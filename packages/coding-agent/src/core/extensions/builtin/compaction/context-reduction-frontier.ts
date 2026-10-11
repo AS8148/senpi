@@ -103,7 +103,7 @@ export function reduceContextWithFrontier(
 		ceilingPressure &&
 		estimateTotalTokens(input.unreducedMessages.slice(state.cutIndex, cut)) < input.contextWindow * 0.1
 	) {
-		if (!wasEngaged && messages.length <= 5) state.engaged = false;
+		if (!wasEngaged) state.engaged = false;
 		else state.compactionRequired = true;
 		return reduced;
 	}
@@ -113,8 +113,7 @@ export function reduceContextWithFrontier(
 	// conservatively; dropping the bound here would manufacture apparent gains.
 	const candidateProjected = Math.max(estimateTotalTokens(candidate) + input.overheadTokens, projected - savings);
 	if (savings < input.contextWindow * 0.02 || (ceilingPressure && candidateProjected > input.ceilingTokens * 0.85)) {
-		if (!wasEngaged && messages.length <= 5) state.engaged = false;
-		else if (ceilingPressure) state.compactionRequired = true;
+		if (ceilingPressure) state.compactionRequired = true;
 		return reduced;
 	}
 	state.cutIndex = cut;
