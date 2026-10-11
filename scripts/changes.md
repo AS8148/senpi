@@ -1928,3 +1928,23 @@ Build tooling is not an extension surface.
 ### Expected merge conflict zones
 
 Upstream edits to scripts/build-binaries.sh at the next sync.
+
+## 2026-10-11 - Changelog gate reports every violation (senpi#3055, senpi#3123)
+
+### What changed
+
+- `scripts/check-pr-changelog.mjs`: collect every changed released section across all changed changelogs, every tracker removal, and every Unreleased-removal violation. Return a `violations` array and retain the string `reason`, joined with "; ". The CLI preserves its first failure line and prints each violation on its own line before the existing remediation.
+- `scripts/check-pr-changelog.test.mjs`: extend the #2609 CLI fixture with a simultaneous released-section edit and tracker removal, and verify aggregation across sections and files plus the returned reason contract.
+
+### Why
+
+- `scripts/check-pr-changelog.mjs`: #3055 both misplaced a changelog bullet in a released section and removed existing tracker lines. The first-only violation chain masked the tracker removal until the released-section problem was fixed, requiring another push. Reporting all existing checks changes no policy; per-PR fragments remain the longer-term work in #3123.
+
+### Why an extension could not handle it
+
+- `scripts/check-pr-changelog.mjs`: the PR gate runs as repository tooling, before runtime extensions load.
+
+### Expected merge conflict zones
+
+- `scripts/check-pr-changelog.mjs`: released-section detection, `checkPrChangelog` aggregation, and CLI failure output.
+- `scripts/check-pr-changelog.test.mjs`: the #2609 CLI fixture and aggregation assertions.
