@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/index.ts` and `packages/coding-agent/src/modes/index.ts` export `RpcEvalCell` and `RpcEvalCellSnapshot` beside the established RPC types. `packages/coding-agent/vitest.config.ts` resolves the public Senpi package to source for the real codemode/RPC regression without a build.
+- `packages/coding-agent/src/index.ts` and `packages/coding-agent/src/modes/index.ts` export `RpcEvalCell` and `RpcEvalCellSnapshot` beside the established RPC types.
 
 ### Why
 
