@@ -1,6 +1,7 @@
 import type { Tool } from "@earendil-works/pi-ai";
 import type { CompactionResult } from "../../../compaction/index.ts";
 import { createWarmAnchorSnapshot, isWarmSummaryAnchorValid } from "../../../compaction/warm-anchor.ts";
+import { AccountUsageLimitError } from "../../../retry-fallback/usage-limit.ts";
 import type {
 	BeforeAgentStartEvent,
 	BeforeAgentStartEventResult,
@@ -508,7 +509,7 @@ export default function compactionExtension(
 		let feedbackSignal = ctx.beginCompaction?.({ reason: "extension" });
 		try {
 			let remoteFallbackReason: string | undefined;
-			if (isOpenAiRemoteCompactionModel(ctx.model)) {
+			if (isOpenAiRemoteCompactionModel(ctx.model) && (ctx.getCompactionModel?.() ?? ctx.model) === ctx.model) {
 				const remoteGeneration = speculativeGeneration + 1;
 				const remoteSnapshot = createSpeculativeCompactionSnapshot(ctx, {
 					generation: remoteGeneration,
@@ -740,16 +741,22 @@ export default function compactionExtension(
 			}
 			let remoteCompaction: Awaited<ReturnType<typeof runOpenAiRemoteCompaction>>;
 			try {
-				remoteCompaction = await runOpenAiRemoteCompaction(
-					ctx,
-					event,
-					(data) => {
-						reportRemoteCompactionTimeout(ctx, event.reason, event.signal, data);
-						pi.events.emit(SENPI_COMPACTION_EVENT, data);
-					},
-					remoteCompactionDependencies,
-				);
+				// Native remote compaction is tied to the active provider's replay origin.
+				// A different summary model must use the bounded local summary route.
+				remoteCompaction =
+					(ctx.getCompactionModel?.() ?? model) !== model
+						? undefined
+						: await runOpenAiRemoteCompaction(
+								ctx,
+								event,
+								(data) => {
+									reportRemoteCompactionTimeout(ctx, event.reason, event.signal, data);
+									pi.events.emit(SENPI_COMPACTION_EVENT, data);
+								},
+								remoteCompactionDependencies,
+							);
 			} catch (error) {
+				if (error instanceof AccountUsageLimitError) return { cancel: true, reason: error.message };
 				// The remote route deliberately rethrows once its signal aborts; the
 				// handler converts that into a silent stand-down so the abort is not
 				// reported as an extension error with a stack (issue #886).

@@ -1,3 +1,44 @@
+## 2026-10-11 - Account fail-fast suppression stays at its emit site (senpi#3131 delta)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: only the account terminal branch omits zero-attempt `auto_retry_end`; `entry_appended` projects structured account advice without mutating the stored entry; wall-clock reset parsing is wired separately from monotonic expiry.
+- `packages/coding-agent/src/core/retry-fallback/usage-limit.ts`: a shared entry projection reuses the message formatter while retaining entry identity.
+- `packages/coding-agent/src/core/retry-fallback/cooldown.ts`: wall time is injected, so fake-clock tests no longer need global Date overrides.
+- `packages/coding-agent/src/core/retry-fallback/unusable.ts`: documents that account keys approximate credential identity using the provider name.
+
+### Why
+
+Suppressing every zero-attempt retry failure hid the reason for long waits and over-cap delays. Entry transports still exposed the raw account error beside formatted message events.
+
+### Why an extension could not handle it
+
+Terminal retry events, stored entry publication, and cooldown clock wiring belong to the session host.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: account retry-end emission, entry publication, and cooldown construction.
+
+## 2026-10-11 - Spent windows expire without local renewal (senpi#3131 review)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the pre-prompt gate routes remembered failures without recording another provider failure. Builtin `getCompactionModel` retains the current healthy model; spent-account resolution tries the held target, configured override, then an authenticated alternate whose context window fits the active transcript and reserved output.
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`, `cooldown.ts`, and `unusable.ts`: local refusals do not refresh cooldowns or circuits; provider reset hints and retry-after durations use the existing bounded cooldown cap; explicit manual selections clear account suppression for a probe.
+- `packages/coding-agent/src/core/retry-fallback/usage-limit.ts`: user-facing assistant projections retain structured usage scope and reuse the shared formatter idempotently.
+
+### Why
+
+Repeated refused prompts kept accounts spent past reset, manual recovery was removed, and formatted advice was being reclassified as a model limit.
+
+### Why an extension could not handle it
+
+Prompt admission, suppression clocks, summary routing, and transport message projection are session-owned.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: prompt admission, event projection, and summary model resolution.
+
 ## 2026-10-11 - No server-search injection in auxiliary requests (senpi#3122 review)
 
 ### What changed
@@ -9590,3 +9631,39 @@ An unsafe newest result poisoned every retained suffix. Repeated automatic admis
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/core/agent-session.ts`: rejection-helper import and `_wouldCompactionOverflow` delegation.
+## 2026-10-11 - Spent accounts stop retrying and compaction uses a usable model (senpi#3131)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: account-scoped failures immediately try another provider or end without backoff; the compaction resolver selects a non-spent override, current model, held target, or authenticated alternate. Published assistant errors and terminal retry errors use the shared account-limit description while the original provider text remains on internal messages and in session logs. Extension context wiring exposes the same compaction resolver.
+- `packages/coding-agent/src/core/retry-fallback/candidates.ts`, `controller.ts`, `unusable.ts`, and `usage-limit.ts`: spent-provider candidates are skipped outright, account failures are retained even without a configured chain, and unavailable compaction raises the same limit description.
+
+### Why
+
+The prior last-resort rescan sent requests to siblings on an account already known to be spent, then normal backoff added roughly 60 seconds. Summarization selected that spent account even after a held model switch.
+
+### Why an extension could not handle it
+
+The retry owner, session account suppression, held-switch state, and default compaction resolver live in core.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/agent-session.ts`: retry branches, event publication, compaction resolver, and context actions.
+
+## 2026-10-11 - Compaction account health no longer narrows a model to never (senpi#3131 CI)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the usability check returns a boolean rather than claiming account health determines whether an object is a `Model`. Optional candidates are checked for existence separately.
+
+### Why
+
+The false branch of the previous type predicate narrowed an existing session model to `never`, making the exhausted-account error fail typechecking. Test provider registrations also now include their required model names.
+
+### Why an extension could not handle it
+
+The invalid predicate was inside the session-owned compaction resolver.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_resolveCompactionModel`.

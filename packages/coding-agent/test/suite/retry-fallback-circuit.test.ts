@@ -1,10 +1,11 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Settings } from "../../src/core/settings-manager.ts";
+import { registerFallbackModels } from "./fallback-provider-fixture.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
 const primary = "faux/faux-1";
-const fallback = "faux/faux-2";
+const fallback = "other-faux/faux-2";
 const models = [{ id: "faux-1" }, { id: "faux-2" }];
 
 const overloaded = () => fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" });
@@ -28,6 +29,7 @@ describe("fallback-chain circuit breaker across sessions sharing one runtime", (
 
 	async function first(extra: Partial<Settings> = {}): Promise<Harness> {
 		const harness = await createHarness({ models, fallbackNow: () => now, settings: settings(extra) });
+		registerFallbackModels(harness, "other-faux", ["faux-2"]);
 		harnesses.push(harness);
 		return harness;
 	}
@@ -39,6 +41,7 @@ describe("fallback-chain circuit breaker across sessions sharing one runtime", (
 			fallbackNow: () => now,
 			settings: settings(extra),
 		});
+		registerFallbackModels(harness, "other-faux", ["faux-2"]);
 		harnesses.push(harness);
 		return harness;
 	}

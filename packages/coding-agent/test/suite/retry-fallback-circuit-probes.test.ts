@@ -3,10 +3,11 @@ import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fallbackCircuitsFor } from "../../src/core/retry-fallback/circuit.ts";
 import type { Settings } from "../../src/core/settings-manager.ts";
+import { registerFallbackModels } from "./fallback-provider-fixture.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
 const primary = "faux/faux-1";
-const fallback = "faux/faux-2";
+const fallback = "other-faux/faux-2";
 const window = { cooldownMs: 60_000, maxCooldownMs: 1_800_000 };
 
 const failure = (errorMessage = "HTTP 503: overloaded") =>
@@ -39,6 +40,7 @@ describe("fallback circuit probes and failure classes (senpi#2201 review)", () =
 			},
 		});
 		harnesses.push(harness);
+		registerFallbackModels(harness, "other-faux", ["faux-2"]);
 		return harness;
 	}
 

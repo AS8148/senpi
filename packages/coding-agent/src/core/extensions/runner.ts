@@ -461,6 +461,7 @@ export class ExtensionRunner {
 	private isCompactingFn: () => boolean = () => false;
 	private checkReloadVetoFn: ExtensionContextActions["checkReloadVeto"];
 	private getContextUsageFn: () => ContextUsage | undefined = () => undefined;
+	private getCompactionModelFn: ExtensionContextActions["getCompactionModel"];
 	private getCompactionSettingsFn: ExtensionContextActions["getCompactionSettings"] = () => ({
 		enabled: true,
 		reserveTokens: 16384,
@@ -605,6 +606,7 @@ export class ExtensionRunner {
 		this.shutdownHandler = contextActions.shutdown;
 		this.getContextUsageFn = contextActions.getContextUsage;
 		this.getCompactionSettingsFn = contextActions.getCompactionSettings;
+		this.getCompactionModelFn = contextActions.getCompactionModel;
 		if (contextActions.getPromptCacheSafeWaitSeconds)
 			this.getPromptCacheSafeWaitSecondsFn = contextActions.getPromptCacheSafeWaitSeconds;
 		if (contextActions.getPromptCacheGoalBackstopMaxSeconds)
@@ -1327,6 +1329,15 @@ export class ExtensionRunner {
 			getCompactionSettings: () => {
 				runner.assertActive();
 				return runner.getCompactionSettingsFn();
+			},
+			get getCompactionModel() {
+				runner.assertActive();
+				return runner.getCompactionModelFn
+					? () => {
+							runner.assertActive();
+							return runner.getCompactionModelFn?.();
+						}
+					: undefined;
 			},
 			getPromptCacheSafeWaitSeconds: () => {
 				runner.assertActive();
