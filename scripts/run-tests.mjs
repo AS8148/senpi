@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { appendFileSync, mkdtempSync, rmSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -16,7 +16,11 @@ const parent = tmpdir();
 const before = process.env.SENPI_TEST_TEMP_GUARD === "1" ? tempEntries(parent) : undefined;
 // Vitest constructs its core _tmpDir before globalSetup. cacheDir/server.deps do not
 // control forks' makeTmpCopies, so the environment must be scoped before loading Vitest.
-const root = mkdtempSync(join(parent, "st-"));
+// Keep a run's fallback TUI socket inside its root, even under a long inherited
+// macOS/agent TMPDIR. This models the 103-byte contract in socket-ownership.ts.
+const socketPath = join(parent, "st-XXXXXX", "senpi-rpc-00000000", "tui", "t-0000000000000000.sock");
+const rootParent = process.platform !== "win32" && Buffer.byteLength(socketPath) > 103 ? "/tmp" : parent;
+const root = mkdtempSync(join(rootParent, "st-"));
 if (before) console.log(`[test-temp] owned root: ${JSON.stringify(basename(root))}`);
 let child;
 let forwarded;
@@ -44,10 +48,20 @@ try {
 } finally {
 	// Runs on success, test failure, spawn error, worker SIGKILL and catchable interrupts.
 	// SIGKILL of this owner itself cannot execute teardown; never reap another run's root.
-	rmSync(root, { recursive: true, force: true, maxRetries: 3 });
-	for (const [signal, handler] of handlers) process.off(signal, handler);
+	try {
+		rmSync(root, { recursive: true, force: true, maxRetries: 3 });
+	} catch (error) {
+		console.error(`[test-temp] child exited with ${process.exitCode}; cleanup failed for ${root}: ${error instanceof Error ? error.message : String(error)}`);
+		process.exitCode = 1;
+	} finally {
+		for (const [signal, handler] of handlers) process.off(signal, handler);
+	}
 }
 if (before) {
-	if (reportTempLeaks(parent, before) !== 0) process.exitCode = 1;
+	const survivingRoot = existsSync(root) ? 1 : 0;
+	console.log(`[test-temp] surviving owned run roots after teardown: ${survivingRoot}`);
+	if (rootParent !== parent && survivingRoot)
+		console.error(`[test-temp] leftover owned root: ${JSON.stringify(root)}`);
+	if (reportTempLeaks(parent, before) !== 0 || survivingRoot !== 0) process.exitCode = 1;
 }
 if (forwarded) process.kill(process.pid, forwarded);

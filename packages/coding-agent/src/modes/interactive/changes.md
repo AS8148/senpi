@@ -1,3 +1,21 @@
+## 2026-10-12 - Short owned temp roots contain TUI socket fallbacks (Refs senpi#3064)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/session-control-registry.ts`: prefer the inherited temp root for the hashed fallback when its complete socket fits the existing 103-byte limit. Test launchers now guarantee that room; normal users with long system temp paths retain the original short `/tmp` fallback.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/session-control-registry.ts`: deep quarantined agent paths pushed CI sockets into unowned system directories.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/session-control-registry.ts`: endpoint registration owns the socket path before an extension can connect.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/session-control-registry.ts`: fallback root selection and private-directory checks.
+
 ## 2026-10-11 - Preserve explanations for zero-attempt retry failures (senpi#3131 delta)
 
 ### What changed

@@ -8,7 +8,6 @@ import {
 	opendirSync,
 	readFileSync,
 	rmSync,
-	statSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -20,8 +19,6 @@ export function tempEntries(directory) {
 	const names = [];
 	try {
 		for (let entry = handle.readSync(); entry; entry = handle.readSync()) {
-			if (names.length === 100_000)
-				throw new Error("temp guard exceeded 100000 top-level entries");
 			names.push(entry.name);
 		}
 	} finally {
@@ -30,9 +27,17 @@ export function tempEntries(directory) {
 	return names.sort();
 }
 
-export function reportTempLeaks(directory, before) {
+export function repoTempName(name) {
+	return /^(?:senpi-|pi-|pip-|tsx-|st-|sj-|rpc1370-|hc-|pc-|ps-|pes-|pew-|per-|pet-|ped-|sa-|dh-tmp-|tui-)/.test(name) ||
+		name === "tui" || /^[A-Za-z0-9_-]{21}$/.test(name);
+}
+
+export function reportTempLeaks(directory, before, matching = () => true) {
 	const known = new Set(before);
-	const leaked = tempEntries(directory).filter((name) => !known.has(name));
+	const fresh = tempEntries(directory).filter((name) => !known.has(name));
+	const leaked = fresh.filter(matching);
+	for (const name of fresh.filter((entry) => !matching(entry)))
+		console.log(`[test-temp] unrecognized new system entry: ${JSON.stringify(join(directory, name))}`);
 	console.log(
 		`[test-temp] new top-level entries after teardown: ${leaked.length}`,
 	);
@@ -105,6 +110,10 @@ if (
 			// npm enables Node's default compile cache before launching the wrapped test.
 			// This is allocated by job setup and retired with the owned parent, not exempted.
 			if (scope) mkdirSync(join(scope, "node-compile-cache"));
+			const system = scope
+				? [...new Set([tmpdir(), ...(process.platform === "win32" ? [] : ["/tmp"])])]
+					.map((directory) => ({ directory, entries: tempEntries(directory) }))
+				: [];
 			writeFileSync(
 				file,
 				JSON.stringify({
@@ -113,6 +122,7 @@ if (
 					registry,
 					scope,
 					environment,
+					system,
 				}),
 			);
 			if (scope) {
@@ -132,15 +142,11 @@ if (
 			(typeof snapshot.scope !== "string" ||
 				!isAbsolute(snapshot.scope) ||
 				!basename(snapshot.scope).startsWith("sj-") ||
-				snapshot.scope !== snapshot.directory ||
-				snapshot.entries.length !== 1 ||
-				snapshot.entries[0] !== "node-compile-cache")
+				snapshot.scope !== snapshot.directory)
 		)
 			throw new Error("invalid exclusive job temp scope");
 		try {
-			if (statSync(snapshot.registry).size > 8 * 1024 * 1024)
-				throw new Error("temp ownership journal exceeds 8 MiB");
-			const baseline = new Set(snapshot.entries);
+			const baselines = [{ directory: snapshot.directory, entries: snapshot.entries }, ...(snapshot.system ?? [])];
 			const roots = new Set(
 				readFileSync(snapshot.registry, "utf8")
 					.split("\n")
@@ -151,16 +157,25 @@ if (
 							typeof root !== "string" ||
 							!isAbsolute(root) ||
 							!basename(root).startsWith("st-") ||
-							(resolve(dirname(root)) === resolve(snapshot.directory) &&
-								baseline.has(basename(root)))
+							baselines.some(({ directory, entries }) =>
+								resolve(dirname(root)) === resolve(directory) && entries.includes(basename(root)))
 						)
 							throw new Error("invalid temp ownership record");
 						return root;
 					}),
 			);
+			// Count before retiring anything: a surviving owner is a failed run, not clean teardown.
+			let leaked = reportTempLeaks(snapshot.directory, snapshot.entries);
+			for (const system of snapshot.system ?? []) {
+				console.log(`[test-temp] checking system temp: ${JSON.stringify(system.directory)}`);
+				leaked += reportTempLeaks(system.directory, system.entries, repoTempName);
+			}
 			let retired = 0;
 			for (const root of roots) {
 				if (existsSync(root)) {
+					console.error(
+						`[test-temp] surviving owner contents ${JSON.stringify(root)}: ${JSON.stringify(tempEntries(root))}`,
+					);
 					console.log(
 						`[test-temp] retiring recorded owned root: ${JSON.stringify(root)}`,
 					);
@@ -171,8 +186,7 @@ if (
 			console.log(
 				`[test-temp] recorded owned roots retired at job teardown: ${retired}`,
 			);
-			process.exitCode =
-				reportTempLeaks(snapshot.directory, snapshot.entries) === 0 ? 0 : 1;
+			process.exitCode = leaked === 0 && retired === 0 ? 0 : 1;
 		} finally {
 			if (snapshot.scope) {
 				rmSync(snapshot.scope, { recursive: true, force: true, maxRetries: 3 });

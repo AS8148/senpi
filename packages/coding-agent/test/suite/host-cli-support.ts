@@ -8,16 +8,21 @@
  * environment-scope case, and inheriting the runner's own would make that case meaningless.
  */
 import { execFileSync, spawn } from "node:child_process";
+import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createHostDaemonPaths } from "../../src/modes/rpc/host-daemon-paths.ts";
+import { provenOwner, readHostRegistration } from "../../src/modes/rpc/host-daemon-registration.ts";
 import { probeHost } from "../../src/modes/rpc/host-probe.ts";
 import { stopHost } from "../../src/modes/rpc/host-stop.ts";
-import { reapProcessesUnder, waitForPidGone } from "../helpers/spawned-host-reaper.ts";
+import { waitForPidGone } from "../helpers/spawned-host-reaper.ts";
+import { waitForWindowsDaemonExit } from "../helpers/windows-daemon-exit.ts";
 
 const cliEntry = join(import.meta.dirname, "..", "..", "src", "cli.ts");
 const sandboxes: HostCliSandbox[] = [];
+const fixtureChildren = new Map<ReturnType<typeof spawn>, Promise<unknown>>();
 
 export interface HostCliSandbox {
 	readonly root: string;
@@ -52,11 +57,24 @@ export async function hostCliSandbox(label: string): Promise<HostCliSandbox> {
  */
 export async function sweepHostCliSandboxes(): Promise<void> {
 	for (const sandbox of sandboxes.splice(0)) {
-		const stopped = await stopHost({ socket: sandbox.socket, agentDir: sandbox.agentDir, force: true }).catch(
-			() => undefined,
-		);
-		if (stopped?.action === "stopped") await waitForPidGone(stopped.pid, 30_000);
-		await reapProcessesUnder(sandbox.root);
+		const paths = createHostDaemonPaths({ socket: sandbox.socket, agentDir: sandbox.agentDir });
+		const owner = await provenOwner(await readHostRegistration(paths), sandbox.socket);
+		const stop = async (): Promise<void> => {
+			const stopped = await stopHost({ socket: sandbox.socket, agentDir: sandbox.agentDir, force: true });
+			if (
+				stopped.action === "stopped" &&
+				process.platform !== "win32" &&
+				!(await waitForPidGone(stopped.pid, 30_000))
+			)
+				throw new Error(`host ${stopped.pid} did not exit`);
+		};
+		if (owner && process.platform === "win32") await waitForWindowsDaemonExit(owner.pid, stop);
+		else await stop();
+		for (const [child, closed] of fixtureChildren) {
+			if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+			await closed;
+			fixtureChildren.delete(child);
+		}
 		await rm(sandbox.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
 	}
 }
@@ -149,6 +167,7 @@ export async function startFixtureHost(
 		detached: true,
 		stdio: "ignore",
 	});
+	fixtureChildren.set(child, once(child, "close"));
 	if (child.pid === undefined) throw new Error("fixture host did not spawn");
 	child.unref();
 	await awaitAnswer(sandbox.socket);

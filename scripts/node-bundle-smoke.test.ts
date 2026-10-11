@@ -73,7 +73,7 @@ test("loads the embedded JavaScript grammar from an isolated Node bundle", () =>
 			const result = spawnSync(runtime, ["--input-type=module", "-e", probe], {
 				cwd: state,
 				encoding: "utf8",
-				env: { PATH: process.env.PATH ?? "" },
+				env: hermeticEnv(state),
 			});
 			expect(result.status, `${runtime}: ${result.stderr}`).toBe(0);
 			expect(result.stdout.trim(), runtime).toBe("tree-sitter-wasm");
