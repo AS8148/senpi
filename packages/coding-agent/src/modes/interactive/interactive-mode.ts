@@ -792,7 +792,7 @@ interface ClipboardImageDeps {
 
 /**
  * Attach a clipboard bitmap as an in-memory image behind an atomic
- * `[Image #N]` marker. Returns false when nothing was attached, so the caller
+ * `[Image #N]` marker. Returns false when the paste was unhandled, so the caller
  * falls through to the plain-text clipboard path.
  *
  * The bytes deliberately never touch the filesystem: writing a temp file and
@@ -803,7 +803,7 @@ interface ClipboardImageDeps {
 async function attachClipboardImage(
 	deps: ClipboardImageDeps,
 	image: { bytes: Uint8Array; mimeType: string },
-): Promise<boolean> {
+): Promise<"attached" | "dropped" | false> {
 	if (deps.settings.getBlockImages()) {
 		// Pinned behavior: nothing is attached and nothing is inserted, but the
 		// paste is never a silent no-op - the user must learn why their screenshot
@@ -821,12 +821,12 @@ async function attachClipboardImage(
 	if (deps.isCompacting()) {
 		// The compaction queue carries text only; an attachment queued behind
 		// compaction would be silently lost at delivery, so drop it here with a
-		// visible status. Consume the paste (true) - the clipboard holds a
+		// visible status. Consume the paste as dropped - the clipboard holds a
 		// bitmap, so the plain-text fallback has nothing useful to insert.
 		deps.showStatus(
 			"Image paste dropped: messages sent during compaction cannot carry images - paste again after compaction finishes",
 		);
-		return true;
+		return "dropped";
 	}
 
 	const processed = await processImage(image.bytes, image.mimeType, {
@@ -850,7 +850,7 @@ async function attachClipboardImage(
 		mimeType: processed.mimeType,
 	});
 	deps.requestRender();
-	return true;
+	return "attached";
 }
 
 /**
@@ -4674,7 +4674,7 @@ export class InteractiveMode {
 					image,
 				));
 			if (attached) {
-				emitUserActivity(this.session, "draft");
+				if (attached === "attached") emitUserActivity(this.session, "draft");
 				return;
 			}
 

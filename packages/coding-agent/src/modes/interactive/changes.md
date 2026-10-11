@@ -3,7 +3,7 @@
 ### What changed
 
 - `packages/coding-agent/src/modes/interactive/composer-user-activity.ts`: observes text changes made during editor input, excluding submit-time clearing and programmatic draft restoration. Submission wrappers preserve all callback arguments, including raw-text details. Programmatic extension input bypasses the observer.
-- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: connects default and extension-provided composers to the host activity source, publishes completed clipboard draft edits safely on borrowed receivers, and inserts extension `pasteToEditor` text without claiming terminal activity.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: connects default and extension-provided composers to the host activity source, publishes completed clipboard draft edits safely on borrowed receivers, and inserts extension `pasteToEditor` text without claiming terminal activity. Image paste distinguishes an actual attachment from a compaction drop; a handled drop never publishes draft activity or a second failure status.
 
 ### Why
 

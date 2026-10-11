@@ -17,8 +17,8 @@ export function createUserActivitySource() {
 }
 
 export function emitUserActivity(
-	session: { recordUserActivity(kind: UserActivityKind): void } | undefined,
+	session: { recordUserActivity?(kind: UserActivityKind): void } | undefined,
 	kind: UserActivityKind,
 ): void {
-	session?.recordUserActivity(kind);
+	session?.recordUserActivity?.(kind);
 }

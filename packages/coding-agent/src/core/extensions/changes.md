@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/extensions/user-activity.ts`: creates a session-owned activity source and distinguishes `"draft"` from `"prompt"`. A missing session in a borrowed UI receiver is a no-op.
+- `packages/coding-agent/src/core/extensions/user-activity.ts`: creates a session-owned activity source and distinguishes `"draft"` from `"prompt"`. A borrowed UI receiver without a session or its publisher method is a no-op.
 - `packages/coding-agent/src/core/extensions/types.ts`: adds optional subscription-only `onUserActivity` to the extension context and its host bindings.
 - `packages/coding-agent/src/core/extensions/runner.ts`: binds the host subscriber, tracks its disposal with the extension generation, and reports listener errors without throwing out of the input path.
 

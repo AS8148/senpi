@@ -5,7 +5,7 @@
 ### What changed
 
 - `session-prewarm.ts`: session start only arms one opportunity. The first draft activity can fire it when keep-alive is enabled and the model is eligible; prompt admission consumes it without a warm call. The setting is checked again after asynchronous prefix preparation. Model selection retargets an unused opportunity and cancels stale work; parking and shutdown cancel pending work.
-- `index.ts`: resets the prewarm generation before existing idle-loop arming. The prewarm activity policy does not gate idle keep-alive after completed turns, including extension-driven turns after reload.
+- `index.ts` and `startup-activity-gate.ts`: reset prewarm and wait for first host activity before arming keep-alive from restored history. Model selection and parked-session resumption cannot bypass the startup gate. Successful completed turns release it, so idle keep-alive after completed extension-driven turns retains its existing behavior. Reload and shutdown dispose the previous activity subscription.
 
 ### Why
 

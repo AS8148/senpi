@@ -14,6 +14,7 @@ import { noticeEntryRenderer } from "../../notice/index.ts";
 import type { EntryRenderer, ExtensionAPI, ExtensionContext, ExtensionFactory } from "../../types.ts";
 import { formatWarmTokenCount } from "../goal/cache-warm.ts";
 import { createSessionPrewarm } from "./session-prewarm.ts";
+import { createStartupActivityGate } from "./startup-activity-gate.ts";
 
 export const CACHE_KEEPALIVE_ENTRY_TYPE = "cache-keepalive";
 export const CACHE_WARM_PING_EVENT = "cache_warm_ping";
@@ -66,6 +67,7 @@ export function createCacheKeepAliveExtension(
 	const warm = dependencies.warmPromptCache ?? warmPromptCache;
 	return (pi: ExtensionAPI) => {
 		const prewarm = createSessionPrewarm(pi, { warm, isPrewarmModel: dependencies.isPromptCachePrewarmModel });
+		const startupActivity = createStartupActivityGate();
 		let ctx: ExtensionContext | undefined;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		let inFlight = false;
@@ -107,7 +109,7 @@ export function createCacheKeepAliveExtension(
 		}
 
 		function arm(): void {
-			if (parked || timer !== undefined || inFlight) return;
+			if (startupActivity.waiting || parked || timer !== undefined || inFlight) return;
 			const current = ctx;
 			const settings = current?.getPromptCacheKeepAliveSettings?.();
 			if (!settings?.enabled || current?.model === undefined || lastCompletedAtMs === undefined) return;
@@ -250,7 +252,7 @@ export function createCacheKeepAliveExtension(
 			const usage = lastAssistantUsage(lastMessages);
 			lastUsage = usage;
 			lastCompletedAtMs = lastAssistantTimestamp(lastMessages);
-			arm();
+			startupActivity.start(nextCtx, arm);
 		});
 
 		pi.on("agent_end", (event, nextCtx) => {
@@ -262,6 +264,7 @@ export function createCacheKeepAliveExtension(
 				return;
 			}
 			lastMessages = [...event.messages];
+			startupActivity.release();
 			lastUsage = usage;
 			lastCompletedAtMs = Date.now();
 			armOnSettle = true;
@@ -293,6 +296,7 @@ export function createCacheKeepAliveExtension(
 		pi.on("input", () => stop("user-input"));
 		pi.on("session_shutdown", () => {
 			stop("session-dispose");
+			startupActivity.release();
 			prewarm.cancel();
 			ctx = undefined;
 		});
