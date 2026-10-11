@@ -24,9 +24,9 @@ append session history. Stopping a detached cell still delivers the ordinary
 `senpi-codemode:notification` completion message to the agent, exactly once.
 
 Both classic and shared hosts advertise the host capability `eval_cells` in
-`get_protocol_info.capabilities`. It indicates protocol support, not that
-codemode is loaded in every session. A session without the extension returns
-`errorCode: "eval_cells_unavailable"`.
+the `data.capabilities` array of a `get_protocol_info` response. It indicates
+protocol support, not that codemode is loaded in every session. A session without
+the extension returns `errorCode: "eval_cells_unavailable"`.
 
 On shared hosts, the three named commands bypass the foreign-session-holder
 guard as explicit reads/cancellation controls. They only touch this host's
