@@ -5810,7 +5810,7 @@ export class InteractiveMode {
 				}
 				this.clearStatusIndicator("retry");
 				// Show error only on final failure (success shows normal response)
-				if (event.success || event.finalError === "Retry cancelled" || event.attempt === 0) {
+				if (event.success || event.finalError === "Retry cancelled") {
 					this.providerErrors?.clear();
 				} else if (isRetryableProviderError(event.finalError)) {
 					this.getProviderErrors().finish(event.finalError, event.attempt);

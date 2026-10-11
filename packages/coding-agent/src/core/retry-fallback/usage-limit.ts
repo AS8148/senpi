@@ -1,5 +1,6 @@
 import { type AssistantMessage, describeProviderFailureForUser, isQuotaExhaustionMessage } from "@earendil-works/pi-ai";
 import { rateLimitModelFamily } from "../credential-pool/model-scope.ts";
+import type { SessionEntry } from "../session-manager.ts";
 import { isBillingErrorMessage } from "./billing.ts";
 
 /**
@@ -66,6 +67,13 @@ export function describeUsageLimitMessage(message: AssistantMessage): AssistantM
 				}
 			: {}),
 	};
+}
+
+/** Project an assistant entry without mutating its persisted identity or payload. */
+export function describeUsageLimitEntry(entry: SessionEntry): SessionEntry {
+	if (entry.type !== "message" || entry.message.role !== "assistant") return entry;
+	const message = describeUsageLimitMessage(entry.message);
+	return message === entry.message ? entry : { ...entry, message };
 }
 
 /** The notice clause naming what hit the limit, or undefined when no usage limit caused the switch. */

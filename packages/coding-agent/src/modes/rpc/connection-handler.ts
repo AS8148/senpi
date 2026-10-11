@@ -55,7 +55,7 @@ import type {
 	ExtensionWidgetOptions,
 	WorkingIndicatorOptions,
 } from "../../core/extensions/index.ts";
-import { describeUsageLimitMessage } from "../../core/retry-fallback/usage-limit.ts";
+import { describeUsageLimitEntry, describeUsageLimitMessage } from "../../core/retry-fallback/usage-limit.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
 import { DURABLE_CLIENT_MESSAGE_ID_CAPABILITY } from "./client-admission-record.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
@@ -1546,12 +1546,22 @@ export function createRpcConnectionHandler(
 					}
 					entries = entries.slice(sinceIndex + 1);
 				}
-				return success(id, "get_entries", { entries, leafId: sessionManager.getLeafId() });
+				return success(id, "get_entries", {
+					entries: entries.map(describeUsageLimitEntry),
+					leafId: sessionManager.getLeafId(),
+				});
 			}
 
 			case "get_tree": {
 				const sessionManager = session.sessionManager;
-				return success(id, "get_tree", { tree: sessionManager.getTree(), leafId: sessionManager.getLeafId() });
+				const tree = sessionManager.getTree();
+				// getTree returns defensive nodes; keep the persisted entries diagnostic-bearing.
+				const nodes = [...tree];
+				for (const node of nodes) {
+					node.entry = describeUsageLimitEntry(node.entry);
+					for (const child of node.children) nodes.push(child);
+				}
+				return success(id, "get_tree", { tree, leafId: sessionManager.getLeafId() });
 			}
 
 			case "get_last_assistant_text": {

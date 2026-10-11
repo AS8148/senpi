@@ -51,6 +51,9 @@ export class UnusableEntries {
 }
 
 function accountKey(provider: string): string {
+	// This is a provider-name approximation, not resolved credential/account identity.
+	// Gateways with distinct model accounts share a key; pooled slots can reset earlier
+	// than the last surfaced account error. Explicit /model selection permits a probe.
 	return `account:${provider}`;
 }
 

@@ -1,3 +1,24 @@
+## 2026-10-11 - Account fail-fast suppression stays at its emit site (senpi#3131 delta)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: only the account terminal branch omits zero-attempt `auto_retry_end`; `entry_appended` projects structured account advice without mutating the stored entry; wall-clock reset parsing is wired separately from monotonic expiry.
+- `packages/coding-agent/src/core/retry-fallback/usage-limit.ts`: a shared entry projection reuses the message formatter while retaining entry identity.
+- `packages/coding-agent/src/core/retry-fallback/cooldown.ts`: wall time is injected, so fake-clock tests no longer need global Date overrides.
+- `packages/coding-agent/src/core/retry-fallback/unusable.ts`: documents that account keys approximate credential identity using the provider name.
+
+### Why
+
+Suppressing every zero-attempt retry failure hid the reason for long waits and over-cap delays. Entry transports still exposed the raw account error beside formatted message events.
+
+### Why an extension could not handle it
+
+Terminal retry events, stored entry publication, and cooldown clock wiring belong to the session host.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: account retry-end emission, entry publication, and cooldown construction.
+
 ## 2026-10-11 - Spent windows expire without local renewal (senpi#3131 review)
 
 ### What changed

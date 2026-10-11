@@ -11,10 +11,12 @@ export class SelectorCooldowns {
 	private readonly expiresAtBySelector = new Map<string, number>();
 	private readonly now: () => number;
 	private readonly random: () => number;
+	private readonly wallNow: () => number;
 
-	constructor(now: () => number, random: () => number = Math.random) {
+	constructor(now: () => number, random: () => number = Math.random, wallNow: () => number = now) {
 		this.now = now;
 		this.random = random;
+		this.wallNow = wallNow;
 	}
 
 	note(baseSelector: string, failure: { retryAfterMs?: number; errorMessage?: string }): void {
@@ -39,7 +41,7 @@ export class SelectorCooldowns {
 
 	private durationFor({ retryAfterMs, errorMessage }: { retryAfterMs?: number; errorMessage?: string }): number {
 		// Reset hints are wall-clock times; the stored deadline remains monotonic.
-		const resetMs = errorMessage === undefined ? undefined : usageLimitResetMs(errorMessage, Date.now());
+		const resetMs = errorMessage === undefined ? undefined : usageLimitResetMs(errorMessage, this.wallNow());
 		const message = stripProviderRequestIds(errorMessage ?? "").toLowerCase();
 		const defaultMs =
 			/usage[- ]limit|quota|insufficient_quota|billing|credits[-_ ]required|credits are required/.test(message)

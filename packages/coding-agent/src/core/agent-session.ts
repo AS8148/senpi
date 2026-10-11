@@ -305,7 +305,12 @@ import {
 } from "./retry-fallback/hint-policy.ts";
 import { createFallbackLogger } from "./retry-fallback/log.ts";
 import { ProbeBackScheduler } from "./retry-fallback/probe-scheduler.ts";
-import { AccountUsageLimitError, describeUsageLimitMessage, usageLimitScope } from "./retry-fallback/usage-limit.ts";
+import {
+	AccountUsageLimitError,
+	describeUsageLimitEntry,
+	describeUsageLimitMessage,
+	usageLimitScope,
+} from "./retry-fallback/usage-limit.ts";
 import { validateFallbackChains } from "./retry-fallback/validate.ts";
 import { isSessionBusySnapshot, type SessionActivitySnapshot, WakeSourceTracker } from "./session-activity.ts";
 import { type ControlEndpointHost, createSessionControlActions } from "./session-control-actions.ts";
@@ -659,6 +664,8 @@ export interface AgentSessionConfig {
 	agentDir?: string;
 	/** Clock override for fallback selector cooldowns (tests only). */
 	fallbackNow?: () => number;
+	/** Wall clock used to translate provider reset timestamps into cooldown durations. */
+	fallbackWallNow?: () => number;
 	/** Random source for retry jitter (tests only). */
 	retryRandom?: () => number;
 	/**
@@ -1392,7 +1399,11 @@ export class AgentSession {
 		// Cooldowns, probe schedules, and circuits measure elapsed time, so they all
 		// run on the monotonic clock; a wall-clock jump never parks or releases an entry.
 		this._fallbackNow = config.fallbackNow ?? monotonicNow;
-		this._selectorCooldowns = new SelectorCooldowns(this._fallbackNow);
+		this._selectorCooldowns = new SelectorCooldowns(
+			this._fallbackNow,
+			undefined,
+			config.fallbackWallNow ?? config.fallbackNow ?? Date.now,
+		);
 		const lease = () => this._fallbackCircuitsLease;
 		this._fallbackCircuits = createFallbackCircuitAccess({
 			// Read on every use: the hold is taken as construction's last step.
@@ -2320,6 +2331,9 @@ export class AgentSession {
 
 	private _emit(event: AgentSessionEvent): void {
 		this._logSessionEvent(event);
+		if (event.type === "entry_appended") {
+			event = { ...event, entry: describeUsageLimitEntry(event.entry) };
+		}
 		if (event.type === "retry_fallback_exhausted" && usageLimitScope(event.lastError) === "account") {
 			event = {
 				...event,
@@ -10112,12 +10126,14 @@ export class AgentSession {
 			if (!switchedFallback) {
 				const chainKey = this._retryFallback.exhaustedChainKey;
 				if (chainKey) this._emit({ type: "retry_fallback_exhausted", chainKey, lastError: errorMessage });
-				this._emit({
-					type: "auto_retry_end",
-					success: false,
-					attempt: this._retryAttempt,
-					finalError: this._terminalFailureText(message, this._retryAttempt),
-				});
+				if (this._retryAttempt > 0) {
+					this._emit({
+						type: "auto_retry_end",
+						success: false,
+						attempt: this._retryAttempt,
+						finalError: this._terminalFailureText(message, this._retryAttempt),
+					});
+				}
 				this._retryAttempt = 0;
 				this._resetHintTierState();
 				this._resolveRetry();

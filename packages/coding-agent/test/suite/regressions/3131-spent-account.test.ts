@@ -53,17 +53,16 @@ describe("#3131 spent account", () => {
 		// then
 		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["primary"]);
 		expect(harness.eventsOfType("auto_retry_start")).toEqual([]);
-		expect(harness.eventsOfType("auto_retry_end")).toMatchObject([
-			{
-				success: false,
-				finalError:
-					"The faux account usage limit has been reached (resets 11pm). Switch to another provider with /model, or configure another provider in retry.fallbackChains.",
-			},
-		]);
+		expect(harness.eventsOfType("auto_retry_end")).toEqual([]);
 		const published = harness.eventsOfType("message_end").find((event) => event.message.role === "assistant");
-		expect(published?.message).toMatchObject({
-			errorMessage: harness.eventsOfType("auto_retry_end")[0]?.finalError,
+		if (published?.message.role !== "assistant") throw new Error("missing account failure message");
+		expect(published.message).toMatchObject({
+			errorCause: { type: "usage_limit", scope: "account" },
 		});
+		for (const part of ["faux", "resets 11pm", "/model", "retry.fallbackChains"]) {
+			expect(published.message.errorMessage).toContain(part);
+		}
+		expect(published.message.errorMessage).not.toMatch(/429|rate_limit_error/);
 		// The original provider payload stays available to engine diagnostics.
 		expect(harness.session.state.messages.findLast((message) => message.role === "assistant")).toMatchObject({
 			errorMessage: accountLimit,
@@ -238,11 +237,10 @@ describe("#3131 spent account", () => {
 		const epoch = Date.UTC(2026, 9, 11);
 		const harness = await createHarness({
 			fallbackNow: () => now,
+			fallbackWallNow: () => epoch + now,
 			settings: { retry: { enabled: true }, compaction: { enabled: false } },
 		});
 		harnesses.push(harness);
-		vi.useFakeTimers({ toFake: ["Date"] });
-		vi.setSystemTime(epoch);
 		harness.setResponses([
 			fauxAssistantMessage("", { stopReason: "error", errorMessage: error }),
 			fauxAssistantMessage("account reset"),
@@ -250,12 +248,10 @@ describe("#3131 spent account", () => {
 		await harness.session.prompt("first attempt");
 		for (const elapsed of [windowMs / 2, windowMs - 1]) {
 			now = elapsed;
-			vi.setSystemTime(epoch + elapsed);
 			await expect(harness.session.prompt("still waiting")).rejects.toThrow();
 			expect(harness.faux.getCallLog()).toHaveLength(1);
 		}
 		now = windowMs + 1;
-		vi.setSystemTime(epoch + now);
 		await harness.session.prompt("after the original reset");
 		expect(harness.faux.getCallLog()).toHaveLength(2);
 		expect(harness.session.messages.at(-1)).toMatchObject({
@@ -452,6 +448,36 @@ describe("#3131 spent account", () => {
 				},
 			});
 			expect(JSON.stringify(history)).not.toMatch(/429|rate_limit_error/);
+			const appendedEntries = harness.eventsOfType("entry_appended");
+			const unsubscribeEntries = harness.session.subscribe((event) => {
+				if (event.type === "entry_appended") appendedEntries.push(event);
+			});
+			await harness.session.bindExtensions({ mode: "rpc" });
+			const rawEntry = harness.sessionManager
+				.getEntries()
+				.findLast((entry) => entry.type === "message" && entry.message.role === "assistant");
+			if (rawEntry?.type !== "message") throw new Error("missing raw assistant entry");
+			harness.session.appendSessionEntry({
+				...rawEntry,
+				id: "raw-account-copy",
+				parentId: harness.sessionManager.getLeafId(),
+			});
+			unsubscribeEntries();
+			const appended = appendedEntries.at(-1);
+			expect(appended).toMatchObject({
+				entry: { message: { errorCause: { type: "usage_limit", scope: "account" } } },
+			});
+			expect(JSON.stringify(appended)).not.toMatch(/429|rate_limit_error/);
+			for (const command of ["get_entries", "get_tree"]) {
+				await handler.handleInputLine(JSON.stringify({ type: command, id: command }));
+				const response = records.find((record) => record.id === command);
+				expect(response).toMatchObject({ success: true });
+				expect(JSON.stringify(response)).toContain('"scope":"account"');
+				expect(JSON.stringify(response)).not.toMatch(/429|rate_limit_error/);
+			}
+			expect(harness.sessionManager.getEntry("raw-account-copy")).toMatchObject({
+				message: { errorMessage: accountLimit },
+			});
 		} finally {
 			await handler.dispose();
 		}

@@ -79,7 +79,7 @@ it("keeps a session opened without a profile on the host's settings: its usage l
 
 	// then
 	expect(lastAssistantText(host, String(plain.sessionId))).toContain("faux-fallback account usage limit");
-	expect(faux.getCallLog().map((call) => call.modelId)).not.toContain("spare-a");
+	expect(spare.getCallLog().map((call) => call.modelId)).not.toContain("spare-a");
 }, 120_000);
 
 it("refuses a malformed retryFallback instead of opening a session without the chain its caller asked for", async () => {

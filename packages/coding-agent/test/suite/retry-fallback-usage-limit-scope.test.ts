@@ -1,7 +1,7 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { MAX_SLOT_BLOCK_MS } from "@earendil-works/pi-ai/auth/pool/failover";
 import { getModel } from "@earendil-works/pi-ai/compat";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { RetryFallbackController, type RetryFallbackControllerDeps } from "../../src/core/retry-fallback/controller.ts";
 import { SelectorCooldowns } from "../../src/core/retry-fallback/cooldown.ts";
 
@@ -14,7 +14,7 @@ const opus = model("anthropic-subscription", "claude-opus-5-5");
 const kimi = model("kimi-coding", "kimi-k3");
 const models = [fable, opus, kimi];
 
-function createController(chain: readonly string[], now: () => number = () => 0) {
+function createController(chain: readonly string[], now: () => number = () => 0, wallNow: () => number = now) {
 	let current: { model: Model<Api> } = { model: fable };
 	const events: unknown[] = [];
 	const deps: RetryFallbackControllerDeps = {
@@ -23,7 +23,7 @@ function createController(chain: readonly string[], now: () => number = () => 0)
 			find: (provider, id) => models.find((entry) => entry.provider === provider && entry.id === id),
 			getAll: () => models,
 		},
-		cooldowns: new SelectorCooldowns(now),
+		cooldowns: new SelectorCooldowns(now, undefined, wallNow),
 		logger: { debug: () => {}, info: () => {}, warn: () => {} },
 		switchModel: async (next) => {
 			current = { model: next };
@@ -171,47 +171,45 @@ describe("retry fallback usage-limit scope", () => {
 
 	it("does not forget a fresh account failure for zero or expired hints", () => {
 		const epoch = Date.UTC(2026, 9, 11);
-		const wallClock = vi.spyOn(Date, "now").mockReturnValue(epoch);
-		try {
-			const { controller } = createController(fullChain);
-			controller.noteHealthFailure(fable, undefined, {
-				errorMessage: JSON.stringify({
-					error: {
-						type: "usage_limit_reached",
-						message: "The usage limit has been reached",
-						resets_at: epoch / 1000 - 1,
-					},
-				}),
-				retryAfterMs: 0,
-			});
-			expect(controller.isProviderSpent(fable.provider)).toBe(true);
-		} finally {
-			wallClock.mockRestore();
-		}
+		const { controller } = createController(
+			fullChain,
+			() => 0,
+			() => epoch,
+		);
+		controller.noteHealthFailure(fable, undefined, {
+			errorMessage: JSON.stringify({
+				error: {
+					type: "usage_limit_reached",
+					message: "The usage limit has been reached",
+					resets_at: epoch / 1000 - 1,
+				},
+			}),
+			retryAfterMs: 0,
+		});
+		expect(controller.isProviderSpent(fable.provider)).toBe(true);
 	});
 
 	it("honors a later account reset even when retry-after is shorter", () => {
 		const epoch = Date.UTC(2026, 9, 11);
-		const wallClock = vi.spyOn(Date, "now").mockReturnValue(epoch);
 		let now = 0;
-		try {
-			const { controller } = createController(fullChain, () => now);
-			controller.noteHealthFailure(fable, undefined, {
-				errorMessage: JSON.stringify({
-					error: {
-						type: "usage_limit_reached",
-						message: "The usage limit has been reached",
-						resets_at: epoch / 1000 + 60,
-					},
-				}),
-				retryAfterMs: 30_000,
-			});
-			now = 31_000;
-			expect(controller.isProviderSpent(fable.provider)).toBe(true);
-			now = 60_001;
-			expect(controller.isProviderSpent(fable.provider)).toBe(false);
-		} finally {
-			wallClock.mockRestore();
-		}
+		const { controller } = createController(
+			fullChain,
+			() => now,
+			() => epoch + now,
+		);
+		controller.noteHealthFailure(fable, undefined, {
+			errorMessage: JSON.stringify({
+				error: {
+					type: "usage_limit_reached",
+					message: "The usage limit has been reached",
+					resets_at: epoch / 1000 + 60,
+				},
+			}),
+			retryAfterMs: 30_000,
+		});
+		now = 31_000;
+		expect(controller.isProviderSpent(fable.provider)).toBe(true);
+		now = 60_001;
+		expect(controller.isProviderSpent(fable.provider)).toBe(false);
 	});
 });

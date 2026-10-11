@@ -1,3 +1,21 @@
+## 2026-10-11 - Entry and tree history project account advice (senpi#3131 delta)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `get_entries` and `get_tree` reuse the structured usage-limit entry projection. Tree projection traverses defensive nodes iteratively and preserves ids, links, labels, and persisted raw diagnostics.
+
+### Why
+
+These history surfaces still exposed raw account-limit JSON even though message history and live messages carried advice.
+
+### Why an extension could not handle it
+
+RPC history responses are owned by the connection handler.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `get_entries` and `get_tree`.
+
 ## 2026-10-11 - RPC history uses the usage-limit presentation projection (senpi#3131 review)
 
 ### What changed
