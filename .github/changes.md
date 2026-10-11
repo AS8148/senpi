@@ -1,3 +1,21 @@
+## 2026-10-11 - Require the real CLI text-tool recovery self-test (senpi#3109)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the Ubuntu `Static checks` job runs the 22-assertion Anthropic real-CLI mock-loop self-test with a five-minute timeout. The existing required `Check and test` fan-in includes this job; the step has no skip condition or failure tolerance.
+
+### Why
+
+- `.github/workflows/ci.yml`: the leaked-call scenario stopped declaring its scripted shell tool after eval-only routing became the default, but no CI step ran it. The scenario now selects the direct `bash` tool surface explicitly. This required self-test covers complete and truncated leaked calls, the Anthropic API round-trip, credential isolation, sandbox cleanup, and command dispatch.
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: required checks and their failure propagation are repository CI configuration.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: the `check` job's steps between static validation and the workspace build.
+
 ## 2026-10-10 - A failing WebView suite prints its vitest output (senpi#3092)
 
 ### What changed
