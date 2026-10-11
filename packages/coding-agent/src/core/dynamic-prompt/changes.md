@@ -604,3 +604,23 @@ All changes are within `extensions/builtin/prompt-preset/` and the matching test
 ### Expected merge conflict zones
 
 - `presets.ts`, `settings.ts`: If upstream renames or reshapes the preset settings. Resolution: keep the model-named taxonomy.
+
+
+## 2026-10-11 - Public Native prompt generation for adapters (#3104)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/build.ts`: expose shared generation or forward the optional host application name.
+- `packages/coding-agent/src/core/dynamic-prompt/identity.ts`: expose shared generation or forward the optional host application name.
+
+### Why
+
+Downstream hosts need the actual Native model body, not a copied prompt selected by the same label. The public subpath reuses Native resolution and rendering. An explicit appName input avoids changing process-global branding. Omitting it preserves Native output.
+
+### Why an extension could not handle it
+
+An extension cannot add a supported package export or parameterize the engine-owned model core before it is rendered. This is the shared engine contract, not an alternate extension prompt.
+
+### Expected merge conflict zones
+
+The prompt-presets export map, builder option/context interfaces, and existing application-name interpolations. Preserve the single implementation and optional-input default when resolving upstream changes.

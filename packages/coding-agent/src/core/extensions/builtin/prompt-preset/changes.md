@@ -1511,3 +1511,36 @@ Per-model prompt preset extension. Selects a tuned system prompt based on the ac
 ### Expected merge conflict zones on next upstream sync
 - LOW: `gpt-5{,.2,.3-codex,.4,.5}.ts` `tuningSection` template literals - upstream has no equivalent helper. If upstream adds its own tuning lines, append rather than overwrite the file-operations block.
 - LOW: `file-operations.ts` is new and additive; no upstream counterpart.
+
+
+## 2026-10-11 - Public Native prompt generation for adapters (#3104)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-fable-5-1.ts`: expose shared generation or forward the optional host application name.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-fable-5.ts`: expose shared generation or forward the optional host application name.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-haiku-5-5.ts`: expose shared generation or forward the optional host application name.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-opus-5-5.ts`: expose shared generation or forward the optional host application name.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-opus-5.ts`: expose shared generation or forward the optional host application name.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/claude-sonnet-5-5.ts`: expose shared generation or forward the optional host application name.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-5.5.ts`: expose shared generation or forward the optional host application name.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-5.6.ts`: expose shared generation or forward the optional host application name.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts`: expose shared generation or forward the optional host application name.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/grok-4.5.ts`: expose shared generation or forward the optional host application name.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/grok-4.6.ts`: expose shared generation or forward the optional host application name.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/grok-4.7.ts`: expose shared generation or forward the optional host application name.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/kimi-k3.ts`: expose shared generation or forward the optional host application name.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/presets.ts`: expose shared generation or forward the optional host application name.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/public.ts`: expose shared generation or forward the optional host application name.
+
+### Why
+
+Downstream hosts need the actual Native model body, not a copied prompt selected by the same label. The public subpath reuses Native resolution and rendering. An explicit appName input avoids changing process-global branding. Omitting it preserves Native output.
+
+### Why an extension could not handle it
+
+An extension cannot add a supported package export or parameterize the engine-owned model core before it is rendered. This is the shared engine contract, not an alternate extension prompt.
+
+### Expected merge conflict zones
+
+The prompt-presets export map, builder option/context interfaces, and existing application-name interpolations. Preserve the single implementation and optional-input default when resolving upstream changes.

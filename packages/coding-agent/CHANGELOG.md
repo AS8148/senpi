@@ -6,6 +6,8 @@
 
 ### Added
 
+- Host adapters can render Native prompt content through the public `@code-yeongyu/senpi/prompt-presets` subpath using `resolvePreset`, `buildPreset`, and `buildDynamicSystemPrompt`. The builders accept an explicit application name while preserving Native's existing default branding; preset selection and content remain single-source ([#3104](https://github.com/code-yeongyu/senpi/issues/3104)).
+
 - Exported a shared prompt-preset resolution contract on the public `@code-yeongyu/senpi/prompt-presets` subpath: a pure, settings-free `resolvePresetName({ providerID, modelID, name? })` plus `PROMPT_PRESET_MODEL_CASES` and `AUTO_RESOLVED_PRESET_NAMES`, so downstream harnesses can pin model-id-to-preset parity against a single source of truth. The model-id matchers moved into an exported `matchers.ts` that `presets.ts` re-imports; `gpt-5` is a manual-only preset and is intentionally excluded from the auto-resolvable set ([#3074](https://github.com/code-yeongyu/senpi/issues/3074)).
 
 ### Changed

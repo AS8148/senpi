@@ -1,3 +1,21 @@
+## 2026-10-11 - Public prompt generation facade (senpi#3104)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `./prompt-presets` now targets the generation facade, retaining every existing contract export and adding Native's preset/default builders and their types.
+
+### Why
+
+- Downstream hosts must generate the same model core rather than copy Native prompt bodies. Requested by @devxoul.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/package.json` owns public package exports; an extension cannot establish the supported import boundary.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/package.json`: the `exports["./prompt-presets"]` target.
+
 ## 2026-10-10 - Runtime auto-routing delegates to the shared contract (omo #9851)
 
 ### What changed
