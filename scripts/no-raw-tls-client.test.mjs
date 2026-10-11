@@ -21,6 +21,11 @@ import {
 // http2.connect(authority) that parses its argument - or is a literal.
 // Adding or editing an entry is a reviewed act: name the host provenance
 // and reference senpi#3078.
+// Known limits: createRequire through namespace/default module imports or
+// require("node:module") chains; require.apply, require aliases/sequence calls;
+// detached getBuiltinModule aliases/.call; variable Bun keys; globalThis Bun
+// destructuring; variable/const-folded module specifiers; Reflect.get(Bun, "connect").
+// This is a regression guard, not a complete data-flow or evasion detector.
 const ALLOWLIST = [
 	{
 		file: "packages/ai/src/api/cursor-agent.ts",
@@ -49,7 +54,7 @@ const OFFENDER_GUIDANCE = [
 ].join("\n");
 
 describe("no raw TLS client calls in shipped source (CVE-2026-48618, Bun 1.4.2)", () => {
-	it("catches every direct client pattern, module form and binding, with line numbers", () => {
+	it("catches sampled client patterns, module forms and bindings, with line numbers", () => {
 		const samples = [
 			['module access: import from "node:tls"', 'import { connect } from "node:tls";'],
 			['module access: import from "node:https"', 'import { createServer } from "node:https";'],
@@ -83,7 +88,7 @@ describe("no raw TLS client calls in shipped source (CVE-2026-48618, Bun 1.4.2)"
 			assert.ok(hits.some((hit) => hit.id === id), "sample not caught as " + id + ": " + sample);
 		}
 		const positioned = findRawTlsClients('const a = 1;\n\nawait tls.connect({ host: "x", port: 1 });');
-		assert.deepEqual(positioned, [{ line: 3, id: "tls.connect(", text: 'tls.connect({ host: "x", port: 1 })' }]);
+		assert.deepEqual(positioned, [{ line: 3, id: "tls.connect(", text: 'tls.connect({ host: "x", port: 1})' }]);
 	});
 
 	it("does not flag URL-parsed or inbound-server neighbors", () => {
@@ -128,7 +133,7 @@ describe("no raw TLS client calls in shipped source (CVE-2026-48618, Bun 1.4.2)"
 
 	it("keeps string contents distinct when normalizing", () => {
 		const paren = findRawTlsClients('tls.connect({ host: ")" + h });');
-		assert.equal(paren[0].text, 'tls.connect({ host: ")" + h })');
+		assert.equal(paren[0].text, 'tls.connect({ host: ")" + h})');
 		const withSpaces = findRawTlsClients('tls.connect({ host: "a  b" });');
 		const single = findRawTlsClients('tls.connect({ host: "a b" });');
 		assert.notEqual(withSpaces[0].text, single[0].text);
@@ -167,7 +172,7 @@ describe("no raw TLS client calls in shipped source (CVE-2026-48618, Bun 1.4.2)"
 			];
 			const verdict = evaluateShippedSource(scan, [pinnedCallEntry()]);
 			assert.ok(
-				verdict.offenders.some((line) => line.includes('tls.connect({ host: "x", port: 1 })')),
+				verdict.offenders.some((line) => line.includes('tls.connect({ host: "x", port: 1})')),
 				"expected the new tls.connect to be flagged: " + JSON.stringify(verdict),
 			);
 		});
