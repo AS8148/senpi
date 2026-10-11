@@ -107,7 +107,7 @@ export function createCacheKeepAliveExtension(
 		}
 
 		function arm(): void {
-			if (parked || timer !== undefined || inFlight) return;
+			if (!prewarm.hasUserActivity || parked || timer !== undefined || inFlight) return;
 			const current = ctx;
 			const settings = current?.getPromptCacheKeepAliveSettings?.();
 			if (!settings?.enabled || current?.model === undefined || lastCompletedAtMs === undefined) return;
@@ -241,6 +241,7 @@ export function createCacheKeepAliveExtension(
 		}
 
 		pi.on("session_start", (_event, nextCtx) => {
+			prewarm.start(nextCtx);
 			stop("session-restart");
 			ctx = nextCtx;
 			attempts = 0;
@@ -250,7 +251,6 @@ export function createCacheKeepAliveExtension(
 			lastUsage = usage;
 			lastCompletedAtMs = lastAssistantTimestamp(lastMessages);
 			arm();
-			prewarm.start(nextCtx);
 		});
 
 		pi.on("agent_end", (event, nextCtx) => {

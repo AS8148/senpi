@@ -110,6 +110,7 @@ import type {
 } from "../../core/extensions/index.ts";
 import { buildNoticeBox, type NoticeLine, type NoticeSpec } from "../../core/extensions/notice/index.ts";
 import type { QuestionRequest, QuestionResponse, SystemPromptChangeEvent } from "../../core/extensions/types.ts";
+import { emitUserActivity } from "../../core/extensions/user-activity.ts";
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.ts";
 import { sessionHolderWarning } from "../../core/foreign-session-holders.ts";
 import { appendUncaughtCrashLog, appendUnhandledRejectionLog } from "../../core/hidden-stdout-log.ts";
@@ -239,6 +240,7 @@ import { TreeSelectorComponent } from "./components/tree-selector.ts";
 import { TrustSelectorComponent } from "./components/trust-selector.ts";
 import { UserMessageComponent } from "./components/user-message.ts";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.ts";
+import { observeComposerActivity } from "./composer-user-activity.ts";
 import { expandEditorSubmission, expandSubmittedText, transferEditorContent } from "./editor-paste-transfer.ts";
 import { formatExtensionErrorHeadline, sanitizeTuiErrorMessage } from "./extension-error-format.ts";
 import { editFileInExternalEditor, editInExternalEditor } from "./external-editor.ts";
@@ -1235,6 +1237,7 @@ export class InteractiveMode {
 			});
 		}
 		this.editor = this.defaultEditor;
+		observeComposerActivity(this.defaultEditor, () => emitUserActivity(this.session, "draft"));
 		this.editorContainer = new Container();
 		this.editorContainer.addChild(this.editor as Component);
 		this.footerDataProvider = new FooterDataProvider(this.sessionManager.getCwd());
@@ -4307,6 +4310,7 @@ export class InteractiveMode {
 				this.defaultEditor.onSubmit?.(expandSubmittedText(newEditor, text));
 			};
 			newEditor.onChange = this.defaultEditor.onChange;
+			observeComposerActivity(newEditor, () => emitUserActivity(this.session, "draft"));
 
 			// Copy text (and any collapsed paste/image markers) from previous editor.
 			// Image payloads live on this instance, so they must be dropped when the
@@ -4650,6 +4654,7 @@ export class InteractiveMode {
 				const leadingSpace = characterBeforeCursor && !/\s/.test(characterBeforeCursor) ? " " : "";
 				const trailingSpace = characterAfterCursor && !/\s/.test(characterAfterCursor) ? " " : "";
 				this.editor.insertTextAtCursor?.(`${leadingSpace}${paths}${trailingSpace}`);
+				emitUserActivity(this.session, "draft");
 				this.ui.requestRender();
 				return;
 			}
@@ -4668,11 +4673,15 @@ export class InteractiveMode {
 					},
 					image,
 				));
-			if (attached) return;
+			if (attached) {
+				emitUserActivity(this.session, "draft");
+				return;
+			}
 
 			const text = await readClipboardText();
 			if (text) {
 				this.editor.insertTextAtCursor?.(text);
+				emitUserActivity(this.session, "draft");
 				this.ui.requestRender();
 			}
 		} catch (error) {

@@ -1,3 +1,21 @@
+## 2026-10-11 - Session-local user activity bus contract (senpi#3140)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/user-activity.ts`: names the `user_activity` channel and its `draft` versus `prompt` payload kinds, with a publisher for session consumers.
+
+### Why
+
+- Cache prewarm needs to distinguish actual composer activity from session lifecycle and prompt admission, without importing TUI or RPC implementation classes.
+
+### Why an extension could not handle it
+
+- Extensions can consume the existing bus, but only the host knows whether composer text came from a user edit or restoration and when a submitted prompt entered admission.
+
+### Expected merge conflict zones
+
+- New activity-contract module; no change to `types.ts` or the typed lifecycle event union.
+
 ## 2026-10-11 - Request-local search exclusion and canonical fallback (senpi#3122 review)
 
 ### What changed

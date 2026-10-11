@@ -1,5 +1,24 @@
 # Cache Keep-Alive Extension Changes
 
+## 2026-10-11 - Arm prewarm until the first user activity (senpi#3140)
+
+### What changed
+
+- `session-prewarm.ts`: session start only arms one opportunity. The first draft activity can fire it when keep-alive is enabled and the model is eligible; prompt admission consumes it without a warm call. The setting is checked again after asynchronous prefix preparation. Model selection retargets an unused opportunity and cancels stale work; parking and shutdown cancel pending work.
+- `index.ts`: resets the prewarm generation before idle-loop arming and requires activity before warming a restored conversation.
+
+### Why
+
+- Launching, resuming, forking, or reloading a session is not user intent to call a provider. The old unconditional startup prewarm also ignored disabled keep-alive.
+
+### Why an extension could not handle it
+
+- This is the builtin extension. It consumes the session-local user-activity bus while retaining the existing preview-safe prefix builder and usage accounting.
+
+### Expected merge conflict zones
+
+- `session-prewarm.ts`: state and lifecycle subscriptions; `index.ts`: `arm()` guard and `session_start` ordering.
+
 ## 2026-09-30 - Keep-alive pings arm after the run settles and send the turn's tools (senpi#2389)
 
 ### What changed

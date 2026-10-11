@@ -91,6 +91,8 @@ function harness(
 		for (const handler of handlers.get(event) ?? []) await handler(data, ctx);
 	}
 	if (options.goalArmed) pi.events?.emit("goal_continuation_timer_state", { armed: true, kind: "monitor" });
+	// These idle-loop cases begin after a user-directed turn, not at cold startup.
+	pi.events.emit("user_activity", { kind: "prompt" });
 	return {
 		pi,
 		ctx,

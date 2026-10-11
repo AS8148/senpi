@@ -2319,6 +2319,8 @@ pi.setSessionFastMode(true);
 
 Shared event bus for communication between extensions:
 
+The host publishes `user_activity` with `{ kind: "draft" }` after a user edits the TUI composer and `{ kind: "prompt" }` when user-originated prompt, steering, or follow-up input enters session admission (including RPC). Session start, resume, fork, reload, and programmatic draft restoration do not publish activity. Cache prewarm consumes the first signal per session generation: a draft can prewarm when keep-alive is enabled, while prompt admission uses the real request instead of making an extra warm call.
+
 ```typescript
 pi.events.on("my:event", (data) => { ... });
 pi.events.emit("my:event", { ... });
