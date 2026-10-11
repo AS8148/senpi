@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- Internal control sockets keep their short-path fallback inside the configured temporary directory when it fits the Unix socket path limit ([#3103](https://github.com/code-yeongyu/senpi/pull/3103)).
+
 - Zero-attempt terminal failures still explain provider-requested long waits and retry-delay caps; only an initial account-usage failure omits a redundant retry-end event. RPC entry events, entry history, and trees now carry the same structured account-limit advice as message history, and reset parsing uses injected clocks ([#3131](https://github.com/code-yeongyu/senpi/issues/3131)).
 
 - Account-wide usage limits skip all fallback models on the spent provider and fail immediately when no other provider can serve. Manual and held-switch compaction use a usable model, and limit errors name the provider, reset hint, and `/model` or fallback configuration instead of raw 429 JSON ([#3131](https://github.com/code-yeongyu/senpi/issues/3131)).
