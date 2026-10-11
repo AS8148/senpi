@@ -48,11 +48,19 @@ function transportSymptom(errorMessage: string, subject: string): string | undef
  */
 export function describeProviderFailureForUser(
 	errorMessage: string | undefined,
-	options: ProviderStallDescriptionOptions = {},
+	options: ProviderStallDescriptionOptions & { usageLimit?: "account" | "model" } = {},
 ): string | undefined {
 	if (!errorMessage) return undefined;
 	const message = stripTurnRetrySuppressionPrefix(errorMessage).trim();
 	if (!message) return undefined;
+	if (options.usageLimit === "account") {
+		const provider = options.model?.split("/")[0];
+		const reset = /\bresets?\s+([^"}\n]+)/i
+			.exec(message)?.[1]
+			?.trim()
+			.replace(/[.;]+$/, "");
+		return `The ${provider ? `${provider} ` : ""}account usage limit has been reached${reset ? ` (resets ${reset})` : ""}. Switch to another provider with /model, or configure another provider in retry.fallbackChains.`;
+	}
 	const stall = describeProviderStallForUser(message, options);
 	if (stall !== undefined) return stall;
 

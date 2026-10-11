@@ -5905,3 +5905,20 @@ Provider authentication and API behaviour live in this package, below any extens
 ### Expected merge conflict zones
 
 Upstream provider/auth changes in these files at the next sync.
+## 2026-10-11 - Explain account-wide usage limits (senpi#3131)
+
+### What changed
+
+- `packages/ai/src/utils/provider-failure-description.ts`: accepts the caller's classified usage-limit scope and describes an account limit with provider identity, a reset hint, and model-switch/fallback recovery.
+
+### Why
+
+Raw provider JSON does not explain that another model on the same account will also fail.
+
+### Why an extension could not handle it
+
+The shared provider-error formatter owns presentation across session, print, and interactive consumers.
+
+### Expected merge conflict zones
+
+The options type and account-limit branch in `describeProviderFailureForUser`.
