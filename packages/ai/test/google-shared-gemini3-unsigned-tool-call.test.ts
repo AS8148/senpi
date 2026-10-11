@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { convertMessages, requiresToolCallId } from "../src/api/google-shared.ts";
-import type { AssistantMessage, Context, Model } from "../src/types.ts";
+import type { AssistantMessage, Context, ImageContent, Model, TextContent, ToolResultMessage } from "../src/types.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
 
 // Gemini 3+ strictly validates replayed tool calls: the first functionCall part of every step
@@ -92,6 +92,43 @@ function makeContext(
 	};
 }
 
+const FOREIGN_MODEL = { api: "openai-completions", provider: "openrouter", id: "deepseek/deepseek-v4.1-flash" };
+
+function makeAssistantToolCall(
+	model: { api: string; provider: string; id: string },
+	content: AssistantMessage["content"],
+	stopReason: AssistantMessage["stopReason"] = "toolUse",
+): AssistantMessage {
+	return {
+		role: "assistant",
+		content,
+		api: model.api,
+		provider: model.provider,
+		model: model.id,
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		stopReason,
+		timestamp: Date.now(),
+	};
+}
+
+function makeToolResult(
+	toolCallId: string,
+	toolName: string,
+	content: Array<TextContent | ImageContent>,
+	isError = false,
+): ToolResultMessage {
+	return { role: "toolResult", toolCallId, toolName, content, isError, timestamp: Date.now() };
+}
+
+const FAKE_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
 describe("google-shared convertMessages — Gemini 3 unsigned tool calls", () => {
 	it.each([
 		makeGemini3Model("google-generative-ai", "google"),
@@ -181,52 +218,21 @@ describe("google-shared convertMessages — Gemini 3 unsigned tool calls", () =>
 		// Strict validation requires signature on the FIRST call; a signature only on
 		// subsequent calls cannot prevent the 400 rejection.
 		const model = makeGemini3Model("google-generative-ai", "google");
-		const now = Date.now();
 		const context: Context = {
 			messages: [
-				{ role: "user", content: "run commands", timestamp: now },
-				{
-					role: "assistant",
-					content: [
-						{ type: "toolCall", id: "call_1", name: "bash", arguments: { command: "first" } },
-						{
-							type: "toolCall",
-							id: "call_2",
-							name: "bash",
-							arguments: { command: "second" },
-							thoughtSignature: VALID_SIG,
-						},
-					],
-					api: model.api,
-					provider: model.provider,
-					model: model.id,
-					usage: {
-						input: 0,
-						output: 0,
-						cacheRead: 0,
-						cacheWrite: 0,
-						totalTokens: 0,
-						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				{ role: "user", content: "run commands", timestamp: Date.now() },
+				makeAssistantToolCall(model, [
+					{ type: "toolCall", id: "call_1", name: "bash", arguments: { command: "first" } },
+					{
+						type: "toolCall",
+						id: "call_2",
+						name: "bash",
+						arguments: { command: "second" },
+						thoughtSignature: VALID_SIG,
 					},
-					stopReason: "toolUse",
-					timestamp: now,
-				},
-				{
-					role: "toolResult",
-					toolCallId: "call_1",
-					toolName: "bash",
-					content: [{ type: "text", text: "result 1" }],
-					isError: false,
-					timestamp: now,
-				},
-				{
-					role: "toolResult",
-					toolCallId: "call_2",
-					toolName: "bash",
-					content: [{ type: "text", text: "result 2" }],
-					isError: false,
-					timestamp: now,
-				},
+				]),
+				makeToolResult("call_1", "bash", [{ type: "text", text: "result 1" }]),
+				makeToolResult("call_2", "bash", [{ type: "text", text: "result 2" }]),
 			],
 		};
 
@@ -244,64 +250,20 @@ describe("google-shared convertMessages — Gemini 3 unsigned tool calls", () =>
 
 	it("preserves structured replay for earlier turns and only downgrades current turn", () => {
 		const model = makeGemini3Model("google-vertex", "google-vertex");
-		const now = Date.now();
-		const foreignModel = { api: "openai-completions", provider: "openrouter", id: "deepseek/deepseek-v4.1-flash" };
 		const context: Context = {
 			messages: [
 				// Turn 1 (earlier)
-				{ role: "user", content: "turn 1 prompt", timestamp: now },
-				{
-					role: "assistant",
-					content: [{ type: "toolCall", id: "call_old", name: "bash", arguments: { command: "echo old" } }],
-					api: foreignModel.api,
-					provider: foreignModel.provider,
-					model: foreignModel.id,
-					usage: {
-						input: 0,
-						output: 0,
-						cacheRead: 0,
-						cacheWrite: 0,
-						totalTokens: 0,
-						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-					},
-					stopReason: "toolUse",
-					timestamp: now,
-				},
-				{
-					role: "toolResult",
-					toolCallId: "call_old",
-					toolName: "bash",
-					content: [{ type: "text", text: "old output" }],
-					isError: false,
-					timestamp: now,
-				},
+				{ role: "user", content: "turn 1 prompt", timestamp: Date.now() },
+				makeAssistantToolCall(FOREIGN_MODEL, [
+					{ type: "toolCall", id: "call_old", name: "bash", arguments: { command: "echo old" } },
+				]),
+				makeToolResult("call_old", "bash", [{ type: "text", text: "old output" }]),
 				// Turn 2 (current turn)
-				{ role: "user", content: "turn 2 prompt", timestamp: now },
-				{
-					role: "assistant",
-					content: [{ type: "toolCall", id: "call_new", name: "bash", arguments: { command: "echo new" } }],
-					api: foreignModel.api,
-					provider: foreignModel.provider,
-					model: foreignModel.id,
-					usage: {
-						input: 0,
-						output: 0,
-						cacheRead: 0,
-						cacheWrite: 0,
-						totalTokens: 0,
-						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-					},
-					stopReason: "toolUse",
-					timestamp: now,
-				},
-				{
-					role: "toolResult",
-					toolCallId: "call_new",
-					toolName: "bash",
-					content: [{ type: "text", text: "new output" }],
-					isError: false,
-					timestamp: now,
-				},
+				{ role: "user", content: "turn 2 prompt", timestamp: Date.now() },
+				makeAssistantToolCall(FOREIGN_MODEL, [
+					{ type: "toolCall", id: "call_new", name: "bash", arguments: { command: "echo new" } },
+				]),
+				makeToolResult("call_new", "bash", [{ type: "text", text: "new output" }]),
 			],
 		};
 
@@ -339,40 +301,75 @@ describe("google-shared convertMessages — Gemini 3 unsigned tool calls", () =>
 		expect(newUserTurn?.parts?.[0]?.text).toBe("[Tool Result: bash (id: call_new)]\nnew output");
 	});
 
-	it("appends inlineData image parts for image-only tool results in text replay", () => {
+	it("treats an image-only user message as the turn boundary", () => {
+		// A pasted screenshot with no caption still starts a new turn: the assistant step
+		// after it is current-turn and needs signature-safe text replay.
 		const model = makeGemini3Model("google-vertex", "google-vertex", "gemini-3-pro-preview", ["text", "image"]);
-		const now = Date.now();
-		const foreignModel = { api: "openai-completions", provider: "openrouter", id: "deepseek/deepseek-v4.1-flash" };
-		const fakePng =
-			"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 		const context: Context = {
 			messages: [
-				{ role: "user", content: "read image", timestamp: now },
+				{ role: "user", content: "look at this", timestamp: Date.now() },
+				makeAssistantToolCall(FOREIGN_MODEL, [
+					{ type: "toolCall", id: "call_old", name: "bash", arguments: { command: "echo old" } },
+				]),
+				makeToolResult("call_old", "bash", [{ type: "text", text: "old output" }]),
 				{
-					role: "assistant",
-					content: [{ type: "toolCall", id: "call_img", name: "read", arguments: { path: "img.png" } }],
-					api: foreignModel.api,
-					provider: foreignModel.provider,
-					model: foreignModel.id,
-					usage: {
-						input: 0,
-						output: 0,
-						cacheRead: 0,
-						cacheWrite: 0,
-						totalTokens: 0,
-						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-					},
-					stopReason: "toolUse",
-					timestamp: now,
+					role: "user",
+					content: [{ type: "image", mimeType: "image/png", data: FAKE_PNG }],
+					timestamp: Date.now(),
 				},
-				{
-					role: "toolResult",
-					toolCallId: "call_img",
-					toolName: "read",
-					content: [{ type: "image", mimeType: "image/png", data: fakePng }],
-					isError: false,
-					timestamp: now,
-				},
+				makeAssistantToolCall(FOREIGN_MODEL, [
+					{ type: "toolCall", id: "call_new", name: "bash", arguments: { command: "echo new" } },
+				]),
+				makeToolResult("call_new", "bash", [{ type: "text", text: "new output" }]),
+			],
+		};
+
+		const contents = convertMessages(model, normalizeContext(context));
+		// The step before the image message is history and stays structured; the image
+		// folds into the tool-result user turn right after it.
+		expect(contents[1]?.parts?.[0]?.functionCall?.id).toBe("call_old");
+		const currentStep = contents[3];
+		expect(currentStep?.role).toBe("model");
+		expect(currentStep?.parts?.[0]?.functionCall).toBeUndefined();
+		expect(currentStep?.parts?.[0]?.text).toBe(
+			'[Tool Call: bash (id: call_new)]\nArguments: {\n  "command": "echo new"\n}',
+		);
+		const currentResult = contents[4];
+		expect(currentResult?.role).toBe("user");
+		expect(currentResult?.parts?.[0]?.functionResponse).toBeUndefined();
+		expect(currentResult?.parts?.[0]?.text).toBe("[Tool Result: bash (id: call_new)]\nnew output");
+	});
+
+	it("ignores an empty user message when locating the turn boundary", () => {
+		// An empty user turn carries no content and must not become the boundary: the
+		// unsigned assistant step before it stays in the current turn and replays as text.
+		const model = makeGemini3Model("google-vertex", "google-vertex");
+		const context: Context = {
+			messages: [
+				{ role: "user", content: "run commands", timestamp: Date.now() },
+				makeAssistantToolCall(FOREIGN_MODEL, [
+					{ type: "toolCall", id: "call_1", name: "bash", arguments: { command: "first" } },
+				]),
+				makeToolResult("call_1", "bash", [{ type: "text", text: "result 1" }]),
+				{ role: "user", content: [{ type: "text", text: "   " }], timestamp: Date.now() },
+			],
+		};
+
+		const contents = convertMessages(model, normalizeContext(context));
+		const modelTurn = contents.find((content) => content.role === "model");
+		expect(modelTurn?.parts?.[0]?.functionCall).toBeUndefined();
+		expect(modelTurn?.parts?.[0]?.text).toContain("[Tool Call: bash (id: call_1)]");
+	});
+
+	it("appends inlineData image parts for image-only tool results in text replay", () => {
+		const model = makeGemini3Model("google-vertex", "google-vertex", "gemini-3-pro-preview", ["text", "image"]);
+		const context: Context = {
+			messages: [
+				{ role: "user", content: "read image", timestamp: Date.now() },
+				makeAssistantToolCall(FOREIGN_MODEL, [
+					{ type: "toolCall", id: "call_img", name: "read", arguments: { path: "img.png" } },
+				]),
+				makeToolResult("call_img", "read", [{ type: "image", mimeType: "image/png", data: FAKE_PNG }]),
 			],
 		};
 
@@ -383,47 +380,22 @@ describe("google-shared convertMessages — Gemini 3 unsigned tool calls", () =>
 		expect(resultTurn?.parts?.[0]?.text).toBe("[Tool Result: read (id: call_img)]");
 		expect(resultTurn?.parts?.[1]?.inlineData).toEqual({
 			mimeType: "image/png",
-			data: fakePng,
+			data: FAKE_PNG,
 		});
 	});
 
 	it("appends inlineData image parts for text+image tool results in text replay", () => {
 		const model = makeGemini3Model("google-vertex", "google-vertex", "gemini-3-pro-preview", ["text", "image"]);
-		const now = Date.now();
-		const foreignModel = { api: "openai-completions", provider: "openrouter", id: "deepseek/deepseek-v4.1-flash" };
-		const fakePng =
-			"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 		const context: Context = {
 			messages: [
-				{ role: "user", content: "read file", timestamp: now },
-				{
-					role: "assistant",
-					content: [{ type: "toolCall", id: "call_img", name: "read", arguments: { path: "img.png" } }],
-					api: foreignModel.api,
-					provider: foreignModel.provider,
-					model: foreignModel.id,
-					usage: {
-						input: 0,
-						output: 0,
-						cacheRead: 0,
-						cacheWrite: 0,
-						totalTokens: 0,
-						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-					},
-					stopReason: "toolUse",
-					timestamp: now,
-				},
-				{
-					role: "toolResult",
-					toolCallId: "call_img",
-					toolName: "read",
-					content: [
-						{ type: "text", text: "here is the image" },
-						{ type: "image", mimeType: "image/png", data: fakePng },
-					],
-					isError: false,
-					timestamp: now,
-				},
+				{ role: "user", content: "read file", timestamp: Date.now() },
+				makeAssistantToolCall(FOREIGN_MODEL, [
+					{ type: "toolCall", id: "call_img", name: "read", arguments: { path: "img.png" } },
+				]),
+				makeToolResult("call_img", "read", [
+					{ type: "text", text: "here is the image" },
+					{ type: "image", mimeType: "image/png", data: FAKE_PNG },
+				]),
 			],
 		};
 
@@ -434,44 +406,21 @@ describe("google-shared convertMessages — Gemini 3 unsigned tool calls", () =>
 		expect(resultTurn?.parts?.[0]?.text).toBe("[Tool Result: read (id: call_img)]\nhere is the image");
 		expect(resultTurn?.parts?.[1]?.inlineData).toEqual({
 			mimeType: "image/png",
-			data: fakePng,
+			data: FAKE_PNG,
 		});
 	});
 
-	it("retains placeholder when image exists but model does not accept images", () => {
+	it("keeps the transform-layer tool-image placeholder for non-vision models", () => {
+		// transform-messages.ts replaces tool images with placeholder text before the
+		// converter runs, so the text replay emits that placeholder and no inlineData.
 		const model = makeGemini3Model("google-vertex", "google-vertex", "gemini-3-pro-preview", ["text"]);
-		const now = Date.now();
-		const foreignModel = { api: "openai-completions", provider: "openrouter", id: "deepseek/deepseek-v4.1-flash" };
-		const fakePng =
-			"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 		const context: Context = {
 			messages: [
-				{ role: "user", content: "read file", timestamp: now },
-				{
-					role: "assistant",
-					content: [{ type: "toolCall", id: "call_img", name: "read", arguments: { path: "img.png" } }],
-					api: foreignModel.api,
-					provider: foreignModel.provider,
-					model: foreignModel.id,
-					usage: {
-						input: 0,
-						output: 0,
-						cacheRead: 0,
-						cacheWrite: 0,
-						totalTokens: 0,
-						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-					},
-					stopReason: "toolUse",
-					timestamp: now,
-				},
-				{
-					role: "toolResult",
-					toolCallId: "call_img",
-					toolName: "read",
-					content: [{ type: "image", mimeType: "image/png", data: fakePng }],
-					isError: false,
-					timestamp: now,
-				},
+				{ role: "user", content: "read file", timestamp: Date.now() },
+				makeAssistantToolCall(FOREIGN_MODEL, [
+					{ type: "toolCall", id: "call_img", name: "read", arguments: { path: "img.png" } },
+				]),
+				makeToolResult("call_img", "read", [{ type: "image", mimeType: "image/png", data: FAKE_PNG }]),
 			],
 		};
 
@@ -487,12 +436,9 @@ describe("google-shared convertMessages — Gemini 3 unsigned tool calls", () =>
 
 	it("omits standalone same-model thinking replay when thinking is off", () => {
 		const model = makeGemini3Model("google-generative-ai", "google");
-		const previousAssistant: AssistantMessage = {
-			role: "assistant",
-			api: "google-generative-ai",
-			provider: "google",
-			model: model.id,
-			content: [
+		const previousAssistant = makeAssistantToolCall(
+			model,
+			[
 				{
 					type: "thinking",
 					thinking: "prior Google thinking",
@@ -500,17 +446,8 @@ describe("google-shared convertMessages — Gemini 3 unsigned tool calls", () =>
 				},
 				{ type: "text", text: "previous answer", textSignature: "BBBBBBBBBBBBBBBBBBBBBB==" },
 			],
-			usage: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-				totalTokens: 0,
-				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-			},
-			stopReason: "stop",
-			timestamp: Date.now(),
-		};
+			"stop",
+		);
 		const contents = convertMessages(
 			model,
 			normalizeContext({

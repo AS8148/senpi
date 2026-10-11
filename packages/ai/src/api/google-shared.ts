@@ -217,13 +217,17 @@ function appendContent(contents: Content[], content: Content): void {
 	contents.push(content);
 }
 
-function findLastUserTextMessageIndex(messages: Message[]): number {
+// The current turn starts after the last user message that carries content. An image-only
+// user message (a pasted screenshot with no caption) starts a new turn exactly like a text
+// prompt does: assistant steps after it are current-turn steps. Empty user messages carry
+// no content and never act as the boundary.
+function findLastUserContentMessageIndex(messages: Message[]): number {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const msg = messages[i];
 		if (msg.role !== "user") continue;
 		if (typeof msg.content === "string") {
 			if (msg.content.trim().length > 0) return i;
-		} else if (msg.content.some((item) => item.type === "text" && item.text.trim().length > 0)) {
+		} else if (msg.content.some((item) => (item.type === "text" ? item.text.trim().length > 0 : true))) {
 			return i;
 		}
 	}
@@ -253,7 +257,7 @@ export function convertMessages<T extends GoogleApiType>(
 		preserveThinking: options.preserveThinking,
 	});
 
-	const lastUserTextIndex = findLastUserTextMessageIndex(transformedMessages);
+	const lastUserContentIndex = findLastUserContentMessageIndex(transformedMessages);
 
 	for (let msgIndex = 0; msgIndex < transformedMessages.length; msgIndex++) {
 		const msg = transformedMessages[msgIndex];
@@ -288,12 +292,12 @@ export function convertMessages<T extends GoogleApiType>(
 			const isSameProviderAndModel = msg.provider === model.provider && msg.model === model.id;
 
 			// Strict validation (requiring a thoughtSignature on the first functionCall part) applies
-			// to the current turn — assistant steps after the last user message with text content.
+			// to the current turn — assistant steps after the last user message carrying content.
 			// Earlier turns preserve structured function calls. In the current turn, if the first
 			// toolCall block lacks a valid signature, the whole step is replayed as text, because
 			// the documented skip_thought_signature_validator sentinel is rejected by Vertex (pi-mono #4032)
 			// and an unsigned functionCall part is a hard 400 on Gemini 3+.
-			const isCurrentTurn = msgIndex > lastUserTextIndex;
+			const isCurrentTurn = msgIndex > lastUserContentIndex;
 			const firstToolCall = msg.content.find((b): b is ToolCall => b.type === "toolCall");
 			const hasValidFirstSignature =
 				firstToolCall !== undefined &&
@@ -383,11 +387,13 @@ export function convertMessages<T extends GoogleApiType>(
 			// A tool call replayed as text pairs with its result as text: an unpaired
 			// functionResponse part would break the model turn's call/response pairing.
 			if (textToolCallIds.has(msg.toolCallId)) {
+				// Unsupported tool images never arrive here as image blocks: transformMessages already
+				// replaced them with placeholder text for non-vision models, so an image-only result on
+				// such a model reaches this branch as text. A vision model's image-only result keeps an
+				// empty body and pairs with the inlineData parts appended below.
 				let bodyText = "";
 				if (textResult.length > 0) {
 					bodyText = `\n${sanitizeSurrogates(textResult)}`;
-				} else if (allImageBlocks.length > 0 && !modelAcceptsImages) {
-					bodyText = "\n(see attached image)";
 				} else if (allImageBlocks.length === 0) {
 					bodyText = "\n(no output)";
 				}
