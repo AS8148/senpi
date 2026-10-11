@@ -868,6 +868,10 @@ pi.on("tool_execution_end", async (event, ctx) => {
 
 Fired before each LLM call. Modify messages non-destructively. See [Session Format](session-format.md) for message types.
 
+`event.source` is `"agent"` for the live agent request and `"projection"` for `prepareProviderRequest` calls, including summarizer inputs. Projections must not advance state belonging to the live request, even when their messages match the branch. The session journal can lag a live request, so transcript equality is not a reliable substitute for this marker.
+
+`ctx.prepareProviderRequest(messages, excludeExtensionPath?, options?)` returns the projected context and its payload transform. In this release the transform excludes server-search tools by default, while retaining client function tools such as `web_search`. Call `ctx.prepareProviderRequest(messages, undefined, { allowServerSearch: true })` when a request must mirror the main turn's native tools and include fields, as keepalive does. Cache-friendly compaction retains the original main-turn payload hook separately; standalone summaries and session titles exclude server search.
+
 ```typescript
 pi.on("context", async (event, ctx) => {
   // event.messages - deep copy, safe to modify
@@ -1326,6 +1330,10 @@ if (usage && usage.tokens > 100_000) {
   // ...
 }
 ```
+
+### ctx.getCompactionModel()
+
+Optional on hosts that expose session-owned summarization routing. Returns the current session model while its account is usable, preserving builtin compaction behavior even when core compaction has a model override. For a spent account, it tries the held switch target, the configured summary override, then an authenticated alternate with enough context capacity for the active transcript and reserved output. It does not change the active session selection and throws an account-limit error when no usable summary model is available.
 
 ### ctx.compact()
 

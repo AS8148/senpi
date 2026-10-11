@@ -1,3 +1,101 @@
+## 2026-10-11 - Resume gate projects accepted compaction context (senpi#3062)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_resumeRequirementStillBlocks` uses `estimateProjectedContextTokens` with the current session projection and branch. Accepted checkpoints invalidate retained pre-checkpoint usage; the next valid provider response restores usage-based accounting.
+
+### Why
+
+- Retained assistant usage measured the larger pre-compaction context, so the resume requirement could keep refusing a session whose compacted summary and kept messages fit. Rejected or failed compaction must retain the previous usage, and a still-oversized projection must remain blocked.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: the resume requirement is checked and cleared in the session admission gate, outside extension-owned compaction results.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_resumeRequirementStillBlocks` context estimation.
+
+## 2026-10-11 - Account fail-fast suppression stays at its emit site (senpi#3131 delta)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: only the account terminal branch omits zero-attempt `auto_retry_end`; `entry_appended` projects structured account advice without mutating the stored entry; wall-clock reset parsing is wired separately from monotonic expiry.
+- `packages/coding-agent/src/core/retry-fallback/usage-limit.ts`: a shared entry projection reuses the message formatter while retaining entry identity.
+- `packages/coding-agent/src/core/retry-fallback/cooldown.ts`: wall time is injected, so fake-clock tests no longer need global Date overrides.
+- `packages/coding-agent/src/core/retry-fallback/unusable.ts`: documents that account keys approximate credential identity using the provider name.
+
+### Why
+
+Suppressing every zero-attempt retry failure hid the reason for long waits and over-cap delays. Entry transports still exposed the raw account error beside formatted message events.
+
+### Why an extension could not handle it
+
+Terminal retry events, stored entry publication, and cooldown clock wiring belong to the session host.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: account retry-end emission, entry publication, and cooldown construction.
+
+## 2026-10-11 - Spent windows expire without local renewal (senpi#3131 review)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the pre-prompt gate routes remembered failures without recording another provider failure. Builtin `getCompactionModel` retains the current healthy model; spent-account resolution tries the held target, configured override, then an authenticated alternate whose context window fits the active transcript and reserved output.
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`, `cooldown.ts`, and `unusable.ts`: local refusals do not refresh cooldowns or circuits; provider reset hints and retry-after durations use the existing bounded cooldown cap; explicit manual selections clear account suppression for a probe.
+- `packages/coding-agent/src/core/retry-fallback/usage-limit.ts`: user-facing assistant projections retain structured usage scope and reuse the shared formatter idempotently.
+
+### Why
+
+Repeated refused prompts kept accounts spent past reset, manual recovery was removed, and formatted advice was being reclassified as a model limit.
+
+### Why an extension could not handle it
+
+Prompt admission, suppression clocks, summary routing, and transport message projection are session-owned.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: prompt admission, event projection, and summary model resolution.
+
+## 2026-10-11 - No server-search injection in auxiliary requests (senpi#3122 review)
+
+### What changed
+
+- `session-title-generator.ts` marks title payloads as search-disabled before passing them through the normal payload hook.
+- Shared summarization and extension request projections use the same request-local exclusion. Keepalive explicitly preserves the main-turn prefix.
+
+### Why
+
+- Auxiliary requests must not pay for or fail on a server-search declaration intended for the user's turn.
+
+### Why an extension could not handle it
+
+- Title and summarization option construction owns these request boundaries.
+
+### Expected merge conflict zones
+
+- Title options, summary options, and extension request preparation.
+
+## 2026-10-11 - Completion server-search capability in models.json (senpi#3122)
+
+### What changed
+
+- `model-config-schema.ts` accepts optional `supportsWebSearch` in completion compatibility entries, matching the provider type. This lets a verified Z.AI PAYG chat route opt into its in-request tool without treating the coding-plan endpoint as equivalent.
+- Both config schemas accept `webSearchToolType` for a Responses route's exact native type, including custom xAI provider ids that need `web_search` rather than OpenAI's legacy preview name.
+- `packages/coding-agent/src/core/model-config.ts`: its compatibility schema mirrors `model-config-schema.ts` for `webSearchToolType`, so config loading and schema validation agree on the exact server-tool declaration.
+
+### Why
+
+- The search extension needs an explicit per-route declaration; user configuration discovery stays read-only and unsupported routes retain standalone search.
+
+### Why an extension could not handle it
+
+- Core owns the models.json validation schema.
+
+### Expected merge conflict zones
+
+- One optional compatibility property in `OpenAICompletionsCompatSchema`.
+
 ## 2026-10-11 - A busy prompt throws a typed AgentBusyError (senpi#3073 review)
 
 ### What changed
@@ -9551,3 +9649,39 @@ An unsafe newest result poisoned every retained suffix. Repeated automatic admis
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/core/agent-session.ts`: rejection-helper import and `_wouldCompactionOverflow` delegation.
+## 2026-10-11 - Spent accounts stop retrying and compaction uses a usable model (senpi#3131)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: account-scoped failures immediately try another provider or end without backoff; the compaction resolver selects a non-spent override, current model, held target, or authenticated alternate. Published assistant errors and terminal retry errors use the shared account-limit description while the original provider text remains on internal messages and in session logs. Extension context wiring exposes the same compaction resolver.
+- `packages/coding-agent/src/core/retry-fallback/candidates.ts`, `controller.ts`, `unusable.ts`, and `usage-limit.ts`: spent-provider candidates are skipped outright, account failures are retained even without a configured chain, and unavailable compaction raises the same limit description.
+
+### Why
+
+The prior last-resort rescan sent requests to siblings on an account already known to be spent, then normal backoff added roughly 60 seconds. Summarization selected that spent account even after a held model switch.
+
+### Why an extension could not handle it
+
+The retry owner, session account suppression, held-switch state, and default compaction resolver live in core.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/agent-session.ts`: retry branches, event publication, compaction resolver, and context actions.
+
+## 2026-10-11 - Compaction account health no longer narrows a model to never (senpi#3131 CI)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the usability check returns a boolean rather than claiming account health determines whether an object is a `Model`. Optional candidates are checked for existence separately.
+
+### Why
+
+The false branch of the previous type predicate narrowed an existing session model to `never`, making the exhausted-account error fail typechecking. Test provider registrations also now include their required model names.
+
+### Why an extension could not handle it
+
+The invalid predicate was inside the session-owned compaction resolver.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_resolveCompactionModel`.

@@ -1,3 +1,40 @@
+## 2026-10-11 - Preserve explanations for zero-attempt retry failures (senpi#3131 delta)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: restores the general terminal retry failure handler, including zero-attempt long-wait and over-cap errors. The session emitter suppresses only the initial account-limit retry-end event.
+
+### Why
+
+The broad zero-attempt clear branch dropped the only explanation for provider-requested waits and rejected retry delays.
+
+### Why an extension could not handle it
+
+Provider-error notice ownership and terminal retry status belong to the interactive mode.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `auto_retry_end`.
+
+## 2026-10-11 - Fail-fast account errors match restored transcripts (senpi#3131 review)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: a zero-attempt terminal failure clears retry status without claiming zero failed retries.
+- `packages/coding-agent/src/modes/interactive/components/assistant-render-descriptors.ts`: structured usage-limit projections retain their already-formatted text instead of adding another error prefix or reclassifying `/model` advice.
+
+### Why
+
+The live account-limit message and restored transcript differed despite representing the same failure.
+
+### Why an extension could not handle it
+
+Retry status and assistant transcript rendering belong to the interactive mode.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: terminal retry status.
+
 ## 2026-10-10 - The footer shows the reasoning level and its cycle key (senpi#3090)
 
 ### What changed
@@ -2619,3 +2656,20 @@ Upstream edits to `showLoadedResources` or the startup-warning block in interact
 ### Expected merge conflict zones
 
 - LOW: the `case "user"` branch of the message renderer (the `textContent` line) and the ask-user `format.ts` import in `interactive-mode.ts`; the `role === "user"` branch of the tree selector's entry label and its import.
+## 2026-10-11 - Explain account limits in restored transcripts (senpi#3131)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/assistant-render-descriptors.ts`: supplies the message's provider/model and usage-limit scope to the existing provider-failure formatter.
+
+### Why
+
+Restored transcript messages retain provider diagnostics; their visible error must explain the account limit rather than expose raw JSON.
+
+### Why an extension could not handle it
+
+The assistant descriptor builder owns restored transcript rendering.
+
+### Expected merge conflict zones
+
+The error descriptor branch and imports in `assistant-render-descriptors.ts`.

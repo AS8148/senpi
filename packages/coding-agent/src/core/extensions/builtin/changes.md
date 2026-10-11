@@ -1,3 +1,61 @@
+## 2026-10-11 - Restore shipped defaults and cache-preserving search policy (senpi#3125 delta)
+
+### What changed
+
+- `server-search-fallback.ts` separates fallback from disabled metadata and preserves the original hook on cache-retaining summaries.
+- Anthropic and OpenAI native injectors restore main's direct API/Claude OAuth and OpenAI/Azure defaults. Both consult failure memory using the request model, not the selected session model.
+- Server-tool exclusion preserves client search declarations and omits empty tools arrays.
+
+### Why
+
+- New opt-in routes must not remove shipped defaults or invalidate the main-turn cache prefix.
+
+### Why an extension could not handle it
+
+- These are corrections to the existing built-in injection and fallback extensions.
+
+### Expected merge conflict zones
+
+- Capability predicates, payload filters and request-model failure lookup.
+
+## 2026-10-11 - Preserve search fallback schemas and keepalive prefixes (senpi#3122 review)
+
+### What changed
+
+- `server-search-fallback.ts`: session/model failure memory is shared by native injectors and standalone search; suppression markers are request-local and never serialized.
+- `cache-keepalive/index.ts`: explicitly requests the main-turn server-search prefix rather than using the search-disabled auxiliary default.
+- Native search extensions preserve provider-built function declarations after a failure and require opt-in on unverified routes.
+
+### Why
+
+- Schema normalization and a stable cache prefix must survive native-search fallback without adding duplicate tools or another failed request per prompt.
+
+### Why an extension could not handle it
+
+- These are coordinated changes to existing built-in extensions.
+
+### Expected merge conflict zones
+
+- Fallback metadata, native injector hooks, and keepalive request preparation.
+
+## 2026-10-11 - Classify the Moonshot server-search echo tool (senpi#3122)
+
+### What changed
+
+- `moved-path-guard/tool-classes.ts` classifies `$web_search` as `none`: it echoes server-generated arguments and performs no filesystem access.
+
+### Why
+
+- The native-first search extension registers this additional tool; the full-load regression requires every built-in tool to carry an explicit moved-path class.
+
+### Why an extension could not handle it
+
+- The moved-path guard owns the built-in tool classification table.
+
+### Expected merge conflict zones
+
+- `moved-path-guard/tool-classes.ts`: the path-free search tool entries.
+
 ## 2026-10-08 - moved-path-guard: folder check follows only a legacy-root symlink (senpi#2898)
 
 ### What changed

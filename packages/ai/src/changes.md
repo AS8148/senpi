@@ -1,3 +1,61 @@
+## 2026-10-11 - Usage-limit advice retains structured cause (senpi#3131 review)
+
+### What changed
+
+- `packages/ai/src/types.ts`: assistant messages have an optional redaction-safe `errorCause` identifying account- or model-scoped usage exhaustion independently of presentation text.
+
+### Why
+
+Recovery advice includes `/model`, so parsing the rewritten sentence loses the original account scope.
+
+### Why an extension could not handle it
+
+The shared assistant message is the transport contract consumed by session events and RPC history.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/types.ts`: optional assistant failure metadata.
+
+## 2026-10-11 - Evidence-gated server search opt-in (senpi#3122 review)
+
+### What changed
+
+- `model.ts`: Google generation and Vertex models accept typed `compat.supportsWebSearch`.
+- `providers/xai.ts`: retains the documented `webSearchToolType` without setting `supportsWebSearchPreview: true`; the unverified route now requires explicit opt-in.
+
+### Why
+
+- Documented tool support and an accepted request are not proof of executed search and replay. The held xAI probe failed authentication.
+
+### Why an extension could not handle it
+
+- Model compatibility types and provider catalog defaults belong to pi-ai.
+
+### Expected merge conflict zones
+
+- `model.ts` compatibility conditional and the xAI catalog mapping.
+
+## 2026-10-11 - Explicit in-turn search capabilities (senpi#3122)
+
+### What changed
+
+- `providers/xai.ts` marks the built-in Responses catalogue with `supportsWebSearchPreview: true`; the coding-agent injector uses xAI's documented `web_search` type, not OpenAI's legacy preview type.
+- `api/openai-responses.ts` gates the current `web_search` name alongside the two legacy preview names, preventing unsupported custom endpoints from receiving hook-injected native search.
+- `types.ts` adds optional `OpenAICompletionsCompat.supportsWebSearch` for endpoint-specific completion server search, and the compatibility resolver keeps this declaration optional rather than synthesizing support for a coding-plan endpoint.
+- Focused xAI, custom-Responses and existing Anthropic encrypted-replay tests cover the boundary.
+
+### Why
+
+- Server search must be the first choice on a supported main-request API. Search capability belongs to the exact provider/API route, not to a guessed proxy hostname or an auxiliary search model.
+
+### Why an extension could not handle it
+
+- Provider catalogue capabilities, shared model types and the final wire sanitizer are owned by pi-ai.
+
+### Expected merge conflict zones
+
+- The xAI catalogue mapping, optional completion compatibility fields, and the Responses native-tool predicate.
+
 ## 2026-10-10 - allowed_tools only on native OpenAI API hosts (senpi#3080)
 
 ### What changed
@@ -5905,3 +5963,20 @@ Provider authentication and API behaviour live in this package, below any extens
 ### Expected merge conflict zones
 
 Upstream provider/auth changes in these files at the next sync.
+## 2026-10-11 - Explain account-wide usage limits (senpi#3131)
+
+### What changed
+
+- `packages/ai/src/utils/provider-failure-description.ts`: accepts the caller's classified usage-limit scope and describes an account limit with provider identity, a reset hint, and model-switch/fallback recovery.
+
+### Why
+
+Raw provider JSON does not explain that another model on the same account will also fail.
+
+### Why an extension could not handle it
+
+The shared provider-error formatter owns presentation across session, print, and interactive consumers.
+
+### Expected merge conflict zones
+
+The options type and account-limit branch in `describeProviderFailureForUser`.

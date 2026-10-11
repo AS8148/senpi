@@ -131,7 +131,9 @@ export type ResolvedOpenAICompletionsCompat = Omit<
 	| "thinkingTokenBudgetField"
 	| "veniceParameters"
 	| "supportsForcedToolChoice"
+	| "supportsWebSearch"
 > & {
+	supportsWebSearch?: OpenAICompletionsCompat["supportsWebSearch"];
 	/** Declared forced tool_choice support; absent means supported. */
 	supportsForcedToolChoice?: OpenAICompletionsCompat["supportsForcedToolChoice"];
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
@@ -269,6 +271,7 @@ export function getOpenAICompletionsCompat(model: Model<"openai-completions">): 
 	if (!model.compat) return detected;
 
 	return {
+		supportsWebSearch: model.compat.supportsWebSearch,
 		supportsStore: model.compat.supportsStore ?? detected.supportsStore,
 		supportsDeveloperRole: model.compat.supportsDeveloperRole ?? detected.supportsDeveloperRole,
 		supportsReasoningEffort: model.compat.supportsReasoningEffort ?? detected.supportsReasoningEffort,

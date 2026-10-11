@@ -841,7 +841,8 @@ Every verb except `list` resolves `<ref>` (a `sessionId`, `durableSessionId`, `n
 `list_sessions` and then ATTACHES to the session before acting. A name that more than one live session carries is
 refused `ambiguous_session` rather than resolved to either, and so is a `durableSessionId` that more than one
 transcript carries, live or parked (a caller-minted id reused while its first session was parked): `candidates`
-lists their paths. A `sessionPath`, or a `durableSessionId` naming one
+lists their paths, or the routing handle (`rpc-N`) of a live session that has no transcript file yet. A
+`sessionPath`, or a `durableSessionId` naming one
 transcript under `<agentDir>/sessions/`, that the host no longer lists (it parked the session) is RESUMED: the CLI
 re-opens it with `open_session { sessionPath, retain_on_disconnect: true }`, so the resumed session again outlives
 the call, and acts on the new routing handle it reports. Attaching is what authorizes `close` and what lets `wait` receive events;
@@ -900,8 +901,8 @@ the one exception: it calls `list_sessions { observe: true }`, so polling it nev
 Session references: `open` and `list` report `sessionId`, `sessionPath` and `durableSessionId` together. `sessionId`
 is a per-host-epoch routing handle that disappears across a park or handoff; `sessionPath` and `durableSessionId`
 survive it, and every subcommand accepts any of the three (plus the session's `name`) as `<ref>` and re-resolves it
-on every call, resuming a parked session as described above. A session parked before its first message cannot be
-resumed (the session listing skips a transcript with no message yet); a reference to it is `unknown_session`.
+on every call, resuming a parked session as described above. A session parked before its first message has no
+transcript yet and cannot be resumed; a reference to it is `unknown_session`.
 
 Ownership: reaching the socket is the trust boundary. Any client that can connect (the socket is `0600` in a
 `0700` directory, so only its owning user) may `prompt`, `steer`, `abort`, `model`, `read` or `wait` on any
@@ -2070,6 +2071,8 @@ The `model` field is a full [Model](#model) object or `null`. `pendingModelSwitc
 `lastProviderDiagnostic` is present after a failed turn whose provider supplied structured evidence: `{"category": "rate_limit", "httpStatus": 429, "code": "rate_limit_error", "evidence": "structured_code"}`. `category` is one of `auth`, `rate_limit`, `quota`, `context_limit`, `invalid_request`, `provider_unavailable`, `unknown`; `httpStatus` is absent for errors delivered inside a streamed response. It describes the same failure as the latest assistant `errorMessage` and is replaced or cleared with it. The failed assistant message in `message_end`, `agent_end`, `get_messages` and the session file carries the same object as `providerDiagnostic`. See [Provider failure diagnostics](sdk.md#provider-failure-diagnostics) for how it is derived.
 
 #### get_messages
+
+Account-scoped usage failures are projected as recovery advice with `errorCause: {"type":"usage_limit","scope":"account"}` in `message_*`, `agent_end`, `entry_appended`, `get_messages`, `get_entries`, and `get_tree`. The engine message and session file retain the original provider error for diagnostics; these raw stored messages are not the user-facing RPC representation. Entry ids, parent links, timestamps, tree labels, and provider diagnostics are preserved by the projection.
 
 Get all messages in the conversation.
 

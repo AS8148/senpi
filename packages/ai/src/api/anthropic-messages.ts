@@ -95,6 +95,10 @@ import {
 	resolveTranscript,
 	type TranscriptContext,
 } from "../utils/transcript.ts";
+import {
+	isAnthropicWebSearchReplayBlock,
+	isReplayableAnthropicProviderNativeBlock,
+} from "./anthropic-native-replay-blocks.ts";
 import { sanitizeAnthropicToolPairs } from "./anthropic-tool-pairs.ts";
 import { demoteToolReferenceReplay, demoteUnavailableToolReferences } from "./anthropic-tool-references.ts";
 import { resolveCloudflareBaseUrl } from "./cloudflare.ts";
@@ -608,28 +612,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
 
-const REPLAYABLE_ANTHROPIC_PROVIDER_NATIVE_TYPES: ReadonlySet<string> = new Set([
-	"server_tool_use",
-	"web_search_tool_result",
-	"web_fetch_tool_result",
-	"code_execution_tool_result",
-	"bash_code_execution_tool_result",
-	"text_editor_code_execution_tool_result",
-	"tool_search_tool_result",
-	"container_upload",
-	// The server-side fallback marker (`fallback`, server-side-fallback-2026-06-01
-	// beta) is deliberately absent: the Messages API rejects it as an *input* tag
-	// ("Input tag 'fallback' found using 'type' does not match any of the expected
-	// tags"), so replaying it 400s every subsequent same-model request. The stored
-	// marker is audit metadata and still drives declined-attempt pruning in
-	// convertMessages (see lastAnthropicFallbackBoundary and
-	// collectDiscardedFallbackToolCallIds); blocks after it replay verbatim.
-]);
-
-function isReplayableAnthropicProviderNativeBlock(raw: unknown): raw is ContentBlockParam {
-	return isRecord(raw) && typeof raw.type === "string" && REPLAYABLE_ANTHROPIC_PROVIDER_NATIVE_TYPES.has(raw.type);
-}
-
 function isSameAnthropicModel(message: AssistantMessage, model: Model<"anthropic-messages">): boolean {
 	return message.provider === model.provider && message.api === model.api && message.model === model.id;
 }
@@ -674,12 +656,6 @@ function isProviderNativeToolUseBlock(raw: unknown): boolean {
 // blocks (kimi-coding 400s with `tool_call_id is not found`), wedging every
 // subsequent request of the session. Dropping the pair loses the searched
 // context but keeps the conversation usable.
-function isAnthropicWebSearchReplayBlock(raw: unknown): boolean {
-	if (!isRecord(raw)) return false;
-	if (raw.type === "web_search_tool_result") return true;
-	return raw.type === "server_tool_use" && raw.name === "web_search";
-}
-
 // Anthropic validates server-tool pairing per request: a `server_tool_use` /
 // `mcp_tool_use` must be answered by its `*_tool_result`, and a result must
 // have its use — otherwise the API answers `400 ... \`web_search\` tool use
@@ -741,13 +717,13 @@ function collectProviderNativeToolPairing(
 			for (const block of message.content) {
 				if (block.type !== "providerNative" || !isRecord(block.raw)) continue;
 				const raw = block.raw;
-				if (typeof raw.type !== "string" || !REPLAYABLE_ANTHROPIC_PROVIDER_NATIVE_TYPES.has(raw.type)) continue;
+				if (!isReplayableAnthropicProviderNativeBlock(raw)) continue;
 				if (isProviderNativeToolUseBlock(raw) && typeof raw.id === "string") pendingUseIds.add(raw.id);
 			}
 			for (const block of message.content) {
 				if (block.type !== "providerNative" || !isRecord(block.raw)) continue;
 				const raw = block.raw;
-				if (typeof raw.type !== "string" || !REPLAYABLE_ANTHROPIC_PROVIDER_NATIVE_TYPES.has(raw.type)) continue;
+				if (!isReplayableAnthropicProviderNativeBlock(raw)) continue;
 				const toolUseId = raw.tool_use_id;
 				if (typeof toolUseId !== "string") continue;
 				if (priorUseIds.has(toolUseId) || pendingUseIds.has(toolUseId)) {

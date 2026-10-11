@@ -6,6 +6,39 @@
 
 ### Added
 
+- Extensions can use `ctx.getCompactionModel()` to resolve a usable summary model without changing the active session selection. Healthy builtin compaction retains the current model; a spent account can use the held target, configured summary override, or an authenticated alternate with sufficient context capacity ([#3131](https://github.com/code-yeongyu/senpi/issues/3131)).
+
+### Changed
+
+- Web search uses the active model's in-turn server tool first on enabled routes. Existing direct Anthropic/Claude OAuth and OpenAI/Azure defaults are preserved; ChatGPT subscription search is enabled, and newly supported xAI Responses, Gemini 2/3, OpenRouter and compatible Anthropic gateways require explicit opt-in. Search-specific failures enable one standalone fallback and record its reason; cheaper auxiliary models remain defaults only on routes without an enabled server tool ([#3122](https://github.com/code-yeongyu/senpi/issues/3122), requested by @code-yeongyu).
+
+- Server search remains default-on for direct Anthropic/Claude OAuth and OpenAI/Azure, unchanged from main, and is default-on for the live-verified first-party ChatGPT/Codex subscription route (except Spark). Gateways including ccapi and GLM coding plan on z.ai's Anthropic endpoint require `compat.supportsWebSearch: true`; xAI Responses, Gemini 2/3, OpenRouter, Moonshot PAYG, Z.AI PAYG and Sonar native-bypass routing also require explicit compatibility opt-in. Kimi for Coding and DeepSeek are not live-verified and do not gain default-on search. A different `nativeModel` setting is ignored on enabled server-search routes: main search and fallback use the session model ([#3122](https://github.com/code-yeongyu/senpi/issues/3122), requested by @code-yeongyu).
+
+### Fixed
+
+- Resuming after accepted compaction uses the compacted summary and retained messages instead of pre-compaction provider usage, so a session that now fits is not refused or compacted again. Fresh provider usage supersedes the estimate on the next response ([#3062](https://github.com/code-yeongyu/senpi/issues/3062)).
+
+- Zero-attempt terminal failures still explain provider-requested long waits and retry-delay caps; only an initial account-usage failure omits a redundant retry-end event. RPC entry events, entry history, and trees now carry the same structured account-limit advice as message history, and reset parsing uses injected clocks ([#3131](https://github.com/code-yeongyu/senpi/issues/3131)).
+
+- Account-wide usage limits skip all fallback models on the spent provider and fail immediately when no other provider can serve. Manual and held-switch compaction use a usable model, and limit errors name the provider, reset hint, and `/model` or fallback configuration instead of raw 429 JSON ([#3131](https://github.com/code-yeongyu/senpi/issues/3131)).
+
+- Locally refused prompts no longer extend a spent account's suppression window. Provider reset hints and retry-after delays bound that window, and an explicit `/model` selection clears it for a deliberate probe ([#3131](https://github.com/code-yeongyu/senpi/issues/3131)).
+- Account-limit advice and its structured scope remain consistent between live messages, restored transcripts, and RPC `get_messages`; the TUI no longer reports zero failed retry attempts when a turn failed without retrying ([#3131](https://github.com/code-yeongyu/senpi/issues/3131)).
+
+- Cross-route Moonshot sanitization preserves intentional empty tool arrays on main requests with tool history when no declaration was removed, retaining compatibility with LiteLLM-style proxies ([#3122](https://github.com/code-yeongyu/senpi/issues/3122)).
+
+- Server-search failures are remembered for the actual failed request model across prompts and model switches. Cache-friendly compaction retains the original payload hook and exact main-turn tools/include prefix. Standalone summaries, titles and default projections exclude only server-search tools, preserve client `web_search`, and do not add empty tool arrays. Fallback preserves provider-built function schemas and Gemini's single function-declaration entry. Moonshot's opt-in echo tool cannot be discovered or lazily activated through tool_search, and its declaration is stripped from non-Moonshot requests ([#3122](https://github.com/code-yeongyu/senpi/issues/3122)).
+
+### Removed
+
+## [2026.10.11] - 2026-10-11
+
+### Breaking Changes
+
+### Added
+
+- Host adapters can render Native prompt content through the public `@code-yeongyu/senpi/prompt-presets` subpath using `resolvePreset`, `buildPreset`, and `buildDynamicSystemPrompt`, with `BuildDynamicSystemPromptOptions`, `ResolvedPromptPreset`, `PromptPresetSettings`, `PromptPresetName`, `ModelWithPromptPresetMetadata`, and `PromptSurface` types. The builders accept an explicit application name while preserving Native's existing default branding; preset selection and content remain single-source ([#3104](https://github.com/code-yeongyu/senpi/issues/3104)).
+
 - `senpi host session open|close|model|prompt|steer|abort|read|state|list|wait` drives a session over the shared host from the command line: one JSON line of output per call and typed exit codes, so an orchestrating agent no longer has to write its own RPC client or scrape a terminal pane ([#3073](https://github.com/code-yeongyu/senpi/issues/3073)).
 
 - RPC refusals of `prompt` while a turn runs, `set_model` with an unknown model, and `get_entries` with an unknown `since` cursor now carry `errorCode` (`streaming`, `model_not_found`, `not_found`), so clients no longer match message text ([#3073](https://github.com/code-yeongyu/senpi/issues/3073)).
@@ -18,8 +51,11 @@
 
 - The runtime snapshot a first launch builds copies the package as npm ships it (the `files` entries of `package.json`, plus `package.json`, README and LICENSE) instead of the whole package directory. Running from a repository checkout no longer copies its sources, tests and scripts: about 1,800 files instead of 11,000 for this package ([#3083](https://github.com/code-yeongyu/senpi/issues/3083)).
 
+- Runtime snapshots omit dependency development trees, root documentation notes and redundant TypeScript sources while retaining manifest entrypoints, source-only extensions, skills, native binaries and the complete dependency graph needed after an install update. A real Node/Bun CLI inventory covers help, external extension loading, a faux turn and codemode bootstrap ([#3083](https://github.com/code-yeongyu/senpi/issues/3083)).
+
 ### Fixed
 
+- Context reduction no longer rewrites the prompt cache every turn on long sessions. Reduction stays engaged and holds a stable prefix between large frontier steps, survives restarts, and advances early near the context limit ([#900](https://github.com/code-yeongyu/senpi/issues/900), building on [#901](https://github.com/code-yeongyu/senpi/pull/901) by [@codeg-dev](https://github.com/codeg-dev); thanks to [@daehwanahn](https://github.com/daehwanahn) and [@ddotz](https://github.com/ddotz) for the reports and measurements).
 - Reloading a session releases the previous extension runner and reuses unchanged module graphs instead of retaining another generation. Edited lazy dependencies now invalidate the graph using the bytes actually compiled, including equal-size edits with preserved timestamps ([#3066](https://github.com/code-yeongyu/senpi/pull/3066) by [@jc01rho](https://github.com/jc01rho), [#3068](https://github.com/code-yeongyu/senpi/issues/3068)).
 
 - Boundary handlers no longer run after their extension runner retires during awaited context previews or handlers, and retired boundary drafts and continuation are discarded. A handler or boundary rebuild that was already in flight and then fails on the retired runner stands down instead of reporting an extension error ([#3071](https://github.com/code-yeongyu/senpi/pull/3071) by [@MoerAI](https://github.com/MoerAI)).

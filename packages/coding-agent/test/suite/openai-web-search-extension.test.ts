@@ -273,7 +273,7 @@ describe("openai-web-search builtin extension", () => {
 		expect(result).toBe(payload);
 	});
 
-	it("still behaves as default-on when enable env is unset", () => {
+	it("keeps the first-party default on when the environment override is unset", () => {
 		const payload = {
 			tools: [{ name: "other_tool" }],
 		};

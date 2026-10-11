@@ -53,6 +53,14 @@ export class RetryFallbackController {
 		return this.lastExhaustedChainKey;
 	}
 
+	isProviderSpent(provider: string): boolean {
+		return this.unusable.isProviderSpent(provider);
+	}
+
+	accountError(provider: string): string | undefined {
+		return this.unusable.accountError(provider);
+	}
+
 	resetTurn(): void {
 		this.triedSelectors.clear();
 		this.lastExhaustedChainKey = undefined;
@@ -185,8 +193,8 @@ export class RetryFallbackController {
 	 * half-open probe - independent of whether a fallback candidate remains.
 	 */
 	noteHealthFailure(model: Model<Api>, thinkingLevel: ThinkingLevel | undefined, failure: CircuitFailure): void {
-		if (!this.managedChainKey({ model, thinkingLevel })) return;
 		this.unusable.note(model, failure);
+		if (!this.managedChainKey({ model, thinkingLevel })) return;
 		this.probes.noteFailure(formatSelector(model), failure);
 	}
 
@@ -211,18 +219,20 @@ export class RetryFallbackController {
 	async tryFallback(
 		reason: FallbackReason,
 		failure: { errorMessage?: string; retryAfterMs?: number },
+		failureObserved = true,
 	): Promise<boolean> {
 		const current = this.deps.getCurrentSelector();
 		// Only a transient failure that spent its budget opens the shared circuit
 		// here; billing/quota exhaustion is recorded at the failure itself (see
 		// noteHealthFailure) so the final chain entry opens too.
-		if (current && reason === "transient") this.noteHealthFailure(current.model, current.thinkingLevel, failure);
+		if (failureObserved && current && reason === "transient")
+			this.noteHealthFailure(current.model, current.thinkingLevel, failure);
 		const limit = usageLimitScope(failure.errorMessage);
-		if (current) this.unusable.note(current.model, failure);
+		if (failureObserved && current) this.unusable.note(current.model, failure);
 		let candidate = this.nextCandidate(false, true);
 		if (!current || !candidate) return false;
 		const currentBase = formatSelector(current.model);
-		if (reason === "transient" || reason === "hard-error" || reason === "billing") {
+		if (failureObserved && (reason === "transient" || reason === "hard-error" || reason === "billing")) {
 			this.deps.cooldowns.note(currentBase, failure);
 			this.deps.logger.info("cooldown_noted", { selector: currentBase, errorMessage: failure.errorMessage });
 		}
