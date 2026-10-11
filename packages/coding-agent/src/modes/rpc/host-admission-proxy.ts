@@ -11,7 +11,13 @@ import { MAX_RPC_LINE_CHARACTERS, serializeJsonLine } from "./jsonl.ts";
 export function proxyWithAdmission(client: Socket, internal: Socket | undefined, admission: HostAdmission): void {
 	const pending: unknown[] = [];
 	const refused = new Set<unknown>();
-	const unsubscribe = admission.onStop(async () => {
+	let protocols = 0;
+	let refusals = Promise.resolve();
+	const unsubscribe = admission.onStop(() => {
+		refusals = refusePending();
+		return refusals;
+	});
+	async function refusePending(): Promise<void> {
 		const ids = pending.splice(0);
 		for (const id of ids) refused.add(id);
 		try {
@@ -20,7 +26,7 @@ export function proxyWithAdmission(client: Socket, internal: Socket | undefined,
 		} catch {
 			fail();
 		}
-	});
+	}
 	client.once("close", () => {
 		unsubscribe();
 		internal?.destroy();
@@ -75,6 +81,7 @@ export function proxyWithAdmission(client: Socket, internal: Socket | undefined,
 			} else if (internal) {
 				// Record admission before writing: a child response can arrive immediately.
 				if (request?.type === "open_session") pending.push(request.id);
+				if (request?.type === "get_protocol_info") protocols++;
 				await write(internal, `${line}\n`);
 			}
 		}
@@ -82,25 +89,76 @@ export function proxyWithAdmission(client: Socket, internal: Socket | undefined,
 	}
 
 	async function responses(source: Socket): Promise<void> {
-		// Responses can contain full histories, unlike the bounded inbound command.
-		for await (const line of lines(source, Number.POSITIVE_INFINITY)) {
-			if (line === undefined) continue;
-			const response = record(line);
+		// Keep complete records together so local refusals cannot split a streaming delta.
+		// After admission, ordinary traffic stays as raw bytes with one write per chunk.
+		let fragments: Buffer[] = [];
+		for await (const chunk of source as AsyncIterable<Buffer>) {
+			const newline = chunk.lastIndexOf(0x0a);
+			if (newline === -1) {
+				fragments.push(chunk);
+				continue;
+			}
+			const complete = chunk.subarray(0, newline + 1);
+			if (pending.length === 0 && protocols === 0 && refused.size === 0) {
+				// Queue the entire record batch synchronously, without copying split buffers.
+				client.cork();
+				let written: Promise<void>;
+				try {
+					for (const fragment of fragments) client.write(fragment);
+					written = write(client, complete);
+				} finally {
+					client.uncork();
+				}
+				await written;
+			} else {
+				const batch = fragments.length > 0 ? Buffer.concat([...fragments, complete]) : complete;
+				await write(client, filterReplies(batch));
+			}
+			fragments = newline + 1 < chunk.length ? [chunk.subarray(newline + 1)] : [];
+		}
+		if (fragments.length > 0) await write(client, filterReplies(Buffer.concat(fragments)));
+		await refusals;
+		client.end(() => client.destroy());
+	}
+
+	function filterReplies(batch: Buffer): Buffer {
+		if (pending.length === 0 && protocols === 0 && refused.size === 0) return batch;
+		const output: Buffer[] = [];
+		let changed = false;
+		for (let start = 0; start < batch.length; ) {
+			const newline = batch.indexOf(0x0a, start);
+			const end = newline === -1 ? batch.length : newline + 1;
+			const line = batch.subarray(start, end);
+			start = end;
+			// Only lifecycle responses need decoding; histories and deltas remain byte slices.
+			const response =
+				line.includes('"open_session"') || line.includes('"get_protocol_info"')
+					? record(line.toString("utf8"))
+					: undefined;
 			if (response?.type === "response" && response.command === "open_session") {
-				if (refused.has(response.id)) continue;
+				if (refused.has(response.id)) {
+					changed = true;
+					continue;
+				}
 				const index = pending.indexOf(response.id);
 				if (index !== -1) pending.splice(index, 1);
 			}
-			if (response?.type === "response" && response.command === "get_protocol_info" && response.success === true) {
-				if (isRecord(response.data)) admission.observe(response.data);
-				await write(client, serializeJsonLine({ ...response, data: admission.protocol() }));
-			} else await write(client, `${line}\n`);
+			if (response?.type === "response" && response.command === "get_protocol_info") {
+				protocols = Math.max(0, protocols - 1);
+				if (response.success === true) {
+					if (isRecord(response.data)) admission.observe(response.data);
+					output.push(Buffer.from(serializeJsonLine({ ...response, data: admission.protocol() })));
+					changed = true;
+					continue;
+				}
+			}
+			output.push(line);
 		}
-		if (!admission.stopping) client.end();
+		return changed ? Buffer.concat(output) : batch;
 	}
 }
 
-async function write(socket: Socket, line: string): Promise<void> {
+async function write(socket: Socket, line: string | Buffer): Promise<void> {
 	await new Promise<void>((resolve, reject) => {
 		socket.write(line, (error) => (error ? reject(error) : resolve()));
 	});

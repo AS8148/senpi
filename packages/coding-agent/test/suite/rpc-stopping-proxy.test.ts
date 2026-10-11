@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HostAdmission } from "../../src/modes/rpc/host-admission.ts";
 import { ClientOccupancy } from "../../src/modes/rpc/host-client-occupancy.ts";
-import { createPublicProxy, listen } from "../../src/modes/rpc/host-lifecycle-proxy.ts";
+import { closeServer, createPublicProxy, listen } from "../../src/modes/rpc/host-lifecycle-proxy.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "../../src/modes/rpc/jsonl.ts";
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -60,7 +60,19 @@ async function proxy(holdOpen = false) {
 		while (replies.length < count) await once(client, "reply", { signal });
 		return replies.splice(0, count);
 	};
-	return { client, admission, take, publicPeers };
+	return {
+		client,
+		admission,
+		take,
+		publicPeers,
+		peers,
+		clients,
+		server,
+		publicPath,
+		holdOpens: () => {
+			holdOpen = true;
+		},
+	};
 }
 
 afterEach(async () => {
@@ -69,6 +81,36 @@ afterEach(async () => {
 });
 
 describe.skipIf(process.platform === "win32")("supervisor admission framing", () => {
+	it("closes a drained connection after its last session parks", async () => {
+		const p = await proxy();
+		p.client.write('{"id":"open","type":"open_session"}\n');
+		expect(await p.take(1)).toMatchObject([{ id: "open", success: true }]);
+		const closed = once(p.client, "close", { signal: AbortSignal.timeout(2_000) });
+		p.admission.stop();
+		p.peers[0].end('{"type":"session_closed","sessionId":"parked","reason":"handoff_parked"}\n');
+		const [records, close] = await Promise.all([p.take(1), closed]);
+		expect(records).toMatchObject([{ type: "session_closed", reason: "handoff_parked" }]);
+		expect(close).toEqual([false]);
+		expect(p.server.listening).toBe(true);
+	});
+
+	it("does not let a late accept pin server close after client teardown", async () => {
+		const p = await proxy();
+		p.admission.stop();
+		p.clients.destroyAll();
+		const accepted = once(p.server, "connection");
+		const late = createConnection(p.publicPath);
+		late.on("error", () => {});
+		try {
+			await accepted;
+			const closed = once(p.server, "close", { signal: AbortSignal.timeout(2_000) });
+			void closeServer(p.server);
+			await closed;
+		} finally {
+			late.destroy();
+		}
+	});
+
 	it("bounds refusal flushing when a reader never drains", async () => {
 		vi.useFakeTimers();
 		try {
@@ -101,6 +143,21 @@ describe.skipIf(process.platform === "win32")("supervisor admission framing", ()
 			{ id: "first", errorCode: "host_stopping" },
 			{ id: "second", errorCode: "host_stopping" },
 		]);
+	});
+
+	it("rearms reply filtering for later opens on an already admitted connection", async () => {
+		const p = await proxy();
+		p.client.write('{"id":"first","type":"open_session"}\n');
+		expect(await p.take(1)).toMatchObject([{ id: "first", success: true }]);
+		p.holdOpens();
+		p.client.write('{"id":"second","type":"open_session"}\n{"id":"barrier","type":"echo"}\n');
+		expect(await p.take(1)).toMatchObject([{ id: "barrier" }]);
+		p.admission.stop();
+		expect(await p.take(1)).toMatchObject([{ id: "second", errorCode: "host_stopping" }]);
+		p.peers[0].write(
+			'{"type":"response","command":"open_session","id":"second","success":true}\n{"type":"event","name":"after-refused"}\n',
+		);
+		expect(await p.take(1)).toEqual([{ type: "event", name: "after-refused" }]);
 	});
 
 	it("preserves fragmented UTF-8, LF framing, and pipelined FIFO", async () => {

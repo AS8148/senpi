@@ -1250,7 +1250,8 @@ without a known replacement. This record has no request id or session handle; ol
    The connection closes after its last attached session parks; a connection shared with another active session
    stays open until that session also settles. A command racing parking on the old connection is either served
    or answered by that terminal record and close, never `unknown_session` for the parked handle. New opens on a
-   draining connection are refused with `host_draining`.
+   draining supervised connection are refused with `host_stopping`; a bare (unsupervised) socket host
+   still returns `host_draining`. Re-resolve the public endpoint rather than retrying the draining connection.
 4. The **supervisor** starts `SENPI_RPC_HANDOFF_GRACE_MS` at supersession (default **600000 ms / 10 minutes**).
    This is a soft grace, not an abort deadline or a delay before parking. At expiry it reports outstanding work
    and requests another drain pass. Sessions still mid-turn or handling requests remain alive even beyond grace;
@@ -1758,7 +1759,8 @@ In the response `error` field, machine-matchable:
 - `session_reservation_limit` (this worker already holds 64 live session paths; the open or session replacement was refused without disturbing the existing session)
 - `missing_session_id` (session-scoped command without `sessionId` in multi mode)
 - `multi_session_disabled` (`open_session` in classic mode)
-- `host_draining` (`open_session` or `release_session` on a connection whose generation is parking for a handoff; the successor already owns the public path, so re-resolve it and open or release there rather than retrying this connection)
+- `host_stopping` (`open_session` refused by a supervised host that is shutting down or draining, including opens previously answered with `host_draining`; `errorData.instanceId` identifies the stopping generation. Re-resolve the public endpoint; a launch-owning caller may wait for this generation's exit within the stop budget and start a successor.)
+- `host_draining` (`open_session` on a bare, unsupervised host, or `release_session` forwarded to a child whose generation is parking for a handoff; re-resolve the public path and open or release on the successor rather than retrying this connection)
 - `turn_active` (`release_session` while a turn runs or is about to start - a prompt in preflight, an admitted delivery not yet written - without `interrupt: true`; `errorData { attachments, busy }`)
 - `session_busy` (`release_session` while other session work runs - bash, compaction, barrier-held work, another request for the session - without `interrupt: true`; `errorData { attachments, busy }`)
 - `attached` (`release_session` while clients are attached, without `force: true`; `errorData { attachments }` names how many)

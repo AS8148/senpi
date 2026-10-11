@@ -13,6 +13,7 @@ import { settledOpportunisticHostGc } from "../../../src/modes/rpc/host-gc-pass.
 import { observeProtocolInfo } from "../../../src/modes/rpc/host-probe.ts";
 import { runHostSessionRequest } from "../../../src/modes/rpc/host-session-runner.ts";
 import { readHostStatus } from "../../../src/modes/rpc/host-status.ts";
+import * as ownershipLock from "../../../src/modes/rpc/ownership-safe-lock.ts";
 import { RpcClient, RpcCommandError } from "../../../src/modes/rpc/rpc-client.ts";
 import { generationEnv, generationScratch, JsonlPeer } from "../../helpers/rpc-generation-support.ts";
 
@@ -224,6 +225,52 @@ describe.skipIf(process.platform === "win32")("stopping host admission", () => {
 		expect(outcome.payload).toMatchObject({ action: "open", reused: false });
 		expect(outcome.payload.sessionId).not.toBe("stopping-generation");
 		expect(r.successors.map(({ child }) => child.pid)).toEqual([outcome.payload.pid]);
+	});
+
+	it("gives two callers waiting during stopping exactly one fresh generation", async () => {
+		const r = await rig();
+		await r.stop();
+		let entered = 0;
+		let bothEntered!: () => void;
+		const contending = new Promise<void>((resolve) => {
+			bothEntered = resolve;
+		});
+		const acquire = ownershipLock.acquireOwnershipSafeLock;
+		const target = `${hostEnsure.hostEnsureLockTarget(r.qa.socket)}.lock`;
+		vi.spyOn(ownershipLock, "acquireOwnershipSafeLock").mockImplementation((...args) => {
+			if (args[0] === target && ++entered === 2) bothEntered();
+			return acquire(...args);
+		});
+		const after = r.messages.length;
+		const callers = [0, 1].map(() =>
+			hostEnsure
+				.ensureHost({
+					socket: r.qa.socket,
+					agentDir: r.qa.agentDir,
+					_test: { spawn: r.launch },
+				})
+				.then(
+					(host) => ({ host }),
+					(error: unknown) => ({ error }),
+				),
+		);
+		await contending;
+		await r.wait("public-probe", after);
+		expect(r.successors).toHaveLength(0);
+		r.supervisor.send("exit");
+		await r.exit;
+		const results = await Promise.all(callers);
+		try {
+			const hosts = results.map((result) => {
+				if (!("host" in result)) throw result.error;
+				return result.host;
+			});
+			expect(hosts[0].pid).toBe(hosts[1].pid);
+			expect(hosts.map((host) => host.reused).sort()).toEqual([false, true]);
+			expect(r.successors.map(({ child }) => child.pid)).toEqual([hosts[0].pid]);
+		} finally {
+			for (const result of results) if ("host" in result) result.host.release();
+		}
 	});
 
 	it("reports stopping through both discovery and host status while the child remains alive", async () => {

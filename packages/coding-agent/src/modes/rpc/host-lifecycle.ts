@@ -34,6 +34,7 @@ import {
 	type SupervisorState,
 	supervisorSender,
 } from "./host-lifecycle-shutdown.ts";
+import { startSupervisorTicker } from "./host-lifecycle-ticker.ts";
 import { errorMessage, writeStderrLine } from "./host-supervisor-log.ts";
 import { PUBLIC_SOCKET_IDENTITY_FILE, statSocketIdentity, writeSocketIdentityFile } from "./socket-ownership.ts";
 import { createSocketSecret, socketSecretPath } from "./socket-transport.ts";
@@ -172,25 +173,16 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	server.once("error", (cause) => {
 		if (!state.shuttingDown) void shutdown(`public socket listener failed: ${errorMessage(cause)}`, 1);
 	});
-	const tickIntervalMs = Math.max(20, Math.min(1_000, policy.idleExitMs / 4));
-	let ownerCheck = false;
-	const ticker = setInterval(() => {
-		if (!drain.active && activity.refresh() === "exit" && activity.clients.unclassifiedCount === 0)
-			void shutdown("idle", 0);
-		if (!ownerCheck && !state.shuttingDown && !drain.active) {
-			ownerCheck = true;
-			void owner
-				.shouldExit(activity)
-				.then((exit) => {
-					if (exit && !state.shuttingDown && !drain.active) void shutdown("owner_gone", 0);
-				})
-				.finally(() => {
-					ownerCheck = false;
-				});
-		}
-	}, tickIntervalMs);
-	watchers.push(() => clearInterval(ticker));
-	watchers.push(() => owner.stop());
+	watchers.push(
+		startSupervisorTicker({
+			idleExitMs: policy.idleExitMs,
+			activity,
+			owner,
+			draining: () => drain.active,
+			shuttingDown: () => state.shuttingDown,
+			shutdown,
+		}),
+	);
 
 	const teardown: SupervisorShutdown = {
 		paths,

@@ -35,9 +35,9 @@ export function createPublicProxy(options: PublicProxyOptions): Server {
 	const { internalSocket, internalSecret, publicSecret, clients } = options;
 	return createServer((client) => {
 		const accept = (): void => {
-			// A draining supervisor serves what it already proxies and accepts nothing new. After a
-			// handoff the public path resolves to the successor anyway; this covers the connection
-			// that raced the rename, and a drain-stop with no successor at all.
+			// Teardown is terminal even for an accept that raced socket shielding/server.close.
+			if (!clients.admit(client)) return;
+			// Draining peers can still probe and receive typed open refusals, without a child hop.
 			const internal = options.admission.stopping
 				? undefined
 				: createConnection(resolveSocketTransportAddress(internalSocket, process.platform, internalSecret));
@@ -45,7 +45,6 @@ export function createPublicProxy(options: PublicProxyOptions): Server {
 			// A readiness exchange can begin and end between ticks: the client is recorded the
 			// moment its first request line arrives, before a later tick can reuse the preceding
 			// idle window. An observing read (`status`) is never recorded (host-client-occupancy.ts).
-			clients.admit(client);
 			const detach = (): void => {
 				// Classification resets activity for attachments. Defer the unknown-admission reset
 				// until release so a status read never resets owner grace, even between ticks.
