@@ -42,11 +42,13 @@ function changelogSections(text) {
 	}));
 }
 
-function releasedChangelogViolation({ path, before, after, taggedSections = {} }) {
+function releasedChangelogViolations({ path, before, after, taggedSections = {} }) {
 	const [previous, current] = [before, after].map(changelogSections);
-	const misplaced = current.findIndex((section, index) => index > 0 && section.name === "Unreleased");
-	if (misplaced > 0)
-		return `${path}:${current[misplaced].line}: released section [${current[misplaced - 1].name}] interrupted`;
+	const violations = [];
+	for (let index = 1; index < current.length; index += 1) {
+		if (current[index].name === "Unreleased")
+			violations.push(`${path}:${current[index].line}: released section [${current[index - 1].name}] interrupted`);
+	}
 	const oldReleased = previous.filter((section) => section.name !== "Unreleased");
 	const newReleased = current.filter((section) => section.name !== "Unreleased");
 	const unreleased = previous.find((section) => section.name === "Unreleased");
@@ -66,8 +68,9 @@ function releasedChangelogViolation({ path, before, after, taggedSections = {} }
 		let offset = 0;
 		while (offset < Math.min(oldLines.length, newLines.length) && oldLines[offset] === newLines[offset]) offset += 1;
 		const section = newSection ?? oldSection;
-		return `${path}:${section.line + offset}: released section [${section.name}] changed`;
+		violations.push(`${path}:${section.line + offset}: released section [${section.name}] changed`);
 	}
+	return violations;
 }
 
 const UNRELEASED_SECTION = /^## \[Unreleased\][^\n]*\n([\s\S]*?)(?=^## \[|(?![\s\S]))/m;
@@ -147,18 +150,18 @@ export function checkPrChangelog({ changedFiles, labels, trackerPolicy, changelo
 	// required package CHANGELOG.md entry.
 	const audit = trackerPolicy == null ? null : auditChangesMdCoverage({ changedFiles, trackerPolicy });
 	const uncovered = audit ? audit.uncovered.map((item) => item.path) : [];
-	const violation =
-		changelogChanges.map(releasedChangelogViolation).find(Boolean) ??
-		trackerRemovals
+	const violations = [
+		...changelogChanges.flatMap(releasedChangelogViolations),
+		...trackerRemovals
 			.filter(({ removed }) => removed > 0)
-			.map(({ path, removed }) => `${path}: removes ${removed} existing line(s); tracker entries may only be added`)
-			.at(0) ??
-		changelogChanges.map(unreleasedRemovalViolation).find(Boolean);
+			.map(({ path, removed }) => `${path}: removes ${removed} existing line(s); tracker entries may only be added`),
+		...changelogChanges.map(unreleasedRemovalViolation).filter(Boolean),
+	];
 	let pass;
 	let reason;
-	if (violation) {
+	if (violations.length > 0) {
 		pass = false;
-		reason = violation;
+		reason = violations.join("; ");
 	} else if (audit && uncovered.length > 0) {
 		pass = false;
 		reason = summarizeUncovered(audit.uncovered);
@@ -171,7 +174,7 @@ export function checkPrChangelog({ changedFiles, labels, trackerPolicy, changelo
 		reason = releaseReason;
 	}
 
-	return { pass, reason, runtimeFiles, changelogFiles, hasNoChangelogLabel, uncovered };
+	return { pass, reason, violations, runtimeFiles, changelogFiles, hasNoChangelogLabel, uncovered };
 }
 
 function diffPathsBetween(from, to) {
@@ -360,8 +363,11 @@ export function main(argv) {
 
 	const result = checkPrChangelog({ changedFiles, labels: args.labels, trackerPolicy, changelogChanges, trackerRemovals });
 	const verdict = result.pass ? "PASS" : "FAIL";
-	console.log(`changelog-gate: ${verdict} - ${result.reason}`);
+	console.log(`changelog-gate: ${verdict} - ${result.violations[0] ?? result.reason}`);
 	if (!result.pass) {
+		for (const violation of result.violations) {
+			console.log(`  violation: ${violation}`);
+		}
 		for (const file of result.runtimeFiles) {
 			console.log(`  runtime change: ${file}`);
 		}
