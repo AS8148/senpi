@@ -1,5 +1,25 @@
 # senpi-codemode fork changes
 
+## 2026-10-12 - Pip cleanup preserves the install outcome (Refs senpi#3064)
+
+### What changed
+
+- `packages/senpi-codemode/src/environments/py-installer.ts`: scratch removal retries three times; an exhausted cleanup failure emits `SENPI_PIP_SCRATCH_CLEANUP` without replacing success or the install's typed failure/cancellation.
+- `packages/senpi-codemode/src/environments/pip-environment.ts`: move the existing isolated environment builder unchanged into its own module; `py-installer.ts` retains its public re-export.
+- Process-kernel test fixtures close their tracked kernels before removing cwd roots; test host and subreaper handles are awaited after termination.
+
+### Why
+
+- `packages/senpi-codemode/src/environments/py-installer.ts`: transient Windows handle errors must not hide the outcome callers branch on. Kernel fixtures previously had no teardown hook.
+
+### Why an extension could not handle it
+
+- `packages/senpi-codemode/src/environments/py-installer.ts`: the installer owns scratch and the primary outcome.
+
+### Expected merge conflict zones
+
+- `packages/senpi-codemode/src/environments/py-installer.ts`: final scratch cleanup and installer diagnostics.
+
 ## 2026-10-10 - Pip scratch belongs to the install revision (senpi#3064)
 
 ### What changed
