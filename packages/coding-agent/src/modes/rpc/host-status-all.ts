@@ -123,6 +123,7 @@ async function unaddressableStatus(dir: string): Promise<Omit<HostStatusReport, 
 	const claims = await readClaimRows(paths, generations);
 	return {
 		reachable: false,
+		lifecycle: null,
 		pid: null,
 		instanceId: null,
 		generation: null,

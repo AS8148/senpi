@@ -16,10 +16,12 @@ export class SupervisorDrain {
 	private graceTimer: ReturnType<typeof setTimeout> | undefined;
 	private readonly child: ChildProcess;
 	private readonly shuttingDown: () => boolean;
+	private readonly beginStopping: () => void;
 
-	constructor(child: ChildProcess, shuttingDown: () => boolean) {
+	constructor(child: ChildProcess, shuttingDown: () => boolean, beginStopping: () => void = () => {}) {
 		this.child = child;
 		this.shuttingDown = shuttingDown;
+		this.beginStopping = beginStopping;
 	}
 
 	get active(): boolean {
@@ -34,6 +36,7 @@ export class SupervisorDrain {
 	drain(): void {
 		if (this.draining || this.shuttingDown()) return;
 		this.draining = true;
+		this.beginStopping();
 		supervisorLog("draining into the next generation");
 		const graceMs = parseIdleExitMs(process.env[HANDOFF_GRACE_MS_ENV]) ?? DEFAULT_HANDOFF_GRACE_MS;
 		this.graceTimer = setTimeout(() => {

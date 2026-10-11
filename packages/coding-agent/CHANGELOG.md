@@ -18,6 +18,8 @@
 
 - Internal control sockets keep their short-path fallback inside the configured temporary directory when it fits the Unix socket path limit ([#3103](https://github.com/code-yeongyu/senpi/pull/3103)).
 
+- Shared RPC hosts advertise `stopping` as soon as shutdown or draining begins and return a typed `host_stopping` refusal to racing session opens. On supervised hosts this replaces `host_draining` for opens during a drain; RPC clients matching the old code must handle `host_stopping`. Bare hosts retain `host_draining`. Launch-owning callers wait for the stopping generation to exit before starting a successor. `senpi host status --json` and each `status --all` row add `lifecycle: "ready" | "stopping" | null`; an unserved socket keeps the same field set with `lifecycle: null` ([#3059](https://github.com/code-yeongyu/senpi/issues/3059)).
+
 - Resuming after accepted compaction uses the compacted summary and retained messages instead of pre-compaction provider usage, so a session that now fits is not refused or compacted again. Fresh provider usage supersedes the estimate on the next response ([#3062](https://github.com/code-yeongyu/senpi/issues/3062)).
 
 - Zero-attempt terminal failures still explain provider-requested long waits and retry-delay caps; only an initial account-usage failure omits a redundant retry-end event. RPC entry events, entry history, and trees now carry the same structured account-limit advice as message history, and reset parsing uses injected clocks ([#3131](https://github.com/code-yeongyu/senpi/issues/3131)).

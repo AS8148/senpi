@@ -1,3 +1,31 @@
+## 2026-10-11 - Supervisor-owned stopping admission (senpi#3059)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-admission-proxy.ts`: forward child EOF after queued refusals, including a drained connection's final parked-session record.
+- `packages/coding-agent/src/modes/rpc/host-admission-proxy.ts`: forward complete response batches as raw buffers once no lifecycle reply is pending; decode only candidate open/protocol replies, preserving late-open filtering, UTF-8 bytes, record boundaries and downstream backpressure.
+- `packages/coding-agent/src/modes/rpc/host-client-occupancy.ts` and `packages/coding-agent/src/modes/rpc/host-lifecycle-proxy.ts`: client teardown is terminal; late accepts are destroyed before attaching a child hop, so they cannot pin listener close.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-ticker.ts` and `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: extract the existing idle/owner ticker without changing its checks or shutdown order, keeping orchestration below the pure-code line ceiling.
+- `packages/coding-agent/src/modes/rpc/host-admission.ts` and `packages/coding-agent/src/modes/rpc/host-admission-proxy.ts`: the supervisor owns a monotonic admission gate. Bounded LF/UTF-8 request framing and backpressured socket writes preserve request order; probes report lifecycle, opens are checked on every connection, and pending opens receive a correlated typed refusal when stop wins.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle-proxy.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle-drain.ts` and `packages/coding-agent/src/modes/rpc/host-lifecycle-shutdown.ts`: close admission before child signalling and keep the public listener available through child reaping instead of destroying clients at shutdown entry.
+- `packages/coding-agent/src/modes/rpc/host-protocol-info.ts`, `packages/coding-agent/src/modes/rpc/host-decision.ts`, `packages/coding-agent/src/modes/rpc/host-ensure.ts` and `packages/coding-agent/src/modes/rpc/host-ensure-types.ts`: preserve the lifecycle field, refuse stopping adoption, and wait under the endpoint lock for both identities of the exact registered generation to exit before ordinary discovery can start a successor. The wait never signals the generation and cannot exceed the existing stop budget; callers may shorten it.
+- `packages/coding-agent/src/modes/rpc/host-session-runner.ts`: only explicit opens with a launch spec retry typed stopping refusals, with the original spec and shared stop deadline.
+- `packages/coding-agent/src/modes/rpc/host-status.ts`, `packages/coding-agent/src/modes/rpc/host-status-all.ts` and `packages/coding-agent/src/modes/rpc/host-outcome.ts`: expose lifecycle honestly, including null for unknown/unreachable state.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: additive `RpcProtocolInfo.lifecycle` and `RPC_ERROR_HOST_STOPPING` in the public error-code union.
+- `packages/coding-agent/docs/rpc.md`: document stopping, typed refusal, bounded replacement authority, and unobserved session counts during teardown.
+
+### Why
+
+A ready probe could race shutdown, adopt the dying generation and lose its first open to a silently destroyed socket. Waiting for a slow child made that race window larger. Admission and stop now linearize on one supervisor event loop; a prior ready response cannot bypass the gate.
+
+### Why an extension could not handle it
+
+The supervisor owns the public socket and outlives session extensions. A child-only metadata check would require a cross-process barrier across every awaited open and still could not answer discovery while its event loop is stalled.
+
+### Expected merge conflict zones
+
+- Supervisor proxy and shutdown sequencing, host decision/ensure control flow, session-open retry mapping, protocol/status field lists and `rpc-types.ts` error constants.
+
 ## 2026-10-11 - Entry and tree history project account advice (senpi#3131 delta)
 
 ### What changed

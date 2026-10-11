@@ -41,8 +41,15 @@ const SUPERVISOR_CORE_ALLOWLIST = new Set(["brand.js", "process-crash-record.js"
  *   `host-state-json` (their atomic writes) and `ownership-safe-lock` (one terminal record per generation).
  * Measured over main's graph: +31.6 KB of built code.
  * The in-host watchdog stays out: the supervisor reads only its threshold, from the `loop-lag-threshold` leaf.
+ * senpi#3059 permits exactly three supervisor-local additions, bringing the measured graph to 55:
+ * - `host-admission`: monotonic stopping state and typed refusal (51 code lines);
+ * - `host-admission-proxy`: public socket framing/admission, using Node builtins and the existing `jsonl`
+ *   leaf (188 code lines);
+ * - `host-lifecycle-ticker`: the extracted idle/owner ticker, with type-only imports (32 code lines).
+ * Together these are 9,930 source bytes, not new CLI/provider/core dependencies. The core allowlist and
+ * every forbidden-import assertion below remain unchanged; this is no allowance for further graph growth.
  */
-const SUPERVISOR_MODULE_CEILING = 52;
+const SUPERVISOR_MODULE_CEILING = 55;
 
 function loadedModules(entries: readonly { phase: string; url: string }[]): string[] {
 	const repo = `file://${repoRoot}`;
