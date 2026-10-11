@@ -12,6 +12,88 @@ Senpi supports subscription-based providers via OAuth and API key providers via 
 - [llama.cpp](#llamacpp)
 - [Custom Providers](#custom-providers)
 - [Resolution Order](#resolution-order)
+- [In-Turn Web Search](#in-turn-web-search)
+
+## In-Turn Web Search
+
+The session model uses its provider's server search before the standalone
+`web_search` tool. A successful native search does not issue an auxiliary
+request on another model. A search-specific request error or native result
+error records one `websearch-native-fallback` entry and enables the standalone
+tool for the remainder of that turn. Existing core retries own their retry
+when one is already pending; otherwise the extension continues once after
+the agent settles. User cancellation never schedules that continuation.
+A provider that recovers from a failed search and completes its answer does
+not receive a duplicate continuation. Sonar's inherent retrieval has no
+independent server-tool error contract; its model errors remain with core
+retry rather than receiving unsupported function-tool definitions.
+
+First-party Anthropic Messages supports `web_search_20250305`. An
+Anthropic-compatible proxy must explicitly declare both search and replay
+support. For example, merge this override into your existing provider entry,
+keeping its current credential configuration:
+
+```json
+{
+  "providers": {
+    "anthropic": {
+      "baseUrl": "https://your-proxy.example/anthropic",
+      "modelOverrides": {
+        "claude-opus-5-5": {
+          "compat": { "supportsWebSearch": true }
+        }
+      }
+    }
+  }
+}
+```
+
+This opt-in was verified with a real ccapi search and exact encrypted-result
+replay. Senpi does not infer support from a proxy hostname. Anthropic requires
+the assistant blocks and their `encrypted_content` to be replayed unchanged.
+
+| Route | In-turn tool / API | Capability and replay contract |
+| --- | --- | --- |
+| Anthropic API and Claude OAuth Messages | `web_search_20250305`, Messages | First-party default; compatible routes opt in with `compat.supportsWebSearch`. Preserve encrypted result blocks. |
+| OpenAI API | `web_search_preview`, Responses | First-party default; custom endpoints opt in with `compat.supportsWebSearchPreview`. The current `web_search` name is also supported. |
+| ChatGPT/Codex subscription | `web_search`, Codex Responses | First-party subscription default, except Spark; custom endpoints require opt-in. Real search and output-item replay verified. |
+| xAI | `web_search`, Responses | Built-in xAI models declare the capability explicitly. Chat Completions does not acquire this capability by sharing the provider id. |
+| Google Gemini / Vertex | `googleSearch`, GenerateContent | Gemini 2/3 try documented grounding first. A route rejecting the combination with coding function tools falls back once on that explicit mixed-tool error. Standard content and thought signatures retain conversation history. |
+| OpenRouter | `openrouter:web_search`, Chat Completions or Responses | Uses OpenRouter's own server tool, not the upstream vendor's wire shape. |
+| Moonshot PAYG | `$web_search` / `builtin_function`, Chat Completions | The server executes search; the client echoes its generated arguments as the tool result without an auxiliary search request. Official docs announce retirement on October 20, 2026. |
+| Kimi coding plan | Anthropic-compatible Messages | Coding-plan documentation does not specify the native search/replay contract. Explicit `compat.supportsWebSearch` opt-in remains available; PAYG documentation is not proof for this endpoint. |
+| DeepSeek | `web_search_20250305`, Anthropic-compatible Messages | Configure an Anthropic-format route and explicit replay-compatible opt-in. The built-in Chat Completions route retains standalone search. |
+| Z.AI PAYG chat | `web_search`, Chat Completions | Explicit `compat.supportsWebSearch: true` on that route; never enabled automatically on the coding-plan endpoint. |
+| GLM coding plan | Remote MCP `webSearchPrime` | This documented coding-plan tool is a separate service, not an in-request PAYG chat tool. HTTP acceptance alone does not prove search execution. |
+| Perplexity Sonar | Search inherent in its main completion | No extra search-model request. Official docs now recommend the Agent API and reformulate synchronous Sonar requests upstream. |
+| Exa, Tavily, Brave, Kagi, Serper, Serpdive, Keenable, Google CSE, SearXNG and result-page engines | Dedicated retrieval APIs/MCP | Standalone search fallbacks, not session-model server tools. |
+
+Official references:
+
+Custom xAI-compatible Responses entries declare both
+`supportsWebSearchPreview: true` and `webSearchToolType: "web_search"`.
+The type selection belongs to the model compatibility entry, not a provider-id
+or hostname guess. OpenAI-compatible endpoints that only support the legacy
+preview type can retain `webSearchToolType: "web_search_preview"`.
+
+- [Anthropic tool and replay](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool)
+- [OpenAI Responses search](https://developers.openai.com/api/docs/guides/tools-web-search)
+- [Codex cached/live search](https://developers.openai.com/codex/config-basic/)
+- [xAI Responses search](https://docs.x.ai/developers/tools/web-search)
+- [Google grounding](https://ai.google.dev/gemini-api/docs/google-search)
+- [Google SDK examples](https://github.com/googleapis/js-genai/blob/main/codegen_instructions.md)
+- [OpenRouter server search](https://openrouter.ai/docs/guides/features/server-tools/web-search)
+- [Moonshot built-in flow](https://platform.kimi.ai/docs/guide/use-web-search)
+- [Kimi coding endpoint](https://www.kimi.com/code/docs/en/third-party-tools/claude-code)
+- [DeepSeek Claude Code integration](https://api-docs.deepseek.com/quick_start/agent_integrations/claude_code)
+- [Z.AI PAYG chat search](https://docs.z.ai/guides/tools/web-search)
+- [GLM coding-plan search MCP](https://docs.z.ai/devpack/mcp/search-mcp-server)
+- [Perplexity migration and conversation contract](https://docs.perplexity.ai/docs/sonar/quickstart)
+
+The `nativeModel` setting and cheaper same-provider defaults apply only to
+auxiliary search on routes without an in-turn server tool. They cannot
+preempt server search. If an eligible route needs the standalone fallback,
+that retry uses the session model rather than swapping to a cheaper model.
 
 ## Subscriptions
 

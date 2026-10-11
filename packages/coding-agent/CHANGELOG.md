@@ -18,6 +18,8 @@
 
 ### Changed
 
+- Web search uses the active model's in-turn server tool first on supported routes, including ChatGPT subscription, xAI Responses, Google Gemini 2/3, OpenRouter and explicitly compatible Anthropic proxies. Search-specific failures enable one standalone fallback and record its reason; cheaper auxiliary models remain defaults only on routes without a server tool ([#3122](https://github.com/code-yeongyu/senpi/issues/3122), requested by @code-yeongyu).
+
 - The runtime snapshot a first launch builds copies the package as npm ships it (the `files` entries of `package.json`, plus `package.json`, README and LICENSE) instead of the whole package directory. Running from a repository checkout no longer copies its sources, tests and scripts: about 1,800 files instead of 11,000 for this package ([#3083](https://github.com/code-yeongyu/senpi/issues/3083)).
 
 - Runtime snapshots omit dependency development trees, root documentation notes and redundant TypeScript sources while retaining manifest entrypoints, source-only extensions, skills, native binaries and the complete dependency graph needed after an install update. A real Node/Bun CLI inventory covers help, external extension loading, a faux turn and codemode bootstrap ([#3083](https://github.com/code-yeongyu/senpi/issues/3083)).
