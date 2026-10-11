@@ -51,6 +51,9 @@ const OFFENDER_GUIDANCE = [
 describe("no raw TLS client calls in shipped source (CVE-2026-48618, Bun 1.4.2)", () => {
 	it("catches every direct client pattern, module form and binding, with line numbers", () => {
 		const samples = [
+			['module access: import from "node:tls"', 'import { connect } from "node:tls";'],
+			['module access: import from "node:https"', 'import { createServer } from "node:https";'],
+			['module access: import from "node:http2"', 'import { createServer } from "node:http2"; createServer(h);'],
 			["tls.connect(", 'await tls.connect({ host: hostname, port: 443 });'],
 			["https.request(", "https.request(url, onResponse);"],
 			["https.get(", "https.get(url, onResponse);"],
@@ -85,11 +88,8 @@ describe("no raw TLS client calls in shipped source (CVE-2026-48618, Bun 1.4.2)"
 
 	it("does not flag URL-parsed or inbound-server neighbors", () => {
 		const samples = [
-			'import { createServer } from "node:http2"; createServer(h);',
-			'import { createServer } from "node:https";',
 			'import { connect } from "node:tlsx"; connect(h);',
 			'import type { Agent } from "node:https";',
-			'import { connect } from "node:tls";',
 			"const response = await fetch(url);",
 			"const { hostname } = new URL(url);",
 			"tls.createServer(options, handler);",
@@ -192,8 +192,9 @@ describe("no raw TLS client calls in shipped source (CVE-2026-48618, Bun 1.4.2)"
 			);
 		});
 
-		it("pins a named-import binding by its call; import-pinned entries go stale", () => {
+		it("pins acquisitions and calls separately; an import pin cannot exempt calls", () => {
 			const entries = [
+				{ file: "pkg/b.mjs", call: 'import { get as httpsGet } from "node:https"', count: 1, reason: "supplies the pinned URL client" },
 				{ file: "pkg/b.mjs", call: 'httpsGet(url, { redaction: "none" })', count: 2, reason: "host is a literal" },
 			];
 			const exact = [
@@ -215,7 +216,7 @@ describe("no raw TLS client calls in shipped source (CVE-2026-48618, Bun 1.4.2)"
 			const importPinned = [
 				{ file: "pkg/b.mjs", call: 'import { get as httpsGet } from "node:https"', count: 1, reason: "x" },
 			];
-			assert.ok(evaluateShippedSource(exact, importPinned).stale.length > 0, "import-pinned entries must go stale");
+			assert.ok(evaluateShippedSource(exact, importPinned).offenders.length > 0, "pinning an acquisition does not exempt its calls");
 		});
 
 		it("still matches the pinned text when the call is reformatted", () => {

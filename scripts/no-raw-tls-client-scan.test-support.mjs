@@ -13,7 +13,7 @@ export function evaluateShippedSource(scan, allowlist) {
 	const matched = new Map(allowlist.map((entry) => [entry, 0]));
 	const scannedPaths = new Set(scan.map((item) => item.path));
 	for (const item of scan) {
-		for (const hit of findRawTlsClients(item.content)) {
+		for (const hit of findRawTlsClients(item.content, item.path)) {
 			const entry = allowlist.find((candidate) => candidate.file === item.path && candidate.call === hit.text);
 			if (entry) {
 				matched.set(entry, matched.get(entry) + 1);
@@ -30,7 +30,7 @@ export function evaluateShippedSource(scan, allowlist) {
 		} else if (seen !== entry.count) {
 			stale.push(entry.file + ": expected " + entry.call + " x" + entry.count + ", found x" + seen);
 		}
-		if (!entry.reason || !entry.reason.trim()) {
+		if (!entry.reason?.trim()) {
 			stale.push(entry.file + ": allowlist entry without a reason");
 		}
 	}
