@@ -615,11 +615,17 @@ which prints the bare socket path).
   attach-only even when its caller requested an upgrade: a host generation never starts its own successor.
   This is process-local state, not an environment marker, so a shell child remains free to run the explicit
   `senpi host handoff` command.
-- `status` prints `{ reachable, socket, pid, instanceId, generation, engineVersion, capabilities,
+- `status` prints `{ reachable, lifecycle, socket, pid, instanceId, generation, engineVersion, capabilities,
   launchProfile, runtimeBuildId, handover, sessions: { total, interactive, worker, retained, foreign_attached, foreign_retained },
   zombies, rss_mb, host_rss_mb, open_fds, memory_pressure, env_keys, generations, crashes, shard, session_rows,
   claims_live, claims }` and exits 3 when nothing answers - with the same
-  field set, so a caller parses one shape and branches on one boolean. `sessions` is what `list_sessions`
+  field set, so a caller parses one shape and branches on one boolean. The additive `lifecycle` field is
+  `"ready"` while an answering supervised host accepts opens, `"stopping"` while it shuts down or drains,
+  and `null` when nobody answers or the answering host does not advertise its lifecycle. An unserved
+  socket therefore includes both `"reachable": false` and `"lifecycle": null`; `null` is not `"ready"`.
+  `status --all` carries the same field and values on each endpoint row. While stopping, session listing
+  is not queried and its empty counts are unobserved, not proof that all sessions have finished.
+  Otherwise, `sessions` is what `list_sessions`
   reports under the same flag, so `worker` stays `0` without `--include-workers`; `foreign_*` is the same
   count from the point of view of a client holding none of those sessions itself. `rss_mb`, `open_fds` and
   `zombies` describe the daemon's whole process tree (supervisor, host, and every tool, kernel and server its
