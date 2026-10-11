@@ -31,6 +31,7 @@ describe("check-pr-changelog gate", () => {
 
 		// Then
 		assert.equal(result.pass, true);
+		assert.deepEqual(result.violations, []);
 	});
 
 	it("passes when runtime source changes carry the no-changelog label", () => {
@@ -131,6 +132,37 @@ describe("check-pr-changelog gate", () => {
 	});
 });
 
+it("returns every released-section, tracker, and Unreleased-removal violation", () => {
+	const paths = ["packages/ai/CHANGELOG.md", "packages/tui/CHANGELOG.md"];
+	const before = "## [Unreleased]\n- pending\n## [1.0.0]\n- first\n## [0.9.0]\n- second\n";
+	const after = before
+		.replace("- pending\n", "")
+		.replace("- first", "- changed first")
+		.replace("- second", "- changed second");
+	const result = checkPrChangelog({
+		changedFiles: paths,
+		labels: [],
+		changelogChanges: paths.map((path) => ({ path, before, after })),
+		trackerRemovals: [
+			{ path: "packages/ai/src/changes.md", removed: 6 },
+			{ path: "packages/tui/src/changes.md", removed: 2 },
+			{ path: "scripts/changes.md", removed: 0 },
+		],
+	});
+	assert.equal(result.pass, false);
+	assert.deepEqual(result.violations, [
+		"packages/ai/CHANGELOG.md:3: released section [1.0.0] changed",
+		"packages/ai/CHANGELOG.md:5: released section [0.9.0] changed",
+		"packages/tui/CHANGELOG.md:3: released section [1.0.0] changed",
+		"packages/tui/CHANGELOG.md:5: released section [0.9.0] changed",
+		"packages/ai/src/changes.md: removes 6 existing line(s); tracker entries may only be added",
+		"packages/tui/src/changes.md: removes 2 existing line(s); tracker entries may only be added",
+		"packages/ai/CHANGELOG.md: removes 1 existing [Unreleased] entry, first: - pending",
+		"packages/tui/CHANGELOG.md: removes 1 existing [Unreleased] entry, first: - pending",
+	]);
+	assert.equal(result.reason, result.violations.join("; "));
+});
+
 // A released history past spawnSync's default 1 MiB buffer must not fail every PR with ENOBUFS.
 it("gates a PR whose changelog has grown past one mebibyte", (t) => {
 	const root = mkdtempSync(join(tmpdir(), "changelog-gate-large-"));
@@ -207,17 +239,42 @@ it("fails a PR that removes existing change-log lines through the PR gate CLI", 
 	git("commit", "-qm", "base fixture");
 	const base = git("rev-parse", "HEAD");
 	const cli = fileURLToPath(new URL("./check-pr-changelog.mjs", import.meta.url));
-	const check = (file, text, expected, pattern) => {
+	const check = (file, text, expected, pattern, additionalChanges = []) => {
 		git("reset", "-q", "--soft", base);
 		for (const [path, original] of [[tracker, trackerOriginal], [changelog, changelogOriginal]]) writeFileSync(join(root, path), original);
 		if (text === null) rmSync(join(root, file));
 		else writeFileSync(join(root, file), text);
+		for (const [path, content] of additionalChanges) writeFileSync(join(root, path), content);
 		git("add", "-A");
 		git("commit", "--allow-empty", "-qm", "scenario fixture");
 		const result = spawnSync(process.execPath, [cli, "--base", base, "--labels", ""], { cwd: root, env, encoding: "utf8", timeout: 30_000 });
 		assert.equal(result.status, expected, result.stdout + result.stderr);
 		if (pattern) assert.match(result.stdout + result.stderr, pattern);
+		return result.stdout + result.stderr;
 	};
+	// #3055: a released-section edit must not mask a tracker removal in the same PR.
+	await t.test("released section edited and existing tracker lines removed", () => {
+		const output = check(
+			changelog,
+			changelogOriginal.replace("- published", "- misplaced PR fix\n- published"),
+			1,
+			/packages\/ai\/CHANGELOG\.md:\d+: released section \[2026\.9\.20\] changed/,
+			[[tracker, entry("New")]],
+		);
+		assert.match(
+			output,
+			/packages\/ai\/src\/changes\.md: removes \d+ existing line\(s\); tracker entries may only be added/,
+		);
+		assert.match(
+			output,
+			/^changelog-gate: FAIL - packages\/ai\/CHANGELOG\.md:\d+: released section \[2026\.9\.20\] changed\n/,
+		);
+		assert.match(output, /^ {2}violation: packages\/ai\/CHANGELOG\.md:\d+: released section \[2026\.9\.20\] changed$/m);
+		assert.match(
+			output,
+			/^ {2}violation: packages\/ai\/src\/changes\.md: removes \d+ existing line\(s\); tracker entries may only be added$/m,
+		);
+	});
 	await t.test("tracker rewritten to only its new entry", () =>
 		check(tracker, entry("New"), 1, /packages\/ai\/src\/changes\.md: removes \d+ existing line/));
 	await t.test("deleted tracker", () => check(tracker, null, 1, /packages\/ai\/src\/changes\.md: removes \d+ existing line/));
