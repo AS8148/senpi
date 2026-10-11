@@ -32,16 +32,18 @@ function isChangelogChange(path) {
 	return CHANGELOG_PATTERN.test(path);
 }
 
-function releasedChangelogViolations({ path, before, after }) {
-	const [previous, current] = [before, after].map((text) => {
-		const headings = [...text.matchAll(/^## \[([^\]]+)\].*$/gm)];
-		return headings.map((heading, index) => ({
-			name: heading[1],
-			line: text.slice(0, heading.index).split("\n").length,
-			text: text.slice(heading.index, headings[index + 1]?.index ?? text.length),
-			body: text.slice(heading.index + heading[0].length, headings[index + 1]?.index ?? text.length),
-		}));
-	});
+function changelogSections(text) {
+	const headings = [...text.matchAll(/^## \[([^\]]+)\].*$/gm)];
+	return headings.map((heading, index) => ({
+		name: heading[1],
+		line: text.slice(0, heading.index).split("\n").length,
+		text: text.slice(heading.index, headings[index + 1]?.index ?? text.length),
+		body: text.slice(heading.index + heading[0].length, headings[index + 1]?.index ?? text.length),
+	}));
+}
+
+function releasedChangelogViolations({ path, before, after, taggedSections = {} }) {
+	const [previous, current] = [before, after].map(changelogSections);
 	const violations = [];
 	for (let index = 1; index < current.length; index += 1) {
 		if (current[index].name === "Unreleased")
@@ -60,6 +62,7 @@ function releasedChangelogViolations({ path, before, after }) {
 		const oldSection = oldReleased[index];
 		const newSection = newReleased[index];
 		if (oldSection?.text === newSection?.text) continue;
+		if (newSection && oldSection?.name === newSection.name && newSection.text === taggedSections[newSection.name]) continue;
 		const oldLines = oldSection?.text.split("\n") ?? [];
 		const newLines = newSection?.text.split("\n") ?? [];
 		let offset = 0;
@@ -229,11 +232,26 @@ function collectPrFacts(base) {
 		.filter((path) => !renames.some((rename) => rename.from === path && isChangelogChange(rename.to)))
 		.map((path) => {
 			const oldPath = renames.find((rename) => rename.to === path)?.from ?? path;
-			return {
-				path,
-				before: baseFiles.has(oldPath) ? runGit(["show", `${mergeBase}:${oldPath}`], `reading base ${oldPath}`) : "",
-				after: headFiles.has(path) ? runGit(["show", `HEAD:${path}`], `reading HEAD ${path}`) : "",
-			};
+			const before = baseFiles.has(oldPath) ? runGit(["show", `${mergeBase}:${oldPath}`], `reading base ${oldPath}`) : "";
+			const after = headFiles.has(path) ? runGit(["show", `HEAD:${path}`], `reading HEAD ${path}`) : "";
+			const previous = changelogSections(before);
+			const taggedSections = Object.create(null);
+			for (const section of changelogSections(after)) {
+				if (section.name === "Unreleased" || previous.find((old) => old.name === section.name)?.text === section.text) continue;
+				// Release names are plain CalVer; anything else (revision syntax such as `~1`) gets no exemption.
+				if (!/^[0-9][0-9A-Za-z.-]*$/.test(section.name)) continue;
+				const tag = `refs/tags/v${section.name}`;
+				let tagged;
+				try {
+					runGit(["show-ref", "--verify", "--quiet", tag], `verifying ${tag}`);
+					tagged = runGit(["show", `${tag}:${path}`], `reading tagged ${path}`);
+				} catch {
+					continue;
+				}
+				const taggedSection = changelogSections(tagged).find((candidate) => candidate.name === section.name);
+				if (taggedSection) taggedSections[section.name] = taggedSection.text;
+			}
+			return { path, before, after, taggedSections };
 		});
 	const trackerRemovals = changedFiles
 		.filter((path) => TRACKER_PATTERN.test(path) && baseFiles.has(path))
