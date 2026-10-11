@@ -60,16 +60,17 @@ describe("host session references across a park", () => {
 				return { handle: data.sessionId, path: data.state.sessionFile };
 			};
 			const first = await open("open-1");
-			await runHostSessionRequest({ action: "prompt", target, ref: first.handle, text: "first transcript" });
+			// Drive the first turn on this one connection: its close must release the ONLY attachment to be final.
+			const settled = peer.waitFor((record) => record.type === "agent_settled" && record.sessionId === first.handle);
 			expect(
-				await runHostSessionRequest({
-					action: "wait",
-					target,
-					ref: first.handle,
-					until: "done",
-					timeoutMs: 20_000,
+				await peer.request({
+					id: "prompt-1",
+					type: "prompt",
+					sessionId: first.handle,
+					message: "first transcript",
 				}),
-			).toMatchObject({ exitCode: 0 });
+			).toMatchObject({ success: true });
+			await settled;
 			const closed = peer.waitFor((record) => record.type === "session_closed" && record.sessionId === first.handle);
 			expect(await peer.request({ id: "close-1", type: "close_session", sessionId: first.handle })).toMatchObject({
 				success: true,
