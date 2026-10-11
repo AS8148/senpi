@@ -6,6 +6,8 @@
 
 ### Added
 
+- Assistant messages can carry a redaction-safe `errorCause` for usage limits, preserving account or model scope when the session replaces provider text with recovery advice ([#3131](https://github.com/code-yeongyu/senpi/issues/3131)).
+
 ### Changed
 
 ### Fixed

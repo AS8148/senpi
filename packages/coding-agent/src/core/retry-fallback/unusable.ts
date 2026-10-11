@@ -43,8 +43,10 @@ export class UnusableEntries {
 	}
 
 	clear(model: Model<Api>): void {
-		// Selecting another model does not refill its provider's account.
+		// A deliberate model selection allows the user to probe after reauth/reset.
 		this.cooldowns.clear(entryKey(model));
+		this.cooldowns.clear(accountKey(model.provider));
+		this.accountErrors.delete(model.provider);
 	}
 }
 

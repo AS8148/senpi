@@ -1,3 +1,21 @@
+## 2026-10-11 - RPC history uses the usage-limit presentation projection (senpi#3131 review)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `get_messages` projects assistant usage-limit advice and structured cause exactly as live session events do, without mutating diagnostic-bearing engine messages.
+
+### Why
+
+Reloading history restored raw 429 JSON after the live stream had displayed limit advice.
+
+### Why an extension could not handle it
+
+`get_messages` is a host transport response, not an extension event.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `get_messages`.
+
 ## 2026-10-11 - Typed error codes for `set_model`, `get_entries` and a busy `prompt` (senpi#3073 review)
 
 ### What changed

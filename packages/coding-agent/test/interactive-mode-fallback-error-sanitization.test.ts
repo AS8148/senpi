@@ -33,6 +33,37 @@ function stripSgr(value: string): string {
 }
 
 describe("InteractiveMode fallback exhaustion errors", () => {
+	it("does not label a fail-fast account refusal as zero failed retry attempts", async () => {
+		const harness = await createHarness({ settings: { retry: { enabled: true } } });
+		try {
+			harness.setResponses([
+				fauxAssistantMessage("", {
+					stopReason: "error",
+					errorMessage: '429 {"error":{"message":"You have hit your session limit"}}',
+				}),
+			]);
+			await harness.session.prompt("hit the account limit");
+			const ended = harness.eventsOfType("auto_retry_end").at(-1);
+			if (!ended) throw new Error("missing terminal retry fixture");
+			expect(ended.attempt).toBe(0);
+			const fixture = {
+				isInitialized: true,
+				footer: { invalidate: vi.fn() },
+				fallbackAppliedBeforeRetryStart: false,
+				clearStatusIndicator: vi.fn(),
+				providerErrors: { clear: vi.fn() },
+				showError: vi.fn(),
+				ui: { requestRender: vi.fn() },
+			};
+			const handleEvent = Reflect.get(InteractiveMode.prototype, "handleEvent");
+			await Reflect.apply(handleEvent, fixture, [ended]);
+			expect(fixture.clearStatusIndicator).toHaveBeenCalledWith("retry");
+			expect(fixture.showError).not.toHaveBeenCalled();
+		} finally {
+			harness.cleanup();
+		}
+	});
+
 	it("renders a provider-derived exhausted fallback error safely without mutating the raw event", async () => {
 		initTheme("dark");
 		const rawProviderError =

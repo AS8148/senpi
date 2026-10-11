@@ -1,3 +1,21 @@
+## 2026-10-11 - Usage-limit advice retains structured cause (senpi#3131 review)
+
+### What changed
+
+- `packages/ai/src/types.ts`: assistant messages have an optional redaction-safe `errorCause` identifying account- or model-scoped usage exhaustion independently of presentation text.
+
+### Why
+
+Recovery advice includes `/model`, so parsing the rewritten sentence loses the original account scope.
+
+### Why an extension could not handle it
+
+The shared assistant message is the transport contract consumed by session events and RPC history.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/types.ts`: optional assistant failure metadata.
+
 ## 2026-10-10 - allowed_tools only on native OpenAI API hosts (senpi#3080)
 
 ### What changed

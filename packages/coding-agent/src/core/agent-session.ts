@@ -305,7 +305,7 @@ import {
 } from "./retry-fallback/hint-policy.ts";
 import { createFallbackLogger } from "./retry-fallback/log.ts";
 import { ProbeBackScheduler } from "./retry-fallback/probe-scheduler.ts";
-import { AccountUsageLimitError, usageLimitScope } from "./retry-fallback/usage-limit.ts";
+import { AccountUsageLimitError, describeUsageLimitMessage, usageLimitScope } from "./retry-fallback/usage-limit.ts";
 import { validateFallbackChains } from "./retry-fallback/validate.ts";
 import { isSessionBusySnapshot, type SessionActivitySnapshot, WakeSourceTracker } from "./session-activity.ts";
 import { type ControlEndpointHost, createSessionControlActions } from "./session-control-actions.ts";
@@ -1615,11 +1615,17 @@ export class AgentSession {
 		const pending = this._pendingModelSwitch?.model;
 		if (pending && usable(pending)) return pending;
 		if (configured && usable(configured)) return configured;
-		const current = this.model;
-		if (current && usable(current)) return current;
+		const requiredContextWindow =
+			estimateMessagesTokens(filterContextExcludedMessages(this._runtimeMessages())) +
+			this._getCompactionSettings().reserveTokens;
 		const available = this._modelRuntime
 			.getModels()
-			.find((model) => usable(model) && this._modelRuntime.hasConfiguredAuth(model.provider));
+			.find(
+				(model) =>
+					usable(model) &&
+					model.contextWindow >= requiredContextWindow &&
+					this._modelRuntime.hasConfiguredAuth(model.provider),
+			);
 		if (available) return available;
 		throw new AccountUsageLimitError(sessionModel.provider, this._retryFallback.accountError(sessionModel.provider));
 	}
@@ -2324,12 +2330,7 @@ export class AgentSession {
 			event = {
 				...event,
 				messages: event.messages.map((message) =>
-					message.role === "assistant" && usageLimitScope(message.errorMessage) === "account"
-						? {
-								...message,
-								errorMessage: new AccountUsageLimitError(message.provider, message.errorMessage).message,
-							}
-						: message,
+					message.role === "assistant" ? describeUsageLimitMessage(message) : message,
 				),
 			};
 		}
@@ -2337,16 +2338,9 @@ export class AgentSession {
 		// but publish only the existing user-facing description to clients.
 		if (
 			(event.type === "message_end" || event.type === "message_start" || event.type === "message_update") &&
-			event.message.role === "assistant" &&
-			usageLimitScope(event.message.errorMessage) === "account"
+			event.message.role === "assistant"
 		) {
-			const message = {
-				...event.message,
-				errorMessage: describeProviderFailureForUser(event.message.errorMessage, {
-					model: `${event.message.provider}/${event.message.model}`,
-					usageLimit: "account",
-				}),
-			};
+			const message = describeUsageLimitMessage(event.message);
 			event =
 				event.type === "message_update"
 					? {
@@ -2355,6 +2349,7 @@ export class AgentSession {
 							assistantMessageEvent: {
 								...event.assistantMessageEvent,
 								...("error" in event.assistantMessageEvent ? { error: message } : {}),
+								...("partial" in event.assistantMessageEvent ? { partial: message } : {}),
 							},
 						}
 					: { ...event, message };
@@ -4892,7 +4887,8 @@ export class AgentSession {
 				if (model && !this._pendingModelSwitch && this._retryFallback.isProviderSpent(model.provider)) {
 					this._retryFallback.resetTurn();
 					const errorMessage = this._retryFallback.accountError(model.provider);
-					if (!(await this._retryFallback.tryFallback("transient", { errorMessage }))) {
+					// Routing around a remembered failure did not observe another provider failure.
+					if (!(await this._retryFallback.tryFallback("transient", { errorMessage }, false))) {
 						throw new AccountUsageLimitError(model.provider, errorMessage);
 					}
 				}
@@ -9254,7 +9250,10 @@ export class AgentSession {
 				},
 				getContextUsage: () => this.getContextUsage(),
 				getCompactionSettings: () => this._getCompactionSettings(),
-				getCompactionModel: () => (this.model ? this._resolveCompactionModel(this.model) : undefined),
+				getCompactionModel: () =>
+					this.model && this._retryFallback.isProviderSpent(this.model.provider)
+						? this._resolveCompactionModel(this.model)
+						: this.model,
 				getPromptCacheSafeWaitSeconds: () => this.resolvePromptCacheSafeWaitSeconds(),
 				getPromptCacheGoalBackstopMaxSeconds: () => this.settingsManager.getPromptCacheGoalBackstopMaxSeconds(),
 				getPromptCacheKeepAliveSettings: () => this.settingsManager.getPromptCacheKeepAliveSettings(),

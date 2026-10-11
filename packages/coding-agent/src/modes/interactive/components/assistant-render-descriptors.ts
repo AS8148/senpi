@@ -162,10 +162,13 @@ export function createAssistantRenderDescriptors(
 			// wording so the retry engine can read it; the transcript gets the
 			// plain-language version, without the recovery advice a retry still in
 			// flight would contradict, and never the internal replay marker.
-			const described = describeProviderFailureForUser(message.errorMessage, {
-				model: `${message.provider}/${message.model}`,
-				usageLimit: usageLimitScope(message.errorMessage),
-			});
+			const described =
+				message.errorCause?.type === "usage_limit" && message.errorCause.scope === "account"
+					? message.errorMessage
+					: describeProviderFailureForUser(message.errorMessage, {
+							model: `${message.provider}/${message.model}`,
+							usageLimit: usageLimitScope(message),
+						});
 			addError(
 				described ?? `Error: ${stripTurnRetrySuppressionPrefix(message.errorMessage ?? "") || "Unknown error"}`,
 			);

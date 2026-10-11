@@ -1,4 +1,6 @@
+import { MAX_SLOT_BLOCK_MS } from "@earendil-works/pi-ai/auth/pool/failover";
 import { stripProviderRequestIds } from "@earendil-works/pi-ai/utils/retry";
+import { usageLimitResetMs } from "../credential-pool/reset-time.ts";
 
 /**
  * Runtime-only selector suppression. A SelectorCooldowns instance belongs to one
@@ -36,16 +38,24 @@ export class SelectorCooldowns {
 	}
 
 	private durationFor({ retryAfterMs, errorMessage }: { retryAfterMs?: number; errorMessage?: string }): number {
-		if (retryAfterMs !== undefined && Number.isFinite(retryAfterMs) && retryAfterMs > 0) {
-			return retryAfterMs;
-		}
-
+		// Reset hints are wall-clock times; the stored deadline remains monotonic.
+		const resetMs = errorMessage === undefined ? undefined : usageLimitResetMs(errorMessage, Date.now());
 		const message = stripProviderRequestIds(errorMessage ?? "").toLowerCase();
-		if (/usage[- ]limit|quota|insufficient_quota|billing|credits[-_ ]required|credits are required/.test(message))
-			return 30 * 60_000;
-		if (/rate[ -]?limit|429|too many requests/.test(message)) return 30_000;
-		if (/overloaded|capacity/.test(message)) return 45_000 + this.capacityJitterMs();
-		if (/5xx|\b5\d\d\b|server|internal error/.test(message)) return 20_000;
+		const defaultMs =
+			/usage[- ]limit|quota|insufficient_quota|billing|credits[-_ ]required|credits are required/.test(message)
+				? 30 * 60_000
+				: /rate[ -]?limit|429|too many requests/.test(message)
+					? 30_000
+					: /overloaded|capacity/.test(message)
+						? 45_000 + this.capacityJitterMs()
+						: /5xx|\b5\d\d\b|server|internal error/.test(message)
+							? 20_000
+							: undefined;
+		const retryMs =
+			retryAfterMs !== undefined && Number.isFinite(retryAfterMs) && retryAfterMs > 0 ? retryAfterMs : undefined;
+		const hintedMs = Math.max(resetMs ?? 0, retryMs ?? 0);
+		if (hintedMs > 0) return Math.min(MAX_SLOT_BLOCK_MS, hintedMs);
+		if (defaultMs !== undefined) return defaultMs;
 		// A reason-less forbidden rejection is a per-request blip on a healthy credential (senpi#2376).
 		if (
 			/"type"\s*:\s*"forbidden"[^}]*request not allowed|request not allowed[^}]*"type"\s*:\s*"forbidden"/.test(

@@ -2,9 +2,12 @@ import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentSessionRuntime } from "../../../src/core/agent-session-runtime.ts";
 import compactionExtension from "../../../src/core/extensions/builtin/compaction/index.ts";
+import { describeUsageLimitMessage, usageLimitScope } from "../../../src/core/retry-fallback/usage-limit.ts";
 import { createAssistantRenderDescriptors } from "../../../src/modes/interactive/components/assistant-render-descriptors.ts";
 import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
 import { runPrintMode } from "../../../src/modes/print-mode.ts";
+import { createRpcConnectionHandler } from "../../../src/modes/rpc/connection-handler.ts";
+import { registerFallbackModels } from "../fallback-provider-fixture.ts";
 import { createHarness, type Harness } from "../harness.ts";
 
 const accountLimit =
@@ -201,6 +204,141 @@ describe("#3131 spent account", () => {
 		expect(harness.eventsOfType("retry_fallback_applied")).toMatchObject([{ limit: "model" }]);
 	});
 
+	it("answers on a configured spare account while skipping a sibling on the spent provider", async () => {
+		const harness = await createHarness({
+			models: [{ id: "primary" }, { id: "sibling" }, { id: "spare" }],
+			settings: {
+				compaction: { enabled: false },
+				retry: { enabled: true, fallbackChains: { "faux/primary": ["faux/sibling", "spare/spare"] } },
+			},
+		});
+		harnesses.push(harness);
+		registerFallbackModels(harness, "spare", ["spare"]);
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: accountLimit }),
+			fauxAssistantMessage("answered by spare"),
+		]);
+		await harness.session.prompt("use my configured spare");
+		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["primary", "spare"]);
+		expect(harness.session.model?.provider).toBe("spare");
+		expect(harness.session.messages.at(-1)).toMatchObject({
+			content: [expect.objectContaining({ text: "answered by spare" })],
+		});
+	});
+
+	it.each([
+		{ error: '429 {"error":{"message":"You have hit your session limit"}}', windowMs: 30_000 },
+		{ error: "usage_limit_reached: the usage limit has been reached", windowMs: 30 * 60_000 },
+		{
+			error: `429 {"error":{"type":"usage_limit_reached","resets_at":${Date.UTC(2026, 9, 11, 0, 1) / 1000}}}`,
+			windowMs: 60_000,
+		},
+	])("does not renew a spent window on local refusals ($windowMs ms)", async ({ error, windowMs }) => {
+		let now = 0;
+		const epoch = Date.UTC(2026, 9, 11);
+		const harness = await createHarness({
+			fallbackNow: () => now,
+			settings: { retry: { enabled: true }, compaction: { enabled: false } },
+		});
+		harnesses.push(harness);
+		vi.useFakeTimers({ toFake: ["Date"] });
+		vi.setSystemTime(epoch);
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: error }),
+			fauxAssistantMessage("account reset"),
+		]);
+		await harness.session.prompt("first attempt");
+		for (const elapsed of [windowMs / 2, windowMs - 1]) {
+			now = elapsed;
+			vi.setSystemTime(epoch + elapsed);
+			await expect(harness.session.prompt("still waiting")).rejects.toThrow();
+			expect(harness.faux.getCallLog()).toHaveLength(1);
+		}
+		now = windowMs + 1;
+		vi.setSystemTime(epoch + now);
+		await harness.session.prompt("after the original reset");
+		expect(harness.faux.getCallLog()).toHaveLength(2);
+		expect(harness.session.messages.at(-1)).toMatchObject({
+			content: [expect.objectContaining({ text: "account reset" })],
+		});
+	});
+
+	it("allows a deliberate manual model selection to probe an account again", async () => {
+		const harness = await createHarness({
+			models: [{ id: "primary" }, { id: "sibling" }],
+			settings: { retry: { enabled: true }, compaction: { enabled: false } },
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: accountLimit }),
+			fauxAssistantMessage("manual probe answered"),
+		]);
+		await harness.session.prompt("spend the account");
+		const sibling = harness.getModel("sibling");
+		if (!sibling) throw new Error("missing sibling fixture");
+		await harness.session.setModel(sibling);
+		await harness.session.prompt("probe after my explicit switch");
+		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["primary", "sibling"]);
+	});
+
+	it("keeps builtin compaction on a healthy session model despite a core compaction override", async () => {
+		const harness = await createHarness({
+			models: [{ id: "primary" }, { id: "cheap" }],
+			settings: { compaction: { keepRecentTokens: 1, model: "other/cheap" } },
+			extensionFactories: [compactionExtension],
+		});
+		harnesses.push(harness);
+		registerFallbackModels(harness, "other", ["cheap"]);
+		for (const text of ["older turn", "recent turn"]) {
+			harness.sessionManager.appendMessage({ role: "user", content: text.repeat(100), timestamp: 1 });
+			harness.sessionManager.appendMessage(fauxAssistantMessage("prior answer".repeat(100)));
+		}
+		harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+		const requests: string[] = [];
+		harness.setResponses([
+			(_context, _options, _state, model) => {
+				requests.push(`${model.provider}/${model.id}`);
+				return fauxAssistantMessage("healthy summary");
+			},
+		]);
+		await harness.session.compact();
+		expect(requests).toEqual(["faux/primary"]);
+	});
+
+	it("skips an authenticated summary alternate whose context window cannot fit the input", async () => {
+		const harness = await createHarness({
+			models: [
+				{ id: "primary", contextWindow: 1_000_000 },
+				{ id: "tiny", contextWindow: 1_000, maxTokens: 100 },
+				{ id: "roomy", contextWindow: 128_000 },
+			],
+			settings: { compaction: { keepRecentTokens: 1 }, retry: { enabled: true } },
+		});
+		harnesses.push(harness);
+		registerFallbackModels(harness, "tiny", ["tiny"]);
+		registerFallbackModels(harness, "roomy", ["roomy"]);
+		harness.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: accountLimit })]);
+		await harness.session.prompt("spend the account");
+		for (const text of ["older turn", "recent turn"]) {
+			harness.sessionManager.appendMessage({ role: "user", content: text.repeat(1000), timestamp: 1 });
+			harness.sessionManager.appendMessage(fauxAssistantMessage("prior answer".repeat(100)));
+		}
+		harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+		const requests: string[] = [];
+		harness.setResponses([
+			(_context, _options, _state, model) => {
+				requests.push(`${model.provider}/${model.id}`);
+				return fauxAssistantMessage("roomy summary");
+			},
+			(_context, _options, _state, model) => {
+				requests.push(`${model.provider}/${model.id}`);
+				return fauxAssistantMessage("roomy turn prefix");
+			},
+		]);
+		await harness.session.compact();
+		expect(requests).toEqual(["roomy/roomy", "roomy/roomy"]);
+	});
+
 	it("refuses another prompt on a remembered spent account before making a request", async () => {
 		// given
 		const harness = await createHarness({ settings: { retry: { enabled: true } }, fallbackNow: () => 0 });
@@ -214,6 +352,25 @@ describe("#3131 spent account", () => {
 		);
 		// then
 		expect(harness.faux.getCallLog()).toHaveLength(callsBefore);
+	});
+
+	it("keeps model-scoped limit presentation unchanged between live and restored messages", () => {
+		initTheme("dark");
+		const raw = fauxAssistantMessage("", {
+			stopReason: "error",
+			errorMessage: "You've reached your Fable limit. Switch to another model.",
+		});
+		const published = describeUsageLimitMessage(raw);
+		expect(published.errorCause).toEqual({ type: "usage_limit", scope: "model" });
+		const renderOptions = {
+			expanded: false,
+			hiddenThinkingLabel: "",
+			hideThinkingBlock: false,
+			hasToolCalls: false,
+		};
+		expect(createAssistantRenderDescriptors(published, renderOptions)).toEqual(
+			createAssistantRenderDescriptors(raw, renderOptions),
+		);
 	});
 
 	it("prints and renders the limit advice without exposing raw provider JSON", async () => {
@@ -265,5 +422,38 @@ describe("#3131 spent account", () => {
 			"The faux account usage limit has been reached (resets 11pm).",
 		);
 		expect(JSON.stringify(restored)).not.toContain("429");
+		const published = harness.eventsOfType("message_end").find((event) => event.message.role === "assistant");
+		if (published?.message.role !== "assistant") throw new Error("missing published assistant fixture");
+		expect(usageLimitScope(published.message)).toBe("account");
+		const live = createAssistantRenderDescriptors(published.message, {
+			expanded: false,
+			hiddenThinkingLabel: "",
+			hideThinkingBlock: false,
+			hasToolCalls: false,
+		});
+		expect(live).toEqual(restored);
+		const records: Record<string, unknown>[] = [];
+		const handler = createRpcConnectionHandler(runtime, {
+			writeRaw(chunk) {
+				for (const line of chunk.split("\n").filter(Boolean)) records.push(JSON.parse(line));
+			},
+			waitForBackpressure: async () => {},
+		});
+		try {
+			await handler.ready;
+			await handler.handleInputLine(JSON.stringify({ type: "get_messages", id: "history" }));
+			const history = records.find((record) => record.id === "history");
+			expect(history).toMatchObject({
+				success: true,
+				data: {
+					messages: expect.arrayContaining([
+						expect.objectContaining({ errorCause: { type: "usage_limit", scope: "account" } }),
+					]),
+				},
+			});
+			expect(JSON.stringify(history)).not.toMatch(/429|rate_limit_error/);
+		} finally {
+			await handler.dispose();
+		}
 	});
 });

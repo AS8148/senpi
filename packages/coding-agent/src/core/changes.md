@@ -1,3 +1,23 @@
+## 2026-10-11 - Spent windows expire without local renewal (senpi#3131 review)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the pre-prompt gate routes remembered failures without recording another provider failure. Builtin `getCompactionModel` retains the current healthy model; spent-account resolution tries the held target, configured override, then an authenticated alternate whose context window fits the active transcript and reserved output.
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`, `cooldown.ts`, and `unusable.ts`: local refusals do not refresh cooldowns or circuits; provider reset hints and retry-after durations use the existing bounded cooldown cap; explicit manual selections clear account suppression for a probe.
+- `packages/coding-agent/src/core/retry-fallback/usage-limit.ts`: user-facing assistant projections retain structured usage scope and reuse the shared formatter idempotently.
+
+### Why
+
+Repeated refused prompts kept accounts spent past reset, manual recovery was removed, and formatted advice was being reclassified as a model limit.
+
+### Why an extension could not handle it
+
+Prompt admission, suppression clocks, summary routing, and transport message projection are session-owned.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: prompt admission, event projection, and summary model resolution.
+
 ## 2026-10-11 - A busy prompt throws a typed AgentBusyError (senpi#3073 review)
 
 ### What changed

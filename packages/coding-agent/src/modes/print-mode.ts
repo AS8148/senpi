@@ -194,10 +194,13 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 				if (assistantMsg.stopReason === "error" || assistantMsg.stopReason === "aborted") {
 					// A provider-stream stall or transport drop keeps the classifier wording
 					// on the message; stderr gets the plain-language version instead.
-					const described = describeProviderFailureForUser(assistantMsg.errorMessage, {
-						model: `${assistantMsg.provider}/${assistantMsg.model}`,
-						usageLimit: usageLimitScope(assistantMsg.errorMessage),
-					});
+					const described =
+						assistantMsg.errorCause?.type === "usage_limit" && assistantMsg.errorCause.scope === "account"
+							? assistantMsg.errorMessage
+							: describeProviderFailureForUser(assistantMsg.errorMessage, {
+									model: `${assistantMsg.provider}/${assistantMsg.model}`,
+									usageLimit: usageLimitScope(assistantMsg),
+								});
 					console.error(
 						described ??
 							(stripTurnRetrySuppressionPrefix(assistantMsg.errorMessage ?? "") ||

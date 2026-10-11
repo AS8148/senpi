@@ -55,6 +55,7 @@ import type {
 	ExtensionWidgetOptions,
 	WorkingIndicatorOptions,
 } from "../../core/extensions/index.ts";
+import { describeUsageLimitMessage } from "../../core/retry-fallback/usage-limit.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
 import { DURABLE_CLIENT_MESSAGE_ID_CAPABILITY } from "./client-admission-record.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
@@ -1579,7 +1580,11 @@ export function createRpcConnectionHandler(
 			// =================================================================
 
 			case "get_messages": {
-				return success(id, "get_messages", { messages: session.messages });
+				return success(id, "get_messages", {
+					messages: session.messages.map((message) =>
+						message.role === "assistant" ? describeUsageLimitMessage(message) : message,
+					),
+				});
 			}
 
 			// On-demand fetch of a media block a `media_placeholders` client received as

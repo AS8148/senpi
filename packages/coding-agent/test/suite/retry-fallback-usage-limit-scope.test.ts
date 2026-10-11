@@ -1,6 +1,7 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
+import { MAX_SLOT_BLOCK_MS } from "@earendil-works/pi-ai/auth/pool/failover";
 import { getModel } from "@earendil-works/pi-ai/compat";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { RetryFallbackController, type RetryFallbackControllerDeps } from "../../src/core/retry-fallback/controller.ts";
 import { SelectorCooldowns } from "../../src/core/retry-fallback/cooldown.ts";
 
@@ -13,7 +14,7 @@ const opus = model("anthropic-subscription", "claude-opus-5-5");
 const kimi = model("kimi-coding", "kimi-k3");
 const models = [fable, opus, kimi];
 
-function createController(chain: readonly string[]) {
+function createController(chain: readonly string[], now: () => number = () => 0) {
 	let current: { model: Model<Api> } = { model: fable };
 	const events: unknown[] = [];
 	const deps: RetryFallbackControllerDeps = {
@@ -22,7 +23,7 @@ function createController(chain: readonly string[]) {
 			find: (provider, id) => models.find((entry) => entry.provider === provider && entry.id === id),
 			getAll: () => models,
 		},
-		cooldowns: new SelectorCooldowns(() => 0),
+		cooldowns: new SelectorCooldowns(now),
 		logger: { debug: () => {}, info: () => {}, warn: () => {} },
 		switchModel: async (next) => {
 			current = { model: next };
@@ -130,13 +131,87 @@ describe("retry fallback usage-limit scope", () => {
 		]);
 	});
 
-	it("does not clear an account limit when a user selects a sibling model", async () => {
+	it("clears the spent account for a deliberate manual model probe", async () => {
 		// given
 		const { controller } = createController(fullChain);
 		await controller.tryFallback("transient", { errorMessage: "You've hit your session limit" });
 		// when
 		controller.clearForManualModelChange(opus);
 		// then
-		expect(controller.isProviderSpent(opus.provider)).toBe(true);
+		expect(controller.isProviderSpent(opus.provider)).toBe(false);
+	});
+
+	it("does not shorten or renew a remembered retry-after deadline when routing local refusals", async () => {
+		let now = 0;
+		const { controller } = createController(["anthropic-subscription/claude-opus-5-5"], () => now);
+		const failure = {
+			errorMessage: '429 {"type":"usage_limit_reached","message":"The usage limit has been reached"}',
+			retryAfterMs: 90_000,
+		};
+		controller.noteHealthFailure(fable, undefined, failure);
+		for (const elapsed of [30_000, 60_000, 89_999]) {
+			now = elapsed;
+			expect(await controller.tryFallback("transient", failure, false)).toBe(false);
+		}
+		now = 90_001;
+		expect(controller.isProviderSpent(fable.provider)).toBe(false);
+	});
+
+	it("caps an oversized provider retry-after hint", () => {
+		let now = 0;
+		const { controller } = createController(fullChain, () => now);
+		controller.noteHealthFailure(fable, undefined, {
+			errorMessage: "usage_limit_reached: the usage limit has been reached",
+			retryAfterMs: Number.MAX_SAFE_INTEGER,
+		});
+		expect(controller.isProviderSpent(fable.provider)).toBe(true);
+		now = MAX_SLOT_BLOCK_MS + 1;
+		expect(controller.isProviderSpent(fable.provider)).toBe(false);
+	});
+
+	it("does not forget a fresh account failure for zero or expired hints", () => {
+		const epoch = Date.UTC(2026, 9, 11);
+		const wallClock = vi.spyOn(Date, "now").mockReturnValue(epoch);
+		try {
+			const { controller } = createController(fullChain);
+			controller.noteHealthFailure(fable, undefined, {
+				errorMessage: JSON.stringify({
+					error: {
+						type: "usage_limit_reached",
+						message: "The usage limit has been reached",
+						resets_at: epoch / 1000 - 1,
+					},
+				}),
+				retryAfterMs: 0,
+			});
+			expect(controller.isProviderSpent(fable.provider)).toBe(true);
+		} finally {
+			wallClock.mockRestore();
+		}
+	});
+
+	it("honors a later account reset even when retry-after is shorter", () => {
+		const epoch = Date.UTC(2026, 9, 11);
+		const wallClock = vi.spyOn(Date, "now").mockReturnValue(epoch);
+		let now = 0;
+		try {
+			const { controller } = createController(fullChain, () => now);
+			controller.noteHealthFailure(fable, undefined, {
+				errorMessage: JSON.stringify({
+					error: {
+						type: "usage_limit_reached",
+						message: "The usage limit has been reached",
+						resets_at: epoch / 1000 + 60,
+					},
+				}),
+				retryAfterMs: 30_000,
+			});
+			now = 31_000;
+			expect(controller.isProviderSpent(fable.provider)).toBe(true);
+			now = 60_001;
+			expect(controller.isProviderSpent(fable.provider)).toBe(false);
+		} finally {
+			wallClock.mockRestore();
+		}
 	});
 });
