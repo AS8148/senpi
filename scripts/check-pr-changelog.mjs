@@ -235,13 +235,16 @@ function collectPrFacts(base) {
 			const taggedSections = Object.create(null);
 			for (const section of changelogSections(after)) {
 				if (section.name === "Unreleased" || previous.find((old) => old.name === section.name)?.text === section.text) continue;
+				// Release names are plain CalVer; anything else (revision syntax such as `~1`) gets no exemption.
+				if (!/^[0-9][0-9A-Za-z.-]*$/.test(section.name)) continue;
 				const tag = `refs/tags/v${section.name}`;
+				let tagged;
 				try {
-					runGit(["rev-parse", "-q", "--verify", tag], `verifying ${tag}`);
+					runGit(["show-ref", "--verify", "--quiet", tag], `verifying ${tag}`);
+					tagged = runGit(["show", `${tag}:${path}`], `reading tagged ${path}`);
 				} catch {
 					continue;
 				}
-				const tagged = runGit(["show", `${tag}:${path}`], `reading tagged ${path}`);
 				const taggedSection = changelogSections(tagged).find((candidate) => candidate.name === section.name);
 				if (taggedSection) taggedSections[section.name] = taggedSection.text;
 			}
