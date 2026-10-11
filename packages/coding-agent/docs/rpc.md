@@ -833,11 +833,15 @@ the line.
 | `3` | refused: `{ action: "refuse", reason, detail, data? }` - every host error code (`unknown_session`, `host_draining`, `session_held` with `holders`, `model_not_found`, ...; the host's `streaming` reads `busy` and `not_found` reads `unknown_cursor`) plus the CLI's own `ambiguous_session` (with `candidates`), `host_unavailable` (no host answers the socket and the verb is not `open`) and `unsupported_endpoint_kind` (the socket is a terminal's control endpoint, refused before any connection) |
 
 A refusal is classified by the host's `errorCode`, or by the session router's bare code when that is the whole
-`error` string; message text is never parsed.
+`error` string; message text is never parsed. A host started by an older build (reused by `open` as compatible)
+sends no `errorCode` for a busy `prompt`, an unknown model or an unknown cursor, so until that host is replaced
+those three refusals read exit 1 `host_error` with the host's text in `detail`.
 
 Every verb except `list` resolves `<ref>` (a `sessionId`, `durableSessionId`, `name`, or `sessionPath`) through
 `list_sessions` and then ATTACHES to the session before acting. A name that more than one live session carries is
-refused `ambiguous_session` rather than resolved to either. A `sessionPath`, or a `durableSessionId` naming one
+refused `ambiguous_session` rather than resolved to either, and so is a `durableSessionId` that more than one
+transcript carries, live or parked (a caller-minted id reused while its first session was parked): `candidates`
+lists their paths. A `sessionPath`, or a `durableSessionId` naming one
 transcript under `<agentDir>/sessions/`, that the host no longer lists (it parked the session) is RESUMED: the CLI
 re-opens it with `open_session { sessionPath, retain_on_disconnect: true }`, so the resumed session again outlives
 the call, and acts on the new routing handle it reports. Attaching is what authorizes `close` and what lets `wait` receive events;
@@ -896,8 +900,8 @@ the one exception: it calls `list_sessions { observe: true }`, so polling it nev
 Session references: `open` and `list` report `sessionId`, `sessionPath` and `durableSessionId` together. `sessionId`
 is a per-host-epoch routing handle that disappears across a park or handoff; `sessionPath` and `durableSessionId`
 survive it, and every subcommand accepts any of the three (plus the session's `name`) as `<ref>` and re-resolves it
-on every call, resuming a parked session as described above. A session parked before its first message has no
-transcript yet and cannot be resumed; a reference to it is `unknown_session`.
+on every call, resuming a parked session as described above. A session parked before its first message cannot be
+resumed (the session listing skips a transcript with no message yet); a reference to it is `unknown_session`.
 
 Ownership: reaching the socket is the trust boundary. Any client that can connect (the socket is `0600` in a
 `0700` directory, so only its owning user) may `prompt`, `steer`, `abort`, `model`, `read` or `wait` on any
