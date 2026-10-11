@@ -841,7 +841,8 @@ Every verb except `list` resolves `<ref>` (a `sessionId`, `durableSessionId`, `n
 `list_sessions` and then ATTACHES to the session before acting. A name that more than one live session carries is
 refused `ambiguous_session` rather than resolved to either, and so is a `durableSessionId` that more than one
 transcript carries, live or parked (a caller-minted id reused while its first session was parked): `candidates`
-lists their paths. A `sessionPath`, or a `durableSessionId` naming one
+lists their paths, or the routing handle (`rpc-N`) of a live session that has no transcript file yet. A
+`sessionPath`, or a `durableSessionId` naming one
 transcript under `<agentDir>/sessions/`, that the host no longer lists (it parked the session) is RESUMED: the CLI
 re-opens it with `open_session { sessionPath, retain_on_disconnect: true }`, so the resumed session again outlives
 the call, and acts on the new routing handle it reports. Attaching is what authorizes `close` and what lets `wait` receive events;
@@ -900,8 +901,8 @@ the one exception: it calls `list_sessions { observe: true }`, so polling it nev
 Session references: `open` and `list` report `sessionId`, `sessionPath` and `durableSessionId` together. `sessionId`
 is a per-host-epoch routing handle that disappears across a park or handoff; `sessionPath` and `durableSessionId`
 survive it, and every subcommand accepts any of the three (plus the session's `name`) as `<ref>` and re-resolves it
-on every call, resuming a parked session as described above. A session parked before its first message cannot be
-resumed (the session listing skips a transcript with no message yet); a reference to it is `unknown_session`.
+on every call, resuming a parked session as described above. A session parked before its first message has no
+transcript yet and cannot be resumed; a reference to it is `unknown_session`.
 
 Ownership: reaching the socket is the trust boundary. Any client that can connect (the socket is `0600` in a
 `0700` directory, so only its owning user) may `prompt`, `steer`, `abort`, `model`, `read` or `wait` on any
