@@ -18,6 +18,8 @@ import { parseRuntimeBuildId } from "./runtime-build-id.ts";
  * host from an older release answers without them; absence is read as "uncomparable", never as zero.
  */
 export interface HostProtocolInfo {
+	/** Absent on older hosts. A stopping generation never admits a new session. */
+	readonly lifecycle?: "ready" | "stopping";
 	readonly protocolVersion: number;
 	/** Informational only. Nothing in this module compares it. */
 	readonly serverVersion: string;
@@ -51,6 +53,7 @@ export function parseHostProtocolInfo(data: unknown): HostProtocolInfo | undefin
 		protocolVersion: typeof data.protocolVersion === "number" ? data.protocolVersion : 0,
 		serverVersion: data.serverVersion,
 		capabilities: data.capabilities,
+		...((data.lifecycle === "ready" || data.lifecycle === "stopping") && { lifecycle: data.lifecycle }),
 		...(typeof data.instanceId === "string" && { instanceId: data.instanceId }),
 		...(typeof data.generation === "number" &&
 			Number.isSafeInteger(data.generation) && { generation: data.generation }),

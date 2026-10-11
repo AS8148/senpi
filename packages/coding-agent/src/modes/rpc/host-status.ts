@@ -43,6 +43,7 @@ export type { HostPathClaimRow, HostSessionRow } from "./host-status-rows.ts";
 
 export interface HostStatusReport {
 	readonly reachable: boolean;
+	readonly lifecycle: "ready" | "stopping" | null;
 	readonly socket: string;
 	readonly pid: number | null;
 	readonly instanceId: string | null;
@@ -136,10 +137,13 @@ export async function probeHostStatus(
 	// A socket that did not answer who it is will not answer what it holds: asking again would only
 	// spend a second budget on a hung endpoint.
 	const listing: readonly HostSessionRow[] =
-		host === undefined ? [] : await readSessionListing(options.socket, includeWorkers, timeoutMs);
+		host === undefined || host.lifecycle === "stopping"
+			? []
+			: await readSessionListing(options.socket, includeWorkers, timeoutMs);
 	const claims = await readClaimRows(paths, generations);
 	const report: HostStatusReport = {
 		reachable: host !== undefined,
+		lifecycle: host?.lifecycle ?? null,
 		socket: options.socket,
 		pid: current?.pid ?? null,
 		instanceId: host?.instanceId ?? current?.instanceId ?? null,
@@ -206,6 +210,7 @@ export function hostSummary(host: HostProtocolInfo | undefined): Record<string, 
 	return {
 		protocolVersion: host.protocolVersion,
 		serverVersion: host.serverVersion,
+		lifecycle: host.lifecycle ?? null,
 		capabilities: host.capabilities,
 		instanceId: host.instanceId ?? null,
 		generation: host.generation ?? null,

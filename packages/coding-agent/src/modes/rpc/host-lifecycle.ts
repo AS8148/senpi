@@ -3,7 +3,8 @@ import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getAgentDir, isBundledNode } from "../../config.ts";
+import { getAgentDir, isBundledNode, VERSION } from "../../config.ts";
+import { HostAdmission } from "./host-admission.ts";
 import { classifyChildExit, noteChildExit } from "./host-child-exit.ts";
 import { hostCrashCleanupPaths } from "./host-cleanup-paths.ts";
 import { createHostDaemonPaths, generationPaths } from "./host-daemon-paths.ts";
@@ -33,6 +34,7 @@ import {
 	type SupervisorState,
 	supervisorSender,
 } from "./host-lifecycle-shutdown.ts";
+import { startSupervisorTicker } from "./host-lifecycle-ticker.ts";
 import { errorMessage, writeStderrLine } from "./host-supervisor-log.ts";
 import { PUBLIC_SOCKET_IDENTITY_FILE, statSocketIdentity, writeSocketIdentityFile } from "./socket-ownership.ts";
 import { createSocketSecret, socketSecretPath } from "./socket-transport.ts";
@@ -153,38 +155,34 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		void state.childExitRecorded.then(() => shutdown(verdict.reason, verdict.exitCode));
 	});
 
-	const drain = new SupervisorDrain(child, () => state.shuttingDown);
+	const admission = new HostAdmission({ protocolVersion: 1, serverVersion: VERSION, capabilities: [], instanceId });
+	const drain = new SupervisorDrain(
+		child,
+		() => state.shuttingDown,
+		() => admission.stop(),
+	);
 	const server = createPublicProxy({
 		internalSocket,
 		...(internalSecret ? { internalSecret } : {}),
 		...(publicSecret ? { publicSecret } : {}),
 		clients: activity.clients,
-		refusing: () => state.shuttingDown || drain.active,
+		admission,
 		onDetach: () => activity.refresh(),
 		onAdmit: () => owner.activity(),
 	});
 	server.once("error", (cause) => {
 		if (!state.shuttingDown) void shutdown(`public socket listener failed: ${errorMessage(cause)}`, 1);
 	});
-	const tickIntervalMs = Math.max(20, Math.min(1_000, policy.idleExitMs / 4));
-	let ownerCheck = false;
-	const ticker = setInterval(() => {
-		if (!drain.active && activity.refresh() === "exit" && activity.clients.unclassifiedCount === 0)
-			void shutdown("idle", 0);
-		if (!ownerCheck && !state.shuttingDown && !drain.active) {
-			ownerCheck = true;
-			void owner
-				.shouldExit(activity)
-				.then((exit) => {
-					if (exit && !state.shuttingDown && !drain.active) void shutdown("owner_gone", 0);
-				})
-				.finally(() => {
-					ownerCheck = false;
-				});
-		}
-	}, tickIntervalMs);
-	watchers.push(() => clearInterval(ticker));
-	watchers.push(() => owner.stop());
+	watchers.push(
+		startSupervisorTicker({
+			idleExitMs: policy.idleExitMs,
+			activity,
+			owner,
+			draining: () => drain.active,
+			shuttingDown: () => state.shuttingDown,
+			shutdown,
+		}),
+	);
 
 	const teardown: SupervisorShutdown = {
 		paths,
@@ -196,6 +194,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		child,
 		activity,
 		drain,
+		admission,
 		state,
 		stopWatchers: () => {
 			for (const stop of watchers.splice(0)) stop();
