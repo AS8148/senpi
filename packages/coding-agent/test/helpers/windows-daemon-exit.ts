@@ -4,6 +4,7 @@ import { once } from "node:events";
 /** Open handles to the owned supervisor and its descendants BEFORE the stop reparents them. */
 export async function waitForWindowsDaemonExit(pid: number, stop: () => Promise<void>): Promise<void> {
 	const script = `
+$ErrorActionPreference = "Stop"
 $rows = Get-CimInstance Win32_Process
 $ids = [System.Collections.Generic.HashSet[int]]::new()
 $null = $ids.Add(${pid})

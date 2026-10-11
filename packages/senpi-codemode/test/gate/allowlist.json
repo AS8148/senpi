@@ -5,9 +5,13 @@
 			"additions": [
 				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root pip scratch is owned and removed after success (#3064)",
 				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root pip scratch is owned and removed after failure (#3064)",
-				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root pip scratch is owned and removed after cancel (#3064)"
+				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root pip scratch is owned and removed after cancel (#3064)",
+				"legacyContracts/test/js-process-fixtures.test.ts/awaits a fixture kernel child before removing its cwd (#3064)",
+				"legacyContracts/test/environments/py-installer-cleanup.test.ts/pip scratch cleanup errors preserves success and reports exhausted cleanup retries (#3064)",
+				"legacyContracts/test/environments/py-installer-cleanup.test.ts/pip scratch cleanup errors preserves failure and reports exhausted cleanup retries (#3064)",
+				"legacyContracts/test/environments/py-installer-cleanup.test.ts/pip scratch cleanup errors preserves cancel and reports exhausted cleanup retries (#3064)"
 			],
-			"reason": "senpi#3064 adds real pip subprocess contracts proving scratch containment and removal after success, failure, and cancellation. The frozen baseline and every existing contract remain unchanged."
+			"reason": "senpi#3064 adds real pip subprocess contracts proving scratch containment and removal after success, failure, and cancellation, preserves install outcomes when cleanup fails, and awaits kernel exit before removing its cwd. Every existing approval and contract remains unchanged."
 		},
 		"senpi#3048": {
 			"additions": [

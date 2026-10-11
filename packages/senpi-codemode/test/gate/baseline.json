@@ -5255,6 +5255,10 @@
       "typebox/value"
     ],
     "legacyContracts": {
+      "test/js-process-fixtures.test.ts/awaits a fixture kernel child before removing its cwd (#3064)": "passed",
+      "test/environments/py-installer-cleanup.test.ts/pip scratch cleanup errors preserves success and reports exhausted cleanup retries (#3064)": "passed",
+      "test/environments/py-installer-cleanup.test.ts/pip scratch cleanup errors preserves failure and reports exhausted cleanup retries (#3064)": "passed",
+      "test/environments/py-installer-cleanup.test.ts/pip scratch cleanup errors preserves cancel and reports exhausted cleanup retries (#3064)": "passed",
       "test/agent-bridge.test.ts/agent bridge delegates the reserved call and coalesces task progress in cell updates": "passed",
       "test/agent-bridge.test.ts/agent bridge rejects a missing prompt": "passed",
       "test/agent-bridge.test.ts/agent bridge rejects an empty prompt": "passed",

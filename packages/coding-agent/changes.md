@@ -1,3 +1,25 @@
+## 2026-10-12 - Host CLI fixtures own their spawned processes (Refs senpi#3064)
+
+### What changed
+
+- Windows fixture teardown records the PID from a successful `ensure --json`, opens supervisor/descendant handles before signalling that owned PID, and awaits their exits without relying on a CIM registration identity.
+- POSIX teardown retains the sandbox argv/descendant reaper after registration-based stop.
+- Each sandbox and direct fixture child is cleaned independently; teardown failures are aggregated after all remaining entries are attempted.
+- The Windows tests assert their start receipt is tracked, the owned PID is no longer alive, and the sandbox root is gone after teardown.
+- Scrubbed session-holder/logger and live-spike child environments retain owned TMPDIR/TEMP/TMP. The real tsx holder asserts that its compiler cache is created inside the fixture root.
+
+### Why
+
+- An unknown process-start identity made the prior Windows watcher path unreachable and the fallback stop refused, leaving a host alive. Production identity observation is investigated separately in senpi#3141.
+
+### Why an extension could not handle it
+
+- Test fixtures own subprocess lifetime before any runtime extension can affect cleanup.
+
+### Expected merge conflict zones
+
+- `test/suite/host-cli-support.ts` ownership receipts and cleanup ordering; keep POSIX and Windows stop paths distinct.
+
 ## 2026-10-10 - Test-run temporary storage has an owner (senpi#3064)
 
 ### What changed

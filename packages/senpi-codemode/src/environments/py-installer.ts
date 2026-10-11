@@ -1,10 +1,8 @@
 import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
+import { devNull } from "node:os";
 import { join } from "node:path";
 import { terminateProcessTrees } from "../kernels/js/process-tree-host.ts";
-import { isolatedPipEnv } from "./pip-environment.ts";
-
-export { isolatedPipEnv } from "./pip-environment.ts";
 
 export type EnvironmentErrorCode =
 	| "environment_install_failed"
@@ -169,6 +167,19 @@ export function normalizePipInstall(args: readonly string[]): string[] {
 	const named = normalized.some((arg) => !arg.startsWith("-") || arg.startsWith("--requirement="));
 	if (!named) throw new EnvironmentError("environment_install_failed", "name at least one requirement");
 	return normalized;
+}
+
+/**
+ * pip's environment with every PIP_* variable removed and its config file pointed at nothing: `--isolated`
+ * alone still honours PIP_CONFIG_FILE, and a configured target, root or prefix would install outside the revision.
+ */
+export function isolatedPipEnv(): NodeJS.ProcessEnv {
+	const env: NodeJS.ProcessEnv = {};
+	for (const [key, value] of Object.entries(process.env)) {
+		if (!key.toUpperCase().startsWith("PIP_")) env[key] = value;
+	}
+	// pip skips every config file when PIP_CONFIG_FILE equals Python's os.devnull: "nul" on Windows, not Node's "\\\\.\\nul".
+	return { ...env, PIP_CONFIG_FILE: process.platform === "win32" ? "nul" : devNull, PYTHONNOUSERSITE: "1" };
 }
 
 export async function runPipInstall(input: {

@@ -1,3 +1,22 @@
+## 2026-10-12 - System-temp scan safeguards have mutation-tested contracts (Refs senpi#3064)
+
+### What changed
+
+- Add real snapshot/check contracts for a foreign job's preexisting `sj-*` directory and a new nonrepository system-temp name. Both remain intact and the guard passes.
+- Removing the baseline filter or repository-name filter independently makes the corresponding contract fail.
+
+### Why
+
+- System scans must detect our new entries without failing on preexisting jobs or newly created unrelated names.
+
+### Why an extension could not handle it
+
+- The guard is CI/bootstrap tooling outside the extension runtime.
+
+### Expected merge conflict zones
+
+- `scripts/test-temp-system.test.mjs`: keep the controlled system-temp fixture scoped away from concurrent live jobs.
+
 ## 2026-10-12 - Temp guards report surviving owners and system escapes (Refs senpi#3064)
 
 ### What changed

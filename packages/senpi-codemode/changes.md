@@ -1,5 +1,26 @@
 # senpi-codemode fork changes
 
+## 2026-10-12 - Restore the installer module and approve cleanup contracts (Refs senpi#3064)
+
+### What changed
+
+- `packages/senpi-codemode/src/environments/py-installer.ts`: restore the existing isolated environment builder to its original module, retaining retrying scratch removal and nonmasking cleanup diagnostics.
+- Remove `packages/senpi-codemode/src/environments/pip-environment.ts`; cleanup did not require that extraction or its two import-census additions.
+- `test/gate/allowlist.json`: add only the fixture-child exit contract and three pip cleanup-error outcome contracts to the existing senpi#3064 approvals.
+- `test/gate/baseline.json`: retain every existing value and add only those four passed legacy-contract observations. The requested clean-main recording passed; its unrelated historical surface additions were discarded.
+
+### Why
+
+- `packages/senpi-codemode/src/environments/py-installer.ts`: keep the cleanup fix local to the installer and preserve the original import surface.
+
+### Why an extension could not handle it
+
+- `packages/senpi-codemode/src/environments/py-installer.ts`: scratch ownership and installer outcomes belong to this implementation.
+
+### Expected merge conflict zones
+
+- `packages/senpi-codemode/src/environments/py-installer.ts`: isolated environment construction and final scratch cleanup.
+
 ## 2026-10-12 - Pip cleanup preserves the install outcome (Refs senpi#3064)
 
 ### What changed
