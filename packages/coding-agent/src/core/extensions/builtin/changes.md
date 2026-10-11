@@ -1,3 +1,23 @@
+## 2026-10-11 - Restore shipped defaults and cache-preserving search policy (senpi#3125 delta)
+
+### What changed
+
+- `server-search-fallback.ts` separates fallback from disabled metadata and preserves the original hook on cache-retaining summaries.
+- Anthropic and OpenAI native injectors restore main's direct API/Claude OAuth and OpenAI/Azure defaults. Both consult failure memory using the request model, not the selected session model.
+- Server-tool exclusion preserves client search declarations and omits empty tools arrays.
+
+### Why
+
+- New opt-in routes must not remove shipped defaults or invalidate the main-turn cache prefix.
+
+### Why an extension could not handle it
+
+- These are corrections to the existing built-in injection and fallback extensions.
+
+### Expected merge conflict zones
+
+- Capability predicates, payload filters and request-model failure lookup.
+
 ## 2026-10-11 - Preserve search fallback schemas and keepalive prefixes (senpi#3122 review)
 
 ### What changed

@@ -64,6 +64,7 @@ export default function (pi: ExtensionAPI): void {
 	let fallbackPending = false;
 	let fallbackSent = false;
 	let userAborted = false;
+	let requestModel: ExtensionContext["model"];
 
 	// senpi#2340: status names the model native search runs on, warns about an ignored nativeModel,
 	// and reports which route and model served the last search.
@@ -164,26 +165,35 @@ export default function (pi: ExtensionAPI): void {
 		{ previewSafe: true },
 	);
 
-	pi.on("before_provider_request", (event, ctx) =>
-		serverSearchPayload(
-			event.model ?? ctx.model,
-			event.payload,
-			hasServerSearchFailed(ctx.sessionManager, ctx.model),
-		),
-	);
+	pi.on("before_provider_request", (event, ctx) => {
+		requestModel = event.model ?? ctx.model;
+		return serverSearchPayload(requestModel, event.payload, hasServerSearchFailed(ctx.sessionManager, requestModel));
+	});
 
 	pi.on("message_end", async (event, ctx) => {
-		if (nativeFailed || event.message.role !== "assistant" || !hasServerSearch(ctx.model)) return undefined;
-		const reason = serverSearchFailure(event.message, ctx.model);
+		if (event.message.role !== "assistant") return undefined;
+		const message = event.message;
+		const model =
+			requestModel?.api === message.api &&
+			requestModel.provider === message.provider &&
+			requestModel.id === message.model
+				? requestModel
+				: ctx.model?.api === message.api &&
+						ctx.model.provider === message.provider &&
+						ctx.model.id === message.model
+					? ctx.model
+					: ctx.modelRegistry.find(message.provider, message.model);
+		if (!model || hasServerSearchFailed(ctx.sessionManager, model) || !hasServerSearch(model)) return undefined;
+		const reason = serverSearchFailure(message, model);
 		if (!reason) return undefined;
 		nativeFailed = true;
-		if (ctx.model) rememberServerSearchFailure(ctx.sessionManager, ctx.model);
+		rememberServerSearchFailure(ctx.sessionManager, model);
 		// A provider can recover from a failed search and still finish its answer.
 		// Enable fallback for another request, but never duplicate a completed answer.
 		fallbackPending =
 			event.message.stopReason === "error" ||
 			!event.message.content.some((block) => block.type === "text" && block.text.trim().length > 0);
-		await refreshState(ctx.model, ctx);
+		await refreshState(model, ctx);
 		pi.appendEntry("websearch-native-fallback", { reason });
 		if (ctx.hasUI) ctx.ui.notify(`Web search fallback: ${reason}.`, "warning");
 		return undefined;

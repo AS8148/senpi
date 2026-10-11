@@ -1,6 +1,7 @@
 import { type Api, fauxAssistantMessage, type Model } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import anthropicWebSearchExtension from "../../src/core/extensions/builtin/anthropic-web-search/index.ts";
+import openaiWebSearchExtension from "../../src/core/extensions/builtin/openai-web-search/index.ts";
 import { createToolSearchExtension, ToolSearchService } from "../../src/core/extensions/builtin/tool-search/index.ts";
 import websearchExtension from "../../src/core/extensions/builtin/websearch/index.ts";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
@@ -76,10 +77,15 @@ describe("session-model search failure memory", () => {
 				expect(JSON.stringify(await runner.emitBeforeProviderRequest(payload))).toContain("web_search_20250305");
 				await runner.emitMessageEnd({
 					type: "message_end",
-					message: fauxAssistantMessage("", {
-						stopReason: "error",
-						errorMessage: "400 web_search_20250305 rejected",
-					}),
+					message: {
+						...fauxAssistantMessage("", {
+							stopReason: "error",
+							errorMessage: "400 web_search_20250305 rejected",
+						}),
+						api: selected.api,
+						provider: selected.provider,
+						model: selected.id,
+					},
 				});
 				expect(JSON.parse(JSON.stringify(await runner.emitBeforeProviderRequest(payload)))).toEqual(payload);
 				await runner.emitBeforeAgentStart("Next prompt", undefined, "", { cwd: h.tempDir });
@@ -140,10 +146,15 @@ describe("session-model search failure memory", () => {
 			expect(JSON.stringify(await runner.emitBeforeProviderRequest(payload))).toContain("googleSearch");
 			await runner.emitMessageEnd({
 				type: "message_end",
-				message: fauxAssistantMessage("", {
-					stopReason: "error",
-					errorMessage: "Tool use with function calling is unsupported",
-				}),
+				message: {
+					...fauxAssistantMessage("", {
+						stopReason: "error",
+						errorMessage: "Tool use with function calling is unsupported",
+					}),
+					api: h.agent.state.model.api,
+					provider: h.agent.state.model.provider,
+					model: h.agent.state.model.id,
+				},
 			});
 			await runner.emitBeforeAgentStart("Next prompt", undefined, "", { cwd: h.tempDir });
 			expect(JSON.parse(JSON.stringify(await runner.emitBeforeProviderRequest(payload)))).toEqual(payload);
@@ -151,4 +162,61 @@ describe("session-model search failure memory", () => {
 			h.cleanup();
 		}
 	});
+
+	it.each(["anthropic-messages", "openai-responses"] as const)(
+		"records a failure for the actual %s request model, not the selected session model",
+		async (api) => {
+			// senpi#3125: a model fallback can send a request different from ctx.model.
+			const h = await createHarness({
+				api,
+				extensionFactories: [anthropicWebSearchExtension, openaiWebSearchExtension, websearchExtension],
+			});
+			try {
+				const selected = {
+					...h.agent.state.model,
+					compat: { supportsWebSearch: true, supportsWebSearchPreview: true },
+				};
+				const failed = { ...selected, id: `${selected.id}-fallback` };
+				h.agent.state.model = selected;
+				const runner = h.getExtensionRunner();
+				await runner.emit({ type: "session_start", reason: "startup" });
+				const payload = {
+					tools: [
+						api === "anthropic-messages"
+							? { name: "web_search", input_schema: {} }
+							: { type: "function", name: "web_search", parameters: {} },
+					],
+				};
+				const nativeType = api === "anthropic-messages" ? "web_search_20250305" : "web_search_preview";
+				expect(
+					JSON.stringify(
+						await runner.emitBeforeProviderRequest(payload, undefined, { model: failed, headers: {} }),
+					),
+				).toContain(nativeType);
+				await runner.emitMessageEnd({
+					type: "message_end",
+					message: {
+						...fauxAssistantMessage("", { stopReason: "error", errorMessage: `400 ${nativeType} rejected` }),
+						api,
+						provider: failed.provider,
+						model: failed.id,
+					},
+				});
+				expect(
+					JSON.stringify(
+						await runner.emitBeforeProviderRequest(payload, undefined, { model: selected, headers: {} }),
+					),
+				).toContain(nativeType);
+				expect(
+					JSON.parse(
+						JSON.stringify(
+							await runner.emitBeforeProviderRequest(payload, undefined, { model: failed, headers: {} }),
+						),
+					),
+				).toEqual(payload);
+			} finally {
+				h.cleanup();
+			}
+		},
+	);
 });

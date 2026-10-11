@@ -1,6 +1,11 @@
 import type { Api, Model, OpenAIResponsesCompat } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
-import { hasServerSearchFailed, isServerSearchFallback, markServerSearchFallback } from "../server-search-fallback.ts";
+import {
+	hasServerSearchFailed,
+	isServerSearchDisabled,
+	isServerSearchFallback,
+	markServerSearchFallback,
+} from "../server-search-fallback.ts";
 
 type ToolDefinition = Record<string, unknown>;
 type OpenAiWebSearchModel = Pick<Model<Api>, "api" | "baseUrl" | "compat"> & { provider?: string; id?: string };
@@ -78,7 +83,14 @@ export function supportsNativeOpenAiWebSearch(target: OpenAiWebSearchTarget): bo
 	// xAI documents web_search on Responses, not its Chat Completions endpoint.
 	// Compatible/custom Responses endpoints still need an explicit capability opt-in.
 	// https://docs.x.ai/developers/tools/web-search
-	return compat?.supportsWebSearchPreview === true;
+	// Preserve main's shipped Azure and first-party OpenAI defaults.
+	if (model.api === "azure-openai-responses") return true;
+	if (compat?.supportsWebSearchPreview !== undefined) return compat.supportsWebSearchPreview;
+	try {
+		return new URL(model.baseUrl || "https://api.openai.com/v1").hostname === "api.openai.com";
+	} catch {
+		return false;
+	}
 }
 
 function isNativeOpenAiWebSearchType(
@@ -121,7 +133,8 @@ function stripNativeOpenAiWebSearch(payload: unknown): unknown {
 		const sanitizedTools = tools.filter((tool) => !(isRecord(tool) && isNativeOpenAiWebSearchType(tool.type)));
 		if (sanitizedTools.length !== tools.length) {
 			changed = true;
-			sanitized.tools = sanitizedTools;
+			if (sanitizedTools.length) sanitized.tools = sanitizedTools;
+			else delete sanitized.tools;
 		}
 	}
 
@@ -173,7 +186,7 @@ function includeWebSearchSources(payload: Record<string, unknown>): string[] {
 }
 
 export function addOpenAiWebSearchToPayload(target: OpenAiWebSearchTarget, payload: unknown): unknown {
-	if (isServerSearchFallback(payload)) return stripNativeOpenAiWebSearch(payload);
+	if (isServerSearchDisabled(payload) || isServerSearchFallback(payload)) return stripNativeOpenAiWebSearch(payload);
 	const model = resolveTarget(target);
 	if (!isOpenAiResponsesApi(model?.api)) {
 		// Defense in depth. `web_search_preview` is an OpenAI Responses-only tool
@@ -208,10 +221,12 @@ export function addOpenAiWebSearchToPayload(target: OpenAiWebSearchTarget, paylo
 			return strippedPayload;
 		}
 
-		return {
+		const result: Record<string, unknown> = {
 			...strippedPayload,
 			tools: passiveSanitized.tools,
 		};
+		if (!passiveSanitized.tools.length) delete result.tools;
+		return result;
 	}
 
 	const hasNativeWebSearch = sanitizedTools.some((tool) => isNativeOpenAiWebSearchType(tool.type));
@@ -255,10 +270,11 @@ Prefer web search over guessing when freshness matters.
 
 export default function openaiWebSearchExtension(pi: ExtensionAPI): void {
 	pi.on("before_provider_request", (event, ctx) => {
-		const payload = hasServerSearchFailed(ctx.sessionManager, ctx.model)
+		const model = event.model ?? ctx.model;
+		const payload = hasServerSearchFailed(ctx.sessionManager, model)
 			? markServerSearchFallback(event.payload)
 			: event.payload;
-		return addOpenAiWebSearchToPayload(event.model ?? ctx.model, payload);
+		return addOpenAiWebSearchToPayload(model, payload);
 	});
 
 	pi.on("session_start", async (_event, ctx) => {

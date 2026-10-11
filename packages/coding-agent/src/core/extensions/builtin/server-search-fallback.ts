@@ -36,7 +36,12 @@ export function disableServerSearch(payload: unknown): unknown {
 	return payload !== null && typeof payload === "object" ? { ...payload, [SERVER_SEARCH_DISABLED]: true } : payload;
 }
 
-export function withoutServerSearch(onPayload: SimpleStreamOptions["onPayload"]): SimpleStreamOptions["onPayload"] {
+export function withoutServerSearch(
+	onPayload: SimpleStreamOptions["onPayload"],
+	cacheRetention: SimpleStreamOptions["cacheRetention"] = "none",
+): SimpleStreamOptions["onPayload"] {
+	// Cache-friendly summaries must keep the main-turn hook and tool prefix verbatim.
+	if (cacheRetention !== "none") return onPayload;
 	return async (payload, model, request) => {
 		const disabled = disableServerSearch(payload);
 		return (await onPayload?.(disabled, model, request)) ?? disabled;
@@ -54,10 +59,9 @@ export function isServerSearchDisabled(payload: unknown): boolean {
 
 export function isServerSearchFallback(payload: unknown): boolean {
 	return (
-		isServerSearchDisabled(payload) ||
-		(payload !== null &&
-			typeof payload === "object" &&
-			SERVER_SEARCH_FALLBACK in payload &&
-			payload[SERVER_SEARCH_FALLBACK] === true)
+		payload !== null &&
+		typeof payload === "object" &&
+		SERVER_SEARCH_FALLBACK in payload &&
+		payload[SERVER_SEARCH_FALLBACK] === true
 	);
 }

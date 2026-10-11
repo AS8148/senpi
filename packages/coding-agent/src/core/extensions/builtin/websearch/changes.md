@@ -1,3 +1,22 @@
+## 2026-10-11 - Narrow auxiliary exclusion and track the failed request model (senpi#3125 delta)
+
+### What changed
+
+- `index.ts` records native-search failures against the model identified by the assistant response and its actual request, not an unrelated selected session model.
+- `server-search.ts` separates disabled server-tool exclusion from fallback, preserves client `web_search`, omits empty tools arrays, and shares Moonshot declaration/choice detection.
+
+### Why
+
+- Auxiliary requests must not lose client tools or acquire invalid empty arrays. Model-fallback requests must not poison another model's session memory.
+
+### Why an extension could not handle it
+
+- This extension owns native routing and failure memory.
+
+### Expected merge conflict zones
+
+- Request/response model matching and payload tool filtering.
+
 ## 2026-10-11 - Review: isolate and evidence-gate server search (senpi#3122)
 
 ### What changed

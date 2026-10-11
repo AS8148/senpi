@@ -1,3 +1,21 @@
+## 2026-10-11 - Replay opted-in GLM server-result pairs (senpi#3125 delta)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: native replay predicates moved to `anthropic-native-replay-blocks.ts`. An opted-in same-model GLM native `tool_result` is paired with its preceding `server_tool_use` and replays unchanged; disabled routes strip the search pair.
+
+### Why
+
+- The live z.ai Anthropic coding-plan response returns `tool_result`, not `web_search_tool_result`, even with a zero search usage counter. The old allowlist dropped its result and the now-unpaired use on the next request.
+
+### Why an extension could not handle it
+
+- The provider adapter owns native response capture and final transcript replay.
+
+### Expected merge conflict zones
+
+- Native replay predicates and pairing classification.
+
 ## 2026-10-11 - Server search wire type and replay (senpi#3122)
 
 ### What changed

@@ -80,12 +80,34 @@ export function hasServerSearch(model: SearchModel | undefined): boolean {
 	);
 }
 
+function isMoonshotSearchTool(tool: unknown): boolean {
+	return (
+		isRecord(tool) &&
+		(tool.name === "$web_search" || (isRecord(tool.function) && tool.function.name === "$web_search"))
+	);
+}
+
+function isClientSearchTool(tool: unknown): boolean {
+	return (
+		isRecord(tool) &&
+		(tool.type === "function" || "input_schema" in tool) &&
+		(tool.name === "web_search" || (isRecord(tool.function) && tool.function.name === "web_search"))
+	);
+}
+
+function withTools(payload: Payload, tools: unknown[]): Payload {
+	const result = { ...payload };
+	if (tools.length) result.tools = tools;
+	else delete result.tools;
+	return result;
+}
+
 function isSearchTool(tool: unknown): boolean {
 	if (!isRecord(tool)) return false;
 	return (
 		tool.name === "web_search" ||
-		tool.name === "$web_search" ||
-		(isRecord(tool.function) && (tool.function.name === "web_search" || tool.function.name === "$web_search")) ||
+		isMoonshotSearchTool(tool) ||
+		(isRecord(tool.function) && tool.function.name === "web_search") ||
 		(typeof tool.type === "string" &&
 			(tool.type === "openrouter:web_search" || tool.type === "web_search" || tool.type.startsWith("web_search_")))
 	);
@@ -100,9 +122,7 @@ function googleTools(tools: unknown[], retainFunction: boolean, disabled: boolea
 			continue;
 		}
 		const declarations = tool.functionDeclarations.filter(
-			(declaration) =>
-				!isRecord(declaration) ||
-				(declaration.name !== "$web_search" && (retainFunction || declaration.name !== "web_search")),
+			(declaration) => !isRecord(declaration) || retainFunction || declaration.name !== "web_search",
 		);
 		if (declarations.length) result.push({ ...tool, functionDeclarations: declarations });
 	}
@@ -116,38 +136,30 @@ export function serverSearchPayload(model: SearchModel | undefined, payload: unk
 	const disabled = isServerSearchDisabled(payload);
 	const fallback = failed || isServerSearchFallback(payload);
 	if (additionalServerSearch(model) !== "moonshot") {
-		if (
-			isRecord(payload.tool_choice) &&
-			(payload.tool_choice.name === "$web_search" ||
-				(isRecord(payload.tool_choice.function) && payload.tool_choice.function.name === "$web_search"))
-		) {
+		if (isMoonshotSearchTool(payload.tool_choice)) {
 			const { tool_choice: _choice, ...rest } = payload;
 			payload = rest;
 		}
 		if (!isRecord(payload)) return payload;
 		if (Array.isArray(payload.tools)) {
-			payload = {
-				...payload,
-				tools: payload.tools.filter(
-					(tool) =>
-						!isRecord(tool) ||
-						(tool.name !== "$web_search" && (!isRecord(tool.function) || tool.function.name !== "$web_search")),
-				),
-			};
+			payload = withTools(
+				payload,
+				payload.tools.filter((tool) => !isMoonshotSearchTool(tool)),
+			);
 		}
 		if (isRecord(payload) && isRecord(payload.config) && Array.isArray(payload.config.tools)) {
 			payload = {
 				...payload,
-				config: {
-					...payload.config,
-					tools: payload.config.tools.flatMap((tool) => {
+				config: withTools(
+					payload.config,
+					payload.config.tools.flatMap((tool) => {
 						if (!isRecord(tool) || !Array.isArray(tool.functionDeclarations)) return [tool];
 						const declarations = tool.functionDeclarations.filter(
-							(declaration) => !isRecord(declaration) || declaration.name !== "$web_search",
+							(declaration) => !isMoonshotSearchTool(declaration),
 						);
 						return declarations.length ? [{ ...tool, functionDeclarations: declarations }] : [];
 					}),
-				},
+				),
 			};
 		}
 	}
@@ -158,7 +170,7 @@ export function serverSearchPayload(model: SearchModel | undefined, payload: unk
 		const tools = Array.isArray(config.tools) ? config.tools : [];
 		return {
 			...payload,
-			config: { ...config, tools: googleTools(tools, fallback && !disabled, disabled) },
+			config: withTools(config, googleTools(tools, fallback || disabled, disabled)),
 			...(fallback ? { [SERVER_SEARCH_FALLBACK]: true } : {}),
 		};
 	}
@@ -166,12 +178,10 @@ export function serverSearchPayload(model: SearchModel | undefined, payload: unk
 	if (!fallback && !kind && !disabled) return payload;
 	const tools = (Array.isArray(payload.tools) ? payload.tools : []).filter((tool) => {
 		if (!isSearchTool(tool)) return true;
-		if (disabled || !fallback || !isRecord(tool)) return false;
+		if (!disabled && !fallback) return false;
 		// Responses/Completions use type:function; Messages uses input_schema.
 		// These declarations already came through their provider's schema builder.
-		return tool.type === "function"
-			? tool.name !== "$web_search" && (!isRecord(tool.function) || tool.function.name !== "$web_search")
-			: tool.name === "web_search" && "input_schema" in tool;
+		return isClientSearchTool(tool);
 	});
 	if (!fallback && !disabled && kind === "openrouter") {
 		tools.push({ type: "openrouter:web_search" });
@@ -180,13 +190,19 @@ export function serverSearchPayload(model: SearchModel | undefined, payload: unk
 	} else if (!fallback && !disabled && kind === "zai") {
 		tools.push({ type: "web_search", web_search: { enable: true, search_result: true } });
 	}
-	const result: Payload = { ...payload, tools };
+	const result = withTools(payload, tools);
 	if (fallback || disabled) {
 		// An include or tool_choice targeting the removed server tool would reject the retry.
 		if (Array.isArray(result.include)) {
 			result.include = result.include.filter((item) => item !== "web_search_call.action.sources");
 		}
-		if (isRecord(result.tool_choice) && isSearchTool(result.tool_choice)) delete result.tool_choice;
+		if (
+			isRecord(result.tool_choice) &&
+			isSearchTool(result.tool_choice) &&
+			!isClientSearchTool(result.tool_choice) &&
+			!(result.tool_choice.name === "web_search" && tools.some(isClientSearchTool))
+		)
+			delete result.tool_choice;
 	}
 	return fallback ? { ...result, [SERVER_SEARCH_FALLBACK]: true } : result;
 }

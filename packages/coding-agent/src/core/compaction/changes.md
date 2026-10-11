@@ -1,3 +1,21 @@
+## 2026-10-11 - Preserve cache-friendly summary hook identity (senpi#3125 delta)
+
+### What changed
+
+- `packages/coding-agent/src/core/compaction/compaction.ts`: cache-retaining summaries pass the caller's `onPayload` through unchanged. Only standalone, non-cache-retaining summaries use server-search exclusion.
+
+### Why
+
+- Source-context summaries reuse the main turn's warm prefix, including its tools and include fields; replacing the payload hook breaks that contract.
+
+### Why an extension could not handle it
+
+- Core constructs the summary request options before extension payload hooks run.
+
+### Expected merge conflict zones
+
+- The isolated summarization options and cache retention policy.
+
 ## 2026-10-11 - Exclude server search from summaries (senpi#3122 review)
 
 ### What changed

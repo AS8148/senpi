@@ -870,6 +870,8 @@ Fired before each LLM call. Modify messages non-destructively. See [Session Form
 
 `event.source` is `"agent"` for the live agent request and `"projection"` for `prepareProviderRequest` calls, including summarizer inputs. Projections must not advance state belonging to the live request, even when their messages match the branch. The session journal can lag a live request, so transcript equality is not a reliable substitute for this marker.
 
+`ctx.prepareProviderRequest(messages, excludeExtensionPath?, options?)` returns the projected context and its payload transform. In this release the transform excludes server-search tools by default, while retaining client function tools such as `web_search`. Call `ctx.prepareProviderRequest(messages, undefined, { allowServerSearch: true })` when a request must mirror the main turn's native tools and include fields, as keepalive does. Cache-friendly compaction retains the original main-turn payload hook separately; standalone summaries and session titles exclude server search.
+
 ```typescript
 pi.on("context", async (event, ctx) => {
   // event.messages - deep copy, safe to modify

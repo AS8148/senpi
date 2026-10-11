@@ -1,5 +1,6 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
+import { disableServerSearch } from "../../src/core/extensions/builtin/server-search-fallback.ts";
 import {
 	additionalServerSearch,
 	hasServerSearch,
@@ -35,10 +36,10 @@ describe("reviewed server search route policy", () => {
 		["anthropic-messages", "anthropic", "claude-opus-5-5"],
 		["openai-responses", "openai", "gpt-6-luna"],
 		["azure-openai-responses", "azure-openai", "gpt-6-luna"],
-	] as const)("does not infer live evidence from the %s first-party hostname", (api, provider, id) => {
+	] as const)("preserves main's shipped %s server-search default", (api, provider, id) => {
 		const model = route(api, provider, id);
 		model.baseUrl = api === "anthropic-messages" ? "https://api.anthropic.com" : "https://api.openai.com/v1";
-		expect(hasServerSearch(model)).toBe(false);
+		expect(hasServerSearch(model)).toBe(true);
 	});
 
 	it("strips a stale Moonshot declaration from non-Moonshot requests even without native search", () => {
@@ -88,17 +89,61 @@ describe("reviewed server search route policy", () => {
 				tools: [{ name: "$web_search", input_schema: {} }],
 				tool_choice: { type: "tool", name: "$web_search" },
 			}),
-		).toEqual({ tools: [] });
+		).toEqual({});
 		expect(
 			serverSearchPayload(route("openai-responses", "openai", "model"), {
 				tools: [{ type: "function", name: "$web_search", parameters: {} }],
 				tool_choice: { type: "function", name: "$web_search" },
 			}),
-		).toEqual({ tools: [] });
+		).toEqual({});
 		expect(
 			serverSearchPayload(route("google-generative-ai", "google", "gemini-2.5-pro"), {
 				config: { tools: [{ functionDeclarations: [{ name: "$web_search" }] }] },
 			}),
-		).toEqual({ config: { tools: [] } });
+		).toEqual({ config: {} });
+	});
+
+	it.each([
+		["anthropic-messages", "custom", "opus"],
+		["openai-completions", "deepseek", "deepseek-chat"],
+		["openai-responses", "custom", "model"],
+	] as const)(
+		"keeps client search and its forced choice when server search is disabled on %s",
+		(api, provider, id) => {
+			const client =
+				api === "anthropic-messages"
+					? { name: "web_search", input_schema: { type: "object" } }
+					: { type: "function", name: "web_search", parameters: { type: "object" } };
+			const choice =
+				api === "anthropic-messages"
+					? { type: "tool", name: "web_search" }
+					: { type: "function", name: "web_search" };
+			const payload = { tools: [client], tool_choice: choice };
+			expect(
+				JSON.parse(JSON.stringify(serverSearchPayload(route(api, provider, id), disableServerSearch(payload)))),
+			).toEqual(payload);
+		},
+	);
+
+	it("preserves Gemini client declarations while excluding grounding", () => {
+		const declaration = { name: "web_search", parametersJsonSchema: { type: "object" } };
+		const result = serverSearchPayload(
+			{ ...route("google-generative-ai", "google", "gemini-2.5-pro"), compat: { supportsWebSearch: true } },
+			disableServerSearch({ config: { tools: [{ functionDeclarations: [declaration] }, { googleSearch: {} }] } }),
+		);
+		expect(JSON.parse(JSON.stringify(result))).toEqual({
+			config: { tools: [{ functionDeclarations: [declaration] }] },
+		});
+	});
+
+	it.each([
+		["openai-completions", "deepseek", "deepseek-chat"],
+		["anthropic-messages", "kimi-coding", "kimi"],
+		["openai-responses", "openai", "model"],
+	] as const)("does not add tools to a tool-less disabled %s request", (api, provider, id) => {
+		const payload = { messages: [] };
+		expect(
+			JSON.parse(JSON.stringify(serverSearchPayload(route(api, provider, id), disableServerSearch(payload)))),
+		).toEqual(payload);
 	});
 });

@@ -110,6 +110,9 @@ describe("server search first (#3122)", () => {
 		const failure = {
 			message: {
 				role: "assistant",
+				api: model.api,
+				provider: model.provider,
+				model: model.id,
 				content: [],
 				stopReason: "error",
 				errorMessage: "HTTP 400: web_search_20250305 unsupported",
@@ -140,6 +143,9 @@ describe("server search first (#3122)", () => {
 		await h.emit("message_end", {
 			message: {
 				role: "assistant",
+				api: model.api,
+				provider: model.provider,
+				model: model.id,
 				content: [],
 				stopReason: "error",
 				errorMessage: "503 web_search_20250305 unavailable",
@@ -158,7 +164,9 @@ describe("server search first (#3122)", () => {
 			{ role: "assistant", content: [], stopReason: "aborted", errorMessage: "web_search aborted" },
 			{ role: "assistant", content: [], stopReason: "error", errorMessage: "401 invalid credentials" },
 		]) {
-			await h.emit("message_end", { message });
+			await h.emit("message_end", {
+				message: { ...message, api: model.api, provider: model.provider, model: model.id },
+			});
 		}
 		await h.emit("agent_settled");
 		expect(h.appendEntry).not.toHaveBeenCalled();
@@ -171,6 +179,9 @@ describe("server search first (#3122)", () => {
 		await h.emit("message_end", {
 			message: {
 				role: "assistant",
+				api: model.api,
+				provider: model.provider,
+				model: model.id,
 				content: [],
 				stopReason: "error",
 				errorMessage: "400 web_search_20250305 rejected",
@@ -187,6 +198,9 @@ describe("server search first (#3122)", () => {
 		await h.emit("message_end", {
 			message: {
 				role: "assistant",
+				api: model.api,
+				provider: model.provider,
+				model: model.id,
 				stopReason: "stop",
 				content: [
 					{
@@ -213,6 +227,9 @@ describe("server search first (#3122)", () => {
 		await h.emit("message_end", {
 			message: {
 				role: "assistant",
+				api: model.api,
+				provider: model.provider,
+				model: model.id,
 				content: [],
 				stopReason: "error",
 				errorMessage: "400 web_search_20250305 unsupported",
@@ -229,6 +246,9 @@ describe("server search first (#3122)", () => {
 		await h.emit("message_end", {
 			message: {
 				role: "assistant",
+				api: model.api,
+				provider: model.provider,
+				model: model.id,
 				content: [],
 				stopReason: "error",
 				errorMessage: "400 web_search_20250305 unsupported",

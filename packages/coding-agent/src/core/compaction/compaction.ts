@@ -826,7 +826,7 @@ export async function completeSummarization(
 	// opt into short retention for an exact provider-context prefix.
 	const isolatedOptions: SimpleStreamOptions = {
 		...options,
-		onPayload: withoutServerSearch(options.onPayload),
+		onPayload: withoutServerSearch(options.onPayload, options.cacheRetention),
 		cacheRetention: options.cacheRetention ?? "none",
 		affinitySessionId: options.affinitySessionId ?? options.sessionId,
 		sessionId: uuidv7(),

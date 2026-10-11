@@ -209,18 +209,18 @@ describe("anthropic-web-search builtin extension", () => {
 });
 
 describe("supportsNativeAnthropicWebSearch", () => {
-	it("requires opt-in even for the first-party Anthropic provider", () => {
+	it("supports the first-party Anthropic provider by default", () => {
 		expect(
 			supportsNativeAnthropicWebSearch({
 				api: "anthropic-messages",
 				baseUrl: "https://api.anthropic.com",
 				provider: "anthropic",
 			}),
-		).toBe(false);
+		).toBe(true);
 	});
 
-	it("does not infer a verified route from a bare API name", () => {
-		expect(supportsNativeAnthropicWebSearch("anthropic-messages")).toBe(false);
+	it("supports a bare Anthropic API name by default", () => {
+		expect(supportsNativeAnthropicWebSearch("anthropic-messages")).toBe(true);
 	});
 
 	it("does not support Anthropic-compatible endpoints by default", () => {
