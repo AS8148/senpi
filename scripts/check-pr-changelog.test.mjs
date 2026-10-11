@@ -135,7 +135,10 @@ describe("check-pr-changelog gate", () => {
 it("returns every released-section, tracker, and Unreleased-removal violation", () => {
 	const paths = ["packages/ai/CHANGELOG.md", "packages/tui/CHANGELOG.md"];
 	const before = "## [Unreleased]\n- pending\n## [1.0.0]\n- first\n## [0.9.0]\n- second\n";
-	const after = before.replace("- pending\n", "").replace("- first", "- changed first").replace("- second", "- changed second");
+	const after = before
+		.replace("- pending\n", "")
+		.replace("- first", "- changed first")
+		.replace("- second", "- changed second");
 	const result = checkPrChangelog({
 		changedFiles: paths,
 		labels: [],
@@ -258,10 +261,19 @@ it("fails a PR that removes existing change-log lines through the PR gate CLI", 
 			/packages\/ai\/CHANGELOG\.md:\d+: released section \[2026\.9\.20\] changed/,
 			[[tracker, entry("New")]],
 		);
-		assert.match(output, /packages\/ai\/src\/changes\.md: removes \d+ existing line\(s\); tracker entries may only be added/);
-		assert.match(output, /^changelog-gate: FAIL - packages\/ai\/CHANGELOG\.md:\d+: released section \[2026\.9\.20\] changed\n/);
-		assert.match(output, /^  violation: packages\/ai\/CHANGELOG\.md:\d+: released section \[2026\.9\.20\] changed$/m);
-		assert.match(output, /^  violation: packages\/ai\/src\/changes\.md: removes \d+ existing line\(s\); tracker entries may only be added$/m);
+		assert.match(
+			output,
+			/packages\/ai\/src\/changes\.md: removes \d+ existing line\(s\); tracker entries may only be added/,
+		);
+		assert.match(
+			output,
+			/^changelog-gate: FAIL - packages\/ai\/CHANGELOG\.md:\d+: released section \[2026\.9\.20\] changed\n/,
+		);
+		assert.match(output, /^ {2}violation: packages\/ai\/CHANGELOG\.md:\d+: released section \[2026\.9\.20\] changed$/m);
+		assert.match(
+			output,
+			/^ {2}violation: packages\/ai\/src\/changes\.md: removes \d+ existing line\(s\); tracker entries may only be added$/m,
+		);
 	});
 	await t.test("tracker rewritten to only its new entry", () =>
 		check(tracker, entry("New"), 1, /packages\/ai\/src\/changes\.md: removes \d+ existing line/));
