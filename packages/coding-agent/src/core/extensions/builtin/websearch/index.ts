@@ -90,6 +90,7 @@ export default function (pi: ExtensionAPI): void {
 	pi.registerTool(
 		defineTool({
 			name: "$web_search",
+			exposure: "search",
 			label: "Moonshot Server Search",
 			description: "Return the Moonshot built-in server search result to the same model.",
 			parameters: Type.Record(Type.String(), Type.Unknown()),
@@ -129,26 +130,30 @@ export default function (pi: ExtensionAPI): void {
 		await refreshState(event.model, ctx);
 	});
 
-	pi.on("before_agent_start", async (event, ctx) => {
-		if (event.trigger !== "extension") {
-			nativeFailed = false;
-			fallbackPending = false;
-			fallbackSent = false;
-			userAborted = false;
-			await refreshState(ctx.model, ctx);
-		}
-		if (!hasServerSearch(ctx.model)) return undefined;
-		const systemPrompt = event.systemPrompt
-			.replace(ANTHROPIC_WEB_SEARCH_SECTION, "")
-			.replace(OPENAI_WEB_SEARCH_SECTION, "");
-		return {
-			systemPrompt: `${systemPrompt}\n## Web Search\n${
-				nativeFailed
-					? "Use the standalone web_search tool when current information is needed. Native search failed on this turn."
-					: "Use the provider's in-turn server web search when current information is needed."
-			}`,
-		};
-	});
+	pi.on(
+		"before_agent_start",
+		async (event, ctx) => {
+			if (!event.preview && event.trigger !== "extension") {
+				nativeFailed = false;
+				fallbackPending = false;
+				fallbackSent = false;
+				userAborted = false;
+				await refreshState(ctx.model, ctx);
+			}
+			if (!hasServerSearch(ctx.model)) return undefined;
+			const systemPrompt = event.systemPrompt
+				.replace(ANTHROPIC_WEB_SEARCH_SECTION, "")
+				.replace(OPENAI_WEB_SEARCH_SECTION, "");
+			return {
+				systemPrompt: `${systemPrompt}\n## Web Search\n${
+					!event.preview && nativeFailed
+						? "Use the standalone web_search tool when current information is needed. Native search failed on this turn."
+						: "Use the provider's in-turn server web search when current information is needed."
+				}`,
+			};
+		},
+		{ previewSafe: true },
+	);
 
 	pi.on("before_provider_request", (event, ctx) =>
 		serverSearchPayload(

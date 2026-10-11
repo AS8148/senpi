@@ -2,6 +2,7 @@
 
 ### What changed
 
+- CI follow-up: `index.ts` registers the Moonshot echo tool as search-exposed so it stays inactive before session binding, and declares a read-only `before_agent_start` preview path so prewarm and keep-alive retain the exact turn prefix. `../moved-path-guard/tool-classes.ts` classifies the echo tool as path-free. The status-label fixture supplies the active-tool API used by route selection.
 - `server-search.ts` declares API-specific server tool shapes with official documentation references, restores the function search tool on a failed native turn, and detects search-specific request/result errors without treating cancellation or unrelated provider failures as search failures.
 - `index.ts` defers the standalone tool on eligible routes, records one fallback reason, and uses the existing `agent_settled` continuation once when core retry does not already own the continuation. Moonshot's documented built-in flow echoes generated search arguments without another HTTP request; its tool is active only on the matching route.
 - `websearch/search-model.ts` keeps eligible routes on their session model. Cheaper auxiliary defaults and settings remain available on no-server routes.

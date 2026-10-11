@@ -215,6 +215,25 @@ describe("server search first (#3122)", () => {
 		expect(h.sendMessage).not.toHaveBeenCalled();
 	});
 
+	it("keeps failed-turn fallback state intact during a prompt-cache preview", async () => {
+		const h = harness(cwd);
+		await h.emit("session_start");
+		await h.emit("message_end", {
+			message: {
+				role: "assistant",
+				content: [],
+				stopReason: "error",
+				errorMessage: "400 web_search_20250305 unsupported",
+			},
+		});
+
+		await h.emit("before_agent_start", { preview: true, trigger: "prompt", systemPrompt: "" });
+
+		expect((await h.payload()).tools[0]?.type).toBeUndefined();
+		await h.emit("agent_settled");
+		expect(h.sendMessage).toHaveBeenCalledTimes(1);
+	});
+
 	it("uses the subscription's in-turn web_search tool instead of the auxiliary search model", () => {
 		const payload = addOpenAiWebSearchToPayload(
 			{ api: "openai-codex-responses", baseUrl: "https://chatgpt.com/backend-api" },

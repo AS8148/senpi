@@ -1,3 +1,21 @@
+## 2026-10-11 - Classify the Moonshot server-search echo tool (senpi#3122)
+
+### What changed
+
+- `moved-path-guard/tool-classes.ts` classifies `$web_search` as `none`: it echoes server-generated arguments and performs no filesystem access.
+
+### Why
+
+- The native-first search extension registers this additional tool; the full-load regression requires every built-in tool to carry an explicit moved-path class.
+
+### Why an extension could not handle it
+
+- The moved-path guard owns the built-in tool classification table.
+
+### Expected merge conflict zones
+
+- `moved-path-guard/tool-classes.ts`: the path-free search tool entries.
+
 ## 2026-10-08 - moved-path-guard: folder check follows only a legacy-root symlink (senpi#2898)
 
 ### What changed
