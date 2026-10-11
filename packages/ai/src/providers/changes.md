@@ -1,3 +1,22 @@
+## 2026-10-11 - xAI in-turn Responses search (senpi#3122)
+
+### What changed
+
+- `packages/ai/src/providers/xai.ts`: explicitly marks built-in Responses models with `supportsWebSearchPreview: true` and `webSearchToolType: "web_search"`, matching https://docs.x.ai/developers/tools/web-search.
+- No model/API or credential migration is performed. Custom compatible routes declare their exact tool type separately.
+
+### Why
+
+xAI's built-in Responses route supports in-turn search and must not default to an auxiliary model.
+
+### Why an extension could not handle it
+
+Provider catalogue flags belong to the provider factory.
+
+### Expected merge conflict zones
+
+The mapped xAI model catalogue.
+
 ## 2026-10-09 - Restore providers-tracker coverage for upstream-modified paths (senpi#3006)
 
 ### What changed

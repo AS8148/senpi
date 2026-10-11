@@ -4,6 +4,7 @@
 
 - `model-config-schema.ts` accepts optional `supportsWebSearch` in completion compatibility entries, matching the provider type. This lets a verified Z.AI PAYG chat route opt into its in-request tool without treating the coding-plan endpoint as equivalent.
 - Both config schemas accept `webSearchToolType` for a Responses route's exact native type, including custom xAI provider ids that need `web_search` rather than OpenAI's legacy preview name.
+- `packages/coding-agent/src/core/model-config.ts`: its compatibility schema mirrors `model-config-schema.ts` for `webSearchToolType`, so config loading and schema validation agree on the exact server-tool declaration.
 
 ### Why
 
