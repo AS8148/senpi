@@ -99,6 +99,10 @@ jobs:
       - name: Check
         run: npm run check
 
+      - name: Real CLI mock-loop self-test
+        timeout-minutes: 5
+        run: node .agents/skills/senpi-qa/scripts/mock-loop.mjs --self-test
+
       - name: Build workspace package entries
         run: npm run build
 
