@@ -10,9 +10,15 @@
 
 ### Changed
 
+- Web search uses the active model's in-turn server tool first on enabled routes. Existing direct Anthropic/Claude OAuth and OpenAI/Azure defaults are preserved; ChatGPT subscription search is enabled, and newly supported xAI Responses, Gemini 2/3, OpenRouter and compatible Anthropic gateways require explicit opt-in. Search-specific failures enable one standalone fallback and record its reason; cheaper auxiliary models remain defaults only on routes without an enabled server tool ([#3122](https://github.com/code-yeongyu/senpi/issues/3122), requested by @code-yeongyu).
+
+- Server search remains default-on for direct Anthropic/Claude OAuth and OpenAI/Azure, unchanged from main, and is default-on for the live-verified first-party ChatGPT/Codex subscription route (except Spark). Gateways including ccapi and GLM coding plan on z.ai's Anthropic endpoint require `compat.supportsWebSearch: true`; xAI Responses, Gemini 2/3, OpenRouter, Moonshot PAYG, Z.AI PAYG and Sonar native-bypass routing also require explicit compatibility opt-in. Kimi for Coding and DeepSeek are not live-verified and do not gain default-on search. A different `nativeModel` setting is ignored on enabled server-search routes: main search and fallback use the session model ([#3122](https://github.com/code-yeongyu/senpi/issues/3122), requested by @code-yeongyu).
+
 ### Fixed
 
 - Internal control sockets keep their short-path fallback inside the configured temporary directory when it fits the Unix socket path limit ([#3103](https://github.com/code-yeongyu/senpi/pull/3103)).
+
+- Resuming after accepted compaction uses the compacted summary and retained messages instead of pre-compaction provider usage, so a session that now fits is not refused or compacted again. Fresh provider usage supersedes the estimate on the next response ([#3062](https://github.com/code-yeongyu/senpi/issues/3062)).
 
 - Zero-attempt terminal failures still explain provider-requested long waits and retry-delay caps; only an initial account-usage failure omits a redundant retry-end event. RPC entry events, entry history, and trees now carry the same structured account-limit advice as message history, and reset parsing uses injected clocks ([#3131](https://github.com/code-yeongyu/senpi/issues/3131)).
 
@@ -20,6 +26,10 @@
 
 - Locally refused prompts no longer extend a spent account's suppression window. Provider reset hints and retry-after delays bound that window, and an explicit `/model` selection clears it for a deliberate probe ([#3131](https://github.com/code-yeongyu/senpi/issues/3131)).
 - Account-limit advice and its structured scope remain consistent between live messages, restored transcripts, and RPC `get_messages`; the TUI no longer reports zero failed retry attempts when a turn failed without retrying ([#3131](https://github.com/code-yeongyu/senpi/issues/3131)).
+
+- Cross-route Moonshot sanitization preserves intentional empty tool arrays on main requests with tool history when no declaration was removed, retaining compatibility with LiteLLM-style proxies ([#3122](https://github.com/code-yeongyu/senpi/issues/3122)).
+
+- Server-search failures are remembered for the actual failed request model across prompts and model switches. Cache-friendly compaction retains the original payload hook and exact main-turn tools/include prefix. Standalone summaries, titles and default projections exclude only server-search tools, preserve client `web_search`, and do not add empty tool arrays. Fallback preserves provider-built function schemas and Gemini's single function-declaration entry. Moonshot's opt-in echo tool cannot be discovered or lazily activated through tool_search, and its declaration is stripped from non-Moonshot requests ([#3122](https://github.com/code-yeongyu/senpi/issues/3122)).
 
 ### Removed
 

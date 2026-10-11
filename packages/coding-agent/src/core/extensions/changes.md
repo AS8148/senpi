@@ -1,3 +1,43 @@
+## 2026-10-11 - Request-local search exclusion and canonical fallback (senpi#3122 review)
+
+### What changed
+
+- `runner.ts` / `types.ts`: request projections disable search by default; optional `allowServerSearch` preserves the keepalive prefix.
+- Native Messages/Responses injectors consult session/model failure memory before stripping function declarations and use the effective request model. All unverified routes require explicit opt-in; the live-verified ChatGPT subscription remains default-on.
+- `builtin/server-search-fallback.ts` owns non-serialized request metadata and a weakly session-owned failed-model set, preserving adapter-built schemas on fallback.
+
+### Why
+
+- Fallback must not rebuild raw parameter schemas or retry an already rejected native tool on every new prompt.
+
+### Why an extension could not handle it
+
+- The existing native and standalone extensions share the request boundary and session identity.
+
+### Expected merge conflict zones
+
+- Request preparation, native capability predicates, and fallback metadata.
+
+## 2026-10-11 - Native server web search first (senpi#3122)
+
+### What changed
+
+- `builtin/openai-web-search/index.ts` handles first-party Codex Responses as well as API-key Responses, chooses the current `web_search` type for Codex/xAI, and preserves the explicit capability opt-in for compatible routes.
+- `builtin/anthropic-web-search/index.ts` documents the exact search-and-encrypted-replay meaning of `supportsWebSearch`, with ccapi's verified contract requiring an explicit model/provider flag.
+- `builtin/websearch/` owns one bounded standalone continuation after search-specific errors and additional provider-native shapes; see its local ledger.
+
+### Why
+
+- Requested by @code-yeongyu: use the session model's in-turn server tool before any auxiliary search-model request.
+
+### Why an extension could not handle it
+
+- This is the coordinated behavior of the existing built-in search extensions, using existing provider-request and settled-agent hooks without changing the extension API.
+
+### Expected merge conflict zones
+
+- The native injector capability predicates and the standalone extension's event registrations.
+
 ## 2026-10-10 - Identify prepared context projections (senpi#900)
 
 ### What changed

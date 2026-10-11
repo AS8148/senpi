@@ -144,6 +144,7 @@ function getCompat(model: Model<"openai-responses">, env?: ProviderEnv): Require
 		supportsWebSocket: model.compat?.supportsWebSocket ?? isNativeEndpoint,
 		supportsRemoteCompactionV2: model.compat?.supportsRemoteCompactionV2 ?? isNativeEndpoint,
 		supportsWebSearchPreview: model.compat?.supportsWebSearchPreview ?? isNativeEndpoint,
+		webSearchToolType: model.compat?.webSearchToolType ?? "web_search_preview",
 		supportsImageGeneration: model.compat?.supportsImageGeneration ?? isNativeEndpoint,
 		supportsStrictMode: model.compat?.supportsStrictMode ?? false,
 		supportsOpenAIGrammarTools: model.compat?.supportsOpenAIGrammarTools ?? false,
@@ -190,7 +191,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isOpenAiWebSearchPreviewTool(value: unknown): boolean {
-	return isRecord(value) && (value.type === "web_search_preview" || value.type === "web_search_preview_2025_03_11");
+	return (
+		isRecord(value) &&
+		(value.type === "web_search" ||
+			value.type === "web_search_preview" ||
+			value.type === "web_search_preview_2025_03_11")
+	);
 }
 
 function sanitizeUnsupportedNativeTools(

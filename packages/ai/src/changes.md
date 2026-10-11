@@ -16,6 +16,46 @@ The shared assistant message is the transport contract consumed by session event
 
 - `packages/ai/src/types.ts`: optional assistant failure metadata.
 
+## 2026-10-11 - Evidence-gated server search opt-in (senpi#3122 review)
+
+### What changed
+
+- `model.ts`: Google generation and Vertex models accept typed `compat.supportsWebSearch`.
+- `providers/xai.ts`: retains the documented `webSearchToolType` without setting `supportsWebSearchPreview: true`; the unverified route now requires explicit opt-in.
+
+### Why
+
+- Documented tool support and an accepted request are not proof of executed search and replay. The held xAI probe failed authentication.
+
+### Why an extension could not handle it
+
+- Model compatibility types and provider catalog defaults belong to pi-ai.
+
+### Expected merge conflict zones
+
+- `model.ts` compatibility conditional and the xAI catalog mapping.
+
+## 2026-10-11 - Explicit in-turn search capabilities (senpi#3122)
+
+### What changed
+
+- `providers/xai.ts` marks the built-in Responses catalogue with `supportsWebSearchPreview: true`; the coding-agent injector uses xAI's documented `web_search` type, not OpenAI's legacy preview type.
+- `api/openai-responses.ts` gates the current `web_search` name alongside the two legacy preview names, preventing unsupported custom endpoints from receiving hook-injected native search.
+- `types.ts` adds optional `OpenAICompletionsCompat.supportsWebSearch` for endpoint-specific completion server search, and the compatibility resolver keeps this declaration optional rather than synthesizing support for a coding-plan endpoint.
+- Focused xAI, custom-Responses and existing Anthropic encrypted-replay tests cover the boundary.
+
+### Why
+
+- Server search must be the first choice on a supported main-request API. Search capability belongs to the exact provider/API route, not to a guessed proxy hostname or an auxiliary search model.
+
+### Why an extension could not handle it
+
+- Provider catalogue capabilities, shared model types and the final wire sanitizer are owned by pi-ai.
+
+### Expected merge conflict zones
+
+- The xAI catalogue mapping, optional completion compatibility fields, and the Responses native-tool predicate.
+
 ## 2026-10-10 - allowed_tools only on native OpenAI API hosts (senpi#3080)
 
 ### What changed

@@ -26,6 +26,7 @@ import type { BuildSystemPromptOptions } from "../system-prompt.ts";
 import type { VirtualModelDefinition } from "../virtual-models.ts";
 import { goalFilePath } from "./builtin/goal/persistence.ts";
 import { goalStoreRef } from "./builtin/goal/store-ref.ts";
+import { disableServerSearch } from "./builtin/server-search-fallback.ts";
 import { dispatchContextMessages } from "./context-dispatch.ts";
 import { kernelToolsStorage } from "./kernel-tools-context.ts";
 import { drainPendingProviderRegistrations } from "./loader.ts";
@@ -1370,9 +1371,9 @@ export class ExtensionRunner {
 				runner.assertActive();
 				runner.compactFn(options);
 			},
-			prepareProviderRequest: async (messages) => {
+			prepareProviderRequest: async (messages, options) => {
 				runner.assertActive();
-				return runner.prepareProviderRequest(messages, excludeBeforeProviderRequestExtensionPath);
+				return runner.prepareProviderRequest(messages, excludeBeforeProviderRequestExtensionPath, options);
 			},
 			getPromptCachePrefixRequest: async (options) => {
 				runner.assertActive();
@@ -1966,11 +1967,16 @@ export class ExtensionRunner {
 	async prepareProviderRequest(
 		messages: AgentMessage[],
 		excludeExtensionPath?: string,
+		options?: { allowServerSearch?: boolean },
 	): Promise<ProviderRequestPreparation> {
 		const transformedMessages = await this.emitContext(messages, excludeExtensionPath, "projection");
 		return {
 			messages: transformedMessages,
-			transformPayload: async (payload) => await this.emitBeforeProviderRequest(payload, excludeExtensionPath),
+			transformPayload: async (payload) =>
+				await this.emitBeforeProviderRequest(
+					options?.allowServerSearch ? payload : disableServerSearch(payload),
+					excludeExtensionPath,
+				),
 			transformHeaders: async (headers) => await this.emitBeforeProviderHeaders(headers),
 		};
 	}

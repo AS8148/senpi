@@ -1,3 +1,39 @@
+## 2026-10-11 - Preserve cache-friendly summary hook identity (senpi#3125 delta)
+
+### What changed
+
+- `packages/coding-agent/src/core/compaction/compaction.ts`: cache-retaining summaries pass the caller's `onPayload` through unchanged. Only standalone, non-cache-retaining summaries use server-search exclusion.
+
+### Why
+
+- Source-context summaries reuse the main turn's warm prefix, including its tools and include fields; replacing the payload hook breaks that contract.
+
+### Why an extension could not handle it
+
+- Core constructs the summary request options before extension payload hooks run.
+
+### Expected merge conflict zones
+
+- The isolated summarization options and cache retention policy.
+
+## 2026-10-11 - Exclude server search from summaries (senpi#3122 review)
+
+### What changed
+
+- `compaction.ts`: `completeSummarization` wraps the caller's payload hook with request-local server-search exclusion, covering ordinary and branch summaries without changing the next user turn.
+
+### Why
+
+- A summary does not need injected search and has no search-fallback continuation.
+
+### Why an extension could not handle it
+
+- Shared summary options are constructed in core before provider hooks run.
+
+### Expected merge conflict zones
+
+- The isolated summarization options.
+
 ## 2026-10-07 - Per-message token estimates cached behind their JSON text (senpi#2525)
 
 ### What changed

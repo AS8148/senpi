@@ -1,3 +1,21 @@
+## 2026-10-11 - Resume gate projects accepted compaction context (senpi#3062)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_resumeRequirementStillBlocks` uses `estimateProjectedContextTokens` with the current session projection and branch. Accepted checkpoints invalidate retained pre-checkpoint usage; the next valid provider response restores usage-based accounting.
+
+### Why
+
+- Retained assistant usage measured the larger pre-compaction context, so the resume requirement could keep refusing a session whose compacted summary and kept messages fit. Rejected or failed compaction must retain the previous usage, and a still-oversized projection must remain blocked.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: the resume requirement is checked and cleared in the session admission gate, outside extension-owned compaction results.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_resumeRequirementStillBlocks` context estimation.
+
 ## 2026-10-11 - Account fail-fast suppression stays at its emit site (senpi#3131 delta)
 
 ### What changed
@@ -38,6 +56,45 @@ Prompt admission, suppression clocks, summary routing, and transport message pro
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/core/agent-session.ts`: prompt admission, event projection, and summary model resolution.
+
+## 2026-10-11 - No server-search injection in auxiliary requests (senpi#3122 review)
+
+### What changed
+
+- `session-title-generator.ts` marks title payloads as search-disabled before passing them through the normal payload hook.
+- Shared summarization and extension request projections use the same request-local exclusion. Keepalive explicitly preserves the main-turn prefix.
+
+### Why
+
+- Auxiliary requests must not pay for or fail on a server-search declaration intended for the user's turn.
+
+### Why an extension could not handle it
+
+- Title and summarization option construction owns these request boundaries.
+
+### Expected merge conflict zones
+
+- Title options, summary options, and extension request preparation.
+
+## 2026-10-11 - Completion server-search capability in models.json (senpi#3122)
+
+### What changed
+
+- `model-config-schema.ts` accepts optional `supportsWebSearch` in completion compatibility entries, matching the provider type. This lets a verified Z.AI PAYG chat route opt into its in-request tool without treating the coding-plan endpoint as equivalent.
+- Both config schemas accept `webSearchToolType` for a Responses route's exact native type, including custom xAI provider ids that need `web_search` rather than OpenAI's legacy preview name.
+- `packages/coding-agent/src/core/model-config.ts`: its compatibility schema mirrors `model-config-schema.ts` for `webSearchToolType`, so config loading and schema validation agree on the exact server-tool declaration.
+
+### Why
+
+- The search extension needs an explicit per-route declaration; user configuration discovery stays read-only and unsupported routes retain standalone search.
+
+### Why an extension could not handle it
+
+- Core owns the models.json validation schema.
+
+### Expected merge conflict zones
+
+- One optional compatibility property in `OpenAICompletionsCompatSchema`.
 
 ## 2026-10-11 - A busy prompt throws a typed AgentBusyError (senpi#3073 review)
 
