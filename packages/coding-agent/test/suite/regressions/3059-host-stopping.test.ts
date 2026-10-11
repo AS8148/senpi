@@ -1,6 +1,7 @@
 import childProcess, { type ChildProcess, spawn } from "node:child_process";
 import { once } from "node:events";
 import { rm } from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readProcessStartTime } from "../../../src/modes/app-server/daemon/process.ts";
@@ -101,6 +102,8 @@ async function rig() {
 		if (args[1]?.includes("successor")) successors.push({ child, exit: once(child, "exit") });
 		return child;
 	});
+	// ensureHost imports the native named export; capture its real handle too.
+	syncBuiltinESMExports();
 	return {
 		qa,
 		supervisor,
@@ -108,6 +111,7 @@ async function rig() {
 		messages,
 		wait,
 		launch,
+		successors,
 		stop: async () => {
 			supervisor.kill("SIGTERM");
 			await wait("child-stopping");
@@ -131,6 +135,7 @@ afterEach(async () => {
 		for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 	} finally {
 		vi.restoreAllMocks();
+		syncBuiltinESMExports();
 	}
 });
 
@@ -178,6 +183,7 @@ describe.skipIf(process.platform === "win32")("stopping host admission", () => {
 		try {
 			expect(next.reused).toBe(false);
 			expect(next.pid).not.toBe(r.supervisor.pid);
+			expect(r.successors.map(({ child }) => child.pid)).toEqual([next.pid]);
 		} finally {
 			next.release();
 		}
@@ -217,6 +223,7 @@ describe.skipIf(process.platform === "win32")("stopping host admission", () => {
 		expect(outcome.exitCode).toBe(0);
 		expect(outcome.payload).toMatchObject({ action: "open", reused: false });
 		expect(outcome.payload.sessionId).not.toBe("stopping-generation");
+		expect(r.successors.map(({ child }) => child.pid)).toEqual([outcome.payload.pid]);
 	});
 
 	it("reports stopping through both discovery and host status while the child remains alive", async () => {
