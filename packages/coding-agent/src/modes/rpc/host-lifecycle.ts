@@ -3,7 +3,8 @@ import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getAgentDir, isBundledNode } from "../../config.ts";
+import { getAgentDir, isBundledNode, VERSION } from "../../config.ts";
+import { HostAdmission } from "./host-admission.ts";
 import { classifyChildExit, noteChildExit } from "./host-child-exit.ts";
 import { hostCrashCleanupPaths } from "./host-cleanup-paths.ts";
 import { createHostDaemonPaths, generationPaths } from "./host-daemon-paths.ts";
@@ -153,13 +154,18 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		void state.childExitRecorded.then(() => shutdown(verdict.reason, verdict.exitCode));
 	});
 
-	const drain = new SupervisorDrain(child, () => state.shuttingDown);
+	const admission = new HostAdmission({ protocolVersion: 1, serverVersion: VERSION, capabilities: [], instanceId });
+	const drain = new SupervisorDrain(
+		child,
+		() => state.shuttingDown,
+		() => admission.stop(),
+	);
 	const server = createPublicProxy({
 		internalSocket,
 		...(internalSecret ? { internalSecret } : {}),
 		...(publicSecret ? { publicSecret } : {}),
 		clients: activity.clients,
-		refusing: () => state.shuttingDown || drain.active,
+		admission,
 		onDetach: () => activity.refresh(),
 		onAdmit: () => owner.activity(),
 	});
@@ -196,6 +202,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		child,
 		activity,
 		drain,
+		admission,
 		state,
 		stopWatchers: () => {
 			for (const stop of watchers.splice(0)) stop();

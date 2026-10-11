@@ -4,6 +4,7 @@ import { createHostDaemonPaths } from "./host-daemon-paths.ts";
 import { HostEnsureRefusedError } from "./host-decision.ts";
 import { endpointKindOfSocket } from "./host-endpoints.ts";
 import { type EnsuredHost, ensureHost } from "./host-ensure.ts";
+import { STOP_WAIT_BUDGET_MS } from "./host-ensure-stop.ts";
 import type { ResolvedHostLaunchSpec } from "./host-launch-spec.ts";
 import { HOST_EXIT_OK, type HostOutcome, refusal } from "./host-outcome.ts";
 import type { HostTarget } from "./host-runner.ts";
@@ -11,7 +12,7 @@ import { mapError } from "./host-session-errors.ts";
 import { type HostSessionOpen, openHostSession } from "./host-session-open.ts";
 import { resolveSessionRef, type SessionRef } from "./host-session-ref.ts";
 import { type HostSessionWait, waitForHostSession } from "./host-session-wait.ts";
-import { RpcClient, type RpcClientEvent, type RpcTransportGoneError } from "./rpc-client.ts";
+import { RpcClient, type RpcClientEvent, RpcCommandError, type RpcTransportGoneError } from "./rpc-client.ts";
 import type { RpcSessionClosedEvent } from "./rpc-types.ts";
 
 type Model = { provider: string; id: string };
@@ -29,6 +30,24 @@ export type HostSessionRequest = { target: HostTarget } & (
 );
 
 export async function runHostSessionRequest(request: HostSessionRequest): Promise<HostOutcome> {
+	const deadline = Date.now() + STOP_WAIT_BUDGET_MS;
+	for (;;) {
+		try {
+			return await runHostSessionRequestOnce(request, Math.max(0, deadline - Date.now()));
+		} catch (error) {
+			if (
+				request.action === "open" &&
+				error instanceof RpcCommandError &&
+				error.errorCode === "host_stopping" &&
+				Date.now() < deadline
+			)
+				continue;
+			return mapError(error, request.target.socket);
+		}
+	}
+}
+
+async function runHostSessionRequestOnce(request: HostSessionRequest, stoppingTimeoutMs: number): Promise<HostOutcome> {
 	const { socket, agentDir } = request.target;
 	let client: RpcClient | undefined;
 	let ensured: EnsuredHost | undefined;
@@ -45,6 +64,7 @@ export async function runHostSessionRequest(request: HostSessionRequest): Promis
 				env: daemonEnvOverrides(process.env, request.spec.env),
 				policy: request.spec.policy,
 				upgrade: "never",
+				stoppingTimeoutMs,
 			});
 			if (!ensured.reused) {
 				await writeDaemonEnvKeys(
@@ -178,6 +198,9 @@ export async function runHostSessionRequest(request: HostSessionRequest): Promis
 				return assertNever(request);
 		}
 	} catch (error) {
+		// Only an explicit open owns a launch spec. No other operation may invent one.
+		if (request.action === "open" && error instanceof RpcCommandError && error.errorCode === "host_stopping")
+			throw error;
 		if (error instanceof HostEnsureRefusedError) {
 			return refusal("refuse", undefined, { reason: error.reason, socket, detail: error.detail });
 		}

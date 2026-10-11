@@ -158,6 +158,29 @@ count the host enforces.
 
 ### Host identity (`get_protocol_info`)
 
+Supervised socket hosts additionally report `lifecycle: "ready" | "stopping"`.
+The supervisor closes admission synchronously when shutdown or a drain begins,
+including owner-expiry shutdown. It keeps answering protocol probes while waiting
+for its child to exit, even if the child no longer responds. `senpi host status`
+and `status --all` expose the same `lifecycle` field (`null` for an older or
+unreachable host). Session counts during stopping are unobserved and represented
+by the existing empty listing, not a claim that the child has already exited.
+
+A ready probe does not reserve an open: a later `open_session` can fail with
+`errorCode: "host_stopping"` and `errorData.instanceId`, including on a connection
+that previously read ready. An open still pending when stopping begins receives
+the same refusal rather than a late successful attachment. Existing admitted
+sessions may finish a drain.
+
+`ensureHost()` never adopts a stopping generation. Under the endpoint lock it
+waits for that registered supervisor and its child to exit, without signalling
+them, within the existing stop budget. `stoppingTimeoutMs` may shorten that wait;
+expiry or an unprovable generation returns `HostEnsureRefusedError` with reason
+`host_stopping`. A fresh ensure then performs ordinary discovery/startup.
+`senpi host session open` retries a typed stopping refusal with its original
+launch specification and a shared stop deadline. Socket-only `RpcClient` reports
+the typed error to its caller; it cannot launch a successor without launch options.
+
 Every `get_protocol_info` answer - classic and multi-session alike - carries the identity of the host that
 answered it, so a client sharing one machine-wide host can tell hosts, builds and launches apart without
 parsing a version string:
