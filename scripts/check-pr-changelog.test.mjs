@@ -342,6 +342,42 @@ it("fails a PR that removes existing change-log lines through the PR gate CLI", 
 		git("tag", "-d", "v2026.9.20");
 		check(changelog, changelogOriginal, 1, /released section \[2026\.9\.20\] changed/);
 	});
+	const commitChangelog = (text, message) => {
+		writeFileSync(join(root, changelog), text);
+		git("add", changelog);
+		git("commit", "-qm", message);
+		return git("rev-parse", "HEAD");
+	};
+	const withBase = (text, run) => {
+		const saved = base;
+		base = commitChangelog(`${text}- accidentally added after release\n`, "incorrect base");
+		try {
+			run();
+		} finally {
+			base = saved;
+		}
+	};
+	// A section name carrying revision syntax must not resolve through the tag (`v2026.9.20~1` is the tag's parent).
+	await t.test("revision syntax in a section name gets no tag exemption", () => {
+		const parentShaped = changelogOriginal.replace("## [2026.9.20]", "## [2026.9.20~1]");
+		commitChangelog(parentShaped, "tag parent holding the parent-shaped section");
+		git("tag", "v2026.9.20", commitChangelog(changelogOriginal, "tagged release"));
+		withBase(parentShaped, () => check(changelog, parentShaped, 1, /released section \[2026\.9\.20~1\] changed/));
+	});
+	// Only CalVer release names are exempt, even when a matching `v<name>` tag exists.
+	await t.test("non-CalVer section name with a matching tag gets no exemption", () => {
+		const named = changelogOriginal.replace("## [2026.9.20]", "## [next]");
+		git("tag", "vnext", commitChangelog(named, "non-CalVer tag"));
+		withBase(named, () => check(changelog, named, 1, /released section \[next\] changed/));
+	});
+	// A tag that lacks the changelog gives the normal FAIL, not a git error.
+	await t.test("tag without the changelog file fails the normal way", () => {
+		git("tag", "-d", "v2026.9.20");
+		const emptyTree = git("hash-object", "-t", "tree", "/dev/null");
+		git("tag", "v2026.9.20", git("commit-tree", emptyTree, "-m", "tag without the changelog"));
+		const output = check(changelog, changelogOriginal, 1, /^changelog-gate: FAIL - packages\/ai\/CHANGELOG\.md:\d+: released section \[2026\.9\.20\] changed$/m);
+		assert.doesNotMatch(output, /fatal:|ERROR/);
+	});
 });
 
 // #1884: drive the real CLI over committed diffs, including the actual release transformation.

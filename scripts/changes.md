@@ -2,8 +2,8 @@
 
 ### What changed
 
-- `scripts/check-pr-changelog.mjs`: collect tagged section slices for changed released sections using the same changelog path at `refs/tags/v<section name>`. Accept a differing section only when its name stays in place and its full slice equals the tagged bytes. Missing tags provide no exemption.
-- `scripts/check-pr-changelog.test.mjs`: pure verdict cases and a real tagged CLI fixture cover restoration, non-tag edits, absent tags, and whitespace differences.
+- `scripts/check-pr-changelog.mjs`: collect tagged section slices for changed released sections using the same changelog path at `refs/tags/v<section name>`. Accept a differing section only when its name stays in place and its full slice equals the tagged bytes. Only plain CalVer section names qualify, and the tag must exist as that exact ref (`show-ref --verify`), so revision syntax such as `~1` never resolves another commit. Missing tags, and tags that lack the changelog, provide no exemption.
+- `scripts/check-pr-changelog.test.mjs`: pure verdict cases and a real tagged CLI fixture cover restoration, non-tag edits, absent tags, whitespace differences, a revision-syntax name, a non-CalVer name with a matching tag, and a tag without the changelog file.
 
 ### Why
 
