@@ -22,7 +22,14 @@ import { ensureClient } from "./host-ensure-client.ts";
 import { publicEndpointAccepts, refuseIfStalled } from "./host-ensure-liveness.ts";
 import { hostEnsureLockOptions, hostEnsureLockTarget } from "./host-ensure-lock.ts";
 import { appendStderr, DEFAULT_READINESS_TIMEOUT_MS, DEFAULT_STOP_TIMEOUT_MS, startHost } from "./host-ensure-start.ts";
-import { ensureSender, matchesPidFileOrUnknown, STOP_WAIT_BUDGET_MS, stopManagedHost } from "./host-ensure-stop.ts";
+import {
+	delay,
+	ensureSender,
+	matchesPidFileOrUnknown,
+	resolvePidFileOwnership,
+	STOP_WAIT_BUDGET_MS,
+	stopManagedHost,
+} from "./host-ensure-stop.ts";
 import type { EnsuredHost, EnsureHostOptions } from "./host-ensure-types.ts";
 import { scheduleOpportunisticHostGc } from "./host-gc-pass.ts";
 import { HANDOFF_LOCK_HOLD_MS, handoffHostLocked } from "./host-handoff.ts";
@@ -96,6 +103,7 @@ async function ensureHostLocked(
 	paths: HostDaemonPaths,
 	socket: string,
 	options: EnsureHostOptions,
+	stopDeadline = Date.now() + Math.min(options.stoppingTimeoutMs ?? STOP_WAIT_BUDGET_MS, STOP_WAIT_BUDGET_MS),
 ): Promise<EnsuredHost> {
 	// Under the lock, so a torn or foreign `endpoint.json` is repaired rather than left unaddressable.
 	await ensureEndpointIdentity(paths, socket, { repair: true });
@@ -115,6 +123,25 @@ async function ensureHostLocked(
 	// A reusable host is held from the connection that proved it compatible, never re-probed later.
 	const held = await holdProtocolInfo(socket, EXISTING_HOST_PROBE_TIMEOUT_MS);
 	const protocol = held?.info;
+	if (protocol?.lifecycle === "stopping") {
+		held?.hold.release();
+		// A typed stop is not permission to signal or overwrite a foreign generation.
+		// Wait for BOTH identities to be gone, then re-run discovery under this lock.
+		if (!registeredHere || !registered || registered.instanceId !== protocol.instanceId)
+			throw new HostEnsureRefusedError(socket, "host_stopping", protocol, "no matching registered generation");
+		const generation = generationPaths(paths, registered.instanceId);
+		for (;;) {
+			if (
+				(await resolvePidFileOwnership(registered.record, testOptions?.readProcessStartTime)) === "gone" &&
+				!(await hostChildAlive(generation))
+			)
+				return ensureHostLocked(paths, socket, options, stopDeadline);
+			const remaining = stopDeadline - Date.now();
+			if (remaining <= 0)
+				throw new HostEnsureRefusedError(socket, "host_stopping", protocol, "generation exit exceeded stop budget");
+			await delay(Math.min(50, remaining));
+		}
+	}
 	const startedByUs =
 		registeredHere && (await writtenByThisProcess(registered?.writer, testOptions?.readProcessStartTime));
 	const attachedPid = registeredHere ? (registered?.record.pid ?? 0) : 0;
@@ -141,7 +168,13 @@ async function ensureHostLocked(
 		case "refuse":
 			throw new HostEnsureRefusedError(socket, decision.reason, protocol);
 		case "handoff":
-			return upgradeGeneration(paths, socket, options, attachedPid);
+			try {
+				return await upgradeGeneration(paths, socket, options, attachedPid);
+			} catch (cause) {
+				if (cause instanceof HostEnsureRefusedError && cause.reason === "host_stopping")
+					return ensureHostLocked(paths, socket, options, stopDeadline);
+				throw cause;
+			}
 		case "start":
 			break;
 		default:
@@ -243,6 +276,10 @@ async function upgradeGeneration(
 async function holdEnsured(socket: string): Promise<() => void> {
 	const held = await holdProtocolInfo(socket, EXISTING_HOST_PROBE_TIMEOUT_MS);
 	if (!held) throw new Error(`RPC socket host at ${socket} stopped answering before this ensure could hold it`);
+	if (held.info.lifecycle === "stopping") {
+		held.hold.release();
+		throw new HostEnsureRefusedError(socket, "host_stopping", held.info);
+	}
 	return held.hold.release;
 }
 

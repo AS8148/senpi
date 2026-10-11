@@ -28,6 +28,7 @@ const STATUS_FIELDS = [
 	"host_rss_mb",
 	"instanceId",
 	"launchProfile",
+	"lifecycle",
 	"memory_pressure",
 	"open_fds",
 	"pid",
@@ -133,6 +134,7 @@ describe.skipIf(process.platform === "win32")("senpi host status", () => {
 		expect(Object.keys(status).sort()).toEqual(STATUS_FIELDS);
 		expect(status).toMatchObject({
 			reachable: true,
+			lifecycle: "ready",
 			socket: qa.socket,
 			pid: ensured.pid,
 			instanceId: ensured.instanceId,
@@ -187,7 +189,13 @@ describe.skipIf(process.platform === "win32")("senpi host status", () => {
 		expect(result.exitCode).toBe(3);
 		const status = onlyJsonLine(result);
 		expect(Object.keys(status).sort()).toEqual(STATUS_FIELDS);
-		expect(status).toMatchObject({ reachable: false, socket: qa.socket, pid: null, generations: [] });
+		expect(status).toMatchObject({
+			reachable: false,
+			lifecycle: null,
+			socket: qa.socket,
+			pid: null,
+			generations: [],
+		});
 	}, 60_000);
 
 	it("lists every endpoint of the agent directory under --all, ignoring --socket", async () => {

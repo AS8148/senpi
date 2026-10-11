@@ -266,6 +266,29 @@ count the host enforces.
 
 ### Host identity (`get_protocol_info`)
 
+Supervised socket hosts additionally report `lifecycle: "ready" | "stopping"`.
+The supervisor closes admission synchronously when shutdown or a drain begins,
+including owner-expiry shutdown. It keeps answering protocol probes while waiting
+for its child to exit, even if the child no longer responds. `senpi host status`
+and `status --all` expose the same `lifecycle` field (`null` for an older or
+unreachable host). Session counts during stopping are unobserved and represented
+by the existing empty listing, not a claim that the child has already exited.
+
+A ready probe does not reserve an open: a later `open_session` can fail with
+`errorCode: "host_stopping"` and `errorData.instanceId`, including on a connection
+that previously read ready. An open still pending when stopping begins receives
+the same refusal rather than a late successful attachment. Existing admitted
+sessions may finish a drain.
+
+`ensureHost()` never adopts a stopping generation. Under the endpoint lock it
+waits for that registered supervisor and its child to exit, without signalling
+them, within the existing stop budget. `stoppingTimeoutMs` may shorten that wait;
+expiry or an unprovable generation returns `HostEnsureRefusedError` with reason
+`host_stopping`. A fresh ensure then performs ordinary discovery/startup.
+`senpi host session open` retries a typed stopping refusal with its original
+launch specification and a shared stop deadline. Socket-only `RpcClient` reports
+the typed error to its caller; it cannot launch a successor without launch options.
+
 Every `get_protocol_info` answer - classic and multi-session alike - carries the identity of the host that
 answered it, so a client sharing one machine-wide host can tell hosts, builds and launches apart without
 parsing a version string:
@@ -700,11 +723,17 @@ which prints the bare socket path).
   attach-only even when its caller requested an upgrade: a host generation never starts its own successor.
   This is process-local state, not an environment marker, so a shell child remains free to run the explicit
   `senpi host handoff` command.
-- `status` prints `{ reachable, socket, pid, instanceId, generation, engineVersion, capabilities,
+- `status` prints `{ reachable, lifecycle, socket, pid, instanceId, generation, engineVersion, capabilities,
   launchProfile, runtimeBuildId, handover, sessions: { total, interactive, worker, retained, foreign_attached, foreign_retained },
   zombies, rss_mb, host_rss_mb, open_fds, memory_pressure, env_keys, generations, crashes, shard, session_rows,
   claims_live, claims }` and exits 3 when nothing answers - with the same
-  field set, so a caller parses one shape and branches on one boolean. `sessions` is what `list_sessions`
+  field set, so a caller parses one shape and branches on one boolean. The additive `lifecycle` field is
+  `"ready"` while an answering supervised host accepts opens, `"stopping"` while it shuts down or drains,
+  and `null` when nobody answers or the answering host does not advertise its lifecycle. An unserved
+  socket therefore includes both `"reachable": false` and `"lifecycle": null`; `null` is not `"ready"`.
+  `status --all` carries the same field and values on each endpoint row. While stopping, session listing
+  is not queried and its empty counts are unobserved, not proof that all sessions have finished.
+  Otherwise, `sessions` is what `list_sessions`
   reports under the same flag, so `worker` stays `0` without `--include-workers`; `foreign_*` is the same
   count from the point of view of a client holding none of those sessions itself. `rss_mb`, `open_fds` and
   `zombies` describe the daemon's whole process tree (supervisor, host, and every tool, kernel and server its
@@ -1335,7 +1364,8 @@ without a known replacement. This record has no request id or session handle; ol
    The connection closes after its last attached session parks; a connection shared with another active session
    stays open until that session also settles. A command racing parking on the old connection is either served
    or answered by that terminal record and close, never `unknown_session` for the parked handle. New opens on a
-   draining connection are refused with `host_draining`.
+   draining supervised connection are refused with `host_stopping`; a bare (unsupervised) socket host
+   still returns `host_draining`. Re-resolve the public endpoint rather than retrying the draining connection.
 4. The **supervisor** starts `SENPI_RPC_HANDOFF_GRACE_MS` at supersession (default **600000 ms / 10 minutes**).
    This is a soft grace, not an abort deadline or a delay before parking. At expiry it reports outstanding work
    and requests another drain pass. Sessions still mid-turn or handling requests remain alive even beyond grace;
@@ -1847,7 +1877,8 @@ codes or code prefixes in `error`:
 - `session_reservation_limit` (this worker already holds 64 live session paths; the open or session replacement was refused without disturbing the existing session)
 - `missing_session_id` (session-scoped command without `sessionId` in multi mode)
 - `multi_session_disabled` (`open_session` in classic mode)
-- `host_draining` (`open_session` or `release_session` on a connection whose generation is parking for a handoff; the successor already owns the public path, so re-resolve it and open or release there rather than retrying this connection)
+- `host_stopping` (`open_session` refused by a supervised host that is shutting down or draining, including opens previously answered with `host_draining`; `errorData.instanceId` identifies the stopping generation. Re-resolve the public endpoint; a launch-owning caller may wait for this generation's exit within the stop budget and start a successor.)
+- `host_draining` (`open_session` on a bare, unsupervised host, or `release_session` forwarded to a child whose generation is parking for a handoff; re-resolve the public path and open or release on the successor rather than retrying this connection)
 - `turn_active` (`release_session` while a turn runs or is about to start - a prompt in preflight, an admitted delivery not yet written - without `interrupt: true`; `errorData { attachments, busy }`)
 - `session_busy` (`release_session` while other session work runs - bash, compaction, barrier-held work, another request for the session - without `interrupt: true`; `errorData { attachments, busy }`)
 - `attached` (`release_session` while clients are attached, without `force: true`; `errorData { attachments }` names how many)

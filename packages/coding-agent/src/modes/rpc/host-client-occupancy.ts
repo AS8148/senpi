@@ -19,6 +19,7 @@ export class ClientOccupancy {
 	private readonly observers = new Set<Socket>();
 	private readonly attached = new Set<Socket>();
 	private readonly onAttach: () => void;
+	private closed = false;
 
 	constructor(onAttach: () => void) {
 		this.onAttach = onAttach;
@@ -32,7 +33,11 @@ export class ClientOccupancy {
 		return this.clients.size - this.observers.size - this.attached.size;
 	}
 
-	admit(client: Socket): void {
+	admit(client: Socket): boolean {
+		if (this.closed) {
+			client.destroy();
+			return false;
+		}
 		this.clients.add(client);
 		let pending = Buffer.alloc(0);
 		const attach = (): void => {
@@ -56,6 +61,7 @@ export class ClientOccupancy {
 			if (pending.length > MAX_CLASSIFIED_LINE_BYTES) attach();
 		};
 		client.on("data", classify);
+		return true;
 	}
 
 	/** Returns whether this peer left without ever proving it was an observing read. */
@@ -68,6 +74,7 @@ export class ClientOccupancy {
 	}
 
 	destroyAll(): void {
+		this.closed = true;
 		for (const client of this.clients) client.destroy();
 	}
 }
