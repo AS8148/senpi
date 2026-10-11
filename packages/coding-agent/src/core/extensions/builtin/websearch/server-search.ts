@@ -142,10 +142,8 @@ export function serverSearchPayload(model: SearchModel | undefined, payload: unk
 		}
 		if (!isRecord(payload)) return payload;
 		if (Array.isArray(payload.tools)) {
-			payload = withTools(
-				payload,
-				payload.tools.filter((tool) => !isMoonshotSearchTool(tool)),
-			);
+			const tools = payload.tools.filter((tool) => !isMoonshotSearchTool(tool));
+			if (tools.length !== payload.tools.length) payload = withTools(payload, tools);
 		}
 		if (isRecord(payload) && isRecord(payload.config) && Array.isArray(payload.config.tools)) {
 			payload = {

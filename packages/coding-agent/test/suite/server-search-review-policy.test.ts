@@ -55,6 +55,24 @@ describe("reviewed server search route policy", () => {
 		expect(payload.tools).toHaveLength(2);
 	});
 
+	it("preserves an intentional empty tools array when tool history requires it", () => {
+		// senpi#3125: pi-ai retains tools: [] for LiteLLM-style proxies with tool history.
+		const payload = {
+			messages: [
+				{
+					role: "assistant",
+					content: null,
+					tool_calls: [{ id: "read-1", type: "function", function: { name: "read", arguments: "{}" } }],
+				},
+				{ role: "tool", tool_call_id: "read-1", content: "File contents" },
+			],
+			tools: [],
+		};
+		const result = serverSearchPayload(route("openai-completions", "custom", "model"), payload);
+		expect(result).toEqual(payload);
+		expect(result).toBe(payload);
+	});
+
 	it("retains the provider-normalized fallback declaration in the existing Gemini tool entry", () => {
 		const model = {
 			...route("google-generative-ai", "google", "gemini-3-pro-preview"),

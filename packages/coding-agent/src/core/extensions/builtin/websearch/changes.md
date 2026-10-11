@@ -1,3 +1,21 @@
+## 2026-10-11 - Preserve intentional empty main-turn tool arrays (senpi#3125 delta)
+
+### What changed
+
+- `server-search.ts` rewrites a non-Moonshot request's top-level tools only when the Moonshot filter removes a declaration. Unchanged payloads, including intentional `tools: []` with tool history, retain their original reference and array.
+
+### Why
+
+- The Completions adapter deliberately supplies an empty array for LiteLLM-style proxies when history contains tool calls or results. Sanitizing an unrelated provider tool must not erase that contract.
+
+### Why an extension could not handle it
+
+- This extension owns the cross-route Moonshot sanitizer that removed the array.
+
+### Expected merge conflict zones
+
+- `serverSearchPayload` top-level Moonshot declaration filtering.
+
 ## 2026-10-11 - Narrow auxiliary exclusion and track the failed request model (senpi#3125 delta)
 
 ### What changed

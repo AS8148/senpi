@@ -14,7 +14,6 @@ const ANTHROPIC_MODEL = {
 	api: "anthropic-messages",
 	provider: "anthropic",
 	baseUrl: "https://api.anthropic.com",
-	compat: { supportsWebSearch: true },
 } as const;
 
 const kimiCodingModel = {
@@ -191,7 +190,7 @@ describe("anthropic-web-search builtin extension", () => {
 		expect(result).toBe(payload);
 	});
 
-	it("keeps an explicitly enabled route on when the environment override is unset", () => {
+	it("keeps the first-party default on when the environment override is unset", () => {
 		const payload = {
 			tools: [{ name: "other_tool" }],
 		};

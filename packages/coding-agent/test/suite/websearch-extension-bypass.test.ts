@@ -77,7 +77,6 @@ const firstPartyAnthropic = {
 	id: "claude-sonnet-4-5",
 	api: "anthropic-messages",
 	baseUrl: "https://api.anthropic.com",
-	compat: { supportsWebSearch: true },
 };
 
 const proxiedAnthropic = {
@@ -92,7 +91,6 @@ const firstPartyOpenAi = {
 	id: "gpt-5.5",
 	api: "openai-responses",
 	baseUrl: "https://api.openai.com/v1",
-	compat: { supportsWebSearchPreview: true },
 };
 
 const proxiedOpenAi = {
