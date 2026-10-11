@@ -20,6 +20,8 @@ const observations: ReadonlySet<string> = new Set([
 	"get_auth_providers",
 	"get_provider_accounts",
 	"memory_report",
+	"eval_cells.list",
+	"eval_cells.peek",
 ] satisfies readonly RpcCommand["type"][]);
 
 export function refreshesSessionActivity(command: string): boolean {

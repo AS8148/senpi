@@ -55,6 +55,7 @@ import type {
 	ExtensionWidgetOptions,
 	WorkingIndicatorOptions,
 } from "../../core/extensions/index.ts";
+import { ExtensionRpcRequestNotFoundError } from "../../core/extensions/runner.ts";
 import { describeUsageLimitEntry, describeUsageLimitMessage } from "../../core/retry-fallback/usage-limit.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
 import { DURABLE_CLIENT_MESSAGE_ID_CAPABILITY } from "./client-admission-record.ts";
@@ -67,6 +68,7 @@ import {
 	buildCustomUnsupportedRequest,
 	CONTINUE_FROM_LEAF_CAPABILITY,
 	DEFAULT_CUSTOM_EXTENSION_LABEL,
+	EVAL_CELLS_CAPABILITY,
 	EXTENSION_EVENTS_CAPABILITY,
 	MEDIA_PLACEHOLDERS_CAPABILITY,
 	QUESTION_CAPABILITY,
@@ -105,6 +107,7 @@ import type {
 import {
 	RPC_ERROR_ENTRY_NOT_FOUND,
 	RPC_ERROR_EVAL_CELL_NOT_FOUND,
+	RPC_ERROR_EVAL_CELLS_UNAVAILABLE,
 	RPC_ERROR_INVALID_EVAL_CELL_REQUEST,
 	RPC_ERROR_MEDIA_NOT_FOUND,
 	RPC_ERROR_MODEL_NOT_FOUND,
@@ -965,6 +968,7 @@ export function createRpcConnectionHandler(
 								MEDIA_PLACEHOLDERS_CAPABILITY,
 								DURABLE_CLIENT_MESSAGE_ID_CAPABILITY,
 								CONTINUE_FROM_LEAF_CAPABILITY,
+								EVAL_CELLS_CAPABILITY,
 								...(options.retryFallbackCommand ? [RETRY_FALLBACK_COMMAND_CAPABILITY] : []),
 								// Client flags cannot advertise a host guard this classic binding does not run.
 								...(options.capabilities ?? []).filter((capability) => capability !== SESSION_HELD_CAPABILITY),
@@ -1630,22 +1634,30 @@ export function createRpcConnectionHandler(
 				return success(id, "get_loaded_surfaces", inventory.data);
 			}
 
-			case "extension_request": {
-				const name = command.name.trim();
-				if (name.length === 0) {
-					return error(id, "extension_request", "Extension RPC request name cannot be empty");
-				}
-				const data = await session.extensionRunner.requestRpc(name, command.data);
-				return success(id, "extension_request", data);
-			}
-
+			case "extension_request":
 			case "eval_cells.list":
 			case "eval_cells.peek":
 			case "eval_cells.stop": {
+				const name = command.type === "extension_request" ? command.name.trim() : command.type;
+				if (name.length === 0) return error(id, command.type, "Extension RPC request name cannot be empty");
 				try {
-					const data = await session.extensionRunner.requestRpc(command.type, command);
+					const data = await session.extensionRunner.requestRpc(
+						name,
+						command.type === "extension_request" ? command.data : command,
+					);
 					return success(id, command.type, data);
 				} catch (cause) {
+					if (
+						cause instanceof ExtensionRpcRequestNotFoundError &&
+						(name === "eval_cells.list" || name === "eval_cells.peek" || name === "eval_cells.stop")
+					) {
+						return error(
+							id,
+							command.type,
+							"Eval cell controls are unavailable in this session",
+							RPC_ERROR_EVAL_CELLS_UNAVAILABLE,
+						);
+					}
 					if (
 						cause instanceof Error &&
 						"code" in cause &&

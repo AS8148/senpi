@@ -23,6 +23,18 @@ codemode detached-cell manager, the same one used by the eval tool's
 append session history. Stopping a detached cell still delivers the ordinary
 `senpi-codemode:notification` completion message to the agent, exactly once.
 
+Both classic and shared hosts advertise the host capability `eval_cells` in
+`get_protocol_info.capabilities`. It indicates protocol support, not that
+codemode is loaded in every session. A session without the extension returns
+`errorCode: "eval_cells_unavailable"`.
+
+On shared hosts, the three named commands bypass the foreign-session-holder
+guard as explicit reads/cancellation controls. They only touch this host's
+manager for the routed session, never the foreign process's cells. List and
+peek are observations and do not renew an otherwise idle detached session;
+stop counts as activity. Cancelling an already-admitted detached cell may
+persist its ordinary completion notification, like the existing abort control.
+
 ### eval_cells.list
 
 ```json
@@ -79,6 +91,12 @@ Unknown IDs, including IDs owned only by another session, fail with
 `errorCode: "eval_cell_not_found"`. A malformed `cellId` or `tailBytes` fails with
 `errorCode: "invalid_eval_cell_request"`. Clients must inspect the code or the
 returned `state`, not match error text.
+
+The extension handlers are also reachable through
+`extension_request {name: "eval_cells.peek", data: {cellId, tailBytes?}}`
+(likewise list/stop). Those aliases preserve the same eval error codes.
+Use the named commands for shared-host observation/control admission:
+generic `extension_request` remains conservatively session-writing.
 
 `RpcClient` exposes `listEvalCells()`, `peekEvalCell(cellId, tailBytes?)`, and
 `stopEvalCell(cellId)` with exported `RpcEvalCell` / `RpcEvalCellSnapshot` types.
@@ -1813,9 +1831,13 @@ capability inventory in both `in-process` and `worker` runtimes. Probe it before
 enabling in-place binding with an engine pin. Classic bindings do not run this guard
 and do not advertise it, even if a client supplies the string in its flags.
 
-In the response `error` field, machine-matchable:
+Match `errorCode` when present; legacy responses expose machine-matchable
+codes or code prefixes in `error`:
 
 - `unknown_session`
+- `eval_cells_unavailable` (the routed session has no eval-cell RPC handler)
+- `eval_cell_not_found` (unknown or foreign-session cell ID)
+- `invalid_eval_cell_request` (malformed eval-cell identifier or tail budget)
 - `session_closing` (an entry whose owner is tearing down). A worker that FAILS while its session is being opened is not that case and reports `open_failed` carrying the worker's own reason, so the code a client matches on always names what actually happened.
 - `session_held` (`open_session`, including attach, or any session-writing RPC whose JSONL has a live holder outside this daemon family). The refusal has `errorCode: "session_held"` and exactly `errorData { holders: [{ pid, cwd? }] }`; no boot or process-start metadata is exposed. A single dispatch guard covers prompt/steer/follow-up, continuation/custom messages/wake/compaction, model/thinking changes, bash/results, edits/name/labels, appends and tree/session changes; only explicit read/control commands bypass it. The host queries `liveSessionHolders` afresh, resolves moved paths, ignores stale/dead/reused-pid records, and excludes its own PID and worker threads. Live generation identities registered to the same endpoint are also excluded, preserving the daemon's `session_path_in_use` retry/reclaim protocol. Open is checked again after runtime holder publication, before attachment or success, with rollback on refusal. Retry after the other process exits; no restart is needed. An interactive CLI opening or resuming a held session warns with pid/cwd; lookup filesystem errors warn and continue.
   - **Mid-turn policy:** a turn admitted before the foreign holder appeared finishes and persists its results; subsequent writing RPCs are refused. Read/control requests, including abort, queue clearing, `extension_ui_response` and `extension_ui_progress`, remain available.

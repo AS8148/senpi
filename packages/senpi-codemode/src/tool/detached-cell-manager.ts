@@ -48,6 +48,7 @@ export class EvalDetachedCellManager {
 	readonly #onStatusChange: ((entries: readonly EvalDetachedCellStatusEntry[]) => void) | undefined;
 	readonly #onWakeSourceState: ((state: WakeSourceState) => void) | undefined;
 	readonly #cells = new Map<string, ManagedCell>();
+	readonly #interrupting = new Map<string, ManagedCell>();
 	readonly #detached = new Map<string, ManagedCell>();
 	readonly #terminalSnapshots: TerminalSnapshotStore;
 	readonly #notificationQueue: DetachedNotificationQueue;
@@ -165,10 +166,11 @@ export class EvalDetachedCellManager {
 	}
 
 	async stop(cellId: string, reason = "Stopped detached eval cell"): Promise<EvalDetachedCellSnapshot> {
-		const live = this.#cells.get(cellId);
+		const live = this.#cells.get(cellId) ?? this.#interrupting.get(cellId);
 		if (live === undefined) return this.#terminal(cellId);
 		if (live.state === "queued") this.#cancelQueued(live, reason);
 		else if (detachedCellIsActive(live.state)) await this.#cancel(live, reason);
+		await live.interruptOutcome?.promise;
 		return this.#snapshot(live);
 	}
 
@@ -282,6 +284,7 @@ export class EvalDetachedCellManager {
 	async #cancel(cell: ManagedCell, reason: string): Promise<void> {
 		const outcome = Promise.withResolvers<void>();
 		cell.interruptOutcome = outcome;
+		this.#interrupting.set(cell.cellId, cell);
 		try {
 			if (!this.#settle(cell, "cancelled", cancelledDetachedResult(cell)) || cell.kernel === undefined) return;
 			const handle = await cell.kernel.interrupt(reason, cell.cellId);
@@ -289,6 +292,7 @@ export class EvalDetachedCellManager {
 			cell.stateRetained = await handle.stateRetained;
 		} finally {
 			outcome.resolve();
+			if (this.#interrupting.get(cell.cellId) === cell) this.#interrupting.delete(cell.cellId);
 			this.#refreshTerminalSnapshot(cell);
 		}
 	}

@@ -7,6 +7,8 @@
 - `packages/senpi-codemode/src/index.ts` registers model-invisible `eval_cells.list`, `eval_cells.peek`, and `eval_cells.stop` handlers through `packages/senpi-codemode/src/extension/eval-cells-rpc.ts`, resolving the current session generation's manager on every request.
 - `packages/senpi-codemode/src/tool/detached-eval-result.ts` shares the list projection with RPC; `packages/senpi-codemode/src/tool/detached-cell-manager.ts` gives unknown cells a typed error and stops listed foreground cells as well as detached/queued cells. Terminal cells retain their existing snapshot and notification behavior.
 - The existing dual publication of `wake_source_state` remains the RPC liveness event; peek/stop return text-only snapshots with a byte-bounded UTF-8 tail.
+- `packages/senpi-codemode/src/tool/detached-cell-manager.ts` retains cells only during a pending interrupt so concurrent stop responses await the same retained-state outcome. The regression exercises both retained and restarted kernels, exactly one interrupt, and exactly one completion notification.
+- `packages/senpi-codemode/test/gate/allowlist.json` approves this RPC module's two additive census memberships. Clean-base and head recordings use the head harness; the frozen baseline changes only those two import arrays.
 
 ### Why
 

@@ -5,6 +5,8 @@
 - `packages/coding-agent/src/modes/rpc/rpc-types.ts`: adds session-routed `eval_cells.list`, `eval_cells.peek`, and `eval_cells.stop` command/response contracts, exported cell/snapshot types, and typed not-found/invalid-request codes.
 - `packages/coding-agent/src/modes/rpc/connection-handler.ts`: dispatches these commands to the current session's extension RPC handlers without executing a model tool or appending history, preserving typed control errors.
 - `packages/coding-agent/src/modes/rpc/rpc-client.ts`: adds typed list, peek, and stop methods through the existing correlated request/error path. Existing `wake_source_state` extension-event forwarding is documented in `packages/coding-agent/docs/rpc.md`.
+- `packages/coding-agent/src/modes/rpc/session-held.ts`: keeps the three named eval reads/cancellation controls available while foreign-held; `packages/coding-agent/src/modes/rpc/session-command-activity.ts` treats list/peek as observations and stop as activity.
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts` and `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: advertise protocol support as `eval_cells` on classic and both shared runtimes. Missing session handlers return `eval_cells_unavailable`; `extension_request` aliases preserve eval error codes without bypassing generic extension-write admission.
 
 ### Why
 

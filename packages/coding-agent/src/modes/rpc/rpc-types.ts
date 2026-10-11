@@ -294,6 +294,7 @@ export const RPC_ERROR_ENTRY_NOT_FOUND = "not_found";
 export const RPC_ERROR_MODEL_NOT_FOUND = "model_not_found";
 export const RPC_ERROR_EVAL_CELL_NOT_FOUND = "eval_cell_not_found";
 export const RPC_ERROR_INVALID_EVAL_CELL_REQUEST = "invalid_eval_cell_request";
+export const RPC_ERROR_EVAL_CELLS_UNAVAILABLE = "eval_cells_unavailable";
 export const RPC_ERROR_NOT_ASSISTANT = "not_assistant";
 export const RPC_ERROR_NOT_USER = "not_user";
 export const RPC_ERROR_EMPTY_TEXT = "empty";
@@ -346,6 +347,7 @@ export type RpcErrorCode =
 	| typeof RPC_ERROR_MODEL_NOT_FOUND
 	| typeof RPC_ERROR_EVAL_CELL_NOT_FOUND
 	| typeof RPC_ERROR_INVALID_EVAL_CELL_REQUEST
+	| typeof RPC_ERROR_EVAL_CELLS_UNAVAILABLE
 	| typeof RPC_ERROR_NOT_ASSISTANT
 	| typeof RPC_ERROR_NOT_USER
 	| typeof RPC_ERROR_EMPTY_TEXT
