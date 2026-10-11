@@ -18,6 +18,7 @@ const model = {
 	baseUrl: "https://proxy.example.com/anthropic",
 	compat: { supportsWebSearch: true },
 } as const;
+const responseIdentity = { api: model.api, provider: model.provider, model: model.id };
 
 type Handler = (event: unknown, ctx: ExtensionContext) => unknown | Promise<unknown>;
 type SearchTool = {
@@ -110,9 +111,7 @@ describe("server search first (#3122)", () => {
 		const failure = {
 			message: {
 				role: "assistant",
-				api: model.api,
-				provider: model.provider,
-				model: model.id,
+				...responseIdentity,
 				content: [],
 				stopReason: "error",
 				errorMessage: "HTTP 400: web_search_20250305 unsupported",
@@ -143,9 +142,7 @@ describe("server search first (#3122)", () => {
 		await h.emit("message_end", {
 			message: {
 				role: "assistant",
-				api: model.api,
-				provider: model.provider,
-				model: model.id,
+				...responseIdentity,
 				content: [],
 				stopReason: "error",
 				errorMessage: "503 web_search_20250305 unavailable",
@@ -179,9 +176,7 @@ describe("server search first (#3122)", () => {
 		await h.emit("message_end", {
 			message: {
 				role: "assistant",
-				api: model.api,
-				provider: model.provider,
-				model: model.id,
+				...responseIdentity,
 				content: [],
 				stopReason: "error",
 				errorMessage: "400 web_search_20250305 rejected",
@@ -198,9 +193,7 @@ describe("server search first (#3122)", () => {
 		await h.emit("message_end", {
 			message: {
 				role: "assistant",
-				api: model.api,
-				provider: model.provider,
-				model: model.id,
+				...responseIdentity,
 				stopReason: "stop",
 				content: [
 					{
@@ -227,9 +220,7 @@ describe("server search first (#3122)", () => {
 		await h.emit("message_end", {
 			message: {
 				role: "assistant",
-				api: model.api,
-				provider: model.provider,
-				model: model.id,
+				...responseIdentity,
 				content: [],
 				stopReason: "error",
 				errorMessage: "400 web_search_20250305 unsupported",
@@ -246,9 +237,7 @@ describe("server search first (#3122)", () => {
 		await h.emit("message_end", {
 			message: {
 				role: "assistant",
-				api: model.api,
-				provider: model.provider,
-				model: model.id,
+				...responseIdentity,
 				content: [],
 				stopReason: "error",
 				errorMessage: "400 web_search_20250305 unsupported",
