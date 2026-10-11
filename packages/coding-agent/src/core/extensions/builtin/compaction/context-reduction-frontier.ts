@@ -95,14 +95,16 @@ export function reduceContextWithFrontier(
 		cut = Math.min(cut, index);
 	}
 	if (cut <= state.cutIndex) {
-		if (ceilingPressure) state.compactionRequired = true;
+		if (!wasEngaged && messages.length <= 5) state.engaged = false;
+		else if (ceilingPressure) state.compactionRequired = true;
 		return reduced;
 	}
 	if (
 		ceilingPressure &&
 		estimateTotalTokens(input.unreducedMessages.slice(state.cutIndex, cut)) < input.contextWindow * 0.1
 	) {
-		state.compactionRequired = true;
+		if (!wasEngaged && messages.length <= 5) state.engaged = false;
+		else state.compactionRequired = true;
 		return reduced;
 	}
 	const candidate = reducePrefix(cut);
@@ -111,7 +113,8 @@ export function reduceContextWithFrontier(
 	// conservatively; dropping the bound here would manufacture apparent gains.
 	const candidateProjected = Math.max(estimateTotalTokens(candidate) + input.overheadTokens, projected - savings);
 	if (savings < input.contextWindow * 0.02 || (ceilingPressure && candidateProjected > input.ceilingTokens * 0.85)) {
-		if (ceilingPressure) state.compactionRequired = true;
+		if (!wasEngaged && messages.length <= 5) state.engaged = false;
+		else if (ceilingPressure) state.compactionRequired = true;
 		return reduced;
 	}
 	state.cutIndex = cut;

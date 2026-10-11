@@ -66,7 +66,7 @@ export function buildCompactionContext(input: {
 		? { messages: sourceMessages, needsAggressiveCompaction: false }
 		: hardLimitEmergencyPrune(
 				sourceMessages,
-				managed
+				managed && state.engaged
 					? Math.max(0, input.promptContextWindow - (input.contextOverheadTokens ?? 0))
 					: input.promptContextWindow,
 				input.emergencyPruneLatch,
@@ -92,6 +92,7 @@ export function buildCompactionContext(input: {
 	const afterPrune = estimateTotalTokens(outgoing) + overhead;
 	if (
 		managed &&
+		(state.anchorCount !== undefined || emergency.messages !== sourceMessages) &&
 		(emergency.needsAggressiveCompaction ||
 			afterPrune > input.promptContextWindow ||
 			(afterPrune < beforePrune && input.emergencyPruneLatch.engaged))

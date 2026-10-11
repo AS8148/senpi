@@ -40,6 +40,7 @@ export function recordReductionUsage(
 	tokens: number,
 ): void {
 	if (
+		!state.engaged ||
 		!Number.isFinite(tokens) ||
 		tokens <= 0 ||
 		state.compactionRequired ||
