@@ -1,5 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import { runHostSessionRequest } from "../../src/modes/rpc/host-session-runner.ts";
+import { canonicalSessionPath } from "../../src/modes/rpc/session-path-key.ts";
 import { JsonlPeer } from "../helpers/rpc-generation-support.ts";
 import { cleanupHostSessionRigs, rig } from "./host-session-support.ts";
 
@@ -42,6 +44,50 @@ describe("host session references across a park", () => {
 			});
 		} finally {
 			observer.destroy();
+		}
+	}, 120_000);
+
+	// #3073 review H3: a durable id carried by a live session AND a parked transcript names two sessions.
+	it("refuses a durable id that a live session and a parked transcript share", async () => {
+		const { target, cwd } = await rig();
+		const durableSessionId = randomUUID();
+		const peer = await JsonlPeer.connect(target.socket);
+		try {
+			const open = async (id: string) => {
+				const reply = await peer.request({ id, type: "open_session", cwd, durableSessionId });
+				expect(reply, JSON.stringify(reply)).toMatchObject({ success: true });
+				const data = reply.data as { sessionId: string; state: { sessionFile: string } };
+				return { handle: data.sessionId, path: data.state.sessionFile };
+			};
+			const first = await open("open-1");
+			await runHostSessionRequest({ action: "prompt", target, ref: first.handle, text: "first transcript" });
+			expect(
+				await runHostSessionRequest({
+					action: "wait",
+					target,
+					ref: first.handle,
+					until: "done",
+					timeoutMs: 20_000,
+				}),
+			).toMatchObject({ exitCode: 0 });
+			const closed = peer.waitFor((record) => record.type === "session_closed" && record.sessionId === first.handle);
+			expect(await peer.request({ id: "close-1", type: "close_session", sessionId: first.handle })).toMatchObject({
+				success: true,
+			});
+			// The id is free for a new transcript only once the first session has finished closing.
+			await closed;
+			const second = await open("open-2");
+			expect(second.path).not.toBe(first.path);
+
+			const byId = await runHostSessionRequest({ action: "state", target, ref: durableSessionId });
+			expect(byId, JSON.stringify(byId.payload)).toMatchObject({
+				exitCode: 3,
+				payload: { reason: "ambiguous_session" },
+			});
+			const sorted = (paths: readonly string[]) => paths.map(canonicalSessionPath).sort();
+			expect(sorted(byId.payload.candidates as string[])).toEqual(sorted([first.path, second.path]));
+		} finally {
+			peer.destroy();
 		}
 	}, 120_000);
 });
