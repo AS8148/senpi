@@ -585,9 +585,13 @@ export interface ExtensionContext {
 	compact(options?: CompactOptions): void;
 	/**
 	 * Prepare a request-local provider context through the normal extension
-	 * boundary. Persisted session messages are never modified.
+	 * boundary. Persisted session messages are never modified. Server search is
+	 * disabled for these auxiliary requests unless preserving a keepalive prefix.
 	 */
-	prepareProviderRequest?(messages: AgentMessage[]): Promise<ProviderRequestPreparation>;
+	prepareProviderRequest?(
+		messages: AgentMessage[],
+		options?: { allowServerSearch?: boolean },
+	): Promise<ProviderRequestPreparation>;
 	/**
 	 * The provider request prefix the next user turn will send, with an empty conversation:
 	 * the system prompt composed through a `before_agent_start` preview pass, the session's

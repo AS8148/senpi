@@ -1,3 +1,41 @@
+## 2026-10-11 - Replay opted-in GLM server-result pairs (senpi#3125 delta)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: native replay predicates moved to `anthropic-native-replay-blocks.ts`. An opted-in same-model GLM native `tool_result` is paired with its preceding `server_tool_use` and replays unchanged; disabled routes strip the search pair.
+
+### Why
+
+- The live z.ai Anthropic coding-plan response returns `tool_result`, not `web_search_tool_result`, even with a zero search usage counter. The old allowlist dropped its result and the now-unpaired use on the next request.
+
+### Why an extension could not handle it
+
+- The provider adapter owns native response capture and final transcript replay.
+
+### Expected merge conflict zones
+
+- Native replay predicates and pairing classification.
+
+## 2026-10-11 - Server search wire type and replay (senpi#3122)
+
+### What changed
+
+- `packages/ai/src/api/openai-responses.ts`: treats current `web_search` and legacy preview declarations as native search under the exact endpoint's capability gate. Resolves the optional `webSearchToolType` declaration without adding capability by URL inference.
+- `packages/ai/src/api/openai-responses-shared.ts`: replays completed/failed `web_search_call` items only on the same originating provider/API/model, preserving native result state while preventing cross-provider leakage.
+- Related focused Responses compatibility, same-route replay and foreign-route tests passed; a real ChatGPT subscription search and output-item replay returned HTTP 200.
+
+### Why
+
+The active model should search in-turn, with valid replay on its next request.
+
+### Why an extension could not handle it
+
+The API adapters own final wire filtering and conversion of stored native blocks.
+
+### Expected merge conflict zones
+
+The native tool-type predicate, compatibility defaults, and provider-native input conversion branch.
+
 ## 2026-10-10 - allowed_tools only on the native OpenAI endpoint, with a refusal fallback (senpi#3080)
 
 ### What changed

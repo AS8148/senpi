@@ -38,6 +38,7 @@ export const MOVED_PATH_TOOL_CLASSES: Readonly<Record<string, MovedPathToolClass
 	ask_user_question: { kind: "none" },
 	todo: { kind: "none" },
 	web_search: { kind: "none" },
+	$web_search: { kind: "none" },
 	tool_search: { kind: "none" },
 	webfetch: { kind: "none" },
 	create_goal: { kind: "none" },

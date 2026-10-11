@@ -4,6 +4,7 @@ import type {
 	Tool as OpenAITool,
 	ResponseCreateParamsStreaming,
 	ResponseFunctionCallOutputItemList,
+	ResponseFunctionWebSearch,
 	ResponseInput,
 	ResponseInputContent,
 	ResponseInputImage,
@@ -483,6 +484,27 @@ export function convertResponsesMessages<TApi extends Api>(
 					}
 					// Signed foreign blocks with no text are intentionally dropped.
 				} else if (block.type === "providerNative") {
+					// Responses accepts its completed web_search_call output items
+					// in the next input. Keep them only on the originating route/model;
+					// encrypted/native state must never cross provider boundaries.
+					// https://developers.openai.com/api/docs/guides/conversation-state
+					// Verified against the ChatGPT subscription endpoint for senpi#3122.
+					const raw = block.raw;
+					if (
+						isSameModel &&
+						block.subtype === "web_search_call" &&
+						raw !== null &&
+						typeof raw === "object" &&
+						"type" in raw &&
+						raw.type === "web_search_call" &&
+						"id" in raw &&
+						typeof raw.id === "string" &&
+						"action" in raw &&
+						"status" in raw &&
+						(raw.status === "completed" || raw.status === "failed")
+					) {
+						output.push(raw as ResponseFunctionWebSearch);
+					}
 				} else if (block.type === "text") {
 					const textBlock = block as TextContent;
 					pushAssistantText(textBlock.text, textBlock.textSignature);

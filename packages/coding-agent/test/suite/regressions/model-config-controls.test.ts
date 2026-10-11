@@ -205,6 +205,26 @@ describe("model configuration controls", () => {
 		expect(compat?.supportsWebSearch).toBe(true);
 	});
 
+	it.each(["google-generative-ai", "google-vertex"])("preserves Google search opt-in for %s models", (api) => {
+		writeFileSync(
+			join(agentDir, "models.json"),
+			JSON.stringify({
+				providers: {
+					custom: {
+						api,
+						baseUrl: "https://google.example.test",
+						compat: { supportsWebSearch: true },
+						models: [{ id: "gemini-2.5-pro" }],
+					},
+				},
+			}),
+			"utf-8",
+		);
+		const registry = ModelRegistry.create(AuthStorage.inMemory(), join(agentDir, "models.json"));
+		expect(registry.getError()).toBeUndefined();
+		expect(registry.find("custom", "gemini-2.5-pro")?.compat).toMatchObject({ supportsWebSearch: true });
+	});
+
 	it("replaces configured thinking variants instead of merging them", () => {
 		writeFileSync(
 			join(agentDir, "models.json"),
