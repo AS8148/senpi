@@ -1329,6 +1329,10 @@ if (usage && usage.tokens > 100_000) {
 }
 ```
 
+### ctx.getCompactionModel()
+
+Optional on hosts that expose session-owned summarization routing. Returns the usable model selected for compaction without changing the active session model. A held switch target can be selected when the active account is spent; otherwise the configured compaction override or an authenticated alternate can serve. Throws an account-limit error when no usable account is available. Builtin summarization uses this same resolver.
+
 ### ctx.compact()
 
 Trigger compaction without awaiting completion. Use `onComplete` and `onError` for follow-up actions.

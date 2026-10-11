@@ -4836,3 +4836,20 @@ The runtime factory builds the session before any extension is loaded.
 ### Expected merge conflict zones
 
 The `promptSurface: launchProfile?.promptSurface` line in the session creation call.
+## 2026-10-11 - Print account limits through the shared formatter (senpi#3131)
+
+### What changed
+
+- `packages/coding-agent/src/modes/print-mode.ts`: supplies provider/model identity and classified usage-limit scope to the existing provider-failure formatter.
+
+### Why
+
+Print mode reads internal messages, where the raw provider detail remains for retry classification.
+
+### Why an extension could not handle it
+
+Print mode owns the final stderr error.
+
+### Expected merge conflict zones
+
+The provider-error branch and usage-limit import in `packages/coding-agent/src/modes/print-mode.ts`.

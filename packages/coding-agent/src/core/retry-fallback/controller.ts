@@ -53,6 +53,14 @@ export class RetryFallbackController {
 		return this.lastExhaustedChainKey;
 	}
 
+	isProviderSpent(provider: string): boolean {
+		return this.unusable.isProviderSpent(provider);
+	}
+
+	accountError(provider: string): string | undefined {
+		return this.unusable.accountError(provider);
+	}
+
 	resetTurn(): void {
 		this.triedSelectors.clear();
 		this.lastExhaustedChainKey = undefined;
@@ -185,8 +193,8 @@ export class RetryFallbackController {
 	 * half-open probe - independent of whether a fallback candidate remains.
 	 */
 	noteHealthFailure(model: Model<Api>, thinkingLevel: ThinkingLevel | undefined, failure: CircuitFailure): void {
-		if (!this.managedChainKey({ model, thinkingLevel })) return;
 		this.unusable.note(model, failure);
+		if (!this.managedChainKey({ model, thinkingLevel })) return;
 		this.probes.noteFailure(formatSelector(model), failure);
 	}
 

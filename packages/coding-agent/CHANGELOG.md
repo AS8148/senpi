@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Account-wide usage limits skip all fallback models on the spent provider and fail immediately when no other provider can serve. Manual and held-switch compaction use a usable model, and limit errors name the provider, reset hint, and `/model` or fallback configuration instead of raw 429 JSON ([#3131](https://github.com/code-yeongyu/senpi/issues/3131)).
+
 ### Removed
 
 ## [2026.10.11] - 2026-10-11

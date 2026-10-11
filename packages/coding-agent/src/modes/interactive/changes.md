@@ -2619,3 +2619,20 @@ Upstream edits to `showLoadedResources` or the startup-warning block in interact
 ### Expected merge conflict zones
 
 - LOW: the `case "user"` branch of the message renderer (the `textContent` line) and the ask-user `format.ts` import in `interactive-mode.ts`; the `role === "user"` branch of the tree selector's entry label and its import.
+## 2026-10-11 - Explain account limits in restored transcripts (senpi#3131)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/assistant-render-descriptors.ts`: supplies the message's provider/model and usage-limit scope to the existing provider-failure formatter.
+
+### Why
+
+Restored transcript messages retain provider diagnostics; their visible error must explain the account limit rather than expose raw JSON.
+
+### Why an extension could not handle it
+
+The assistant descriptor builder owns restored transcript rendering.
+
+### Expected merge conflict zones
+
+The error descriptor branch and imports in `assistant-render-descriptors.ts`.

@@ -305,6 +305,7 @@ import {
 } from "./retry-fallback/hint-policy.ts";
 import { createFallbackLogger } from "./retry-fallback/log.ts";
 import { ProbeBackScheduler } from "./retry-fallback/probe-scheduler.ts";
+import { AccountUsageLimitError, usageLimitScope } from "./retry-fallback/usage-limit.ts";
 import { validateFallbackChains } from "./retry-fallback/validate.ts";
 import { isSessionBusySnapshot, type SessionActivitySnapshot, WakeSourceTracker } from "./session-activity.ts";
 import { type ControlEndpointHost, createSessionControlActions } from "./session-control-actions.ts";
@@ -1597,17 +1598,29 @@ export class AgentSession {
 	 * `compaction.model` override ("provider/model"), that model is used for the
 	 * summarization call instead of the session model — this is what lets an
 	 * SDK-owned lane (anthropic-subscription) compact on a cheaper/different model.
-	 * Any resolution failure (unset, malformed, unknown model) falls back to the
-	 * session model so compaction never silently breaks.
+	 * Unset, malformed, or unknown overrides keep a usable session model.
+	 * A spent account instead uses the held target or another authenticated model.
 	 */
 	private _resolveCompactionModel(sessionModel: Model<any>): Model<any> {
 		const override = this._getCompactionSettings().model;
-		if (!override) return sessionModel;
-		const slash = override.indexOf("/");
-		if (slash <= 0 || slash === override.length - 1) return sessionModel;
-		const provider = override.slice(0, slash);
-		const modelId = override.slice(slash + 1);
-		return this._modelRuntime.getModel(provider, modelId) ?? sessionModel;
+		const slash = override?.indexOf("/") ?? -1;
+		const configured =
+			override && slash > 0
+				? this._modelRuntime.getModel(override.slice(0, slash), override.slice(slash + 1))
+				: undefined;
+		const usable = (model: Model<any> | undefined): model is Model<any> =>
+			model !== undefined && !this._retryFallback.isProviderSpent(model.provider);
+		// Preserve the explicit override and original-model geometry on healthy sessions.
+		// A held downswitch uses its target only when the original account cannot serve.
+		if (usable(sessionModel)) return usable(configured) ? configured : sessionModel;
+		if (usable(this._pendingModelSwitch?.model)) return this._pendingModelSwitch.model;
+		if (usable(configured)) return configured;
+		if (usable(this.model)) return this.model;
+		const available = this._modelRuntime
+			.getModels()
+			.find((model) => usable(model) && this._modelRuntime.hasConfiguredAuth(model.provider));
+		if (available) return available;
+		throw new AccountUsageLimitError(sessionModel.provider, this._retryFallback.accountError(sessionModel.provider));
 	}
 
 	private async _getCompactionRequestAuth(
@@ -2300,6 +2313,51 @@ export class AgentSession {
 
 	private _emit(event: AgentSessionEvent): void {
 		this._logSessionEvent(event);
+		if (event.type === "retry_fallback_exhausted" && usageLimitScope(event.lastError) === "account") {
+			event = {
+				...event,
+				lastError: new AccountUsageLimitError(this.model?.provider ?? "", event.lastError).message,
+			};
+		}
+		if (event.type === "agent_end") {
+			event = {
+				...event,
+				messages: event.messages.map((message) =>
+					message.role === "assistant" && usageLimitScope(message.errorMessage) === "account"
+						? {
+								...message,
+								errorMessage: new AccountUsageLimitError(message.provider, message.errorMessage).message,
+							}
+						: message,
+				),
+			};
+		}
+		// Keep provider text on the engine message for classification and in session.log,
+		// but publish only the existing user-facing description to clients.
+		if (
+			(event.type === "message_end" || event.type === "message_start" || event.type === "message_update") &&
+			event.message.role === "assistant" &&
+			usageLimitScope(event.message.errorMessage) === "account"
+		) {
+			const message = {
+				...event.message,
+				errorMessage: describeProviderFailureForUser(event.message.errorMessage, {
+					model: `${event.message.provider}/${event.message.model}`,
+					usageLimit: "account",
+				}),
+			};
+			event =
+				event.type === "message_update"
+					? {
+							...event,
+							message,
+							assistantMessageEvent: {
+								...event.assistantMessageEvent,
+								...("error" in event.assistantMessageEvent ? { error: message } : {}),
+							},
+						}
+					: { ...event, message };
+		}
 		for (const l of [...this._eventListeners]) {
 			l(event);
 		}
@@ -3308,7 +3366,11 @@ export class AgentSession {
 			this._clearCircuitProbeWatchdog();
 			// Billing and quota exhaustion make the entry unusable for every session,
 			// whether or not the chain has a candidate left.
-			if (msg.stopReason === "error" && isHealthExhaustionFailure(msg.errorMessage) && this.model) {
+			if (
+				msg.stopReason === "error" &&
+				(isHealthExhaustionFailure(msg.errorMessage) || usageLimitScope(msg.errorMessage) === "account") &&
+				this.model
+			) {
 				this._retryFallback.noteHealthFailure(this.model, this.thinkingLevel, { errorMessage: msg.errorMessage });
 			}
 			const requiredAutoCompaction = this._getRequiredAutoCompactionReason(msg);
@@ -4825,6 +4887,14 @@ export class AgentSession {
 		if (!this.isStreaming) {
 			try {
 				await this._maybeRestoreFallbackPrimary();
+				const model = this.model;
+				if (model && !this._pendingModelSwitch && this._retryFallback.isProviderSpent(model.provider)) {
+					this._retryFallback.resetTurn();
+					const errorMessage = this._retryFallback.accountError(model.provider);
+					if (!(await this._retryFallback.tryFallback("transient", { errorMessage }))) {
+						throw new AccountUsageLimitError(model.provider, errorMessage);
+					}
+				}
 			} catch (error) {
 				if (ownsPromptStart) this._promptStartPending = false;
 				throw error;
@@ -7601,6 +7671,7 @@ export class AgentSession {
 					throw new Error("Nothing to compact (session too small)");
 				}
 
+				const compactionModel = this._resolveCompactionModel(model);
 				if (this._extensionRunner.hasHandlers("session_before_compact")) {
 					const messagesBeforeExtension = new Set(this.agent.state.messages);
 					const extensionResult = (await this._extensionRunner.emit({
@@ -7649,7 +7720,6 @@ export class AgentSession {
 					// (lifecycle record, preparation, branch) still tracks the session
 					// model. Falls back to the session model when the override is unset
 					// or cannot be resolved.
-					const compactionModel = this._resolveCompactionModel(model);
 					const {
 						model: requestModel,
 						apiKey,
@@ -9183,6 +9253,7 @@ export class AgentSession {
 				},
 				getContextUsage: () => this.getContextUsage(),
 				getCompactionSettings: () => this._getCompactionSettings(),
+				getCompactionModel: () => (this.model ? this._resolveCompactionModel(this.model) : undefined),
 				getPromptCacheSafeWaitSeconds: () => this.resolvePromptCacheSafeWaitSeconds(),
 				getPromptCacheGoalBackstopMaxSeconds: () => this.settingsManager.getPromptCacheGoalBackstopMaxSeconds(),
 				getPromptCacheKeepAliveSettings: () => this.settingsManager.getPromptCacheKeepAliveSettings(),
@@ -9916,6 +9987,7 @@ export class AgentSession {
 			describeProviderFailureForUser(message.errorMessage, {
 				attempts,
 				model,
+				usageLimit: usageLimitScope(message.errorMessage),
 				recovery: this._retryFallback.hasConfiguredChain() ? "chain-exhausted" : "no-fallback-configured",
 			}) ?? (message.errorMessage === undefined ? undefined : stripTurnRetrySuppressionPrefix(message.errorMessage))
 		);
@@ -10032,7 +10104,27 @@ export class AgentSession {
 				throw error;
 			}
 		};
-		if (sameModelRemint) {
+		if (usageLimitScope(errorMessage) === "account") {
+			switchedFallback = await tryFallback(isBillingErrorMessage(errorMessage) ? "billing" : "transient", {
+				errorMessage,
+				retryAfterMs: this._getProviderRetryDelayMs(errorMessage),
+			});
+			if (!switchedFallback) {
+				const chainKey = this._retryFallback.exhaustedChainKey;
+				if (chainKey) this._emit({ type: "retry_fallback_exhausted", chainKey, lastError: errorMessage });
+				this._emit({
+					type: "auto_retry_end",
+					success: false,
+					attempt: this._retryAttempt,
+					finalError: this._terminalFailureText(message, this._retryAttempt),
+				});
+				this._retryAttempt = 0;
+				this._resetHintTierState();
+				this._resolveRetry();
+				return "not-handled";
+			}
+			this._retryAttempt = 1;
+		} else if (sameModelRemint) {
 			this._retryAttempt++;
 			if (this._retryAttempt > retryProfile.turn.maxRetries) {
 				if (this._retryAttempt > 1) {
@@ -10422,7 +10514,10 @@ export class AgentSession {
 			attempt: this._retryAttempt,
 			maxAttempts: retryProfile.turn.maxRetries,
 			delayMs,
-			errorMessage,
+			errorMessage:
+				usageLimitScope(errorMessage) === "account"
+					? new AccountUsageLimitError(message.provider, errorMessage).message
+					: errorMessage,
 		});
 
 		// Remove error message from agent state (keep in session for history)

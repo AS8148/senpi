@@ -9551,3 +9551,21 @@ An unsafe newest result poisoned every retained suffix. Repeated automatic admis
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/core/agent-session.ts`: rejection-helper import and `_wouldCompactionOverflow` delegation.
+## 2026-10-11 - Spent accounts stop retrying and compaction uses a usable model (senpi#3131)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: account-scoped failures immediately try another provider or end without backoff; the compaction resolver selects a non-spent override, current model, held target, or authenticated alternate. Published assistant errors and terminal retry errors use the shared account-limit description while the original provider text remains on internal messages and in session logs. Extension context wiring exposes the same compaction resolver.
+- `packages/coding-agent/src/core/retry-fallback/candidates.ts`, `controller.ts`, `unusable.ts`, and `usage-limit.ts`: spent-provider candidates are skipped outright, account failures are retained even without a configured chain, and unavailable compaction raises the same limit description.
+
+### Why
+
+The prior last-resort rescan sent requests to siblings on an account already known to be spent, then normal backoff added roughly 60 seconds. Summarization selected that spent account even after a held model switch.
+
+### Why an extension could not handle it
+
+The retry owner, session account suppression, held-switch state, and default compaction resolver live in core.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/agent-session.ts`: retry branches, event publication, compaction resolver, and context actions.

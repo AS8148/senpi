@@ -86,7 +86,7 @@ describe("retry fallback usage-limit scope", () => {
 		});
 	});
 
-	it("#given an account-wide limit and only same-provider rungs left #when falling back #then the remaining rung is still tried as the last resort", async () => {
+	it("#given an account-wide limit and only same-provider rungs left #when falling back #then no spent account is tried", async () => {
 		const { controller, events } = createController(["anthropic-subscription/claude-opus-5-5"]);
 
 		const switched = await controller.tryFallback("transient", {
@@ -94,12 +94,12 @@ describe("retry fallback usage-limit scope", () => {
 		});
 
 		expect({ switched, events }).toEqual({
-			switched: true,
-			events: [expect.objectContaining({ to: "anthropic-subscription/claude-opus-5-5", limit: "account" })],
+			switched: false,
+			events: [],
 		});
 	});
 
-	it("#given an account-wide limit #when the other provider's rung is spent too #then the chain falls back to the same-provider rung before exhausting", async () => {
+	it("#given an account-wide limit #when the other provider's rung fails too #then the spent provider stays excluded", async () => {
 		const { controller, current } = createController([
 			"kimi-coding/kimi-k3",
 			"anthropic-subscription/claude-opus-5-5",
@@ -113,9 +113,9 @@ describe("retry fallback usage-limit scope", () => {
 		hops.push(await controller.tryFallback("hard-error", limit));
 
 		expect({ hops, afterFirst, afterSecond, exhausted: controller.exhaustedChainKey }).toEqual({
-			hops: [true, true, false],
+			hops: [true, false, false],
 			afterFirst: "kimi-coding/kimi-k3",
-			afterSecond: "anthropic-subscription/claude-opus-5-5",
+			afterSecond: "kimi-coding/kimi-k3",
 			exhausted: "anthropic-subscription/claude-fable-5-1",
 		});
 	});
@@ -128,5 +128,15 @@ describe("retry fallback usage-limit scope", () => {
 		expect(events.map((event) => [Reflect.get(Object(event), "to"), Object.hasOwn(Object(event), "limit")])).toEqual([
 			["anthropic-subscription/claude-opus-5-5", false],
 		]);
+	});
+
+	it("does not clear an account limit when a user selects a sibling model", async () => {
+		// given
+		const { controller } = createController(fullChain);
+		await controller.tryFallback("transient", { errorMessage: "You've hit your session limit" });
+		// when
+		controller.clearForManualModelChange(opus);
+		// then
+		expect(controller.isProviderSpent(opus.provider)).toBe(true);
 	});
 });

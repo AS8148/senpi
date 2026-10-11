@@ -1,4 +1,4 @@
-import { isQuotaExhaustionMessage } from "@earendil-works/pi-ai";
+import { describeProviderFailureForUser, isQuotaExhaustionMessage } from "@earendil-works/pi-ai";
 import { rateLimitModelFamily } from "../credential-pool/model-scope.ts";
 import { isBillingErrorMessage } from "./billing.ts";
 
@@ -11,6 +11,13 @@ import { isBillingErrorMessage } from "./billing.ts";
  * the chain moves to another provider instead.
  */
 export type UsageLimitScope = "model" | "account";
+
+export class AccountUsageLimitError extends Error {
+	constructor(provider: string, raw = "usage limit reached") {
+		super(describeProviderFailureForUser(raw, { model: provider, usageLimit: "account" }));
+		this.name = "AccountUsageLimitError";
+	}
+}
 
 // Subscription limit prose that carries no quota/billing keyword, e.g. Claude's
 // "You've hit your session limit · resets 3pm" and the SDK terminal reasons.

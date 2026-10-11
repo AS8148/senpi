@@ -81,6 +81,7 @@ export interface SpeculativeCompactionContext {
 	modelRegistry?: ModelRegistry;
 	getContextUsage(): ContextUsage | undefined;
 	getCompactionSettings?(): CompactionPreparation["settings"];
+	getCompactionModel?(): Model<any> | undefined;
 	getMessageRevision(): number;
 	getSystemPrompt?(): string;
 	prepareProviderRequest?(messages: AgentMessage[]): Promise<ProviderRequestPreparation>;
@@ -272,20 +273,24 @@ export async function runExtensionCompaction(
 	onProgress?: CompactionProgressCallback,
 ): Promise<CompactionResult | undefined> {
 	if (signal?.aborted) return undefined;
-	const auth = await context.modelRegistry?.getApiKeyAndHeaders(snapshot.model);
+	const selectedModel = context.getCompactionModel?.() ?? snapshot.model;
+	const selectedSnapshot =
+		selectedModel === snapshot.model
+			? snapshot
+			: { ...snapshot, model: selectedModel, contextWindow: selectedModel.contextWindow };
+	const auth = await context.modelRegistry?.getApiKeyAndHeaders(selectedModel);
 	if (signal?.aborted) return undefined;
 	// A provider is authenticated for summarization by a resolved key, a credential
 	// request header, or ambient request-time auth. The ambient marker comes from the
 	// same provider resolution normal turns use; an unconfigured keyed provider still
 	// has none of these and is rejected before a request.
 	if (!auth?.ok || !(auth.apiKey || hasCredentialHeaders(auth.headers) || auth.ambient)) {
-		const detail =
-			auth && !auth.ok ? auth.error : `no credentials resolved for provider "${snapshot.model.provider}"`;
+		const detail = auth && !auth.ok ? auth.error : `no credentials resolved for provider "${selectedModel.provider}"`;
 		throw new SummaryGenerationError("auth", `summarization credentials unavailable: ${detail}`);
 	}
 	const requestSnapshot = auth.baseUrl
-		? { ...snapshot, model: { ...snapshot.model, baseUrl: auth.baseUrl } }
-		: snapshot;
+		? { ...selectedSnapshot, model: { ...selectedModel, baseUrl: auth.baseUrl } }
+		: selectedSnapshot;
 
 	const prompt = buildPrompt({
 		variant: requestSnapshot.promptVariant,
