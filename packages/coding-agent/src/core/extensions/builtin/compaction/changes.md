@@ -2223,3 +2223,21 @@ This is private state and request-assembly policy inside the owning builtin comp
 - `context-reduction-frontier.ts` around initial engagement and failed cut admission.
 - `context-pipeline.ts` around emergency-prune budgeting and handoff detection.
 - `context-reduction-state.ts` around request usage anchors.
+## 2026-10-11 - Summarize away from spent accounts (senpi#3131)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative.ts`: resolves the session-selected usable summary model before auth and bounds redirected input to its context window.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: native remote compaction is skipped when the summary model differs from the active replay provider; an unavailable account reports the common limit error.
+
+### Why
+
+The builtin route previously ignored the core compaction resolver and sent summaries to spent accounts.
+
+### Why an extension could not handle it
+
+This is the builtin extension that owns summary generation and native routing.
+
+### Expected merge conflict zones
+
+Summary auth/snapshot setup in `speculative.ts` and native-compaction gates in `index.ts`.

@@ -2072,6 +2072,8 @@ The `model` field is a full [Model](#model) object or `null`. `pendingModelSwitc
 
 #### get_messages
 
+Account-scoped usage failures are projected as recovery advice with `errorCause: {"type":"usage_limit","scope":"account"}` in `message_*`, `agent_end`, `entry_appended`, `get_messages`, `get_entries`, and `get_tree`. The engine message and session file retain the original provider error for diagnostics; these raw stored messages are not the user-facing RPC representation. Entry ids, parent links, timestamps, tree labels, and provider diagnostics are preserved by the projection.
+
 Get all messages in the conversation.
 
 ```json

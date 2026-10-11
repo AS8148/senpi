@@ -14,7 +14,7 @@ import {
 import { REQUIRED_COMPACTION_ERROR_MESSAGE } from "../core/agent-session.ts";
 import type { AgentSessionRuntime } from "../core/agent-session-runtime.ts";
 import { flushRawStdout, waitForRawStdoutBackpressure, writeRawStdout } from "../core/output-guard.ts";
-import { usageLimitCause } from "../core/retry-fallback/usage-limit.ts";
+import { usageLimitCause, usageLimitScope } from "../core/retry-fallback/usage-limit.ts";
 import { killTrackedDetachedChildren } from "../utils/shell.ts";
 import { toJsonEvent } from "./json-event.ts";
 import { formatProviderNativeBody, formatProviderNativeSummary } from "./provider-native-rendering.ts";
@@ -194,7 +194,13 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 				if (assistantMsg.stopReason === "error" || assistantMsg.stopReason === "aborted") {
 					// A provider-stream stall or transport drop keeps the classifier wording
 					// on the message; stderr gets the plain-language version instead.
-					const described = describeProviderFailureForUser(assistantMsg.errorMessage);
+					const described =
+						assistantMsg.errorCause?.type === "usage_limit" && assistantMsg.errorCause.scope === "account"
+							? assistantMsg.errorMessage
+							: describeProviderFailureForUser(assistantMsg.errorMessage, {
+									model: `${assistantMsg.provider}/${assistantMsg.model}`,
+									usageLimit: usageLimitScope(assistantMsg),
+								});
 					console.error(
 						described ??
 							(stripTurnRetrySuppressionPrefix(assistantMsg.errorMessage ?? "") ||

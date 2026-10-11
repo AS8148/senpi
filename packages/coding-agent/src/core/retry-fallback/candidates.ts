@@ -19,7 +19,7 @@ export interface CandidateFilters {
 	isSuppressed(base: string): boolean;
 	isAuthAvailable(provider: string): boolean;
 	isCircuitOpen(base: string): boolean;
-	/** Providers whose account-wide usage limit or billing failure this session saw: their entries are tried last. */
+	/** Providers whose account-wide usage limit or billing failure this session saw: their entries are skipped. */
 	isProviderSpent?(provider: string): boolean;
 	skip(candidate: string, skipReason: string): void;
 }
@@ -36,16 +36,7 @@ export function firstUsableCandidate(
 	current: { model: Model<Api>; thinkingLevel?: ThinkingLevel },
 	filters: CandidateFilters,
 ): UsableCandidate | undefined {
-	const isSpent = filters.isProviderSpent;
-	if (!isSpent) return scanCandidates(entries, current, filters, () => false);
-	let avoided = false;
-	const elsewhere = scanCandidates(entries, current, filters, (provider) => {
-		const spent = isSpent(provider);
-		avoided ||= spent;
-		return spent;
-	});
-	if (elsewhere || !avoided) return elsewhere;
-	return scanCandidates(entries, current, filters, () => false);
+	return scanCandidates(entries, current, filters, (provider) => filters.isProviderSpent?.(provider) ?? false);
 }
 
 function scanCandidates(
