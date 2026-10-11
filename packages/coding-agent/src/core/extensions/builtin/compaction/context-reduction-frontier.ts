@@ -95,7 +95,7 @@ export function reduceContextWithFrontier(
 		cut = Math.min(cut, index);
 	}
 	if (cut <= state.cutIndex) {
-		if (!wasEngaged && messages.length <= 5) state.engaged = false;
+		if (!wasEngaged) state.engaged = false;
 		else if (ceilingPressure) state.compactionRequired = true;
 		return reduced;
 	}

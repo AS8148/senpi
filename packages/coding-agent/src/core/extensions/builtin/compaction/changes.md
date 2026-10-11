@@ -2197,3 +2197,25 @@ This is the owning builtin. The projection must also be applied by the session m
 - `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: local summary generation and recovery decision points.
 - `packages/coding-agent/src/core/extensions/builtin/compaction/deterministic-fallback.ts`: failure-kind classifier, candidate summary construction and diagnostic formatting.
 - `packages/coding-agent/src/core/extensions/builtin/compaction/rejected-recovery.ts`: persisted rejection selection.
+## 2026-10-11 - Preserve fallback before the reduction frontier commits
+
+### What changed
+
+- `context-reduction-frontier.ts`: an initial reduction attempt now rolls back `engaged` whenever no frontier cut is committed, including six-or-more-message histories whose protected tail consumes the whole prompt.
+- `context-pipeline.ts`: emergency-prune overhead and compaction handoff require a committed reduction anchor or an actual prune-only rewrite.
+- `context-reduction-state.ts`: provider usage is not recorded before the frontier engages.
+- Fixture coverage: `test/fixtures/compaction/context-reduction/pre-engagement-short-history.jsonl` and its owner regression encode the no-reducible-prefix transition.
+
+### Why
+
+Ceiling pressure could mark a fresh frontier engaged even when the protected recent tail left no reducible prefix. That disabled the fallback path and requested compaction before deterministic reduction had changed the request.
+
+### Why an extension could not handle it
+
+This is private state and request-assembly policy inside the owning builtin compaction extension; no public hook can safely repair the frontier after the context event.
+
+### Expected merge conflict zones
+
+- `context-reduction-frontier.ts` around initial engagement and failed cut admission.
+- `context-pipeline.ts` around emergency-prune budgeting and handoff detection.
+- `context-reduction-state.ts` around request usage anchors.

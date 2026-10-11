@@ -1,6 +1,12 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { reduceContextWithFrontier } from "../../../src/core/extensions/builtin/compaction/context-reduction-frontier.ts";
+import { createContextReductionState } from "../../../src/core/extensions/builtin/compaction/context-reduction-state.ts";
 import { estimateTotalTokens } from "../../../src/core/extensions/builtin/compaction/overflow-retry.ts";
-import { SessionManager } from "../../../src/core/session-manager.ts";
+import { migrateSessionEntries, parseSessionEntries, SessionManager } from "../../../src/core/session-manager.ts";
 import {
 	appendReduction,
 	createReductionHarness,
@@ -14,6 +20,14 @@ import {
 import type { Harness } from "../harness.ts";
 
 const harnesses: Harness[] = [];
+const testDir = dirname(fileURLToPath(import.meta.url));
+
+function loadCompactionFixture(relativePath: string): AgentMessage[] {
+	const content = readFileSync(join(testDir, "../../fixtures/compaction", relativePath), "utf8");
+	const entries = parseSessionEntries(content);
+	migrateSessionEntries(entries);
+	return entries.flatMap((entry) => (entry.type === "message" ? [entry.message as AgentMessage] : []));
+}
 afterEach(() => {
 	vi.restoreAllMocks();
 	for (const h of harnesses.splice(0).reverse()) h.cleanup();
@@ -25,6 +39,19 @@ async function setup(options: Parameters<typeof createReductionHarness>[0] = {})
 }
 
 describe("frontier review regressions", () => {
+	it("keeps fallback ownership when a short initial history has no reducible prefix", () => {
+		const messages = loadCompactionFixture("context-reduction/pre-engagement-short-history.jsonl");
+		const state = createContextReductionState();
+		const reduced = reduceContextWithFrontier(messages, state, {
+			unreducedMessages: messages,
+			contextWindow: 100_000,
+			ceilingTokens: 1,
+			overheadTokens: 0,
+			force: false,
+		});
+		expect(reduced).toEqual(messages);
+		expect(state).toEqual(createContextReductionState());
+	});
 	it("persists and reuses the frontier through real agent requests", async () => {
 		const manager = SessionManager.inMemory();
 		for (const message of reductionSeed()) manager.appendMessage(message);
