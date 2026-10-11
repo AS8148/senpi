@@ -1608,14 +1608,15 @@ export class AgentSession {
 			override && slash > 0
 				? this._modelRuntime.getModel(override.slice(0, slash), override.slice(slash + 1))
 				: undefined;
-		const usable = (model: Model<any> | undefined): model is Model<any> =>
-			model !== undefined && !this._retryFallback.isProviderSpent(model.provider);
+		const usable = (model: Model<any>): boolean => !this._retryFallback.isProviderSpent(model.provider);
 		// Preserve the explicit override and original-model geometry on healthy sessions.
 		// A held downswitch uses its target only when the original account cannot serve.
-		if (usable(sessionModel)) return usable(configured) ? configured : sessionModel;
-		if (usable(this._pendingModelSwitch?.model)) return this._pendingModelSwitch.model;
-		if (usable(configured)) return configured;
-		if (usable(this.model)) return this.model;
+		if (usable(sessionModel)) return configured && usable(configured) ? configured : sessionModel;
+		const pending = this._pendingModelSwitch?.model;
+		if (pending && usable(pending)) return pending;
+		if (configured && usable(configured)) return configured;
+		const current = this.model;
+		if (current && usable(current)) return current;
 		const available = this._modelRuntime
 			.getModels()
 			.find((model) => usable(model) && this._modelRuntime.hasConfiguredAuth(model.provider));

@@ -9569,3 +9569,21 @@ The retry owner, session account suppression, held-switch state, and default com
 ### Expected merge conflict zones
 
 `packages/coding-agent/src/core/agent-session.ts`: retry branches, event publication, compaction resolver, and context actions.
+
+## 2026-10-11 - Compaction account health no longer narrows a model to never (senpi#3131 CI)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the usability check returns a boolean rather than claiming account health determines whether an object is a `Model`. Optional candidates are checked for existence separately.
+
+### Why
+
+The false branch of the previous type predicate narrowed an existing session model to `never`, making the exhausted-account error fail typechecking. Test provider registrations also now include their required model names.
+
+### Why an extension could not handle it
+
+The invalid predicate was inside the session-owned compaction resolver.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_resolveCompactionModel`.

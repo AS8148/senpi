@@ -89,6 +89,7 @@ describe("#3131 spent account", () => {
 				models: [
 					{
 						id: "target",
+						name: "Target",
 						contextWindow: 372_000,
 						maxTokens: 32_000,
 						reasoning: false,

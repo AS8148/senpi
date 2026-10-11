@@ -15,6 +15,7 @@ export function registerFallbackModels(harness: Harness, provider: string, ids: 
 		baseUrl: first.baseUrl,
 		models: models.map((model) => ({
 			id: model.id,
+			name: model.name,
 			contextWindow: model.contextWindow,
 			maxTokens: model.maxTokens,
 			reasoning: model.reasoning,
