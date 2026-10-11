@@ -151,7 +151,7 @@ describe("first-activity prewarm matches the first WebSocket turn (#2096)", () =
 		try {
 			session.settingsManager.applyOverrides({ promptCache: { keepAlive: { enabled: true } } });
 			await session.bindExtensions({});
-			session.emitExtensionEvent("user_activity", { kind: "draft" });
+			session.recordUserActivity("draft");
 			const prewarm = await within(prewarmSent.promise, "the prewarm request");
 			await within(session.prompt("Reply with exactly: A"), "the first turn");
 

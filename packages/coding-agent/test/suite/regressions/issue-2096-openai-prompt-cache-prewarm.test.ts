@@ -32,7 +32,7 @@ describe("first-activity OpenAI prompt-cache prewarm (#2096)", () => {
 		harness.setResponses([fauxAssistantMessage("first answer")]);
 
 		await harness.session.bindExtensions({});
-		harness.session.emitExtensionEvent("user_activity", { kind: "draft" });
+		harness.session.recordUserActivity("draft");
 		const call = await within(warmCalled, "the prewarm request");
 		expect(call.context.messages).toEqual([]);
 		expect(call.context.systemPrompt).toBe(harness.session.systemPrompt);
@@ -102,7 +102,7 @@ describe("first-activity OpenAI prompt-cache prewarm (#2096)", () => {
 		const binding = harness.session.bindExtensions({});
 		lateSessionStart.resolve();
 		await within(binding, "extension binding");
-		harness.session.emitExtensionEvent("user_activity", { kind: "draft" });
+		harness.session.recordUserActivity("draft");
 		const warm = await within(warmCalled, "the prewarm request");
 		await within(harness.session.prompt("hello"), "the first turn");
 
@@ -125,7 +125,7 @@ describe("first-activity OpenAI prompt-cache prewarm (#2096)", () => {
 		harness.setResponses([fauxAssistantMessage("still answered")]);
 
 		await harness.session.bindExtensions({});
-		harness.session.emitExtensionEvent("user_activity", { kind: "draft" });
+		harness.session.recordUserActivity("draft");
 		await within(warmCalled, "the prewarm request");
 		const entry = await within(entryAppended, "the failed prewarm entry");
 		expect(entry.data).toMatchObject({ phase: "failed", error: "prewarm rejected" });

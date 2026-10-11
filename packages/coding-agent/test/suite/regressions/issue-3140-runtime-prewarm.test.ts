@@ -110,6 +110,7 @@ describe("real runtime and RPC prewarm admission (#3140)", () => {
 	});
 
 	it("sends the first JSONL RPC prompt with exactly one provider call", async () => {
+		vi.useFakeTimers();
 		const fixture = await createRuntime();
 		fixture.harness.setResponses([fauxAssistantMessage("answer")]);
 		const lines: string[] = [];
@@ -119,6 +120,8 @@ describe("real runtime and RPC prewarm admission (#3140)", () => {
 		});
 		cleanups.push(async () => handler.dispose());
 		await handler.ready;
+		await vi.runAllTimersAsync();
+		expect(fixture.warm).not.toHaveBeenCalled();
 		const ended = deferred<void>();
 		const unsubscribe = fixture.runtime.session.subscribe((event) => {
 			if (event.type === "agent_end") ended.resolve();

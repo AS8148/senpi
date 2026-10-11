@@ -107,7 +107,7 @@ export function createCacheKeepAliveExtension(
 		}
 
 		function arm(): void {
-			if (!prewarm.hasUserActivity || parked || timer !== undefined || inFlight) return;
+			if (parked || timer !== undefined || inFlight) return;
 			const current = ctx;
 			const settings = current?.getPromptCacheKeepAliveSettings?.();
 			if (!settings?.enabled || current?.model === undefined || lastCompletedAtMs === undefined) return;

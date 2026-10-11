@@ -84,15 +84,13 @@ function harness(
 		modelRegistry: {
 			getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "key", headers: {} }),
 		},
-		sessionManager: { getSessionId: () => "session-1" },
+		sessionManager: { getSessionId: () => "session-1", buildSessionContext: () => ({ messages: [] }) },
 		ui: { notify: (message: string) => notifications.push(message) },
 	} as unknown as ExtensionContext;
 	async function fire(event: string, data: any = { type: event }) {
 		for (const handler of handlers.get(event) ?? []) await handler(data, ctx);
 	}
 	if (options.goalArmed) pi.events?.emit("goal_continuation_timer_state", { armed: true, kind: "monitor" });
-	// These idle-loop cases begin after a user-directed turn, not at cold startup.
-	pi.events.emit("user_activity", { kind: "prompt" });
 	return {
 		pi,
 		ctx,
@@ -151,6 +149,16 @@ describe("cache keep-alive", () => {
 			channel: "cache_warm_ping",
 			data: expect.objectContaining({ iteration: 1, cachedTokens: 45_000, ttlSeconds: 300 }),
 		});
+	});
+
+	it("keeps warming completed extension-driven turns after reload without user activity", async () => {
+		const h = harness();
+		await h.fire("session_start", { type: "session_start", reason: "reload" });
+
+		await h.fire("agent_end", agentEnd);
+		await advance(240_000);
+
+		expect(h.warm).toHaveBeenCalledTimes(1);
 	});
 
 	it("does not schedule pings while parked, including when a detached turn finishes", async () => {

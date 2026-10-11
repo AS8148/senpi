@@ -8,7 +8,7 @@ import {
 	type WarmPromptCacheUsage,
 } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
-import { USER_ACTIVITY_EVENT } from "../../user-activity.ts";
+import type { UserActivityKind } from "../../user-activity.ts";
 import { PROMPT_CACHE_PREWARM_ENTRY_TYPE, type PromptCachePrewarmEntryData } from "./prewarm-entry.ts";
 
 export const PROMPT_CACHE_PREWARM_TIMEOUT_MS = 30_000;
@@ -25,7 +25,6 @@ export interface SessionPrewarmDependencies {
 }
 
 export interface SessionPrewarm {
-	readonly hasUserActivity: boolean;
 	start(ctx: ExtensionContext): void;
 	cancel(): void;
 }
@@ -49,6 +48,7 @@ export function createSessionPrewarm(pi: ExtensionAPI, dependencies: SessionPrew
 	let used = false;
 	let submitted = false;
 	let parked = false;
+	let unsubscribeActivity: (() => void) | undefined;
 
 	function cancel(): void {
 		current?.abort();
@@ -86,14 +86,13 @@ export function createSessionPrewarm(pi: ExtensionAPI, dependencies: SessionPrew
 		pi.appendEntry(PROMPT_CACHE_PREWARM_ENTRY_TYPE, data);
 	}
 
-	pi.events.on(USER_ACTIVITY_EVENT, (data) => {
-		if (typeof data !== "object" || data === null || !("kind" in data)) return;
-		if (data.kind === "prompt") {
+	function onActivity(kind: UserActivityKind): void {
+		if (kind === "prompt") {
 			submitted = true;
 			used = true;
 			return;
 		}
-		if (data.kind !== "draft" || context === undefined || parked || used) return;
+		if (context === undefined || parked || used) return;
 		used = true;
 		const ctx = context;
 		const model = ctx.model;
@@ -109,7 +108,7 @@ export function createSessionPrewarm(pi: ExtensionAPI, dependencies: SessionPrew
 		const controller = new AbortController();
 		current = controller;
 		void run(ctx, model, controller);
-	});
+	}
 	pi.on("model_select", (_event, ctx) => {
 		cancel();
 		context = ctx;
@@ -123,20 +122,21 @@ export function createSessionPrewarm(pi: ExtensionAPI, dependencies: SessionPrew
 		context = ctx;
 	});
 	pi.on("session_shutdown", () => {
+		unsubscribeActivity?.();
+		unsubscribeActivity = undefined;
 		context = undefined;
 		cancel();
 	});
 
 	return {
-		get hasUserActivity() {
-			return used;
-		},
 		start(ctx) {
 			cancel();
+			unsubscribeActivity?.();
 			context = ctx;
 			used = false;
 			submitted = false;
 			parked = false;
+			unsubscribeActivity = ctx.onUserActivity?.(onActivity);
 		},
 		cancel,
 	};

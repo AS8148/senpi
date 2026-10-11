@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/agent-session.ts`: `prompt()` and the shared steering/follow-up admission path publish session-local `user_activity` with `kind: "prompt"` synchronously, before any preflight await. Extension-originated input is excluded.
+- `packages/coding-agent/src/core/agent-session.ts`: `prompt()` and the shared steering/follow-up admission path publish host-owned `"prompt"` activity synchronously, before any preflight await. Extension-originated input is excluded. The session owns the activity emitter and exposes only subscription through extension contexts.
 
 ### Why
 
@@ -10,7 +10,7 @@
 
 ### Why an extension could not handle it
 
-- Prompt and queued-input admission are session-owned and happen before the existing asynchronous `input` handlers. The builtin consumes the shared event bus without depending on RPC or TUI classes.
+- Prompt and queued-input admission are session-owned and happen before the existing asynchronous `input` handlers. The builtin consumes the read-only host activity hook without depending on RPC or TUI classes; the public extension bus cannot forge activity.
 
 ### Expected merge conflict zones
 

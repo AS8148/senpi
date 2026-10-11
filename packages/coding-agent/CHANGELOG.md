@@ -16,7 +16,7 @@
 
 ### Fixed
 
-- Prompt-cache prewarm waits for the first composer edit instead of calling the provider when a session starts, resumes, forks, or reloads. Submitting the first prompt uses that real request to warm the cache without an extra call, and disabled cache keep-alive disables prewarm too ([#3140](https://github.com/code-yeongyu/senpi/issues/3140)).
+- Prompt-cache prewarm is now opt-in through `promptCache.keepAlive.enabled`, which defaults to `false`: prewarm is off by default. When enabled, it starts only on the first real composer edit, never on session start, resume, fork, reload, or extension-injected text. Submitting the first prompt uses that real request to warm the cache without an extra call. Idle keep-alive after completed turns, including extension-driven turns, retains its existing behavior ([#3140](https://github.com/code-yeongyu/senpi/issues/3140)).
 - Resuming after accepted compaction uses the compacted summary and retained messages instead of pre-compaction provider usage, so a session that now fits is not refused or compacted again. Fresh provider usage supersedes the estimate on the next response ([#3062](https://github.com/code-yeongyu/senpi/issues/3062)).
 
 - Zero-attempt terminal failures still explain provider-requested long waits and retry-delay caps; only an initial account-usage failure omits a redundant retry-end event. RPC entry events, entry history, and trees now carry the same structured account-limit advice as message history, and reset parsing uses injected clocks ([#3131](https://github.com/code-yeongyu/senpi/issues/3131)).

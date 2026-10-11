@@ -1,8 +1,10 @@
-## 2026-10-11 - Session-local user activity bus contract (senpi#3140)
+## 2026-10-11 - Host-authenticated user activity subscription (senpi#3140)
 
 ### What changed
 
-- `packages/coding-agent/src/core/extensions/user-activity.ts`: names the `user_activity` channel and its `draft` versus `prompt` payload kinds, with a publisher for session consumers.
+- `packages/coding-agent/src/core/extensions/user-activity.ts`: creates a session-owned activity source and distinguishes `"draft"` from `"prompt"`. A missing session in a borrowed UI receiver is a no-op.
+- `packages/coding-agent/src/core/extensions/types.ts`: adds optional subscription-only `onUserActivity` to the extension context and its host bindings.
+- `packages/coding-agent/src/core/extensions/runner.ts`: binds the host subscriber, tracks its disposal with the extension generation, and reports listener errors without throwing out of the input path.
 
 ### Why
 
@@ -10,11 +12,11 @@
 
 ### Why an extension could not handle it
 
-- Extensions can consume the existing bus, but only the host knows whether composer text came from a user edit or restoration and when a submitted prompt entered admission.
+- Only the host knows whether composer text came from a user edit or restoration and when a submitted prompt entered admission. An open event bus is not authoritative: extensions could forge activity on it.
 
 ### Expected merge conflict zones
 
-- New activity-contract module; no change to `types.ts` or the typed lifecycle event union.
+- `types.ts`: context/action subscription signatures; `runner.ts`: context binding and construction; new activity-source module. No change to the typed lifecycle event union.
 
 ## 2026-10-11 - Request-local search exclusion and canonical fallback (senpi#3122 review)
 

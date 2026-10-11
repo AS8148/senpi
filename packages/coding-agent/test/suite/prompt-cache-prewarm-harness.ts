@@ -63,9 +63,6 @@ export async function createPrewarmHarness(
 		],
 	});
 	harnesses.push(harness);
-	harness.session.resourceLoader.emitExtensionEvent = (channel, data) => {
-		harness.session.resourceLoader.getExtensions().eventBus?.emit(channel, data);
-	};
 	// createAgentSession gives the agent the session id; the bare harness Agent has none.
 	harness.agent.sessionId = harness.sessionManager.getSessionId();
 	const entryAppended = deferred<{ customType: string; data: unknown }>();

@@ -50,7 +50,7 @@ describe("prewarm waits for user activity (#3140)", () => {
 		});
 		await harness.session.bindExtensions({});
 
-		harness.session.emitExtensionEvent("user_activity", { kind: "draft" });
+		harness.session.recordUserActivity("draft");
 		await vi.runAllTimersAsync();
 
 		expect(warm).not.toHaveBeenCalled();
@@ -65,7 +65,7 @@ describe("prewarm waits for user activity (#3140)", () => {
 		if (nextModel === undefined) throw new Error("Missing fixture model");
 
 		await harness.session.setModel(nextModel);
-		harness.session.emitExtensionEvent("user_activity", { kind: "draft" });
+		harness.session.recordUserActivity("draft");
 		const call = await within(warmCalled, "retargeted prewarm");
 
 		expect(call.model.id).toBe("after");
@@ -78,7 +78,7 @@ describe("prewarm waits for user activity (#3140)", () => {
 		await harness.session.bindExtensions({});
 
 		await harness.session.steer("hello", undefined, { source: "rpc" });
-		harness.session.emitExtensionEvent("user_activity", { kind: "draft" });
+		harness.session.recordUserActivity("draft");
 		await vi.runAllTimersAsync();
 
 		expect(warm).not.toHaveBeenCalled();
@@ -89,14 +89,14 @@ describe("prewarm waits for user activity (#3140)", () => {
 		const warm = vi.fn(async () => ({ supported: false as const }));
 		const { harness, warmCalled } = await createPrewarmHarness(warm);
 		await harness.session.bindExtensions({});
-		harness.session.emitExtensionEvent("user_activity", { kind: "draft" });
+		harness.session.recordUserActivity("draft");
 		await within(warmCalled, "initial prewarm");
 		await vi.runAllTimersAsync();
 
 		await harness.session.extensionRunner.emit({ type: "session_start", reason: "reload" });
 		await vi.runAllTimersAsync();
 		expect(warm).toHaveBeenCalledTimes(1);
-		harness.session.emitExtensionEvent("user_activity", { kind: "draft" });
+		harness.session.recordUserActivity("draft");
 		await vi.runAllTimersAsync();
 
 		expect(warm).toHaveBeenCalledTimes(2);

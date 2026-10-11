@@ -30,7 +30,7 @@ describe("prompt-cache prewarm preview runs only preview-safe handlers (#2115)",
 		harness.setResponses([fauxAssistantMessage("answer")]);
 
 		await harness.session.bindExtensions({});
-		harness.session.emitExtensionEvent("user_activity", { kind: "draft" });
+		harness.session.recordUserActivity("draft");
 		const entry = await within(entryAppended, "the skipped prewarm entry");
 		expect(entry.data).toMatchObject({
 			phase: "skipped",
@@ -90,7 +90,7 @@ describe("prompt-cache prewarm preview runs only preview-safe handlers (#2115)",
 		harness.setResponses([fauxAssistantMessage("answer")]);
 
 		await harness.session.bindExtensions({});
-		harness.session.emitExtensionEvent("user_activity", { kind: "draft" });
+		harness.session.recordUserActivity("draft");
 		await within(previewEntered.promise, "the preview pass");
 		await within(harness.session.prompt("hello"), "the first turn");
 		const entry = await within(entryAppended, "the skipped prewarm entry");

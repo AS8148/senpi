@@ -252,7 +252,7 @@ import type {
 	ModelSelectSource,
 } from "./extensions/types.ts";
 import { normalizeToolExposure, RUNTIME_EXTENSION_PATH } from "./extensions/types.ts";
-import { emitUserActivity } from "./extensions/user-activity.ts";
+import { createUserActivitySource, emitUserActivity, type UserActivityKind } from "./extensions/user-activity.ts";
 import { deliveryIdOf, ExternalAdmission } from "./external-admission.ts";
 import { shouldWarnHighReasoning } from "./high-reasoning-warning.ts";
 import { LazyToolActivation } from "./lazy-tool-activation.ts";
@@ -1286,6 +1286,7 @@ export class AgentSession {
 	// (which rebuilds the base prompt with discovered skills) have run.
 	private _sessionStartSettled: Promise<void> = Promise.resolve();
 	private readonly _promptCachePrefixBuilds = new PromptCachePrefixBuilds();
+	private readonly _userActivity = createUserActivitySource();
 	private _extensionUIContext?: ExtensionUIContext;
 	private _extensionMode: ExtensionMode = "print";
 	private _extensionCommandContextActions?: ExtensionCommandContextActions;
@@ -4551,6 +4552,11 @@ export class AgentSession {
 		return this._resourceLoader.onExtensionEvent?.(channel, handler) ?? (() => {});
 	}
 
+	/** Host input entry point; not exposed by the extension API or its event bus. */
+	recordUserActivity(kind: UserActivityKind): void {
+		this._userActivity.emit(kind);
+	}
+
 	/** Publish on the internal event bus shared by this session's extensions. */
 	emitExtensionEvent(channel: string, data: unknown): void {
 		this._resourceLoader.emitExtensionEvent?.(channel, data);
@@ -4774,13 +4780,13 @@ export class AgentSession {
 	 * @throws Error if no model selected or no API key available (when not streaming)
 	 */
 	async prompt(text: string, options?: PromptOptions): Promise<void> {
-		if (options?.source !== "extension") emitUserActivity(this, "prompt");
 		// Held synchronously, before any await: an external delivery never overtakes this input.
 		const hold = this.externalAdmission.beginInput({
 			command: this._isExtensionCommandText(text, options),
 			submittedByCommand: options?.source === "extension",
 		});
 		try {
+			if (options?.source !== "extension") emitUserActivity(this, "prompt");
 			await this._prompt(text, {
 				...options,
 				promptDisposition: (disposition) => {
@@ -9277,6 +9283,7 @@ export class AgentSession {
 				getPromptCacheSafeWaitSeconds: () => this.resolvePromptCacheSafeWaitSeconds(),
 				getPromptCacheGoalBackstopMaxSeconds: () => this.settingsManager.getPromptCacheGoalBackstopMaxSeconds(),
 				getPromptCacheKeepAliveSettings: () => this.settingsManager.getPromptCacheKeepAliveSettings(),
+				onUserActivity: (listener) => this._userActivity.subscribe(listener),
 				getLookAtSettings: () => {
 					const global = this.settingsManager.getGlobalSettings().lookAt;
 					const project = this.settingsManager.getProjectSettings().lookAt;

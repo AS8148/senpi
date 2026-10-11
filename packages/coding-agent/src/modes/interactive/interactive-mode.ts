@@ -240,7 +240,7 @@ import { TreeSelectorComponent } from "./components/tree-selector.ts";
 import { TrustSelectorComponent } from "./components/trust-selector.ts";
 import { UserMessageComponent } from "./components/user-message.ts";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.ts";
-import { observeComposerActivity } from "./composer-user-activity.ts";
+import { insertProgrammaticComposerInput, observeComposerActivity } from "./composer-user-activity.ts";
 import { expandEditorSubmission, expandSubmittedText, transferEditorContent } from "./editor-paste-transfer.ts";
 import { formatExtensionErrorHeadline, sanitizeTuiErrorMessage } from "./extension-error-format.ts";
 import { editFileInExternalEditor, editInExternalEditor } from "./external-editor.ts";
@@ -3668,7 +3668,7 @@ export class InteractiveMode {
 				this.applyTerminalTitle();
 			},
 			custom: (factory, options) => this.showExtensionCustom(factory, options),
-			pasteToEditor: (text) => this.editor.handleInput(`\x1b[200~${text}\x1b[201~`),
+			pasteToEditor: (text) => insertProgrammaticComposerInput(this.editor, `\x1b[200~${text}\x1b[201~`),
 			setEditorText: (text) => this.editor.setText(text),
 			getEditorText: () => this.getExpandedEditorText(),
 			editor: (title, prefill) =>
