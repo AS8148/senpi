@@ -8,6 +8,8 @@
 
 ### Changed
 
+- Web search uses the active model's in-turn server tool first on supported routes, including ChatGPT subscription, xAI Responses, Google Gemini 2/3, OpenRouter and explicitly compatible Anthropic proxies. Search-specific failures enable one standalone fallback and record its reason; cheaper auxiliary models remain defaults only on routes without a server tool ([#3122](https://github.com/code-yeongyu/senpi/issues/3122), requested by @code-yeongyu).
+
 ### Fixed
 
 ### Removed
@@ -29,8 +31,6 @@
 - Exported a shared prompt-preset resolution contract on the public `@code-yeongyu/senpi/prompt-presets` subpath: a pure, settings-free `resolvePresetName({ providerID, modelID, name? })` plus `PROMPT_PRESET_MODEL_CASES` and `AUTO_RESOLVED_PRESET_NAMES`, so downstream harnesses can pin model-id-to-preset parity against a single source of truth. The model-id matchers moved into an exported `matchers.ts` that `presets.ts` re-imports; `gpt-5` is a manual-only preset and is intentionally excluded from the auto-resolvable set ([#3074](https://github.com/code-yeongyu/senpi/issues/3074)).
 
 ### Changed
-
-- Web search uses the active model's in-turn server tool first on supported routes, including ChatGPT subscription, xAI Responses, Google Gemini 2/3, OpenRouter and explicitly compatible Anthropic proxies. Search-specific failures enable one standalone fallback and record its reason; cheaper auxiliary models remain defaults only on routes without a server tool ([#3122](https://github.com/code-yeongyu/senpi/issues/3122), requested by @code-yeongyu).
 
 - The runtime snapshot a first launch builds copies the package as npm ships it (the `files` entries of `package.json`, plus `package.json`, README and LICENSE) instead of the whole package directory. Running from a repository checkout no longer copies its sources, tests and scripts: about 1,800 files instead of 11,000 for this package ([#3083](https://github.com/code-yeongyu/senpi/issues/3083)).
 
