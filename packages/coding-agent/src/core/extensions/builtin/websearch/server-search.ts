@@ -17,12 +17,13 @@ export function additionalServerSearch(model: SearchModel | undefined): Addition
 	const declared = model.compat && "supportsWebSearch" in model.compat ? model.compat.supportsWebSearch : undefined;
 	if (declared === false) return undefined;
 	// Google Search grounding uses GenerateContent config.tools, not Messages/Responses.
-	// Gemini 3 supports combining grounding with the function tools a coding session needs.
+	// Gemini 2/3 document this native tool. Endpoint-specific mixed-tool rejection
+	// is an attempt failure, not a reason to preempt server search with a subrequest.
 	// https://ai.google.dev/gemini-api/docs/google-search
 	// https://github.com/googleapis/js-genai/blob/main/codegen_instructions.md
 	if (
 		(model.api === "google-generative-ai" || model.api === "google-vertex") &&
-		/^gemini-3/.test(model.id) &&
+		/^gemini-(?:2[.-]|3[.-]|flash-latest|pro-latest)/.test(model.id) &&
 		!/(image|live|tts|embedding|computer-use)/.test(model.id)
 	) {
 		return "google";
@@ -193,9 +194,24 @@ export function serverSearchFailure(
 	}
 	if (
 		message.stopReason === "error" &&
-		!/(\b401\b|invalid[_ -]?(?:api[_ -]?)?key|authentication|unauthorized|quota|billing|insufficient)/i.test(
+		/(\b401\b|invalid[_ -]?(?:api[_ -]?)?key|authentication|unauthorized|quota|billing|insufficient)/i.test(
 			message.errorMessage ?? "",
-		) &&
+		)
+	) {
+		return undefined;
+	}
+	if (
+		message.stopReason === "error" &&
+		model !== undefined &&
+		(model.api === "google-generative-ai" || model.api === "google-vertex") &&
+		/(multiple tools|combining.*tools|tools.*combination|tool use with function calling is unsupported)/i.test(
+			message.errorMessage ?? "",
+		)
+	) {
+		return "server search request rejected (mixed tools unsupported)";
+	}
+	if (
+		message.stopReason === "error" &&
 		/(web_search_\d{8}|web_search_preview|openrouter:web_search|googleSearch|google_search|(?:tool(?:[_ -]?type)?|type)\s*[:=]?\s*["']?web_search\b)/i.test(
 			message.errorMessage ?? "",
 		)

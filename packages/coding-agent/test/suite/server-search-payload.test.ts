@@ -47,7 +47,7 @@ describe("provider-specific server search payloads", () => {
 		expect(additionalServerSearch(model("openai-completions", "zai", "glm-5"))).toBeUndefined();
 		expect(hasServerSearch(model("anthropic-messages", "kimi-coding", "kimi-for-coding"))).toBe(false);
 		expect(hasServerSearch(model("openai-completions", "xai", "grok-4.7"))).toBe(false);
-		expect(additionalServerSearch(model("google-generative-ai", "google", "gemini-2.5-pro"))).toBeUndefined();
+		expect(additionalServerSearch(model("google-generative-ai", "google", "gemini-2.5-pro"))).toBe("google");
 	});
 
 	it("uses Moonshot's built-in search on its PAYG route, but not on Kimi coding", () => {
@@ -200,5 +200,21 @@ describe("provider-specific server search payloads", () => {
 				model("openai-completions", "perplexity", "sonar-pro"),
 			),
 		).toBeUndefined();
+	});
+
+	it("tries documented Gemini 2 grounding first and falls back on its explicit mixed-tool rejection", () => {
+		const route = model("google-generative-ai", "google", "gemini-2.5-pro");
+		expect(hasServerSearch(route)).toBe(true);
+		expect(
+			serverSearchFailure(
+				{
+					content: [],
+					stopReason: "error",
+					errorMessage: "Tool use with function calling is unsupported",
+				},
+				route,
+			),
+		).toBe("server search request rejected (mixed tools unsupported)");
+		expect(hasServerSearch(model("google-generative-ai", "google", "gemini-2.5-flash-image"))).toBe(false);
 	});
 });

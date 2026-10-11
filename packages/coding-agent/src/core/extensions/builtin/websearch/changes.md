@@ -7,6 +7,7 @@
 - `websearch/search-model.ts` keeps eligible routes on their session model. Cheaper auxiliary defaults and settings remain available on no-server routes.
 - Focused payload, extension and real AgentSession regressions cover native-first dispatch, restored fallback, cancellation, retry ownership and next-prompt reset.
 - Review follow-ups keep completed answers from receiving duplicate continuations, reject unrelated auth/quota/function-schema errors, and mark fallback payloads with non-serialized request metadata so native injectors cannot re-enable search regardless of handler order.
+- Gemini 2/3 attempt their documented grounding tool first; an explicit mixed-tool rejection falls back once rather than assuming before the request that server search is unavailable.
 
 ### Why
 
