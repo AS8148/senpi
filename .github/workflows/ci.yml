@@ -99,6 +99,10 @@ jobs:
       - name: Check
         run: npm run check
 
+      - name: Real CLI text-tool recovery self-test
+        timeout-minutes: 5
+        run: node .agents/skills/senpi-qa/scripts/mock-loop.mjs --self-test --api anthropic-messages
+
       - name: Build workspace package entries
         run: npm run build
 
