@@ -725,6 +725,8 @@ export interface AssistantMessage {
 	stopDetails?: AssistantStopDetails;
 	deferred?: DeferredHandle;
 	errorMessage?: string;
+	/** Redaction-safe cause retained when a session projects a provider limit as user-facing advice. */
+	errorCause?: { type: "usage_limit"; scope: "account" | "model" };
 	/** Structured provider failure family, minted only by a provider adapter from structured error metadata. */
 	providerDiagnostic?: ProviderDiagnostic;
 	/** Explicit owner for an abort initiated by the provider retry watchdog. */

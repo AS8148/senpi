@@ -8,6 +8,10 @@
  * - Interact with the user via UI primitives
  */
 
+import type { ContextEvent } from "./context-event.ts";
+
+export type { ContextEvent } from "./context-event.ts";
+
 import type {
 	AgentMessage,
 	AgentTool,
@@ -552,6 +556,8 @@ export interface ExtensionContext {
 	getContextUsage(): ContextUsage | undefined;
 	/** Get resolved compaction settings from global/project/user overrides. */
 	getCompactionSettings(): CompactionPreparation["settings"];
+	/** Session-selected usable summarization model; throws when every authenticated account is spent. */
+	getCompactionModel?(): Model<Api> | undefined;
 	/**
 	 * Longest a tool may block in the foreground before the active model's prompt
 	 * cache expires, or `undefined` when no cache-derived budget applies. Reads the
@@ -1338,18 +1344,6 @@ export type SessionEvent =
 // ============================================================================
 // Agent Events
 // ============================================================================
-
-/**
- * Fired before each LLM call. Can modify messages.
- *
- * `messages` holds the conversation without system messages. The prompt and tool state
- * belong to Pi: it restores them after the handler returns, so a handler cannot drop
- * them and does not need to preserve them.
- */
-export interface ContextEvent {
-	type: "context";
-	messages: AgentMessage[];
-}
 
 /**
  * Fired before each LLM call, after every `context` handler has run and Pi has restored
@@ -3048,6 +3042,7 @@ export interface ExtensionContextActions {
 	shutdown: () => void;
 	getContextUsage: () => ContextUsage | undefined;
 	getCompactionSettings: () => CompactionPreparation["settings"];
+	getCompactionModel?: () => Model<Api> | undefined;
 	getPromptCacheSafeWaitSeconds?: () => number | undefined;
 	getPromptCacheGoalBackstopMaxSeconds?: () => number;
 	getPromptCacheKeepAliveSettings?: () => {

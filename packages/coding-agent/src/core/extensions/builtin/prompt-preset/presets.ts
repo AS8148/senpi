@@ -61,7 +61,7 @@ export function resolvePresetName(
 	return resolveContractPresetName({ providerID: model.provider, modelID: model.id, name: model.name });
 }
 
-function buildPreset(name: ResolvedPresetName, options: BuildDynamicSystemPromptOptions): ResolvedPromptPreset {
+export function buildPreset(name: ResolvedPresetName, options: BuildDynamicSystemPromptOptions): ResolvedPromptPreset {
 	switch (name) {
 		case "gpt-6-astra":
 			return { name, prompt: buildGpt6AstraPrompt(options) };
@@ -135,6 +135,7 @@ function withDefaults(options: Partial<BuildDynamicSystemPromptOptions> = {}): B
 		contextFiles: options.contextFiles ?? [],
 		skills: options.skills ?? [],
 		surface: options.surface ?? "terminal",
+		appName: options.appName,
 	};
 }
 

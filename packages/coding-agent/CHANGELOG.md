@@ -6,14 +6,46 @@
 
 ### Added
 
+- Extensions can use `ctx.getCompactionModel()` to resolve a usable summary model without changing the active session selection. Healthy builtin compaction retains the current model; a spent account can use the held target, configured summary override, or an authenticated alternate with sufficient context capacity ([#3131](https://github.com/code-yeongyu/senpi/issues/3131)).
+
+### Changed
+
+### Fixed
+
+- Zero-attempt terminal failures still explain provider-requested long waits and retry-delay caps; only an initial account-usage failure omits a redundant retry-end event. RPC entry events, entry history, and trees now carry the same structured account-limit advice as message history, and reset parsing uses injected clocks ([#3131](https://github.com/code-yeongyu/senpi/issues/3131)).
+
+- Account-wide usage limits skip all fallback models on the spent provider and fail immediately when no other provider can serve. Manual and held-switch compaction use a usable model, and limit errors name the provider, reset hint, and `/model` or fallback configuration instead of raw 429 JSON ([#3131](https://github.com/code-yeongyu/senpi/issues/3131)).
+
+- Locally refused prompts no longer extend a spent account's suppression window. Provider reset hints and retry-after delays bound that window, and an explicit `/model` selection clears it for a deliberate probe ([#3131](https://github.com/code-yeongyu/senpi/issues/3131)).
+- Account-limit advice and its structured scope remain consistent between live messages, restored transcripts, and RPC `get_messages`; the TUI no longer reports zero failed retry attempts when a turn failed without retrying ([#3131](https://github.com/code-yeongyu/senpi/issues/3131)).
+
+### Removed
+
+## [2026.10.11] - 2026-10-11
+
+### Breaking Changes
+
+### Added
+
+- Host adapters can render Native prompt content through the public `@code-yeongyu/senpi/prompt-presets` subpath using `resolvePreset`, `buildPreset`, and `buildDynamicSystemPrompt`, with `BuildDynamicSystemPromptOptions`, `ResolvedPromptPreset`, `PromptPresetSettings`, `PromptPresetName`, `ModelWithPromptPresetMetadata`, and `PromptSurface` types. The builders accept an explicit application name while preserving Native's existing default branding; preset selection and content remain single-source ([#3104](https://github.com/code-yeongyu/senpi/issues/3104)).
+
+- `senpi host session open|close|model|prompt|steer|abort|read|state|list|wait` drives a session over the shared host from the command line: one JSON line of output per call and typed exit codes, so an orchestrating agent no longer has to write its own RPC client or scrape a terminal pane ([#3073](https://github.com/code-yeongyu/senpi/issues/3073)).
+
+- RPC refusals of `prompt` while a turn runs, `set_model` with an unknown model, and `get_entries` with an unknown `since` cursor now carry `errorCode` (`streaming`, `model_not_found`, `not_found`), so clients no longer match message text ([#3073](https://github.com/code-yeongyu/senpi/issues/3073)).
+
+- The footer shows a reasoning model's level as `effort <level>` with the key bound to `app.thinking.cycle` beside it (`shift+tab` by default, your own key when rebound, nothing when unbound) whenever the whole footer fits; on a narrower terminal the key drops first, then the label falls back to the compact `model:<level>` the footer always showed, so no stat or path character is lost to the hint. A one-time tip, `Shift+Tab changes the reasoning level`, is shown once per agent directory for reasoning models ([#3090](https://github.com/code-yeongyu/senpi/issues/3090), requested by @devxoul).
+
 - Exported a shared prompt-preset resolution contract on the public `@code-yeongyu/senpi/prompt-presets` subpath: a pure, settings-free `resolvePresetName({ providerID, modelID, name? })` plus `PROMPT_PRESET_MODEL_CASES` and `AUTO_RESOLVED_PRESET_NAMES`, so downstream harnesses can pin model-id-to-preset parity against a single source of truth. The model-id matchers moved into an exported `matchers.ts` that `presets.ts` re-imports; `gpt-5` is a manual-only preset and is intentionally excluded from the auto-resolvable set ([#3074](https://github.com/code-yeongyu/senpi/issues/3074)).
 
 ### Changed
 
 - The runtime snapshot a first launch builds copies the package as npm ships it (the `files` entries of `package.json`, plus `package.json`, README and LICENSE) instead of the whole package directory. Running from a repository checkout no longer copies its sources, tests and scripts: about 1,800 files instead of 11,000 for this package ([#3083](https://github.com/code-yeongyu/senpi/issues/3083)).
 
+- Runtime snapshots omit dependency development trees, root documentation notes and redundant TypeScript sources while retaining manifest entrypoints, source-only extensions, skills, native binaries and the complete dependency graph needed after an install update. A real Node/Bun CLI inventory covers help, external extension loading, a faux turn and codemode bootstrap ([#3083](https://github.com/code-yeongyu/senpi/issues/3083)).
+
 ### Fixed
 
+- Context reduction no longer rewrites the prompt cache every turn on long sessions. Reduction stays engaged and holds a stable prefix between large frontier steps, survives restarts, and advances early near the context limit ([#900](https://github.com/code-yeongyu/senpi/issues/900), building on [#901](https://github.com/code-yeongyu/senpi/pull/901) by [@codeg-dev](https://github.com/codeg-dev); thanks to [@daehwanahn](https://github.com/daehwanahn) and [@ddotz](https://github.com/ddotz) for the reports and measurements).
 - Reloading a session releases the previous extension runner and reuses unchanged module graphs instead of retaining another generation. Edited lazy dependencies now invalidate the graph using the bytes actually compiled, including equal-size edits with preserved timestamps ([#3066](https://github.com/code-yeongyu/senpi/pull/3066) by [@jc01rho](https://github.com/jc01rho), [#3068](https://github.com/code-yeongyu/senpi/issues/3068)).
 
 - Boundary handlers no longer run after their extension runner retires during awaited context previews or handlers, and retired boundary drafts and continuation are discarded. A handler or boundary rebuild that was already in flight and then fails on the retired runner stands down instead of reporting an extension error ([#3071](https://github.com/code-yeongyu/senpi/pull/3071) by [@MoerAI](https://github.com/MoerAI)).

@@ -55,6 +55,7 @@ import type {
 	ExtensionWidgetOptions,
 	WorkingIndicatorOptions,
 } from "../../core/extensions/index.ts";
+import { describeUsageLimitEntry, describeUsageLimitMessage } from "../../core/retry-fallback/usage-limit.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
 import { DURABLE_CLIENT_MESSAGE_ID_CAPABILITY } from "./client-admission-record.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
@@ -101,7 +102,7 @@ import type {
 	RpcSessionReplacedEvent,
 	RpcSkillInvocationEvent,
 } from "./rpc-types.ts";
-import { RPC_ERROR_MEDIA_NOT_FOUND } from "./rpc-types.ts";
+import { RPC_ERROR_ENTRY_NOT_FOUND, RPC_ERROR_MEDIA_NOT_FOUND, RPC_ERROR_MODEL_NOT_FOUND } from "./rpc-types.ts";
 import { availableModelsData, interruptRunningTurn, unsupportedThinkingLevel } from "./session-control-actions-data.ts";
 import { SessionExtensionUiRequests } from "./session-extension-ui-requests.ts";
 
@@ -1119,7 +1120,12 @@ export function createRpcConnectionHandler(
 				const models = await session.modelRegistry.getAvailable();
 				const model = models.find((m) => m.provider === command.provider && m.id === command.modelId);
 				if (!model) {
-					return error(id, "set_model", `Model not found: ${command.provider}/${command.modelId}`);
+					return error(
+						id,
+						"set_model",
+						`Model not found: ${command.provider}/${command.modelId}`,
+						RPC_ERROR_MODEL_NOT_FOUND,
+					);
 				}
 				const systemPromptChange = await session.setModel(model, { source: "rpc" });
 				return success(id, "set_model", { ...model, systemPromptName: systemPromptChange?.systemPromptName });
@@ -1536,16 +1542,26 @@ export function createRpcConnectionHandler(
 				if (command.since !== undefined) {
 					const sinceIndex = entries.findIndex((e) => e.id === command.since);
 					if (sinceIndex === -1) {
-						return error(id, "get_entries", `Entry not found: ${command.since}`);
+						return error(id, "get_entries", `Entry not found: ${command.since}`, RPC_ERROR_ENTRY_NOT_FOUND);
 					}
 					entries = entries.slice(sinceIndex + 1);
 				}
-				return success(id, "get_entries", { entries, leafId: sessionManager.getLeafId() });
+				return success(id, "get_entries", {
+					entries: entries.map(describeUsageLimitEntry),
+					leafId: sessionManager.getLeafId(),
+				});
 			}
 
 			case "get_tree": {
 				const sessionManager = session.sessionManager;
-				return success(id, "get_tree", { tree: sessionManager.getTree(), leafId: sessionManager.getLeafId() });
+				const tree = sessionManager.getTree();
+				// getTree returns defensive nodes; keep the persisted entries diagnostic-bearing.
+				const nodes = [...tree];
+				for (const node of nodes) {
+					node.entry = describeUsageLimitEntry(node.entry);
+					for (const child of node.children) nodes.push(child);
+				}
+				return success(id, "get_tree", { tree, leafId: sessionManager.getLeafId() });
 			}
 
 			case "get_last_assistant_text": {
@@ -1574,7 +1590,11 @@ export function createRpcConnectionHandler(
 			// =================================================================
 
 			case "get_messages": {
-				return success(id, "get_messages", { messages: session.messages });
+				return success(id, "get_messages", {
+					messages: session.messages.map((message) =>
+						message.role === "assistant" ? describeUsageLimitMessage(message) : message,
+					),
+				});
 			}
 
 			// On-demand fetch of a media block a `media_placeholders` client received as

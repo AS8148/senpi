@@ -15,6 +15,21 @@ describe("stripTurnRetrySuppressionPrefix", () => {
 });
 
 describe("describeProviderFailureForUser", () => {
+	it("explains an account limit with provider, reset time, and model-switch recovery instead of raw JSON", () => {
+		// given
+		const raw = '429 {"error":{"message":"You have hit your session limit; resets 11pm"}}';
+		// when
+		const text = describeProviderFailureForUser(raw, {
+			model: "test-provider/primary",
+			usageLimit: "account",
+		});
+		// then
+		expect(text).toBe(
+			"The test-provider account usage limit has been reached (resets 11pm). Switch to another provider with /model, or configure another provider in retry.fallbackChains.",
+		);
+		expect(text).not.toContain("429");
+	});
+
 	it("explains an abnormal WebSocket closure in plain language and names the next step", () => {
 		const text = describeProviderFailureForUser("WebSocket closed 1006 Connection ended", {
 			model: "openai-codex/gpt-6-astra",

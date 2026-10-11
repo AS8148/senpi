@@ -130,6 +130,7 @@ export interface HarnessOptions {
 	persistSession?: boolean;
 	autoTitleSessions?: boolean;
 	fallbackNow?: () => number;
+	fallbackWallNow?: () => number;
 	retryRandom?: () => number;
 	transportImageBudget?: { budgetBytes: number; alwaysKeepNewest: number };
 	modelsJson?: Record<string, unknown>;
@@ -312,6 +313,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		extensionRunnerRef,
 		autoTitleSessions: options.autoTitleSessions,
 		fallbackNow: options.fallbackNow,
+		fallbackWallNow: options.fallbackWallNow,
 		retryRandom: options.retryRandom ?? (() => 0.5),
 		environmentContext: options.environmentContext ?? false,
 	});

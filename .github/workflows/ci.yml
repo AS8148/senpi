@@ -112,6 +112,20 @@ jobs:
       - name: Check
         run: npm run check
 
+      - name: Snapshot OS temp before tests
+        id: test_temp_snapshot
+        shell: bash
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
+
+      - name: Real CLI text-tool recovery self-test
+        timeout-minutes: 5
+        run: node scripts/run-tests.mjs node .agents/skills/senpi-qa/scripts/mock-loop.mjs --self-test --api anthropic-messages
+
+      - name: Check OS temp after tests
+        if: always() && steps.test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: node scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
+
       - name: Build workspace package entries
         run: npm run build
 

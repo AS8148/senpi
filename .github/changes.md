@@ -6,6 +6,7 @@
 - `.github/workflows/ci.yml`, `.github/workflows/releasability.yml`: every test job snapshots the OS temp directory before its first test step and runs final teardown/check with `always()` when that snapshot succeeded. Unowned leftovers fail the job and are named; snapshots live under gitignored local-ignore.
 - `.github/workflows/ci.yml`, `.github/workflows/releasability.yml`: snapshot setup explicitly exports a creator-owned cleanup journal. Final teardown retires only recorded run roots before checking for unowned residue, including a run root recreated by late Windows child activity.
 - `.github/workflows/ci.yml`, `.github/workflows/releasability.yml`: exported TMPDIR/TEMP/TMP make the job's count an exclusive measurement, not a count of unrelated host daemons. Final teardown removes its own job parent and restores the host temp environment before post-job actions.
+- `.github/workflows/ci.yml`: the real CLI recovery self-test added on main also runs inside the temp owner, between snapshot setup and an always-run final count, before the workspace build.
 
 ### Why
 
@@ -18,6 +19,24 @@
 ### Expected merge conflict zones
 
 - Test command arguments and runtime selection; preserve existing reporters, shards and test filters.
+
+## 2026-10-11 - Require the real CLI text-tool recovery self-test (senpi#3109)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the Ubuntu `Static checks` job runs the 22-assertion Anthropic real-CLI mock-loop self-test with a five-minute timeout. The existing required `Check and test` fan-in includes this job; the step has no skip condition or failure tolerance.
+
+### Why
+
+- `.github/workflows/ci.yml`: the leaked-call scenario stopped declaring its scripted shell tool after eval-only routing became the default, but no CI step ran it. The scenario now selects the direct `bash` tool surface explicitly. This required self-test covers complete and truncated leaked calls, the Anthropic API round-trip, credential isolation, sandbox cleanup, and command dispatch.
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: required checks and their failure propagation are repository CI configuration.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: the `check` job's steps between static validation and the workspace build.
 
 ## 2026-10-10 - A failing WebView suite prints its vitest output (senpi#3092)
 

@@ -1,3 +1,22 @@
+## 2026-10-10 - Identify prepared context projections (senpi#900)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts` labels context events from `prepareProviderRequest` as projections; normal agent dispatch is labeled separately. The unchanged two-phase transformation, cloning, snapshot, and system-message restoration logic now lives in `packages/coding-agent/src/core/extensions/context-dispatch.ts`.
+- `packages/coding-agent/src/core/extensions/types.ts` re-exports `ContextEvent` from `packages/coding-agent/src/core/extensions/context-event.ts` with an optional read-only `source` marker. `packages/coding-agent/docs/extensions.md` documents its ownership meaning.
+
+### Why
+
+- A real agent request can reach the context hook before its current user message reaches the session journal. Comparing those lists misclassifies the live request; a prepared projection can also exactly match the journal.
+
+### Why an extension could not handle it
+
+- Only the host dispatcher knows whether it is preparing a separate projection or handling the agent's request. The compaction extension uses that provenance to keep projections on scratch state.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitContext` delegation and `prepareProviderRequest` origin argument. `packages/coding-agent/src/core/extensions/types.ts`: the `ContextEvent` type re-export.
+
 ## 2026-10-10 - Retired runners stop boundary dispatch (senpi#2785)
 
 ### What changed
@@ -3250,3 +3269,21 @@ The dialog options type is the public extension API that every UI context receiv
 ### Expected merge conflict zones
 
 The `ExtensionUIDialogOptions` interface in `types.ts`.
+## 2026-10-11 - Share usable compaction model selection (senpi#3131)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: optional `getCompactionModel` resolves the session's usable summary model.
+- `packages/coding-agent/src/core/extensions/runner.ts`: forwards that callback with the existing active-runner lease checks.
+
+### Why
+
+Builtin summarization must obey the same spent-account state and held-switch target as core compaction.
+
+### Why an extension could not handle it
+
+Only the session owns account suppression and pending model selection.
+
+### Expected merge conflict zones
+
+The compaction context/action declarations in `types.ts` and callback storage, binding, and context construction in `runner.ts`.
