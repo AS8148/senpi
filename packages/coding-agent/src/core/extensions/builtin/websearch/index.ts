@@ -3,6 +3,11 @@ import { defineTool, type ExtensionAPI, type ExtensionContext } from "../../type
 import { ANTHROPIC_WEB_SEARCH_SECTION } from "../anthropic-web-search/index.ts";
 import { OPENAI_WEB_SEARCH_SECTION } from "../openai-web-search/index.ts";
 import {
+	hasServerSearchFailed,
+	rememberServerSearchFailure,
+	resetServerSearchFailures,
+} from "../server-search-fallback.ts";
+import {
 	additionalServerSearch,
 	hasServerSearch,
 	type SearchModel,
@@ -91,6 +96,7 @@ export default function (pi: ExtensionAPI): void {
 		defineTool({
 			name: "$web_search",
 			exposure: "search",
+			allowLazyActivation: false,
 			label: "Moonshot Server Search",
 			description: "Return the Moonshot built-in server search result to the same model.",
 			parameters: Type.Record(Type.String(), Type.Unknown()),
@@ -110,12 +116,15 @@ export default function (pi: ExtensionAPI): void {
 		const active = pi.getActiveTools();
 		const withoutMoonshot = active.filter((name) => name !== "$web_search");
 		const moonshotEnabled = !nativeFailed && additionalServerSearch(model) === "moonshot";
-		pi.setActiveTools(moonshotEnabled ? [...withoutMoonshot, "$web_search"] : withoutMoonshot);
+		if (moonshotEnabled !== active.includes("$web_search")) {
+			pi.setActiveTools(moonshotEnabled ? [...withoutMoonshot, "$web_search"] : withoutMoonshot);
+		}
 		updateUi(ctx);
 	}
 
 	pi.on("session_start", async (_event, ctx) => {
 		lastServedBy = undefined;
+		resetServerSearchFailures(ctx.sessionManager);
 		nativeFailed = false;
 		fallbackPending = false;
 		fallbackSent = false;
@@ -124,7 +133,7 @@ export default function (pi: ExtensionAPI): void {
 	});
 
 	pi.on("model_select", async (event, ctx) => {
-		nativeFailed = false;
+		nativeFailed = hasServerSearchFailed(ctx.sessionManager, event.model);
 		fallbackPending = false;
 		fallbackSent = false;
 		await refreshState(event.model, ctx);
@@ -134,7 +143,7 @@ export default function (pi: ExtensionAPI): void {
 		"before_agent_start",
 		async (event, ctx) => {
 			if (!event.preview && event.trigger !== "extension") {
-				nativeFailed = false;
+				nativeFailed = hasServerSearchFailed(ctx.sessionManager, ctx.model);
 				fallbackPending = false;
 				fallbackSent = false;
 				userAborted = false;
@@ -146,8 +155,8 @@ export default function (pi: ExtensionAPI): void {
 				.replace(OPENAI_WEB_SEARCH_SECTION, "");
 			return {
 				systemPrompt: `${systemPrompt}\n## Web Search\n${
-					!event.preview && nativeFailed
-						? "Use the standalone web_search tool when current information is needed. Native search failed on this turn."
+					hasServerSearchFailed(ctx.sessionManager, ctx.model)
+						? "Use the standalone web_search tool when current information is needed. Native search failed for this session model."
 						: "Use the provider's in-turn server web search when current information is needed."
 				}`,
 			};
@@ -159,9 +168,7 @@ export default function (pi: ExtensionAPI): void {
 		serverSearchPayload(
 			event.model ?? ctx.model,
 			event.payload,
-			nativeFailed
-				? { name: searchTool.name, description: searchTool.description, parameters: searchTool.parameters }
-				: undefined,
+			hasServerSearchFailed(ctx.sessionManager, ctx.model),
 		),
 	);
 
@@ -170,6 +177,7 @@ export default function (pi: ExtensionAPI): void {
 		const reason = serverSearchFailure(event.message, ctx.model);
 		if (!reason) return undefined;
 		nativeFailed = true;
+		if (ctx.model) rememberServerSearchFailure(ctx.sessionManager, ctx.model);
 		// A provider can recover from a failed search and still finish its answer.
 		// Enable fallback for another request, but never duplicate a completed answer.
 		fallbackPending =

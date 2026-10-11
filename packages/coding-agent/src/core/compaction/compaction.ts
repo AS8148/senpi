@@ -29,6 +29,7 @@ import type {
 import { streamSimple } from "@earendil-works/pi-ai/compat";
 import { estimateContextTokens as estimateProviderContextTokens } from "@earendil-works/pi-ai/utils/estimate";
 import { resolveEffectiveReserveTokens } from "../extensions/builtin/compaction/policy.ts";
+import { withoutServerSearch } from "../extensions/builtin/server-search-fallback.ts";
 import { convertToLlm, isContextExcludedCustomMessage } from "../messages.ts";
 import {
 	buildSessionProjection,
@@ -825,6 +826,7 @@ export async function completeSummarization(
 	// opt into short retention for an exact provider-context prefix.
 	const isolatedOptions: SimpleStreamOptions = {
 		...options,
+		onPayload: withoutServerSearch(options.onPayload),
 		cacheRetention: options.cacheRetention ?? "none",
 		affinitySessionId: options.affinitySessionId ?? options.sessionId,
 		sessionId: uuidv7(),

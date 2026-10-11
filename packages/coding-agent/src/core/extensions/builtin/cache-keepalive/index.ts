@@ -167,7 +167,7 @@ export function createCacheKeepAliveExtension(
 			const iteration = attempts;
 			const pingGeneration = generation;
 			try {
-				const preparation = await current.prepareProviderRequest?.(lastMessages);
+				const preparation = await current.prepareProviderRequest?.(lastMessages, { allowServerSearch: true });
 				if (pingGeneration !== generation) {
 					inFlight = false;
 					arm();

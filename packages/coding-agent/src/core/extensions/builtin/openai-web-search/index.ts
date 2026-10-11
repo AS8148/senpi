@@ -1,6 +1,6 @@
 import type { Api, Model, OpenAIResponsesCompat } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
-import { isServerSearchFallback } from "../server-search-fallback.ts";
+import { hasServerSearchFailed, isServerSearchFallback, markServerSearchFallback } from "../server-search-fallback.ts";
 
 type ToolDefinition = Record<string, unknown>;
 type OpenAiWebSearchModel = Pick<Model<Api>, "api" | "baseUrl" | "compat"> & { provider?: string; id?: string };
@@ -58,23 +58,11 @@ function resolveTarget(target: OpenAiWebSearchTarget): OpenAiWebSearchModel | un
 	return target;
 }
 
-function isOpenAiResponsesNativeEndpoint(model: OpenAiWebSearchModel): boolean {
-	try {
-		return new URL(model.baseUrl || "https://api.openai.com/v1").hostname === "api.openai.com";
-	} catch {
-		return false;
-	}
-}
-
 export function supportsNativeOpenAiWebSearch(target: OpenAiWebSearchTarget): boolean {
 	const model = resolveTarget(target);
 	if (!isOpenAiResponsesApi(model?.api)) {
 		return false;
 	}
-	if (model.api === "azure-openai-responses") {
-		return true;
-	}
-
 	const compat = model.compat as OpenAIResponsesCompat | undefined;
 	// Codex/ChatGPT plans support web_search in their main Responses request.
 	// https://developers.openai.com/codex/config-basic/#web-search-mode
@@ -90,7 +78,7 @@ export function supportsNativeOpenAiWebSearch(target: OpenAiWebSearchTarget): bo
 	// xAI documents web_search on Responses, not its Chat Completions endpoint.
 	// Compatible/custom Responses endpoints still need an explicit capability opt-in.
 	// https://docs.x.ai/developers/tools/web-search
-	return compat?.supportsWebSearchPreview ?? isOpenAiResponsesNativeEndpoint(model);
+	return compat?.supportsWebSearchPreview === true;
 }
 
 function isNativeOpenAiWebSearchType(
@@ -267,7 +255,10 @@ Prefer web search over guessing when freshness matters.
 
 export default function openaiWebSearchExtension(pi: ExtensionAPI): void {
 	pi.on("before_provider_request", (event, ctx) => {
-		return addOpenAiWebSearchToPayload(ctx.model, event.payload);
+		const payload = hasServerSearchFailed(ctx.sessionManager, ctx.model)
+			? markServerSearchFallback(event.payload)
+			: event.payload;
+		return addOpenAiWebSearchToPayload(event.model ?? ctx.model, payload);
 	});
 
 	pi.on("session_start", async (_event, ctx) => {

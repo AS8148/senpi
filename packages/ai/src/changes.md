@@ -1,3 +1,22 @@
+## 2026-10-11 - Evidence-gated server search opt-in (senpi#3122 review)
+
+### What changed
+
+- `model.ts`: Google generation and Vertex models accept typed `compat.supportsWebSearch`.
+- `providers/xai.ts`: retains the documented `webSearchToolType` without setting `supportsWebSearchPreview: true`; the unverified route now requires explicit opt-in.
+
+### Why
+
+- Documented tool support and an accepted request are not proof of executed search and replay. The held xAI probe failed authentication.
+
+### Why an extension could not handle it
+
+- Model compatibility types and provider catalog defaults belong to pi-ai.
+
+### Expected merge conflict zones
+
+- `model.ts` compatibility conditional and the xAI catalog mapping.
+
 ## 2026-10-11 - Explicit in-turn search capabilities (senpi#3122)
 
 ### What changed

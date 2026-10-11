@@ -1,3 +1,23 @@
+## 2026-10-11 - Preserve search fallback schemas and keepalive prefixes (senpi#3122 review)
+
+### What changed
+
+- `server-search-fallback.ts`: session/model failure memory is shared by native injectors and standalone search; suppression markers are request-local and never serialized.
+- `cache-keepalive/index.ts`: explicitly requests the main-turn server-search prefix rather than using the search-disabled auxiliary default.
+- Native search extensions preserve provider-built function declarations after a failure and require opt-in on unverified routes.
+
+### Why
+
+- Schema normalization and a stable cache prefix must survive native-search fallback without adding duplicate tools or another failed request per prompt.
+
+### Why an extension could not handle it
+
+- These are coordinated changes to existing built-in extensions.
+
+### Expected merge conflict zones
+
+- Fallback metadata, native injector hooks, and keepalive request preparation.
+
 ## 2026-10-11 - Classify the Moonshot server-search echo tool (senpi#3122)
 
 ### What changed

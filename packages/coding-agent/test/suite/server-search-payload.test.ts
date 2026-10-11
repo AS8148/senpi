@@ -17,6 +17,7 @@ function model(api: Api, provider: string, id: string) {
 describe("provider-specific server search payloads", () => {
 	it("uses OpenRouter's own server tool without leaking the upstream vendor's tool shape", () => {
 		const route = model("openai-completions", "openrouter", "anthropic/claude-opus-5");
+		route.compat = { supportsWebSearch: true };
 		expect(
 			serverSearchPayload(route, {
 				tools: [
@@ -31,6 +32,7 @@ describe("provider-specific server search payloads", () => {
 
 	it("adds Google grounding alongside non-search function declarations on a supported generation model", () => {
 		const route = model("google-generative-ai", "google", "gemini-3-pro-preview");
+		route.compat = { supportsWebSearch: true };
 		expect(
 			serverSearchPayload(route, {
 				contents: [{ role: "user", parts: [{ text: "Latest documentation?" }] }],
@@ -47,12 +49,14 @@ describe("provider-specific server search payloads", () => {
 		expect(additionalServerSearch(model("openai-completions", "zai", "glm-5"))).toBeUndefined();
 		expect(hasServerSearch(model("anthropic-messages", "kimi-coding", "kimi-for-coding"))).toBe(false);
 		expect(hasServerSearch(model("openai-completions", "xai", "grok-4.7"))).toBe(false);
-		expect(additionalServerSearch(model("google-generative-ai", "google", "gemini-2.5-pro"))).toBe("google");
+		expect(additionalServerSearch(model("google-generative-ai", "google", "gemini-2.5-pro"))).toBeUndefined();
 	});
 
 	it("uses Moonshot's built-in search on its PAYG route, but not on Kimi coding", () => {
+		const route = model("openai-completions", "moonshotai", "kimi-k3");
+		route.compat = { supportsWebSearch: true };
 		expect(
-			serverSearchPayload(model("openai-completions", "moonshotai", "kimi-k3"), {
+			serverSearchPayload(route, {
 				tools: [{ type: "function", function: { name: "web_search" } }],
 			}),
 		).toEqual({
@@ -84,9 +88,12 @@ describe("provider-specific server search payloads", () => {
 			model("anthropic-messages", "anthropic", "claude-opus-5-5"),
 			{
 				messages,
-				tools: [{ type: "web_search_20250305", name: "web_search" }],
+				tools: [
+					{ type: "web_search_20250305", name: "web_search" },
+					{ name: "web_search", input_schema: { type: "object" } },
+				],
 			},
-			{ name: "web_search", description: "Search", parameters: { type: "object" } },
+			true,
 		) as { messages: unknown };
 		expect(payload.messages).toBe(messages);
 	});
@@ -150,12 +157,20 @@ describe("provider-specific server search payloads", () => {
 		] as const) {
 			const fallback = serverSearchPayload(
 				route,
-				{ tools: [] },
 				{
-					name: "web_search",
-					description: "Fallback",
-					parameters: { type: "object" },
+					tools:
+						route.api === "anthropic-messages"
+							? [{ name: "web_search", input_schema: { type: "object", additionalProperties: false } }]
+							: [
+									{
+										type: "function",
+										name: "web_search",
+										parameters: { type: "object", additionalProperties: false },
+										strict: true,
+									},
+								],
 				},
+				true,
 			);
 			const after = inject(route, fallback);
 			expect(JSON.parse(JSON.stringify(after))).toEqual(JSON.parse(JSON.stringify(fallback)));
@@ -202,8 +217,9 @@ describe("provider-specific server search payloads", () => {
 		).toBeUndefined();
 	});
 
-	it("tries documented Gemini 2 grounding first and falls back on its explicit mixed-tool rejection", () => {
+	it("tries explicitly enabled Gemini 2 grounding first and falls back on its mixed-tool rejection", () => {
 		const route = model("google-generative-ai", "google", "gemini-2.5-pro");
+		route.compat = { supportsWebSearch: true };
 		expect(hasServerSearch(route)).toBe(true);
 		expect(
 			serverSearchFailure(

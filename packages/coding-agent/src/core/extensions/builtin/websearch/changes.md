@@ -1,3 +1,24 @@
+## 2026-10-11 - Review: isolate and evidence-gate server search (senpi#3122)
+
+### What changed
+
+- `index.ts`: `$web_search` cannot be lazily activated and is active only on an explicitly opted-in Moonshot route. Search failures persist per session/model across prompts and model switches, and a new session clears them.
+- `server-search.ts`: Gemini, OpenRouter, retiring Moonshot, Z.AI and Sonar native-bypass routing require explicit opt-in. Non-Moonshot declarations and choices lose `$web_search`, including when no server search is enabled.
+- Fallback preserves adapter-built function schemas; Gemini keeps its existing single function-declaration entry. Search-disabled summary/title/projection payloads never acquire native tools.
+- Official route documentation distinguishes held live proof from failed probes and doc-only support. A different `nativeModel` is ignored on enabled server-search routes.
+
+### Why
+
+- A documented tool is not live evidence, and a provider-only echo tool must not enter another API's tool catalog or request.
+
+### Why an extension could not handle it
+
+- The existing websearch extension owns tool registration, routing, and fallback.
+
+### Expected merge conflict zones
+
+- Tool registration, native bypass, payload tool filtering, and lifecycle hooks.
+
 ## 2026-10-11 - Server search before auxiliary search models (senpi#3122)
 
 ### What changed

@@ -1,3 +1,21 @@
+## 2026-10-11 - Exclude server search from summaries (senpi#3122 review)
+
+### What changed
+
+- `compaction.ts`: `completeSummarization` wraps the caller's payload hook with request-local server-search exclusion, covering ordinary and branch summaries without changing the next user turn.
+
+### Why
+
+- A summary does not need injected search and has no search-fallback continuation.
+
+### Why an extension could not handle it
+
+- Shared summary options are constructed in core before provider hooks run.
+
+### Expected merge conflict zones
+
+- The isolated summarization options.
+
 ## 2026-10-07 - Per-message token estimates cached behind their JSON text (senpi#2525)
 
 ### What changed

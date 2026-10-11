@@ -10,6 +10,12 @@ import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
 const ENABLE_ENV = "PI_ANTHROPIC_WEB_SEARCH";
 const ALLOWED_DOMAINS_ENV = "PI_ANTHROPIC_WEB_SEARCH_ALLOWED_DOMAINS";
 const BLOCKED_DOMAINS_ENV = "PI_ANTHROPIC_WEB_SEARCH_BLOCKED_DOMAINS";
+const ANTHROPIC_MODEL = {
+	api: "anthropic-messages",
+	provider: "anthropic",
+	baseUrl: "https://api.anthropic.com",
+	compat: { supportsWebSearch: true },
+} as const;
 
 const kimiCodingModel = {
 	api: "anthropic-messages",
@@ -46,7 +52,7 @@ describe("anthropic-web-search builtin extension", () => {
 			tools: [{ name: "other_tool" }],
 		};
 
-		const result = addAnthropicWebSearchToPayload("anthropic-messages", payload) as {
+		const result = addAnthropicWebSearchToPayload(ANTHROPIC_MODEL, payload) as {
 			tools: unknown[];
 		};
 
@@ -62,7 +68,7 @@ describe("anthropic-web-search builtin extension", () => {
 			tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 3 }],
 		};
 
-		const result = addAnthropicWebSearchToPayload("anthropic-messages", payload) as {
+		const result = addAnthropicWebSearchToPayload(ANTHROPIC_MODEL, payload) as {
 			tools: Array<Record<string, unknown>>;
 		};
 
@@ -76,7 +82,7 @@ describe("anthropic-web-search builtin extension", () => {
 			tools: [{ name: "web_search", description: "pi-websearch function" }, { name: "other_tool" }],
 		};
 
-		const result = addAnthropicWebSearchToPayload("anthropic-messages", payload) as {
+		const result = addAnthropicWebSearchToPayload(ANTHROPIC_MODEL, payload) as {
 			tools: Array<Record<string, unknown>>;
 		};
 
@@ -102,7 +108,7 @@ describe("anthropic-web-search builtin extension", () => {
 			tools: [{ name: "other_tool" }],
 		};
 
-		const result = addAnthropicWebSearchToPayload("anthropic-messages", payload) as {
+		const result = addAnthropicWebSearchToPayload(ANTHROPIC_MODEL, payload) as {
 			tools: unknown[];
 		};
 
@@ -180,17 +186,17 @@ describe("anthropic-web-search builtin extension", () => {
 			tools: [{ name: "web_search", description: "function tool" }],
 		};
 
-		const result = addAnthropicWebSearchToPayload("anthropic-messages", payload);
+		const result = addAnthropicWebSearchToPayload(ANTHROPIC_MODEL, payload);
 
 		expect(result).toBe(payload);
 	});
 
-	it("still behaves as default-on when enable env is unset", () => {
+	it("keeps an explicitly enabled route on when the environment override is unset", () => {
 		const payload = {
 			tools: [{ name: "other_tool" }],
 		};
 
-		const result = addAnthropicWebSearchToPayload("anthropic-messages", payload) as {
+		const result = addAnthropicWebSearchToPayload(ANTHROPIC_MODEL, payload) as {
 			tools: Array<Record<string, unknown>>;
 		};
 
@@ -203,18 +209,18 @@ describe("anthropic-web-search builtin extension", () => {
 });
 
 describe("supportsNativeAnthropicWebSearch", () => {
-	it("supports the first-party Anthropic provider", () => {
+	it("requires opt-in even for the first-party Anthropic provider", () => {
 		expect(
 			supportsNativeAnthropicWebSearch({
 				api: "anthropic-messages",
 				baseUrl: "https://api.anthropic.com",
 				provider: "anthropic",
 			}),
-		).toBe(true);
+		).toBe(false);
 	});
 
-	it("keeps supporting the bare api string for backwards compatibility", () => {
-		expect(supportsNativeAnthropicWebSearch("anthropic-messages")).toBe(true);
+	it("does not infer a verified route from a bare API name", () => {
+		expect(supportsNativeAnthropicWebSearch("anthropic-messages")).toBe(false);
 	});
 
 	it("does not support Anthropic-compatible endpoints by default", () => {
@@ -324,10 +330,7 @@ describe("anthropic-web-search before_agent_start", () => {
 		anthropicWebSearchExtension(pi as ExtensionAPI);
 		expect(beforeAgentStartHandler).toBeDefined();
 
-		const result = await beforeAgentStartHandler?.(
-			{ systemPrompt: "system" },
-			{ model: { api: "anthropic-messages", provider: "anthropic", baseUrl: "https://api.anthropic.com" } },
-		);
+		const result = await beforeAgentStartHandler?.({ systemPrompt: "system" }, { model: ANTHROPIC_MODEL });
 
 		expect(result).toBeUndefined();
 	});
@@ -351,10 +354,7 @@ describe("anthropic-web-search before_agent_start", () => {
 		anthropicWebSearchExtension(pi as ExtensionAPI);
 		expect(beforeAgentStartHandler).toBeDefined();
 
-		const anthropicResult = await beforeAgentStartHandler?.(
-			{ systemPrompt: "system" },
-			{ model: { api: "anthropic-messages", provider: "anthropic", baseUrl: "https://api.anthropic.com" } },
-		);
+		const anthropicResult = await beforeAgentStartHandler?.({ systemPrompt: "system" }, { model: ANTHROPIC_MODEL });
 		expect(anthropicResult?.systemPrompt).toContain(ANTHROPIC_WEB_SEARCH_SECTION);
 
 		const kimiResult = await beforeAgentStartHandler?.({ systemPrompt: "system" }, { model: kimiCodingModel });

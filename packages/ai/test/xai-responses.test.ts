@@ -172,10 +172,11 @@ describe("xAI Responses provider", () => {
 		}
 	});
 
-	it("declares in-turn server search on the built-in Responses catalogue", () => {
+	it("declares the Responses search shape without enabling an unverified route", () => {
 		const models = xaiProvider().getModels();
 		expect(models.length).toBeGreaterThan(0);
-		expect(models.every((model) => model.compat?.supportsWebSearchPreview === true)).toBe(true);
+		expect(models.every((model) => model.compat?.supportsWebSearchPreview !== true)).toBe(true);
+		expect(models.every((model) => model.compat?.webSearchToolType === "web_search")).toBe(true);
 	});
 
 	it("exposes the documented per-model efforts", () => {

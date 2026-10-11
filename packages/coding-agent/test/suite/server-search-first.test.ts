@@ -4,6 +4,10 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { addAnthropicWebSearchToPayload } from "../../src/core/extensions/builtin/anthropic-web-search/index.ts";
 import { addOpenAiWebSearchToPayload } from "../../src/core/extensions/builtin/openai-web-search/index.ts";
+import {
+	hasServerSearchFailed,
+	markServerSearchFallback,
+} from "../../src/core/extensions/builtin/server-search-fallback.ts";
 import websearchExtension from "../../src/core/extensions/builtin/websearch/index.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../src/core/extensions/types.ts";
 
@@ -42,7 +46,7 @@ function harness(cwd: string) {
 		sendMessage,
 		appendEntry,
 	} as unknown as ExtensionAPI);
-	const ctx = { cwd, model, hasUI: false } as unknown as ExtensionContext;
+	const ctx = { cwd, model, hasUI: false, sessionManager: {} } as unknown as ExtensionContext;
 	return {
 		sendMessage,
 		appendEntry,
@@ -58,7 +62,10 @@ function harness(cwd: string) {
 				messages: [{ role: "user", content: "Find the official documentation." }],
 				tools: [{ name: "web_search", input_schema: { type: "object" } }],
 			};
-			const native = addAnthropicWebSearchToPayload(model, initial);
+			const native = addAnthropicWebSearchToPayload(
+				model,
+				hasServerSearchFailed(ctx.sessionManager, ctx.model) ? markServerSearchFallback(initial) : initial,
+			);
 			return (await handlers.get("before_provider_request")?.({ model, payload: native }, ctx)) as {
 				tools: Array<{ name: string; type?: string; input_schema?: unknown }>;
 			};
@@ -158,7 +165,7 @@ describe("server search first (#3122)", () => {
 		expect(h.sendMessage).not.toHaveBeenCalled();
 	});
 
-	it("lets a new user prompt attempt native search again after a prior turn's failure", async () => {
+	it("remembers a native failure for later user prompts in the same session model", async () => {
 		const h = harness(cwd);
 		await h.emit("session_start");
 		await h.emit("message_end", {
@@ -170,7 +177,8 @@ describe("server search first (#3122)", () => {
 			},
 		});
 		await h.emit("before_agent_start", { trigger: "prompt", systemPrompt: "" });
-		expect((await h.payload()).tools[0]?.type).toBe("web_search_20250305");
+		expect((await h.payload()).tools[0]?.type).toBeUndefined();
+		expect((await h.payload()).tools[0]?.input_schema).toEqual({ type: "object" });
 	});
 
 	it("does not duplicate a completed answer after the provider recovered from a search-result error", async () => {

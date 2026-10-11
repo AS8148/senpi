@@ -1,3 +1,21 @@
+## 2026-10-11 - Keep unverified xAI search opt-in (senpi#3122 review)
+
+### What changed
+
+- `xai.ts` selects `web_search` as the Responses tool shape without enabling server search in the catalog. Users opt in with `supportsWebSearchPreview: true`.
+
+### Why
+
+- The held live probe returned HTTP 403; official documentation alone must not enable a route by default.
+
+### Why an extension could not handle it
+
+- The capability default is owned by the provider factory.
+
+### Expected merge conflict zones
+
+- The xAI model mapping.
+
 ## 2026-10-11 - xAI in-turn Responses search (senpi#3122)
 
 ### What changed

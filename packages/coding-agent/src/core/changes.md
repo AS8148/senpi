@@ -1,3 +1,22 @@
+## 2026-10-11 - No server-search injection in auxiliary requests (senpi#3122 review)
+
+### What changed
+
+- `session-title-generator.ts` marks title payloads as search-disabled before passing them through the normal payload hook.
+- Shared summarization and extension request projections use the same request-local exclusion. Keepalive explicitly preserves the main-turn prefix.
+
+### Why
+
+- Auxiliary requests must not pay for or fail on a server-search declaration intended for the user's turn.
+
+### Why an extension could not handle it
+
+- Title and summarization option construction owns these request boundaries.
+
+### Expected merge conflict zones
+
+- Title options, summary options, and extension request preparation.
+
 ## 2026-10-11 - Completion server-search capability in models.json (senpi#3122)
 
 ### What changed

@@ -31,6 +31,7 @@ interface Harness {
 function createHarness(cwd: string): Harness {
 	const handlers = new Map<string, EventHandler>();
 	let tool: RegisteredTool | undefined;
+	const sessionManager = {};
 	const pi = {
 		registerTool(definition: unknown) {
 			if ((definition as { name: string }).name === "web_search") tool = definition as RegisteredTool;
@@ -48,7 +49,7 @@ function createHarness(cwd: string): Harness {
 	if (!tool) throw new Error("websearch extension did not register a tool");
 
 	function contextFor(model: unknown): ExtensionContext {
-		return { model, cwd, hasUI: false } as unknown as ExtensionContext;
+		return { model, cwd, hasUI: false, sessionManager } as unknown as ExtensionContext;
 	}
 
 	return {
@@ -76,6 +77,7 @@ const firstPartyAnthropic = {
 	id: "claude-sonnet-4-5",
 	api: "anthropic-messages",
 	baseUrl: "https://api.anthropic.com",
+	compat: { supportsWebSearch: true },
 };
 
 const proxiedAnthropic = {
@@ -90,6 +92,7 @@ const firstPartyOpenAi = {
 	id: "gpt-5.5",
 	api: "openai-responses",
 	baseUrl: "https://api.openai.com/v1",
+	compat: { supportsWebSearchPreview: true },
 };
 
 const proxiedOpenAi = {

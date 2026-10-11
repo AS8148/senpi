@@ -9,10 +9,12 @@ const ENABLE_ENV = "PI_OPENAI_WEB_SEARCH";
 const OPENAI_RESPONSES_MODEL = {
 	api: "openai-responses",
 	baseUrl: "https://api.openai.com/v1",
+	compat: { supportsWebSearchPreview: true },
 } as const;
 const AZURE_OPENAI_RESPONSES_MODEL = {
 	api: "azure-openai-responses",
 	baseUrl: "https://example.openai.azure.com/openai",
+	compat: { supportsWebSearchPreview: true },
 } as const;
 const PROXY_OPENAI_RESPONSES_MODEL = {
 	api: "openai-responses",
@@ -273,7 +275,7 @@ describe("openai-web-search builtin extension", () => {
 		expect(result).toBe(payload);
 	});
 
-	it("still behaves as default-on when enable env is unset", () => {
+	it("keeps an explicitly enabled route on when the environment override is unset", () => {
 		const payload = {
 			tools: [{ name: "other_tool" }],
 		};

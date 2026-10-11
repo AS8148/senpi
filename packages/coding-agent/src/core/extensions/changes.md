@@ -1,3 +1,23 @@
+## 2026-10-11 - Request-local search exclusion and canonical fallback (senpi#3122 review)
+
+### What changed
+
+- `runner.ts` / `types.ts`: request projections disable search by default; optional `allowServerSearch` preserves the keepalive prefix.
+- Native Messages/Responses injectors consult session/model failure memory before stripping function declarations and use the effective request model. All unverified routes require explicit opt-in; the live-verified ChatGPT subscription remains default-on.
+- `builtin/server-search-fallback.ts` owns non-serialized request metadata and a weakly session-owned failed-model set, preserving adapter-built schemas on fallback.
+
+### Why
+
+- Fallback must not rebuild raw parameter schemas or retry an already rejected native tool on every new prompt.
+
+### Why an extension could not handle it
+
+- The existing native and standalone extensions share the request boundary and session identity.
+
+### Expected merge conflict zones
+
+- Request preparation, native capability predicates, and fallback metadata.
+
 ## 2026-10-11 - Native server web search first (senpi#3122)
 
 ### What changed

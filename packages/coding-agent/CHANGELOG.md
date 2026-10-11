@@ -10,7 +10,11 @@
 
 - Web search uses the active model's in-turn server tool first on supported routes, including ChatGPT subscription, xAI Responses, Google Gemini 2/3, OpenRouter and explicitly compatible Anthropic proxies. Search-specific failures enable one standalone fallback and record its reason; cheaper auxiliary models remain defaults only on routes without a server tool ([#3122](https://github.com/code-yeongyu/senpi/issues/3122), requested by @code-yeongyu).
 
+- Server search is default-on only for the live-verified first-party ChatGPT/Codex subscription route (except Spark). Anthropic including ccapi, OpenAI API/Azure and xAI Responses require explicit compatibility opt-in, as do Gemini 2/3, OpenRouter, Moonshot PAYG, Z.AI PAYG and Sonar native-bypass routing. A different `nativeModel` setting is ignored on enabled server-search routes: main search and fallback use the session model ([#3122](https://github.com/code-yeongyu/senpi/issues/3122), requested by @code-yeongyu).
+
 ### Fixed
+
+- Server-search failures are remembered per session/model across prompts and model switches. Compaction and title requests no longer inject search, and fallback preserves provider-built function schemas and Gemini's single function-declaration entry. Moonshot's opt-in echo tool cannot be discovered or lazily activated through tool_search, and its declaration is stripped from non-Moonshot requests ([#3122](https://github.com/code-yeongyu/senpi/issues/3122)).
 
 ### Removed
 

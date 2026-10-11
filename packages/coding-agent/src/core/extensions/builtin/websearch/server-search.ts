@@ -1,11 +1,10 @@
 import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
 import { isAnthropicWebSearchEnabled, supportsNativeAnthropicWebSearch } from "../anthropic-web-search/index.ts";
 import { isOpenaiWebSearchEnabled, supportsNativeOpenAiWebSearch } from "../openai-web-search/index.ts";
-import { SERVER_SEARCH_FALLBACK } from "../server-search-fallback.ts";
+import { isServerSearchDisabled, isServerSearchFallback, SERVER_SEARCH_FALLBACK } from "../server-search-fallback.ts";
 
 export type SearchModel = Pick<Model<Api>, "api" | "provider" | "id" | "baseUrl" | "compat">;
 type Payload = Record<string, unknown>;
-type FunctionSearch = { name: string; description: string; parameters: unknown };
 type AdditionalServerSearch = "google" | "openrouter" | "perplexity" | "moonshot" | "zai";
 
 function isRecord(value: unknown): value is Payload {
@@ -15,10 +14,10 @@ function isRecord(value: unknown): value is Payload {
 export function additionalServerSearch(model: SearchModel | undefined): AdditionalServerSearch | undefined {
 	if (!model) return undefined;
 	const declared = model.compat && "supportsWebSearch" in model.compat ? model.compat.supportsWebSearch : undefined;
-	if (declared === false) return undefined;
+	if (declared !== true) return undefined;
 	// Google Search grounding uses GenerateContent config.tools, not Messages/Responses.
-	// Gemini 2/3 document this native tool. Endpoint-specific mixed-tool rejection
-	// is an attempt failure, not a reason to preempt server search with a subrequest.
+	// Gemini 2/3 document this native tool, but search mixed with function tools
+	// remains opt-in until a live endpoint probe succeeds.
 	// https://ai.google.dev/gemini-api/docs/google-search
 	// https://github.com/googleapis/js-genai/blob/main/codegen_instructions.md
 	if (
@@ -92,7 +91,7 @@ function isSearchTool(tool: unknown): boolean {
 	);
 }
 
-function googleTools(tools: unknown[], fallback?: FunctionSearch): unknown[] {
+function googleTools(tools: unknown[], retainFunction: boolean, disabled: boolean): unknown[] {
 	const result: unknown[] = [];
 	for (const tool of tools) {
 		if (!isRecord(tool) || "googleSearch" in tool || "google_search" in tool) continue;
@@ -101,67 +100,88 @@ function googleTools(tools: unknown[], fallback?: FunctionSearch): unknown[] {
 			continue;
 		}
 		const declarations = tool.functionDeclarations.filter(
-			(declaration) => !isRecord(declaration) || declaration.name !== "web_search",
+			(declaration) =>
+				!isRecord(declaration) ||
+				(declaration.name !== "$web_search" && (retainFunction || declaration.name !== "web_search")),
 		);
 		if (declarations.length) result.push({ ...tool, functionDeclarations: declarations });
 	}
-	result.push(
-		fallback
-			? {
-					functionDeclarations: [
-						{ name: fallback.name, description: fallback.description, parametersJsonSchema: fallback.parameters },
-					],
-				}
-			: { googleSearch: {} },
-	);
+	if (!retainFunction && !disabled) result.push({ googleSearch: {} });
 	return result;
 }
 
-/** Restore function search after failure, regardless of native-injector registration order. */
-export function serverSearchPayload(
-	model: SearchModel | undefined,
-	payload: unknown,
-	fallback?: FunctionSearch,
-): unknown {
+/** Preserve adapter-built function search on fallback; never reconstruct its normalized schema. */
+export function serverSearchPayload(model: SearchModel | undefined, payload: unknown, failed = false): unknown {
+	if (!isRecord(payload)) return payload;
+	const disabled = isServerSearchDisabled(payload);
+	const fallback = failed || isServerSearchFallback(payload);
+	if (additionalServerSearch(model) !== "moonshot") {
+		if (
+			isRecord(payload.tool_choice) &&
+			(payload.tool_choice.name === "$web_search" ||
+				(isRecord(payload.tool_choice.function) && payload.tool_choice.function.name === "$web_search"))
+		) {
+			const { tool_choice: _choice, ...rest } = payload;
+			payload = rest;
+		}
+		if (!isRecord(payload)) return payload;
+		if (Array.isArray(payload.tools)) {
+			payload = {
+				...payload,
+				tools: payload.tools.filter(
+					(tool) =>
+						!isRecord(tool) ||
+						(tool.name !== "$web_search" && (!isRecord(tool.function) || tool.function.name !== "$web_search")),
+				),
+			};
+		}
+		if (isRecord(payload) && isRecord(payload.config) && Array.isArray(payload.config.tools)) {
+			payload = {
+				...payload,
+				config: {
+					...payload.config,
+					tools: payload.config.tools.flatMap((tool) => {
+						if (!isRecord(tool) || !Array.isArray(tool.functionDeclarations)) return [tool];
+						const declarations = tool.functionDeclarations.filter(
+							(declaration) => !isRecord(declaration) || declaration.name !== "$web_search",
+						);
+						return declarations.length ? [{ ...tool, functionDeclarations: declarations }] : [];
+					}),
+				},
+			};
+		}
+	}
 	if (!model || !isRecord(payload)) return payload;
 	const google = model.api === "google-generative-ai" || model.api === "google-vertex";
-	if (google && (additionalServerSearch(model) === "google" || fallback)) {
+	if (google && (additionalServerSearch(model) === "google" || fallback || disabled)) {
 		const config = isRecord(payload.config) ? payload.config : {};
 		const tools = Array.isArray(config.tools) ? config.tools : [];
 		return {
 			...payload,
-			config: { ...config, tools: googleTools(tools, fallback) },
+			config: { ...config, tools: googleTools(tools, fallback && !disabled, disabled) },
 			...(fallback ? { [SERVER_SEARCH_FALLBACK]: true } : {}),
 		};
 	}
 	const kind = additionalServerSearch(model);
-	if (!fallback && !kind) return payload;
-	const tools = (Array.isArray(payload.tools) ? payload.tools : []).filter((tool) => !isSearchTool(tool));
-	if (fallback) {
-		if (model.api === "anthropic-messages") {
-			tools.push({ name: fallback.name, description: fallback.description, input_schema: fallback.parameters });
-		} else if (model.api === "openai-completions") {
-			tools.push({
-				type: "function",
-				function: { name: fallback.name, description: fallback.description, parameters: fallback.parameters },
-			});
-		} else {
-			tools.push({
-				type: "function",
-				name: fallback.name,
-				description: fallback.description,
-				parameters: fallback.parameters,
-			});
-		}
-	} else if (kind === "openrouter") {
+	if (!fallback && !kind && !disabled) return payload;
+	const tools = (Array.isArray(payload.tools) ? payload.tools : []).filter((tool) => {
+		if (!isSearchTool(tool)) return true;
+		if (disabled || !fallback || !isRecord(tool)) return false;
+		// Responses/Completions use type:function; Messages uses input_schema.
+		// These declarations already came through their provider's schema builder.
+		return tool.type === "function"
+			? tool.name !== "$web_search" && (!isRecord(tool.function) || tool.function.name !== "$web_search")
+			: tool.name === "web_search" && "input_schema" in tool;
+	});
+	if (!fallback && !disabled && kind === "openrouter") {
 		tools.push({ type: "openrouter:web_search" });
-	} else if (kind === "moonshot") {
+	} else if (!fallback && !disabled && kind === "moonshot") {
 		tools.push({ type: "builtin_function", function: { name: "$web_search" } });
-	} else if (kind === "zai") {
+	} else if (!fallback && !disabled && kind === "zai") {
 		tools.push({ type: "web_search", web_search: { enable: true, search_result: true } });
 	}
 	const result: Payload = { ...payload, tools };
-	if (fallback) {
+	if (fallback || disabled) {
 		// An include or tool_choice targeting the removed server tool would reject the retry.
 		if (Array.isArray(result.include)) {
 			result.include = result.include.filter((item) => item !== "web_search_call.action.sources");
@@ -180,7 +200,8 @@ export function serverSearchFailure(
 	// Sonar has inherent retrieval, not an independent server tool declaration or
 	// tool-result error contract. Its model errors stay with core retry; never
 	// turn an arbitrary Sonar error into an unsupported function-tool request.
-	if (additionalServerSearch(model) === "perplexity") return undefined;
+	if (model?.provider === "perplexity" && model.api === "openai-completions" && /^sonar/.test(model.id))
+		return undefined;
 	for (const block of message.content) {
 		if (block.type !== "providerNative" || !isRecord(block.raw)) continue;
 		const raw = block.raw;
