@@ -6,7 +6,7 @@ import { cacheWriteTokens, replayContextCache } from "../support/cache-replay-mo
 
 describe("offline cache cost model", () => {
 	it.each([true, false])("uses recorded ceiling anchors only when their cut matches: %s", (matches) => {
-		const entries = syntheticCacheSession().slice(0, 5);
+		const entries = syntheticCacheSession().slice(0, 11);
 		const response = entries.at(-1);
 		if (response?.type !== "message") throw new Error("Missing response fixture");
 		const saved: FileEntry = {
@@ -16,7 +16,7 @@ describe("offline cache cost model", () => {
 			timestamp: response.timestamp,
 			customType: "senpi.context-reduction.v1",
 			data: {
-				engaged: false,
+				engaged: true,
 				cutIndex: 0,
 				prefixHash: "",
 				anchorCount: 1,

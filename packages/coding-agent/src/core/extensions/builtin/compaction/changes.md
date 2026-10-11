@@ -2205,6 +2205,7 @@ This is the owning builtin. The projection must also be applied by the session m
 - `context-pipeline.ts`: emergency-prune overhead and compaction handoff require a committed reduction anchor or an actual prune-only rewrite.
 - `context-reduction-state.ts`: provider usage is not recorded before the frontier engages.
 - Fixture coverage: `test/fixtures/compaction/context-reduction/pre-engagement-short-history.jsonl` and its owner regression encode the no-reducible-prefix transition.
+- `test/compaction/cache-replay.test.ts`: the persisted-anchor case now uses a long enough synthetic branch to represent an actually engaged frontier.
 
 ### Why
 
