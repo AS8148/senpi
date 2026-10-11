@@ -1,3 +1,21 @@
+## 2026-10-11 - Resume gate projects accepted compaction context (senpi#3062)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_resumeRequirementStillBlocks` uses `estimateProjectedContextTokens` with the current session projection and branch. Accepted checkpoints invalidate retained pre-checkpoint usage; the next valid provider response restores usage-based accounting.
+
+### Why
+
+- Retained assistant usage measured the larger pre-compaction context, so the resume requirement could keep refusing a session whose compacted summary and kept messages fit. Rejected or failed compaction must retain the previous usage, and a still-oversized projection must remain blocked.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: the resume requirement is checked and cleared in the session admission gate, outside extension-owned compaction results.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_resumeRequirementStillBlocks` context estimation.
+
 ## 2026-10-11 - Account fail-fast suppression stays at its emit site (senpi#3131 delta)
 
 ### What changed

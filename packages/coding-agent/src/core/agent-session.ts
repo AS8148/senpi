@@ -6366,8 +6366,11 @@ export class AgentSession {
 		model: Model<any>,
 		settings: ReturnType<SettingsManager["getCompactionSettings"]>,
 	): boolean {
-		const currentContext = estimateContextTokens(
-			filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages),
+		// Kept assistant usage predates an accepted checkpoint. The projection
+		// estimates its summary and suffix until a fresh provider response supersedes it.
+		const currentContext = estimateProjectedContextTokens(
+			this.sessionManager.buildSessionProjection(),
+			this.sessionManager.getBranch(),
 		).tokens;
 		return !projectModelUsabilityBudget({
 			model,

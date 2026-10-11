@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- Resuming after accepted compaction uses the compacted summary and retained messages instead of pre-compaction provider usage, so a session that now fits is not refused or compacted again. Fresh provider usage supersedes the estimate on the next response ([#3062](https://github.com/code-yeongyu/senpi/issues/3062)).
+
 - Zero-attempt terminal failures still explain provider-requested long waits and retry-delay caps; only an initial account-usage failure omits a redundant retry-end event. RPC entry events, entry history, and trees now carry the same structured account-limit advice as message history, and reset parsing uses injected clocks ([#3131](https://github.com/code-yeongyu/senpi/issues/3131)).
 
 - Account-wide usage limits skip all fallback models on the spent provider and fail immediately when no other provider can serve. Manual and held-switch compaction use a usable model, and limit errors name the provider, reset hint, and `/model` or fallback configuration instead of raw 429 JSON ([#3131](https://github.com/code-yeongyu/senpi/issues/3131)).
