@@ -9,6 +9,29 @@ import { fileURLToPath } from "node:url";
 import { checkPrChangelog } from "./check-pr-changelog.mjs";
 import { CHANGELOGS, reAddUnreleasedSections, stampChangelogs } from "./release-changelog.mjs";
 
+// #3126: restoring shipped section bytes is the only exception to released immutability.
+describe("tagged released section restoration", () => {
+	const path = "packages/ai/CHANGELOG.md";
+	const tagged = "## [2026.9.20] - 2026-09-20\n\n### Fixed\n\n- published\n";
+	const before = `${tagged}- accidentally added after release\n`;
+	for (const [name, after, taggedSections, pass] of [
+		["restores the exact tagged section", tagged, { "2026.9.20": tagged }, true],
+		["rejects a section matching neither base nor tag", tagged.replace("- published", "- changed"), { "2026.9.20": tagged }, false],
+		["rejects restoration without a tag", tagged, {}, false],
+		["rejects a whitespace difference from the tag", `${tagged}\n`, { "2026.9.20": tagged }, false],
+	]) {
+		it(name, () => {
+			const result = checkPrChangelog({
+				changedFiles: [path],
+				labels: [],
+				changelogChanges: [{ path, before, after, taggedSections }],
+			});
+			assert.equal(result.pass, pass, result.reason);
+			if (!pass) assert.match(result.reason, /released section \[2026\.9\.20\] changed/);
+		});
+	}
+});
+
 describe("check-pr-changelog gate", () => {
 	it("fails when runtime package source changes without a changelog entry", () => {
 		// Given
@@ -201,11 +224,12 @@ it("fails a PR that removes existing change-log lines through the PR gate CLI", 
 	}
 	git("add", tracker, changelog);
 	git("commit", "-qm", "upstream fixture");
+	git("tag", "v2026.9.20");
 	mkdirSync(join(root, ".github"));
 	writeFileSync(join(root, ".github/upstream.json"), JSON.stringify({ sha: git("rev-parse", "HEAD") }));
 	git("add", ".github/upstream.json");
 	git("commit", "-qm", "base fixture");
-	const base = git("rev-parse", "HEAD");
+	let base = git("rev-parse", "HEAD");
 	const cli = fileURLToPath(new URL("./check-pr-changelog.mjs", import.meta.url));
 	const check = (file, text, expected, pattern) => {
 		git("reset", "-q", "--soft", base);
@@ -250,6 +274,17 @@ it("fails a PR that removes existing change-log lines through the PR gate CLI", 
 	await t.test("Unreleased entry stamped into a release", () =>
 		check(changelog, changelogOriginal.replace("## [Unreleased]\n", "## [Unreleased]\n\n## [2026.10.1] - 2026-10-01\n"), 0));
 	await t.test("Unreleased prepend", () => check(changelog, changelogOriginal.replace(pending, `- new fix\n${pending}`), 0));
+	writeFileSync(join(root, changelog), `${changelogOriginal}- accidentally added after release\n`);
+	git("add", changelog);
+	git("commit", "-qm", "incorrect released base");
+	base = git("rev-parse", "HEAD");
+	await t.test("released section restored to its real tag", () => check(changelog, changelogOriginal, 0));
+	await t.test("released section differs from base and tag", () =>
+		check(changelog, changelogOriginal.replace("- published", "- changed"), 1, /released section \[2026\.9\.20\] changed/));
+	await t.test("released restoration without its tag fails closed", () => {
+		git("tag", "-d", "v2026.9.20");
+		check(changelog, changelogOriginal, 1, /released section \[2026\.9\.20\] changed/);
+	});
 });
 
 // #1884: drive the real CLI over committed diffs, including the actual release transformation.
