@@ -6,7 +6,19 @@ import { cacheWriteTokens, replayContextCache } from "../support/cache-replay-mo
 
 describe("offline cache cost model", () => {
 	it.each([true, false])("uses recorded ceiling anchors only when their cut matches: %s", (matches) => {
-		const entries = syntheticCacheSession().slice(0, 5);
+		const entries = syntheticCacheSession().slice(0, 11);
+		const initial = entries[1];
+		if (initial?.type !== "message" || initial.message.role !== "user") throw new Error("Missing user fixture");
+		// Cross the latch gate with a real reducible-history window, but remain
+		// below the ceiling until the matching provider usage anchor arrives.
+		initial.message.content = "setup ".repeat(34_000);
+		const unanchored = replayContextCache(entries, {
+			contextWindow: 100_000,
+			fixedPrefixTokens: 0,
+			feedback: false,
+		});
+		expect(unanchored.shapeChanges).toBe(1);
+		expect(unanchored.compactionRequiredRequests).toBe(0);
 		const response = entries.at(-1);
 		if (response?.type !== "message") throw new Error("Missing response fixture");
 		const saved: FileEntry = {
@@ -16,10 +28,10 @@ describe("offline cache cost model", () => {
 			timestamp: response.timestamp,
 			customType: "senpi.context-reduction.v1",
 			data: {
-				engaged: false,
+				engaged: true,
 				cutIndex: 0,
 				prefixHash: "",
-				anchorCount: 1,
+				anchorCount: 7,
 				anchorCut: matches ? 0 : 1,
 				anchorHash: "",
 				anchorTokens: 99_000,

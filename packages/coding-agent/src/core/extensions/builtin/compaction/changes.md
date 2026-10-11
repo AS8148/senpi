@@ -3,8 +3,9 @@
 ### What changed
 
 - `packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction-frontier.ts`: builds on @codeg-dev's #901 latch with a cut index and SHA-256 fingerprint of the unreduced prefix. The existing reducers in `context-reduction.ts` see only that prefix. The cut protects five messages and 3,000 recent tokens; clearing also keeps six clearable results within the prefix.
-- `packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction-state.ts`: persists the latch, cut, fingerprint, and same-lineage provider-usage anchor in `senpi.context-reduction.v1`. Projection takes the maximum of the reduced estimate plus overhead and the matching request's reported input usage plus estimated growth. In-flight handoff flags are not persisted.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction-state.ts`: persists the latch, cut, fingerprint, and same-lineage provider-usage anchor in `senpi.context-reduction.v1`. After engagement, projection takes the maximum of the reduced estimate plus overhead and the matching request's reported input usage plus estimated growth. In-flight handoff flags are not persisted.
 - `packages/coding-agent/src/core/extensions/builtin/compaction/context-pipeline.ts`: gates on the unreduced estimate plus overhead. The frontier normally uses a 10% window tail budget. At 95% of the ceiling, a step must advance at least a full 10% block, save at least 2% of the window, and reach 85% or less; otherwise it requests compaction. The final post-prune size is checked too, and a request legal only because emergency pruning changed its prefix also requires compaction. Provider-native models bypass the latch but retain their deterministic breaker fallback; external-owner and append-only lanes retain their ownership rules.
+- Before engagement, no provider-usage anchor is recorded: the frontier ceiling uses only the character estimate plus known overhead, emergency pruning retains the full prompt-window budget, and unprunable requests remain on the existing provider-overflow/compaction/retry route. Invisible provider overhead can therefore overflow before engagement; the calibrated ceiling guarantee applies after engagement. Post-prune recovery depends on engagement or an actual prune, not on whether a usage anchor has arrived or was cleared by a frontier step.
 - `packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction-lifecycle.ts`: owns live-request capture and branch persistence. Summarizer/cache-friendly projections run on scratch state without borrowing a live usage anchor or persisting changes. Resume, forks, and tree navigation restore the destination branch's saved frontier when its fingerprint matches. Accepted compaction resets it; rejection does not release the latch.
 - `packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction-handoff.ts`: uses the existing system-abort/compaction action, fences callbacks to their branch, and requests continuation only after acceptance when no work is already queued. Rejection stops the current request but does not persist an orphaned handoff that would block future requests.
 - `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts` delegates frontier lifecycle wiring to the extracted modules. Tests cover 60-turn near-ceiling growth, byte stability, overflow, gain and block guards, persisted anchors, scratch projections, native fallback, branch restoration, and accepted/rejected/stale handoffs.
@@ -2201,10 +2202,11 @@ This is the owning builtin. The projection must also be applied by the session m
 
 ### What changed
 
-- `context-reduction-frontier.ts`: an initial reduction attempt now rolls back `engaged` whenever no frontier cut is committed, including six-or-more-message histories whose protected tail consumes the whole prompt.
-- `context-pipeline.ts`: emergency-prune overhead and compaction handoff require a committed reduction anchor or an actual prune-only rewrite.
+- `context-reduction-frontier.ts`: an initial reduction attempt rolls back `engaged` when no eligible prefix remains outside the protected tail, regardless of message count. Later gain and block guards retain the existing latch semantics.
+- `context-pipeline.ts`: emergency pruning subtracts known overhead after engagement; post-prune handoff requires engagement or an actual prune-only rewrite. A freshly advanced frontier remains protected while its usage anchor is empty.
 - `context-reduction-state.ts`: provider usage is not recorded before the frontier engages.
 - Fixture coverage: `test/fixtures/compaction/context-reduction/pre-engagement-short-history.jsonl` and its owner regression encode the no-reducible-prefix transition.
+- `test/compaction/cache-replay.test.ts`: the persisted-anchor case now uses a long enough synthetic branch to represent an actually engaged frontier.
 
 ### Why
 

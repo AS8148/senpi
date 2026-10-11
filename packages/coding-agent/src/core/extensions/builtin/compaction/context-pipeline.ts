@@ -92,7 +92,7 @@ export function buildCompactionContext(input: {
 	const afterPrune = estimateTotalTokens(outgoing) + overhead;
 	if (
 		managed &&
-		(state.anchorCount !== undefined || emergency.messages !== sourceMessages) &&
+		(state.engaged || emergency.messages !== sourceMessages) &&
 		(emergency.needsAggressiveCompaction ||
 			afterPrune > input.promptContextWindow ||
 			(afterPrune < beforePrune && input.emergencyPruneLatch.engaged))
