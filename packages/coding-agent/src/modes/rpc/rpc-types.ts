@@ -317,8 +317,11 @@ export const RPC_ERROR_RELEASE_UNSUPPORTED = "release_unsupported";
 export const RPC_ERROR_RELEASE_FAILED = "release_failed";
 /** A draining host parks every session itself; `release_session` and `open_session` are refused meanwhile. */
 export const RPC_ERROR_HOST_DRAINING = "host_draining";
+/** The supervisor has closed admission; a launch-owning caller may ensure a successor. */
+export const RPC_ERROR_HOST_STOPPING = "host_stopping";
 
 export type RpcErrorCode =
+	| typeof RPC_ERROR_HOST_STOPPING
 	| typeof RPC_ERROR_UNKNOWN_SESSION
 	| typeof RPC_ERROR_SESSION_CLOSING
 	| typeof RPC_ERROR_SESSION_PATH_IN_USE
@@ -665,6 +668,8 @@ export interface RpcProtocolIdentity {
 }
 
 export interface RpcProtocolInfo extends RpcProtocolIdentity {
+	/** Supervised socket hosts expose admission state independently of child responsiveness. */
+	readonly lifecycle?: "ready" | "stopping";
 	readonly protocolVersion: 1;
 	/** Informational engine version. Never compare it for compatibility - use the fields above. */
 	readonly serverVersion: string;

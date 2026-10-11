@@ -85,7 +85,11 @@ export type HostDecision =
 			readonly reason: "no_host" | "restart_own_host";
 			readonly upgradeable: false;
 	  }
-	| { readonly action: "refuse"; readonly reason: "protocol" | "capability"; readonly upgradeable: false }
+	| {
+			readonly action: "refuse";
+			readonly reason: "protocol" | "capability" | "host_stopping";
+			readonly upgradeable: false;
+	  }
 	| {
 			readonly action: "fallback";
 			readonly reason: "capability" | "engine_mismatch";
@@ -111,6 +115,7 @@ export type HostRefusalReason =
 	| "foreign_writer"
 	| "legacy_host"
 	| "host_busy"
+	| "host_stopping"
 	| "host_stalled";
 
 /**
@@ -147,6 +152,8 @@ function refusalDetail(reason: HostRefusalReason, host: HostProtocolInfo | undef
 			return "a host from before the per-socket daemon directory is still running; it is drained and replaced only while it holds no session, and no second host is started beside it";
 		case "host_busy":
 			return "its socket accepts connections but did not answer inside the probe budget: a live host under load, which is never ended to make room for a replacement";
+		case "host_stopping":
+			return "this generation is stopping; wait for its exit before launching a successor";
 		case "host_stalled":
 			return "nothing reaches its socket, but its process is alive and its own loop-lag watchdog measured a recent stall: a stalled host is still serving its sessions, so it is neither stopped nor replaced";
 		default:
@@ -172,6 +179,7 @@ export function decideHostAction(
 	if (host === undefined) {
 		return { action: "start", reason: client.startedByUs ? "restart_own_host" : "no_host", upgradeable: false };
 	}
+	if (host.lifecycle === "stopping") return { action: "refuse", reason: "host_stopping", upgradeable: false };
 	if (host.protocolVersion !== client.protocolVersion) {
 		return { action: "refuse", reason: "protocol", upgradeable: false };
 	}

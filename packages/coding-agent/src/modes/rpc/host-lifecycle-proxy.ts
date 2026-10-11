@@ -6,6 +6,8 @@
 import { access, chmod, mkdir, rename, unlink } from "node:fs/promises";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
+import type { HostAdmission } from "./host-admission.ts";
+import { proxyWithAdmission } from "./host-admission-proxy.ts";
 import type { ClientOccupancy } from "./host-client-occupancy.ts";
 import { MAX_SOCKET_PATH_BYTES, type SocketFileIdentity, statSocketIdentity } from "./socket-ownership.ts";
 import {
@@ -21,8 +23,8 @@ export interface PublicProxyOptions {
 	readonly internalSecret?: Buffer;
 	readonly publicSecret?: Buffer;
 	readonly clients: ClientOccupancy;
-	/** True while the supervisor accepts nothing new: shutting down or draining. */
-	readonly refusing: () => boolean;
+	/** Shared authority for stopping, protocol replies and new-session admission. */
+	readonly admission: HostAdmission;
 	/** A client went away: occupancy changed. */
 	readonly onDetach: () => void;
 	/** A dropped unclassified admission breaks quiescence; a proven observing read does not. */
@@ -33,39 +35,27 @@ export function createPublicProxy(options: PublicProxyOptions): Server {
 	const { internalSocket, internalSecret, publicSecret, clients } = options;
 	return createServer((client) => {
 		const accept = (): void => {
-			// A draining supervisor serves what it already proxies and accepts nothing new. After a
-			// handoff the public path resolves to the successor anyway; this covers the connection
-			// that raced the rename, and a drain-stop with no successor at all.
-			if (options.refusing()) {
-				client.destroy();
-				return;
-			}
-			const internal = createConnection(
-				resolveSocketTransportAddress(internalSocket, process.platform, internalSecret),
-			);
-			if (internalSecret) sendSocketHandshake(internal, internalSecret);
+			// Teardown is terminal even for an accept that raced socket shielding/server.close.
+			if (!clients.admit(client)) return;
+			// Draining peers can still probe and receive typed open refusals, without a child hop.
+			const internal = options.admission.stopping
+				? undefined
+				: createConnection(resolveSocketTransportAddress(internalSocket, process.platform, internalSecret));
+			if (internal && internalSecret) sendSocketHandshake(internal, internalSecret);
 			// A readiness exchange can begin and end between ticks: the client is recorded the
 			// moment its first request line arrives, before a later tick can reuse the preceding
 			// idle window. An observing read (`status`) is never recorded (host-client-occupancy.ts).
-			clients.admit(client);
 			const detach = (): void => {
 				// Classification resets activity for attachments. Defer the unknown-admission reset
 				// until release so a status read never resets owner grace, even between ticks.
 				if (clients.release(client)) options.onAdmit?.();
 				options.onDetach();
-				internal.destroy();
+				internal?.destroy();
 				client.destroy();
 			};
-			client.pipe(internal);
-			internal.pipe(client);
+			proxyWithAdmission(client, internal, options.admission);
 			client.once("close", detach);
 			client.once("error", detach);
-			// Let the final lifecycle records drain through the public socket before closing it.
-			internal.once("end", () => client.end(() => client.destroy()));
-			internal.once("close", () => {
-				if (!internal.readableEnded) detach();
-			});
-			internal.once("error", detach);
 		};
 		if (publicSecret) authenticateSocket(client, publicSecret, accept);
 		else accept();
