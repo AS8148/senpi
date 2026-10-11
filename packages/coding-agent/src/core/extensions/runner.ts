@@ -1538,9 +1538,22 @@ export class ExtensionRunner {
 		const ctx = this.createContext();
 		let entries: SessionBoundaryDraft[] = [];
 		let shouldContinue = false;
-		let context = await buildContext(entries);
-		let valid = true;
+		// Reported only when the runner retires before its first preview build completes.
+		let context: BoundaryContextPreview = {
+			contextEntries: [],
+			contextMessages: [],
+			llmMessages: [],
+			pendingMessages: [],
+			canContinue: false,
+		};
 		const retired = (): BoundaryDispatchResult => ({ entries: [], continue: false, context, valid: false });
+		try {
+			context = await buildContext(entries);
+		} catch (err) {
+			if (!this.isActive) return retired();
+			throw err;
+		}
+		let valid = true;
 
 		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, baseEvent.type)) {
 			for (const handler of handlers) {
