@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { findRawTlsClients } from "./no-raw-tls-client.test-support.mjs";
+import { findRawTlsClients, normalizeCallText } from "./no-raw-tls-client.test-support.mjs";
 
 export { findRawTlsClients, normalizeCallText } from "./no-raw-tls-client.test-support.mjs";
 
@@ -11,10 +11,11 @@ export const REPO_ROOT = path.resolve(fileURLToPath(new URL(".", import.meta.url
 export function evaluateShippedSource(scan, allowlist) {
 	const offenders = [];
 	const matched = new Map(allowlist.map((entry) => [entry, 0]));
+	const calls = new Map(allowlist.map((entry) => [entry, normalizeCallText(entry.call)]));
 	const scannedPaths = new Set(scan.map((item) => item.path));
 	for (const item of scan) {
-		for (const hit of findRawTlsClients(item.content)) {
-			const entry = allowlist.find((candidate) => candidate.file === item.path && candidate.call === hit.text);
+		for (const hit of findRawTlsClients(item.content, item.path)) {
+			const entry = allowlist.find((candidate) => candidate.file === item.path && calls.get(candidate) === hit.text);
 			if (entry) {
 				matched.set(entry, matched.get(entry) + 1);
 				continue;
@@ -30,7 +31,7 @@ export function evaluateShippedSource(scan, allowlist) {
 		} else if (seen !== entry.count) {
 			stale.push(entry.file + ": expected " + entry.call + " x" + entry.count + ", found x" + seen);
 		}
-		if (!entry.reason || !entry.reason.trim()) {
+		if (!entry.reason?.trim()) {
 			stale.push(entry.file + ": allowlist entry without a reason");
 		}
 	}
