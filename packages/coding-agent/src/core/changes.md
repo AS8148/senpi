@@ -1,3 +1,22 @@
+## 2026-10-11 - Completion server-search capability in models.json (senpi#3122)
+
+### What changed
+
+- `model-config-schema.ts` accepts optional `supportsWebSearch` in completion compatibility entries, matching the provider type. This lets a verified Z.AI PAYG chat route opt into its in-request tool without treating the coding-plan endpoint as equivalent.
+- Both config schemas accept `webSearchToolType` for a Responses route's exact native type, including custom xAI provider ids that need `web_search` rather than OpenAI's legacy preview name.
+
+### Why
+
+- The search extension needs an explicit per-route declaration; user configuration discovery stays read-only and unsupported routes retain standalone search.
+
+### Why an extension could not handle it
+
+- Core owns the models.json validation schema.
+
+### Expected merge conflict zones
+
+- One optional compatibility property in `OpenAICompletionsCompatSchema`.
+
 ## 2026-10-11 - A busy prompt throws a typed AgentBusyError (senpi#3073 review)
 
 ### What changed

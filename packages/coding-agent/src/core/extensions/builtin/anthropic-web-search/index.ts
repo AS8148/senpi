@@ -1,5 +1,6 @@
 import type { AnthropicMessagesCompat, Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
+import { isServerSearchFallback } from "../server-search-fallback.ts";
 
 type ToolDefinition = Record<string, unknown>;
 type AnthropicWebSearchModel = Pick<Model<Api>, "api" | "provider" | "baseUrl" | "compat">;
@@ -61,10 +62,12 @@ function isNativeAnthropicEndpoint(model: AnthropicWebSearchModel): boolean {
 	}
 }
 
-// Mirrors pi-ai's `AnthropicMessagesCompat.supportsWebSearch` default:
-// first-party api.anthropic.com only. Anthropic-compatible endpoints (e.g.,
-// kimi-coding) may execute the server-side search but reject the replayed
-// server_tool_use / web_search_tool_result blocks on the next request.
+// https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool
+// supportsWebSearch means BOTH main-request search and unchanged encrypted-result
+// replay. The first-party Messages endpoint supports it, including Claude OAuth.
+// ccapi's Messages route passed a real search + replay for senpi#3122; opt its
+// provider/model entries in with compat.supportsWebSearch: true. Never infer that
+// compatibility from a proxy hostname. Other compatible routes remain explicit.
 export function supportsNativeAnthropicWebSearch(target: AnthropicWebSearchTarget): boolean {
 	const model = resolveTarget(target);
 	if (model?.api !== "anthropic-messages") {
@@ -163,6 +166,7 @@ export function addAnthropicWebSearchToPayload(target: AnthropicWebSearchTarget,
 	if (!isRecord(payload)) {
 		return payload;
 	}
+	if (isServerSearchFallback(payload)) return stripNativeAnthropicWebSearch(payload);
 
 	if (!supportsNativeAnthropicWebSearch(model)) {
 		// Anthropic-compatible endpoints (e.g., kimi-coding) may execute the

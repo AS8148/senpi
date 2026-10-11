@@ -18,7 +18,13 @@ export function xaiProvider(): Provider<"openai-responses"> {
 				load: loadXaiOAuth,
 			}),
 		},
-		models: Object.values(XAI_MODELS),
+		// xAI's Responses endpoint executes web_search in the same request.
+		// https://docs.x.ai/developers/tools/web-search
+		// Explicit catalog capability, not an inference from a custom proxy URL.
+		models: Object.values(XAI_MODELS).map((model) => ({
+			...model,
+			compat: { ...model.compat, supportsWebSearchPreview: true, webSearchToolType: "web_search" as const },
+		})),
 		api: openAIResponsesApi(),
 	});
 }

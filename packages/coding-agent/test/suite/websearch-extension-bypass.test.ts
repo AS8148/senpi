@@ -33,9 +33,13 @@ function createHarness(cwd: string): Harness {
 	let tool: RegisteredTool | undefined;
 	const pi = {
 		registerTool(definition: unknown) {
-			tool = definition as RegisteredTool;
+			if ((definition as { name: string }).name === "web_search") tool = definition as RegisteredTool;
 		},
 		registerCommand() {},
+		getActiveTools() {
+			return ["web_search"];
+		},
+		setActiveTools() {},
 		on(eventName: string, handler: unknown) {
 			handlers.set(eventName, handler as EventHandler);
 		},

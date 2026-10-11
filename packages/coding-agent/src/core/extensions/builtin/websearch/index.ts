@@ -1,6 +1,14 @@
-import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
-import { isAnthropicWebSearchEnabled, supportsNativeAnthropicWebSearch } from "../anthropic-web-search/index.ts";
-import { isOpenaiWebSearchEnabled, supportsNativeOpenAiWebSearch } from "../openai-web-search/index.ts";
+import { Type } from "typebox";
+import { defineTool, type ExtensionAPI, type ExtensionContext } from "../../types.ts";
+import { ANTHROPIC_WEB_SEARCH_SECTION } from "../anthropic-web-search/index.ts";
+import { OPENAI_WEB_SEARCH_SECTION } from "../openai-web-search/index.ts";
+import {
+	additionalServerSearch,
+	hasServerSearch,
+	type SearchModel,
+	serverSearchFailure,
+	serverSearchPayload,
+} from "./server-search.ts";
 
 import { loadWebsearchConfig } from "./websearch/config.ts";
 import { attemptRouteLabel } from "./websearch/route-attempts.ts";
@@ -13,19 +21,7 @@ const STATUS_KEY = "pi-websearch";
 const WIDGET_KEY = "pi-websearch";
 const NATIVE_BYPASS_MESSAGE = "Native provider web search is handled by the built-in provider extension.";
 
-type NativeCapableModel = Parameters<typeof supportsNativeAnthropicWebSearch>[0] &
-	Parameters<typeof supportsNativeOpenAiWebSearch>[0];
-
-// Defer to the provider-native server-side web_search only when the builtin
-// injecting extension will actually add it for this exact model (first-party
-// endpoint or explicit compat opt-in, and not disabled via env). A provider id
-// of "anthropic"/"openai" alone is not enough: proxied baseUrls (ccapi, quotio,
-// …) never receive the native tool, so bypassing there leaves no web search.
-function isProviderNativeBypass(model: NativeCapableModel): boolean {
-	if (supportsNativeAnthropicWebSearch(model)) return isAnthropicWebSearchEnabled();
-	if (supportsNativeOpenAiWebSearch(model)) return isOpenaiWebSearchEnabled();
-	return false;
-}
+type NativeCapableModel = SearchModel | undefined;
 
 export default function (pi: ExtensionAPI): void {
 	let state: ConfigLoadResult = {
@@ -59,6 +55,10 @@ export default function (pi: ExtensionAPI): void {
 	}
 
 	let lastServedBy: string | undefined;
+	let nativeFailed = false;
+	let fallbackPending = false;
+	let fallbackSent = false;
+	let userAborted = false;
 
 	// senpi#2340: status names the model native search runs on, warns about an ignored nativeModel,
 	// and reports which route and model served the last search.
@@ -81,28 +81,125 @@ export default function (pi: ExtensionAPI): void {
 		return { text };
 	}
 
+	const searchTool = createWebSearchTool(() => state, {
+		onSearchComplete: (details) => {
+			if (!details.error) lastServedBy = attemptRouteLabel(details);
+		},
+	});
+	pi.registerTool(searchTool);
 	pi.registerTool(
-		createWebSearchTool(() => state, {
-			onSearchComplete: (details) => {
-				if (!details.error) lastServedBy = attemptRouteLabel(details);
+		defineTool({
+			name: "$web_search",
+			label: "Moonshot Server Search",
+			description: "Return the Moonshot built-in server search result to the same model.",
+			parameters: Type.Record(Type.String(), Type.Unknown()),
+			async execute(_id, params) {
+				// Official Moonshot flow: echo generated arguments, never make a
+				// separate request or substitute another model.
+				return { content: [{ type: "text", text: JSON.stringify(params) }], details: params };
 			},
 		}),
 	);
 
 	async function refreshState(model: NativeCapableModel, ctx: ExtensionContext): Promise<void> {
-		state = isProviderNativeBypass(model)
-			? { ok: false, reason: "provider_native_bypass", message: NATIVE_BYPASS_MESSAGE }
-			: await loadWebsearchConfig({ cwd: ctx.cwd });
+		state =
+			!nativeFailed && hasServerSearch(model)
+				? { ok: false, reason: "provider_native_bypass", message: NATIVE_BYPASS_MESSAGE }
+				: await loadWebsearchConfig({ cwd: ctx.cwd });
+		const active = pi.getActiveTools();
+		const withoutMoonshot = active.filter((name) => name !== "$web_search");
+		const moonshotEnabled = !nativeFailed && additionalServerSearch(model) === "moonshot";
+		pi.setActiveTools(moonshotEnabled ? [...withoutMoonshot, "$web_search"] : withoutMoonshot);
 		updateUi(ctx);
 	}
 
 	pi.on("session_start", async (_event, ctx) => {
 		lastServedBy = undefined;
+		nativeFailed = false;
+		fallbackPending = false;
+		fallbackSent = false;
+		userAborted = false;
 		await refreshState(ctx.model, ctx);
 	});
 
 	pi.on("model_select", async (event, ctx) => {
+		nativeFailed = false;
+		fallbackPending = false;
+		fallbackSent = false;
 		await refreshState(event.model, ctx);
+	});
+
+	pi.on("before_agent_start", async (event, ctx) => {
+		if (event.trigger !== "extension") {
+			nativeFailed = false;
+			fallbackPending = false;
+			fallbackSent = false;
+			userAborted = false;
+			await refreshState(ctx.model, ctx);
+		}
+		if (!hasServerSearch(ctx.model)) return undefined;
+		const systemPrompt = event.systemPrompt
+			.replace(ANTHROPIC_WEB_SEARCH_SECTION, "")
+			.replace(OPENAI_WEB_SEARCH_SECTION, "");
+		return {
+			systemPrompt: `${systemPrompt}\n## Web Search\n${
+				nativeFailed
+					? "Use the standalone web_search tool when current information is needed. Native search failed on this turn."
+					: "Use the provider's in-turn server web search when current information is needed."
+			}`,
+		};
+	});
+
+	pi.on("before_provider_request", (event, ctx) =>
+		serverSearchPayload(
+			event.model ?? ctx.model,
+			event.payload,
+			nativeFailed
+				? { name: searchTool.name, description: searchTool.description, parameters: searchTool.parameters }
+				: undefined,
+		),
+	);
+
+	pi.on("message_end", async (event, ctx) => {
+		if (nativeFailed || event.message.role !== "assistant" || !hasServerSearch(ctx.model)) return undefined;
+		const reason = serverSearchFailure(event.message, ctx.model);
+		if (!reason) return undefined;
+		nativeFailed = true;
+		// A provider can recover from a failed search and still finish its answer.
+		// Enable fallback for another request, but never duplicate a completed answer.
+		fallbackPending =
+			event.message.stopReason === "error" ||
+			!event.message.content.some((block) => block.type === "text" && block.text.trim().length > 0);
+		await refreshState(ctx.model, ctx);
+		pi.appendEntry("websearch-native-fallback", { reason });
+		if (ctx.hasUI) ctx.ui.notify(`Web search fallback: ${reason}.`, "warning");
+		return undefined;
+	});
+
+	pi.on("agent_end", (event) => {
+		userAborted = event.abortSource === "user";
+		// The core retry already continues the original request with the restored function tool.
+		if (event.willRetry || userAborted) fallbackPending = false;
+	});
+
+	pi.on("session_abort", () => {
+		userAborted = true;
+		fallbackPending = false;
+	});
+
+	pi.on("agent_settled", () => {
+		if (!fallbackPending || fallbackSent || userAborted) return;
+		fallbackPending = false;
+		fallbackSent = true;
+		pi.sendMessage(
+			{
+				customType: "websearch-native-fallback",
+				content:
+					"Continue the original request using the standalone web_search tool. Do not retry native server search on this turn.",
+				display: false,
+			},
+			{ triggerTurn: true },
+		);
 	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {

@@ -23,6 +23,13 @@ import type { AssistantMessageEventStream } from "./utils/event-stream.ts";
 export type { Model } from "./model.ts";
 export type { SessionAffinityFormat } from "./openai-responses-compat.ts";
 export type OpenAIResponsesCompat = BaseOpenAIResponsesCompat & {
+	/**
+	 * Exact native search type for a compatible Responses endpoint.
+	 * OpenAI supports both names; xAI documents only web_search.
+	 * https://developers.openai.com/api/docs/guides/tools-web-search
+	 * https://docs.x.ai/developers/tools/web-search
+	 */
+	webSearchToolType?: "web_search" | "web_search_preview";
 	/** Whether the model supports message-anchored `additional_tools` input items. Default: false. */
 	supportsAdditionalTools?: boolean;
 	/** Whether the exact model accepts developer or system messages after the conversation has started. When false, later system messages are folded into the leading system message. Default: false; the generated model catalog enables it for verified models. */
@@ -980,6 +987,16 @@ export type AssistantMessageEvent =
  * Use this to override URL-based auto-detection for custom providers.
  */
 export interface OpenAICompletionsCompat {
+	/**
+	 * In-turn web search support on this exact endpoint. OpenRouter and Moonshot
+	 * have documented native defaults; Z.AI PAYG chat requires explicit opt-in
+	 * because its coding-plan endpoint documents remote MCP search instead.
+	 * https://openrouter.ai/docs/guides/features/server-tools/web-search
+	 * https://platform.kimi.ai/docs/guide/use-web-search
+	 * https://docs.z.ai/guides/tools/web-search
+	 * https://docs.z.ai/devpack/mcp/search-mcp-server
+	 */
+	supportsWebSearch?: boolean;
 	/** Whether the provider supports the `store` field. Default: auto-detected from URL. */
 	supportsStore?: boolean;
 	/** Whether the provider supports the `developer` role (vs `system`). Default: auto-detected from URL. */

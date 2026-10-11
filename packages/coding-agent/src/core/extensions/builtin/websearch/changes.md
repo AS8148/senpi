@@ -1,3 +1,26 @@
+## 2026-10-11 - Server search before auxiliary search models (senpi#3122)
+
+### What changed
+
+- `server-search.ts` declares API-specific server tool shapes with official documentation references, restores the function search tool on a failed native turn, and detects search-specific request/result errors without treating cancellation or unrelated provider failures as search failures.
+- `index.ts` defers the standalone tool on eligible routes, records one fallback reason, and uses the existing `agent_settled` continuation once when core retry does not already own the continuation. Moonshot's documented built-in flow echoes generated search arguments without another HTTP request; its tool is active only on the matching route.
+- `websearch/search-model.ts` keeps eligible routes on their session model. Cheaper auxiliary defaults and settings remain available on no-server routes.
+- Focused payload, extension and real AgentSession regressions cover native-first dispatch, restored fallback, cancellation, retry ownership and next-prompt reset.
+- Review follow-ups keep completed answers from receiving duplicate continuations, reject unrelated auth/quota/function-schema errors, and mark fallback payloads with non-serialized request metadata so native injectors cannot re-enable search regardless of handler order.
+
+### Why
+
+- Requested by @code-yeongyu: the active model should search in its main request when the provider supports a server tool, rather than routing that work through a cheaper auxiliary model.
+
+### Why an extension could not handle it
+
+- These are the existing built-in native and standalone search extensions; their shared routing state must agree.
+
+### Expected merge conflict zones
+
+- `index.ts` registration and native bypass; `websearch/native.ts` metadata interface and `websearch/search-model.ts` default selection.
+- Senpi PR #3118 independently changes auxiliary session headers in `websearch/native.ts`; this change adds capability metadata only and does not replace that fix.
+
 ## 2026-10-05 - Keenable web search provider, keyed and keyless-public
 
 ### What changed

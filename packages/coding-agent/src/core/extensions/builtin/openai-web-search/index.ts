@@ -1,12 +1,19 @@
 import type { Api, Model, OpenAIResponsesCompat } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
+import { isServerSearchFallback } from "../server-search-fallback.ts";
 
 type ToolDefinition = Record<string, unknown>;
-type OpenAiWebSearchModel = Pick<Model<Api>, "api" | "baseUrl" | "compat">;
+type OpenAiWebSearchModel = Pick<Model<Api>, "api" | "baseUrl" | "compat"> & { provider?: string; id?: string };
 type OpenAiWebSearchTarget = Api | OpenAiWebSearchModel | undefined;
 
-const OPENAI_RESPONSES_APIS: ReadonlySet<Api> = new Set(["openai-responses", "azure-openai-responses"]);
+const OPENAI_RESPONSES_APIS: ReadonlySet<Api> = new Set([
+	"openai-responses",
+	"azure-openai-responses",
+	"openai-codex-responses",
+]);
 const ENABLE_ENV = "PI_OPENAI_WEB_SEARCH";
+// OpenAI still supports this legacy server-tool name; Codex and xAI use web_search.
+// https://developers.openai.com/api/docs/guides/tools-web-search
 const NATIVE_OPENAI_WEB_SEARCH_TYPE = "web_search_preview";
 const WEB_SEARCH_SOURCES_INCLUDE = "web_search_call.action.sources";
 const STATUS_KEY = "openai-web-search";
@@ -35,7 +42,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
 
-function isOpenAiResponsesApi(api: Api | undefined): api is "openai-responses" | "azure-openai-responses" {
+function isOpenAiResponsesApi(
+	api: Api | undefined,
+): api is "openai-responses" | "azure-openai-responses" | "openai-codex-responses" {
 	return api !== undefined && OPENAI_RESPONSES_APIS.has(api);
 }
 
@@ -67,11 +76,27 @@ export function supportsNativeOpenAiWebSearch(target: OpenAiWebSearchTarget): bo
 	}
 
 	const compat = model.compat as OpenAIResponsesCompat | undefined;
+	// Codex/ChatGPT plans support web_search in their main Responses request.
+	// https://developers.openai.com/codex/config-basic/#web-search-mode
+	// Real subscription search and output-item replay were verified for senpi#3122.
+	if (model.api === "openai-codex-responses") {
+		if (model.id?.includes("-spark")) return false;
+		try {
+			return compat?.supportsWebSearchPreview ?? new URL(model.baseUrl).hostname === "chatgpt.com";
+		} catch {
+			return false;
+		}
+	}
+	// xAI documents web_search on Responses, not its Chat Completions endpoint.
+	// Compatible/custom Responses endpoints still need an explicit capability opt-in.
+	// https://docs.x.ai/developers/tools/web-search
 	return compat?.supportsWebSearchPreview ?? isOpenAiResponsesNativeEndpoint(model);
 }
 
-function isNativeOpenAiWebSearchType(value: unknown): value is "web_search_preview" | "web_search_preview_2025_03_11" {
-	return value === "web_search_preview" || value === "web_search_preview_2025_03_11";
+function isNativeOpenAiWebSearchType(
+	value: unknown,
+): value is "web_search" | "web_search_preview" | "web_search_preview_2025_03_11" {
+	return value === "web_search" || value === "web_search_preview" || value === "web_search_preview_2025_03_11";
 }
 
 function isUnsupportedWebSearchType(value: unknown): boolean {
@@ -160,6 +185,7 @@ function includeWebSearchSources(payload: Record<string, unknown>): string[] {
 }
 
 export function addOpenAiWebSearchToPayload(target: OpenAiWebSearchTarget, payload: unknown): unknown {
+	if (isServerSearchFallback(payload)) return stripNativeOpenAiWebSearch(payload);
 	const model = resolveTarget(target);
 	if (!isOpenAiResponsesApi(model?.api)) {
 		// Defense in depth. `web_search_preview` is an OpenAI Responses-only tool
@@ -203,7 +229,11 @@ export function addOpenAiWebSearchToPayload(target: OpenAiWebSearchTarget, paylo
 	const hasNativeWebSearch = sanitizedTools.some((tool) => isNativeOpenAiWebSearchType(tool.type));
 
 	if (!hasNativeWebSearch) {
-		sanitizedTools.push({ type: NATIVE_OPENAI_WEB_SEARCH_TYPE });
+		sanitizedTools.push({
+			type:
+				(model.compat as OpenAIResponsesCompat | undefined)?.webSearchToolType ??
+				(model.api === "openai-codex-responses" ? "web_search" : NATIVE_OPENAI_WEB_SEARCH_TYPE),
+		});
 	}
 
 	return {
