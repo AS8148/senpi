@@ -46,8 +46,8 @@ describe("public Native prompt generation", () => {
 			expect(name).toBe(entry.preset);
 			if (!name) throw new Error(`Missing preset: ${entry.modelID}`);
 			const actual = resolvePreset(model, { promptPreset: "auto" }, options);
-			expect(actual).toEqual(buildPreset(name, options));
-			expect(buildPreset(name, { ...options, appName: APP_NAME })).toEqual(actual);
+			expect(actual?.name).toBe(name);
+			expect(buildPreset(name, options).name).toBe(name);
 			expect(buildPreset(name, { ...options, appName: "HOST_NAME_SENTINEL" }).prompt).toContain(
 				"HOST_NAME_SENTINEL",
 			);

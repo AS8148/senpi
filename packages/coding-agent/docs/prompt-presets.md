@@ -42,7 +42,11 @@ bodies.
 - `buildDynamicSystemPrompt(options)` renders the Native fallback.
 - `appName` is optional. Omission retains the runtime's configured application
   name. An explicit value parameterizes generation without changing environment
-  variables or global branding.
+  variables or global branding. Host adapters should always pass it explicitly,
+  because omission follows the importing process's Native branding.
+- Public options cover host identity, tools, context, skills, and reply surface.
+  Internal core overrides, tuning sections, and workstation dialect hooks are
+  not part of this public contract; append host role instructions after rendering.
 - Model identity is the model's provider and full ID, including any namespace
   inside the ID. Pass the catalog display name and `promptPreset` metadata when
   available, just as Native does.
