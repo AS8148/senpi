@@ -35,6 +35,15 @@ export type {
 	EvalDetachedCellStatusEntry,
 } from "./detached-cell-contract.ts";
 
+export class EvalCellNotFoundError extends Error {
+	readonly code = "eval_cell_not_found";
+
+	constructor(cellId: string) {
+		super(`Unknown detached eval cell "${cellId}"`);
+		this.name = "EvalCellNotFoundError";
+	}
+}
+
 export class EvalDetachedCellManager {
 	readonly #onStatusChange: ((entries: readonly EvalDetachedCellStatusEntry[]) => void) | undefined;
 	readonly #onWakeSourceState: ((state: WakeSourceState) => void) | undefined;
@@ -159,7 +168,7 @@ export class EvalDetachedCellManager {
 		const live = this.#cells.get(cellId);
 		if (live === undefined) return this.#terminal(cellId);
 		if (live.state === "queued") this.#cancelQueued(live, reason);
-		else if (live.detached) await this.#cancel(live, reason);
+		else if (detachedCellIsActive(live.state)) await this.#cancel(live, reason);
 		return this.#snapshot(live);
 	}
 
@@ -304,7 +313,7 @@ export class EvalDetachedCellManager {
 
 	#terminal(cellId: string): EvalDetachedCellSnapshot {
 		const snapshot = this.#terminalSnapshots.get(cellId);
-		if (snapshot === undefined) throw new Error(`Unknown detached eval cell "${cellId}"`);
+		if (snapshot === undefined) throw new EvalCellNotFoundError(cellId);
 		return snapshot;
 	}
 }

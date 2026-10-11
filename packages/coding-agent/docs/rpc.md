@@ -13,6 +13,96 @@ RPC mode enables headless operation of the coding agent via a JSON protocol over
 
 **Note for Node.js/TypeScript users**: If you're building a Node.js application, consider using `AgentSession` directly from `@code-yeongyu/senpi` instead of spawning a subprocess. See [`src/core/agent-session.ts`](../src/core/agent-session.ts) for the API. For a subprocess-based TypeScript client, see [`src/modes/rpc/rpc-client.ts`](../src/modes/rpc/rpc-client.ts).
 
+## Eval cell control
+
+`eval_cells.list`, `eval_cells.peek`, and `eval_cells.stop` are session-scoped
+control commands, not model tools. On a shared host include the same `sessionId`
+routing handle used for other session commands. They use the session's current
+codemode detached-cell manager, the same one used by the eval tool's
+`list`/`peek`/`stop` actions. They do not execute a tool, add model context, or
+append session history. Stopping a detached cell still delivers the ordinary
+`senpi-codemode:notification` completion message to the agent, exactly once.
+
+### eval_cells.list
+
+```json
+{"id":"cells","type":"eval_cells.list"}
+```
+
+```json
+{"id":"cells","type":"response","command":"eval_cells.list","success":true,"data":[{"cellId":"cell_1","language":"js","state":"detached","startedAtMs":1720000000000,"summary":"Read the input files"}]}
+```
+
+The array contains live and recently settled cells, in the eval tool's existing
+list order. `language` is `js`, `py`, `rb`, or `jl`; `state` is `queued`,
+`running`, `detached`, `completed`, `failed`, or `cancelled`. `summary` is
+optional, and a queued cell can include `queuedBehind: string[]`. A detached
+queued cell has state `detached` and its predecessors in `queuedBehind`.
+An empty or not-yet-started manager returns `[]`. Recent snapshots have the
+manager's existing retention limits; a removed snapshot is no longer addressable.
+
+### eval_cells.peek
+
+```json
+{"id":"tail","type":"eval_cells.peek","cellId":"cell_1","tailBytes":8192}
+```
+
+```json
+{"id":"tail","type":"response","command":"eval_cells.peek","success":true,"data":{"cellId":"cell_1","language":"js","state":"detached","startedAtMs":1720000000000,"summary":"Read the input files","outputTail":"Read 12 files\n"}}
+```
+
+The text-only snapshot includes the list metadata and `outputTail`, taken from
+the manager's buffered output. `tailBytes` defaults to 8192, is capped at 65536,
+and must be a non-negative safe integer. Zero returns an empty tail. A partial
+leading UTF-8 character is dropped, so the returned text never exceeds the byte
+budget. Full result bodies, source code, and inline images are not duplicated
+in this control response. Available snapshots also include `stateRetained`,
+`interruptNote`, `hardLimitSeconds`, and `runBudgetSeconds` when defined.
+
+### eval_cells.stop
+
+```json
+{"id":"stop","type":"eval_cells.stop","cellId":"cell_1"}
+```
+
+```json
+{"id":"stop","type":"response","command":"eval_cells.stop","success":true,"data":{"cellId":"cell_1","language":"js","state":"cancelled","startedAtMs":1720000000000,"summary":"Read the input files","outputTail":"Read 12 files\n","stateRetained":true}}
+```
+
+The response waits for interrupt completion and confirms the terminal state,
+including whether kernel state was retained. Its output tail uses the default
+8192-byte budget. If the cell ended between list and stop, the response succeeds
+with its existing `completed`, `failed`, or `cancelled` snapshot: no second
+interrupt or completion notification is sent.
+
+Unknown IDs, including IDs owned only by another session, fail with
+`errorCode: "eval_cell_not_found"`. A malformed `cellId` or `tailBytes` fails with
+`errorCode: "invalid_eval_cell_request"`. Clients must inspect the code or the
+returned `state`, not match error text.
+
+`RpcClient` exposes `listEvalCells()`, `peekEvalCell(cellId, tailBytes?)`, and
+`stopEvalCell(cellId)` with exported `RpcEvalCell` / `RpcEvalCellSnapshot` types.
+Failed commands reject with `RpcCommandError.errorCode`.
+
+### Eval liveness event
+
+The existing `wake_source_state` snapshot already reaches RPC clients that
+advertise the `extension_events` capability. Codemode publishes it on session
+start and each detached-cell transition, including a zero-count snapshot on
+settlement. It travels in the normal extension-event envelope, tagged with the
+owning routing `sessionId` on a shared host:
+
+```json
+{"type":"extension_event","name":"wake_source_state","sessionId":"session_1","data":{"source":"senpi-codemode","activeCount":1,"items":[{"id":"cell_1","description":"Read the input files","startedAtMs":1720000000000}]}}
+```
+
+Each event is a full per-source snapshot, not a delta. Filter
+`data.source === "senpi-codemode"` and replace the previous detached-cell
+liveness set. `items` carry `id`, `description`, and epoch `startedAtMs`.
+Use `eval_cells.list` to load initial state after attaching and peek on demand
+for output; transitions need no polling. The liveness event itself adds no
+model context or history.
+
 ## Account display names
 
 `get_provider_accounts` returns secret-free descriptors containing `name`, `source`, `blocked`, `pinned`, and optional `displayName`. Render a named account as `displayName (name)`; keep using the immutable `name` for `account_pin`, `account_remove`, and comparisons. Legacy accounts omit `displayName`.

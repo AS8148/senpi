@@ -1,3 +1,23 @@
+## 2026-10-11 - Model-invisible eval cell RPC commands (senpi#3072)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: adds session-routed `eval_cells.list`, `eval_cells.peek`, and `eval_cells.stop` command/response contracts, exported cell/snapshot types, and typed not-found/invalid-request codes.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: dispatches these commands to the current session's extension RPC handlers without executing a model tool or appending history, preserving typed control errors.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: adds typed list, peek, and stop methods through the existing correlated request/error path. Existing `wake_source_state` extension-event forwarding is documented in `packages/coding-agent/docs/rpc.md`.
+
+### Why
+
+Desktop detached-cell controls need the same session-owned manager and completion notification contract as the eval tool, without requiring model participation.
+
+### Why an extension could not handle it
+
+The manager operations are extension-owned; session command aliases, response types, and client methods belong to the host's RPC transport.
+
+### Expected merge conflict zones
+
+- Command/response unions in `rpc-types.ts`, the `connection-handler.ts` command switch, and additive `rpc-client.ts` methods.
+
 ## 2026-10-11 - Entry and tree history project account advice (senpi#3131 delta)
 
 ### What changed

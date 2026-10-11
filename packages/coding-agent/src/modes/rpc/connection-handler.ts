@@ -102,7 +102,13 @@ import type {
 	RpcSessionReplacedEvent,
 	RpcSkillInvocationEvent,
 } from "./rpc-types.ts";
-import { RPC_ERROR_ENTRY_NOT_FOUND, RPC_ERROR_MEDIA_NOT_FOUND, RPC_ERROR_MODEL_NOT_FOUND } from "./rpc-types.ts";
+import {
+	RPC_ERROR_ENTRY_NOT_FOUND,
+	RPC_ERROR_EVAL_CELL_NOT_FOUND,
+	RPC_ERROR_INVALID_EVAL_CELL_REQUEST,
+	RPC_ERROR_MEDIA_NOT_FOUND,
+	RPC_ERROR_MODEL_NOT_FOUND,
+} from "./rpc-types.ts";
 import { availableModelsData, interruptRunningTurn, unsupportedThinkingLevel } from "./session-control-actions-data.ts";
 import { SessionExtensionUiRequests } from "./session-extension-ui-requests.ts";
 
@@ -1631,6 +1637,24 @@ export function createRpcConnectionHandler(
 				}
 				const data = await session.extensionRunner.requestRpc(name, command.data);
 				return success(id, "extension_request", data);
+			}
+
+			case "eval_cells.list":
+			case "eval_cells.peek":
+			case "eval_cells.stop": {
+				try {
+					const data = await session.extensionRunner.requestRpc(command.type, command);
+					return success(id, command.type, data);
+				} catch (cause) {
+					if (
+						cause instanceof Error &&
+						"code" in cause &&
+						(cause.code === RPC_ERROR_EVAL_CELL_NOT_FOUND || cause.code === RPC_ERROR_INVALID_EVAL_CELL_REQUEST)
+					) {
+						return error(id, command.type, cause.message, cause.code);
+					}
+					throw cause;
+				}
 			}
 
 			// =================================================================

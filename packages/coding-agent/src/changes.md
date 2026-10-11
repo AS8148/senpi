@@ -1,3 +1,21 @@
+## 2026-10-11 - Export eval cell RPC contracts (senpi#3072)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts` and `packages/coding-agent/src/modes/index.ts` export `RpcEvalCell` and `RpcEvalCellSnapshot` beside the established RPC types. `packages/coding-agent/vitest.config.ts` resolves the public Senpi package to source for the real codemode/RPC regression without a build.
+
+### Why
+
+Typed downstream clients need the new session-owned cell control results through the public coding-agent entry point.
+
+### Why an extension could not handle it
+
+Extensions cannot add exports to the host's public package entry point.
+
+### Expected merge conflict zones
+
+- Additive RPC type export lists in the two barrels; no runtime initialization changes.
+
 ## 2026-10-10 - Runtime dependency snapshots omit development payload (#3083 part B)
 
 ### What changed

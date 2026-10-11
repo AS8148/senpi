@@ -1,5 +1,25 @@
 # senpi-codemode fork changes
 
+## 2026-10-11 - Session-scoped eval cell RPC control (senpi#3072)
+
+### What changed
+
+- `packages/senpi-codemode/src/index.ts` registers model-invisible `eval_cells.list`, `eval_cells.peek`, and `eval_cells.stop` handlers through `packages/senpi-codemode/src/extension/eval-cells-rpc.ts`, resolving the current session generation's manager on every request.
+- `packages/senpi-codemode/src/tool/detached-eval-result.ts` shares the list projection with RPC; `packages/senpi-codemode/src/tool/detached-cell-manager.ts` gives unknown cells a typed error and stops listed foreground cells as well as detached/queued cells. Terminal cells retain their existing snapshot and notification behavior.
+- The existing dual publication of `wake_source_state` remains the RPC liveness event; peek/stop return text-only snapshots with a byte-bounded UTF-8 tail.
+
+### Why
+
+Desktop clients need to inspect and stop their session's cells without making a model tool call or adding control entries to session history.
+
+### Why an extension could not handle it
+
+The control handlers are implemented in the owning codemode extension. The wire command aliases and typed RPC client live in the host transport.
+
+### Expected merge conflict zones
+
+- None upstream: codemode is fork-only. Preserve the manager's exactly-once settlement and notification queue when merging future lifecycle changes.
+
 ## 2026-10-10 - Install Julia globals sizing only on request (Refs senpi#3048)
 
 ### What changed
