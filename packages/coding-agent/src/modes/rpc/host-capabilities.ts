@@ -21,6 +21,7 @@ import {
 	SESSION_KIND_CAPABILITY,
 	WARM_CAPABILITY,
 } from "./custom-capability.ts";
+import { EFFECT_LEDGER_CAPABILITY } from "./effect-record.ts";
 
 /**
  * The capabilities a multi-session host advertises in `get_protocol_info`, in their wire order. `warm` is added only
@@ -36,6 +37,7 @@ export function multiSessionHostCapabilities(options: {
 			AUTO_TITLE_SESSIONS_CAPABILITY,
 			MEDIA_PLACEHOLDERS_CAPABILITY,
 			DURABLE_CLIENT_MESSAGE_ID_CAPABILITY,
+			EFFECT_LEDGER_CAPABILITY,
 			CONTINUE_FROM_LEAF_CAPABILITY,
 			EVAL_CELLS_CAPABILITY,
 			// Both shared runtimes dispatch through the active session-writing holder guard.

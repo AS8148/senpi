@@ -34,12 +34,18 @@ export interface ModelChangeOrigin {
 	readonly source: ModelChangeSource;
 	/** Who issued it, where known: an extension path, an RPC client, the picker that was used. */
 	readonly actor?: string;
+	/** The RPC `effectId` of the `set_model` that asked for this switch; stamped on the `model_change` entry. */
+	readonly effectId?: string;
 }
 
 export const SDK_MODEL_CHANGE: ModelChangeOrigin = { source: "sdk" };
 
 export function heldSwitchOrigin(first: ModelChangeOrigin): ModelChangeOrigin {
-	return { source: "held-switch", actor: first.actor === undefined ? first.source : `${first.source}:${first.actor}` };
+	return {
+		source: "held-switch",
+		actor: first.actor === undefined ? first.source : `${first.source}:${first.actor}`,
+		...(first.effectId === undefined ? {} : { effectId: first.effectId }),
+	};
 }
 
 export function modelChangeLogFields(input: {

@@ -215,6 +215,8 @@ export interface ModelChangeEntry extends SessionEntryBase {
 	actor?: string;
 	/** The switch landed while a turn was streaming. */
 	duringTurn?: boolean;
+	/** The RPC `effectId` that asked for the switch, so a reopen can tell the receipt was applied. */
+	effectId?: string;
 }
 
 /**
@@ -1815,6 +1817,7 @@ export class SessionManager {
 			...(attribution === undefined ? {} : { source: attribution.origin.source }),
 			...(attribution?.origin.actor === undefined ? {} : { actor: attribution.origin.actor }),
 			...(attribution?.duringTurn ? { duringTurn: true } : {}),
+			...(attribution?.origin.effectId === undefined ? {} : { effectId: attribution.origin.effectId }),
 		};
 		this._appendEntry(entry);
 		return entry.id;
