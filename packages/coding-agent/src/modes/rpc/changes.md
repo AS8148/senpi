@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 ## 2026-10-12 - Busy-host trim (senpi#3218)
 
 ### What changed
@@ -16,6 +17,32 @@ The trimmer is part of the multi-session host's self-observation loop and reads 
 ### Expected merge conflict zones
 
 `host-zero-session-trim.ts` (fork-only module), the `host_trimmed` case in `session-event-writer.ts`, and `RpcHostTrimmedEvent` in `rpc-host-lifecycle-types.ts`.
+
+## 2026-10-12 - Effect ledger: durable receipts and get_effect_status (senpi#3199)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/effect-record.ts`, `effect-status.ts`, `effect-outcome-copy.ts`, `effect-ledger.ts`, `effect-transcript-lookup.ts`, `effect-commands.ts`, `effect-crash-point.ts`: new modules. `rpc_effect` custom entries (schema, semantic fingerprint, `EffectIdConflict`), the per-session ledger (`accepted` written before the effect, append-only transitions, reopen seal), the authoritative backwards transcript lookup, the `abort`/`set_model`/`set_thinking_level`/`get_effect_status` handlers, the reason/action copy, and a test-only SIGKILL crash point gated on `SENPI_TEST_RPC_EFFECT_CRASH`.
+- `packages/coding-agent/src/modes/rpc/client-admission-record.ts`: `completed` admissions take an optional `outcome`; the on-disk entry type and fields are otherwise unchanged.
+- `packages/coding-agent/src/modes/rpc/client-admissions.ts`: seals persisted `running` records as `completed { interrupted_by_reopen }` before restoring queued input, records the turn's outcome (`completed`/`aborted` with `abortSource` and `abortedBy`/`error`) when `agent_idle` seals it, and writes `dropped_by_replace` for queued input before a session replacement discards it.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: routes `abort`, `set_model`, `set_thinking_level` and `get_effect_status` through the effect handlers, publishes the ledger at bind (so the seal runs before any command), installs the replacement hook, and advertises `effect_ledger`.
+- `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: advertises `effect_ledger` on shared hosts.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: answers `get_effect_status { sessionPath }` without a `sessionId` from disk, never loading the session.
+- `packages/coding-agent/src/modes/rpc/host-observe-request.ts`, `session-command-activity.ts`, `session-held.ts`: `get_effect_status` is an observing read: it never resets the idle window and passes the holder guard.
+- `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`: bounds `effectId` to 1-256 characters.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: additive `effectId` fields, `get_effect_status` command and response, `RpcEffectAnswer`, and the `effect_id_conflict`, `transcript_unreadable` and `provider_unavailable` codes.
+
+### Why
+
+A client whose `abort` or model switch timed out could not tell whether it landed, and an input receipt from a crashed turn stayed `running` forever. Receipts with an identity, replay and a query let clients resolve that instead of guessing.
+
+### Why an extension could not handle it
+
+The receipts must be written inside the RPC command handlers before the effect is applied and sealed when the transport binds a reopened session; both are host transport internals.
+
+### Expected merge conflict zones
+
+- The `connection-handler.ts` command switch (`abort`, `set_model`, `set_thinking_level`), the command and response unions in `rpc-types.ts`, and the capability lists.
 
 ## 2026-10-11 - Model-invisible eval cell RPC commands (senpi#3072)
 

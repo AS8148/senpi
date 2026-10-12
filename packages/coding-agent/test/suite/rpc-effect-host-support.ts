@@ -5,7 +5,6 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { z } from "zod";
 import { EFFECT_CRASH_ENV } from "../../src/modes/rpc/effect-crash-point.ts";
@@ -48,10 +47,18 @@ export async function rawClient(socketPath: string) {
 	await once(socket, "connect", { signal: AbortSignal.timeout(10_000) });
 	const records: HostRecord[] = [];
 	const waiters = new Set<(record: HostRecord) => void>();
-	createInterface({ input: socket }).on("line", (line) => {
-		const record = z.record(z.string(), z.unknown()).parse(JSON.parse(line)) as HostRecord;
-		records.push(record);
-		for (const waiter of [...waiters]) waiter(record);
+	// Strict LF framing: a host SIGKILLed mid-write leaves an unterminated tail, which is not a record.
+	let pending = "";
+	socket.setEncoding("utf8");
+	socket.on("data", (chunk: string) => {
+		const lines = (pending + chunk).split("\n");
+		pending = lines.pop() ?? "";
+		for (const line of lines) {
+			if (line === "") continue;
+			const record = z.record(z.string(), z.unknown()).parse(JSON.parse(line)) as HostRecord;
+			records.push(record);
+			for (const waiter of [...waiters]) waiter(record);
+		}
 	});
 	let serial = 0;
 	const wait = (predicate: (record: HostRecord) => boolean, ms = 60_000): Promise<HostRecord> =>
@@ -205,6 +212,19 @@ export async function openSession(client: RawClient, fields: Record<string, unkn
 	const sessionId = String(opened.data?.sessionId);
 	const state = await client.request({ type: "get_state", sessionId });
 	return { sessionId, sessionPath: String(state.data?.sessionFile) };
+}
+
+/**
+ * Run one turn to idle (the faux turn is held until aborted), so the transcript holds messages: a resumed
+ * session restores its model from the transcript only when it has a conversation.
+ */
+export async function settledTurn(client: RawClient, sessionId: string): Promise<void> {
+	const started = client.wait((record) => record.type === "agent_start" && record.sessionId === sessionId);
+	const idle = client.wait((record) => record.type === "agent_idle" && record.sessionId === sessionId);
+	await client.request({ type: "prompt", sessionId, message: "warm up" });
+	await started;
+	await client.request({ type: "abort", sessionId });
+	await idle;
 }
 
 export const effectOf = (record: HostRecord): Record<string, unknown> | undefined =>

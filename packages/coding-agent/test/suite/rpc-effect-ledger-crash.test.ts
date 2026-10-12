@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { effectHostWorld, effectOf, openSession, type RawClient } from "./rpc-effect-host-support.ts";
+import { effectHostWorld, effectOf, openSession, type RawClient, settledTurn } from "./rpc-effect-host-support.ts";
 
 const MODEL = { provider: "fauxeffect", modelId: "faux-1" };
 const switchTo = (client: RawClient, sessionId: string, modelId: string, effectId: string) =>
@@ -14,6 +14,7 @@ describe("RPC effect ledger crash points", () => {
 		const doomed = await world.start({ crashAt: "after:set_model:accepted" });
 		const client = await doomed.connect();
 		const opened = await openSession(client, { cwd: world.cwd, ...MODEL });
+		await settledTurn(client, opened.sessionId);
 		client.send({
 			type: "set_model",
 			sessionId: opened.sessionId,
@@ -49,6 +50,7 @@ describe("RPC effect ledger crash points", () => {
 		const doomed = await world.start({ crashAt: "before:set_model:done" });
 		const client = await doomed.connect();
 		const opened = await openSession(client, { cwd: world.cwd, ...MODEL });
+		await settledTurn(client, opened.sessionId);
 		client.send({
 			type: "set_model",
 			sessionId: opened.sessionId,

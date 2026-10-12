@@ -1991,6 +1991,63 @@ records in `queue_update`, `get_state`, `clear_queue`, `get_steering_messages`, 
 `get_follow_up_messages` carry IDs too. The legacy string `messages`, `steering`,
 and `followUp` arrays remain available.
 
+#### Effects and receipts
+
+Hosts advertising `effect_ledger` give every effect on a session a durable receipt
+written before the effect is applied, and answer for it by id. A receipt is never
+execution truth: `get_state.isStreaming` says whether a turn runs now; the receipt's
+`outcome` says how an effect ended.
+
+| Kind | Commands | Id field |
+| --- | --- | --- |
+| `input` | `prompt`, `steer`, `follow_up` | `clientMessageId` (the effect id is the client message id) |
+| `abort` | `abort` | `effectId` |
+| `set_model` | `set_model`, `set_thinking_level` | `effectId` |
+
+An `effectId` is a client-minted string of 1-256 characters. Keep it unchanged when
+retrying: the transport `id` and the routing `sessionId` may change (a reopened session
+gets a new handle), and neither is part of the effect's identity.
+
+States: `accepted` (recorded, not yet applied), `applied` (dispatched), `done`, and
+`failed`. Input admissions map `queued -> accepted`, `running -> applied`,
+`completed -> done`. `failed` and every `outcome` other than `completed` carry
+`reason`, plain-words `detail` and, when the caller can act, `action`.
+
+- `abort { effectId }` on a streaming session answers `applied` and becomes `done` when
+  the session reaches `agent_idle`; on an idle session it answers `done` with
+  `disposition: "no_active_turn"`. An abort never fails.
+- `set_model { effectId }` answers `done` once `model_changed` was emitted; the
+  `model_change` transcript entry carries the `effectId`. A model the registry does not
+  offer fails with `outcome.reason: "unknown_model"`; a switch the session refuses fails
+  with `provider_unavailable`. `set_thinking_level { effectId }` records the same kind.
+- An input's `done` receipt carries `outcome.kind`: `completed`, `aborted` (with
+  `abortSource` and `abortedBy: { connectionId }` when a client's `abort` reached the
+  turn), or `error`. A queued input dropped because the session was replaced
+  (`new_session`, `switch_session`, `fork`) reads `failed` with
+  `outcome.kind: "dropped_by_replace"`.
+
+Replay: the same id with the same request answers the stored status with
+`replayed: true` and performs nothing. The same id with a different request is refused
+with `errorCode: "effect_id_conflict"` and `errorData: { effectId, reason, action }`
+(inputs keep `client_message_id_conflict`). The comparison covers only the semantic
+fields: `abort { awaitIdle, clearQueue, graceMs }`, `set_model { provider, modelId }`,
+`set_thinking_level { level, scope }`.
+
+Reopen seal: a reopened session (or a restarted host) has no live turn and no pending
+switch, so every unfinished receipt is sealed before any command reads it. A running
+input becomes `done` with `outcome.kind: "interrupted_by_reopen"`; an abort becomes
+`done` with `disposition: "no_active_turn"`; a `set_model` becomes `failed` with
+`reason: "interrupted_by_reopen"` and `action: "send set_model again with a new
+effectId"` unless its `model_change` entry is already in the transcript, in which case
+it is `done`. The model a session runs is read from its transcript, never from a receipt.
+
+An `abort` without `effectId` writes nothing and behaves as before.
+
+The host never writes `uncertain`. A client whose request timed out, or whose
+connection dropped before the response, treats the effect as uncertain locally and
+resolves it with [get_effect_status](#get_effect_status): `found: false` means the
+effect never landed and the same id can be sent again.
+
 #### prompt
 
 Send a user prompt to the agent. The command response is emitted after the prompt is accepted, queued, or handled. Events continue streaming asynchronously after acceptance.
@@ -2115,6 +2172,15 @@ Response:
 {"type": "response", "command": "abort", "success": true}
 ```
 
+With `effectId` (capability `effect_ledger`) the abort is recorded before it is
+dispatched and the response carries the receipt; see
+[Effects and receipts](#effects-and-receipts):
+
+```json
+{"type": "abort", "effectId": "stop-1"}
+{"type": "response", "command": "abort", "success": true, "data": {"effectId": "stop-1", "state": "applied", "effect": {"effectId": "stop-1", "kind": "abort", "state": "applied", "durableSessionId": "session-id"}}}
+```
+
 
 #### interrupt
 
@@ -2220,6 +2286,33 @@ The `model` field is a full [Model](#model) object or `null`. `pendingModelSwitc
 
 `lastProviderDiagnostic` is present after a failed turn whose provider supplied structured evidence: `{"category": "rate_limit", "httpStatus": 429, "code": "rate_limit_error", "evidence": "structured_code"}`. `category` is one of `auth`, `rate_limit`, `quota`, `context_limit`, `invalid_request`, `provider_unavailable`, `unknown`; `httpStatus` is absent for errors delivered inside a streamed response. It describes the same failure as the latest assistant `errorMessage` and is replaced or cleared with it. The failed assistant message in `message_end`, `agent_end`, `get_messages` and the session file carries the same object as `providerDiagnostic`. See [Provider failure diagnostics](sdk.md#provider-failure-diagnostics) for how it is derived.
 
+#### get_effect_status
+
+The newest receipt of one effect (capability `effect_ledger`). For inputs `effectId` is the
+`clientMessageId`. The command only reads: it never resets a host's or session's idle window,
+works on a session another process holds, and may be sent with `observe: true`.
+
+With `sessionId` it answers from the loaded session. With `sessionPath` and no `sessionId` it
+reads that transcript from disk, so a session that was unloaded or whose host restarted is
+answered without being loaded again:
+
+```json
+{"type": "get_effect_status", "effectId": "stop-1", "sessionId": "rpc-1"}
+{"type": "get_effect_status", "effectId": "stop-1", "sessionPath": "/path/to/session.jsonl"}
+```
+
+Response:
+```json
+{"type": "response", "command": "get_effect_status", "success": true, "data": {"found": true, "effect": {"effectId": "stop-1", "kind": "abort", "state": "done", "disposition": "no_active_turn", "durableSessionId": "session-id"}}}
+{"type": "response", "command": "get_effect_status", "success": true, "data": {"found": false, "searched": "complete"}}
+```
+
+`found: false` is answered only after the whole transcript was searched (the read starts with
+the last 4 MiB and continues to the header), so it is proof the effect never landed: send the
+same id again. A transcript that cannot be read is refused with
+`errorCode: "transcript_unreadable"` and `errorData: { path, reason, action }`, never with
+`found: false`.
+
 #### get_messages
 
 Account-scoped usage failures are projected as recovery advice with `errorCause: {"type":"usage_limit","scope":"account"}` in `message_*`, `agent_end`, `entry_appended`, `get_messages`, `get_entries`, and `get_tree`. The engine message and session file retain the original provider error for diagnostics; these raw stored messages are not the user-facing RPC representation. Entry ids, parent links, timestamps, tree labels, and provider diagnostics are preserved by the projection.
@@ -2297,6 +2390,11 @@ Switch to a specific model. A provider/model pair the session's registry does no
 ```json
 {"type": "set_model", "provider": "anthropic", "modelId": "claude-sonnet-4-20250514"}
 ```
+
+An optional `effectId` records the switch as an effect: the response adds `effectId`,
+`state` and `effect` beside the model, a retry with the same id answers
+`replayed: true` without switching again, and a refusal also records the receipt as
+`failed`. See [Effects and receipts](#effects-and-receipts).
 
 Response contains the full [Model](#model) object:
 ```json

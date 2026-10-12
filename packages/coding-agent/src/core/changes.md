@@ -1,3 +1,22 @@
+## 2026-10-12 - model_change entries carry the RPC effectId (senpi#3199)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-change-origin.ts`: `ModelChangeOrigin` takes an optional `effectId`; `heldSwitchOrigin` keeps it so a switch held for compaction still names its request.
+- `packages/coding-agent/src/core/session-manager.ts`: `ModelChangeEntry.effectId` is written when the origin carries one.
+
+### Why
+
+A host that dies between applying an RPC `set_model` and recording its receipt must be able to tell from the transcript alone that the switch landed, so the reopen seal answers `done` instead of guessing.
+
+### Why an extension could not handle it
+
+The `model_change` entry is written by the session's model switch itself; only its origin can carry the request identity to it.
+
+### Expected merge conflict zones
+
+- `ModelChangeOrigin` and `ModelChangeEntry` field lists, `appendModelChange`'s attribution spread.
+
 ## 2026-10-12 - Review repairs for config/state separation (senpi#3178)
 
 ### What changed
