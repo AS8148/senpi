@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/agent-session.ts`: both pre-prompt threshold decisions, final turn-local admission, scheduled continuation and retry revalidation reuse `estimateProjectedContextTokens`, sampling the current branch after compaction checks. Projection-only estimates include the current system prompt and active tools once, replacing any persisted system snapshot rather than double-counting it. Trusted provider usage already includes that prefix. The existing first post-compaction response exemption is preserved in both post-turn and inline pre-prompt checks.
+- `packages/coding-agent/src/core/agent-session.ts`: both pre-prompt threshold decisions, final turn-local admission, scheduled continuation and retry revalidation reuse `estimateProjectedContextTokens`, sampling the current branch after compaction checks. Estimate composition is unchanged; only usage provenance is corrected. The existing first post-compaction response exemption is preserved in both post-turn and inline pre-prompt checks.
 
 ### Why
 

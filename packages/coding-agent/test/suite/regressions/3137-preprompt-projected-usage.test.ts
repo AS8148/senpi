@@ -1,14 +1,9 @@
-import {
-	createAssistantMessageEventStream,
-	fauxAssistantMessage,
-	getCurrentSystemMessage,
-} from "@earendil-works/pi-ai";
-import { Type } from "typebox";
+import { createAssistantMessageEventStream, fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { estimateProjectedContextTokens } from "../../../src/core/compaction/index.ts";
 import type { ExtensionAPI } from "../../../src/core/extensions/index.ts";
 import { createTestExtensionsResult, createTestResourceLoader } from "../../utilities.ts";
-import { createHarness, type Harness, type HarnessOptions } from "../harness.ts";
+import { createHarness, type Harness } from "../harness.ts";
 
 const harnesses: Harness[] = [];
 
@@ -27,11 +22,7 @@ function answerWithUsage(input: number) {
 	return { ...answer, usage: { ...answer.usage, input, totalTokens: input } };
 }
 
-async function setup(
-	contextWindow = 400_000,
-	outcome: "accept" | "fail" | "reject" | "abort" = "accept",
-	options: Pick<HarnessOptions, "systemPrompt" | "tools" | "initialActiveToolNames"> = {},
-) {
+async function setup(contextWindow = 400_000, outcome: "accept" | "fail" | "reject" | "abort" = "accept") {
 	let boundary = "";
 	const attempts: string[] = [];
 	const resourceLoader = createTestResourceLoader({
@@ -58,7 +49,6 @@ async function setup(
 			},
 		]),
 	});
-	resourceLoader.getSystemPrompt = () => options.systemPrompt;
 	const harness = await createHarness({
 		resourceLoader,
 		models: [{ id: "preprompt-projection", contextWindow, maxTokens: 4_000 }],
@@ -73,7 +63,6 @@ async function setup(
 			},
 			retry: { enabled: false },
 		},
-		...options,
 	});
 	harnesses.push(harness);
 	const oldId = harness.sessionManager.appendMessage({
@@ -123,31 +112,6 @@ function addTail(harness: Harness, text = "extension note"): void {
 		timestamp: Date.now(),
 	});
 	harness.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
-}
-
-async function setupPrefix() {
-	const systemPrompt = "system ".repeat(140_000);
-	const { harness, attempts } = await setup(400_000, "accept", {
-		systemPrompt,
-		tools: [
-			{
-				name: "sample",
-				label: "Sample",
-				description: "tool ".repeat(120_000),
-				parameters: Type.Object({ input: Type.String() }),
-				execute: async () => ({ content: [{ type: "text", text: "result" }], details: {} }),
-			},
-		],
-		initialActiveToolNames: [],
-	});
-	harness.sessionManager.appendMessage({ role: "system", content: systemPrompt, timestamp: Date.now() });
-	harness.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
-	await harness.session.compact();
-	expect(getCurrentSystemMessage(harness.sessionManager.buildSessionProjection().messages)?.content).toBe(
-		systemPrompt,
-	);
-	harness.setResponses([answerWithUsage(1_000)]);
-	return { harness, attempts };
 }
 
 describe("#3137: pre-prompt admission uses current projected context", () => {
@@ -280,26 +244,6 @@ describe("#3137: pre-prompt admission uses current projected context", () => {
 		const { harness } = await setup();
 		await harness.session.compact();
 		addTail(harness, "large tail ".repeat(160_000));
-
-		await expect(harness.session.prompt("continue")).rejects.toThrow(/compaction threshold/);
-
-		expect(harness.faux.getCallLog()).toHaveLength(0);
-	});
-
-	it("admits a system snapshot that fits once and ignores inactive tool schemas", async () => {
-		const { harness, attempts } = await setupPrefix();
-		expect(harness.session.getActiveToolNames()).toEqual([]);
-		expect(harness.session.getAllTools().map((tool) => tool.name)).toContain("sample");
-
-		await harness.session.prompt("continue");
-
-		expect(harness.faux.getCallLog()).toHaveLength(1);
-		expect(attempts).toEqual(["manual"]);
-	});
-
-	it("refuses when the system snapshot plus active tool schemas exceed the threshold", async () => {
-		const { harness } = await setupPrefix();
-		harness.session.setActiveToolsByName(["sample"]);
 
 		await expect(harness.session.prompt("continue")).rejects.toThrow(/compaction threshold/);
 

@@ -42,10 +42,7 @@ import {
 import {
 	type AssistantMessageEvent,
 	contentText,
-	estimateContextTokens as estimatePromptTokens,
-	getCurrentSystemMessage,
 	type JsonObject,
-	normalizeContext,
 	providerNotConfiguredMessage,
 	SERVER_FALLBACK_ABORTED_DIAGNOSTIC,
 	supportsAllowedToolChoice,
@@ -8181,23 +8178,14 @@ export class AgentSession {
 		throw new RequiredCompactionError();
 	}
 
-	/** Share resume's branch provenance rule; provider usage already includes the fixed prefix. */
+	/** Share resume's branch provenance rule without changing estimate composition. */
 	private _estimatePrePromptContextTokens(additions: readonly AgentMessage[] = []): number {
 		const projection = this.sessionManager.buildSessionProjection();
 		const estimate = estimateProjectedContextTokens(
 			{ ...projection, messages: [...projection.messages, ...additions] },
 			this.sessionManager.getBranch(),
 		);
-		if (estimate.lastUsageIndex !== null) return estimate.tokens;
-		const projectedSystem = getCurrentSystemMessage(projection.messages);
-		const prefixTokens = estimatePromptTokens(
-			normalizeContext({
-				systemPrompt: this.agent.state.systemPrompt,
-				messages: [],
-				tools: this.agent.state.tools,
-			}),
-		).tokens;
-		return estimate.tokens - (projectedSystem ? estimateTokens(projectedSystem) : 0) + prefixTokens;
+		return estimate.tokens;
 	}
 
 	/**
