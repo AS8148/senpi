@@ -2,6 +2,13 @@ import { SettingsManager } from "../../../settings-manager.ts";
 import type { ExtensionAPI, ExtensionContext, ToolCallEvent, ToolCallEventResult } from "../../types.ts";
 import { extractPatchedPaths } from "../gpt-apply-patch/index.ts";
 import { decideAuto } from "./auto-policy.ts";
+import {
+	configuredReviewModel,
+	createModelReviewRunner,
+	isReviewable,
+	latestUserRequest,
+	reviewResidualAsk,
+} from "./auto-reviewer.ts";
 import { PERMISSION_PRESET_NAMES, parsePermissionFlag, parsePermissionPresetFlag } from "./cli.ts";
 import { disabled } from "./config.ts";
 import { forgetDispatchApproval, registerDispatchAuthorizer } from "./dispatch.ts";
@@ -218,10 +225,31 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 				},
 			};
 
-			const auto =
+			let auto =
 				callPreset === "auto"
 					? await decideAuto(event.toolName, event.input, permissionRequest, ctx.cwd)
 					: undefined;
+			const reviewModel = configuredReviewModel();
+			if (
+				auto &&
+				!auto.approveBlanketAsk &&
+				reviewModel &&
+				isReviewable(event.toolName, event.input, permissionRequest, ctx.cwd)
+			) {
+				const verdict = await reviewResidualAsk(
+					{ toolName: event.toolName, input: event.input, userRequest: latestUserRequest(ctx) },
+					createModelReviewRunner(ctx, reviewModel),
+					{ signal },
+				);
+				pi.events.emit("permission_auto_review", {
+					toolName: event.toolName,
+					callID: event.toolCallId,
+					approve: verdict.approve,
+					reason: verdict.reason,
+				});
+				if (ctx.hasUI) ctx.ui.notify(verdict.reason, verdict.approve ? "info" : "warning");
+				if (verdict.approve) auto = { approveBlanketAsk: true };
+			}
 			const askResultPromise = activeService
 				.ask(request, {
 					autoApproveAsk: permissionRequest.autoApproveAsk ?? false,
