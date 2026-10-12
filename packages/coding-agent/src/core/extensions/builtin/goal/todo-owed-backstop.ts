@@ -65,6 +65,15 @@ ${prefix}The turn ended with open todo work and no question to the user. Ask: ${
 </system-reminder>`;
 }
 
+/**
+ * The one notice left after the automatic continuations ran out (#10026): what is unfinished, why
+ * the agent stopped (it kept ending turns with work open), and the action that resumes it.
+ */
+export function buildTodoOwedStopNotice(openTasks: number, now: string, continuations: number): string {
+	const tasks = openTasks === 1 ? "1 open todo task" : `${openTasks} open todo tasks`;
+	return `Agent stopped with ${tasks} (Now: ${now}): ${continuations} automatic continuations in a row ended without closing a task. Reply to resume it, or close the work with /todo done or /todo drop.`;
+}
+
 /** True when the last non-empty paragraph of the text ends any sentence with `?`. */
 export function endsWithQuestion(text: string): boolean {
 	const paragraphs = text
@@ -131,6 +140,10 @@ export class TodoOwedBackstop {
 	readonly #pi: ExtensionAPI;
 	#remindersThisChain = 0;
 	#notifiedThisChain = false;
+	// The open tasks when the last nudge was sent. A turn that closed one of them made progress, so
+	// the cap counts only consecutive continuations that closed nothing (#10026). Adding tasks is not
+	// progress: an agent that only appends work still reaches the cap.
+	#openTasksAtLastNudge: ReadonlySet<string> | undefined;
 	#logger: SessionLogger | undefined;
 
 	constructor(pi: ExtensionAPI) {
@@ -140,6 +153,7 @@ export class TodoOwedBackstop {
 	resetChain(): void {
 		this.#remindersThisChain = 0;
 		this.#notifiedThisChain = false;
+		this.#openTasksAtLastNudge = undefined;
 	}
 
 	afterAgentEnd(input: TodoOwedInput): void {
@@ -150,7 +164,11 @@ export class TodoOwedBackstop {
 		}
 		const { ctx } = input;
 		const branch = ctx.sessionManager.getBranch();
-		const openTasks = openTodoTaskContents(branch).length;
+		const openTaskContents = openTodoTaskContents(branch);
+		const openTasks = openTaskContents.length;
+		const stillOpen = new Set(openTaskContents);
+		const previous = this.#openTasksAtLastNudge;
+		if (previous !== undefined && [...previous].some((task) => !stillOpen.has(task))) this.resetChain();
 		const anchors = describeAskNowNext(getLatestTodoStateFromBranchEntries(branch));
 		const sessionId = ctx.sessionManager.getSessionId();
 		if (this.#remindersThisChain >= TODO_OWED_CHAIN_LIMIT) {
@@ -159,10 +177,7 @@ export class TodoOwedBackstop {
 				return;
 			}
 			this.#notifiedThisChain = true;
-			ctx.ui.notify(
-				`Agent stopped with ${openTasks} open todo tasks (Now: ${anchors.now}). Send a message to continue.`,
-				"warning",
-			);
+			ctx.ui.notify(buildTodoOwedStopNotice(openTasks, anchors.now, this.#remindersThisChain), "warning");
 			this.#emit({
 				sessionId,
 				chainCount: this.#remindersThisChain,
@@ -174,6 +189,7 @@ export class TodoOwedBackstop {
 			return;
 		}
 		this.#remindersThisChain += 1;
+		this.#openTasksAtLastNudge = stillOpen;
 		const content = buildTodoOwedReminder(anchors, this.#remindersThisChain === TODO_OWED_CHAIN_LIMIT);
 		this.#pi.sendMessage(
 			{ customType: TODO_OWED_CUSTOM_TYPE, content, display: false },
