@@ -139,7 +139,9 @@ describe("senpi#3216 credential-pool blocks stay proportional to the evidence", 
 
 		// when
 		const before = Date.now();
-		await collectClosed(runtime.stream(faux.getModel(), { messages: [], tools: [] }, { sessionId: "issue-3216-hint" }));
+		await collectClosed(
+			runtime.stream(faux.getModel(), { messages: [], tools: [] }, { sessionId: "issue-3216-hint" }),
+		);
 
 		// then
 		const blocked = Object.values(await repository().listSlots("faux", "stored")).filter(

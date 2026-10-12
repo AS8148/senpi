@@ -6,9 +6,13 @@
 
 ### Added
 
+- `/gpt-account` and `/account <provider> list` say why an account is blocked: a usage limit with the time it lifts, or a rejected login or disabled account with the command that fixes it. `/gpt-account login <id>` logs an existing account in again in place, keeping its id, display name and pin ([#3216](https://github.com/code-yeongyu/senpi/issues/3216)).
+
 ### Changed
 
 ### Fixed
+
+- Credential-pool accounts are no longer taken out for a day or more by an ordinary rate limit. A served request now ends an account's failure streak, and without a reset time from the provider a block lasts at most an hour; before, accounts that had seen enough transient 429s over their lifetime were blocked for 31-34 hours although their quota was fine. Every block now writes one line to the debug log with its reason, where its length came from, and a redacted excerpt of the provider's message ([#3216](https://github.com/code-yeongyu/senpi/issues/3216), reported in the OmO community).
 
 ### Removed
 

@@ -1,6 +1,7 @@
 import { accountLabel } from "@earendil-works/pi-ai/auth/pool/slots";
 import {
 	type CredentialAccountSummary,
+	describeAccountHealth,
 	getCredentialAccounts,
 	pinCredentialAccount,
 	removeCredentialAccount,
@@ -20,7 +21,7 @@ function usage(ctx: ExtensionCommandContext): void {
 }
 
 function statusOf(account: CredentialAccountSummary): string {
-	const states = [accountLabel(account), account.source, account.blocked ? "blocked" : "available"];
+	const states = [accountLabel(account), account.source, describeAccountHealth(account)];
 	for (const { model, until } of account.blockedModels ?? []) {
 		states.push(`blocked for ${model} until ${new Date(until).toISOString()}`);
 	}
