@@ -155,7 +155,7 @@ describe("goal wake sources", () => {
 		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS * 3);
 		expect(harness.sent).toHaveLength(0);
 		// The parked timer is still armed: no backstop fire consumed it on the way.
-		expect(emitted(harness.events, GOAL_CONTINUATION_TIMER_STATE_EVENT).at(-1)).toEqual({
+		expect(emitted(harness.events, GOAL_CONTINUATION_TIMER_STATE_EVENT).at(-1)).toMatchObject({
 			armed: true,
 			kind: "monitor",
 		});

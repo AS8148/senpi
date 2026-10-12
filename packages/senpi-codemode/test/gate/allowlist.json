@@ -1,6 +1,18 @@
 {
 	"version": 1,
 	"nodes": {
+		"senpi#3205": {
+			"additions": [
+				"legacyContracts/test/js-rewrite-imports-host-cost.test.ts/rewriteImports host cost does not parse a cell whose only import text is inside data",
+				"legacyContracts/test/js-rewrite-imports-host-cost.test.ts/rewriteImports host cost still rewrites real static and dynamic imports",
+				"legacyContracts/test/js-rewrite-imports-host-cost.test.ts/rewriteImports host cost still rewrites a comment before a dynamic call",
+				"legacyContracts/test/js-rewrite-imports-host-cost.test.ts/rewriteImports host cost still rewrites a block comment before named bindings",
+				"legacyContracts/test/js-rewrite-imports-host-cost.test.ts/rewriteImports host cost still rewrites a line comment before a default binding",
+				"legacyContracts/test/js-rewrite-imports-host-cost.test.ts/rewriteImports host cost still rewrites a non-ASCII binding",
+				"legacyContracts/test/js-rewrite-imports-host-cost.test.ts/rewriteImports host cost prepares a large data cell full of comment-like import text in linear time"
+			],
+			"reason": "senpi#3205 adds contracts proving a cell whose only import text is data is prepared without a Babel parse, that real static and dynamic imports are still rewritten (including after a comment and with a non-ASCII binding, which the review found the first gate skipped), and that a large data cell full of comment-like import text is prepared in linear time. The frozen baseline and every existing contract remain unchanged."
+		},
 		"senpi#3064": {
 			"additions": [
 				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root pip scratch is owned and removed after success (#3064)",

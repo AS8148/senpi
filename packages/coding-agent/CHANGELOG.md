@@ -6,11 +6,17 @@
 
 ### Added
 
+- RPC clients now see a goal's deliberate wait: `goal_continuation_scheduled`, `goal_continuation_timer_state` (with `dueAtMs` while armed) and `goal_continuation_resumed` arrive as `extension_event`s, and a `goal_continuation_fire_now` extension request runs the armed continuation at once through the timer's own eligibility checks ([#3196](https://github.com/code-yeongyu/senpi/issues/3196), requested by @code-yeongyu).
+
 ### Changed
 
 ### Fixed
 
+- An agent that stops with open todo tasks is continued automatically again after it makes progress: the two automatic continuations are counted only while they close no task, where before a long unattended run got none on its next early stop once it had used two. When the agent really stalls, the notice now says why (two continuations in a row closed no task) and what to do (reply to resume it, or `/todo done` / `/todo drop`), instead of only "Send a message to continue". Waiting on a background child, monitor, eval cell, open question or goal still shows nothing ([oh-my-openagent#10026](https://github.com/code-yeongyu/oh-my-openagent/issues/10026), requested by @code-yeongyu).
+
 ### Removed
+
+- Removed the Codex `app-server` command, daemon, generated protocol and compatibility QA harness. Process integrations use Native RPC (`senpi --mode rpc` or `senpi host`); OpenAI API and ChatGPT subscription models remain supported, and historical model-change records remain readable ([#3167](https://github.com/code-yeongyu/senpi/issues/3167), requested by @code-yeongyu).
 
 ## [2026.10.12] - 2026-10-12
 
@@ -57,8 +63,6 @@
 - Server-search failures are remembered for the actual failed request model across prompts and model switches. Cache-friendly compaction retains the original payload hook and exact main-turn tools/include prefix. Standalone summaries, titles and default projections exclude only server-search tools, preserve client `web_search`, and do not add empty tool arrays. Fallback preserves provider-built function schemas and Google's single function-declaration entry. Moonshot's opt-in echo tool cannot be discovered or lazily activated through tool_search, and its declaration is stripped from non-Moonshot requests ([#3122](https://github.com/code-yeongyu/senpi/issues/3122)).
 
 ### Removed
-
-- Removed the Codex `app-server` command, daemon, generated protocol and compatibility QA harness. Process integrations use Native RPC (`senpi --mode rpc` or `senpi host`); OpenAI API and ChatGPT subscription models remain supported, and historical model-change records remain readable ([#3167](https://github.com/code-yeongyu/senpi/issues/3167), requested by @code-yeongyu).
 
 ## [2026.10.11] - 2026-10-11
 
