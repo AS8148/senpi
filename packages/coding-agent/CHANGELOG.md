@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- A busy multi-session task host now collects when its session count drops while its footprint is at least 2 GB, instead of only at zero sessions, waiting at least a minute and at least 100 times the last pause between those collections; `host_trimmed` now carries `sessions` and `pauseMs`. A research DAG's shard no longer keeps tens of GB of freed heap pages while its other children are still running ([#3218](https://github.com/code-yeongyu/senpi/issues/3218)).
+
 ### Removed
 
 ## [2026.10.12] - 2026-10-12
@@ -33,8 +35,6 @@
 - Server search remains default-on for direct Anthropic/Claude OAuth and OpenAI/Azure, unchanged from main, and is default-on for the live-verified first-party ChatGPT/Codex subscription route (except Spark). Gateways including ccapi and GLM coding plan on z.ai's Anthropic endpoint require `compat.supportsWebSearch: true`; xAI Responses, Google Vertex and AI Studio, OpenRouter, Moonshot PAYG, Z.AI PAYG and Sonar native-bypass routing also require explicit compatibility opt-in. Kimi for Coding and DeepSeek are not live-verified and do not gain default-on search. A different `nativeModel` setting is ignored on enabled server-search routes: main search and fallback use the session model ([#3122](https://github.com/code-yeongyu/senpi/issues/3122), requested by @code-yeongyu).
 
 ### Fixed
-
-- A busy multi-session task host now collects (at most once a minute) when its session count drops while its footprint is at least 2 GB, instead of only at zero sessions, spacing those collections by at least 100 times the last pause; `host_trimmed` now carries `sessions` and `pauseMs`. A research DAG's shard no longer keeps tens of GB of freed heap pages while its other children are still running ([#3218](https://github.com/code-yeongyu/senpi/issues/3218)).
 
 - A finished bash session no longer keeps its headless terminal screen (10,000 lines of scrollback plus replay history, about 20 MB for a 4,000-line output) until the 32-session limit evicts it; it keeps its final visible screen and its bounded output, so long sessions and task hosts no longer grow with every shell command ([#3171](https://github.com/code-yeongyu/senpi/issues/3171)).
 - A turn no longer fails when the session is replaced, reloaded, or disposed while its first `turn_end` or `agent_before_settle` boundary preview is being built: the retired extension runner now stands down on that step like every other boundary step, discarding drafts and continuation without reporting a stale-context error ([#3101](https://github.com/code-yeongyu/senpi/issues/3101)). Thanks to @MoerAI ([#3145](https://github.com/code-yeongyu/senpi/pull/3145)).
