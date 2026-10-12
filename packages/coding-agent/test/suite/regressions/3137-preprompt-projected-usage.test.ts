@@ -38,7 +38,7 @@ async function setup(contextWindow = 400_000, outcome: "accept" | "fail" | "reje
 				idleCompactionEnabled: false,
 				keepRecentTokens: 2_000,
 				reserveTokens: 20_000,
-				reserveScaleEnabled: false,
+				reserveScalingEnabled: false,
 			},
 			retry: { enabled: false },
 		},
