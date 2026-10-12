@@ -5,10 +5,11 @@ import type {
 } from "@anthropic-ai/sdk/resources/beta/messages/messages.js";
 
 /**
- * Anthropic intermittently rejects the opaque `encrypted_content` of a native
- * web search result it accepted earlier (senpi #3201). Same-model replay keeps
- * the payload byte-for-byte (#208), so while the rejection lasts every later
- * request on that model fails with "messages.N.content.0: Invalid `encrypted_content` in
+ * The opaque `encrypted_content` of a native web search result is only valid
+ * for the account that ran the search (senpi #3201). Same-model replay keeps
+ * the payload byte-for-byte (#208), so once a request is served by another
+ * account (credential rotation, a multi-account gateway) every later request
+ * on that model fails with "messages.N.content.0: Invalid `encrypted_content` in
  * `search_result` block" and the session only moves on through a model
  * fallback. Stripping the field is not an option: the API requires it (#150).
  *

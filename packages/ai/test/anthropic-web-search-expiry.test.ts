@@ -9,9 +9,9 @@ import { normalizeContext } from "../src/utils/transcript.ts";
 import { finalTextResponse } from "./anthropic-tool-reference-harness.ts";
 
 /**
- * senpi #3201: Anthropic intermittently rejects a web search result's
- * `encrypted_content` it accepted earlier, and every same-model request that
- * replays it fails with "Invalid `encrypted_content` in `search_result` block". The
+ * senpi #3201: a web search result's `encrypted_content` is only valid for the
+ * account that ran the search, and every same-model request another account
+ * serves fails with "Invalid `encrypted_content` in `search_result` block". The
  * provider retries with the expired pair demoted to text, keeps newer pairs
  * verbatim, and remembers the demotion for the session.
  */

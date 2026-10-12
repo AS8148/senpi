@@ -9,7 +9,7 @@
 
 ### Why
 
-- Live 2026-10-12 (claude-opus-5-5 through an Anthropic-compatible relay): a web search at 08:10:42Z replayed fine until 08:15:37Z, then every same-model request failed with `messages.37.content.0: Invalid \`encrypted_content\` in \`search_result\` block` on five different upstream accounts, including the one that ran the search, until about 09:57Z; at about 10:00Z the same bytes (and even a garbage payload) were accepted again. The validation is an intermittent server-side condition the client cannot predict, so recovery has to react to the rejection. History only grows, so the session failed on that model until a cross-model fallback dropped the blocks, then failed again after the fallback reverted. Stripping only `encrypted_content` (#150) is rejected because the field is required.
+- Live 2026-10-12 (claude-opus-5-5 through a multi-account Anthropic gateway): a web search at 08:10:42Z replayed fine until 08:15:37Z, then every same-model request failed with `messages.37.content.0: Invalid \`encrypted_content\` in \`search_result\` block`. The payload is only valid for the account that produced it; when the gateway's candidate pool no longer contained that account, every remaining account rejected it (five 400s on one request). History only grows, so the session failed on that model until a cross-model fallback dropped the blocks, then failed again after the fallback reverted. The gateway now degrades such replays itself, but any account change (credential rotation, another gateway, a re-login) hits the same rejection in the client. Stripping only `encrypted_content` (#150) is rejected because the field is required.
 
 ### Why an extension could not handle it
 
