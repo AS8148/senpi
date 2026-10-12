@@ -17,7 +17,7 @@ const collect = typeof Bun !== "undefined" ? () => Bun.gc(true) : () => globalTh
 const heapUsed = async () => { for (let i = 0; i < 3; i++) { await new Promise(setImmediate); collect(); } return process.memoryUsage().heapUsed; };
 `;
 	const args =
-		typeof Bun === "undefined"
+		process.versions.bun === undefined
 			? ["--expose-gc", "--import", "tsx", "--input-type=module", "--eval", prelude + body]
 			: ["--eval", prelude + body];
 	const result = spawnSync(process.execPath, args, { encoding: "utf8", timeout: 120_000 });
