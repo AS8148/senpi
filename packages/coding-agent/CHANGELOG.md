@@ -6,6 +6,8 @@
 
 ### Added
 
+- Session-scoped `eval_cells.list`, `eval_cells.peek`, and `eval_cells.stop` RPC commands and typed client methods expose live/recent eval cells, bounded UTF-8 output tails, and confirmed stop outcomes without model tool calls or history entries. Detached stops preserve the existing completion notification; RPC clients can consume the already-forwarded `wake_source_state` event ([#3072](https://github.com/code-yeongyu/senpi/issues/3072)).
+
 - Extensions can use `ctx.getCompactionModel()` to resolve a usable summary model without changing the active session selection. Healthy builtin compaction retains the current model; a spent account can use the held target, configured summary override, or an authenticated alternate with sufficient context capacity ([#3131](https://github.com/code-yeongyu/senpi/issues/3131)).
 
 ### Changed

@@ -6,7 +6,11 @@
 
 ### Added
 
+- Session-owned eval cell RPC handlers share the eval tool's manager, bound output tails, return typed unknown-cell failures and confirmed stop snapshots, and preserve ordinary detached completion notifications ([#3072](https://github.com/code-yeongyu/senpi/issues/3072)).
+
 ### Changed
+
+- The eval tool's stop action also cancels listed running foreground cells, returning their terminal outcome. Concurrent stops await the same interrupt and confirm whether kernel state survived ([#3072](https://github.com/code-yeongyu/senpi/issues/3072)).
 
 ### Fixed
 
