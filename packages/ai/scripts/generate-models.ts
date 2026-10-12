@@ -498,6 +498,8 @@ const OPENAI_MAX_CONTEXT_INPUT_CAP = 922000;
 // same 1,050,000 window and 922,000 input cap); GPT-6 Luna ships the full 922,000 input cap.
 const GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW = 600000;
 const GPT_6_SOL_DEFAULT_CONTEXT_WINDOW = 400000;
+// Live Codex catalog, 2026-10-12T00:15Z: subscription default only; API budgets stay unchanged (#3150).
+const CHATGPT_SUBSCRIPTION_GPT_61_SOL_CONTEXT_WINDOW = 500000;
 const GPT_6_LUNA_DEFAULT_CONTEXT_WINDOW = OPENAI_MAX_CONTEXT_INPUT_CAP;
 const OPENAI_FLAGSHIP_DEFAULT_CONTEXT_WINDOWS: ReadonlyMap<string, number> = new Map([
 	["gpt-5.6-sol", 650000],
@@ -1289,6 +1291,10 @@ function applyOpenAIConfigurationUpdateMetadata(model: Model<Api>): void {
 // first-party OpenAI catalogs carry the input cap, so the effective Astra budget
 // changed with the provider that routed the request.
 function applyGpt6ContextWindow(model: Model<Api>): void {
+	if (model.provider === "chatgpt-subscription" && model.id === "gpt-6.1-sol") {
+		model.contextWindow = CHATGPT_SUBSCRIPTION_GPT_61_SOL_CONTEXT_WINDOW;
+		return;
+	}
 	const contextWindow = gpt6FamilyDefaultContextWindow(model.id);
 	if (contextWindow === undefined) return;
 	model.contextWindow = contextWindow;
@@ -4022,7 +4028,8 @@ async function generateModels() {
 	// OpenAI Codex (ChatGPT OAuth) models
 	// NOTE: These are not fetched from models.dev; we keep a small, explicit list to avoid aliases.
 	// Older model limits are based on observed server behavior. GPT-5.6 Luna and Terra follow Codex's 272k
-	// catalog limit (formerly 372k); Sol defaults to 400k. GPT-6 Astra is stamped with the fork's series
+	// catalog limit (formerly 372k); 6.1 Sol defaults to the live Codex catalog's 500k in the final pass.
+	// GPT-6 Sol keeps 400k. GPT-6 Astra is stamped with the fork's series
 	// default by applyGpt6AstraContextWindow in the final metadata pass.
 	const CODEX_BASE_URL = "https://chatgpt.com/backend-api";
 	const CODEX_CONTEXT = 272000;
@@ -4076,7 +4083,7 @@ async function generateModels() {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: withOpenAiLongContextPricing(OPENAI_GPT_6_STANDARD_COSTS["gpt-6.1-sol"]),
-			contextWindow: GPT_6_SOL_DEFAULT_CONTEXT_WINDOW,
+			contextWindow: CHATGPT_SUBSCRIPTION_GPT_61_SOL_CONTEXT_WINDOW,
 			maxTokens: CODEX_MAX_TOKENS,
 		},
 		{
