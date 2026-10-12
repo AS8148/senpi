@@ -4871,3 +4871,23 @@ Print mode owns the final stderr error.
 ### Expected merge conflict zones
 
 The provider-error branch and usage-limit import in `packages/coding-agent/src/modes/print-mode.ts`.
+
+## 2026-10-12 - Export the reserved-keyword matcher (senpi#3160)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`
+
+Exports `findReservedKeywordSpans`, `findReservedKeywordRuns` and their types from the fork-only `core/reserved-keywords.ts`, which follows the omo-senpi engine's arming rules (identifier/path guards plus quote, URL, relay-header and negation masks), so it marks only text that actually arms.
+
+### Why
+
+One matcher drives both the TUI rainbow and any SDK consumer that needs the engine's keyword detection.
+
+### Why an extension could not handle it
+
+The package barrel is the only public entry point; an extension cannot add exports to it.
+
+### Expected merge conflict zones
+
+- LOW: the `core/skills.ts` export block in `packages/coding-agent/src/index.ts`.
