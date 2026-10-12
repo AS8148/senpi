@@ -5,8 +5,8 @@ import { parseSettingsJson } from "../../../settings-manager.ts";
 import type { ConfigReloadLogger } from "./log.ts";
 
 /**
- * Settings keys a running session already applies live (model/thinking picks)
- * or never reads back (changelog bookkeeping). A settings.json change limited
+ * Settings keys a running session already applies live (model/thinking defaults).
+ * A settings.json change limited
  * to these keys — typically /model or a thinking-level change in another
  * session or a background CLI run — must not hot-reload this session. Any
  * other key change keeps the full validate-and-reload flow.
@@ -15,12 +15,6 @@ const ROUTINE_SETTINGS_KEYS: ReadonlySet<string> = new Set([
 	"defaultModel",
 	"defaultProvider",
 	"defaultThinkingLevel",
-	"modelThinkingLevels",
-	"modelLastOnThinkingLevels",
-	"modelServiceTiers",
-	"lastChangelogVersion",
-	"changelogSeen",
-	"tipsHistory",
 ]);
 
 export function joinConfigDir(cwd: string): string {
