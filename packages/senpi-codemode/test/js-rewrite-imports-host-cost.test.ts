@@ -57,4 +57,17 @@ describe("rewriteImports host cost", () => {
 	])("still rewrites %s", (_name, source) => {
 		expect(rewriteImports(source)).toContain("__senpi_import__");
 	});
+
+	// #3206 delta review: a gate that scans comment bodies backtracked quadratically here (19.6 s at 1.36 MB on Node).
+	it("prepares a large data cell full of comment-like import text in linear time", { timeout: 5000 }, () => {
+		// Given valid JS whose strings repeat the keyword followed by comment markers
+		const rows = Array.from({ length: 90_000 }, () => `${IMPORT} /* */ x`);
+		const source = `const rows = ${JSON.stringify(rows)};`;
+
+		// When the cell is prepared
+		const output = rewriteImports(source);
+
+		// Then nothing is rewritten and it finishes well inside the budget
+		expect(output).toBe(source);
+	});
 });
