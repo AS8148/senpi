@@ -98,10 +98,6 @@ const SEMANTIC_FIELDS: Readonly<Record<EffectCommandKind, readonly string[]>> = 
 	dequeue: ["queuedId", "text"],
 };
 
-export function effectKindOf(command: EffectCommandKind): Exclude<EffectKind, "input"> {
-	return command;
-}
-
 export function effectFingerprint(command: EffectCommandKind, payload: object): string {
 	const semantic: Record<string, unknown> = { kind: command };
 	for (const field of SEMANTIC_FIELDS[command]) {

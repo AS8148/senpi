@@ -309,6 +309,8 @@ export const RPC_ERROR_EFFECT_ID_CONFLICT = "effect_id_conflict";
 export const RPC_ERROR_TRANSCRIPT_UNREADABLE = "transcript_unreadable";
 /** `set_model { effectId }` was refused because the model's provider cannot serve it now. */
 export const RPC_ERROR_PROVIDER_UNAVAILABLE = "provider_unavailable";
+/** `set_model { effectId }` was refused because the target cannot hold the session context. */
+export const RPC_ERROR_CONTEXT_BUDGET = "context_budget";
 export const RPC_ERROR_EVAL_CELL_NOT_FOUND = "eval_cell_not_found";
 export const RPC_ERROR_INVALID_EVAL_CELL_REQUEST = "invalid_eval_cell_request";
 export const RPC_ERROR_EVAL_CELLS_UNAVAILABLE = "eval_cells_unavailable";
@@ -368,6 +370,7 @@ export type RpcErrorCode =
 	| typeof RPC_ERROR_EFFECT_ID_CONFLICT
 	| typeof RPC_ERROR_TRANSCRIPT_UNREADABLE
 	| typeof RPC_ERROR_PROVIDER_UNAVAILABLE
+	| typeof RPC_ERROR_CONTEXT_BUDGET
 	| typeof RPC_ERROR_EVAL_CELL_NOT_FOUND
 	| typeof RPC_ERROR_INVALID_EVAL_CELL_REQUEST
 	| typeof RPC_ERROR_EVAL_CELLS_UNAVAILABLE

@@ -2023,7 +2023,9 @@ receipt contract.
   `model_change` transcript entry carries the `effectId`. A model the registry does not
   offer fails with `outcome.reason: "unknown_model"`; missing credentials fail with
   `provider_unavailable`, while a context-budget refusal fails with `context_budget`
-  and an action to compact or select a larger model.
+  and an action to compact or select a larger model. The immediate budget refusal's
+  `errorCode` is `"context_budget"` (`RPC_ERROR_CONTEXT_BUDGET` in the typed API);
+  `errorData.effect` carries the failed receipt.
   A switch held for compaction answers `accepted` until the next send applies it.
   Overwriting the hold, selecting a fitting model directly, or cycling onto one fails
   the older receipt with `superseded`; a held target that still cannot fit after repair

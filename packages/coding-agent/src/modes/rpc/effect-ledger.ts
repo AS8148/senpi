@@ -11,7 +11,6 @@ import {
 	type EffectState,
 	type EffectStatus,
 	effectFingerprint,
-	effectKindOf,
 	isTerminalEffectState,
 	RPC_EFFECT_ENTRY,
 	type RpcEffectRecord,
@@ -155,7 +154,7 @@ export class EffectLedger {
 		const now = new Date().toISOString();
 		const record: RpcEffectRecord = {
 			effectId,
-			kind: effectKindOf(command),
+			kind: command,
 			state: "accepted",
 			by,
 			acceptedAt: now,

@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 ## 2026-10-12 - Busy-host trim (senpi#3218)
 
 ### What changed
@@ -17,6 +16,26 @@ The trimmer is part of the multi-session host's self-observation loop and reads 
 ### Expected merge conflict zones
 
 `host-zero-session-trim.ts` (fork-only module), the `host_trimmed` case in `session-event-writer.ts`, and `RpcHostTrimmedEvent` in `rpc-host-lifecycle-types.ts`.
+
+## 2026-10-12 - Declare budget refusal code and inline effect kind (senpi#3199)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: declare `RPC_ERROR_CONTEXT_BUDGET` in `RpcErrorCode`.
+- `effect-commands.ts`: use the shared budget constant.
+- `effect-ledger.ts`, `effect-record.ts`: store the command kind directly without a pass-through helper.
+
+### Why
+
+Budget refusals belong to the typed RPC error inventory; the command kind already is the record kind.
+
+### Why an extension could not handle it
+
+RPC owns its error types and receipt construction.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: error constants and union; effect command refusal and record construction.
 
 ## 2026-10-12 - Settle model effects on replacement and unexpected errors (senpi#3199)
 

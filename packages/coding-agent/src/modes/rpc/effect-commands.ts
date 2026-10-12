@@ -13,6 +13,7 @@ import {
 import { type EffectActor, type EffectCommandKind, EffectIdConflict, type EffectStatus } from "./effect-record.ts";
 import { lookupEffectInTranscript, TranscriptUnreadable } from "./effect-transcript-lookup.ts";
 import {
+	RPC_ERROR_CONTEXT_BUDGET,
 	RPC_ERROR_EFFECT_ID_CONFLICT,
 	RPC_ERROR_MODEL_NOT_FOUND,
 	RPC_ERROR_PROVIDER_UNAVAILABLE,
@@ -157,7 +158,7 @@ export async function runSetModel(ctx: EffectCommandContext, command: Command<"s
 			command.id,
 			"set_model",
 			cause.message,
-			budget ? "context_budget" : RPC_ERROR_PROVIDER_UNAVAILABLE,
+			budget ? RPC_ERROR_CONTEXT_BUDGET : RPC_ERROR_PROVIDER_UNAVAILABLE,
 			answer(failed, ctx.sessionId),
 		);
 	}
