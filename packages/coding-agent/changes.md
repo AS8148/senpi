@@ -1,3 +1,29 @@
+## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
+
+### What changed
+
+Remove the dedicated app-server QA command, direct ws and @types/ws dependencies, and the deleted generated-tree build exclusion. Keep Native RPC QA on qa-shared, with a protocol-neutral fake API key.
+
+- `packages/coding-agent/package.json`
+- `packages/coding-agent/scripts/qa-rpc-socket/ensure-host.mjs`
+- `packages/coding-agent/scripts/qa-rpc-socket/host-lifecycle.mjs`
+- `packages/coding-agent/scripts/qa-rpc-socket/load-1000.mjs`
+- `packages/coding-agent/scripts/qa-shared/lib/env.mjs`
+- `packages/coding-agent/tsconfig.build.json`
+- `packages/coding-agent/vitest.config.ts`
+
+### Why
+
+The executable Codex compatibility layer is being removed. Shared Native runtime behavior and historical records must remain independent of that layer.
+
+### Why an extension could not handle it
+
+These host contracts, import paths and build or verification targets belong to the repository; an extension cannot retire them.
+
+### Expected merge conflict zones
+
+The listed paths, especially command dispatch, mode unions and process identity imports. Keep the supported runtime branches and the shared utility behavior.
+
 ## 2026-10-12 - Native RPC QA owns neutral helper imports (Refs senpi#3167)
 
 ### What changed

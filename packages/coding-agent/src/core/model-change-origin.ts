@@ -14,7 +14,7 @@ export type ModelChangeSource =
 	| "control"
 	/** An RPC client's `set_model`, `cycle_model` or `set_fast_mode`. */
 	| "rpc"
-	/** An app-server thread setting. */
+	/** A historical thread setting from the retired app-server compatibility mode. */
 	| "app-server"
 	/** An extension's `setModel` / `setSessionModel`; `actor` is the extension path. */
 	| "extension"

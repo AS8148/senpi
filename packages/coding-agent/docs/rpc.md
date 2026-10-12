@@ -3899,7 +3899,7 @@ skills continue to use `skill_invocation`.
 
 ### loaded_surfaces_changed
 
-Emitted without a request id when the loaded skill, extension, or MCP inventory changes. The event carries no inventory payload; clients re-read `get_commands` for skills and `get_loaded_surfaces` for extensions/MCP, mirroring the app-server `skills/changed` invalidation model.
+Emitted without a request id when the loaded skill, extension, or MCP inventory changes. The event carries no inventory payload; clients re-read `get_commands` for skills and `get_loaded_surfaces` for extensions/MCP.
 
 ```json
 {"type": "loaded_surfaces_changed"}
