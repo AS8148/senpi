@@ -17,7 +17,12 @@
 
 export const OBSERVE_REQUEST_FIELD = "observe";
 
-const OBSERVING_COMMANDS: ReadonlySet<unknown> = new Set(["get_protocol_info", "list_sessions"]);
+const OBSERVING_COMMANDS: ReadonlySet<unknown> = new Set([
+	"get_protocol_info",
+	"list_sessions",
+	"subscribe_sessions",
+	"unsubscribe_sessions",
+]);
 
 export function isObservingRequest(line: string): boolean {
 	let request: unknown;

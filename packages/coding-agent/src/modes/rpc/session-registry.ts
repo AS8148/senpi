@@ -8,6 +8,7 @@ import { SESSION_PATH_RETRY_AFTER_MS } from "./host-reservations.ts";
 import { createRegistryWarm, type HostWarm } from "./host-warm.ts";
 import { assertRequestedModelResolved } from "./open-session-model.ts";
 import { refreshesSessionActivity } from "./session-command-activity.ts";
+import { publishedSessionContext } from "./session-context-patch.ts";
 import { canonicalSessionPath } from "./session-path-key.ts";
 import { attachToOpenSession } from "./session-registry-attach.ts";
 import { settleClosingReservation, syncRuntimeMetadata } from "./session-registry-claims.ts";
@@ -282,6 +283,7 @@ export class RpcSessionRegistry {
 
 	list(): RpcSessionRow[] {
 		this.syncRuntimeMetadata();
+		const now = this.now();
 		return [...this.entries].map(([sessionId, entry]) => ({
 			sessionId,
 			durableSessionId: entry.durableSessionId,
@@ -289,10 +291,11 @@ export class RpcSessionRegistry {
 			cwd: entry.cwd,
 			name: entry.runtime?.session.sessionManager.getSessionName(),
 			kind: entry.kind,
-			context: entry.context,
+			context: publishedSessionContext(entry.context, entry.contextOverlay),
 			// A closing entry has already released its last attachment; never publish that as negative.
 			attachments: Math.max(0, entry.attachments),
 			status: entry.state === "quarantined" ? "closing" : entry.state,
+			idleMs: Math.max(0, now - entry.lastCommandAt),
 		}));
 	}
 

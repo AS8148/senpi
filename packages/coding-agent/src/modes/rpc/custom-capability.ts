@@ -56,6 +56,13 @@ export const SESSION_CONTEXT_CAPABILITY = "session_context";
 export const SESSION_KIND_CAPABILITY = "session_kind";
 
 /**
+ * Host capability: `subscribe_sessions` / `unsubscribe_sessions` (the `session_status` stream), a real
+ * `session_opened` per created session, `set_session_context`, and one `loaded_surfaces_changed` per
+ * connection per inventory digest.
+ */
+export const SESSION_STATUS_CAPABILITY = "session_status";
+
+/**
  * HOST capability: this host honors `open_session.auto_title`, so a session can opt
  * into or out of engine-side titling independently of `--auto-title-sessions`.
  */

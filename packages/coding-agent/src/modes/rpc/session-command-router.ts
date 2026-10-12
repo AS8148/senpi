@@ -29,6 +29,13 @@ import { dispatchSessionBinding, sessionHeldCheck } from "./session-held.ts";
 import type { OpenRpcSession, RpcSessionLaunchProfile, RpcSessionRegistry } from "./session-registry.ts";
 import { RpcSessionRegistryError } from "./session-registry.ts";
 import { releaseSession } from "./session-release.ts";
+import {
+	answerSetSessionContext,
+	answerSubscribeSessions,
+	answerUnsubscribeSessions,
+	notAttachedRefusal,
+} from "./session-status-commands.ts";
+import { registryStatusSource } from "./session-status-source.ts";
 import { selectSweepEvictions } from "./session-sweep.ts";
 import { liveToolMediaScope, toolMediaPersister } from "./tool-media-store.ts";
 
@@ -163,6 +170,7 @@ export class SessionCommandRouter {
 		this.onEmptyExit = idle?.onEmptyExit;
 		this.onHandoffParked = idle?.onHandoffParked;
 		this.canExitWhenEmpty = idle?.canExitWhenEmpty;
+		writer.status.setSource(registryStatusSource(registry));
 		if (Number.isFinite(this.idleEvictionMs) || Number.isFinite(this.emptyExitMs)) {
 			// Unref'd: occupancy hygiene must never be the reason the event loop stays open.
 			const tickMs = Math.max(20, Math.min(5_000, Math.min(this.idleEvictionMs, this.emptyExitMs) / 4));
@@ -359,8 +367,13 @@ export class SessionCommandRouter {
 			}
 			return { id: command.id, type: "response", command: "set_client_info", success: true } as RpcResponse;
 		}
+		if (command.type === "subscribe_sessions")
+			return answerSubscribeSessions(command, this.writer.currentConnection(), this.writer.status);
+		if (command.type === "unsubscribe_sessions")
+			return answerUnsubscribeSessions(command, this.writer.currentConnection(), this.writer.status);
 		if (!command.sessionId) return error(command.id, command.type, RPC_ERROR_MISSING_SESSION_ID);
 		const sessionId = command.sessionId;
+		if (command.type === "set_session_context") return this.setSessionContext(command);
 		try {
 			const entry = this.registry.getForCommand(sessionId, command.type);
 			await dispatchSessionBinding(
@@ -371,6 +384,19 @@ export class SessionCommandRouter {
 				(observedStarts) => this.registry.holderPids?.(observedStarts) ?? Promise.resolve([]),
 			);
 			return undefined;
+		} catch (cause) {
+			return error(command.id, command.type, this.code(cause), this.detail(cause));
+		}
+	}
+
+	/** Any attached connection may patch; a host with no per-connection identity (stdio) owns every session. */
+	private setSessionContext(command: Extract<RpcCommand, { type: "set_session_context" }>): RpcResponse {
+		const owner = this.writer.currentConnection();
+		if (owner !== undefined && this.sessionsByConnection.get(owner)?.has(command.sessionId) !== true)
+			return notAttachedRefusal(command);
+		try {
+			const entry = this.registry.getForCommand(command.sessionId, command.type);
+			return answerSetSessionContext(command, entry, this.writer.status);
 		} catch (cause) {
 			return error(command.id, command.type, this.code(cause), this.detail(cause));
 		}
@@ -714,6 +740,19 @@ export class SessionCommandRouter {
 						this.writer.forgetSession(openedSession.sessionId);
 					});
 			}
+			if (opened.attached) this.writer.status.publish(openedSession.sessionId, "attach", "client");
+			else {
+				this.writer.publishSessionOpened({
+					type: "session_opened",
+					sessionId: openedSession.sessionId,
+					durableSessionId: openedSession.durableSessionId,
+					...(openedSession.sessionPath !== undefined ? { sessionPath: openedSession.sessionPath } : {}),
+					kind: entry.kind,
+					cwd: entry.cwd,
+					context: entry.context,
+				});
+				this.writer.status.publish(openedSession.sessionId, "open", "client");
+			}
 			if (!this.draining && owner !== undefined && this.releasedConnections.has(owner)) {
 				this.releaseOwnerAttachment(owner, openedSession.sessionId);
 				await this.releaseOwnedSession(openedSession.sessionId);
@@ -841,6 +880,7 @@ export class SessionCommandRouter {
 		const claim = this.tryClaimClose(sessionId, { drainAttachments: false, detach: true });
 		if (!claim) return;
 		if (!claim.finalizer) {
+			this.writer.status.publish(sessionId, "detach", "client");
 			if (parks && live.runtime) {
 				live.lifecycleMutex = live.lifecycleMutex.then(() => live.runtime?.emitAttachmentEvent("session_parked"));
 				await live.lifecycleMutex;
@@ -920,6 +960,7 @@ export class SessionCommandRouter {
 					reply.complete(true, "client_close"),
 				);
 			} else {
+				this.writer.status.publish(command.sessionId, "detach", "client");
 				await this.finalizations.get(command.sessionId)?.promise;
 				reply.complete(false);
 			}

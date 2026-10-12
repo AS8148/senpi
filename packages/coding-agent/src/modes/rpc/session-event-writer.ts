@@ -12,6 +12,9 @@ import type {
 } from "./rpc-types.ts";
 import { SessionEventFanout, type SessionEventWriterConnection } from "./session-event-fanout.ts";
 import { SessionOpenTurns } from "./session-open-turns.ts";
+import { type SessionStatusActor, causeOfRecord, terminalOfLifecycle } from "./session-status.ts";
+import { type SessionOpenedRecord, sessionOpenedLines } from "./session-status-opened.ts";
+import { SessionStatusStream } from "./session-status-stream.ts";
 import type { SocketEventSinkActor } from "./socket-event-fanout.ts";
 
 export type { SessionEventWriterConnection } from "./session-event-fanout.ts";
@@ -105,6 +108,19 @@ export class SessionEventWriter {
 	/** Sessions whose lifecycle records stay on their attached connections (`kind: "worker"`). */
 	private readonly workerSessions = new Set<string>();
 	private readonly openTurns = new SessionOpenTurns();
+	/** Host-level `subscribe_sessions` subscriptions; publishes ride each subscriber's own FIFO actor. */
+	readonly status = new SessionStatusStream({
+		enqueue: (connectionId, line) => {
+			const actor = this.fanout.get(connectionId)?.actor;
+			if (actor === undefined) return false;
+			actor.enqueue(line);
+			this.requestFlush();
+			return true;
+		},
+		pendingQuestions: (sessionId) => this.fanout.pendingQuestionCount(sessionId),
+	});
+	/** The loaded-surface digest each connection was last told about (F13: one notice per change, not per session). */
+	private readonly surfaceDigests = new Map<string, string>();
 	/** Per-session image persisters: bytes reach disk before the placeholder that names them is emitted. */
 	private readonly mediaPersisters = new Map<string, MediaPersister>();
 	private readonly writeRaw: RawWriter;
@@ -172,6 +188,8 @@ export class SessionEventWriter {
 
 	unregisterConnection(id: string): void {
 		this.fanout.unregisterConnection(id);
+		this.status.dropConnection(id);
+		this.surfaceDigests.delete(id);
 	}
 
 	attachConnectionToSession(id: string, sessionId: string): void {
@@ -256,7 +274,10 @@ export class SessionEventWriter {
 			return false;
 		}
 		this.openTurns.note(sessionId, record.type);
-		const targets = this.fanout.targets(sessionId, targetId, isTargeted, record.type);
+		const attached = this.fanout.targets(sessionId, targetId, isTargeted, record.type);
+		// Mirroring is an explicit per-subscription opt-in; it adds destinations, never an attachment.
+		const mirrors = isTargeted ? [] : this.status.mirrorTargets(sessionId, String(record.type));
+		const targets = mirrors.length === 0 ? attached : [...new Set([...attached, ...mirrors])];
 		// A record is only walked and re-serialized when a target asked for placeholders;
 		// otherwise this is byte-for-byte today's path, with serializeJsonLine called once.
 		const hasPlaceholderTarget = targets.some((target) =>
@@ -280,8 +301,58 @@ export class SessionEventWriter {
 				);
 			} else this.appendSessionRecord(sessionId, wants ? (redacted as RpcRecord) : tagged, target);
 		}
+		// After the causing record is on every destination's FIFO, never before (ordering contract).
+		const cause = isTargeted ? undefined : causeOfRecord(record);
+		if (cause !== undefined) this.status.publish(sessionId, cause, this.changeActor("agent"));
 		this.requestFlush();
 		return true;
+	}
+
+	/** Who caused a change: the client whose command is being dispatched, else `fallback`. */
+	private changeActor(fallback: SessionStatusActor): SessionStatusActor {
+		return this.connectionContext.getStore() === undefined ? fallback : "client";
+	}
+
+	/**
+	 * Publish `session_opened` for a session this host just created. Interactive sessions broadcast it (the
+	 * lifecycle whitelist); a worker's reaches only its attached connections and subscribers that asked for
+	 * workers (invariant I4). `context` travels only to subscribers that asked for it.
+	 */
+	publishSessionOpened(record: SessionOpenedRecord): void {
+		if (this.fanout.isEmpty()) {
+			const { context: _context, ...wire } = record;
+			this.appendSessionRecord(record.sessionId, { ...wire });
+			this.requestFlush();
+			return;
+		}
+		const lines = sessionOpenedLines(record);
+		const subscribers = this.status.matchingConnections(record.sessionId);
+		const recipients =
+			record.kind === "worker"
+				? new Set([...this.fanout.attachedConnections(record.sessionId), ...subscribers.keys()])
+				: new Set(this.fanout.connectionIds());
+		for (const id of recipients)
+			this.fanout.get(id)?.actor.enqueue(subscribers.get(id) === true ? lines.withContext : lines.plain);
+		this.requestFlush();
+	}
+
+	/**
+	 * One `loaded_surfaces_changed` per connection per inventory digest: a connection attached to several
+	 * sessions hears a host-wide surface change once, tagged with the first session that reported it.
+	 */
+	publishLoadedSurfacesChanged(sessionId: string, digest: string): void {
+		if (this.fanout.isEmpty()) {
+			this.enqueue(sessionId, { type: "loaded_surfaces_changed" });
+			return;
+		}
+		if (this.sealedSessions.has(sessionId)) return;
+		const line = serializeJsonLine({ type: "loaded_surfaces_changed", sessionId });
+		for (const id of this.fanout.attachedConnections(sessionId)) {
+			if (this.surfaceDigests.get(id) === digest) continue;
+			this.surfaceDigests.set(id, digest);
+			this.fanout.get(id)?.actor.enqueue(line);
+		}
+		this.requestFlush();
 	}
 
 	/**
@@ -442,6 +513,7 @@ export class SessionEventWriter {
 		else if (this.workerSessions.has(sessionId))
 			this.fanout.deliverToSession(sessionId, serializeJsonLine(lifecycle));
 		else this.fanout.broadcast(serializeJsonLine(lifecycle));
+		this.sealStatus(sessionId, lifecycle);
 		const taggedResponse = { ...response, sessionId };
 		const registered = targetId === undefined ? undefined : this.fanout.get(targetId);
 		if (registered) registered.actor.enqueue(serializeJsonLine(taggedResponse));
@@ -483,7 +555,15 @@ export class SessionEventWriter {
 		else if (this.workerSessions.has(sessionId))
 			this.fanout.deliverToSession(sessionId, serializeJsonLine(lifecycle));
 		else this.fanout.broadcast(serializeJsonLine(lifecycle));
+		this.sealStatus(sessionId, lifecycle);
 		this.requestFlush();
+	}
+
+	private sealStatus(sessionId: string, lifecycle: RpcSessionParkedEvent | RpcSessionClosedEvent): void {
+		const terminal = terminalOfLifecycle(lifecycle);
+		const cause = causeOfRecord(lifecycle);
+		if (terminal !== undefined && cause !== undefined)
+			this.status.seal(sessionId, terminal, cause, this.changeActor("host"));
 	}
 
 	/**
@@ -585,6 +665,7 @@ export class SessionEventWriter {
 		this.workerSessions.delete(sessionId);
 		this.fanout.forgetSession(sessionId);
 		this.mediaPersisters.delete(sessionId);
+		this.status.forget(sessionId);
 	}
 
 	/** Drain every retained lane and the current in-flight record. */
