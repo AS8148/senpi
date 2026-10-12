@@ -8,7 +8,7 @@ import type { RpcHostTrimmedEvent } from "../../src/modes/rpc/rpc-types.ts";
 
 const MEGABYTE = 1024 * 1024;
 
-function createTrimmer(options: { collect?: () => boolean } = {}) {
+function createTrimmer(options: { collect?: () => boolean; pauseMs?: number } = {}) {
 	let clock = 0;
 	let sessions = 0;
 	let footprintMb = 500;
@@ -23,6 +23,7 @@ function createTrimmer(options: { collect?: () => boolean } = {}) {
 			options.collect ??
 			(() => {
 				collections += 1;
+				clock += options.pauseMs ?? 0;
 				footprintMb = 120;
 				return true;
 			}),
@@ -60,6 +61,8 @@ describe("zero-session host trim", () => {
 				footprintAfterMb: 120,
 				measure: "phys_footprint",
 				collected: true,
+				sessions: 0,
+				pauseMs: 0,
 			},
 		]);
 		harness.tick();
@@ -126,6 +129,8 @@ describe("zero-session host trim", () => {
 				footprintAfterMb: 120,
 				measure: "phys_footprint",
 				collected: true,
+				sessions: 1,
+				pauseMs: 0,
 			},
 		]);
 	});
@@ -171,6 +176,26 @@ describe("zero-session host trim", () => {
 		expect(harness.collections()).toBe(2);
 	});
 
+	it("spaces busy-host trims by at least 100 times the last collection's pause", () => {
+		// Given: a busy 3 GB host whose collection blocks the loop for 1 s.
+		const harness = createTrimmer({ pauseMs: 1_000 });
+		harness.setSessions(3);
+		harness.allocate(3 * 1024);
+		harness.setSessions(2);
+		harness.tick();
+		expect(harness.records[0]).toMatchObject({ sessions: 2, pauseMs: 1_000 });
+		// When: the next drop comes after 60 s but before 100 s from the end of that collection.
+		harness.allocate(3 * 1024);
+		harness.advance(100_000 - 1);
+		harness.setSessions(1);
+		// Then: it waits for the pause-scaled interval.
+		expect(harness.collections()).toBe(1);
+		harness.advance(1);
+		harness.setSessions(3);
+		harness.setSessions(2);
+		expect(harness.collections()).toBe(2);
+	});
+
 	it("still reports, uncollected, where the runtime exposes no full collection", () => {
 		const harness = createTrimmer({ collect: () => false });
 		harness.setSessions(1);
@@ -183,6 +208,8 @@ describe("zero-session host trim", () => {
 				footprintAfterMb: 500,
 				measure: "phys_footprint",
 				collected: false,
+				sessions: 0,
+				pauseMs: 0,
 			},
 		]);
 	});

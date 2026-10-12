@@ -12,7 +12,11 @@
  * 40-60 GB while about 30 children came and went, almost all of it freed heap pages, because a host
  * whose other sessions keep allocating never goes idle long enough to return them (senpi#3218). So a
  * drop in the session count also trims, but only once the footprint is at least
- * {@link DECLINE_TRIM_FLOOR_BYTES}: a small host never pays the collection pause.
+ * {@link DECLINE_TRIM_FLOOR_BYTES}: a small host never pays the collection pause. With sessions still
+ * running, the pause blocks them, so each collection is timed and the next busy-host trim waits at
+ * least {@link DECLINE_TRIM_PAUSE_FACTOR} times that pause: collection never takes more than about 1%
+ * of a busy host's loop, however slow the machine (measured: 63 ms on a 0.5 GB live heap, 149 ms on
+ * 1.5 GB).
  */
 import { type ProcessFootprint, readOwnFootprint } from "../../core/process-footprint.ts";
 import type { RpcHostTrimmedEvent } from "./rpc-host-lifecycle-types.ts";
@@ -21,6 +25,8 @@ export const ZERO_SESSION_TRIM_TICK_MS = 1_000;
 export const ZERO_SESSION_TRIM_MIN_INTERVAL_MS = 60_000;
 /** Below this footprint a session-count drop with sessions still open does not collect. */
 export const DECLINE_TRIM_FLOOR_BYTES = 2 * 1024 * 1024 * 1024;
+/** A busy-host trim waits at least this many times the previous collection's pause. */
+export const DECLINE_TRIM_PAUSE_FACTOR = 100;
 
 const BYTES_PER_MEGABYTE = 1024 * 1024;
 
@@ -34,6 +40,13 @@ export interface ZeroSessionTrimmerOptions {
 	readonly collect?: () => boolean;
 }
 
+interface PendingTrim {
+	readonly beforeBytes: number;
+	readonly collected: boolean;
+	readonly sessions: number;
+	readonly pauseMs: number;
+}
+
 export class ZeroSessionTrimmer {
 	private readonly options: ZeroSessionTrimmerOptions;
 	private readonly now: () => number;
@@ -43,7 +56,8 @@ export class ZeroSessionTrimmer {
 	private declined = false;
 	private lastTrimAt: number | undefined;
 	/** A collection that ran on the previous tick; its record waits for the allocator to return the pages. */
-	private pending: { readonly beforeBytes: number; readonly collected: boolean } | undefined;
+	private pending: PendingTrim | undefined;
+	private lastPauseMs = 0;
 	private timer: ReturnType<typeof setInterval> | undefined;
 
 	constructor(options: ZeroSessionTrimmerOptions) {
@@ -79,29 +93,38 @@ export class ZeroSessionTrimmer {
 		this.lastSessionCount = sessions;
 		if (sessions > 0) {
 			this.heldSessions = true;
-			if (declined && this.intervalElapsed() && this.readFootprint().bytes >= DECLINE_TRIM_FLOOR_BYTES) {
-				this.trim();
+			if (declined && this.busyIntervalElapsed() && this.readFootprint().bytes >= DECLINE_TRIM_FLOOR_BYTES) {
+				this.trim(sessions);
 			}
 			return;
 		}
 		if (!this.heldSessions) return;
 		this.heldSessions = false;
-		if (!this.intervalElapsed()) return;
-		this.trim();
+		if (!this.intervalElapsed(ZERO_SESSION_TRIM_MIN_INTERVAL_MS)) return;
+		this.trim(0);
 	}
 
-	private intervalElapsed(): boolean {
-		return this.lastTrimAt === undefined || this.now() - this.lastTrimAt >= ZERO_SESSION_TRIM_MIN_INTERVAL_MS;
+	private intervalElapsed(minimumMs: number): boolean {
+		return this.lastTrimAt === undefined || this.now() - this.lastTrimAt >= minimumMs;
 	}
 
-	private trim(): void {
+	private busyIntervalElapsed(): boolean {
+		return this.intervalElapsed(
+			Math.max(ZERO_SESSION_TRIM_MIN_INTERVAL_MS, this.lastPauseMs * DECLINE_TRIM_PAUSE_FACTOR),
+		);
+	}
+
+	private trim(sessions: number): void {
 		const beforeBytes = this.readFootprint().bytes;
-		this.pending = { beforeBytes, collected: (this.options.collect ?? collectFully)() };
+		const startedAt = this.now();
+		const collected = (this.options.collect ?? collectFully)();
 		this.lastTrimAt = this.now();
+		this.lastPauseMs = this.lastTrimAt - startedAt;
+		this.pending = { beforeBytes, collected, sessions, pauseMs: this.lastPauseMs };
 	}
 
 	/** One tick after the collection: freed pages are decommitted lazily, so an immediate read shows none of it. */
-	private report(pending: { readonly beforeBytes: number; readonly collected: boolean }): void {
+	private report(pending: PendingTrim): void {
 		this.pending = undefined;
 		const after = this.readFootprint();
 		this.options.emit({
@@ -110,6 +133,8 @@ export class ZeroSessionTrimmer {
 			footprintAfterMb: Math.round(after.bytes / BYTES_PER_MEGABYTE),
 			measure: after.measure,
 			collected: pending.collected,
+			sessions: pending.sessions,
+			pauseMs: pending.pauseMs,
 		});
 	}
 
