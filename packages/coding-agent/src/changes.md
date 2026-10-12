@@ -18,6 +18,28 @@ These host contracts, import paths and build or verification targets belong to t
 
 The listed paths, especially command dispatch, mode unions and process identity imports. Keep the supported runtime branches and the shared utility behavior.
 
+## 2026-10-12 - Print-then-exit commands skip startup compile caching (senpi#3166)
+
+### What changed
+
+- `packages/coding-agent/src/compile-cache.ts`: `enableStartupCompileCache` checks command arguments before enabling or publishing the cache. Package and host routing reuse `cli/deferred-commands.ts`; schedule commands skip caching except `run --watch`. Root `--version`/`-v` uses the same parser-free check as `cli.ts`. Other candidate help/list/export flags lazily use the existing argument parser so prompt and option values do not disable session caching. Parse/import failures fall through to the previous cache enablement behavior, leaving errors to the CLI. Multi-session RPC hosts retain caching even with `--help`. Ordinary sessions still enable the cache before loading the parser.
+- `packages/coding-agent/src/cli.ts` and `packages/coding-agent/src/cli-main.ts` await the shared decision before continuing startup, including help's fast path and isolated child entries.
+- `packages/coding-agent/test/compile-cache-invocation.test.ts` observes the enable call and inherited environment without timing thresholds, including legacy provider IDs, deferred commands, schedule watchers and multi-session RPC hosts. `packages/coding-agent/test/compile-cache.test.ts` observes parser module resolution to protect the parser-free version path; its cache subprocess drivers await the decision. Node-bundle smoke tests are unchanged.
+
+### Why
+
+Bun 1.4.3 writes a cold compile cache at process exit more slowly than 1.4.2. Metadata-only invocations paid this shutdown cost despite never opening a session. Real sessions retain compile caching for later launches.
+
+An externally supplied `NODE_COMPILE_CACHE` remains untouched: the runtime may enable that cache before CLI startup, so skipping senpi's programmatic enablement does not disable the external cache.
+
+### Why an extension could not handle it
+
+Cache enablement happens in the CLI bootstrap before extension loading and before the help fast path.
+
+### Expected merge conflict zones
+
+- LOW: the shared startup compile-cache helper and its two entry-point calls. Preserve the pre-import ordering for sessions and await the command decision.
+
 ## 2026-10-11 - Export eval cell RPC contracts (senpi#3072)
 
 ### What changed

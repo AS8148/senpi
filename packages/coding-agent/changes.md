@@ -11,6 +11,7 @@ Remove the dedicated app-server QA command, direct ws and @types/ws dependencies
 - `packages/coding-agent/scripts/qa-shared/lib/env.mjs`
 - `packages/coding-agent/tsconfig.build.json`
 - `packages/coding-agent/vitest.config.ts`
+- `packages/coding-agent/test/compile-cache-invocation.test.ts`: retain session-cache coverage with JSON print mode instead of the retired command; preserve the legacy OpenAI provider argument cases.
 
 ### Why
 
@@ -44,6 +45,26 @@ The listed paths, especially command dispatch, mode unions and process identity 
 ### Expected merge conflict zones
 
 - `scripts/qa-app-server/lib` is removed by the following retirement PR. Preserve the neutral modules and their shared behavior tests.
+
+## 2026-10-12 - Document config/state separation (senpi#3178)
+
+### What changed
+
+- `packages/coding-agent/docs/settings.md` removes bookkeeping from settings tables and the config example, describes `state.json` migration and downgrade behavior, and adds git configuration guidance.
+- Settings and model-memory tests now inspect the separate state file; config-default assertions still inspect settings.
+- `packages/coding-agent/CHANGELOG.md` records the user-visible config stability change under Unreleased.
+
+### Why
+
+- Users need to know which files are portable configuration and which files to ignore.
+
+### Why an extension could not handle it
+
+- Documentation, regression fixtures and the release changelog belong to the package.
+
+### Expected merge conflict zones
+
+- Settings tables/examples, settings persistence assertions and the Unreleased Changed section.
 
 ## 2026-10-12 - Host CLI fixtures own their spawned processes (Refs senpi#3064)
 
