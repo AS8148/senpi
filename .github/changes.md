@@ -1,3 +1,21 @@
+## 2026-10-12 - The Windows zip install fails in its own step when Chocolatey is down (senpi#3088)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `Install archive tool` step of the `Compiled extensions (Windows)` job retries `choco install zip` up to four times with a short backoff and fails the step unless `zip` is on PATH afterwards, naming the likely cause.
+
+### Why
+
+- `.github/workflows/ci.yml`: when the Chocolatey community feed returns 503, `choco install` reports "installed 0/0 packages" and exits 0, so the job continued until `scripts/build-binaries.sh` failed with `zip: command not found` (exit 127) inside an unrelated test, sending reviewers to the PR's code.
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: CI tool installation is repository configuration.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: the `Install archive tool` step of the `compiled-extensions-windows` job.
+
 ## 2026-10-10 - Test-run temporary storage has an owner (senpi#3064)
 
 ### What changed
