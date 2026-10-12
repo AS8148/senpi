@@ -1,3 +1,21 @@
+## 2026-10-12 - Explicit thinking saves own the startup default (senpi#3178)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `/thinking` Ctrl+S and the `/settings` thinking callback explicitly save the clamped session level through `setDefaultThinkingLevel`; ordinary cycle keys use model memory only. Explicit saves of `off` on non-reasoning models preserve the configured startup default, matching the prior guard.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: moving bookkeeping out of config must preserve explicit default-save controls.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: these built-in selectors own the save action.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `applyThinkingLevel` and `onThinkingLevelChange`.
+
 ## 2026-10-12 - Short owned temp roots contain TUI socket fallbacks (Refs senpi#3064)
 
 ### What changed

@@ -1333,6 +1333,8 @@ export class AgentSession {
 	private readonly _shownHighReasoningWarningKeys = new Set<string>();
 	private readonly _shownThinkingClampWarningKeys = new Set<string>();
 	private readonly _startupThinkingClamp: ThinkingClampNotice | undefined;
+	/** Last manual preference for unremembered models, kept in the session rather than startup config. */
+	private _lastManualThinkingLevel: ThinkingLevel | undefined;
 	// Widened with the upstream BuildSystemPromptOptions user-override fields so
 	// extensions (prompt-preset) can see CLI/SDK custom prompts via
 	// before_agent_start/model_select systemPromptOptions and ctx.getSystemPromptOptions().
@@ -6954,7 +6956,7 @@ export class AgentSession {
 	/**
 	 * Set thinking level.
 	 * Clamps to model capabilities based on available thinking levels.
-	 * Persistent calls refresh per-model memory; session entries and events are emitted only on change.
+	 * Refreshes per-model memory, never the startup default; explicit save controls own that setting.
 	 */
 	setThinkingLevel(level: ThinkingLevel): void {
 		this._setThinkingLevel(level, true, { level, source: "explicit" });
@@ -6970,7 +6972,7 @@ export class AgentSession {
 
 	private _setThinkingLevel(
 		level: ThinkingLevel,
-		updateGlobalDefault: boolean,
+		rememberModelLevel: boolean,
 		selection: ThinkingSelection | undefined,
 		trigger?: ModelChangeOrigin,
 	): void {
@@ -6998,7 +7000,8 @@ export class AgentSession {
 		this.agent.state.thinkingLevel = effectiveLevel;
 		this.agent.state.thinkingSelection = effectiveSelection;
 
-		if (updateGlobalDefault) {
+		if (rememberModelLevel) {
+			if (this.supportsThinking() || effectiveLevel !== "off") this._lastManualThinkingLevel = effectiveLevel;
 			const model = this.model;
 			if (model) {
 				this.settingsManager.setModelThinkingLevel(model.provider, model.id, effectiveLevel);
@@ -7012,9 +7015,6 @@ export class AgentSession {
 				this.agent.state.reasoningBaseline ??= previousLevel;
 				this.sessionManager.appendConfigurationUpdate(effectiveLevel);
 				this.agent.state.messages = this.sessionManager.buildSessionContext().messages;
-			}
-			if (updateGlobalDefault && (this.supportsThinking() || effectiveLevel !== "off")) {
-				this.settingsManager.setDefaultThinkingLevel(effectiveLevel);
 			}
 			this._emit({ type: "thinking_level_changed", level: effectiveLevel });
 			void this._extensionRunner.emit({
@@ -7121,7 +7121,7 @@ export class AgentSession {
 		requestedLevel ??= model.defaultThinkingLevel;
 		let fromGlobalDefault = false;
 		if (requestedLevel === undefined) {
-			const configuredDefault = this.settingsManager.getDefaultThinkingLevel();
+			const configuredDefault = this._lastManualThinkingLevel ?? this.settingsManager.getDefaultThinkingLevel();
 			if (configuredDefault !== undefined) {
 				requestedLevel = configuredDefault;
 				selection = { level: configuredDefault, source: "explicit" };

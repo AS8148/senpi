@@ -10,6 +10,8 @@
 
 ### Changed
 
+- Tip history, changelog acknowledgments and per-model reasoning/fast-mode memories now live in `state.json` instead of the global settings file, keeping version-controlled config clean during normal use. `/reasoning`, `/efforts`, and thinking cycles remember the model's level without saving the startup default; `/thinking` Ctrl+S and `/settings` still explicitly save it. Existing global keys migrate silently without overwriting saved state; project settings are untouched, corrupt state no longer disables config, and no-value-change saves preserve config bytes. Restart older sessions during upgrades: their legacy bookkeeping writes can still trigger config reloads ([#3178](https://github.com/code-yeongyu/senpi/issues/3178), requested by @devxoul).
+
 ### Fixed
 
 - An agent that stops with open todo tasks is continued automatically again after it makes progress: the two automatic continuations are counted only while they close no task, where before a long unattended run got none on its next early stop once it had used two. When the agent really stalls, the notice now says why (two continuations in a row closed no task) and what to do (reply to resume it, or `/todo done` / `/todo drop`), instead of only "Send a message to continue". Waiting on a background child, monitor, eval cell, open question or goal still shows nothing ([oh-my-openagent#10026](https://github.com/code-yeongyu/oh-my-openagent/issues/10026), requested by @code-yeongyu).
