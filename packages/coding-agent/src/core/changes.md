@@ -2,13 +2,13 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/agent-session.ts`: persistent thinking selection remembers the per-model level only; startup default writes are owned by explicit UI save controls. Session-only and turn-scoped changes remain ephemeral.
+- `packages/coding-agent/src/core/agent-session.ts`: persistent thinking selection remembers the per-model level only; startup default writes are owned by explicit UI save controls. A session-local last manual level preserves first-switch inheritance without writing config; favorite overrides, target memory, and the model's own default keep precedence. Session-only and turn-scoped changes remain ephemeral.
 - `packages/coding-agent/src/core/settings-manager.ts`: config saves retain unmodified legacy state keys; failed state saves are debug-logged separately and do not prevent config saves. State parsing normalizes model aliases before nested deletion.
 - `packages/coding-agent/src/core/settings-state.ts`: corrupt/unreadable state is ignored and logged once, migration failures are memoized by source per process, and canonical model keys outrank legacy aliases.
 
 ### Why
 
-- `packages/coding-agent/src/core/agent-session.ts`: ordinary reasoning changes still dirtied settings.
+- `packages/coding-agent/src/core/agent-session.ts`: ordinary reasoning changes still dirtied settings. Removing that write also removed last-manual inheritance for unremembered models; the unchanged restore regression passes on `792eb9c38e` and `0e18075308` but fails on `fe3921bced`.
 - `packages/coding-agent/src/core/settings-manager.ts`: re-added keys were discarded without being copied to state, and state failures blocked configuration.
 - `packages/coding-agent/src/core/settings-state.ts`: disposable bookkeeping must not disable global configuration or resurrect deleted model memory.
 
