@@ -17,6 +17,29 @@ The trimmer is part of the multi-session host's self-observation loop and reads 
 
 `host-zero-session-trim.ts` (fork-only module), the `host_trimmed` case in `session-event-writer.ts`, and `RpcHostTrimmedEvent` in `rpc-host-lifecycle-types.ts`.
 
+## 2026-10-12 - Session status stream: subscribe_sessions, session_status, session_opened, set_session_context (senpi#3157, senpi#3155)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: adds the `subscribe_sessions`, `unsubscribe_sessions` and `set_session_context` command/response contracts, the `session_status` and `session_opened` record types, and the typed `invalid_subscription`, `unknown_subscription` and `invalid_session_context` error codes.
+- `packages/coding-agent/src/modes/rpc/session-status.ts`, `session-status-stream.ts`, `session-status-subscriptions.ts`, `session-status-source.ts`, `session-status-opened.ts`, `session-status-commands.ts`: the pure `deriveSessionStatus`, per-subscription `seq`, the `sessions`/`include_workers`/`include_context`/`mirror` matching, and an optional `lastEffect` provider hook for a later effect ledger.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: publishes `session_status` right after enqueueing the record that caused it, seals it on park/close, emits a real `session_opened`, delivers opted-in mirrored content, and sends one `loaded_surfaces_changed` per connection per inventory digest (F13).
+- `packages/coding-agent/src/modes/rpc/session-context-patch.ts`, `session-registry.ts`, `session-registry-types.ts`, `worker-session-registry.ts`, `session-command-router.ts`: `set_session_context` validation (key shape, value and total size, reserved host keys) and attach/detach/open/context status causes.
+- `packages/coding-agent/src/modes/rpc/host-observe-request.ts`: `subscribe_sessions` and `unsubscribe_sessions` are observing commands, so a subscriber never counts as an attachment or refreshes the idle window.
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts`, `host-capabilities.ts`, `connection-handler.ts`, `session-binding.ts`, `session-event-fanout.ts`: the `session_status` capability, and the per-connection surface-change publish path.
+
+### Why
+
+Supervisors (omo's monitor and thread tools, the desktop app) had no push for a session's appearance, attachment changes, run state or end without attaching to every session, and a connection attached to N sessions heard one surface change N times.
+
+### Why an extension could not handle it
+
+Subscriptions, fanout ordering, attachment accounting and the idle window belong to the host's RPC transport, which extensions cannot reach.
+
+### Expected merge conflict zones
+
+- Command/response and record unions in `rpc-types.ts`; the record-enqueue paths in `session-event-writer.ts`.
+
 ## 2026-10-11 - Model-invisible eval cell RPC commands (senpi#3072)
 
 ### What changed

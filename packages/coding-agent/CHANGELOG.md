@@ -19,6 +19,7 @@
 ### Added
 
 - RPC clients now see scheduled goal continuations, their due time, and their resumption through the `goal_continuation_scheduled`, `goal_continuation_timer_state`, and `goal_continuation_resumed` extension events. The `goal_continuation_fire_now` extension request runs an armed continuation immediately through its normal eligibility checks; a timer held while the user types stays held ([#3208](https://github.com/code-yeongyu/senpi/pull/3208)).
+- Multi-session RPC hosts stream session status: `subscribe_sessions` returns a snapshot, then a `session_status` record (status, attachments, model, queue counts, cause) per change with a gap-free per-subscription `seq`, without attaching or refreshing the idle window. Filters cover all sessions, ids or `childrenOf`; `include_workers`, `include_context` and an opt-in `mirror` of content kinds are available. `session_opened` is now emitted for every new session, `set_session_context` patches a session's published context, and a connection attached to several sessions hears one `loaded_surfaces_changed` per surface change ([#3157](https://github.com/code-yeongyu/senpi/issues/3157), [#3155](https://github.com/code-yeongyu/senpi/issues/3155)).
 
 ### Changed
 
