@@ -2024,7 +2024,8 @@ States: `accepted` (recorded, not yet applied), `applied` (dispatched), `done`, 
   `abortSource` and `abortedBy: { connectionId }` when a client's `abort` reached the
   turn), or `error`. A queued input dropped because the session was replaced
   (`new_session`, `switch_session`, `fork`) reads `failed` with
-  `outcome.kind: "dropped_by_replace"`.
+  `outcome.kind: "dropped_by_replace"`. A host stop or an unload is not a replacement:
+  a queued input keeps its `accepted` receipt and is restored when the session reopens.
 
 Replay: the same id with the same request answers the stored status with
 `replayed: true` and performs nothing. The same id with a different request is refused
