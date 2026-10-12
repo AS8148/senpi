@@ -14,6 +14,7 @@
 
 ### Fixed
 
+- A JavaScript `eval` cell is prepared on the shared RPC host without a Babel parse when its text has no import syntax (a string or data that only mentions `import` no longer parses), and the whole-AST walk runs only for a dynamic `import(`. A 1.4 MB data cell took 1.5-2.7 s of host-loop time and now takes under 1 ms ([#3205](https://github.com/code-yeongyu/senpi/issues/3205)).
 - Pip installs preserve successful results, typed install errors and cancellation when scratch cleanup fails. Cleanup retries before reporting exhausted retries as a warning ([#3103](https://github.com/code-yeongyu/senpi/pull/3103)).
 
 ### Removed

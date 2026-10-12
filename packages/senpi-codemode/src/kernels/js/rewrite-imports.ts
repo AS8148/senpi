@@ -151,8 +151,13 @@ function applyEdits(code: string, edits: readonly TextEdit[]): string {
 	return output;
 }
 
+// Cells are prepared on the shared host loop (#3205), so Babel runs only for text that can be import syntax: the
+// keyword followed by a binding, `{`, `*`, a specifier string or `(`. `import` inside data ("import-1") never parses.
+const IMPORT_SYNTAX = /\bimport\s*[\w$*{"'(]/;
+const DYNAMIC_IMPORT_SYNTAX = /\bimport\s*\(/;
+
 export function rewriteImports(code: string): string {
-	if (!code.includes("import")) return code;
+	if (!IMPORT_SYNTAX.test(code)) return code;
 	const ast = parseProgram(code);
 	if (!ast) return code;
 	const edits: TextEdit[] = [];
@@ -161,9 +166,11 @@ export function rewriteImports(code: string): string {
 		if (node.type !== "ImportDeclaration" || typeof node.start !== "number" || typeof node.end !== "number") continue;
 		edits.push({ start: node.start, end: node.end, text: rewriteImportDeclaration(node) });
 	}
-	walkNodes(ast.program, (node) => {
-		const edit = dynamicImportEdit(node);
-		if (edit) edits.push(edit);
-	});
+	if (DYNAMIC_IMPORT_SYNTAX.test(code)) {
+		walkNodes(ast.program, (node) => {
+			const edit = dynamicImportEdit(node);
+			if (edit) edits.push(edit);
+		});
+	}
 	return applyEdits(code, edits);
 }
