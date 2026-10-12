@@ -12,6 +12,8 @@
 
 ### Removed
 
+- The engine turn limit is removed: the engine no longer pauses itself after a count of automatic turns, and an always-on session keeps running without waiting for a user message. The `engineTurns.maxPerUserInput` and `engineTurns.maxToolFreePerMinute` settings are retired and ignored on load, and the `engine-turn-limit` entry, the `engine:turn-limit` bus event, the "Paused: the agent started ... turns on its own" notice, and the `cap-per-message`/`cap-per-minute` pause reasons are gone. Goal and stream-rule self-stops (`goal-stale`, `goal-repeat`, `repetition`) are unchanged ([#3168](https://github.com/code-yeongyu/senpi/issues/3168), requested by @code-yeongyu).
+
 ## [2026.10.12] - 2026-10-12
 
 ### Breaking Changes
@@ -57,8 +59,6 @@
 - Server-search failures are remembered for the actual failed request model across prompts and model switches. Cache-friendly compaction retains the original payload hook and exact main-turn tools/include prefix. Standalone summaries, titles and default projections exclude only server-search tools, preserve client `web_search`, and do not add empty tool arrays. Fallback preserves provider-built function schemas and Google's single function-declaration entry. Moonshot's opt-in echo tool cannot be discovered or lazily activated through tool_search, and its declaration is stripped from non-Moonshot requests ([#3122](https://github.com/code-yeongyu/senpi/issues/3122)).
 
 ### Removed
-
-- The engine turn limit is removed: the engine no longer pauses itself after a count of automatic turns, and an always-on session keeps running without waiting for a user message. The `engineTurns.maxPerUserInput` and `engineTurns.maxToolFreePerMinute` settings are retired and ignored on load, and the `engine-turn-limit` entry, the `engine:turn-limit` bus event, the "Paused: the agent started ... turns on its own" notice, and the `cap-per-message`/`cap-per-minute` pause reasons are gone. Goal and stream-rule self-stops (`goal-stale`, `goal-repeat`, `repetition`) are unchanged ([#3168](https://github.com/code-yeongyu/senpi/issues/3168), requested by @code-yeongyu).
 
 ## [2026.10.11] - 2026-10-11
 
