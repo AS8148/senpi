@@ -8,6 +8,7 @@ import {
 	type WarmPromptCacheUsage,
 } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
+import type { UserActivityKind } from "../../user-activity.ts";
 import { PROMPT_CACHE_PREWARM_ENTRY_TYPE, type PromptCachePrewarmEntryData } from "./prewarm-entry.ts";
 
 export const PROMPT_CACHE_PREWARM_TIMEOUT_MS = 30_000;
@@ -29,7 +30,8 @@ export interface SessionPrewarm {
 }
 
 /**
- * One prompt-cache prewarm per session start for OpenAI GPT-5.6+ models (senpi#2096).
+ * Arm at session start, then prewarm once on the first draft edit (senpi#3140).
+ * A submitted prompt consumes the opportunity: the real request warms its own prefix.
  * The request is the host's `getPromptCachePrefixRequest()` prefix, the first user turn's
  * request with an empty conversation, because the platform reuses a prefix only up to a
  * block boundary: a prewarmed system prompt that stops short of the turn's is never read.
@@ -42,6 +44,11 @@ export interface SessionPrewarm {
 export function createSessionPrewarm(pi: ExtensionAPI, dependencies: SessionPrewarmDependencies): SessionPrewarm {
 	const isPrewarmModel = dependencies.isPrewarmModel ?? isOpenAIResponsesPromptCacheModel;
 	let current: AbortController | undefined;
+	let context: ExtensionContext | undefined;
+	let used = false;
+	let submitted = false;
+	let parked = false;
+	let unsubscribeActivity: (() => void) | undefined;
 
 	function cancel(): void {
 		current?.abort();
@@ -58,6 +65,7 @@ export function createSessionPrewarm(pi: ExtensionAPI, dependencies: SessionPrew
 				return;
 			}
 			const { request } = prefix;
+			if (submitted || ctx.getPromptCacheKeepAliveSettings?.().enabled !== true) return;
 			const result = await dependencies.warm(request.model, request.context, {
 				...request.options,
 				signal,
@@ -78,14 +86,57 @@ export function createSessionPrewarm(pi: ExtensionAPI, dependencies: SessionPrew
 		pi.appendEntry(PROMPT_CACHE_PREWARM_ENTRY_TYPE, data);
 	}
 
+	function onActivity(kind: UserActivityKind): void {
+		if (kind === "prompt") {
+			submitted = true;
+			used = true;
+			return;
+		}
+		if (context === undefined || parked || used) return;
+		used = true;
+		const ctx = context;
+		const model = ctx.model;
+		if (
+			ctx.getPromptCacheKeepAliveSettings?.().enabled !== true ||
+			model === undefined ||
+			model.cacheRetention === "none" ||
+			!isPrewarmModel(model) ||
+			!ctx.isIdle() ||
+			ctx.hasPendingMessages()
+		)
+			return;
+		const controller = new AbortController();
+		current = controller;
+		void run(ctx, model, controller);
+	}
+	pi.on("model_select", (_event, ctx) => {
+		cancel();
+		context = ctx;
+	});
+	pi.on("session_parked", () => {
+		parked = true;
+		cancel();
+	});
+	pi.on("session_resumed", (_event, ctx) => {
+		parked = false;
+		context = ctx;
+	});
+	pi.on("session_shutdown", () => {
+		unsubscribeActivity?.();
+		unsubscribeActivity = undefined;
+		context = undefined;
+		cancel();
+	});
+
 	return {
 		start(ctx) {
 			cancel();
-			const model = ctx.model;
-			if (model === undefined || model.cacheRetention === "none" || !isPrewarmModel(model)) return;
-			const controller = new AbortController();
-			current = controller;
-			void run(ctx, model, controller);
+			unsubscribeActivity?.();
+			context = ctx;
+			used = false;
+			submitted = false;
+			parked = false;
+			unsubscribeActivity = ctx.onUserActivity?.(onActivity);
 		},
 		cancel,
 	};

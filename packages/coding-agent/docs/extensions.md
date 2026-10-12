@@ -709,7 +709,7 @@ The `systemPromptOptions` field gives extensions access to the same structured d
 
 Inside `before_agent_start`, `event.systemPrompt` and `ctx.getSystemPrompt()` both reflect the chained system prompt as of the current handler. Later `before_agent_start` handlers can still modify it again.
 
-`event.preview` is `true` when senpi composes the next turn's system prompt before any user prompt exists: the session-start prompt-cache prewarm sends the first turn's prefix ahead of time, and `ctx.getPromptCachePrefixRequest()` returns that prefix to extensions. In a preview `event.prompt` is empty and no turn follows.
+`event.preview` is `true` when senpi composes the next turn's system prompt before any user prompt exists. Prompt-cache prewarm sends that prefix only after the first real composer activity and only when `promptCache.keepAlive.enabled` is `true` (default `false`, so prewarm is off by default). Session start, resume, fork, reload, and extension-injected text never trigger prewarm. `ctx.getPromptCachePrefixRequest()` also returns this prefix to extensions. In a preview `event.prompt` is empty and no turn follows.
 
 A preview only reaches handlers that opt in with `{ previewSafe: true }`:
 
@@ -1260,6 +1260,12 @@ ctx.sessionManager.getLeafId()              // Current leaf entry ID
 Optional read-only getter for the absolute path to the current session's authoritative goal-store file. The host resolves it from the session manager and `ctx.cwd`; reading it performs no file creation. Persisted sessions honor session-directory overrides, while in-memory sessions use a cwd-hashed `extensions/goal/no-session/<hash>` bucket under the agent state directory. Do not derive it from `getSessionFile()`.
 
 Shell tools and eval kernels expose this value as `PI_GOAL_STORE_FILE` and `ctx.cwd` as `PI_SESSION_CWD`. Hand-built contexts and older hosts may omit the getter, in which case `PI_GOAL_STORE_FILE` is unset.
+
+### ctx.onUserActivity()
+
+Optional subscription-only hook for host-authenticated activity. `ctx.onUserActivity(listener)` calls a synchronous listener with `"draft"` for actual terminal composer edits or `"prompt"` for user-originated prompt, steer, or follow-up admission, including RPC. It returns an unsubscribe function and is also removed when the extension generation retires. The host owns the emitter; `pi.events.emit("user_activity", ...)` cannot invoke this hook. Extension `pasteToEditor`, programmatic draft restoration, and lifecycle events do not publish activity.
+
+Cache prewarm consumes the first activity per session generation. It is opt-in via `promptCache.keepAlive.enabled` (default `false`): a first draft edit may prewarm, while prompt admission uses the real request instead of issuing an extra warm call. This one-shot policy does not gate the existing idle keep-alive loop after completed turns.
 
 ### ctx.modelRegistry / ctx.model / ctx.thinkingLevel / ctx.scopedModels
 
