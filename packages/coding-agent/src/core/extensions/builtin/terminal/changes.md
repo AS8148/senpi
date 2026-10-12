@@ -3,7 +3,7 @@
 ### What changed
 
 - `packages/coding-agent/src/core/extensions/builtin/terminal/runtime-session.ts`: when the process exits, `TerminalRuntimeSession` flushes its `TerminalScreen`, keeps the final snapshot with an empty `scrollback`, then disposes the screen and drops the reference. `snapshot()` returns that final screen, `resizeScreen()` is a no-op, and output that arrives later still reaches the output buffer. `screenReleased()` resolves once the release has happened.
-- Tests (`packages/coding-agent/test/suite/regressions/3171-exited-terminal-releases-screen.test.ts`): six real PTY sessions that each print 4,000 lines retain under 3 MB each after exit (5.4 MB on main with flat replay history, about 20 MB without it), and each keeps `row 4000` as its last visible row.
+- Tests (`packages/coding-agent/test/suite/regressions/3171-exited-terminal-releases-screen.test.ts`): six real PTY sessions that each print 4,000 lines retain under 3 MB each after exit (12.5-16.8 MB each on main; 5.4 MB with #3170's flat replay history applied), and each keeps `row 4000` as its last visible row.
 
 ### Why
 

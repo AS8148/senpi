@@ -10,9 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 // xterm (10,000 lines of scrollback) and its replay history: about 20 MB for a 4,000-line output.
 // After exit only the last visible screen is ever read, so that is all an exited session may keep.
 // It runs under Bun because the long-lived hosts that grew run on Bun's JSC.
-const managerPath = fileURLToPath(
-	new URL("../../../src/core/extensions/builtin/terminal/manager.ts", import.meta.url),
-);
+const managerPath = fileURLToPath(new URL("../../../src/core/extensions/builtin/terminal/manager.ts", import.meta.url));
 
 const roots: string[] = [];
 afterEach(() => {
@@ -40,7 +38,7 @@ await new Promise((resolve) => warm.runtime.session.onExit(resolve));
 const before = await gc();
 const runtimes = [];
 for (let i = 0; i < 6; i++) {
-	const command = "i=0; while [ $i -lt 4000 ]; do i=$((i+1)); echo \\"row $i of terminal ${"${i}"} zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\\"; done";
+	const command = "i=0; while [ $i -lt 4000 ]; do i=$((i+1)); echo \\"row $i of terminal $i zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\\"; done";
 	const { runtime } = await manager.create(command, { command: "/bin/sh", args: ["-c", command], cwd: ${JSON.stringify(root)}, cols: 120, rows: 40 });
 	await new Promise((resolve) => runtime.session.onExit(resolve));
 	runtimes.push(runtime);

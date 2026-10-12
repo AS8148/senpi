@@ -20,7 +20,13 @@ export interface DeltaRead {
 	readonly droppedChars: number;
 }
 
-const RELEASED_SCREEN: TerminalScreenSnapshot = { cols: 0, rows: 0, visibleGrid: [], scrollback: [], cursor: { x: 0, y: 0 } };
+const RELEASED_SCREEN: TerminalScreenSnapshot = {
+	cols: 0,
+	rows: 0,
+	visibleGrid: [],
+	scrollback: [],
+	cursor: { x: 0, y: 0 },
+};
 
 /**
  * A live terminal session: a pi-pty {@link TerminalSession} plus an xterm screen model
@@ -68,7 +74,10 @@ export class TerminalRuntimeSession {
 		});
 		this.screenRelease = new Promise((resolve) => {
 			this.session.onExit(() => {
-				void this.releaseScreen().finally(resolve);
+				// Best-effort like every screen write (#837): a failed release leaves an empty final screen, never an unhandled rejection.
+				void this.releaseScreen()
+					.catch(() => {})
+					.finally(resolve);
 			});
 		});
 		this.session.start();
@@ -85,9 +94,12 @@ export class TerminalRuntimeSession {
 		if (!screen) return;
 		await screen.flush().catch(() => {});
 		if (this.screen !== screen) return;
-		this.finalScreen = { ...screen.snapshot(), scrollback: [] };
 		this.screen = null;
-		screen.dispose();
+		try {
+			this.finalScreen = { ...screen.snapshot(), scrollback: [] };
+		} finally {
+			screen.dispose();
+		}
 	}
 
 	get backend(): string | null {
