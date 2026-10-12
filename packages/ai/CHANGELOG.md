@@ -10,6 +10,8 @@
 
 ### Changed
 
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`openrouter`, `vercel-ai-gateway`).
+
 - xAI catalogs select the documented Responses `web_search` shape without enabling search by default; routes require explicit `compat.supportsWebSearchPreview: true`. Gemini/Vertex models now support typed `compat.supportsWebSearch` opt-in ([#3122](https://github.com/code-yeongyu/senpi/issues/3122)).
 
 ### Fixed
