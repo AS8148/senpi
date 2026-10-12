@@ -1,13 +1,14 @@
 import {
-	estimateContextTokens as estimatePromptTokens,
+	createAssistantMessageEventStream,
 	fauxAssistantMessage,
-	normalizeContext,
+	getCurrentSystemMessage,
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { estimateProjectedContextTokens } from "../../../src/core/compaction/index.ts";
 import type { ExtensionAPI } from "../../../src/core/extensions/index.ts";
-import { createHarness, type Harness } from "../harness.ts";
+import { createTestExtensionsResult, createTestResourceLoader } from "../../utilities.ts";
+import { createHarness, type Harness, type HarnessOptions } from "../harness.ts";
 
 const harnesses: Harness[] = [];
 
@@ -26,23 +27,15 @@ function answerWithUsage(input: number) {
 	return { ...answer, usage: { ...answer.usage, input, totalTokens: input } };
 }
 
-async function setup(contextWindow = 400_000, outcome: "accept" | "fail" | "reject" | "abort" = "accept") {
+async function setup(
+	contextWindow = 400_000,
+	outcome: "accept" | "fail" | "reject" | "abort" = "accept",
+	options: Pick<HarnessOptions, "systemPrompt" | "tools" | "initialActiveToolNames"> = {},
+) {
 	let boundary = "";
 	const attempts: string[] = [];
-	const harness = await createHarness({
-		models: [{ id: "preprompt-projection", contextWindow, maxTokens: 4_000 }],
-		settings: {
-			compaction: {
-				enabled: true,
-				speculativeEnabled: false,
-				idleCompactionEnabled: false,
-				keepRecentTokens: 2_000,
-				reserveTokens: 20_000,
-				reserveScalingEnabled: false,
-			},
-			retry: { enabled: false },
-		},
-		extensionFactories: [
+	const resourceLoader = createTestResourceLoader({
+		extensionsResult: await createTestExtensionsResult([
 			(pi: ExtensionAPI) => {
 				pi.on("session_before_compact", (event) => {
 					attempts.push(event.reason);
@@ -63,7 +56,24 @@ async function setup(contextWindow = 400_000, outcome: "accept" | "fail" | "reje
 					};
 				});
 			},
-		],
+		]),
+	});
+	resourceLoader.getSystemPrompt = () => options.systemPrompt;
+	const harness = await createHarness({
+		resourceLoader,
+		models: [{ id: "preprompt-projection", contextWindow, maxTokens: 4_000 }],
+		settings: {
+			compaction: {
+				enabled: true,
+				speculativeEnabled: false,
+				idleCompactionEnabled: false,
+				keepRecentTokens: 2_000,
+				reserveTokens: 20_000,
+				reserveScalingEnabled: false,
+			},
+			retry: { enabled: false },
+		},
+		...options,
 	});
 	harnesses.push(harness);
 	const oldId = harness.sessionManager.appendMessage({
@@ -86,6 +96,24 @@ async function setup(contextWindow = 400_000, outcome: "accept" | "fail" | "reje
 	return { harness, attempts, stale, oldId };
 }
 
+function reportUsageOnProviderTurns(harness: Harness, inputs: number[]): void {
+	const streamFunction = harness.agent.streamFunction;
+	harness.agent.streamFunction = async (...args) => {
+		const input = inputs.shift();
+		if (input === undefined) throw new Error("Unexpected provider turn");
+		const source = await streamFunction(...args);
+		const stream = createAssistantMessageEventStream();
+		void (async () => {
+			for await (const event of source) {
+				if (event.type === "done") event.message.usage = answerWithUsage(input).usage;
+				stream.push(event);
+			}
+			stream.end();
+		})().catch((error) => stream.fail(error));
+		return stream;
+	};
+}
+
 function addTail(harness: Harness, text = "extension note"): void {
 	harness.sessionManager.appendMessage({
 		role: "custom",
@@ -97,10 +125,29 @@ function addTail(harness: Harness, text = "extension note"): void {
 	harness.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
 }
 
-function prePromptTokens(harness: Harness): unknown {
-	const estimate = Reflect.get(harness.session, "_estimatePrePromptContextTokens");
-	if (typeof estimate !== "function") throw new Error("Missing pre-prompt estimator");
-	return estimate.call(harness.session);
+async function setupPrefix() {
+	const systemPrompt = "system ".repeat(140_000);
+	const { harness, attempts } = await setup(400_000, "accept", {
+		systemPrompt,
+		tools: [
+			{
+				name: "sample",
+				label: "Sample",
+				description: "tool ".repeat(120_000),
+				parameters: Type.Object({ input: Type.String() }),
+				execute: async () => ({ content: [{ type: "text", text: "result" }], details: {} }),
+			},
+		],
+		initialActiveToolNames: [],
+	});
+	harness.sessionManager.appendMessage({ role: "system", content: systemPrompt, timestamp: Date.now() });
+	harness.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+	await harness.session.compact();
+	expect(getCurrentSystemMessage(harness.sessionManager.buildSessionProjection().messages)?.content).toBe(
+		systemPrompt,
+	);
+	harness.setResponses([answerWithUsage(1_000)]);
+	return { harness, attempts };
 }
 
 describe("#3137: pre-prompt admission uses current projected context", () => {
@@ -147,22 +194,66 @@ describe("#3137: pre-prompt admission uses current projected context", () => {
 		expect(harness.faux.getCallLog()).toHaveLength(callsBefore);
 	});
 
-	it.each([1_000, 381_000])("uses fresh provider usage of %i after compaction", async (input) => {
+	it("uses fresh low provider usage after compaction", async () => {
 		const { harness, attempts } = await setup();
 		await harness.session.compact();
-		harness.sessionManager.appendMessage(answerWithUsage(input));
-		addTail(harness);
-		harness.setResponses([answerWithUsage(1_000)]);
+		harness.setResponses([answerWithUsage(1_000), answerWithUsage(1_000)]);
+		reportUsageOnProviderTurns(harness, [1_000, 1_000]);
 
-		if (input === 381_000) {
-			await expect(harness.session.prompt("continue")).rejects.toThrow(/compaction threshold/);
-			expect(harness.faux.getCallLog()).toHaveLength(0);
-			expect(attempts).toEqual(["manual", "pre_prompt"]);
-		} else {
-			await harness.session.prompt("continue");
-			expect(harness.faux.getCallLog()).toHaveLength(1);
-			expect(attempts).toEqual(["manual"]);
-		}
+		await harness.session.prompt("first response");
+		await harness.session.waitForSettledSessionWork();
+		await harness.session.prompt("continue");
+
+		expect(harness.faux.getCallLog()).toHaveLength(2);
+		expect(attempts).toEqual(["manual"]);
+	});
+
+	it("preserves the first real post-compaction response exemption before the next prompt", async () => {
+		const { harness, attempts } = await setup();
+		await harness.session.compact();
+		harness.setResponses([answerWithUsage(381_000), answerWithUsage(1_000)]);
+		reportUsageOnProviderTurns(harness, [381_000, 1_000]);
+		await harness.session.prompt("first response still reports old usage");
+		await harness.session.waitForSettledSessionWork();
+
+		await harness.session.prompt("continue");
+
+		expect(harness.faux.getCallLog()).toHaveLength(2);
+		expect(attempts).toEqual(["manual"]);
+	});
+
+	it("refuses fresh high usage from a later real provider response after the exemption is consumed", async () => {
+		const { harness, attempts } = await setup();
+		await harness.session.compact();
+		harness.setResponses([answerWithUsage(1_000), answerWithUsage(381_000)]);
+		reportUsageOnProviderTurns(harness, [1_000, 381_000]);
+		await harness.session.prompt("consume first-response exemption");
+		await harness.session.waitForSettledSessionWork();
+		await harness.session.prompt("report current over-limit usage");
+		await harness.session.waitForSettledSessionWork();
+
+		await expect(harness.session.prompt("continue")).rejects.toThrow(/compaction threshold/);
+
+		expect(harness.faux.getCallLog()).toHaveLength(2);
+		expect(attempts.filter((reason) => reason === "manual")).toHaveLength(1);
+	});
+
+	it("retries a provider timeout after accepted compaction without reusing kept usage", async () => {
+		const { harness, attempts } = await setup();
+		await harness.session.compact();
+		harness.settingsManager.applyOverrides({ retry: { enabled: true, maxRetries: 1, baseDelayMs: 0 } });
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "Request timed out." }),
+			answerWithUsage(1_000),
+		]);
+
+		await harness.session.prompt("continue");
+
+		expect(harness.eventsOfType("auto_retry_end").filter((event) => !event.success)).toEqual([]);
+		expect(harness.faux.getCallLog()).toHaveLength(2);
+		expect(harness.session.getLastAssistantText()).toBe("answer");
+		expect(harness.eventsOfType("auto_retry_end")).toContainEqual(expect.objectContaining({ success: true }));
+		expect(attempts).toEqual(["manual"]);
 	});
 
 	it("does not recompact usage invalidated by a context edit in the inline threshold check", async () => {
@@ -195,52 +286,39 @@ describe("#3137: pre-prompt admission uses current projected context", () => {
 		expect(harness.faux.getCallLog()).toHaveLength(0);
 	});
 
-	it("counts the current system prompt and tool schemas once until fresh usage arrives", async () => {
-		const { harness } = await setup();
-		await harness.session.compact();
-		harness.agent.state.systemPrompt = "system prefix ".repeat(1_000);
-		harness.agent.state.tools = [
-			{
-				name: "sample",
-				label: "Sample",
-				description: "tool description ".repeat(1_000),
-				parameters: Type.Object({ input: Type.String() }),
-				execute: async () => ({ content: [{ type: "text", text: "result" }], details: {} }),
-			},
-		];
-		const projected = estimateProjectedContextTokens(
-			harness.sessionManager.buildSessionProjection(),
-			harness.sessionManager.getBranch(),
-		).tokens;
-		const prefix = estimatePromptTokens(
-			normalizeContext({
-				systemPrompt: harness.agent.state.systemPrompt,
-				messages: [],
-				tools: harness.agent.state.tools,
-			}),
-		).tokens;
+	it("admits a system snapshot that fits once and ignores inactive tool schemas", async () => {
+		const { harness, attempts } = await setupPrefix();
+		expect(harness.session.getActiveToolNames()).toEqual([]);
+		expect(harness.session.getAllTools().map((tool) => tool.name)).toContain("sample");
 
-		expect(prePromptTokens(harness)).toBe(projected + prefix);
+		await harness.session.prompt("continue");
 
-		harness.sessionManager.appendMessage(answerWithUsage(20_000));
-		harness.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
-		expect(prePromptTokens(harness)).toBe(20_000);
+		expect(harness.faux.getCallLog()).toHaveLength(1);
+		expect(attempts).toEqual(["manual"]);
+	});
+
+	it("refuses when the system snapshot plus active tool schemas exceed the threshold", async () => {
+		const { harness } = await setupPrefix();
+		harness.session.setActiveToolsByName(["sample"]);
+
+		await expect(harness.session.prompt("continue")).rejects.toThrow(/compaction threshold/);
+
+		expect(harness.faux.getCallLog()).toHaveLength(0);
 	});
 
 	it("counts turn-local custom messages in final admission after a checkpoint", async () => {
 		const { harness } = await setup();
 		await harness.session.compact();
-		const enforce = Reflect.get(harness.session, "_enforceFinalProviderAdmission");
-		if (typeof enforce !== "function") throw new Error("Missing final provider admission");
-		const tail = {
-			role: "custom",
-			customType: "next-turn-note",
-			content: "large tail ".repeat(160_000),
-			display: false,
-			timestamp: Date.now(),
-		};
+		await harness.session.sendCustomMessage(
+			{
+				customType: "next-turn-note",
+				content: "large tail ".repeat(160_000),
+				display: false,
+			},
+			{ deliverAs: "nextTurn" },
+		);
 
-		await expect(enforce.call(harness.session, [tail])).rejects.toThrow(/compaction threshold/);
+		await expect(harness.session.prompt("continue")).rejects.toThrow(/compaction threshold/);
 
 		expect(harness.faux.getCallLog()).toHaveLength(0);
 	});

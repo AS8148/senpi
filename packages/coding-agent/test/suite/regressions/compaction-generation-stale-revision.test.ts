@@ -201,7 +201,7 @@ describe("Regression: stale compaction generation after a revision change", () =
 		const releaseAssistantEnd = createDeferred();
 		const payloadTimestamp = Date.now() - 10_000;
 		const harness = await createHarness({
-			models: [{ id: "faux-1", contextWindow: 1_000, maxTokens: 64 }],
+			models: [{ id: "faux-1", contextWindow: 10_000, maxTokens: 64 }],
 			settings: { compaction: { enabled: true, reserveTokens: 0, keepRecentTokens: 1 } },
 			extensionFactories: [
 				(pi: ExtensionAPI) => {
@@ -211,6 +211,14 @@ describe("Regression: stale compaction generation after a revision change", () =
 							!getMessageText(event.message).includes("delayed assistant payload")
 						)
 							return;
+						event.message.usage = {
+							...event.message.usage,
+							input: 12_000,
+							output: 0,
+							cacheRead: 0,
+							cacheWrite: 0,
+							totalTokens: 12_000,
+						};
 						assistantEndStarted.resolve();
 						await releaseAssistantEnd.promise;
 					});
@@ -238,11 +246,11 @@ describe("Regression: stale compaction generation after a revision change", () =
 				provider: model.provider,
 				model: model.id,
 				usage: {
-					input: 1_200,
+					input: 12_000,
 					output: 0,
 					cacheRead: 0,
 					cacheWrite: 0,
-					totalTokens: 1_200,
+					totalTokens: 12_000,
 					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 				},
 			},
@@ -294,7 +302,7 @@ describe("Regression: stale compaction generation after a revision change", () =
 		const payloadTimestamp = Date.now() - 10_000;
 		const harness = await createHarness({
 			persistSession: true,
-			models: [{ id: "faux-1", contextWindow: 1_000, maxTokens: 64 }],
+			models: [{ id: "faux-1", contextWindow: 10_000, maxTokens: 64 }],
 			settings: { compaction: { enabled: true, reserveTokens: 0, keepRecentTokens: 1 } },
 			extensionFactories: [
 				(pi: ExtensionAPI) => {
@@ -304,6 +312,14 @@ describe("Regression: stale compaction generation after a revision change", () =
 							!getMessageText(event.message).includes("delayed assistant payload")
 						)
 							return;
+						event.message.usage = {
+							...event.message.usage,
+							input: 12_000,
+							output: 0,
+							cacheRead: 0,
+							cacheWrite: 0,
+							totalTokens: 12_000,
+						};
 						assistantEndStarted.resolve();
 						await releaseAssistantEnd.promise;
 					});
@@ -331,11 +347,11 @@ describe("Regression: stale compaction generation after a revision change", () =
 				provider: model.provider,
 				model: model.id,
 				usage: {
-					input: 1_200,
+					input: 12_000,
 					output: 0,
 					cacheRead: 0,
 					cacheWrite: 0,
-					totalTokens: 1_200,
+					totalTokens: 12_000,
 					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 				},
 			},
@@ -394,7 +410,7 @@ describe("Regression: stale compaction generation after a revision change", () =
 			expect(delayedAssistantEntry.message.timestamp).toBe(payloadTimestamp);
 			expect(new Date(compactionEntry.timestamp).getTime()).toBeGreaterThan(payloadTimestamp);
 
-			// The reloaded context is still above threshold (usage 1200 > window 1000),
+			// The reloaded context is still above threshold (usage 12000 > window 10000),
 			// so the next admission must compact (cancelled here) or block entirely. It
 			// must not classify the assistant as pre-compaction via the timestamp
 			// fallback and wave the prompt through to the provider.

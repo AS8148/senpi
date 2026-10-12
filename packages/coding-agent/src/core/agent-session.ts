@@ -8150,7 +8150,9 @@ export class AgentSession {
 		const compacted = assistantMessage
 			? await this._checkCompaction(assistantMessage, skipAbortedCheck, inlineReason, retryAfterCompaction)
 			: false;
-		if (compacted) return true;
+		if (compacted || (assistantMessage && this._postCompactionUsageExemptAssistants.has(assistantMessage))) {
+			return compacted;
+		}
 		const contextTokens = this._estimatePrePromptContextTokens();
 
 		// Under a virtual selection, the physical model of the latest response supplies the limits;
@@ -8448,7 +8450,7 @@ export class AgentSession {
 		// The first ordinary response can carry provider usage calculated before
 		// compaction. Consume that exemption only after proving this is not an
 		// overflow, then retain the decision for later admission re-sampling.
-		if (!inlineReason && this._consumePostCompactionUsageExemption(assistantMessage)) return false;
+		if (this._consumePostCompactionUsageExemption(assistantMessage)) return false;
 
 		// Case 2: Threshold - context is getting large
 		// For error messages or all-zero usage messages, estimate from the last valid response.
@@ -10577,9 +10579,7 @@ export class AgentSession {
 		// before the continuation so a rejected compaction never admits that model.
 		const model = this.model;
 		const compactionSettings = this._getCompactionSettings();
-		const contextTokens = estimateContextTokens(
-			filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages),
-		).tokens;
+		const contextTokens = this._estimatePrePromptContextTokens();
 		if (
 			compactionSettings.enabled &&
 			model &&

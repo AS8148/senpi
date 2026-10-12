@@ -913,7 +913,7 @@ describe("AgentSession compaction characterization", () => {
 
 	it("compacts a terminating tool result before the next separate user prompt", async () => {
 		// given
-		const contextWindow = 5_000;
+		const contextWindow = 8_000;
 		const reserveTokens = 1_000;
 		const threshold = contextWindow - reserveTokens;
 		const largeToolResult = "terminating tool output ".repeat(300);
@@ -931,21 +931,24 @@ describe("AgentSession compaction characterization", () => {
 		const seedTimestamp = Date.now() - 2_000;
 		harness.sessionManager.appendMessage({
 			role: "user",
-			content: [{ type: "text", text: "prior terminating context ".repeat(220) }],
+			content: [{ type: "text", text: "prior terminating context ".repeat(600) }],
 			timestamp: seedTimestamp,
 		});
 		harness.sessionManager.appendMessage(
 			createAssistant(harness, {
 				text: "prior response",
 				stopReason: "stop",
-				totalTokens: 700,
+				totalTokens: 6_000,
 				timestamp: seedTimestamp + 1_000,
 			}),
 		);
 		harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
-		const terminatingToolCall = Object.assign(createAssistant(harness, { stopReason: "toolUse", totalTokens: 700 }), {
-			content: [fauxToolCall("large_result", {})],
-		});
+		const terminatingToolCall = Object.assign(
+			createAssistant(harness, { stopReason: "toolUse", totalTokens: 6_000 }),
+			{
+				content: [fauxToolCall("large_result", {})],
+			},
+		);
 		harness.setResponses([
 			terminatingToolCall,
 			(context) => {
@@ -1592,7 +1595,7 @@ describe("AgentSession compaction characterization", () => {
 
 	it("compacts and resumes after a length stop below the desired output limit", async () => {
 		const harness = await createHarness({
-			models: [{ id: "faux-1", contextWindow: 1000, maxTokens: 100 }],
+			models: [{ id: "faux-1", contextWindow: 10_000, maxTokens: 100 }],
 			settings: { compaction: { keepRecentTokens: 1, reserveTokens: 0 } },
 			extensionFactories: [
 				(pi) => {
@@ -1613,7 +1616,7 @@ describe("AgentSession compaction characterization", () => {
 			fauxAssistantMessage("completed response"),
 		]);
 
-		await harness.session.prompt("x".repeat(5000));
+		await harness.session.prompt("x".repeat(25_000));
 
 		expect(harness.faux.state.callCount).toBe(2);
 		expect(harness.eventsOfType("compaction_end").at(-1)).toMatchObject({
@@ -2103,7 +2106,7 @@ describe("AgentSession compaction characterization", () => {
 			settings: {
 				compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 0 },
 			},
-			models: [{ id: "faux-1", contextWindow: 1, maxTokens: 100 }],
+			models: [{ id: "faux-1", contextWindow: 5_000, maxTokens: 100 }],
 			extensionFactories: [
 				(pi) => {
 					pi.on("session_before_compact", async (event) => ({
@@ -2120,7 +2123,7 @@ describe("AgentSession compaction characterization", () => {
 		harnesses.push(harness);
 		harness.setResponses([fauxAssistantMessage("completed answer")]);
 
-		await expect(harness.session.prompt("hello")).resolves.toBeUndefined();
+		await expect(harness.session.prompt("hello ".repeat(4_000))).resolves.toBeUndefined();
 
 		const compactionEnd = harness.eventsOfType("compaction_end").at(-1);
 		expect(compactionEnd).toMatchObject({
