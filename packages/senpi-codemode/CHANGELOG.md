@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- A JavaScript `eval` cell is prepared on the shared RPC host without a Babel parse when its text has no `import` keyword (data such as `import-1` or `import.meta` no longer parses; a comment or non-ASCII name after `import` still rewrites), and the whole-AST walk runs only when `import` can be followed by `(`. A 1.4 MB data cell took 1.5-2.7 s of host-loop time and now takes under 1 ms ([#3205](https://github.com/code-yeongyu/senpi/issues/3205)).
+
 ### Removed
 
 ## [2026.10.12] - 2026-10-12

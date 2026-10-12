@@ -1,5 +1,45 @@
 # goal Extension Changes
 
+## 2026-10-12 - The todo-owed stop notice names the cause and the resume action (oh-my-openagent#10026)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/todo-owed-backstop.ts`: the chain cap counts only consecutive continuations that closed nothing. `TodoOwedBackstop` remembers the open tasks at each nudge and restarts the chain when a later turn end finds one of them closed (adding tasks is not progress). Before, the chain reset only on direct user input, `session_start` or `session_tree`, so a long unattended run that once used both nudges got no automatic continuation on its next real early stop. The single notice shown at the cap (`reason: "capped"`) now comes from the exported `buildTodoOwedStopNotice(openTasks, now, continuations)`: the open tasks, the `Now:` anchor, the consecutive continuations that closed nothing, and the actions that resume it (a reply, `/todo done`, `/todo drop`). Suppression clauses and the hidden reminders are unchanged.
+- `packages/coding-agent/test/suite/goal-todo-owed-backstop.test.ts`: a progress run (each nudged turn closes a task) keeps getting fresh continuations and notifies only at the final stall; a wake source emitted on the real bus keeps the session silent; the capped notice is compared whole with `buildTodoOwedStopNotice`.
+
+### Why
+
+The owner's error rule: every notice shows its reason and the user's action. The old text gave neither the cause nor any option besides typing.
+
+### Why an extension could not handle it
+
+The backstop is itself a builtin extension, and the change is confined to its notice text.
+
+### Expected merge conflict zones
+
+- None upstream: `todo-owed-backstop.ts` is fork-only.
+
+## 2026-10-12 - RPC clients see a goal's continuation wait and can run it now (senpi#3196)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/rpc-wait-surface.ts` (new): `publishGoalContinuationEvent` sends every continuation event to `pi.events` and also through `pi.rpc.emit`, so RPC clients with the `extension_events` capability receive `goal_continuation_scheduled`, `goal_continuation_timer_state` and `goal_continuation_resumed` as `extension_event`s. A stale-context error from a retired runtime is dropped; any other error propagates. `registerGoalFireNowRequest` registers the `goal_continuation_fire_now` extension request.
+- `packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts`: the five continuation emits go through that publisher. The armed `goal_continuation_timer_state` payload now carries `dueAtMs`. `fireNow()` runs the armed continuation at once through the same `#continueIfEligible` path as the timer, keeping the armed drain-fire flag; it answers `{ fired: false, reason: "held" }` while a direct-input hold is active and `{ fired: false, reason: "not_armed" }` when nothing is armed.
+- `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: registers the fire-now request on the monitor continuation.
+
+### Why
+
+The OmO desktop showed a goal that was deliberately waiting on a monitor or child as idle: the scheduled continuation, its due time and its wake sources reached only in-process listeners and the TUI ticker (code-yeongyu/omo-desktop-app#2307). The desktop also needs a "Check now" that does not bypass eligibility.
+
+### Why an extension could not handle it
+
+The goal extension is the only owner of the continuation timer and its schedule data; another extension cannot observe the armed timer or fire it through the goal's admission checks.
+
+### Expected merge conflict zones
+
+- `monitor-continuation.ts` emit sites (`#schedule`, `#continueIfEligible`, `#cancelTimer`, the hold/disarm path) and the class fields near `#scheduledContinuationKind`.
+- `index.ts` where `MonitorAwareGoalContinuation` is constructed.
+
 ## 2026-10-09 - Cover live stale stops and explain them to the model (senpi#3053)
 
 ### What changed
