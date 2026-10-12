@@ -20,7 +20,7 @@ const MODULE_PATH = resolve(__dirname, "..", "src", "compile-cache.ts");
 // Loads the seam, then reports what a spawned child would inherit plus the effective cache dir.
 const driverSource = `import { getCompileCacheDir } from "node:module";
 const { enableStartupCompileCache } = await import(process.env.MODULE_URL);
-enableStartupCompileCache();
+await enableStartupCompileCache();
 // Compile something after the call: ESM static imports are hoisted, so only modules loaded
 // after enablement can populate the cache.
 await import(process.env.PAYLOAD_URL);
@@ -144,7 +144,7 @@ export async function load(url, context, next) {
 import { pathToFileURL } from "node:url";
 register(pathToFileURL(process.env.HOOKS_PATH));
 const { enableStartupCompileCache } = await import(process.env.MODULE_URL);
-enableStartupCompileCache();
+await enableStartupCompileCache();
 console.log("SURVIVED " + JSON.stringify(process.env.NODE_COMPILE_CACHE ?? null));
 `,
 			);

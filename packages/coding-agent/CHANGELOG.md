@@ -22,6 +22,8 @@
 
 ### Fixed
 
+- Help, version, model/tip listings, session export, and package/host/schedule commands no longer enable the startup compile cache, avoiding Bun 1.4.3's slower cold-cache write at exit. Interactive, RPC and prompt-processing sessions retain caching ([#3166](https://github.com/code-yeongyu/senpi/issues/3166)).
+
 - Prompts and timeout retries after accepted compaction no longer stop with "Context remains above the compaction threshold because compaction did not complete" because of pre-compaction usage, including when an extension message follows the checkpoint. Failed compaction preserves previous usage, and the existing first-response stale-usage exemption remains in place ([#3137](https://github.com/code-yeongyu/senpi/issues/3137)).
 
 - Internal control sockets keep their short-path fallback inside the configured temporary directory when it fits the Unix socket path limit ([#3103](https://github.com/code-yeongyu/senpi/pull/3103)).

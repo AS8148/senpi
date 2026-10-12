@@ -1,3 +1,23 @@
+## 2026-10-12 - Print-then-exit commands skip startup compile caching (senpi#3166)
+
+### What changed
+
+- `packages/coding-agent/src/compile-cache.ts`: `enableStartupCompileCache` checks command arguments before enabling or publishing the cache. Package, host and schedule commands skip it; candidate help/version/list/export flags use the existing argument parser so prompt and option values do not disable session caching. Ordinary sessions still enable the cache before loading the parser.
+- `packages/coding-agent/src/cli.ts` and `packages/coding-agent/src/cli-main.ts` await the shared decision before continuing startup, including help's fast path and isolated child entries.
+- `packages/coding-agent/test/compile-cache-invocation.test.ts` observes the enable call and inherited environment without timing thresholds; the existing cache subprocess drivers await the decision. Node-bundle smoke tests are unchanged.
+
+### Why
+
+Bun 1.4.3 writes a cold compile cache at process exit more slowly than 1.4.2. Metadata-only invocations paid this shutdown cost despite never opening a session. Real sessions retain compile caching for later launches.
+
+### Why an extension could not handle it
+
+Cache enablement happens in the CLI bootstrap before extension loading and before the help fast path.
+
+### Expected merge conflict zones
+
+- LOW: the shared startup compile-cache helper and its two entry-point calls. Preserve the pre-import ordering for sessions and await the command decision.
+
 ## 2026-10-11 - Export eval cell RPC contracts (senpi#3072)
 
 ### What changed
