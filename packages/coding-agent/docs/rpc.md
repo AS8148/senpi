@@ -2002,7 +2002,8 @@ execution truth: `get_state.isStreaming` says whether a turn runs now; the recei
 | --- | --- | --- |
 | `input` | `prompt`, `steer`, `follow_up` | `clientMessageId` (the effect id is the client message id) |
 | `abort` | `abort` | `effectId` |
-| `set_model` | `set_model`, `set_thinking_level` | `effectId` |
+| `set_model` | `set_model` | `effectId` |
+| `set_thinking_level` | `set_thinking_level` | `effectId` |
 
 An `effectId` is a client-minted string of 1-256 characters. Keep it unchanged when
 retrying: the transport `id` and the routing `sessionId` may change (a reopened session
@@ -2025,7 +2026,8 @@ States: `accepted` (recorded, not yet applied), `applied` (dispatched), `done`, 
   Overwriting the hold, selecting a fitting model directly, or cycling onto one fails
   the older receipt with `superseded`; a held target that still cannot fit after repair
   fails with `context_budget`. Same-id retries replay those failures rather than switching.
-  `set_thinking_level { effectId }` records the same kind.
+  `set_thinking_level { effectId }` records its own kind and stamps its id on
+  `thinking_level_change`, including when the level was already in force.
 - An input's `done` receipt carries `outcome.kind`: `completed`, `aborted` (with
   `abortSource` and `abortedBy: { connectionId }` when a client's `abort` reached the
   turn), or `error`. A queued input dropped because the session was replaced
@@ -2047,6 +2049,9 @@ input becomes `done` with `outcome.kind: "interrupted_by_reopen"`; an abort beco
 `reason: "interrupted_by_reopen"` and `action: "send set_model again with a new
 effectId"` unless its `model_change` entry is already in the transcript, in which case
 it is `done`. The model a session runs is read from its transcript, never from a receipt.
+An unfinished `set_thinking_level` similarly becomes `done` if its stamped
+`thinking_level_change` exists, otherwise `failed` with an action to send
+`set_thinking_level` again with a new effect id.
 
 An `abort` without `effectId` writes nothing and behaves as before.
 

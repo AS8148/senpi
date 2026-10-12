@@ -34,6 +34,12 @@ export const EFFECT_OUTCOMES = {
 		detail: "a newer model selection replaced this switch before it was applied",
 		action: "read the current model, then send set_model with a new effectId if you still want this model",
 	},
+	setThinkingInterruptedByReopen: {
+		kind: "interrupted_by_reopen",
+		reason: "interrupted_by_reopen",
+		detail: "the host restarted before the thinking level was applied",
+		action: "send set_thinking_level again with a new effectId",
+	},
 	dequeueInterruptedByReopen: {
 		kind: "interrupted_by_reopen",
 		reason: "interrupted_by_reopen",

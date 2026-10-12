@@ -34,12 +34,12 @@ export const effectOutcomeSchema = z.object({
 });
 export type EffectOutcome = z.infer<typeof effectOutcomeSchema>;
 
-export type EffectKind = "input" | "abort" | "unload" | "set_model" | "dequeue";
+export type EffectKind = "input" | "abort" | "unload" | "set_model" | "set_thinking_level" | "dequeue";
 export type EffectState = "accepted" | "applied" | "done" | "failed";
 
 export const rpcEffectRecordSchema = z.object({
 	effectId: z.string().min(1).max(256),
-	kind: z.enum(["abort", "unload", "set_model", "dequeue"]),
+	kind: z.enum(["abort", "unload", "set_model", "set_thinking_level", "dequeue"]),
 	state: z.enum(["accepted", "applied", "done", "failed"]),
 	disposition: z.string().optional(),
 	outcome: effectOutcomeSchema.optional(),
@@ -99,7 +99,7 @@ const SEMANTIC_FIELDS: Readonly<Record<EffectCommandKind, readonly string[]>> = 
 };
 
 export function effectKindOf(command: EffectCommandKind): Exclude<EffectKind, "input"> {
-	return command === "set_thinking_level" ? "set_model" : command;
+	return command;
 }
 
 export function effectFingerprint(command: EffectCommandKind, payload: object): string {

@@ -6980,16 +6980,16 @@ export class AgentSession {
 	 * Clamps to model capabilities based on available thinking levels.
 	 * Refreshes per-model memory, never the startup default; explicit save controls own that setting.
 	 */
-	setThinkingLevel(level: ThinkingLevel): void {
-		this._setThinkingLevel(level, true, { level, source: "explicit" });
+	setThinkingLevel(level: ThinkingLevel, origin?: ModelChangeOrigin): void {
+		this._setThinkingLevel(level, true, { level, source: "explicit" }, origin);
 	}
 
 	/**
 	 * Set the thinking level for this session without changing the global default.
 	 * The effective level is still persisted in this session's history.
 	 */
-	setSessionThinkingLevel(level: ThinkingLevel): void {
-		this._setThinkingLevel(level, false, { level, source: "explicit" });
+	setSessionThinkingLevel(level: ThinkingLevel, origin?: ModelChangeOrigin): void {
+		this._setThinkingLevel(level, false, { level, source: "explicit" }, origin);
 	}
 
 	private _setThinkingLevel(
@@ -7046,6 +7046,9 @@ export class AgentSession {
 			});
 			this._emitHighReasoningWarningIfNeeded();
 			this._emitThinkingClampWarningIfNeeded();
+		} else if (trigger?.effectId !== undefined) {
+			// A no-op RPC effect still needs proof it applied if the process dies before its receipt.
+			this.sessionManager.appendThinkingLevelChange(effectiveLevel, effectiveSelection, trigger);
 		}
 	}
 

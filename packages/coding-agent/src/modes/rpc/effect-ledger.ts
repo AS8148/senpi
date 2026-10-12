@@ -39,14 +39,16 @@ export class EffectLedger {
 		this.admissions = ClientAdmissions.forSession(session);
 		this.durableSessionId = session.sessionManager.getSessionId();
 		const switchedBy = new Set<string>();
+		const thinkingBy = new Set<string>();
 		for (const entry of session.sessionManager.getEntries()) {
 			if (entry.type === "model_change" && entry.effectId !== undefined) switchedBy.add(entry.effectId);
+			if (entry.type === "thinking_level_change" && entry.effectId !== undefined) thinkingBy.add(entry.effectId);
 			if (entry.type !== "custom" || entry.customType !== RPC_EFFECT_ENTRY) continue;
 			const parsed = rpcEffectRecordSchema.safeParse(entry.data);
 			if (parsed.success && parsed.data.durableSessionId === this.durableSessionId)
 				this.records.set(parsed.data.effectId, parsed.data);
 		}
-		this.sealOnReopen(switchedBy);
+		this.sealOnReopen(switchedBy, thinkingBy);
 		this.unsubscribe = session.subscribe((event) => {
 			if (this.durableSessionId !== session.sessionManager.getSessionId()) return;
 			if (event.type === "model_changed" && event.origin.effectId !== undefined) {
@@ -88,7 +90,7 @@ export class EffectLedger {
 	 * nonterminal effect it finds is stale by definition. Seal each one before the ledger is published,
 	 * so a same-id retry answers a terminal state and nothing stays pending forever.
 	 */
-	private sealOnReopen(switchedBy: ReadonlySet<string>): void {
+	private sealOnReopen(switchedBy: ReadonlySet<string>, thinkingBy: ReadonlySet<string>): void {
 		for (const record of [...this.records.values()]) {
 			if (isTerminalEffectState(record.state)) continue;
 			switch (record.kind) {
@@ -106,6 +108,14 @@ export class EffectLedger {
 					break;
 				case "unload":
 					this.transition(record.effectId, "done");
+					break;
+				case "set_thinking_level":
+					if (thinkingBy.has(record.effectId))
+						this.transition(record.effectId, "done", { disposition: "applied" });
+					else
+						this.transition(record.effectId, "failed", {
+							outcome: EFFECT_OUTCOMES.setThinkingInterruptedByReopen,
+						});
 					break;
 				case "dequeue":
 					this.transition(record.effectId, "failed", { outcome: EFFECT_OUTCOMES.dequeueInterruptedByReopen });

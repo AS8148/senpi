@@ -173,9 +173,9 @@ export async function runSetThinkingLevel(ctx: EffectCommandContext, command: Co
 					: ledger?.transition(effectId, "failed", { outcome: unsupportedThinkingLevelOutcome(message) });
 			return refuse(command.id, "set_thinking_level", message, undefined, failed && answer(failed, ctx.sessionId));
 		}
-		ctx.session.setSessionThinkingLevel(command.level);
+		ctx.session.setSessionThinkingLevel(command.level, { source: "rpc", effectId });
 	} else {
-		ctx.session.setThinkingLevel(command.level);
+		ctx.session.setThinkingLevel(command.level, { source: "rpc", effectId });
 	}
 	if (effectId === undefined || ledger === undefined) return respond(command.id, "set_thinking_level");
 	const done = ledger.transition(effectId, "done", { disposition: "applied" });

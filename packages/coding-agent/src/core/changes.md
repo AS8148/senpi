@@ -1,3 +1,22 @@
+## 2026-10-12 - Thinking-level effect identity in the transcript (senpi#3199)
+
+### What changed
+
+- `agent-session.ts`: both thinking setters accept optional origin metadata. An effect-id-bearing no-op writes proof of application without emitting another selection.
+- `session-manager.ts`: `thinking_level_change` carries the origin's optional `effectId`.
+
+### Why
+
+Reopening after application but before the terminal receipt must derive the applied thinking effect from its transcript, not report an interrupted model switch.
+
+### Why an extension could not handle it
+
+The core thinking setter writes the authoritative transcript entry before RPC records completion.
+
+### Expected merge conflict zones
+
+- Thinking setter signatures and `ThinkingLevelChangeEntry` / `appendThinkingLevelChange`.
+
 ## 2026-10-12 - Held model switch cancellation and typed auth refusal (senpi#3199)
 
 ### What changed

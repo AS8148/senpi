@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	contextBudgetOutcome,
 	EFFECT_OUTCOMES,
 	providerUnavailableOutcome,
 	turnErrorOutcome,
@@ -16,6 +17,9 @@ describe("effect outcome copy", () => {
 		["interrupted_by_reopen", EFFECT_OUTCOMES.inputInterruptedByReopen],
 		["dropped_by_replace", EFFECT_OUTCOMES.inputDroppedByReplace],
 		["interrupted_by_reopen", EFFECT_OUTCOMES.setModelInterruptedByReopen],
+		["interrupted_by_reopen", EFFECT_OUTCOMES.setThinkingInterruptedByReopen],
+		["superseded", EFFECT_OUTCOMES.setModelSuperseded],
+		["context_budget", contextBudgetOutcome("the target cannot hold the fixed prefix")],
 		["interrupted_by_reopen", EFFECT_OUTCOMES.dequeueInterruptedByReopen],
 		["unknown_model", unknownModelOutcome("faux", "missing")],
 		["provider_unavailable", providerUnavailableOutcome("no credentials for faux")],
@@ -33,6 +37,9 @@ describe("effect outcome copy", () => {
 	it("tells a caller to mint a new id wherever retrying under the old id would replay the failure", () => {
 		for (const outcome of [
 			EFFECT_OUTCOMES.setModelInterruptedByReopen,
+			EFFECT_OUTCOMES.setThinkingInterruptedByReopen,
+			EFFECT_OUTCOMES.setModelSuperseded,
+			contextBudgetOutcome("the target cannot hold the fixed prefix"),
 			EFFECT_OUTCOMES.dequeueInterruptedByReopen,
 			unknownModelOutcome("faux", "missing"),
 			providerUnavailableOutcome("no credentials"),

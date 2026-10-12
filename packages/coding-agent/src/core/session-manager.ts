@@ -193,6 +193,8 @@ export interface ThinkingLevelChangeEntry extends SessionEntryBase {
 	/** Set when a model switch re-applied this level: the switch's source (senpi#2870). */
 	triggerSource?: ModelChangeSource;
 	triggerActor?: string;
+	/** The RPC thinking-level effect that applied this value. */
+	effectId?: string;
 }
 
 export interface ConfigurationUpdateEntry extends SessionEntryBase {
@@ -1759,6 +1761,7 @@ export class SessionManager {
 			thinkingSelection,
 			...(trigger === undefined ? {} : { triggerSource: trigger.source }),
 			...(trigger?.actor === undefined ? {} : { triggerActor: trigger.actor }),
+			...(trigger?.effectId === undefined ? {} : { effectId: trigger.effectId }),
 		};
 		this._appendEntry(entry);
 		return entry.id;

@@ -164,7 +164,7 @@ describe("RPC effect ledger", () => {
 		const absent = (await rpc.send({ type: "get_effect_status", effectId: "never-sent" })) as Wire;
 
 		// Then
-		expect(known).toMatchObject({ data: { found: true, effect: { kind: "set_model", state: "done" } } });
+		expect(known).toMatchObject({ data: { found: true, effect: { kind: "set_thinking_level", state: "done" } } });
 		expect(absent).toMatchObject({ data: { found: false, searched: "complete" } });
 	});
 
