@@ -2710,3 +2710,24 @@ The assistant descriptor builder owns restored transcript rendering.
 ### Expected merge conflict zones
 
 The error descriptor branch and imports in `assistant-render-descriptors.ts`.
+
+## 2026-10-12 - Rainbow for reserved OmO keywords in the editor (senpi#3160)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/theme/theme.ts`
+- `packages/coding-agent/src/modes/interactive/grok/chrome.ts`
+
+`getEditorTheme()` and the Grok chrome editor theme set `keywordHighlight` from `getReservedKeywordHighlight()`, which builds the desktop composer's light/dark spectrum (fork-only `theme/reserved-keyword-rainbow.ts`) in the active colour mode and returns `undefined` under `NO_COLOR`.
+
+### Why
+
+Match the OmO desktop app's rainbow keyword cue in the TUI so `ulw`-style prompts read the same on both surfaces.
+
+### Why an extension could not handle it
+
+The editor theme is built by the interactive mode itself; extensions cannot inject an `EditorTheme` hook into the built-in editor.
+
+### Expected merge conflict zones
+
+- LOW: `getEditorTheme()` in `theme.ts` and the editor theme object in `GrokChrome`.
