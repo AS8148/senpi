@@ -102,6 +102,13 @@ import type {
 } from "./types.ts";
 import { RUNTIME_EXTENSION_PATH } from "./types.ts";
 
+export class ExtensionRpcRequestNotFoundError extends Error {
+	constructor(name: string) {
+		super(`Unknown extension RPC request: ${name}`);
+		this.name = "ExtensionRpcRequestNotFoundError";
+	}
+}
+
 // Extension shortcuts compete with canonical keybinding ids from keybindings.json.
 // Only editor-global shortcuts are reserved here. Picker-specific bindings are not.
 const RESERVED_KEYBINDINGS_FOR_EXTENSION_CONFLICTS = [
@@ -1184,7 +1191,7 @@ export class ExtensionRunner {
 			return handler === undefined ? [] : [handler];
 		});
 		if (matches.length === 0) {
-			throw new Error(`Unknown extension RPC request: ${normalizedName}`);
+			throw new ExtensionRpcRequestNotFoundError(normalizedName);
 		}
 		if (matches.length > 1) {
 			throw new Error(`Multiple extension RPC request handlers registered: ${normalizedName}`);
