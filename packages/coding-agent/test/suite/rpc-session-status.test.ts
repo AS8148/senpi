@@ -141,7 +141,9 @@ describe("session_status stream (T1 acceptance)", () => {
 				context: { parent_session_id: "parent-durable", task_id: "t1" },
 			}),
 		);
-		const opened = await watcher.waitFor((record) => record.type === "session_opened" && record.sessionId === child.sessionId);
+		const opened = await watcher.waitFor(
+			(record) => record.type === "session_opened" && record.sessionId === child.sessionId,
+		);
 		expect(opened.kind).toBe("worker");
 		await nextStatus(watcher, sub.subscriptionId, "open", String(child.sessionId));
 		expect(watcher.inbox.some((record) => record.sessionId === other.sessionId)).toBe(false);
@@ -160,9 +162,13 @@ describe("activity neutrality and mirror opt-in", () => {
 		const b = rig.client("B");
 		const s1 = String(dataOf(await a.request({ type: "open_session", cwd: rig.cwd })).sessionId);
 		const row = async () =>
-			(dataOf(await b.request({ type: "list_sessions" })).sessions as Array<{ sessionId: string; attachments: number; idleMs: number }>).find(
-				(listed) => listed.sessionId === s1,
-			);
+			(
+				dataOf(await b.request({ type: "list_sessions" })).sessions as Array<{
+					sessionId: string;
+					attachments: number;
+					idleMs: number;
+				}>
+			).find((listed) => listed.sessionId === s1);
 		const before = await row();
 		rig.clock.now += 5_000;
 		await subscribe(b, { mirror: "all" });
@@ -190,9 +196,57 @@ describe("activity neutrality and mirror opt-in", () => {
 		const s1 = String(dataOf(await a.request({ type: "open_session", cwd: rig.cwd })).sessionId);
 		const worker = String(dataOf(await a.request({ type: "open_session", cwd: rig.cwd, kind: "worker" })).sessionId);
 		rig.faux.setResponses([
-			{ role: "assistant", content: [{ type: "text", text: "interactive reply" }], api: rig.faux.api, provider: rig.model.provider, model: rig.model.id, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: "stop", timestamp: 0 },
-			{ role: "assistant", content: [{ type: "toolCall", id: "call-1", name: "ls", arguments: { path: "." } }], api: rig.faux.api, provider: rig.model.provider, model: rig.model.id, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: "toolUse", timestamp: 0 },
-			{ role: "assistant", content: [{ type: "text", text: "worker done" }], api: rig.faux.api, provider: rig.model.provider, model: rig.model.id, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: "stop", timestamp: 0 },
+			{
+				role: "assistant",
+				content: [{ type: "text", text: "interactive reply" }],
+				api: rig.faux.api,
+				provider: rig.model.provider,
+				model: rig.model.id,
+				usage: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				stopReason: "stop",
+				timestamp: 0,
+			},
+			{
+				role: "assistant",
+				content: [{ type: "toolCall", id: "call-1", name: "ls", arguments: { path: "." } }],
+				api: rig.faux.api,
+				provider: rig.model.provider,
+				model: rig.model.id,
+				usage: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				stopReason: "toolUse",
+				timestamp: 0,
+			},
+			{
+				role: "assistant",
+				content: [{ type: "text", text: "worker done" }],
+				api: rig.faux.api,
+				provider: rig.model.provider,
+				model: rig.model.id,
+				usage: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				stopReason: "stop",
+				timestamp: 0,
+			},
 		]);
 		const idle1 = a.waitFor((record) => record.type === "agent_idle" && record.sessionId === s1);
 		dataOf(await a.request({ type: "prompt", sessionId: s1, message: "hello" }));
@@ -203,12 +257,29 @@ describe("activity neutrality and mirror opt-in", () => {
 		await rig.writer.flush();
 
 		expect(mirror.inbox.some((record) => record.type === "message_update" && record.sessionId === s1)).toBe(true);
-		expect(mirror.inbox.some((record) => record.type === "tool_execution_start" && record.sessionId === worker)).toBe(true);
+		expect(mirror.inbox.some((record) => record.type === "tool_execution_start" && record.sessionId === worker)).toBe(
+			true,
+		);
 		expect(mirror.inbox.some((record) => record.type === "message_start")).toBe(false);
-		expect(statusOnly.inbox.some((record) => record.type === "message_update" || record.type === "tool_execution_start")).toBe(false);
-		expect(interactiveOnly.inbox.some((record) => record.type === "message_update" && record.sessionId === s1)).toBe(true);
-		expect(interactiveOnly.inbox.some((record) => record.sessionId === worker && record.type !== "agent_start" && record.type !== "agent_settled" && record.type !== "agent_idle")).toBe(false);
-		const listed = (dataOf(await mirror.request({ type: "list_sessions", include_workers: true })).sessions as Array<{ sessionId: string; attachments: number }>);
+		expect(
+			statusOnly.inbox.some((record) => record.type === "message_update" || record.type === "tool_execution_start"),
+		).toBe(false);
+		expect(interactiveOnly.inbox.some((record) => record.type === "message_update" && record.sessionId === s1)).toBe(
+			true,
+		);
+		expect(
+			interactiveOnly.inbox.some(
+				(record) =>
+					record.sessionId === worker &&
+					record.type !== "agent_start" &&
+					record.type !== "agent_settled" &&
+					record.type !== "agent_idle",
+			),
+		).toBe(false);
+		const listed = dataOf(await mirror.request({ type: "list_sessions", include_workers: true })).sessions as Array<{
+			sessionId: string;
+			attachments: number;
+		}>;
 		expect(listed.find((row) => row.sessionId === s1)?.attachments).toBe(1);
 		expect(statusRecords(mirror, sub.subscriptionId).length).toBeGreaterThan(0);
 	});
@@ -221,14 +292,26 @@ describe("set_session_context and error copy", () => {
 		const watcher = rig.client("watcher");
 		const s1 = String(dataOf(await a.request({ type: "open_session", cwd: rig.cwd, kind: "worker" })).sessionId);
 		const sub = await subscribe(watcher, { include_workers: true, include_context: true });
-		const patched = dataOf(await a.request({ type: "set_session_context", sessionId: s1, patch: { task_status: "running", run_epoch: 2 } }));
+		const patched = dataOf(
+			await a.request({
+				type: "set_session_context",
+				sessionId: s1,
+				patch: { task_status: "running", run_epoch: 2 },
+			}),
+		);
 		expect(patched.context).toMatchObject({ task_status: "running", run_epoch: 2 });
 		const status = await nextStatus(watcher, sub.subscriptionId, "context", s1);
 		expect(status.context).toMatchObject({ task_status: "running" });
 
-		const refused = await a.request({ type: "set_session_context", sessionId: s1, patch: { host_socket: "/elsewhere" } });
+		const refused = await a.request({
+			type: "set_session_context",
+			sessionId: s1,
+			patch: { host_socket: "/elsewhere" },
+		});
 		expect(refused).toMatchObject({ success: false, errorCode: "invalid_session_context" });
-		expect(String(refused.error)).toBe('invalid_session_context: key "host_socket" is set by the host and cannot be patched');
+		expect(String(refused.error)).toBe(
+			'invalid_session_context: key "host_socket" is set by the host and cannot be patched',
+		);
 		expect(refused.errorData).toEqual({
 			reason: 'key "host_socket" is set by the host and cannot be patched',
 			action: "drop that key from the patch; the host keeps it current",
@@ -247,7 +330,10 @@ describe("set_session_context and error copy", () => {
 			reason: "this connection holds no subscription with that id",
 			action: "send the subscriptionId your subscribe_sessions answer returned, on the same connection",
 		});
-		const rows = dataOf(await watcher.request({ type: "list_sessions", include_workers: true })).sessions as Array<{ sessionId: string; context: Record<string, unknown> }>;
+		const rows = dataOf(await watcher.request({ type: "list_sessions", include_workers: true })).sessions as Array<{
+			sessionId: string;
+			context: Record<string, unknown>;
+		}>;
 		expect(rows.find((row) => row.sessionId === s1)?.context).toMatchObject({ task_status: "running", run_epoch: 2 });
 	});
 });
@@ -259,9 +345,22 @@ describe("F13: loaded_surfaces_changed dedupe", () => {
 		const s1 = dataOf(await a.request({ type: "open_session", cwd: rig.cwd }));
 		const s2 = dataOf(await a.request({ type: "open_session", cwd: rig.cwd }));
 		const before = a.inbox.length;
-		const snapshot = { servers: [{ name: "probe", serverInfo: null, tools: [], resources: [], resourceTemplates: [], authStatus: "unsupported" }] };
+		const snapshot = {
+			servers: [
+				{
+					name: "probe",
+					serverInfo: null,
+					tools: [],
+					resources: [],
+					resourceTemplates: [],
+					authStatus: "unsupported",
+				},
+			],
+		};
 		for (const durable of [s1, s2].map((opened) => String((opened.state as { sessionId: string }).sessionId))) {
-			rig.extensionApis.get(durable)?.events.emit("senpi.rpc.mcp_inventory.changed", { sessionId: durable, snapshot });
+			rig.extensionApis
+				.get(durable)
+				?.events.emit("senpi.rpc.mcp_inventory.changed", { sessionId: durable, snapshot });
 		}
 		await rig.writer.flush();
 		const changes = a.inbox.slice(before).filter((record) => record.type === "loaded_surfaces_changed");

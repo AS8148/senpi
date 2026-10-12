@@ -11,7 +11,10 @@ export type SessionSelector =
 	| { readonly kind: "ids"; readonly ids: ReadonlySet<string> }
 	| { readonly kind: "childrenOf"; readonly parent: string };
 
-export type MirrorSelection = { readonly kind: "none" } | { readonly kind: "all" } | { readonly kind: "types"; readonly types: ReadonlySet<string> };
+export type MirrorSelection =
+	| { readonly kind: "none" }
+	| { readonly kind: "all" }
+	| { readonly kind: "types"; readonly types: ReadonlySet<string> };
 
 export interface SubscriptionOptions {
 	readonly selector: SessionSelector;
@@ -37,10 +40,13 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function parseSelector(value: unknown): { readonly selector: SessionSelector } | { readonly refusal: SubscriptionRefusal } {
+function parseSelector(
+	value: unknown,
+): { readonly selector: SessionSelector } | { readonly refusal: SubscriptionRefusal } {
 	if (value === undefined || value === "all") return { selector: { kind: "all" } };
-	const action = 'send sessions: "all", { ids: [<sessionId | durableSessionId | sessionPath>] } or { childrenOf: <durableSessionId> }';
-	if (!isRecord(value)) return refusal("sessions must be \"all\" or an object", action);
+	const action =
+		'send sessions: "all", { ids: [<sessionId | durableSessionId | sessionPath>] } or { childrenOf: <durableSessionId> }';
+	if (!isRecord(value)) return refusal('sessions must be "all" or an object', action);
 	if ("ids" in value && !("childrenOf" in value)) {
 		const ids = value.ids;
 		if (!Array.isArray(ids) || ids.length === 0 || ids.length > MAX_SELECTOR_IDS)
@@ -63,7 +69,10 @@ function parseMirror(value: unknown): { readonly mirror: MirrorSelection } | { r
 	if (value === "all") return { mirror: { kind: "all" } };
 	const action = 'send mirror: "none", "all" or an array of record types such as ["message_update"]';
 	if (!Array.isArray(value) || value.length === 0 || value.length > MAX_MIRROR_TYPES)
-		return refusal(`mirror must be "none", "all" or a non-empty array of at most ${MAX_MIRROR_TYPES} record types`, action);
+		return refusal(
+			`mirror must be "none", "all" or a non-empty array of at most ${MAX_MIRROR_TYPES} record types`,
+			action,
+		);
 	if (!value.every((type): type is string => typeof type === "string" && RECORD_TYPE_PATTERN.test(type)))
 		return refusal(`every mirror entry must be a record type matching ${RECORD_TYPE_PATTERN.source}`, action);
 	return { mirror: { kind: "types", types: new Set(value) } };

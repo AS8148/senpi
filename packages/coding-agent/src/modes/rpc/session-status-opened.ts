@@ -14,7 +14,10 @@ export interface SessionOpenedRecord {
 }
 
 /** The two wire forms: `plain` for every recipient, `withContext` for subscribers that asked for context. */
-export function sessionOpenedLines(record: SessionOpenedRecord): { readonly plain: string; readonly withContext: string } {
+export function sessionOpenedLines(record: SessionOpenedRecord): {
+	readonly plain: string;
+	readonly withContext: string;
+} {
 	const { context, ...plain } = record;
 	return {
 		plain: serializeJsonLine(plain),

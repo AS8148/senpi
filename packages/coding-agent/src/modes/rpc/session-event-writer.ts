@@ -12,7 +12,7 @@ import type {
 } from "./rpc-types.ts";
 import { SessionEventFanout, type SessionEventWriterConnection } from "./session-event-fanout.ts";
 import { SessionOpenTurns } from "./session-open-turns.ts";
-import { type SessionStatusActor, causeOfRecord, terminalOfLifecycle } from "./session-status.ts";
+import { causeOfRecord, type SessionStatusActor, terminalOfLifecycle } from "./session-status.ts";
 import { type SessionOpenedRecord, sessionOpenedLines } from "./session-status-opened.ts";
 import { SessionStatusStream } from "./session-status-stream.ts";
 import type { SocketEventSinkActor } from "./socket-event-fanout.ts";

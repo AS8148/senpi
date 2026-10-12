@@ -5,9 +5,9 @@ import type { HostMcpRegistry } from "../../core/extensions/builtin/mcp/host-reg
 import type { SessionContext, SessionKind } from "../../core/extensions/types.ts";
 import { EMPTY_SESSION_CONTEXT } from "../../core/extensions/types.ts";
 import type { SessionPathReservations } from "./host-reservations.ts";
+import type { PreparableRuntimeFactory } from "./host-warm.ts";
 import type { SessionContextOverlay } from "./session-context-patch.ts";
 import type { PublishedSessionContext } from "./session-status.ts";
-import type { PreparableRuntimeFactory } from "./host-warm.ts";
 import type { SessionWorkerClient } from "./session-worker-client.ts";
 
 /** The immutable flags selected when a routing session is opened. */

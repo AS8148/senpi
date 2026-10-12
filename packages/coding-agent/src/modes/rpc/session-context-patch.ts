@@ -12,7 +12,11 @@ import type { PublishedSessionContext } from "./session-status.ts";
 export type SessionContextValue = string | number | boolean;
 export type SessionContextOverlay = Readonly<Record<string, SessionContextValue | null>>;
 
-export const SESSION_CONTEXT_PATCH_LIMITS = { keyPattern: /^[a-z][a-z0-9_]{0,63}$/, valueChars: 256, overlayBytes: 4_096 } as const;
+export const SESSION_CONTEXT_PATCH_LIMITS = {
+	keyPattern: /^[a-z][a-z0-9_]{0,63}$/,
+	valueChars: 256,
+	overlayBytes: 4_096,
+} as const;
 
 /** Keys the host stamps on every session; a client may not rewrite where or behind whom a session runs. */
 export const RESERVED_SESSION_CONTEXT_KEYS: ReadonlySet<string> = new Set([
@@ -35,16 +39,24 @@ export function applyContextPatch(
 	overlay: SessionContextOverlay | undefined,
 	patch: unknown,
 ): { readonly overlay: SessionContextOverlay } | { readonly refusal: ContextPatchRefusal } {
-	const shape = 'send patch as an object of lowercase keys to string, number, boolean or null values, e.g. { "task_status": "running" }';
-	if (typeof patch !== "object" || patch === null || Array.isArray(patch)) return refuse("patch must be an object", shape);
+	const shape =
+		'send patch as an object of lowercase keys to string, number, boolean or null values, e.g. { "task_status": "running" }';
+	if (typeof patch !== "object" || patch === null || Array.isArray(patch))
+		return refuse("patch must be an object", shape);
 	const entries = Object.entries(patch);
 	if (entries.length === 0) return refuse("patch has no keys", shape);
 	const merged: Record<string, SessionContextValue | null> = { ...overlay };
 	for (const [key, value] of entries) {
 		if (!SESSION_CONTEXT_PATCH_LIMITS.keyPattern.test(key))
-			return refuse(`key "${key}" must match ${SESSION_CONTEXT_PATCH_LIMITS.keyPattern.source}`, "rename the key to lowercase letters, digits and underscores");
+			return refuse(
+				`key "${key}" must match ${SESSION_CONTEXT_PATCH_LIMITS.keyPattern.source}`,
+				"rename the key to lowercase letters, digits and underscores",
+			);
 		if (RESERVED_SESSION_CONTEXT_KEYS.has(key))
-			return refuse(`key "${key}" is set by the host and cannot be patched`, "drop that key from the patch; the host keeps it current");
+			return refuse(
+				`key "${key}" is set by the host and cannot be patched`,
+				"drop that key from the patch; the host keeps it current",
+			);
 		if (typeof value === "string" && value.length > SESSION_CONTEXT_PATCH_LIMITS.valueChars)
 			return refuse(
 				`value for "${key}" is ${value.length} characters, at most ${SESSION_CONTEXT_PATCH_LIMITS.valueChars} are accepted`,

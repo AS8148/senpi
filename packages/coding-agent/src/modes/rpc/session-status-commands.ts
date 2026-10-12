@@ -70,7 +70,11 @@ export function answerUnsubscribeSessions(
 	connectionId: string | undefined,
 	stream: SessionStatusStream,
 ): RpcResponse {
-	if (connectionId !== undefined && typeof command.subscriptionId === "string" && stream.unsubscribe(connectionId, command.subscriptionId))
+	if (
+		connectionId !== undefined &&
+		typeof command.subscriptionId === "string" &&
+		stream.unsubscribe(connectionId, command.subscriptionId)
+	)
 		return { id: command.id, type: "response", command: "unsubscribe_sessions", success: true };
 	return refusal(command.id, command.type, RPC_ERROR_UNKNOWN_SUBSCRIPTION, {
 		reason: "this connection holds no subscription with that id",

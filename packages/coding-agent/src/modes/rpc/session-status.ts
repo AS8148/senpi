@@ -10,7 +10,14 @@
 import type { SessionKind } from "../../core/extensions/types.ts";
 import type { RpcSessionState } from "./session-registry-types.ts";
 
-export type SessionStatusValue = "opening" | "idle" | "running" | "waiting_input" | "compacting" | "unloaded" | "closed";
+export type SessionStatusValue =
+	| "opening"
+	| "idle"
+	| "running"
+	| "waiting_input"
+	| "compacting"
+	| "unloaded"
+	| "closed";
 
 export type SessionStatusCause =
 	| "open"
@@ -191,7 +198,10 @@ export function terminalOfLifecycle(record: {
 }
 
 /** The status change a session record publishes, or undefined when the record changes no status. */
-export function causeOfRecord(record: { readonly type?: unknown; readonly method?: unknown }): SessionStatusCause | undefined {
+export function causeOfRecord(record: {
+	readonly type?: unknown;
+	readonly method?: unknown;
+}): SessionStatusCause | undefined {
 	switch (record.type) {
 		case "agent_start":
 			return "prompt";

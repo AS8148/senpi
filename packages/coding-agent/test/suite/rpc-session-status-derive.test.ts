@@ -59,7 +59,8 @@ describe("deriveSessionStatus", () => {
 
 	it("reports waiting_input from a pending question frame, even mid-turn", () => {
 		expect(
-			deriveSessionStatus(entry(), runtime({ isStreaming: true, isCompacting: true }), { pendingQuestions: 1 }).status,
+			deriveSessionStatus(entry(), runtime({ isStreaming: true, isCompacting: true }), { pendingQuestions: 1 })
+				.status,
 		).toBe("waiting_input");
 		expect(deriveSessionStatus(entry(), runtime({ pendingQuestions: 2 }), noQuestions).status).toBe("waiting_input");
 	});

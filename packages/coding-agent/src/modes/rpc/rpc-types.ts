@@ -21,9 +21,9 @@ import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts"
 import type { ContextUsage, SessionControlAdmission, SessionKind } from "../../core/extensions/types.ts";
 import type { SessionEntry, SessionMessageEntry, SessionTreeNode, UsageTotals } from "../../core/session-manager.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
-import type { SessionStatusRecord } from "./session-status.ts";
 import type { ClientMessageAdmission } from "./client-admission-record.ts";
 import type { RpcSlashCommand } from "./rpc-command-surface.ts";
+import type { SessionStatusRecord } from "./session-status.ts";
 
 export type { SessionContext, SessionKind } from "../../core/extensions/types.ts";
 export type { RpcCommandInvocationEvent } from "./rpc-command-invocation.ts";

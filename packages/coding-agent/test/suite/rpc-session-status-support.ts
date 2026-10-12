@@ -8,8 +8,8 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxProvider } from "@earendil-works/pi-ai/providers/faux";
-import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
 import { parseArgs } from "../../src/cli/args.ts";
+import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
 import { createCliRuntimeFactory } from "../../src/main.ts";
 import { createHostCore } from "../../src/modes/rpc/multi-session-host.ts";
 import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
@@ -64,12 +64,12 @@ export async function statusHost() {
 	);
 	const clock = { now: 1_000_000 };
 	const writer = new SessionEventWriter(() => {});
-	const core = createHostCore(
-		{ agentDir, createRuntime, cwd },
-		writer,
-		[],
-		{ now: () => clock.now, idleEvictionMs: 1e12, emptyExitMs: 1e12, closeGraceMs: 1_000 },
-	);
+	const core = createHostCore({ agentDir, createRuntime, cwd }, writer, [], {
+		now: () => clock.now,
+		idleEvictionMs: 1e12,
+		emptyExitMs: 1e12,
+		closeGraceMs: 1_000,
+	});
 	const listeners = new Set<(record: WireRecord) => void>();
 	const clients: RawClient[] = [];
 	let serial = 0;
@@ -99,7 +99,9 @@ export async function statusHost() {
 				};
 				const timer = setTimeout(() => {
 					listeners.delete(listener);
-					reject(new Error(`${name}: deadline waiting for ${String(predicate).replace(/\s+/g, " ").slice(0, 160)}`));
+					reject(
+						new Error(`${name}: deadline waiting for ${String(predicate).replace(/\s+/g, " ").slice(0, 160)}`),
+					);
 				}, ms);
 				listeners.add(listener);
 			});
