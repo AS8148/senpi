@@ -25,7 +25,7 @@ function usage(ctx: ExtensionCommandContext): void {
 function reloginCommandFor(provider: string): (name: string) => string {
 	return normalizeProviderId(provider) === "chatgpt-subscription"
 		? (name) => `/gpt-account login ${name}`
-		: () => `/login ${provider}`;
+		: (name) => `/login ${provider}, then /account ${provider} remove ${name}`;
 }
 
 function statusOf(account: CredentialAccountSummary, provider: string): string {

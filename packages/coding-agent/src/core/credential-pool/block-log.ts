@@ -67,13 +67,12 @@ const EXTRA_SECRET_PATTERNS: readonly RegExp[] = [
 function redactCredentialShapes(text: string): string {
 	let out = text;
 	for (const pattern of EXTRA_SECRET_PATTERNS) {
-		out = out.replace(pattern, (match, prefix?: string, suffix?: string) =>
-			typeof prefix === "string" && typeof suffix === "string" && match.startsWith(prefix)
-				? `${prefix}<redacted>${suffix}`
-				: typeof prefix === "string" && match.startsWith(prefix) && /cookie/i.test(prefix)
-					? `${prefix}<redacted>`
-					: "<redacted>",
-		);
+		out = out.replace(pattern, (match: string, ...groups: unknown[]) => {
+			const [prefix, suffix] = groups;
+			if (typeof prefix !== "string" || !match.startsWith(prefix)) return "<redacted>";
+			if (typeof suffix === "string") return `${prefix}<redacted>${suffix}`;
+			return /cookie/i.test(prefix) ? `${prefix}<redacted>` : "<redacted>";
+		});
 	}
 	return out;
 }

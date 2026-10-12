@@ -6,6 +6,7 @@ import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import type { PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AuthStorage } from "../../../src/core/auth-storage.ts";
+import { classifyCredentialFailure } from "../../../src/core/credential-pool/classify.ts";
 import {
 	CREDENTIAL_POOL_STATE_FILENAME,
 	CredentialSlotRepository,
@@ -222,5 +223,22 @@ describe("senpi#3216 credential-pool blocks stay proportional to the evidence", 
 		expect(lines).toHaveLength(1);
 		expect(lines[0]).toContain("cooldown=backoff");
 		expect(lines[0]).toContain("provider=faux");
+	});
+
+	test("the ChatGPT adapter's throttle wording is a rate limit of unknown scope, held to the hintless cap", () => {
+		// given - what the ChatGPT adapter reports for a rate_limit_exceeded 429 with a far reset.
+		const action = classifyCredentialFailure(
+			new Error(
+				"ChatGPT is rate limiting requests (rate_limit_exceeded). Try again in ~2048 min. (retry-after-ms: 122880000)",
+			),
+			{ nowMs: Date.now() },
+		);
+
+		// then
+		expect(action.kind).toBe("failover");
+		if (action.kind !== "failover" || action.block.reason !== "rate_limit")
+			throw new Error("expected a rate-limit block");
+		expect(action.block.scope).toBe("unknown");
+		expect(action.block.cooldownMs).toBeLessThanOrEqual(HOUR);
 	});
 });
