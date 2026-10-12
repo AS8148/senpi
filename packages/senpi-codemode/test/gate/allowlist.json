@@ -1,6 +1,13 @@
 {
 	"version": 1,
 	"nodes": {
+		"senpi#3205": {
+			"additions": [
+				"legacyContracts/test/js-rewrite-imports-host-cost.test.ts/rewriteImports host cost does not parse a cell whose only import text is inside data",
+				"legacyContracts/test/js-rewrite-imports-host-cost.test.ts/rewriteImports host cost still rewrites real static and dynamic imports"
+			],
+			"reason": "senpi#3205 adds contracts proving a cell whose only import text is data is prepared without a Babel parse, and that real static and dynamic imports are still rewritten. The frozen baseline and every existing contract remain unchanged."
+		},
 		"senpi#3064": {
 			"additions": [
 				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root pip scratch is owned and removed after success (#3064)",
