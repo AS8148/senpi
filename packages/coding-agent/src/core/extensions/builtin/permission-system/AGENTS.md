@@ -27,34 +27,7 @@ permission-system/
 
 ## EVAL CELLS (senpi#3210)
 
-- An `eval` call is decided like any tool without a parser of its own: one `eval` request with pattern `*`, evaluated against the active preset. Approving it approves running the cell's code with this process's rights. Plain Node/Bun side effects inside the cell (`fs`, `child_process`, `Bun.# builtin/permission-system
-
-Builtin extension #3. Full port of opencode's permission flow. Loads preset/rule policy from CLI (`--permission-preset`, `--permission tool=action`), settings (`permissionPreset`, `permission`), and per-session approvals. Defaults to the `full-access` preset, persists "always allow" decisions, blocks denied calls with a structured error, and supports parser-aware patterns (bash command prefixes, file path globs for read/write/edit/apply_patch). **JSONL storage shape is a contract — migration required to change it.**
-
-## FILES
-
-```
-permission-system/
-├── index.ts            # Extension entry — wires session_start / tool_call / session_shutdown + UI prompt
-├── internal-tools.ts   # Engine-owned bookkeeping tool classification
-├── service.ts          # Permission service core (ask/reply/list)
-├── evaluate.ts         # Rule evaluator with wildcard matching
-├── wildcard.ts         # Wildcard matcher
-├── types.ts            # Action ("ask"|"allow"|"deny"), preset names, Rule, Request, Reply
-├── settings.ts         # Loads presets/rules from global/project settings.json + approved JSONL
-├── cli.ts              # `--permission-preset` and `--permission tool=action` flag parsers
-├── config.ts           # preset rules / fromConfig / merge / disabled state transforms
-├── storage.ts          # JSONL persistence (CONTRACT — don't change line shape)
-├── arity.ts            # Bash command prefix parser
-├── parsers.ts          # Tool input parser registry (paths, globs, apply_patch bodies)
-├── prompt.ts           # TUI permission prompt
-├── non-interactive.ts  # No-UI fallback (print/json/rpc modes)
-├── events.ts           # permission_asked / permission_replied events
-├── external-dir.ts     # Detects writes outside repo root → forces ask
-└── changes.md          # Fork tracker (apply_patch path extraction 2026-04-13)
-```
-
-, network) do not reach the permission system.
+- An `eval` call is decided like any tool without a parser of its own: one `eval` request with pattern `*`, evaluated against the active preset. Approving it approves running the cell's code with this process's rights. Plain Node/Bun side effects inside the cell (`fs`, `child_process`, `Bun.*`, network) do not reach the permission system.
 - Calls a cell makes through `tool.*` (bash, write, edit, …) go through the dispatch authorizer (`dispatch-policy.ts`) and get their own decision, as if the model had called them directly.
 - An "always" answer on `eval` therefore allows arbitrary code for the rest of the session.
 - Invariant, pinned by `test/permission/eval-preset-floor.test.ts`: under every preset the `eval` call is at least as strict as the strictest of `bash`, `edit` and `write`. `decideAuto` never approves `eval`, and any reviewer or judge layered on `auto` must decline it (or review only the nested `tool.*` calls), never approve a cell wholesale.
