@@ -413,7 +413,7 @@ Migration: older configs that used `compat.reasoningEffortMap` should move that 
 
 ### Default Thinking Level
 
-`defaultThinkingLevel` names the level a session starts at on this model when you have not picked one for it yet. A level you chose for the model earlier (remembered per model) still wins; the model default wins over the global `defaultThinkingLevel` setting, which follows the last level you picked on any model. The value is clamped to the levels the model supports.
+`defaultThinkingLevel` names the level a session starts at on this model when you have not picked one for it yet. A level you chose for the model earlier (remembered per model) still wins; the model default wins over the global `defaultThinkingLevel` setting, which changes only when you save it explicitly (Ctrl+S in `/thinking`, or `/settings`). The value is clamped to the levels the model supports.
 
 ### Discovering Models From an Endpoint
 
