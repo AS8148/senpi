@@ -25,6 +25,7 @@ import { mkdir, readFile, rename, rm, writeFile } from "fs/promises";
 import { homedir } from "os";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
+import { isDeepStrictEqual } from "util";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
 import { findNearestParentConfigDir } from "../nearest-parent-config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
@@ -82,6 +83,13 @@ import {
 	type TodoFirstTurnPlan,
 	type TodoSettings,
 } from "./settings-shapes.ts";
+import {
+	logStateError,
+	migrateSettingsState,
+	parseStateSettings,
+	readSettingsState,
+	STATE_KEYS,
+} from "./settings-state.ts";
 import { MAX_SKILL_EXPANSIONS_PER_PROMPT } from "./skill-invocation.ts";
 import {
 	type BranchSummarySettings,
@@ -474,6 +482,10 @@ export interface SettingsManagerCreateOptions {
 
 export interface SettingsStorage {
 	withLock(scope: SettingsScope, fn: (current: string | undefined) => string | undefined): void;
+	/** Optional separate bookkeeping store. Backends without it retain legacy global persistence. */
+	withStateLock?(fn: (current: string | undefined) => string | undefined): void;
+	withStateLockAsync?(fn: (current: string | undefined) => string | undefined): Promise<void>;
+	tryWithStateLock?(fn: (current: string | undefined) => string | undefined): boolean;
 	/**
 	 * The same locked read-modify-write without blocking the caller's thread while another writer
 	 * holds the lock. Queued saves use it when present; `withLock` stays for synchronous callers.
@@ -598,6 +610,18 @@ export class FileSettingsStorage implements SettingsStorage {
 		underLock?: () => void,
 	): Promise<void> {
 		const path = scope === "global" ? this.globalSettingsPath : this.projectSettingsPath;
+		return this.withPathLockAsync(path, fn, underLock);
+	}
+
+	withStateLockAsync(fn: (current: string | undefined) => string | undefined): Promise<void> {
+		return this.withPathLockAsync(join(resolvePath(this.agentDir), "state.json"), fn);
+	}
+
+	private async withPathLockAsync(
+		path: string,
+		fn: (current: string | undefined) => string | undefined,
+		underLock?: () => void,
+	): Promise<void> {
 		const readCurrent = async (): Promise<string | undefined> => {
 			try {
 				return await readFile(path, "utf-8");
@@ -645,6 +669,28 @@ export class FileSettingsStorage implements SettingsStorage {
 
 	withLock(scope: SettingsScope, fn: (current: string | undefined) => string | undefined, waitForLock = true): void {
 		const path = scope === "global" ? this.globalSettingsPath : this.projectSettingsPath;
+		this.withPathLock(path, fn, waitForLock);
+	}
+
+	withStateLock(fn: (current: string | undefined) => string | undefined): void {
+		this.withPathLock(join(resolvePath(this.agentDir), "state.json"), fn);
+	}
+
+	tryWithStateLock(fn: (current: string | undefined) => string | undefined): boolean {
+		try {
+			this.withPathLock(join(resolvePath(this.agentDir), "state.json"), fn, false);
+			return true;
+		} catch (error) {
+			if (error instanceof SettingsLockBusy) return false;
+			throw error;
+		}
+	}
+
+	private withPathLock(
+		path: string,
+		fn: (current: string | undefined) => string | undefined,
+		waitForLock = true,
+	): void {
 		const dir = dirname(path);
 
 		// Read without the lock: writers publish atomically via temp+rename below, so
@@ -688,6 +734,12 @@ export class FileSettingsStorage implements SettingsStorage {
 export class InMemorySettingsStorage implements SettingsStorage {
 	private global: string | undefined;
 	private project: string | undefined;
+	private state: string | undefined;
+
+	withStateLock(fn: (current: string | undefined) => string | undefined): void {
+		const next = fn(this.state);
+		if (next !== undefined) this.state = next;
+	}
 
 	withLock(scope: SettingsScope, fn: (current: string | undefined) => string | undefined): void {
 		const current = scope === "global" ? this.global : this.project;
@@ -814,12 +866,14 @@ export class SettingsManager {
 			return undefined;
 		});
 
-		if (!content) {
-			return {};
-		}
-		const raw = parseSettingsJson(content);
+		const raw = content ? parseSettingsJson(content) : {};
 		// A project file belongs to the user's repository: its retired keys are ignored, never rewritten.
 		if (removeRetiredSettingsKeys(raw) && scope === "global") writeRawScopedSettings(storage, scope);
+		if (scope === "global" && storage.withStateLock) {
+			// TODO(PR #3213 follow-up: state-fallback-removal): remove config fallback after the first migration release.
+			if ([...STATE_KEYS].some((key) => Object.hasOwn(raw, key))) migrateSettingsState(storage);
+			Object.assign(raw, readSettingsState(storage));
+		}
 		return SettingsManager.migrateSettings(raw);
 	}
 
@@ -1219,9 +1273,11 @@ export class SettingsManager {
 		snapshotSettings: Settings,
 		modifiedFields: Set<keyof Settings>,
 		modifiedNestedFields: Map<keyof Settings, Set<string>>,
+		state = false,
 	): void | Promise<void> {
-		const merge = (current: string | undefined): string => {
-			const currentFileSettings = current ? SettingsManager.migrateSettings(parseSettingsJson(current)) : {};
+		const merge = (current: string | undefined): string | undefined => {
+			const raw = state ? parseStateSettings(this.storage, current) : current ? parseSettingsJson(current) : {};
+			const currentFileSettings = SettingsManager.migrateSettings(structuredClone(raw));
 			const mergedSettings: Settings = { ...currentFileSettings };
 			for (const field of modifiedFields) {
 				const value = snapshotSettings[field];
@@ -1231,17 +1287,31 @@ export class SettingsManager {
 					const inMemoryNested = value as Record<string, unknown>;
 					const mergedNested = { ...baseNested };
 					for (const nestedKey of nestedModified) {
-						mergedNested[nestedKey] = inMemoryNested[nestedKey];
+						if (inMemoryNested[nestedKey] === undefined) delete mergedNested[nestedKey];
+						else mergedNested[nestedKey] = inMemoryNested[nestedKey];
 					}
 					(mergedSettings as Record<string, unknown>)[field] = mergedNested;
+				} else if (value === undefined) {
+					delete mergedSettings[field];
 				} else {
 					(mergedSettings as Record<string, unknown>)[field] = value;
 				}
 			}
 
-			return JSON.stringify(mergedSettings, null, 2);
+			// Compare parsed values, not serialized formatting: no-op saves preserve JSONC and whitespace.
+			return isDeepStrictEqual(currentFileSettings, mergedSettings)
+				? undefined
+				: JSON.stringify(mergedSettings, null, 2);
 		};
 		const storage = this.storage;
+		if (state && storage.withStateLock) {
+			if (!storage.withStateLockAsync || !storage.tryWithStateLock) {
+				storage.withStateLock(merge);
+				return;
+			}
+			if (storage.tryWithStateLock(merge)) return;
+			return storage.withStateLockAsync(merge);
+		}
 		if (!storage.withLockAsync || !storage.tryWithLock) {
 			storage.withLock(scope, merge);
 			return;
@@ -1267,9 +1337,28 @@ export class SettingsManager {
 		const modifiedFields = new Set(this.modifiedFields);
 		const modifiedNestedFields = this.cloneModifiedNestedFields(this.modifiedNestedFields);
 
-		this.enqueueWrite("global", () =>
-			this.persistScopedSettings("global", snapshotGlobalSettings, modifiedFields, modifiedNestedFields),
-		);
+		this.enqueueWrite("global", async () => {
+			if (this.storage.withStateLock) {
+				const stateFields = new Set([...modifiedFields].filter((key) => STATE_KEYS.has(key)));
+				if (stateFields.size > 0) {
+					try {
+						await this.persistScopedSettings(
+							"global",
+							snapshotGlobalSettings,
+							stateFields,
+							modifiedNestedFields,
+							true,
+						);
+					} catch (error) {
+						logStateError(this.storage, error);
+					}
+				}
+				for (const key of STATE_KEYS) modifiedFields.delete(key);
+			}
+			if (modifiedFields.size > 0) {
+				await this.persistScopedSettings("global", snapshotGlobalSettings, modifiedFields, modifiedNestedFields);
+			}
+		});
 	}
 
 	private saveProjectSettings(settings: Settings): void {
