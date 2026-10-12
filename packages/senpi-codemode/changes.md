@@ -1,5 +1,24 @@
 # senpi-codemode fork changes
 
+## 2026-10-12 - Prepare an eval cell without a Babel parse unless it has import syntax (Fixes senpi#3205)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/js/rewrite-imports.ts`: `rewriteImports` parses only when the text has import syntax (the keyword followed by a binding, `{`, `*`, a specifier string or `(`), and walks the AST only when it has a dynamic `import(`.
+- `test/gate/allowlist.json`: register the two additive host-cost contracts in `test/js-rewrite-imports-host-cost.test.ts` without changing the frozen compatibility baseline.
+
+### Why
+
+- `packages/senpi-codemode/src/kernels/js/rewrite-imports.ts`: cells are prepared on the shared RPC host loop. A large cell whose text merely mentioned `import` cost up to 2.7 s of synchronous parse and walk there, stalling every session on the host.
+
+### Why an extension could not handle it
+
+- `packages/senpi-codemode/src/kernels/js/rewrite-imports.ts`: cell preparation is internal to the JS kernel.
+
+### Expected merge conflict zones
+
+- `packages/senpi-codemode/src/kernels/js/rewrite-imports.ts`: the head of `rewriteImports`.
+
 ## 2026-10-12 - Restore the installer module and approve cleanup contracts (Refs senpi#3064)
 
 ### What changed
