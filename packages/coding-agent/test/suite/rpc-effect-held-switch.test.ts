@@ -1,7 +1,10 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { SessionManager } from "../../src/core/session-manager.ts";
 import { runSetModel } from "../../src/modes/rpc/effect-commands.ts";
 import { EffectLedger } from "../../src/modes/rpc/effect-ledger.ts";
+import { lookupEffectInTranscript } from "../../src/modes/rpc/effect-transcript-lookup.ts";
+import { RpcSessionRegistry } from "../../src/modes/rpc/session-registry.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
 // The #1873 deferred-switch geometry: the transcript fits the current model but not the target.
@@ -10,8 +13,11 @@ describe("RPC held model effect settlement", () => {
 	afterEach(() => {
 		for (const harness of harnesses.splice(0)) harness.cleanup();
 	});
-	const setup = async (refuseAfterRepair = false) => {
+	const setup = async (refuseAfterRepair = false, sessionManager?: SessionManager) => {
 		const harness = await createHarness({
+			sessionManager,
+			persistSession: true,
+			autoTitleSessions: false,
 			models: [
 				{ id: "million", contextWindow: 1_000_000, maxTokens: 32_000 },
 				{ id: "372k", contextWindow: 372_000, maxTokens: 32_000 },
@@ -85,6 +91,77 @@ describe("RPC held model effect settlement", () => {
 		});
 	});
 
+	// senpi#3199: replacement must settle the outgoing receipt before disposing its writer.
+	it.each(["new_session", "switch_session", "fork"] as const)(
+		"fails a held effect in its outgoing transcript on %s",
+		async (path) => {
+			const base = await setup();
+			let current: Harness | undefined;
+			const registry = new RpcSessionRegistry({
+				agentDir: base.session.agentDir,
+				createRuntime: async (options) => {
+					const harness = await setup(false, options.sessionManager);
+					current = harness;
+					return {
+						session: harness.session,
+						extensionsResult: harness.session.resourceLoader.getExtensions(),
+						diagnostics: [],
+						services: {
+							cwd: options.cwd,
+							agentDir: options.agentDir,
+							authStorage: harness.authStorage,
+							modelRegistry: harness.modelRegistry,
+							modelRuntime: harness.session.modelRuntime,
+							settingsManager: harness.settingsManager,
+							resourceLoader: harness.session.resourceLoader,
+							diagnostics: [],
+						},
+					};
+				},
+			});
+			const opened = await registry.openSession({ cwd: base.tempDir });
+			try {
+				const harness = current;
+				const runtime = registry.peek(opened.sessionId)?.runtime;
+				if (!harness || !runtime || !opened.sessionPath) throw new Error("missing replacement fixture");
+				await switchTo(harness, "372k", "held");
+				const ledger = EffectLedger.forSession(harness.session);
+				expect(ledger.status("held")).toMatchObject({ state: "accepted" });
+				const user = harness.sessionManager
+					.getEntries()
+					.find((entry) => entry.type === "message" && entry.message.role === "user");
+				if (!user) throw new Error("missing fork entry");
+
+				if (path === "new_session") await runtime.newSession();
+				else if (path === "fork") await runtime.fork(user.id);
+				else {
+					const target = SessionManager.create(harness.tempDir);
+					await target.persistHeaderNow();
+					const targetPath = target.getSessionFile();
+					if (!targetPath) throw new Error("missing switch target");
+					await runtime.switchSession(targetPath);
+				}
+
+				const expected = {
+					state: "failed",
+					outcome: {
+						kind: "dropped_by_replace",
+						reason: "dropped_by_replace",
+						detail: expect.any(String),
+						action: expect.any(String),
+					},
+				};
+				expect(ledger.status("held")).toMatchObject(expected);
+				expect(await lookupEffectInTranscript(opened.sessionPath, "held")).toMatchObject({
+					found: true,
+					effect: expected,
+				});
+			} finally {
+				await registry.close(opened.sessionId);
+			}
+		},
+	);
+
 	it("fails a held effect when the repaired target refuses its budget", async () => {
 		const harness = await setup();
 		await switchTo(harness, "372k", "held");
@@ -125,6 +202,28 @@ describe("RPC held model effect settlement", () => {
 			throw error;
 		};
 		await expect(switchTo(harness, "900k", "unknown")).rejects.toBe(error);
+		expect(EffectLedger.forSession(harness.session).status("unknown")).toMatchObject({
+			state: "failed",
+			outcome: { kind: "error", reason: "error", detail: error.message, action: expect.any(String) },
+		});
+	});
+
+	it("fails a repaired held effect before rethrowing an unknown selection error", async () => {
+		const harness = await setup();
+		await switchTo(harness, "372k", "held");
+		const error = new TypeError("broken model selection");
+		const runner = harness.session.extensionRunner;
+		vi.spyOn(runner, "emitModelSelect").mockImplementation(async () => {
+			throw error;
+		});
+		harness.setResponses([fauxAssistantMessage("unused")]);
+
+		await expect(harness.session.prompt("continue")).rejects.toBe(error);
+
+		expect(EffectLedger.forSession(harness.session).status("held")).toMatchObject({
+			state: "failed",
+			outcome: { kind: "error", reason: "error", detail: error.message, action: expect.any(String) },
+		});
 	});
 
 	it("keeps the login remedy for an actual credential refusal", async () => {

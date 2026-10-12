@@ -538,13 +538,13 @@ export type AgentSessionEvent =
 			safetyMarginProfile: string;
 			direction: "forward" | "backward";
 	  }
-	/** A switch accepted but held until the next send can compact for it (#1873). */
 	| {
 			type: "model_change_cancelled";
 			origin: ModelChangeOrigin;
-			reason: "superseded" | "context-budget";
+			reason: "superseded" | "context-budget" | "error";
 			detail?: string;
 	  }
+	/** A switch accepted but held until the next send can compact for it (#1873). */
 	| {
 			type: "model_change_pending";
 			model: Model<any>;
@@ -6395,14 +6395,12 @@ export class AgentSession {
 				origin: heldSwitchOrigin(pending.origin),
 			});
 		} catch (error) {
-			if (error instanceof ModelUsabilityBudgetError) {
-				this._emit({
-					type: "model_change_cancelled",
-					origin: pending.origin,
-					reason: "context-budget",
-					detail: error.message,
-				});
-			}
+			this._emit({
+				type: "model_change_cancelled",
+				origin: pending.origin,
+				reason: error instanceof ModelUsabilityBudgetError ? "context-budget" : "error",
+				detail: error instanceof Error ? error.message : String(error),
+			});
 			throw error;
 		}
 		return true;

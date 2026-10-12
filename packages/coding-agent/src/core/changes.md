@@ -1,3 +1,21 @@
+## 2026-10-12 - Settle unexpected held-switch failures (senpi#3199)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: a held switch whose final application throws emits `model_change_cancelled` with `reason: "error"` and the original detail before rethrowing. The held-switch comment belongs to `model_change_pending`.
+
+### Why
+
+The RPC receipt must fail when application fails, including unexpected exceptions.
+
+### Why an extension could not handle it
+
+The core session owns final held-switch application and its error boundary.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: model-change event union and `_applyPendingModelSwitch` catch.
+
 ## 2026-10-12 - Thinking-level effect identity in the transcript (senpi#3199)
 
 ### What changed

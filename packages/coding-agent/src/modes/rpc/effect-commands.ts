@@ -5,6 +5,7 @@ import { ClientAdmissions } from "./client-admissions.ts";
 import { type EffectBegin, EffectLedger } from "./effect-ledger.ts";
 import {
 	contextBudgetOutcome,
+	modelSwitchErrorOutcome,
 	providerUnavailableOutcome,
 	unknownModelOutcome,
 	unsupportedThinkingLevelOutcome,
@@ -142,7 +143,12 @@ export async function runSetModel(ctx: EffectCommandContext, command: Command<"s
 	try {
 		systemPromptName = (await ctx.session.setModel(model, { source: "rpc", effectId }))?.systemPromptName;
 	} catch (cause) {
-		if (!(cause instanceof ModelUsabilityBudgetError) && !(cause instanceof ModelSwitchAuthError)) throw cause;
+		if (!(cause instanceof ModelUsabilityBudgetError) && !(cause instanceof ModelSwitchAuthError)) {
+			ledger.transition(effectId, "failed", {
+				outcome: modelSwitchErrorOutcome(cause instanceof Error ? cause.message : String(cause)),
+			});
+			throw cause;
+		}
 		const budget = cause instanceof ModelUsabilityBudgetError;
 		const failed = ledger.transition(effectId, "failed", {
 			outcome: budget ? contextBudgetOutcome(cause.message) : providerUnavailableOutcome(cause.message),

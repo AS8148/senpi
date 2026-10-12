@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 ## 2026-10-12 - Busy-host trim (senpi#3218)
 
 ### What changed
@@ -16,6 +17,26 @@ The trimmer is part of the multi-session host's self-observation loop and reads 
 ### Expected merge conflict zones
 
 `host-zero-session-trim.ts` (fork-only module), the `host_trimmed` case in `session-event-writer.ts`, and `RpcHostTrimmedEvent` in `rpc-host-lifecycle-types.ts`.
+
+## 2026-10-12 - Settle model effects on replacement and unexpected errors (senpi#3199)
+
+### What changed
+
+- `effect-ledger.ts`, `effect-outcome-copy.ts`: fail nonterminal model effects with replacement reason and action before the outgoing session is disposed; unexpected held-switch application errors carry an error outcome.
+- `effect-commands.ts`: record an unexpected model-selection failure before rethrowing the original exception.
+- `packages/coding-agent/src/modes/rpc/rpc-mode.ts`, `packages/coding-agent/src/modes/rpc/session-registry.ts`, `session-registry-switch.ts`: register the model-effect replacement hook alongside the input-admission hook for classic, shared and cwd-changing runtimes.
+
+### Why
+
+Replacement and selection errors must produce terminal receipts with their actual cause.
+
+### Why an extension could not handle it
+
+RPC owns the receipt ledger and runtime hook registration outside extension lifetimes.
+
+### Expected merge conflict zones
+
+- Effect event subscription and command catch; runtime creation in `packages/coding-agent/src/modes/rpc/rpc-mode.ts` and `packages/coding-agent/src/modes/rpc/session-registry.ts`.
 
 ## 2026-10-12 - Resolve effect-ledger review findings (senpi#3199)
 

@@ -34,6 +34,12 @@ export const EFFECT_OUTCOMES = {
 		detail: "a newer model selection replaced this switch before it was applied",
 		action: "read the current model, then send set_model with a new effectId if you still want this model",
 	},
+	setModelDroppedByReplace: {
+		kind: "dropped_by_replace",
+		reason: "dropped_by_replace",
+		detail: "the session was replaced (new_session, switch_session or fork) before this model switch was applied",
+		action: "read the current model, then send set_model with a new effectId on the current session",
+	},
 	setThinkingInterruptedByReopen: {
 		kind: "interrupted_by_reopen",
 		reason: "interrupted_by_reopen",
@@ -73,6 +79,15 @@ export function contextBudgetOutcome(detail: string): EffectOutcome {
 		detail,
 		action:
 			"compact the session or pick a model with a larger context window, then send set_model with a new effectId",
+	};
+}
+
+export function modelSwitchErrorOutcome(detail: string): EffectOutcome {
+	return {
+		kind: "error",
+		reason: "error",
+		detail,
+		action: "read the error, then send set_model again with a new effectId after correcting its cause",
 	};
 }
 

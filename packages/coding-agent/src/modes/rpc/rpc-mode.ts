@@ -112,6 +112,7 @@ import { toJsonEvent } from "../json-event.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
 import { createRpcConnectionHandler, type RpcConnectionSink } from "./connection-handler.ts";
 import { parseClientCapabilities } from "./custom-capability.ts";
+import { EffectLedger } from "./effect-ledger.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS, serializeJsonLine } from "./jsonl.ts";
 import { createRpcShutdown } from "./shutdown.ts";
 
@@ -153,6 +154,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 	const capabilities = parseClientCapabilities(envValue("RPC_CLIENT_CAPABILITIES"));
 	const handler = createRpcConnectionHandler(runtimeHost, sink, { capabilities, retryFallbackCommand: true });
 	ClientAdmissions.sealQueuedOnReplace(runtimeHost);
+	EffectLedger.sealOnReplace(runtimeHost);
 
 	const signalCleanupHandlers: Array<() => void> = [];
 

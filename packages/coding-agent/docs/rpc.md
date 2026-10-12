@@ -2027,7 +2027,10 @@ receipt contract.
   A switch held for compaction answers `accepted` until the next send applies it.
   Overwriting the hold, selecting a fitting model directly, or cycling onto one fails
   the older receipt with `superseded`; a held target that still cannot fit after repair
-  fails with `context_budget`. Same-id retries replay those failures rather than switching.
+  fails with `context_budget`. Replacing the session with `new_session`, `switch_session`
+  or `fork` fails a held switch with `dropped_by_replace` in its outgoing transcript.
+  Unexpected selection errors record `failed` with `outcome.kind: "error"`, the error detail,
+  and an action before propagating the exception. Same-id retries replay those failures rather than switching.
   `set_thinking_level { effectId }` records its own kind and stamps its id on
   `thinking_level_change`, including when the level was already in force.
 - An input's `done` receipt carries `outcome.kind`: `completed`, `aborted` (with
@@ -3501,6 +3504,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 | `skill_invocation` | Ordered explicit skill metadata after prompt expansion |
 | `loaded_surfaces_changed` | Loaded skills, extensions, or MCP inventory changed; re-read `get_commands` and `get_loaded_surfaces` |
 | `model_changed` | Active model changed (any source), with the thinking level in force afterwards |
+| `model_change_cancelled` | A held model switch ended without applying: `origin` carries its source and optional `effectId`, `reason` is `superseded`, `context-budget` or `error`, and optional `detail` describes the failure |
 | `service_tier_changed` | Effective service tier or fast-mode state changed |
 | `session_closed` | Multi-session host: a routing handle ended. Optional `reason`: `client_close`, `idle_evicted`, `host_shutdown`, `replaced`, `handoff_parked`, `session_dir_removed`, `error` |
 | `session_parked` | Multi-session host: a retained session was released to disk at the idle window (`sessionId`, `sessionPath`). Replaces `session_closed` for that handle |

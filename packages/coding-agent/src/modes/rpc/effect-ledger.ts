@@ -1,7 +1,8 @@
 import type { AgentSession } from "../../core/agent-session.ts";
+import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
 import { effectCrashPoint } from "./effect-crash-point.ts";
-import { contextBudgetOutcome, EFFECT_OUTCOMES } from "./effect-outcome-copy.ts";
+import { contextBudgetOutcome, EFFECT_OUTCOMES, modelSwitchErrorOutcome } from "./effect-outcome-copy.ts";
 import {
 	type EffectActor,
 	type EffectCommandKind,
@@ -62,12 +63,26 @@ export class EffectLedger {
 						outcome:
 							event.reason === "context-budget"
 								? contextBudgetOutcome(event.detail ?? "the target model cannot hold the repaired context")
-								: EFFECT_OUTCOMES.setModelSuperseded,
+								: event.reason === "error"
+									? modelSwitchErrorOutcome(event.detail ?? "the model switch failed")
+									: EFFECT_OUTCOMES.setModelSuperseded,
 					});
 			} else if (event.type === "agent_idle") {
 				for (const record of [...this.records.values()]) {
 					if (record.kind === "abort" && record.state === "applied") this.transition(record.effectId, "done");
 				}
+			}
+		});
+	}
+
+	/** Settle existing held effects while the outgoing transcript can still be written. */
+	static sealOnReplace(runtime: AgentSessionRuntime): () => void {
+		return runtime.onBeforeSessionReplace(() => {
+			const ledger = ledgers.get(runtime.session);
+			if (!ledger || ledger.durableSessionId !== runtime.session.sessionManager.getSessionId()) return;
+			for (const record of [...ledger.records.values()]) {
+				if (record.kind === "set_model" && !isTerminalEffectState(record.state))
+					ledger.transition(record.effectId, "failed", { outcome: EFFECT_OUTCOMES.setModelDroppedByReplace });
 			}
 		});
 	}

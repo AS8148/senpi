@@ -5,6 +5,7 @@ import { createAgentSessionRuntime } from "../../core/agent-session-runtime.ts";
 import type { SessionStartEvent } from "../../core/extensions/types.ts";
 import { assertValidSessionId, SessionManager } from "../../core/session-manager.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
+import { EffectLedger } from "./effect-ledger.ts";
 import { SESSION_PATH_RETRY_AFTER_MS } from "./host-reservations.ts";
 import { createRegistryWarm, type HostWarm } from "./host-warm.ts";
 import { assertRequestedModelResolved } from "./open-session-model.ts";
@@ -211,6 +212,7 @@ export class RpcSessionRegistry {
 			);
 			assertRequestedModelResolved(runtimeProfile, entry.runtime.diagnostics);
 			ClientAdmissions.sealQueuedOnReplace(entry.runtime);
+			EffectLedger.sealOnReplace(entry.runtime);
 			entry.durableSessionId = manager.getSessionId();
 			entry.sessionPath ??= manager.getSessionFile();
 			entry.state = "open";
