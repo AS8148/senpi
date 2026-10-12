@@ -200,8 +200,9 @@ describe("firstTodoOwedSuppression", () => {
 		// when
 		const suppression = firstTodoOwedSuppression(input);
 
-		// then
-		expect(suppression).toBe("wake-source");
+		// then: #3163 folds wake sources into the named "waiting" suppression.
+		expect(suppression).toBe("waiting");
+		expect(collectOnDutySources(input)).toEqual(["wake-source"]);
 	});
 
 	it.each(["subagent", "non-interactive", "pending-messages", "continuation-pending"] as const)(
@@ -554,8 +555,8 @@ describe("todo-owed backstop through the real AgentSession", () => {
 		// when
 		await harness.session.prompt("build the parser");
 
-		// then
-		expect(events).toEqual([]);
+		// then: no nudge or notice; #3163 reports the quiet wait as a "waiting" event.
+		expect(events).toEqual([expect.objectContaining({ reason: "waiting", sources: ["senpi-task"] })]);
 		expect(notices).toEqual([]);
 		expect(owedContents(harness)).toEqual([]);
 	}, 20_000);
