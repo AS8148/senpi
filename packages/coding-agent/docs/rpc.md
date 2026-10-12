@@ -2013,6 +2013,8 @@ States: `accepted` (recorded, not yet applied), `applied` (dispatched), `done`, 
 `failed`. Input admissions map `queued -> accepted`, `running -> applied`,
 `completed -> done`. `failed` and every `outcome` other than `completed` carry
 `reason`, plain-words `detail` and, when the caller can act, `action`.
+An effect's actor is `by: { connectionId }`. Client names are not part of the
+receipt contract.
 
 - `abort { effectId }` on a streaming session answers `applied` and becomes `done` when
   the session reaches `agent_idle`; on an idle session it answers `done` with
@@ -2029,7 +2031,7 @@ States: `accepted` (recorded, not yet applied), `applied` (dispatched), `done`, 
   `set_thinking_level { effectId }` records its own kind and stamps its id on
   `thinking_level_change`, including when the level was already in force.
 - An input's `done` receipt carries `outcome.kind`: `completed`, `aborted` (with
-  `abortSource` and `abortedBy: { connectionId }` when a client's `abort` reached the
+  `abortSource` and `abortedBy: { connectionId }` when a client's `abort` or matching `interrupt` reached the
   turn), or `error`. A queued input dropped because the session was replaced
   (`new_session`, `switch_session`, `fork`) reads `failed` with
   `outcome.kind: "dropped_by_replace"`. A host stop or an unload is not a replacement:

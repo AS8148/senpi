@@ -1068,7 +1068,14 @@ export function createRpcConnectionHandler(
 				});
 
 			case "interrupt":
-				return success(id, "interrupt", await interruptRunningTurn(session, command.turnId, () => session.abort()));
+				return success(
+					id,
+					"interrupt",
+					await interruptRunningTurn(session, command.turnId, () => {
+						ClientAdmissions.forSession(session).noteAbort(effectContext().by);
+						return session.abort();
+					}),
+				);
 
 			case "abort_compaction": {
 				session.abortCompaction();

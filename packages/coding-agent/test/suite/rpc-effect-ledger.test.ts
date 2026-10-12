@@ -222,5 +222,4 @@ describe("RPC effect ledger", () => {
 		});
 		expect(retry).toMatchObject({ success: true, data: { replayed: true, state: "failed" } });
 	});
-
 });

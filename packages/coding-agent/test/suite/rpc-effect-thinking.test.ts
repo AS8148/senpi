@@ -32,9 +32,9 @@ describe("RPC thinking effect identity and reopen", () => {
 		const fixture = await setup();
 		const rpc = fixture.bind();
 		await rpc.send({ type: "set_thinking_level", level: "high", scope, effectId: "thinking" });
-		expect(fixture.session.sessionManager.getEntries().filter((e) => e.type === "thinking_level_change")).toContainEqual(
-			expect.objectContaining({ effectId: "thinking", thinkingLevel: "high" }),
-		);
+		expect(
+			fixture.session.sessionManager.getEntries().filter((e) => e.type === "thinking_level_change"),
+		).toContainEqual(expect.objectContaining({ effectId: "thinking", thinkingLevel: "high" }));
 		expect(await rpc.send({ type: "get_effect_status", effectId: "thinking" })).toMatchObject({
 			data: { effect: { kind: "set_thinking_level", state: "done" } },
 		});
@@ -59,9 +59,9 @@ describe("RPC thinking effect identity and reopen", () => {
 		await rpc.send({ type: "set_thinking_level", level: "high", effectId: "first" });
 		const selected = fixture.harness.eventsOfType("thinking_level_changed").length;
 		await rpc.send({ type: "set_thinking_level", level: "high", effectId: "thinking" });
-		expect(fixture.session.sessionManager.getEntries().filter((e) => e.type === "thinking_level_change")).toContainEqual(
-			expect.objectContaining({ effectId: "thinking", thinkingLevel: "high" }),
-		);
+		expect(
+			fixture.session.sessionManager.getEntries().filter((e) => e.type === "thinking_level_change"),
+		).toContainEqual(expect.objectContaining({ effectId: "thinking", thinkingLevel: "high" }));
 		expect(fixture.harness.eventsOfType("thinking_level_changed")).toHaveLength(selected);
 	});
 

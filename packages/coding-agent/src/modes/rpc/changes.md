@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 ## 2026-10-12 - Busy-host trim (senpi#3218)
 
 ### What changed
@@ -17,6 +16,28 @@ The trimmer is part of the multi-session host's self-observation loop and reads 
 ### Expected merge conflict zones
 
 `host-zero-session-trim.ts` (fork-only module), the `host_trimmed` case in `session-event-writer.ts`, and `RpcHostTrimmedEvent` in `rpc-host-lifecycle-types.ts`.
+
+## 2026-10-12 - Resolve effect-ledger review findings (senpi#3199)
+
+### What changed
+
+- `effect-ledger.ts`, `effect-outcome-copy.ts`, `effect-record.ts`: held model effects settle as superseded or context-budget failures; thinking effects have their own kind and derive their reopen seal from stamped thinking entries.
+- `effect-commands.ts`: typed success builders replace response assertions; auth and context-budget refusals are classified separately, and unknown exceptions propagate.
+- `connection-handler.ts`: `interrupt` records its actor only in the callback that actually aborts the matching turn.
+- The actor schema documents only the populated `connectionId`, not an unused client name.
+- Focused tests cover each held-switch exit, thinking application and no-op identity, interrupt attribution, exact foreign abort ownership, and lookup after reopening a transcript larger than the disk scan chunk. The outcome-copy suite is the single rendering test.
+
+### Why
+
+Receipts must end with the actual cause and recoverable action, including when deferred work never applies or a process dies after applying a thinking level.
+
+### Why an extension could not handle it
+
+RPC owns the durable receipts, typed responses and connection identity.
+
+### Expected merge conflict zones
+
+- Effect schemas, reopen seal and command handlers.
 
 ## 2026-10-12 - Effect ledger: durable receipts and get_effect_status (senpi#3199)
 

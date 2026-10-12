@@ -65,10 +65,7 @@ describe("RPC held model effect settlement", () => {
 			const current = harness.getModel("million");
 			const roomy = harness.getModel("900k");
 			if (!current || !roomy) throw new Error("missing cycle fixtures");
-			harness.session.setFavoriteModels([
-				{ model: current },
-				{ model: roomy },
-			]);
+			harness.session.setFavoriteModels([{ model: current }, { model: roomy }]);
 			await harness.session.cycleModel();
 		} else {
 			await switchTo(harness, path === "held overwrite" ? "360k" : "900k", "newer");

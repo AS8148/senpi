@@ -5,7 +5,7 @@ import { z } from "zod";
 export const RPC_EFFECT_ENTRY = "rpc_effect";
 export const EFFECT_LEDGER_CAPABILITY = "effect_ledger";
 
-const actorSchema = z.object({ connectionId: z.string(), clientName: z.string().optional() });
+const actorSchema = z.object({ connectionId: z.string() });
 export type EffectActor = z.infer<typeof actorSchema>;
 
 /**

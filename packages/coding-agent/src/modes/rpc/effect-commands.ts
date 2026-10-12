@@ -31,8 +31,14 @@ export interface EffectCommandContext {
 	readonly sessionId?: string;
 }
 
-function respond(id: string | undefined, command: string, data?: unknown): RpcResponse {
-	return { id, type: "response", command, success: true, ...(data === undefined ? {} : { data }) } as RpcResponse;
+type EffectResponse = Extract<
+	RpcResponse,
+	{ success: true; command: "abort" | "set_model" | "set_thinking_level" | "get_effect_status" }
+>;
+type ResponsePayload<T> = T extends EffectResponse ? Omit<T, "id" | "type" | "success"> : never;
+
+function respond(id: string | undefined, response: ResponsePayload<EffectResponse>): RpcResponse {
+	return { ...response, id, type: "response", success: true };
 }
 
 function refuse(
@@ -50,7 +56,7 @@ function refuse(
 		error: message,
 		...(errorCode === undefined ? {} : { errorCode }),
 		...(errorData === undefined ? {} : { errorData }),
-	} as RpcResponse;
+	};
 }
 
 function answer(status: EffectStatus, sessionId: string | undefined, replayed = false): RpcEffectAnswer {
@@ -84,11 +90,12 @@ export async function runAbort(ctx: EffectCommandContext, command: Command<"abor
 	if (effectId === undefined) {
 		ClientAdmissions.forSession(ctx.session).noteAbort(ctx.by);
 		dispatch();
-		return respond(command.id, "abort");
+		return respond(command.id, { command: "abort" });
 	}
 	const begun = await begin(ctx, "abort", { ...command, effectId });
 	if (isResponse(begun)) return begun;
-	if ("replay" in begun) return respond(command.id, "abort", answer(begun.replay, ctx.sessionId, true));
+	if ("replay" in begun)
+		return respond(command.id, { command: "abort", data: answer(begun.replay, ctx.sessionId, true) });
 	ClientAdmissions.forSession(ctx.session).noteAbort(ctx.by);
 	const streaming = ctx.session.isStreaming;
 	dispatch();
@@ -96,7 +103,7 @@ export async function runAbort(ctx: EffectCommandContext, command: Command<"abor
 	const status = streaming
 		? ledger.transition(effectId, "applied")
 		: ledger.transition(effectId, "done", { disposition: "no_active_turn" });
-	return respond(command.id, "abort", answer(status, ctx.sessionId));
+	return respond(command.id, { command: "abort", data: answer(status, ctx.sessionId) });
 }
 
 export async function runSetModel(ctx: EffectCommandContext, command: Command<"set_model">): Promise<RpcResponse> {
@@ -104,7 +111,7 @@ export async function runSetModel(ctx: EffectCommandContext, command: Command<"s
 	const begun = effectId === undefined ? undefined : await begin(ctx, "set_model", { ...command, effectId });
 	if (begun !== undefined && isResponse(begun)) return begun;
 	if (begun !== undefined && "replay" in begun)
-		return respond(command.id, "set_model", answer(begun.replay, ctx.sessionId, true));
+		return respond(command.id, { command: "set_model", data: answer(begun.replay, ctx.sessionId, true) });
 	const ledger = effectId === undefined ? undefined : EffectLedger.forSession(ctx.session);
 	const models = await ctx.session.modelRegistry.getAvailable();
 	const model = models.find((m) => m.provider === command.provider && m.id === command.modelId);
@@ -126,7 +133,10 @@ export async function runSetModel(ctx: EffectCommandContext, command: Command<"s
 	}
 	if (effectId === undefined || ledger === undefined) {
 		const systemPromptChange = await ctx.session.setModel(model, { source: "rpc" });
-		return respond(command.id, "set_model", { ...model, systemPromptName: systemPromptChange?.systemPromptName });
+		return respond(command.id, {
+			command: "set_model",
+			data: { ...model, systemPromptName: systemPromptChange?.systemPromptName },
+		});
 	}
 	let systemPromptName: string | undefined;
 	try {
@@ -148,10 +158,13 @@ export async function runSetModel(ctx: EffectCommandContext, command: Command<"s
 	// `done` was written by the ledger when `model_changed` carried this id; a switch held for compaction
 	// stays `accepted` until it lands.
 	const status = ledger.status(effectId);
-	return respond(command.id, "set_model", {
-		...model,
-		systemPromptName,
-		...(status === undefined ? {} : answer(status, ctx.sessionId)),
+	return respond(command.id, {
+		command: "set_model",
+		data: {
+			...model,
+			systemPromptName,
+			...(status === undefined ? {} : answer(status, ctx.sessionId)),
+		},
 	});
 }
 
@@ -160,7 +173,10 @@ export async function runSetThinkingLevel(ctx: EffectCommandContext, command: Co
 	const begun = effectId === undefined ? undefined : await begin(ctx, "set_thinking_level", { ...command, effectId });
 	if (begun !== undefined && isResponse(begun)) return begun;
 	if (begun !== undefined && "replay" in begun)
-		return respond(command.id, "set_thinking_level", answer(begun.replay, ctx.sessionId, true));
+		return respond(command.id, {
+			command: "set_thinking_level",
+			data: answer(begun.replay, ctx.sessionId, true),
+		});
 	const ledger = effectId === undefined ? undefined : EffectLedger.forSession(ctx.session);
 	if (command.scope === "turn") {
 		// Validate BEFORE mutating: the session clamps an unsupported level to a supported neighbour, so
@@ -177,9 +193,9 @@ export async function runSetThinkingLevel(ctx: EffectCommandContext, command: Co
 	} else {
 		ctx.session.setThinkingLevel(command.level, { source: "rpc", effectId });
 	}
-	if (effectId === undefined || ledger === undefined) return respond(command.id, "set_thinking_level");
+	if (effectId === undefined || ledger === undefined) return respond(command.id, { command: "set_thinking_level" });
 	const done = ledger.transition(effectId, "done", { disposition: "applied" });
-	return respond(command.id, "set_thinking_level", answer(done, ctx.sessionId));
+	return respond(command.id, { command: "set_thinking_level", data: answer(done, ctx.sessionId) });
 }
 
 /** `get_effect_status` on a loaded session; a `sessionPath` naming another transcript reads that file. */
@@ -187,17 +203,16 @@ export async function runGetEffectStatus(ctx: EffectCommandContext, command: Com
 	if (command.sessionPath !== undefined && command.sessionPath !== ctx.session.sessionFile)
 		return answerEffectFromTranscript(command.id, command.sessionPath, command.effectId);
 	const status = EffectLedger.forSession(ctx.session).status(command.effectId, ctx.sessionId);
-	return respond(
-		command.id,
-		"get_effect_status",
-		status === undefined ? { found: false, searched: "complete" } : { found: true, effect: status },
-	);
+	return respond(command.id, {
+		command: "get_effect_status",
+		data: status === undefined ? { found: false, searched: "complete" } : { found: true, effect: status },
+	});
 }
 
 /** `get_effect_status { sessionPath }` for a session that is not loaded: an authoritative disk read. */
 export async function answerEffectFromTranscript(id: string | undefined, path: string, effectId: string) {
 	try {
-		return respond(id, "get_effect_status", await lookupEffectInTranscript(path, effectId));
+		return respond(id, { command: "get_effect_status", data: await lookupEffectInTranscript(path, effectId) });
 	} catch (cause) {
 		if (!(cause instanceof TranscriptUnreadable)) throw cause;
 		return refuse(id, "get_effect_status", cause.message, RPC_ERROR_TRANSCRIPT_UNREADABLE, {
