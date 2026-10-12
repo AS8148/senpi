@@ -8,6 +8,7 @@
  * environment-scope case, and inheriting the runner's own would make that case meaningless.
  */
 import { execFileSync, spawn } from "node:child_process";
+import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -15,9 +16,11 @@ import { join } from "node:path";
 import { probeHost } from "../../src/modes/rpc/host-probe.ts";
 import { stopHost } from "../../src/modes/rpc/host-stop.ts";
 import { reapProcessesUnder, waitForPidGone } from "../helpers/spawned-host-reaper.ts";
+import { waitForWindowsDaemonExit } from "../helpers/windows-daemon-exit.ts";
 
 const cliEntry = join(import.meta.dirname, "..", "..", "src", "cli.ts");
 const sandboxes: HostCliSandbox[] = [];
+const fixtureChildren = new Map<ReturnType<typeof spawn>, Promise<unknown>>();
 
 export interface HostCliSandbox {
 	readonly root: string;
@@ -26,6 +29,8 @@ export interface HostCliSandbox {
 	readonly specDir: string;
 	/** Short on purpose: `<socket>.next-<gen>` must stay inside the 104-byte sun_path limit. */
 	readonly socket: string;
+	/** Receipts from this sandbox's successful ensure --json starts, independent of identity probes. */
+	readonly ownedPids: Set<number>;
 }
 
 export interface HostCliResult {
@@ -36,7 +41,13 @@ export interface HostCliResult {
 
 export async function hostCliSandbox(label: string): Promise<HostCliSandbox> {
 	const root = await mkdtemp(join(tmpdir(), `hc-${label}-`));
-	const sandbox = { root, agentDir: join(root, "a"), specDir: join(root, "spec"), socket: join(root, "r.sock") };
+	const sandbox = {
+		root,
+		agentDir: join(root, "a"),
+		specDir: join(root, "spec"),
+		socket: join(root, "r.sock"),
+		ownedPids: new Set<number>(),
+	};
 	sandboxes.push(sandbox);
 	await mkdir(sandbox.agentDir, { recursive: true });
 	await mkdir(sandbox.specDir, { recursive: true });
@@ -46,19 +57,54 @@ export async function hostCliSandbox(label: string): Promise<HostCliSandbox> {
 /**
  * Ends every daemon these cases started, then removes their sandboxes.
  *
- * The stop comes FIRST and is waited for: a supervisor that is SIGKILLed - which is all the argv
- * sweep can do - never removes the private hop directory it created under the temp dir, and nothing
- * else ever will. The sweep stays as the backstop for a daemon no registration can prove.
+ * Windows uses the successful ensure receipt, not a registration identity that CIM may not prove.
+ * Open the owned supervisor/descendant handles before stopping it and await every exit.
+ * POSIX stops through registration first, then reaps sandbox argv/descendants as the backstop.
+ * One failed sandbox never prevents the others from being stopped.
  */
 export async function sweepHostCliSandboxes(): Promise<void> {
+	const errors: unknown[] = [];
 	for (const sandbox of sandboxes.splice(0)) {
-		const stopped = await stopHost({ socket: sandbox.socket, agentDir: sandbox.agentDir, force: true }).catch(
-			() => undefined,
-		);
-		if (stopped?.action === "stopped") await waitForPidGone(stopped.pid, 30_000);
-		await reapProcessesUnder(sandbox.root);
-		await rm(sandbox.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+		try {
+			if (process.platform === "win32") {
+				for (const pid of sandbox.ownedPids) {
+					try {
+						await waitForWindowsDaemonExit(pid, async () => {
+							try {
+								process.kill(pid, "SIGTERM");
+							} catch (error) {
+								if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error;
+							}
+						});
+					} catch (error) {
+						errors.push(error);
+					}
+				}
+			} else {
+				try {
+					const stopped = await stopHost({ socket: sandbox.socket, agentDir: sandbox.agentDir, force: true });
+					if (stopped.action === "stopped" && !(await waitForPidGone(stopped.pid, 30_000)))
+						throw new Error(`host ${stopped.pid} did not exit`);
+				} finally {
+					await reapProcessesUnder(sandbox.root);
+				}
+			}
+			await rm(sandbox.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+		} catch (error) {
+			errors.push(error);
+		}
 	}
+	for (const [child, closed] of fixtureChildren) {
+		try {
+			if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+			await closed;
+		} catch (error) {
+			errors.push(error);
+		} finally {
+			fixtureChildren.delete(child);
+		}
+	}
+	if (errors.length > 0) throw new AggregateError(errors, "host CLI sandbox teardown failed");
 }
 
 /** Runs `senpi host <args>` from source and returns what the process said. */
@@ -91,7 +137,22 @@ export function runHostCli(
 	});
 	return new Promise((resolve, reject) => {
 		child.once("error", reject);
-		child.once("close", (code) => resolve({ exitCode: code ?? -1, stdout, stderr }));
+		child.once("close", (code) => {
+			const result = { exitCode: code ?? -1, stdout, stderr };
+			try {
+				if (args[0] === "ensure" && code === 0) {
+					const json = onlyJsonLine(result);
+					if (json.action === "start") {
+						if (typeof json.pid !== "number" || !Number.isSafeInteger(json.pid) || json.pid <= 0)
+							throw new Error("successful host start did not report an owned pid");
+						sandbox.ownedPids.add(json.pid);
+					}
+				}
+				resolve(result);
+			} catch (error) {
+				reject(error);
+			}
+		});
 	});
 }
 
@@ -149,6 +210,7 @@ export async function startFixtureHost(
 		detached: true,
 		stdio: "ignore",
 	});
+	fixtureChildren.set(child, once(child, "close"));
 	if (child.pid === undefined) throw new Error("fixture host did not spawn");
 	child.unref();
 	await awaitAnswer(sandbox.socket);
