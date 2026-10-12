@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- `PI_TUI_DEBUG` render dumps honor the configured OS temporary directory instead of writing to a hard-coded `/tmp/tui` path ([#3103](https://github.com/code-yeongyu/senpi/pull/3103)).
+
 ### Removed
 
 ## [2026.10.11] - 2026-10-11

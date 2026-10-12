@@ -1,3 +1,69 @@
+## 2026-10-12 - System-temp scan safeguards have mutation-tested contracts (Refs senpi#3064)
+
+### What changed
+
+- Add real snapshot/check contracts for a foreign job's preexisting `sj-*` directory and a new nonrepository system-temp name. Both remain intact and the guard passes.
+- Removing the baseline filter or repository-name filter independently makes the corresponding contract fail.
+
+### Why
+
+- System scans must detect our new entries without failing on preexisting jobs or newly created unrelated names.
+
+### Why an extension could not handle it
+
+- The guard is CI/bootstrap tooling outside the extension runtime.
+
+### Expected merge conflict zones
+
+- `scripts/test-temp-system.test.mjs`: keep the controlled system-temp fixture scoped away from concurrent live jobs.
+
+## 2026-10-12 - Temp guards report surviving owners and system escapes (Refs senpi#3064)
+
+### What changed
+
+- `scripts/test-temp-guard.mjs`: count before retiring recorded roots, print surviving root contents, fail when any root needed retirement, and scan both pre-export temp and POSIX `/tmp` for new repository-created names. Unknown system names are reported without failing; shared system entries are never removed.
+- `scripts/test-temp-guard.mjs`: remove speculative scan/journal caps and the exact-single-entry scope check; retain prefix and baseline protection before deleting creator-owned roots.
+- `scripts/run-tests.mjs`: allocate a short system-temp root when inherited TMPDIR leaves no room for the 103-byte fallback socket; report cleanup failure without skipping signal-handler removal or leftover reporting.
+- `scripts/node-bundle-smoke.test.ts`: the grammar probe uses the existing hermetic environment, including owned temp variables.
+- `scripts/ci-test-temp-workflow.test.mjs`: structurally require every CI test-runtime step to sit between snapshot setup and an always-run final count.
+
+### Why
+
+- `scripts/test-temp-guard.mjs`: retiring a late root into a green result hid leaked processes; checking only the exclusive scope missed callers that ignored TMPDIR. Remaining fixture migration is tracked in senpi#3138, so this PR references rather than closes #3064.
+
+### Why an extension could not handle it
+
+- `scripts/run-tests.mjs`, `scripts/test-temp-guard.mjs`: temporary ownership and CI checks run before agent extensions.
+
+### Expected merge conflict zones
+
+- `scripts/run-tests.mjs`, `scripts/test-temp-guard.mjs`: run-root allocation, snapshot fields, final count and cleanup ordering.
+
+## 2026-10-10 - Test invocations own their temporary storage (senpi#3064)
+
+### What changed
+
+- `scripts/run-tests.mjs`: launch test processes with a private TMPDIR/TEMP/TMP before Vitest initializes, remove that root after child exit, and forward catchable interrupts to the child's process group before teardown. CI compares sorted top-level temp names after cleanup, bounded at 100000 entries, and fails with each leftover name.
+- `scripts/vitest-temp.ts`: shared file-scoped fixture creation registers teardown even when an assertion fails.
+- `scripts/vitest-temp-setup.ts`: register Vitest hooks only in framework setup; the fixture registry and harness also load in plain Bun subprocess workers without importing Vitest.
+- `scripts/test-temp-guard.mjs`: the bounded top-level scanner is shared by the launcher and a snapshot/check CLI. A job-final check can report residue even if the launcher itself was killed.
+- `scripts/test-temp-guard.mjs`, `scripts/run-tests.mjs`: snapshot setup creates an ownership journal exported explicitly to subsequent CI steps. Job teardown removes only roots recorded by their creator, including roots recreated after per-invocation teardown; unregistered entries still fail and are never removed.
+- `scripts/test-temp-guard.mjs`: CI snapshot setup gives the job an exclusive, short temp parent instead of counting unrelated macOS daemon directories in the shared host temp tree. It reports remaining job entries, removes only that newly allocated job parent on success or failure, and restores the previous temp environment for post-job actions. No system-directory name exceptions or shared-temp sweeps are used.
+- `scripts/test-temp-guard.mjs`: allocate npm's default Node compile cache inside the owned job parent at setup; it remains enabled during tests and is removed with that parent at teardown rather than becoming an unowned temp entry.
+- `scripts/run-tests.mjs`, `scripts/node-bundle-cursor-exec.test.ts`, `scripts/node-bundle-smoke.test.ts`, `scripts/node-bundle-reinstall.test.ts`: keep jiti's pnpm cwd workaround from ignoring owned TMPDIR via JITI_RESPECT_TMPDIR_ENV; hermetic bundle and compiled-probe child environments preserve TMPDIR/TEMP/TMP on every OS.
+
+### Why
+
+- Vitest 5 forks write SSR transform copies into its core temp directory independently of cacheDir. Its core directory survives normal close; workers killed before project close also leave copies. Test fixtures without teardown add smaller directories.
+
+### Why an extension could not handle it
+
+- These are test-process bootstrap and fixture ownership rules, not agent runtime extension behavior.
+
+### Expected merge conflict zones
+
+- Test command wiring in package manifests and workflows; Vitest's temp-copy implementation should be rechecked after dependency upgrades.
+
 ## 2026-10-11 - Allow exact restoration of tagged released changelog sections (senpi#3126)
 
 ### What changed

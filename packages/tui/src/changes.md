@@ -1,3 +1,22 @@
+## 2026-10-12 - Render diagnostics honor the caller's temporary directory (Refs senpi#3064)
+
+### What changed
+
+- `packages/tui/src/tui.ts`: PI_TUI_DEBUG render dumps use `path.join(os.tmpdir(), "tui")` rather than literal `/tmp/tui`.
+- The diagnostic-permissions fixture uses its own temporary root for TMPDIR/TEMP/TMP and removes that entire root after the test.
+
+### Why
+
+- `packages/tui/src/tui.ts`: a workspace test left the shared `/tmp/tui` directory outside the run owner. Render dumps must follow the caller's configured temp ownership.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/tui.ts`: the renderer chooses and creates the diagnostic path.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui.ts`: PI_TUI_DEBUG path construction and diagnostic file permissions.
+
 ## 2026-10-07 - Multiplexer focus events and width changes repaint the viewport only (senpi#1704)
 
 ### What changed
