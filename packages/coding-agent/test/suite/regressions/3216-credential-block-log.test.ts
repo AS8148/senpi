@@ -62,4 +62,22 @@ describe("senpi#3216 credential block log line", () => {
 		expect(auth).not.toContain("until=");
 		expect(auth).not.toContain("cooldown=");
 	});
+
+	test("token shapes a provider body can echo are redacted: bare JWT bearer, JSON tokens, cookies", () => {
+		// given
+		const jwt = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1c2VyLTEyMyJ9.c2lnbmF0dXJlLXZhbHVl";
+		const line = formatCredentialBlockLog({
+			providerId: "chatgpt-subscription",
+			slot: { name: "a", lane: "stored" },
+			block: { reason: "auth_error" },
+			nowMs: NOW,
+			providerText: `401 {"error":"bad","access_token":"at-secret-value-1234","refresh_token":"rt-secret-value-5678"} Bearer ${jwt} Cookie: session=cookie-secret-abc; other=1`,
+		});
+
+		// then
+		for (const secret of [jwt, "at-secret-value-1234", "rt-secret-value-5678", "cookie-secret-abc"]) {
+			expect(line).not.toContain(secret);
+		}
+		expect(line).toContain("401");
+	});
 });

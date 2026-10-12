@@ -102,6 +102,7 @@ describe("senpi#3216 /gpt-account login <id>", () => {
 		// given - 'default' (displayed as Personal) carries an auth block.
 		await seedAccounts();
 		await block("default", "old-a", { blockReason: "auth_error" });
+		await repository.mutateSlotState(PROVIDER, "stored", "default", (current) => ({ ...current, failureCount: 10 }));
 		const { ctx, notices } = createLoginCommandContext(storage, dir, async () => undefined);
 		const committed: string[] = [];
 		// Stands in for the real runtime: the fresh login is appended as a new slot, then reported by name.
@@ -138,6 +139,7 @@ describe("senpi#3216 /gpt-account login <id>", () => {
 		expect(stored.type === "oauth" ? stored.access : undefined).toBe("new-a");
 		const accounts = await getCredentialAccounts(storage, PROVIDER, {}, repository);
 		expect(accounts.find((account) => account.name === "default")?.blocked).toBe(false);
+		expect((await repository.listSlots(PROVIDER, "stored")).default).toBeUndefined();
 		expect(committed).toHaveLength(1);
 		expect(notices.at(-1)?.type).toBe("info");
 	});

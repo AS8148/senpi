@@ -28,6 +28,11 @@ export type CredentialBlock =
 			retryAfterWasCapped: boolean;
 			/** Whether the provider named the reset (`hint`) or the cooldown is the slot's own backoff. */
 			cooldownSource?: "hint" | "backoff";
+			/**
+			 * `account`: the provider said the account's quota is spent. `unknown`: a plain 429 or throttle
+			 * text that may be about this request rather than the account (senpi#3216).
+			 */
+			scope?: "account" | "unknown";
 			/** Set when the limit names the one model family it binds ("Fable limit"). */
 			modelFamily?: string;
 	  };
@@ -137,15 +142,21 @@ export function classifyCredentialFailure(
 			extract429RetryAfterMs({ status: status ?? 429, bodyText: text }, nowMs) ??
 			(usageLimit ? (normalized.retryAfterMs ?? usageLimitResetMs(text, nowMs)) : undefined);
 		const modelFamily = rateLimitModelFamily(text);
+		// A throttle that does not say the account is spent may be about this request alone, so even a
+		// long retry hint in its text never takes the account out for longer than the hintless cap.
+		const capMs = usageLimit
+			? context.cooldownCapMs
+			: Math.min(context.cooldownCapMs ?? HINTLESS_COOLDOWN_CAP_MS, HINTLESS_COOLDOWN_CAP_MS);
 		return {
 			kind: "failover",
 			block: {
 				reason: "rate_limit",
 				...rateLimitCooldown(failureCount, hint, {
 					baseMs: context.cooldownBaseMs,
-					capMs: context.cooldownCapMs,
+					capMs,
 				}),
 				cooldownSource: hint === undefined ? "backoff" : "hint",
+				scope: usageLimit ? "account" : "unknown",
 				...(modelFamily === undefined ? {} : { modelFamily }),
 			},
 		};

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AssistantMessageEvent, AssistantMessageEventStream } from "@earendil-works/pi-ai";
@@ -23,14 +23,23 @@ const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 
 let dir: string;
+const originalAgentDir = process.env.SENPI_CODING_AGENT_DIR;
 
 beforeEach(() => {
 	dir = mkdtempSync(join(tmpdir(), "issue-3216-"));
+	process.env.SENPI_CODING_AGENT_DIR = dir;
 });
 
 afterEach(() => {
+	if (originalAgentDir === undefined) delete process.env.SENPI_CODING_AGENT_DIR;
+	else process.env.SENPI_CODING_AGENT_DIR = originalAgentDir;
 	rmSync(dir, { recursive: true, force: true });
 });
+
+function debugLog(): string {
+	const path = join(dir, "senpi-debug.log");
+	return existsSync(path) ? readFileSync(path, "utf8") : "";
+}
 
 function twoAccounts(): PooledCredential {
 	return {
@@ -149,5 +158,69 @@ describe("senpi#3216 credential-pool blocks stay proportional to the evidence", 
 		);
 		expect(blocked).toHaveLength(1);
 		expect(blocked[0]?.blockedUntil ?? 0).toBeGreaterThanOrEqual(before + 30 * HOUR);
+	});
+
+	test("a plain 429 answered the same way by a second account is about the request: that account is not blocked and the error reaches the session", async () => {
+		// given - both accounts throttle this request without saying their quota is spent.
+		const { faux, runtime } = await runtimeWith(twoAccounts());
+		faux.setResponses([throttled(), throttled()]);
+
+		// when
+		const events = await collectClosed(
+			runtime.stream(faux.getModel(), { messages: [], tools: [] }, { sessionId: "issue-3216-request" }),
+		);
+
+		// then - one rotation, then the provider's error; only the first account carries a short block.
+		expect(faux.getCallLog()).toHaveLength(2);
+		expect(events.at(-1)?.type).toBe("error");
+		const blocked = Object.values(await repository().listSlots("faux", "stored")).filter(
+			(slot) => slot.blockReason === "rate_limit",
+		);
+		expect(blocked).toHaveLength(1);
+		expect((blocked[0]?.blockedUntil ?? 0) - Date.now()).toBeLessThanOrEqual(2 * MINUTE);
+	});
+
+	test("a long retry hint in a plain 429's text never blocks an account past the hintless cap", async () => {
+		// given
+		const { faux, runtime } = await runtimeWith(twoAccounts());
+		faux.setResponses([
+			fauxAssistantMessage([], {
+				stopReason: "error",
+				errorMessage: "429 rate limit exceeded, retry after 108000 seconds",
+			}),
+			fauxAssistantMessage("served by the sibling"),
+		]);
+
+		// when
+		const before = Date.now();
+		await collectClosed(
+			runtime.stream(faux.getModel(), { messages: [], tools: [] }, { sessionId: "issue-3216-plain-hint" }),
+		);
+
+		// then
+		const blocked = Object.values(await repository().listSlots("faux", "stored")).filter(
+			(slot) => slot.blockReason === "rate_limit",
+		);
+		expect(blocked).toHaveLength(1);
+		expect((blocked[0]?.blockedUntil ?? 0) - before).toBeLessThanOrEqual(HOUR + MINUTE);
+	});
+
+	test("every block writes one debug-log line with its reason and cooldown source", async () => {
+		// given
+		const { faux, runtime } = await runtimeWith(twoAccounts());
+		faux.setResponses([throttled(), fauxAssistantMessage("served by the sibling")]);
+
+		// when
+		await collectClosed(
+			runtime.stream(faux.getModel(), { messages: [], tools: [] }, { sessionId: "issue-3216-log" }),
+		);
+
+		// then
+		const lines = debugLog()
+			.split("\n")
+			.filter((line) => line.includes("reason=rate_limit"));
+		expect(lines).toHaveLength(1);
+		expect(lines[0]).toContain("cooldown=backoff");
+		expect(lines[0]).toContain("provider=faux");
 	});
 });

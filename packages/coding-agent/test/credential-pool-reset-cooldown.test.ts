@@ -81,6 +81,7 @@ describe("a usage limit's reset time becomes that account's cooldown (senpi#1768
 				cooldownMs: COOLDOWN_CAP_MS,
 				retryAfterWasCapped: true,
 				cooldownSource: "hint",
+				scope: "account",
 			},
 		});
 	});

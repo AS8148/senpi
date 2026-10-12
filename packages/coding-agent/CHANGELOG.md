@@ -12,7 +12,7 @@
 
 ### Fixed
 
-- Credential-pool accounts are no longer taken out for a day or more by an ordinary rate limit. A served request now ends an account's failure streak, and without a reset time from the provider a block lasts at most an hour; before, accounts that had seen enough transient 429s over their lifetime were blocked for 31-34 hours although their quota was fine. Every block now writes one line to the debug log with its reason, where its length came from, and a redacted excerpt of the provider's message ([#3216](https://github.com/code-yeongyu/senpi/issues/3216), reported in the OmO community).
+- Credential-pool accounts are no longer taken out for a day or more by an ordinary rate limit. A served request now ends an account's failure streak, without a reset time from the provider a block lasts at most an hour, and a throttle that two accounts in one request both answer is treated as a limit on the request rather than on every account; before, accounts that had seen enough transient 429s over their lifetime were blocked for 31-34 hours although their quota was fine. Every block now writes one line to the debug log with its reason, where its length came from, and a redacted excerpt of the provider's message ([#3216](https://github.com/code-yeongyu/senpi/issues/3216), reported in the OmO community).
 
 ### Removed
 

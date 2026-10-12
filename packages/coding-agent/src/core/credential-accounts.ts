@@ -302,7 +302,10 @@ export async function replaceCredentialAccountMaterial(
 		if (current === undefined) throw new Error(`No stored credential for provider: ${provider}`);
 		return replaceSlotMaterial(current as PooledCredential, name, loginName);
 	});
-	await (repository ?? defaultRepository(storage)).mutateSlotState(provider, "stored", loginName, () => undefined);
+	const repo = repository ?? defaultRepository(storage);
+	await repo.mutateSlotState(provider, "stored", loginName, () => undefined);
+	// New material starts with a clean record: no block, no failure streak, no model blocks.
+	await repo.mutateSlotState(provider, "stored", name, () => undefined);
 	emitProviderAccountsChanged(provider);
 }
 

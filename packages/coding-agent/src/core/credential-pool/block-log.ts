@@ -55,8 +55,31 @@ function slotRef(lane: string, name: string): string {
 	return `${lane}:${createHash("sha256").update(`${lane}\0${name}`).digest("hex").slice(0, 8)}`;
 }
 
+// Credential shapes a provider error body can echo that the shared redaction may not cover.
+const EXTRA_SECRET_PATTERNS: readonly RegExp[] = [
+	/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}\b/g,
+	/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi,
+	/("(?:access|refresh|id)_token"\s*:\s*")[^"]*(")/gi,
+	/\b((?:set-)?cookie\s*[:=]\s*)[^\n]*/gi,
+	/\b(sk|rk|pk)-[A-Za-z0-9_-]{12,}\b/g,
+];
+
+function redactCredentialShapes(text: string): string {
+	let out = text;
+	for (const pattern of EXTRA_SECRET_PATTERNS) {
+		out = out.replace(pattern, (match, prefix?: string, suffix?: string) =>
+			typeof prefix === "string" && typeof suffix === "string" && match.startsWith(prefix)
+				? `${prefix}<redacted>${suffix}`
+				: typeof prefix === "string" && match.startsWith(prefix) && /cookie/i.test(prefix)
+					? `${prefix}<redacted>`
+					: "<redacted>",
+		);
+	}
+	return out;
+}
+
 function providerExcerpt(text: string): string {
-	const oneLine = redactSensitiveOutput(text).replace(/\s+/g, " ").trim();
+	const oneLine = redactCredentialShapes(redactSensitiveOutput(text)).replace(/\s+/g, " ").trim();
 	return oneLine.length <= EXCERPT_CHARS ? oneLine : `${oneLine.slice(0, EXCERPT_CHARS)}…`;
 }
 

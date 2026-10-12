@@ -37,6 +37,9 @@ async function showAccounts(ctx: ExtensionCommandContext): Promise<void> {
 	if (accounts.length === 0) lines.push("  (none)");
 	for (const account of accounts) {
 		const states = [accountLabel(account), account.source, describeAccountHealth(account, reloginCommand)];
+		for (const { model, until } of account.blockedModels ?? []) {
+			states.push(`usage limit on ${model} until ${new Date(until).toISOString()}`);
+		}
 		if (account.pinned) states.push("pinned");
 		lines.push(`  ${states.join(" | ")}`);
 	}
