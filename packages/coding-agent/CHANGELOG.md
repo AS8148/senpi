@@ -16,6 +16,8 @@
 
 - Credential-pool accounts are no longer taken out for a day or more by an ordinary rate limit. A served request now ends an account's failure streak, without a reset time from the provider a block lasts at most an hour, and a throttle that two accounts in one request both answer is treated as a limit on the request rather than on every account; before, accounts that had seen enough transient 429s over their lifetime were blocked for 31-34 hours although their quota was fine. Every block now writes one line to the debug log with its reason, where its length came from, and a redacted excerpt of the provider's message ([#3216](https://github.com/code-yeongyu/senpi/issues/3216), reported in the OmO community).
 
+- An agent that stops with open todo tasks is continued automatically again after it makes progress: the two automatic continuations are counted only while they close no task, where before a long unattended run got none on its next early stop once it had used two. When the agent really stalls, the notice now says why (two continuations in a row closed no task) and what to do (reply to resume it, or `/todo done` / `/todo drop`), instead of only "Send a message to continue". Waiting on a background child, monitor, eval cell, open question or goal still shows nothing ([oh-my-openagent#10026](https://github.com/code-yeongyu/oh-my-openagent/issues/10026), requested by @code-yeongyu).
+
 ### Removed
 
 ## [2026.10.12] - 2026-10-12
