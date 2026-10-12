@@ -21,10 +21,11 @@ import type { Api, Model } from "../src/types.ts";
  *
  * Project defaults for the prompt budget (`contextWindow` is the prompt budget,
  * not the documented window): Luna ships the full 922,000 input cap, Sol and
- * 6.1 Sol ship 400,000, Astra keeps 600,000. Like Astra, each tier's number is
- * stamped on every provider catalog so the budget does not change with the route.
+ * 6.1 Sol ship 400,000, Astra keeps 600,000. The subscription 6.1 Sol default is
+ * 500,000 per the live Codex catalog fetched 2026-10-12T00:15Z (issue #3150).
  */
 const SOL_CONTEXT_WINDOW = 400_000;
+const SUBSCRIPTION_SOL_CONTEXT_WINDOW = 500_000;
 const LUNA_CONTEXT_WINDOW = 922_000;
 
 const EXPECTED = {
@@ -82,7 +83,10 @@ for (const provider of ["openai", "chatgpt-subscription"] as const) {
 					baseUrl: provider === "openai" ? "https://api.openai.com/v1" : "https://chatgpt.com/backend-api",
 					reasoning: true,
 					input: ["text", "image"],
-					contextWindow: EXPECTED[id].contextWindow,
+					contextWindow:
+						provider === "chatgpt-subscription" && id === "gpt-6.1-sol"
+							? SUBSCRIPTION_SOL_CONTEXT_WINDOW
+							: EXPECTED[id].contextWindow,
 					maxTokens: 128000,
 					cost: EXPECTED[id].cost,
 				});
@@ -125,7 +129,10 @@ for (const provider of ["openai", "chatgpt-subscription"] as const) {
 					id: `${id}-fast`,
 					upstreamModelId: id,
 					serviceTier: "priority",
-					contextWindow: EXPECTED[id].contextWindow,
+					contextWindow:
+						provider === "chatgpt-subscription" && id === "gpt-6.1-sol"
+							? SUBSCRIPTION_SOL_CONTEXT_WINDOW
+							: EXPECTED[id].contextWindow,
 				});
 			});
 		});
@@ -145,6 +152,7 @@ describe("ChatGPT Subscription GPT-6.1 Sol Ultrafast", () => {
 			defaultThinkingLevel: "xhigh",
 		});
 		expect(ultrafast?.cost).toEqual(EXPECTED["gpt-6.1-sol"].cost);
+		expect(ultrafast?.contextWindow).toBe(SUBSCRIPTION_SOL_CONTEXT_WINDOW);
 		expect(ultrafast && getSupportedThinkingLevels(ultrafast)).toEqual(["low", "medium", "high", "xhigh", "max"]);
 		expect(getModels("openai").some((model) => model.id === "gpt-6.1-sol-ultrafast")).toBe(false);
 	});
@@ -216,9 +224,10 @@ type Catalog = Record<string, Record<string, CatalogEntry>>;
  */
 function isOpenAIFamilyModel(key: string, marker: FamilyId): boolean {
 	const tier = marker.replaceAll(".", "\\.");
-	return new RegExp(`^chat:(?:(?:[a-z]{2,6}\\.)?openai\\.|openai[/-])?${tier}(?:-fast|-pro)?(?::batch)?$`, "u").test(
-		key,
-	);
+	return new RegExp(
+		`^chat:(?:(?:[a-z]{2,6}\\.)?openai\\.|openai[/-])?${tier}(?:-fast|-pro|-ultrafast)?(?::batch)?$`,
+		"u",
+	).test(key);
 }
 
 function collectFamilyEntriesFrom(catalogs: ReadonlyMap<string, Catalog>, marker: FamilyId): FamilyEntry[] {
@@ -251,7 +260,13 @@ function collectFamilyEntries(marker: FamilyId): FamilyEntry[] {
 
 function offendersOf(entries: readonly FamilyEntry[], id: FamilyId): string[] {
 	return entries
-		.filter((entry) => entry.contextWindow !== EXPECTED[id].contextWindow)
+		.filter(
+			(entry) =>
+				entry.contextWindow !==
+				(entry.file === "chatgpt-subscription.json" && id === "gpt-6.1-sol"
+					? SUBSCRIPTION_SOL_CONTEXT_WINDOW
+					: EXPECTED[id].contextWindow),
+		)
 		.map((entry) => `${entry.file}:${entry.api}/${entry.id}=${String(entry.contextWindow)}`)
 		.sort();
 }
@@ -305,7 +320,7 @@ describe("which catalog entries carry a GPT-6 tier's window", () => {
 
 describe("GPT-6 Sol/6.1 Sol/Luna series catalog context window", () => {
 	for (const id of FAMILY_IDS) {
-		it(`declares ${EXPECTED[id].contextWindow} for every ${id} entry in every provider catalog`, () => {
+		it(`declares the route-specific default for every ${id} entry in every provider catalog`, () => {
 			const entries = collectFamilyEntries(id);
 			expect(entries.length, `generated catalogs should ship ${id} entries`).toBeGreaterThan(0);
 			expect(offendersOf(entries, id), `${id} entries must all declare the tier context window`).toEqual([]);
