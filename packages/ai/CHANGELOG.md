@@ -18,6 +18,8 @@
 
 ### Fixed
 
+- An Anthropic session no longer wedges once a replayed native web search result expires. A request rejected with `400 Invalid \`encrypted_content\` in \`search_result\` block` is retried with the expired search turned into text (query, result titles and URLs), newer search results keep replaying unchanged, and the session remembers the demotion ([#3201](https://github.com/code-yeongyu/senpi/issues/3201)).
+
 - The shared provider-failure formatter explains account-wide usage limits with the provider, reset hint, and model-switch recovery instead of raw 429 JSON ([#3131](https://github.com/code-yeongyu/senpi/issues/3131)).
 
 - Responses search declarations honor endpoint compatibility, and completed/failed `web_search_call` items replay only on the same provider/API/model. Opted-in GLM coding-plan Anthropic requests now preserve paired native `tool_result` blocks during replay as well as displaying them in the response; a zero server-search usage counter does not hide those blocks ([#3122](https://github.com/code-yeongyu/senpi/issues/3122)).
