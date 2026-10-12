@@ -47,4 +47,14 @@ describe("rewriteImports host cost", () => {
 		expect(output).toContain("__senpi_import__ : (specifier, options)");
 		expect(parseCalls.count).toBe(1);
 	});
+
+	// #3206 review: forms the plain-text gate must not skip; the old code rewrote every one.
+	it.each([
+		["a comment before a dynamic call", `const lazy = await ${IMPORT} /*x*/ ("x");`],
+		["a block comment before named bindings", `${IMPORT} /*c*/ {a} from "a";`],
+		["a line comment before a default binding", `${IMPORT} // c\nx from "a";`],
+		["a non-ASCII binding", `${IMPORT} ünicode from "a";`],
+	])("still rewrites %s", (_name, source) => {
+		expect(rewriteImports(source)).toContain("__senpi_import__");
+	});
 });

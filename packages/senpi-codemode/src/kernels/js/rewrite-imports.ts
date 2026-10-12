@@ -152,9 +152,11 @@ function applyEdits(code: string, edits: readonly TextEdit[]): string {
 }
 
 // Cells are prepared on the shared host loop (#3205), so Babel runs only for text that can be import syntax: the
-// keyword followed by a binding, `{`, `*`, a specifier string or `(`. `import` inside data ("import-1") never parses.
-const IMPORT_SYNTAX = /\bimport\s*[\w$*{"'(]/;
-const DYNAMIC_IMPORT_SYNTAX = /\bimport\s*\(/;
+// keyword as a whole word, not `import-1` or `import.meta`. Anything after it (comments, non-ASCII names) still
+// parses; a false positive only costs a parse, a false negative would skip a rewrite. The AST walk runs only when
+// `import` can be followed by `(`, with whitespace and comments allowed in between.
+const IMPORT_SYNTAX = /\bimport\b(?![-.$])/u;
+const DYNAMIC_IMPORT_SYNTAX = /\bimport(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\n]*(?:\n|$))*\(/u;
 
 export function rewriteImports(code: string): string {
 	if (!IMPORT_SYNTAX.test(code)) return code;
