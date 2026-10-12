@@ -53,6 +53,9 @@ export function isReviewable(
 	request: PermissionRequest,
 	cwd: string,
 ): boolean {
+	// An eval cell is arbitrary code: approving the call approves everything the cell does, and the
+	// nested tool.* calls get their own dispatch decision anyway. Never review it wholesale (senpi#3210).
+	if (toolName === "eval") return false;
 	if (request.permission === "external_directory") return false;
 	const root = path.resolve(cwd);
 	const touchesHardPath = (value: string): boolean => {
