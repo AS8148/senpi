@@ -103,6 +103,19 @@ describe("RPC effect ledger on a real host", () => {
 		expect(sessions.data?.sessions).toEqual([]);
 		const after = await world.readEntries(opened.sessionPath);
 		expect(effectSwitches(after, "early")).toHaveLength(effectSwitches(before, "early").length);
+		const reopened = await openSession(reader, { sessionPath: opened.sessionPath });
+		const loaded = await reader.request({
+			type: "get_effect_status",
+			sessionId: reopened.sessionId,
+			effectId: "early",
+		});
+		expect(loaded).toMatchObject({ success: true, data: { found: true } });
+		expect(effectOf(loaded)).toMatchObject({
+			effectId: "early",
+			kind: "set_model",
+			state: "done",
+			sessionId: reopened.sessionId,
+		});
 		await second.stop();
 	}, 240_000);
 
@@ -138,6 +151,11 @@ describe("RPC effect ledger on a real host", () => {
 		const host = await world.start();
 		const owner = await host.connect();
 		const opened = await openSession(owner, { cwd: world.cwd, ...MODEL });
+		const ownerReceipt = await owner.request({
+			type: "abort",
+			sessionId: opened.sessionId,
+			effectId: "a-identity",
+		});
 		const started = owner.wait((record) => record.type === "agent_start" && record.sessionId === opened.sessionId);
 		await owner.request({ type: "prompt", sessionId: opened.sessionId, message: "run", clientMessageId: "a-input" });
 		await started;
@@ -145,7 +163,11 @@ describe("RPC effect ledger on a real host", () => {
 
 		// When: client B aborts it and client C reads the receipt afterwards.
 		const aborter = await host.connect();
-		await aborter.request({ type: "abort", sessionId: opened.sessionId });
+		const abortReceipt = await aborter.request({
+			type: "abort",
+			sessionId: opened.sessionId,
+			effectId: "b-abort",
+		});
 		await idle;
 		const late = await host.connect();
 		const status = await late.request({
@@ -157,8 +179,14 @@ describe("RPC effect ledger on a real host", () => {
 		// Then
 		expect(effectOf(status)).toMatchObject({
 			state: "done",
-			outcome: { kind: "aborted", abortSource: expect.any(String), abortedBy: { connectionId: expect.any(String) } },
+			outcome: {
+				kind: "aborted",
+				abortSource: expect.any(String),
+				abortedBy: effectOf(abortReceipt)?.by,
+			},
 		});
+		expect(effectOf(abortReceipt)?.by).toMatchObject({ connectionId: expect.any(String) });
+		expect(effectOf(abortReceipt)?.by).not.toEqual(effectOf(ownerReceipt)?.by);
 		await host.stop();
 	}, 240_000);
 

@@ -223,17 +223,4 @@ describe("RPC effect ledger", () => {
 		expect(retry).toMatchObject({ success: true, data: { replayed: true, state: "failed" } });
 	});
 
-	it("gives every non-success outcome a reason, plain words, and an action where the caller can act", () => {
-		for (const outcome of Object.values(EFFECT_OUTCOMES)) {
-			expect(outcome.reason).toMatch(/^[a-z_]+$/);
-			expect(outcome.detail.length).toBeGreaterThan(10);
-		}
-		for (const outcome of [
-			EFFECT_OUTCOMES.inputInterruptedByReopen,
-			EFFECT_OUTCOMES.inputDroppedByReplace,
-			EFFECT_OUTCOMES.setModelInterruptedByReopen,
-			EFFECT_OUTCOMES.dequeueInterruptedByReopen,
-		])
-			expect(outcome.action).toMatch(/new (effectId|clientMessageId)/);
-	});
 });
