@@ -65,6 +65,14 @@ ${prefix}The turn ended with open todo work and no question to the user. Ask: ${
 </system-reminder>`;
 }
 
+/**
+ * The one notice left after the automatic continuations ran out (#10026): what is unfinished, why
+ * the agent stopped (it kept ending turns with work open), and the action that resumes it.
+ */
+export function buildTodoOwedStopNotice(openTasks: number, now: string, continuations: number): string {
+	return `Agent stopped with ${openTasks} open todo tasks (Now: ${now}) after ${continuations} automatic continuations ended without progress. Reply to resume it, or mark the tasks done or dropped.`;
+}
+
 /** True when the last non-empty paragraph of the text ends any sentence with `?`. */
 export function endsWithQuestion(text: string): boolean {
 	const paragraphs = text
@@ -159,10 +167,7 @@ export class TodoOwedBackstop {
 				return;
 			}
 			this.#notifiedThisChain = true;
-			ctx.ui.notify(
-				`Agent stopped with ${openTasks} open todo tasks (Now: ${anchors.now}). Send a message to continue.`,
-				"warning",
-			);
+			ctx.ui.notify(buildTodoOwedStopNotice(openTasks, anchors.now, this.#remindersThisChain), "warning");
 			this.#emit({
 				sessionId,
 				chainCount: this.#remindersThisChain,

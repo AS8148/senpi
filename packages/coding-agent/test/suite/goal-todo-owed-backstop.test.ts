@@ -9,6 +9,7 @@ import goalExtension from "../../src/core/extensions/builtin/goal/index.ts";
 import {
 	buildTodoOwedReminder,
 	firstTodoOwedSuppression,
+	TODO_OWED_CHAIN_LIMIT,
 	TODO_OWED_CUSTOM_TYPE,
 	TODO_OWED_REMINDER_EVENT,
 	type TodoOwedInput,
@@ -158,6 +159,17 @@ describe("firstTodoOwedSuppression", () => {
 
 		// then
 		expect(suppression).toBe("active-goal");
+	});
+
+	it("suppresses while a wake source (a background child, monitor, eval cell or open question) will wake the turn (#10026)", () => {
+		// given
+		const input = predicateInput({ hasActiveWakeSources: true });
+
+		// when
+		const suppression = firstTodoOwedSuppression(input);
+
+		// then
+		expect(suppression).toBe("wake-source");
 	});
 
 	it.each(["subagent", "non-interactive", "pending-messages", "continuation-pending"] as const)(
@@ -316,6 +328,11 @@ describe("todo-owed backstop through the real AgentSession", () => {
 		]);
 		expect(harness.faux.state.callCount).toBe(4);
 		expect(notices.map((notice) => notice.type)).toEqual(["warning"]);
+		// #10026: the notice carries what is unfinished and how many automatic continuations already ran.
+		const notice = notices[0]?.message ?? "";
+		expect(notice).toContain("Write the parser (Build)");
+		expect(notice).toContain("2 open todo tasks");
+		expect(notice).toContain(`${TODO_OWED_CHAIN_LIMIT} automatic`);
 		expect(events.map((event) => [event.reason, event.chainCount, event.openTasks, event.now])).toEqual([
 			["delivered", 1, 2, "Write the parser (Build)"],
 			["delivered", 2, 2, "Write the parser (Build)"],
