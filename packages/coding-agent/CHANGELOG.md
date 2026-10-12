@@ -12,6 +12,8 @@
 
 ### Changed
 
+- ChatGPT subscription GPT-6.1 Sol, Fast and Ultrafast now default to a 500,000-token context budget, with compaction and context-usage accounting following that window ([#3150](https://github.com/code-yeongyu/senpi/issues/3150), requested by @code-yeongyu).
+
 - Web search uses the active model's in-turn server tool first on enabled routes. Existing direct Anthropic/Claude OAuth and OpenAI/Azure defaults are preserved; ChatGPT subscription search is enabled, and newly supported xAI Responses, Gemini 2/3, OpenRouter and compatible Anthropic gateways require explicit opt-in. Search-specific failures enable one standalone fallback and record its reason; cheaper auxiliary models remain defaults only on routes without an enabled server tool ([#3122](https://github.com/code-yeongyu/senpi/issues/3122), requested by @code-yeongyu).
 
 - Server search remains default-on for direct Anthropic/Claude OAuth and OpenAI/Azure, unchanged from main, and is default-on for the live-verified first-party ChatGPT/Codex subscription route (except Spark). Gateways including ccapi and GLM coding plan on z.ai's Anthropic endpoint require `compat.supportsWebSearch: true`; xAI Responses, Gemini 2/3, OpenRouter, Moonshot PAYG, Z.AI PAYG and Sonar native-bypass routing also require explicit compatibility opt-in. Kimi for Coding and DeepSeek are not live-verified and do not gain default-on search. A different `nativeModel` setting is ignored on enabled server-search routes: main search and fallback use the session model ([#3122](https://github.com/code-yeongyu/senpi/issues/3122), requested by @code-yeongyu).
