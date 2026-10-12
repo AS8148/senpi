@@ -39,14 +39,12 @@ describe("3178 session state writes", () => {
 		await harness.session.cycleModel("forward", { persistDefault: false });
 		expect(harness.session.model?.id).toBe("second");
 		expect(harness.session.thinkingLevel).toBe("low");
-		harness.session.setThinkingLevel("low");
 		harness.settingsManager.setModelServiceTier("faux", "second", "priority");
 		await harness.settingsManager.flush();
 
 		expect(readFileSync(configPath, "utf8")).toBe(before);
 		expect(JSON.parse(readFileSync(join(harness.tempDir, "agent", "state.json"), "utf8"))).toEqual({
 			modelThinkingLevels: { "faux/first": "high", "faux/second": "low" },
-			modelLastOnThinkingLevels: { "faux/second": "low" },
 			modelServiceTiers: { "faux/second": "priority" },
 		});
 	});

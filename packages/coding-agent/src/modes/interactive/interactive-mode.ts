@@ -7749,6 +7749,7 @@ export class InteractiveMode {
 					},
 					onThinkingLevelChange: (level) => {
 						this.session.setThinkingLevel(level);
+						this.settingsManager.setDefaultThinkingLevel(this.session.thinkingLevel);
 						this.footer.invalidate();
 						this.updateEditorBorderColor();
 					},
@@ -7954,8 +7955,10 @@ export class InteractiveMode {
 	 * reaches exactly the members the switch uses.
 	 */
 	private static applyThinkingLevel(mode: InteractiveMode, level: ThinkingLevel, persist: boolean): void {
-		if (persist) mode.session.setThinkingLevel(level);
-		else mode.session.setSessionThinkingLevel(level);
+		if (persist) {
+			mode.session.setThinkingLevel(level);
+			mode.settingsManager.setDefaultThinkingLevel(mode.session.thinkingLevel);
+		} else mode.session.setSessionThinkingLevel(level);
 		mode.footer.invalidate();
 		mode.updateEditorBorderColor();
 		mode.showStatus(persist ? `Default thinking level: ${level}` : `Thinking level: ${level}`);

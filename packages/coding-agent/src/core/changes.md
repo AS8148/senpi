@@ -1,3 +1,28 @@
+## 2026-10-12 - Review repairs for config/state separation (senpi#3178)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: persistent thinking selection remembers the per-model level only; startup default writes are owned by explicit UI save controls. Session-only and turn-scoped changes remain ephemeral.
+- `packages/coding-agent/src/core/settings-manager.ts`: config saves retain unmodified legacy state keys; failed state saves are debug-logged separately and do not prevent config saves. State parsing normalizes model aliases before nested deletion.
+- `packages/coding-agent/src/core/settings-state.ts`: corrupt/unreadable state is ignored and logged once, migration failures are memoized by source per process, and canonical model keys outrank legacy aliases.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: ordinary reasoning changes still dirtied settings.
+- `packages/coding-agent/src/core/settings-manager.ts`: re-added keys were discarded without being copied to state, and state failures blocked configuration.
+- `packages/coding-agent/src/core/settings-state.ts`: disposable bookkeeping must not disable global configuration or resurrect deleted model memory.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: the shared setter serves UI, RPC and extension callers.
+- `packages/coding-agent/src/core/settings-manager.ts` and `packages/coding-agent/src/core/settings-state.ts`: persistence and loading run before extensions.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_setThinkingLevel` persistence block.
+- `packages/coding-agent/src/core/settings-manager.ts`: state merge and save queue.
+- `packages/coding-agent/src/core/settings-state.ts`: parsing and failure memoization.
+
 ## 2026-10-12 - Bookkeeping persists separately from user settings (senpi#3178)
 
 ### What changed

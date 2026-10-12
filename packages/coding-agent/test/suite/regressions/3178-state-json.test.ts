@@ -211,16 +211,13 @@ describe("3178 config and state separation", () => {
 	});
 
 	it.each([
-		"tipsHistory",
-		"changelogSeen",
-		"lastChangelogVersion",
-		"modelThinkingLevels",
-		"modelLastOnThinkingLevels",
-		"modelServiceTiers",
-	])("no longer treats legacy %s config edits as routine", (key) => {
+		["live startup default", { defaultModel: "other" }, false],
+		["legacy bookkeeping", { tipsHistory: { example: 123 } }, true],
+		["structural settings", { extensions: ["./extension.ts"] }, true],
+	] as const)("classifies an external %s edit", (_name, changed, reload) => {
 		const contents = new Map<string, string>();
 		refreshSettingsContentSnapshots(contents, agentDir, cwd);
-		writeFileSync(settingsPath, JSON.stringify({ ...JSON.parse(config), [key]: {} }));
+		writeFileSync(settingsPath, JSON.stringify({ ...JSON.parse(config), ...changed }));
 		const log = () => ({ written: true, disabled: false });
 		expect(
 			excludeRoutineOnlySettingsChanges([settingsPath], contents, agentDir, cwd, {
@@ -229,7 +226,7 @@ describe("3178 config and state separation", () => {
 				warn: log,
 				error: log,
 			}),
-		).toEqual([settingsPath]);
+		).toEqual(reload ? [settingsPath] : []);
 	});
 
 	it("does not identify state.json as a watched settings path", () => {

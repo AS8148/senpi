@@ -83,7 +83,13 @@ import {
 	type TodoFirstTurnPlan,
 	type TodoSettings,
 } from "./settings-shapes.ts";
-import { migrateSettingsState, readSettingsState, STATE_KEYS } from "./settings-state.ts";
+import {
+	logStateError,
+	migrateSettingsState,
+	parseStateSettings,
+	readSettingsState,
+	STATE_KEYS,
+} from "./settings-state.ts";
 import { MAX_SKILL_EXPANSIONS_PER_PROMPT } from "./skill-invocation.ts";
 import {
 	type BranchSummarySettings,
@@ -864,6 +870,7 @@ export class SettingsManager {
 		// A project file belongs to the user's repository: its retired keys are ignored, never rewritten.
 		if (removeRetiredSettingsKeys(raw) && scope === "global") writeRawScopedSettings(storage, scope);
 		if (scope === "global" && storage.withStateLock) {
+			// TODO(senpi#3178): remove config-only state fallback after the first migration release.
 			if ([...STATE_KEYS].some((key) => Object.hasOwn(raw, key))) migrateSettingsState(storage);
 			Object.assign(raw, readSettingsState(storage));
 		}
@@ -1269,12 +1276,9 @@ export class SettingsManager {
 		state = false,
 	): void | Promise<void> {
 		const merge = (current: string | undefined): string | undefined => {
-			const raw = current ? parseSettingsJson(current) : {};
-			const currentFileSettings = state ? (raw as Settings) : SettingsManager.migrateSettings(structuredClone(raw));
+			const raw = state ? parseStateSettings(this.storage, current) : current ? parseSettingsJson(current) : {};
+			const currentFileSettings = SettingsManager.migrateSettings(structuredClone(raw));
 			const mergedSettings: Settings = { ...currentFileSettings };
-			if (scope === "global" && !state && this.storage.withStateLock) {
-				for (const key of STATE_KEYS) delete mergedSettings[key];
-			}
 			for (const field of modifiedFields) {
 				const value = snapshotSettings[field];
 				if (modifiedNestedFields.has(field) && typeof value === "object" && value !== null) {
@@ -1337,13 +1341,17 @@ export class SettingsManager {
 			if (this.storage.withStateLock) {
 				const stateFields = new Set([...modifiedFields].filter((key) => STATE_KEYS.has(key)));
 				if (stateFields.size > 0) {
-					await this.persistScopedSettings(
-						"global",
-						snapshotGlobalSettings,
-						stateFields,
-						modifiedNestedFields,
-						true,
-					);
+					try {
+						await this.persistScopedSettings(
+							"global",
+							snapshotGlobalSettings,
+							stateFields,
+							modifiedNestedFields,
+							true,
+						);
+					} catch (error) {
+						logStateError(this.storage, error);
+					}
 				}
 				for (const key of STATE_KEYS) modifiedFields.delete(key);
 			}

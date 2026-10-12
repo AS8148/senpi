@@ -9,11 +9,17 @@ Senpi uses JSON settings files with project settings overriding global settings.
 
 Edit directly or use `/settings` for common options. To save startup model defaults interactively, use `/model` and press Ctrl+S on the desired model. To save the startup thinking level, use `/thinking` and press Ctrl+S.
 
+`/reasoning`, `/efforts`, and the thinking-level cycle key change the current session and its per-model memory, not the startup default. The `/settings` thinking option is an explicit default save. RPC thinking changes follow the same memory-only rule; turn-scoped changes remain ephemeral.
+
 ## state.json
 
 Senpi keeps automatically written bookkeeping in `<agentDir>/state.json`, beside the other `*-state.json` files. It contains `tipsHistory`, `changelogSeen`, legacy `lastChangelogVersion`, `modelThinkingLevels`, `modelLastOnThinkingLevels`, and `modelServiceTiers`. Showing tips, acknowledging changelogs, and remembering per-model reasoning or fast mode no longer rewrite your global settings file.
 
 Existing global state keys move silently on first load. Values already in `state.json` win; project settings are never migrated. Legacy settings values remain a read fallback for one release. Migration writes state first, then removes the keys from settings, so an interrupted migration can be repeated safely. JSONC comments are lost during that one-time rewrite. Downgrading to an older build can re-show tips once.
+
+A corrupt or unreadable state file is debug-logged once and ignored without disabling your configuration. Truncated state can be replaced by the next bookkeeping save. A failed migration is retried on the next process launch, not by every manager in the current process.
+
+During a mixed-version upgrade, an older session can re-add bookkeeping to settings. A new session preserves those keys until migration can safely copy them; old-session writes can still trigger config reloads. Restart older sessions to end that transition.
 
 ## Keeping your config in git
 

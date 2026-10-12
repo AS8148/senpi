@@ -19,6 +19,7 @@ describe("model switching preserves the preferred reasoning level", () => {
 
 	it("preserves the preferred reasoning level across manual model switches", async () => {
 		const harness = await createHarness({
+			settings: { defaultThinkingLevel: "max" },
 			models: [
 				{ id: "claude-opus-4-8", reasoning: true },
 				{ id: "faux-basic", reasoning: true },
@@ -42,6 +43,7 @@ describe("model switching preserves the preferred reasoning level", () => {
 
 	it("preserves the preferred reasoning level across favorite model cycling", async () => {
 		const harness = await createHarness({
+			settings: { defaultThinkingLevel: "max" },
 			models: [
 				{ id: "claude-opus-4-8", reasoning: true },
 				{ id: "faux-basic", reasoning: true },
@@ -66,6 +68,7 @@ describe("model switching preserves the preferred reasoning level", () => {
 
 	it("does not replace the preferred reasoning level with a favorite override", async () => {
 		const harness = await createHarness({
+			settings: { defaultThinkingLevel: "max" },
 			models: [
 				{ id: "claude-opus-4-8", reasoning: true },
 				{ id: "faux-basic", reasoning: true },

@@ -50,6 +50,7 @@ describe("AgentSession model and extension characterization", () => {
 	it("setModel preserves its model-selection persistence and lifecycle contract", async () => {
 		const modelEvents: string[] = [];
 		const harness = await createHarness({
+			settings: { defaultThinkingLevel: "high" },
 			models: [
 				{ id: "faux-1", name: "One", reasoning: true },
 				{ id: "faux-2", name: "Two", reasoning: true },

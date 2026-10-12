@@ -37,11 +37,12 @@ describe("3178 migration publication and no-op saves", () => {
 		expect(JSON.parse(global).tipsHistory).toEqual({ example: 123 });
 		const publishedState = state;
 		failRewrite = false;
-		SettingsManager.fromStorage(storage);
+		// A failed migration is retried on a fresh launch, not by every manager in this process.
+		SettingsManager.fromStorage({ ...storage });
 		expect(state).toBe(publishedState);
 		expect(JSON.parse(global)).toEqual({ theme: "dark" });
 		const publishedConfig = global;
-		SettingsManager.fromStorage(storage);
+		SettingsManager.fromStorage({ ...storage });
 		expect(global).toBe(publishedConfig);
 		expect(publications).toEqual(["state", "config", "config"]);
 	});

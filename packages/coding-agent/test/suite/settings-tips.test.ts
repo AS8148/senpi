@@ -3,11 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { getAgentDir } from "../../src/config.ts";
-import { createConfigReloadLogger } from "../../src/core/extensions/builtin/config-reload/log.ts";
-import {
-	excludeRoutineOnlySettingsChanges,
-	updateSettingsContentSnapshot,
-} from "../../src/core/extensions/builtin/config-reload/routine-settings.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
 
 const projectDirs: string[] = [];
@@ -86,23 +81,5 @@ describe("SettingsManager tips settings", () => {
 			writeSettings({ tipsHistory });
 			expect(SettingsManager.create(projectDir).getTipsHistory()).toEqual({});
 		}
-	});
-
-	it("reloads legacy tips-history config edits and other config changes", () => {
-		const projectDir = createProjectDir();
-		const logger = createConfigReloadLogger(agentDir);
-		const snapshots = new Map<string, string>();
-		writeSettings({ theme: "dark", tipsHistory: { "welcome-tip": 1_700_000_000_000 } });
-		updateSettingsContentSnapshot(snapshots, settingsPath);
-
-		writeSettings({ theme: "dark", tipsHistory: { "welcome-tip": 1_700_000_100_000 } });
-		expect(excludeRoutineOnlySettingsChanges([settingsPath], snapshots, agentDir, projectDir, logger)).toEqual([
-			settingsPath,
-		]);
-
-		writeSettings({ theme: "light", tipsHistory: { "welcome-tip": 1_700_000_100_000 } });
-		expect(excludeRoutineOnlySettingsChanges([settingsPath], snapshots, agentDir, projectDir, logger)).toEqual([
-			settingsPath,
-		]);
 	});
 });

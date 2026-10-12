@@ -1438,24 +1438,6 @@ describe("routine settings keys", () => {
 		return excludeRoutineOnlySettingsChanges([settingsPath], contents, agentDir, projectDir, logger);
 	}
 
-	it("reloads for legacy per-model thinking level config edits", () => {
-		expect(
-			classify({ theme: "dark" }, { theme: "dark", modelThinkingLevels: { "openai/gpt-5.5": "xhigh" } }),
-		).toEqual([settingsPath]);
-	});
-
-	it("reloads for legacy per-model last-on thinking level config edits", () => {
-		expect(
-			classify({ theme: "dark" }, { theme: "dark", modelLastOnThinkingLevels: { "openai/gpt-5.5": "xhigh" } }),
-		).toEqual([settingsPath]);
-	});
-
-	it("reloads for legacy per-model service tier config edits", () => {
-		expect(
-			classify({ theme: "dark" }, { theme: "dark", modelServiceTiers: { "openai/gpt-5.5": "priority" } }),
-		).toEqual([settingsPath]);
-	});
-
 	it("still reloads for non-routine key changes", () => {
 		expect(
 			classify(

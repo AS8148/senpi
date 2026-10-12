@@ -20,14 +20,10 @@ function makeOnOffOnly(model: Model<string>): void {
 	} as ThinkingLevelMap;
 }
 
-async function readSettings(harness: Harness): Promise<Record<string, unknown>> {
+async function readState(harness: Harness): Promise<Record<string, unknown>> {
 	await harness.settingsManager.flush();
-	const settingsPath = join(harness.tempDir, "agent", "settings.json");
 	const statePath = join(harness.tempDir, "agent", "state.json");
-	return {
-		...(existsSync(settingsPath) ? JSON.parse(readFileSync(settingsPath, "utf8")) : {}),
-		...(existsSync(statePath) ? JSON.parse(readFileSync(statePath, "utf8")) : {}),
-	};
+	return existsSync(statePath) ? JSON.parse(readFileSync(statePath, "utf8")) : {};
 }
 
 describe("per-model thinking memory", () => {
@@ -37,9 +33,10 @@ describe("per-model thinking memory", () => {
 		while (harnesses.length > 0) harnesses.pop()?.cleanup();
 	});
 
-	it("characterizes the global default scalar overwritten by each persistent manual choice", async () => {
+	it("keeps the startup default separate from each model's remembered choice", async () => {
 		const harness = await createHarness({
 			fileSettings: true,
+			settings: { defaultThinkingLevel: "low" },
 			models: [
 				{ id: "gpt-5.6-sol", reasoning: true },
 				{ id: "on-off-b", reasoning: true },
@@ -52,13 +49,16 @@ describe("per-model thinking memory", () => {
 		harness.session.setFavoriteModels([{ model: modelA }, { model: modelB }]);
 
 		harness.session.setThinkingLevel("xhigh");
-		expect(harness.settingsManager.getDefaultThinkingLevel()).toBe("xhigh");
+		expect(harness.settingsManager.getDefaultThinkingLevel()).toBe("low");
 
 		await harness.session.cycleModel();
 		harness.session.setThinkingLevel("off");
 
-		expect(harness.settingsManager.getDefaultThinkingLevel()).toBe("off");
-		expect(await readSettings(harness)).toMatchObject({ defaultThinkingLevel: "off" });
+		expect(harness.settingsManager.getDefaultThinkingLevel()).toBe("low");
+		await harness.settingsManager.flush();
+		expect(
+			JSON.parse(readFileSync(join(harness.tempDir, "agent", "settings.json"), "utf8")).defaultThinkingLevel,
+		).toBe("low");
 	});
 
 	it("restores each favorite model's manual level across repeated cycles and persists both memories", async () => {
@@ -88,7 +88,7 @@ describe("per-model thinking memory", () => {
 		await harness.session.cycleModel();
 		expect(harness.session.thinkingLevel).toBe("xhigh");
 
-		expect(await readSettings(harness)).toMatchObject({
+		expect(await readState(harness)).toMatchObject({
 			modelThinkingLevels: {
 				[`${modelA.provider}/${modelA.id}`]: "xhigh",
 				[`${modelB.provider}/${modelB.id}`]: "off",
@@ -126,13 +126,13 @@ describe("per-model thinking memory", () => {
 
 		await harness.session.prompt("trigger fallback");
 		expect(harness.session.model?.id).toBe("fallback-b");
-		let settings = await readSettings(harness);
+		let settings = await readState(harness);
 		expect(settings.modelThinkingLevels).toEqual({ [primary]: "xhigh" });
 
 		now += 10 * 60_000;
 		await harness.session.prompt("resume primary");
 		expect(harness.session.model?.id).toBe("gpt-5.6-sol");
-		settings = await readSettings(harness);
+		settings = await readState(harness);
 		expect(settings.modelThinkingLevels).toEqual({ [primary]: "xhigh" });
 	});
 
@@ -194,7 +194,7 @@ describe("per-model thinking memory", () => {
 		await harness.session.cycleModel();
 
 		expect(harness.session.thinkingLevel).toBe("high");
-		expect(await readSettings(harness)).toMatchObject({
+		expect(await readState(harness)).toMatchObject({
 			modelThinkingLevels: { "faux/on-off-b": "xhigh" },
 		});
 	});
@@ -214,7 +214,7 @@ describe("per-model thinking memory", () => {
 		await harness.session.setSessionModel(modelB);
 
 		expect(harness.session.thinkingLevel).toBe("medium");
-		expect((await readSettings(harness)).modelThinkingLevels).toBeUndefined();
+		expect((await readState(harness)).modelThinkingLevels).toBeUndefined();
 	});
 
 	it("persists the clamped model memory even when the effective level is unchanged", async () => {
@@ -228,7 +228,7 @@ describe("per-model thinking memory", () => {
 
 		harness.session.setThinkingLevel("off");
 
-		expect(await readSettings(harness)).toMatchObject({
+		expect(await readState(harness)).toMatchObject({
 			modelThinkingLevels: { [`${model.provider}/${model.id}`]: "off" },
 		});
 	});
@@ -249,6 +249,6 @@ describe("per-model thinking memory", () => {
 		await harness.session.cycleModel();
 
 		expect(harness.session.thinkingLevel).toBe("low");
-		expect((await readSettings(harness)).modelThinkingLevels).toBeUndefined();
+		expect((await readState(harness)).modelThinkingLevels).toBeUndefined();
 	});
 });

@@ -14,7 +14,7 @@
 
 ### Changed
 
-- Tip history, changelog acknowledgments and per-model reasoning/fast-mode memories now live in `state.json` instead of the global settings file, keeping version-controlled config clean during normal use. Existing global keys migrate silently without overwriting saved state; project settings are untouched, and no-value-change saves preserve config bytes ([#3178](https://github.com/code-yeongyu/senpi/issues/3178), requested by @devxoul).
+- Tip history, changelog acknowledgments and per-model reasoning/fast-mode memories now live in `state.json` instead of the global settings file, keeping version-controlled config clean during normal use. `/reasoning`, `/efforts`, and thinking cycles remember the model's level without saving the startup default; `/thinking` Ctrl+S and `/settings` still explicitly save it. Existing global keys migrate silently without overwriting saved state; project settings are untouched, corrupt state no longer disables config, and no-value-change saves preserve config bytes. Restart older sessions during upgrades: their legacy bookkeeping writes can still trigger config reloads ([#3178](https://github.com/code-yeongyu/senpi/issues/3178), requested by @devxoul).
 
 - ChatGPT subscription GPT-6.1 Sol, Fast and Ultrafast now default to a 500,000-token context budget, with compaction and context-usage accounting following that window ([#3150](https://github.com/code-yeongyu/senpi/issues/3150), requested by @code-yeongyu).
 
