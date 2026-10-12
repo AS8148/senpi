@@ -46,8 +46,8 @@ for (let i = 0; i < 6; i++) {
 // When: the sessions have exited and settled, still listed by the manager.
 await Promise.all(runtimes.map((runtime) => runtime.screenReleased?.()));
 const after = await gc();
-const lastRows = runtimes.map((runtime) => runtime.snapshot().visibleGrid.filter((row) => row.trim().length > 0).at(-1) ?? "");
-console.log(JSON.stringify({ listed: manager.size, perTerminalMB: (after - before) / 6 / 1048576, lastRows }));
+const finalScreens = runtimes.map((runtime) => runtime.snapshot().visibleGrid.map((row) => row.trimEnd()).join(""));
+console.log(JSON.stringify({ listed: manager.size, perTerminalMB: (after - before) / 6 / 1048576, finalScreens }));
 await manager.teardown();
 process.exit(0);
 `,
@@ -57,14 +57,14 @@ process.exit(0);
 			const result = JSON.parse(output.trim().split("\n").at(-1) ?? "{}") as {
 				listed: number;
 				perTerminalMB: number;
-				lastRows: string[];
+				finalScreens: string[];
 			};
 			// Then: every session is still listed with its final screen readable, and each one costs
 			// about its bounded output text, not a whole screen model.
 			expect(result.perTerminalMB).toBeLessThan(3);
 			expect(result.listed).toBe(7);
-			expect(result.lastRows).toHaveLength(6);
-			for (const row of result.lastRows) expect(row).toMatch(/^row 4000 of terminal 4000 z+$/);
+			expect(result.finalScreens).toHaveLength(6);
+			for (const screen of result.finalScreens) expect(screen).toMatch(/row 4000 of terminal 4000 z{58}$/);
 		},
 		180_000,
 	);
