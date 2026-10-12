@@ -4,7 +4,8 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/extensions/builtin/goal/todo-owed-backstop.ts`: the single notice shown after the two automatic continuations (`reason: "capped"`) comes from the exported `buildTodoOwedStopNotice(openTasks, now, continuations)`. Besides the open-task count and the `Now:` anchor, it states that the automatic continuations ended without progress, and that a reply resumes the agent or the tasks can be marked done or dropped. Suppression clauses, the chain cap and the hidden reminders are unchanged.
+- `packages/coding-agent/src/core/extensions/builtin/goal/todo-owed-backstop.ts`: the chain cap counts only consecutive continuations that closed nothing. `TodoOwedBackstop` remembers the open tasks at each nudge and restarts the chain when a later turn end finds one of them closed (adding tasks is not progress). Before, the chain reset only on direct user input, `session_start` or `session_tree`, so a long unattended run that once used both nudges got no automatic continuation on its next real early stop. The single notice shown at the cap (`reason: "capped"`) now comes from the exported `buildTodoOwedStopNotice(openTasks, now, continuations)`: the open tasks, the `Now:` anchor, the consecutive continuations that closed nothing, and the actions that resume it (a reply, `/todo done`, `/todo drop`). Suppression clauses and the hidden reminders are unchanged.
+- `packages/coding-agent/test/suite/goal-todo-owed-backstop.test.ts`: a progress run (each nudged turn closes a task) keeps getting fresh continuations and notifies only at the final stall; a wake source emitted on the real bus keeps the session silent; the capped notice is compared whole with `buildTodoOwedStopNotice`.
 
 ### Why
 
