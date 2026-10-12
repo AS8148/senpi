@@ -135,7 +135,7 @@ describe("senpi#3216 /gpt-account login <id>", () => {
 			["spare", undefined, "old-c"],
 		]);
 		expect(stored.pinned).toBe("work");
-		expect(stored.access).toBe("new-a");
+		expect(stored.type === "oauth" ? stored.access : undefined).toBe("new-a");
 		const accounts = await getCredentialAccounts(storage, PROVIDER, {}, repository);
 		expect(accounts.find((account) => account.name === "default")?.blocked).toBe(false);
 		expect(committed).toHaveLength(1);
