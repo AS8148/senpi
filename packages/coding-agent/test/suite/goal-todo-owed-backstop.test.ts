@@ -244,6 +244,15 @@ describe("collectOnDutySources", () => {
 		).toEqual(["eval", "senpi-task", "active-goal", "continuation-pending", "pending-messages"]);
 	});
 
+	it("does not count a goal whose continuation stopped as on duty", () => {
+		// given
+		const input = predicateInput({ goal: { ...goalFixture("active"), continuationStoppedAt: 5 } });
+
+		// when / then
+		expect(collectOnDutySources(input)).toEqual([]);
+		expect(firstTodoOwedSuppression(input)).toBe("goal-stopped");
+	});
+
 	it("ignores inactive wake sources and stopped goals", () => {
 		expect(
 			collectOnDutySources(predicateInput({ wakeSourceNames: ["senpi-task"], goal: goalFixture("blocked") })),

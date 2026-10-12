@@ -13,7 +13,7 @@ import { describeAskNowNext, getLatestTodoStateFromBranchEntries } from "../todo
 import { didAgentEndCleanly } from "./continuation.ts";
 import { lastAssistantMessage } from "./last-assistant-message.ts";
 import { openTodoTaskContents } from "./todo-gate.ts";
-import type { Goal } from "./types.ts";
+import { type Goal, goalDisplayStatus } from "./types.ts";
 
 export const TODO_OWED_CUSTOM_TYPE = "senpi.todo-owed";
 export const TODO_OWED_REMINDER_EVENT = "todo_owed_reminder";
@@ -38,6 +38,7 @@ export type TodoOwedSuppression =
 	| "no-open-tasks"
 	| "wake-source"
 	| "waiting"
+	| "goal-stopped"
 	| "ask-user-call"
 	| "question"
 	| "cap";
@@ -64,7 +65,8 @@ export type TodoOwedInput = {
 export function collectOnDutySources(input: TodoOwedInput): string[] {
 	const sources: string[] = [];
 	if (input.hasActiveWakeSources) sources.push(...(input.wakeSourceNames ?? ["wake-source"]));
-	if (input.goal?.status === "active") sources.push("active-goal");
+	// A goal whose continuation stopped will not wake on its own; it is not waiting on anything.
+	if (input.goal && goalDisplayStatus(input.goal) === "active") sources.push("active-goal");
 	if (input.continuationPending) sources.push("continuation-pending");
 	if (input.ctx.hasPendingMessages()) sources.push("pending-messages");
 	return [...new Set(sources)];
@@ -134,6 +136,9 @@ export function firstTodoOwedSuppression(input: TodoOwedInput): Exclude<TodoOwed
 	if (lastAssistantMessage(event.messages)?.stopReason === "length") return "length";
 	if (openTodoTaskContents(ctx.sessionManager.getBranch()).length === 0) return "no-open-tasks";
 	if (collectOnDutySources(input).length > 0) return "waiting";
+	// A stopped goal already shows its own stop notice and resume action; a todo nudge or a
+	// "waiting" footer on top of it would contradict that notice.
+	if (input.goal?.status === "active" && input.goal.continuationStoppedAt !== undefined) return "goal-stopped";
 	if (calledAskUser(event.messages)) return "ask-user-call";
 	if (endsWithQuestion(assistantText(lastAssistantMessage(event.messages)))) return "question";
 	if (!readTurnEndBackstopSetting(ctx)) return "disabled";

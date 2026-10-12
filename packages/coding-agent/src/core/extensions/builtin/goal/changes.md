@@ -6,6 +6,7 @@
 
 - `packages/coding-agent/src/core/extensions/builtin/goal/todo-owed-backstop.ts`: `collectOnDutySources` combines active wake-source names, an active goal, a pending continuation, and pending messages into the `waiting` suppression. It renders the `todo-waiting` footer, emits the existing reminder event with `reason: "waiting"` and `sources`, and logs the reason and source names at debug level.
 - `packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts` exposes its existing live source-name projection; `packages/coding-agent/src/core/extensions/builtin/goal/index.ts` passes those names to the backstop and clears the waiting footer on agent start, session start, and tree navigation.
+- A goal whose continuation stopped (stale stop) is not an on-duty source: it gets the `goal-stopped` suppression, so the goal's own stop notice stays visible and no `todo-waiting` footer or nudge contradicts it.
 - The two hidden nudges, the cap and its stop notice (owned by oh-my-openagent#10026 above), the setting, and the chain resets are unchanged.
 - `goal-todo-owed-backstop.test.ts` covers named waits, source drain, footer clearing, telemetry, debug logging, and a stopped goal not counting as waiting. `docs/settings.md` and the unreleased changelog describe the behavior.
 
