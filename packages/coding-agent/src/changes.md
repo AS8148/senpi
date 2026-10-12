@@ -4878,11 +4878,11 @@ The provider-error branch and usage-limit import in `packages/coding-agent/src/m
 
 - `packages/coding-agent/src/index.ts`
 
-Exports `findReservedKeywordSpans`, `findReservedKeywordRuns` and their types from the fork-only `core/reserved-keywords.ts`, ported 1:1 from the desktop's matcher.
+Exports `findReservedKeywordSpans`, `findReservedKeywordRuns` and their types from the fork-only `core/reserved-keywords.ts`, which follows the omo-senpi engine's arming rules (identifier/path guards plus quote, URL, relay-header and negation masks), so it marks only text that actually arms.
 
 ### Why
 
-One matcher drives both the TUI rainbow and any SDK consumer that needs the same keyword detection as the OmO desktop app.
+One matcher drives both the TUI rainbow and any SDK consumer that needs the engine's keyword detection.
 
 ### Why an extension could not handle it
 

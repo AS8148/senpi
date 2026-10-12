@@ -4,7 +4,7 @@ import { findReservedKeywordRuns, findReservedKeywordSpans } from "../src/core/r
 const keywordsOf = (text: string) => [...new Set(findReservedKeywordSpans(text).map((span) => span.keyword))];
 const runsOf = (text: string) => findReservedKeywordRuns(text).map((run) => text.slice(run.start, run.end));
 
-describe("reserved keyword matcher (desktop parity)", () => {
+describe("reserved keyword matcher (engine parity)", () => {
 	it("recognises every keyword and alias the engine arms on", () => {
 		expect(keywordsOf("ulw fix the login bug")).toEqual(["ultrawork"]);
 		expect(keywordsOf("please ULTRAWORK this")).toEqual(["ultrawork"]);
@@ -27,6 +27,32 @@ describe("reserved keyword matcher (desktop parity)", () => {
 		expect(keywordsOf("```\nulw research\n```\nplain text")).toEqual([]);
 		expect(keywordsOf("<ultrawork-mode>ulw</ultrawork-mode> plain")).toEqual([]);
 		expect(runsOf("`ulw` then ulw loop")).toEqual(["ulw loop"]);
+	});
+
+	it("paints nothing the engine would not arm: identifiers, paths, URLs, quotes, relays and prohibitions", () => {
+		for (const text of [
+			"https://x.com/ulw-research",
+			"open ./ulw/plan.md",
+			"see .omo/ulw/state",
+			"branch feat/tui-ulw-rainbow",
+			"edit ulw-plan.md",
+			"the mass-ulw-refactor branch",
+			"the senpi-ulw-loop helper",
+			"bump v1.ulw",
+			'he said "ulw" twice',
+			"> ulw quoted",
+			"Do not load mass-ulw or ulw-research.",
+			"[REPORT] ulw done",
+		]) {
+			expect(runsOf(text), text).toEqual([]);
+		}
+	});
+
+	it("still paints the request around masked material", () => {
+		expect(runsOf("read https://x.com/a then ulw the fix")).toEqual(["ulw"]);
+		expect(runsOf("Do not use tmux, but ulw the fix")).toEqual(["ulw"]);
+		expect(runsOf("mass ulw-loop the queue")).toEqual(["mass ulw-loop"]);
+		expect(runsOf("Ulw-Research the market")).toEqual(["Ulw-Research"]);
 	});
 
 	it("returns overlapping spans over the original text", () => {
