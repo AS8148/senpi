@@ -1,5 +1,23 @@
 # goal Extension Changes
 
+## 2026-10-12 - The todo-owed stop notice names the cause and the resume action (oh-my-openagent#10026)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/todo-owed-backstop.ts`: the single notice shown after the two automatic continuations (`reason: "capped"`) comes from the exported `buildTodoOwedStopNotice(openTasks, now, continuations)`. Besides the open-task count and the `Now:` anchor, it states that the automatic continuations ended without progress, and that a reply resumes the agent or the tasks can be marked done or dropped. Suppression clauses, the chain cap and the hidden reminders are unchanged.
+
+### Why
+
+The owner's error rule: every notice shows its reason and the user's action. The old text gave neither the cause nor any option besides typing.
+
+### Why an extension could not handle it
+
+The backstop is itself a builtin extension, and the change is confined to its notice text.
+
+### Expected merge conflict zones
+
+- None upstream: `todo-owed-backstop.ts` is fork-only.
+
 ## 2026-10-09 - Cover live stale stops and explain them to the model (senpi#3053)
 
 ### What changed
@@ -268,7 +286,7 @@ Agent-end routing, goal blocking, and the mechanical-block set are private to th
 
 ### What changed
 
-- `packages/coding-agent/src/core/extensions/builtin/goal/todo-owed-backstop.ts` (new): `TodoOwedBackstop` evaluates at the tail of the `agent_end` handler, after `continueGoalAfterAgentEnd` returned. A turn owes a nudge only when every clause holds: main session (`ctx.sessionManager.getHeader()?.parentSession === undefined` and `ctx.mode` not in `{print, json}` - the set `terminal/notify.ts` never wakes; child sessions are untagged today, so they pass and are treated as main), `event.aborted !== true` and `didAgentEndCleanly(event.messages)` with a last stopReason other than `length`, no pending messages, no active goal, no continuation pending, at least one open todo task (`todo-gate.ts openTodoTaskContents`), no live wake source (`monitor-continuation.ts hasActiveWakeSources`), no `ask_user_question` / `request_user_input` tool call in the run's messages, a final paragraph that does not end a sentence with `?`, and `todo.turnEndBackstop` enabled. Delivery is a hidden followUp exactly like `queueHiddenGoalPrompt` (`pi.sendMessage({ customType: "senpi.todo-owed", content, display: false }, { triggerTurn: true, deliverAs: "followUp" })`) with the Ask/Now/Next anchors from `todotools/state.ts getLatestTodoStateFromBranchEntries` + `describeAskNowNext`; the second delivery prefixes "Second and final reminder. ". After two, `ctx.ui.notify("Agent stopped with N open todo tasks (Now: ...). Send a message to continue. (#10026 replaced that notice with `buildTodoOwedStopNotice`: the open tasks, the `Now:` anchor, how many automatic continuations ran, and the actions that resume it.)", "warning")` fires once per chain, then nothing. `todo_owed_reminder` is emitted per delivery/cap; every suppression logs one debug line naming the first failing clause. No timers anywhere.
+- `packages/coding-agent/src/core/extensions/builtin/goal/todo-owed-backstop.ts` (new): `TodoOwedBackstop` evaluates at the tail of the `agent_end` handler, after `continueGoalAfterAgentEnd` returned. A turn owes a nudge only when every clause holds: main session (`ctx.sessionManager.getHeader()?.parentSession === undefined` and `ctx.mode` not in `{print, json}` - the set `terminal/notify.ts` never wakes; child sessions are untagged today, so they pass and are treated as main), `event.aborted !== true` and `didAgentEndCleanly(event.messages)` with a last stopReason other than `length`, no pending messages, no active goal, no continuation pending, at least one open todo task (`todo-gate.ts openTodoTaskContents`), no live wake source (`monitor-continuation.ts hasActiveWakeSources`), no `ask_user_question` / `request_user_input` tool call in the run's messages, a final paragraph that does not end a sentence with `?`, and `todo.turnEndBackstop` enabled. Delivery is a hidden followUp exactly like `queueHiddenGoalPrompt` (`pi.sendMessage({ customType: "senpi.todo-owed", content, display: false }, { triggerTurn: true, deliverAs: "followUp" })`) with the Ask/Now/Next anchors from `todotools/state.ts getLatestTodoStateFromBranchEntries` + `describeAskNowNext`; the second delivery prefixes "Second and final reminder. ". After two, `ctx.ui.notify("Agent stopped with N open todo tasks (Now: ...). Send a message to continue.", "warning")` fires once per chain, then nothing. `todo_owed_reminder` is emitted per delivery/cap; every suppression logs one debug line naming the first failing clause. No timers anywhere.
 - `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: instantiates the backstop, resets its chain on `session_start` and `session_tree`, and calls `afterAgentEnd` at the tail of the `agent_end` handler.
 - `packages/coding-agent/src/core/extensions/builtin/goal/direct-input-lifecycle.ts`: optional `onAcceptedDirectInput` dependency, fired for every accepted non-extension input; the goal builtin wires it to reset the backstop chain.
 - `packages/coding-agent/src/core/extensions/builtin/goal/continuation.ts`: `didAgentEndCleanly` is now exported (the backstop reuses the goal's own clean-end predicate instead of restating it).
