@@ -10,7 +10,7 @@ describe("RPC held model effect settlement", () => {
 	afterEach(() => {
 		for (const harness of harnesses.splice(0)) harness.cleanup();
 	});
-	const setup = async () => {
+	const setup = async (refuseAfterRepair = false) => {
 		const harness = await createHarness({
 			models: [
 				{ id: "million", contextWindow: 1_000_000, maxTokens: 32_000 },
@@ -22,6 +22,11 @@ describe("RPC held model effect settlement", () => {
 			settings: { compaction: { keepRecentTokens: 1 } },
 			extensionFactories: [
 				(pi) => {
+					pi.on("model_select", (event) =>
+						refuseAfterRepair && event.model.id === "372k"
+							? { systemPrompt: "oversized fixed prefix ".repeat(400_000) }
+							: undefined,
+					);
 					pi.on("session_before_compact", (event) => ({
 						compaction: {
 							summary: "compact summary",
@@ -99,6 +104,17 @@ describe("RPC held model effect settlement", () => {
 			success: false,
 			errorCode: "context_budget",
 			errorData: { effect: { state: "failed", outcome: { kind: "context_budget" } } },
+		});
+	});
+
+	it("fails a repaired held effect when the model-select hook refuses the budget", async () => {
+		const harness = await setup(true);
+		await switchTo(harness, "372k", "held");
+		harness.setResponses([fauxAssistantMessage("unused")]);
+		await expect(harness.session.prompt("continue")).rejects.toMatchObject({ name: "ModelUsabilityBudgetError" });
+		expect(EffectLedger.forSession(harness.session).status("held")).toMatchObject({
+			state: "failed",
+			outcome: { kind: "context_budget" },
 		});
 	});
 

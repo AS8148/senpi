@@ -6384,15 +6384,27 @@ export class AgentSession {
 		}
 		this._pendingModelSwitch = undefined;
 
-		await this._switchActiveModel(pending.model, {
-			persistDefault: pending.persistDefault,
-			appendSessionEntry: true,
-			emitModelSelect: true,
-			modelSelectSource: "set",
-			invalidateCompaction: true,
-			allowDeferral: false,
-			origin: heldSwitchOrigin(pending.origin),
-		});
+		try {
+			await this._switchActiveModel(pending.model, {
+				persistDefault: pending.persistDefault,
+				appendSessionEntry: true,
+				emitModelSelect: true,
+				modelSelectSource: "set",
+				invalidateCompaction: true,
+				allowDeferral: false,
+				origin: heldSwitchOrigin(pending.origin),
+			});
+		} catch (error) {
+			if (error instanceof ModelUsabilityBudgetError) {
+				this._emit({
+					type: "model_change_cancelled",
+					origin: pending.origin,
+					reason: "context-budget",
+					detail: error.message,
+				});
+			}
+			throw error;
+		}
 		return true;
 	}
 
