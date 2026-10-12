@@ -229,6 +229,9 @@ type RpcSessionCommand =
 	| { id?: string; type: "get_commands" }
 	| { id?: string; type: "get_loaded_surfaces" }
 	| { id?: string; type: "extension_request"; name: string; data?: unknown }
+	| { id?: string; type: "eval_cells.list" }
+	| { id?: string; type: "eval_cells.peek"; cellId: string; tailBytes?: number }
+	| { id?: string; type: "eval_cells.stop"; cellId: string }
 
 	// Auth (task 13) is additive. get_auth_providers, login_api_key and logout
 	// answer synchronously. login_start responds immediately (flow-started) and
@@ -289,6 +292,9 @@ export const RPC_ERROR_STREAMING = "streaming";
 export const RPC_ERROR_ENTRY_NOT_FOUND = "not_found";
 /** `set_model` named a provider/model pair the session's registry does not offer. */
 export const RPC_ERROR_MODEL_NOT_FOUND = "model_not_found";
+export const RPC_ERROR_EVAL_CELL_NOT_FOUND = "eval_cell_not_found";
+export const RPC_ERROR_INVALID_EVAL_CELL_REQUEST = "invalid_eval_cell_request";
+export const RPC_ERROR_EVAL_CELLS_UNAVAILABLE = "eval_cells_unavailable";
 export const RPC_ERROR_NOT_ASSISTANT = "not_assistant";
 export const RPC_ERROR_NOT_USER = "not_user";
 export const RPC_ERROR_EMPTY_TEXT = "empty";
@@ -342,6 +348,9 @@ export type RpcErrorCode =
 	| typeof RPC_ERROR_STREAMING
 	| typeof RPC_ERROR_ENTRY_NOT_FOUND
 	| typeof RPC_ERROR_MODEL_NOT_FOUND
+	| typeof RPC_ERROR_EVAL_CELL_NOT_FOUND
+	| typeof RPC_ERROR_INVALID_EVAL_CELL_REQUEST
+	| typeof RPC_ERROR_EVAL_CELLS_UNAVAILABLE
 	| typeof RPC_ERROR_NOT_ASSISTANT
 	| typeof RPC_ERROR_NOT_USER
 	| typeof RPC_ERROR_EMPTY_TEXT
@@ -1000,6 +1009,14 @@ export type RpcResponse =
 			success: true;
 			data: unknown;
 	  }
+	| { id?: string; type: "response"; command: "eval_cells.list"; success: true; data: RpcEvalCell[] }
+	| {
+			id?: string;
+			type: "response";
+			command: "eval_cells.peek" | "eval_cells.stop";
+			success: true;
+			data: RpcEvalCellSnapshot;
+	  }
 
 	// Auth (task 13)
 	| {
@@ -1035,6 +1052,25 @@ export type RpcResponse =
 			errorCode?: string;
 			errorData?: unknown;
 	  };
+
+/** Session-owned cell metadata; live and recently settled cells share the same list shape. */
+export interface RpcEvalCell {
+	readonly cellId: string;
+	readonly language: "js" | "py" | "rb" | "jl";
+	readonly state: "queued" | "running" | "detached" | "completed" | "failed" | "cancelled";
+	readonly startedAtMs: number;
+	readonly summary?: string;
+	readonly queuedBehind?: readonly string[];
+}
+
+/** Bounded text-only snapshot: no duplicated result body, code, or inline images. */
+export interface RpcEvalCellSnapshot extends RpcEvalCell {
+	readonly outputTail: string;
+	readonly stateRetained?: boolean;
+	readonly interruptNote?: string;
+	readonly hardLimitSeconds?: number;
+	readonly runBudgetSeconds?: number;
+}
 
 /** Success payload of `edit_assistant_message`. `leafId` is the session leaf after the call. */
 export type EditAssistantMessageResult =

@@ -13,6 +13,114 @@ RPC mode enables headless operation of the coding agent via a JSON protocol over
 
 **Note for Node.js/TypeScript users**: If you're building a Node.js application, consider using `AgentSession` directly from `@code-yeongyu/senpi` instead of spawning a subprocess. See [`src/core/agent-session.ts`](../src/core/agent-session.ts) for the API. For a subprocess-based TypeScript client, see [`src/modes/rpc/rpc-client.ts`](../src/modes/rpc/rpc-client.ts).
 
+## Eval cell control
+
+`eval_cells.list`, `eval_cells.peek`, and `eval_cells.stop` are session-scoped
+control commands, not model tools. On a shared host include the same `sessionId`
+routing handle used for other session commands. They use the session's current
+codemode detached-cell manager, the same one used by the eval tool's
+`list`/`peek`/`stop` actions. They do not execute a tool, add model context, or
+append session history. Stopping a detached cell still delivers the ordinary
+`senpi-codemode:notification` completion message to the agent, exactly once.
+
+Both classic and shared hosts advertise the host capability `eval_cells` in
+the `data.capabilities` array of a `get_protocol_info` response. It indicates
+protocol support, not that codemode is loaded in every session. A session without
+the extension returns `errorCode: "eval_cells_unavailable"`.
+
+On shared hosts, the three named commands bypass the foreign-session-holder
+guard as explicit reads/cancellation controls. They only touch this host's
+manager for the routed session, never the foreign process's cells. List and
+peek are observations and do not renew an otherwise idle detached session;
+stop counts as activity. Cancelling an already-admitted detached cell may
+persist its ordinary completion notification, like the existing abort control.
+
+### eval_cells.list
+
+```json
+{"id":"cells","type":"eval_cells.list"}
+```
+
+```json
+{"id":"cells","type":"response","command":"eval_cells.list","success":true,"data":[{"cellId":"cell_1","language":"js","state":"detached","startedAtMs":1720000000000,"summary":"Read the input files"}]}
+```
+
+The array contains live and recently settled cells, in the eval tool's existing
+list order. `language` is `js`, `py`, `rb`, or `jl`; `state` is `queued`,
+`running`, `detached`, `completed`, `failed`, or `cancelled`. `summary` is
+optional, and a queued cell can include `queuedBehind: string[]`. A detached
+queued cell has state `detached` and its predecessors in `queuedBehind`.
+An empty or not-yet-started manager returns `[]`. Recent snapshots have the
+manager's existing retention limits; a removed snapshot is no longer addressable.
+
+### eval_cells.peek
+
+```json
+{"id":"tail","type":"eval_cells.peek","cellId":"cell_1","tailBytes":8192}
+```
+
+```json
+{"id":"tail","type":"response","command":"eval_cells.peek","success":true,"data":{"cellId":"cell_1","language":"js","state":"detached","startedAtMs":1720000000000,"summary":"Read the input files","outputTail":"Read 12 files\n"}}
+```
+
+The text-only snapshot includes the list metadata and `outputTail`, taken from
+the manager's buffered output. `tailBytes` defaults to 8192, is capped at 65536,
+and must be a non-negative safe integer. Zero returns an empty tail. A partial
+leading UTF-8 character is dropped, so the returned text never exceeds the byte
+budget. Full result bodies, source code, and inline images are not duplicated
+in this control response. Available snapshots also include `stateRetained`,
+`interruptNote`, `hardLimitSeconds`, and `runBudgetSeconds` when defined.
+
+### eval_cells.stop
+
+```json
+{"id":"stop","type":"eval_cells.stop","cellId":"cell_1"}
+```
+
+```json
+{"id":"stop","type":"response","command":"eval_cells.stop","success":true,"data":{"cellId":"cell_1","language":"js","state":"cancelled","startedAtMs":1720000000000,"summary":"Read the input files","outputTail":"Read 12 files\n","stateRetained":true}}
+```
+
+The response waits for interrupt completion and confirms the terminal state,
+including whether kernel state was retained. Its output tail uses the default
+8192-byte budget. If the cell ended between list and stop, the response succeeds
+with its existing `completed`, `failed`, or `cancelled` snapshot: no second
+interrupt or completion notification is sent.
+
+Unknown IDs, including IDs owned only by another session, fail with
+`errorCode: "eval_cell_not_found"`. A malformed `cellId` or `tailBytes` fails with
+`errorCode: "invalid_eval_cell_request"`. Clients must inspect the code or the
+returned `state`, not match error text.
+
+The extension handlers are also reachable through
+`extension_request {name: "eval_cells.peek", data: {cellId, tailBytes?}}`
+(likewise list/stop). Those aliases preserve the same eval error codes.
+Use the named commands for shared-host observation/control admission:
+generic `extension_request` remains conservatively session-writing.
+
+`RpcClient` exposes `listEvalCells()`, `peekEvalCell(cellId, tailBytes?)`, and
+`stopEvalCell(cellId)` with exported `RpcEvalCell` / `RpcEvalCellSnapshot` types.
+Failed commands reject with `RpcCommandError.errorCode`.
+
+### Eval liveness event
+
+The existing `wake_source_state` snapshot already reaches RPC clients that
+advertise the `extension_events` capability. Codemode publishes it on session
+start and each detached-cell transition, including a zero-count snapshot on
+settlement. It travels in the normal extension-event envelope, tagged with the
+owning routing `sessionId` on a shared host:
+
+```json
+{"type":"extension_event","name":"wake_source_state","sessionId":"session_1","data":{"source":"senpi-codemode","activeCount":1,"items":[{"id":"cell_1","description":"Read the input files","startedAtMs":1720000000000}]}}
+```
+
+Each event is a full per-source snapshot, not a delta. Filter
+`data.source === "senpi-codemode"` and replace the previous detached-cell
+liveness set. `items` carry `id`, `description`, and epoch `startedAtMs`.
+Use `eval_cells.list` to load initial state after attaching and peek on demand
+for output; transitions need no polling. The liveness event itself adds no
+model context or history.
+
 ## Account display names
 
 `get_provider_accounts` returns secret-free descriptors containing `name`, `source`, `blocked`, `pinned`, and optional `displayName`. Render a named account as `displayName (name)`; keep using the immutable `name` for `account_pin`, `account_remove`, and comparisons. Legacy accounts omit `displayName`.
@@ -1753,9 +1861,13 @@ capability inventory in both `in-process` and `worker` runtimes. Probe it before
 enabling in-place binding with an engine pin. Classic bindings do not run this guard
 and do not advertise it, even if a client supplies the string in its flags.
 
-In the response `error` field, machine-matchable:
+Match `errorCode` when present; legacy responses expose machine-matchable
+codes or code prefixes in `error`:
 
 - `unknown_session`
+- `eval_cells_unavailable` (the routed session has no eval-cell RPC handler)
+- `eval_cell_not_found` (unknown or foreign-session cell ID)
+- `invalid_eval_cell_request` (malformed eval-cell identifier or tail budget)
 - `session_closing` (an entry whose owner is tearing down). A worker that FAILS while its session is being opened is not that case and reports `open_failed` carrying the worker's own reason, so the code a client matches on always names what actually happened.
 - `session_held` (`open_session`, including attach, or any session-writing RPC whose JSONL has a live holder outside this daemon family). The refusal has `errorCode: "session_held"` and exactly `errorData { holders: [{ pid, cwd? }] }`; no boot or process-start metadata is exposed. A single dispatch guard covers prompt/steer/follow-up, continuation/custom messages/wake/compaction, model/thinking changes, bash/results, edits/name/labels, appends and tree/session changes; only explicit read/control commands bypass it. The host queries `liveSessionHolders` afresh, resolves moved paths, ignores stale/dead/reused-pid records, and excludes its own PID and worker threads. Live generation identities registered to the same endpoint are also excluded, preserving the daemon's `session_path_in_use` retry/reclaim protocol. Open is checked again after runtime holder publication, before attachment or success, with rollback on refusal. Retry after the other process exits; no restart is needed. An interactive CLI opening or resuming a held session warns with pid/cwd; lookup filesystem errors warn and continue.
   - **Mid-turn policy:** a turn admitted before the foreign holder appeared finishes and persists its results; subsequent writing RPCs are refused. Read/control requests, including abort, queue clearing, `extension_ui_response` and `extension_ui_progress`, remain available.

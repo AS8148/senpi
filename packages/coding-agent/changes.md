@@ -1,3 +1,21 @@
+## 2026-10-11 - Source-only eval RPC regression wiring (senpi#3072)
+
+### What changed
+
+- `packages/coding-agent/vitest.config.ts` resolves `@code-yeongyu/senpi` to its workspace source entry for the codemode/RPC integration regression, matching the codemode package's existing source-only test convention.
+
+### Why
+
+The regression must run the real codemode extension inside the coding-agent session without requiring a build or another lane's install.
+
+### Why an extension could not handle it
+
+The alias belongs to the package test runner's module resolution configuration.
+
+### Expected merge conflict zones
+
+- The additive `resolve.alias` entry in `packages/coding-agent/vitest.config.ts`.
+
 ## 2026-10-11 - Public prompt generation facade (senpi#3104)
 
 ### What changed

@@ -536,6 +536,8 @@ export {
 	RpcClientOpenInFlightError,
 	type RpcClientOptions,
 	type RpcCommand,
+	type RpcEvalCell,
+	type RpcEvalCellSnapshot,
 	type RpcEventListener,
 	type RpcExtensionEvent,
 	type RpcExtensionUIRequest,
