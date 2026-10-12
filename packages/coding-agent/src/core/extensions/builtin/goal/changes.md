@@ -1,5 +1,26 @@
 # goal Extension Changes
 
+## 2026-10-12 - Name on-duty todo waits (senpi#3163)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/todo-owed-backstop.ts`: `collectOnDutySources` combines active wake-source names, an active goal, a pending continuation, and pending messages into the `waiting` suppression. It renders the `todo-waiting` footer, emits the existing reminder event with `reason: "waiting"` and `sources`, and logs the reason and source names at debug level.
+- `packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts` exposes its existing live source-name projection; `packages/coding-agent/src/core/extensions/builtin/goal/index.ts` passes those names to the backstop and clears the waiting footer on agent start, session start, and tree navigation.
+- The two hidden nudges, the cap and its stop notice (owned by oh-my-openagent#10026 above), the setting, and the chain resets are unchanged.
+- `goal-todo-owed-backstop.test.ts` covers named waits, source drain, footer clearing, telemetry, debug logging, and a stopped goal not counting as waiting. `docs/settings.md` and the unreleased changelog describe the behavior.
+
+### Why
+
+Open todo work can legitimately wait for a background child or another continuation owner. The old suppression hid that reason.
+
+### Why an extension could not handle it
+
+The goal builtin owns the continuation latch, wake-source registry, todo backstop chain, and lifecycle hooks.
+
+### Expected merge conflict zones
+
+`todo-owed-backstop.ts` suppression and notice, `index.ts` lifecycle and agent-end input assembly, and the source-name projection in `monitor-continuation.ts`.
+
 ## 2026-10-12 - The todo-owed stop notice names the cause and the resume action (oh-my-openagent#10026)
 
 ### What changed
