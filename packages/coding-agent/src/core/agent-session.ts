@@ -321,6 +321,7 @@ import type { BranchSummaryEntry, CompactionEntry, SessionEntry, SessionProjecti
 import {
 	CURRENT_SESSION_VERSION,
 	getLatestCompactionEntry,
+	getSessionContextEntryId,
 	type SessionHeader,
 	SessionManager,
 } from "./session-manager.ts";
@@ -1245,6 +1246,7 @@ export class AgentSession {
 	private _extensionRunner!: ExtensionRunner;
 	private _turnIndex = 0;
 	private readonly _entryIdsByMessage = new WeakMap<object, string>();
+	private _prePromptProjection: { branch: SessionEntry[]; projection: SessionProjection } | undefined;
 	private readonly _boundaryDispatchedMessages = new WeakSet<object>();
 	/** Assistant turns whose `turn_end` boundary committed entries, so the next request must re-read agent state. */
 	private readonly _boundaryRefreshedTurns = new WeakSet<object>();
@@ -8178,14 +8180,30 @@ export class AgentSession {
 		throw new RequiredCompactionError();
 	}
 
-	/** Share resume's branch provenance rule without changing estimate composition. */
+	/** Share resume's branch provenance rule without projecting trusted usage on every request. */
 	private _estimatePrePromptContextTokens(additions: readonly AgentMessage[] = []): number {
-		const projection = this.sessionManager.buildSessionProjection();
-		const estimate = estimateProjectedContextTokens(
-			{ ...projection, messages: [...projection.messages, ...additions] },
-			this.sessionManager.getBranch(),
-		);
-		return estimate.tokens;
+		const branch = this.sessionManager.getBranch();
+		const messages = [...this.sessionManager.buildSessionContext().messages, ...additions];
+		const estimate = estimateContextTokens(messages);
+		const usageMessage = estimate.lastUsageIndex === null ? undefined : messages[estimate.lastUsageIndex];
+		const usageEntryId = usageMessage ? getSessionContextEntryId(usageMessage) : undefined;
+		let needsProjection = false;
+		for (let i = branch.length - 1; i >= 0; i--) {
+			const entry = branch[i];
+			if (usageEntryId !== undefined && entry.id === usageEntryId) break;
+			if (entry.type === "compaction" || entry.type === "context_edit") {
+				needsProjection = true;
+				break;
+			}
+		}
+		if (!needsProjection) return estimate.tokens;
+
+		if (this._prePromptProjection?.branch !== branch) {
+			this._prePromptProjection = { branch, projection: this.sessionManager.buildSessionProjection() };
+		}
+		const { projection } = this._prePromptProjection;
+		return estimateProjectedContextTokens({ ...projection, messages: [...projection.messages, ...additions] }, branch)
+			.tokens;
 	}
 
 	/**

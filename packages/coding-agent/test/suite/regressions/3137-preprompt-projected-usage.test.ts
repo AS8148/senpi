@@ -141,6 +141,25 @@ describe("#3137: pre-prompt admission uses current projected context", () => {
 		expect(attempts).toEqual(["manual"]);
 	});
 
+	it("reuses the admission projection while the invalidated-usage branch is unchanged", async () => {
+		const { harness } = await setup();
+		await harness.session.compact();
+		addTail(harness);
+		harness.setResponses([answerWithUsage(1_000)]);
+		const buildProjection = harness.sessionManager.buildSessionProjection.bind(harness.sessionManager);
+		const sampledBranches: ReturnType<typeof harness.sessionManager.getBranch>[] = [];
+		const projections = vi.spyOn(harness.sessionManager, "buildSessionProjection").mockImplementation(() => {
+			sampledBranches.push(harness.sessionManager.getBranch());
+			return buildProjection();
+		});
+
+		await harness.session.prompt("continue");
+
+		expect(harness.faux.getCallLog()).toHaveLength(1);
+		expect(projections).toHaveBeenCalled();
+		expect(new Set(sampledBranches).size).toBe(sampledBranches.length);
+	});
+
 	it.each(["fail", "reject", "abort"] as const)("keeps old usage and refuses when compaction %ss", async (outcome) => {
 		const { harness } = await setup(400_000, outcome);
 		await expect(harness.session.compact()).rejects.toThrow();
