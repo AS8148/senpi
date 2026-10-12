@@ -3,7 +3,7 @@
 ### What changed
 
 - `packages/coding-agent/src/core/agent-session.ts`: persistent thinking selection remembers the per-model level only; startup default writes are owned by explicit UI save controls. A session-local last manual level preserves first-switch inheritance without writing config; favorite overrides, target memory, and the model's own default keep precedence. Session-only and turn-scoped changes remain ephemeral.
-- `packages/coding-agent/src/core/settings-manager.ts`: config saves retain unmodified legacy state keys; failed state saves are debug-logged separately and do not prevent config saves. State parsing normalizes model aliases before nested deletion.
+- `packages/coding-agent/src/core/settings-manager.ts`: config saves retain unmodified legacy state keys; failed state saves are debug-logged separately and do not prevent config saves. State parsing normalizes model aliases before nested deletion. The fallback-removal TODO tracks the `state-fallback-removal` follow-up in PR #3213 rather than the issue this PR closes.
 - `packages/coding-agent/src/core/settings-state.ts`: corrupt/unreadable state is ignored and logged once, migration failures are memoized by source per process, and canonical model keys outrank legacy aliases.
 
 ### Why

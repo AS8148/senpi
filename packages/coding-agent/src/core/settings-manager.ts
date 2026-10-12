@@ -870,7 +870,7 @@ export class SettingsManager {
 		// A project file belongs to the user's repository: its retired keys are ignored, never rewritten.
 		if (removeRetiredSettingsKeys(raw) && scope === "global") writeRawScopedSettings(storage, scope);
 		if (scope === "global" && storage.withStateLock) {
-			// TODO(senpi#3178): remove config-only state fallback after the first migration release.
+			// TODO(PR #3213 follow-up: state-fallback-removal): remove config fallback after the first migration release.
 			if ([...STATE_KEYS].some((key) => Object.hasOwn(raw, key))) migrateSettingsState(storage);
 			Object.assign(raw, readSettingsState(storage));
 		}

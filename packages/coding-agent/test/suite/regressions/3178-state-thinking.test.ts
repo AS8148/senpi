@@ -50,10 +50,13 @@ describe("3178 changing thinking levels without saving the startup default", () 
 		},
 	);
 
-	it("still saves the clamped startup default through the explicit thinking selector save", async () => {
+	it.each([
+		["graded", true, "low", "low"],
+		["plain", false, "off", "high"],
+	] as const)("preserves the explicit thinking save contract on %s models", async (id, reasoning, level, saved) => {
 		const harness = await createHarness({
 			fileSettings: true,
-			models: [{ id: "graded", reasoning: true }],
+			models: [{ id, reasoning }],
 			settings: { defaultThinkingLevel: "high" },
 		});
 		harnesses.push(harness);
@@ -71,14 +74,14 @@ describe("3178 changing thinking levels without saving the startup default", () 
 					throw new Error(message);
 				},
 			},
-			"low",
+			level,
 			true,
 		);
 		await harness.settingsManager.flush();
 
-		expect(harness.session.thinkingLevel).toBe("low");
+		expect(harness.session.thinkingLevel).toBe(level);
 		expect(
 			JSON.parse(readFileSync(join(harness.tempDir, "agent", "settings.json"), "utf8")).defaultThinkingLevel,
-		).toBe("low");
+		).toBe(saved);
 	});
 });

@@ -7749,7 +7749,9 @@ export class InteractiveMode {
 					},
 					onThinkingLevelChange: (level) => {
 						this.session.setThinkingLevel(level);
-						this.settingsManager.setDefaultThinkingLevel(this.session.thinkingLevel);
+						if (this.session.thinkingLevel !== "off" || this.session.supportsThinking()) {
+							this.settingsManager.setDefaultThinkingLevel(this.session.thinkingLevel);
+						}
 						this.footer.invalidate();
 						this.updateEditorBorderColor();
 					},
@@ -7957,7 +7959,9 @@ export class InteractiveMode {
 	private static applyThinkingLevel(mode: InteractiveMode, level: ThinkingLevel, persist: boolean): void {
 		if (persist) {
 			mode.session.setThinkingLevel(level);
-			mode.settingsManager.setDefaultThinkingLevel(mode.session.thinkingLevel);
+			if (mode.session.thinkingLevel !== "off" || mode.session.supportsThinking()) {
+				mode.settingsManager.setDefaultThinkingLevel(mode.session.thinkingLevel);
+			}
 		} else mode.session.setSessionThinkingLevel(level);
 		mode.footer.invalidate();
 		mode.updateEditorBorderColor();

@@ -98,7 +98,8 @@ describe("3178 config and state separation", () => {
 			modelServiceTiers: { "faux/example": "priority" },
 		};
 		const remaining = { zCustom: { nested: [1, 2] }, queueMode: "all", retry: { maxDelayMs: 123 }, theme: "dark" };
-		writeFileSync(settingsPath, JSON.stringify({ zCustom: remaining.zCustom, ...state, ...remaining }));
+		const { zCustom, ...rest } = remaining;
+		writeFileSync(settingsPath, JSON.stringify({ zCustom, ...state, ...rest }));
 		const manager = SettingsManager.create(cwd, agentDir);
 		expect(manager.getTipsHistory()).toEqual(state.tipsHistory);
 		expect(JSON.parse(readFileSync(statePath, "utf8"))).toEqual(state);
