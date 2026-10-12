@@ -8,6 +8,18 @@
 
 - RPC clients now see a goal's deliberate wait: `goal_continuation_scheduled`, `goal_continuation_timer_state` (with `dueAtMs` while armed) and `goal_continuation_resumed` arrive as `extension_event`s, and a `goal_continuation_fire_now` extension request runs the armed continuation at once through the timer's own eligibility checks ([#3196](https://github.com/code-yeongyu/senpi/issues/3196), requested by @code-yeongyu).
 
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.12] - 2026-10-12
+
+### Breaking Changes
+
+### Added
+
 - The interactive editor paints OmO's reserved prompt keywords (`ulw`/`ultrawork`, `mass ulw` and its aliases, `ulw plan`, `ulw loop`, `ulw research`) with the same per-character rainbow as the OmO desktop composer, only where the OmO engine would arm them (not inside identifiers, paths, URLs, quotes, relayed headers or "do not load ..." sentences): truecolor gradient, 256-colour fallback, and no decoration under `NO_COLOR`. Cursor, selection and wide-glyph widths are unchanged. `findReservedKeywordSpans` and `findReservedKeywordRuns` are exported ([#3160](https://github.com/code-yeongyu/senpi/issues/3160), requested by @code-yeongyu).
 
 - Session-scoped `eval_cells.list`, `eval_cells.peek`, and `eval_cells.stop` RPC commands and typed client methods expose live/recent eval cells, bounded UTF-8 output tails, and confirmed stop outcomes without model tool calls or history entries. Detached stops preserve the existing completion notification; RPC clients can consume the already-forwarded `wake_source_state` event ([#3072](https://github.com/code-yeongyu/senpi/issues/3072)).
