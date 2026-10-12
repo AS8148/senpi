@@ -1,3 +1,21 @@
+## 2026-10-12 - Replacement-only session hook on AgentSessionRuntime (senpi#3199)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: new `AgentSessionRuntime.onBeforeSessionReplace(listener)`, returning its remover. Listeners run synchronously in `teardownCurrent` (new, switch, fork, resume), after `session_shutdown` handlers and just before `beforeSessionInvalidate`, while the outgoing session can still write its transcript. They never run from `dispose()`, and any number coexist.
+
+### Why
+
+The RPC host must give queued inputs that a replacement discards a terminal `dropped_by_replace` receipt in the outgoing transcript. The only existing hook, `setBeforeSessionInvalidate`, is a single slot that interactive mode owns, and it also fires from `dispose()`, so using it would have overwritten the TUI's teardown and marked queued input dropped on every graceful stop.
+
+### Why an extension could not handle it
+
+The write must happen inside the runtime's replacement sequence, after shutdown handlers and before the old session is disposed; extensions see `session_shutdown` but not the RPC host's admission ledger.
+
+### Expected merge conflict zones
+
+- The `AgentSessionRuntime` field list, the setter block after `setBeforeSessionInvalidate`, and the `mark("shutdown")` line in `teardownCurrent`.
+
 ## 2026-10-12 - model_change entries carry the RPC effectId (senpi#3199)
 
 ### What changed

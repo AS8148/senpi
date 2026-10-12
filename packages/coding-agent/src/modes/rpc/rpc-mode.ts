@@ -109,6 +109,7 @@ import {
 } from "../../core/output-guard.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { toJsonEvent } from "../json-event.ts";
+import { ClientAdmissions } from "./client-admissions.ts";
 import { createRpcConnectionHandler, type RpcConnectionSink } from "./connection-handler.ts";
 import { parseClientCapabilities } from "./custom-capability.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS, serializeJsonLine } from "./jsonl.ts";
@@ -151,6 +152,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 	// byte-identical default behavior.
 	const capabilities = parseClientCapabilities(envValue("RPC_CLIENT_CAPABILITIES"));
 	const handler = createRpcConnectionHandler(runtimeHost, sink, { capabilities, retryFallbackCommand: true });
+	ClientAdmissions.sealQueuedOnReplace(runtimeHost);
 
 	const signalCleanupHandlers: Array<() => void> = [];
 

@@ -1,5 +1,6 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AgentSession, PromptDisposition } from "../../core/agent-session.ts";
+import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
 import {
 	clientMessageIdentity,
 	type PreparedClientInput,
@@ -102,6 +103,15 @@ export class ClientAdmissions {
 		});
 		// Publish this ledger in the WeakMap before restoration emits queue events.
 		this.ready = Promise.resolve().then(() => this.restore());
+	}
+
+	/**
+	 * Whenever `runtime` replaces its session, give the outgoing session's still-queued inputs a
+	 * `dropped_by_replace` receipt. Only a ledger that already exists is touched: building one now would
+	 * restore (replay) persisted queued input into a session that is being torn down.
+	 */
+	static sealQueuedOnReplace(runtime: AgentSessionRuntime): () => void {
+		return runtime.onBeforeSessionReplace(() => sessions.get(runtime.session)?.dropQueuedByReplace());
 	}
 
 	static forSession(session: AgentSession): ClientAdmissions {

@@ -321,8 +321,6 @@ export function createRpcConnectionHandler(
 	let suppressLoadedSurfaceEvents = false;
 	const eventOutput = createRpcEventOutputBuffer(sink.writeRaw, options.eventFlushScheduler);
 
-	// The replaced session's queued inputs get an honest terminal receipt before its queue is discarded.
-	runtimeHost.setBeforeSessionInvalidate(() => ClientAdmissions.forSession(runtimeHost.session).dropQueuedByReplace());
 	const effectContext = (): EffectCommandContext => ({
 		session,
 		by: { connectionId: options.clientInfo?.connectionId() ?? "local" },
