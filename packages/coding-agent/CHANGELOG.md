@@ -8,6 +8,8 @@
 
 - `/gpt-account` and `/account <provider> list` say why an account is blocked: a usage limit with the time it lifts, or a rejected login or disabled account with the command that fixes it. `/gpt-account login <id>` logs an existing account in again in place, keeping its id, display name and pin ([#3216](https://github.com/code-yeongyu/senpi/issues/3216)).
 
+- RPC clients now see a goal's deliberate wait: `goal_continuation_scheduled`, `goal_continuation_timer_state` (with `dueAtMs` while armed) and `goal_continuation_resumed` arrive as `extension_event`s, and a `goal_continuation_fire_now` extension request runs the armed continuation at once through the timer's own eligibility checks ([#3196](https://github.com/code-yeongyu/senpi/issues/3196), requested by @code-yeongyu).
+
 ### Changed
 
 ### Fixed
