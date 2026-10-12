@@ -1665,3 +1665,26 @@ Rendering internals below any extension hook.
 ### Expected merge conflict zones
 
 Upstream TUI fixes in these files at the next sync.
+
+## 2026-10-12 - Editor keyword-run highlight hook (senpi#3160)
+
+### What changed
+
+- `packages/tui/src/components/editor.ts`
+- `packages/tui/src/components/editor-line-render.ts`
+- `packages/tui/src/index.ts`
+
+`EditorTheme` gains an optional `keywordHighlight` (`find` over the whole text joined with `\n`, `style` per character with its run offset and length). `Editor.render` caches runs per text and splits them per logical line and wrap chunk; `renderEditorLine` cuts segments at run edges, drops runs that overlap a mention, and styles the cursor grapheme in reverse video as before. `EditorKeywordHighlight` is exported from the barrel.
+
+### Why
+
+OmO's desktop composer paints reserved prompt keywords (`ulw`, `mass ulw`, `ulw research`, ...) with a rainbow; the TUI editor had no per-character decoration seam, so the same cue was missing in the terminal.
+
+### Why an extension could not handle it
+
+Row composition, wrapping and the cursor grapheme live inside `Editor.render`; an extension can only replace the whole editor, not decorate characters inside its rows.
+
+### Expected merge conflict zones
+
+- MEDIUM: `Editor.render` around the `renderEditorLine` call and `EditorTheme` in `packages/tui/src/components/editor.ts`.
+- LOW: the `Editor` export block in `packages/tui/src/index.ts`.

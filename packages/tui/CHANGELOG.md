@@ -6,6 +6,8 @@
 
 ### Added
 
+- `EditorTheme.keywordHighlight` (`EditorKeywordHighlight`) decorates keyword runs per character with the offset inside the run, so a gradient stays continuous across wrapped rows; a mention or the cursor grapheme takes precedence, and row widths never change ([#3160](https://github.com/code-yeongyu/senpi/issues/3160), requested by @code-yeongyu).
+
 ### Changed
 
 ### Fixed
