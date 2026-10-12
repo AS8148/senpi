@@ -12,6 +12,8 @@
 
 ### Changed
 
+- Tip history, changelog acknowledgments and per-model reasoning/fast-mode memories now live in `state.json` instead of the global settings file, keeping version-controlled config clean during normal use. `/reasoning`, `/efforts`, and thinking cycles remember the model's level without saving the startup default; `/thinking` Ctrl+S and `/settings` still explicitly save it. Existing global keys migrate silently without overwriting saved state; project settings are untouched, corrupt state no longer disables config, and no-value-change saves preserve config bytes. Restart older sessions during upgrades: their legacy bookkeeping writes can still trigger config reloads ([#3178](https://github.com/code-yeongyu/senpi/issues/3178), requested by @devxoul).
+
 ### Fixed
 
 - Credential-pool accounts are no longer taken out for a day or more by an ordinary rate limit. A served request now ends an account's failure streak, without a reset time from the provider a block lasts at most an hour, and a throttle that two accounts in one request both answer is treated as a limit on the request rather than on every account; before, accounts that had seen enough transient 429s over their lifetime were blocked for 31-34 hours although their quota was fine. Every block now writes one line to the debug log with its reason, where its length came from, and a redacted excerpt of the provider's message ([#3216](https://github.com/code-yeongyu/senpi/issues/3216), reported in the OmO community).

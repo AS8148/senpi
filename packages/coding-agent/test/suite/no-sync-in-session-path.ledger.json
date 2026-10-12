@@ -237,14 +237,14 @@
 		{
 			"file": "src/core/settings-manager.ts",
 			"api": "readFileSync",
-			"symbol": "withLock",
+			"symbol": "withPathLock",
 			"count": 2,
 			"note": "settings.json read+write under the sync file lock (KB-scale)"
 		},
 		{
 			"file": "src/core/settings-manager.ts",
 			"api": "writeFileSync",
-			"symbol": "withLock",
+			"symbol": "withPathLock",
 			"count": 1,
 			"note": "settings.json read+write under the sync file lock (KB-scale)"
 		},
