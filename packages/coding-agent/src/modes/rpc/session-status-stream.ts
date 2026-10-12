@@ -57,7 +57,11 @@ export class SessionStatusStream {
 	private lastEffect: SessionLastEffectProvider | undefined;
 	private nextSubscription = 0;
 
-	constructor(private readonly delivery: SessionStatusDelivery) {}
+	private readonly delivery: SessionStatusDelivery;
+
+	constructor(delivery: SessionStatusDelivery) {
+		this.delivery = delivery;
+	}
 
 	setSource(source: SessionStatusSource): void {
 		this.source = source;
