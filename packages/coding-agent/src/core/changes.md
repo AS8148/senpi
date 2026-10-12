@@ -1,3 +1,21 @@
+## 2026-10-12 - Pre-prompt gates use projected context after compaction (senpi#3137)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: both pre-prompt threshold decisions, final turn-local admission, scheduled continuation and retry revalidation share usage-provenance accounting, sampling the current branch after compaction checks. Fresh provider usage uses the cached canonical context without building a projection; usage invalidated by a later compaction or context edit uses `estimateProjectedContextTokens` with a projection cached for that branch. Estimate composition is unchanged; only usage provenance is corrected. The existing first post-compaction response exemption is preserved in both post-turn and inline pre-prompt checks.
+
+### Why
+
+- Accepted compaction or context edits invalidate earlier usage even with extension messages in the tail. A fitting compacted session must reach the provider instead of failing with a required-compaction error. Failed, rejected or aborted attempts keep the old usage.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: core admission runs before extension-driven provider requests and owns the inline threshold refusal and stale-usage exemption.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_enforceCompactionBeforeProvider`, `_estimatePrePromptContextTokens`, `_checkCompaction` and `_handleRetryableError` threshold accounting.
+
 ## 2026-10-11 - Publish real user admission before prompt preflight (senpi#3140)
 
 ### What changed
