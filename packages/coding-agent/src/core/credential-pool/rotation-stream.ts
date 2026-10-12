@@ -133,6 +133,9 @@ export function streamWithCredentialRotation(
 							lease: undefined,
 							blockedUntil: undefined,
 							blockReason: undefined,
+							// A served request ends the failure streak: the next failure starts the backoff over
+							// instead of inheriting every transient failure in the account's history (senpi#3216).
+							failureCount: undefined,
 							// Serving one model says nothing about another model's quota:
 							// only the blocks on the model that just served are lifted.
 							modelBlocks: pruneModelBlocks(current.modelBlocks, now(), options.modelId),

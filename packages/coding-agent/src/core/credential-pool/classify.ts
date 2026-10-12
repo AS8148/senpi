@@ -10,6 +10,13 @@ import { isAccountUsageLimitText } from "./usage-limit.ts";
 
 export const COOLDOWN_BASE_MS = DEFAULT_SLOT_BLOCK_MS;
 export const COOLDOWN_CAP_MS = MAX_SLOT_BLOCK_MS;
+/**
+ * The longest block a slot earns from its own failure count alone (senpi#3216). Only a provider
+ * reset hint (a retry-after, a reset field or reset prose) may block an account for longer: a
+ * request-scoped 429 says nothing about an account's quota, and an unbounded backoff once kept
+ * unused accounts out for 34 hours.
+ */
+export const HINTLESS_COOLDOWN_CAP_MS = 60 * 60 * 1000;
 export const RETRY_SAME_MAX_ATTEMPTS = 2;
 
 export type CredentialBlock =
@@ -19,6 +26,8 @@ export type CredentialBlock =
 			reason: "rate_limit";
 			cooldownMs: number;
 			retryAfterWasCapped: boolean;
+			/** Whether the provider named the reset (`hint`) or the cooldown is the slot's own backoff. */
+			cooldownSource?: "hint" | "backoff";
 			/** Set when the limit names the one model family it binds ("Fable limit"). */
 			modelFamily?: string;
 	  };
@@ -40,7 +49,7 @@ export function rateLimitCooldown(
 ): { cooldownMs: number; retryAfterWasCapped: boolean } {
 	const cap = policy.capMs ?? COOLDOWN_CAP_MS;
 	const base = policy.baseMs ?? COOLDOWN_BASE_MS;
-	const backoff = Math.min(cap, base * 2 ** Math.max(0, failureCount));
+	const backoff = Math.min(cap, HINTLESS_COOLDOWN_CAP_MS, base * 2 ** Math.max(0, failureCount));
 	const floored = serverHintMs === undefined ? backoff : Math.max(backoff, serverHintMs);
 	return {
 		cooldownMs: Math.min(cap, floored),
@@ -136,6 +145,7 @@ export function classifyCredentialFailure(
 					baseMs: context.cooldownBaseMs,
 					capMs: context.cooldownCapMs,
 				}),
+				cooldownSource: hint === undefined ? "backoff" : "hint",
 				...(modelFamily === undefined ? {} : { modelFamily }),
 			},
 		};
