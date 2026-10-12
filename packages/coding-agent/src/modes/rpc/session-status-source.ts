@@ -66,6 +66,10 @@ export function registryStatusSource(registry: {
 }): SessionStatusSource {
 	return {
 		sessionIds: () => registry.list().map((row) => row.sessionId),
+		entryView: (sessionId) => {
+			const entry = registry.peek(sessionId);
+			return entry === undefined ? undefined : entryView(entry);
+		},
 		view: (sessionId) => {
 			const entry = registry.peek(sessionId);
 			if (entry === undefined) return undefined;

@@ -1139,6 +1139,8 @@ Ends a subscription held by the same connection; a closed connection ends its su
 
 An attached connection patches the context a session publishes (on `list_sessions { include_workers: true }` and on `session_status` for subscribers with `include_context`). Keys match `^[a-z][a-z0-9_]{0,63}$`; values are strings of at most 256 characters, numbers, booleans, or `null` to delete; the patched context is at most 4096 bytes of JSON. The host's own keys (`host_socket`, `host_instance`, `shard_key`, `tree_key`) are refused with `invalid_session_context` and `errorData { reason, action }`. The session's extensions keep reading the context the session was opened with. The response carries the published `context`; subscribers with `include_context` receive a `session_status` with cause `context`.
 
+A connection without an attachment receives `errorCode: "session_not_attached"` with `errorData.reason: "this connection is not attached to that session"` and `errorData.action: "attach first with open_session { sessionPath }, then patch its context"`.
+
 #### session_status
 
 ```json
@@ -1169,7 +1171,7 @@ A -> open_session {cwd}                                  B <- session_opened rpc
 A -> close_session {rpc-1}                               B <- session_status detach, attachments 1
 ```
 
-`session_opened { sessionId, durableSessionId, sessionPath, kind, cwd, context? }` is emitted for every session the host creates (not for an attach): broadcast for `interactive` sessions, and for a `worker` delivered to its attached connections and to subscribers with `include_workers` (`context` only for subscribers with `include_context`).
+`session_opened { sessionId, durableSessionId, sessionPath, kind, cwd, context? }` is emitted for every session the host creates (not for an attach). An `interactive` session's record is broadcast to every connection, including connections without a subscription. A `worker` session's record reaches its attached connections and matching subscribers with `include_workers`. For both kinds, `context` is included only for matching subscribers with `include_context`; all other recipients receive the record without context.
 
 ### Client information
 
@@ -1944,6 +1946,7 @@ Match `errorCode` when present; legacy responses expose machine-matchable
 codes or code prefixes in `error`:
 
 - `unknown_session`
+- `session_not_attached: <reason>` (`set_session_context` from a connection without an attachment; `errorData { reason, action }` tells the caller to attach with `open_session { sessionPath }` first)
 - `eval_cells_unavailable` (the routed session has no eval-cell RPC handler)
 - `eval_cell_not_found` (unknown or foreign-session cell ID)
 - `invalid_eval_cell_request` (malformed eval-cell identifier or tail budget)

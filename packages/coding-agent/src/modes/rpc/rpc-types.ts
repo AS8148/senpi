@@ -253,6 +253,8 @@ type RpcSessionCommand =
 
 /** Stable multi-session protocol error codes. */
 export const RPC_ERROR_UNKNOWN_SESSION = "unknown_session";
+/** `set_session_context` requires an attachment on the requesting connection. */
+export const RPC_ERROR_SESSION_NOT_ATTACHED = "session_not_attached";
 export const RPC_ERROR_SESSION_CLOSING = "session_closing";
 export const RPC_ERROR_SESSION_PATH_IN_USE = "session_path_in_use";
 /** A live process outside this host holds the session JSONL; retry after it exits. */
@@ -334,6 +336,7 @@ export const RPC_ERROR_HOST_STOPPING = "host_stopping";
 export type RpcErrorCode =
 	| typeof RPC_ERROR_HOST_STOPPING
 	| typeof RPC_ERROR_UNKNOWN_SESSION
+	| typeof RPC_ERROR_SESSION_NOT_ATTACHED
 	| typeof RPC_ERROR_SESSION_CLOSING
 	| typeof RPC_ERROR_SESSION_PATH_IN_USE
 	| typeof RPC_ERROR_SESSION_HELD

@@ -10,7 +10,7 @@ import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
 import {
 	RPC_ERROR_INVALID_SESSION_CONTEXT,
 	RPC_ERROR_INVALID_SUBSCRIPTION,
-	RPC_ERROR_UNKNOWN_SESSION,
+	RPC_ERROR_SESSION_NOT_ATTACHED,
 	RPC_ERROR_UNKNOWN_SUBSCRIPTION,
 } from "./rpc-types.ts";
 import { applyContextPatch, publishedSessionContext } from "./session-context-patch.ts";
@@ -47,7 +47,7 @@ export function answerSubscribeSessions(
 			reason: "this transport has no per-connection identity to deliver a subscription to",
 			action: "connect to the host socket (senpi --mode rpc --listen) and subscribe there",
 		});
-	const parsed = parseSubscription(command as unknown as Readonly<Record<string, unknown>>);
+	const parsed = parseSubscription(command);
 	if ("refusal" in parsed) return refusal(command.id, command.type, RPC_ERROR_INVALID_SUBSCRIPTION, parsed.refusal);
 	const subscribed = stream.subscribe(connectionId, parsed.options);
 	return {
@@ -83,7 +83,7 @@ export function answerUnsubscribeSessions(
 }
 
 export function notAttachedRefusal(command: Command<"set_session_context">): RpcResponse {
-	return refusal(command.id, command.type, RPC_ERROR_UNKNOWN_SESSION, {
+	return refusal(command.id, command.type, RPC_ERROR_SESSION_NOT_ATTACHED, {
 		reason: "this connection is not attached to that session",
 		action: "attach first with open_session { sessionPath }, then patch its context",
 	});

@@ -24,6 +24,7 @@ import { mirrorsRecord, type SubscriptionOptions, subscriptionMatches } from "./
 
 export interface SessionStatusSource {
 	readonly sessionIds: () => readonly string[];
+	readonly entryView: (sessionId: string) => SessionStatusEntryView | undefined;
 	readonly view: (
 		sessionId: string,
 	) => { readonly entry: SessionStatusEntryView; readonly runtime?: SessionStatusRuntimeView } | undefined;
@@ -141,16 +142,15 @@ export class SessionStatusStream {
 	}
 
 	mirrorTargets(sessionId: string, recordType: string): readonly string[] {
-		if (this.subscriptions.size === 0) return [];
-		const view = this.currentView(sessionId);
-		if (view === undefined) return [];
+		const subscriptions = [...this.subscriptions.values()].filter((subscription) =>
+			mirrorsRecord(subscription.options.mirror, recordType),
+		);
+		if (subscriptions.length === 0) return [];
+		const entry = this.source?.entryView(sessionId) ?? this.lastViews.get(sessionId)?.entry;
+		if (entry === undefined) return [];
 		const targets = new Set<string>();
-		for (const subscription of this.subscriptions.values())
-			if (
-				mirrorsRecord(subscription.options.mirror, recordType) &&
-				subscriptionMatches(subscription.options, sessionId, view.entry)
-			)
-				targets.add(subscription.connectionId);
+		for (const subscription of subscriptions)
+			if (subscriptionMatches(subscription.options, sessionId, entry)) targets.add(subscription.connectionId);
 		return [...targets];
 	}
 

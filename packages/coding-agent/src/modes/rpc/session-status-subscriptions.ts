@@ -4,6 +4,7 @@
  * Parsed once at the wire boundary, so the stream downstream only ever holds a selector that is known to
  * be well formed. Every refusal names the field that was wrong and what to send instead.
  */
+import type { RpcCommand } from "./rpc-types.ts";
 import type { SessionStatusEntryView } from "./session-status.ts";
 
 export type SessionSelector =
@@ -84,7 +85,12 @@ function optionalBoolean(value: unknown, field: string): boolean | undefined | S
 }
 
 export function parseSubscription(
-	request: Readonly<Record<string, unknown>>,
+	request: Readonly<
+		Pick<
+			Extract<RpcCommand, { type: "subscribe_sessions" }>,
+			"sessions" | "mirror" | "include_workers" | "include_context"
+		>
+	>,
 ): { readonly options: SubscriptionOptions } | { readonly refusal: SubscriptionRefusal } {
 	const selector = parseSelector(request.sessions);
 	if ("refusal" in selector) return selector;

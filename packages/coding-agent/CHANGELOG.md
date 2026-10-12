@@ -39,6 +39,8 @@
 
 - Closing a todo task resets the two-continuation limit, so unattended work that makes progress can continue after its next early stop. After two automatic continuations close no task, the stop notice explains the limit and how to resume: reply, or close the work with `/todo done` or `/todo drop` ([#3220](https://github.com/code-yeongyu/senpi/pull/3220)).
 
+- Status-only RPC subscriptions no longer rebuild runtime state for every content delta; mirror matching reads only session metadata. `set_session_context` refusals now identify a missing connection attachment with `session_not_attached` and attachment recovery instructions ([#3157](https://github.com/code-yeongyu/senpi/issues/3157), [#3155](https://github.com/code-yeongyu/senpi/issues/3155)).
+
 ### Removed
 
 ## [2026.10.12] - 2026-10-12
