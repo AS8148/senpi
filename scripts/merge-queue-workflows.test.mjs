@@ -63,15 +63,66 @@ describe("Changelog gate on merge_group", () => {
 });
 
 describe("Review claim gate on merge_group", () => {
-	const script = workflow("review-claims.yml").jobs.gate.steps[0].with.script;
+	const gate = workflow("review-claims.yml").jobs.gate;
+	const script = gate.steps[0].with.script;
+	const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
 
-	it("finds the queued pull request from the merge group head ref", () => {
-		assert.match(script, /context\.payload\.merge_group\?\.head_ref/);
-		const queued = /\/pr-(\d+)-[0-9a-f]+$/.exec("refs/heads/gh-readonly-queue/main/pr-3169-b07fa24074c8fe7317ebec4a2ef1ba74272aab49");
-		assert.equal(queued?.[1], "3169");
+	/** Runs the workflow's own script with stubbed github-script inputs and returns what it reported. */
+	async function runGate(payload, labels) {
+		const requested = [];
+		const result = { failed: undefined, info: undefined };
+		const github = {
+			rest: { issues: { listLabelsOnIssue: Symbol("listLabelsOnIssue") } },
+			paginate: async (_method, options) => {
+				requested.push(options.issue_number);
+				return labels.map((name) => ({ name }));
+			},
+		};
+		const core = {
+			setFailed: (message) => {
+				result.failed = message;
+			},
+			info: (message) => {
+				result.info = message;
+			},
+		};
+		const context = { repo: { owner: "o", repo: "r" }, payload };
+		await new AsyncFunction("github", "context", "core", script)(github, context, core);
+		return { ...result, requested };
+	}
+
+	const queued = (headRef) => ({ merge_group: { head_ref: headRef } });
+
+	it("reads the queued pull request's labels from the merge group head ref", async () => {
+		const run = await runGate(queued("refs/heads/gh-readonly-queue/main/pr-3169-b07fa24074c8fe7317ebec4a2ef1ba74272aab49"), []);
+		assert.deepEqual(run.requested, [3169]);
+		assert.equal(run.failed, undefined);
 	});
 
-	it("fails closed when it cannot tell which pull request the run is for", () => {
-		assert.match(script, /core\.setFailed\("Merge blocked: could not tell which pull request this run is for\."\)/);
+	it("handles a base branch containing a slash", async () => {
+		const run = await runGate(queued("refs/heads/gh-readonly-queue/release/v1/pr-12-0123abcd"), []);
+		assert.deepEqual(run.requested, [12]);
+	});
+
+	it("blocks a queued pull request that carries a claim label", async () => {
+		const run = await runGate(queued("refs/heads/gh-readonly-queue/main/pr-7-abc123"), ["will-review"]);
+		assert.match(run.failed ?? "", /will-review/);
+	});
+
+	for (const headRef of ["", "refs/heads/main", "refs/heads/gh-readonly-queue/main/pr-7-not-hex"]) {
+		it(`fails closed without reading labels when the head ref is ${JSON.stringify(headRef)}`, async () => {
+			const run = await runGate(queued(headRef), []);
+			assert.ok(run.failed, "the gate must fail when it cannot identify the pull request");
+			assert.deepEqual(run.requested, []);
+		});
+	}
+
+	it("still uses the pull request payload on pull request events", async () => {
+		const run = await runGate({ pull_request: { number: 41 } }, []);
+		assert.deepEqual(run.requested, [41]);
+	});
+
+	it("runs with a read-only token", () => {
+		assert.deepEqual(gate.permissions, { issues: "read", "pull-requests": "read" });
 	});
 });

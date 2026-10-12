@@ -51,10 +51,19 @@ the job on the queue. Keep that file equal to the branch-protection setting.
 - `Review claim gate` (`review-claims.yml`) re-reads the queued PR's claim labels (PR number from the
   `gh-readonly-queue/<base>/pr-<n>-<sha>` head ref) and fails closed when it cannot tell which PR it is for.
 
-Until a maintainer enables the queue, nothing changes: PRs still need `behind 0` and green checks on their
-head. To enable it: Settings > Branches > `main` rule (or a ruleset) > Require merge queue, keep the same
-three required checks, merge method "merge commit". Once enabled, a PR is ready when its own checks are green
-and it is approved; the queue re-tests it on top of the latest `main`, so nobody re-syncs branches by hand.
+Until a maintainer enables the queue, nothing changes for PRs or pushes.
+
+Queue runs execute the queued PR's own workflow files in this repository's context, with its secrets and
+with whatever `permissions:` those files ask for. Queuing a PR therefore runs its workflow changes with
+secrets before it merges, even if the queue then rejects it. Before enabling the queue, the `main` rule must
+require at least one approval, code-owner review for `.github/**`, and approval of the most recent push, so a
+workflow change cannot reach the queue unreviewed.
+
+To enable it: Settings > Branches > `main` rule (or a ruleset) > Require merge queue, keep the same three
+required checks, merge method "merge commit". Once enabled, a PR is ready when its own checks are green and it
+is approved; the queue re-tests it on top of the latest `main`, so nobody updates branches by hand. With merge
+groups larger than one, the claim gate checks the newest PR in the group; keep the group size at 1 or rely on
+each PR's own gate run.
 
 ## ANTI-PATTERNS
 
