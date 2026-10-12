@@ -39,6 +39,8 @@ export class ZeroSessionTrimmer {
 	private readonly now: () => number;
 	private heldSessions = false;
 	private lastSessionCount = 0;
+	/** A drop the registry reported between ticks; a backfill in the same second must not hide it. */
+	private declined = false;
 	private lastTrimAt: number | undefined;
 	/** A collection that ran on the previous tick; its record waits for the allocator to return the pages. */
 	private pending: { readonly beforeBytes: number; readonly collected: boolean } | undefined;
@@ -65,16 +67,19 @@ export class ZeroSessionTrimmer {
 	/** The registry's own signal: any session that existed, however briefly, makes the next zero a transition. */
 	observe(size: number): void {
 		if (size > 0) this.heldSessions = true;
+		if (size < this.lastSessionCount) this.declined = true;
+		this.lastSessionCount = size;
 	}
 
 	check(): void {
 		if (this.pending !== undefined) this.report(this.pending);
 		const sessions = this.options.sessions();
-		const previous = this.lastSessionCount;
+		const declined = this.declined || sessions < this.lastSessionCount;
+		this.declined = false;
 		this.lastSessionCount = sessions;
 		if (sessions > 0) {
 			this.heldSessions = true;
-			if (sessions < previous && this.intervalElapsed() && this.readFootprint().bytes >= DECLINE_TRIM_FLOOR_BYTES) {
+			if (declined && this.intervalElapsed() && this.readFootprint().bytes >= DECLINE_TRIM_FLOOR_BYTES) {
 				this.trim();
 			}
 			return;

@@ -130,6 +130,27 @@ describe("zero-session host trim", () => {
 		]);
 	});
 
+	it("sees a drop that a new session backfills before the next tick (senpi#3218 review)", () => {
+		// Given: a pool held at its concurrency cap of 3 on a 3 GB host.
+		const harness = createTrimmer();
+		harness.setSessions(3);
+		harness.allocate(3 * 1024);
+		// When: a child closes and the next one opens within the same second.
+		harness.trimmer.observe(2);
+		harness.trimmer.observe(3);
+		harness.tick();
+		// Then: the drop still counts.
+		expect(harness.collections()).toBe(1);
+	});
+
+	it("collects at exactly the floor", () => {
+		const harness = createTrimmer();
+		harness.setSessions(2);
+		harness.allocate(DECLINE_TRIM_FLOOR_BYTES / MEGABYTE);
+		harness.setSessions(1);
+		expect(harness.collections()).toBe(1);
+	});
+
 	it("does not collect on a session-count drop below the floor or within the interval", () => {
 		const harness = createTrimmer();
 		harness.setSessions(3);
