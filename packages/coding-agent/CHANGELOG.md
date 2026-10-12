@@ -6,6 +6,8 @@
 
 ### Added
 
+- RPC clients now see a goal's deliberate wait: `goal_continuation_scheduled`, `goal_continuation_timer_state` (with `dueAtMs` while armed) and `goal_continuation_resumed` arrive as `extension_event`s, and a `goal_continuation_fire_now` extension request runs the armed continuation at once through the timer's own eligibility checks ([#3196](https://github.com/code-yeongyu/senpi/issues/3196), requested by @code-yeongyu).
+
 ### Changed
 
 ### Fixed

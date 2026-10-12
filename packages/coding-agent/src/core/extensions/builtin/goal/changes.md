@@ -19,6 +19,27 @@ The backstop is itself a builtin extension, and the change is confined to its no
 
 - None upstream: `todo-owed-backstop.ts` is fork-only.
 
+## 2026-10-12 - RPC clients see a goal's continuation wait and can run it now (senpi#3196)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/rpc-wait-surface.ts` (new): `publishGoalContinuationEvent` sends every continuation event to `pi.events` and also through `pi.rpc.emit`, so RPC clients with the `extension_events` capability receive `goal_continuation_scheduled`, `goal_continuation_timer_state` and `goal_continuation_resumed` as `extension_event`s. A stale-context error from a retired runtime is dropped; any other error propagates. `registerGoalFireNowRequest` registers the `goal_continuation_fire_now` extension request.
+- `packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts`: the five continuation emits go through that publisher. The armed `goal_continuation_timer_state` payload now carries `dueAtMs`. `fireNow()` runs the armed continuation at once through the same `#continueIfEligible` path as the timer, keeping the armed drain-fire flag; it answers `{ fired: false, reason: "held" }` while a direct-input hold is active and `{ fired: false, reason: "not_armed" }` when nothing is armed.
+- `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: registers the fire-now request on the monitor continuation.
+
+### Why
+
+The OmO desktop showed a goal that was deliberately waiting on a monitor or child as idle: the scheduled continuation, its due time and its wake sources reached only in-process listeners and the TUI ticker (code-yeongyu/omo-desktop-app#2307). The desktop also needs a "Check now" that does not bypass eligibility.
+
+### Why an extension could not handle it
+
+The goal extension is the only owner of the continuation timer and its schedule data; another extension cannot observe the armed timer or fire it through the goal's admission checks.
+
+### Expected merge conflict zones
+
+- `monitor-continuation.ts` emit sites (`#schedule`, `#continueIfEligible`, `#cancelTimer`, the hold/disarm path) and the class fields near `#scheduledContinuationKind`.
+- `index.ts` where `MonitorAwareGoalContinuation` is constructed.
+
 ## 2026-10-09 - Cover live stale stops and explain them to the model (senpi#3053)
 
 ### What changed
