@@ -20,17 +20,25 @@ export interface DeltaRead {
 	readonly droppedChars: number;
 }
 
+const RELEASED_SCREEN: TerminalScreenSnapshot = { cols: 0, rows: 0, visibleGrid: [], scrollback: [], cursor: { x: 0, y: 0 } };
+
 /**
  * A live terminal session: a pi-pty {@link TerminalSession} plus an xterm screen model
  * and a bounded decoded-output buffer with a per-consumer read cursor. Reads are pure
  * non-blocking peeks; watchers subscribe through `onOutput` (the monitor path).
+ *
+ * Once the process exits, the screen model is replaced by its final visible screen: an exited session
+ * stays listed until the registry needs its slot, and a live xterm with its scrollback and replay
+ * history costs tens of MB that nothing reads after exit (senpi#3171).
  */
 export class TerminalRuntimeSession {
 	readonly session: TerminalSession;
 	readonly command: string;
 	readonly startedAtMs: number;
 	private readonly argv: readonly string[];
-	private readonly screen: TerminalScreen;
+	private screen: TerminalScreen | null;
+	private finalScreen: TerminalScreenSnapshot | null = null;
+	private readonly screenRelease: Promise<void>;
 	private readonly decoder = new TextDecoder("utf-8", { fatal: false });
 	private buffer = "";
 	private droppedChars = 0;
@@ -58,8 +66,28 @@ export class TerminalRuntimeSession {
 				}
 			}
 		});
+		this.screenRelease = new Promise((resolve) => {
+			this.session.onExit(() => {
+				void this.releaseScreen().finally(resolve);
+			});
+		});
 		this.session.start();
 		this.startedAtMs = Date.now();
+	}
+
+	/** Resolves once an exited session has kept its final visible screen and dropped the screen model. */
+	screenReleased(): Promise<void> {
+		return this.screenRelease;
+	}
+
+	private async releaseScreen(): Promise<void> {
+		const screen = this.screen;
+		if (!screen) return;
+		await screen.flush().catch(() => {});
+		if (this.screen !== screen) return;
+		this.finalScreen = { ...screen.snapshot(), scrollback: [] };
+		this.screen = null;
+		screen.dispose();
 	}
 
 	get backend(): string | null {
@@ -96,7 +124,7 @@ export class TerminalRuntimeSession {
 	private ingest(chunk: Uint8Array): string {
 		const text = this.decoder.decode(chunk, { stream: true });
 		if (text.length === 0) return text;
-		this.ownScreenWrite(this.screen.feed(text));
+		if (this.screen) this.ownScreenWrite(this.screen.feed(text));
 		this.buffer += text;
 		if (this.buffer.length > MAX_SESSION_OUTPUT_CHARS) {
 			const overflow = this.buffer.length - MAX_SESSION_OUTPUT_CHARS;
@@ -127,11 +155,12 @@ export class TerminalRuntimeSession {
 	}
 
 	snapshot(): TerminalScreenSnapshot {
-		return this.screen.snapshot();
+		if (this.screen) return this.screen.snapshot();
+		return this.finalScreen ?? RELEASED_SCREEN;
 	}
 
 	resizeScreen(cols: number, rows: number): void {
-		this.ownScreenWrite(this.screen.resize(cols, rows));
+		if (this.screen) this.ownScreenWrite(this.screen.resize(cols, rows));
 	}
 
 	/**
@@ -155,6 +184,7 @@ export class TerminalRuntimeSession {
 		this.unsubscribeData?.();
 		this.unsubscribeData = null;
 		this.outputListeners.clear();
-		this.screen.dispose();
+		this.screen?.dispose();
+		this.screen = null;
 	}
 }
