@@ -507,6 +507,7 @@ export class ExtensionRunner {
 	});
 	private getSystemPromptOptionsFn: () => BuildSystemPromptOptions = () => ({ cwd: this.cwd });
 	private getPromptCachePrefixRequestFn: ExtensionContextActions["getPromptCachePrefixRequest"] = undefined;
+	private onUserActivityFn: ExtensionContextActions["onUserActivity"];
 	private getAgentDirFn: () => string = () => getAgentDir();
 	private executeToolFn: ExtensionContextActions["executeTool"];
 	private getCallableToolsFn: () => readonly AgentTool[] = () => [];
@@ -629,6 +630,7 @@ export class ExtensionRunner {
 		if (contextActions.getAgentDir) this.getAgentDirFn = contextActions.getAgentDir;
 		this.getSystemPromptOptionsFn = contextActions.getSystemPromptOptions ?? (() => ({ cwd: this.cwd }));
 		this.getPromptCachePrefixRequestFn = contextActions.getPromptCachePrefixRequest;
+		this.onUserActivityFn = contextActions.onUserActivity;
 		this.executeToolFn = contextActions.executeTool;
 		this.getCallableToolsFn = contextActions.getCallableTools ?? (() => []);
 
@@ -1350,6 +1352,21 @@ export class ExtensionRunner {
 			getPromptCacheKeepAliveSettings: () => {
 				runner.assertActive();
 				return runner.getPromptCacheKeepAliveSettingsFn();
+			},
+			onUserActivity: (listener) => {
+				runner.assertActive();
+				const unsubscribe = runner.onUserActivityFn?.((kind) => {
+					try {
+						listener(kind);
+					} catch (error) {
+						runner.emitError({
+							extensionPath: excludeBeforeProviderRequestExtensionPath ?? RUNTIME_EXTENSION_PATH,
+							event: "user_activity",
+							error: error instanceof Error ? error.message : String(error),
+						});
+					}
+				});
+				return runner.runtime.trackEventBusSubscription(unsubscribe ?? (() => {}));
 			},
 			getLookAtSettings: () => {
 				runner.assertActive();

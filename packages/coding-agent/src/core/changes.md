@@ -1,3 +1,21 @@
+## 2026-10-11 - Publish real user admission before prompt preflight (senpi#3140)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `prompt()` and the shared steering/follow-up admission path publish host-owned `"prompt"` activity synchronously, before any preflight await. Extension-originated input is excluded. The session owns the activity emitter and exposes only subscription through extension contexts.
+
+### Why
+
+- A real submitted prompt warms its own cache prefix. A pending draft prewarm must see admission before asynchronous preview/auth preparation can issue a redundant provider request.
+
+### Why an extension could not handle it
+
+- Prompt and queued-input admission are session-owned and happen before the existing asynchronous `input` handlers. The builtin consumes the read-only host activity hook without depending on RPC or TUI classes; the public extension bus cannot forge activity.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: extension imports, `prompt()` entry, and `_queueUserInput()` entry.
+
 ## 2026-10-11 - Resume gate projects accepted compaction context (senpi#3062)
 
 ### What changed
