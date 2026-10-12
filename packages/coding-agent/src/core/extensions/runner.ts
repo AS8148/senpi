@@ -102,6 +102,13 @@ import type {
 } from "./types.ts";
 import { RUNTIME_EXTENSION_PATH } from "./types.ts";
 
+export class ExtensionRpcRequestNotFoundError extends Error {
+	constructor(name: string) {
+		super(`Unknown extension RPC request: ${name}`);
+		this.name = "ExtensionRpcRequestNotFoundError";
+	}
+}
+
 // Extension shortcuts compete with canonical keybinding ids from keybindings.json.
 // Only editor-global shortcuts are reserved here. Picker-specific bindings are not.
 const RESERVED_KEYBINDINGS_FOR_EXTENSION_CONFLICTS = [
@@ -507,6 +514,7 @@ export class ExtensionRunner {
 	});
 	private getSystemPromptOptionsFn: () => BuildSystemPromptOptions = () => ({ cwd: this.cwd });
 	private getPromptCachePrefixRequestFn: ExtensionContextActions["getPromptCachePrefixRequest"] = undefined;
+	private onUserActivityFn: ExtensionContextActions["onUserActivity"];
 	private getAgentDirFn: () => string = () => getAgentDir();
 	private executeToolFn: ExtensionContextActions["executeTool"];
 	private getCallableToolsFn: () => readonly AgentTool[] = () => [];
@@ -629,6 +637,7 @@ export class ExtensionRunner {
 		if (contextActions.getAgentDir) this.getAgentDirFn = contextActions.getAgentDir;
 		this.getSystemPromptOptionsFn = contextActions.getSystemPromptOptions ?? (() => ({ cwd: this.cwd }));
 		this.getPromptCachePrefixRequestFn = contextActions.getPromptCachePrefixRequest;
+		this.onUserActivityFn = contextActions.onUserActivity;
 		this.executeToolFn = contextActions.executeTool;
 		this.getCallableToolsFn = contextActions.getCallableTools ?? (() => []);
 
@@ -1182,7 +1191,7 @@ export class ExtensionRunner {
 			return handler === undefined ? [] : [handler];
 		});
 		if (matches.length === 0) {
-			throw new Error(`Unknown extension RPC request: ${normalizedName}`);
+			throw new ExtensionRpcRequestNotFoundError(normalizedName);
 		}
 		if (matches.length > 1) {
 			throw new Error(`Multiple extension RPC request handlers registered: ${normalizedName}`);
@@ -1350,6 +1359,21 @@ export class ExtensionRunner {
 			getPromptCacheKeepAliveSettings: () => {
 				runner.assertActive();
 				return runner.getPromptCacheKeepAliveSettingsFn();
+			},
+			onUserActivity: (listener) => {
+				runner.assertActive();
+				const unsubscribe = runner.onUserActivityFn?.((kind) => {
+					try {
+						listener(kind);
+					} catch (error) {
+						runner.emitError({
+							extensionPath: excludeBeforeProviderRequestExtensionPath ?? RUNTIME_EXTENSION_PATH,
+							event: "user_activity",
+							error: error instanceof Error ? error.message : String(error),
+						});
+					}
+				});
+				return runner.runtime.trackEventBusSubscription(unsubscribe ?? (() => {}));
 			},
 			getLookAtSettings: () => {
 				runner.assertActive();

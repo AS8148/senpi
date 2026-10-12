@@ -1,6 +1,13 @@
 {
 	"version": 1,
 	"nodes": {
+		"senpi#3072": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/extension/eval-cells-rpc.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/extension/eval-cells-rpc.ts"
+			],
+			"reason": "senpi#3072: reviewed session-scoped, model-invisible RPC handlers share the existing eval cell manager. Record only this module's additive import membership in the frozen baseline."
+		},
 		"senpi#3048": {
 			"additions": [
 				"legacyContracts/test/kernels/jl/lazy-globals.test.ts/Julia lazy globals declarations (Refs senpi#3048) installs zero sizing declarations before a below-threshold first result",

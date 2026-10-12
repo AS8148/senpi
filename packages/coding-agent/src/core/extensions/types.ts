@@ -113,6 +113,7 @@ import type { McpServerDeclaration } from "./builtin/mcp/config-schema.ts";
 import type { EvalHandleHost } from "./eval-handle-host.ts";
 import type { ExtensionKernelTools } from "./kernel-tools-context.ts";
 import type { SessionControlActions, SessionControlWakeEvent } from "./session-control-types.ts";
+import type { UserActivityKind } from "./user-activity.ts";
 
 export type { ExecOptions, ExecResult } from "../exec.ts";
 export type { AppKeybinding, KeybindingsManager } from "../keybindings.ts";
@@ -566,6 +567,8 @@ export interface ExtensionContext {
 	getPromptCacheSafeWaitSeconds?(): number | undefined;
 	/** Maximum Goal monitor continuation backstop configured for prompt-cache waits. */
 	getPromptCacheGoalBackstopMaxSeconds?(): number;
+	/** Subscribe to host-authenticated activity; extensions cannot publish it. */
+	onUserActivity?(listener: (kind: UserActivityKind) => void): () => void;
 	/** Resolved opt-in prompt-cache keep-alive policy. */
 	getPromptCacheKeepAliveSettings?(): {
 		enabled: boolean;
@@ -3049,6 +3052,7 @@ export interface ExtensionContextActions {
 	getCompactionModel?: () => Model<Api> | undefined;
 	getPromptCacheSafeWaitSeconds?: () => number | undefined;
 	getPromptCacheGoalBackstopMaxSeconds?: () => number;
+	onUserActivity?: (listener: (kind: UserActivityKind) => void) => () => void;
 	getPromptCacheKeepAliveSettings?: () => {
 		enabled: boolean;
 		maxRequestsPerSession: number;

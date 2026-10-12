@@ -6,6 +6,8 @@
 
 ### Added
 
+- Session-scoped `eval_cells.list`, `eval_cells.peek`, and `eval_cells.stop` RPC commands and typed client methods expose live/recent eval cells, bounded UTF-8 output tails, and confirmed stop outcomes without model tool calls or history entries. Detached stops preserve the existing completion notification; RPC clients can consume the already-forwarded `wake_source_state` event ([#3072](https://github.com/code-yeongyu/senpi/issues/3072)).
+
 - Extensions can use `ctx.getCompactionModel()` to resolve a usable summary model without changing the active session selection. Healthy builtin compaction retains the current model; a spent account can use the held target, configured summary override, or an authenticated alternate with sufficient context capacity ([#3131](https://github.com/code-yeongyu/senpi/issues/3131)).
 
 ### Changed
@@ -18,6 +20,7 @@
 
 ### Fixed
 
+- Prompt-cache prewarm is now opt-in through `promptCache.keepAlive.enabled`, which defaults to `false`: prewarm is off by default. When enabled, it starts only on the first composer edit, never on session start, resume, fork, reload, restored drafts, or extension UI text insertion. Submitting the first prompt uses that real request to warm the cache without an extra call. Restored Anthropic history also waits for first activity before scheduling keep-alive; completed turns, including extension-driven turns, retain their existing idle keep-alive behavior. Clipboard images dropped during compaction do not count as edits ([#3140](https://github.com/code-yeongyu/senpi/issues/3140)).
 - Shared RPC hosts advertise `stopping` as soon as shutdown or draining begins and return a typed `host_stopping` refusal to racing session opens. On supervised hosts this replaces `host_draining` for opens during a drain; RPC clients matching the old code must handle `host_stopping`. Bare hosts retain `host_draining`. Launch-owning callers wait for the stopping generation to exit before starting a successor. `senpi host status --json` and each `status --all` row add `lifecycle: "ready" | "stopping" | null`; an unserved socket keeps the same field set with `lifecycle: null` ([#3059](https://github.com/code-yeongyu/senpi/issues/3059)).
 
 - Resuming after accepted compaction uses the compacted summary and retained messages instead of pre-compaction provider usage, so a session that now fits is not refused or compacted again. Fresh provider usage supersedes the estimate on the next response ([#3062](https://github.com/code-yeongyu/senpi/issues/3062)).

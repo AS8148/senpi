@@ -51,6 +51,8 @@ import type {
 	RpcAccountFailoverEvent,
 	RpcAuthAccountsChangedEvent,
 	RpcCommand,
+	RpcEvalCell,
+	RpcEvalCellSnapshot,
 	RpcExtensionEvent,
 	RpcExtensionUIProgress,
 	RpcExtensionUIRequest,
@@ -1105,6 +1107,23 @@ export class RpcClient {
 			...(data === undefined ? {} : { data }),
 		});
 		return this.getData<T>(response);
+	}
+
+	/** Read live and recently settled eval cells without a model tool call. */
+	async listEvalCells(): Promise<RpcEvalCell[]> {
+		return this.getData<RpcEvalCell[]>(await this.send({ type: "eval_cells.list" }));
+	}
+
+	/** Read a bounded UTF-8 output tail; the host caps tailBytes at 64 KiB. */
+	async peekEvalCell(cellId: string, tailBytes?: number): Promise<RpcEvalCellSnapshot> {
+		return this.getData<RpcEvalCellSnapshot>(
+			await this.send({ type: "eval_cells.peek", cellId, ...(tailBytes === undefined ? {} : { tailBytes }) }),
+		);
+	}
+
+	/** Stop a session-owned cell and return its confirmed terminal snapshot. */
+	async stopEvalCell(cellId: string): Promise<RpcEvalCellSnapshot> {
+		return this.getData<RpcEvalCellSnapshot>(await this.send({ type: "eval_cells.stop", cellId }));
 	}
 
 	/** List safe metadata for the named provider's configured account slots. */

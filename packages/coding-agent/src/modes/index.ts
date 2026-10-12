@@ -104,6 +104,8 @@ export {
 export { runRpcMode } from "./rpc/rpc-mode.ts";
 export type {
 	RpcCommand,
+	RpcEvalCell,
+	RpcEvalCellSnapshot,
 	RpcExtensionEvent,
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
