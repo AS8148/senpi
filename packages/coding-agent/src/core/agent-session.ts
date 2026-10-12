@@ -277,6 +277,7 @@ import {
 import { ModelRegistry } from "./model-registry.ts";
 import { type AvailableModelsSource, getModelNarrowingPatterns, resolveModelScope } from "./model-resolver.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
+import { ModelSwitchAuthError } from "./model-switch-auth-error.ts";
 import { NestedToolCallRunner } from "./nested-tool-calls.ts";
 import { PROMPT_CACHE_SAFE_WAIT_ENV, resolvePromptCacheSafeWaitSeconds } from "./prompt-cache-budget.ts";
 import { PromptCachePrefixBuilds } from "./prompt-cache-prefix-request.ts";
@@ -538,6 +539,12 @@ export type AgentSessionEvent =
 			direction: "forward" | "backward";
 	  }
 	/** A switch accepted but held until the next send can compact for it (#1873). */
+	| {
+			type: "model_change_cancelled";
+			origin: ModelChangeOrigin;
+			reason: "superseded" | "context-budget";
+			detail?: string;
+	  }
 	| {
 			type: "model_change_pending";
 			model: Model<any>;
@@ -6274,6 +6281,7 @@ export class AgentSession {
 		origin: ModelChangeOrigin,
 	): void {
 		const pending = createPendingModelSwitch({ model, projection, persistDefault, origin });
+		this._clearPendingModelSwitch();
 		this._pendingModelSwitch = pending;
 		this._emit({
 			type: "model_change_pending",
@@ -6284,6 +6292,19 @@ export class AgentSession {
 			shortfallTokens: projection.shortfallTokens,
 			notice: pending.notice,
 		});
+	}
+
+	private _clearPendingModelSwitch(error?: ModelUsabilityBudgetError): void {
+		const pending = this._pendingModelSwitch;
+		this._pendingModelSwitch = undefined;
+		if (pending !== undefined) {
+			this._emit({
+				type: "model_change_cancelled",
+				origin: pending.origin,
+				reason: error === undefined ? "superseded" : "context-budget",
+				...(error === undefined ? {} : { detail: error.message }),
+			});
+		}
 	}
 
 	/**
@@ -6355,12 +6376,13 @@ export class AgentSession {
 			}
 		}
 
-		this._pendingModelSwitch = undefined;
 		if (!projection.usable) {
 			const error = new ModelUsabilityBudgetError(projection);
+			this._clearPendingModelSwitch(error);
 			this._recordRejectedModelChange(pending.model, error);
 			throw error;
 		}
+		this._pendingModelSwitch = undefined;
 
 		await this._switchActiveModel(pending.model, {
 			persistDefault: pending.persistDefault,
@@ -6545,7 +6567,7 @@ export class AgentSession {
 			this._assertModelUsableForSwitch(model, liveContextTokens);
 		}
 		if (!(await this._modelRuntime.checkAuth(model.provider))) {
-			const error = new Error(`No API key for ${model.provider}/${model.id}`);
+			const error = new ModelSwitchAuthError(model.provider, model.id);
 			this._recordRejectedModelChange(model, error);
 			throw error;
 		}
@@ -6710,7 +6732,7 @@ export class AgentSession {
 			// Without this a held switch survives its own resolution - an explicit
 			// /compact followed by a manual retry applies the switch here, and the stale
 			// hold would compact and re-switch again on the next message.
-			this._pendingModelSwitch = undefined;
+			this._clearPendingModelSwitch();
 			// Emit only after all admission hooks have accepted the candidate.
 			this._emit({
 				type: "model_changed",
@@ -6917,7 +6939,7 @@ export class AgentSession {
 			// #1873: the cycle commits here rather than through `_switchActiveModel`, so it
 			// has to supersede a held switch itself - otherwise cycling onto a model that
 			// fits leaves an older hold to reclaim the session on the next message.
-			this._pendingModelSwitch = undefined;
+			this._clearPendingModelSwitch();
 			// Post-switch, same contract as _switchActiveModel: the level in force AFTER the cycle.
 			this._emit({
 				type: "model_changed",

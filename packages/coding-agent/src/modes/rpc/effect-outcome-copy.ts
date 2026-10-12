@@ -28,6 +28,12 @@ export const EFFECT_OUTCOMES = {
 		detail: "the host restarted before the model switch was applied",
 		action: "send set_model again with a new effectId",
 	},
+	setModelSuperseded: {
+		kind: "superseded",
+		reason: "superseded",
+		detail: "a newer model selection replaced this switch before it was applied",
+		action: "read the current model, then send set_model with a new effectId if you still want this model",
+	},
 	dequeueInterruptedByReopen: {
 		kind: "interrupted_by_reopen",
 		reason: "interrupted_by_reopen",
@@ -51,6 +57,16 @@ export function providerUnavailableOutcome(detail: string): EffectOutcome {
 		reason: "provider_unavailable",
 		detail,
 		action: "sign in to the provider or pick another model, then send set_model again with a new effectId",
+	};
+}
+
+export function contextBudgetOutcome(detail: string): EffectOutcome {
+	return {
+		kind: "context_budget",
+		reason: "context_budget",
+		detail,
+		action:
+			"compact the session or pick a model with a larger context window, then send set_model with a new effectId",
 	};
 }
 

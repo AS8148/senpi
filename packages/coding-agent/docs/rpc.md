@@ -2018,8 +2018,14 @@ States: `accepted` (recorded, not yet applied), `applied` (dispatched), `done`, 
   `disposition: "no_active_turn"`. An abort never fails.
 - `set_model { effectId }` answers `done` once `model_changed` was emitted; the
   `model_change` transcript entry carries the `effectId`. A model the registry does not
-  offer fails with `outcome.reason: "unknown_model"`; a switch the session refuses fails
-  with `provider_unavailable`. `set_thinking_level { effectId }` records the same kind.
+  offer fails with `outcome.reason: "unknown_model"`; missing credentials fail with
+  `provider_unavailable`, while a context-budget refusal fails with `context_budget`
+  and an action to compact or select a larger model.
+  A switch held for compaction answers `accepted` until the next send applies it.
+  Overwriting the hold, selecting a fitting model directly, or cycling onto one fails
+  the older receipt with `superseded`; a held target that still cannot fit after repair
+  fails with `context_budget`. Same-id retries replay those failures rather than switching.
+  `set_thinking_level { effectId }` records the same kind.
 - An input's `done` receipt carries `outcome.kind`: `completed`, `aborted` (with
   `abortSource` and `abortedBy: { connectionId }` when a client's `abort` reached the
   turn), or `error`. A queued input dropped because the session was replaced

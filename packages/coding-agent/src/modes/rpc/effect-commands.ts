@@ -1,7 +1,10 @@
 import type { AgentSession } from "../../core/agent-session.ts";
+import { ModelUsabilityBudgetError } from "../../core/extensions/builtin/compaction/model-usability-budget.ts";
+import { ModelSwitchAuthError } from "../../core/model-switch-auth-error.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
 import { type EffectBegin, EffectLedger } from "./effect-ledger.ts";
 import {
+	contextBudgetOutcome,
 	providerUnavailableOutcome,
 	unknownModelOutcome,
 	unsupportedThinkingLevelOutcome,
@@ -129,9 +132,18 @@ export async function runSetModel(ctx: EffectCommandContext, command: Command<"s
 	try {
 		systemPromptName = (await ctx.session.setModel(model, { source: "rpc", effectId }))?.systemPromptName;
 	} catch (cause) {
-		const detail = cause instanceof Error ? cause.message : String(cause);
-		const failed = ledger.transition(effectId, "failed", { outcome: providerUnavailableOutcome(detail) });
-		return refuse(command.id, "set_model", detail, RPC_ERROR_PROVIDER_UNAVAILABLE, answer(failed, ctx.sessionId));
+		if (!(cause instanceof ModelUsabilityBudgetError) && !(cause instanceof ModelSwitchAuthError)) throw cause;
+		const budget = cause instanceof ModelUsabilityBudgetError;
+		const failed = ledger.transition(effectId, "failed", {
+			outcome: budget ? contextBudgetOutcome(cause.message) : providerUnavailableOutcome(cause.message),
+		});
+		return refuse(
+			command.id,
+			"set_model",
+			cause.message,
+			budget ? "context_budget" : RPC_ERROR_PROVIDER_UNAVAILABLE,
+			answer(failed, ctx.sessionId),
+		);
 	}
 	// `done` was written by the ledger when `model_changed` carried this id; a switch held for compaction
 	// stays `accepted` until it lands.

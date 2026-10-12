@@ -23,6 +23,8 @@ export const effectOutcomeSchema = z.object({
 		"unknown_model",
 		"provider_unavailable",
 		"unsupported_thinking_level",
+		"superseded",
+		"context_budget",
 	]),
 	reason: z.string().optional(),
 	detail: z.string().optional(),

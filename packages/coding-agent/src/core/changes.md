@@ -1,3 +1,22 @@
+## 2026-10-12 - Held model switch cancellation and typed auth refusal (senpi#3199)
+
+### What changed
+
+- `agent-session.ts`: clearing or replacing a held switch emits `model_change_cancelled` with its origin and either supersession or context-budget refusal. Applying its own switch clears the hold without cancellation.
+- `model-switch-auth-error.ts`: credential refusal is a typed error, so RPC can distinguish it from budget refusal and unrelated failures.
+
+### Why
+
+A held RPC effect must end when a newer choice displaces it or its repaired target refuses admission, rather than remaining accepted until restart.
+
+### Why an extension could not handle it
+
+Only the session owns every hold overwrite, direct selection, cycle and repaired-target admission.
+
+### Expected merge conflict zones
+
+- The model-change event union and held-switch assignments in `agent-session.ts`.
+
 ## 2026-10-12 - Replacement-only session hook on AgentSessionRuntime (senpi#3199)
 
 ### What changed

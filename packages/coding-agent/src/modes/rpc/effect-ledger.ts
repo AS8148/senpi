@@ -1,7 +1,7 @@
 import type { AgentSession } from "../../core/agent-session.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
 import { effectCrashPoint } from "./effect-crash-point.ts";
-import { EFFECT_OUTCOMES } from "./effect-outcome-copy.ts";
+import { contextBudgetOutcome, EFFECT_OUTCOMES } from "./effect-outcome-copy.ts";
 import {
 	type EffectActor,
 	type EffectCommandKind,
@@ -53,6 +53,15 @@ export class EffectLedger {
 				const record = this.records.get(event.origin.effectId);
 				if (record?.kind === "set_model" && !isTerminalEffectState(record.state))
 					this.transition(record.effectId, "done", { disposition: "applied" });
+			} else if (event.type === "model_change_cancelled" && event.origin.effectId !== undefined) {
+				const record = this.records.get(event.origin.effectId);
+				if (record?.kind === "set_model" && !isTerminalEffectState(record.state))
+					this.transition(record.effectId, "failed", {
+						outcome:
+							event.reason === "context-budget"
+								? contextBudgetOutcome(event.detail ?? "the target model cannot hold the repaired context")
+								: EFFECT_OUTCOMES.setModelSuperseded,
+					});
 			} else if (event.type === "agent_idle") {
 				for (const record of [...this.records.values()]) {
 					if (record.kind === "abort" && record.state === "applied") this.transition(record.effectId, "done");
