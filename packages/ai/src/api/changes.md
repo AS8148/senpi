@@ -1,3 +1,24 @@
+
+## 2026-10-12 - Recover from expired native web search payloads (senpi#3201)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-web-search-expiry.ts`: new fork-only helpers. `isExpiredWebSearchContentError` matches `400 ... Invalid \`encrypted_content\` in \`search_result\` block`; `expiredWebSearchReplayIds` returns the `tool_use_id`s of the web search results replayed at or before the rejected `messages.N` index (every result when the index is missing); `demoteExpiredWebSearchReplay` rewrites those pairs to text (`Searched the web for: <query>` plus a list of result titles and URLs).
+- `packages/ai/src/api/anthropic-messages.ts`: when a request fails with that 400, `stream` marks the newly expired search ids, retries with them demoted, and repeats while the error names a not-yet-demoted search. The ids are remembered per (session, base URL, model) in `expiredWebSearchReplays`, cleared by the same session-resource cleanup as the other replay fallbacks. Search results that were never rejected keep replaying byte-for-byte (#208).
+- `packages/ai/test/anthropic-web-search-expiry.test.ts`: a local endpoint that rejects the stale payload proves the retry, that the newer search pair keeps its `encrypted_content`, the session memory, and that an unrelated 400 is not retried.
+
+### Why
+
+- Live 2026-10-12 (claude-opus-5-5 through a multi-account Anthropic gateway): a web search at 08:10:42Z replayed fine until 08:15:37Z, then every same-model request failed with `messages.37.content.0: Invalid \`encrypted_content\` in \`search_result\` block`. The payload is only valid for the account that produced it; when the gateway's candidate pool no longer contained that account, every remaining account rejected it (five 400s on one request). History only grows, so the session failed on that model until a cross-model fallback dropped the blocks, then failed again after the fallback reverted. The gateway now degrades such replays itself, but any account change (credential rotation, another gateway, a re-login) hits the same rejection in the client. Stripping only `encrypted_content` (#150) is rejected because the field is required.
+
+### Why an extension could not handle it
+
+- The rejection is decided by the wire payload the provider assembles from history; an extension's `before_provider_request` hook cannot see the HTTP error to retry, and demoting every search up front would discard valid page contents.
+
+### Expected merge conflict zones
+
+- LOW: one more `Set` beside `toolReferenceReplayFallbacks` and its cleanup loop, one demotion call in `createRequest`, and one retry branch in the fork-only retry block; `anthropic-web-search-expiry.ts` is fork-only.
+
 ## 2026-10-11 - Replay opted-in GLM server-result pairs (senpi#3125 delta)
 
 ### What changed
