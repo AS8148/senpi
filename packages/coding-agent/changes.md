@@ -1,3 +1,24 @@
+## 2026-10-12 - Native RPC QA owns neutral helper imports (Refs senpi#3167)
+
+### What changed
+
+- Moved scratch environment, process cleanup, the HTTP model fixture, and cleanup regression coverage to `scripts/qa-shared/lib`.
+- Extracted the shared PASS/FAIL reporter from the Codex JSON-RPC client.
+- Native RPC QA now imports the neutral modules. The existing app-server environment and cleanup entry points forward to the same module instances until the protocol removal lands, preserving external OmO QA consumers.
+- Added regression coverage for package-root resolution, environment isolation, shared scratch ownership, and a real HTTP fixture request.
+
+### Why
+
+- Native RPC and OmO QA reuse these helpers but do not speak the Codex app-server protocol. They must remain available when that protocol is removed.
+
+### Why an extension could not handle it
+
+- These scripts own test-process setup and teardown before runtime extensions load.
+
+### Expected merge conflict zones
+
+- `scripts/qa-app-server/lib` is removed by the following retirement PR. Preserve the neutral modules and their shared behavior tests.
+
 ## 2026-10-12 - Document config/state separation (senpi#3178)
 
 ### What changed

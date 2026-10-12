@@ -33,8 +33,8 @@ import { execFileSync, spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { cleanupAllAndWait, installCleanupHooks, startFakeModelServer, writeMockModelsJson } from "../qa-app-server/lib/env.mjs";
-import { trackChild } from "../qa-app-server/lib/cleanup.mjs";
+import { cleanupAllAndWait, installCleanupHooks, startFakeModelServer, writeMockModelsJson } from "../qa-shared/lib/env.mjs";
+import { trackChild } from "../qa-shared/lib/cleanup.mjs";
 import { parseArgs, resolveSessionRuntime } from "../../src/cli/args.ts";
 import { connectJsonlSocket } from "./lib/jsonl-socket.mjs";
 
