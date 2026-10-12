@@ -321,6 +321,7 @@ import type { BranchSummaryEntry, CompactionEntry, SessionEntry, SessionProjecti
 import {
 	CURRENT_SESSION_VERSION,
 	getLatestCompactionEntry,
+	getSessionContextEntryId,
 	type SessionHeader,
 	SessionManager,
 } from "./session-manager.ts";
@@ -1245,6 +1246,7 @@ export class AgentSession {
 	private _extensionRunner!: ExtensionRunner;
 	private _turnIndex = 0;
 	private readonly _entryIdsByMessage = new WeakMap<object, string>();
+	private _prePromptProjection: { branch: SessionEntry[]; projection: SessionProjection } | undefined;
 	private readonly _boundaryDispatchedMessages = new WeakSet<object>();
 	/** Assistant turns whose `turn_end` boundary committed entries, so the next request must re-read agent state. */
 	private readonly _boundaryRefreshedTurns = new WeakSet<object>();
@@ -8144,15 +8146,13 @@ export class AgentSession {
 			}
 			this._resumeCompactionRequirement = undefined;
 		}
-		const contextTokens = estimateContextTokens(
-			filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages),
-		).tokens;
 		const compacted = assistantMessage
 			? await this._checkCompaction(assistantMessage, skipAbortedCheck, inlineReason, retryAfterCompaction)
 			: false;
 		if (compacted || (assistantMessage && this._postCompactionUsageExemptAssistants.has(assistantMessage))) {
 			return compacted;
 		}
+		const contextTokens = this._estimatePrePromptContextTokens();
 
 		// Under a virtual selection, the physical model of the latest response supplies the limits;
 		// before one, the virtual model's declared limits apply. An undeclared window (<= 0) is unknown, so
@@ -8168,18 +8168,8 @@ export class AgentSession {
 			return false;
 		}
 
-		const latestCompaction = getLatestCompactionEntry(this.sessionManager.getBranch());
 		const assistantBeforeLatestCompaction =
 			assistantMessage !== undefined && this._isAssistantFromBeforeLatestCompaction(assistantMessage);
-		const hasPostCompactionCustomState =
-			latestCompaction !== null &&
-			this.agent.state.messages.some(
-				(message) =>
-					message.role === "custom" && message.timestamp >= new Date(latestCompaction.timestamp).getTime(),
-			);
-		if (assistantBeforeLatestCompaction && !hasPostCompactionCustomState) {
-			return false;
-		}
 		if (assistantBeforeLatestCompaction && assistantMessage) {
 			const compacted = await this._runPrePromptCompaction(assistantMessage, skipAbortedCheck, inlineReason);
 			if (compacted) return true;
@@ -8188,6 +8178,32 @@ export class AgentSession {
 			return false;
 		}
 		throw new RequiredCompactionError();
+	}
+
+	/** Share resume's branch provenance rule without projecting trusted usage on every request. */
+	private _estimatePrePromptContextTokens(additions: readonly AgentMessage[] = []): number {
+		const branch = this.sessionManager.getBranch();
+		const messages = [...this.sessionManager.buildSessionContext().messages, ...additions];
+		const estimate = estimateContextTokens(messages);
+		const usageMessage = estimate.lastUsageIndex === null ? undefined : messages[estimate.lastUsageIndex];
+		const usageEntryId = usageMessage ? getSessionContextEntryId(usageMessage) : undefined;
+		let needsProjection = false;
+		for (let i = branch.length - 1; i >= 0; i--) {
+			const entry = branch[i];
+			if (usageEntryId !== undefined && entry.id === usageEntryId) break;
+			if (entry.type === "compaction" || entry.type === "context_edit") {
+				needsProjection = true;
+				break;
+			}
+		}
+		if (!needsProjection) return estimate.tokens;
+
+		if (this._prePromptProjection?.branch !== branch) {
+			this._prePromptProjection = { branch, projection: this.sessionManager.buildSessionProjection() };
+		}
+		const { projection } = this._prePromptProjection;
+		return estimateProjectedContextTokens({ ...projection, messages: [...projection.messages, ...additions] }, branch)
+			.tokens;
 	}
 
 	/**
@@ -8232,22 +8248,12 @@ export class AgentSession {
 		const settings = this._getCompactionSettings();
 		const reserveTokens = resolveEffectiveReserveTokens(model.contextWindow, settings);
 		const isOversized = (): boolean => {
-			const providerMessages = filterContextExcludedMessages([
-				...this.agent.state.messages,
+			const contextTokens = this._estimatePrePromptContextTokens([
 				...messages,
 				// Re-read the queues on every sample: this closure is evaluated again
 				// after compaction, when more input may have arrived.
 				...this._pendingQueuedInputMessages(),
 			]);
-			const estimate = estimateContextTokens(providerMessages);
-			const usageMessage = estimate.lastUsageIndex === null ? undefined : providerMessages[estimate.lastUsageIndex];
-			// Kept assistant usage can describe the pre-compaction request. Once a
-			// compaction boundary exists, fall back to byte-derived message estimates
-			// until a provider response refreshes that usage.
-			const contextTokens =
-				usageMessage?.role === "assistant" && this._isAssistantFromBeforeLatestCompaction(usageMessage)
-					? estimateMessagesTokens(providerMessages)
-					: estimate.tokens;
 			return contextTokens > model.contextWindow - reserveTokens;
 		};
 
@@ -8459,8 +8465,7 @@ export class AgentSession {
 		let contextTokens: number;
 		let staleUsageContentTokens: number | undefined;
 		if (inlineReason) {
-			const messages = filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages);
-			contextTokens = estimateContextTokens(messages).tokens;
+			contextTokens = this._estimatePrePromptContextTokens();
 		} else {
 			const directContextTokens = assistantMessage.usage ? calculateContextTokens(assistantMessage.usage) : 0;
 			if (!usageScope.usageMatchesProjection) {
@@ -8631,13 +8636,7 @@ export class AgentSession {
 		const settings = this._getCompactionSettings();
 		if (!model || !settings.enabled) return;
 
-		const canonicalMessages = filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages);
-		const estimate = estimateContextTokens(canonicalMessages);
-		const usageMessage = estimate.lastUsageIndex === null ? undefined : canonicalMessages[estimate.lastUsageIndex];
-		const contextTokens =
-			usageMessage?.role === "assistant" && this._isAssistantFromBeforeLatestCompaction(usageMessage)
-				? estimateMessagesTokens(canonicalMessages)
-				: estimate.tokens;
+		const contextTokens = this._estimatePrePromptContextTokens();
 		// An explicit user prompt passes the proactive policy in the compaction
 		// extension's before_agent_start, which automatic continuations never emit.
 		// Sampling the same predicate here makes both routes compact at the same
@@ -10586,9 +10585,7 @@ export class AgentSession {
 		// before the continuation so a rejected compaction never admits that model.
 		const model = this.model;
 		const compactionSettings = this._getCompactionSettings();
-		const contextTokens = estimateContextTokens(
-			filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages),
-		).tokens;
+		const contextTokens = this._estimatePrePromptContextTokens();
 		if (
 			compactionSettings.enabled &&
 			model &&
