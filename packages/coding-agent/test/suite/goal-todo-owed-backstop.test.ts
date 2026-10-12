@@ -8,7 +8,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import goalExtension from "../../src/core/extensions/builtin/goal/index.ts";
 import {
 	buildTodoOwedReminder,
+	buildTodoOwedStopNotice,
 	firstTodoOwedSuppression,
+	TODO_OWED_CHAIN_LIMIT,
 	TODO_OWED_CUSTOM_TYPE,
 	TODO_OWED_REMINDER_EVENT,
 	type TodoOwedInput,
@@ -158,6 +160,17 @@ describe("firstTodoOwedSuppression", () => {
 
 		// then
 		expect(suppression).toBe("active-goal");
+	});
+
+	it("suppresses while a wake source (a background child, monitor, eval cell or open question) will wake the turn (#10026)", () => {
+		// given
+		const input = predicateInput({ hasActiveWakeSources: true });
+
+		// when
+		const suppression = firstTodoOwedSuppression(input);
+
+		// then
+		expect(suppression).toBe("wake-source");
 	});
 
 	it.each(["subagent", "non-interactive", "pending-messages", "continuation-pending"] as const)(
@@ -316,11 +329,69 @@ describe("todo-owed backstop through the real AgentSession", () => {
 		]);
 		expect(harness.faux.state.callCount).toBe(4);
 		expect(notices.map((notice) => notice.type)).toEqual(["warning"]);
+		expect(notices[0]?.message).toBe(buildTodoOwedStopNotice(2, "Write the parser (Build)", TODO_OWED_CHAIN_LIMIT));
 		expect(events.map((event) => [event.reason, event.chainCount, event.openTasks, event.now])).toEqual([
 			["delivered", 1, 2, "Write the parser (Build)"],
 			["delivered", 2, 2, "Write the parser (Build)"],
 			["capped", 2, 2, "Write the parser (Build)"],
 		]);
+	}, 20_000);
+
+	it("restarts the count after a nudged turn closes a task, so an agent making progress is continued again (#10026)", async () => {
+		// given - three open tasks; each nudged turn closes one, then the agent stops again.
+		const { harness, notices, events } = await createBackstopHarness();
+		harness.setResponses([
+			fauxAssistantMessage(
+				[
+					fauxToolCall("todo", {
+						op: "init",
+						list: [{ phase: "Build", items: ["Write the parser", "Wire the parser", "Test the parser"] }],
+					}),
+				],
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage("Parser plan is ready."),
+			fauxAssistantMessage([fauxToolCall("todo", { op: "done", task: "Write the parser" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Parser written."),
+			fauxAssistantMessage([fauxToolCall("todo", { op: "done", task: "Wire the parser" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Parser wired."),
+			fauxAssistantMessage("Still on the tests."),
+			fauxAssistantMessage("Tests unchanged."),
+		]);
+
+		// when
+		await harness.session.prompt("build the parser");
+
+		// then - every stop after progress gets a fresh continuation; only the final stall notifies.
+		expect(events.map((event) => [event.reason, event.chainCount, event.openTasks])).toEqual([
+			["delivered", 1, 3],
+			["delivered", 1, 2],
+			["delivered", 1, 1],
+			["delivered", 2, 1],
+			["capped", 2, 1],
+		]);
+		expect(notices.map((notice) => notice.message)).toEqual([
+			buildTodoOwedStopNotice(1, "Test the parser (Build)", TODO_OWED_CHAIN_LIMIT),
+		]);
+	}, 20_000);
+
+	it("stays silent through the real session while a wake source is live (#10026)", async () => {
+		// given - a background child registered as a wake source when the turn ends.
+		const { harness, notices, events } = await createBackstopHarness();
+		harness.getExtensionRunner().emitBusEvent("wake_source_state", { source: "senpi-task", activeCount: 1 });
+		harness.setResponses(openTodoThen(fauxAssistantMessage("Waiting for the review child.")));
+
+		// when
+		await harness.session.prompt("build the parser");
+
+		// then
+		expect(events).toEqual([]);
+		expect(notices).toEqual([]);
+		expect(owedContents(harness)).toEqual([]);
 	}, 20_000);
 
 	it("starts a new chain after a new user message", async () => {
