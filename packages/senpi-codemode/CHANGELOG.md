@@ -6,6 +6,18 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.12] - 2026-10-12
+
+### Breaking Changes
+
+### Added
+
 - Session-owned eval cell RPC handlers share the eval tool's manager, bound output tails, return typed unknown-cell failures and confirmed stop snapshots, and preserve ordinary detached completion notifications ([#3072](https://github.com/code-yeongyu/senpi/issues/3072)).
 
 ### Changed
