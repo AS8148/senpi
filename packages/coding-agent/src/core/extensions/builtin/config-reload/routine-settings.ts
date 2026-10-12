@@ -11,11 +11,7 @@ import type { ConfigReloadLogger } from "./log.ts";
  * session or a background CLI run — must not hot-reload this session. Any
  * other key change keeps the full validate-and-reload flow.
  */
-const ROUTINE_SETTINGS_KEYS: ReadonlySet<string> = new Set([
-	"defaultModel",
-	"defaultProvider",
-	"defaultThinkingLevel",
-]);
+const ROUTINE_SETTINGS_KEYS: ReadonlySet<string> = new Set(["defaultModel", "defaultProvider", "defaultThinkingLevel"]);
 
 export function joinConfigDir(cwd: string): string {
 	return resolve(cwd, CONFIG_DIR_NAME);

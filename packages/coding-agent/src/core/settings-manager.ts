@@ -25,6 +25,7 @@ import { mkdir, readFile, rename, rm, writeFile } from "fs/promises";
 import { homedir } from "os";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
+import { isDeepStrictEqual } from "util";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
 import { findNearestParentConfigDir } from "../nearest-parent-config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
@@ -65,7 +66,6 @@ import {
 import { parseSettingsJson } from "./settings-json.ts";
 import { withoutOverride } from "./settings-overrides.ts";
 import { removeRetiredSettingsKeys, writeRawScopedSettings } from "./settings-retired-keys.ts";
-import { migrateSettingsState, readSettingsState, STATE_KEYS } from "./settings-state.ts";
 import {
 	ASK_USER_DEFAULT_TIMEOUT_MINUTES,
 	ASK_USER_MAX_TIMEOUT_MINUTES,
@@ -83,6 +83,7 @@ import {
 	type TodoFirstTurnPlan,
 	type TodoSettings,
 } from "./settings-shapes.ts";
+import { migrateSettingsState, readSettingsState, STATE_KEYS } from "./settings-state.ts";
 import { MAX_SKILL_EXPANSIONS_PER_PROMPT } from "./skill-invocation.ts";
 import {
 	type BranchSummarySettings,
@@ -1282,16 +1283,19 @@ export class SettingsManager {
 					const inMemoryNested = value as Record<string, unknown>;
 					const mergedNested = { ...baseNested };
 					for (const nestedKey of nestedModified) {
-						mergedNested[nestedKey] = inMemoryNested[nestedKey];
+						if (inMemoryNested[nestedKey] === undefined) delete mergedNested[nestedKey];
+						else mergedNested[nestedKey] = inMemoryNested[nestedKey];
 					}
 					(mergedSettings as Record<string, unknown>)[field] = mergedNested;
+				} else if (value === undefined) {
+					delete mergedSettings[field];
 				} else {
 					(mergedSettings as Record<string, unknown>)[field] = value;
 				}
 			}
 
 			// Compare parsed values, not serialized formatting: no-op saves preserve JSONC and whitespace.
-			return JSON.stringify(currentFileSettings) === JSON.stringify(mergedSettings)
+			return isDeepStrictEqual(currentFileSettings, mergedSettings)
 				? undefined
 				: JSON.stringify(mergedSettings, null, 2);
 		};
@@ -1333,7 +1337,13 @@ export class SettingsManager {
 			if (this.storage.withStateLock) {
 				const stateFields = new Set([...modifiedFields].filter((key) => STATE_KEYS.has(key)));
 				if (stateFields.size > 0) {
-					await this.persistScopedSettings("global", snapshotGlobalSettings, stateFields, modifiedNestedFields, true);
+					await this.persistScopedSettings(
+						"global",
+						snapshotGlobalSettings,
+						stateFields,
+						modifiedNestedFields,
+						true,
+					);
 				}
 				for (const key of STATE_KEYS) modifiedFields.delete(key);
 			}

@@ -2,20 +2,22 @@
 
 ### What changed
 
-- `settings-manager.ts` keeps its public getters/setters and in-memory global settings, but routes the six `STATE_KEYS` to sibling `state.json`. Optional state-lock storage methods reuse the file backend's lock-free read, locked re-merge and temp/rename publish, including asynchronous contention handling. The in-memory backend also separates state; third-party backends without the optional methods retain legacy global persistence.
-- `settings-state.ts` silently migrates raw global keys, writing missing state keys first and only then removing config keys. Existing state wins, project files are untouched, and failures go to the debug log while legacy reads remain available. Unrelated raw values and insertion order survive migration. No-value-change saves preserve config bytes.
+- `packages/coding-agent/src/core/settings-manager.ts` keeps its public getters/setters and in-memory global settings, but routes the six `STATE_KEYS` to sibling `state.json`. Optional state-lock storage methods reuse the file backend's lock-free read, locked re-merge and temp/rename publish, including asynchronous contention handling. The in-memory backend also separates state; third-party backends without the optional methods retain legacy global persistence.
+- `packages/coding-agent/src/core/settings-state.ts` silently migrates raw global keys, writing missing state keys first and only then removing config keys. Existing state wins, project files are untouched, and failures go to the debug log while legacy reads remain available. Unrelated raw values and insertion order survive migration. No-value-change saves preserve config bytes.
 
 ### Why
 
-- Tip history, changelog acknowledgments and per-model memories made a version-controlled settings file dirty during ordinary use.
+- `packages/coding-agent/src/core/settings-manager.ts`: tip history, changelog acknowledgments and per-model memories made a version-controlled settings file dirty during ordinary use.
+- `packages/coding-agent/src/core/settings-state.ts`: existing bookkeeping must move without normalizing unrelated configuration.
 
 ### Why an extension could not handle it
 
-- Settings load and persistence run before extensions and also serve SDK consumers without extensions.
+- `packages/coding-agent/src/core/settings-manager.ts` and `packages/coding-agent/src/core/settings-state.ts`: settings load and persistence run before extensions and also serve SDK consumers without extensions.
 
 ### Expected merge conflict zones
 
-- `settings-manager.ts`: storage interface/file lock methods, `loadFromStorage`, `persistScopedSettings` and `save`; keep state outside settings source selection.
+- `packages/coding-agent/src/core/settings-manager.ts`: storage interface/file lock methods, `loadFromStorage`, `persistScopedSettings` and `save`; keep state outside settings source selection.
+- `packages/coding-agent/src/core/settings-state.ts`: fork-only new migration module.
 
 ## 2026-10-12 - Pre-prompt gates use projected context after compaction (senpi#3137)
 

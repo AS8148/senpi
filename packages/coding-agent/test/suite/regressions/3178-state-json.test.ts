@@ -37,13 +37,41 @@ describe("3178 config and state separation", () => {
 	afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 	it.each([
-		["tip shown", (manager: SettingsManager) => manager.setTipShown("example", 123), { tipsHistory: { example: 123 } }],
-		["tip history", (manager: SettingsManager) => manager.setTipsHistory({ example: 123 }), { tipsHistory: { example: 123 } }],
-		["changelog acknowledged", (manager: SettingsManager) => manager.setChangelogSeen("engine", "1.2"), { changelogSeen: { engine: "1.2" } }],
-		["legacy changelog", (manager: SettingsManager) => manager.setLastChangelogVersion("1.2"), { lastChangelogVersion: "1.2" }],
-		["reasoning effort", (manager: SettingsManager) => manager.setModelThinkingLevel("faux", "example", "high"), { modelThinkingLevels: { "faux/example": "high" }, modelLastOnThinkingLevels: { "faux/example": "high" } }],
-		["reasoning restore", (manager: SettingsManager) => manager.setModelLastOnThinkingLevel("faux", "example", "low"), { modelLastOnThinkingLevels: { "faux/example": "low" } }],
-		["fast mode", (manager: SettingsManager) => manager.setModelServiceTier("faux", "example", "priority"), { modelServiceTiers: { "faux/example": "priority" } }],
+		[
+			"tip shown",
+			(manager: SettingsManager) => manager.setTipShown("example", 123),
+			{ tipsHistory: { example: 123 } },
+		],
+		[
+			"tip history",
+			(manager: SettingsManager) => manager.setTipsHistory({ example: 123 }),
+			{ tipsHistory: { example: 123 } },
+		],
+		[
+			"changelog acknowledged",
+			(manager: SettingsManager) => manager.setChangelogSeen("engine", "1.2"),
+			{ changelogSeen: { engine: "1.2" } },
+		],
+		[
+			"legacy changelog",
+			(manager: SettingsManager) => manager.setLastChangelogVersion("1.2"),
+			{ lastChangelogVersion: "1.2" },
+		],
+		[
+			"reasoning effort",
+			(manager: SettingsManager) => manager.setModelThinkingLevel("faux", "example", "high"),
+			{ modelThinkingLevels: { "faux/example": "high" }, modelLastOnThinkingLevels: { "faux/example": "high" } },
+		],
+		[
+			"reasoning restore",
+			(manager: SettingsManager) => manager.setModelLastOnThinkingLevel("faux", "example", "low"),
+			{ modelLastOnThinkingLevels: { "faux/example": "low" } },
+		],
+		[
+			"fast mode",
+			(manager: SettingsManager) => manager.setModelServiceTier("faux", "example", "priority"),
+			{ modelServiceTiers: { "faux/example": "priority" } },
+		],
 	] as const)("keeps config byte-identical after %s", async (_name, update, expected) => {
 		const manager = SettingsManager.create(cwd, agentDir);
 		update(manager);
@@ -83,12 +111,18 @@ describe("3178 config and state separation", () => {
 	});
 
 	it("keeps existing state keys while migrating only missing keys", () => {
-		writeFileSync(settingsPath, JSON.stringify({ tipsHistory: { old: 1 }, changelogSeen: { engine: "1.2" }, theme: "dark" }));
+		writeFileSync(
+			settingsPath,
+			JSON.stringify({ tipsHistory: { old: 1 }, changelogSeen: { engine: "1.2" }, theme: "dark" }),
+		);
 		writeFileSync(statePath, JSON.stringify({ tipsHistory: { current: 2 } }));
 		const manager = SettingsManager.create(cwd, agentDir);
 		expect(manager.getTipsHistory()).toEqual({ current: 2 });
 		expect(manager.getChangelogSeen()).toBe("1.2");
-		expect(JSON.parse(readFileSync(statePath, "utf8"))).toEqual({ tipsHistory: { current: 2 }, changelogSeen: { engine: "1.2" } });
+		expect(JSON.parse(readFileSync(statePath, "utf8"))).toEqual({
+			tipsHistory: { current: 2 },
+			changelogSeen: { engine: "1.2" },
+		});
 		expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toEqual({ theme: "dark" });
 	});
 
@@ -104,7 +138,9 @@ describe("3178 config and state separation", () => {
 	it("falls back to legacy settings when a state migration write fails", () => {
 		writeFileSync(settingsPath, JSON.stringify({ tipsHistory: { legacy: 123 } }));
 		const files = new FileSettingsStorage(cwd, agentDir);
-		const storage: SettingsStorage & { withStateLock: (fn: (current: string | undefined) => string | undefined) => void } = {
+		const storage: SettingsStorage & {
+			withStateLock: (fn: (current: string | undefined) => string | undefined) => void;
+		} = {
 			withLock: (scope, fn) => files.withLock(scope, fn),
 			withStateLock: (fn) => {
 				const next = fn(undefined);
@@ -167,20 +203,34 @@ describe("3178 config and state separation", () => {
 		expect(loaded.getTipsHistory()).toEqual({ example: 123 });
 		expect(loaded.getModelServiceTier("faux", "example")).toBe("priority");
 		let global: string | undefined;
-		storage.withLock("global", (current) => { global = current; return undefined; });
+		storage.withLock("global", (current) => {
+			global = current;
+			return undefined;
+		});
 		expect(global).toBeUndefined();
 	});
 
-	it.each(["tipsHistory", "changelogSeen", "lastChangelogVersion", "modelThinkingLevels", "modelLastOnThinkingLevels", "modelServiceTiers"])(
-		"no longer treats legacy %s config edits as routine",
-		(key) => {
-			const contents = new Map<string, string>();
-			refreshSettingsContentSnapshots(contents, agentDir, cwd);
-			writeFileSync(settingsPath, JSON.stringify({ ...JSON.parse(config), [key]: {} }));
-			const log = () => ({ written: true, disabled: false });
-			expect(excludeRoutineOnlySettingsChanges([settingsPath], contents, agentDir, cwd, { debug: log, info: log, warn: log, error: log })).toEqual([settingsPath]);
-		},
-	);
+	it.each([
+		"tipsHistory",
+		"changelogSeen",
+		"lastChangelogVersion",
+		"modelThinkingLevels",
+		"modelLastOnThinkingLevels",
+		"modelServiceTiers",
+	])("no longer treats legacy %s config edits as routine", (key) => {
+		const contents = new Map<string, string>();
+		refreshSettingsContentSnapshots(contents, agentDir, cwd);
+		writeFileSync(settingsPath, JSON.stringify({ ...JSON.parse(config), [key]: {} }));
+		const log = () => ({ written: true, disabled: false });
+		expect(
+			excludeRoutineOnlySettingsChanges([settingsPath], contents, agentDir, cwd, {
+				debug: log,
+				info: log,
+				warn: log,
+				error: log,
+			}),
+		).toEqual([settingsPath]);
+	});
 
 	it("does not identify state.json as a watched settings path", () => {
 		expect(isSettingsPath(statePath, agentDir, cwd)).toBe(false);

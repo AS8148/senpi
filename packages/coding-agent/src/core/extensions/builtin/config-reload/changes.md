@@ -4,19 +4,19 @@
 
 ### What changed
 
-- `routine-settings.ts` now suppresses only `defaultModel`, `defaultProvider` and `defaultThinkingLevel` changes. Bookkeeping lives in `state.json`, which is outside the builtin config watch allow-list.
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/routine-settings.ts` now suppresses only `defaultModel`, `defaultProvider` and `defaultThinkingLevel` changes. Bookkeeping lives in `state.json`, which is outside the builtin config watch allow-list.
 
 ### Why
 
-- State writes must not reload settings; manually editing obsolete state keys in settings must no longer be treated as an ordinary model-default save.
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/routine-settings.ts`: state writes must not reload settings; manually editing obsolete state keys in settings must no longer be treated as an ordinary model-default save.
 
 ### Why an extension could not handle it
 
-- This is the builtin extension's own change classifier.
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/routine-settings.ts` is the builtin extension's own change classifier.
 
 ### Expected merge conflict zones
 
-- `routine-settings.ts`: `ROUTINE_SETTINGS_KEYS`.
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/routine-settings.ts`: `ROUTINE_SETTINGS_KEYS`.
 
 ## 2026-10-09 - Concurrent log rotation never disables a log sink (senpi#2976)
 
