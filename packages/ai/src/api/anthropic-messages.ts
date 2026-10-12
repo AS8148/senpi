@@ -101,6 +101,11 @@ import {
 } from "./anthropic-native-replay-blocks.ts";
 import { sanitizeAnthropicToolPairs } from "./anthropic-tool-pairs.ts";
 import { demoteToolReferenceReplay, demoteUnavailableToolReferences } from "./anthropic-tool-references.ts";
+import {
+	demoteExpiredWebSearchReplay,
+	expiredWebSearchReplayIds,
+	isExpiredWebSearchContentError,
+} from "./anthropic-web-search-expiry.ts";
 import { resolveCloudflareBaseUrl } from "./cloudflare.ts";
 import {
 	getJsonSchemaToolParameters,
@@ -388,6 +393,8 @@ type UnsignedThinkingReplay = "text" | "empty-signature";
 const unsignedThinkingTextReplayFallbacks = new Set<string>();
 // Endpoints that rejected a replayed tool_reference for one conversation (senpi #2568).
 const toolReferenceReplayFallbacks = new Set<string>();
+// `${fallbackKey}\u0000${tool_use_id}` of web search results whose encrypted payload expired (senpi #3201).
+const expiredWebSearchReplays = new Set<string>();
 
 registerSessionResourceCleanup((sessionId?: string) => {
 	// One small entry per (session, base URL, model) that ever hit the fallback;
@@ -396,10 +403,15 @@ registerSessionResourceCleanup((sessionId?: string) => {
 	if (sessionId === undefined) {
 		unsignedThinkingTextReplayFallbacks.clear();
 		toolReferenceReplayFallbacks.clear();
+		expiredWebSearchReplays.clear();
 		return;
 	}
 	const prefix = `${sessionId}\u0000`;
-	for (const fallbacks of [unsignedThinkingTextReplayFallbacks, toolReferenceReplayFallbacks]) {
+	for (const fallbacks of [
+		unsignedThinkingTextReplayFallbacks,
+		toolReferenceReplayFallbacks,
+		expiredWebSearchReplays,
+	]) {
 		for (const key of fallbacks) {
 			if (key.startsWith(prefix)) fallbacks.delete(key);
 		}
@@ -1405,6 +1417,14 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					: getAnthropicCompat(model).unsignedThinkingReplay;
 			let demoteReferenceReplay = fallbackKey !== undefined && toolReferenceReplayFallbacks.has(fallbackKey);
 			let requestReplaysReferences = false;
+			const expiredSearchPrefix = fallbackKey === undefined ? undefined : `${fallbackKey}\u0000`;
+			const expiredSearchIds = new Set<string>();
+			if (expiredSearchPrefix !== undefined) {
+				for (const key of expiredWebSearchReplays) {
+					if (key.startsWith(expiredSearchPrefix)) expiredSearchIds.add(key.slice(expiredSearchPrefix.length));
+				}
+			}
+			let lastSentParams: MessageCreateParamsStreaming | undefined;
 			const createRequest = async (): Promise<{ params: MessageCreateParamsStreaming; response: Response }> => {
 				let params = buildParams(model, normalizedContext, isOAuth, options, unsignedThinkingReplay);
 				const nextParams = await options?.onPayload?.(params, model);
@@ -1417,6 +1437,8 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				const withoutReferenceReplay = demoteToolReferenceReplay(params);
 				requestReplaysReferences = withoutReferenceReplay !== params;
 				if (demoteReferenceReplay) params = withoutReferenceReplay;
+				params = demoteExpiredWebSearchReplay(params, expiredSearchIds);
+				lastSentParams = params;
 				params = sanitizeAnthropicToolPairs(params) as MessageCreateParamsStreaming;
 				const payloadRequestMetadata = extractPayloadRequestMetadata(params);
 				params = payloadRequestMetadata.params;
@@ -1445,6 +1467,29 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				});
 				return { params: sent.params, response: sent.result };
 			};
+			// True when the error names web search payloads this request had not demoted yet.
+			const markNewlyExpiredSearches = (error: unknown): boolean => {
+				if (!isExpiredWebSearchContentError(error) || lastSentParams === undefined) return false;
+				const newlyExpired = expiredWebSearchReplayIds(lastSentParams, error).filter(
+					(id) => !expiredSearchIds.has(id),
+				);
+				for (const id of newlyExpired) {
+					expiredSearchIds.add(id);
+					if (expiredSearchPrefix !== undefined) expiredWebSearchReplays.add(expiredSearchPrefix + id);
+				}
+				return newlyExpired.length > 0;
+			};
+			const createRequestDemotingExpiredSearches = async (): Promise<{
+				params: MessageCreateParamsStreaming;
+				response: Response;
+			}> => {
+				try {
+					return await createRequest();
+				} catch (error) {
+					if (markNewlyExpiredSearches(error)) return createRequestDemotingExpiredSearches();
+					throw error;
+				}
+			};
 			let requestOutcome: { params: MessageCreateParamsStreaming; response: Response };
 			try {
 				requestOutcome = await retryProviderRequest(
@@ -1462,6 +1507,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 								if (fallbackKey) toolReferenceReplayFallbacks.add(fallbackKey);
 								return createRequest();
 							}
+							if (markNewlyExpiredSearches(error)) return createRequestDemotingExpiredSearches();
 							if (await retryWithNewerClaudeCode(error)) {
 								try {
 									return await createRequest();
