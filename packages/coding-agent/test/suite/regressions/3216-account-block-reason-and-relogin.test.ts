@@ -89,6 +89,15 @@ describe("senpi#3216 account block reasons", () => {
 		expect(new Set(Object.values(rendered)).size).toBe(3);
 	});
 
+	it("an environment account's auth block names its variable, not a command that refuses env accounts", () => {
+		const text = describeAccountHealth(
+			{ name: "env-key", source: "env", blocked: true, blockReason: "auth_error" },
+			(name) => `/gpt-account login ${name}`,
+		);
+		expect(text).not.toContain("/gpt-account login");
+		expect(text).toContain("environment variable");
+	});
+
 	it("an available account and a usage limit with a known reset render as such", () => {
 		expect(describeAccountHealth({ name: "a", blocked: false })).toBe("available");
 		expect(describeAccountHealth({ name: "a", blocked: true, blockReason: "rate_limit", blockedUntil: UNTIL })).toBe(

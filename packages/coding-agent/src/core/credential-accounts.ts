@@ -39,11 +39,19 @@ export type CredentialAccountSummary = {
  * in-place re-login, e.g. `/gpt-account login <id>`.
  */
 export function describeAccountHealth(
-	account: Pick<CredentialAccountSummary, "name" | "blocked" | "blockReason" | "blockedUntil">,
+	account: Pick<CredentialAccountSummary, "name" | "blocked" | "blockReason" | "blockedUntil"> & {
+		readonly source?: CredentialAccountSource;
+	},
 	reauthCommand?: (name: string) => string,
 ): string {
 	if (!account.blocked) return "available";
-	const relogin = reauthCommand === undefined ? "log in again" : reauthCommand(account.name);
+	// An environment account is fixed by changing its variable; no command can log it in again.
+	const relogin =
+		account.source === "env"
+			? "a new key in its environment variable"
+			: reauthCommand === undefined
+				? "log in again"
+				: reauthCommand(account.name);
 	switch (account.blockReason) {
 		case "auth_error":
 			return `blocked: login rejected, fix with ${relogin}`;

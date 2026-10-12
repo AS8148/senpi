@@ -3,7 +3,7 @@
 
 ### What changed
 
-- `packages/ai/src/api/openai-codex-responses.ts`: `parseErrorResponse` words only `usage_limit_reached` / `usage_not_included` as "You have hit your ChatGPT usage limit"; a `rate_limit_exceeded` or code-less 429 now reads "ChatGPT is rate limiting requests (<code>)", with the same "Try again in ~N min" when `resets_at` is present.
+- `packages/ai/src/api/openai-codex-responses.ts`: `parseErrorResponse` words only `usage_limit_reached` / `usage_not_included` as "You have hit your ChatGPT usage limit"; a `rate_limit_exceeded` or code-less 429 now reads "ChatGPT is rate limiting requests (<code>)", with the same "Try again in ~N min" when `resets_at` is present. The raw code now appears in that text, so a 429 whose code is `insufficient_quota` matches the pool's billing pattern and becomes an `account_disabled` block instead of a rate limit, which matches what the code means.
 
 ### Why
 
