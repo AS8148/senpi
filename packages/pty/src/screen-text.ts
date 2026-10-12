@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import type { Terminal as XtermTerminalType } from "@xterm/headless";
 
 const DEFAULT_SCROLLBACK = 1000;
@@ -31,11 +32,6 @@ export function decodeInput(value: string | Uint8Array): string {
 }
 
 /**
- * Replaces lone surrogates with U+FFFD. Valid text comes back as the same string, and repaired text is
- * joined from slices: the screen keeps these strings as replay history, and a string grown one character
- * at a time stays a rope of per-character nodes (senpi#3170).
- */
-/**
  * The last `maxLength` chars of `value`, sanitized, as a copy that does not keep `value` alive: a plain
  * slice of an oversized chunk would pin the whole chunk in replay history (senpi#3170). The UTF-16
  * round trip is lossless, lone surrogates included, and runs only when a chunk outgrows the cap.
@@ -45,6 +41,11 @@ export function sanitizedTail(value: string, maxLength: number): string {
 	return sanitizeString(tail);
 }
 
+/**
+ * Replaces lone surrogates with U+FFFD. Valid text comes back as the same string, and repaired text is
+ * joined from slices: the screen keeps these strings as replay history, and a string grown one character
+ * at a time stays a rope of per-character nodes (senpi#3170).
+ */
 export function sanitizeString(value: string): string {
 	const parts: string[] = [];
 	let copiedUpTo = 0;
