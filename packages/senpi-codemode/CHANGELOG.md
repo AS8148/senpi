@@ -14,6 +14,8 @@
 
 ### Fixed
 
+- Pip installs preserve successful results, typed install errors and cancellation when scratch cleanup fails. Cleanup retries before reporting exhausted retries as a warning ([#3103](https://github.com/code-yeongyu/senpi/pull/3103)).
+
 ### Removed
 
 ## [2026.10.11] - 2026-10-11

@@ -3492,7 +3492,7 @@ export abstract class TuiBase extends Container {
 		buffer = this.finishFrame(buffer, cursorPos, newLines.length, finalCursorRow);
 
 		if (process.env.PI_TUI_DEBUG === "1") {
-			const debugDir = "/tmp/tui";
+			const debugDir = path.join(os.tmpdir(), "tui");
 			fs.mkdirSync(debugDir, { recursive: true });
 			const debugPath = path.join(debugDir, `render-${Date.now()}-${Math.random().toString(36).slice(2)}.log`);
 			const debugData = [

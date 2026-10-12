@@ -1,3 +1,42 @@
+## 2026-10-10 - Test-run temporary storage has an owner (senpi#3064)
+
+### What changed
+
+- `packages/ai/package.json`: test invocations use scripts/run-tests.mjs so TMPDIR/TEMP/TMP are scoped before the test runtime starts and cleaned after exit.
+- `packages/ai/vitest.config.ts`: always load the fixture teardown adapter, retaining CI diagnostics; plain subprocess helpers do not import framework hooks.
+
+### Why
+
+- Vitest SSR copies and interrupted fixture writes must not accumulate in the OS temp directory.
+
+### Why an extension could not handle it
+
+- Test-process bootstrap is repository tooling, before runtime extensions load.
+
+### Expected merge conflict zones
+
+- Test command arguments and runtime selection; preserve existing reporters, shards and test filters.
+
+## 2026-10-12 - Subscription GPT-6.1 Sol 500k default (senpi#3150)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: the ChatGPT subscription `gpt-6.1-sol` row literal and final context metadata pass both use the subscription-specific 500000 prompt budget. Priority and Ultrafast clone that processed row. The subscription shard and manifest are regenerated with `--strict --providers chatgpt-subscription`.
+
+### Why
+
+- Requested by @code-yeongyu for the next release. The live Codex catalog fetched 2026-10-12T00:15Z reports `context_window: 500000`, `max_context_window: 872000`, and no explicit auto-compaction limit. The previous 400000 was a deliberate project budget inherited from GPT-6 Sol, not this live subscription default.
+- API and gateway budgets, other subscription models, output limits and the >272K price tier remain unchanged. Subscription surcharge removal is unconfirmed. The shared model contract has no separate subscription maximum field, so none is added.
+- Compaction thresholds/reserve and context-usage display already derive from the selected model window. The 500000 default yields a 350000 adaptive threshold, a 20000 scaled reserve, and 25000 retained-token budget under the existing default policy.
+
+### Why an extension could not handle it
+
+- `packages/ai/scripts/generate-models.ts` owns the shipped builtin catalog and its clone metadata; local overrides cannot correct the default for every installation.
+
+### Expected merge conflict zones
+
+- LOW: the constants and final context metadata pass in `packages/ai/scripts/generate-models.ts`. Regenerate the subscription shard and manifest rather than hand-merging generated data.
+
 ## 2026-10-08 - Native ChatGPT Subscription Sol Ultrafast catalog variant
 
 ### What changed
