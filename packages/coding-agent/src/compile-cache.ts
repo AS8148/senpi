@@ -1,4 +1,10 @@
 import * as nodeModule from "node:module";
+import {
+	CONFIG_COMMAND_ARGV,
+	HOST_COMMAND_ARGV,
+	isPackageCommandArgv,
+	SCHEDULE_COMMAND_ARGV,
+} from "./cli/deferred-commands.ts";
 
 // Enabling the on-disk V8 code cache trades a little startup IO for skipped compilation of the
 // CLI's large module graph. Node does not export NODE_COMPILE_CACHE into process.env when the
@@ -20,19 +26,51 @@ export async function enableStartupCompileCache(): Promise<void> {
 		return;
 	}
 	const args = process.argv.slice(2);
-	if (["install", "remove", "uninstall", "update", "list", "host", "schedule"].includes(args[0] ?? "")) {
+	// Match cli.ts's engine-free root version fast path, even for flag-like option values.
+	if (
+		!isPackageCommandArgv(args) &&
+		args[0] !== CONFIG_COMMAND_ARGV &&
+		(args.includes("--version") || args.includes("-v"))
+	) {
+		return;
+	}
+	let scheduleWatch = false;
+	if (args[0] === SCHEDULE_COMMAND_ARGV && args[1] === "run") {
+		for (let index = 2; index < args.length; index++) {
+			const arg = args[index];
+			if (arg === "--watch") scheduleWatch = true;
+			else if (["--exec", "--poll-seconds", "--timeout-seconds", "--concurrency"].includes(arg ?? "")) index++;
+		}
+	}
+	if (
+		isPackageCommandArgv(args) ||
+		args[0] === HOST_COMMAND_ARGV ||
+		(args[0] === SCHEDULE_COMMAND_ARGV && !scheduleWatch)
+	) {
 		return;
 	}
 	if (
-		args.some((arg) => ["--help", "-h", "--version", "-v", "--export", "--list-models", "--list-tips"].includes(arg))
+		!scheduleWatch &&
+		args.some((arg) => ["--help", "-h", "--export", "--list-models", "--list-tips"].includes(arg))
 	) {
 		// Bun writes the cold cache at exit, making metadata-only launches slower (#3166).
 		// Parse only candidate invocations: ordinary sessions enable the cache before loading
 		// even the argument parser, while flag-like prompt/option values still retain caching.
-		const { parseArgs } = await import("./cli/args.ts");
-		const parsed = parseArgs(args);
-		if (parsed.help || parsed.version || parsed.export || parsed.listModels !== undefined || parsed.listTips) {
-			return;
+		try {
+			const { parseArgs } = await import("./cli/args.ts");
+			const parsed = parseArgs(args);
+			if (
+				parsed.version ||
+				parsed.export ||
+				parsed.listModels !== undefined ||
+				parsed.listTips ||
+				(parsed.help && !(parsed.mode === "rpc" && parsed.multiSession))
+			) {
+				return;
+			}
+		} catch {
+			// The decision is only an optimization. On parse/import failure enable as before;
+			// the real CLI owns argument errors and must retain its existing output and exit code.
 		}
 	}
 	// A cache directory that cannot be created (read-only or sandboxed HOME/TMPDIR) must not break

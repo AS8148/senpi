@@ -22,7 +22,7 @@
 
 ### Fixed
 
-- Help, version, model/tip listings, session export, and package/host/schedule commands no longer enable the startup compile cache, avoiding Bun 1.4.3's slower cold-cache write at exit. Interactive, RPC and prompt-processing sessions retain caching ([#3166](https://github.com/code-yeongyu/senpi/issues/3166)).
+- Help, version, model/tip listings, session export, and one-shot package/host/schedule commands no longer enable the startup compile cache, avoiding Bun 1.4.3's slower cold-cache write at exit. Root version requests stay parser-free, and cache decisions do not change argument errors. Interactive, RPC and prompt-processing sessions, schedule watchers, and multi-session RPC hosts (even with `--help`) retain caching. An externally supplied `NODE_COMPILE_CACHE` remains untouched ([#3166](https://github.com/code-yeongyu/senpi/issues/3166)).
 
 - Prompts and timeout retries after accepted compaction no longer stop with "Context remains above the compaction threshold because compaction did not complete" because of pre-compaction usage, including when an extension message follows the checkpoint. Failed compaction preserves previous usage, and the existing first-response stale-usage exemption remains in place ([#3137](https://github.com/code-yeongyu/senpi/issues/3137)).
 
