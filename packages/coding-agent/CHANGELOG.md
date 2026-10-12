@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Help, version, model/tip listings, session export, and one-shot package/host/schedule commands no longer enable the startup compile cache, avoiding Bun 1.4.3's slower cold-cache write at exit. Root version requests stay parser-free, and cache decisions do not change argument errors. Interactive, RPC and prompt-processing sessions, schedule watchers, and multi-session RPC hosts (even with `--help`) retain caching. An externally supplied `NODE_COMPILE_CACHE` remains untouched ([#3166](https://github.com/code-yeongyu/senpi/issues/3166)).
+
 ### Removed
 
 ## [2026.10.12] - 2026-10-12
@@ -33,8 +35,6 @@
 - Server search remains default-on for direct Anthropic/Claude OAuth and OpenAI/Azure, unchanged from main, and is default-on for the live-verified first-party ChatGPT/Codex subscription route (except Spark). Gateways including ccapi and GLM coding plan on z.ai's Anthropic endpoint require `compat.supportsWebSearch: true`; xAI Responses, Google Vertex and AI Studio, OpenRouter, Moonshot PAYG, Z.AI PAYG and Sonar native-bypass routing also require explicit compatibility opt-in. Kimi for Coding and DeepSeek are not live-verified and do not gain default-on search. A different `nativeModel` setting is ignored on enabled server-search routes: main search and fallback use the session model ([#3122](https://github.com/code-yeongyu/senpi/issues/3122), requested by @code-yeongyu).
 
 ### Fixed
-
-- Help, version, model/tip listings, session export, and one-shot package/host/schedule commands no longer enable the startup compile cache, avoiding Bun 1.4.3's slower cold-cache write at exit. Root version requests stay parser-free, and cache decisions do not change argument errors. Interactive, RPC and prompt-processing sessions, schedule watchers, and multi-session RPC hosts (even with `--help`) retain caching. An externally supplied `NODE_COMPILE_CACHE` remains untouched ([#3166](https://github.com/code-yeongyu/senpi/issues/3166)).
 
 - A finished bash session no longer keeps its headless terminal screen (10,000 lines of scrollback plus replay history, about 20 MB for a 4,000-line output) until the 32-session limit evicts it; it keeps its final visible screen and its bounded output, so long sessions and task hosts no longer grow with every shell command ([#3171](https://github.com/code-yeongyu/senpi/issues/3171)).
 - A turn no longer fails when the session is replaced, reloaded, or disposed while its first `turn_end` or `agent_before_settle` boundary preview is being built: the retired extension runner now stands down on that step like every other boundary step, discarding drafts and continuation without reporting a stale-context error ([#3101](https://github.com/code-yeongyu/senpi/issues/3101)). Thanks to @MoerAI ([#3145](https://github.com/code-yeongyu/senpi/pull/3145)).
