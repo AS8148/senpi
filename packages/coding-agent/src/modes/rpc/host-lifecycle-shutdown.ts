@@ -6,6 +6,7 @@
 import type { ChildProcess } from "node:child_process";
 import { rm } from "node:fs/promises";
 import type { Server } from "node:net";
+import type { HostAdmission } from "./host-admission.ts";
 import type { HostStopSender } from "./host-crash-record.ts";
 import type { HostDaemonPaths, HostGenerationPaths } from "./host-daemon-paths.ts";
 import { releaseGeneration } from "./host-daemon-registration.ts";
@@ -49,6 +50,7 @@ export interface SupervisorShutdown {
 	readonly child: ChildProcess;
 	readonly activity: SupervisorActivity;
 	readonly drain: SupervisorDrain;
+	readonly admission: HostAdmission;
 	readonly state: SupervisorState;
 	/** Stops the idle ticker, the supersession watch and the win32 identity watchdog. */
 	readonly stopWatchers: () => void;
@@ -66,17 +68,19 @@ export async function performShutdown(context: SupervisorShutdown, reason: strin
 	const { state, child } = context;
 	state.shuttingDown = true;
 	state.shutdownReason = reason;
+	context.admission.stop();
 	let childStopStarted = false;
 	let hardExit: ReturnType<typeof setTimeout> | undefined;
 	try {
 		context.stopWatchers();
 		context.drain.stop();
 		writeStderrLine(`senpi rpc host supervisor: ${reason} shutdown`);
-		context.activity.clients.destroyAll();
 		// No fallible socket/metadata cleanup may bypass the child's observed exit.
 		childStopStarted = true;
 		await stopChild(context, reason);
 		await state.childExitRecorded;
+		await context.admission.flush();
+		context.activity.clients.destroyAll();
 		if (process.platform === "win32")
 			hardExit = setTimeout(() => process.exit(exitCode), WINDOWS_SUPERVISOR_SHUTDOWN_HARD_EXIT_MS);
 		// libuv unlinks the bound NAME when the listening handle closes - which would delete a newer

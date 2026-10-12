@@ -24,6 +24,8 @@ export interface EnsureHostOptions {
 	readonly env?: Readonly<Record<string, string | null>>;
 	/** Whether a newer build may take the socket over from the running host. Defaults to `never`. */
 	readonly upgrade?: HostUpgradePolicy;
+	/** Maximum wait for an already-stopping generation; capped by the normal stop budget. */
+	readonly stoppingTimeoutMs?: number;
 	readonly _test?: {
 		readonly readinessTimeoutMs?: number;
 		readonly stopTimeoutMs?: number;
