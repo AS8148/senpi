@@ -5,15 +5,22 @@
  * Every session's state is per session - its runtime, its extension module graph (#1948) - so once
  * the registry is empty nothing live references it, yet the process keeps the pages until a full
  * collection runs; an idle task shard otherwise sits at its peak footprint for its whole idle window.
- * At most one trim per minute; never while any session (opening and closing ones included) exists;
- * idle exit is untouched. The single full collection is the accepted exception to the no-sync rule,
- * and the record is what logs it.
+ * At most one trim per minute; idle exit is untouched. The single full collection is the accepted
+ * exception to the no-sync rule, and the record is what logs it.
+ *
+ * A busy shard (a parent's task DAG) may never reach zero while it runs: its footprint stayed at
+ * 40-60 GB while about 30 children came and went, almost all of it freed heap pages, because a host
+ * whose other sessions keep allocating never goes idle long enough to return them (senpi#3218). So a
+ * drop in the session count also trims, but only once the footprint is at least
+ * {@link DECLINE_TRIM_FLOOR_BYTES}: a small host never pays the collection pause.
  */
 import { type ProcessFootprint, readOwnFootprint } from "../../core/process-footprint.ts";
 import type { RpcHostTrimmedEvent } from "./rpc-host-lifecycle-types.ts";
 
 export const ZERO_SESSION_TRIM_TICK_MS = 1_000;
 export const ZERO_SESSION_TRIM_MIN_INTERVAL_MS = 60_000;
+/** Below this footprint a session-count drop with sessions still open does not collect. */
+export const DECLINE_TRIM_FLOOR_BYTES = 2 * 1024 * 1024 * 1024;
 
 const BYTES_PER_MEGABYTE = 1024 * 1024;
 
@@ -31,6 +38,7 @@ export class ZeroSessionTrimmer {
 	private readonly options: ZeroSessionTrimmerOptions;
 	private readonly now: () => number;
 	private heldSessions = false;
+	private lastSessionCount = 0;
 	private lastTrimAt: number | undefined;
 	/** A collection that ran on the previous tick; its record waits for the allocator to return the pages. */
 	private pending: { readonly beforeBytes: number; readonly collected: boolean } | undefined;
@@ -61,14 +69,24 @@ export class ZeroSessionTrimmer {
 
 	check(): void {
 		if (this.pending !== undefined) this.report(this.pending);
-		if (this.options.sessions() > 0) {
+		const sessions = this.options.sessions();
+		const previous = this.lastSessionCount;
+		this.lastSessionCount = sessions;
+		if (sessions > 0) {
 			this.heldSessions = true;
+			if (sessions < previous && this.intervalElapsed() && this.readFootprint().bytes >= DECLINE_TRIM_FLOOR_BYTES) {
+				this.trim();
+			}
 			return;
 		}
 		if (!this.heldSessions) return;
 		this.heldSessions = false;
-		if (this.lastTrimAt !== undefined && this.now() - this.lastTrimAt < ZERO_SESSION_TRIM_MIN_INTERVAL_MS) return;
+		if (!this.intervalElapsed()) return;
 		this.trim();
+	}
+
+	private intervalElapsed(): boolean {
+		return this.lastTrimAt === undefined || this.now() - this.lastTrimAt >= ZERO_SESSION_TRIM_MIN_INTERVAL_MS;
 	}
 
 	private trim(): void {

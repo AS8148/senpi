@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { ZERO_SESSION_TRIM_MIN_INTERVAL_MS, ZeroSessionTrimmer } from "../../src/modes/rpc/host-zero-session-trim.ts";
+import {
+	DECLINE_TRIM_FLOOR_BYTES,
+	ZERO_SESSION_TRIM_MIN_INTERVAL_MS,
+	ZeroSessionTrimmer,
+} from "../../src/modes/rpc/host-zero-session-trim.ts";
 import type { RpcHostTrimmedEvent } from "../../src/modes/rpc/rpc-types.ts";
 
 const MEGABYTE = 1024 * 1024;
@@ -103,6 +107,47 @@ describe("zero-session host trim", () => {
 		harness.setSessions(0);
 		harness.tick();
 		expect(harness.records.map((record) => record.footprintBeforeMb)).toEqual([500, 400]);
+	});
+
+	it("trims a busy host whose session count drops while its footprint is at least the floor (senpi#3218)", () => {
+		// Given: a DAG shard that held 3 sessions and grew to 3 GB.
+		const harness = createTrimmer();
+		harness.setSessions(3);
+		harness.allocate(3 * 1024);
+		// When: two of its children end while one is still running.
+		harness.setSessions(1);
+		harness.tick();
+		// Then: it collects once without waiting for zero sessions.
+		expect(harness.collections()).toBe(1);
+		expect(harness.records).toEqual([
+			{
+				type: "host_trimmed",
+				footprintBeforeMb: 3 * 1024,
+				footprintAfterMb: 120,
+				measure: "phys_footprint",
+				collected: true,
+			},
+		]);
+	});
+
+	it("does not collect on a session-count drop below the floor or within the interval", () => {
+		const harness = createTrimmer();
+		harness.setSessions(3);
+		harness.allocate(DECLINE_TRIM_FLOOR_BYTES / MEGABYTE - 1);
+		harness.setSessions(2);
+		expect(harness.collections()).toBe(0);
+		harness.allocate(3 * 1024);
+		harness.setSessions(1);
+		expect(harness.collections()).toBe(1);
+		harness.tick();
+		harness.allocate(3 * 1024);
+		harness.advance(ZERO_SESSION_TRIM_MIN_INTERVAL_MS - 1);
+		harness.setSessions(3);
+		harness.setSessions(2);
+		expect(harness.collections()).toBe(1);
+		harness.advance(1);
+		harness.setSessions(1);
+		expect(harness.collections()).toBe(2);
 	});
 
 	it("still reports, uncollected, where the runtime exposes no full collection", () => {
