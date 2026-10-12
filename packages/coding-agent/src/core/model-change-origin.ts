@@ -12,7 +12,7 @@ export type ModelChangeSource =
 	| "cycle"
 	/** A terminal session's control endpoint `set_model`. */
 	| "control"
-	/** An RPC client's `set_model`, `cycle_model` or `set_fast_mode`. */
+	/** An RPC client's `set_model`, `cycle_model`, `set_fast_mode` or `set_thinking_level`. */
 	| "rpc"
 	/** An app-server thread setting. */
 	| "app-server"
@@ -34,7 +34,7 @@ export interface ModelChangeOrigin {
 	readonly source: ModelChangeSource;
 	/** Who issued it, where known: an extension path, an RPC client, the picker that was used. */
 	readonly actor?: string;
-	/** The RPC `effectId` of the `set_model` that asked for this switch; stamped on the `model_change` entry. */
+	/** The RPC `effectId` of the model or thinking-level request; stamped on its transcript change entry. */
 	readonly effectId?: string;
 }
 

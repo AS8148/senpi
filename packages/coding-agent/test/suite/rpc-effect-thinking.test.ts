@@ -53,16 +53,38 @@ describe("RPC thinking effect identity and reopen", () => {
 		});
 	});
 
-	it("stamps a no-op thinking change without emitting a second selection", async () => {
+	it.each([undefined, "turn"] as const)(
+		"stamps a no-op thinking change for scope %s without a second selection",
+		async (scope) => {
+			const fixture = await setup();
+			const rpc = fixture.bind();
+			await rpc.send({ type: "set_thinking_level", level: "high", scope, effectId: "first" });
+			const selected = fixture.harness.eventsOfType("thinking_level_changed").length;
+			await rpc.send({ type: "set_thinking_level", level: "high", scope, effectId: "thinking" });
+			expect(
+				fixture.session.sessionManager.getEntries().filter((e) => e.type === "thinking_level_change"),
+			).toContainEqual(expect.objectContaining({ effectId: "thinking", thinkingLevel: "high" }));
+			expect(fixture.harness.eventsOfType("thinking_level_changed")).toHaveLength(selected);
+		},
+	);
+
+	it("does not stamp an unchanged thinking level for a model effect", async () => {
 		const fixture = await setup();
 		const rpc = fixture.bind();
-		await rpc.send({ type: "set_thinking_level", level: "high", effectId: "first" });
-		const selected = fixture.harness.eventsOfType("thinking_level_changed").length;
+		const model = fixture.harness.getModel();
 		await rpc.send({ type: "set_thinking_level", level: "high", effectId: "thinking" });
+		const before = fixture.session.sessionManager
+			.getEntries()
+			.filter((entry) => entry.type === "thinking_level_change");
+
+		await rpc.send({ type: "set_model", provider: model.provider, modelId: model.id, effectId: "model" });
+
 		expect(
-			fixture.session.sessionManager.getEntries().filter((e) => e.type === "thinking_level_change"),
-		).toContainEqual(expect.objectContaining({ effectId: "thinking", thinkingLevel: "high" }));
-		expect(fixture.harness.eventsOfType("thinking_level_changed")).toHaveLength(selected);
+			fixture.session.sessionManager.getEntries().filter((entry) => entry.type === "thinking_level_change"),
+		).toEqual(before);
+		expect(await rpc.send({ type: "get_effect_status", effectId: "model" })).toMatchObject({
+			data: { effect: { kind: "set_model", state: "done" } },
+		});
 	});
 
 	it("seals an unapplied thinking effect with thinking-level reason and action", async () => {

@@ -1,3 +1,23 @@
+## 2026-10-12 - Stamp no-op thinking effects only at thinking setters (senpi#3199)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: only public thinking setters request a no-op effect stamp; a model switch with unchanged thinking writes no redundant thinking entry.
+- `packages/coding-agent/src/core/session-manager.ts`, `packages/coding-agent/src/core/model-change-origin.ts`: document RPC thinking request provenance, including requests without an effect id.
+
+### Why
+
+A model effect proves application through its model entry. Thinking entries also attribute explicit thinking requests.
+
+### Why an extension could not handle it
+
+Core setters own thinking persistence and the shared origin types.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: thinking setters and `_setThinkingLevel` signature.
+- `packages/coding-agent/src/core/session-manager.ts`, `packages/coding-agent/src/core/model-change-origin.ts`: origin field documentation.
+
 ## 2026-10-12 - Settle unexpected held-switch failures (senpi#3199)
 
 ### What changed

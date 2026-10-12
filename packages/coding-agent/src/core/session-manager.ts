@@ -190,10 +190,10 @@ export interface ThinkingLevelChangeEntry extends SessionEntryBase {
 	thinkingLevel: string;
 	/** Explicit selector provenance. Omitted by legacy entries and SDK-defaulted fallbacks. */
 	thinkingSelection?: ThinkingSelection;
-	/** Set when a model switch re-applied this level: the switch's source (senpi#2870). */
+	/** Source of a model switch or explicit thinking-level request, including RPC requests without an effectId. */
 	triggerSource?: ModelChangeSource;
 	triggerActor?: string;
-	/** The RPC thinking-level effect that applied this value. */
+	/** The RPC model or thinking-level effect that applied this value. */
 	effectId?: string;
 }
 
