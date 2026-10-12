@@ -1712,7 +1712,9 @@ REPORT: nothing here aborts a turn, kills a session, or refuses an `open_session
 - **Busy-host trim**: a host whose footprint is at least 2 GB also collects when its session count drops while other
   sessions still run (`sessions` > 0 in the record), because a host whose sessions keep allocating never idles long
   enough to return freed pages (#3218). Each collection is timed (`pauseMs`), and the next busy-host trim waits at least
-  60 s and at least 100 times that pause, so collection stays under about 1% of a busy host's loop.
+  60 s and at least 100 times that pause, which keeps collection near 1% of a busy host's loop in steady state. The
+  first busy-host trim has no earlier pause to wait on, and one collection on a multi-GB live heap can itself exceed
+  the stall threshold (a `host_stalled` record and ~120 s of refused ensures, never a lost session).
   These collections are the only synchronous work the no-sync rule allows, and the record is their log.
 
 `host_stalled`, `host_memory_pressure` and `host_trimmed` are additive records: a client that does not know them ignores them.
@@ -3458,8 +3460,8 @@ the memory was returned. Hosts released before senpi#2261 send `rssMb` and `sess
 { "type": "host_trimmed", "footprintBeforeMb": 442, "footprintAfterMb": 237, "measure": "phys_footprint", "collected": true, "sessions": 0, "pauseMs": 41 }
 ```
 
-Informational, at most once a minute: the host's last session closed, or a 2 GB+ host's session count dropped (`sessions`
-> 0), and it ran one full collection that blocked the loop for `pauseMs`. `collected` is
+Informational, at most once a minute: the host's last session closed, or a 2 GB+ host's session count dropped
+(`sessions` above 0), and it ran one full collection that blocked the loop for `pauseMs`. `collected` is
 `false` where the runtime exposes none (Node without `--expose-gc`); the record is still sent, with the two readings.
 
 ### model_changed

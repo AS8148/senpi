@@ -18,6 +18,7 @@ function createTrimmer(options: { collect?: () => boolean; pauseMs?: number } = 
 		emit: (record) => records.push(record),
 		sessions: () => sessions,
 		now: () => clock,
+		monotonicNow: () => clock,
 		readFootprint: () => ({ bytes: footprintMb * MEGABYTE, measure: "phys_footprint" }),
 		collect:
 			options.collect ??

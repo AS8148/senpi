@@ -14,9 +14,11 @@
  * drop in the session count also trims, but only once the footprint is at least
  * {@link DECLINE_TRIM_FLOOR_BYTES}: a small host never pays the collection pause. With sessions still
  * running, the pause blocks them, so each collection is timed and the next busy-host trim waits at
- * least {@link DECLINE_TRIM_PAUSE_FACTOR} times that pause: collection never takes more than about 1%
- * of a busy host's loop, however slow the machine (measured: 63 ms on a 0.5 GB live heap, 149 ms on
- * 1.5 GB).
+ * least {@link DECLINE_TRIM_PAUSE_FACTOR} times that pause, which keeps collection near 1% of a busy
+ * host's loop in steady state. The first busy-host trim has no earlier pause to wait on, and one
+ * collection on a multi-GB live heap can itself pass the stall threshold (measured: 63 ms at 0.5 GB live
+ * and 149 ms at 1.5 GB on one machine, 5.2 s at 3 GB live on a slower one); that costs a `host_stalled`
+ * record and ~120 s of refused ensures, never a session, and beats holding tens of GB of freed pages.
  */
 import { type ProcessFootprint, readOwnFootprint } from "../../core/process-footprint.ts";
 import type { RpcHostTrimmedEvent } from "./rpc-host-lifecycle-types.ts";
@@ -35,6 +37,8 @@ export interface ZeroSessionTrimmerOptions {
 	/** Live sessions, including ones opening or closing. */
 	readonly sessions: () => number;
 	readonly now?: () => number;
+	/** Monotonic milliseconds for timing a collection; a wall-clock jump must not stretch the next wait. */
+	readonly monotonicNow?: () => number;
 	readonly readFootprint?: () => ProcessFootprint;
 	/** Runs one full collection; `false` when the runtime exposes none. */
 	readonly collect?: () => boolean;
@@ -116,10 +120,11 @@ export class ZeroSessionTrimmer {
 
 	private trim(sessions: number): void {
 		const beforeBytes = this.readFootprint().bytes;
-		const startedAt = this.now();
+		const monotonicNow = this.options.monotonicNow ?? performance.now.bind(performance);
+		const startedAt = monotonicNow();
 		const collected = (this.options.collect ?? collectFully)();
+		this.lastPauseMs = Math.round(monotonicNow() - startedAt);
 		this.lastTrimAt = this.now();
-		this.lastPauseMs = this.lastTrimAt - startedAt;
 		this.pending = { beforeBytes, collected, sessions, pauseMs: this.lastPauseMs };
 	}
 
