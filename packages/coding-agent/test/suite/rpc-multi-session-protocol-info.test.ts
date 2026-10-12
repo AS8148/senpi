@@ -32,6 +32,7 @@ describe("multi-session RPC protocol info", () => {
 					"retain_on_disconnect",
 					"session_context",
 					"session_kind",
+					"session_status",
 					"auto_title_per_session",
 					"durable_session_id",
 					"moved_path_guard",
