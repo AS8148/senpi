@@ -70,6 +70,12 @@ const EXPECTED = {
 type FamilyId = keyof typeof EXPECTED;
 const FAMILY_IDS = Object.keys(EXPECTED) as FamilyId[];
 
+function expectedContextWindow(provider: string, id: FamilyId): number {
+	return provider === "chatgpt-subscription" && id === "gpt-6.1-sol"
+		? SUBSCRIPTION_SOL_CONTEXT_WINDOW
+		: EXPECTED[id].contextWindow;
+}
+
 for (const provider of ["openai", "chatgpt-subscription"] as const) {
 	for (const id of FAMILY_IDS) {
 		describe(`${provider}/${id}`, () => {
@@ -83,10 +89,7 @@ for (const provider of ["openai", "chatgpt-subscription"] as const) {
 					baseUrl: provider === "openai" ? "https://api.openai.com/v1" : "https://chatgpt.com/backend-api",
 					reasoning: true,
 					input: ["text", "image"],
-					contextWindow:
-						provider === "chatgpt-subscription" && id === "gpt-6.1-sol"
-							? SUBSCRIPTION_SOL_CONTEXT_WINDOW
-							: EXPECTED[id].contextWindow,
+					contextWindow: expectedContextWindow(provider, id),
 					maxTokens: 128000,
 					cost: EXPECTED[id].cost,
 				});
@@ -129,10 +132,7 @@ for (const provider of ["openai", "chatgpt-subscription"] as const) {
 					id: `${id}-fast`,
 					upstreamModelId: id,
 					serviceTier: "priority",
-					contextWindow:
-						provider === "chatgpt-subscription" && id === "gpt-6.1-sol"
-							? SUBSCRIPTION_SOL_CONTEXT_WINDOW
-							: EXPECTED[id].contextWindow,
+					contextWindow: expectedContextWindow(provider, id),
 				});
 			});
 		});
@@ -217,7 +217,7 @@ type Catalog = Record<string, Record<string, CatalogEntry>>;
  * - `chat:` - a classifier or image row is never the tier's chat model;
  * - the vendor form: bare (`gpt-6-luna`), `openai/` (OpenRouter, gateways), `openai-` (Venice), or Bedrock's dotted
  *   `openai.` with an optional region (`global.`, `us.`);
- * - the tier name, then only `-fast` or `-pro`, then only `:batch`, then the end of the key.
+ * - the tier name, then only `-fast`, `-pro` or `-ultrafast`, then only `:batch`, then the end of the key.
  * A third party's model whose id merely contains the tier name is somebody else's product with its own window. The
  * release regenerates catalogs from live provider lists, which do list such models, for example OpenRouter's
  * `classifier:openai/gpt-6-luna-decisions`.
@@ -260,13 +260,7 @@ function collectFamilyEntries(marker: FamilyId): FamilyEntry[] {
 
 function offendersOf(entries: readonly FamilyEntry[], id: FamilyId): string[] {
 	return entries
-		.filter(
-			(entry) =>
-				entry.contextWindow !==
-				(entry.file === "chatgpt-subscription.json" && id === "gpt-6.1-sol"
-					? SUBSCRIPTION_SOL_CONTEXT_WINDOW
-					: EXPECTED[id].contextWindow),
-		)
+		.filter((entry) => entry.contextWindow !== expectedContextWindow(entry.file.slice(0, -".json".length), id))
 		.map((entry) => `${entry.file}:${entry.api}/${entry.id}=${String(entry.contextWindow)}`)
 		.sort();
 }

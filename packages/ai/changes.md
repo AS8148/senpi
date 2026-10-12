@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/ai/scripts/generate-models.ts`: applies a 500000 prompt budget only to the ChatGPT subscription `gpt-6.1-sol` base row in the final context metadata pass. Priority and Ultrafast clone that processed row. The subscription shard and manifest are regenerated with `--strict --providers chatgpt-subscription`.
+- `packages/ai/scripts/generate-models.ts`: the ChatGPT subscription `gpt-6.1-sol` row literal and final context metadata pass both use the subscription-specific 500000 prompt budget. Priority and Ultrafast clone that processed row. The subscription shard and manifest are regenerated with `--strict --providers chatgpt-subscription`.
 
 ### Why
 
