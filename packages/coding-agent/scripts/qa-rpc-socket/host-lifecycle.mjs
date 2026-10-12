@@ -34,8 +34,8 @@ import {
 	installCleanupHooks,
 	startFakeModelServer,
 	writeMockModelsJson,
-} from "../qa-app-server/lib/env.mjs";
-import { trackCloser, untrackCloser } from "../qa-app-server/lib/cleanup.mjs";
+} from "../qa-shared/lib/env.mjs";
+import { trackCloser, untrackCloser } from "../qa-shared/lib/cleanup.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const outPath = flag("--out");
