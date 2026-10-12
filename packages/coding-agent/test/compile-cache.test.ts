@@ -70,14 +70,12 @@ afterEach(() => {
 
 describe("startup compile cache", () => {
 	// #3166: guard the engine-free version path by observing module resolution, not timing.
-	test.each(["--version", "-v", "--help"])(
-		"loads the parser only when the candidate flag is %s",
-		(flag) => {
-			const hooks = join(hostDir, "parser-hooks.mjs");
-			const probe = join(hostDir, "parser-probe.mjs");
-			writeFileSync(
-				hooks,
-				`export async function resolve(specifier, context, next) {
+	test.each(["--version", "-v", "--help"])("loads the parser only when the candidate flag is %s", (flag) => {
+		const hooks = join(hostDir, "parser-hooks.mjs");
+		const probe = join(hostDir, "parser-probe.mjs");
+		writeFileSync(
+			hooks,
+			`export async function resolve(specifier, context, next) {
 	if (specifier === "./cli/args.ts" && context.parentURL === process.env.MODULE_URL) {
 		console.error("PARSER_IMPORTED");
 		return { url: "stub:args", shortCircuit: true };
@@ -91,32 +89,31 @@ export async function load(url, context, next) {
 	return next(url, context);
 }
 `,
-			);
-			writeFileSync(
-				probe,
-				`import { register } from "node:module";
+		);
+		writeFileSync(
+			probe,
+			`import { register } from "node:module";
 import { pathToFileURL } from "node:url";
 register(pathToFileURL(process.env.HOOKS_PATH));
 const { enableStartupCompileCache } = await import(process.env.MODULE_URL);
 await enableStartupCompileCache();
 console.log("SURVIVED");
 `,
-			);
-			const result = spawnSync(process.execPath, [probe, "--provider", "openai-codex", flag], {
-				encoding: "utf8",
-				env: {
-					...process.env,
-					MODULE_URL: pathToFileURL(MODULE_PATH).href,
-					HOOKS_PATH: hooks,
-					NODE_COMPILE_CACHE: undefined,
-				},
-			});
+		);
+		const result = spawnSync(process.execPath, [probe, "--provider", "openai-codex", flag], {
+			encoding: "utf8",
+			env: {
+				...process.env,
+				MODULE_URL: pathToFileURL(MODULE_PATH).href,
+				HOOKS_PATH: hooks,
+				NODE_COMPILE_CACHE: undefined,
+			},
+		});
 
-			expect(result.status, result.stderr).toBe(0);
-			expect(result.stdout).toContain("SURVIVED");
-			expect(result.stderr.includes("PARSER_IMPORTED")).toBe(flag === "--help");
-		},
-	);
+		expect(result.status, result.stderr).toBe(0);
+		expect(result.stdout).toContain("SURVIVED");
+		expect(result.stderr.includes("PARSER_IMPORTED")).toBe(flag === "--help");
+	});
 
 	describe("#given a fresh cache directory", () => {
 		test("#when the seam runs #then it populates the cache and children inherit that exact directory", () => {
