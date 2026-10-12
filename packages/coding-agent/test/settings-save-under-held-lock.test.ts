@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import lockfile from "proper-lockfile";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as debugLog from "../src/core/hidden-stdout-log.ts";
 import { FILE_STORAGE_LOCK_OPTIONS } from "../src/core/lockfile-policy.ts";
 import { getSettingsPath, SettingsManager } from "../src/core/settings-manager.ts";
 
@@ -83,7 +84,8 @@ describe("saving settings while another writer holds the settings lock", () => {
 		expect(settings.drainErrors().map((error) => error.scope)).toEqual(["project"]);
 	});
 
-	it("reports a lock that never frees without throwing at the caller, and keeps the setting in memory", async () => {
+	it("debug-logs a held state lock once, retains tip memory, and allows later config saves", async () => {
+		const log = vi.spyOn(debugLog, "appendDebugLogEntry").mockImplementation(() => {});
 		const settings = SettingsManager.create(join(root, "work"), agentDir);
 		const release = await lockfile.lock(statePath, { ...FILE_STORAGE_LOCK_OPTIONS, retries: 0 });
 		try {
@@ -91,10 +93,16 @@ describe("saving settings while another writer holds the settings lock", () => {
 			await settings.flush();
 
 			expect(settings.getTipsHistory()).toEqual({ welcome: 2_000 });
-			const errors = settings.drainErrors();
-			expect(errors).toHaveLength(1);
-			expect(errors[0]?.scope).toBe("global");
+			expect(log).toHaveBeenCalledTimes(1);
+			expect(settings.drainErrors()).toEqual([]);
 			expect(JSON.parse(readFileSync(settingsPath, "utf-8"))).toEqual({ theme: "dark" });
+			settings.setTheme("light");
+			await settings.flush();
+			expect(JSON.parse(readFileSync(settingsPath, "utf-8"))).toEqual({ theme: "light" });
+			expect(JSON.parse(readFileSync(statePath, "utf-8"))).toEqual({});
+			expect(settings.getTipsHistory()).toEqual({ welcome: 2_000 });
+			expect(settings.drainErrors()).toEqual([]);
+			expect(log).toHaveBeenCalledTimes(1);
 		} finally {
 			await release();
 		}
