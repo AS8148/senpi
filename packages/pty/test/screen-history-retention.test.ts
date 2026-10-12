@@ -1,5 +1,4 @@
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { sanitizedTail, sanitizeString } from "../src/screen-text.ts";
 
@@ -7,8 +6,8 @@ import { sanitizedTail, sanitizeString } from "../src/screen-text.ts";
 // sanitizeString, and a screen keeps up to 1,000,000 replay chars. A string built one character at a time
 // stays a rope of per-character nodes (about 31 bytes per char under JSC and V8), so one busy terminal held
 // tens of MB of history alone. A trimmed oversized chunk must not pin the chunk it was cut from either.
-const screenTextPath = fileURLToPath(new URL("../src/screen-text.ts", import.meta.url));
-const screenPath = fileURLToPath(new URL("../src/screen.ts", import.meta.url));
+const screenTextUrl = new URL("../src/screen-text.ts", import.meta.url).href;
+const screenUrl = new URL("../src/screen.ts", import.meta.url).href;
 
 /** Runs `body` in a fresh process of the current runtime with a forced-GC heap probe; returns its last JSON line. */
 function measure<T>(body: string): T {
@@ -38,7 +37,7 @@ describe("sanitizeString", () => {
 	it("keeps retained replay chunks near one byte per char", () => {
 		// Given: 200 flat PTY-sized chunks (~5k chars each), every tenth one carrying a lone surrogate.
 		const result = measure<{ chars: number; repaired: number; bytesPerChar: number }>(`
-const { sanitizeString } = await import(${JSON.stringify(screenTextPath)});
+const { sanitizeString } = await import(${JSON.stringify(screenTextUrl)});
 const chunk = (k) => Array.from({ length: 64 }, (_, j) => "row " + k + "-" + j + " " + "z".repeat(60) + " fn" + j + "()\\r\\n").join("") + (k % 10 === 7 ? "\\ud800" : "");
 const inputs = Array.from({ length: 200 }, (_, k) => JSON.parse(JSON.stringify(chunk(k))));
 const before = await heapUsed();
@@ -59,7 +58,7 @@ console.log(JSON.stringify({ chars, repaired, bytesPerChar: (after - before) / c
 	it("does not keep an oversized chunk alive after trimming it to the replay cap", () => {
 		// Given: a small screen (4,096-char replay cap) fed one 4,000,000-char chunk.
 		const result = measure<{ retainedBytes: number }>(`
-const { TerminalScreen } = await import(${JSON.stringify(screenPath)});
+const { TerminalScreen } = await import(${JSON.stringify(screenUrl)});
 const screen = new TerminalScreen({ cols: 10, rows: 3, scrollback: 10 });
 await screen.flush();
 const before = await heapUsed();
