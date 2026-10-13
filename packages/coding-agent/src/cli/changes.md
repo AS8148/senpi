@@ -2,11 +2,19 @@
 
 ### What changed
 
-`--verbose app-server -p` now keeps `app-server` as the print prompt, exactly like `--verbose app-server --mode json`. The retired-command rejection applies only when neither an explicit mode nor print mode was requested.
+- `args.ts`: `--verbose app-server -p` now keeps `app-server` as the print prompt, exactly like `--verbose app-server --mode json`. The retired-command rejection applies only when neither an explicit mode nor print mode was requested.
 
 ### Why
 
-The review of #3223 found the two explicit-mode spellings disagreed: a trailing `--mode` kept the prompt while a trailing `-p` rejected it.
+The Opus review of #3223 found that the two explicit-mode spellings disagreed: a trailing `--mode` kept the prompt, while a trailing `-p` rejected it.
+
+### Why an extension could not handle it
+
+Argument parsing runs before any extension loads, so only the CLI parser can decide whether a positional word is a prompt.
+
+### Expected merge conflict zones
+
+The retired-command check near the end of `parseArgs` in `args.ts`.
 
 ## 2026-10-13 - Reject retired commands after leading options (senpi#3167)
 
