@@ -10,7 +10,13 @@
 
 ### Changed
 
+- Tip history, changelog acknowledgments and per-model reasoning/fast-mode memories now live in `state.json` instead of the global settings file, keeping version-controlled config clean during normal use. `/reasoning`, `/efforts`, and thinking cycles remember the model's level without saving the startup default; `/thinking` Ctrl+S and `/settings` still explicitly save it. Existing global keys migrate silently without overwriting saved state; project settings are untouched, corrupt state no longer disables config, and no-value-change saves preserve config bytes. Restart older sessions during upgrades: their legacy bookkeeping writes can still trigger config reloads ([#3178](https://github.com/code-yeongyu/senpi/issues/3178), requested by @devxoul).
+
 ### Fixed
+
+- A busy multi-session task host now collects when its session count drops while its footprint is at least 2 GB, instead of only at zero sessions, waiting at least a minute and at least 100 times the last pause between those collections; `host_trimmed` now carries `sessions` and `pauseMs`. A research DAG's shard no longer keeps tens of GB of freed heap pages while its other children are still running ([#3218](https://github.com/code-yeongyu/senpi/issues/3218)).
+
+- Help, version, model/tip listings, session export, and one-shot package/host/schedule commands no longer enable the startup compile cache, avoiding Bun 1.4.3's slower cold-cache write at exit. Root version requests stay parser-free, and cache decisions do not change argument errors. Interactive, RPC and prompt-processing sessions, schedule watchers, and multi-session RPC hosts (even with `--help`) retain caching. An externally supplied `NODE_COMPILE_CACHE` remains untouched ([#3166](https://github.com/code-yeongyu/senpi/issues/3166)).
 
 - An agent that stops with open todo tasks is continued automatically again after it makes progress: the two automatic continuations are counted only while they close no task, where before a long unattended run got none on its next early stop once it had used two. When the agent really stalls, the notice now says why (two continuations in a row closed no task) and what to do (reply to resume it, or `/todo done` / `/todo drop`), instead of only "Send a message to continue". Waiting on a background child, monitor, eval cell, open question or goal still shows nothing ([oh-my-openagent#10026](https://github.com/code-yeongyu/oh-my-openagent/issues/10026), requested by @code-yeongyu).
 
