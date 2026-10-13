@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/model-registry.ts`: `getProviderAuthStatus()` now runs `retryBusyCredentialRead()` first, and while the runtime has no availability snapshot it answers a stored credential from the live store (`{ configured: true, source: "stored" }`), the same rule `getAvailable()` already applies. A configured runtime answer, and every answer once an availability pass has succeeded, is returned unchanged.
+- `packages/coding-agent/src/core/model-registry.ts`: `getProviderAuthStatus()` now runs `retryBusyCredentialRead()` first, and while the runtime has no availability snapshot it answers from the live store through `AuthStorage.getAuthStatus()` (stored, `--api-key` runtime override, or environment key, each with its own source label), the same credentials `getAvailable()` already counts through `hasAuth()`. A configured runtime answer, and every answer once an availability pass has succeeded, is returned unchanged.
 
 ### Why
 
