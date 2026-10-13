@@ -8,6 +8,7 @@ import {
 	AUTO_TITLE_SESSIONS_CAPABILITY,
 	BROWSER_ENGINE_CAPABILITY,
 	CONTINUE_FROM_LEAF_CAPABILITY,
+	DETACH_CONNECTION_CAPABILITY,
 	DURABLE_SESSION_ID_CAPABILITY,
 	EVAL_CELLS_CAPABILITY,
 	MEDIA_PLACEHOLDERS_CAPABILITY,
@@ -34,6 +35,7 @@ export function multiSessionHostCapabilities(options: {
 	return [
 		...new Set([
 			"multi_session",
+			"expected_host_instance",
 			AUTO_TITLE_SESSIONS_CAPABILITY,
 			MEDIA_PLACEHOLDERS_CAPABILITY,
 			DURABLE_CLIENT_MESSAGE_ID_CAPABILITY,
@@ -47,6 +49,8 @@ export function multiSessionHostCapabilities(options: {
 			// per-session launch profile `context`/`auto_title` travel on, and the session
 			// listing `kind` filters.
 			RETAIN_ON_DISCONNECT_CAPABILITY,
+			// Only a multi-session host tracks attachments per connection, so only it can drop them on request.
+			DETACH_CONNECTION_CAPABILITY,
 			SESSION_CONTEXT_CAPABILITY,
 			SESSION_KIND_CAPABILITY,
 			AUTO_TITLE_PER_SESSION_CAPABILITY,

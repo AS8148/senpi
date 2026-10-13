@@ -1,3 +1,21 @@
+## 2026-10-13 - Provider auth status re-reads a store that was busy on its first read (omo-desktop-app#2249)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-registry.ts`: `getProviderAuthStatus()` now runs `retryBusyCredentialRead()` first, and while the runtime has no availability snapshot it answers from the live store through `AuthStorage.getAuthStatus()` (stored, `--api-key` runtime override, or environment key, each with its own source label), the same credentials `getAvailable()` already counts through `hasAuth()`. A configured runtime answer, and every answer once an availability pass has succeeded, is returned unchanged.
+
+### Why
+
+- When `auth.json` was locked on the store's first read (#2487), the runtime's stored-provider set stays empty until an availability pass succeeds. `hasConfiguredAuth()` and `getAvailable()` re-read the store live, so the provider's models worked, but `getProviderAuthStatus()` read only the empty set. The desktop provider card (fed by RPC `get_auth_providers`) therefore showed the provider as "Not connected" while its models ran (omo-desktop-app#2249). Regression: `test/suite/regressions/2249-auth-status-busy-store.test.ts`.
+
+### Why an extension could not handle it
+
+- The answer is computed inside `ModelRegistry`, which every auth consumer (RPC `get_auth_providers`, `authMethodStatus`, the selectors) calls directly; no hook sits between the store read and the status.
+
+### Expected merge conflict zones
+
+- LOW: `getProviderAuthStatus()` in `packages/coding-agent/src/core/model-registry.ts` (one method body).
+
 ## 2026-10-12 - Stamp no-op thinking effects only at thinking setters (senpi#3199)
 
 ### What changed
@@ -110,6 +128,27 @@ The `model_change` entry is written by the session's model switch itself; only i
 ### Expected merge conflict zones
 
 - `ModelChangeOrigin` and `ModelChangeEntry` field lists, `appendModelChange`'s attribution spread.
+
+## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
+
+### What changed
+
+Remove the executable AppMode member while retaining the historical model-change source value so old entries remain readable.
+
+- `packages/coding-agent/src/core/model-change-origin.ts`
+- `packages/coding-agent/src/core/project-trust.ts`
+
+### Why
+
+The executable Codex compatibility layer is being removed. Shared Native runtime behavior and historical records must remain independent of that layer.
+
+### Why an extension could not handle it
+
+These host contracts, import paths and build or verification targets belong to the repository; an extension cannot retire them.
+
+### Expected merge conflict zones
+
+The listed paths, especially command dispatch, mode unions and process identity imports. Keep the supported runtime branches and the shared utility behavior.
 
 ## 2026-10-12 - Review repairs for config/state separation (senpi#3178)
 
@@ -9880,3 +9919,22 @@ The invalid predicate was inside the session-owned compaction resolver.
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/core/agent-session.ts`: `_resolveCompactionModel`.
+## 2026-10-13 - Public holder endpoint evidence (senpi#3255)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts` carries host-owned `holderEndpoint` through initial holds and session replacement.
+- Holder records add optional `host_socket`/`host_instance`. `liveSessionHolders` exposes them only after the existing process identity validation and a stable-record read; legacy records remain live without endpoint fields.
+- A holder record replaced during that stable-record read now reports no `cwd` either; the pre-fence behavior published the second read's `cwd`, and the safer read is kept.
+
+### Why
+
+Another client needs the public endpoint of the single writer, without treating missing metadata as proof of absence.
+
+### Why an extension could not handle it
+
+Runtime ownership publication precedes extension attachment.
+
+### Expected merge conflict zones
+
+`AgentSessionLaunchProfile`, runtime hold calls, holder identity publication and listing.
