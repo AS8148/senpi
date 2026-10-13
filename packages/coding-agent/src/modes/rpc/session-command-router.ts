@@ -1,5 +1,6 @@
 import { VERSION } from "../../config.ts";
 import { buildRpcSessionState } from "./connection-handler.ts";
+import { answerEffectFromTranscript } from "./effect-commands.ts";
 import { multiSessionHostCapabilities } from "./host-capabilities.ts";
 import { answerWarm } from "./host-warm.ts";
 import { protocolIdentity } from "./protocol-identity.ts";
@@ -359,6 +360,9 @@ export class SessionCommandRouter {
 			}
 			return { id: command.id, type: "response", command: "set_client_info", success: true } as RpcResponse;
 		}
+		// A receipt of a session this host has not loaded is read from its transcript, never by loading it.
+		if (command.type === "get_effect_status" && !command.sessionId && command.sessionPath !== undefined)
+			return answerEffectFromTranscript(command.id, command.sessionPath, command.effectId);
 		if (!command.sessionId) return error(command.id, command.type, RPC_ERROR_MISSING_SESSION_ID);
 		const sessionId = command.sessionId;
 		try {

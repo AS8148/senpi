@@ -138,6 +138,7 @@ function extractUserMessageText(content: string | Array<{ type: string; text?: s
 export class AgentSessionRuntime {
 	private rebindSession?: (session: AgentSession) => Promise<void>;
 	private beforeSessionInvalidate?: () => void;
+	private readonly sessionReplaceListeners = new Set<() => void>();
 	private _session: AgentSession;
 	private _services: AgentSessionServices;
 	private readonly createRuntime: CreateAgentSessionRuntimeFactory;
@@ -255,6 +256,19 @@ export class AgentSessionRuntime {
 		this.beforeSessionInvalidate = beforeSessionInvalidate;
 	}
 
+	/**
+	 * Run `listener` synchronously while the current session is REPLACED (new, switch, fork, resume), after
+	 * `session_shutdown` handlers and before the outgoing session is disposed, so it can still write to that
+	 * transcript. Unlike `setBeforeSessionInvalidate` it never runs from `dispose()`, and any number of
+	 * listeners coexist. Returns the function that removes it.
+	 */
+	onBeforeSessionReplace(listener: () => void): () => void {
+		this.sessionReplaceListeners.add(listener);
+		return () => {
+			this.sessionReplaceListeners.delete(listener);
+		};
+	}
+
 	/** Attachment transitions are ordered by the RPC entry's lifecycle mutex. */
 	async emitAttachmentEvent(type: "session_parked" | "session_resumed"): Promise<void> {
 		const runner = this.session.extensionRunner;
@@ -319,6 +333,7 @@ export class AgentSessionRuntime {
 			targetSessionFile,
 		});
 		mark("shutdown");
+		for (const listener of [...this.sessionReplaceListeners]) listener();
 		this.beforeSessionInvalidate?.();
 		const replaced = this.session.sessionManager;
 		this.session.dispose();
