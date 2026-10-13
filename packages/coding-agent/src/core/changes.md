@@ -1,3 +1,24 @@
+## 2026-10-13 - A fallback rung is identified by its model AND its thinking level
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/chains.ts` (fork-only): `rungSelector()` exports the rung form `provider/id[:level]`; `candidatesAfter()` treats only a same-base entry WITHOUT an explicit level as the current position, so an entry that runs the same model at another level is no longer consumed as the entry the session is already on.
+- `packages/coding-agent/src/core/retry-fallback/candidates.ts` (fork-only): the `self` skip compares the rung (same model, and no explicit level or the running level), and the `tried` lookup uses the rung instead of the model.
+- `packages/coding-agent/src/core/retry-fallback/controller.ts` (fork-only): the three `triedSelectors` writes store the rung. Cooldowns and circuits stay keyed by the model: a rate-limited or spent account is unhealthy at every level.
+- `packages/coding-agent/src/core/retry-fallback/validate.ts` (fork-only): `cannot reference the same model` fires only for a true rung duplicate, where an entry without a level inherits the key's.
+
+### Why
+
+A chain could not walk to a second rung of the same model at another thinking level. With `models: [X:high, X:off, Y]` - the shape the OMO/senpi adapter sends, as the entries `[X:off, Y]` under the bare `X` key - three checks removed the rung: the position match consumed `X:off` as the current entry, the `self` check then matched it by provider and model id, and `tried` blocked that model's remaining rungs once one was taken. Validation additionally warned about the configuration. The retry therefore landed on `Y` instead of retrying `X` with thinking off. Regression: `test/suite/retry-fallback-thinking-clamp.test.ts` (two controller cases), `test/suite/retry-fallback-chains.test.ts`, `test/suite/retry-fallback-validate.test.ts` (each fails on the pre-change code).
+
+### Why an extension could not handle it
+
+- The chain scan, the turn-scoped tried-selector set and the chain validator are core retry-fallback internals. No extension hook sees a candidate before the switch, and no hook owns the entry the scan starts from.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/core/retry-fallback/candidates.ts` (self/tried checks), `chains.ts` (`candidatesAfter`, `baseSelector`/`rungSelector`), `controller.ts` (`triedSelectors` writes), `validate.ts` (same-model warning).
+
 ## 2026-10-13 - Provider auth status re-reads a store that was busy on its first read (omo-desktop-app#2249)
 
 ### What changed

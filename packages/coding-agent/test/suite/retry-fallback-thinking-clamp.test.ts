@@ -157,4 +157,32 @@ describe("retry fallback thinking-level selection", () => {
 		// The fallback window still remembers the pre-fallback level for the revert.
 		expect(controller.activeState?.originalThinkingLevel).toBe("off");
 	});
+
+	it("walks to the same model at another level instead of skipping the rung", async () => {
+		// The plugin holds the head rung separately: `models: [A:high, A:off, B]` is sent as the
+		// entries `[A:off, B]` under the bare `A` key, so the second rung of A is the first
+		// fallback and must survive both the position match and the self check.
+		const { controller, switches } = createController({
+			models: [primary, toggle],
+			chains: { "faux/primary": ["faux/primary:off", "faux/toggle"] },
+			current: { model: primary, thinkingLevel: "high" },
+		});
+
+		expect(await controller.tryFallback("hard-error", {})).toBe(true);
+		expect(switches).toEqual([{ provider: "faux", id: "primary", thinking: "off", reason: "fallback" }]);
+	});
+
+	it("walks a second rung of the same model after the first one was taken", async () => {
+		// Refusal notes no cooldown, so the walk is limited only by `tried`: keyed by the rung
+		// it lets A:low follow A:off; keyed by the model it stopped the walk at A:off.
+		const { controller, switches } = createController({
+			models: [primary, toggle],
+			chains: { "faux/primary": ["faux/primary:off", "faux/primary:low", "faux/toggle"] },
+			current: { model: primary, thinkingLevel: "high" },
+		});
+
+		expect(await controller.tryFallback("refusal", {})).toBe(true);
+		expect(await controller.tryFallback("refusal", {})).toBe(true);
+		expect(switches.map((record) => `${record.id}:${record.thinking}`)).toEqual(["primary:off", "primary:low"]);
+	});
 });

@@ -9,6 +9,7 @@ import {
 	formatSelector,
 	parseFallbackSelector,
 	resolveChainKey,
+	rungSelector,
 } from "./chains.ts";
 import { CircuitProbes } from "./circuit-probes.ts";
 import type {
@@ -243,7 +244,7 @@ export class RetryFallbackController {
 				return true;
 			} catch (error) {
 				if (!this.deps.isCandidateRefusal?.(error)) throw error;
-				this.triedSelectors.add(baseSelector(candidate.selector));
+				this.triedSelectors.add(rungSelector(candidate.selector));
 				this.skip(formatSelector(candidate.model), "refused");
 			}
 			candidate = this.nextCandidate(false, true);
@@ -260,7 +261,7 @@ export class RetryFallbackController {
 		const thinking = this.selectThinking(candidate.selector, candidate.model, current.thinkingLevel);
 		this.probes.admit(baseSelector(candidate.selector));
 		await this.switchOrRelease(candidate.model, thinking, "fallback");
-		this.triedSelectors.add(baseSelector(candidate.selector));
+		this.triedSelectors.add(rungSelector(candidate.selector));
 		const from = formatSelector(current.model);
 		const to = formatSelector(candidate.model);
 		const prior = this.state;
@@ -303,7 +304,7 @@ export class RetryFallbackController {
 			skip: (raw, skipReason) => this.skip(raw, skipReason),
 		});
 		if (candidate) {
-			if (reserve) this.triedSelectors.add(baseSelector(candidate.selector));
+			if (reserve) this.triedSelectors.add(rungSelector(candidate.selector));
 			return { chainKey, ...candidate };
 		}
 		this.lastExhaustedChainKey = chainKey;
