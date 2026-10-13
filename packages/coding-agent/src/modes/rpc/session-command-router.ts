@@ -1,6 +1,7 @@
 import { VERSION } from "../../config.ts";
 import { buildRpcSessionState } from "./connection-handler.ts";
 import { answerEffectFromTranscript } from "./effect-commands.ts";
+import { latestSessionEffect } from "./effect-ledger.ts";
 import { multiSessionHostCapabilities } from "./host-capabilities.ts";
 import { answerWarm } from "./host-warm.ts";
 import { protocolIdentity } from "./protocol-identity.ts";
@@ -25,6 +26,7 @@ import {
 import { runWithSessionAttribution } from "./session-attribution.ts";
 import { createRpcSessionBinding, type RpcSessionBinding } from "./session-binding.ts";
 import { readDrainVerdicts } from "./session-drain.ts";
+import { drainSessionEffects, installSessionEffectFlusher } from "./session-effect-status.ts";
 import type { SessionEventWriter } from "./session-event-writer.ts";
 import { dispatchSessionBinding, sessionHeldCheck } from "./session-held.ts";
 import type { OpenRpcSession, RpcSessionLaunchProfile, RpcSessionRegistry } from "./session-registry.ts";
@@ -172,6 +174,26 @@ export class SessionCommandRouter {
 		this.onHandoffParked = idle?.onHandoffParked;
 		this.canExitWhenEmpty = idle?.canExitWhenEmpty;
 		writer.status.setSource(registryStatusSource(registry));
+		writer.status.setLastEffectProvider((sessionId) => {
+			const session = this.registry.peek(sessionId)?.runtime?.session;
+			if (session === undefined) return undefined;
+			const latest = latestSessionEffect(session);
+			return latest === undefined
+				? undefined
+				: { effectId: latest.effectId, kind: latest.kind, state: latest.state };
+		});
+		writer.afterRecord = (sessionId) => {
+			const session = this.registry.peek(sessionId)?.runtime?.session;
+			if (session === undefined) return;
+			for (const status of drainSessionEffects(session)) this.writer.status.publishEffect(sessionId, status);
+		};
+		installSessionEffectFlusher((session, statuses) => {
+			for (const row of this.registry.list()) {
+				if (this.registry.peek(row.sessionId)?.runtime?.session !== session) continue;
+				for (const status of statuses) this.writer.status.publishEffect(row.sessionId, status);
+				return;
+			}
+		});
 		if (Number.isFinite(this.idleEvictionMs) || Number.isFinite(this.emptyExitMs)) {
 			// Unref'd: occupancy hygiene must never be the reason the event loop stays open.
 			const tickMs = Math.max(20, Math.min(5_000, Math.min(this.idleEvictionMs, this.emptyExitMs) / 4));

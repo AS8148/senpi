@@ -14,7 +14,10 @@
  * flushed onto the actor the moment `activate()` runs, so no `seq > 0` record can overtake the response
  * that carries the `seq 0` snapshot.
  */
+
+import type { EffectStatus } from "./effect-record.ts";
 import { serializeJsonLine } from "./jsonl.ts";
+import { effectStatusRecord } from "./session-effect-status.ts";
 import {
 	type DerivedSessionStatus,
 	deriveSessionStatus,
@@ -182,6 +185,26 @@ export class SessionStatusStream {
 			const record = this.recordFor(subscription, sessionId, derived, change);
 			if (!this.delivery.enqueue(subscription.connectionId, serializeJsonLine(record)))
 				this.subscriptions.delete(subscription.id);
+		}
+	}
+
+	/** Publish one effect transition to every matched `effects: true` subscriber, sharing the seq. */
+	publishEffect(sessionId: string, status: EffectStatus): void {
+		if (this.subscriptions.size === 0 && this.pendings.size === 0) return;
+		const view = this.currentView(sessionId);
+		if (view === undefined) return;
+		const at = status.updatedAt ?? status.acceptedAt ?? (this.delivery.now?.() ?? new Date()).toISOString();
+		for (const pending of this.pendings.values()) {
+			if (!pending.options.effects || !subscriptionMatches(pending.options, sessionId, view.entry)) continue;
+			pending.seq += 1;
+			pending.lines.push(serializeJsonLine(effectStatusRecord(pending, sessionId, status, at)));
+		}
+		for (const subscription of this.subscriptions.values()) {
+			if (!subscription.options.effects || !subscriptionMatches(subscription.options, sessionId, view.entry))
+				continue;
+			subscription.seq += 1;
+			const line = serializeJsonLine(effectStatusRecord(subscription, sessionId, status, at));
+			if (!this.delivery.enqueue(subscription.connectionId, line)) this.subscriptions.delete(subscription.id);
 		}
 	}
 

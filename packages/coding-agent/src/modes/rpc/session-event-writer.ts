@@ -122,6 +122,11 @@ export class SessionEventWriter {
 	});
 	/** F13 surface dedupe: one notice per connection per inventory transition, tracked per session. */
 	private readonly surfaceDedupe = new SurfaceDigestDedupe();
+	/**
+	 * Set by the host wiring: drains the session's pending effect transitions. Invoked after every
+	 * record this writer publishes for the session, so an `effect_status` always lands after its cause.
+	 */
+	afterRecord?: (sessionId: string) => void;
 	/** Per-session image persisters: bytes reach disk before the placeholder that names them is emitted. */
 	private readonly mediaPersisters = new Map<string, MediaPersister>();
 	private readonly writeRaw: RawWriter;
@@ -309,6 +314,7 @@ export class SessionEventWriter {
 		// After the causing record is on every destination's FIFO, never before (ordering contract).
 		const cause = isTargeted ? undefined : causeOfRecord(record);
 		if (cause !== undefined) this.status.publish(sessionId, cause, this.changeActor("agent"));
+		this.afterRecord?.(sessionId);
 		this.requestFlush();
 		return true;
 	}
