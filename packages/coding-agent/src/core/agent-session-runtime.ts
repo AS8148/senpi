@@ -17,6 +17,7 @@ import type {
 import { type ExtensionRunner, emitSessionShutdownEvent } from "./extensions/runner.ts";
 import type { CreateAgentSessionResult } from "./sdk.ts";
 import { assertSessionCwdExists } from "./session-cwd.ts";
+import type { SessionHolderEndpoint } from "./session-hold-errors.ts";
 import { holdSessionFile, type SessionHold } from "./session-holders.ts";
 import { SessionManager } from "./session-manager.ts";
 import { reserveSessionWrite, unregisterSessionWriter } from "./session-write-reservation.ts";
@@ -37,6 +38,8 @@ export interface CreateAgentSessionRuntimeResult extends CreateAgentSessionResul
 /** Immutable flags selected when a runtime is first launched. */
 export interface AgentSessionLaunchProfile {
 	cwd: string;
+	/** Host-owned public endpoint evidence; never sourced from client session context. */
+	holderEndpoint?: SessionHolderEndpoint;
 	permissionPreset?: string;
 	creationModel?: { provider: string; modelId: string };
 	initialThinkingLevel?: string;
@@ -166,7 +169,11 @@ export class AgentSessionRuntime {
 		this._diagnostics = _diagnostics;
 		this._modelFallbackMessage = _modelFallbackMessage;
 		this._launchProfile = launchProfile;
-		this._sessionHold = holdActiveSession(_session.sessionManager, wasFlushed(_session.sessionManager));
+		this._sessionHold = holdActiveSession(
+			_session.sessionManager,
+			wasFlushed(_session.sessionManager),
+			launchProfile?.holderEndpoint,
+		);
 	}
 
 	/** Stops advertising the open session to other processes; a runtime that replaces this one holds its own. */
@@ -342,7 +349,8 @@ export class AgentSessionRuntime {
 	}
 
 	private async apply(result: CreateAgentSessionRuntimeResult, hold?: SessionHold): Promise<void> {
-		this._sessionHold = hold ?? holdActiveSession(result.session.sessionManager, false);
+		this._sessionHold =
+			hold ?? holdActiveSession(result.session.sessionManager, false, this._launchProfile?.holderEndpoint);
 		this._session = result.session;
 		// The replacement was built from the profile read before its runtime was created; an attach
 		// that moved a setting while it was being built reached only the retired session (senpi#2842).
@@ -385,7 +393,7 @@ export class AgentSessionRuntime {
 		const sessionManager = SessionManager.open(sessionPath, undefined, options?.cwdOverride);
 		assertSessionCwdExists(sessionManager, this.cwd);
 		// Held before the current session is torn down: a session being moved fails the switch here.
-		const hold = holdActiveSession(sessionManager, wasFlushed(sessionManager));
+		const hold = holdActiveSession(sessionManager, wasFlushed(sessionManager), this._launchProfile?.holderEndpoint);
 		time("open", "switch");
 		try {
 			await this.teardownCurrent("resume", sessionManager.getSessionFile());
@@ -611,12 +619,17 @@ function wasFlushed(sessionManager: SessionManager): boolean {
 	return sessionManager.getEntries().some((entry) => entry.type === "message" && entry.message.role === "assistant");
 }
 
-function holdActiveSession(sessionManager: SessionManager, expectExisting: boolean): SessionHold | undefined {
+function holdActiveSession(
+	sessionManager: SessionManager,
+	expectExisting: boolean,
+	holderEndpoint?: SessionHolderEndpoint,
+): SessionHold | undefined {
 	const sessionFile = sessionManager.getSessionFile();
 	if (!sessionManager.isPersisted() || sessionFile === undefined) return undefined;
 	return holdSessionFile(sessionFile, sessionManager.getSessionId(), {
 		cwd: sessionManager.getCwd(),
 		expectExisting,
+		holderEndpoint,
 	});
 }
 

@@ -459,6 +459,8 @@ export class RpcClient {
 	}
 
 	async openSession(options: {
+		/** Attach only on this generation; requires `expected_host_instance`. */
+		expectedHostInstance?: string;
 		sessionPath?: string;
 		cwd?: string;
 		provider?: string;

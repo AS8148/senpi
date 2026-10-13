@@ -1,5 +1,39 @@
 # RPC Mode
 
+## Fenced holder attachment
+
+Shared hosts advertise `expected_host_instance`. After discovering a holder,
+read `get_protocol_info` through its public RPC socket with the existing socket
+authentication, then send `open_session { sessionPath, expectedHostInstance }`.
+The field is attach-only: `owner_changed` with
+`errorData { reason: "host_instance_mismatch", action: "rediscover_holder" }`
+means the generation changed. A matching generation that no longer owns the
+path returns `session_not_held` with the same rediscovery action. Neither
+refusal constructs a runtime or claims a file. A matching held path attaches
+to its existing routing handle and event stream. Without the field, open
+retains its existing create/resume behavior. Clients must check the capability
+before using this safety fence; older hosts may ignore unknown fields.
+
+Session holder records publish `host_socket` (the public endpoint, not a
+supervisor's private child hop) and `host_instance` alongside PID/boot/start
+identity. Path reservation claims publish `host_socket` alongside their
+existing `instanceId`. `session_held` exposes these optional endpoint fields
+on validated live holders. They are discovery evidence, not authorization:
+validate the process identity and the endpoint's live protocol identity
+before attachment, and fence every attach. A legacy record missing endpoint
+fields still blocks another writer while its process is live. An unreachable
+endpoint or missing fields never prove that a writer is absent; rediscover
+through registered host reservations or a transcript-context candidate and
+validate that candidate against the live host. Proven dead/stale process
+identities continue to be reclaimed by the existing lease guard.
+
+Attachment creates no input effect receipt. Send ordinary `prompt` with
+`clientMessageId`/`clientTurnId` through the attached connection and use the
+existing durable input admission/replay machinery below. This adds no second
+ledger and uses no process-kernel startup credential. TUI socket sidecar auth,
+Windows host handshake auth, and restricted local Unix host sockets retain
+their existing contracts.
+
 When the last client disconnects from a retained in-process session, extensions receive
 `session_parked`; the first reattachment to that still-open session emits
 `session_resumed`. File-monitor polling and prompt-cache keepalive pause between these
@@ -1876,7 +1910,7 @@ codes or code prefixes in `error`:
 - `eval_cell_not_found` (unknown or foreign-session cell ID)
 - `invalid_eval_cell_request` (malformed eval-cell identifier or tail budget)
 - `session_closing` (an entry whose owner is tearing down). A worker that FAILS while its session is being opened is not that case and reports `open_failed` carrying the worker's own reason, so the code a client matches on always names what actually happened.
-- `session_held` (`open_session`, including attach, or any session-writing RPC whose JSONL has a live holder outside this daemon family). The refusal has `errorCode: "session_held"` and exactly `errorData { holders: [{ pid, cwd? }] }`; no boot or process-start metadata is exposed. A single dispatch guard covers prompt/steer/follow-up, continuation/custom messages/wake/compaction, model/thinking changes, bash/results, edits/name/labels, appends and tree/session changes; only explicit read/control commands bypass it. The host queries `liveSessionHolders` afresh, resolves moved paths, ignores stale/dead/reused-pid records, and excludes its own PID and worker threads. Live generation identities registered to the same endpoint are also excluded, preserving the daemon's `session_path_in_use` retry/reclaim protocol. Open is checked again after runtime holder publication, before attachment or success, with rollback on refusal. Retry after the other process exits; no restart is needed. An interactive CLI opening or resuming a held session warns with pid/cwd; lookup filesystem errors warn and continue.
+- `session_held` (`open_session`, including attach, or any session-writing RPC whose JSONL has a live holder outside this daemon family). The refusal has `errorCode: "session_held"` and `errorData { holders: [{ pid, cwd?, host_socket?, host_instance? }] }`; no boot or process-start metadata is exposed. A single dispatch guard covers prompt/steer/follow-up, continuation/custom messages/wake/compaction, model/thinking changes, bash/results, edits/name/labels, appends and tree/session changes; only explicit read/control commands bypass it. The host queries `liveSessionHolders` afresh, resolves moved paths, ignores stale/dead/reused-pid records, and excludes its own PID and worker threads. Live generation identities registered to the same endpoint are also excluded, preserving the daemon's `session_path_in_use` retry/reclaim protocol. Open is checked again after runtime holder publication, before attachment or success, with rollback on refusal. Retry after the other process exits; no restart is needed. An interactive CLI opening or resuming a held session warns with pid/cwd; lookup filesystem errors warn and continue.
   - **Mid-turn policy:** a turn admitted before the foreign holder appeared finishes and persists its results; subsequent writing RPCs are refused. Read/control requests, including abort, queue clearing, `extension_ui_response` and `extension_ui_progress`, remain available.
   - **Conservative admission:** `new_session`, `fork`, `clone`, and settings or account commands carrying this session's routing handle are also refused while its current file is held. Close the handle and open another session to leave a held file.
   - Holder records are admission evidence, not an exclusive filesystem lock. SessionManager's append API is synchronous and fresh process-identity checks are asynchronous; changing append to asynchronous admission would change the SDK contract and could discard results of already-executed tools.
