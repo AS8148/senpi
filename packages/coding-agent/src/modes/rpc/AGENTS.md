@@ -50,7 +50,7 @@ rpc-session-state.ts      `buildRpcSessionState`: the one wire projection of a s
 host-gc.ts, host-gc-evidence.ts           `host gc`: remove dead endpoint dirs on three-part evidence
 host-gc-pass.ts, host-gc-pass-marker.ts   The budgeted gc pass ensure schedules after returning (`gc-last-run.json`)
 host-ensure-{start,stop,client,types}.ts, host-internal-dir-reaper.ts, host-ensure-liveness.ts   ensureHost's start + readiness gate, the recorded stop path, client identity, options, tmpdir reaper, stall refusal
-host-observers.ts, host-zero-session-trim.ts  Host self-observation: stall watchdog, memory sampler, zero-session trim (`host_trimmed`)
+host-observers.ts, host-zero-session-trim.ts  Host self-observation: stall watchdog, memory sampler, zero-session + busy-host trim (`host_trimmed`)
 host-lifecycle.ts, supervisor-route.ts    Supervisor that owns the public socket + idle exit (orchestration only)
 host-lifecycle-{launch,proxy,activity,drain,shutdown,scratch,stall-wait}.ts, host-cli-entry.ts, host-supervisor-log.ts
                           Supervisor argv/child launch (CLI entry resolution), public proxy, idle activity, drain, teardown + child stop,
