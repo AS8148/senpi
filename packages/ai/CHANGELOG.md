@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Provider models that accept only discrete thinking levels, such as `gemini-4-argon`, now get a thinking level instead of a thinking budget, which they reject with HTTP 400 ([#3292](https://github.com/code-yeongyu/senpi/issues/3292)).
+
 ### Removed
 
 ## [2026.10.15] - 2026-10-15

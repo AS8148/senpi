@@ -160,6 +160,32 @@ describe("Google thinking level maps", () => {
 		expect(payload.config?.thinkingConfig).toEqual({ includeThoughts: true, thinkingLevel: "MEDIUM" });
 	});
 
+	// gemini-4-argon rejects thinking_budget with HTTP 400; it only accepts LOW/MEDIUM/HIGH levels (senpi#3292).
+	const argonMap = {
+		off: null,
+		minimal: null,
+		low: "low",
+		medium: "medium",
+		high: "high",
+		xhigh: null,
+		max: null,
+	} as const satisfies ThinkingLevelMap;
+
+	it.each(googleAdapters)(
+		"sends a thinking level, never a budget, for gemini-4-argon on $name",
+		async ({ capture }) => {
+			const payload = await capture("gemini-4-argon", argonMap, "high");
+
+			expect(payload.config?.thinkingConfig).toEqual({ includeThoughts: true, thinkingLevel: "HIGH" });
+		},
+	);
+
+	it.each(googleAdapters)("clamps disabled thinking to LOW for gemini-4-argon on $name", async ({ capture }) => {
+		const payload = await capture("gemini-4-argon", argonMap);
+
+		expect(payload.config?.thinkingConfig).toEqual({ thinkingLevel: "LOW" });
+	});
+
 	it.each(googleAdapters)("disables Gemini 2.5 thinking when reasoning is omitted on $name", async ({ capture }) => {
 		const payload = await capture("gemini-2.5-flash", {});
 

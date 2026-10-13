@@ -79,6 +79,9 @@ export function usesGoogleThinkingLevel<T extends GoogleApiType>(model: Model<T>
 		// Match Gemini 3 Pro/Flash IDs with or without a minor version, such as
 		// gemini-3-flash-preview, gemini-3.1-pro-preview, and gemini-3.8-flash.
 		/gemini-3(?:\.\d+)?-(?:pro|flash)/.test(id) ||
+		// Generation 4 and later (gemini-4-argon, ...) only accept discrete levels; a
+		// thinking_budget is rejected with HTTP 400 (senpi#3292).
+		/gemini-(?:[4-9]|[1-9]\d)(?:\.\d+)?-/.test(id) ||
 		id === "gemini-flash-latest" ||
 		id === "gemini-flash-lite-latest" ||
 		// Match both hosted Gemma 4 naming forms: gemma-4-* and gemma4-*.
