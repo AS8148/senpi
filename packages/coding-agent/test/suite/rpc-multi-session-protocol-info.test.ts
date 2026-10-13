@@ -30,6 +30,7 @@ describe("multi-session RPC protocol info", () => {
 					"eval_cells",
 					"session_held",
 					"retain_on_disconnect",
+					"detach_connection",
 					"session_context",
 					"session_kind",
 					"auto_title_per_session",

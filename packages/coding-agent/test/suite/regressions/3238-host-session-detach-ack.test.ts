@@ -9,6 +9,7 @@ import { runHostSessionRequest } from "../../../src/modes/rpc/host-session-runne
 import { RpcClient } from "../../../src/modes/rpc/rpc-client.ts";
 
 type Command = { readonly id?: string; readonly type: string };
+type FakeHostOptions = { readonly capabilities: readonly string[]; readonly answerDetach: boolean };
 
 /**
  * A multi-session host reduced to what `senpi host session` touches. Like the real host, it releases a closed
@@ -21,16 +22,23 @@ class FakeHost {
 	private readonly heldCloses: Array<() => void> = [];
 	private readonly closeWaiters: Array<() => void> = [];
 	private readonly server: Server;
-	private constructor(
-		readonly socketPath: string,
-		private readonly options: { readonly capabilities: readonly string[]; readonly answerDetach: boolean },
-	) {
+	readonly socketPath: string;
+	private readonly options: FakeHostOptions;
+	private constructor(socketPath: string, options: FakeHostOptions) {
+		this.socketPath = socketPath;
+		this.options = options;
 		this.server = createServer((socket) => this.accept(socket));
 	}
 
-	static async start(dir: string, options: FakeHost["options"]): Promise<FakeHost> {
+	static async start(dir: string, options: FakeHostOptions): Promise<FakeHost> {
 		const host = new FakeHost(join(dir, "rpc.sock"), options);
-		await new Promise<void>((resolve) => host.server.listen(host.socketPath, resolve));
+		await new Promise<void>((resolve, reject) => {
+			host.server.once("error", reject);
+			host.server.listen(host.socketPath, () => {
+				host.server.off("error", reject);
+				resolve();
+			});
+		});
 		return host;
 	}
 
@@ -104,7 +112,7 @@ afterEach(async () => {
 	for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-async function fakeHost(options: FakeHost["options"]): Promise<{ host: FakeHost; agentDir: string }> {
+async function fakeHost(options: FakeHostOptions): Promise<{ host: FakeHost; agentDir: string }> {
 	const dir = mkdtempSync(join(tmpdir(), "hs-3238-"));
 	dirs.push(dir);
 	const host = await FakeHost.start(dir, options);

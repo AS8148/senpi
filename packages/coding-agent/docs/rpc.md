@@ -3227,6 +3227,21 @@ Response:
 
 Refusals carry `error` = `turn_active` or `session_busy` with `errorData.busy` (pass `"interrupt": true` to abort the work first), `attached` with `errorData.attachments` (pass `"force": true`), `invalid_release_reason`, `release_unsupported`, `release_failed` (`errorData.detail`; the session stays hosted when its entry could not be written), `host_draining`, `session_closing` or `unknown_session`.
 
+#### detach_connection
+
+Multi-session hosts that advertise the `detach_connection` capability only. A connection's last request before it closes: the host drops every session attachment this connection holds and answers only after that, so another connection's next `list_sessions` no longer counts it. Closing the socket afterwards releases nothing more.
+
+```json
+{"type": "detach_connection"}
+```
+
+Response:
+```json
+{"type": "response", "command": "detach_connection", "success": true}
+```
+
+`senpi host session` sends it before closing and waits at most 5 s; when no answer comes it prints one line and closes anyway. Against a host that does not advertise the capability it sends nothing and relies on the release at socket close.
+
 ### Commands
 
 #### get_commands
