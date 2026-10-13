@@ -16,7 +16,6 @@
 
 - The dependency pin line in `packages/coding-agent/package.json` and the matching `bun.lock` entries.
 
-## 2026-10-12 - Native RPC QA owns neutral helper imports (Refs senpi#3167)
 ## 2026-10-13 - Cover retired commands after leading options (senpi#3167)
 
 ### What changed
