@@ -110,7 +110,12 @@ describe("tps builtin extension notify gating (senpi#3236)", () => {
 		const notifications: string[] = [];
 		const ctx = createContext(notifications, "tui");
 		const harness = createHarness();
-		const zeroOutput = createAssistantMessage({ input: 10, output: 0, cacheRead: 30, cacheWrite: 0 });
+		const zeroOutput = createAssistantMessage({
+			input: 10,
+			output: 0,
+			cacheRead: 30,
+			cacheWrite: 0,
+		});
 		const output = createAssistantMessage({ input: 10, output: 100, cacheRead: 30, cacheWrite: 0 });
 
 		// output <= 0: no notify.
