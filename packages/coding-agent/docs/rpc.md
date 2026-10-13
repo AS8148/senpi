@@ -1106,13 +1106,14 @@ A multi-session host advertising the capability `session_status` pushes one `ses
 #### subscribe_sessions
 
 ```json
-{"id": "s1", "type": "subscribe_sessions", "sessions": "all", "include_workers": false, "include_context": false, "mirror": "none"}
+{"id": "s1", "type": "subscribe_sessions", "sessions": "all", "include_workers": false, "include_context": false, "mirror": "none", "effects": false}
 ```
 
 - `sessions`: `"all"` (default), `{ "ids": [...] }` (routing ids, durable session ids or session paths), or `{ "childrenOf": "<durableSessionId>" }` (sessions whose `context.parent_session_id`, or else `context.root_session_id`, equals it).
 - `include_workers`: include `kind: "worker"` sessions; default `true` for `childrenOf`, `false` otherwise.
 - `include_context`: carry each session's published `context` on its records; default `false`.
 - `mirror`: `"none"` (default), `"all"` or an array of record types (`["message_update", "tool_execution_start"]`). The matched sessions' records of those types are also delivered to this connection. Mirroring is an explicit opt-in open to every subscriber of the host (the socket is per user, mode 0600): it is not an attachment and does not keep a session alive. Worker content is mirrored only with `include_workers: true`.
+- `effects`: also deliver `effect_status` receipts of matched sessions; default `true` for `childrenOf`, `false` otherwise. Each `effect_status` is enqueued after the record that caused the transition and shares the subscription's `seq`.
 
 Response:
 
@@ -1152,7 +1153,7 @@ A connection without an attachment receives `errorCode: "session_not_attached"` 
 
 - `status`: `opening`, `idle`, `running`, `waiting_input` (a question is pending), `compacting`, `unloaded` (the routing handle ended and the session reopens by `sessionPath`; `reason` is `idle`, `unload_session` or `handoff`), or `closed` (`reason` is the `session_closed.reason`). After an abort ends a run, `idle` carries `reason: "aborted"`.
 - `lastChange.cause`: `open`, `prompt`, `agent_end`, `agent_idle`, `abort`, `question`, `compaction`, `set_model`, `queue`, `attach`, `detach`, `replace`, `park`, `close` or `context`; `by` is `client`, `agent` or `host`.
-- `context` is present only with `include_context`. `lastEffect` is reserved for the effect ledger and absent on hosts without the `effect_ledger` capability.
+- `context` is present only with `include_context`. `lastEffect: { effectId, kind, state }` names the session's most recent effect receipt (an input with a `clientMessageId`, an abort, a model or thinking-level switch) and is absent on hosts without the `effect_ledger` capability or before the session's first effect.
 - On `new_session`, `switch_session` or `fork` the routing id stays; the record carries the new `durableSessionId` and `sessionPath` with cause `replace`.
 
 Ordering: a status rides the subscribing connection's own queue and is enqueued AFTER the record that caused it, so a connection that is both attached and subscribed always reads `queue_update` before the `session_status` it caused, and `agent_idle` before the matching `idle`.
@@ -1172,6 +1173,18 @@ A -> close_session {rpc-1}                               B <- session_status det
 ```
 
 `session_opened { sessionId, durableSessionId, sessionPath, kind, cwd, context? }` is emitted for every session the host creates (not for an attach). An `interactive` session's record is broadcast to every connection, including connections without a subscription. A `worker` session's record reaches its attached connections and matching subscribers with `include_workers`. For both kinds, `context` is included only for matching subscribers with `include_context`; all other recipients receive the record without context.
+
+#### effect_status
+
+```json
+{"type": "effect_status", "subscriptionId": "sub-1", "seq": 5, "sessionId": "rpc-1",
+ "effectId": "stop-1", "kind": "abort", "state": "done", "disposition": "applied",
+ "by": {"connectionId": "A"}, "at": "2026-10-13T08:00:00.000Z"}
+```
+
+On a host with the `effect_ledger` capability, a subscription with `effects: true` receives one `effect_status` per effect transition of every matched session: every `rpc_effect` transition (`abort`, `set_model`, `set_thinking_level`) and every input admission transition (`prompt`/`steer`/`follow_up` with a `clientMessageId`, whose `effectId` IS the `clientMessageId`). `kind` is `input`, `abort`, `set_model`, `set_thinking_level`, `unload` or `dequeue`; `state` is `accepted`, `applied`, `done` or `failed`; `disposition` and `outcome` follow the `get_effect_status` shape. `by` names the connection whose command the effect belongs to (absent on `input` receipts, which carry no actor) and `at` is the transition time.
+
+An `effect_status` is enqueued on the subscribing connection AFTER the record that caused the transition and shares the subscription's gap-free `seq`: a subscriber watching an `abort { effectId }` reads the abort's `session_status` deltas and the effect's `accepted -> applied -> done` as one ordered stream, with `done` landing after the `agent_idle` status that sealed the turn.
 
 ### Client information
 
