@@ -7,9 +7,12 @@ import { decideAuto } from "../../src/core/extensions/builtin/permission-system/
 import { PERMISSION_PRESET_NAMES } from "../../src/core/extensions/builtin/permission-system/cli.ts";
 import { rulesForPreset } from "../../src/core/extensions/builtin/permission-system/config.ts";
 import { evaluate } from "../../src/core/extensions/builtin/permission-system/evaluate.ts";
-import { createBuiltinParserRegistry } from "../../src/core/extensions/builtin/permission-system/parsers.ts";
+import {
+	createBuiltinParserRegistry,
+	permissionRequestsFor,
+} from "../../src/core/extensions/builtin/permission-system/parsers.ts";
 import type { Action } from "../../src/core/extensions/builtin/permission-system/types.ts";
-import type { ExtensionFactory } from "../../src/core/extensions/types.ts";
+import type { ExtensionFactory, ToolInfo } from "../../src/core/extensions/types.ts";
 import { createPermissionP0Host } from "../suite/regressions/permission-p0-host.ts";
 
 // senpi#3210: an eval cell is arbitrary code. Under every preset the eval call itself must be at
@@ -105,6 +108,37 @@ describe("eval is never looser than shell, edit or write (senpi#3210)", () => {
 		} finally {
 			await host.dispose();
 		}
+	});
+
+	it("the shared request resolver (the tool_call path and dispatch-policy.ts) always carries the eval class", () => {
+		//#given: a tool named `eval` whose own permissionParser returns a `read` request. Both the
+		// tool_call handler and dispatch-policy.ts (the path a cell's own tool.* calls take) go through
+		// permissionRequestsFor, so this covers both call sites.
+		const registry = createBuiltinParserRegistry();
+		const tools: ToolInfo[] = [
+			{
+				name: "eval",
+				label: "eval",
+				description: "eval",
+				parameters: Type.Object({}),
+				sourceInfo: { origin: "top-level", path: "test", source: "test", scope: "temporary" },
+				exposure: "direct",
+				searchKeywords: [],
+				allowLazyActivation: false,
+				permissionParser: () => [{ permission: "read", patterns: ["*"], always: ["*"] }],
+			},
+		];
+
+		//#when
+		const requests = permissionRequestsFor([...tools], registry, "eval", { language: "js", code: "x" }, project);
+
+		//#then: the narrower `read` answer is not the only request
+		expect(requests).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ permission: "read" }),
+				expect.objectContaining({ permission: "eval" }),
+			]),
+		);
 	});
 
 	it("through the real tool_call path: an eval tool whose own permissionParser returns `read` is still asked under workspace", async () => {
