@@ -49,6 +49,11 @@ describe.skipIf(process.platform === "win32")("client-less retained sessions acr
 			}),
 		);
 		const openedState = opened.state as { durableSessionId?: string; sessionFile?: string } | undefined;
+		// A real retained session has a transcript on disk; the file is written incrementally during a
+		// turn. Drive one turn so the file exists, then abort it (the conditional handover waits for no
+		// busy session; the retry below absorbs the abort's settle timing).
+		await opener.request({ id: "turn", type: "prompt", sessionId: opened.sessionId, message: "say ok" }, 120_000);
+		await opener.request({ id: "abort", type: "abort", sessionId: opened.sessionId }, 120_000);
 		const durableId =
 			typeof openedState?.durableSessionId === "string"
 				? openedState.durableSessionId
@@ -59,7 +64,16 @@ describe.skipIf(process.platform === "win32")("client-less retained sessions acr
 		opener.destroy();
 
 		const caller = await connect(rig, peers);
-		const answer = dataOf(await caller.request(beginHandoverCommand(rig), 120_000));
+		// The conditional idle handover refuses while the just-aborted turn is still settling; retry
+		// until it admits the handoff, so the test does not hinge on the abort's settle timing.
+		let answer: Record<string, unknown> = {};
+		const handoffDeadline = Date.now() + 120_000;
+		for (;;) {
+			answer = dataOf(await caller.request(beginHandoverCommand(rig), 120_000));
+			if (answer.state === "handover_completed") break;
+			if (Date.now() >= handoffDeadline) break;
+			await new Promise((resolve) => setTimeout(resolve, 250));
+		}
 		expect(answer).toMatchObject({ operation_id: "op-1", state: "handover_completed" });
 		const successor = answer.successor as { pid: number; runtimeBuildId: string };
 		pids.push(successor.pid);

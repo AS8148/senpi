@@ -471,17 +471,23 @@ export class SessionCommandRouter {
 			: [];
 		// A retain_on_disconnect session survives EVERY generation (senpi#3282): park it to disk AND
 		// into the handover record, whether the park came from the handoff drain or the idle sweep, so
-		// the successor reopens it. A removal without recording it is the bug this guards.
+		// the successor reopens it. The write is awaited before the drain proceeds, or the generation
+		// can hand over and exit before it lands and the park is lost. A removal without recording it
+		// is the bug this guards.
 		if (
 			this.handoverParkedDir !== undefined &&
 			retained?.retainOnDisconnect === true &&
 			retained.sessionPath !== undefined
 		) {
-			const dir = this.handoverParkedDir;
-			void recordHandoverParkedSession(dir, {
+			await recordHandoverParkedSession(this.handoverParkedDir, {
 				sessionPath: retained.sessionPath,
 				...(retained.durableSessionId !== undefined ? { durableSessionId: retained.durableSessionId } : {}),
 				retainOnDisconnect: true,
+				...(retained.profile?.cwd !== undefined ? { cwd: retained.profile.cwd } : {}),
+				...(retained.profile?.creationModel !== undefined ? { model: retained.profile.creationModel } : {}),
+				...(retained.profile?.initialThinkingLevel !== undefined
+					? { thinkingLevel: retained.profile.initialThinkingLevel }
+					: {}),
 			}).catch((cause: unknown) => {
 				process.stderr.write(`senpi rpc handover park record ${sessionId} failed: ${String(cause)}\n`);
 			});

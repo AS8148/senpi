@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { access, chmod, mkdir, unlink } from "node:fs/promises";
 import { createConnection, createServer, type Server } from "node:net";
 import { basename, dirname, join } from "node:path";
@@ -22,8 +23,9 @@ import { createHostDaemonPaths } from "./host-daemon-paths.ts";
 import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
 import {
 	clearHandoverParkedSession,
+	dropHandoverParkedSessionIfFileGone,
 	type HandoverParkedEntry,
-	takeHandoverParkedSessions,
+	readHandoverParkedSessions,
 } from "./host-handover-parked.ts";
 import { performIdleHandover } from "./host-handover-wire.ts";
 import { EXPECTED_RUNTIME_BUILD_ID_ENV } from "./host-idle-handover.ts";
@@ -117,14 +119,14 @@ async function reopenHandoverParkedSessions(
 	// removed only after a successful reopen (crash-safe, at most once, never lost).
 	const deadline = Date.now() + HANDOVER_PARKED_REOPEN_WINDOW_MS;
 	for (;;) {
-		const parked = await takeHandoverParkedSessions(daemonDir);
+		const parked = await readHandoverParkedSessions(daemonDir);
 		for (const entry of parked) {
 			await reopenOne(daemonDir, registry, entry);
 		}
 		// Return only after the drain finished writing (we reopened something and the record is now
 		// empty) or the window closed; an empty read BEFORE the predecessor's drain lands must not
 		// end the wait, or the whole reopen is skipped.
-		if (parked.length > 0 && (await takeHandoverParkedSessions(daemonDir)).length === 0) return;
+		if (parked.length > 0 && (await readHandoverParkedSessions(daemonDir)).length === 0) return;
 		if (Date.now() >= deadline) return;
 		await new Promise((resolve) => setTimeout(resolve, HANDOVER_PARKED_REOPEN_POLL_MS));
 	}
@@ -135,10 +137,17 @@ async function reopenOne(
 	registry: { openSession: RpcSessionRegistry["openSession"] },
 	entry: HandoverParkedEntry,
 ): Promise<void> {
+	// A session file that no longer exists can never reopen: drop the entry instead of retrying it
+	// in every later generation (the review's dead-path finding).
+	await dropHandoverParkedSessionIfFileGone(daemonDir, entry.sessionPath);
+	if (!existsSync(entry.sessionPath)) {
+		process.stderr.write(`senpi rpc successor dropped a parked session whose file is gone: ${entry.sessionPath}\n`);
+		return;
+	}
 	try {
 		await registry.openSession(
 			{
-				cwd: process.cwd(),
+				...(entry.cwd !== undefined ? { cwd: entry.cwd } : { cwd: process.cwd() }),
 				sessionPath: entry.sessionPath,
 				...(entry.durableSessionId !== undefined ? { durableSessionId: entry.durableSessionId } : {}),
 				...(entry.model !== undefined ? { creationModel: entry.model } : {}),
