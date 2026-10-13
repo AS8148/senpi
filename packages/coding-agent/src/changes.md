@@ -1,3 +1,21 @@
+## 2026-10-13 - Claude Agent SDK 0.3.296 (senpi#3258)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` pin moves 0.3.292 -> 0.3.296; `bun.lock` refreshes the pin and its 8 platform optionalDependencies.
+
+### Why
+
+- The releasability gate's "Claude Agent SDK currency" job fails while the pin trails the latest published release, blocking the 2026.10.12 release; the bump keeps new Claude models usable on anthropic-subscription.
+
+### Why an extension could not handle it
+
+- The SDK pin and its platform binaries are build-time dependency resolution, not runtime extension surface.
+
+### Expected merge conflict zones
+
+- The dependency pin line in `packages/coding-agent/package.json` and the matching `bun.lock` entries.
+
 ## 2026-10-12 - Print-then-exit commands skip startup compile caching (senpi#3166)
 
 ### What changed
