@@ -3,6 +3,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { describe, expect, it } from "vitest";
 import { stream as streamOpenAICompletions } from "../src/api/openai-completions.ts";
+import { DEEPSEEK_MODELS } from "../src/providers/deepseek.models.ts";
 import type { Context, Model } from "../src/types.ts";
 import { normalizeToolParametersForOpenAICompat } from "../src/utils/tool-schema-compat.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
@@ -16,7 +17,7 @@ describe("typeless tool-parameter roots get type object (#3245)", () => {
 			schema: { allOf: [{ type: "object", properties: { a: { type: "string" } } }, { required: ["a"] }] },
 		},
 		{
-			name: "root $ref",
+			name: "root $ref (characterization: already typed before #3250)",
 			schema: { $ref: "#/$defs/args", $defs: { args: { type: "object", properties: { a: { type: "string" } } } } },
 		},
 	])("adds the object type and keeps the $name keyword", ({ schema }) => {
@@ -67,25 +68,11 @@ describe("DeepSeek wire payload (real request builder)", () => {
 		};
 
 		const body = await captureFirstRequestBody(async (baseUrl) => {
-			const model: Model<"openai-completions"> = {
-				id: "deepseek-test",
-				name: "DeepSeek Test",
-				api: "openai-completions",
-				provider: "deepseek",
-				baseUrl,
-				reasoning: false,
-				input: ["text"],
-				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-				contextWindow: 128000,
-				maxTokens: 4096,
-				compat: {
-					supportsStore: false,
-					supportsDeveloperRole: false,
-					maxTokensField: "max_tokens",
-					thinkingFormat: "deepseek",
-					supportsStrictMode: true,
-				},
-			};
+			const catalogModel: Model<"openai-completions"> | undefined = Object.values(DEEPSEEK_MODELS).find(
+				(candidate) => candidate.api === "openai-completions",
+			);
+			if (!catalogModel) throw new Error("the DeepSeek catalog has no Chat Completions model");
+			const model: Model<"openai-completions"> = { ...catalogModel, baseUrl };
 			const context: Context = {
 				messages: [{ role: "user", content: "hello", timestamp: 1 }],
 				tools: [{ name: "read_target", description: "Read a path or a free-form target", parameters: mixedRoot }],
