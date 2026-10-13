@@ -2,14 +2,19 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { DETACH_CONNECTION_CAPABILITY } from "../../../src/modes/rpc/custom-capability.ts";
 import { detachBeforeClose } from "../../../src/modes/rpc/host-session-detach.ts";
 import { runHostSessionRequest } from "../../../src/modes/rpc/host-session-runner.ts";
 import { RpcClient } from "../../../src/modes/rpc/rpc-client.ts";
+import { REQUEST_DEADLINE_MS } from "../../../src/modes/rpc/rpc-request-deadline.ts";
 
 type Command = { readonly id?: string; readonly type: string };
-type FakeHostOptions = { readonly capabilities: readonly string[]; readonly answerDetach: boolean };
+type FakeHostOptions = {
+	readonly capabilities: readonly string[];
+	readonly answerDetach: boolean;
+	readonly unanswered?: readonly string[];
+};
 
 /**
  * A multi-session host reduced to what `senpi host session` touches. Like the real host, it releases a closed
@@ -21,6 +26,7 @@ class FakeHost {
 	private readonly attachments = new Map<Socket, number>();
 	private readonly heldCloses: Array<() => void> = [];
 	private readonly closeWaiters: Array<() => void> = [];
+	private readonly commandWaiters: Array<{ readonly type: string; readonly notify: () => void }> = [];
 	private readonly server: Server;
 	readonly socketPath: string;
 	private readonly options: FakeHostOptions;
@@ -48,6 +54,10 @@ class FakeHost {
 
 	nextClose(): Promise<void> {
 		return new Promise((resolve) => this.closeWaiters.push(resolve));
+	}
+
+	received(type: string): Promise<void> {
+		return new Promise((notify) => this.commandWaiters.push({ type, notify }));
 	}
 
 	releaseClosedConnections(): void {
@@ -79,6 +89,8 @@ class FakeHost {
 
 	private handle(socket: Socket, command: Command): void {
 		this.commands.push(command.type);
+		for (const waiter of this.commandWaiters.filter((entry) => entry.type === command.type)) waiter.notify();
+		if (this.options.unanswered?.includes(command.type)) return;
 		const reply = (data?: unknown) =>
 			socket.write(
 				`${JSON.stringify({ id: command.id, type: "response", command: command.type, success: true, ...(data === undefined ? {} : { data }) })}\n`,
@@ -108,6 +120,7 @@ class FakeHost {
 const dirs: string[] = [];
 const hosts: FakeHost[] = [];
 afterEach(async () => {
+	vi.useRealTimers();
 	for (const host of hosts.splice(0)) await host.stop();
 	for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
@@ -162,6 +175,32 @@ describe("a short-lived host session client releases its attachment before it re
 		await closed;
 		host.releaseClosedConnections();
 		expect(host.attachmentCount()).toBe(0);
+	});
+
+	it("#given a host that stopped answering #when the command times out #then the client closes without asking for a detach", async () => {
+		// given
+		const { host, agentDir } = await fakeHost({
+			capabilities: [DETACH_CONNECTION_CAPABILITY],
+			answerDetach: true,
+			unanswered: ["get_state"],
+		});
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		const stateSent = host.received("get_state");
+
+		// when
+		const outcome = runHostSessionRequest({
+			action: "state",
+			ref: "rpc-1",
+			target: { socket: host.socketPath, agentDir },
+		});
+		await stateSent;
+		await vi.advanceTimersByTimeAsync(REQUEST_DEADLINE_MS);
+		const result = await outcome;
+
+		// then
+		expect(result.payload).toMatchObject({ action: "error", reason: "host_error" });
+		expect(String(result.payload.detail)).toContain("Timeout waiting for response to get_state");
+		expect(host.commands.slice(host.commands.indexOf("get_state") + 1)).toEqual([]);
 	});
 
 	it("#given a host that never answers the detach #when the client closes #then it reports the missing answer once and still closes", async () => {

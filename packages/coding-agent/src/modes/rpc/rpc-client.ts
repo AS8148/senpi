@@ -45,6 +45,7 @@ import {
 	PROMPT_COMPACTION_DEADLINE_MS,
 	promptStalledMessage,
 	REQUEST_DEADLINE_MS,
+	RpcRequestTimeoutError,
 } from "./rpc-request-deadline.ts";
 import type {
 	EditAssistantMessageResult,
@@ -1370,7 +1371,7 @@ export class RpcClient {
 			if (command.type === "prompt") {
 				promptCap = setTimeout(() => {
 					deadline.clear();
-					expire(new Error(timeoutMessage()));
+					expire(new RpcRequestTimeoutError(timeoutMessage()));
 				}, PROMPT_ACK_MAX_WAIT_MS);
 			}
 
