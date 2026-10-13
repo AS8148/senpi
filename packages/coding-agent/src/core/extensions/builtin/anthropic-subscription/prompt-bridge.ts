@@ -34,6 +34,17 @@ function appendContentBlocks(blocks: ContentBlockParam[], content: string | read
  */
 export const CONVERSATION_HISTORY_CLOSER = "\n</conversation_history>";
 
+export const RESPOND_TO_USER_INSTRUCTION =
+	'The above is the conversation history so far, provided as context. Respond as the assistant to the user message below only. Never emit "USER:" or "ASSISTANT:" labels or continue the transcript.';
+
+/**
+ * A replay that ends with tool results (a model switch or fallback mid-turn) has no new user message. Saying "the
+ * user message below" there made the model read the last tool output, often images it generated itself, as something
+ * the user had just sent (senpi#2768).
+ */
+export const CONTINUE_TURN_INSTRUCTION =
+	'The above is the conversation history so far, provided as context. There is no new user message: the last entries are results of tool calls you made in your current turn, not anything the user sent. Continue that turn as the assistant. Never emit "USER:" or "ASSISTANT:" labels or continue the transcript.';
+
 export type PromptBlockOptions = {
 	/**
 	 * Mark the last history text block as a prompt-cache breakpoint with this lifetime. History only grows by
@@ -108,7 +119,9 @@ export function buildPromptBlocks(
 		pushText("\n</recovered_tool_results>");
 	}
 	pushText(
-		'The above is the conversation history so far, provided as context. Respond as the assistant to the user message below only. Never emit "USER:" or "ASSISTANT:" labels or continue the transcript.',
+		history.at(-1)?.role === "toolResult" && !finalUserMessage
+			? CONTINUE_TURN_INSTRUCTION
+			: RESPOND_TO_USER_INSTRUCTION,
 	);
 	if (finalUserMessage && !appendContentBlocks(blocks, finalUserMessage.content)) pushText("(see attached image)");
 	return blocks;

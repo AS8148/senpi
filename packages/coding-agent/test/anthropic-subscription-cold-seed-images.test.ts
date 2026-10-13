@@ -7,7 +7,9 @@ import {
 } from "../src/core/extensions/builtin/anthropic-subscription/cold-seed-images.ts";
 import {
 	buildPromptBlocks,
+	CONTINUE_TURN_INSTRUCTION,
 	mapPiToolNameToSdk,
+	RESPOND_TO_USER_INSTRUCTION,
 } from "../src/core/extensions/builtin/anthropic-subscription/prompt-bridge.ts";
 import type { ContentBlockParam } from "../src/core/extensions/builtin/anthropic-subscription/sdk-boundary.ts";
 import {
@@ -196,6 +198,23 @@ describe("anthropic-subscription cold seed replays tool-read images as tool outp
 			coldSeedImageText.capped({ kind: "tool", toolName: READ, toolCallId: `read-${n}` }),
 		);
 		expect(texts(rebuild(messages))).toEqual(expect.arrayContaining(dropped));
+	});
+
+	it("a replay that ends mid-turn with generated images says there is no new user message (senpi#2768)", () => {
+		const messages = [
+			say("Keep generating with dots", 0),
+			...readOf("gen-1", distinctImage(1), 1),
+			...readOf("gen-2", distinctImage(2), 2),
+		];
+
+		const blocks = rebuild(messages);
+
+		expect(texts(blocks)).toContain(CONTINUE_TURN_INSTRUCTION);
+		expect(texts(blocks)).not.toContain(RESPOND_TO_USER_INSTRUCTION);
+		expect(labelsBeforeImages(blocks)).toEqual([coldSeedImageText.toolOutput(READ)]);
+		expect(texts(blocks)).toContain(
+			coldSeedImageText.answered({ kind: "tool", toolName: READ, toolCallId: "gen-1" }),
+		);
 	});
 
 	it("a long tool-screenshot session switched to the Claude lane replays none of its answered images (senpi#2768)", () => {

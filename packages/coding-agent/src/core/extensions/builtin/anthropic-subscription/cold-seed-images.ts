@@ -28,7 +28,7 @@ function source(origin: ReplayedImageOrigin): string {
 
 export const coldSeedImageText = {
 	toolOutput: (toolName: string): string =>
-		`[image returned by the ${toolName} tool (tool output, not a user attachment)]`,
+		`[image returned by the ${toolName} tool to your own call (tool output, not a user attachment)]`,
 	userHistory: "[image the user attached in this earlier turn (history, not part of the current message)]",
 	duplicate: (origin: ReplayedImageOrigin, first: ReplayedImageOrigin): string =>
 		`${subject(origin)}: identical to an image already shown above (${source(first)}); not attached again]`,
