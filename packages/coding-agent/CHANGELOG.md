@@ -14,6 +14,8 @@
 
 ### Fixed
 
+- A tool named `eval` with its own `permissionParser` could answer for itself with a narrower class (for example `read`), so a preset that allows reads would run an arbitrary-code cell without asking. The `eval` permission request is now always carried alongside any tool-owned requests, so only a preset that allows everything allows a cell ([#3211](https://github.com/code-yeongyu/senpi/pull/3211), requested by @code-yeongyu).
+
 - Help, version, model/tip listings, session export, and one-shot package/host/schedule commands no longer enable the startup compile cache, avoiding Bun 1.4.3's slower cold-cache write at exit. Root version requests stay parser-free, and cache decisions do not change argument errors. Interactive, RPC and prompt-processing sessions, schedule watchers, and multi-session RPC hosts (even with `--help`) retain caching. An externally supplied `NODE_COMPILE_CACHE` remains untouched ([#3166](https://github.com/code-yeongyu/senpi/issues/3166)).
 
 - An agent that stops with open todo tasks is continued automatically again after it makes progress: the two automatic continuations are counted only while they close no task, where before a long unattended run got none on its next early stop once it had used two. When the agent really stalls, the notice now says why (two continuations in a row closed no task) and what to do (reply to resume it, or `/todo done` / `/todo drop`), instead of only "Send a message to continue". Waiting on a background child, monitor, eval cell, open question or goal still shows nothing ([oh-my-openagent#10026](https://github.com/code-yeongyu/oh-my-openagent/issues/10026), requested by @code-yeongyu).

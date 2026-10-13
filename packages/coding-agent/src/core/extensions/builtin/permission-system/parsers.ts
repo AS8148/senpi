@@ -70,6 +70,11 @@ function withExternalDirectoryRequests(
 }
 
 /** The requests a tool's own `permissionParser` derives from this call, or undefined when the tool declares none. */
+/** The `eval` class a cell carries on its own, used when its tool-owned parser names anything narrower. */
+export function fallbackEvalPermissionRequest(): PermissionRequest {
+	return { permission: "eval", patterns: ["*"], always: ["*"] };
+}
+
 export function toolOwnedPermissionRequests(
 	tools: readonly ToolInfo[],
 	toolName: string,

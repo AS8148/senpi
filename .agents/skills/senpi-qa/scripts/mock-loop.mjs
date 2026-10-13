@@ -270,7 +270,7 @@ async function withEvalAutoPreset(apiName, evidenceSlug) {
 			const bodies = server.requests.map((request) => JSON.stringify(request.body ?? {}));
 			const asked = bodies.some((body) => /Permission required/.test(body));
 			return {
-				name: "auto preset: the eval cell is asked about (refused with no UI) and creates nothing",
+				name: "auto preset: the eval cell is asked about (refused with no UI), proven by the ask reaching the model, and creates nothing",
 				pass: !made && asked,
 				detail: `made=${made} asked=${asked}`,
 			};

@@ -10,7 +10,12 @@ import { createDispatchAuthorizer } from "./dispatch-policy.ts";
 import { createEventEmitter } from "./events.ts";
 import { INTERNAL_PERMISSION_TOOLS } from "./internal-tools.ts";
 import { handleNoUI } from "./non-interactive.ts";
-import { createBuiltinParserRegistry, type ParserRegistry, toolOwnedPermissionRequests } from "./parsers.ts";
+import {
+	createBuiltinParserRegistry,
+	fallbackEvalPermissionRequest,
+	type ParserRegistry,
+	toolOwnedPermissionRequests,
+} from "./parsers.ts";
 import { showPermissionPrompt } from "./prompt.ts";
 import { PermissionService } from "./service.ts";
 import { loadPermissionSettings } from "./settings.ts";
@@ -192,7 +197,12 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		const toolOwnedRequests = parserRegistry.has(event.toolName)
 			? undefined
 			: toolOwnedPermissionRequests(pi.getAllTools(), event.toolName, event.input, ctx.cwd);
-		const permissionRequests = toolOwnedRequests ?? parserRegistry.parse(event.toolName, event.input, ctx.cwd);
+		let permissionRequests = toolOwnedRequests ?? parserRegistry.parse(event.toolName, event.input, ctx.cwd);
+		// An eval cell is arbitrary code, so its tool's own parser can never speak for everything the
+		// cell does. A `read`-class answer from it must not approve the call (senpi#3211).
+		if (event.toolName === "eval" && !permissionRequests.some((request) => request.permission === "eval")) {
+			permissionRequests = [...permissionRequests, fallbackEvalPermissionRequest()];
+		}
 		// Parsing preserves a path monitor's approved parent. Only rearming is
 		// bookkeeping; path watches read file bytes and retain filesystem checks.
 		if (
