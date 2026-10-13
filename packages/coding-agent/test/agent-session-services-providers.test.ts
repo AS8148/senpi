@@ -82,6 +82,8 @@ describe("createAgentSessionServices provider registration order", () => {
 			"config:ord-legacy",
 			"config:anthropic-subscription",
 			"config:cursor-cli-oauth",
+			"config:vertex-garden",
+			"config:vertex-claude",
 		]);
 	});
 
@@ -98,6 +100,8 @@ describe("createAgentSessionServices provider registration order", () => {
 			"config:ord-legacy-last",
 			"config:anthropic-subscription",
 			"config:cursor-cli-oauth",
+			"config:vertex-garden",
+			"config:vertex-claude",
 		]);
 	});
 });
