@@ -753,8 +753,10 @@ export class SessionCommandRouter {
 	 * Releases every session a dropped connection still owned. Each handle goes through
 	 * the same refcounted close as an explicit close_session, so a session another
 	 * connection is still attached to keeps running and only the last owner tears it down.
+	 * Resolves to the sessions whose attachment is still counted: the ones that release when
+	 * their running turn settles, or every owned one while the host drains.
 	 */
-	async releaseConnection(connectionId: string): Promise<void> {
+	async releaseConnection(connectionId: string): Promise<string[]> {
 		this.releasedConnections.add(connectionId);
 		this.writer.clearConnectionCapabilities(connectionId);
 		for (const sessionId of this.sessionsByConnection.get(connectionId)?.keys() ?? [])
@@ -767,13 +769,14 @@ export class SessionCommandRouter {
 			// Its attachment-draining claim releases these counts once work settles.
 			if (opens) await Promise.all([...opens]);
 			this.releasedConnections.delete(connectionId);
-			return;
+			return [...(owned?.keys() ?? [])];
 		}
 		if (owned === undefined) {
 			if (opens) await Promise.all([...opens]);
 			this.releasedConnections.delete(connectionId);
-			return;
+			return [];
 		}
+		const deferred = new Set<string>();
 		await Promise.all(
 			[...owned].map(async ([sessionId, count]) => {
 				for (let attachment = 0; attachment < count; attachment++) {
@@ -788,10 +791,15 @@ export class SessionCommandRouter {
 					// A retained session is never closed by a drop, so it has nothing to defer:
 					// release the attachment now - the client is already gone and must not keep
 					// counting - and let the turn run to settlement on its own.
+					//
+					// Only the release that would end the session can abort its turn. While another
+					// attachment remains, this one goes now, so the session stops counting the client
+					// the moment it leaves (senpi#3238).
 					const live = this.registry.peek(sessionId);
-					const retained = live?.retainOnDisconnect === true;
+					const endsSession = live?.retainOnDisconnect !== true && (live?.attachments ?? 0) <= 1;
 					const session = live?.state === "open" ? live.runtime?.session : undefined;
-					if (!retained && live?.state === "open" && live.worker?.snapshot?.streaming) {
+					if (endsSession && live?.state === "open" && live.worker?.snapshot?.streaming) {
+						deferred.add(sessionId);
 						const unsubscribe = live.worker.subscribeSettled(() => {
 							unsubscribe();
 							void this.releaseOwnedSession(sessionId).catch((cause: unknown) => {
@@ -802,7 +810,8 @@ export class SessionCommandRouter {
 						});
 						continue;
 					}
-					if (!retained && session?.isStreaming) {
+					if (endsSession && session?.isStreaming) {
+						deferred.add(sessionId);
 						let released = false;
 						const unsubscribe = session.subscribe((event) => {
 							if (event.type !== "agent_settled" && event.type !== "agent_idle") return;
@@ -823,6 +832,7 @@ export class SessionCommandRouter {
 		);
 		if (opens) await Promise.all([...opens]);
 		this.releasedConnections.delete(connectionId);
+		return [...deferred];
 	}
 
 	/**

@@ -520,14 +520,17 @@ export class RpcClient {
 	/**
 	 * Drop this connection's session attachments and wait until the host confirms they are gone (senpi#3238).
 	 * A host without `detach_connection` is left to today's release on socket close: `"unsupported"`.
+	 * Otherwise `deferred` names the sessions that still count this connection (see `detach_connection`).
 	 */
-	async detachConnection(): Promise<"detached" | "unsupported"> {
+	async detachConnection(): Promise<{ readonly deferred: readonly string[] } | "unsupported"> {
 		const info = this.getData<{ capabilities?: unknown }>(await this.send({ type: "get_protocol_info" }, false));
 		if (!Array.isArray(info.capabilities) || !info.capabilities.includes(DETACH_CONNECTION_CAPABILITY))
 			return "unsupported";
-		const response = await this.send({ type: "detach_connection" }, false);
-		if (!response.success) this.getData(response);
-		return "detached";
+		const data = this.getData<{ deferred?: unknown }>(await this.send({ type: "detach_connection" }, false));
+		const deferred = Array.isArray(data?.deferred)
+			? data.deferred.filter((id): id is string => typeof id === "string")
+			: [];
+		return { deferred };
 	}
 
 	async listSessions(options?: { observe?: boolean; include_workers?: boolean }): Promise<

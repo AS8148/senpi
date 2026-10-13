@@ -1,3 +1,23 @@
+## 2026-10-13 - A mid-turn release waits only when it would end the session (senpi#3238 review)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: `releaseConnection` defers an attachment until the running turn settles only when that release would end the session: not retained, and this is its last attachment. While another attachment remains, it releases at once, even mid-turn. It resolves to the session ids still counting the connection: the deferred ones, or every owned one while the host drains.
+- `packages/coding-agent/src/modes/rpc/connection-detach.ts` and `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `detach_connection` answer carries `data.deferred`.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `detachConnection()` returns `{ deferred }` from a host that supports it.
+
+### Why
+
+The review of #3254 found that a `senpi host session` ref command could still be counted after its acknowledged detach. The command attaches to a live session another client opened without `retain_on_disconnect`, and if that session's turn was running, the release was deferred until it settled. The deferral protects a turn from being aborted when its session closes, and only the last attachment's release closes a session.
+
+### Why an extension could not handle it
+
+Attachment counts and the deferred mid-turn release live in the multi-session host's command router; no extension sees connections.
+
+### Expected merge conflict zones
+
+The attachment loop in `releaseConnection`, the `detach_connection` response in `rpc-types.ts`, and `detachConnection()` in `rpc-client.ts`.
+
 ## 2026-10-13 - Acknowledged detach for short-lived host session clients (senpi#3238)
 
 ### What changed

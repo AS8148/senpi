@@ -473,8 +473,8 @@ export type RpcCommand =
 	| {
 			id?: string;
 			/**
-			 * The connection's last request: drop every session attachment it holds, then answer. Advertised as
-			 * `detach_connection`. Closing the socket afterwards releases nothing more.
+			 * Meant as the connection's last request: release every session attachment it holds, then answer.
+			 * Advertised as `detach_connection`. Closing the socket afterwards releases nothing more.
 			 */
 			type: "detach_connection";
 	  }
@@ -753,6 +753,11 @@ export type RpcResponse =
 			type: "response";
 			command: "detach_connection";
 			success: true;
+			/**
+			 * Sessions that still count this connection: releasing it would end a turn still running (it
+			 * releases when the turn settles), or the host is draining. Empty when every attachment is gone.
+			 */
+			data: { deferred: string[] };
 	  }
 	| {
 			id?: string;
