@@ -1,3 +1,21 @@
+## 2026-10-13 - Handoff parks retained sessions as `session_parked` (senpi#3276)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: a generation handoff (`reason === "handoff_parked"`) now seals the session with `writer.parkSession` (emitting `session_parked { sessionId, sessionPath }`) instead of `writer.closeSession` (which emitted `session_closed`). The parked file is reopenable by `open_session { sessionPath }` on the successor with the same durable session id.
+
+### Why
+
+Every idle handover (default every ~15 min) dropped retained sessions: the drain emitted `session_closed { reason: "handoff_parked", sessionPath }`, which any client keying on the record type reads as "session ended." The documented contract (`rpc-types.ts`) says `session_parked` replaces `session_closed` for a parked handle and that `handoff_parked` reopens by path, so the lane vanished from the desktop app even though the session file stayed intact on disk.
+
+### Why an extension could not handle it
+
+The drain/seal decision lives inside the session command router's lifecycle teardown, which no extension hook reaches.
+
+### Expected merge conflict zones
+
+The park/close branch in `evictIdleSession` in `session-command-router.ts`.
+
 ## 2026-10-12 - Busy-host trim (senpi#3218)
 
 ### What changed

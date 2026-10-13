@@ -466,13 +466,12 @@ export class SessionCommandRouter {
 			await this.finalizeClose(sessionId, binding, () =>
 				// A drain names ITS reason on the close record. An idle sweep of a RETAINED
 				// session parks instead: the file reopens by path. Anything else is a close.
-				parkedPath !== undefined && reason === undefined
+				parkedPath !== undefined && (reason === undefined || reason === "handoff_parked")
 					? this.writer.parkSession(sessionId, parkedPath)
 					: this.writer.closeSession(
 							sessionId,
 							{ type: "response", command: "close_session", success: true, data: {} },
 							reason ?? "idle_evicted",
-							reason === "handoff_parked" ? parkedPath : undefined,
 						),
 			);
 		} else {

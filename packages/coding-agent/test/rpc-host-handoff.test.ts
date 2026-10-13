@@ -92,12 +92,12 @@ describe.skipIf(process.platform === "win32")("generation handoff between live h
 		const before = await probeHost({ socket: qa.socket });
 		const attached = await peer(qa);
 		const sessionId = openedSessionId(await attached.request({ id: "open", type: "open_session", cwd: qa.cwd }));
-		const parked = attached.waitFor((record) => record.type === "session_closed" && record.sessionId === sessionId);
+		const parked = attached.waitFor((record) => record.type === "session_parked" && record.sessionId === sessionId);
 
 		const result = await handoff(qa);
 
 		expect(result.generation).toBe(1);
-		expect(await parked).toMatchObject({ reason: "handoff_parked", sessionPath: expect.any(String) });
+		expect(await parked).toMatchObject({ sessionPath: expect.any(String) });
 		await attached.waitForClose();
 		// A connection made after it reaches a DIFFERENT host process.
 		const after = await probeHost({ socket: qa.socket });
@@ -191,11 +191,11 @@ describe.skipIf(process.platform === "win32")("generation handoff between live h
 		});
 
 		const parked = watcher.waitFor(
-			(value) => value.type === "session_closed" && value.reason === "handoff_parked",
+			(value) => value.type === "session_parked" && value.sessionId === sessionId,
 			90_000,
 		);
 		held.release();
-		expect(await parked).toMatchObject({ sessionId });
+		expect(await parked).toMatchObject({ sessionId, sessionPath: expect.any(String) });
 		// The old generation leaves once its last session is parked.
 		await watcher.waitForClose(90_000);
 		expect(await waitForPidGone(firstPid(qa), 45_000)).toBe(true);
@@ -223,8 +223,8 @@ describe.skipIf(process.platform === "win32")("generation handoff between live h
 
 		expect(stopped).toMatchObject({ action: "drained", pid: firstPid(qa) });
 		client.destroy();
-		expect(await watcher.waitFor((value) => value.type === "session_closed", 90_000)).toMatchObject({
-			reason: "handoff_parked",
+		expect(await watcher.waitFor((value) => value.type === "session_parked", 90_000)).toMatchObject({
+			sessionPath: expect.any(String),
 		});
 		await watcher.waitForClose(90_000);
 		expect(await waitForPidGone(firstPid(qa), 45_000)).toBe(true);
