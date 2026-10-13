@@ -57,6 +57,7 @@ function entryView(entry: RpcSessionEntry): SessionStatusEntryView {
 		...(sessionPath !== undefined ? { sessionPath } : {}),
 		...(name !== undefined ? { name } : {}),
 		context: publishedSessionContext(entry.context, entry.contextOverlay),
+		openContext: entry.context,
 	};
 }
 

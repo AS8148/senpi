@@ -18,12 +18,19 @@ export const SESSION_CONTEXT_PATCH_LIMITS = {
 	overlayBytes: 4_096,
 } as const;
 
-/** Keys the host stamps on every session; a client may not rewrite where or behind whom a session runs. */
+/**
+ * Keys a client may never patch: the host's own stamps, and the lineage labels a
+ * `childrenOf` subscription matches on. Lineage belongs to the frozen open-time context;
+ * letting a patch rewrite it would let any attached client re-parent a session in every
+ * supervisor's `childrenOf` view without the subscribers ever being told.
+ */
 export const RESERVED_SESSION_CONTEXT_KEYS: ReadonlySet<string> = new Set([
 	"host_socket",
 	"host_instance",
 	"shard_key",
 	"tree_key",
+	"parent_session_id",
+	"root_session_id",
 ]);
 
 export interface ContextPatchRefusal {

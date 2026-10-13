@@ -201,6 +201,10 @@ export class SessionEventWriter {
 		this.fanout.detachConnectionFromSession(id, sessionId);
 	}
 
+	hasConnection(id: string): boolean {
+		return this.fanout.get(id) !== undefined;
+	}
+
 	setConnectionCapabilities(id: string, capabilities: readonly string[]): void {
 		this.fanout.setConnectionCapabilities(id, capabilities);
 	}
@@ -383,13 +387,14 @@ export class SessionEventWriter {
 		});
 	}
 
-	/** Queue one untagged host-control response for the current connection. */
-	enqueueControl(value: object): Promise<void> {
+	/** Queue one untagged host-control response for the given connection (defaults to the current one). */
+	enqueueControl(value: object, targetOverride?: string): Promise<void> {
 		if (this.failure !== undefined) return Promise.reject(this.failure);
-		const targetId = this.connectionContext.getStore();
+		const targetId = targetOverride ?? this.connectionContext.getStore();
 		const registered = targetId === undefined ? undefined : this.fanout.get(targetId);
 		if (registered) {
 			registered.actor.enqueue(serializeJsonLine(value));
+			this.requestFlush();
 			return Promise.resolve();
 		}
 		if (this.exceedsStdioCapacity(serializeJsonLine(value))) {

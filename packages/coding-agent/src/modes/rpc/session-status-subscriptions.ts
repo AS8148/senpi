@@ -114,7 +114,7 @@ export function parseSubscription(
 export function subscriptionMatches(
 	options: SubscriptionOptions,
 	sessionId: string,
-	entry: Pick<SessionStatusEntryView, "kind" | "durableSessionId" | "sessionPath" | "context">,
+	entry: Pick<SessionStatusEntryView, "kind" | "durableSessionId" | "sessionPath" | "context" | "openContext">,
 ): boolean {
 	if (entry.kind === "worker" && !options.includeWorkers) return false;
 	const selector = options.selector;
@@ -128,7 +128,10 @@ export function subscriptionMatches(
 				(entry.sessionPath !== undefined && selector.ids.has(entry.sessionPath))
 			);
 		case "childrenOf": {
-			const parent = entry.context.parent_session_id ?? entry.context.root_session_id;
+			// Lineage matching reads the frozen open-time context: a set_session_context patch
+			// can neither move a session into a supervisor's children view nor out of it.
+			const lineage = entry.openContext ?? entry.context;
+			const parent = lineage.parent_session_id ?? lineage.root_session_id;
 			return parent === selector.parent;
 		}
 		default: {

@@ -271,6 +271,10 @@ export const RPC_ERROR_INVALID_SESSION_CONTEXT = "invalid_session_context";
 export const RPC_ERROR_INVALID_SUBSCRIPTION = "invalid_subscription";
 /** `unsubscribe_sessions` named a subscription this connection does not hold. */
 export const RPC_ERROR_UNKNOWN_SUBSCRIPTION = "unknown_subscription";
+/** `subscribe_sessions` on a connection that already holds the documented maximum number of subscriptions. */
+export const RPC_ERROR_SUBSCRIPTION_LIMIT = "subscription_limit";
+/** `subscribe_sessions`/`unsubscribe_sessions` on a transport with no per-connection identity (stdio). */
+export const RPC_ERROR_UNSUPPORTED_TRANSPORT = "unsupported_transport";
 /** `open_session.kind` was neither `interactive` nor `worker`; an unknown kind is never downgraded. */
 export const RPC_ERROR_INVALID_SESSION_KIND = "invalid_session_kind";
 /** A launch-profile field on `open_session` (currently `auto_title`) was the wrong type. */
@@ -349,6 +353,8 @@ export type RpcErrorCode =
 	| typeof RPC_ERROR_INVALID_SESSION_CONTEXT
 	| typeof RPC_ERROR_INVALID_SUBSCRIPTION
 	| typeof RPC_ERROR_UNKNOWN_SUBSCRIPTION
+	| typeof RPC_ERROR_SUBSCRIPTION_LIMIT
+	| typeof RPC_ERROR_UNSUPPORTED_TRANSPORT
 	| typeof RPC_ERROR_INVALID_SESSION_KIND
 	| typeof RPC_ERROR_INVALID_LAUNCH_PROFILE
 	| typeof RPC_ERROR_INVALID_SESSION_ID

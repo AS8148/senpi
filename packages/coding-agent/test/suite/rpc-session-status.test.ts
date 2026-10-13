@@ -114,6 +114,71 @@ describe("session_status stream (T1 acceptance)", () => {
 		expect(listed.find((row) => row.sessionId === s1)?.attachments).toBe(2);
 	});
 
+	it("answers subscribe_sessions BEFORE any seq 1 record, even when a change is published mid-dispatch (#3198 review)", async () => {
+		const rig = await host();
+		const a = rig.client("A");
+		const s1 = String(dataOf(await a.request({ type: "open_session", cwd: rig.cwd })).sessionId);
+
+		// Given: the subscription is registered by one dispatch, then a change is published by the NEXT
+		// dispatch before the first one's response had any async hop to overtake. The two-command
+		// ladder reproduces the review's window without any clock: the publish provably runs between
+		// registration and the response's enqueue.
+		const sub = await subscribe(a, { include_context: true });
+		expect((sub.snapshot as Array<{ sessionId: string }>).map((record) => record.sessionId)).toEqual([s1]);
+		rig.writer.status.publish(s1, "context", "client", true);
+		dataOf(await a.request({ type: "list_sessions" }));
+
+		// The stream-level contract the whole mechanism exists for: a change published while the
+		// subscription is pending its response is HELD, then delivered as seq 1 behind it.
+		const record = await nextStatus(a, sub.subscriptionId, "context", s1);
+		expect(record).toMatchObject({ seq: sub.seq + 1, sessionId: s1 });
+		const responseIndex = a.inbox.findIndex(
+			(candidate) =>
+				candidate.type === "response" && candidate.command === "subscribe_sessions" && candidate.success === true,
+		);
+		expect(responseIndex).toBeGreaterThanOrEqual(0);
+		expect(
+			a.inbox.indexOf(record),
+			"the seq 1 delta must arrive after the response carrying the seq 0 snapshot",
+		).toBeGreaterThan(responseIndex);
+	});
+
+	it("holds a change published before activation as seq 1 on the pending subscription (#3198 review)", async () => {
+		const { SessionStatusStream } = await import("../../src/modes/rpc/session-status-stream.ts");
+		const enqueued: string[] = [];
+		const stream = new SessionStatusStream({
+			enqueue: (_connectionId, line) => {
+				enqueued.push(line);
+				return true;
+			},
+			pendingQuestions: () => 0,
+		});
+		stream.setSource({
+			sessionIds: () => ["rpc-1"],
+			entryView: () => ({ state: "open", kind: "interactive", cwd: "/w", attachments: 1, context: {} }),
+			view: () => ({ entry: { state: "open", kind: "interactive", cwd: "/w", attachments: 1, context: {} } }),
+		});
+		const pending = stream.subscribe("c", {
+			selector: { kind: "all" },
+			includeWorkers: false,
+			includeContext: true,
+			mirror: { kind: "none" },
+		});
+		// A publish lands while the subscription is registered but its response is not yet on the wire.
+		stream.publish("rpc-1", "context", "client", true);
+		// Pre-fix: nothing was held, so activation delivered zero records. Post-fix: one held seq-1 record.
+		expect(enqueued).toHaveLength(0);
+		stream.activate(pending.subscriptionId);
+		expect(enqueued).toHaveLength(1);
+		const delivered = JSON.parse(enqueued[0]!.trim()) as {
+			seq: number;
+			subscriptionId: string;
+			lastChange: { cause: string };
+		};
+		expect(delivered).toMatchObject({ seq: pending.seq + 1, subscriptionId: pending.subscriptionId });
+		expect(delivered.lastChange.cause).toBe("context");
+	});
+
 	it("emits the status AFTER the record that caused it on a connection that is also attached", async () => {
 		const rig = await host();
 		const a = rig.client("A");
@@ -335,6 +400,80 @@ describe("set_session_context and error copy", () => {
 			context: Record<string, unknown>;
 		}>;
 		expect(rows.find((row) => row.sessionId === s1)?.context).toMatchObject({ task_status: "running", run_epoch: 2 });
+	});
+});
+
+describe("lineage keys and childrenOf membership (#3198 review)", () => {
+	it("refuses a parent_session_id patch, and childrenOf membership is unaffected by any patch", async () => {
+		const rig = await host();
+		const parent = rig.client("parent");
+		const watcher = rig.client("watcher");
+		// Given: a childrenOf subscription watching parent-durable, and a worker child opened under it.
+		const sub = await subscribe(watcher, { sessions: { childrenOf: "parent-durable" }, include_workers: true });
+		const child = dataOf(
+			await parent.request({
+				type: "open_session",
+				cwd: rig.cwd,
+				kind: "worker",
+				context: { parent_session_id: "parent-durable", task_id: "t1" },
+			}),
+		);
+		const childId = String(child.sessionId);
+		await nextStatus(watcher, sub.subscriptionId, "open", childId);
+
+		// When: the attached parent tries to re-parent the child through a context patch.
+		const refused = await parent.request({
+			type: "set_session_context",
+			sessionId: childId,
+			patch: { parent_session_id: "stranger" },
+		});
+		// Then: lineage keys are reserved, with the same reason/action errorData shape as host keys.
+		expect(refused).toMatchObject({ success: false, errorCode: "invalid_session_context" });
+		expect(String(refused.error)).toBe(
+			'invalid_session_context: key "parent_session_id" is set by the host and cannot be patched',
+		);
+		expect(refused.errorData).toEqual({
+			reason: 'key "parent_session_id" is set by the host and cannot be patched',
+			action: "drop that key from the patch; the host keeps it current",
+		});
+		const refusedRoot = await parent.request({
+			type: "set_session_context",
+			sessionId: childId,
+			patch: { root_session_id: null },
+		});
+		expect(refusedRoot).toMatchObject({ success: false, errorCode: "invalid_session_context" });
+
+		// And: a patch to a non-lineage key leaves the child's childrenOf membership untouched.
+		dataOf(await parent.request({ type: "set_session_context", sessionId: childId, patch: { note: "x" } }));
+		dataOf(await parent.request({ type: "steer", sessionId: childId, message: "queued" }));
+		const queued = await nextStatus(watcher, sub.subscriptionId, "queue", childId);
+		expect(queued.sessionId).toBe(childId);
+
+		// And: a unit-level proof that childrenOf matching reads the frozen open context, not the
+		// published overlay - the spoof the reviewer named, at the boundary that decides membership.
+		const { subscriptionMatches } = await import("../../src/modes/rpc/session-status-subscriptions.ts");
+		const options = {
+			selector: { kind: "childrenOf" as const, parent: "parent-durable" },
+			includeWorkers: true,
+			includeContext: false,
+			mirror: { kind: "none" as const },
+		};
+		const frozen = {
+			kind: "worker" as const,
+			context: { task_id: "t2" },
+			openContext: { parent_session_id: "parent-durable" },
+		};
+		expect(subscriptionMatches(options, "rpc-x", frozen)).toBe(true);
+		// If matching read the published (patchable) context, this session would not match - it must.
+		const spoofedOut = {
+			kind: "worker" as const,
+			context: { parent_session_id: "stranger" },
+			openContext: { parent_session_id: "parent-durable" },
+		};
+		expect(subscriptionMatches(options, "rpc-y", spoofedOut)).toBe(true);
+		// A session that never had the lineage must not match even if a patch could add one.
+		const notAChild = { kind: "worker" as const, context: { task_id: "t2" }, openContext: { task_id: "t2" } };
+		expect(subscriptionMatches(options, "rpc-z", notAChild)).toBe(false);
 	});
 });
 

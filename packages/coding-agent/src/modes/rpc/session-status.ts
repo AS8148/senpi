@@ -57,6 +57,12 @@ export interface SessionStatusEntryView {
 	readonly sessionPath?: string;
 	readonly name?: string;
 	readonly context: PublishedSessionContext;
+	/**
+	 * The context the session was opened with, before any `set_session_context` patch. `childrenOf`
+	 * subscription matching reads this, so a patch can never move a session into or out of a
+	 * supervisor's children view; the published `context` above is what subscribers read.
+	 */
+	readonly openContext?: PublishedSessionContext;
 }
 
 /** What the live runtime contributes; absent while the session is opening or after it was torn down. */

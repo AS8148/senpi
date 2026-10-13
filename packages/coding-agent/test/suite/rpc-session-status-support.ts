@@ -128,6 +128,7 @@ export async function statusHost() {
 		faux,
 		model,
 		writer,
+		core,
 		extensionApis,
 		client,
 		/** Drops a client the way the socket host does: unregister the transport, then release its sessions. */

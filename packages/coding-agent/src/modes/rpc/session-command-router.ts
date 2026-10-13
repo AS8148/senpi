@@ -367,8 +367,29 @@ export class SessionCommandRouter {
 			}
 			return { id: command.id, type: "response", command: "set_client_info", success: true } as RpcResponse;
 		}
-		if (command.type === "subscribe_sessions")
-			return answerSubscribeSessions(command, this.writer.currentConnection(), this.writer.status);
+		if (command.type === "subscribe_sessions") {
+			const connection = this.writer.currentConnection();
+			const { answer, activate } = answerSubscribeSessions(command, connection, this.writer.status);
+			// On a socket host the response is enqueued HERE, ahead of activation: a delta published
+			// while this dispatch awaited the route queues behind the snapshot it belongs after.
+			if (activate !== undefined && connection !== undefined) {
+				const enqueue = async () => {
+					// Two hops: the response must be enqueued onto the actor's FIFO before the
+					// subscription goes live, so a delta published between registration and here
+					// always lands behind the snapshot answer it follows.
+					await this.writer.enqueueControl(answer, connection);
+					await new Promise<void>((resolve) => queueMicrotask(resolve));
+					try {
+						if (this.writer.hasConnection(connection)) this.writer.status.activate(activate);
+					} catch (cause) {
+						process.stderr.write(`senpi rpc subscription activation failed: ${String(cause)}\n`);
+					}
+				};
+				void enqueue();
+				return undefined;
+			}
+			return answer;
+		}
 		if (command.type === "unsubscribe_sessions")
 			return answerUnsubscribeSessions(command, this.writer.currentConnection(), this.writer.status);
 		if (!command.sessionId) return error(command.id, command.type, RPC_ERROR_MISSING_SESSION_ID);
@@ -774,12 +795,28 @@ export class SessionCommandRouter {
 			return undefined;
 		} catch (cause) {
 			if (opened) {
+				// The open published session_opened and an open status before this rollback, so its
+				// subscribers must also read the terminal record; otherwise they keep a live session
+				// the host no longer holds (#3198 review, L1).
+				const entry = this.registry.peek(opened.sessionId);
+				this.writer.closeSession(
+					opened.sessionId,
+					{
+						type: "response",
+						command: "close_session",
+						success: false,
+						error: "open_rolled_back",
+					},
+					"error",
+					entry?.sessionPath,
+				);
 				try {
 					if (opened.attached) await this.releaseOwnedSession(opened.sessionId);
 					else await this.registry.close(opened.sessionId);
 				} catch {
 					/* The open rollback has already removed the entry. */
 				}
+				this.writer.forgetSession(opened.sessionId);
 			}
 			return error(command.id, "open_session", this.code(cause), this.detail(cause));
 		}
