@@ -4,7 +4,7 @@ import { buildRpcSessionState } from "./connection-handler.ts";
 import { answerEffectFromTranscript } from "./effect-commands.ts";
 import { multiSessionHostCapabilities } from "./host-capabilities.ts";
 import { answerWarm } from "./host-warm.ts";
-import { protocolIdentity } from "./protocol-identity.ts";
+import { hostInstanceId, protocolIdentity } from "./protocol-identity.ts";
 import {
 	sessionAutoTitleError,
 	sessionBrowserEngineError,
@@ -20,6 +20,7 @@ import {
 	RPC_ERROR_INVALID_SESSION_KIND,
 	RPC_ERROR_MISSING_SESSION_ID,
 	RPC_ERROR_OPEN_FAILED,
+	RPC_ERROR_OWNER_CHANGED,
 	RPC_ERROR_SESSION_CLOSING,
 	RPC_ERROR_UNKNOWN_SESSION,
 } from "./rpc-types.ts";
@@ -588,6 +589,26 @@ export class SessionCommandRouter {
 		command: Extract<RpcCommand, { type: "open_session" }>,
 		owner?: string,
 	): Promise<RpcResponse | undefined> {
+		const instanceId = this.defaults.hostContext?.host_instance ?? hostInstanceId();
+		if (command.expectedHostInstance !== undefined) {
+			if (typeof command.expectedHostInstance !== "string" || command.expectedHostInstance.trim() === "")
+				return error(
+					command.id,
+					"open_session",
+					`${RPC_ERROR_INVALID_LAUNCH_PROFILE}: expectedHostInstance must be a non-empty string`,
+					{
+						reason: "invalid_expected_host_instance",
+						action: "supply_host_instance",
+					},
+				);
+			if (command.expectedHostInstance !== instanceId)
+				return error(command.id, "open_session", RPC_ERROR_OWNER_CHANGED, {
+					reason: "host_instance_mismatch",
+					action: "rediscover_holder",
+					expectedHostInstance: command.expectedHostInstance,
+					hostInstance: instanceId,
+				});
+		}
 		// The opaque per-session inputs are parsed HERE, at the wire boundary, so the
 		// registry, the runtime and the extensions downstream receive values already
 		// proven to satisfy every documented cap.
@@ -624,6 +645,12 @@ export class SessionCommandRouter {
 				{
 					cwd: command.cwd ?? this.defaults.cwd,
 					sessionPath: command.sessionPath,
+					holderEndpoint: {
+						host_instance: instanceId,
+						...(this.defaults.hostContext?.host_socket === undefined
+							? {}
+							: { host_socket: this.defaults.hostContext.host_socket }),
+					},
 					permissionPreset: command.permissionPreset ?? this.defaults.permissionPreset,
 					creationModel:
 						command.provider && command.modelId
@@ -641,7 +668,10 @@ export class SessionCommandRouter {
 					...(command.retryFallback !== undefined ? { retryFallback: command.retryFallback } : {}),
 				},
 				// Host lifecycle policy, deliberately outside the immutable launch profile.
-				{ retainOnDisconnect: command.retain_on_disconnect === true },
+				{
+					retainOnDisconnect: command.retain_on_disconnect === true,
+					attachOnly: command.expectedHostInstance !== undefined,
+				},
 			);
 			const openedSession = opened;
 			const entry = this.registry.getForCommand(openedSession.sessionId, "open_session");

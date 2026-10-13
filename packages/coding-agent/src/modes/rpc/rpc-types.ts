@@ -272,6 +272,8 @@ export const RPC_ERROR_MISSING_SESSION_ID = "missing_session_id";
 export const RPC_ERROR_MULTI_SESSION_DISABLED = "multi_session_disabled";
 export const RPC_ERROR_INVALID_PATH = "invalid_path";
 export const RPC_ERROR_OPEN_FAILED = "open_failed";
+export const RPC_ERROR_OWNER_CHANGED = "owner_changed";
+export const RPC_ERROR_SESSION_NOT_HELD = "session_not_held";
 export const RPC_ERROR_MEDIA_NOT_FOUND = "media_not_found";
 /** `open_session.context` broke a documented cap (key count, key syntax, value or total bytes). */
 export const RPC_ERROR_INVALID_SESSION_CONTEXT = "invalid_session_context";
@@ -346,6 +348,8 @@ export const RPC_ERROR_HOST_DRAINING = "host_draining";
 export const RPC_ERROR_HOST_STOPPING = "host_stopping";
 
 export type RpcErrorCode =
+	| typeof RPC_ERROR_OWNER_CHANGED
+	| typeof RPC_ERROR_SESSION_NOT_HELD
 	| typeof RPC_ERROR_HOST_STOPPING
 	| typeof RPC_ERROR_UNKNOWN_SESSION
 	| typeof RPC_ERROR_SESSION_CLOSING
@@ -408,6 +412,12 @@ export type RpcCommand =
 	| {
 			id?: string;
 			type: "open_session";
+			/**
+			 * Attach only to an existing session on this host generation. Requires
+			 * `expected_host_instance`; mismatch returns `owner_changed`, a released
+			 * session returns `session_not_held`. Neither refusal creates a writer.
+			 */
+			expectedHostInstance?: string;
 			sessionPath?: string;
 			cwd?: string;
 			provider?: string;

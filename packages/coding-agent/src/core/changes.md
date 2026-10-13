@@ -9880,3 +9880,22 @@ The invalid predicate was inside the session-owned compaction resolver.
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/core/agent-session.ts`: `_resolveCompactionModel`.
+## 2026-10-13 - Public holder endpoint evidence (senpi#3255)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts` carries host-owned `holderEndpoint` through initial holds and session replacement.
+- Holder records add optional `host_socket`/`host_instance`. `liveSessionHolders` exposes them only after the existing process identity validation and a stable-record read; legacy records remain live without endpoint fields.
+- A holder record replaced during that stable-record read now reports no `cwd` either; the pre-fence behavior published the second read's `cwd`, and the safer read is kept.
+
+### Why
+
+Another client needs the public endpoint of the single writer, without treating missing metadata as proof of absence.
+
+### Why an extension could not handle it
+
+Runtime ownership publication precedes extension attachment.
+
+### Expected merge conflict zones
+
+`AgentSessionLaunchProfile`, runtime hold calls, holder identity publication and listing.
