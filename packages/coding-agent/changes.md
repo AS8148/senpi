@@ -3,6 +3,7 @@
 ### What changed
 
 - `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` pin moves 0.3.292 -> 0.3.296; `bun.lock` refreshes the pin and its 8 platform optionalDependencies.
+- The root `package-lock.json` (the 8 platform packages relocked) and `packages/coding-agent/install-lock/package-lock.json` follow the same pin; CI's `npm ci` jobs and the install-lock gate read those two.
 
 ### Why
 
@@ -15,6 +16,7 @@
 ### Expected merge conflict zones
 
 - The dependency pin line in `packages/coding-agent/package.json` and the matching `bun.lock` entries.
+- The SDK entries in the root `package-lock.json` and `packages/coding-agent/install-lock/package-lock.json` at the next dependency sync.
 
 ## 2026-10-13 - Cover retired commands after leading options (senpi#3167)
 

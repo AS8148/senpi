@@ -8,12 +8,12 @@
 
 ### Changed
 
-- The advertised [CC] fingerprint floor that Anthropic OAuth requests declare follows the bundled Claude Agent SDK to [CC] 2.1.296 ([#3258](https://github.com/code-yeongyu/senpi/pull/3258)).
+- The advertised Claude Code fingerprint floor that Anthropic OAuth requests declare follows the bundled Claude Agent SDK to Claude Code 2.1.296 ([#3258](https://github.com/code-yeongyu/senpi/pull/3258)).
 - The bundled model catalog is refreshed from models.dev and the providers' model listings (`cloudflare-ai-gateway`, `meta`, `opengateway`, `openrouter`, `vercel-ai-gateway`) ([#3248](https://github.com/code-yeongyu/senpi/pull/3248)).
 
 ### Fixed
 
-- Tool parameter schemas sent to [OI] Chat Completions providers now always declare a root `type: "object"`, including when a root `anyOf`/`oneOf` union cannot be merged into a single object schema. DeepSeek's official API (and gateways that forward to it, such as OpenGateway's DeepSeek route) rejected such requests with `400 Invalid schema ... got 'type: null'` ([#3245](https://github.com/code-yeongyu/senpi/issues/3245)).
+- Tool parameter schemas sent to OpenAI Chat Completions providers now always declare a root `type: "object"`, including when a root `anyOf`/`oneOf` union cannot be merged into a single object schema. DeepSeek's official API (and gateways that forward to it, such as OpenGateway's DeepSeek route) rejected such requests with `400 Invalid schema ... got 'type: null'` ([#3245](https://github.com/code-yeongyu/senpi/issues/3245)).
 
 ### Removed
 
