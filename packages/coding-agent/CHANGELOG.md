@@ -12,6 +12,8 @@
 
 ### Removed
 
+- Removed the Codex `app-server` command, daemon, generated protocol and compatibility QA harness. Process integrations use Native RPC (`senpi --mode rpc` or `senpi host`); OpenAI API and ChatGPT subscription models remain supported, and historical model-change records remain readable ([#3167](https://github.com/code-yeongyu/senpi/issues/3167), requested by @code-yeongyu).
+
 ## [2026.10.13] - 2026-10-13
 
 ### Breaking Changes
@@ -39,8 +41,6 @@
 - Closing a todo task resets the two-continuation limit, so unattended work that makes progress can continue after its next early stop. After two automatic continuations close no task, the stop notice explains the limit and how to resume: reply, or close the work with `/todo done` or `/todo drop` ([#3220](https://github.com/code-yeongyu/senpi/pull/3220)).
 
 ### Removed
-
-- Removed the Codex `app-server` command, daemon, generated protocol and compatibility QA harness. Process integrations use Native RPC (`senpi --mode rpc` or `senpi host`); OpenAI API and ChatGPT subscription models remain supported, and historical model-change records remain readable ([#3167](https://github.com/code-yeongyu/senpi/issues/3167), requested by @code-yeongyu).
 
 ## [2026.10.12] - 2026-10-12
 
