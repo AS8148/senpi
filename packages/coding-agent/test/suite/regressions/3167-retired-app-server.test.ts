@@ -44,6 +44,7 @@ describe("retired app-server invocation", () => {
 		{ args: ["-p", "app-server"] },
 		{ args: ["--mode", "text", "app-server"] },
 		{ args: ["--verbose", "app-server", "--mode", "json"] },
+		{ args: ["--verbose", "app-server", "-p"] },
 		{ args: ["--verbose", "explain", "app-server"] },
 	])("keeps ordinary prompt arguments $args", ({ args }) => {
 		const parsed = parseArgs(args);
