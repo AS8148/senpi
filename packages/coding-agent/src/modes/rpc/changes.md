@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/modes/rpc/host-zero-session-trim.ts`: besides the zero-session trim, a host at or above a 2 GB footprint collects when its session count drops while other sessions still run (a drop the registry reports between ticks counts too). Each collection is timed, and the next busy-host trim waits at least 60 s and at least 100 times the last pause; a drop that lands inside that wait is held and answered when it ends.
+- `packages/coding-agent/src/modes/rpc/host-zero-session-trim.ts`: besides the zero-session trim, a host at or above a 2 GB footprint collects when its session count drops while other sessions still run (a drop the registry reports between ticks counts too). Each collection is timed, and the next busy-host trim waits at least 60 s and at least 100 times the last pause.
 - `packages/coding-agent/src/modes/rpc/rpc-host-lifecycle-types.ts`, `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: `host_trimmed` gains `sessions` (0 for the zero-session trim) and `pauseMs`.
 
 ### Why
