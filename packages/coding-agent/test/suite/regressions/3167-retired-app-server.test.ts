@@ -12,25 +12,50 @@ describe("retired app-server invocation", () => {
 		{ args: ["app-server", "--listen", "stdio://"] },
 		{ args: ["app-server", "daemon", "start"] },
 		{ args: ["app-server", "--help", "-ne"] },
+		{ args: ["--verbose", "app-server"] },
+		{ args: ["--no-extensions", "app-server", "daemon", "start"] },
+		{ args: ["--provider", "openai", "app-server", "--listen", "stdio://"] },
 	])("rejects $args without collecting a prompt", ({ args }) => {
 		const parsed = parseArgs(args);
 		expect(parsed.diagnostics).toEqual([expect.objectContaining({ type: "error" })]);
 		expect(parsed.messages).toEqual([]);
 	});
 
-	it("exits before initializing a model runtime", async () => {
-		const exit = new Error("CLI exited");
-		const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
-			throw exit;
-		});
-		const errors = vi.spyOn(console, "error").mockImplementation(() => {});
-		const createRuntime = vi.spyOn(ModelRuntime, "create");
+	it.each([{ args: ["app-server", "--help", "-ne"] }, { args: ["--verbose", "app-server", "--help", "-ne"] }])(
+		"exits before initializing a model runtime for $args",
+		async ({ args }) => {
+			const exit = new Error("CLI exited");
+			const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
+				throw exit;
+			});
+			const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+			const createRuntime = vi.spyOn(ModelRuntime, "create");
 
-		await expect(main(["app-server", "--help", "-ne"])).rejects.toBe(exit);
+			await expect(main(args)).rejects.toBe(exit);
 
-		expect(exitSpy).toHaveBeenCalledExactlyOnceWith(1);
-		expect(errors).toHaveBeenCalled();
-		expect(createRuntime).not.toHaveBeenCalled();
+			expect(exitSpy).toHaveBeenCalledExactlyOnceWith(1);
+			expect(errors).toHaveBeenCalled();
+			expect(createRuntime).not.toHaveBeenCalled();
+		},
+	);
+
+	it.each([
+		{ args: ["--verbose", "--", "app-server"] },
+		{ args: ["-p", "app-server"] },
+		{ args: ["--mode", "text", "app-server"] },
+		{ args: ["--verbose", "app-server", "--mode", "json"] },
+		{ args: ["--verbose", "explain", "app-server"] },
+	])("keeps ordinary prompt arguments $args", ({ args }) => {
+		const parsed = parseArgs(args);
+		expect(parsed.diagnostics).toEqual([]);
+		expect(parsed.messages).toEqual(args.includes("explain") ? ["explain", "app-server"] : ["app-server"]);
+	});
+
+	it("does not confuse a flag value with the retired command", () => {
+		const parsed = parseArgs(["--system-prompt", "app-server", "hello"]);
+		expect(parsed.diagnostics).toEqual([]);
+		expect(parsed.systemPrompt).toBe("app-server");
+		expect(parsed.messages).toEqual(["hello"]);
 	});
 
 	it("keeps explicit prompt text and Native RPC arguments usable", () => {

@@ -1,3 +1,21 @@
+## 2026-10-13 - Cover retired commands after leading options (senpi#3167)
+
+### What changed
+
+Extend `test/suite/regressions/3167-retired-app-server.test.ts` with leading boolean and valued options, early rejection before model-runtime creation, and positive controls for explicit modes, print values, delimiter-separated text, ordinary prompts and option values.
+
+### Why
+
+The first retirement guard missed legacy commands when a recognized option came first.
+
+### Why an extension could not handle it
+
+These tests verify CLI parsing before extensions or a model runtime are initialized.
+
+### Expected merge conflict zones
+
+The invocation tables and main-entry assertion in the retirement regression.
+
 ## 2026-10-13 - Keep shared TPS regressions on supported modes (senpi#3167)
 
 ### What changed

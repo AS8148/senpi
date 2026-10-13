@@ -124,6 +124,7 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 		return result;
 	}
 
+	let hasRetiredCommand = false;
 	for (let i = 0; i < args.length; i++) {
 		const arg = args[i];
 
@@ -329,8 +330,17 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 		} else if (arg.startsWith("-") && !arg.startsWith("--")) {
 			result.diagnostics.push({ type: "error", message: `Unknown option: ${arg}` });
 		} else if (!arg.startsWith("-")) {
+			if (result.messages.length === 0 && arg === "app-server") hasRetiredCommand = true;
 			result.messages.push(arg);
 		}
+	}
+
+	if (hasRetiredCommand && result.mode === undefined) {
+		result.messages = [];
+		result.diagnostics.push({
+			type: "error",
+			message: `The app-server command has been removed. Use "${APP_NAME} --mode rpc" for process integration.`,
+		});
 	}
 
 	return result;

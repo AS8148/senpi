@@ -1,3 +1,21 @@
+## 2026-10-13 - Reject retired commands after leading options (senpi#3167)
+
+### What changed
+
+Reject an implicit app-server command after recognized leading options before it can become a model prompt. Keep explicit modes, including a mode supplied after the positional argument, explicit print values, delimiter-separated text, option values and non-command prompt tokens unchanged.
+
+### Why
+
+The initial retirement guard checked only the first raw argument, so a former invocation such as `--verbose app-server` could silently become a prompt.
+
+### Why an extension could not handle it
+
+Argument rejection must happen before model-runtime or extension initialization.
+
+### Expected merge conflict zones
+
+The positional and final-validation branches in `args.ts`, and the focused `3167-retired-app-server.test.ts` regression cases.
+
 ## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
 
 ### What changed
