@@ -2,6 +2,7 @@ import { VERSION } from "../../config.ts";
 import { buildRpcSessionState } from "./connection-handler.ts";
 import { answerEffectFromTranscript } from "./effect-commands.ts";
 import { multiSessionHostCapabilities } from "./host-capabilities.ts";
+import { recordHandoverParkedSession } from "./host-handover-parked.ts";
 import { answerWarm } from "./host-warm.ts";
 import { protocolIdentity } from "./protocol-identity.ts";
 import {
@@ -65,6 +66,12 @@ export interface RpcSessionIdlePolicy {
 	onEmptyExit?: () => void;
 	/** Close connections whose last attached session has finished handoff parking. */
 	onHandoffParked?: (connections: readonly string[]) => Promise<void>;
+	/**
+	 * Endpoint daemon directory the drain appends the handoff-parked residency record to
+	 * (senpi#3282), so the successor reopens exactly the set this host held resident. Absent,
+	 * the park is not persisted (the old behavior).
+	 */
+	handoverParkedDir?: string;
 	/**
 	 * Consulted every tick before the empty-exit window advances. Returning false
 	 * both blocks the exit and resets the window, so a host with a connected but
@@ -133,6 +140,7 @@ export class SessionCommandRouter {
 	/** Called after any request for that session settles; a release waits here for the others to finish. */
 	private readonly requestSettledListeners = new Map<string, Set<() => void>>();
 	private readonly onHandoffParked?: RpcSessionIdlePolicy["onHandoffParked"];
+	private readonly handoverParkedDir?: string;
 	private emptySince: number | undefined;
 	/** Halves the idle window while the host reports memory pressure; never refuses work. */
 	private memoryPressure = false;
@@ -163,6 +171,7 @@ export class SessionCommandRouter {
 		this.emptyExitMs = idle?.emptyExitMs ?? Number.POSITIVE_INFINITY;
 		this.onEmptyExit = idle?.onEmptyExit;
 		this.onHandoffParked = idle?.onHandoffParked;
+		this.handoverParkedDir = idle?.handoverParkedDir;
 		this.canExitWhenEmpty = idle?.canExitWhenEmpty;
 		if (Number.isFinite(this.idleEvictionMs) || Number.isFinite(this.emptyExitMs)) {
 			// Unref'd: occupancy hygiene must never be the reason the event loop stays open.
@@ -460,6 +469,23 @@ export class SessionCommandRouter {
 		const owners = handoff
 			? [...this.sessionsByConnection].filter(([, owned]) => owned.has(sessionId)).map(([connection]) => connection)
 			: [];
+		// A retain_on_disconnect session survives EVERY generation (senpi#3282): park it to disk AND
+		// into the handover record, whether the park came from the handoff drain or the idle sweep, so
+		// the successor reopens it. A removal without recording it is the bug this guards.
+		if (
+			this.handoverParkedDir !== undefined &&
+			retained?.retainOnDisconnect === true &&
+			retained.sessionPath !== undefined
+		) {
+			const dir = this.handoverParkedDir;
+			void recordHandoverParkedSession(dir, {
+				sessionPath: retained.sessionPath,
+				...(retained.durableSessionId !== undefined ? { durableSessionId: retained.durableSessionId } : {}),
+				retainOnDisconnect: true,
+			}).catch((cause: unknown) => {
+				process.stderr.write(`senpi rpc handover park record ${sessionId} failed: ${String(cause)}\n`);
+			});
+		}
 		// A failed claim means an explicit close raced us and owns the entry now.
 		const claim = this.tryClaimClose(sessionId, { drainAttachments: true });
 		if (!claim) return;

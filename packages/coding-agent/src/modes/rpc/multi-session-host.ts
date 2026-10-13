@@ -18,7 +18,13 @@ import type { RpcConnectionSink } from "./connection-handler.ts";
 import { parseClientCapabilities } from "./custom-capability.ts";
 import { ClientOccupancy } from "./host-client-occupancy.ts";
 import { HostCoreGate, type HostCoreHooks } from "./host-core-gate.ts";
+import { createHostDaemonPaths } from "./host-daemon-paths.ts";
 import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
+import {
+	clearHandoverParkedSession,
+	type HandoverParkedEntry,
+	takeHandoverParkedSessions,
+} from "./host-handover-parked.ts";
 import { performIdleHandover } from "./host-handover-wire.ts";
 import { EXPECTED_RUNTIME_BUILD_ID_ENV } from "./host-idle-handover.ts";
 import { type HostIdleOverrides, RPC_CLOSE_GRACE_MS_ENV, resolveHostIdlePolicy } from "./host-idle-policy.ts";
@@ -93,6 +99,62 @@ interface Connection {
  * events remain visible to every connection. Responses and extension UI
  * requests remain requester-only; foreign observation uses attach-on-open.
  */
+/**
+ * senpi#3282: a successor host reopens exactly the set its predecessor held resident and parked
+ * with `handoff_parked`, restoring it with the same durable id and `retain_on_disconnect`. An
+ * entry is removed from the record only after a successful reopen (crash-safe, at most once); an
+ * entry whose session file is gone is logged and dropped. Runs once at host startup.
+ */
+async function reopenHandoverParkedSessions(
+	registry: Pick<RpcSessionRegistry, "openSession"> & { readonly size?: number },
+	agentDir: string,
+	socket: string,
+): Promise<void> {
+	const daemonDir = createHostDaemonPaths({ socket, agentDir }).dir;
+	// The predecessor parks its retained sessions AFTER this generation binds the public socket
+	// (its drain fires on detecting supersession), so the record is not necessarily present at this
+	// generation's startup. Poll for a bounded window and reopen each entry as it lands; an entry is
+	// removed only after a successful reopen (crash-safe, at most once, never lost).
+	const deadline = Date.now() + HANDOVER_PARKED_REOPEN_WINDOW_MS;
+	for (;;) {
+		const parked = await takeHandoverParkedSessions(daemonDir);
+		for (const entry of parked) {
+			await reopenOne(daemonDir, registry, entry);
+		}
+		// Return only after the drain finished writing (we reopened something and the record is now
+		// empty) or the window closed; an empty read BEFORE the predecessor's drain lands must not
+		// end the wait, or the whole reopen is skipped.
+		if (parked.length > 0 && (await takeHandoverParkedSessions(daemonDir)).length === 0) return;
+		if (Date.now() >= deadline) return;
+		await new Promise((resolve) => setTimeout(resolve, HANDOVER_PARKED_REOPEN_POLL_MS));
+	}
+}
+
+async function reopenOne(
+	daemonDir: string,
+	registry: { openSession: RpcSessionRegistry["openSession"] },
+	entry: HandoverParkedEntry,
+): Promise<void> {
+	try {
+		await registry.openSession(
+			{
+				cwd: process.cwd(),
+				sessionPath: entry.sessionPath,
+				...(entry.durableSessionId !== undefined ? { durableSessionId: entry.durableSessionId } : {}),
+				...(entry.model !== undefined ? { creationModel: entry.model } : {}),
+				...(entry.thinkingLevel !== undefined ? { initialThinkingLevel: entry.thinkingLevel } : {}),
+			},
+			{ retainOnDisconnect: entry.retainOnDisconnect },
+		);
+		await clearHandoverParkedSession(daemonDir, entry.sessionPath);
+	} catch (cause) {
+		process.stderr.write(`senpi rpc successor reopen parked session ${entry.sessionPath} failed: ${String(cause)}\n`);
+	}
+}
+
+const HANDOVER_PARKED_REOPEN_WINDOW_MS = 30_000;
+const HANDOVER_PARKED_REOPEN_POLL_MS = 250;
+
 export async function runMultiSessionHost(options: MultiSessionHostOptions): Promise<never> {
 	return runAsHostGenerationProcess(() =>
 		options.listen === undefined || options.listen === "stdio://"
@@ -110,6 +172,7 @@ export function createHostCore(
 	hooks: HostCoreHooks = {},
 ) {
 	const policy = resolveHostIdlePolicy(process.env, idle);
+	const endpointSocket = publicEndpointSocket(options);
 	const pathReservations = createEndpointReservations({
 		agentDir: options.agentDir,
 		socket: listenSocketPath(options),
@@ -146,9 +209,21 @@ export function createHostCore(
 			emptyExitMs: policy.emptyExitMs,
 			onEmptyExit: idle.onEmptyExit,
 			onHandoffParked: idle.onHandoffParked,
+			...(endpointSocket === undefined
+				? {}
+				: {
+						handoverParkedDir: createHostDaemonPaths({
+							socket: endpointSocket,
+							agentDir: options.agentDir,
+						}).dir,
+					}),
 			canExitWhenEmpty: idle.canExitWhenEmpty,
 		},
 	);
+	if (endpointSocket !== undefined)
+		reopenHandoverParkedSessions(registry, options.agentDir, endpointSocket).catch((cause: unknown) => {
+			process.stderr.write(`senpi rpc successor reopen parked set failed: ${String(cause)}\n`);
+		});
 	const gate = new HostCoreGate(registry, (command) => router.handle(command), hooks);
 	const handle = async (line: string): Promise<void> => {
 		let parsed: unknown;
@@ -571,6 +646,17 @@ function hostSessionContext(socketPath: string): SessionContext {
 function listenSocketPath(options: MultiSessionHostOptions): string | undefined {
 	if (options.listen === undefined || options.listen === "stdio://") return undefined;
 	return resolveSocketPath(options.listen, options.agentDir);
+}
+
+/**
+ * The PUBLIC endpoint clients address, matching `hostSessionContext`: a supervised host's own
+ * listener is a private hop, so the daemon-directory key must come from the supervisor's public
+ * socket or every generation hashes a different directory (senpi#3282). Bare hosts bind the path.
+ */
+function publicEndpointSocket(options: MultiSessionHostOptions): string | undefined {
+	const supervised = readHostWatchdogConfigFromBrandEnv();
+	if (supervised !== undefined) return supervised.publicSocket;
+	return listenSocketPath(options);
 }
 
 function resolveSocketPath(value: string, agentDir: string): string {

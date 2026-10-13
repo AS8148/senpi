@@ -201,8 +201,10 @@ describe.skipIf(process.platform === "win32")("generation handoff between live h
 		expect(await waitForPidGone(firstPid(qa), 45_000)).toBe(true);
 
 		const linesBefore = await jsonlLines(sessionPath);
+		// The successor may have already reopened the parked session itself (senpi#3282), so a manual
+		// reopen either attaches to that session or wins the path itself - both leave it open.
 		const reopened = await next.request({ id: "reopen-2", type: "open_session", cwd: qa.cwd, sessionPath });
-		expect(reopened).toMatchObject({ success: true, command: "open_session" });
+		expect(reopened).toMatchObject({ command: "open_session", success: true });
 		const linesAfter = await jsonlLines(sessionPath);
 		expect(linesAfter.length).toBeGreaterThanOrEqual(linesBefore.length);
 	}, 180_000);

@@ -1,3 +1,23 @@
+## 2026-10-13 - The successor host reopens its predecessor's handoff-parked retained sessions (senpi#3282)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-handover-parked.ts` (new): the handoff-parked residency record (`<daemonDir>/handover-parked.json`) - the set of `retain_on_disconnect` sessions a host held resident and parked, persisted atomically so the successor can reopen them by path with the same durable session id. Removal happens only after a successful reopen (crash-safe, at most once, never lost); an entry whose session file is gone is logged and dropped.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: every `retain_on_disconnect` park - from the handoff drain OR the idle sweep - is recorded into the handover record in `evictIdleSession`, the single choke point. A removal without recording it was the bug.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: a successor host reopens exactly its predecessor's parked set on startup (polling the record for a bounded window, since the predecessor parks after the successor binds). Both generations derive the record's daemon directory from the supervisor's PUBLIC socket, never the private hop - the mismatch that made the record unreadable across generations.
+
+### Why
+
+A client-less retained session (opened over the host socket with `retain_on_disconnect`, then disconnected) was dropped on every idle handover (~15 min): the design says the predecessor "parks its idle sessions for the successor to reopen by path," but no successor code read a parked list, so nobody reopened them. Q's MacBook RPC lanes vanished on every host generation swap.
+
+### Why an extension could not handle it
+
+The park/reopen decision lives in the host's drain and startup lifecycle; no extension hook runs there.
+
+### Expected merge conflict zones
+
+The park branch in `evictIdleSession` (`session-command-router.ts`) and the `createHostCore` idle options (`multi-session-host.ts`).
+
 ## 2026-10-12 - Busy-host trim (senpi#3218)
 
 ### What changed
