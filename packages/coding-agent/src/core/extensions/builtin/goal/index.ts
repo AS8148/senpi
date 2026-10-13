@@ -126,6 +126,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		}) ?? (() => {});
 
 	pi.on("session_start", async (event, ctx) => {
+		ctx.ui.setStatus("todo-waiting", undefined);
 		activeContext = ctx;
 		monitorContinuation.start(ctx);
 		directInputLifecycle.reset();
@@ -185,7 +186,8 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		}
 	});
 
-	pi.on("session_tree", async () => {
+	pi.on("session_tree", async (_event, ctx) => {
+		ctx.ui.setStatus("todo-waiting", undefined);
 		todoOwedBackstop.resetChain();
 	});
 
@@ -214,6 +216,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("agent_start", async (_event, ctx) => {
+		ctx.ui.setStatus("todo-waiting", undefined);
 		const continuationStarted = continuationPending;
 		continuationPending = false;
 		if (continuationStarted) monitorContinuation.noteContinuationStarted();
@@ -276,6 +279,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 			goal,
 			continuationPending,
 			hasActiveWakeSources: monitorContinuation.hasActiveWakeSources(),
+			wakeSourceNames: monitorContinuation.liveWakeSources(),
 		});
 	});
 

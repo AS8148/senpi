@@ -1707,9 +1707,15 @@ REPORT: nothing here aborts a turn, kills a session, or refuses an `open_session
 
 - **Zero-session trim**: when a host that held sessions drops to zero (opening and closing ones included), it runs one
   full collection (`Bun.gc(true)`; `gc()` on Node only with `--expose-gc`) and, one second later, broadcasts
-  `host_trimmed { footprintBeforeMb, footprintAfterMb, measure, collected }` - the allocator returns freed pages lazily,
-  so the after reading waits for it. At most one trim per minute; never while a session exists; idle exit is unchanged.
-  That single collection is the only synchronous work the no-sync rule allows, and the record is its log.
+  `host_trimmed { footprintBeforeMb, footprintAfterMb, measure, collected, sessions, pauseMs }` - the allocator returns
+  freed pages lazily, so the after reading waits for it. At most one trim per minute; idle exit is unchanged.
+- **Busy-host trim**: a host whose footprint is at least 2 GB also collects when its session count drops while other
+  sessions still run (`sessions` > 0 in the record), because a host whose sessions keep allocating never idles long
+  enough to return freed pages (#3218). Each collection is timed (`pauseMs`), and the next busy-host trim waits at least
+  60 s and at least 100 times that pause, which keeps collection near 1% of a busy host's loop in steady state. The
+  first busy-host trim has no earlier pause to wait on, and one collection on a multi-GB live heap can itself exceed
+  the stall threshold (a `host_stalled` record and ~120 s of refused ensures, never a lost session).
+  These collections are the only synchronous work the no-sync rule allows, and the record is their log.
 
 `host_stalled`, `host_memory_pressure` and `host_trimmed` are additive records: a client that does not know them ignores them.
 
@@ -3387,7 +3393,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 | `session_parked` | Multi-session host: a retained session was released to disk at the idle window (`sessionId`, `sessionPath`). Replaces `session_closed` for that handle |
 | `host_stalled` | Multi-session host: the event loop was blocked past `SENPI_RPC_LOOP_LAG_ERROR_MS`, with the drift and the session/tool blamed for it |
 | `host_memory_pressure` | Multi-session host: the memory footprint is above `SENPI_RPC_HOST_RSS_WARN_MB`, with RSS beside it and the live session count |
-| `host_trimmed` | Multi-session host: it dropped to zero sessions and collected, with the footprint before and after |
+| `host_trimmed` | Multi-session host: it collected (at zero sessions, or at 2 GB+ after a session-count drop), with the footprint before and after, the sessions still open and the pause |
 | `session_opened` | Multi-session host: a session was opened on this host (content-free lifecycle record) |
 | `session_closed` | Multi-session host: a routing handle ended, with an optional `reason` (`handoff_parked` = a generation handoff put the session back on disk; reopen it by `sessionPath`) |
 | `session_parked` | Multi-session host: a retained session's handle was released while the session itself stays on disk (`{ sessionId, sessionPath }`); reopen it with `open_session { sessionPath }` |
@@ -3451,10 +3457,11 @@ the memory was returned. Hosts released before senpi#2261 send `rssMb` and `sess
 ### host_trimmed
 
 ```json
-{ "type": "host_trimmed", "footprintBeforeMb": 442, "footprintAfterMb": 237, "measure": "phys_footprint", "collected": true }
+{ "type": "host_trimmed", "footprintBeforeMb": 442, "footprintAfterMb": 237, "measure": "phys_footprint", "collected": true, "sessions": 0, "pauseMs": 41 }
 ```
 
-Informational, at most once a minute: the host's last session closed and it ran one full collection. `collected` is
+Informational, at most once a minute: the host's last session closed, or a 2 GB+ host's session count dropped
+(`sessions` above 0), and it ran one full collection that blocked the loop for `pauseMs`. `collected` is
 `false` where the runtime exposes none (Node without `--expose-gc`); the record is still sent, with the two readings.
 
 ### model_changed
