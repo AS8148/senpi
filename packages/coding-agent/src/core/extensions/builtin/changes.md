@@ -1,3 +1,22 @@
+## 2026-10-14 - vertex-model-garden provider extension
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/index.ts`: registers the new `vertex-model-garden` builtin after `cursor-cli-oauth`.
+- `packages/coding-agent/src/core/extensions/builtin/vertex-model-garden/` (fork-only): registers `vertex-garden` (Model Garden partner models through `.../locations/global/endpoints/openapi`, `openai-completions`) and `vertex-claude` (Claude through `publishers/anthropic/models/<id>:streamRawPredict`, `anthropic-messages`). Both wrap the builtin API streams, inject an ADC bearer token plus `x-goog-user-project`, and are gated on `GOOGLE_CLOUD_PROJECT`. Claude requests are rewritten in a fetch wrapper: model moves to the URL, `anthropic_version: vertex-2023-10-16` joins the body, `x-api-key` is dropped.
+
+### Why
+
+- Vertex partner models and Claude on Vertex previously needed a hand-written models.json, a token script and a local proxy.
+
+### Why an extension could not handle it
+
+- It is an extension; only the one-line registration in `builtin/index.ts` sits outside it.
+
+### Expected merge conflict zones
+
+- LOW: one import and one `builtinExtensions` entry.
+
 ## 2026-10-13 - tps: per-run stats notify is TUI-only (senpi#3236)
 
 ### What changed

@@ -1,3 +1,21 @@
+## 2026-10-14 - Direct google-auth-library dependency
+
+### What changed
+
+- `packages/ai/package.json`: adds `google-auth-library` 10.6.2 as a direct dependency (already installed at that version through `@google/genai`; lockfiles gain only the workspace edge).
+
+### Why
+
+- `src/api/google-vertex-adc.ts` imports `GoogleAuth` to mint Vertex access tokens for the `vertex-model-garden` extension; a transitive import would violate pinned-dependency rules.
+
+### Why an extension could not handle it
+
+- Package dependencies are declared by the package that imports them.
+
+### Expected merge conflict zones
+
+- LOW: one line in the `dependencies` block.
+
 ## 2026-10-13 - Idempotent catalog generation (whole-manifest key)
 
 ### What changed
