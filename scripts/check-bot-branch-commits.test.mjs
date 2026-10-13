@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -27,8 +27,8 @@ function repoWithBotBranch() {
 	return { dir, git };
 }
 
-function run(dir) {
-	return spawnSync("node", [script, "--base", "main", "--head", "automation/refresh", "--bot-email", BOT], {
+function run(dir, scriptPath = script) {
+	return spawnSync("node", [scriptPath, "--base", "main", "--head", "automation/refresh", "--bot-email", BOT], {
 		cwd: dir,
 		encoding: "utf8",
 	});
@@ -73,5 +73,43 @@ test("refuses a hand merge of main into the bot branch", () => {
 		assert.match(result.stderr, /Merge branch 'main'/);
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("refuses a commit the bot authored but a person committed", () => {
+	const { dir } = repoWithBotBranch();
+	try {
+		writeFileSync(join(dir, "data.json"), '{"v":2}');
+		execFileSync("git", ["commit", "-qam", "fix(ai): refresh again"], {
+			cwd: dir,
+			env: { ...process.env, GIT_AUTHOR_NAME: "a", GIT_AUTHOR_EMAIL: BOT, GIT_COMMITTER_NAME: "a", GIT_COMMITTER_EMAIL: "dev@example.com" },
+		});
+		const result = run(dir);
+		assert.equal(result.status, 1);
+		assert.match(result.stderr, /\[committer dev@example\.com\] fix\(ai\): refresh again/);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("still checks when started through a symlinked path with a space", () => {
+	const { dir, git } = repoWithBotBranch();
+	const scriptsDir = mkdtempSync(join(tmpdir(), "bot branch script-"));
+	try {
+		writeFileSync(join(dir, "CHANGELOG.md"), "hand edit");
+		git(["add", "."]);
+		git(["commit", "-qm", "docs(changelog): hand edit"]);
+		const copied = join(scriptsDir, "real dir", "check.mjs");
+		mkdirSync(join(scriptsDir, "real dir"));
+		copyFileSync(script, copied);
+		const linked = join(scriptsDir, "linked check.mjs");
+		symlinkSync(copied, linked);
+		for (const scriptPath of [copied, linked]) {
+			const result = run(dir, scriptPath);
+			assert.equal(result.status, 1, `${scriptPath} exited ${result.status}: ${result.stdout}`);
+		}
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+		rmSync(scriptsDir, { recursive: true, force: true });
 	}
 });
