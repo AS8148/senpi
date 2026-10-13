@@ -8,6 +8,7 @@
 
 ### Changed
 
+- The advertised [CC] fingerprint floor that Anthropic OAuth requests declare follows the bundled Claude Agent SDK to [CC] 2.1.296 ([#3258](https://github.com/code-yeongyu/senpi/pull/3258)).
 - The bundled model catalog is refreshed from models.dev and the providers' model listings (`cloudflare-ai-gateway`, `meta`, `opengateway`, `openrouter`, `vercel-ai-gateway`) ([#3248](https://github.com/code-yeongyu/senpi/pull/3248)).
 
 ### Fixed
