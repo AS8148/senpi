@@ -1,6 +1,8 @@
 import { once } from "node:events";
-import { readdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { Worker } from "node:worker_threads";
 import { expect, it } from "vitest";
 import { liveSessionHolders } from "../../../src/core/session-holders.ts";
 import { createHostDaemonPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
@@ -172,3 +174,57 @@ it("validates legacy and stale holder evidence against the live host without tru
 		await host.dispose();
 	}
 }, 60_000);
+
+it.each(["", "   "])(
+	"refuses a malformed expectedHostInstance with the sibling launch-profile string form",
+	async (expectedHostInstance) => {
+		const host = await startWorkerHost(undefined, { socket: true, sessionRuntime: "in-process" });
+		try {
+			const client = await host.connect();
+			const refused = await client.request({
+				type: "open_session",
+				sessionPath: join(host.cwd, "malformed.jsonl"),
+				expectedHostInstance,
+			});
+			expect(refused).toMatchObject({
+				success: false,
+				errorCode: "invalid_launch_profile: expectedHostInstance must be a non-empty string",
+				errorData: { reason: "invalid_expected_host_instance", action: "supply_host_instance" },
+			});
+			expect((await client.request({ type: "list_sessions" })).data?.sessions).toEqual([]);
+		} finally {
+			await host.dispose();
+		}
+	},
+	60_000,
+);
+
+it("writes a lease from a session worker with the host's process start, not the worker's own", async () => {
+	const root = await mkdtemp(join(tmpdir(), "senpi-3255-worker-start-"));
+	try {
+		const file = join(root, "worker-held.jsonl");
+		await persistSession(file, root);
+		const durableId = "11111111-1111-4111-8111-111111111111";
+		// The sentinel is far from any real boot instant, so the start a reverted
+		// workerData pass-through would write (the worker isolate's own) can never
+		// collide with the host value passed through workerData.
+		const hostProcessStartedAtMs = 1_111_111_111_111;
+		const worker = new Worker(new URL("./issue-3255-worker-start-fixture.mjs", import.meta.url), {
+			workerData: { hostProcessStartedAtMs, file, id: durableId, cwd: root },
+			execArgv: ["--import", "tsx"],
+		});
+		try {
+			await once(worker, "message", { signal: AbortSignal.timeout(10_000) });
+			const recordsDir = join(root, "session-holders", durableId);
+			const records = (await readdir(recordsDir)).filter((name) => name.endsWith(".json"));
+			expect(records).toHaveLength(1);
+			const evidence = JSON.parse(await readFile(join(recordsDir, records[0]), "utf8"));
+			expect(evidence.processStartedAtMs).toBe(hostProcessStartedAtMs);
+		} finally {
+			worker.postMessage("release");
+			await once(worker, "exit", { signal: AbortSignal.timeout(10_000) });
+		}
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+}, 30_000);

@@ -585,10 +585,15 @@ export class SessionCommandRouter {
 		const instanceId = this.defaults.hostContext?.host_instance ?? hostInstanceId();
 		if (command.expectedHostInstance !== undefined) {
 			if (typeof command.expectedHostInstance !== "string" || command.expectedHostInstance.trim() === "")
-				return error(command.id, "open_session", RPC_ERROR_INVALID_LAUNCH_PROFILE, {
-					reason: "invalid_expected_host_instance",
-					action: "supply_host_instance",
-				});
+				return error(
+					command.id,
+					"open_session",
+					`${RPC_ERROR_INVALID_LAUNCH_PROFILE}: expectedHostInstance must be a non-empty string`,
+					{
+						reason: "invalid_expected_host_instance",
+						action: "supply_host_instance",
+					},
+				);
 			if (command.expectedHostInstance !== instanceId)
 				return error(command.id, "open_session", RPC_ERROR_OWNER_CHANGED, {
 					reason: "host_instance_mismatch",
