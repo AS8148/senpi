@@ -562,6 +562,11 @@ export type RpcCommand =
 			include_workers?: boolean;
 			/** Carry each session's published `context` on its records (default false). */
 			include_context?: boolean;
+			/**
+			 * Also deliver `effect_status` receipts of matched sessions, each emitted after the record that
+			 * caused the transition (default: true for `childrenOf`, false otherwise).
+			 */
+			effects?: boolean;
 			/** Also deliver these content record types of matched sessions (default `"none"`); opt-in, never an attachment. */
 			mirror?: "none" | "all" | string[];
 			/** Mark the request activity-neutral for the supervisor's idle exit, as on `list_sessions`. */
@@ -1547,6 +1552,7 @@ export interface RpcSessionOpenedEvent {
 	context?: Readonly<Record<string, string | number | boolean>>;
 }
 
+export type { SessionEffectStatusRecord as RpcEffectStatusEvent } from "./session-effect-status.ts";
 export type { SessionStatusRecord as RpcSessionStatusEvent } from "./session-status.ts";
 
 /**

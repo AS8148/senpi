@@ -18,6 +18,8 @@ import {
 } from "./client-admission-record.ts";
 import { EFFECT_OUTCOMES, turnErrorOutcome } from "./effect-outcome-copy.ts";
 import type { EffectActor, EffectOutcome } from "./effect-record.ts";
+import { projectAdmission } from "./effect-status.ts";
+import { noteSessionEffect } from "./session-effect-status.ts";
 
 type AdmissionHooks = {
 	readonly queued: (input: PreparedClientInput) => void;
@@ -188,6 +190,7 @@ export class ClientAdmissions {
 	private save(record: ClientAdmissionRecord): void {
 		this.session.sessionManager.appendCustomEntry(CLIENT_ADMISSION_ENTRY, record);
 		this.records.set(record.clientMessageId, record);
+		noteSessionEffect(this.session, projectAdmission(record));
 	}
 
 	async admit(
