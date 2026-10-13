@@ -7,7 +7,7 @@
  * itself with `observe: true`; the supervisor classifies a connection by the requests it sends, and
  * only a connection that sends something other than an observing read becomes an attachment.
  *
- * Only the two side-effect-free reads can observe: `observe: true` on any other command is ignored
+ * Only the side-effect-free reads can observe (`get_effect_status` answers a receipt and changes nothing): `observe: true` on any other command is ignored
  * and the connection attaches, so a client cannot hold a session while its host idles out under it.
  * `warm` never attaches, marked or not: it opens nothing, so a host that only received it idles out
  * on its normal deadline (senpi#2314).
@@ -22,6 +22,7 @@ const OBSERVING_COMMANDS: ReadonlySet<unknown> = new Set([
 	"list_sessions",
 	"subscribe_sessions",
 	"unsubscribe_sessions",
+	"get_effect_status",
 ]);
 
 export function isObservingRequest(line: string): boolean {
