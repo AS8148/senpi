@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Tool parameter schemas sent to [OI] Chat Completions providers now always declare a root `type: "object"`, including when a root `anyOf`/`oneOf` union cannot be merged into a single object schema. DeepSeek's official API (and gateways that forward to it, such as OpenGateway's DeepSeek route) rejected such requests with `400 Invalid schema ... got 'type: null'` ([#3245](https://github.com/code-yeongyu/senpi/issues/3245)).
+
 ### Removed
 
 ## [2026.10.12] - 2026-10-12

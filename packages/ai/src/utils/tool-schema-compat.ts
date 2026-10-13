@@ -236,8 +236,11 @@ function ensureRootObjectSchema(schema: Record<string, unknown>): Record<string,
 	const merged = mergeRootObjectUnion(schema);
 	if (merged) return merged;
 	if (schema.type !== undefined) return schema;
-	const hasCombiner = COMBINER_KEYS.some((key) => Array.isArray(schema[key]));
-	if (hasCombiner) return schema;
+	// DeepSeek (and gateways forwarding to it) reject any root parameters schema
+	// without `type: "object"` (`got 'type: null'`). When the root union cannot
+	// merge, keep the combiner and claim the object type rather than send a
+	// typeless root: tool parameters are objects in practice, and the wire
+	// shape stays valid for validators that enforce the root type.
 	return { ...schema, type: "object" };
 }
 
