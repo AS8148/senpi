@@ -211,10 +211,25 @@ describe("anthropic-subscription cold seed replays tool-read images as tool outp
 
 		expect(texts(blocks)).toContain(CONTINUE_TURN_INSTRUCTION);
 		expect(texts(blocks)).not.toContain(RESPOND_TO_USER_INSTRUCTION);
-		expect(labelsBeforeImages(blocks)).toEqual([coldSeedImageText.toolOutput(READ)]);
-		expect(texts(blocks)).toContain(
-			coldSeedImageText.answered({ kind: "tool", toolName: READ, toolCallId: "gen-1" }),
-		);
+		expect(labelsBeforeImages(blocks)).toEqual([
+			coldSeedImageText.toolOutput(READ),
+			coldSeedImageText.toolOutput(READ),
+		]);
+	});
+
+	it("a mid-turn replay leaves the current turn's own upload unlabeled (senpi#2768)", () => {
+		const messages = [
+			say("earlier", 0),
+			{ ...assistantRead("noop", 1), content: [{ type: "text" as const, text: "ok" }], stopReason: "stop" as const },
+			upload(distinctImage(5), 2),
+			...readOf("look-1", distinctImage(6), 3),
+		];
+
+		const blocks = rebuild(messages);
+
+		expect(texts(blocks)).toContain(CONTINUE_TURN_INSTRUCTION);
+		expect(texts(blocks)).not.toContain(coldSeedImageText.userHistory);
+		expect(images(blocks)).toContain(distinctImage(5).data);
 	});
 
 	it("a long tool-screenshot session switched to the Claude lane replays none of its answered images (senpi#2768)", () => {

@@ -33,7 +33,7 @@ export const coldSeedImageText = {
 	duplicate: (origin: ReplayedImageOrigin, first: ReplayedImageOrigin): string =>
 		`${subject(origin)}: identical to an image already shown above (${source(first)}); not attached again]`,
 	answered: (origin: Extract<ReplayedImageOrigin, { kind: "tool" }>): string =>
-		`[image returned earlier by the ${origin.toolName} tool, id=${origin.toolCallId}: already seen, not attached again; run the tool again if you need it]`,
+		`[image returned earlier by the ${origin.toolName} tool, id=${origin.toolCallId}: already seen earlier in this conversation; run the tool again if you need it]`,
 	capped: (origin: ReplayedImageOrigin): string =>
 		`${subject(origin)}: omitted from this replay, which re-sends at most ${MAX_REPLAYED_HISTORY_IMAGES} earlier images; re-read the source if you need it]`,
 	unreadable: (origin: ReplayedImageOrigin): string =>
@@ -144,10 +144,19 @@ function isAnsweredToolImage(occurrence: ImageOccurrence): boolean {
 export function replayHistoryImages(
 	history: Context["messages"],
 	sdkToolName: (piToolName: string) => string,
+	options: { readonly inProgressTurn?: boolean } = {},
 ): ReadonlyMap<number, readonly unknown[]> {
 	const contents = imageBearingContent(history, sdkToolName);
-	const lastAssistantIndex = history.findLastIndex((message) => message.role === "assistant");
-	const occurrences = collectOccurrences(contents, lastAssistantIndex);
+	// Everything before this index is from turns the assistant already finished. A replay taken in
+	// the middle of a turn keeps that turn's own user message and tool results in history; they are
+	// the work in progress, not the past.
+	const answeredBefore = options.inProgressTurn
+		? Math.max(
+				0,
+				history.findLastIndex((message) => message.role === "user"),
+			)
+		: history.findLastIndex((message) => message.role === "assistant");
+	const occurrences = collectOccurrences(contents, answeredBefore);
 	if (occurrences.length === 0) return new Map();
 	const replayed = selectUserFirstThenMostRecent(occurrences);
 	const firstShown = new Map<string, ReplayedImageOrigin>();
@@ -171,16 +180,15 @@ export function replayHistoryImages(
 			} else {
 				firstShown.set(hash, origin);
 				const canonical = { ...entry, data: Buffer.from(decoded.compactBase64, "base64").toString("base64") };
-				replacement = [
-					{
-						type: "text",
-						text:
-							origin.kind === "tool"
-								? coldSeedImageText.toolOutput(origin.toolName)
-								: coldSeedImageText.userHistory,
-					},
-					canonical,
-				];
+				// A user upload after the last assistant message belongs to the turn still in progress
+				// (a mid-turn replay keeps it in history), so only earlier uploads are labeled as history.
+				const label =
+					origin.kind === "tool"
+						? coldSeedImageText.toolOutput(origin.toolName)
+						: occurrence.answered
+							? coldSeedImageText.userHistory
+							: undefined;
+				replacement = label === undefined ? [canonical] : [{ type: "text", text: label }, canonical];
 			}
 		}
 		const perMessage = replacements.get(occurrence.messageIndex) ?? new Map<number, readonly unknown[]>();

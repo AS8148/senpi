@@ -150,6 +150,26 @@
 - LOW: `blockedAccount`/`persistBlock`/`usable` in `failover.ts`, `selectUnblocked`/`clearExpiredBlocks`/`AllAccountsBlockedError` in `affinity.ts`, the `selectAccount`/`runFailover` call in `queryWithAuthLane`, `slotStatus` in `account-command.ts`.
 - All production paths are fork-only.
 
+## 2026-10-13 - Cold seeds stop re-sending answered tool images, and a mid-turn replay says there is no new user message (senpi#2768)
+
+### What changed
+
+- `cold-seed-images.ts`: a tool image that a later assistant message already answered is no longer re-sent in a cold seed; it becomes `coldSeedImageText.answered` (`[image returned earlier by the <tool> tool, id=<id>: already seen earlier in this conversation; run the tool again if you need it]`) in its own turn. Pending tool images are labeled `[image returned by the <tool> tool to your own call (tool output, not a user attachment)]`; the user's own uploads from finished turns are labeled `coldSeedImageText.userHistory`, and an upload in the turn still in progress stays unlabeled. The cap (8) ranks only the images still replayed: user uploads first, then the newest.
+- `prompt-bridge.ts`: a replay with no new user message whose history ends with a tool result (a model switch or fallback in the middle of a turn) closes with `CONTINUE_TURN_INSTRUCTION` instead of "respond to the user message below", and passes `inProgressTurn` to `replayHistoryImages` so that turn's own images count as current work.
+
+### Why
+
+- A cold seed packs the whole history into one user message. With up to 8 earlier tool screenshots in it, the model answered plain questions as if the user had just sent those images ("checking the 8 images you sent"); in a mid-turn replay it read its own just-generated images as a new upload ("the 6 images you newly sent").
+
+### Why an extension could not handle it
+
+- This is the anthropic-subscription lane's own replay builder; nothing outside the lane assembles the cold-seed prompt.
+
+### Expected merge conflict zones
+
+- `cold-seed-images.ts`: `coldSeedImageText`, `collectOccurrences`, `replayHistoryImages`.
+- `prompt-bridge.ts`: the closing instruction in `buildPromptBlocks`.
+
 ## 2026-10-01 - Cold seed replays tool-read images as tool output, deduplicated and capped (senpi#2490)
 
 ### What changed

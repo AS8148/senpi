@@ -323,7 +323,8 @@ export function dedupeConsecutivePlaceholder(
  * rises when the total crosses the next half-budget step (likewise half the
  * historical-image limit). A request that just adds an image therefore sends
  * every earlier image exactly as before, and a provider cache or a sent-history
- * hash keyed on that history stays valid until the next step.
+ * hash keyed on that history stays valid until the next step. Crossing a step drops up to
+ * half the budget at once, so the request shrinks noticeably then grows back image by image.
  *
  * The newest protected blocks, the current turn (when a historical limit is
  * set) and the newest historical images under that limit are always kept. The

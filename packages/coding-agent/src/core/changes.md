@@ -1,3 +1,21 @@
+## 2026-10-13 - Transport image elision moves its cutoff in steps (senpi#2768)
+
+### What changed
+
+- `packages/coding-agent/src/core/messages.ts`: `elideOldImages` no longer recomputes its recency cutoff on every request. Images are dropped once they end below a threshold that rises in half-budget steps (half-limit steps for `maxHistoricalImages`), measured from the oldest image, so a request that only adds an image re-sends every earlier image unchanged until the next step. Elided images stay as `IMAGE_ELISION_PLACEHOLDER` in their original message; the newest protected images, the current turn and the newest historical images under the limit are still kept, and the kept total stays within the budget.
+
+### Why
+
+- `packages/coding-agent/src/core/messages.ts`: past 24 MB of images, each new image moved the cutoff and changed older tool results, so the anthropic-subscription resident lane's sent-stream hash diverged and it flattened and re-sent the whole conversation on almost every image turn (#2768: 20 of 20 predicted flattens, 87% of one session's cache writes).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/messages.ts`: `convertToLlmForTransport` builds the provider context for every lane inside the core request path (`sdk.ts`), before any extension sees the request.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/messages.ts`: the body of `elideOldImages` and its doc comment.
+
 ## 2026-10-12 - Review repairs for config/state separation (senpi#3178)
 
 ### What changed

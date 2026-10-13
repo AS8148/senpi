@@ -78,6 +78,8 @@ export function buildPromptBlocks(
 	const finalMessage = context.messages.at(-1);
 	const finalUserMessage = finalMessage?.role === "user" ? finalMessage : undefined;
 	const history = finalUserMessage ? context.messages.slice(0, -1) : context.messages;
+	// No new user message and the history ends with tool results: a model switch or fallback inside a turn.
+	const continuesTurn = !finalUserMessage && history.at(-1)?.role === "toolResult";
 
 	if (history.length > 0) {
 		const historyStart = blocks.length;
@@ -88,7 +90,9 @@ export function buildPromptBlocks(
 			hasPreviousTurn = true;
 		};
 
-		const replayedImages = replayHistoryImages(history, (name) => mapPiToolNameToSdk(name, customToolNameToSdk));
+		const replayedImages = replayHistoryImages(history, (name) => mapPiToolNameToSdk(name, customToolNameToSdk), {
+			inProgressTurn: continuesTurn,
+		});
 		for (const [index, message] of history.entries()) {
 			if (message.role === "user") {
 				pushPrefix("USER:");
