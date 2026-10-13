@@ -38,6 +38,7 @@ import {
 	type ModelDataStructure,
 	MODEL_DATA_MANIFEST_FILE,
 	readModelDataProviderIds,
+	stableGeneratedAt,
 	readModelDataStructure,
 	validateGeneratedModelData,
 	validateModelDataDirectory,
@@ -4413,6 +4414,19 @@ async function generateModels() {
 	const generatedAt = generatorOptions.generatedAt ?? new Date().toISOString();
 
 	if (!generatorOptions.jsonOnly) {
+		// Idempotent timestamp: when the regenerated content equals the committed catalog, keep its
+		// generatedAt so a content-unchanged regeneration is byte-identical and the drift check stays green.
+		let stableTs = generatedAt;
+		try {
+			const committedManifestPath = join(packageRoot, "src/providers/data", MODEL_DATA_MANIFEST_FILE);
+			const committedManifest = JSON.parse(readFileSync(committedManifestPath, "utf8")) as {
+				structureHash: string;
+				generatedAt: string;
+			};
+			stableTs = stableGeneratedAt(modelDataStructure, generatedAt, committedManifest);
+		} catch {
+			// No committed manifest yet (first generation): use the fresh timestamp.
+		}
 		// Stage and validate all provider values before replacing the current generated data.
 		const providersDir = join(packageRoot, "src/providers");
 		const dataDir = join(providersDir, "data");
@@ -4434,7 +4448,7 @@ async function generateModels() {
 			}
 			writeJson(
 				join(stagedDataDir, MODEL_DATA_MANIFEST_FILE),
-				createModelDataManifest(modelDataStructure, fileContents, generatedAt),
+				createModelDataManifest(modelDataStructure, fileContents, stableTs),
 			);
 			validateModelDataDirectory(modelDataStructure, stagedDataDir);
 

@@ -9,10 +9,35 @@ import {
 	MODEL_DATA_SCHEMA_VERSION,
 	type ModelDataStructure,
 	readModelDataStructure,
+	stableGeneratedAt,
 	validateModelDataDirectory,
 } from "../scripts/model-data.ts";
 
 const GENERATED_AT = "2026-07-23T10:00:00.000Z";
+
+describe("stableGeneratedAt (idempotent catalog generation)", () => {
+	const structure: ModelDataStructure = { "test-provider": { "chat:model-a": "openai-completions" } };
+
+	it("keeps the committed generatedAt when the content is unchanged", () => {
+		const committed = createModelDataManifest(structure, {}, GENERATED_AT);
+		const newer = "2026-10-13T04:00:00.000Z";
+		expect(stableGeneratedAt(structure, newer, committed)).toBe(GENERATED_AT);
+		// regenerate twice with unchanged data -> byte-identical timestamp, so the drift check stays green
+		expect(stableGeneratedAt(structure, "2026-10-14T00:00:00.000Z", committed)).toBe(GENERATED_AT);
+	});
+
+	it("moves the timestamp when the content changes", () => {
+		const committed = createModelDataManifest(structure, {}, GENERATED_AT);
+		const changed: ModelDataStructure = { "test-provider": { "chat:model-b": "openai-completions" } };
+		const newer = "2026-10-13T04:00:00.000Z";
+		expect(stableGeneratedAt(changed, newer, committed)).toBe(newer);
+	});
+
+	it("uses the fresh timestamp when there is no committed manifest", () => {
+		const newer = "2026-10-13T04:00:00.000Z";
+		expect(stableGeneratedAt(structure, newer, undefined)).toBe(newer);
+	});
+});
 const temporaryRoots: string[] = [];
 
 afterEach(() => {

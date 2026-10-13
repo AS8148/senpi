@@ -164,6 +164,21 @@ export function createModelDataManifest(
 	};
 }
 
+// Catalog generation is idempotent: when the regenerated content (structureHash, the model set itself)
+// equals the committed catalog, keep the committed generatedAt instead of stamping a new one, so a
+// content-unchanged regeneration is byte-identical and the releasability drift check stays green. The
+// timestamp moves only when the models actually change.
+export function stableGeneratedAt(
+	newStructure: ModelDataStructure,
+	newGeneratedAt: string,
+	committedManifest: { structureHash: string; generatedAt: string } | undefined,
+): string {
+	if (committedManifest && committedManifest.structureHash === modelDataStructureHash(newStructure)) {
+		return committedManifest.generatedAt;
+	}
+	return newGeneratedAt;
+}
+
 function validateModelValue(
 	value: unknown,
 	providerId: string,
