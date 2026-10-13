@@ -6,6 +6,8 @@
 
 ### Added
 
+- The `input` extension event carries optional relay-layer provenance (`origin`, `originSender`) so a relay layer (the chat/channel gateway injecting external messages) can mark an external message's provenance on any transport; absent for the session owner's own input. This is the host contract the omo gateway sets and the ultrawork relayed-origin gate (omo #10096) reads. (omo#10096)
+
 ### Changed
 
 ### Fixed
