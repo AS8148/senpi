@@ -35,6 +35,7 @@ import type {
 import {
 	assertExactModelIds,
 	createModelDataManifest,
+	type ModelDataManifest,
 	type ModelDataStructure,
 	MODEL_DATA_MANIFEST_FILE,
 	readModelDataProviderIds,
@@ -4414,19 +4415,6 @@ async function generateModels() {
 	const generatedAt = generatorOptions.generatedAt ?? new Date().toISOString();
 
 	if (!generatorOptions.jsonOnly) {
-		// Idempotent timestamp: when the regenerated content equals the committed catalog, keep its
-		// generatedAt so a content-unchanged regeneration is byte-identical and the drift check stays green.
-		let stableTs = generatedAt;
-		try {
-			const committedManifestPath = join(packageRoot, "src/providers/data", MODEL_DATA_MANIFEST_FILE);
-			const committedManifest = JSON.parse(readFileSync(committedManifestPath, "utf8")) as {
-				structureHash: string;
-				generatedAt: string;
-			};
-			stableTs = stableGeneratedAt(modelDataStructure, generatedAt, committedManifest);
-		} catch {
-			// No committed manifest yet (first generation): use the fresh timestamp.
-		}
 		// Stage and validate all provider values before replacing the current generated data.
 		const providersDir = join(packageRoot, "src/providers");
 		const dataDir = join(providersDir, "data");
@@ -4445,6 +4433,22 @@ async function generateModels() {
 					: readFileSync(join(dataDir, filename), "utf8");
 				fileContents[filename] = content;
 				writeFileSync(join(stagedDataDir, filename), content);
+			}
+
+			// Idempotent timestamp: when the regenerated content (the whole manifest except generatedAt)
+			// equals the committed catalog, keep its generatedAt so a content-unchanged regeneration is
+			// byte-identical and the drift check stays green. An explicit --generatedAt always wins.
+			let stableTs = generatedAt;
+			if (generatorOptions.generatedAt === undefined) {
+				const newManifest = createModelDataManifest(modelDataStructure, fileContents, generatedAt);
+				try {
+					const committedManifestPath = join(packageRoot, "src/providers/data", MODEL_DATA_MANIFEST_FILE);
+					const committedManifest = JSON.parse(readFileSync(committedManifestPath, "utf8")) as ModelDataManifest;
+					stableTs = stableGeneratedAt(newManifest, committedManifest);
+				} catch (error) {
+					// No committed manifest yet, or it is corrupt: fall back to the fresh timestamp.
+					console.warn(`generate-models: no readable committed manifest (${error instanceof Error ? error.message : String(error)}); using the fresh timestamp.`);
+				}
 			}
 			writeJson(
 				join(stagedDataDir, MODEL_DATA_MANIFEST_FILE),
