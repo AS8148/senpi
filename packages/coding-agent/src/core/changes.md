@@ -9771,7 +9771,7 @@ The invalid predicate was inside the session-owned compaction resolver.
 
 ### What changed
 
-- `AgentSessionRuntime` carries host-owned `holderEndpoint` through initial holds and session replacement.
+- `packages/coding-agent/src/core/agent-session-runtime.ts` carries host-owned `holderEndpoint` through initial holds and session replacement.
 - Holder records add optional `host_socket`/`host_instance`. `liveSessionHolders` exposes them only after the existing process identity validation and a stable-record read; legacy records remain live without endpoint fields.
 
 ### Why

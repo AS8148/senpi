@@ -5649,7 +5649,9 @@ An extension cannot observe its own SIGKILL. The detached supervisor must hold t
 ### What changed
 
 - Hosts publish their public socket in path reservations and host-owned endpoint identity in runtime holder records. `session_held` preserves validated holder endpoint fields.
-- `open_session.expectedHostInstance` is an attach-only generation fence, advertised as `expected_host_instance`. Mismatch returns `owner_changed`; an unheld path returns `session_not_held`. Both include reason and rediscovery action.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts` defines `open_session.expectedHostInstance` and the typed `owner_changed` / `session_not_held` refusals.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts` exposes the attach-only fence to typed RPC clients.
+- The fence is advertised as `expected_host_instance`. Mismatch returns `owner_changed`; an unheld path returns `session_not_held`. Both include reason and rediscovery action.
 - Both registries enforce attach-only before constructing a runtime or worker. Unfenced opens retain create/resume behavior; attachment keeps the existing input admission path and socket authentication.
 
 ### Why
