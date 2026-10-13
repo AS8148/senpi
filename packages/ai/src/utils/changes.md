@@ -1,3 +1,27 @@
+## 2026-10-13 - Every typeless tool-parameter root gets `type: "object"` (senpi#3245, senpi#3250)
+
+### What changed
+
+- `packages/ai/src/utils/tool-schema-compat.ts`: `ensureRootObjectSchema` now adds `type: "object"` to a typeless root
+  `allOf` and to an `anyOf`/`oneOf` union that cannot merge because a branch is not an object shape. Both previously
+  went out typeless. The combiner stays beside the added type. (A typeless `$ref` root already got `type: "object"`
+  before this change.) This supersedes the 2026-08-05 rule in `packages/ai/src/changes.md` that scalar and mixed root
+  unions are left typeless.
+
+### Why
+
+DeepSeek and gateways forwarding to it reject every tool whose root parameters schema has no `type`
+(`got 'type: null'`), so an unmergeable root union failed every tool call. Tool arguments are always JSON objects and
+are validated locally against the original schema, so the stricter wire schema costs nothing in practice.
+
+### Why an extension could not handle it
+
+Tool-parameter normalization runs inside the OpenAI-compatible request builder after extensions hand over tools.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/utils/tool-schema-compat.ts`: the tail of `ensureRootObjectSchema` and its doc comment.
+
 ## 2026-10-09 - Restore utils-tracker coverage for upstream-modified paths (senpi#3006)
 
 ### What changed
