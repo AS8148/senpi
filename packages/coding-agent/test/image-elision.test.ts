@@ -223,6 +223,62 @@ describe("elideOldImages", () => {
 	});
 });
 
+describe("elideOldImages across a growing session (senpi#2768)", () => {
+	const budget = 1000;
+	const elidedIndexes = (result: Message[]): number[] =>
+		result.flatMap((message, index) =>
+			(message.content as Array<{ type: string; text?: string }>).some(
+				(block) => block.text === IMAGE_ELISION_PLACEHOLDER,
+			)
+				? [index]
+				: [],
+		);
+
+	it("moves the cutoff in steps, so a turn that only adds an image resends earlier images unchanged", () => {
+		const history: Message[] = [];
+		let previous: number[] = [];
+		let changedRequests = 0;
+		for (let turn = 0; turn < 40; turn++) {
+			history.push(toolResult(img(String.fromCharCode(65 + (turn % 26)).repeat(100))));
+			const result = elideOldImages(history, { budgetBytes: budget, alwaysKeepNewest: 1 });
+			const elided = elidedIndexes(result);
+			const keptBytes = result.reduce(
+				(sum, message) =>
+					sum +
+					(message.content as Array<{ type: string; data?: string }>)
+						.filter((block) => block.type === "image")
+						.reduce((bytes, block) => bytes + (block.data?.length ?? 0), 0),
+				0,
+			);
+			expect(keptBytes).toBeLessThanOrEqual(budget);
+			expect(previous.every((index) => elided.includes(index))).toBe(true);
+			if (elided.length !== previous.length) changedRequests++;
+			previous = elided;
+		}
+		// 30 requests run over budget; the cutoff moves once per half-budget step, not on each of them.
+		expect(changedRequests).toBeLessThanOrEqual(7);
+	});
+
+	it("moves the historical-image limit in steps too", () => {
+		const history: Message[] = [];
+		let previous: number[] = [];
+		let changedRequests = 0;
+		for (let turn = 0; turn < 30; turn++) {
+			history.push(
+				{ role: "user", content: [img(`shot-${turn}`)] } as unknown as Message,
+				{ role: "assistant", content: [{ type: "text", text: `analyzed ${turn}` }] } as unknown as Message,
+			);
+			const result = elideOldImages(history, { budgetBytes: Number.POSITIVE_INFINITY, maxHistoricalImages: 8 });
+			const elided = elidedIndexes(result);
+			expect(history.length / 2 - elided.length).toBeLessThanOrEqual(8);
+			expect(previous.every((index) => elided.includes(index))).toBe(true);
+			if (elided.length !== previous.length) changedRequests++;
+			previous = elided;
+		}
+		expect(changedRequests).toBeLessThanOrEqual(6);
+	});
+});
+
 describe("convertToLlmForTransport", () => {
 	it("passes convertToLlm output through when images fit", () => {
 		const messages = [agentToolResult({ type: "text", text: "n" }, img("A".repeat(10)))];
