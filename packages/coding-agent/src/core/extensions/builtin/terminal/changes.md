@@ -1,3 +1,21 @@
+## 2026-10-13 - Session workers share the host process start instant (senpi#3255)
+
+### What changed
+
+- `process-identity.ts` accepts the host's process-start instant from session worker data. Other callers keep the existing load-time capture.
+
+### Why
+
+Bun worker uptime starts at isolate creation. A worker lease using that instant was removed by the host's admission recheck as a reused PID, leaving holder endpoint evidence undiscoverable.
+
+### Why an extension could not handle it
+
+The identity is needed when the runtime first publishes its lease.
+
+### Expected merge conflict zones
+
+`process-identity.ts` load-time start capture.
+
 ## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
 
 ### What changed

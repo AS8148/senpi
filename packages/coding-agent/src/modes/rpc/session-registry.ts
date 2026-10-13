@@ -134,6 +134,11 @@ export class RpcSessionRegistry {
 				this.now(),
 			);
 		}
+		if (options?.attachOnly)
+			throw new RpcSessionRegistryError("session_not_held", undefined, {
+				reason: "session_not_held",
+				action: "rediscover_holder",
+			});
 		if (sessionPath) {
 			// Taken SYNCHRONOUSLY, before any await: a concurrent open for the same path must find the
 			// reservation already held, not a window between the decision and the record of it.

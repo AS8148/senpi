@@ -1851,6 +1851,7 @@ names a valid preset.
 | `open_session` | `sessionPath?`, `cwd?`, `provider?`, `modelId?`, `thinkingLevel?`, `permissionPreset?`, `retain_on_disconnect?`, `kind?`, `context?`, `auto_title?`, `durableSessionId?`, `promptSurface?`, `browserEngine?`, `retryFallback?` (all optional; paths MUST be absolute) | `{ sessionId, state: RpcSessionState, attached?: true }` | `sessionPath` = today's `--session` semantics (open-if-exists else create persisting there, `session-manager.ts:926-940`); `provider`/`modelId` applied only on create (resume restores the session's model — mirrors `SenpiSessionRuntime.ts:198-200`); params form the immutable launch profile (D8). When the path is already held by a fully-open session, the open ATTACHES to it: same routing handle, `attached: true`, one more attachment counted; the runtime is torn down only when the last attachment closes. Idle sessions past the eviction window are closed by the host itself. `retain_on_disconnect: true` (default false) makes a dropped connection DETACH from this session instead of closing it — see "Retained sessions" below. `kind` (default `interactive`) and the opaque `context` map are described under "Session kind and context" above; both are stored frozen for the session's life and never influence auth, model or resource resolution. |
 | `close_session` | `sessionId` | `{}` | Refused with `unknown_session` when the requesting connection never attached to that handle (a close releases the CALLER's attachment, and `list_sessions` publishes every handle). Otherwise aborts active work, awaits agent idle + settled persistence for up to the host grace window (default 10s), then quarantines any worker that has not exited without releasing its path reservation; its response is the LAST record tagged with that handle for the first closer — no events after (test-pinned). An admitted concurrent close joins the same teardown and receives its own successful response; output saturation rejects admission with the bounded close-overflow/resync notice described above. |
 | `list_sessions` | `include_workers?` (default false) | `{ sessions: [{ sessionId, durableSessionId, sessionPath, cwd, name, status, attachments, kind, context? }] }` | Includes `opening`/`closing` entries. Internally quarantined workers remain externally `closing` until exit. `attachments` is the session's live client attachment count; `0` on an `open` row is a retained session with no client attached. Every row carries `kind`. Rows with `kind: "worker"` are omitted unless `include_workers: true`, and `context` is published ONLY on that listing — a default listing carries no `context` at all. |
+| `detach_connection` | - | `{ deferred: string[] }` | Multi-session hosts that advertise `detach_connection`. Meant as the connection's last request: the host releases every session attachment this connection holds and answers only after that, so another connection's next `list_sessions` no longer counts it. `deferred` names the sessions that still count it (see `#### detach_connection`). Closing the socket afterwards releases nothing more. `senpi host session` sends it before closing, bounded at 5 s; on a host without the capability, or after a request timed out or the connection was lost, it relies on the release at socket close. |
 | `release_session` | `sessionId`, `reason: "takeover"`, `interrupt?`, `force?` | `{ released: true, session_path, attachments }` | Hands the session to a runtime outside this host. See "Handing a session over (`release_session`)" below. |
 | `wake` | `sessionId`, `delivery_ids?` | `{ admitted: [{ delivery_id, kind }] }` | Runs the session's registered inbox drain once. See "Waking a host session (`wake`)" below. |
 | `warm` | `cwd?`, `kind?`, `context?` (as on `open_session`; `cwd` MUST be absolute) | `{ state: "warmed" \| "already_warm" \| "unsupported" }` | Loads what the next matching `open_session` needs without opening a session; never listed, never an attachment, idempotent per profile. See "Warming a host" above. Advertised as the `warm` capability by in-process hosts only. |
@@ -1859,6 +1860,46 @@ names a valid preset.
 ### Identities (D6)
 
 Response-level `sessionId` = opaque **routing handle**, unique per process epoch, ephemeral (dies with the child). `state.sessionId` = **durable** JSONL session identity (what a resume cursor stores today). `list_sessions` exposes both. Clients store both, discard routing handles on child exit, and verify only durable ids against cursors.
+
+### Fenced holder attachment
+
+Shared hosts advertise `expected_host_instance`. After discovering a holder,
+read `get_protocol_info` through its public RPC socket with the existing socket
+authentication, then send `open_session { sessionPath, expectedHostInstance }`.
+The field is attach-only: `owner_changed` with
+`errorData { reason: "host_instance_mismatch", action: "rediscover_holder" }`
+means the generation changed. A matching generation that no longer owns the
+path returns `session_not_held` with the same rediscovery action. Neither
+refusal constructs a runtime or claims a file. A matching held path attaches
+to its existing routing handle and event stream. Without the field, open
+retains its existing create/resume behavior. Clients must check the capability
+before using this safety fence; older hosts may ignore unknown fields.
+
+Session holder records publish `host_socket` (the public endpoint, not a
+supervisor's private child hop) and `host_instance` alongside PID/boot/start
+identity. Path reservation claims publish `host_socket` alongside their
+existing `instanceId`. `session_held` exposes these optional endpoint fields
+on validated live holders; a record that changed during the liveness probe
+reports neither the endpoint fields nor `cwd`. They are discovery evidence,
+not authorization: this fence protects against stale or other host
+generations, not against a malicious same-user process. Any same-user process
+can write a holder record naming a live PID and any `host_socket`, and the
+fence only compares against the instance ID the endpoint reports about
+itself, so a fake same-user socket could echo it back. Validate the process
+identity and the endpoint's live protocol identity before attachment, and
+fence every attach. A legacy record missing endpoint fields still blocks
+another writer while its process is live. An unreachable endpoint or missing
+fields never prove that a writer is absent; rediscover through registered
+host reservations or a transcript-context candidate and validate that
+candidate against the live host. Proven dead/stale process identities
+continue to be reclaimed by the existing lease guard.
+
+Attachment creates no input effect receipt. Send ordinary `prompt` with
+`clientMessageId`/`clientTurnId` through the attached connection and use the
+existing durable input admission/replay machinery below. This adds no second
+ledger and uses no process-kernel startup credential. TUI socket sidecar auth,
+Windows host handshake auth, and restricted local Unix host sockets retain
+their existing contracts.
 
 ### Stable error codes
 
@@ -1876,7 +1917,7 @@ codes or code prefixes in `error`:
 - `eval_cell_not_found` (unknown or foreign-session cell ID)
 - `invalid_eval_cell_request` (malformed eval-cell identifier or tail budget)
 - `session_closing` (an entry whose owner is tearing down). A worker that FAILS while its session is being opened is not that case and reports `open_failed` carrying the worker's own reason, so the code a client matches on always names what actually happened.
-- `session_held` (`open_session`, including attach, or any session-writing RPC whose JSONL has a live holder outside this daemon family). The refusal has `errorCode: "session_held"` and exactly `errorData { holders: [{ pid, cwd? }] }`; no boot or process-start metadata is exposed. A single dispatch guard covers prompt/steer/follow-up, continuation/custom messages/wake/compaction, model/thinking changes, bash/results, edits/name/labels, appends and tree/session changes; only explicit read/control commands bypass it. The host queries `liveSessionHolders` afresh, resolves moved paths, ignores stale/dead/reused-pid records, and excludes its own PID and worker threads. Live generation identities registered to the same endpoint are also excluded, preserving the daemon's `session_path_in_use` retry/reclaim protocol. Open is checked again after runtime holder publication, before attachment or success, with rollback on refusal. Retry after the other process exits; no restart is needed. An interactive CLI opening or resuming a held session warns with pid/cwd; lookup filesystem errors warn and continue.
+- `session_held` (`open_session`, including attach, or any session-writing RPC whose JSONL has a live holder outside this daemon family). The refusal has `errorCode: "session_held"` and `errorData { holders: [{ pid, cwd?, host_socket?, host_instance? }] }`; no boot or process-start metadata is exposed. A single dispatch guard covers prompt/steer/follow-up, continuation/custom messages/wake/compaction, model/thinking changes, bash/results, edits/name/labels, appends and tree/session changes; only explicit read/control commands bypass it. The host queries `liveSessionHolders` afresh, resolves moved paths, ignores stale/dead/reused-pid records, and excludes its own PID and worker threads. Live generation identities registered to the same endpoint are also excluded, preserving the daemon's `session_path_in_use` retry/reclaim protocol. Open is checked again after runtime holder publication, before attachment or success, with rollback on refusal. Retry after the other process exits; no restart is needed. An interactive CLI opening or resuming a held session warns with pid/cwd; lookup filesystem errors warn and continue.
   - **Mid-turn policy:** a turn admitted before the foreign holder appeared finishes and persists its results; subsequent writing RPCs are refused. Read/control requests, including abort, queue clearing, `extension_ui_response` and `extension_ui_progress`, remain available.
   - **Conservative admission:** `new_session`, `fork`, `clone`, and settings or account commands carrying this session's routing handle are also refused while its current file is held. Close the handle and open another session to leave a held file.
   - Holder records are admission evidence, not an exclusive filesystem lock. SessionManager's append API is synchronous and fresh process-identity checks are asynchronous; changing append to asynchronous admission would change the SDK contract and could discard results of already-executed tools.
@@ -1896,7 +1937,7 @@ codes or code prefixes in `error`:
 - `open_failed: <detail>`. `open_failed: model_unavailable: <reason>` means the open named a model (`provider`/`modelId`) that could not be resolved, for example an unknown provider; the session is not opened, rather than running on the default model. The in-process runtime adds `errorData { reason: "model_unavailable", requestedModel }`; a worker runtime relays the same error text, so match on the prefix
 - `invalid_session_context: <detail>` (`open_session.context` past a documented cap: more than 32 keys, a key that does not match `^[a-z][a-z0-9_]*$`, a non-string or >16 KiB value, or more than 32 KiB of JSON in total; the detail names the cap and its byte budget)
 - `invalid_session_kind: <detail>` (`open_session.kind` other than `interactive` or `worker`)
-- `invalid_launch_profile: <detail>` (`open_session.auto_title` present but not a boolean, `open_session.promptSurface` other than `terminal`, `app` or `chat`, `open_session.browserEngine` other than `connected`, `builtin` or `none`, a malformed `open_session.retryFallback`, or `open_session.provider` without `modelId` or the reverse)
+- `invalid_launch_profile: <detail>` (`open_session.auto_title` present but not a boolean, `open_session.promptSurface` other than `terminal`, `app` or `chat`, `open_session.browserEngine` other than `connected`, `builtin` or `none`, a malformed `open_session.retryFallback`, an empty or non-string `open_session.expectedHostInstance`, or `open_session.provider` without `modelId` or the reverse)
 - `host_memory_pressure` (sent only by hosts released before #2207, which declined to CREATE a `kind: "worker"` session above `SENPI_RPC_HOST_RSS_REFUSE_MB`; `errorData { rssMb, retry_after_ms }` says when to ask again. Current hosts never refuse an open for memory; a client talking to an older generation waits and retries, it never starts a second host or a per-child process)
 - `warm_failed: <detail>` (`warm` could not load its profile, for example a `cwd` that does not exist; not remembered, so a retry loads again)
 - `media_not_found` (`get_media` for an unknown `toolCallId`, or a `contentIndex` that does not point at an image block)
@@ -3342,6 +3383,28 @@ Response:
 `dropped` is non-empty only after `"interrupt": true` took queued input out of the session: redeliver the ids in `deliveries` to the next owner, and hand `user_messages` to the adopting client, which decides what to do with them (for example, resubmit them in order as queued prompts).
 
 Refusals carry `error` = `turn_active` or `session_busy` with `errorData.busy` (pass `"interrupt": true` to abort the work first), `attached` with `errorData.attachments` (pass `"force": true`), `invalid_release_reason`, `release_unsupported`, `release_failed` (`errorData.detail`; the session stays hosted when its entry could not be written), `host_draining`, `session_closing` or `unknown_session`.
+
+#### detach_connection
+
+Multi-session hosts that advertise the `detach_connection` capability only. Meant as a connection's last request before it closes: the host releases every session attachment this connection holds and answers only after that, so another connection's next `list_sessions` no longer counts it. Closing the socket afterwards releases nothing more. The host does not refuse later requests on the connection; a later `open_session` attaches as usual.
+
+```json
+{"type": "detach_connection"}
+```
+
+Response:
+```json
+{"type": "response", "command": "detach_connection", "success": true, "data": {"deferred": []}}
+```
+
+`deferred` lists the sessions that still count this connection when the answer is sent:
+
+- a session that is not retained, whose turn is still running, and of which this connection holds the last attachment. Releasing it would end the session and abort the turn, so the attachment is released when the turn settles.
+- every session the connection holds while the host is draining; the drain releases them once their work settles.
+
+While another attachment remains on a session, this connection's attachment is released before the answer, even mid-turn. The same applies when a connection simply closes.
+
+`senpi host session` sends it before closing and waits at most 5 s; when no answer comes it prints one line and closes anyway. Against a host that does not advertise the capability it sends nothing and relies on the release at socket close.
 
 ### Commands
 

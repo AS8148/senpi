@@ -116,7 +116,12 @@ export function sessionHeldCheck(
 		const foreign = holders.filter((holder) => !family.includes(holder.pid));
 		if (foreign.length > 0)
 			throw new RpcSessionRegistryError(RPC_ERROR_SESSION_HELD, undefined, {
-				holders: foreign.map(({ pid, cwd }) => ({ pid, ...(cwd === undefined ? {} : { cwd }) })),
+				holders: foreign.map(({ pid, cwd, host_socket, host_instance }) => ({
+					pid,
+					...(cwd === undefined ? {} : { cwd }),
+					...(host_socket === undefined ? {} : { host_socket }),
+					...(host_instance === undefined ? {} : { host_instance }),
+				})),
 			});
 	};
 }
