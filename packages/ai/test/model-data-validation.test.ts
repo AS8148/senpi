@@ -24,7 +24,9 @@ describe("stableGeneratedAt (idempotent catalog generation)", () => {
 		const regenerated = createModelDataManifest(structure, {}, newer);
 		expect(stableGeneratedAt(regenerated, committed)).toBe(GENERATED_AT);
 		// regenerate twice with unchanged data -> byte-identical, so the drift check stays green
-		expect(stableGeneratedAt(createModelDataManifest(structure, {}, "2026-10-14T00:00:00.000Z"), committed)).toBe(GENERATED_AT);
+		expect(stableGeneratedAt(createModelDataManifest(structure, {}, "2026-10-14T00:00:00.000Z"), committed)).toBe(
+			GENERATED_AT,
+		);
 	});
 
 	it("moves the timestamp when a model is added or removed", () => {
