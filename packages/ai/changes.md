@@ -1,3 +1,21 @@
+## 2026-10-13 - Advertised [CC] floor 2.1.296 (senpi#3258)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `claudeCodeVersion` (the bundled [CC] version and the floor of the advertised `claude-cli/<version>`) moves 2.1.292 -> 2.1.296 to match the @anthropic-ai/claude-agent-sdk 0.3.296 bump in `packages/coding-agent/package.json`.
+
+### Why
+
+- The floor must track the pinned claude-agent-sdk's shipped [CC] version; the currency regression (senpi#2033) floors the advertised version at the SDK's and fails when they drift.
+
+### Why an extension could not handle it
+
+- The advertised [CC] identity is a build-time constant a downstream installer rewrites byte-for-byte; it is not runtime extension surface.
+
+### Expected merge conflict zones
+
+- The single `claudeCodeVersion` declaration line.
+
 ## 2026-10-10 - Test-run temporary storage has an owner (senpi#3064)
 
 ### What changed
