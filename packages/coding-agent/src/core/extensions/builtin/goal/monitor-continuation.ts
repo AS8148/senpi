@@ -581,7 +581,7 @@ export class MonitorAwareGoalContinuation {
 				: buildContinuationPrompt(goal, { modelId: ctx.model?.id });
 		if (!verdict.stallNotice) return content;
 
-		const liveSources = this.#liveWakeSources();
+		const liveSources = this.liveWakeSources();
 		this.#pi.events?.emit(GOAL_MONITOR_STALL_EVENT, {
 			goalId: goal.id,
 			consecutiveContinuations: this.#toollessContinuationStreak,
@@ -743,7 +743,7 @@ export class MonitorAwareGoalContinuation {
 		return Object.fromEntries([...this.#wakeSources.entries()].sort(([left], [right]) => left.localeCompare(right)));
 	}
 
-	#liveWakeSources(): string[] {
+	liveWakeSources(): string[] {
 		return [...this.#wakeSources.entries()]
 			.filter(([, count]) => count > 0)
 			.map(([source]) => source)
