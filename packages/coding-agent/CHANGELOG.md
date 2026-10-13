@@ -14,7 +14,7 @@
 
 ### Removed
 
-- Removed the Codex `app-server` command, daemon, generated protocol and compatibility QA harness. Process integrations use Native RPC (`senpi --mode rpc` or `senpi host`); OpenAI API and ChatGPT subscription models remain supported, and historical model-change records remain readable ([#3167](https://github.com/code-yeongyu/senpi/issues/3167), requested by @code-yeongyu).
+- Removed the Codex `app-server` command, daemon, generated protocol and compatibility QA harness. Process integrations use Native RPC (`senpi --mode rpc` or `senpi host`); OpenAI API and ChatGPT subscription models remain supported, and historical model-change records remain readable. Extensions that compared `ctx.mode` with `"app-server"` must drop that branch: `ExtensionMode` no longer includes it ([#3167](https://github.com/code-yeongyu/senpi/issues/3167), requested by @code-yeongyu).
 
 ## [2026.10.13] - 2026-10-13
 

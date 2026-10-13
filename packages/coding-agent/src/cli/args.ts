@@ -335,7 +335,7 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 		}
 	}
 
-	if (hasRetiredCommand && result.mode === undefined) {
+	if (hasRetiredCommand && result.mode === undefined && !result.print) {
 		result.messages = [];
 		result.diagnostics.push({
 			type: "error",

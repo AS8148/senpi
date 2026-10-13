@@ -1,3 +1,13 @@
+## 2026-10-13 - Treat a trailing print flag like an explicit mode after the retired command (senpi#3167)
+
+### What changed
+
+`--verbose app-server -p` now keeps `app-server` as the print prompt, exactly like `--verbose app-server --mode json`. The retired-command rejection applies only when neither an explicit mode nor print mode was requested.
+
+### Why
+
+The review of #3223 found the two explicit-mode spellings disagreed: a trailing `--mode` kept the prompt while a trailing `-p` rejected it.
+
 ## 2026-10-13 - Reject retired commands after leading options (senpi#3167)
 
 ### What changed
