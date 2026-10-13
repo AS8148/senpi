@@ -350,6 +350,63 @@ describe("activity neutrality and mirror opt-in", () => {
 	});
 });
 
+describe("subscription cap and transport refusal codes (#3198 review, L4 + L2)", () => {
+	it("refuses a 65th subscription on one connection with subscription_limit and reason/action", async () => {
+		const rig = await host();
+		const a = rig.client("A");
+		for (let i = 0; i < 64; i++) {
+			const answer = await a.request({ type: "subscribe_sessions" });
+			expect(answer.success).toBe(true);
+		}
+		const refused = await a.request({ type: "subscribe_sessions" });
+		expect(refused).toMatchObject({ success: false, errorCode: "subscription_limit" });
+		expect(String(refused.error)).toContain("subscription_limit: this connection already holds 64 subscriptions");
+		expect(refused.errorData).toEqual({
+			reason: "this connection already holds 64 subscriptions",
+			action: "unsubscribe_sessions the ones you no longer read, then subscribe again",
+		});
+		// Another connection is unaffected by A's cap.
+		const b = rig.client("B");
+		expect((await b.request({ type: "subscribe_sessions" })).success).toBe(true);
+	});
+
+	it("stdio transports refuse subscribe/unsubscribe with a code that names the transport", async () => {
+		const { answerSubscribeSessions, answerUnsubscribeSessions } = await import(
+			"../../src/modes/rpc/session-status-commands.ts"
+		);
+		const { SessionStatusStream } = await import("../../src/modes/rpc/session-status-stream.ts");
+		const stream = new SessionStatusStream({ enqueue: () => true, pendingQuestions: () => 0 });
+		stream.setSource({ sessionIds: () => [], view: () => undefined, entryView: () => undefined });
+		const failure = (
+			response: unknown,
+		): { success: false; error: string; errorCode?: string; errorData?: unknown } => {
+			if (typeof response !== "object" || response === null || (response as { success?: unknown }).success !== false)
+				throw new Error("expected a failure response");
+			return response as { success: false; error: string; errorCode?: string; errorData?: unknown };
+		};
+		const subscribe = answerSubscribeSessions({ id: "s1", type: "subscribe_sessions" }, undefined, stream);
+		const subscribeFailure = failure(subscribe.answer);
+		expect(subscribeFailure.errorCode).toBe("unsupported_transport");
+		expect(subscribeFailure.error).toContain("stdio");
+		expect(subscribeFailure.errorData).toEqual({
+			reason: "stdio has no per-connection identity to deliver a subscription to",
+			action: "connect to the host socket (senpi --mode rpc --listen) and subscribe there",
+		});
+		expect(subscribe.activate).toBeUndefined();
+		const unsubscribe = answerUnsubscribeSessions(
+			{ id: "u1", type: "unsubscribe_sessions", subscriptionId: "sub-1" },
+			undefined,
+			stream,
+		);
+		const unsubscribeFailure = failure(unsubscribe);
+		expect(unsubscribeFailure.errorCode).toBe("unsupported_transport");
+		expect(unsubscribeFailure.errorData).toEqual({
+			reason: "stdio has no per-connection identity holding any subscription",
+			action: "connect to the host socket (senpi --mode rpc --listen) and manage subscriptions there",
+		});
+	});
+});
+
 describe("set_session_context and error copy", () => {
 	it("patches context, republishes it to include_context subscribers and refuses reserved keys with reason and action", async () => {
 		const rig = await host();

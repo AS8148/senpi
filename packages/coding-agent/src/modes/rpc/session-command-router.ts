@@ -795,21 +795,25 @@ export class SessionCommandRouter {
 			return undefined;
 		} catch (cause) {
 			if (opened) {
-				// The open published session_opened and an open status before this rollback, so its
-				// subscribers must also read the terminal record; otherwise they keep a live session
-				// the host no longer holds (#3198 review, L1).
-				const entry = this.registry.peek(opened.sessionId);
-				this.writer.closeSession(
-					opened.sessionId,
-					{
-						type: "response",
-						command: "close_session",
-						success: false,
-						error: "open_rolled_back",
-					},
-					"error",
-					entry?.sessionPath,
-				);
+				// Only a non-attached open published session_opened and an open status before this
+				// rollback, and only while the registry still holds the live entry, so only that
+				// rollback owes its subscribers the terminal record; an attach rollback, or one whose
+				// entry is already gone, never announced the session in the first place (#3198 review, L1).
+				if (!opened.attached) {
+					const entry = this.registry.peek(opened.sessionId);
+					if (entry?.runtime !== undefined || entry?.worker !== undefined)
+						this.writer.closeSession(
+							opened.sessionId,
+							{
+								type: "response",
+								command: "close_session",
+								success: false,
+								error: "open_rolled_back",
+							},
+							"error",
+							entry.sessionPath,
+						);
+				}
 				try {
 					if (opened.attached) await this.releaseOwnedSession(opened.sessionId);
 					else await this.registry.close(opened.sessionId);

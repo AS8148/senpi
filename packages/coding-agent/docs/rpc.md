@@ -1121,7 +1121,7 @@ Response:
  "data": {"subscriptionId": "sub-1", "seq": 0, "hostGeneration": "0", "hostInstanceId": "<uuid>", "snapshot": [ /* session_status records, seq 0 */ ]}}
 ```
 
-The snapshot is the state at subscription time. Every later record of the subscription has `seq` strictly one more than the previous one, starting at `seq + 1`. A reconnect is a new subscription with a fresh snapshot; nothing is replayed. Refusals carry `errorCode: "invalid_subscription"` and `errorData { reason, action }`.
+The snapshot is the state at subscription time. The response carrying it is the first record of the subscription: a connection that already holds 64 subscriptions is refused with `subscription_limit`, and on the stdio transport the command is refused with `unsupported_transport`. Every later record of the subscription has `seq` strictly one more than the previous one, starting at `seq + 1` behind the response. A reconnect is a new subscription with a fresh snapshot; nothing is replayed. Refusals carry `errorCode: "invalid_subscription"` (or `subscription_limit` / `unsupported_transport`) and `errorData { reason, action }`.
 
 #### unsubscribe_sessions
 
@@ -1137,7 +1137,7 @@ Ends a subscription held by the same connection; a closed connection ends its su
 {"id": "c1", "type": "set_session_context", "sessionId": "rpc-1", "patch": {"task_status": "running", "run_epoch": 2, "stale_key": null}}
 ```
 
-An attached connection patches the context a session publishes (on `list_sessions { include_workers: true }` and on `session_status` for subscribers with `include_context`). Keys match `^[a-z][a-z0-9_]{0,63}$`; values are strings of at most 256 characters, numbers, booleans, or `null` to delete; the patched context is at most 4096 bytes of JSON. The host's own keys (`host_socket`, `host_instance`, `shard_key`, `tree_key`) are refused with `invalid_session_context` and `errorData { reason, action }`. The session's extensions keep reading the context the session was opened with. The response carries the published `context`; subscribers with `include_context` receive a `session_status` with cause `context`.
+An attached connection patches the context a session publishes (on `list_sessions { include_workers: true }` and on `session_status` for subscribers with `include_context`). Keys match `^[a-z][a-z0-9_]{0,63}$`; values are strings of at most 256 characters, numbers, booleans, or `null` to delete; the patched context is at most 4096 bytes of JSON. The host's own keys (`host_socket`, `host_instance`, `shard_key`, `tree_key`) and the lineage keys (`parent_session_id`, `root_session_id`) are refused with `invalid_session_context` and `errorData { reason, action }`. The session's extensions keep reading the context the session was opened with, and a `childrenOf` subscription matches on that frozen open-time context, so no patch moves a session into or out of a supervisor's children view. The response carries the published `context`; subscribers with `include_context` receive a `session_status` with cause `context`.
 
 A connection without an attachment receives `errorCode: "session_not_attached"` with `errorData.reason: "this connection is not attached to that session"` and `errorData.action: "attach first with open_session { sessionPath }, then patch its context"`.
 
@@ -1972,7 +1972,9 @@ codes or code prefixes in `error`:
 - `invalid_session_context: <detail>` (`open_session.context` past a documented cap: more than 32 keys, a key that does not match `^[a-z][a-z0-9_]*$`, a non-string or >16 KiB value, or more than 32 KiB of JSON in total; the detail names the cap and its byte budget)
 - `invalid_subscription: <reason>` (`subscribe_sessions` with a malformed `sessions`, `mirror` or flag; `errorData { reason, action }`)
 - `unknown_subscription: <reason>` (`unsubscribe_sessions` naming a subscription this connection does not hold)
-- `invalid_session_context: <reason>` from `set_session_context` (a reserved host key, a bad key or value, or a patched context over 4096 bytes; `errorData { reason, action }`)
+- `subscription_limit: <reason>` (`subscribe_sessions` on a connection that already holds the documented maximum of 64 subscriptions; `errorData { reason, action }`)
+- `unsupported_transport: <reason>` (`subscribe_sessions` or `unsubscribe_sessions` on the stdio transport, which has no per-connection identity to deliver a subscription to; `errorData { reason, action }`)
+- `invalid_session_context: <reason>` from `set_session_context` (a reserved host or lineage key, a bad key or value, or a patched context over 4096 bytes; `errorData { reason, action }`)
 - `invalid_session_kind: <detail>` (`open_session.kind` other than `interactive` or `worker`)
 - `invalid_launch_profile: <detail>` (`open_session.auto_title` present but not a boolean, `open_session.promptSurface` other than `terminal`, `app` or `chat`, `open_session.browserEngine` other than `connected`, `builtin` or `none`, a malformed `open_session.retryFallback`, or `open_session.provider` without `modelId` or the reverse)
 - `host_memory_pressure` (sent only by hosts released before #2207, which declined to CREATE a `kind: "worker"` session above `SENPI_RPC_HOST_RSS_REFUSE_MB`; `errorData { rssMb, retry_after_ms }` says when to ask again. Current hosts never refuse an open for memory; a client talking to an older generation waits and retries, it never starts a second host or a per-child process)
@@ -3986,7 +3988,7 @@ skills continue to use `skill_invocation`.
 
 ### loaded_surfaces_changed
 
-Emitted without a request id when the loaded skill, extension, or MCP inventory changes. A multi-session host sends one per connection per inventory change (tagged with the first session that reported it), not one per attached session. The event carries no inventory payload; clients re-read `get_commands` for skills and `get_loaded_surfaces` for extensions/MCP, mirroring the app-server `skills/changed` invalidation model.
+Emitted without a request id when the loaded skill, extension, or MCP inventory changes. A multi-session host sends one per connection per inventory change on either session runtime (in-process or worker isolate), tagged with the first session that reported that transition: sessions moving from the same digest to the same new one share a single event, while a session converging from a different start still announces its own change, because `get_commands` and `get_loaded_surfaces` are read per session. The event carries no inventory payload; clients re-read `get_commands` for skills and `get_loaded_surfaces` for extensions/MCP, mirroring the app-server `skills/changed` invalidation model.
 
 ```json
 {"type": "loaded_surfaces_changed"}

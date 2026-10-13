@@ -197,7 +197,7 @@ export class SessionStatusStream {
 	}
 
 	mirrorTargets(sessionId: string, recordType: string): readonly string[] {
-		const subscriptions = [...this.subscriptions.values()].filter((subscription) =>
+		const subscriptions = [...this.pendings.values(), ...this.subscriptions.values()].filter((subscription) =>
 			mirrorsRecord(subscription.options.mirror, recordType),
 		);
 		if (subscriptions.length === 0) return [];
