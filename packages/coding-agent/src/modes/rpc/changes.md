@@ -1,3 +1,25 @@
+## 2026-10-13 - Acknowledged detach for short-lived host session clients (senpi#3238)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: a connection-level `detach_connection` command and its response.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: dispatches `detach_connection` to `connection-detach.ts`, which awaits `releaseConnection` for the asking connection before answering.
+- `packages/coding-agent/src/modes/rpc/custom-capability.ts` and `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: the multi-session host advertises `detach_connection`.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `detachConnection()` checks the capability and returns `"unsupported"` on an older host.
+- `packages/coding-agent/src/modes/rpc/host-session-runner.ts`: every `senpi host session` command detaches through `host-session-detach.ts` before it closes its socket, bounded at 5 s; a missing or refused answer is one plain stderr line and the close proceeds.
+
+### Why
+
+A short-lived client's attachment was released only when the host processed its socket close, asynchronously and through the supervisor proxy, so another connection listing right after `open` returned could still see the client attached (the `host-session-runner` test failed on Linux CI with `attachments: 1`). There was no event or answer a caller could wait on.
+
+### Why an extension could not handle it
+
+Attachments are counted per connection inside the multi-session host's command router; no extension sees connections or can release them.
+
+### Expected merge conflict zones
+
+The `dispatch` branch list in `session-command-router.ts`, the command and response unions in `rpc-types.ts`, the capability list in `host-capabilities.ts`, and the `finally` of `runHostSessionRequestOnce` in `host-session-runner.ts`.
+
 ## 2026-10-12 - Busy-host trim (senpi#3218)
 
 ### What changed

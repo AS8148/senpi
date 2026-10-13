@@ -18,6 +18,7 @@ import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
 import { MissingSessionCwdError } from "../../core/session-cwd.ts";
 import { unknownCommandErrorFromWire } from "../../core/unknown-command.ts";
+import { DETACH_CONNECTION_CAPABILITY } from "./custom-capability.ts";
 
 /** A command the host refused; `errorCode` carries the typed code when the command defines one. */
 export class RpcCommandError extends Error {
@@ -514,6 +515,19 @@ export class RpcClient {
 			this.sessionId = undefined;
 			this.compactions.clear();
 		}
+	}
+
+	/**
+	 * Drop this connection's session attachments and wait until the host confirms they are gone (senpi#3238).
+	 * A host without `detach_connection` is left to today's release on socket close: `"unsupported"`.
+	 */
+	async detachConnection(): Promise<"detached" | "unsupported"> {
+		const info = this.getData<{ capabilities?: unknown }>(await this.send({ type: "get_protocol_info" }, false));
+		if (!Array.isArray(info.capabilities) || !info.capabilities.includes(DETACH_CONNECTION_CAPABILITY))
+			return "unsupported";
+		const response = await this.send({ type: "detach_connection" }, false);
+		if (!response.success) this.getData(response);
+		return "detached";
 	}
 
 	async listSessions(options?: { observe?: boolean; include_workers?: boolean }): Promise<

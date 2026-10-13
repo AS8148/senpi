@@ -472,6 +472,14 @@ export type RpcCommand =
 	  }
 	| {
 			id?: string;
+			/**
+			 * The connection's last request: drop every session attachment it holds, then answer. Advertised as
+			 * `detach_connection`. Closing the socket afterwards releases nothing more.
+			 */
+			type: "detach_connection";
+	  }
+	| {
+			id?: string;
 			type: "list_sessions";
 			/**
 			 * Include `kind: "worker"` rows, each with its `context` (default false). A
@@ -739,6 +747,12 @@ export type RpcResponse =
 			success: true;
 			/** `unsupported`: this host's session runtime cannot be warmed from the host process (worker isolates). */
 			data: { state: "warmed" | "already_warm" | "unsupported" };
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "detach_connection";
+			success: true;
 	  }
 	| {
 			id?: string;

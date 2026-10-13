@@ -8,6 +8,7 @@ import { STOP_WAIT_BUDGET_MS } from "./host-ensure-stop.ts";
 import type { ResolvedHostLaunchSpec } from "./host-launch-spec.ts";
 import { HOST_EXIT_OK, type HostOutcome, refusal } from "./host-outcome.ts";
 import type { HostTarget } from "./host-runner.ts";
+import { detachBeforeClose } from "./host-session-detach.ts";
 import { mapError } from "./host-session-errors.ts";
 import { type HostSessionOpen, openHostSession } from "./host-session-open.ts";
 import { resolveSessionRef, type SessionRef } from "./host-session-ref.ts";
@@ -207,6 +208,7 @@ async function runHostSessionRequestOnce(request: HostSessionRequest, stoppingTi
 		return mapError(error, socket);
 	} finally {
 		ensured?.release();
+		if (client) await detachBeforeClose(client, (line) => process.stderr.write(`senpi host session: ${line}\n`));
 		await client?.stop();
 	}
 }

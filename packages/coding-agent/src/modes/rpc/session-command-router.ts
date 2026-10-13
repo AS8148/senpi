@@ -1,4 +1,5 @@
 import { VERSION } from "../../config.ts";
+import { detachConnection } from "./connection-detach.ts";
 import { buildRpcSessionState } from "./connection-handler.ts";
 import { multiSessionHostCapabilities } from "./host-capabilities.ts";
 import { answerWarm } from "./host-warm.ts";
@@ -334,6 +335,8 @@ export class SessionCommandRouter {
 				data: { sessions },
 			};
 		}
+		if (command.type === "detach_connection")
+			return detachConnection(command, this.writer.currentConnection(), (id) => this.releaseConnection(id));
 		if (command.type === "open_session") return this.openWithBarrier(command);
 		if (command.type === "close_session") return this.close(command);
 		if (command.type === "release_session")
