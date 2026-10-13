@@ -10,6 +10,10 @@
 
 The releasability drift check regenerated the catalog with a fresh `generatedAt` and diffed the whole file, so it always failed on the timestamp. An idempotent key that covers the whole manifest except the timestamp keeps the drift check green on unchanged content while still tripping on a real change (a new/removed model, or a field edit).
 
+### Why an extension could not handle it
+
+The catalog's `generatedAt` and the manifest comparison are build-time constants in the generator, not something an extension can override at runtime.
+
 ### Expected merge conflict zones
 
 The manifest's `generatedAt` and `structureHash` lines.

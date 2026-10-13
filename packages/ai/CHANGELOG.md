@@ -8,6 +8,7 @@
 
 ### Changed
 
+- The bundled model catalog is refreshed from models.dev and the providers' live listings (opengateway, openrouter, opencode) ([#3256](https://github.com/code-yeongyu/senpi/pull/3256)).
 - The bundled model catalog is refreshed from models.dev and the providers' model listings (`cloudflare-ai-gateway`, `meta`, `opengateway`, `openrouter`, `vercel-ai-gateway`) ([#3248](https://github.com/code-yeongyu/senpi/pull/3248)).
 
 ### Fixed
