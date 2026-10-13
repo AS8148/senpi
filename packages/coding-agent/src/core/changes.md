@@ -9773,6 +9773,7 @@ The invalid predicate was inside the session-owned compaction resolver.
 
 - `packages/coding-agent/src/core/agent-session-runtime.ts` carries host-owned `holderEndpoint` through initial holds and session replacement.
 - Holder records add optional `host_socket`/`host_instance`. `liveSessionHolders` exposes them only after the existing process identity validation and a stable-record read; legacy records remain live without endpoint fields.
+- A holder record replaced during that stable-record read now reports no `cwd` either; the pre-fence behavior published the second read's `cwd`, and the safer read is kept.
 
 ### Why
 

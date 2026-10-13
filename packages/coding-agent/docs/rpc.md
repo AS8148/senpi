@@ -1,39 +1,5 @@
 # RPC Mode
 
-## Fenced holder attachment
-
-Shared hosts advertise `expected_host_instance`. After discovering a holder,
-read `get_protocol_info` through its public RPC socket with the existing socket
-authentication, then send `open_session { sessionPath, expectedHostInstance }`.
-The field is attach-only: `owner_changed` with
-`errorData { reason: "host_instance_mismatch", action: "rediscover_holder" }`
-means the generation changed. A matching generation that no longer owns the
-path returns `session_not_held` with the same rediscovery action. Neither
-refusal constructs a runtime or claims a file. A matching held path attaches
-to its existing routing handle and event stream. Without the field, open
-retains its existing create/resume behavior. Clients must check the capability
-before using this safety fence; older hosts may ignore unknown fields.
-
-Session holder records publish `host_socket` (the public endpoint, not a
-supervisor's private child hop) and `host_instance` alongside PID/boot/start
-identity. Path reservation claims publish `host_socket` alongside their
-existing `instanceId`. `session_held` exposes these optional endpoint fields
-on validated live holders. They are discovery evidence, not authorization:
-validate the process identity and the endpoint's live protocol identity
-before attachment, and fence every attach. A legacy record missing endpoint
-fields still blocks another writer while its process is live. An unreachable
-endpoint or missing fields never prove that a writer is absent; rediscover
-through registered host reservations or a transcript-context candidate and
-validate that candidate against the live host. Proven dead/stale process
-identities continue to be reclaimed by the existing lease guard.
-
-Attachment creates no input effect receipt. Send ordinary `prompt` with
-`clientMessageId`/`clientTurnId` through the attached connection and use the
-existing durable input admission/replay machinery below. This adds no second
-ledger and uses no process-kernel startup credential. TUI socket sidecar auth,
-Windows host handshake auth, and restricted local Unix host sockets retain
-their existing contracts.
-
 When the last client disconnects from a retained in-process session, extensions receive
 `session_parked`; the first reattachment to that still-open session emits
 `session_resumed`. File-monitor polling and prompt-cache keepalive pause between these
@@ -1893,6 +1859,46 @@ names a valid preset.
 ### Identities (D6)
 
 Response-level `sessionId` = opaque **routing handle**, unique per process epoch, ephemeral (dies with the child). `state.sessionId` = **durable** JSONL session identity (what a resume cursor stores today). `list_sessions` exposes both. Clients store both, discard routing handles on child exit, and verify only durable ids against cursors.
+
+### Fenced holder attachment
+
+Shared hosts advertise `expected_host_instance`. After discovering a holder,
+read `get_protocol_info` through its public RPC socket with the existing socket
+authentication, then send `open_session { sessionPath, expectedHostInstance }`.
+The field is attach-only: `owner_changed` with
+`errorData { reason: "host_instance_mismatch", action: "rediscover_holder" }`
+means the generation changed. A matching generation that no longer owns the
+path returns `session_not_held` with the same rediscovery action. Neither
+refusal constructs a runtime or claims a file. A matching held path attaches
+to its existing routing handle and event stream. Without the field, open
+retains its existing create/resume behavior. Clients must check the capability
+before using this safety fence; older hosts may ignore unknown fields.
+
+Session holder records publish `host_socket` (the public endpoint, not a
+supervisor's private child hop) and `host_instance` alongside PID/boot/start
+identity. Path reservation claims publish `host_socket` alongside their
+existing `instanceId`. `session_held` exposes these optional endpoint fields
+on validated live holders; a record that changed during the liveness probe
+reports neither the endpoint fields nor `cwd`. They are discovery evidence,
+not authorization: this fence protects against stale or other host
+generations, not against a malicious same-user process. Any same-user process
+can write a holder record naming a live PID and any `host_socket`, and the
+fence only compares against the instance ID the endpoint reports about
+itself, so a fake same-user socket could echo it back. Validate the process
+identity and the endpoint's live protocol identity before attachment, and
+fence every attach. A legacy record missing endpoint fields still blocks
+another writer while its process is live. An unreachable endpoint or missing
+fields never prove that a writer is absent; rediscover through registered
+host reservations or a transcript-context candidate and validate that
+candidate against the live host. Proven dead/stale process identities
+continue to be reclaimed by the existing lease guard.
+
+Attachment creates no input effect receipt. Send ordinary `prompt` with
+`clientMessageId`/`clientTurnId` through the attached connection and use the
+existing durable input admission/replay machinery below. This adds no second
+ledger and uses no process-kernel startup credential. TUI socket sidecar auth,
+Windows host handshake auth, and restricted local Unix host sockets retain
+their existing contracts.
 
 ### Stable error codes
 
