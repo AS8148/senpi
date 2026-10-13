@@ -13,17 +13,17 @@ export class SurfaceDigestDedupe {
 	private readonly connections = new Map<string, Map<string, { last: string; previous: string | undefined }>>();
 
 	/**
-	 * Record one session's move to `digest` for a connection. Returns true when the connection must
-	 * hear about it; the move is recorded either way, so the session's next transition is judged
-	 * against where it actually arrived.
+	 * Record one session's move from `previous` to `digest` for a connection. Returns true when the
+	 * connection must hear about it. `previous` is the session's real prior digest, never this
+	 * connection's memory of it: a connection that attached after the session last moved has no
+	 * memory, and judging from that would merge two different moves onto the same target.
 	 */
-	announce(connectionId: string, sessionId: string, digest: string): boolean {
+	announce(connectionId: string, sessionId: string, previous: string | undefined, digest: string): boolean {
 		let sessions = this.connections.get(connectionId);
 		if (sessions === undefined) {
 			sessions = new Map();
 			this.connections.set(connectionId, sessions);
 		}
-		const previous = sessions.get(sessionId)?.last;
 		if (previous === digest) return false;
 		let tell = true;
 		for (const [other, announced] of sessions) {

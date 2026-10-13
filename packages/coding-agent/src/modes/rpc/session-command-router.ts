@@ -380,12 +380,18 @@ export class SessionCommandRouter {
 					await this.writer.enqueueControl(answer, connection);
 					await new Promise<void>((resolve) => queueMicrotask(resolve));
 					try {
+						// A connection that closed while this subscribe awaited dispatch already ran dropConnection,
+						// before this pending entry existed; drop it here or it holds deltas for the life of the host.
 						if (this.writer.hasConnection(connection)) this.writer.status.activate(activate);
+						else this.writer.status.unsubscribe(connection, activate);
 					} catch (cause) {
 						process.stderr.write(`senpi rpc subscription activation failed: ${String(cause)}\n`);
 					}
 				};
-				void enqueue();
+				void enqueue().catch((cause: unknown) => {
+					this.writer.status.unsubscribe(connection, activate);
+					process.stderr.write(`senpi rpc subscribe answer could not be delivered: ${String(cause)}\n`);
+				});
 				return undefined;
 			}
 			return answer;
@@ -802,17 +808,7 @@ export class SessionCommandRouter {
 				if (!opened.attached) {
 					const entry = this.registry.peek(opened.sessionId);
 					if (entry?.runtime !== undefined || entry?.worker !== undefined)
-						this.writer.closeSession(
-							opened.sessionId,
-							{
-								type: "response",
-								command: "close_session",
-								success: false,
-								error: "open_rolled_back",
-							},
-							"error",
-							entry.sessionPath,
-						);
+						this.writer.sealRolledBackOpen(opened.sessionId, entry.sessionPath);
 				}
 				try {
 					if (opened.attached) await this.releaseOwnedSession(opened.sessionId);

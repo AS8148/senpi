@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { dataOf, type RawClient, statusHost, statusRecords, type WireRecord } from "./rpc-session-status-support.ts";
 
 const hosts: Array<AsyncDisposable> = [];
@@ -534,6 +534,59 @@ describe("lineage keys and childrenOf membership (#3198 review)", () => {
 	});
 });
 
+describe("an open rolled back after session_opened (#3198 review round 2, L1)", () => {
+	it("seals the session for subscribers without sending the opener a close_session it never asked for", async () => {
+		const rig = await host();
+		const a = rig.client("A");
+		const b = rig.client("B");
+		const sub = await subscribe(b);
+		// Given: the open publishes session_opened and its open status, then its own answer fails to queue.
+		const enqueue = rig.writer.enqueue.bind(rig.writer);
+		const spy = vi.spyOn(rig.writer, "enqueue").mockImplementation((sessionId, record) => {
+			const response = record as { type?: string; command?: string };
+			if (response.type === "response" && response.command === "open_session") throw new Error("answer refused");
+			return enqueue(sessionId, record);
+		});
+		const before = a.inbox.length;
+		// When: A opens a session and the open rolls back.
+		const failed = await a.request({ type: "open_session", cwd: rig.cwd });
+		spy.mockRestore();
+		await rig.writer.flush();
+		expect(failed.success).toBe(false);
+		const opened = b.inbox.find((record) => record.type === "session_opened");
+		expect(opened).toBeDefined();
+		// Then: subscribers get the terminal record for the session they were told about...
+		const terminal = statusRecords(b, sub.subscriptionId).find(
+			(record) => record.sessionId === opened?.sessionId && record.status === "closed",
+		);
+		expect(terminal).toBeDefined();
+		// ...and the opener sees only its own failed open, never an unrequested close_session answer.
+		const closeAnswers = a.inbox
+			.slice(before)
+			.filter((record) => record.type === "response" && record.command === "close_session");
+		expect(closeAnswers).toEqual([]);
+	});
+});
+
+describe("subscribe racing its connection's close (#3198 review round 2, M1)", () => {
+	it("leaves no pending subscription behind for a connection that closed before the subscribe was dispatched", async () => {
+		const rig = await host();
+		const a = rig.client("A");
+		rig.client("Z");
+		// Given: Z's transport closes while its subscribe_sessions is still on its way to dispatch.
+		rig.writer.unregisterConnection("Z");
+		// When: the subscribe is dispatched anyway, and a session then changes for an "all" selector.
+		await rig.writer.withConnection("Z", () =>
+			rig.core.handle(JSON.stringify({ type: "subscribe_sessions", id: "Z-late" })),
+		);
+		await rig.writer.flush();
+		dataOf(await a.request({ type: "open_session", cwd: rig.cwd }));
+		await rig.writer.flush();
+		// Then: nothing is kept for the dead connection, so nothing accumulates for the life of the host.
+		expect(rig.writer.status.connectionSize("Z")).toBe(0);
+	});
+});
+
 describe("F13: loaded_surfaces_changed dedupe", () => {
 	it("tells a connection attached to several sessions about one inventory change once", async () => {
 		const rig = await host();
@@ -600,5 +653,47 @@ describe("F13: loaded_surfaces_changed dedupe", () => {
 		// event naming S1 alone would leave S3's command list stale. Only truly shared transitions dedupe.
 		const changes = a.inbox.slice(before).filter((record) => record.type === "loaded_surfaces_changed");
 		expect(changes.map((record) => record.sessionId)).toEqual([s3.sessionId, s1.sessionId, s3.sessionId]);
+	});
+
+	it("announces a session's first change on a connection that attached after it moved (#3198 review round 2, H1)", async () => {
+		const rig = await host();
+		const a = rig.client("A");
+		const b = rig.client("B");
+		const emit = (durable: string, server: string) =>
+			rig.extensionApis.get(durable)?.events.emit("senpi.rpc.mcp_inventory.changed", {
+				sessionId: durable,
+				snapshot: {
+					servers: [
+						{
+							name: server,
+							serverInfo: null,
+							tools: [],
+							resources: [],
+							resourceTemplates: [],
+							authStatus: "unsupported",
+						},
+					],
+				},
+			});
+		// Given: B alone holds S3 while it moves to a partial inventory Dpre, so A never hears that move.
+		const s3 = dataOf(await b.request({ type: "open_session", cwd: rig.cwd }));
+		const d3 = String((s3.state as { sessionId: string }).sessionId);
+		emit(d3, "probe-pre");
+		await rig.writer.flush();
+		// And: A opens S1 and only then attaches S3.
+		const s1 = dataOf(await a.request({ type: "open_session", cwd: rig.cwd }));
+		const d1 = String((s1.state as { sessionId: string }).sessionId);
+		const s3Path = String((s3.state as { sessionFile?: string }).sessionFile);
+		const s3OnA = dataOf(await a.request({ type: "open_session", cwd: rig.cwd, sessionPath: s3Path }));
+		const before = a.inbox.length;
+		// When: S1 moves to the full inventory D, then S3 moves from Dpre to the same D.
+		emit(d1, "probe");
+		await rig.writer.flush();
+		emit(d3, "probe");
+		await rig.writer.flush();
+		// Then: A hears both. They are different transitions (X->D and Dpre->D) even though this is each
+		// session's first change on A, and get_commands for S3 would otherwise stay stale.
+		const changes = a.inbox.slice(before).filter((record) => record.type === "loaded_surfaces_changed");
+		expect(changes.map((record) => record.sessionId)).toEqual([s1.sessionId, s3OnA.sessionId]);
 	});
 });

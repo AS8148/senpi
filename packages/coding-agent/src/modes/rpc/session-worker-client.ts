@@ -278,7 +278,7 @@ export class SessionWorkerClient {
 					acknowledge(message.signal, false);
 					return;
 				}
-				writer.publishLoadedSurfacesChanged(sessionId, message.digest);
+				writer.publishLoadedSurfacesChanged(sessionId, message.previous, message.digest);
 				acknowledge(message.signal, true);
 				return;
 			}

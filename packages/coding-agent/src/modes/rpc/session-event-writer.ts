@@ -346,7 +346,7 @@ export class SessionEventWriter {
 	 * same digest to the same new one share a single event, tagged with the first session that
 	 * reported it; a session converging from a different start still announces its own change.
 	 */
-	publishLoadedSurfacesChanged(sessionId: string, digest: string): void {
+	publishLoadedSurfacesChanged(sessionId: string, previous: string | undefined, digest: string): void {
 		if (this.fanout.isEmpty()) {
 			this.enqueue(sessionId, { type: "loaded_surfaces_changed" });
 			return;
@@ -354,7 +354,7 @@ export class SessionEventWriter {
 		if (this.sealedSessions.has(sessionId)) return;
 		const line = serializeJsonLine({ type: "loaded_surfaces_changed", sessionId });
 		for (const id of this.fanout.attachedConnections(sessionId)) {
-			if (!this.surfaceDedupe.announce(id, sessionId, digest)) continue;
+			if (!this.surfaceDedupe.announce(id, sessionId, previous, digest)) continue;
 			this.fanout.get(id)?.actor.enqueue(line);
 		}
 		this.requestFlush();
@@ -550,6 +550,20 @@ export class SessionEventWriter {
 	 */
 	releaseSession(sessionId: string, sessionPath: string): void {
 		this.sealWithLifecycle(sessionId, { type: "session_closed", sessionId, reason: "released", sessionPath });
+	}
+
+	/**
+	 * Seal a session whose open rolled back after `session_opened` was published, so subscribers get
+	 * its terminal record. The opener's answer is its own failed `open_session`; like a park, no close
+	 * response is owed to anyone.
+	 */
+	sealRolledBackOpen(sessionId: string, sessionPath: string | undefined): void {
+		this.sealWithLifecycle(sessionId, {
+			type: "session_closed",
+			sessionId,
+			reason: "error",
+			...(sessionPath !== undefined && { sessionPath }),
+		});
 	}
 
 	private sealWithLifecycle(sessionId: string, lifecycle: RpcSessionParkedEvent | RpcSessionClosedEvent): void {
