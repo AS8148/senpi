@@ -59,6 +59,10 @@ export default function (pi: ExtensionAPI) {
 		assistantElapsedMs = 0;
 
 		if (!ctx.hasUI) return;
+		// senpi#3236: the per-run stats notice is a TUI footer nicety; in RPC
+		// mode ctx.ui.notify becomes an extension_ui_request that surfaces as a
+		// "Work Log" row on the desktop. Only the TUI shows it.
+		if (ctx.mode !== "tui") return;
 		if (elapsedMs <= 0) return;
 
 		let input = 0;
