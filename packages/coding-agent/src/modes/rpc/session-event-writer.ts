@@ -15,6 +15,7 @@ import { SessionOpenTurns } from "./session-open-turns.ts";
 import { causeOfRecord, type SessionStatusActor, terminalOfLifecycle } from "./session-status.ts";
 import { type SessionOpenedRecord, sessionOpenedLines } from "./session-status-opened.ts";
 import { SessionStatusStream } from "./session-status-stream.ts";
+import { SurfaceDigestDedupe } from "./session-surface-dedupe.ts";
 import type { SocketEventSinkActor } from "./socket-event-fanout.ts";
 
 export type { SessionEventWriterConnection } from "./session-event-fanout.ts";
@@ -119,8 +120,8 @@ export class SessionEventWriter {
 		},
 		pendingQuestions: (sessionId) => this.fanout.pendingQuestionCount(sessionId),
 	});
-	/** The loaded-surface digest each connection was last told about (F13: one notice per change, not per session). */
-	private readonly surfaceDigests = new Map<string, string>();
+	/** F13 surface dedupe: one notice per connection per inventory transition, tracked per session. */
+	private readonly surfaceDedupe = new SurfaceDigestDedupe();
 	/** Per-session image persisters: bytes reach disk before the placeholder that names them is emitted. */
 	private readonly mediaPersisters = new Map<string, MediaPersister>();
 	private readonly writeRaw: RawWriter;
@@ -189,7 +190,7 @@ export class SessionEventWriter {
 	unregisterConnection(id: string): void {
 		this.fanout.unregisterConnection(id);
 		this.status.dropConnection(id);
-		this.surfaceDigests.delete(id);
+		this.surfaceDedupe.dropConnection(id);
 	}
 
 	attachConnectionToSession(id: string, sessionId: string): void {
@@ -337,8 +338,9 @@ export class SessionEventWriter {
 	}
 
 	/**
-	 * One `loaded_surfaces_changed` per connection per inventory digest: a connection attached to several
-	 * sessions hears a host-wide surface change once, tagged with the first session that reported it.
+	 * One `loaded_surfaces_changed` per connection per inventory transition: sessions moving from the
+	 * same digest to the same new one share a single event, tagged with the first session that
+	 * reported it; a session converging from a different start still announces its own change.
 	 */
 	publishLoadedSurfacesChanged(sessionId: string, digest: string): void {
 		if (this.fanout.isEmpty()) {
@@ -348,8 +350,7 @@ export class SessionEventWriter {
 		if (this.sealedSessions.has(sessionId)) return;
 		const line = serializeJsonLine({ type: "loaded_surfaces_changed", sessionId });
 		for (const id of this.fanout.attachedConnections(sessionId)) {
-			if (this.surfaceDigests.get(id) === digest) continue;
-			this.surfaceDigests.set(id, digest);
+			if (!this.surfaceDedupe.announce(id, sessionId, digest)) continue;
 			this.fanout.get(id)?.actor.enqueue(line);
 		}
 		this.requestFlush();
@@ -666,6 +667,7 @@ export class SessionEventWriter {
 		this.fanout.forgetSession(sessionId);
 		this.mediaPersisters.delete(sessionId);
 		this.status.forget(sessionId);
+		this.surfaceDedupe.forgetSession(sessionId);
 	}
 
 	/** Drain every retained lane and the current in-flight record. */

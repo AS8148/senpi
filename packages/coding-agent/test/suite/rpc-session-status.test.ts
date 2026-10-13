@@ -366,4 +366,43 @@ describe("F13: loaded_surfaces_changed dedupe", () => {
 		const changes = a.inbox.slice(before).filter((record) => record.type === "loaded_surfaces_changed");
 		expect(changes).toHaveLength(1);
 	});
+
+	it("still announces when a session converges onto a digest the connection heard from a different start (#3198 review)", async () => {
+		const rig = await host();
+		const a = rig.client("A");
+		const s1 = dataOf(await a.request({ type: "open_session", cwd: rig.cwd }));
+		const s3 = dataOf(await a.request({ type: "open_session", cwd: rig.cwd }));
+		const d1 = String((s1.state as { sessionId: string }).sessionId);
+		const d3 = String((s3.state as { sessionId: string }).sessionId);
+		const emit = (durable: string, server: string) =>
+			rig.extensionApis.get(durable)?.events.emit("senpi.rpc.mcp_inventory.changed", {
+				sessionId: durable,
+				snapshot: {
+					servers: [
+						{
+							name: server,
+							serverInfo: null,
+							tools: [],
+							resources: [],
+							resourceTemplates: [],
+							authStatus: "unsupported",
+						},
+					],
+				},
+			});
+		const before = a.inbox.length;
+		// Given: S3 first surfaces a partial inventory Dpre (MCP still connecting), and the connection hears it.
+		emit(d3, "probe-pre");
+		await rig.writer.flush();
+		// And: S1 then converges on the full inventory D, so the connection's last heard digest is D.
+		emit(d1, "probe");
+		await rig.writer.flush();
+		// When: S3 converges on the same D from Dpre.
+		emit(d3, "probe");
+		await rig.writer.flush();
+		// Then: the connection is told S3's own change - reads like get_commands are per session, so the
+		// event naming S1 alone would leave S3's command list stale. Only truly shared transitions dedupe.
+		const changes = a.inbox.slice(before).filter((record) => record.type === "loaded_surfaces_changed");
+		expect(changes.map((record) => record.sessionId)).toEqual([s3.sessionId, s1.sessionId, s3.sessionId]);
+	});
 });
