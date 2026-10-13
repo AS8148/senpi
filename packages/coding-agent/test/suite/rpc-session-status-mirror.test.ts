@@ -21,6 +21,7 @@ describe("session status mirror view cost", () => {
 			includeWorkers: false,
 			includeContext: false,
 			mirror: { kind: "none" },
+			effects: false,
 		});
 		view.mockClear();
 		entryView.mockClear();
@@ -54,6 +55,7 @@ describe("session status mirror view cost", () => {
 			includeWorkers: true,
 			includeContext: false,
 			mirror: { kind: "types", types: new Set(["message_update"]) },
+			effects: false,
 		});
 		view.mockClear();
 
@@ -89,6 +91,7 @@ describe("publish with no subscribers (#3198 review, L3)", () => {
 			includeWorkers: false,
 			includeContext: false,
 			mirror: { kind: "none" },
+			effects: false,
 		});
 
 		// Then: the no-subscriber publish never built a view (L3's hot path), yet the snapshot a later
@@ -110,6 +113,7 @@ describe("subscriptions per connection cap (#3198 review, L4)", () => {
 			includeWorkers: false,
 			includeContext: false,
 			mirror: { kind: "none" as const },
+			effects: false,
 		};
 		// Given: one connection fills every slot (pending until activation, like the real path).
 		for (let i = 0; i < MAX_SUBSCRIPTIONS_PER_CONNECTION; i++) stream.subscribe("c", options);

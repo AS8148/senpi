@@ -163,6 +163,7 @@ describe("session_status stream (T1 acceptance)", () => {
 			includeWorkers: false,
 			includeContext: true,
 			mirror: { kind: "none" },
+			effects: false,
 		});
 		// A publish lands while the subscription is registered but its response is not yet on the wire.
 		stream.publish("rpc-1", "context", "client", true);
@@ -514,6 +515,7 @@ describe("lineage keys and childrenOf membership (#3198 review)", () => {
 			includeWorkers: true,
 			includeContext: false,
 			mirror: { kind: "none" as const },
+			effects: true,
 		};
 		const frozen = {
 			kind: "worker" as const,
