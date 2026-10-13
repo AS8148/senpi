@@ -4,7 +4,7 @@ import { workerData } from "node:worker_threads";
 export {
 	PROCESS_START_TOLERANCE_MS,
 	sameProcessStartMs as sameProcessStart,
-} from "../../../../modes/app-server/daemon/process.ts";
+} from "../../../../utils/process-identity.ts";
 
 /**
  * Two boot instants further apart than this belong to different boots. `os.uptime()` is

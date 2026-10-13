@@ -288,7 +288,7 @@ export class RpcClient {
 				// SENPI_RUNTIME=bun pin makes the launcher re-exec under Bun via spawnSync, so a
 				// SIGTERM to the wrapper leaves the Bun host running: it keeps the session lease
 				// and keeps writing session state after stop() resolved. Pin the runtime to the
-				// interpreter chosen here, the same way app-server/daemon.ts does; options.env is
+				// interpreter chosen here; options.env is
 				// spread last so a caller can still override the pin explicitly.
 				SENPI_RUNTIME: "node",
 				...this.options.env,

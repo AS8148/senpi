@@ -111,6 +111,27 @@ The `model_change` entry is written by the session's model switch itself; only i
 
 - `ModelChangeOrigin` and `ModelChangeEntry` field lists, `appendModelChange`'s attribution spread.
 
+## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
+
+### What changed
+
+Remove the executable AppMode member while retaining the historical model-change source value so old entries remain readable.
+
+- `packages/coding-agent/src/core/model-change-origin.ts`
+- `packages/coding-agent/src/core/project-trust.ts`
+
+### Why
+
+The executable Codex compatibility layer is being removed. Shared Native runtime behavior and historical records must remain independent of that layer.
+
+### Why an extension could not handle it
+
+These host contracts, import paths and build or verification targets belong to the repository; an extension cannot retire them.
+
+### Expected merge conflict zones
+
+The listed paths, especially command dispatch, mode unions and process identity imports. Keep the supported runtime branches and the shared utility behavior.
+
 ## 2026-10-12 - Review repairs for config/state separation (senpi#3178)
 
 ### What changed

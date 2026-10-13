@@ -27,7 +27,7 @@ import {
 	processStartTimeMs,
 	readProcessStartTime,
 	sameProcessStartMs,
-} from "../app-server/daemon/process.ts";
+} from "../../utils/process-identity.ts";
 import { createHostDaemonPaths, HOST_DAEMON_DIR_ENV, hostDaemonDirectoryPaths } from "./host-daemon-paths.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
 import { logUnknownHostIdentity } from "./host-supervisor-log.ts";

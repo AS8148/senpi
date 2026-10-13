@@ -60,6 +60,42 @@ Attachments are counted per connection inside the multi-session host's command r
 
 The `dispatch` branch list in `session-command-router.ts`, the command and response unions in `rpc-types.ts`, the capability list in `host-capabilities.ts`, and the `finally` of `runHostSessionRequestOnce` in `host-session-runner.ts`.
 
+## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
+
+### What changed
+
+Retarget process identity imports to the byte-identical neutral utility and remove the retired daemon example from the RPC client comment. Native host ownership, supervision, admission and teardown algorithms do not change.
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`
+- `packages/coding-agent/src/modes/rpc/host-daemon-state.ts`
+- `packages/coding-agent/src/modes/rpc/host-ensure-start.ts`
+- `packages/coding-agent/src/modes/rpc/host-ensure-stop.ts`
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`
+- `packages/coding-agent/src/modes/rpc/host-gc-evidence.ts`
+- `packages/coding-agent/src/modes/rpc/host-generations.ts`
+- `packages/coding-agent/src/modes/rpc/host-internal-dir-reaper.ts`
+- `packages/coding-agent/src/modes/rpc/host-legacy.ts`
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-drain.ts`
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-scratch.ts`
+- `packages/coding-agent/src/modes/rpc/host-reservations.ts`
+- `packages/coding-agent/src/modes/rpc/host-stalled-evidence.ts`
+- `packages/coding-agent/src/modes/rpc/host-successor.ts`
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`
+- `packages/coding-agent/src/modes/rpc/session-held.ts`
+- `packages/coding-agent/src/modes/rpc/supervisor-route.ts`
+
+### Why
+
+The executable Codex compatibility layer is being removed. Shared Native runtime behavior and historical records must remain independent of that layer.
+
+### Why an extension could not handle it
+
+These host contracts, import paths and build or verification targets belong to the repository; an extension cannot retire them.
+
+### Expected merge conflict zones
+
+The listed paths, especially command dispatch, mode unions and process identity imports. Keep the supported runtime branches and the shared utility behavior.
+
 ## 2026-10-12 - Busy-host trim (senpi#3218)
 
 ### What changed
