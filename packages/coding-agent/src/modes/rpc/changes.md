@@ -1,3 +1,22 @@
+## 2026-10-12 - Busy-host trim (senpi#3218)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-zero-session-trim.ts`: besides the zero-session trim, a host at or above a 2 GB footprint collects when its session count drops while other sessions still run (a drop the registry reports between ticks counts too). Each collection is timed, and the next busy-host trim waits at least 60 s and at least 100 times the last pause.
+- `packages/coding-agent/src/modes/rpc/rpc-host-lifecycle-types.ts`, `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: `host_trimmed` gains `sessions` (0 for the zero-session trim) and `pauseMs`.
+
+### Why
+
+A shard host serving a ~38-child research DAG held 40-60 GB of `phys_footprint` while ~30 children came and went, almost all of it freed JS-heap pages: a host whose other sessions keep allocating never idles long enough to return them, and the trim only ran at zero sessions.
+
+### Why an extension could not handle it
+
+The trimmer is part of the multi-session host's self-observation loop and reads the host's session registry; no extension hook runs at the host process level.
+
+### Expected merge conflict zones
+
+`host-zero-session-trim.ts` (fork-only module), the `host_trimmed` case in `session-event-writer.ts`, and `RpcHostTrimmedEvent` in `rpc-host-lifecycle-types.ts`.
+
 ## 2026-10-11 - Model-invisible eval cell RPC commands (senpi#3072)
 
 ### What changed

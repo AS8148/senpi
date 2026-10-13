@@ -403,6 +403,8 @@ export class SessionEventWriter {
 					footprintAfterMb: record.footprintAfterMb,
 					measure: record.measure,
 					collected: record.collected,
+					sessions: record.sessions,
+					pauseMs: record.pauseMs,
 				};
 				break;
 			default: {

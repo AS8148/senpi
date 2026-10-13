@@ -74,9 +74,11 @@ export interface RpcHostKernelMemory {
 }
 
 /**
- * Emitted once when a host that held sessions drops to zero of them and collects: the footprint before
- * and after, so a client can see what the idle host returned. `collected` is false where the runtime
- * exposes no full collection (Node without `--expose-gc`); the record is still sent.
+ * Emitted once when a host collects: after it drops to zero sessions, or, at or above a 2 GB footprint,
+ * after its session count drops while others still run (`sessions` > 0). The footprint before and after
+ * lets a client see what the host returned; `pauseMs` is how long the collection blocked the loop.
+ * `collected` is false where the runtime exposes no full collection (Node without `--expose-gc`); the
+ * record is still sent.
  */
 export interface RpcHostTrimmedEvent {
 	type: "host_trimmed";
@@ -84,6 +86,9 @@ export interface RpcHostTrimmedEvent {
 	footprintAfterMb: number;
 	measure: ProcessFootprintMeasure;
 	collected: boolean;
+	/** Sessions still open when it collected; 0 for the zero-session trim. */
+	sessions: number;
+	pauseMs: number;
 }
 
 export type RpcHostLifecycleEvent =
