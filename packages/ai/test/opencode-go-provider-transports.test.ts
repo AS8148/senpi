@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { normalizeContext } from "../src/utils/transcript.ts";
 import { opencodeGoProvider } from "../src/providers/opencode-go.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 describe("opencode-go provider transports", () => {
 	afterEach(() => {
