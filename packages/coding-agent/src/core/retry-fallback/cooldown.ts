@@ -1,6 +1,7 @@
 import { MAX_SLOT_BLOCK_MS } from "@earendil-works/pi-ai/auth/pool/failover";
 import { stripProviderRequestIds } from "@earendil-works/pi-ai/utils/retry";
 import { usageLimitResetMs } from "../credential-pool/reset-time.ts";
+import { isTransportFailureText } from "./transient-network.ts";
 
 /**
  * Runtime-only selector suppression. A SelectorCooldowns instance belongs to one
@@ -68,11 +69,7 @@ export class SelectorCooldowns {
 		}
 		// Transport blips (timeouts, DNS, socket drops) say nothing about model
 		// health; the 5-minute default parked the primary and blocked revert-to-primary.
-		if (
-			/timed? out|timeout|econnreset|econnrefused|etimedout|socket hang up|socket connection was closed|network.?error|connection.?error|connection.?refused|connection.?lost|other side closed|fetch failed|getaddrinfo|enotfound|eai_again|upstream.?connect|reset before headers|terminated|websocket.?closed|websocket.?error|ended without|stream ended before message_stop|stream ended before a terminal response event|http2 request did not get a response/.test(
-				message,
-			)
-		) {
+		if (isTransportFailureText(message)) {
 			return 60_000;
 		}
 		return 5 * 60_000;
