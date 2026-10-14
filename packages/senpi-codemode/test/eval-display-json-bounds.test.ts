@@ -149,7 +149,8 @@ describe("eval display jsonOutputs bounds (#3261)", () => {
 				fakeExtensionContext(),
 			);
 			const stored = toolResult.details.jsonOutputs;
-			if (stored === undefined || stored.length !== 1) throw new Error("expected exactly one stored jsonOutputs entry");
+			if (stored === undefined || stored.length !== 1)
+				throw new Error("expected exactly one stored jsonOutputs entry");
 			return stored[0];
 		}
 
@@ -193,7 +194,9 @@ describe("eval display jsonOutputs bounds (#3261)", () => {
 			if (typeof stored !== "object" || stored === null || Array.isArray(stored)) return;
 			const record = stored as Record<string, unknown>;
 			expect(record["key-0000"]).toBe("v".repeat(500));
-			expect(Object.values(record).some((value) => typeof value === "string" && value.includes("more keys"))).toBe(true);
+			expect(Object.values(record).some((value) => typeof value === "string" && value.includes("more keys"))).toBe(
+				true,
+			);
 			expect(JSON.stringify(stored).length).toBeLessThanOrEqual(BUDGET);
 		});
 
@@ -205,7 +208,8 @@ describe("eval display jsonOutputs bounds (#3261)", () => {
 			const stored = await storeDisplay(value);
 
 			// Then
-			if (typeof stored !== "object" || stored === null || Array.isArray(stored)) throw new Error("expected a record");
+			if (typeof stored !== "object" || stored === null || Array.isArray(stored))
+				throw new Error("expected a record");
 			const record = stored as Record<string, unknown>;
 			expect(record.width).toBe(1);
 			expect(record.height).toBe(1);
@@ -222,7 +226,8 @@ describe("eval display jsonOutputs bounds (#3261)", () => {
 			const stored = await storeDisplay(value);
 
 			// Then: the sibling keys survive and the escaped serialization fits the budget.
-			if (typeof stored !== "object" || stored === null || Array.isArray(stored)) throw new Error("expected a record");
+			if (typeof stored !== "object" || stored === null || Array.isArray(stored))
+				throw new Error("expected a record");
 			const record = stored as Record<string, unknown>;
 			expect(record.width).toBe(1);
 			expect(record.height).toBe(1);
@@ -240,7 +245,8 @@ describe("eval display jsonOutputs bounds (#3261)", () => {
 			const stored = await storeDisplay({ root: node, width: 1 });
 
 			// Then
-			if (typeof stored !== "object" || stored === null || Array.isArray(stored)) throw new Error("expected a record");
+			if (typeof stored !== "object" || stored === null || Array.isArray(stored))
+				throw new Error("expected a record");
 			const record = stored as Record<string, unknown>;
 			expect(record.width).toBe(1);
 			expect("root" in record).toBe(true);
@@ -256,7 +262,8 @@ describe("eval display jsonOutputs bounds (#3261)", () => {
 			const stored = await storeDisplay(value);
 
 			// Then
-			if (typeof stored !== "object" || stored === null || Array.isArray(stored)) throw new Error("expected a record");
+			if (typeof stored !== "object" || stored === null || Array.isArray(stored))
+				throw new Error("expected a record");
 			const record = stored as Record<string, unknown>;
 			expect(record.buffer).toBe("<Buffer 2.9 MB>");
 			expect(record.width).toBe(1);
