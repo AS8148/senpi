@@ -87,7 +87,17 @@ type RpcSessionCommand =
 	 * `effectId` (1-256 chars, capability `effect_ledger`) records the abort as a durable effect BEFORE it is
 	 * dispatched and makes a retry with the same id a replay; without it the abort behaves exactly as before.
 	 */
-	| { id?: string; type: "abort"; effectId?: string }
+	| {
+			id?: string;
+			type: "abort";
+			effectId?: string;
+			/** Answer only once the session is idle (or `graceMs` passed); the answer says which. */
+			awaitIdle?: boolean;
+			/** Drain the steering and follow-up queues atomically before the abort. */
+			clearQueue?: boolean;
+			/** How long `awaitIdle` waits, 0..60000 ms; default 10000. */
+			graceMs?: number;
+	  }
 	| { id?: string; type: "interrupt"; turnId?: string }
 	| { id?: string; type: "abort_compaction" }
 	| { id?: string; type: "reload" }
@@ -271,6 +281,8 @@ export const RPC_ERROR_SESSION_RESERVATION_LIMIT = "session_reservation_limit";
 export const RPC_ERROR_MISSING_SESSION_ID = "missing_session_id";
 export const RPC_ERROR_MULTI_SESSION_DISABLED = "multi_session_disabled";
 export const RPC_ERROR_INVALID_PATH = "invalid_path";
+/** A command field outside its documented range; `errorData` carries `reason` and `action`. */
+export const RPC_ERROR_INVALID_ARGUMENT = "invalid_argument";
 export const RPC_ERROR_OPEN_FAILED = "open_failed";
 export const RPC_ERROR_OWNER_CHANGED = "owner_changed";
 export const RPC_ERROR_SESSION_NOT_HELD = "session_not_held";
@@ -392,6 +404,15 @@ export type RpcErrorCode =
 	| typeof RPC_ERROR_HOST_DRAINING;
 
 /** What an effect command (`abort`/`set_model`/`set_thinking_level` with `effectId`) answers about its receipt. */
+/** `abort` with `awaitIdle` or `clearQueue`: whether the turn stopped and what was cleared. */
+export interface RpcAbortQuiesce {
+	/** True only when the session reached idle within `graceMs`. */
+	stopped: boolean;
+	idle: boolean;
+	/** Queued inputs `clearQueue` removed (0 when not requested). */
+	cleared: number;
+}
+
 export interface RpcEffectAnswer {
 	effectId: string;
 	state: EffectState;
@@ -848,7 +869,13 @@ export type RpcResponse =
 			success: true;
 			data?: ClientMessageIdentity & { disposition?: QueuedInputDisposition; admission?: ClientMessageAdmission };
 	  }
-	| { id?: string; type: "response"; command: "abort"; success: true; data?: RpcEffectAnswer }
+	| {
+			id?: string;
+			type: "response";
+			command: "abort";
+			success: true;
+			data?: RpcEffectAnswer | (Partial<RpcEffectAnswer> & RpcAbortQuiesce);
+	  }
 	| {
 			id?: string;
 			type: "response";

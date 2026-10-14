@@ -6,6 +6,8 @@
 
 ### Added
 
+- RPC `abort` takes `awaitIdle` (answer once the turn stopped, or `stopped: false` after `graceMs`, default 10 s, max 60 s), `clearQueue` (drain queued input first; each drained input gets a `cleared_by_abort` receipt) and reports `cleared`; aborted `agent_end` and `session_abort` carry `abortedBy: { connectionId, effectId? }` ([#3156](https://github.com/code-yeongyu/senpi/issues/3156)).
+
 - Shared RPC hosts publish each session holder's public socket and host instance in validated lease evidence. Clients can pass `open_session.expectedHostInstance` to attach only to that live host generation; a changed owner or released path returns a typed refusal with a rediscovery action instead of creating another writer ([#3255](https://github.com/code-yeongyu/senpi/issues/3255), [#3257](https://github.com/code-yeongyu/senpi/pull/3257)).
 
 - Dual-era MCP client: servers speaking the 2026-07-28 stateless spec revision (no `initialize`, per-request `_meta`, `MCP-Protocol-Version` / `Mcp-Method` / `Mcp-Name` headers, `server/discover`) now connect, while legacy initialize-handshake servers keep working through spec-driven auto-negotiation (HTTP: modern request first with 400-body classification; stdio: discover-first probe; era cached per origin/process). Modern-only servers receive zero legacy handshake traffic through an SDK-compatibility bridge that answers the SDK client's `initialize` locally from the discovery result. Connect diagnostics log the negotiated era and protocol version per server. Modern-only stdio servers work too: the spawned process answers `server/discover` first, then every request carries the per-request `_meta`, with no `initialize` sent ([#3304](https://github.com/code-yeongyu/senpi/issues/3304), reported by @changeroa).

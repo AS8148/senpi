@@ -38,6 +38,7 @@ export class ClientAdmissions {
 	private turnOutcome: EffectOutcome | undefined;
 	/** The client whose `abort` reached the current turn, for `outcome.abortedBy`. */
 	private turnAbortedBy: EffectActor | undefined;
+	private lastAbort: { readonly connectionId: string; readonly effectId?: string } | undefined;
 	private readonly session: AgentSession;
 	private readonly durableSessionId: string;
 	private readonly unsubscribeAgent: () => void;
@@ -84,6 +85,7 @@ export class ClientAdmissions {
 				const outcome = this.turnOutcome ?? { kind: "completed" as const };
 				this.turnOutcome = undefined;
 				this.turnAbortedBy = undefined;
+				this.lastAbort = undefined;
 				for (const record of this.records.values()) {
 					if (record.state === "running") this.save({ ...record, state: "completed", outcome });
 				}
@@ -134,8 +136,31 @@ export class ClientAdmissions {
 	}
 
 	/** Remember who aborted the running turn; the turn's receipts name them once it ends. */
-	noteAbort(by: EffectActor): void {
+	noteAbort(by: EffectActor, effectId?: string): void {
 		if (this.session.isStreaming) this.turnAbortedBy = by;
+		this.lastAbort = { connectionId: by.connectionId, ...(effectId === undefined ? {} : { effectId }) };
+	}
+
+	/** The client (and abort effect) that aborted the current turn, for `agent_end`/`session_abort.abortedBy`. */
+	get abortedBy(): { readonly connectionId: string; readonly effectId?: string } | undefined {
+		return this.lastAbort;
+	}
+
+	/**
+	 * `abort { clearQueue }` is about to drain the queues: give every still-queued input an honest
+	 * `cleared_by_abort` receipt first, so the drain's `queue_update` cannot read it as delivered.
+	 */
+	clearQueuedByAbort(): void {
+		if (this.durableSessionId !== this.session.sessionManager.getSessionId()) return;
+		for (const record of [...this.records.values()]) {
+			if (record.state !== "queued") continue;
+			this.save({
+				...record,
+				state: "completed",
+				prepared: undefined,
+				outcome: EFFECT_OUTCOMES.inputClearedByAbort,
+			});
+		}
 	}
 
 	/**

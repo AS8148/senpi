@@ -15,6 +15,7 @@ import { lookupEffectInTranscript, TranscriptUnreadable } from "./effect-transcr
 import {
 	RPC_ERROR_CONTEXT_BUDGET,
 	RPC_ERROR_EFFECT_ID_CONFLICT,
+	RPC_ERROR_INVALID_ARGUMENT,
 	RPC_ERROR_MODEL_NOT_FOUND,
 	RPC_ERROR_PROVIDER_UNAVAILABLE,
 	RPC_ERROR_TRANSCRIPT_UNREADABLE,
@@ -87,25 +88,90 @@ function isResponse(value: EffectBegin | RpcResponse): value is RpcResponse {
 	return "type" in value;
 }
 
-export async function runAbort(ctx: EffectCommandContext, command: Command<"abort">, dispatch: () => void) {
-	const { effectId } = command;
-	if (effectId === undefined) {
-		ClientAdmissions.forSession(ctx.session).noteAbort(ctx.by);
-		dispatch();
-		return respond(command.id, { command: "abort" });
+export const ABORT_DEFAULT_GRACE_MS = 10_000;
+export const ABORT_MAX_GRACE_MS = 60_000;
+
+function invalidGrace(command: Command<"abort">): RpcResponse | undefined {
+	const { graceMs } = command;
+	if (graceMs === undefined) return undefined;
+	if (Number.isInteger(graceMs) && graceMs >= 0 && graceMs <= ABORT_MAX_GRACE_MS) return undefined;
+	const reason = "invalid_grace_ms";
+	const action = `send graceMs as a whole number of milliseconds from 0 to ${ABORT_MAX_GRACE_MS}`;
+	return refuse(
+		command.id,
+		"abort",
+		`graceMs must be an integer from 0 to ${ABORT_MAX_GRACE_MS}`,
+		RPC_ERROR_INVALID_ARGUMENT,
+		{
+			reason,
+			action,
+		},
+	);
+}
+
+/** Resolves true once `aborting` settles with the session idle, false when `graceMs` runs out first. */
+async function quiesce(session: AgentSession, aborting: Promise<void>, graceMs: number): Promise<boolean> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const expired = new Promise<false>((resolve) => {
+		timer = setTimeout(() => resolve(false), graceMs);
+	});
+	try {
+		return await Promise.race([aborting.then(() => !session.isStreaming), expired]);
+	} finally {
+		clearTimeout(timer);
 	}
-	const begun = await begin(ctx, "abort", { ...command, effectId });
-	if (isResponse(begun)) return begun;
-	if ("replay" in begun)
+}
+
+/**
+ * `abort`: with `clearQueue` the queued inputs are drained (each gets a `cleared_by_abort` receipt) before
+ * the abort; with `awaitIdle` the answer waits until the session is idle or `graceMs` passes. Without
+ * either, the abort is acknowledged on dispatch exactly as before.
+ */
+export async function runAbort(
+	ctx: EffectCommandContext,
+	command: Command<"abort">,
+	dispatch: () => Promise<void>,
+): Promise<RpcResponse> {
+	const invalid = invalidGrace(command);
+	if (invalid !== undefined) return invalid;
+	const { effectId } = command;
+	const quiesced = command.awaitIdle === true || command.clearQueue === true;
+	const begun = effectId === undefined ? undefined : await begin(ctx, "abort", { ...command, effectId });
+	if (begun !== undefined && isResponse(begun)) return begun;
+	if (begun !== undefined && "replay" in begun)
 		return respond(command.id, { command: "abort", data: answer(begun.replay, ctx.sessionId, true) });
-	ClientAdmissions.forSession(ctx.session).noteAbort(ctx.by);
+	const admissions = ClientAdmissions.forSession(ctx.session);
 	const streaming = ctx.session.isStreaming;
-	dispatch();
-	const ledger = EffectLedger.forSession(ctx.session);
-	const status = streaming
-		? ledger.transition(effectId, "applied")
-		: ledger.transition(effectId, "done", { disposition: "no_active_turn" });
-	return respond(command.id, { command: "abort", data: answer(status, ctx.sessionId) });
+	let cleared = 0;
+	if (command.clearQueue === true) {
+		admissions.clearQueuedByAbort();
+		const drained = ctx.session.clearQueue({ abortWillFollow: true });
+		cleared = drained.steering.length + drained.followUp.length;
+	}
+	admissions.noteAbort(ctx.by, effectId);
+	const aborting = dispatch();
+	const ledger = effectId === undefined ? undefined : EffectLedger.forSession(ctx.session);
+	let status =
+		effectId === undefined
+			? undefined
+			: streaming
+				? ledger?.transition(effectId, "applied")
+				: ledger?.transition(effectId, "done", { disposition: "no_active_turn" });
+	if (!quiesced)
+		return respond(command.id, {
+			command: "abort",
+			...(status === undefined ? {} : { data: answer(status, ctx.sessionId) }),
+		});
+	const idle =
+		command.awaitIdle === true
+			? await quiesce(ctx.session, aborting, command.graceMs ?? ABORT_DEFAULT_GRACE_MS)
+			: !streaming;
+	// The ledger moves an applied abort to `done` on `agent_idle`; read it again after the wait.
+	if (effectId !== undefined) status = ledger?.status(effectId) ?? status;
+	return respond(command.id, {
+		command: "abort",
+		data: { ...(status === undefined ? {} : answer(status, ctx.sessionId)), stopped: idle, idle, cleared },
+	});
 }
 
 export async function runSetModel(ctx: EffectCommandContext, command: Command<"set_model">): Promise<RpcResponse> {
