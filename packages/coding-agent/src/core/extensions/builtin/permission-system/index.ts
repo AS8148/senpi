@@ -11,6 +11,7 @@ import { createEventEmitter } from "./events.ts";
 import { INTERNAL_PERMISSION_TOOLS } from "./internal-tools.ts";
 import { handleNoUI } from "./non-interactive.ts";
 import { createBuiltinParserRegistry, type ParserRegistry, toolOwnedPermissionRequests } from "./parsers.ts";
+import { registerPermissionPresetReader } from "./preset-registry.ts";
 import { showPermissionPrompt } from "./prompt.ts";
 import { PermissionService } from "./service.ts";
 import { loadPermissionSettings } from "./settings.ts";
@@ -179,6 +180,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 	let loadedPresetFlag: { readonly value: boolean | string | undefined } | undefined;
 	let loadedPermissionFlag: boolean | string | undefined;
 	const retireAuthorizers = new WeakMap<object, () => void>();
+	const retirePresetReaders = new WeakMap<object, () => void>();
 
 	const nextRequestID = createRequestIDFactory();
 	// Rules this session already persisted at answer time; shutdown skips re-appending them.
@@ -194,6 +196,15 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
+		// Registered before loading, so a failed load reports no preset instead of an older load's.
+		retirePresetReaders.get(ctx.sessionManager)?.();
+		retirePresetReaders.set(
+			ctx.sessionManager,
+			registerPermissionPresetReader(ctx.sessionManager, () => {
+				followPresetFlag(ctx.cwd, ctx.agentDir);
+				return setupError === null ? (activePreset ?? undefined) : undefined;
+			}),
+		);
 		setupError = null;
 		try {
 			loadPermissionRules(ctx.cwd, [], ctx.agentDir);
@@ -403,6 +414,8 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		void event;
 		retireAuthorizers.get(ctx.sessionManager)?.();
 		retireAuthorizers.delete(ctx.sessionManager);
+		retirePresetReaders.get(ctx.sessionManager)?.();
+		retirePresetReaders.delete(ctx.sessionManager);
 
 		if (!service) {
 			return;

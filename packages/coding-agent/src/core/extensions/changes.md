@@ -1,3 +1,20 @@
+## 2026-10-15 - pi.getPermissionPreset() (#3301, senpi#2465)
+
+### What changed
+
+`ExtensionAPI.getPermissionPreset(): PermissionPresetName | undefined` returns the preset the permission system enforces for this session now. The loader resolves it through the session's own `sessionManager` from `builtin/permission-system/preset-registry.ts`; before the host binds the runtime there is no session and it returns `undefined`.
+
+- `packages/coding-agent/src/core/extensions/types.ts`
+- `packages/coding-agent/src/core/extensions/loader.ts`
+
+### Why
+
+Clients (the desktop's Full-access UI) must show the preset actually enforced, including a settings-only Full access and the `full-access` default, not just the flag.
+
+### Expected merge-conflict zones
+
+`types.ts` (the Flags block of `ExtensionAPI`) and `loader.ts` (beside `getFlag`).
+
 ## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
 
 ### What changed

@@ -1,5 +1,20 @@
 # Permission System Builtin Extension
 
+## 2026-10-15 - The enforced preset is readable per session (#3301)
+
+### What changed
+
+- `preset-registry.ts`: a `WeakMap` keyed by `sessionManager`, like the dispatch authorizers. `registerPermissionPresetReader` returns a retire function that never removes a newer load's reader.
+- `index.ts`: `session_start` registers the reader before loading the rules, so a failed load reports `undefined` instead of an older load's preset. The reader runs `followPresetFlag(ctx.cwd, ctx.agentDir)` first, then returns `activePreset` unless `setupError` is set. `session_shutdown` retires it.
+
+### Must not break
+
+`test/suite/regressions/issue-2465-get-permission-preset.test.ts`:
+- settings-only Full access and the no-flag default both read `full-access`;
+- a setting's stricter preset is read as that preset;
+- a live flag change is followed;
+- a failed setup reads `undefined`, and so does a session without the permission system.
+
 ## 2026-10-14 - Unregistered-tool deny never masked; configured deny beats a preset wildcard (#3301 review)
 
 ### What changed
