@@ -278,11 +278,11 @@ The Mistral message mapping runs inside the provider adapter after every extensi
 
 ### What changed
 
-- `packages/ai/src/api/google-shared.ts`: `usesGoogleThinkingLevel` also matches generation-4 and later ids (`gemini-4-argon`, ...), so both adapters (`google-generative-ai`, `google-vertex`) send `thinkingLevel` and, when thinking is off, clamp to the lowest supported level instead of sending `thinkingBudget`.
+- `packages/ai/src/api/google-shared.ts`: `usesGoogleThinkingLevel` also matches generation-4 and later ids through `isGoogleGeneration4OrLaterModelId` (`packages/ai/src/google-thinking-generation.ts`, anchored to a complete id or a `models/` namespace), so both adapters (`google-generative-ai`, `google-vertex`) send `thinkingLevel` and, when thinking is off, clamp to the lowest supported level instead of sending `thinkingBudget`.
 
 ### Why
 
-The provider documents that `gemini-4-argon` supports only `LOW`, `MEDIUM` and `HIGH`, and it rejects `thinking_budget` (or `MINIMAL`) with HTTP 400. Under the generation-3-only match, every Argon request failed.
+The provider documents that its generation-4 models support only `LOW`, `MEDIUM` and `HIGH`, and reject a thinking budget (or `MINIMAL`) with HTTP 400. Under the generation-3-only match, every request to those models failed.
 
 ### Why an extension could not handle it
 
