@@ -97,7 +97,11 @@ describe("provider idle recovery", () => {
 
 	it("does not re-enable disabled stream guards during a timeout retry", async () => {
 		const harness = await createHarness({
-			settings: { turn_inactivity_ms: 0, turn_max_runtime_ms: 0, retry: { enabled: true, maxRetries: 1, baseDelayMs: 0 } },
+			settings: {
+				turn_inactivity_ms: 0,
+				turn_max_runtime_ms: 0,
+				retry: { enabled: true, maxRetries: 1, baseDelayMs: 0 },
+			},
 		});
 		harnesses.push(harness);
 		harness.agent.timeoutMs = undefined;
@@ -229,7 +233,11 @@ describe("provider idle recovery", () => {
 	it("expires a no-first-event retry at the reconciled continuation bound without shortening the provider guards", async () => {
 		vi.useFakeTimers();
 		const harness = await createHarness({
-			settings: { turn_inactivity_ms: 0, turn_max_runtime_ms: 0, retry: { enabled: true, modelFallback: false, maxRetries: 1, baseDelayMs: 0 } },
+			settings: {
+				turn_inactivity_ms: 0,
+				turn_max_runtime_ms: 0,
+				retry: { enabled: true, modelFallback: false, maxRetries: 1, baseDelayMs: 0 },
+			},
 		});
 		harnesses.push(harness);
 		harness.agent.timeoutMs = DEFAULT_PROVIDER_IDLE_TIMEOUT_MS;
