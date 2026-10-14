@@ -1405,6 +1405,8 @@ export async function main(args: string[], options?: MainOptions) {
 		.catch((error: unknown) => {
 			// A model that cannot start is the user's to fix, not a crash: one line and its fix (senpi#3333).
 			if (!(error instanceof ModelUsabilityBudgetError)) throw error;
+			// Stop the spinner first: exit runs before `.finally`, and its line has no newline.
+			startupLoadingIndicator.stop();
 			console.error(chalk.red(error.message));
 			process.exit(1);
 		})

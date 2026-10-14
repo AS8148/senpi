@@ -79,6 +79,8 @@ export interface CreateAgentSessionOptions {
 	model?: Model<any>;
 	/** Provenance for an explicitly supplied initial model. Omit to leave external SDK model selection untouched. */
 	initialModelProvenance?: InitialModelProvenance;
+	/** Internal: this model replaced an automatic startup pick that could not start (senpi#3333). */
+	startupReplacement?: boolean;
 	/** Thinking level. Default: from settings, else 'medium' (clamped to model capabilities) */
 	thinkingLevel?: ThinkingLevel;
 	/** Provenance for a pre-resolved CLI/scoped/legacy selector. */
@@ -561,12 +563,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		if (!hasThinkingEntry) {
 			sessionManager.appendThinkingLevelChange(thinkingLevel, thinkingSelection);
 		}
-	} else {
-		// Save initial model and thinking level for new sessions so they can be restored on resume
-		if (model) {
-			sessionManager.appendModelChange(model.provider, model.id);
-		}
-		sessionManager.appendThinkingLevelChange(thinkingLevel, thinkingSelection);
 	}
 
 	const sessionStartEvent = initialModelProvenance
@@ -651,7 +647,12 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		// release what the constructed session holds (its shared fallback breaker, writer).
 		session.dispose();
 		if (refused && replacement) {
-			const retried = await createAgentSession({ ...options, model: replacement, initialModelProvenance });
+			const retried = await createAgentSession({
+				...options,
+				model: replacement,
+				initialModelProvenance,
+				startupReplacement: true,
+			});
 			const note = startupReplacementMessage(replacement, refused);
 			return {
 				...retried,
@@ -659,12 +660,21 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			};
 		}
 		if (refused && error instanceof Error && refused.admission === "start") {
-			error.message = startupRefusalMessage(
+			error.message = `${error.message}\n${startupRefusalMessage(
 				refused,
-				isAutomaticPick(initialModelProvenance) && options.model === undefined,
-			);
+				(isAutomaticPick(initialModelProvenance) && options.model === undefined) ||
+					options.startupReplacement === true,
+			)}`;
 		}
 		throw error;
+	}
+	// Save the initial model and thinking level of a new session only once it has been admitted,
+	// so a refused startup pick never lands in the session log (senpi#3333).
+	if (!hasExistingSession) {
+		if (model) {
+			sessionManager.appendModelChange(model.provider, model.id);
+		}
+		sessionManager.appendThinkingLevelChange(thinkingLevel, thinkingSelection);
 	}
 	sessionRef.current = session;
 	const extensionsResult = resourceLoader.getExtensions();
