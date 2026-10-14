@@ -1,3 +1,23 @@
+## 2026-10-14 - Pure network-transient failures never open the fallback circuit or switch models (senpi#3306)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/transient-network.ts` (new): `isPureNetworkTransient` matches a pure network fault (timeout, reset, DNS, connection failure) that names no usage limit.
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: `tryFallback` returns false for a pure network transient so the session never switches models, and `noteHealthFailure` withholds the shared circuit open for the same class.
+
+### Why
+
+A guest tester on a flaky office network saw OmO fall back to another model again and again. Every provider failure — including a bare timeout or ECONNRESET — was recorded into the fallback circuit and could switch models. A pure network fault is the transport's fault, not the model's or the account's; the same-model retry budget already paces it.
+
+### Why an extension could not handle it
+
+Fallback switching and circuit opening live in the core retry-fallback controller, below the extension API; no extension can intercept the failure classification there.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: `tryFallback` and `noteHealthFailure`.
+- `packages/coding-agent/src/core/retry-fallback/`: the new `transient-network.ts`.
+
 ## 2026-10-13 - Provider auth status re-reads a store that was busy on its first read (omo-desktop-app#2249)
 
 ### What changed

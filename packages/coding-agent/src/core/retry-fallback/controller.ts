@@ -18,6 +18,7 @@ import type {
 	RetryFallbackControllerDeps,
 } from "./controller-types.ts";
 import { pinAfterSwitch } from "./pin.ts";
+import { isPureNetworkTransient } from "./transient-network.ts";
 import { UnusableEntries } from "./unusable.ts";
 import { type UsageLimitScope, usageLimitScope } from "./usage-limit.ts";
 
@@ -193,8 +194,11 @@ export class RetryFallbackController {
 	 * half-open probe - independent of whether a fallback candidate remains.
 	 */
 	noteHealthFailure(model: Model<Api>, thinkingLevel: ThinkingLevel | undefined, failure: CircuitFailure): void {
-		this.unusable.note(model, failure);
 		if (!this.managedChainKey({ model, thinkingLevel })) return;
+		// A pure network fault never opens the shared circuit: it is the transport's fault,
+		// not the model's, and the same-model retry budget already paces it (senpi#3306).
+		if (isPureNetworkTransient(failure.errorMessage)) return;
+		this.unusable.note(model, failure);
 		this.probes.noteFailure(formatSelector(model), failure);
 	}
 
@@ -222,6 +226,11 @@ export class RetryFallbackController {
 		failureObserved = true,
 	): Promise<boolean> {
 		const current = this.deps.getCurrentSelector();
+		// A pure network fault never switches models or opens the shared circuit: it is
+		// the transport's fault, not the model's or the account's, and the same-model retry
+		// budget already paces it. Switching here is what stuck a session on a fallback after
+		// one flaky office network (senpi#3306).
+		if (reason === "transient" && isPureNetworkTransient(failure.errorMessage)) return false;
 		// Only a transient failure that spent its budget opens the shared circuit
 		// here; billing/quota exhaustion is recorded at the failure itself (see
 		// noteHealthFailure) so the final chain entry opens too.
