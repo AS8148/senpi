@@ -104,6 +104,8 @@ describe("isPureNetworkTransient", () => {
 		"getaddrinfo ENOTFOUND api.example.test",
 		"Request timed out after 60000ms",
 		"socket hang up",
+		"Client network socket disconnected before secure TLS connection was established",
+		"write EPIPE",
 	])("#given %s #then it is a network blip", (message) => {
 		expect(isPureNetworkTransient(message)).toBe(true);
 	});
