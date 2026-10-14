@@ -201,7 +201,7 @@ describe.skipIf(process.platform === "win32")("generation handoff between live h
 		// to the reopened session or opens it itself. Poll until the predecessor has released the
 		// path claim and the reopen succeeds (no fixed sleeps).
 		let reopened: WireRecord = {};
-		const reopenDeadline = Date.now() + 60_000;
+		const reopenDeadline = Date.now() + 120_000;
 		for (;;) {
 			reopened = await next.request({ id: "reopen-2", type: "open_session", cwd: qa.cwd, sessionPath });
 			if (reopened.success === true) break;

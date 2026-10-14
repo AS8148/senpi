@@ -246,6 +246,35 @@ export class RpcSessionRegistry {
 	}
 
 	/**
+	 * Discards a session still stuck in "opening" (its runtime construction never resolved), running
+	 * the same rollback the openSession catch runs on failure: dispose what construction started,
+	 * drop the entry, and release the path reservation so another generation or a client can open
+	 * the file again. A stuck auto-reopen uses this to stop holding the path (senpi#3282 review).
+	 */
+	async discardOpeningSession(sessionPath: string): Promise<boolean> {
+		const key = canonicalSessionPath(sessionPath);
+		for (const [handle, entry] of this.entries) {
+			if (entry.state !== "opening" || entry.reservationKey !== key) continue;
+			try {
+				await entry.runtime?.dispose();
+			} catch {
+				// The discard must still release the path.
+			} finally {
+				try {
+					await entry.scope.close?.();
+				} finally {
+					this.entries.delete(handle);
+					this.options.onSizeChange?.(this.entries.size);
+					this.reservations.delete(key);
+					await releaseWithinGrace(this.teardownHost, handle, key);
+				}
+			}
+			return true;
+		}
+		return false;
+	}
+
+	/**
 	 * Read-only lookup with no state transitions or attachment accounting.
 	 * Exists so lifecycle decisions (e.g. deferring a dropped connection's
 	 * release while a turn is still streaming) can inspect the live entry

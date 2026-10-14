@@ -617,8 +617,7 @@ export class SessionCommandRouter {
 		// record entry, or a later generation would reopen a second copy (MEDIUM-1, senpi#3282 review).
 		// Cleared only after the open SUCCEEDS (MEDIUM-A): if the open fails - a session_path_in_use
 		// during a handover, or a bad profile - the entry must stay so a later generation can still
-		// reopen the session. open() resolves `undefined` on success (the response is written through
-		// the writer) and an RpcResponse only on failure, so success is `response === undefined`.
+		// reopen the session.
 		if (command.sessionPath !== undefined && this.handoverParkedDir !== undefined) {
 			const dir = this.handoverParkedDir;
 			const sessionPath = command.sessionPath;

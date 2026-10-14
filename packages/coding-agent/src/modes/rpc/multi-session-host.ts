@@ -108,10 +108,10 @@ interface Connection {
  * entry whose session file is gone is logged and dropped. Runs once at host startup.
  */
 async function reopenHandoverParkedSessions(
-	registry: Pick<RpcSessionRegistry, "openSession"> & { readonly size?: number },
+	registry: Pick<RpcSessionRegistry, "openSession"> &
+		Partial<Pick<RpcSessionRegistry, "discardOpeningSession">> & { readonly size?: number },
 	agentDir: string,
 	socket: string,
-	holder?: { readonly hostInstance: string; readonly hostSocket?: string },
 ): Promise<void> {
 	const daemonDir = createHostDaemonPaths({ socket, agentDir }).dir;
 	// The predecessor parks its retained sessions AFTER this generation binds the public socket (its
@@ -138,7 +138,7 @@ async function reopenHandoverParkedSessions(
 		const parked = await readHandoverParkedSessions(daemonDir);
 		for (const entry of parked) {
 			sawAnyPark = true;
-			await reopenOne(daemonDir, registry, entry, reopenAttempts, holder, heldPolls);
+			await reopenOne(daemonDir, registry, entry, reopenAttempts, heldPolls);
 		}
 		const remaining = (await readHandoverParkedSessions(daemonDir)).length;
 		emptyStreak = remaining === 0 ? emptyStreak + 1 : 0;
@@ -150,10 +150,9 @@ async function reopenHandoverParkedSessions(
 
 async function reopenOne(
 	daemonDir: string,
-	registry: { openSession: RpcSessionRegistry["openSession"] },
+	registry: Pick<RpcSessionRegistry, "openSession"> & Partial<Pick<RpcSessionRegistry, "discardOpeningSession">>,
 	entry: HandoverParkedEntry,
 	attempts: Map<string, number>,
-	holder?: { readonly hostInstance: string; readonly hostSocket?: string },
 	heldPolls?: Map<string, number>,
 ): Promise<void> {
 	await dropHandoverParkedSessionIfFileGone(daemonDir, entry.sessionPath);
@@ -162,26 +161,48 @@ async function reopenOne(
 		return;
 	}
 	try {
-		await registry.openSession(
+		// Bound the construction: a resume that never resolves (a stuck runtime build) would hold the
+		// path's cross-generation claim forever, blocking a client's explicit reopen of its own
+		// retained session. On the timeout the stuck entry is discarded - its reservation released -
+		// and the record cleared, so the client can open the file itself (senpi#3282 review H2).
+		const opened = registry.openSession(
 			{
 				...(entry.cwd !== undefined ? { cwd: entry.cwd } : { cwd: process.cwd() }),
 				sessionPath: entry.sessionPath,
-				...(holder !== undefined
-					? {
-							holderEndpoint: {
-								host_instance: holder.hostInstance,
-								...(holder.hostSocket !== undefined ? { host_socket: holder.hostSocket } : {}),
-							},
-						}
-					: {}),
 				...(entry.durableSessionId !== undefined ? { durableSessionId: entry.durableSessionId } : {}),
 				...(entry.model !== undefined ? { creationModel: entry.model } : {}),
 				...(entry.thinkingLevel !== undefined ? { initialThinkingLevel: entry.thinkingLevel } : {}),
 			},
 			{ retainOnDisconnect: entry.retainOnDisconnect },
 		);
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		try {
+			await Promise.race([
+				opened,
+				new Promise<never>((_resolve, reject) => {
+					timer = setTimeout(
+						() => reject(new Error("reopen construction timed out")),
+						HANDOVER_PARKED_REOPEN_CONSTRUCTION_MS,
+					);
+				}),
+			]);
+		} finally {
+			if (timer !== undefined) clearTimeout(timer);
+		}
 		await clearHandoverParkedSession(daemonDir, entry.sessionPath);
 	} catch (cause) {
+		// A construction that never resolved was timed out above: discard the stuck "opening" entry
+		// so its path reservation is released, and clear the record so the auto-reopen stops
+		// re-hanging on it - a client's explicit reopen can then win the file.
+		if (cause instanceof Error && cause.message === "reopen construction timed out") {
+			process.stderr.write(
+				`senpi rpc successor reopen of parked session ${entry.sessionPath} timed out; releasing the path\n`,
+			);
+			if (registry.discardOpeningSession !== undefined)
+				await registry.discardOpeningSession(entry.sessionPath).catch(() => {});
+			await clearHandoverParkedSession(daemonDir, entry.sessionPath);
+			return;
+		}
 		// A `session_path_in_use` refusal means the predecessor still holds the path's cross-generation
 		// claim (its drain has not released it yet): the holder is alive, so the park is not failing -
 		// it is waiting. It is retried on the next poll, bounded only by the watch budget, and it is
@@ -219,6 +240,7 @@ async function reopenOne(
 // budget is safe: the watch is a background task that never blocks readiness, and it returns early
 // once the record has been drained and stayed empty for the quiet streak.
 const HANDOVER_PARKED_REOPEN_BUDGET_MS = 120_000;
+const HANDOVER_PARKED_REOPEN_CONSTRUCTION_MS = 40_000;
 const HANDOVER_PARKED_REOPEN_POLL_MS = 250;
 const HANDOVER_PARKED_REOPEN_MAX_ATTEMPTS = 8;
 const HANDOVER_PARKED_REOPEN_QUIET_STREAK = 8;
@@ -290,10 +312,7 @@ export function createHostCore(
 		},
 	);
 	if (endpointSocket !== undefined)
-		reopenHandoverParkedSessions(registry, options.agentDir, endpointSocket, {
-			hostInstance: hostInstanceId(),
-			hostSocket: endpointSocket,
-		}).catch((cause: unknown) => {
+		reopenHandoverParkedSessions(registry, options.agentDir, endpointSocket).catch((cause: unknown) => {
 			process.stderr.write(`senpi rpc successor reopen parked set failed: ${String(cause)}\n`);
 		});
 	const gate = new HostCoreGate(registry, (command) => router.handle(command), hooks);
