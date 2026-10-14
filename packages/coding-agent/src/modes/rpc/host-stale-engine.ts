@@ -7,13 +7,13 @@
  * "keep":
  *
  *     stale_unproven_owner  the registration does not prove the process serving this socket (I1)
+ *     stale_clients         the supervisor holds an accepted public connection, or that cannot be read
  *     stale_unreachable     the host does not answer an observing `get_protocol_info`
  *     stale_not_older       its engine ordinal is not STRICTLY older than the caller's (I2: unknown is equal)
  *     stale_persistent      its recorded policy is `persistent`: an operator asked it to stay
  *     stale_sessions        it lists any session, workers included, or does not answer the listing
  *     stale_claims          any session-path claim exists under its `reservations/`
  *     stale_young           it has been up less than its own recorded idle window plus the grace
- *     stale_clients         the supervisor holds an accepted public connection, or that cannot be read
  *
  * Every probe is an observing read, so judging a host never resets its idle window. The caller
  * judges inside the endpoint's ensure lock and stops through `stopHost`, which re-reads the session
@@ -62,6 +62,8 @@ export async function judgeStaleEngine(
 	const paths = createHostDaemonPaths({ socket, agentDir });
 	const owner = await provenOwner(await readHostRegistration(paths), socket);
 	if (owner === undefined) return keep("stale_unproven_owner");
+	// Counted before this judge's own probes connect, so none of them can be read back as a client.
+	const clients = await countPublicClients(owner.pid, socket);
 	const info = await observeProtocolInfo(socket, PROBE_TIMEOUT_MS);
 	if (info === undefined) return keep("stale_unreachable");
 	const hostOrdinal = info.engineOrdinal;
@@ -79,7 +81,7 @@ export async function judgeStaleEngine(
 	if (startedAt === undefined || now - startedAt < policy.idleExitMs + (options.graceMs ?? STALE_ENGINE_GRACE_MS)) {
 		return keep("stale_young");
 	}
-	if ((await countPublicClients(owner.pid, socket)) !== 0) return keep("stale_clients");
+	if (clients !== 0) return keep("stale_clients");
 	return { stale: true, pid: owner.pid };
 }
 

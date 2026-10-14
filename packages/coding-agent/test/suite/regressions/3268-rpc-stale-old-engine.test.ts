@@ -6,6 +6,7 @@ import { readHostRegistration } from "../../../src/modes/rpc/host-daemon-registr
 import { ensureHost } from "../../../src/modes/rpc/host-ensure.ts";
 import { gcHostEndpoints } from "../../../src/modes/rpc/host-gc.ts";
 import { readAllHostStatus } from "../../../src/modes/rpc/host-status-all.ts";
+import { stopHost } from "../../../src/modes/rpc/host-stop.ts";
 import {
 	GENERATION_HOST_ARGS,
 	type GenerationScratch,
@@ -79,7 +80,7 @@ describe.skipIf(process.platform === "win32")("stale old-engine hosts (#3268)", 
 		const { qa, supervisor } = await idleHost("client");
 		await attach(qa);
 		const result = await gcHostEndpoints(qa.agentDir, { staleEngine });
-		expect(result.stopped).toEqual([]);
+		expect(result.stopped).toBeUndefined();
 		expect(result.kept).toEqual([expect.objectContaining({ socket: qa.socket, reason: "stale_clients" })]);
 		expect(processAlive(supervisor)).toBe(true);
 	}, 90_000);
@@ -92,13 +93,13 @@ describe.skipIf(process.platform === "win32")("stale old-engine hosts (#3268)", 
 		);
 		peer.destroy();
 		const result = await gcHostEndpoints(qa.agentDir, { staleEngine });
-		expect(result.stopped).toEqual([]);
+		expect(result.stopped).toBeUndefined();
 		expect(result.kept).toEqual([expect.objectContaining({ socket: qa.socket, reason: "stale_sessions" })]);
 		expect(processAlive(supervisor)).toBe(true);
 	}, 90_000);
 
 	it.each([
-		["the same engine", { client: engineBuildIdentity(), now: PAST_WINDOW }, "stale_not_older"],
+		["the same engine", { client: engineBuildIdentity(), now: PAST_WINDOW }, "live_generation"],
 		["a host still inside its idle window", { client: NEWER_CLIENT, now: Date.now }, "stale_young"],
 	] as const)(
 		"keeps %s",
@@ -107,12 +108,29 @@ describe.skipIf(process.platform === "win32")("stale old-engine hosts (#3268)", 
 			const [row] = await readAllHostStatus({ agentDir: qa.agentDir, includeWorkers: true, staleEngine: options });
 			expect(row?.stale_old_engine).toBe(false);
 			const result = await gcHostEndpoints(qa.agentDir, { staleEngine: options });
-			expect(result.stopped).toEqual([]);
+			expect(result.stopped).toBeUndefined();
 			expect(result.kept).toEqual([expect.objectContaining({ socket: qa.socket, reason })]);
 			expect(processAlive(supervisor)).toBe(true);
 		},
 		90_000,
 	);
+
+	it("refuses a stop that requires an answer from a host that stopped answering", async () => {
+		const { qa, supervisor, host } = await idleHost("silent");
+		process.kill(host, "SIGSTOP");
+		try {
+			const result = await stopHost({
+				socket: qa.socket,
+				agentDir: qa.agentDir,
+				timeoutMs: 500,
+				requireAnswer: true,
+			});
+			expect(result).toEqual({ action: "refuse", reason: "sessions_live" });
+			expect(processAlive(supervisor)).toBe(true);
+		} finally {
+			process.kill(host, "SIGCONT");
+		}
+	}, 90_000);
 
 	it("never judges a live host without the stale-engine option", async () => {
 		const { qa, supervisor } = await idleHost("plain");

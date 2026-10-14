@@ -73,7 +73,7 @@ export interface HostGcEntry<Reason extends string> {
 
 export interface HostGcResult {
 	readonly removed: readonly HostGcEntry<SocketSilence>[];
-	/** Present only when the run judged stale older-engine hosts (`staleEngine`). */
+	/** Present only when a run stopped a stale older-engine host (`staleEngine`). */
 	readonly stopped?: readonly (HostGcEntry<"stale_old_engine"> & { readonly pid: number })[];
 	readonly kept: readonly HostGcEntry<HostGcKeptReason>[];
 }
@@ -116,7 +116,7 @@ export async function gcHostEndpoints(agentDir: string, options: HostGcOptions =
 			kept.push({ ...entry, reason: "failed", error: error instanceof Error ? error.message : String(error) });
 		}
 	}
-	return options.staleEngine === undefined ? { removed, kept } : { removed, stopped, kept };
+	return stopped.length === 0 ? { removed, kept } : { removed, stopped, kept };
 }
 
 /** One endpoint, judged and removed exactly as a full run does; the budgeted pass (`host-gc-pass.ts`) reuses it. */
@@ -137,7 +137,8 @@ export async function gcEndpoint(
 		if (evidence.inUse === "live_claim" || (evidence.inUse !== undefined && options.staleEngine === undefined)) {
 			return { removed: false, reason: evidence.inUse };
 		}
-		if (evidence.inUse !== undefined) return await stopIfStale(socket, dir, options.staleEngine ?? {});
+		if (evidence.inUse !== undefined)
+			return await stopIfStale(socket, dir, evidence.inUse, options.staleEngine ?? {});
 		const skipped = await removeEndpoint(socket, dir);
 		return { removed: true, reason: evidence.silence, skipped };
 	} finally {
@@ -145,9 +146,19 @@ export async function gcEndpoint(
 	}
 }
 
+const NOT_A_CANDIDATE: ReadonlySet<StaleEngineKeep> = new Set([
+	"stale_unproven_owner",
+	"stale_unreachable",
+	"stale_not_older",
+]);
+
+/** The stop's own reads, kept short so the endpoint's ensure lock is not held for their default 10 s each. */
+const STALE_STOP_TIMEOUT_MS = 2_000;
+
 async function stopIfStale(
 	socket: string,
 	dir: string,
+	inUse: EndpointInUse,
 	options: StaleEngineOptions,
 ): Promise<
 	| { readonly removed: false; readonly reason: HostGcKeptReason }
@@ -155,8 +166,9 @@ async function stopIfStale(
 > {
 	const agentDir = dirname(dirname(dir));
 	const verdict = await judgeStaleEngine(socket, agentDir, options.client ?? engineBuildIdentity(), options);
-	if (!verdict.stale) return { removed: false, reason: verdict.reason };
-	const result = await stopHost({ socket, agentDir });
+	// A host that is no candidate at all (most run this very engine) keeps the evidence reason it always had.
+	if (!verdict.stale) return { removed: false, reason: NOT_A_CANDIDATE.has(verdict.reason) ? inUse : verdict.reason };
+	const result = await stopHost({ socket, agentDir, timeoutMs: STALE_STOP_TIMEOUT_MS, requireAnswer: true });
 	if (result.action === "refuse") {
 		return { removed: false, reason: result.reason === "unknown_owner" ? "stale_unproven_owner" : "stale_sessions" };
 	}

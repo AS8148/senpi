@@ -14,7 +14,8 @@ import { readdir, readFile, readlink, realpath } from "node:fs/promises";
 import { join } from "node:path";
 
 const LSOF_TIMEOUT_MS = 2_000;
-const LINUX_SOCKET_LISTENING = "01";
+/** `__SO_ACCEPTCON` in `/proc/net/unix` Flags: the socket is a listener. */
+const LINUX_ACCEPTCON_FLAG = 0x10000;
 
 export async function countPublicClients(supervisorPid: number, socket: string): Promise<number | undefined> {
 	const names = new Set([socket, await realpath(socket).catch(() => socket)]);
@@ -61,10 +62,10 @@ async function linuxDescriptors(pid: number, names: ReadonlySet<string>): Promis
 		let listeners = 0;
 		for (const line of (await readFile("/proc/net/unix", "utf8")).split("\n").slice(1)) {
 			const fields = line.trim().split(/\s+/);
-			const [state, inode, path] = [fields[5], fields[6], fields[7]];
+			const [flags, inode, path] = [fields[3], fields[6], fields[7]];
 			if (inode === undefined || path === undefined || !inodes.has(inode) || !names.has(path)) continue;
 			total += 1;
-			if (state === LINUX_SOCKET_LISTENING) listeners += 1;
+			if ((Number.parseInt(flags ?? "0", 16) & LINUX_ACCEPTCON_FLAG) !== 0) listeners += 1;
 		}
 		return { total, listeners };
 	} catch {
