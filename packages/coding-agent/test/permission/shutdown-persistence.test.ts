@@ -15,7 +15,7 @@ import { closeLiveHosts, createLiveHost, SHELL_FIXTURE_INPUT } from "./live-perm
 
 afterEach(closeLiveHosts);
 
-const SHELL_RULE = { permission: "shell_fixture", pattern: "*", action: "allow" } as const;
+const SHELL_RULE = { permission: "shell_fixture", action: "allow" } as const;
 
 async function answerAlwaysAndFinish(host: Awaited<ReturnType<typeof createLiveHost>>): Promise<void> {
 	const turn = host.runProbe("shell_fixture", SHELL_FIXTURE_INPUT, "run shell");

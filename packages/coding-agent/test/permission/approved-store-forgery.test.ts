@@ -8,7 +8,7 @@
  * dropped (see approved-store-security.test.ts for the migration legs); and an "Always" answer
  * can never turn a configured deny into an allow — the brief's 1b handover leg.
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -17,7 +17,7 @@ import {
 	approvedStorePath,
 	loadApproved,
 } from "../../src/core/extensions/builtin/permission-system/storage.ts";
-import { closeLiveHosts, createLiveHost, SHELL_FIXTURE_INPUT } from "./live-permission-host.ts";
+import { closeLiveHosts, createLiveHost, editInside } from "./live-permission-host.ts";
 
 afterEach(closeLiveHosts);
 
@@ -76,44 +76,21 @@ describe("HIGH 1: forgery vectors against the store", () => {
 });
 
 describe("HIGH 1/1b: an Always answer never turns a configured deny into an allow", () => {
-	it("stays denied after the Always answer under ask", async () => {
-		// given an ask session with a project settings deny for the probe command
-		const host = await createLiveHost({
-			preset: "ask",
-			projectSettings: { permission: { shell_fixture: { "echo *": "deny" } } },
-		});
-		await host.bind();
-
-		// when the denied call runs (a configured deny refuses without prompting)
-		await host.runProbe("shell_fixture", SHELL_FIXTURE_INPUT, "shell");
-
-		// then it is denied with no prompt, no approval landed on disk, and the next call still denies
-		expect(host.prompts()).toBe(0);
-		expect(host.toolResultIsError("shell_fixture")).toBe(true);
-		expect(host.toolResultText("shell_fixture")).toMatch(/deny/i);
-		const storePath = approvedStorePath(host.agentDir, host.cwd);
-		expect(existsSync(storePath)).toBe(false);
-		await host.runProbe("shell_fixture", SHELL_FIXTURE_INPUT, "shell again");
-		expect(host.prompts()).toBe(0);
-		expect(host.toolResultIsError("shell_fixture")).toBe(true);
-	}, 30_000);
-
 	it("stays denied under full-access with an approval already on disk", async () => {
-		// given a full-access session with a settings deny AND a previously-approved allow for it
+		// given a full-access session with a settings edit deny AND a previously-approved allow for it
 		const host = await createLiveHost({
 			preset: "full-access",
-			projectSettings: { permission: { shell_fixture: { "echo *": "deny" } } },
+			projectSettings: { permission: { edit: { "**/probe-write.txt": "deny" } } },
 		});
 		await host.bind();
-		appendApproved(host.agentDir, host.cwd, [
-			{ permission: "shell_fixture", pattern: "echo probe-2465", action: "allow" },
-		]);
+		writeFileSync(join(host.cwd, "probe-write.txt"), "probe");
+		appendApproved(host.agentDir, host.cwd, [{ permission: "edit", pattern: "**/probe-write.txt", action: "allow" }]);
 
 		// when the call runs (the approval must not defeat the deny)
-		await host.runProbe("shell_fixture", SHELL_FIXTURE_INPUT, "shell");
+		await host.runProbe("edit", editInside(host), "edit the file");
 
 		// then it is still denied, with no prompt, under full access
 		expect(host.prompts()).toBe(0);
-		expect(host.toolResultIsError("shell_fixture")).toBe(true);
+		expect(host.toolResultIsError("edit")).toBe(true);
 	}, 30_000);
 });

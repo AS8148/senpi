@@ -107,8 +107,19 @@ export class PermissionService {
 			return { action: "deny", rules: [{ permission, pattern: "*", action: "deny" }] };
 		}
 		if (!options.presetBound) {
-			// HIGH 2: evaluate the configured rules alone first. When the configured decision is a deny,
-			// it outranks any approval; an approval can only turn a configured ask into an allow.
+			// HIGH 2: a configured (settings/CLI) decision outranks the preset's wildcard and any
+			// approval. Evaluate the user's rules with their own last-match order; when the user's
+			// decision is a deny it wins outright, and a preset wildcard-ask never masks it. The preset
+			// only fills the gap the user left (no user rule matched, or the user decision is an ask).
+			const userRule = evaluate(
+				permission,
+				target,
+				this.staticRuleset.filter((rule) => !isPresetRule(rule)),
+			);
+			const userRules = this.staticRuleset.filter((rule) => !isPresetRule(rule));
+			if (userRules.includes(userRule) && userRule.action === "deny") {
+				return { action: "deny", rules: [{ ...userRule }] };
+			}
 			const configured = evaluate(permission, target, this.staticRuleset);
 			if (configured.action === "deny") return { action: "deny", rules: [{ ...configured }] };
 			const approvedRule = evaluate(permission, target, this.approved);

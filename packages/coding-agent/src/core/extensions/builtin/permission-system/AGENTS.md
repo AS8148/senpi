@@ -47,7 +47,7 @@ permission-system/
 5. **Project settings** (`.senpi/settings.json` `permission`).
 6. **CLI preset** (`--permission-preset`).
 7. **CLI flags** (`--permission`).
-8. **Session approvals** — in-memory "always allow" rules; new ones are appended to `<projectDir>/.senpi/permissions-approved.jsonl` on session shutdown.
+8. **Session approvals** — in-memory "always allow" rules; new ones are persisted to the agent-dir store at `<agentDir>/permissions/approved/<project-hash>.jsonl` (validated, allow-only, symlink-safe), appended at answer time and at session shutdown. The legacy `<projectDir>/.senpi/permissions-approved.jsonl` is imported once, validated, then removed.
 9. **No match** — interactive → ask; non-interactive → block (`non-interactive.ts`).
 
 Presets other than `full-access` start with `*=ask` so they mask lower-precedence wildcard allows before adding their own allows.
