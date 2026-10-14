@@ -440,6 +440,10 @@ type WithParentToolCallId<E> = E extends {
 /** Session-specific events that extend the core AgentEvent */
 type AgentSessionAgentEndEvent = Extract<AgentEvent, { type: "agent_end" }> & {
 	willRetry: boolean;
+	aborted?: true;
+	abortSource?: AgentAbortSource;
+	/** Set when the turn's inactivity lease or hard max runtime ended it (see turn-deadline.ts). */
+	deadline?: TurnDeadline;
 };
 
 export type AgentSessionEvent =
@@ -1432,6 +1436,7 @@ export class AgentSession {
 			},
 			owner: () => this.sessionId,
 			now: this._fallbackNow,
+			wallNow: config.fallbackWallNow ?? config.fallbackNow ?? Date.now,
 			settings: () => this.settingsManager.getFallbackCircuitSettings(),
 			logger: fallbackLogger,
 		});

@@ -3,7 +3,7 @@
 // The lease renews only on tool execution events and admitted user input.
 import { clearTimeout as clearRealTimeout, setTimeout as setRealTimeout } from "node:timers";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/compat";
+import { fauxAssistantMessage } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHarness, getAssistantTexts, type Harness } from "../harness.ts";
@@ -89,8 +89,7 @@ describe("turn inactivity lease and max runtime (senpi#3227)", () => {
 		await prompting;
 
 		expect(agentEnd.abortSource).toBe("system");
-		const deadline = (agentEnd as unknown as { deadline?: { kind: string; limitMs: number; elapsedMs: number } })
-			.deadline;
+		const deadline = agentEnd.deadline;
 		expect(deadline?.kind).toBe("inactivity");
 		expect(deadline?.limitMs).toBe(INACTIVITY_MS);
 		expect(deadline?.elapsedMs).toBeGreaterThanOrEqual(INACTIVITY_MS);
@@ -101,7 +100,10 @@ describe("turn inactivity lease and max runtime (senpi#3227)", () => {
 
 	it("renews on tool execution progress so only the hard max runtime stops the turn", async () => {
 		// The inactivity lease is set far above the hard cap, so only the cap can end the turn.
-		const h = await createLeaseHarness({ turn_inactivity_ms: LONG_INACTIVITY_MS, turn_max_runtime_ms: MAX_RUNTIME_MS }, true);
+		const h = await createLeaseHarness(
+			{ turn_inactivity_ms: LONG_INACTIVITY_MS, turn_max_runtime_ms: MAX_RUNTIME_MS },
+			true,
+		);
 		h.setResponses([fauxAssistantMessage(`work in progress ${"still going ".repeat(320)}`)]);
 		const ended = waitForSessionEvent(h, "agent_end", (event) => event.aborted === true);
 
@@ -110,7 +112,7 @@ describe("turn inactivity lease and max runtime (senpi#3227)", () => {
 		const agentEnd = await ended;
 		await prompting;
 
-		const deadline = (agentEnd as unknown as { deadline?: { kind: string; limitMs: number } }).deadline;
+		const deadline = agentEnd.deadline;
 		expect(deadline?.kind).toBe("max_runtime");
 		expect(deadline?.limitMs).toBe(MAX_RUNTIME_MS);
 	}, 60_000);
@@ -136,7 +138,7 @@ describe("turn inactivity lease and max runtime (senpi#3227)", () => {
 		const agentEnd = await ended;
 		await prompting;
 
-		const deadline = (agentEnd as unknown as { deadline?: { kind: string } }).deadline;
+		const deadline = agentEnd.deadline;
 		expect(deadline?.kind).toBe("inactivity");
 	}, 60_000);
 

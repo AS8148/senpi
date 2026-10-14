@@ -1,3 +1,21 @@
+## 2026-10-14 - The direct anthropic provider offers no Claude subscription OAuth (senpi#3259)
+
+### What changed
+
+- `packages/ai/src/providers/anthropic.ts`: `anthropicProvider()` no longer registers the "Anthropic (Claude Pro/Max)" OAuth method; it keeps API-key, `ANTHROPIC_AUTH_TOKEN`, env and workload-identity auth. Claude subscriptions sign in through the coding-agent `anthropic-subscription` lane, which runs the same OAuth flow (`loadAnthropicOAuth`) behind the Claude Agent SDK.
+
+### Why
+
+- Anthropic bills a Claude subscription token sent straight to the Messages API as a third-party app: every request is refused with "Third-party apps now draw from your extra usage, not your plan limits", so a user who signed in this way could never use their plan (senpi#3259). The Agent SDK lane runs requests through Claude Code, the path that draws from plan limits.
+
+### Why an extension could not handle it
+
+- Login surfaces (TUI `/login`, RPC `get_auth_providers`, `AuthStorage.getOAuthProviders()`) enumerate `builtinProviders()` auth methods directly; an extension can add a provider but cannot remove a builtin provider's OAuth method.
+
+### Expected merge conflict zones
+
+- LOW: the `auth` block of `anthropicProvider()` and its two OAuth imports.
+
 ## 2026-10-11 - Keep unverified xAI search opt-in (senpi#3122 review)
 
 ### What changed
