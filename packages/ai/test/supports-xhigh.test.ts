@@ -222,10 +222,11 @@ describe("getSupportedThinkingLevels", () => {
 		expect(getSupportedThinkingLevels(model!)).toEqual(["off", "low", "high", "max"]);
 	});
 
-	it("includes low/high/max plus off for DeepSeek V4 Flash on opencode-go", () => {
-		const model = getModel("opencode-go", "deepseek-v4-flash");
+	it("maps the opencode-go model served over Google Generative AI to its low/medium/high thinking levels", () => {
+		const model = getModel("opencode-go", "gemini-4-argon-contributor");
 		expect(model).toBeDefined();
-		expect(getSupportedThinkingLevels(model!)).toEqual(["off", "low", "high", "max"]);
+		expect(model!.api).toBe("google-generative-ai");
+		expect(getSupportedThinkingLevels(model!)).toEqual(["low", "medium", "high"]);
 	});
 
 	it("preserves low/high/max metadata for DeepSeek V4.1 Flash on OpenRouter", () => {
