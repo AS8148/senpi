@@ -1,3 +1,22 @@
+## 2026-10-15 - Connection failures classify as network from structured transport codes (senpi#3228)
+
+### What changed
+
+- `packages/ai/src/utils/provider-diagnostic-vocabulary.ts`: `categoryForTransportCode` (closed allowlist: ECONNRESET, ECONNREFUSED, ETIMEDOUT, ENOTFOUND, EAI_AGAIN, EPIPE, UND_ERR_SOCKET, UND_ERR_CONNECT_TIMEOUT -> `network`); `network` is a recognized category.
+- `packages/ai/src/utils/provider-diagnostic-sources.ts`: `transportProviderDiagnosticFromError` reads the error's own `code`, then `cause.code`, never the message; the transport wrappers fall back to it when the adapter's classifier finds nothing.
+
+### Why
+
+A dropped connection had no category, so clients could not say "check connectivity".
+
+### Why an extension could not handle it
+
+The diagnostic is minted inside the provider transport wrappers in `pi-ai`, below any extension.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/utils/provider-diagnostic-sources.ts`: `awaitProviderTransport` and `iterateProviderTransport`.
+
 ## 2026-10-14 - Anthropic third-party billing rejection is terminal account exhaustion with its own explanation (senpi#3259)
 
 ### What changed

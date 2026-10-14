@@ -1,3 +1,21 @@
+## 2026-10-15 - ProviderDiagnostic gains the network category and structured_transport evidence (senpi#3228)
+
+### What changed
+
+- `packages/ai/src/provider-diagnostic.ts`: `ProviderDiagnosticCategory` adds `network`; `ProviderDiagnosticEvidence` adds `structured_transport`; `sanitizeProviderDiagnostic` accepts a transport diagnostic only with no status and a code from the allowlist.
+
+### Why
+
+See `utils/changes.md` (senpi#3228): connection failures need a category clients can act on.
+
+### Why an extension could not handle it
+
+The diagnostic type and its boundary validation are part of the `pi-ai` contract.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/provider-diagnostic.ts`: the category and evidence unions and `sanitizeProviderDiagnostic`.
+
 ## 2026-10-11 - Usage-limit advice retains structured cause (senpi#3131 review)
 
 ### What changed

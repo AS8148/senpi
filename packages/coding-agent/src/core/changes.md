@@ -1,3 +1,22 @@
+## 2026-10-15 - agent_end carries a structured provider failure with a reason and an action (senpi#3228)
+
+### What changed
+
+- `packages/coding-agent/src/core/provider-failure.ts` (new): `describeProviderFailure` maps the failed message's sanitized `providerDiagnostic` to `{ category, provider, httpStatus?, code?, reason, action }` with one action per category (`unknown` included); `providerFailureOf` reads it from the run's last assistant message only when `stopReason` is `"error"`; `formatProviderFailure` renders one line.
+- `packages/coding-agent/src/core/agent-session.ts`: `AgentSessionAgentEndEvent` gains optional `failure`, and the listener-facing `agent_end` is passed through `withProviderFailure`.
+
+### Why
+
+Clients could not tell an expired login from a rate limit or an outage without parsing prose, so `task_output` and the desktop failure card had no next step to show.
+
+### Why an extension could not handle it
+
+`agent_end` is emitted by `AgentSession` to every listener (RPC, print JSON, TUI); an extension can observe the event but cannot add a field every surface sees.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the `AgentSessionAgentEndEvent` type and the `agent_end` branch of the listener emit.
+
 ## 2026-10-14 - A network blip falls back for one turn at most and never opens the fallback circuit (senpi#3306)
 
 ### What changed
