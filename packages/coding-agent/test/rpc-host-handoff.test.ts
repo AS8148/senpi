@@ -197,10 +197,16 @@ describe.skipIf(process.platform === "win32")("generation handoff between live h
 		expect(await waitForPidGone(firstPid(qa), 45_000)).toBe(true);
 
 		const linesBefore = await jsonlLines(sessionPath);
-		// The successor may have already reopened the parked session itself (senpi#3282), so a manual
-		// reopen either attaches to that session or wins the path itself - both leave it open.
-		const reopened = await next.request({ id: "reopen-2", type: "open_session", cwd: qa.cwd, sessionPath });
-		expect(reopened).toMatchObject({ command: "open_session", success: true });
+		// The successor auto-reopens the parked session (senpi#3282), so a manual reopen of the same
+		// path is refused as already-held. Whoever holds it, the session is open on the successor.
+		const listed = (await next.request({ id: "list", type: "list_sessions", include_workers: true })).data as
+			| { sessions?: Array<{ durableSessionId?: string; sessionPath?: string; status?: string }> }
+			| undefined;
+		const rows = listed?.sessions ?? [];
+		const stillOpen = rows.some(
+			(row) => row.status === "open" && (row.sessionPath === sessionPath || row.durableSessionId === sessionId),
+		);
+		expect(stillOpen, `the session is not open on the successor (rows: ${JSON.stringify(rows)})`).toBe(true);
 		const linesAfter = await jsonlLines(sessionPath);
 		expect(linesAfter.length).toBeGreaterThanOrEqual(linesBefore.length);
 	}, 180_000);

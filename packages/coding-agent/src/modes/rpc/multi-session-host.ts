@@ -113,20 +113,34 @@ async function reopenHandoverParkedSessions(
 	socket: string,
 ): Promise<void> {
 	const daemonDir = createHostDaemonPaths({ socket, agentDir }).dir;
-	// The predecessor parks its retained sessions AFTER this generation binds the public socket
-	// (its drain fires on detecting supersession), so the record is not necessarily present at this
-	// generation's startup. Poll for a bounded window and reopen each entry as it lands; an entry is
+	// The predecessor parks its retained sessions AFTER this generation binds the public socket (its
+	// drain fires on detecting supersession), so the record is not necessarily present at startup,
+	// and a session still busy at the drain start parks only after its turn settles. Returning on the
+	// first empty read would drop those. Keep watching until the record has stayed empty for a
+	// sustained streak - the drain has finished writing by then - bounded by the window. Entries are
 	// removed only after a successful reopen (crash-safe, at most once, never lost).
-	const deadline = Date.now() + HANDOVER_PARKED_REOPEN_WINDOW_MS;
+	//
+	// The empty-streak early-exit only applies once a park has actually been seen: under load the
+	// predecessor's drain can be delayed past the whole quiet streak while it has not written a
+	// single entry yet, and returning then would skip a park that lands late (senpi#3282 review).
+	// Before the first entry arrives, only the budget ends the watch. The record persists until a
+	// successful reopen consumes it, so the watch can afford a generous budget: a predecessor whose
+	// event loop is starved by parallel hosts still parks eventually, and the entry is waiting when
+	// it does. Once a park has been seen and the record has stayed empty for the quiet streak, the
+	// drain is finished and the watch returns early.
+	const deadline = Date.now() + HANDOVER_PARKED_REOPEN_BUDGET_MS;
+	const reopenAttempts = new Map<string, number>();
+	let emptyStreak = 0;
+	let sawAnyPark = false;
 	for (;;) {
 		const parked = await readHandoverParkedSessions(daemonDir);
 		for (const entry of parked) {
-			await reopenOne(daemonDir, registry, entry);
+			sawAnyPark = true;
+			await reopenOne(daemonDir, registry, entry, reopenAttempts);
 		}
-		// Return only after the drain finished writing (we reopened something and the record is now
-		// empty) or the window closed; an empty read BEFORE the predecessor's drain lands must not
-		// end the wait, or the whole reopen is skipped.
-		if (parked.length > 0 && (await readHandoverParkedSessions(daemonDir)).length === 0) return;
+		const remaining = (await readHandoverParkedSessions(daemonDir)).length;
+		emptyStreak = remaining === 0 ? emptyStreak + 1 : 0;
+		if (sawAnyPark && emptyStreak >= HANDOVER_PARKED_REOPEN_QUIET_STREAK) return;
 		if (Date.now() >= deadline) return;
 		await new Promise((resolve) => setTimeout(resolve, HANDOVER_PARKED_REOPEN_POLL_MS));
 	}
@@ -136,14 +150,15 @@ async function reopenOne(
 	daemonDir: string,
 	registry: { openSession: RpcSessionRegistry["openSession"] },
 	entry: HandoverParkedEntry,
+	attempts: Map<string, number>,
 ): Promise<void> {
-	// A session file that no longer exists can never reopen: drop the entry instead of retrying it
-	// in every later generation (the review's dead-path finding).
 	await dropHandoverParkedSessionIfFileGone(daemonDir, entry.sessionPath);
 	if (!existsSync(entry.sessionPath)) {
 		process.stderr.write(`senpi rpc successor dropped a parked session whose file is gone: ${entry.sessionPath}\n`);
 		return;
 	}
+	const tried = (attempts.get(entry.sessionPath) ?? 0) + 1;
+	attempts.set(entry.sessionPath, tried);
 	try {
 		await registry.openSession(
 			{
@@ -157,12 +172,26 @@ async function reopenOne(
 		);
 		await clearHandoverParkedSession(daemonDir, entry.sessionPath);
 	} catch (cause) {
+		if (tried >= HANDOVER_PARKED_REOPEN_MAX_ATTEMPTS) {
+			process.stderr.write(
+				`senpi rpc successor gave up reopening parked session ${entry.sessionPath} after ${tried} attempts: ${String(cause)}\n`,
+			);
+			await clearHandoverParkedSession(daemonDir, entry.sessionPath);
+			return;
+		}
 		process.stderr.write(`senpi rpc successor reopen parked session ${entry.sessionPath} failed: ${String(cause)}\n`);
 	}
 }
 
-const HANDOVER_PARKED_REOPEN_WINDOW_MS = 30_000;
+// The watch budget must outlast a heavily loaded drain: a predecessor whose event loop is blocked
+// (parallel hosts, a busy turn settling) can take tens of seconds to write its park after this
+// generation binds. The record persists until a successful reopen consumes it, so a generous
+// budget is safe: the watch is a background task that never blocks readiness, and it returns early
+// once the record has been drained and stayed empty for the quiet streak.
+const HANDOVER_PARKED_REOPEN_BUDGET_MS = 120_000;
 const HANDOVER_PARKED_REOPEN_POLL_MS = 250;
+const HANDOVER_PARKED_REOPEN_MAX_ATTEMPTS = 8;
+const HANDOVER_PARKED_REOPEN_QUIET_STREAK = 8;
 
 export async function runMultiSessionHost(options: MultiSessionHostOptions): Promise<never> {
 	return runAsHostGenerationProcess(() =>

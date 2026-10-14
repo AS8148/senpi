@@ -1,8 +1,5 @@
-import { readFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createHostDaemonPaths } from "../src/modes/rpc/host-daemon-paths.ts";
 import { probeHost } from "../src/modes/rpc/host-probe.ts";
 import { readHostStatus } from "../src/modes/rpc/host-status.ts";
 import { signalGeneration } from "../src/modes/rpc/host-stop.ts";
@@ -86,21 +83,6 @@ describe.skipIf(process.platform === "win32")("client-less retained sessions acr
 		const current = status.generations.find((row) => row.current);
 		if (current !== undefined) pids.push(current.pid);
 
-		const daemonDir = createHostDaemonPaths({ socket: rig.qa.socket, agentDir: rig.qa.agentDir }).dir;
-		const parkedRecordPath = join(daemonDir, "handover-parked.json");
-		const readParkedIds = (): string[] => {
-			try {
-				const record = JSON.parse(readFileSync(parkedRecordPath, "utf8")) as {
-					sessions?: Array<{ durableSessionId?: string }>;
-				};
-				return (record.sessions ?? [])
-					.map((row) => row.durableSessionId)
-					.filter((id): id is string => typeof id === "string");
-			} catch {
-				return [];
-			}
-		};
-
 		const lister = await connect(rig, peers);
 		const listDurableIds = async (): Promise<string[]> => {
 			const listed = dataOf(await lister.request({ id: "list", type: "list_sessions", include_workers: true }));
@@ -109,22 +91,16 @@ describe.skipIf(process.platform === "win32")("client-less retained sessions acr
 				.filter((id): id is string => typeof id === "string");
 		};
 
-		// After the first handover the session is open with the same durable id, OR present in the
-		// parked record (a retain_on_disconnect session survives every generation, senpi#3282).
+		// After the first handover the session must be OPEN with the same durable id: a successor
+		// that leaves it only in the parked record (or drops it) FAILS, because the production bug is
+		// exactly that the reopened session never comes back open (senpi#3282).
 		const deadline1 = Date.now() + 60_000;
-		let openIds: string[] = [];
-		let parkedIds: string[] = [];
-		for (;;) {
-			openIds = await listDurableIds();
-			parkedIds = readParkedIds();
-			if (openIds.includes(durableId!) || parkedIds.includes(durableId!)) break;
-			if (Date.now() >= deadline1) break;
-			await new Promise((resolve) => setTimeout(resolve, 250));
+		let openAfterFirst = false;
+		while (!openAfterFirst && Date.now() < deadline1) {
+			openAfterFirst = (await listDurableIds()).includes(durableId!);
+			if (!openAfterFirst) await new Promise((resolve) => setTimeout(resolve, 250));
 		}
-		expect(
-			openIds.includes(durableId!) || parkedIds.includes(durableId!),
-			`durable ${durableId} neither open nor in the parked record`,
-		).toBe(true);
+		expect(openAfterFirst, `durable ${durableId} not open after the first handover`).toBe(true);
 
 		// After a SECOND handover the session is open again with the same durable id.
 		const successorInfo = answer.successor as { instanceId: string; generation: number; runtimeBuildId: string };
@@ -146,16 +122,10 @@ describe.skipIf(process.platform === "win32")("client-less retained sessions acr
 		});
 		const deadline2 = Date.now() + 60_000;
 		let openAgain = false;
-		let lastParked: string[] = [];
 		while (!openAgain && Date.now() < deadline2) {
 			openAgain = (await listDurableIds()).includes(durableId!);
-			lastParked = readParkedIds();
-			if (openAgain || lastParked.includes(durableId!)) break;
-			await new Promise((resolve) => setTimeout(resolve, 250));
+			if (!openAgain) await new Promise((resolve) => setTimeout(resolve, 250));
 		}
-		expect(
-			openAgain || lastParked.includes(durableId!),
-			`durable ${durableId} neither open nor in the parked record after the second handover`,
-		).toBe(true);
+		expect(openAgain, `durable ${durableId} not open after the second handover`).toBe(true);
 	}, 300_000);
 });

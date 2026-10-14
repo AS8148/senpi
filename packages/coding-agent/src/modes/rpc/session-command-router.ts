@@ -3,7 +3,7 @@ import { detachConnection } from "./connection-detach.ts";
 import { buildRpcSessionState } from "./connection-handler.ts";
 import { answerEffectFromTranscript } from "./effect-commands.ts";
 import { multiSessionHostCapabilities } from "./host-capabilities.ts";
-import { recordHandoverParkedSession } from "./host-handover-parked.ts";
+import { clearHandoverParkedSession, recordHandoverParkedSession } from "./host-handover-parked.ts";
 import { answerWarm } from "./host-warm.ts";
 import { hostInstanceId, protocolIdentity } from "./protocol-identity.ts";
 import {
@@ -473,13 +473,18 @@ export class SessionCommandRouter {
 		const owners = handoff
 			? [...this.sessionsByConnection].filter(([, owned]) => owned.has(sessionId)).map(([connection]) => connection)
 			: [];
-		// A retain_on_disconnect session survives EVERY generation (senpi#3282): park it to disk AND
-		// into the handover record, whether the park came from the handoff drain or the idle sweep, so
-		// the successor reopens it. The write is awaited before the drain proceeds, or the generation
-		// can hand over and exit before it lands and the park is lost. A removal without recording it
-		// is the bug this guards.
+		// A failed claim means an explicit close raced us and owns the entry now; nothing is recorded,
+		// or a closed session would come back on the next host start (MEDIUM-1, senpi#3282 review).
+		const claim = this.tryClaimClose(sessionId, { drainAttachments: true });
+		if (!claim) return;
+		// A retain_on_disconnect session survives EVERY generation: park it to disk AND into the
+		// handover record, whether the park came from the handoff drain or the idle sweep, so the
+		// successor reopens it. Recorded only after the claim wins, and only when the teardown parks
+		// (parkedPath set) - never for an explicit close. The write is awaited before the drain
+		// proceeds, or the generation can hand over and exit before it lands and the park is lost.
 		if (
 			this.handoverParkedDir !== undefined &&
+			parkedPath !== undefined &&
 			retained?.retainOnDisconnect === true &&
 			retained.sessionPath !== undefined
 		) {
@@ -496,9 +501,6 @@ export class SessionCommandRouter {
 				process.stderr.write(`senpi rpc handover park record ${sessionId} failed: ${String(cause)}\n`);
 			});
 		}
-		// A failed claim means an explicit close raced us and owns the entry now.
-		const claim = this.tryClaimClose(sessionId, { drainAttachments: true });
-		if (!claim) return;
 		const binding = this.bindings.get(sessionId);
 		binding?.cancelPendingExtensionUiRequests?.();
 		if (!handoff) this.forgetSessionOwnership(sessionId);
@@ -590,6 +592,10 @@ export class SessionCommandRouter {
 	private openWithBarrier(command: Extract<RpcCommand, { type: "open_session" }>): Promise<RpcResponse | undefined> {
 		const owner = this.writer.currentConnection();
 		if (owner === undefined) return this.open(command);
+		// A manual reopen-by-path supersedes the handover auto-reopen for that session: clear its
+		// record entry, or a later generation would reopen a second copy (MEDIUM-1, senpi#3282 review).
+		if (command.sessionPath !== undefined && this.handoverParkedDir !== undefined)
+			void clearHandoverParkedSession(this.handoverParkedDir, command.sessionPath).catch(() => {});
 		let resolveBarrier!: () => void;
 		const barrier = new Promise<void>((resolve) => {
 			resolveBarrier = resolve;
@@ -995,6 +1001,11 @@ export class SessionCommandRouter {
 		try {
 			if (owner !== undefined) this.releaseOwnerAttachment(owner, command.sessionId);
 			if (claim.finalizer) {
+				// An explicit close ends the session for good: drop any handover-parked record entry, or
+				// the session would come back on the next host start (MEDIUM-1, senpi#3282 review).
+				const entry = this.registry.peek(command.sessionId);
+				if (this.handoverParkedDir !== undefined && entry?.sessionPath !== undefined)
+					await clearHandoverParkedSession(this.handoverParkedDir, entry.sessionPath).catch(() => {});
 				await this.finalizeClose(command.sessionId, this.bindings.get(command.sessionId), () =>
 					reply.complete(true, "client_close"),
 				);
