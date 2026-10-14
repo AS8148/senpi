@@ -4002,7 +4002,11 @@ async function generateModels() {
 			candidate.id.includes("deepseek-v4") &&
 			!QWEN_TOKEN_PLAN_PROVIDER_IDS.has(candidate.provider)
 		) {
-			const preservesNativeReasoningEffort = candidate.provider === "openrouter" || candidate.provider === "opencode";
+			// Venice's request schema is additionalProperties:false and has no `thinking` field, so
+			// DeepSeek's native `thinking: { type }` object 400s every request there (senpi#3308); its
+			// deepseek models take thinking through `reasoning_effort` like OpenRouter and OpenCode.
+			const preservesNativeReasoningEffort =
+				candidate.provider === "openrouter" || candidate.provider === "opencode" || candidate.provider === "venice";
 			candidate.compat = {
 				...candidate.compat,
 				...(preservesNativeReasoningEffort

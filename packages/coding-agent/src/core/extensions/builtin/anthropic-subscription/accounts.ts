@@ -19,6 +19,8 @@ export type AccountSlot = {
 	 * rejected, or the grant a recovery produced, so one auth block gets at most one recovery (senpi#2926).
 	 */
 	authRecoveryGrant?: string;
+	/** Digest of the `anthropic` OAuth grant this account was copied from (senpi#3259), so the copy runs once. */
+	importedFrom?: string;
 };
 
 export type SlotState = Record<string, { blockedUntil?: number; blockReason?: string; modelBlocks?: ModelBlocks }>;

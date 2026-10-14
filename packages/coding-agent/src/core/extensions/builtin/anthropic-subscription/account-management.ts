@@ -35,8 +35,7 @@ export function getProviderAccounts(
 			name: account.name,
 			...(displayName === undefined ? {} : { displayName }),
 			source: account.source,
-			blocked:
-				account.blockReason === "auth_error" || (account.blockedUntil !== undefined && account.blockedUntil > now),
+			blocked: account.blockedUntil !== undefined && account.blockedUntil > now,
 			pinned: credential.pinned === account.name,
 		};
 	});
