@@ -432,8 +432,20 @@ type WithParentToolCallId<E> = E extends {
 	: E;
 
 /** Session-specific events that extend the core AgentEvent */
+/** Why a session-level abort happened, when the caller knows: today only a session replacement says so. */
+export interface AgentAbortCause {
+	readonly kind: "session_replaced";
+	/** What replaced the session: `new_session`, `fork` or a `switch_session`/resume. */
+	readonly reason: "new" | "fork" | "resume";
+	/** The replacement's transcript and durable session id, when they are known before the teardown. */
+	readonly targetSessionFile?: string;
+	readonly targetSessionId?: string;
+}
+
 type AgentSessionAgentEndEvent = Extract<AgentEvent, { type: "agent_end" }> & {
 	willRetry: boolean;
+	/** Present when the run was aborted by an abort that named its cause (for example a session replacement). */
+	abortCause?: AgentAbortCause;
 };
 
 export type AgentSessionEvent =
@@ -1129,6 +1141,8 @@ export class AgentSession {
 	private _followUpMessages: string[] = [];
 	/** Recovery-only order across both native queue modes and TUI compaction ownership. */
 	private _queuedInputOrder: QueuedInput[] = [];
+	/** The cause of the abort in flight, reported on the `agent_end` it produces. */
+	private _abortCause: AgentAbortCause | undefined;
 	private _nextQueuedInputOrder = 0;
 	private _sessionLogger: SessionLogger;
 	private _activeCompactionLogAttempt:
@@ -3278,7 +3292,11 @@ export class AgentSession {
 		// Notify all listeners
 		this._emit(
 			event.type === "agent_end"
-				? { ...event, willRetry: agentEndWillRetry }
+				? {
+						...event,
+						willRetry: agentEndWillRetry,
+						...(this._abortCause === undefined ? {} : { abortCause: this._abortCause }),
+					}
 				: event.type === "message_update"
 					? withResolvedToolName(event, (name) => this.resolveToolCallName(name))
 					: event,
@@ -6136,7 +6154,16 @@ export class AgentSession {
 	/**
 	 * Abort current operation and wait for agent to become idle.
 	 */
-	async abort(): Promise<void> {
+	async abort(options?: { readonly cause?: AgentAbortCause }): Promise<void> {
+		this._abortCause = options?.cause;
+		try {
+			await this._abortWithProvenance();
+		} finally {
+			this._abortCause = undefined;
+		}
+	}
+
+	private async _abortWithProvenance(): Promise<void> {
 		// Streaming aborts are carried by agent_end provenance; only gaps need session_abort.
 		const wasMidRun = this.isStreaming && this._retryAbortController === undefined;
 		const hadRetryBackoff = this._retryAbortController !== undefined;

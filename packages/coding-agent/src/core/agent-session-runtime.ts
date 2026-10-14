@@ -316,13 +316,29 @@ export class AgentSessionRuntime {
 		return { cancelled: result?.cancel === true };
 	}
 
-	private async teardownCurrent(reason: SessionShutdownEvent["reason"], targetSessionFile?: string): Promise<void> {
+	private async teardownCurrent(
+		reason: SessionShutdownEvent["reason"],
+		targetSessionFile?: string,
+		targetSessionId?: string,
+	): Promise<void> {
 		const mark = (label: string): void => {
 			if (reason === "resume") time(label, "switch");
 		};
 		// Settle the active response before replacement so the outgoing turn and
-		// any completed tool results are persisted to the old session.
-		await this.session.abort();
+		// any completed tool results are persisted to the old session. The abort names the
+		// replacement, so a client sees why its running turn ended before `session_replaced` arrives.
+		await this.session.abort(
+			reason === "new" || reason === "fork" || reason === "resume"
+				? {
+						cause: {
+							kind: "session_replaced",
+							reason,
+							...(targetSessionFile === undefined ? {} : { targetSessionFile }),
+							...(targetSessionId === undefined ? {} : { targetSessionId }),
+						},
+					}
+				: undefined,
+		);
 		mark("abort");
 		const oldRunner = this.session.extensionRunner;
 		// Test hosts and partial runner implementations may lack identity introspection;
@@ -411,7 +427,7 @@ export class AgentSessionRuntime {
 		const hold = holdActiveSession(sessionManager, wasFlushed(sessionManager), this._launchProfile?.holderEndpoint);
 		time("open", "switch");
 		try {
-			await this.teardownCurrent("resume", sessionManager.getSessionFile());
+			await this.teardownCurrent("resume", sessionManager.getSessionFile(), sessionManager.getSessionId());
 			await this.apply(
 				await this.createRuntime({
 					cwd: sessionManager.getCwd(),
@@ -452,7 +468,7 @@ export class AgentSessionRuntime {
 			sessionManager.newSession({ parentSession: options.parentSession });
 		}
 
-		await this.teardownCurrent("new", sessionManager.getSessionFile());
+		await this.teardownCurrent("new", sessionManager.getSessionFile(), sessionManager.getSessionId());
 		await this.apply(
 			await this.createRuntime({
 				cwd: this.cwd,
@@ -507,7 +523,7 @@ export class AgentSessionRuntime {
 			if (!targetLeafId) {
 				const sessionManager = SessionManager.create(this.cwd, sessionDir);
 				sessionManager.newSession({ parentSession: currentSessionFile });
-				await this.teardownCurrent("fork", sessionManager.getSessionFile());
+				await this.teardownCurrent("fork", sessionManager.getSessionFile(), sessionManager.getSessionId());
 				await this.apply(
 					await this.createRuntime({
 						cwd: this.cwd,
@@ -529,7 +545,7 @@ export class AgentSessionRuntime {
 			if (!forkedSessionPath) {
 				throw new Error("Failed to create forked session");
 			}
-			await this.teardownCurrent("fork", sessionManager.getSessionFile());
+			await this.teardownCurrent("fork", sessionManager.getSessionFile(), sessionManager.getSessionId());
 			await this.apply(
 				await this.createRuntime({
 					cwd: sessionManager.getCwd(),
@@ -544,7 +560,7 @@ export class AgentSessionRuntime {
 		}
 
 		const sessionManager = this.session.sessionManager;
-		await this.teardownCurrent("fork", sessionManager.getSessionFile());
+		await this.teardownCurrent("fork", sessionManager.getSessionFile(), sessionManager.getSessionId());
 		if (!targetLeafId) {
 			sessionManager.newSession({ parentSession: previousSessionFile });
 		} else {
@@ -603,7 +619,7 @@ export class AgentSessionRuntime {
 
 		const sessionManager = SessionManager.open(destinationPath, sessionDir, cwdOverride);
 		assertSessionCwdExists(sessionManager, this.cwd);
-		await this.teardownCurrent("resume", sessionManager.getSessionFile());
+		await this.teardownCurrent("resume", sessionManager.getSessionFile(), sessionManager.getSessionId());
 		await this.apply(
 			await this.createRuntime({
 				cwd: sessionManager.getCwd(),
