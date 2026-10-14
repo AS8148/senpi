@@ -1,231 +1,227 @@
 import {
+	bufferPlaceholder,
+	isRecord,
+	MAX_DISPLAY_JSON_BYTES,
+	serializedBufferByteLength,
+	serializedStringLength,
+} from "./display-json-size.ts";
+import {
 	JSON_TREE_MAX_DEPTH_EXPANDED,
 	JSON_TREE_MAX_LINES_EXPANDED,
 	JSON_TREE_SCALAR_LEN_EXPANDED,
 } from "./json-tree.ts";
 
-/** Model-facing display text budget; the stored jsonOutputs entry follows the same order of budget. */
-export const MAX_DISPLAY_TEXT_BYTES = 8_000;
-/**
- * Total serialized-size budget for one stored entry. Measured in characters (JS string length), so
- * non-ASCII text can store up to ~3x this many UTF-8 bytes; the bound is what matters (#3261 review).
- */
-export const MAX_DISPLAY_JSON_BYTES = MAX_DISPLAY_TEXT_BYTES;
+const STUB = "…";
+const STUB_COST = 3; // JSON.stringify("…")
+const MAX_KEY_CHARS = 64;
 
-// Serialized-size headroom for JSON punctuation beyond per-node accounting (commas, colons, braces).
-const PUNCTUATION_ALLOWANCE = 512;
-
-type Budget = { remaining: number };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return value !== null && typeof value === "object" && !Array.isArray(value);
+function serializedLength(value: unknown): number {
+	return value === undefined ? 0 : JSON.stringify(value).length;
 }
 
-/** Length of value's JSON string body after escaping; bounded at 6x plus quotes, never serialized here. */
-function serializedStringLength(value: string): number {
-	let length = 2;
-	for (const character of value) {
-		const codePoint = character.codePointAt(0) ?? 0;
-		// Control characters, quotes and backslashes escape (up to \uXXXX); everything else is one char.
-		length += codePoint < 0x20 || character === '"' || character === "\\" ? JSON.stringify(character).length : 1;
-	}
-	return length;
+function elisionMarker(elided: number): string {
+	return `[…${elided}ch elided…]`;
 }
 
-/**
- * Byte length of a `{type:"Buffer",data:[...]}` serialization, or undefined when the shape is not one.
- * Only a bounded prefix of the data array is validated, so a multi-MB legacy dump never gets walked (#3261).
- */
-export function serializedBufferByteLength(value: unknown): number | undefined {
-	if (!isRecord(value) || value.type !== "Buffer" || !Array.isArray(value.data)) return undefined;
-	if (value.data.length === 0) return 0;
-	const prefixLength = Math.min(value.data.length, 1_024);
-	for (let index = 0; index < prefixLength; index += 1) {
-		const byte = value.data[index];
-		if (typeof byte !== "number" || !Number.isInteger(byte) || byte < 0 || byte > 255) return undefined;
-	}
-	return value.data.length;
-}
-
-export function formatByteLength(bytes: number): string {
-	if (bytes < 1024) return `${bytes} B`;
-	if (bytes < 1024 * 1024) return `${Number((bytes / 1024).toFixed(1))} KB`;
-	return `${Number((bytes / (1024 * 1024)).toFixed(1))} MB`;
-}
-
-export function bufferPlaceholder(bytes: number): string {
-	return `<Buffer ${formatByteLength(bytes)}>`;
-}
-
-function boundString(value: string, budget: Budget): string {
-	const serialized = serializedStringLength(value);
-	if (serialized <= budget.remaining && value.length <= JSON_TREE_SCALAR_LEN_EXPANDED) {
-		budget.remaining -= serialized;
-		return value;
-	}
-	// Long or escaped strings keep a prefix; the marker stays visible in the stored entry.
-	const serializedBudget = Math.max(0, budget.remaining - 40);
-	let keptLength = Math.min(JSON_TREE_SCALAR_LEN_EXPANDED, value.length);
-	while (keptLength > 0 && serializedStringLength(value.slice(0, keptLength)) > serializedBudget) {
+/** The longest prefix of value whose serialized length with its elision marker fits limit, or undefined. */
+function trimmedString(value: string, maxChars: number, limit: number): string | undefined {
+	let keptLength = Math.min(maxChars, value.length);
+	while (keptLength >= 0) {
+		const candidate = `${value.slice(0, keptLength)}${elisionMarker(value.length - keptLength)}`;
+		if (serializedStringLength(candidate) <= limit) return candidate;
+		if (keptLength === 0) return undefined;
 		keptLength = Math.floor(keptLength / 2);
 	}
-	const kept = value.slice(0, keptLength);
-	const marked = `${kept}[…${value.length - kept.length}ch elided…]`;
-	budget.remaining -= serializedStringLength(marked);
-	return marked;
+	return undefined;
 }
 
-function boundArray(value: readonly unknown[], depth: number, budget: Budget): unknown[] {
+function boundString(value: string, limit: number): string {
+	if (value.length <= JSON_TREE_SCALAR_LEN_EXPANDED && serializedStringLength(value) <= limit) return value;
+	return trimmedString(value, JSON_TREE_SCALAR_LEN_EXPANDED, limit) ?? STUB;
+}
+
+/** Keys are display data too: long or escape-heavy keys keep a prefix and stay unique (#3261 review). */
+function boundKey(key: string, taken: Set<string>): string {
+	const base =
+		key.length <= MAX_KEY_CHARS && serializedStringLength(key) <= MAX_KEY_CHARS + 2
+			? key
+			: (trimmedString(key, MAX_KEY_CHARS, MAX_KEY_CHARS + 2) ?? STUB);
+	let unique = base;
+	for (let suffix = 2; taken.has(unique); suffix += 1) unique = `${base}#${suffix}`;
+	taken.add(unique);
+	return unique;
+}
+
+/**
+ * Serialized length of what boundNode would keep given unlimited room, capped at cap + 1 so a
+ * multi-MB value is never walked past what the budget could use.
+ */
+function boundedNeed(value: unknown, depth: number, cap: number): number {
+	if (value === undefined) return 0;
+	if (value === null || typeof value === "boolean" || typeof value === "number") return serializedLength(value);
+	if (typeof value === "string") {
+		if (value.length > cap || value.length > JSON_TREE_SCALAR_LEN_EXPANDED) return cap + 1;
+		return Math.min(cap + 1, serializedStringLength(value));
+	}
+	const bufferBytes = serializedBufferByteLength(value);
+	if (bufferBytes !== undefined) return serializedLength(bufferPlaceholder(bufferBytes));
+	if (depth >= JSON_TREE_MAX_DEPTH_EXPANDED) return STUB_COST;
+	let total = 2;
+	if (Array.isArray(value)) {
+		for (const item of value) {
+			total += 1 + boundedNeed(item, depth + 1, cap - total);
+			if (total > cap) return cap + 1;
+		}
+		return total;
+	}
+	if (isRecord(value)) {
+		for (const key in value) {
+			total += 2 + serializedStringLength(key) + boundedNeed(value[key], depth + 1, cap - total);
+			if (total > cap) return cap + 1;
+		}
+		return total;
+	}
+	return Math.min(cap + 1, serializedStringLength(String(value)));
+}
+
+function boundArray(value: readonly unknown[], depth: number, limit: number): unknown {
 	const kept: unknown[] = [];
-	budget.remaining -= 2; // []
+	let used = 2;
 	for (const [index, item] of value.entries()) {
-		if (index >= JSON_TREE_MAX_LINES_EXPANDED || budget.remaining <= 0) {
-			kept.push(`… (${value.length - index} more items)`);
+		const marker = `… (${value.length - index} more items)`;
+		const markerCost = serializedLength(marker) + (index > 0 ? 1 : 0);
+		const isLast = index === value.length - 1;
+		const room =
+			limit - used - (index > 0 ? 1 : 0) - (isLast ? 0 : serializedLength(`… (${value.length} more items)`) + 1);
+		if (index >= JSON_TREE_MAX_LINES_EXPANDED || room < STUB_COST + 8) {
+			if (used + markerCost > limit) return kept.length === 0 ? STUB : kept;
+			kept.push(marker);
 			return kept;
 		}
-		if (index > 0) budget.remaining -= 1; // comma
-		kept.push(boundNode(item, depth + 1, budget));
+		const child = boundNode(item, depth + 1, room);
+		used += (index > 0 ? 1 : 0) + (child === undefined ? 4 : serializedLength(child));
+		kept.push(child);
 	}
 	return kept;
 }
 
-function boundRecord(value: Record<string, unknown>, depth: number, budget: Budget): Record<string, unknown> {
-	const kept: Record<string, unknown> = {};
-	budget.remaining -= 2; // {}
+function boundRecord(value: Record<string, unknown>, depth: number, limit: number): unknown {
+	const taken = new Set<string>();
 	const keys = Object.keys(value);
-	for (const [index, key] of keys.entries()) {
-		if (index >= JSON_TREE_MAX_LINES_EXPANDED) {
-			kept["…"] = `${keys.length - index} more keys`;
-			return kept;
-		}
-		if (index > 0) budget.remaining -= 1; // comma
-		budget.remaining -= key.length + 3; // "key":
-		const childBudget: Budget = { remaining: budget.remaining };
-		const child = boundNode(value[key], depth + 1, childBudget);
-		// When the next value cannot fit even trimmed, stop and mark the rest instead of starving it.
-		if (childBudget.remaining <= 0 && typeof value[key] === "string" && String(child).endsWith("0ch elided…]")) {
-			kept["…"] = `${keys.length - index} more keys`;
-			return kept;
-		}
-		budget.remaining = childBudget.remaining;
-		kept[key] = child;
-		if (budget.remaining <= 0 && index < keys.length - 1) {
-			kept["…"] = `${keys.length - index - 1} more keys`;
-			return kept;
-		}
+	const shown = keys.slice(0, JSON_TREE_MAX_LINES_EXPANDED).map((key) => ({ key, stored: boundKey(key, taken) }));
+	const overflowKey = boundKey("…", taken);
+	const stubCost = (entry: { stored: string }) => serializedStringLength(entry.stored) + 2 + STUB_COST;
+	const overflowCost = (count: number) =>
+		count === 0 ? 0 : serializedStringLength(overflowKey) + 2 + serializedLength(`${count} more keys`);
+	// Every shown key is guaranteed at least a stub value; keys that cannot all fit become a visible count.
+	let base = 2 + shown.reduce((sum, entry) => sum + stubCost(entry), 0) + overflowCost(keys.length - shown.length);
+	while (base > limit && shown.length > 0) {
+		const dropped = shown.pop();
+		if (dropped) base -= stubCost(dropped);
+		base += overflowCost(keys.length - shown.length) - overflowCost(keys.length - shown.length - 1);
 	}
+	if (base > limit) return STUB;
+	// Max-min fair share of the remaining room: small values are kept whole, large ones share what is left.
+	let pool = limit - base;
+	const needs = shown.map((entry) =>
+		Math.max(0, boundedNeed(value[entry.key], depth + 1, pool + STUB_COST) - STUB_COST),
+	);
+	const order = shown.map((_, index) => index).sort((left, right) => (needs[left] ?? 0) - (needs[right] ?? 0));
+	const results = new Map<number, unknown>();
+	for (const [position, index] of order.entries()) {
+		const entry = shown[index];
+		if (!entry) continue;
+		const share = Math.floor(pool / (order.length - position));
+		const grant = Math.min(needs[index] ?? 0, share);
+		const child = boundNode(value[entry.key], depth + 1, STUB_COST + grant);
+		pool -= Math.max(0, serializedLength(child) - STUB_COST);
+		results.set(index, child);
+	}
+	const kept: Record<string, unknown> = {};
+	for (const [index, entry] of shown.entries()) kept[entry.stored] = results.get(index);
+	if (keys.length > shown.length) kept[overflowKey] = `${keys.length - shown.length} more keys`;
 	return kept;
 }
 
-function boundNode(value: unknown, depth: number, budget: Budget): unknown {
-	if (budget.remaining <= 0) return "…";
-	if (value === null || value === undefined) {
-		budget.remaining -= 4;
-		return value;
+/**
+ * Serialized length of value when bounding would keep it unchanged (no cap, depth, key, or Buffer rule
+ * applies), or Infinity otherwise; stops counting past cap so large values are never walked in full.
+ */
+function unchangedLength(value: unknown, depth: number, cap: number): number {
+	if (value === undefined || value === null || typeof value === "boolean" || typeof value === "number") {
+		return value === undefined ? 4 : serializedLength(value);
 	}
-	if (typeof value === "boolean") {
-		budget.remaining -= 5;
-		return value;
+	if (typeof value === "string") {
+		return value.length > JSON_TREE_SCALAR_LEN_EXPANDED || value.length > cap
+			? Number.POSITIVE_INFINITY
+			: serializedStringLength(value);
 	}
-	if (typeof value === "number") {
-		budget.remaining -= 24;
-		return value;
+	if (depth >= JSON_TREE_MAX_DEPTH_EXPANDED || serializedBufferByteLength(value) !== undefined) {
+		return Number.POSITIVE_INFINITY;
 	}
-	if (typeof value === "string") return boundString(value, budget);
+	let total = 2;
+	if (Array.isArray(value)) {
+		if (value.length > JSON_TREE_MAX_LINES_EXPANDED) return Number.POSITIVE_INFINITY;
+		for (const item of value) {
+			total += 1 + unchangedLength(item, depth + 1, cap - total);
+			if (total > cap) return Number.POSITIVE_INFINITY;
+		}
+		return total;
+	}
+	if (isRecord(value)) {
+		let count = 0;
+		for (const key in value) {
+			count += 1;
+			const keyLength = serializedStringLength(key);
+			if (count > JSON_TREE_MAX_LINES_EXPANDED || key.length > MAX_KEY_CHARS || keyLength > MAX_KEY_CHARS + 2) {
+				return Number.POSITIVE_INFINITY;
+			}
+			total += 2 + keyLength + unchangedLength(value[key], depth + 1, cap - total);
+			if (total > cap) return Number.POSITIVE_INFINITY;
+		}
+		return total;
+	}
+	return Number.POSITIVE_INFINITY;
+}
+
+/** The value bounded so its serialized length is at most max(limit, 3). */
+function boundNode(value: unknown, depth: number, limit: number): unknown {
+	if (value === undefined) return value;
+	// A value that already fits as it is stays exactly as it is.
+	if (unchangedLength(value, depth, limit) <= limit) return value;
+	if (value === null || typeof value === "boolean" || typeof value === "number") {
+		return serializedLength(value) <= limit ? value : STUB;
+	}
+	if (typeof value === "string") return boundString(value, limit);
 	const bufferBytes = serializedBufferByteLength(value);
 	if (bufferBytes !== undefined) {
 		const placeholder = bufferPlaceholder(bufferBytes);
-		budget.remaining -= serializedStringLength(placeholder);
-		return placeholder;
+		return serializedLength(placeholder) <= limit ? placeholder : STUB;
 	}
-	if (depth >= JSON_TREE_MAX_DEPTH_EXPANDED) {
-		budget.remaining -= 3;
-		return "…";
-	}
-	if (Array.isArray(value)) return boundArray(value, depth, budget);
-	if (isRecord(value)) return boundRecord(value, depth, budget);
-	return String(value);
+	if (depth >= JSON_TREE_MAX_DEPTH_EXPANDED || limit < STUB_COST + 2) return STUB;
+	if (Array.isArray(value)) return boundArray(value, depth, limit);
+	if (isRecord(value)) return boundRecord(value, depth, limit);
+	return boundString(String(value), limit);
+}
+
+/** Every top-level key with a stub value, or a bare stub when even that cannot fit. */
+function skeleton(value: unknown): unknown {
+	if (!isRecord(value)) return STUB;
+	const stubbed = boundRecord(
+		Object.fromEntries(Object.keys(value).map((key) => [key, STUB])),
+		0,
+		MAX_DISPLAY_JSON_BYTES,
+	);
+	return serializedLength(stubbed) <= MAX_DISPLAY_JSON_BYTES ? stubbed : STUB;
 }
 
 /**
- * Estimates the serialized length of a bounded value without building it, so the stored entry can be
- * re-trimmed (never dropped) when the first pass overshoots.
- */
-function estimateSerializedLength(value: unknown): number {
-	if (value === null || value === undefined) return 4;
-	if (typeof value === "boolean") return value ? 4 : 5;
-	if (typeof value === "number") return 24;
-	if (typeof value === "string") return serializedStringLength(value);
-	if (Array.isArray(value)) {
-		let length = 2;
-		for (const [index, item] of value.entries()) {
-			if (index > 0) length += 1;
-			length += estimateSerializedLength(item);
-		}
-		return length;
-	}
-	if (isRecord(value)) {
-		let length = 2;
-		let index = 0;
-		for (const key in value) {
-			if (index > 0) length += 1;
-			length += key.length + 3 + estimateSerializedLength(value[key]);
-			index += 1;
-		}
-		return length;
-	}
-	return 16;
-}
-
-/**
- * Bounds one display value for persistence in `details.jsonOutputs`. The whole value is always kept:
- * serialized Buffers collapse to a `<Buffer N>` placeholder, strings/arrays/objects trim to a visible
- * `… elided` / `N more items` / `N more keys` marker, and depth follows the JSON-tree caps. When the
- * first pass still overshoots the budget (punctuation beyond the allowance), it re-trims with a tighter
- * budget instead of dropping the value (#3261 review).
+ * Bounds one display value for persistence in `details.jsonOutputs`. The value is trimmed inside, never
+ * replaced: every shown key keeps at least a stub, serialized Buffers become `<Buffer N>`, long strings,
+ * arrays and objects carry a visible `… elided` / `N more items` / `N more keys` marker, keys are
+ * trimmed like strings, and the real serialized length is checked last (#3261 review).
  */
 export function sanitizeDisplayJson(value: unknown): unknown {
-	let budget = MAX_DISPLAY_JSON_BYTES - PUNCTUATION_ALLOWANCE;
-	let sanitized = boundNode(value, 0, { remaining: budget });
-	for (let attempt = 0; attempt < 4; attempt += 1) {
-		const estimated = estimateSerializedLength(sanitized);
-		if (estimated <= MAX_DISPLAY_JSON_BYTES) return sanitized;
-		budget = Math.max(256, Math.floor(budget / 2));
-		sanitized = boundNode(value, 0, { remaining: budget });
-	}
-	return sanitized;
-}
-
-/**
- * Iterative early-exit size estimate for stored entries (legacy sessions carry multi-MB ones); never
- * enumerates more of the value than the budget plus a key.
- */
-export function displayJsonSizeExceeds(value: unknown, budget: number): boolean {
-	let size = 0;
-	const pending: unknown[] = [value];
-	while (pending.length > 0) {
-		const node = pending.pop();
-		if (node === null || node === undefined) continue;
-		if (typeof node === "boolean" || typeof node === "number") {
-			size += 8;
-		} else if (typeof node === "string") {
-			size += node.length;
-		} else if (Array.isArray(node)) {
-			size += 2;
-			for (const child of node) {
-				size += 1;
-				if (size > budget) return true;
-				pending.push(child);
-			}
-		} else if (isRecord(node)) {
-			size += 2;
-			for (const key in node) {
-				size += key.length + 1;
-				if (size > budget) return true;
-				pending.push(node[key]);
-			}
-		}
-		if (size > budget) return true;
-	}
-	return false;
+	const sanitized = boundNode(value, 0, MAX_DISPLAY_JSON_BYTES);
+	return serializedLength(sanitized) <= MAX_DISPLAY_JSON_BYTES ? sanitized : skeleton(value);
 }

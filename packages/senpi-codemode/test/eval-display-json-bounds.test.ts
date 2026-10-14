@@ -193,7 +193,8 @@ describe("eval display jsonOutputs bounds (#3261)", () => {
 			expect(stored === null || Array.isArray(stored)).toBe(false);
 			if (typeof stored !== "object" || stored === null || Array.isArray(stored)) return;
 			const record = stored as Record<string, unknown>;
-			expect(record["key-0000"]).toBe("v".repeat(500));
+			expect(record["key-0000"]).toMatch(/^v+\[…\d+ch elided…\]$/);
+			expect(Object.keys(record).length).toBeGreaterThan(10);
 			expect(Object.values(record).some((value) => typeof value === "string" && value.includes("more keys"))).toBe(
 				true,
 			);

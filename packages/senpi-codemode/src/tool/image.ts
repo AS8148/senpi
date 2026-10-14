@@ -11,7 +11,8 @@ import {
 	TailBuffer,
 	truncateTail,
 } from "../output/streaming-output.ts";
-import { MAX_DISPLAY_TEXT_BYTES, sanitizeDisplayJson } from "./display-json-bounds.ts";
+import { sanitizeDisplayJson } from "./display-json-bounds.ts";
+import { MAX_DISPLAY_TEXT_BYTES } from "./display-json-size.ts";
 import { type EvalImageContent, type EvalImageResizer, resizeEvalImage } from "./image-resize.ts";
 
 export {

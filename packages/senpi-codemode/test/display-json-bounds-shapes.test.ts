@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { MAX_DISPLAY_JSON_BYTES, sanitizeDisplayJson } from "../src/tool/display-json-bounds.ts";
+import { sanitizeDisplayJson } from "../src/tool/display-json-bounds.ts";
+import { MAX_DISPLAY_JSON_BYTES } from "../src/tool/display-json-size.ts";
 
 function serializedLength(value: unknown): number {
 	return JSON.stringify(value).length;

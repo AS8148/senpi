@@ -138,8 +138,8 @@ function wrappedBufferImageOps(value) {
 }
 
 function isPlausibleBmp(bytes) {
-	// A BMP header is at least 26 bytes (14 file + 12 info); its little-endian file-size field must agree
-	// with the actual length (or exceed it when the field is a leftover estimate).
+	// A BMP header is at least 26 bytes (14 file + 12 info), and its little-endian file-size field must
+	// not exceed the bytes actually present: text after "BM" declares hundreds of MB and stays JSON.
 	if (bytes.length < 26) return false;
 	const declared = bytes[2] | (bytes[3] << 8) | (bytes[4] << 16) | (bytes[5] << 24);
 	return declared >= 26 && bytes.length >= declared;

@@ -5,7 +5,7 @@ import {
 	formatByteLength,
 	MAX_DISPLAY_JSON_BYTES,
 	serializedBufferByteLength,
-} from "./display-json-bounds.ts";
+} from "./display-json-size.ts";
 import {
 	formatScalar,
 	JSON_TREE_MAX_DEPTH_COLLAPSED,
@@ -88,7 +88,8 @@ function renderJsonEntryLines(
 				`${nested.key}: ${bufferPlaceholder(serializedBufferByteLength(record[nested.key]) ?? 0)}`,
 			);
 			const keys = Object.keys(record).filter((key) => key !== nested.key);
-			for (const key of keys) {
+			const shownKeys = keys.slice(0, Math.max(0, lineCap - 1));
+			for (const key of shownKeys) {
 				appendLines(
 					lines,
 					renderAllVisualLines(
@@ -97,6 +98,8 @@ function renderJsonEntryLines(
 					),
 				);
 			}
+			if (keys.length > shownKeys.length)
+				appendLines(lines, fallback(`  … ${keys.length - shownKeys.length} more keys`));
 			return lines;
 		}
 		if (displayJsonSizeExceeds(value, MAX_DISPLAY_JSON_BYTES)) {
