@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- A forced `tool_choice` refusal that blames thinking is now remembered for that model under its own record (`hasRefusedForcedToolChoiceWhileThinking`), separate from model-wide refusals, so callers that know a request runs with thinking can skip the forced choice up front ([#3324](https://github.com/code-yeongyu/senpi/issues/3324)).
+
 - A model that refuses a forced first-turn tool choice with "Thinking mode does not support this tool_choice" (opencode-go DeepSeek thinking models) no longer kills the turn at launch: the request is retried once without the forced choice ([#3324](https://github.com/code-yeongyu/senpi/issues/3324)).
 
 - Anthropic's "Third-party apps now draw from your extra usage" rejection is classified as terminal account exhaustion with a plain explanation of the billing path, and the `anthropic` provider no longer offers a Claude subscription OAuth login; subscriptions use the Agent SDK lane ([#3259](https://github.com/code-yeongyu/senpi/issues/3259)).

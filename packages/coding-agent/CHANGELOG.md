@@ -14,6 +14,8 @@
 
 ### Fixed
 
+- A model that refused the first turn's forced `todo` call because thinking was on (for example opencode-go's DeepSeek thinking models) is no longer sent a forced choice again with thinking on, so later sessions skip the refused request and the retry; with thinking off it is still forced ([#3324](https://github.com/code-yeongyu/senpi/issues/3324), reported by @AS8148).
+
 - Local extensions keep loading after a runtime update on Bun 1.4.2 and older. Bun's transpile cache had stored the previous runtime's path to `extension-runtime-module.js`, so once that runtime was pruned an unchanged extension failed with `Cannot find module`. The cache entry now changes whenever the runtime moves, and a cache that is already broken heals on the next start, with nothing to clear by hand ([#3300](https://github.com/code-yeongyu/senpi/issues/3300), reported in the OmO community).
 
 - A credential-pool account blocked for an authentication error is no longer excluded until someone logs in again. The block now lasts 15 minutes, then one request tries the account again (refreshing its saved login first when it can), so accounts whose token was renewed elsewhere come back on their own. A goal whose provider is down no longer fires eight retries within seconds and gives up: retries back off from 15 seconds up to 30 minutes, and when the pool names the time an account frees up, the goal waits until then and continues ([#3264](https://github.com/code-yeongyu/senpi/issues/3264)).

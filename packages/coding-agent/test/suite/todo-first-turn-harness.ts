@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import todotoolsExtension from "../../src/core/extensions/builtin/todotools/index.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../src/core/extensions/types.ts";
@@ -26,13 +27,14 @@ export function model(id: string, api: Api = "anthropic-messages", compat?: Reco
 export const TODO_PAYLOAD = { tools: [{ name: "read" }, { name: "todo" }] };
 
 /** The todotools extension on a captured fake `pi`, with an empty branch; the temp agent dir is pushed to `tempDirs`. */
-export function fauxTodotoolsPi(tempDirs: string[], options: { setting?: string } = {}) {
+export function fauxTodotoolsPi(tempDirs: string[], options: { setting?: string; thinkingLevel?: ThinkingLevel } = {}) {
 	const handlers = new Map<string, Handler[]>();
 	const pi = {
 		registerTool: () => {},
 		registerCommand: () => {},
 		appendEntry: () => {},
 		getActiveTools: () => ["read", "todo"],
+		getThinkingLevel: () => options.thinkingLevel ?? "off",
 		on: (event: string, handler: Handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler]),
 	} as unknown as ExtensionAPI;
 	todotoolsExtension(pi);

@@ -1,6 +1,10 @@
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { getAnthropicCompat } from "@earendil-works/pi-ai/utils/prompt-cache-ttl";
-import { hasRefusedForcedToolChoice } from "@earendil-works/pi-ai/utils/tool-choice-fallback";
+import {
+	hasRefusedForcedToolChoice,
+	hasRefusedForcedToolChoiceWhileThinking,
+} from "@earendil-works/pi-ai/utils/tool-choice-fallback";
 import type { SessionEntry } from "../../../session-manager.ts";
 import type { TodoFirstTurnPlan } from "../../../settings-shapes.ts";
 import { isSessionControlDeliveryDetails, SESSION_CONTROL_DELIVERY_TYPE } from "../../session-control-types.ts";
@@ -122,11 +126,17 @@ function declaresTool(tools: unknown, toolName: string): boolean {
 
 /**
  * The payload with a forced `todo` tool_choice, or `undefined` to leave it untouched: the
- * request must declare `todo`, carry no tool_choice of its own, and (Anthropic) not run
- * extended thinking, which rejects any forced tool use.
+ * request must declare `todo`, carry no tool_choice of its own, and not run thinking on a model
+ * that rejects a forced choice with thinking on: Anthropic extended thinking always does, and any
+ * other model once it has refused one with thinking on in this process (senpi#3324).
  */
-export function withForcedTodoChoice(payload: unknown, model: Model<Api> | undefined): unknown {
+export function withForcedTodoChoice(
+	payload: unknown,
+	model: Model<Api> | undefined,
+	thinkingLevel: ThinkingLevel = "off",
+): unknown {
 	if (!supportsNamedToolChoice(model)) return undefined;
+	if (model && thinkingLevel !== "off" && hasRefusedForcedToolChoiceWhileThinking(model)) return undefined;
 	const toolChoice = namedToolChoicePayload(model?.api, "todo");
 	if (!toolChoice || !isRecord(payload) || payload.tool_choice !== undefined) return undefined;
 	if (!declaresTool(payload.tools, "todo")) return undefined;

@@ -122,7 +122,7 @@ export default function todotoolsExtension(pi: ExtensionAPI): void {
 	pi.on("before_provider_request", async (event, ctx) => {
 		if (!pendingForce) return undefined;
 		const forced = pendingForce.forceNamed
-			? withForcedTodoChoice(event.payload, event.model ?? ctx.model)
+			? withForcedTodoChoice(event.payload, event.model ?? ctx.model, pi.getThinkingLevel())
 			: undefined;
 		if (!pendingForce.logged) {
 			pendingForce.logged = true;

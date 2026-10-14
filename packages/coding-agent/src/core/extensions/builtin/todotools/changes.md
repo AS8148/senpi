@@ -1,5 +1,24 @@
 # todotools Fork Tracker
 
+## 2026-10-14 - The first-turn todo force skips a model that refused it with thinking on (senpi#3324)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/first-turn.ts`: `withForcedTodoChoice` takes the session thinking level and leaves the payload untouched when thinking is on and the model refused a forced choice because of thinking earlier in this process (`hasRefusedForcedToolChoiceWhileThinking`).
+- `packages/coding-agent/src/core/extensions/builtin/todotools/index.ts`: passes `pi.getThinkingLevel()`.
+
+### Why
+
+opencode-go's DeepSeek thinking models refuse a forced `tool_choice` with thinking on. #3328 made that refusal retry once without the forced choice, but every later first turn with thinking on still paid the refused request. Anthropic extended thinking was already skipped by api; other providers only reveal the refusal at runtime, so it is learned per model.
+
+### Why an extension could not handle it
+
+This is the builtin todotools extension itself; the refusal memory it reads lives in `@earendil-works/pi-ai`'s tool-choice fallback.
+
+### Expected merge conflict zones
+
+- `withForcedTodoChoice` in `first-turn.ts` and the `before_provider_request` handler in `index.ts`.
+
 ## 2026-10-01 - The first-turn opener asks for the phases the request needs (senpi#2505)
 
 ### What changed

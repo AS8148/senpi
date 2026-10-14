@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
 	clearForcedToolChoiceRefusals,
 	hasRefusedForcedToolChoice,
+	hasRefusedForcedToolChoiceWhileThinking,
 	isForcedToolChoiceUnsupportedError,
 	sendWithForcedToolChoiceFallback,
 } from "../src/utils/tool-choice-fallback.ts";
@@ -63,5 +64,6 @@ describe("forced tool_choice refused by a thinking model (#3324)", () => {
 		expect(params.tool_choice).toBeUndefined();
 		expect(sent).toEqual([FORCED, undefined]);
 		expect(hasRefusedForcedToolChoice(target)).toBe(false);
+		expect(hasRefusedForcedToolChoiceWhileThinking(target)).toBe(true);
 	});
 });

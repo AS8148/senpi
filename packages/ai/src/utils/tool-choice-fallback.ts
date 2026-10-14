@@ -10,6 +10,14 @@ export type ForcedToolChoiceTarget = Pick<Model<Api>, "api" | "provider" | "base
  */
 const forcedToolChoiceRefusals = new Set<string>();
 
+/**
+ * Models that refused a forced tool_choice because thinking was on, and then accepted the request
+ * without one. Kept apart from the refusals above because the same model may accept a forced choice
+ * with thinking off; callers that know a request runs with thinking skip the forced choice for them
+ * (senpi#3324).
+ */
+const forcedToolChoiceThinkingRefusals = new Set<string>();
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
@@ -196,9 +204,15 @@ export function hasRefusedForcedToolChoice(target: ForcedToolChoiceTarget): bool
 	return forcedToolChoiceRefusals.has(refusalKey(target));
 }
 
+/** Whether `target` refused a forced tool_choice earlier in this process because thinking was on. */
+export function hasRefusedForcedToolChoiceWhileThinking(target: ForcedToolChoiceTarget): boolean {
+	return forcedToolChoiceThinkingRefusals.has(refusalKey(target));
+}
+
 /** Forgets every remembered refusal; tests isolate their models with it. */
 export function clearForcedToolChoiceRefusals(): void {
 	forcedToolChoiceRefusals.clear();
+	forcedToolChoiceThinkingRefusals.clear();
 }
 
 export type ForcedToolChoiceRequest<TParams extends { tool_choice?: unknown }, TResult> = {
@@ -235,7 +249,9 @@ export async function sendWithForcedToolChoiceFallback<TParams extends { tool_ch
 		const params = omitToolChoiceParam(request.params);
 		const result = await request.send(params);
 		// A refusal that names thinking depends on the request's thinking setting, not on the model alone.
-		if (!/thinking/i.test(errorMessage(error))) forcedToolChoiceRefusals.add(refusalKey(request.target));
+		(/thinking/i.test(errorMessage(error)) ? forcedToolChoiceThinkingRefusals : forcedToolChoiceRefusals).add(
+			refusalKey(request.target),
+		);
 		return { params, result };
 	}
 }

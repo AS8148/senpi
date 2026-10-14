@@ -212,6 +212,36 @@ describe("first-turn tool_choice through the faux pi shape", () => {
 		expect(other?.tool_choice).toEqual({ type: "function", function: { name: "todo" } });
 	});
 
+	it("sends only the reminder with thinking on to a model that refused a forced choice because of thinking (senpi#3324)", async () => {
+		// given: opencode-go refused the forced choice because thinking was on, and the retry was accepted
+		clearForcedToolChoiceRefusals();
+		const deepseek = model("deepseek-v4.1-flash", "openai-completions");
+		const refusal = Object.assign(new Error("400 Thinking mode does not support this tool_choice"), { status: 400 });
+		await sendWithForcedToolChoiceFallback({
+			target: deepseek,
+			params: { tool_choice: namedToolChoicePayload(deepseek.api, "todo") as unknown },
+			acceptsForcedToolChoice: true,
+			isForced: (choice) => choice !== undefined,
+			send: async (params) => {
+				if (params.tool_choice !== undefined) throw refusal;
+				return "ok";
+			},
+		});
+		const thinking = fauxTodotoolsPi(tempDirs, { thinkingLevel: "high" });
+		await thinking.startTurn();
+		const thinkingOff = fauxTodotoolsPi(tempDirs);
+		await thinkingOff.startTurn();
+
+		// when
+		const withThinking = await thinking.providerRequest(TODO_PAYLOAD, deepseek);
+		const withoutThinking = await thinkingOff.providerRequest(TODO_PAYLOAD, deepseek);
+		clearForcedToolChoiceRefusals();
+
+		// then: thinking on skips the forced choice; thinking off still forces it
+		expect(withThinking?.tool_choice).toBeUndefined();
+		expect(withoutThinking?.tool_choice).toEqual({ type: "function", function: { name: "todo" } });
+	});
+
 	it("sends only the reminder under the remind setting", async () => {
 		// given
 		const faux = fauxTodotoolsPi(tempDirs, { setting: "remind" });
