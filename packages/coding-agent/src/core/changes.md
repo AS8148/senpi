@@ -41,6 +41,29 @@ A chain could not walk to a second rung of the same model at another thinking le
 
 - MEDIUM: `packages/coding-agent/src/core/retry-fallback/candidates.ts` (self/tried checks), `chains.ts` (`candidatesAfter`, `baseSelector`/`rungSelector`), `controller.ts` (`triedSelectors` writes), `validate.ts` (same-model warning).
 
+## 2026-10-14 - A network blip falls back for one turn at most and never opens the fallback circuit (senpi#3306)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/transient-network.ts` (new): `isPureNetworkTransient` matches a transport failure (timeout, reset, DNS, connection or stream drop) that names no limit, quota, rate limit, overload, reset window or server-side failure (a 5xx status, "server", "unavailable", "high demand", "overflow"), matching the precedence `cooldown.ts` already gives those. `isTransportFailureText` is the one transport pattern, shared with the cooldown.
+- `packages/coding-agent/src/core/retry-fallback/cooldown.ts`: the transport-blip branch of `durationFor` uses `isTransportFailureText` instead of its own copy of the pattern.
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: when a network blip outlasts the same-model retries, `tryFallback` still switches to the next chain entry, but it notes no cooldown on the primary, and `noteHealthFailure` does not open the shared circuit for it. The switch is held for the rest of that turn, even if a later failure in the same turn switches again: `maybeRestorePrimary(policy, "continuation")` refuses to revert it, and the next `"turn"` boundary reverts it.
+- `packages/coding-agent/src/core/agent-session.ts`: `_maybeRestoreFallbackPrimary` takes the boundary kind. The retry continuation and the post-compaction continuation pass `"continuation"`; the prompt boundary keeps `"turn"`.
+
+### Why
+
+A guest tester on a flaky office network saw OmO fall back to another model again and again. A timeout or ECONNRESET that outlasted the same-model retries opened the shared circuit with its doubling cooldown and put the primary on a cooldown, so the session stayed on the fallback long after the network recovered. A network fault is the transport's, not the model's or the account's. It may move one turn to the fallback, but it must not hold the primary away from the next one.
+
+### Why an extension could not handle it
+
+Fallback switching, circuit opening and the revert gate live in the core retry-fallback controller and its `AgentSession` wiring, below the extension API. No extension can reclassify a failure or hold a revert there.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: `tryFallback`, `noteHealthFailure`, `maybeRestorePrimary`, `clear`, `clearForManualModelChange`.
+- `packages/coding-agent/src/core/retry-fallback/cooldown.ts`: `durationFor`.
+- `packages/coding-agent/src/core/agent-session.ts`: `_maybeRestoreFallbackPrimary` and its two continuation call sites.
+
 ## 2026-10-14 - The fallback circuit opens for a usage limit until its own reset window (senpi#3314)
 
 ### What changed
