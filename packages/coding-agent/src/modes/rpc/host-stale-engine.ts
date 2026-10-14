@@ -65,7 +65,7 @@ export async function judgeStaleEngine(
 	const info = await observeProtocolInfo(socket, PROBE_TIMEOUT_MS);
 	if (info === undefined) return keep("stale_unreachable");
 	const hostOrdinal = info.engineOrdinal;
-	const hostIdentity =
+	const hostIdentity: EngineBuildIdentity | undefined =
 		hostOrdinal === undefined
 			? undefined
 			: { text: info.engineVersion ?? "", ordinal: hostOrdinal, scheme: hostOrdinal[4] > 0 ? "epoch" : "nodef" };
