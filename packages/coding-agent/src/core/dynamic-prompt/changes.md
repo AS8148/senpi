@@ -4,7 +4,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/dynamic-prompt/handoff.ts`: `HANDOFF_MOMENTS` names "the creation of a todo list with more than one task" and "the final message of a turn that changed something or carried out multi-step work" (was "the todo list's creation" and "a turn that did work"), and says a reply that answers a question - an explanation, a lookup, a review, a one-task request - is the answer itself, with no block, even when finding the answer took tool calls.
+- `packages/coding-agent/src/core/dynamic-prompt/handoff.ts`: `HANDOFF_MOMENTS` names "the creation of a todo list with more than one task" and "the final message of a turn that changed something or carried out multi-step work" (was "the todo list's creation" and "a turn that did work"), and says a reply that answers a question - an explanation, a lookup, a review - is the answer itself, with no block, even when finding the answer took tool calls.
 - `packages/coding-agent/src/core/dynamic-prompt/style.ts`: the final-message sentence uses the same condition.
 
 ### Why

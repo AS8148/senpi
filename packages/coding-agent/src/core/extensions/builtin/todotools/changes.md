@@ -5,7 +5,7 @@
 ### What changed
 
 - `todo-format.ts` `handoffMomentOf`: a list with fewer than two tasks returns no moment, so its results carry no "Handoff due" cue.
-- `first-turn.ts` `FIRST_TURN_REMINDER`: "a question or a one-step request is one task, and its reply is the answer itself, with no handoff block" replaces "a question needs none past answering it".
+- `first-turn.ts` `FIRST_TURN_REMINDER`: "a question is one task, and its reply is the answer itself, with no handoff block" replaces "a question needs none past answering it".
 
 ### Why
 

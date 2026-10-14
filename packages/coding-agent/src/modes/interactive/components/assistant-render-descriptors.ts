@@ -48,8 +48,8 @@ function assertNever(value: never): never {
 }
 
 /**
- * A handoff block folds into one muted line naming Now and Next (senpi#3323); its `For you` slot
- * stays as answer text below it, so the reader sees the answer and nothing is lost. Ctrl+O (expand
+ * A handoff block folds into one muted line naming Now and Next (senpi#3323); its answer (the `For you` slot, or the GPT outcome and
+ * `You need` slot) stays as answer text below it, so the reader sees the answer and nothing is lost. Ctrl+O (expand
  * all) or a click on the line opens the block as written, dimmed.
  */
 function pushHandoffDescriptors(
@@ -74,7 +74,7 @@ function pushHandoffDescriptors(
 		text: theme.fg("dim", ["\u25B8 Handoff", ...parts].join(" \u00B7 ")),
 		handoffBlock,
 	});
-	if (segment.forYou !== undefined) descriptors.push(SPACER_DESCRIPTOR, { kind: "text-md", text: segment.forYou });
+	if (segment.answer !== undefined) descriptors.push(SPACER_DESCRIPTOR, { kind: "text-md", text: segment.answer });
 }
 
 function isVisibleContent(content: AssistantMessage["content"][number], providerNativeVisible: boolean): boolean {
