@@ -31,7 +31,10 @@ describe("RPC auth and connection handler contracts", () => {
 		expect(response).toMatchObject({ type: "response", command: "get_auth_providers", success: true });
 		const data = response.data as { providers: Array<Record<string, unknown>> };
 		const anthropic = data.providers.find((provider) => provider.id === "anthropic");
-		expect(anthropic).toMatchObject({ authType: "oauth", name: expect.any(String) });
+		expect(anthropic).toMatchObject({ authType: "api_key", name: expect.any(String) });
+		expect(data.providers.some((provider) => provider.id === "anthropic" && provider.authType === "oauth")).toBe(
+			false,
+		);
 		expect(anthropic?.status).toMatchObject({ configured: expect.any(Boolean) });
 		await handler.dispose();
 	});
@@ -55,32 +58,32 @@ describe("RPC auth and connection handler contracts", () => {
 			);
 		};
 
-		harness.authStorage.set("anthropic", {
+		harness.authStorage.set("openrouter", {
 			type: "oauth",
 			access: "scripted-access",
 			refresh: "scripted-refresh",
 			expires: 4_102_444_800_000,
 		});
 		await modelRegistry.refresh();
-		expect(await rowsFor("anthropic")).toEqual({
+		expect(await rowsFor("openrouter")).toEqual({
 			oauth: { configured: true, source: "stored" },
 			api_key: { configured: false },
 		});
 
-		harness.authStorage.remove("anthropic");
+		harness.authStorage.remove("openrouter");
 		await handler.handleInputLine(
-			JSON.stringify({ id: "key", type: "login_api_key", provider: "anthropic", key: "sk-scripted" }),
+			JSON.stringify({ id: "key", type: "login_api_key", provider: "openrouter", key: "sk-scripted" }),
 		);
 		await collected.waitFor((message) => message.id === "key");
 		// No refresh here: the login_api_key response itself must mean the status is current.
-		expect(await rowsFor("anthropic")).toEqual({
+		expect(await rowsFor("openrouter")).toEqual({
 			oauth: { configured: false },
 			api_key: { configured: true, source: "stored" },
 		});
 
-		await handler.handleInputLine(JSON.stringify({ id: "out", type: "logout", provider: "anthropic" }));
+		await handler.handleInputLine(JSON.stringify({ id: "out", type: "logout", provider: "openrouter" }));
 		await collected.waitFor((message) => message.id === "out");
-		expect(await rowsFor("anthropic")).toEqual({
+		expect(await rowsFor("openrouter")).toEqual({
 			oauth: { configured: false },
 			api_key: { configured: false },
 		});
