@@ -23,13 +23,13 @@ function elisionMarker(elided: number): string {
 	return `[…${elided}ch elided…]`;
 }
 
-/** The longest prefix of value whose serialized length with its elision marker fits limit, or undefined. */
 /** keptLength moved back so the prefix never ends on the high half of a surrogate pair. */
 function characterBoundary(value: string, keptLength: number): number {
 	const last = value.charCodeAt(keptLength - 1);
 	return keptLength > 0 && last >= 0xd800 && last <= 0xdbff ? keptLength - 1 : keptLength;
 }
 
+/** The longest prefix of value whose serialized length with its elision marker fits limit, or undefined. */
 function trimmedString(value: string, maxChars: number, limit: number): string | undefined {
 	let keptLength = characterBoundary(value, Math.min(maxChars, value.length));
 	while (keptLength >= 0) {
