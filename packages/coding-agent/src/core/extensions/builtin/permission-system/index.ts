@@ -54,11 +54,13 @@ function denyReason(
 	request: Request,
 ): string {
 	if (settingsManager === null) return error.message;
-	const pattern = request.patterns[0] ?? "*";
-	const provenance = findDenyProvenance(settingsManager, cliRuleset, request.permission, pattern);
+	const provenance = findDenyProvenance(settingsManager, cliRuleset, request.permission, request.patterns);
 	if (!provenance) return error.message;
 	const source = provenance.layer === "cli" ? "--permission" : `${provenance.layer} settings.json`;
-	return `Denied by ${provenance.layer} permission rule ${provenance.permission}:${provenance.pattern} = deny (${source}). Edit that entry to allow this call.`;
+	// Only promise an unblock when no other layer still denies the call: naming the winning rule and
+	// telling the user to edit it is wrong when a second deny would keep blocking.
+	const unblock = provenance.otherLayerDenies ? "" : " Edit that entry to allow this call.";
+	return `Denied by ${provenance.layer} permission rule ${provenance.permission}:${provenance.pattern} = deny (${source}).${unblock}`;
 }
 
 /**
@@ -84,34 +86,43 @@ function persistAlways(agentDir: string, cwd: string, request: Request, persiste
 	for (const rule of rules) persisted.add(`${rule.permission}:${rule.pattern}`);
 }
 
-/** The most specific settings rule (global/project/CLI) denying this permission, for the refusal message. */
+/**
+ * The settings deny rule that actually decided, using the same precedence as the decision
+ * (global, then project, then CLI; last match wins within and across layers). A decision-time
+ * deny is the last matching deny over the merged static ruleset, so the topmost layer with a
+ * match is the winner. `otherLayerDenies` is true when a lower layer also matches, so the
+ * refusal does not promise that editing the winning entry alone would unblock the call.
+ */
 function findDenyProvenance(
 	settingsManager: SettingsManager,
 	cliRuleset: Ruleset,
 	permission: string,
-	pattern: string,
-): { layer: "global" | "project" | "cli"; permission: string; pattern: string; action: string } | undefined {
+	patterns: readonly string[],
+): { layer: "global" | "project" | "cli"; permission: string; pattern: string; action: string; otherLayerDenies: boolean } | undefined {
 	const matches = (rules: Ruleset) =>
 		rules.filter(
 			(rule) =>
 				rule.action === "deny" &&
 				Wildcard.match(permission, rule.permission) &&
-				(Wildcard.match(pattern, rule.pattern) ||
-					(rule.pattern.endsWith(" *") && Wildcard.match(pattern, rule.pattern.slice(0, -2)))),
+				patterns.some(
+					(value) =>
+						Wildcard.match(value, rule.pattern) ||
+						(rule.pattern.endsWith(" *") && Wildcard.match(value, rule.pattern.slice(0, -2))),
+				),
 		);
 	const globalPermission = (settingsManager.getGlobalSettings() as { permission?: PermissionConfig }).permission;
 	const globalMatches = matches(globalPermission ? fromConfig(globalPermission) : []);
-	if (globalMatches.length > 0) {
-		return { layer: "global", ...globalMatches[globalMatches.length - 1] };
-	}
 	const projectPermission = (settingsManager.getProjectSettings() as { permission?: PermissionConfig }).permission;
 	const projectMatches = matches(projectPermission ? fromConfig(projectPermission) : []);
-	if (projectMatches.length > 0) {
-		return { layer: "project", ...projectMatches[projectMatches.length - 1] };
-	}
 	const cliMatches = matches(cliRuleset);
 	if (cliMatches.length > 0) {
-		return { layer: "cli", ...cliMatches[cliMatches.length - 1] };
+		return { layer: "cli", ...cliMatches[cliMatches.length - 1], otherLayerDenies: projectMatches.length > 0 || globalMatches.length > 0 };
+	}
+	if (projectMatches.length > 0) {
+		return { layer: "project", ...projectMatches[projectMatches.length - 1], otherLayerDenies: globalMatches.length > 0 };
+	}
+	if (globalMatches.length > 0) {
+		return { layer: "global", ...globalMatches[globalMatches.length - 1], otherLayerDenies: false };
 	}
 	return undefined;
 }

@@ -4,7 +4,6 @@ import { isPresetRule } from "./config.ts";
 import { evaluate } from "./evaluate.ts";
 import { createLocalEventEmitter, type PermissionEventEmitter } from "./events.ts";
 import { approvedFileVersion, approvedStoreRealPath, loadApproved } from "./storage.ts";
-import { Wildcard } from "./wildcard.ts";
 import {
 	CorrectedError,
 	DeniedError,
@@ -109,17 +108,20 @@ export class PermissionService {
 		if (this.protectedStorePath !== undefined && this.targetIsProtectedStore(target)) {
 			return { action: "deny", rules: [{ permission, pattern: "*", action: "deny" }] };
 		}
-		const staticDeny = this.staticDeny(permission, target);
 		if (!options.presetBound) {
-			// HIGH 2: a configured deny outranks any approval, in every layer and order.
-			if (staticDeny !== undefined) return { action: "deny", rules: [staticDeny] };
-			const rule = evaluate(permission, target, this.staticRuleset, this.approved);
+			// HIGH 2: evaluate the configured rules alone first. When the configured decision is a deny,
+			// it outranks any approval; an approval can only turn a configured ask into an allow.
+			const configured = evaluate(permission, target, this.staticRuleset);
+			if (configured.action === "deny") return { action: "deny", rules: [{ ...configured }] };
+			const approvedRule = evaluate(permission, target, this.approved);
+			if (this.approved.includes(approvedRule) && approvedRule.action === "allow") {
+				return { action: "allow", rules: [{ ...approvedRule }] };
+			}
 			// Full access means no prompts: a settings/CLI ask collapses to allow here, while a deny
 			// stays denied. This is the one dedicated full-access decision (senpi#2465).
-			const action = this.preset === "full-access" && rule.action === "ask" ? "allow" : rule.action;
-			return { action, rules: [{ ...rule }] };
+			const action = this.preset === "full-access" && configured.action === "ask" ? "allow" : configured.action;
+			return { action, rules: [{ ...configured }] };
 		}
-		if (staticDeny !== undefined) return { action: "deny", rules: [staticDeny] };
 		const presetRules = this.staticRuleset.filter((rule) => isPresetRule(rule));
 		const userRules = this.staticRuleset.filter((rule) => !isPresetRule(rule));
 		const presetRule = evaluate(permission, target, presetRules);
@@ -159,21 +161,6 @@ export class PermissionService {
 		} catch {
 			return undefined;
 		}
-	}
-
-	/** The matching static (settings/CLI) deny rule, when one applies; approvals never override it. */
-	private staticDeny(permission: string, target: string | readonly string[]): Rule | undefined {
-		const targets = typeof target === "string" ? [target] : target;
-		return this.staticRuleset.find(
-			(rule) =>
-				rule.action === "deny" &&
-				Wildcard.match(permission, rule.permission) &&
-				targets.some(
-					(value) =>
-						Wildcard.match(value, rule.pattern) ||
-						(rule.pattern.endsWith(" *") && Wildcard.match(value, rule.pattern.slice(0, -2))),
-				),
-		);
 	}
 
 	/** Request permission for a tool call. Resolves if allowed, throws on denial. */

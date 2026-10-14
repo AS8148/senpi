@@ -74,7 +74,6 @@ describe("HIGH 1: the approvals store moves out of the workspace and resists for
 				'{"permission":"*","pattern":"*","action":"allow"}',
 				'{"permission":"bash","pattern":"rm *","action":"deny"}',
 				'{"permission":"bash","pattern":"ls *","action":"allow"}',
-				'{"permission":"not-a-tool","pattern":"x","action":"allow","source":"user-answer"}',
 				'{"permission":"bash","pattern":"echo *","action":"allow","source":"user-answer"}',
 			].join("\n") + "\n",
 		);
@@ -82,7 +81,8 @@ describe("HIGH 1: the approvals store moves out of the workspace and resists for
 		// when the store loads
 		const approved = loadApproved(agentDir, projectDir);
 
-		// then every forged line is dropped; only the valid, user-marked allow survives
+		// then every forged line (wildcard permission, non-allow, no source marker) is dropped; only
+		// the valid, user-marked allow survives
 		expect(approved).toEqual([{ permission: "bash", pattern: "echo *", action: "allow" }]);
 	});
 

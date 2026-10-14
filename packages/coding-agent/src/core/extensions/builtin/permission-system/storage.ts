@@ -10,9 +10,6 @@ const MIGRATED_MARKER = ".migrated";
 /** Marker only the user-answer path (persistAlways / migration) writes; forgery without it is dropped. */
 const USER_ANSWER_SOURCE = "user-answer";
 
-/** The permission kinds an approved rule may name; a wildcard or unknown kind is never approved. */
-const KNOWN_PERMISSIONS = new Set(["read", "list", "grep", "edit", "bash", "external_directory", "webfetch"]);
-
 function getLegacyPermissionsPath(projectDir: string): string {
 	return path.join(projectDir, CONFIG_DIR_NAME, PERMISSIONS_FILE);
 }
@@ -48,14 +45,22 @@ function isWellFormedPattern(pattern: unknown): pattern is string {
 }
 
 /**
- * Validates one loaded line: action 'allow', a known (non-wildcard) permission kind, a well-formed
+ * A concrete permission kind names a real gated tool (bash, edit, read, or any custom/MCP tool);
+ * only a wildcard or empty permission is a forgery vector and is rejected. The review's forge is
+ * specifically `{"permission":"*","pattern":"*","action":"allow"}` — a wildcard permission.
+ */
+function isConcretePermission(permission: unknown): permission is string {
+	return typeof permission === "string" && permission.length > 0 && permission !== "*" && !permission.includes("\n");
+}
+/**
+ * Validates one loaded line: action 'allow', a concrete (non-wildcard) permission kind, a well-formed
  * pattern, and the user-answer source marker only the answer path writes. Anything else is dropped.
  */
 function toApprovedRule(value: unknown): Rule | undefined {
 	if (typeof value !== "object" || value === null) return undefined;
 	const candidate = value as Record<string, unknown>;
 	if (candidate.action !== "allow") return undefined;
-	if (typeof candidate.permission !== "string" || !KNOWN_PERMISSIONS.has(candidate.permission)) return undefined;
+	if (!isConcretePermission(candidate.permission)) return undefined;
 	if (!isWellFormedPattern(candidate.pattern)) return undefined;
 	if (candidate.source !== USER_ANSWER_SOURCE) return undefined;
 	return { permission: candidate.permission, pattern: candidate.pattern, action: "allow" };
@@ -63,6 +68,12 @@ function toApprovedRule(value: unknown): Rule | undefined {
 
 function readRules(filePath: string): Ruleset {
 	if (!fs.existsSync(filePath)) return [];
+	// Never read through a symlink at the store path: a linked-in line is not honored.
+	try {
+		if (fs.lstatSync(filePath).isSymbolicLink()) return [];
+	} catch {
+		return [];
+	}
 	const content = fs.readFileSync(filePath, "utf-8");
 	const lines = content.split("\n").filter((line) => line.trim() !== "");
 	const rules: Rule[] = [];
@@ -122,6 +133,8 @@ export function appendApproved(agentDir: string, projectDir: string, rules: Rule
 	const filePath = approvedStorePath(agentDir, projectDir);
 	const dir = path.dirname(filePath);
 	if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+	// Never write through a symlink at the store path: an attacker-chosen target must stay untouched.
+	if (fs.existsSync(filePath) && fs.lstatSync(filePath).isSymbolicLink()) return;
 	const lines = `${rules.map((rule) => JSON.stringify({ ...rule, source: USER_ANSWER_SOURCE })).join("\n")}\n`;
 	fs.appendFileSync(filePath, lines, { flag: "a" });
 }
