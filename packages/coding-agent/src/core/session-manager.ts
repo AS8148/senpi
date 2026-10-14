@@ -34,7 +34,7 @@ import { projectRetainedMessages } from "./extensions/builtin/compaction/retaine
 import { resolveMovedPath } from "./extensions/builtin/moved-path-guard/resolve.ts";
 import type { ModelChangeOrigin, ModelChangeSource } from "./model-change-origin.ts";
 import { sessionCwdMatcher } from "./moved-session-cwd.ts";
-import type { RepositoryIdentity } from "./repository-identity.ts";
+import { REPOSITORY_IDENTITY_ENTRY_TYPE, type RepositoryIdentity } from "./repository-identity.ts";
 import {
 	ALL_SESSION_LIST_PUBLISH_INTERVAL,
 	listSessionFilesInDir,
@@ -1096,16 +1096,33 @@ export function setSessionEntryLoaderForTesting(loader: typeof loadEntriesFromFi
 	};
 }
 
-/** Setup and extension-state entries: a file this process created that holds only these is disposable (senpi#3263). */
-const DISPOSABLE_ENTRY_TYPES: ReadonlySet<FileEntry["type"]> = new Set([
+/** Setup entries: a file this process created that holds only these is disposable (senpi#3263). */
+const SETUP_ENTRY_TYPES: ReadonlySet<FileEntry["type"]> = new Set([
 	"session",
 	"model_change",
 	"model_change_rejected",
 	"thinking_level_change",
 	"configuration_update",
-	"custom",
 	"label",
 ]);
+
+/**
+ * `custom` bookkeeping that extensions write at session start without any user action (senpi#3263).
+ * Any other `custom` entry (a paid cache prewarm, a todo list, unknown extension state) keeps the file.
+ */
+export const STARTUP_BOOKKEEPING_CUSTOM_TYPES: ReadonlySet<string> = new Set([
+	"pi-rules.scan",
+	REPOSITORY_IDENTITY_ENTRY_TYPE,
+	"claude-sdk-oauth-binding",
+	"nested-agents-md:debug",
+	// Written by the OmO memory extension, which lives outside this repository.
+	"senpi-memory.session-binding",
+]);
+
+function isDisposableEntry(entry: FileEntry): boolean {
+	if (entry.type === "custom") return STARTUP_BOOKKEEPING_CUSTOM_TYPES.has(entry.customType);
+	return SETUP_ENTRY_TYPES.has(entry.type);
+}
 
 /** A user or assistant message: the first one makes a new session worth a file (#10000). */
 function isConversationEntry(entry: FileEntry): boolean {
@@ -1313,6 +1330,7 @@ export class SessionManager {
 
 	newSession(options?: NewSessionOptions): string | undefined {
 		const timestamp = this._resetToNewSession(options);
+		this.ownedHeaderFile = undefined;
 		if (this.persist) {
 			const fileTimestamp = timestamp.replace(/[:.]/g, "-");
 			const path = join(this.getSessionDir(), `${fileTimestamp}_${this.sessionId}.jsonl`);
@@ -1505,17 +1523,18 @@ export class SessionManager {
 
 	/**
 	 * Removes the session file when this process created it with persistHeaderNow() and it holds only
-	 * setup or extension-state entries (header, model, thinking level, configuration, `custom` state such
-	 * as rules scans and memory bindings, labels), then returns to buffering so a later entry cannot
-	 * recreate a header-less file; those entries reach disk again with the first message (senpi#3263).
-	 * Any message (user, assistant, `!cmd`), delivered `custom_message`, session name or usage record
+	 * setup entries (header, model, thinking level, configuration, labels) and the startup bookkeeping in
+	 * STARTUP_BOOKKEEPING_CUSTOM_TYPES (rules scan, memory binding, repository identity), then returns to
+	 * buffering so a later entry cannot recreate a header-less file; those entries reach disk again with
+	 * the first message (senpi#3263). Any message (user, assistant, `!cmd`), delivered `custom_message`,
+	 * session name, other `custom` entry (such as a paid cache prewarm or a todo list) or usage record
 	 * keeps the file, and a file opened from disk is never deleted here.
 	 */
 	async discardHeaderOnlyFile(): Promise<boolean> {
 		await this.headerWrite;
 		if (!this.persist || !this.sessionFile || !this.flushed) return false;
 		if (this.ownedHeaderFile !== this.sessionFile) return false;
-		if (!this.fileEntries.every((entry) => DISPOSABLE_ENTRY_TYPES.has(entry.type))) return false;
+		if (!this.fileEntries.every(isDisposableEntry)) return false;
 		await rm(this.sessionFile, { force: true });
 		this.ownedHeaderFile = undefined;
 		this.flushed = false;

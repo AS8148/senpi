@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/session-manager.ts`: `discardHeaderOnlyFile()` removes only a file this process created with `persistHeaderNow()` (tracked as `ownedHeaderFile`, set when `_writeHeaderAsync` succeeds and cleared when an existing file is opened), and only when every entry is in `DISPOSABLE_ENTRY_TYPES`: the header, model/thinking/configuration setup, extension `custom` state (rules scans, memory bindings) and labels. Any message (including a `!cmd` `bashExecution`), a delivered `custom_message`, a `session_info` name or a `usage` record keeps the file. This replaces `SETUP_ONLY_ENTRY_TYPES`, which refused to discard a file holding `custom` entries. The in-memory entries are kept and reach disk with the first message, as before.
+- `packages/coding-agent/src/core/session-manager.ts`: `discardHeaderOnlyFile()` removes only a file this process created with `persistHeaderNow()` (tracked as `ownedHeaderFile`, set when `_writeHeaderAsync` succeeds and cleared when an existing file is opened or a new session starts), and only when every entry is setup (`SETUP_ENTRY_TYPES`: header, model/thinking/configuration changes, labels) or startup bookkeeping named in `STARTUP_BOOKKEEPING_CUSTOM_TYPES` (`pi-rules.scan`, `repository-identity`, `claude-sdk-oauth-binding`, `nested-agents-md:debug`, and the OmO memory extension's `senpi-memory.session-binding`). Any other `custom` entry (a paid `prompt-cache-prewarm`, a `senpi.todo-state` list, unknown extension state), any message (including a `!cmd` `bashExecution`), a delivered `custom_message`, a `session_info` name or a `usage` record keeps the file. This replaces `SETUP_ONLY_ENTRY_TYPES`. The in-memory entries are kept and reach disk with the first message, as before.
 
 ### Why
 
@@ -14,7 +14,7 @@
 
 ### Expected merge conflict zones
 
-- `packages/coding-agent/src/core/session-manager.ts`: LOW, `discardHeaderOnlyFile()`, `_writeHeaderAsync`'s flushed branch, the open-existing-file branch, and the `DISPOSABLE_ENTRY_TYPES` constant above the class.
+- `packages/coding-agent/src/core/session-manager.ts`: LOW, `discardHeaderOnlyFile()`, `_writeHeaderAsync`'s flushed branch, the open-existing-file branch, `newSession()`, and the `SETUP_ENTRY_TYPES` / `STARTUP_BOOKKEEPING_CUSTOM_TYPES` constants above the class.
 
 ## 2026-10-14 - The fallback circuit opens for a usage limit until its own reset window (senpi#3314)
 

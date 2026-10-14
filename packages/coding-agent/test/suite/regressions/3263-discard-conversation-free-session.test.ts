@@ -3,7 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
-import { SessionManager } from "../../../src/core/session-manager.ts";
+import { BINDING_ENTRY_TYPE } from "../../../src/core/extensions/builtin/anthropic-subscription/session-binding.ts";
+import { PROMPT_CACHE_PREWARM_ENTRY_TYPE } from "../../../src/core/extensions/builtin/cache-keepalive/prewarm-entry.ts";
+import { TODO_STATE_ENTRY_TYPE } from "../../../src/core/extensions/builtin/todotools/todo-types.ts";
+import { SessionManager, STARTUP_BOOKKEEPING_CUSTOM_TYPES } from "../../../src/core/session-manager.ts";
 
 // senpi#3263: a TUI session writes its header at startup (control endpoint), and extensions then
 // append custom entries (rules scan, memory binding). Closing without chatting must still remove
@@ -77,6 +80,33 @@ describe("closing a session without a conversation leaves no file (#3263)", () =
 			truncated: false,
 			timestamp: Date.now(),
 		});
+
+		expect(await manager.discardHeaderOnlyFile()).toBe(false);
+		expect(existsSync(file)).toBe(true);
+	});
+
+	it("names the subscription binding marker by its owning constant", () => {
+		expect(STARTUP_BOOKKEEPING_CUSTOM_TYPES.has(BINDING_ENTRY_TYPE)).toBe(true);
+		expect(STARTUP_BOOKKEEPING_CUSTOM_TYPES.has(PROMPT_CACHE_PREWARM_ENTRY_TYPE)).toBe(false);
+		expect(STARTUP_BOOKKEEPING_CUSTOM_TYPES.has(TODO_STATE_ENTRY_TYPE)).toBe(false);
+	});
+
+	it("keeps the cost record of a paid prompt-cache prewarm", async () => {
+		const { manager, file } = startedSession();
+		await manager.persistHeaderNow();
+		manager.appendCustomEntry(PROMPT_CACHE_PREWARM_ENTRY_TYPE, {
+			phase: "warmed",
+			usage: { input: 10, output: 0, cacheRead: 0, cacheWrite: 4000, totalTokens: 4010 },
+		});
+
+		expect(await manager.discardHeaderOnlyFile()).toBe(false);
+		expect(existsSync(file)).toBe(true);
+	});
+
+	it("keeps extension state the user created, such as a todo list", async () => {
+		const { manager, file } = startedSession();
+		await manager.persistHeaderNow();
+		manager.appendCustomEntry(TODO_STATE_ENTRY_TYPE, { schema: "v2", phases: [] });
 
 		expect(await manager.discardHeaderOnlyFile()).toBe(false);
 		expect(existsSync(file)).toBe(true);
