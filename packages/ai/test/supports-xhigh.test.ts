@@ -222,10 +222,9 @@ describe("getSupportedThinkingLevels", () => {
 		expect(getSupportedThinkingLevels(model!)).toEqual(["off", "low", "high", "max"]);
 	});
 
-	it("maps the opencode-go model served over Google Generative AI to its low/medium/high thinking levels", () => {
-		const model = getModel("opencode-go", "gemini-4-argon-contributor");
+	it("maps an opencode-go model served over Google Generative AI to its low/medium/high thinking levels", () => {
+		const model = getModels("opencode-go").find((candidate) => candidate.api === "google-generative-ai");
 		expect(model).toBeDefined();
-		expect(model!.api).toBe("google-generative-ai");
 		expect(getSupportedThinkingLevels(model!)).toEqual(["low", "medium", "high"]);
 	});
 
