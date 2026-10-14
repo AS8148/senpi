@@ -692,6 +692,26 @@ describe("ModelRegistry", () => {
 			expect(anthropicModels.some((m) => m.id === "claude-custom")).toBe(false);
 			expect(anthropicModels.some((m) => m.id.includes("claude"))).toBe(true);
 		});
+
+		// Desktop #1812: a server added from the desktop is its own provider id with a key in
+		// auth.json; removing it deletes the models.json block, logs the provider out, and refreshes.
+		test("removing a custom provider and its stored key drops its models on refresh", async () => {
+			const gpuBox = {
+				...providerConfig("http://192.168.1.20:8000/v1", [{ id: "qwen2.5-coder" }], "openai-completions"),
+			};
+			delete (gpuBox as { apiKey?: string }).apiKey;
+			writeModelsJson({ "gpu-box": gpuBox });
+			authStorage.set("gpu-box", { type: "api_key", key: "synthetic-server-key" });
+			const registry = await createModelRegistry(authStorage, modelsJsonPath);
+			expect(registry.getAvailable().some((m) => m.provider === "gpu-box")).toBe(true);
+
+			writeModelsJson({});
+			authStorage.remove("gpu-box");
+			await registry.refresh();
+
+			expect(registry.getAll().some((m) => m.provider === "gpu-box")).toBe(false);
+			expect(registry.getAvailable().some((m) => m.provider === "gpu-box")).toBe(false);
+		});
 	});
 
 	describe("modelOverrides (per-model customization)", () => {
