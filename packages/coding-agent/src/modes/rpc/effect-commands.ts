@@ -144,10 +144,14 @@ export async function runQueuedInputChange(
 				...effectAnswer(begun.replay, ctx.sessionId, true),
 			},
 		});
+	const clientMessageId = ctx.session.getQueuedInputs().find((input) => input.queuedId === queuedId)?.clientMessageId;
 	const status =
 		command.type === "dequeue_message"
 			? ctx.session.dequeueQueuedInput(queuedId)
 			: ctx.session.editQueuedInput(queuedId, command.text);
+	// A durable input is restored from its admission record on reopen: that record must carry the edit too.
+	if (status === "edited" && clientMessageId !== undefined && command.type === "edit_queued_message")
+		ClientAdmissions.forSession(ctx.session).editQueuedText(clientMessageId, command.text);
 	const outcome =
 		status === "already_delivered"
 			? EFFECT_OUTCOMES.queuedInputAlreadyDelivered

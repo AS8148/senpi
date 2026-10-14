@@ -48,6 +48,9 @@ Admission records and their restore on reopen live in the RPC admission ledger.
 - `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `rpc-input-validation.ts`, `connection-handler.ts`: the two commands, their `queuedId` validation and dispatch.
 - `packages/coding-agent/src/modes/rpc/rpc-session-state.ts`: `get_state.ordered` comes from `getQueuedInputs()` (now carrying `queuedId`) instead of a private field.
 
+- `packages/coding-agent/src/modes/rpc/client-admissions.ts`: `editQueuedText` writes an edited queued input's text into its admission record (images and fingerprint kept), so a reopen restores the edit.
+- `packages/coding-agent/src/modes/rpc/effect-ledger.ts`, `effect-outcome-copy.ts`: the reopen seal fails an unfinished `edit_queued` (and `dequeue`) with `interrupted_by_reopen`; an unhandled kind throws.
+
 ### Why
 
 A client could see queued messages but not remove or correct one (desktop #2263).

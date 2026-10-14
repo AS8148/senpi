@@ -5658,7 +5658,6 @@ export class AgentSession {
 			mode: input.mode,
 			count: queue.length,
 		});
-		this._emitQueueUpdate();
 		const content: (TextContent | ImageContent)[] = [
 			...userTextContent(input.text, input.textBlocks),
 			...(input.images ?? []),
@@ -5676,16 +5675,13 @@ export class AgentSession {
 					? this._postCompactionDeferredSteeringMessages
 					: this._postCompactionDeferredFollowUpMessages;
 			deferred.push(message);
-			return;
+		} else if (input.mode === "steer") {
+			this.agent.steer(message);
+		} else {
+			this.agent.followUp(message);
 		}
-		switch (input.mode) {
-			case "steer":
-				this.agent.steer(message);
-				break;
-			case "followUp":
-				this.agent.followUp(message);
-				break;
-		}
+		// Announce the input only once it is queued everywhere, so a listener can already change it by queuedId.
+		this._emitQueueUpdate();
 	}
 
 	private _flushPostCompactionDeferredMessages(): void {
@@ -6131,12 +6127,14 @@ export class AgentSession {
 		if (index === -1) return this._deliveredQueuedIds.has(queuedId) ? "already_delivered" : "not_found";
 		const record = this._queuedInputOrder[index]!;
 		const message = this._queuedMessages.get(queuedId);
+		// Only user input is queued by id; anything else cannot be edited, and must not be removed by an edit.
+		if (nextText !== undefined && message?.role !== "user") return "not_found";
 		const deferred =
 			record.mode === "steer"
 				? this._postCompactionDeferredSteeringMessages
 				: this._postCompactionDeferredFollowUpMessages;
 		const nextMessage: AgentMessage | undefined =
-			nextText === undefined || message === undefined || message.role !== "user"
+			nextText === undefined || message?.role !== "user"
 				? undefined
 				: {
 						...message,
