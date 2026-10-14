@@ -4,9 +4,10 @@ import { stripProviderRequestIds } from "@earendil-works/pi-ai/utils/retry";
 const TRANSPORT_FAILURE =
 	/timed? out|timeout|econnreset|econnrefused|etimedout|socket hang up|socket connection was closed|network.?error|connection.?error|connection.?refused|connection.?lost|other side closed|fetch failed|getaddrinfo|enotfound|eai_again|upstream.?connect|reset before headers|terminated|websocket.?closed|websocket.?error|ended without|stream ended before message_stop|stream ended before a terminal response event|http2 request did not get a response/;
 
-// A limit, spent account or loaded model is the provider's answer, even beside a timeout.
+// A limit, spent account, loaded model or server-side failure (5xx, "unavailable") is the provider's
+// answer, even beside a timeout, matching the precedence in cooldown.ts.
 const PROVIDER_VERDICT =
-	/usage[- ]limit|quota|billing|credits|rate[ -]?limit|\b429\b|too many requests|overloaded|capacity|forbidden|resets? (?:at|in)\b/;
+	/usage[- ]limit|quota|billing|credits|rate[ -]?limit|\b429\b|too many requests|overloaded|capacity|forbidden|resets? (?:at|in)\b|\b5\d\d\b|server|unavailable|high demand|overflow/;
 
 function normalize(errorMessage: string): string {
 	return stripProviderRequestIds(errorMessage).toLowerCase();

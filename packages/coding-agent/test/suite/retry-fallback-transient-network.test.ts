@@ -59,6 +59,28 @@ describe("senpi#3306 network blips never strand a session on a fallback", () => 
 		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-1", "faux-2", "faux-1"]);
 	});
 
+	it("#given a blip then a rate limit on the fallback in one turn #when the retry continues #then the session stays off the primary", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }, { id: "faux-2" }, { id: "faux-3" }],
+			fallbackNow: () => 0,
+			settings: {
+				retry: {
+					enabled: true,
+					baseDelayMs: 1,
+					maxRetries: 0,
+					fallbackChains: { [primary]: [fallback, "faux/faux-3"] },
+				},
+			},
+		});
+		harnesses.push(harness);
+		harness.setResponses([networkReset(), rateLimitedTimeout(), fauxAssistantMessage("third answer")]);
+
+		await harness.session.prompt("first");
+
+		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-2", "faux-3"]);
+		expect(harness.eventsOfType("retry_fallback_reverted")).toEqual([]);
+	});
+
 	it("#given a rate limit that also mentions a timeout #when the next turn starts on a frozen clock #then the primary stays held", async () => {
 		const harness = await flakyHarness(harnesses, 1);
 		harness.setResponses([
@@ -91,6 +113,12 @@ describe("isPureNetworkTransient", () => {
 		"overloaded_error: capacity, connection reset",
 		"You have hit your usage limit. Resets in 9 minutes (timeout)",
 		"insufficient_quota",
+		"500 Internal server error: request timed out",
+		"504 Gateway Timeout",
+		"Error 524: A timeout occurred",
+		"503 upstream connect error or disconnect/reset before headers. reset reason: overflow",
+		"service unavailable: connection error",
+		"model is experiencing high demand; timed out",
 		undefined,
 	])("#given %s #then it is not a pure network blip", (message) => {
 		expect(isPureNetworkTransient(message)).toBe(false);

@@ -260,7 +260,7 @@ export class RetryFallbackController {
 		while (candidate) {
 			try {
 				await this.applyCandidate(current, candidate, reason, limit);
-				this.heldForNetworkBlip = networkBlip;
+				this.heldForNetworkBlip ||= networkBlip;
 				return true;
 			} catch (error) {
 				if (!this.deps.isCandidateRefusal?.(error)) throw error;

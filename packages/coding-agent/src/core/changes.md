@@ -2,9 +2,9 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/retry-fallback/transient-network.ts` (new): `isPureNetworkTransient` matches a transport failure (timeout, reset, DNS, connection or stream drop) that names no limit, quota, rate limit, overload or reset window. `isTransportFailureText` is the one transport pattern, shared with the cooldown.
+- `packages/coding-agent/src/core/retry-fallback/transient-network.ts` (new): `isPureNetworkTransient` matches a transport failure (timeout, reset, DNS, connection or stream drop) that names no limit, quota, rate limit, overload, reset window or server-side failure (a 5xx status, "server", "unavailable", "high demand", "overflow"), matching the precedence `cooldown.ts` already gives those. `isTransportFailureText` is the one transport pattern, shared with the cooldown.
 - `packages/coding-agent/src/core/retry-fallback/cooldown.ts`: the transport-blip branch of `durationFor` uses `isTransportFailureText` instead of its own copy of the pattern.
-- `packages/coding-agent/src/core/retry-fallback/controller.ts`: when a network blip outlasts the same-model retries, `tryFallback` still switches to the next chain entry, but it notes no cooldown on the primary, and `noteHealthFailure` does not open the shared circuit for it. The switch is held for the rest of that turn: `maybeRestorePrimary(policy, "continuation")` refuses to revert it, and the next `"turn"` boundary reverts it.
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: when a network blip outlasts the same-model retries, `tryFallback` still switches to the next chain entry, but it notes no cooldown on the primary, and `noteHealthFailure` does not open the shared circuit for it. The switch is held for the rest of that turn, even if a later failure in the same turn switches again: `maybeRestorePrimary(policy, "continuation")` refuses to revert it, and the next `"turn"` boundary reverts it.
 - `packages/coding-agent/src/core/agent-session.ts`: `_maybeRestoreFallbackPrimary` takes the boundary kind. The retry continuation and the post-compaction continuation pass `"continuation"`; the prompt boundary keeps `"turn"`.
 
 ### Why

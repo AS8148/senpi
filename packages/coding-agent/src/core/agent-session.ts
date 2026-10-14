@@ -6629,7 +6629,7 @@ export class AgentSession {
 	 */
 	private async _onCompactionContextChanged(): Promise<void> {
 		const released = this._retryFallback.notifyCompactionApplied();
-		if (released && !this.isStreaming) await this._maybeRestoreFallbackPrimary();
+		if (released && !this.isStreaming) await this._maybeRestoreFallbackPrimary("turn");
 	}
 
 	private async _switchActiveModel(
