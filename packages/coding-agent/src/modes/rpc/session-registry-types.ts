@@ -81,6 +81,7 @@ export class RpcSessionRegistryError extends Error {
 		| "session_reservation_limit"
 		| "invalid_path"
 		| "invalid_session_id"
+		| "session_not_held"
 		| "open_failed";
 	/** Machine-readable context for the wire (`errorData`): who holds a path, when to retry. */
 	readonly detail?: Readonly<Record<string, unknown>>;
@@ -114,6 +115,8 @@ export interface RpcSessionRegistryOptions {
 
 /** Host-side lifecycle policy for one `open_session`, distinct from the session's launch profile. */
 export interface RpcSessionOpenOptions {
+	/** Refuse unless the registry already owns the path; never prepare or construct a writer. */
+	attachOnly?: boolean;
 	/** Keep the session alive when its last client disconnects (`open_session.retain_on_disconnect`). */
 	retainOnDisconnect?: boolean;
 }
@@ -145,6 +148,7 @@ export interface OpenRpcSession {
 export function frozenProfile(profile: RpcSessionLaunchProfile): Readonly<RpcSessionLaunchProfile> {
 	return Object.freeze({
 		...profile,
+		...(profile.holderEndpoint ? { holderEndpoint: Object.freeze({ ...profile.holderEndpoint }) } : {}),
 		...(profile.creationModel ? { creationModel: Object.freeze({ ...profile.creationModel }) } : {}),
 		...(profile.sessionContext ? { sessionContext: Object.freeze({ ...profile.sessionContext }) } : {}),
 		...(profile.retryFallback
