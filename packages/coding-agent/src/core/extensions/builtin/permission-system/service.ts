@@ -1,7 +1,10 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { isPresetRule } from "./config.ts";
 import { evaluate } from "./evaluate.ts";
 import { createLocalEventEmitter, type PermissionEventEmitter } from "./events.ts";
-import { approvedFileVersion, loadApproved } from "./storage.ts";
+import { approvedFileVersion, approvedStoreRealPath, loadApproved } from "./storage.ts";
+import { Wildcard } from "./wildcard.ts";
 import {
 	CorrectedError,
 	DeniedError,
@@ -38,6 +41,7 @@ export class PermissionService {
 		emitter: PermissionEventEmitter = createLocalEventEmitter(),
 		preset?: PermissionPresetName,
 		projectDir?: string,
+		agentDir?: string,
 	) {
 		this.staticRuleset = [...staticRuleset];
 		this.approved = [...approved];
@@ -47,11 +51,19 @@ export class PermissionService {
 		// is this session's own (unsaved or just-saved) answers and survives a re-read.
 		this.persistedApprovedCount = approved.length;
 		this.projectDir = projectDir;
-		this.approvedVersion = projectDir === undefined ? undefined : approvedFileVersion(projectDir);
+		this.agentDir = agentDir;
+		this.protectedStorePath =
+			agentDir !== undefined && projectDir !== undefined
+				? approvedStoreRealPath(agentDir, projectDir)
+				: undefined;
+		this.approvedVersion =
+			agentDir === undefined || projectDir === undefined ? undefined : approvedFileVersion(agentDir, projectDir);
 	}
 
 	private readonly preset?: PermissionPresetName;
 	private readonly projectDir?: string;
+	private readonly agentDir?: string;
+	private readonly protectedStorePath?: string;
 	private persistedApprovedCount: number;
 	private approvedVersion: string | undefined;
 
@@ -61,10 +73,10 @@ export class PermissionService {
 	 * re-read replaces the persisted prefix while keeping this session's own answers.
 	 */
 	private refreshApproved(): void {
-		if (this.projectDir === undefined) return;
-		const version = approvedFileVersion(this.projectDir);
+		if (this.projectDir === undefined || this.agentDir === undefined) return;
+		const version = approvedFileVersion(this.agentDir, this.projectDir);
 		if (version === this.approvedVersion) return;
-		const fresh = loadApproved(this.projectDir);
+		const fresh = loadApproved(this.agentDir, this.projectDir);
 		this.approved = [...fresh, ...this.approved.slice(this.persistedApprovedCount)];
 		this.persistedApprovedCount = fresh.length;
 		this.approvedVersion = version;
@@ -92,13 +104,22 @@ export class PermissionService {
 		options: DecisionOptions = {},
 	): { readonly action: Rule["action"]; readonly rules: readonly Rule[] } {
 		this.refreshApproved();
+		// Defence in depth (HIGH 1): the agent's own tools never touch the approvals store, whatever
+		// rules say. The target's real path is compared against the store's real path.
+		if (this.protectedStorePath !== undefined && this.targetIsProtectedStore(target)) {
+			return { action: "deny", rules: [{ permission, pattern: "*", action: "deny" }] };
+		}
+		const staticDeny = this.staticDeny(permission, target);
 		if (!options.presetBound) {
+			// HIGH 2: a configured deny outranks any approval, in every layer and order.
+			if (staticDeny !== undefined) return { action: "deny", rules: [staticDeny] };
 			const rule = evaluate(permission, target, this.staticRuleset, this.approved);
 			// Full access means no prompts: a settings/CLI ask collapses to allow here, while a deny
 			// stays denied. This is the one dedicated full-access decision (senpi#2465).
 			const action = this.preset === "full-access" && rule.action === "ask" ? "allow" : rule.action;
 			return { action, rules: [{ ...rule }] };
 		}
+		if (staticDeny !== undefined) return { action: "deny", rules: [staticDeny] };
 		const presetRules = this.staticRuleset.filter((rule) => isPresetRule(rule));
 		const userRules = this.staticRuleset.filter((rule) => !isPresetRule(rule));
 		const presetRule = evaluate(permission, target, presetRules);
@@ -116,6 +137,43 @@ export class PermissionService {
 			return { action: "allow", rules: [...rules, { ...remembered }] };
 		}
 		return { action: "ask", rules };
+	}
+
+	/** True when any target path resolves (real path, case-folded on macOS) to the approvals store. */
+	private targetIsProtectedStore(target: string | readonly string[]): boolean {
+		const store = this.protectedStorePath;
+		if (store === undefined) return false;
+		const targets = typeof target === "string" ? [target] : target;
+		for (const value of targets) {
+			const resolved = this.canonicalForCompare(value);
+			if (resolved !== undefined && resolved === this.canonicalForCompare(store)) return true;
+		}
+		return false;
+	}
+
+	private canonicalForCompare(value: string): string | undefined {
+		if (!value.includes("/") && !value.includes(path.sep)) return undefined;
+		try {
+			const real = fs.realpathSync.native(value);
+			return process.platform === "darwin" ? real.toLowerCase() : real;
+		} catch {
+			return undefined;
+		}
+	}
+
+	/** The matching static (settings/CLI) deny rule, when one applies; approvals never override it. */
+	private staticDeny(permission: string, target: string | readonly string[]): Rule | undefined {
+		const targets = typeof target === "string" ? [target] : target;
+		return this.staticRuleset.find(
+			(rule) =>
+				rule.action === "deny" &&
+				Wildcard.match(permission, rule.permission) &&
+				targets.some(
+					(value) =>
+						Wildcard.match(value, rule.pattern) ||
+						(rule.pattern.endsWith(" *") && Wildcard.match(value, rule.pattern.slice(0, -2))),
+				),
+		);
 	}
 
 	/** Request permission for a tool call. Resolves if allowed, throws on denial. */
@@ -238,6 +296,14 @@ export class PermissionService {
 	/** Get the current approved ruleset */
 	getApproved(): Ruleset {
 		return this.approved.map((rule) => ({ ...rule }));
+	}
+
+	/**
+	 * This session's own approved rules (its answers), identified by permission+pattern+action, not
+	 * by index: a refresh that grows or shrinks the persisted prefix never duplicates or drops them.
+	 */
+	getSessionApproved(): Ruleset {
+		return this.approved.slice(this.persistedApprovedCount).map((rule) => ({ ...rule }));
 	}
 
 	private nextRequestID(): string {

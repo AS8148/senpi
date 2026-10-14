@@ -66,13 +66,21 @@ function denyReason(
  * store now, not at session shutdown (senpi#2465). The shutdown append then skips the rules this
  * session already persisted, so the JSONL contract keeps one line per rule.
  */
-function persistAlways(cwd: string, request: Request, persisted: Set<string>): void {
+function persistAlways(agentDir: string, cwd: string, request: Request, persisted: Set<string>): void {
 	const rules = request.always.map((pattern) => ({
 		permission: request.permission,
 		pattern,
 		action: "allow" as const,
 	}));
-	if (rules.length > 0) appendApproved(cwd, rules);
+	if (rules.length === 0) return;
+	// MEDIUM 4: a failed write (EACCES/ENOSPC) must not abort the tool call after the ask resolved;
+	// the rule is left unmarked so the shutdown append retries it.
+	try {
+		appendApproved(agentDir, cwd, rules);
+	} catch (error) {
+		console.error(`permission: failed to persist an Always answer; it will be retried at shutdown (${getReason(error)})`);
+		return;
+	}
 	for (const rule of rules) persisted.add(`${rule.permission}:${rule.pattern}`);
 }
 
@@ -193,7 +201,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 			);
 		}
 
-		const loadedSettings = loadPermissionSettings(settingsManager, cliRuleset, cwd, cliPreset);
+		const loadedSettings = loadPermissionSettings(settingsManager, cliRuleset, cwd, cliPreset, agentDir);
 		staticRuleset = loadedSettings.staticRuleset;
 		activePreset = loadedSettings.preset;
 		const approved = loadedSettings.approved;
@@ -204,6 +212,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 			createEventEmitter(pi),
 			activePreset,
 			cwd,
+			agentDir,
 		);
 		initialApprovedCount = approved.length;
 	};
@@ -229,7 +238,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		) {
 			return;
 		}
-		const sessionApproved = service ? service.getApproved().slice(initialApprovedCount) : [];
+		const sessionApproved = service ? service.getSessionApproved() : [];
 		setupError = null;
 		try {
 			loadPermissionRules(cwd, sessionApproved, agentDir);
@@ -330,7 +339,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 				const reply = await showPermissionPrompt(ctx, request, signal);
 				activeService.reply(reply);
 				if (reply.reply === "always") {
-					persistAlways(ctx.cwd, request, persistedAtAnswer);
+					persistAlways(ctx.agentDir, ctx.cwd, request, persistedAtAnswer);
 				}
 			} else {
 				activeService.reply(
@@ -373,11 +382,10 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		}
 
 		const approved = service
-			.getApproved()
-			.slice(initialApprovedCount)
+			.getSessionApproved()
 			.filter((rule) => !persistedAtAnswer.has(`${rule.permission}:${rule.pattern}`));
 		if (approved.length > 0) {
-			appendApproved(ctx.cwd, approved);
+			appendApproved(ctx.agentDir, ctx.cwd, approved);
 		}
 
 		for (const pendingRequest of service.list()) {

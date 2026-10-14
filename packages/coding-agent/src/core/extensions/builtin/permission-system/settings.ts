@@ -26,6 +26,7 @@ export function loadPermissionSettings(
 	cliOverride: Ruleset,
 	projectDir: string,
 	cliPresetOverride?: PermissionPresetName,
+	agentDir?: string,
 ): { staticRuleset: Ruleset; approved: Ruleset; preset: PermissionPresetName } {
 	const globalSettings = settingsManager.getGlobalSettings() as Settings & PermissionSettings;
 	const globalPreset = parseSettingsPreset(globalSettings.permissionPreset, "global");
@@ -50,7 +51,7 @@ export function loadPermissionSettings(
 		cliPresetRuleset,
 		cliOverride,
 	);
-	const approved = loadApproved(projectDir);
+	const approved = agentDir === undefined ? [] : loadApproved(agentDir, projectDir);
 
 	const preset = cliPresetOverride ?? projectPreset ?? globalPreset ?? DEFAULT_PERMISSION_PRESET;
 	return { staticRuleset, approved, preset };
