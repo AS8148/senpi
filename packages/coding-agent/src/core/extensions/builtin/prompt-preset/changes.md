@@ -25,7 +25,7 @@
 ### What changed
 
 - `gpt-surface.ts` `GPT_HANDOFF_MOMENTS` carries the senpi#3323 condition from `dynamic-prompt/handoff.ts`; `gpt-6-astra.ts` `HANDOFF_REPORT` now interpolates `GPT_HANDOFF_MOMENTS.terminal` instead of a copy of it, so its app replacement cannot drift.
-- Final-message rules apply to "a turn that changed something or carried out multi-step work": `claude-opus-5-5.ts`, `claude-opus-5.ts`, `claude-sonnet-5-5.ts`, `claude-haiku-5-5.ts`, `claude-fable-5.ts`, `claude-fable-5-1.ts`, `kimi-k3.ts`, `gpt-5.5.ts`, `gpt-5.6.ts`, `grok-4.5.ts`, and `gpt-6-astra.ts` `FINAL_MESSAGE_SHAPE` with its app replacement.
+- Final-message rules apply to a change ("if the turn changed something", "The final message of a change ...", "for a change, the Handoff block"): `claude-opus-5-5.ts`, `claude-opus-5.ts`, `claude-sonnet-5-5.ts`, `claude-haiku-5-5.ts`, `claude-fable-5.ts`, `claude-fable-5-1.ts`, `kimi-k3.ts`, `gpt-5.5.ts`, `gpt-5.6.ts`, `grok-4.5.ts`, and `gpt-6-astra.ts` `FINAL_MESSAGE_SHAPE` with its app replacement.
 - `test/suite/prompt-presets-native-baseline.json` is recaptured: every terminal and app hash changes, every chat hash is unchanged.
 
 ### Why

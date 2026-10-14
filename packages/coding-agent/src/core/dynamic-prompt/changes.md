@@ -4,8 +4,8 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/dynamic-prompt/handoff.ts`: `HANDOFF_MOMENTS` names "the creation of a todo list with more than one task" and "the final message of a turn that changed something or carried out multi-step work" (was "the todo list's creation" and "a turn that did work"), and says a reply that answers a question - an explanation, a lookup, a review - is the answer itself, with no block, even when finding the answer took tool calls.
-- `packages/coding-agent/src/core/dynamic-prompt/style.ts`: the final-message sentence uses the same condition.
+- `packages/coding-agent/src/core/dynamic-prompt/handoff.ts`: `HANDOFF_MOMENTS` names "a multi-task todo list's creation" and "the end of a turn that changed something" (was "the todo list's creation" and "the final message of a turn that did work"), and says "an answer stays an answer, even after tool calls" (was "a reply that only answers a question is the answer itself"). The sentences are no longer than before: the compaction characterization suites run the default prompt in a 5,000-token window, and a longer wording (+218 characters) tipped `agent-session-compaction` and `pre-prompt-compaction-no-continue` into a second compaction.
+- `packages/coding-agent/src/core/dynamic-prompt/style.ts`: "The final message of a change opens with the Handoff block" (was "The final message of work ...").
 
 ### Why
 
