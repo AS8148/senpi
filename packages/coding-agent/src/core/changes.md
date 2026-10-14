@@ -1,3 +1,69 @@
+## 2026-10-14 - A hard error parks only its rung, so a later rung of the same model stays reachable (senpi#3311)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: `tryFallback` notes a `hard-error` cooldown under the failing rung (`provider/id:level`, via `rungSelector`) instead of the model, and, for a model-wide park (`transient`, `billing`), re-scans the chain after noting it so that model's other rungs are ruled out in the same walk. `originalRecovered` refuses a revert while the original rung (`originalSelector` at `originalThinkingLevel`) is parked by its own hard error.
+- `packages/coding-agent/src/core/retry-fallback/candidates.ts`: the scan skips an entry whose model is suppressed, or whose rung is suppressed at the level the entry would run at (its own level, or the inherited one, clamped like the switch), so a bare entry sees a park on the level it inherits.
+- `packages/coding-agent/src/core/retry-fallback/cooldown.ts`: new `clearModel(base)` clears the model key and every `base:<level>` rung; `clearForManualModelChange` uses it, so picking a model by hand lifts all its parks.
+
+### Why
+
+A chain that runs one model at several thinking levels (`[X:off, X:low, Y]` from `X:high`) reached only the first of those rungs per turn: the cooldown noted for `X:off` was keyed by `X`, so `X:low` was suppressed and the walk jumped to `Y`. A hard error belongs to the level the model rejected; a spent or overloaded account is unhealthy at every level, so those keep the model key.
+
+### Why an extension could not handle it
+
+Cooldown keys, the candidate scan and the revert gate are internal to the retry-fallback controller; no extension hook sees or changes them.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: the cooldown block of `tryFallback` and `originalRecovered`.
+- `packages/coding-agent/src/core/retry-fallback/candidates.ts`: the suppression checks in `scanCandidates`.
+- `packages/coding-agent/src/core/retry-fallback/cooldown.ts`: the new `clearModel`.
+
+## 2026-10-13 - A fallback rung is identified by its model AND its thinking level
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/chains.ts` (fork-only): `rungSelector()` exports the rung form `provider/id[:level]`; `candidatesAfter()` treats only a same-base entry WITHOUT an explicit level as the current position, so an entry that runs the same model at another level is no longer consumed as the entry the session is already on.
+- `packages/coding-agent/src/core/retry-fallback/candidates.ts` (fork-only): the `self` skip compares the rung (same model, and no explicit level or the running level), and the `tried` lookup uses the rung instead of the model.
+- `packages/coding-agent/src/core/retry-fallback/controller.ts` (fork-only): the three `triedSelectors` writes store the rung. Cooldowns and circuits stay keyed by the model: a rate-limited or spent account is unhealthy at every level.
+- `packages/coding-agent/src/core/retry-fallback/validate.ts` (fork-only): `cannot reference the same model` fires only for a true rung duplicate, where an entry without a level inherits the key's.
+
+### Why
+
+A chain could not walk to a second rung of the same model at another thinking level. With `models: [X:high, X:off, Y]` - the shape the OMO/senpi adapter sends, as the entries `[X:off, Y]` under the bare `X` key - three checks removed the rung: the position match consumed `X:off` as the current entry, the `self` check then matched it by provider and model id, and `tried` blocked that model's remaining rungs once one was taken. Validation additionally warned about the configuration. The retry therefore landed on `Y` instead of retrying `X` with thinking off. Regression: `test/suite/retry-fallback-thinking-clamp.test.ts` (two controller cases), `test/suite/retry-fallback-chains.test.ts`, `test/suite/retry-fallback-validate.test.ts` (each fails on the pre-change code).
+
+### Why an extension could not handle it
+
+- The chain scan, the turn-scoped tried-selector set and the chain validator are core retry-fallback internals. No extension hook sees a candidate before the switch, and no hook owns the entry the scan starts from.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/core/retry-fallback/candidates.ts` (self/tried checks), `chains.ts` (`candidatesAfter`, `baseSelector`/`rungSelector`), `controller.ts` (`triedSelectors` writes), `validate.ts` (same-model warning).
+
+## 2026-10-14 - A network blip falls back for one turn at most and never opens the fallback circuit (senpi#3306)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/transient-network.ts` (new): `isPureNetworkTransient` matches a transport failure (timeout, reset, DNS, connection or stream drop) that names no limit, quota, rate limit, overload, reset window or server-side failure (a 5xx status, "server", "unavailable", "high demand", "overflow"), matching the precedence `cooldown.ts` already gives those. `isTransportFailureText` is the one transport pattern, shared with the cooldown.
+- `packages/coding-agent/src/core/retry-fallback/cooldown.ts`: the transport-blip branch of `durationFor` uses `isTransportFailureText` instead of its own copy of the pattern.
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: when a network blip outlasts the same-model retries, `tryFallback` still switches to the next chain entry, but it notes no cooldown on the primary, and `noteHealthFailure` does not open the shared circuit for it. The switch is held for the rest of that turn, even if a later failure in the same turn switches again: `maybeRestorePrimary(policy, "continuation")` refuses to revert it, and the next `"turn"` boundary reverts it.
+- `packages/coding-agent/src/core/agent-session.ts`: `_maybeRestoreFallbackPrimary` takes the boundary kind. The retry continuation and the post-compaction continuation pass `"continuation"`; the prompt boundary keeps `"turn"`.
+
+### Why
+
+A guest tester on a flaky office network saw OmO fall back to another model again and again. A timeout or ECONNRESET that outlasted the same-model retries opened the shared circuit with its doubling cooldown and put the primary on a cooldown, so the session stayed on the fallback long after the network recovered. A network fault is the transport's, not the model's or the account's. It may move one turn to the fallback, but it must not hold the primary away from the next one.
+
+### Why an extension could not handle it
+
+Fallback switching, circuit opening and the revert gate live in the core retry-fallback controller and its `AgentSession` wiring, below the extension API. No extension can reclassify a failure or hold a revert there.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: `tryFallback`, `noteHealthFailure`, `maybeRestorePrimary`, `clear`, `clearForManualModelChange`.
+- `packages/coding-agent/src/core/retry-fallback/cooldown.ts`: `durationFor`.
+- `packages/coding-agent/src/core/agent-session.ts`: `_maybeRestoreFallbackPrimary` and its two continuation call sites.
+
 ## 2026-10-14 - The fallback circuit opens for a usage limit until its own reset window (senpi#3314)
 
 ### What changed
