@@ -1,7 +1,8 @@
 /**
  * Attach-on-open: a live session outlives individual client attachments, so a resume (or a second
- * surface) for an already-hosted path joins the existing runtime instead of failing. An entry still
- * opening keeps the exclusive reservation and rejects as before.
+ * surface) for an already-hosted path joins the existing runtime instead of failing. An entry
+ * still opening holds the reservation, and an explicit open for that path waits on the entry's
+ * openCompletion (bounded on the waiter only) and attaches once it opens.
  */
 import type { SessionPathReservations } from "./host-reservations.ts";
 import {
@@ -12,6 +13,31 @@ import {
 	type RpcSessionOpenOptions,
 	RpcSessionRegistryError,
 } from "./session-registry-types.ts";
+
+/** How long ONE explicit reopen waits on an in-flight open before giving up (the open keeps going). */
+const DEFAULT_OPEN_IN_PROGRESS_WAIT_MS = 90_000;
+/** How long the caller is told to wait before retrying after an open_in_progress rejection. */
+const OPEN_IN_PROGRESS_WAIT_RETRY_MS = 2_000;
+
+// The wait is read at call time so a test can shorten it via SENPI_OPEN_IN_PROGRESS_WAIT_MS.
+function openInProgressWaitMs(): number {
+	const override = Number(process.env.SENPI_OPEN_IN_PROGRESS_WAIT_MS);
+	return Number.isFinite(override) && override > 0 ? override : DEFAULT_OPEN_IN_PROGRESS_WAIT_MS;
+}
+
+class OpenInProgressWaitError extends Error {}
+
+function waitWithDeadline(openCompletion: Promise<void>, waitMs: number): Promise<void> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	return Promise.race([
+		openCompletion,
+		new Promise<never>((_resolve, reject) => {
+			timer = setTimeout(() => reject(new OpenInProgressWaitError()), waitMs);
+		}),
+	]).finally(() => {
+		if (timer !== undefined) clearTimeout(timer);
+	});
+}
 
 export async function attachToOpenSession(
 	entries: ReadonlyMap<string, RpcSessionEntry>,
@@ -31,10 +57,21 @@ export async function attachToOpenSession(
 		);
 		if (inFlight?.[1].openCompletion !== undefined) {
 			try {
-				await inFlight[1].openCompletion;
-			} catch {
-				// The in-flight open failed; the path is free again, so this open can take it fresh.
-				throw new RpcSessionRegistryError("session_path_in_use");
+				// The deadline is on THIS waiter only, never on the open: a slow-but-healthy open still
+				// completes (observed shared-host opens run ~10s with 20s outliers, so 90s only cuts a
+				// genuinely never-settling construction), and a later retry attaches to it. The entry,
+				// its runtime and its reservation are left untouched (senpi#3282 review M1).
+				await waitWithDeadline(inFlight[1].openCompletion, openInProgressWaitMs());
+			} catch (cause) {
+				if (cause instanceof OpenInProgressWaitError)
+					throw new RpcSessionRegistryError("session_path_in_use", "the session is still opening", {
+						reason: "open_in_progress",
+						retry_after_ms: OPEN_IN_PROGRESS_WAIT_RETRY_MS,
+					});
+				// The in-flight open FAILED: its rollback released the reservation, so the path is now
+				// free and the caller's retry opens it fresh. This open reports session_path_in_use so
+				// the caller retries (senpi#3282 review L1).
+				throw cause;
 			}
 			return attachToOpenSession(entries, sessionPath, profile, options, pathReservations, now);
 		}
