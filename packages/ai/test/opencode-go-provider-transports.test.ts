@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { normalizeContext } from "../src/utils/transcript.ts";
 import { opencodeGoProvider } from "../src/providers/opencode-go.ts";
 
 describe("opencode-go provider transports", () => {
@@ -19,7 +20,7 @@ describe("opencode-go provider transports", () => {
 		const missing: string[] = [];
 		for (const [api, model] of oneModelPerApi) {
 			const result = await provider
-				.stream(model, { messages: [] }, { apiKey: "test-key", signal: AbortSignal.abort() })
+				.stream(model, normalizeContext({ messages: [] }), { apiKey: "test-key", signal: AbortSignal.abort() })
 				.result();
 			if (result.errorMessage?.includes("has no API implementation")) missing.push(api);
 		}

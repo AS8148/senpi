@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { clampThinkingLevel, getModel, getSupportedThinkingLevels, supportsMax, supportsXhigh } from "../src/compat.ts";
 import type { Model } from "../src/model.ts";
+import { opencodeGoProvider } from "../src/providers/opencode-go.ts";
 import type { Api } from "../src/types.ts";
 import {
 	FIXTURE_MAX_MODEL_ID,
@@ -223,7 +224,9 @@ describe("getSupportedThinkingLevels", () => {
 	});
 
 	it("maps an opencode-go model served over Google Generative AI to its low/medium/high thinking levels", () => {
-		const model = getModels("opencode-go").find((candidate) => candidate.api === "google-generative-ai");
+		const model = opencodeGoProvider()
+			.getModels()
+			.find((candidate) => candidate.api === "google-generative-ai");
 		expect(model).toBeDefined();
 		expect(getSupportedThinkingLevels(model!)).toEqual(["low", "medium", "high"]);
 	});
