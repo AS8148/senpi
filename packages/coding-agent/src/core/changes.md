@@ -1,3 +1,21 @@
+## 2026-10-14 - Extension runtime module resolves through a stable agent-dir copy (senpi#3300)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/bun-extension-registry.ts`: `resolveRuntimeModulePath` now returns a stable path under the agent dir (`<agentDir>/runtime/extension-runtime-module.js`) holding a COPY of the current runtime module, refreshed by content hash, instead of the versioned dist path.
+
+### Why
+
+Bun <= 1.4.2 bakes the resolved ABSOLUTE path of the runtime module into an extension's transpile cache. A runtime update prunes that versioned path, and the stale cache then fails to load an unchanged extension with "Cannot find module <old runtime>/.../extension-runtime-module.js" (reproduced on Bun 1.4.2 against the bundled dist; clean on 1.4.3, which keeps the specifier symbolic). A copy at a non-versioned path can never name a pruned file; a re-export could still name it, so the shim copies the content.
+
+### Why an extension could not handle it
+
+The runtime-module resolution lives in the core extension registry, below the extension API.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/bun-extension-registry.ts`: `resolveRuntimeModulePath` and the new `stableRuntimeModulePath`.
+
 ## 2026-10-13 - Provider auth status re-reads a store that was busy on its first read (omo-desktop-app#2249)
 
 ### What changed
