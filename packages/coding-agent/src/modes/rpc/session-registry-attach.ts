@@ -2,9 +2,13 @@
  * Attach-on-open: a live session outlives individual client attachments, so a resume (or a second
  * surface) for an already-hosted path joins the existing runtime instead of failing. An entry
  * still opening holds the reservation, and an explicit open for that path waits on the entry's
- * openCompletion (bounded on the waiter only) and attaches once it opens.
+ * openCompletion (bounded on the waiter only, default 45s) and attaches once it opens; on that
+ * wait expiring, only the one waiting reopen fails with a retryable session_path_in_use
+ * {reason: "open_in_progress", retry_after_ms} naming an attached current owner, and the in-flight
+ * open keeps running untouched.
  */
-import type { SessionPathReservations } from "./host-reservations.ts";
+import type { SessionPathOwner, SessionPathReservations } from "./host-reservations.ts";
+import { hostInstanceId } from "./protocol-identity.ts";
 import {
 	frozenProfile,
 	type OpenRpcSession,
@@ -15,7 +19,7 @@ import {
 } from "./session-registry-types.ts";
 
 /** How long ONE explicit reopen waits on an in-flight open before giving up (the open keeps going). */
-const DEFAULT_OPEN_IN_PROGRESS_WAIT_MS = 90_000;
+const DEFAULT_OPEN_IN_PROGRESS_WAIT_MS = 45_000;
 /** How long the caller is told to wait before retrying after an open_in_progress rejection. */
 const OPEN_IN_PROGRESS_WAIT_RETRY_MS = 2_000;
 
@@ -26,6 +30,19 @@ function openInProgressWaitMs(): number {
 }
 
 class OpenInProgressWaitError extends Error {}
+
+// The owner a still-opening path's rejection names: the current host, attached (the session is
+// being served, not stranded), so a reclaim never treats it as a stranded claim.
+function openingOwner(sessionPath: string): SessionPathOwner {
+	return {
+		instanceId: hostInstanceId(),
+		pid: process.pid,
+		processStartTime: null,
+		sessionPath,
+		attached: true,
+		current: true,
+	};
+}
 
 function waitWithDeadline(openCompletion: Promise<void>, waitMs: number): Promise<void> {
 	let timer: ReturnType<typeof setTimeout> | undefined;
@@ -58,20 +75,27 @@ export async function attachToOpenSession(
 		if (inFlight?.[1].openCompletion !== undefined) {
 			try {
 				// The deadline is on THIS waiter only, never on the open: a slow-but-healthy open still
-				// completes (observed shared-host opens run ~10s with 20s outliers, so 90s only cuts a
-				// genuinely never-settling construction), and a later retry attaches to it. The entry,
-				// its runtime and its reservation are left untouched (senpi#3282 review M1).
+				// completes (observed shared-host opens run ~10s with 20s outliers, so the bound sits just
+				// under the interactive client's 60s open timeout), and a later retry attaches to it. The
+				// entry, its runtime and its reservation are left untouched (senpi#3282 review M1/M2).
 				await waitWithDeadline(inFlight[1].openCompletion, openInProgressWaitMs());
 			} catch (cause) {
 				if (cause instanceof OpenInProgressWaitError)
 					throw new RpcSessionRegistryError("session_path_in_use", "the session is still opening", {
 						reason: "open_in_progress",
 						retry_after_ms: OPEN_IN_PROGRESS_WAIT_RETRY_MS,
+						// The rejection names the current host as an ATTACHED owner: a reclaim of a path whose
+						// session is still opening must never close it, and an attached current owner keeps the
+						// claim standing (senpi#3282 review; the opening session is never stranded).
+						owner: openingOwner(sessionPath),
 					});
 				// The in-flight open FAILED: its rollback released the reservation, so the path is now
 				// free and the caller's retry opens it fresh. This open reports session_path_in_use so
-				// the caller retries (senpi#3282 review L1).
-				throw cause;
+				// the caller retries, not the failed opener's own error (senpi#3282 review M1).
+				throw new RpcSessionRegistryError("session_path_in_use", "the in-flight open failed", {
+					reason: "open_failed",
+					retry_after_ms: OPEN_IN_PROGRESS_WAIT_RETRY_MS,
+				});
 			}
 			return attachToOpenSession(entries, sessionPath, profile, options, pathReservations, now);
 		}
