@@ -2,8 +2,8 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/agent-session.ts`: `abort({ cause })` keeps the cause for the abort in flight and adds it to the `agent_end` the aborted run produces (`abortCause`, type `AgentAbortCause`).
-- `packages/coding-agent/src/core/agent-session-runtime.ts`: `teardownCurrent` passes `{ kind: "session_replaced", reason, targetSessionFile, targetSessionId }` for `new` / `fork` / `resume`; `reload` and `quit` pass none.
+- `packages/coding-agent/src/core/agent-session.ts`: `abort({ cause })` records the cause (the first one wins) until the aborted run's `agent_end` carries it as `abortCause` (type `AgentAbortCause`, exported); a new run drops a stale one.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `teardownCurrent` passes `{ kind: "session_replaced", reason, targetSessionFile, targetSessionId }` for `new` / `fork` / `resume` (the in-memory fork names no file or id: it gets its id only after the teardown); `reload` and `quit` pass none.
 
 ### Why
 
