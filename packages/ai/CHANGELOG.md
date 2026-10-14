@@ -12,6 +12,7 @@
 
 ### Fixed
 
+- Venice deepseek models (`deepseek-v4-1-flash`, `deepseek-v4-pro-0813` and the other deepseek-v4 entries) work again: requests no longer carry DeepSeek's `thinking` key, which Venice rejected with 400 on every call, and thinking runs through Venice's `reasoning_effort` instead ([#3308](https://github.com/code-yeongyu/senpi/issues/3308)).
 - Anthropic's "Third-party apps now draw from your extra usage" rejection is classified as terminal account exhaustion with a plain explanation of the billing path, and the `anthropic` provider no longer offers a Claude subscription OAuth login; subscriptions use the Agent SDK lane ([#3259](https://github.com/code-yeongyu/senpi/issues/3259)).
 
 ### Removed

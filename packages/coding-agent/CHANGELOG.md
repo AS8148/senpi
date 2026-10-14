@@ -8,6 +8,8 @@
 
 - `tool.glob({ pattern, path })` finds files by glob inside eval, the same way `tool.grep` searches text there. It is never a top-level tool, and the eval prompt now names it, so a model that reached for `tool.glob` no longer gets "Unknown tool glob" ([#3330](https://github.com/code-yeongyu/senpi/issues/3330)).
 
+- Shared RPC hosts publish each session holder's public socket and host instance in validated lease evidence. Clients can pass `open_session.expectedHostInstance` to attach only to that live host generation; a changed owner or released path returns a typed refusal with a rediscovery action instead of creating another writer ([#3255](https://github.com/code-yeongyu/senpi/issues/3255), [#3257](https://github.com/code-yeongyu/senpi/pull/3257)).
+
 - Dual-era MCP client: servers speaking the 2026-07-28 stateless spec revision (no `initialize`, per-request `_meta`, `MCP-Protocol-Version` / `Mcp-Method` / `Mcp-Name` headers, `server/discover`) now connect, while legacy initialize-handshake servers keep working through spec-driven auto-negotiation (HTTP: modern request first with 400-body classification; stdio: discover-first probe; era cached per origin/process). Modern-only servers receive zero legacy handshake traffic through an SDK-compatibility bridge that answers the SDK client's `initialize` locally from the discovery result. Connect diagnostics log the negotiated era and protocol version per server. Modern-only stdio servers work too: the spawned process answers `server/discover` first, then every request carries the per-request `_meta`, with no `initialize` sent ([#3304](https://github.com/code-yeongyu/senpi/issues/3304), reported by @changeroa).
 
 - RPC effect ledger (capability `effect_ledger`): `abort`, `set_model` and `set_thinking_level` take an optional `effectId` and get a durable receipt written before the effect is applied; a retry with the same id replays the receipt instead of acting twice, and a different request under that id is refused with `effect_id_conflict`. `get_effect_status` answers any receipt by id, including inputs by `clientMessageId`, from a loaded session or from a transcript on disk. Input receipts now say how their turn ended (completed, aborted and by whom, error), a reopened session seals receipts its dead process left running, and queued input dropped by `new_session`/`switch_session` reads `failed` instead of vanishing ([#3199](https://github.com/code-yeongyu/senpi/issues/3199)).
@@ -15,6 +17,12 @@
 ### Changed
 
 ### Fixed
+
+- A fallback chain that lists one model at several thinking levels now walks every one of those levels. A rung that hard-errors parks only itself, so `models: [X:high, X:off, X:low, Y]` tries `X:low` after `X:off` fails instead of jumping to `Y`; a rate limit, quota or overload still skips every level of that model, so after one the walk moves on to the next model. This replaces the per-turn limit described in the previous entry. A model you pick by hand gets all its levels back ([#3311](https://github.com/code-yeongyu/senpi/issues/3311), reported by @tw-yshuang).
+
+- `senpi host session` commands now return only after the host has dropped their attachment: on a host that advertises the new `detach_connection` capability the client asks for the detach and waits for the answer (bounded at 5 s, with one plain line if it never comes), so a listing right after `open` no longer shows the short-lived client as still attached. A connection leaving a session that another client also holds now releases its attachment at once, even while a turn runs; only the last attachment of a non-retained session still waits for the turn to settle. After a request timed out or the connection was lost, the client closes without asking for the detach. Older hosts keep the release on socket close. ([#3238](https://github.com/code-yeongyu/senpi/issues/3238))
+
+- A flaky network no longer strands a session on a fallback model. A timeout or connection reset that outlasts the same-model retries may finish that one turn on the next model in the chain, but it no longer puts the primary on a cooldown or opens its circuit, so the next turn goes back to the primary. A rate limit, quota or overload error keeps its existing fallback behavior ([#3306](https://github.com/code-yeongyu/senpi/issues/3306), reported in the OmO community).
 
 - A model that hit a usage limit and fell back now returns when that limit's own reset passes ("resets 3pm", `resets_at`, or "resets in 9 minutes"), instead of staying on the fallback for a cooldown that doubled past the window with every failed retry. A short hint such as "retry in 7s", even on a spent quota, and a plain Retry-After still keep the doubling cooldown, so a failing provider is not retried every few seconds ([#3314](https://github.com/code-yeongyu/senpi/issues/3314), reported in the OmO community).
 
@@ -26,6 +34,11 @@
 
 - A tool named `eval` with its own `permissionParser` could answer for itself with a narrower class (for example `read`), so a preset that allows reads would run an arbitrary-code cell without asking. The `eval` permission request is now always carried alongside any tool-owned requests, so only a preset that allows everything allows a cell ([#3211](https://github.com/code-yeongyu/senpi/pull/3211), requested by @code-yeongyu).
 - A provider whose credentials were locked when the store was first read no longer reports "not configured" to `get_auth_providers` after the lock clears, while its models already work. The status now re-reads the store the same way model availability does (omo-desktop-app#2249).
+
+- A provider whose credentials were locked when the store was first read no longer reports "not configured" to `get_auth_providers` after the lock clears, while its models already work. The status now re-reads the store the same way model availability does ([#3273](https://github.com/code-yeongyu/senpi/pull/3273), reported from the OmO desktop app).
+
+
+- A fallback chain can walk to a rung that runs the same model at another thinking level. Such an entry used to disappear twice over: the chain scan consumed it as the entry in flight and then skipped it as a self-reference, and a model's remaining rungs were suppressed once one of them had been taken - so a chain written as `models: [X:high, X:off, Y]`, which is how the OMO/senpi adapter ships it (the entries `[X:off, Y]` under the bare `X` key), jumped straight to `Y`. Chain validation no longer reports `X:off` under the `X` key as referencing the same model. Cooldowns and circuits stay keyed by the model, because a rate-limited or spent account is unhealthy at every level, so one same-model rung remains reachable per turn before the current model's cooldown expires.
 
 ### Removed
 
@@ -39,8 +52,6 @@
 
 - RPC clients now see scheduled goal continuations, their due time, and their resumption through the `goal_continuation_scheduled`, `goal_continuation_timer_state`, and `goal_continuation_resumed` extension events. The `goal_continuation_fire_now` extension request runs an armed continuation immediately through its normal eligibility checks; a timer held while the user types stays held ([#3208](https://github.com/code-yeongyu/senpi/pull/3208)).
 
-- Shared RPC hosts publish each session holder's public socket and host instance in validated lease evidence. Clients can pass `open_session.expectedHostInstance` to attach only to that live host generation; a changed owner or released path returns a typed refusal with a rediscovery action instead of creating another writer ([#3255](https://github.com/code-yeongyu/senpi/issues/3255), [#3257](https://github.com/code-yeongyu/senpi/pull/3257)).
-
 ### Changed
 
 - The bundled Claude Agent SDK is updated to 0.3.296 (from 0.3.292), so the Anthropic subscription lane runs Claude Code 2.1.296 and the models it knows ([#3258](https://github.com/code-yeongyu/senpi/pull/3258)).
@@ -50,8 +61,6 @@
 ### Fixed
 
 - Busy multi-session RPC hosts now reclaim freed heap pages when their session count drops and their footprint is at least 2 GB, even while other children keep running. Drops during the trim interval stay pending until it expires, including when a new session replaces the closed one between checks. Busy-host collections wait at least a minute and at least 100 times the previous collection pause; `host_trimmed` reports `sessions` and `pauseMs`. This prevents long sessions with many concurrent children from retaining their peak memory footprint ([#3240](https://github.com/code-yeongyu/senpi/pull/3240), [#3221](https://github.com/code-yeongyu/senpi/pull/3221)).
-
-- `senpi host session` commands now return only after the host has dropped their attachment: on a host that advertises the new `detach_connection` capability the client asks for the detach and waits for the answer (bounded at 5 s, with one plain line if it never comes), so a listing right after `open` no longer shows the short-lived client as still attached. A connection leaving a session that another client also holds now releases its attachment at once, even while a turn runs; only the last attachment of a non-retained session still waits for the turn to settle. After a request timed out or the connection was lost, the client closes without asking for the detach. Older hosts keep the release on socket close. ([#3238](https://github.com/code-yeongyu/senpi/issues/3238))
 
 - Per-run TPS/cache-hit notices now appear only in the TUI, preventing an extra info row after every agent run in RPC clients ([#3237](https://github.com/code-yeongyu/senpi/pull/3237)).
 
