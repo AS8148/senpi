@@ -1282,7 +1282,7 @@ A replacement first stops the session's running turn. That turn's `agent_end` (`
 { "type": "agent_end", "aborted": true, "abortCause": { "kind": "session_replaced", "reason": "new", "targetSessionFile": "…", "targetSessionId": "…" } }
 ```
 
-`reason` is `new`, `fork` or `resume` (`switch_session`); `targetSessionId` equals the `durableSessionId` of the `session_replaced` that follows. An ordinary `abort`, a `reload` and a shutdown carry no `abortCause`.
+`reason` is `new`, `fork` or `resume` (`switch_session`); when present, `targetSessionId` equals the `durableSessionId` of the `session_replaced` that follows. A fork of a session that was never saved gets its new id only after the teardown, so it names no target. The first named cause wins until the `agent_end` it explains: a plain `abort` arriving meanwhile does not erase it. An ordinary `abort`, a `reload` and a shutdown carry no `abortCause`.
 
 ### Multi-session host lifecycle (cold start + idle exit)
 
@@ -3739,7 +3739,7 @@ Emitted when the agent begins processing a prompt.
 
 ### agent_end
 
-Emitted when one low-level agent run completes. Contains all messages generated during this run. If `willRetry` is true, an automatic retry will follow.
+Emitted when one low-level agent run completes. Contains all messages generated during this run. If `willRetry` is true, an automatic retry will follow. A run stopped because its session was replaced also carries `abortCause: { kind: "session_replaced", reason, targetSessionFile?, targetSessionId? }` (see `session_replaced`); extensions' own `agent_end` does not carry it, they learn of the replacement from `session_shutdown`.
 
 ```json
 {

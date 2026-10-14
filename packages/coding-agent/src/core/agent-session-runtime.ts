@@ -560,7 +560,9 @@ export class AgentSessionRuntime {
 		}
 
 		const sessionManager = this.session.sessionManager;
-		await this.teardownCurrent("fork", sessionManager.getSessionFile(), sessionManager.getSessionId());
+		// The in-memory fork reuses this manager and gets its new id only after the old turn is torn down,
+		// so the replacement is named without an id it does not have yet.
+		await this.teardownCurrent("fork");
 		if (!targetLeafId) {
 			sessionManager.newSession({ parentSession: previousSessionFile });
 		} else {

@@ -432,6 +432,15 @@ type WithParentToolCallId<E> = E extends {
 	: E;
 
 /** Session-specific events that extend the core AgentEvent */
+/** Whether a run's final assistant message stopped because it was aborted. */
+function endedAborted(messages: readonly AgentMessage[]): boolean {
+	for (let index = messages.length - 1; index >= 0; index--) {
+		const message = messages[index];
+		if (message?.role === "assistant") return message.stopReason === "aborted";
+	}
+	return false;
+}
+
 /** Why a session-level abort happened, when the caller knows: today only a session replacement says so. */
 export interface AgentAbortCause {
 	readonly kind: "session_replaced";
@@ -3278,6 +3287,10 @@ export class AgentSession {
 		}
 
 		const agentEndWillRetry = event.type === "agent_end" && this._willRetryAfterAgentEnd(event.messages);
+		// A cause belongs to the run it stopped: a new run drops a stale one, the aborted run's agent_end takes it.
+		if (event.type === "agent_start") this._abortCause = undefined;
+		const abortCause = event.type === "agent_end" && endedAborted(event.messages) ? this._abortCause : undefined;
+		if (abortCause !== undefined) this._abortCause = undefined;
 
 		// Emit to extensions first. Agent event persistence is intentionally
 		// asynchronous, so retain the source run signal while dispatching.
@@ -3295,7 +3308,7 @@ export class AgentSession {
 				? {
 						...event,
 						willRetry: agentEndWillRetry,
-						...(this._abortCause === undefined ? {} : { abortCause: this._abortCause }),
+						...(abortCause === undefined ? {} : { abortCause }),
 					}
 				: event.type === "message_update"
 					? withResolvedToolName(event, (name) => this.resolveToolCallName(name))
@@ -6155,12 +6168,10 @@ export class AgentSession {
 	 * Abort current operation and wait for agent to become idle.
 	 */
 	async abort(options?: { readonly cause?: AgentAbortCause }): Promise<void> {
-		this._abortCause = options?.cause;
-		try {
-			await this._abortWithProvenance();
-		} finally {
-			this._abortCause = undefined;
-		}
+		// The first named cause wins until the `agent_end` it explains is emitted (or a new run starts):
+		// a plain abort racing a replacement's teardown never erases the replacement's cause.
+		if (options?.cause !== undefined && this._abortCause === undefined) this._abortCause = options.cause;
+		await this._abortWithProvenance();
 	}
 
 	private async _abortWithProvenance(): Promise<void> {
