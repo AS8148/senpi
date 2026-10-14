@@ -1,3 +1,27 @@
+## 2026-10-14 - Negotiate modern MCP behind an SDK lifecycle bridge (senpi#3304)
+
+### What changed
+
+- HTTP connections discover the protocol era before constructing the selected transport. Modern HTTP uses stateless POST requests; legacy connections retain the existing SDK materializer and wire behavior after discovery.
+- `modern/sdk-bridge.ts` answers the SDK's `initialize` locally from validated discovery and consumes `notifications/initialized` locally. Connection diagnostics distinguish the real negotiated wire version from the SDK compatibility version.
+- `modern/era.ts` uses the shared request builder, headers and strict code-only classifier in `wire.ts`. Era tests now use -32020 (HeaderMismatch), -32021 (MissingRequiredClientCapabilityError), and -32022 (UnsupportedProtocolVersionError). Named -32000-class forms in the compatibility prose do not establish the modern era; generic error text cannot safely select a different protocol.
+- Stdio probes discovery on the actual spawned transport before initialization and retains that same process for legacy fallback. Modern stdio is detected but not supported in this wave: it reports "modern stdio server detected; stdio modern transport not yet supported - configure an HTTP endpoint" and closes the process instead of restarting it or sending legacy initialization.
+- `connection.ts` owns a pending connection before discovery and handles materialization errors through its existing connect-failure path. Disposing a pending connection aborts discovery. Each connection owns its era cache, so endpoint metadata and credentials cannot leak across sessions. Legacy session-required 404 responses still use the original SDK initialization and diagnostics.
+
+### Why
+
+Contract (a), a transport-level SDK compatibility adapter, preserves the installed SDK's actual invariants without copying its client implementation or mutating private state. SDK 1.32.1 installs protocol callbacks, requests `initialize`, validates `InitializeResultSchema` and its supported-version list, populates capabilities/serverInfo/instructions, calls `setProtocolVersion`, sends `notifications/initialized`, and installs capability-dependent list handlers. The bridge supplies discovery's capabilities, namespaced serverInfo and instructions through that normal validation path, using the SDK's own latest version solely for its local schema dialect; discovery must independently support the real modern wire version. That local version never reaches the modern transport or server. A facade would duplicate catalog, elicitation and notification behavior; post-connect seeding would couple us to private fields and skip initialization side effects. Once the SDK supports modern discovery natively, delete the bridge and the factory dispatch rather than replacing downstream Client consumers.
+
+### Why an extension could not handle it
+
+The MCP builtin owns transport construction and SDK initialization; another extension cannot replace this private lifecycle seam.
+
+### Expected merge conflict zones
+
+`transport.ts`'s materialization seam, `connection.ts`'s pending connection ownership, and the `modern/` modules. The legacy SDK materializer remains unchanged.
+
+Fixture accounting decision: `test/mcp/fixtures/sharing-http.ts` now increments `connects` only in the SDK's one-time `onsessioninitialized` callback, rather than for every sessionless POST. The existing sharing, reconnect, lifecycle, and catalog assertions measure established MCP sessions, not raw HTTP requests; none require raw POST accounting. Counting initialization events therefore preserves every assertion's intent without changing any assertion, remains independent of session-map cleanup during graceful shutdown, and avoids a discovery-specific exception that would still count other rejected sessionless requests as connections. Legacy containment is behavioral: the discovery probe does not establish a session or alter subsequent legacy traffic.
+
 ## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
 
 ### What changed

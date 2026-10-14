@@ -1,31 +1,21 @@
 import { z } from "zod";
+import {
+	buildModernRequest,
+	classifyModernError,
+	deriveModernHeaders,
+	MODERN_PROTOCOL_VERSION,
+	type ModernClientInfo,
+	type ModernError,
+	type ModernRequest,
+} from "./wire.ts";
 
-export const MODERN_PROTOCOL_VERSION = "2026-07-28";
-
-// Local wire contracts are intentionally duplicated until the integration node
-// connects this isolated probe to the sibling-owned wire.ts.
+export { MODERN_PROTOCOL_VERSION } from "./wire.ts";
 export interface ProbeOptions {
-	readonly clientInfo: { readonly name: string; readonly version: string };
+	readonly clientInfo: ModernClientInfo;
 	readonly clientCapabilities: Readonly<Record<string, unknown>>;
 	readonly supportedVersions: readonly string[];
 }
-export interface ProbeRequest {
-	readonly jsonrpc: "2.0";
-	readonly id: number;
-	readonly method: "server/discover";
-	readonly params: {
-		readonly _meta: {
-			readonly "io.modelcontextprotocol/protocolVersion": string;
-			readonly "io.modelcontextprotocol/clientInfo": ProbeOptions["clientInfo"];
-			readonly "io.modelcontextprotocol/clientCapabilities": ProbeOptions["clientCapabilities"];
-		};
-	};
-}
-const errorSchema = z.object({
-	code: z.number().int(),
-	message: z.string(),
-	data: z.unknown().optional(),
-});
+export type ProbeRequest = ModernRequest;
 const discoverySchema = z
 	.object({
 		resultType: z.literal("complete"),
@@ -41,7 +31,8 @@ const discoverySchema = z
 		cacheScope: z.string().optional(),
 	})
 	.passthrough();
-export type ModernError = z.infer<typeof errorSchema>;
+
+export type { ModernError } from "./wire.ts";
 export type DiscoveryResult = z.infer<typeof discoverySchema>;
 type ModernOutcome = {
 	readonly kind: "modern-OK" | "modern-version-retry";
@@ -63,27 +54,16 @@ export type EraOutcome =
 export type ProbeFetch = (url: URL, init: RequestInit) => Promise<Response>;
 export type ProbeSend = (request: ProbeRequest) => Promise<unknown>;
 
-export function modernError(value: unknown): ModernError | undefined {
-	const parsed = z.object({ error: errorSchema }).safeParse(value);
-	if (!parsed.success) return undefined;
-	const error = parsed.data.error;
-	const tag = z.object({ type: z.string() }).safeParse(error.data);
-	const names = ["HeaderMismatch", "HeaderMismatchError", "MissingCapability", "MissingCapabilityError"];
-	return error.code === -32022 || names.includes(error.message) || (tag.success && names.includes(tag.data.type))
-		? error
-		: undefined;
-}
+export const modernError = classifyModernError;
 
 function request(options: ProbeOptions, version: string): ProbeRequest {
+	const built = buildModernRequest(1, "server/discover", options.clientInfo, options.clientCapabilities);
 	return {
-		jsonrpc: "2.0",
-		id: 1,
-		method: "server/discover",
+		...built,
 		params: {
 			_meta: {
+				...built.params._meta,
 				"io.modelcontextprotocol/protocolVersion": version,
-				"io.modelcontextprotocol/clientInfo": options.clientInfo,
-				"io.modelcontextprotocol/clientCapabilities": options.clientCapabilities,
 			},
 		},
 	};
@@ -137,15 +117,15 @@ export async function probeHttpEra(url: URL, fetch: ProbeFetch, options: ProbeOp
 		let response: Response;
 		let value: unknown;
 		try {
+			const discoveryRequest = request(options, version);
 			response = await fetch(url, {
 				method: "POST",
 				headers: {
 					"Content-Type": "application/json",
 					Accept: "application/json, text/event-stream",
-					"MCP-Protocol-Version": version,
-					"Mcp-Method": "server/discover",
+					...deriveModernHeaders(discoveryRequest),
 				},
-				body: JSON.stringify(request(options, version)),
+				body: JSON.stringify(discoveryRequest),
 			});
 			value = await body(response);
 		} catch (cause) {
@@ -168,9 +148,8 @@ export async function probeHttpEra(url: URL, fetch: ProbeFetch, options: ProbeOp
 					{ era: "modern" },
 				);
 			}
-			const supported = z.object({ supported: z.array(z.string()) }).safeParse(error.data);
-			const mutual = supported.success
-				? supported.data.supported
+			const mutual = error.supportedVersions
+				? error.supportedVersions
 						.filter((candidate) => options.supportedVersions.includes(candidate))
 						.sort()
 						.at(-1)
@@ -202,7 +181,7 @@ export async function probeStdioEra(send: ProbeSend, options: ProbeOptions): Pro
 	try {
 		value = await send(request(options, MODERN_PROTOCOL_VERSION));
 	} catch (error) {
-		value = { error };
+		value = { jsonrpc: "2.0", error };
 	}
 	const discovery = complete(value);
 	if (discovery) return { kind: "modern-OK", version: MODERN_PROTOCOL_VERSION, discovery };

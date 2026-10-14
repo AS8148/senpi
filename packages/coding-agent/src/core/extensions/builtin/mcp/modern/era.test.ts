@@ -82,8 +82,22 @@ describe("HTTP era detection", () => {
 		},
 	);
 
-	it.each(["HeaderMismatch", "MissingCapabilityError"])("retains modern classification on %s", async (name) => {
-		const error = rpcError(-32000, name);
+	it.each(["HeaderMismatch", "MissingCapabilityError"])(
+		"does not infer modern from generic error text %s",
+		async (name) => {
+			const error = rpcError(-32000, name, { type: name });
+			expect(await probeHttpEra(new URL("https://fixture.test"), async () => reply(error, 400), options)).toEqual({
+				kind: "legacy-fallback",
+			});
+			expect(await probeStdioEra(async () => error, options)).toEqual({ kind: "legacy-fallback" });
+		},
+	);
+
+	it.each([
+		[-32020, "HeaderMismatch"],
+		[-32021, "MissingRequiredClientCapabilityError"],
+	] as const)("retains modern classification on %s", async (code, name) => {
+		const error = rpcError(code, name);
 		const result = await probeHttpEra(new URL("https://fixture.test"), async () => reply(error, 400), options);
 		expect(result).toMatchObject({ kind: "modern-OK", error: error.error });
 	});
@@ -153,8 +167,8 @@ describe("stdio era detection", () => {
 		expect(Object.keys(send.mock.calls[0]?.[0].params ?? {})).toEqual(["_meta"]);
 	});
 
-	it.each([-32022, "HeaderMismatch", "MissingCapabilityError"])("recognizes modern error %s", async (value) => {
-		const error = rpcError(typeof value === "number" ? value : -32000, String(value));
+	it.each([-32022, -32020, -32021])("recognizes modern error %s", async (value) => {
+		const error = rpcError(value, String(value));
 		expect(await probeStdioEra(async () => error, options)).toMatchObject({ kind: "modern-OK" });
 	});
 

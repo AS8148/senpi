@@ -35,7 +35,10 @@ describe("session era cache", () => {
 		const cache = new EraCache();
 		const key = { kind: "http", url: new URL("https://fixture.test") } as const;
 		const probe = vi.fn(async (): Promise<EraOutcome> => modern).mockResolvedValueOnce(legacy);
-		const request = vi.fn(async () => ({ error: { code: -32022, message: "UnsupportedProtocolVersionError" } }));
+		const request = vi.fn(async () => ({
+			jsonrpc: "2.0",
+			error: { code: -32022, message: "UnsupportedProtocolVersionError" },
+		}));
 		await cache.request(key, probe, request);
 		expect(probe).toHaveBeenCalledTimes(2);
 		expect(request).toHaveBeenCalledTimes(2);
