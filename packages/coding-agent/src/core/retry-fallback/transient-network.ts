@@ -1,12 +1,23 @@
-// A pure network-transient failure (timeout, reset, DNS, connection fault, a 5xx that
-// names no limit) is the transport's fault, not the model's or the account's. Opening the
-// shared circuit for it would stick the session on a fallback after one flaky office
-// network, which is exactly what the guest report showed (senpi#3306). The same-model
-// retry budget already paces these; only a failure that earns a fallback should open the
-// circuit, and this predicate withholds that for a pure network fault.
-const PURE_NETWORK_TEXT =
-	/econnreset|econnrefused|etimedout|enotfound|ehostunreach|enetunreach|socket hang up|fetch failed|network error|request timed out|connection (?:reset|refused|timed out|closed)|dns|getaddrinfo/i;
+import { stripProviderRequestIds } from "@earendil-works/pi-ai/utils/retry";
+
+// Transport blips (timeouts, DNS, socket drops, a cut stream); shared by the cooldown and the fallback decision.
+const TRANSPORT_FAILURE =
+	/timed? out|timeout|econnreset|econnrefused|etimedout|socket hang up|socket connection was closed|network.?error|connection.?error|connection.?refused|connection.?lost|other side closed|fetch failed|getaddrinfo|enotfound|eai_again|upstream.?connect|reset before headers|terminated|websocket.?closed|websocket.?error|ended without|stream ended before message_stop|stream ended before a terminal response event|http2 request did not get a response/;
+
+// A limit, spent account or loaded model is the provider's answer, even beside a timeout.
+const PROVIDER_VERDICT =
+	/usage[- ]limit|quota|billing|credits|rate[ -]?limit|\b429\b|too many requests|overloaded|capacity|forbidden|resets? (?:at|in)\b/;
+
+function normalize(errorMessage: string): string {
+	return stripProviderRequestIds(errorMessage).toLowerCase();
+}
+
+export function isTransportFailureText(normalizedMessage: string): boolean {
+	return TRANSPORT_FAILURE.test(normalizedMessage);
+}
 
 export function isPureNetworkTransient(errorMessage: string | undefined): boolean {
-	return errorMessage !== undefined && PURE_NETWORK_TEXT.test(errorMessage);
+	if (errorMessage === undefined) return false;
+	const message = normalize(errorMessage);
+	return isTransportFailureText(message) && !PROVIDER_VERDICT.test(message);
 }

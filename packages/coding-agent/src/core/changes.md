@@ -1,22 +1,25 @@
-## 2026-10-14 - Pure network-transient failures never open the fallback circuit or switch models (senpi#3306)
+## 2026-10-14 - A network blip falls back for one turn at most and never opens the fallback circuit (senpi#3306)
 
 ### What changed
 
-- `packages/coding-agent/src/core/retry-fallback/transient-network.ts` (new): `isPureNetworkTransient` matches a pure network fault (timeout, reset, DNS, connection failure) that names no usage limit.
-- `packages/coding-agent/src/core/retry-fallback/controller.ts`: `tryFallback` returns false for a pure network transient so the session never switches models, and `noteHealthFailure` withholds the shared circuit open for the same class.
+- `packages/coding-agent/src/core/retry-fallback/transient-network.ts` (new): `isPureNetworkTransient` matches a transport failure (timeout, reset, DNS, connection or stream drop) that names no limit, quota, rate limit, overload or reset window. `isTransportFailureText` is the one transport pattern, shared with the cooldown.
+- `packages/coding-agent/src/core/retry-fallback/cooldown.ts`: the transport-blip branch of `durationFor` uses `isTransportFailureText` instead of its own copy of the pattern.
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: when a network blip outlasts the same-model retries, `tryFallback` still switches to the next chain entry, but it notes no cooldown on the primary, and `noteHealthFailure` does not open the shared circuit for it. The switch is held for the rest of that turn: `maybeRestorePrimary(policy, "continuation")` refuses to revert it, and the next `"turn"` boundary reverts it.
+- `packages/coding-agent/src/core/agent-session.ts`: `_maybeRestoreFallbackPrimary` takes the boundary kind. The retry continuation and the post-compaction continuation pass `"continuation"`; the prompt boundary keeps `"turn"`.
 
 ### Why
 
-A guest tester on a flaky office network saw OmO fall back to another model again and again. Every provider failure — including a bare timeout or ECONNRESET — was recorded into the fallback circuit and could switch models. A pure network fault is the transport's fault, not the model's or the account's; the same-model retry budget already paces it.
+A guest tester on a flaky office network saw OmO fall back to another model again and again. A timeout or ECONNRESET that outlasted the same-model retries opened the shared circuit with its doubling cooldown and put the primary on a cooldown, so the session stayed on the fallback long after the network recovered. A network fault is the transport's, not the model's or the account's. It may move one turn to the fallback, but it must not hold the primary away from the next one.
 
 ### Why an extension could not handle it
 
-Fallback switching and circuit opening live in the core retry-fallback controller, below the extension API; no extension can intercept the failure classification there.
+Fallback switching, circuit opening and the revert gate live in the core retry-fallback controller and its `AgentSession` wiring, below the extension API. No extension can reclassify a failure or hold a revert there.
 
 ### Expected merge conflict zones
 
-- `packages/coding-agent/src/core/retry-fallback/controller.ts`: `tryFallback` and `noteHealthFailure`.
-- `packages/coding-agent/src/core/retry-fallback/`: the new `transient-network.ts`.
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: `tryFallback`, `noteHealthFailure`, `maybeRestorePrimary`, `clear`, `clearForManualModelChange`.
+- `packages/coding-agent/src/core/retry-fallback/cooldown.ts`: `durationFor`.
+- `packages/coding-agent/src/core/agent-session.ts`: `_maybeRestoreFallbackPrimary` and its two continuation call sites.
 
 ## 2026-10-13 - Provider auth status re-reads a store that was busy on its first read (omo-desktop-app#2249)
 
