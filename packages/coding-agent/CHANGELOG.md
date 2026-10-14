@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- A tool named `eval` with its own `permissionParser` could answer for itself with a narrower class (for example `read`), so a preset that allows reads would run an arbitrary-code cell without asking. The `eval` permission request is now always carried alongside any tool-owned requests, so only a preset that allows everything allows a cell ([#3211](https://github.com/code-yeongyu/senpi/pull/3211), requested by @code-yeongyu).
+
 - A provider whose credentials were locked when the store was first read no longer reports "not configured" to `get_auth_providers` after the lock clears, while its models already work. The status now re-reads the store the same way model availability does (omo-desktop-app#2249).
 
 ### Removed
@@ -35,8 +37,6 @@
 - Tip history, changelog acknowledgments, and per-model reasoning/fast-mode memories now live in `state.json`, keeping automatically written bookkeeping out of version-controlled global settings. `/reasoning`, `/efforts`, and thinking cycles remember the model's level without changing the startup default; Ctrl+S in `/thinking` and the `/settings` thinking option still save it explicitly. Existing global keys migrate without overwriting saved state or changing project settings. Corrupt state no longer disables config, and no-value-change saves preserve config bytes. Restart older sessions during upgrades: their legacy bookkeeping writes can still trigger config reloads ([#3213](https://github.com/code-yeongyu/senpi/pull/3213), requested by @devxoul).
 
 ### Fixed
-
-- A tool named `eval` with its own `permissionParser` could answer for itself with a narrower class (for example `read`), so a preset that allows reads would run an arbitrary-code cell without asking. The `eval` permission request is now always carried alongside any tool-owned requests, so only a preset that allows everything allows a cell ([#3211](https://github.com/code-yeongyu/senpi/pull/3211), requested by @code-yeongyu).
 
 - Help, version, model/tip listings, session export, and one-shot package/host/schedule commands no longer enable the startup compile cache, avoiding Bun 1.4.3's slower cold-cache write at exit. Root version requests stay parser-free, and cache decisions do not change argument errors. Interactive, RPC and prompt-processing sessions, schedule watchers, and multi-session RPC hosts (even with `--help`) retain caching. An externally supplied `NODE_COMPILE_CACHE` remains untouched ([#3166](https://github.com/code-yeongyu/senpi/issues/3166)).
 - Busy multi-session RPC hosts now reclaim freed heap pages when their session count drops and their footprint is at least 2 GB, even while other children keep running. Drops during the trim interval stay pending until it expires, including when a new session replaces the closed one between checks. Busy-host collections wait at least a minute and at least 100 times the previous collection pause; `host_trimmed` reports `sessions` and `pauseMs`. This prevents long sessions with many concurrent children from retaining their peak memory footprint ([#3240](https://github.com/code-yeongyu/senpi/pull/3240), [#3221](https://github.com/code-yeongyu/senpi/pull/3221)).
