@@ -67,8 +67,8 @@ interface SuccessorInfo {
 
 // Drives a conditional handover until the target build serves the socket. A host that is still
 // settling work answers handover_pending and switches over on its own once idle; it then drains the
-// connection it answered on, so completion is read from the socket (the serving build and the
-// current generation), never from a reply on that connection. Every attempt opens a fresh
+// connection it answered on, so completion is read from the socket (the process and build that
+// answer it), never from a reply on that connection. Every attempt opens a fresh
 // connection and uses its own request id: JsonlPeer.request resolves on the first stored response
 // with a given id.
 async function handOverUntilServed(
@@ -91,20 +91,28 @@ async function handOverUntilServed(
 		} finally {
 			caller.destroy();
 		}
-		const status = await readHostStatus({ socket: rig.qa.socket, agentDir: rig.qa.agentDir }).catch(() => undefined);
-		const current = status?.generations.find((row) => row.current);
+		// A handoff is complete exactly when the process answering the socket changes
+		// (HostProtocolInfo.instanceId). The status pointer's `current` flag can lag behind it.
 		const serving = await probeHost({ socket: rig.qa.socket }).catch(() => undefined);
 		if (
-			current !== undefined &&
-			current.instanceId !== from.instanceId &&
-			serving?.runtimeBuildId === targetRuntimeBuildId
-		)
-			return {
-				pid: current.pid,
-				instanceId: current.instanceId,
-				generation: current.generation,
-				runtimeBuildId: targetRuntimeBuildId,
-			};
+			serving?.instanceId !== undefined &&
+			serving.instanceId !== from.instanceId &&
+			serving.generation !== undefined &&
+			serving.runtimeBuildId === targetRuntimeBuildId
+		) {
+			const status = await readHostStatus({ socket: rig.qa.socket, agentDir: rig.qa.agentDir }).catch(
+				() => undefined,
+			);
+			const row = status?.generations.find((generation) => generation.instanceId === serving.instanceId);
+			if (row !== undefined)
+				return {
+					pid: row.pid,
+					instanceId: serving.instanceId,
+					generation: serving.generation,
+					runtimeBuildId: targetRuntimeBuildId,
+				};
+		}
+		lastAnswer = { ...lastAnswer, serving: serving && { id: serving.instanceId, gen: serving.generation } };
 		await new Promise((resolve) => setTimeout(resolve, 250));
 	}
 	return { lastAnswer };
