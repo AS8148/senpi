@@ -6,11 +6,15 @@
 
 ### Added
 
+- `/account <provider> reset <id>` clears one account's cooldown or block (the credential-pool health record and any block a provider lane stored on the account), so the next request tries it again ([#3285](https://github.com/code-yeongyu/senpi/issues/3285)).
+
 - RPC effect ledger (capability `effect_ledger`): `abort`, `set_model` and `set_thinking_level` take an optional `effectId` and get a durable receipt written before the effect is applied; a retry with the same id replays the receipt instead of acting twice, and a different request under that id is refused with `effect_id_conflict`. `get_effect_status` answers any receipt by id, including inputs by `clientMessageId`, from a loaded session or from a transcript on disk. Input receipts now say how their turn ended (completed, aborted and by whom, error), a reopened session seals receipts its dead process left running, and queued input dropped by `new_session`/`switch_session` reads `failed` instead of vanishing ([#3199](https://github.com/code-yeongyu/senpi/issues/3199)).
 
 ### Changed
 
 ### Fixed
+
+- Several sessions sharing one credential pool no longer fail requests with "Credential store is busy ... held for 5500ms". Reading pool health takes no lock, callers in one process queue for it instead of starving each other, and a health write that still cannot take the lock is skipped and logged instead of failing a reply that already arrived ([#3285](https://github.com/code-yeongyu/senpi/issues/3285)).
 
 - A provider whose credentials were locked when the store was first read no longer reports "not configured" to `get_auth_providers` after the lock clears, while its models already work. The status now re-reads the store the same way model availability does (omo-desktop-app#2249).
 
