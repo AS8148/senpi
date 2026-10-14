@@ -150,6 +150,24 @@ These host contracts, import paths and build or verification targets belong to t
 
 The listed paths, especially command dispatch, mode unions and process identity imports. Keep the supported runtime branches and the shared utility behavior.
 
+## 2026-10-12 - Anthropic's provider default is Claude Opus 5.5
+
+### What changed
+
+- `packages/coding-agent/src/core/model-resolver.ts`: `defaultModelPerProvider.anthropic` and `defaultModelPerProvider["anthropic-subscription"]` are `claude-opus-5-5` (was `claude-opus-4-8`).
+
+### Why
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the retry fallback chains, prompt presets and omo agent chains already lead with `claude-opus-5-5`, but an Anthropic-only user without a saved model still started on Opus 4.8. Both rows stay identical because the `anthropic-subscription` builtin serves the bundled `anthropic` catalog, which lists `claude-opus-5-5`.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the built-in provider default table is core resolver data read before any extension runs.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the `anthropic` and `anthropic-subscription` rows of `defaultModelPerProvider`.
+
 ## 2026-10-12 - Review repairs for config/state separation (senpi#3178)
 
 ### What changed
