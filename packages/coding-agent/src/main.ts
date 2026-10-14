@@ -77,6 +77,7 @@ import { AuthStorage, ReadOnlyAuthStorage } from "./core/auth-storage.ts";
 import { envValue } from "./core/brand.ts";
 import { type CredentialAccountSummary, summarizeCredentialAccounts } from "./core/credential-accounts.ts";
 import { exportFromFile } from "./core/export-html/index.ts";
+import { ModelUsabilityBudgetError } from "./core/extensions/builtin/compaction/model-usability-budget.ts";
 import { resolveMovedPath } from "./core/extensions/builtin/moved-path-guard/resolve.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
 import { applyHttpProxySettings, configureHttpDispatcher } from "./core/http-dispatcher.ts";
@@ -1400,9 +1401,16 @@ export async function main(args: string[], options?: MainOptions) {
 		cwd: sessionManager.getCwd(),
 		agentDir,
 		sessionManager,
-	}).finally(() => {
-		startupLoadingIndicator.stop();
-	});
+	})
+		.catch((error: unknown) => {
+			// A model that cannot start is the user's to fix, not a crash: one line and its fix (senpi#3333).
+			if (!(error instanceof ModelUsabilityBudgetError)) throw error;
+			console.error(chalk.red(error.message));
+			process.exit(1);
+		})
+		.finally(() => {
+			startupLoadingIndicator.stop();
+		});
 	time("createAgentSessionRuntime");
 	await prepareSessionOpening(sessionManager, appMode);
 	const { services, session, modelFallbackMessage } = runtime;

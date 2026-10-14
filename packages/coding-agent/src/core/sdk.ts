@@ -19,6 +19,7 @@ import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefi
 import { convertToLlmForTransport, TRANSPORT_IMAGE_BUDGET_BYTES } from "./messages.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import {
+	defaultModelPerProvider,
 	findInitialModel,
 	getModelNarrowingPatterns,
 	type InitialModelProvenance,
@@ -31,6 +32,13 @@ import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
 import { getDefaultSessionDir, SessionManager } from "./session-manager.ts";
 import { DEFAULT_TOOL_NAMES, SettingsManager } from "./settings-manager.ts";
+import {
+	canStartOn,
+	isAutomaticPick,
+	nextStartableModel,
+	startupRefusalMessage,
+	startupReplacementMessage,
+} from "./startup-model-pick.ts";
 import { clampThinkingSelection, getSupportedThinkingLevels } from "./thinking-levels.ts";
 import { time } from "./timings.ts";
 import {
@@ -622,9 +630,40 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			}
 		}
 	} catch (error) {
+		// An automatic pick that cannot start moves to the next one that can (senpi#3333). The
+		// candidates are measured against this session's prompt and tools before it is released.
+		const refused = error instanceof ModelUsabilityBudgetError ? error.projection : undefined;
+		const replacement =
+			refused &&
+			model &&
+			!hasExistingSession &&
+			options.model === undefined &&
+			isAutomaticPick(initialModelProvenance)
+				? nextStartableModel(
+						modelRuntime.getAvailableSnapshot(),
+						model,
+						(candidate) => canStartOn(session, candidate),
+						defaultModelPerProvider,
+						modelRuntime,
+					)
+				: undefined;
 		// A refused startup returns no session to its caller, so nothing else would ever
 		// release what the constructed session holds (its shared fallback breaker, writer).
 		session.dispose();
+		if (refused && replacement) {
+			const retried = await createAgentSession({ ...options, model: replacement, initialModelProvenance });
+			const note = startupReplacementMessage(replacement, refused);
+			return {
+				...retried,
+				modelFallbackMessage: retried.modelFallbackMessage ? `${retried.modelFallbackMessage}. ${note}` : note,
+			};
+		}
+		if (refused && error instanceof Error && refused.admission === "start") {
+			error.message = startupRefusalMessage(
+				refused,
+				isAutomaticPick(initialModelProvenance) && options.model === undefined,
+			);
+		}
 		throw error;
 	}
 	sessionRef.current = session;
