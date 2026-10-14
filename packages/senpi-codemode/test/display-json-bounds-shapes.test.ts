@@ -66,4 +66,26 @@ describe("display values keep every top-level key within the budget (#3261 revie
 			true,
 		);
 	});
+
+	test("emoji-heavy records keep their scalars and the budget holds", () => {
+		const messages = Array.from({ length: 300 }, (_, index) => ({ id: index, text: "\u{1F389}".repeat(150) }));
+		const stored = record(sanitizeDisplayJson({ messages, total: 300, page: 1 }));
+
+		expect(Object.keys(stored)).toEqual(["messages", "total", "page"]);
+		expect(stored.total).toBe(300);
+		expect(stored.page).toBe(1);
+		expect(Array.isArray(stored.messages)).toBe(true);
+		expect(serializedLength(stored)).toBeLessThanOrEqual(MAX_DISPLAY_JSON_BYTES);
+	});
+
+	test("emoji keys stay keys and a trimmed emoji string never splits a surrogate pair", () => {
+		const value = Object.fromEntries(
+			Array.from({ length: 150 }, (_, index) => [`${"\u{1F600}".repeat(40)}-${index}`, index]),
+		);
+		const stored = record(sanitizeDisplayJson(value));
+
+		expect(Object.keys(stored).length).toBeGreaterThan(1);
+		expect(serializedLength(stored)).toBeLessThanOrEqual(MAX_DISPLAY_JSON_BYTES);
+		expect(JSON.stringify(stored)).not.toMatch(/\\ud[89a-f][0-9a-f]{2}/i);
+	});
 });
