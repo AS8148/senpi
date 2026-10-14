@@ -12,7 +12,13 @@ import {
 	reapProcessesUnder,
 	waitForPidGone,
 } from "./helpers/rpc-generation-support.ts";
-import { beginHandoverCommand, connect, dataOf, startHandoverRig } from "./helpers/rpc-idle-handover-support.ts";
+import {
+	beginHandoverCommand,
+	connect,
+	dataOf,
+	type HandoverRig,
+	startHandoverRig,
+} from "./helpers/rpc-idle-handover-support.ts";
 
 // Diagnostic dump for a failure of the reopen assertion below: capture the listed durable ids, the
 // transcript's existence, and the handover-parked record tree (entry contents included) so a lost
@@ -50,6 +56,58 @@ async function dumpReopenFailure(
 	};
 	await walk(daemonRoot, 0);
 	process.stderr.write(`${lines.join("\n")}\n`);
+}
+
+interface SuccessorInfo {
+	readonly pid: number;
+	readonly instanceId: string;
+	readonly generation: number;
+	readonly runtimeBuildId: string;
+}
+
+// Drives a conditional handover until the target build serves the socket. A host that is still
+// settling work answers handover_pending and switches over on its own once idle; it then drains the
+// connection it answered on, so completion is read from the socket (the serving build and the
+// current generation), never from a reply on that connection. Every attempt opens a fresh
+// connection and uses its own request id: JsonlPeer.request resolves on the first stored response
+// with a given id.
+async function handOverUntilServed(
+	rig: HandoverRig,
+	from: { readonly instanceId: string },
+	targetRuntimeBuildId: string,
+	overrides: Record<string, unknown>,
+	label: string,
+): Promise<SuccessorInfo | { readonly lastAnswer: Record<string, unknown> }> {
+	let lastAnswer: Record<string, unknown> = {};
+	const deadline = Date.now() + 120_000;
+	for (let attempt = 0; Date.now() < deadline; attempt++) {
+		const caller = await connect(rig, peers);
+		try {
+			lastAnswer = dataOf(
+				await caller.request(beginHandoverCommand(rig, { ...overrides, id: `${label}-${attempt}` }), 20_000),
+			);
+		} catch (cause) {
+			lastAnswer = { state: "no_answer", cause: String(cause) };
+		} finally {
+			caller.destroy();
+		}
+		const status = await readHostStatus({ socket: rig.qa.socket, agentDir: rig.qa.agentDir }).catch(() => undefined);
+		const current = status?.generations.find((row) => row.current);
+		const serving = await probeHost({ socket: rig.qa.socket }).catch(() => undefined);
+		if (
+			current !== undefined &&
+			current.instanceId !== from.instanceId &&
+			serving?.runtimeBuildId === targetRuntimeBuildId
+		)
+			return {
+				pid: current.pid,
+				instanceId: current.instanceId,
+				generation: current.generation,
+				runtimeBuildId: targetRuntimeBuildId,
+			};
+		await new Promise((resolve) => setTimeout(resolve, 250));
+	}
+	return { lastAnswer };
 }
 
 const scratches: GenerationScratch[] = [];
@@ -100,37 +158,25 @@ describe.skipIf(process.platform === "win32")("client-less retained sessions acr
 		expect(typeof durableId).toBe("string");
 		opener.destroy();
 
-		const caller = await connect(rig, peers);
 		// The conditional idle handover refuses while the just-aborted turn is still settling; retry
 		// until it admits the handoff, so the test does not hinge on the abort's settle timing.
-		let answer: Record<string, unknown> = {};
-		const handoffDeadline = Date.now() + 120_000;
-		// Every request needs its own id: JsonlPeer.request resolves on the first stored response with
-		// that id, so a reused id hands every retry the first attempt's answer.
-		for (let attempt = 0; ; attempt++) {
-			answer = dataOf(await caller.request(beginHandoverCommand(rig, { id: `begin-${attempt}` }), 120_000));
-			if (answer.state === "handover_completed") break;
-			if (Date.now() >= handoffDeadline) break;
-			await new Promise((resolve) => setTimeout(resolve, 250));
-		}
-		expect(answer).toMatchObject({ operation_id: "op-1", state: "handover_completed" });
-		const successor = answer.successor as { pid: number; runtimeBuildId: string };
+		const successor = await handOverUntilServed(rig, rig, rig.buildB.runtimeBuildId, {}, "begin");
+		if (!("pid" in successor)) throw new Error(`first handover did not complete: ${JSON.stringify(successor)}`);
 		pids.push(successor.pid);
-		expect(successor.runtimeBuildId).toBe(rig.buildB.runtimeBuildId);
 		expect(await waitForPidGone(rig.firstPid, 60_000)).toBe(true);
 
-		const after = await probeHost({ socket: rig.qa.socket });
-		expect(after?.runtimeBuildId).toBe(rig.buildB.runtimeBuildId);
-		const status = await readHostStatus({ socket: rig.qa.socket, agentDir: rig.qa.agentDir });
-		const current = status.generations.find((row) => row.current);
-		if (current !== undefined) pids.push(current.pid);
-
-		const lister = await connect(rig, peers);
 		let listRequests = 0;
+		// A fresh connection per poll: the second handover drains every connection to the host it replaces.
 		const listDurableIds = async (): Promise<string[]> => {
-			const listed = dataOf(
-				await lister.request({ id: `list-${listRequests++}`, type: "list_sessions", include_workers: true }),
-			);
+			const lister = await connect(rig, peers);
+			let listed: Record<string, unknown>;
+			try {
+				listed = dataOf(
+					await lister.request({ id: `list-${listRequests++}`, type: "list_sessions", include_workers: true }),
+				);
+			} finally {
+				lister.destroy();
+			}
 			return ((listed.sessions ?? []) as Array<{ durableSessionId?: string }>)
 				.map((row) => row.durableSessionId)
 				.filter((id): id is string => typeof id === "string");
@@ -151,33 +197,21 @@ describe.skipIf(process.platform === "win32")("client-less retained sessions acr
 		expect(openAfterFirst, `durable ${durableId} not open after the first handover`).toBe(true);
 
 		// After a SECOND handover the session is open again with the same durable id.
-		const successorInfo = answer.successor as { instanceId: string; generation: number; runtimeBuildId: string };
-		const caller2 = await connect(rig, peers);
-		// The successor answers handover_pending until its just-reopened session settles; retry like the
-		// first handover does.
-		let answer2: Record<string, unknown> = {};
-		const handoff2Deadline = Date.now() + 120_000;
-		for (let attempt = 0; ; attempt++) {
-			answer2 = dataOf(
-				await caller2.request(
-					beginHandoverCommand(rig, {
-						id: `begin2-${attempt}`,
-						operation_id: "op-2",
-						if_instance_id: successorInfo.instanceId,
-						if_generation: successorInfo.generation,
-						target_runtime_build_id: rig.buildA.runtimeBuildId,
-						host_args: rig.buildA.hostArgs,
-					}),
-					120_000,
-				),
-			);
-			if (answer2.state === "handover_completed") break;
-			if (Date.now() >= handoff2Deadline) break;
-			await new Promise((resolve) => setTimeout(resolve, 250));
-		}
-		expect(answer2, `second handover did not complete: ${JSON.stringify(answer2)}`).toMatchObject({
-			state: "handover_completed",
-		});
+		const successor2 = await handOverUntilServed(
+			rig,
+			successor,
+			rig.buildA.runtimeBuildId,
+			{
+				operation_id: "op-2",
+				if_instance_id: successor.instanceId,
+				if_generation: successor.generation,
+				target_runtime_build_id: rig.buildA.runtimeBuildId,
+				host_args: rig.buildA.hostArgs,
+			},
+			"begin2",
+		);
+		if (!("pid" in successor2)) throw new Error(`second handover did not complete: ${JSON.stringify(successor2)}`);
+		pids.push(successor2.pid);
 		const deadline2 = Date.now() + 60_000;
 		let openAgain = false;
 		while (!openAgain && Date.now() < deadline2) {
