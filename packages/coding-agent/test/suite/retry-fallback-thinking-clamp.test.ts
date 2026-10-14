@@ -46,6 +46,7 @@ function createController(options: {
 	models: Model<Api>[];
 	chains: Record<string, readonly string[]>;
 	current: { model: Model<Api>; thinkingLevel?: ThinkingLevel };
+	now?: () => number;
 }): { controller: RetryFallbackController; switches: SwitchRecord[] } {
 	const switches: SwitchRecord[] = [];
 	let current = options.current;
@@ -55,7 +56,7 @@ function createController(options: {
 			find: (provider, id) => options.models.find((model) => model.provider === provider && model.id === id),
 			getAll: () => options.models,
 		},
-		cooldowns: new SelectorCooldowns(() => 0),
+		cooldowns: new SelectorCooldowns(options.now ?? (() => 0)),
 		logger: { debug: () => {}, info: () => {}, warn: () => {} },
 		switchModel: async (model, thinking, reason) => {
 			switches.push({ provider: model.provider, id: model.id, thinking, reason });
@@ -184,5 +185,48 @@ describe("retry fallback thinking-level selection", () => {
 		expect(await controller.tryFallback("refusal", {})).toBe(true);
 		expect(await controller.tryFallback("refusal", {})).toBe(true);
 		expect(switches.map((record) => `${record.id}:${record.thinking}`)).toEqual(["primary:off", "primary:low"]);
+	});
+
+	it("walks a second rung of the same model after the first one hard-errored (senpi#3311)", async () => {
+		// A hard error parks only the rung that failed: keyed by the model, the cooldown noted for
+		// primary:off suppressed primary:low and the walk jumped to toggle.
+		const { controller, switches } = createController({
+			models: [primary, toggle],
+			chains: { "faux/primary": ["faux/primary:off", "faux/primary:low", "faux/toggle"] },
+			current: { model: primary, thinkingLevel: "high" },
+		});
+
+		expect(await controller.tryFallback("hard-error", {})).toBe(true);
+		expect(await controller.tryFallback("hard-error", {})).toBe(true);
+		expect(switches.map((record) => `${record.id}:${record.thinking}`)).toEqual(["primary:off", "primary:low"]);
+	});
+
+	it("keeps a transient failure parking the whole model, so its other rungs are skipped", async () => {
+		const { controller, switches } = createController({
+			models: [primary, toggle],
+			chains: { "faux/primary": ["faux/primary:off", "faux/primary:low", "faux/toggle"] },
+			current: { model: primary, thinkingLevel: "high" },
+		});
+
+		expect(await controller.tryFallback("hard-error", {})).toBe(true);
+		expect(await controller.tryFallback("transient", { errorMessage: "overloaded_error" })).toBe(true);
+		expect(switches.map((record) => `${record.id}:${record.thinking}`)).toEqual(["primary:off", "toggle:off"]);
+	});
+
+	it("does not revert to the original rung while its own hard error is cooling down", async () => {
+		let now = 0;
+		const { controller, switches } = createController({
+			models: [primary, toggle],
+			chains: { "faux/primary": ["faux/primary:off", "faux/toggle"] },
+			current: { model: primary, thinkingLevel: "high" },
+			now: () => now,
+		});
+
+		expect(await controller.tryFallback("hard-error", { errorMessage: "thinking budget not supported" })).toBe(true);
+		expect(await controller.maybeRestorePrimary("cooldown-expiry")).toBe(false);
+
+		now += 10 * 60_000;
+		expect(await controller.maybeRestorePrimary("cooldown-expiry")).toBe(true);
+		expect(switches.at(-1)).toEqual({ provider: "faux", id: "primary", thinking: "high", reason: "fallback-revert" });
 	});
 });

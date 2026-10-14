@@ -116,7 +116,7 @@ export class RetryFallbackController {
 		const model = this.deps.registry.find(selector.provider, selector.id);
 		if (!model) return false;
 		const stranded = this.unusable.isUnusable(current.model) && !this.unusable.isUnusable(model);
-		if (!stranded && !this.originalRecovered(state.originalSelector, revertPolicy)) return false;
+		if (!stranded && !this.originalRecovered(state, revertPolicy)) return false;
 		// User override wins: only restore the original thinking level when the
 		// current level still equals the level the fallback switch applied. A manual
 		// setThinkingLevel clears lastAppliedThinkingLevel (see noteManualThinkingLevel).
@@ -134,8 +134,14 @@ export class RetryFallbackController {
 		return true;
 	}
 
-	private originalRecovered(originalSelector: string, revertPolicy: "cooldown-expiry" | "never"): boolean {
+	private originalRecovered(state: ActiveFallbackState, revertPolicy: "cooldown-expiry" | "never"): boolean {
 		if (revertPolicy !== "cooldown-expiry") return false;
+		const originalSelector = state.originalSelector;
+		// The original rung may be parked by its own hard error while the model as a whole is not.
+		const originalRung = state.originalThinkingLevel
+			? `${originalSelector}:${state.originalThinkingLevel}`
+			: originalSelector;
+		if (this.deps.cooldowns.isSuppressed(originalRung)) return false;
 		// An entry the breaker tracks recovers on the circuit's clock; the per-session
 		// cooldown only governs entries the breaker never opened (hard errors, breaker off).
 		const suppressed = this.probes.governs(originalSelector)
@@ -234,9 +240,22 @@ export class RetryFallbackController {
 		if (!current || !candidate) return false;
 		const currentBase = formatSelector(current.model);
 		if (failureObserved && (reason === "transient" || reason === "hard-error" || reason === "billing")) {
-			this.deps.cooldowns.note(currentBase, failure);
-			this.deps.logger.info("cooldown_noted", { selector: currentBase, errorMessage: failure.errorMessage });
+			// A hard error is the rung's (a level the model rejects), so it parks only that rung and a
+			// later rung of the same model stays reachable; a transient or billing failure parks the
+			// whole model, which is unhealthy at every level (senpi#3311).
+			const parked =
+				reason === "hard-error"
+					? rungSelector({
+							provider: current.model.provider,
+							id: current.model.id,
+							thinkingLevel: current.thinkingLevel,
+						})
+					: currentBase;
+			this.deps.cooldowns.note(parked, failure);
+			this.deps.logger.info("cooldown_noted", { selector: parked, errorMessage: failure.errorMessage });
 		}
+		// The candidate was picked before the park; a model-wide park also rules out its other rungs.
+		candidate = this.nextCandidate(false, true);
 		// A rung the switch itself refuses does not end the walk: the next rung may fit (senpi#2894).
 		while (candidate) {
 			try {

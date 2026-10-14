@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- A fallback chain that lists one model at several thinking levels now walks every one of those levels. A rung that hard-errors parks only itself, so `models: [X:high, X:off, X:low, Y]` tries `X:low` after `X:off` fails instead of jumping to `Y`; a rate limit, quota or overload still skips every level of that model ([#3311](https://github.com/code-yeongyu/senpi/issues/3311), reported by @tw-yshuang).
+
 - A provider whose credentials were locked when the store was first read no longer reports "not configured" to `get_auth_providers` after the lock clears, while its models already work. The status now re-reads the store the same way model availability does (omo-desktop-app#2249).
 
 - A fallback chain can walk to a rung that runs the same model at another thinking level. Such an entry used to disappear twice over: the chain scan consumed it as the entry in flight and then skipped it as a self-reference, and a model's remaining rungs were suppressed once one of them had been taken - so a chain written as `models: [X:high, X:off, Y]`, which is how the OMO/senpi adapter ships it (the entries `[X:off, Y]` under the bare `X` key), jumped straight to `Y`. Chain validation no longer reports `X:off` under the `X` key as referencing the same model. Cooldowns and circuits stay keyed by the model, because a rate-limited or spent account is unhealthy at every level, so one same-model rung remains reachable per turn before the current model's cooldown expires.

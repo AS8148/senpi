@@ -80,7 +80,7 @@ function scanCandidates(
 			filters.skip(raw, "tried");
 			continue;
 		}
-		if (filters.isSuppressed(base)) {
+		if (filters.isSuppressed(base) || filters.isSuppressed(rungSelector(selector))) {
 			filters.skip(raw, "suppressed");
 			continue;
 		}

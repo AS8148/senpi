@@ -1,3 +1,23 @@
+## 2026-10-14 - A hard error parks only its rung, so a later rung of the same model stays reachable (senpi#3311)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: `tryFallback` notes a `hard-error` cooldown under the failing rung (`provider/id:level`, via `rungSelector`) instead of the model, and re-scans the chain after noting it, so a model-wide park (`transient`, `billing`) also rules out that model's other rungs in the same walk. `originalRecovered` refuses a revert while the original rung (`originalSelector` at `originalThinkingLevel`) is parked by its own hard error.
+- `packages/coding-agent/src/core/retry-fallback/candidates.ts`: the scan skips an entry whose model or whose rung is suppressed.
+
+### Why
+
+A chain that runs one model at several thinking levels (`[X:off, X:low, Y]` from `X:high`) reached only the first of those rungs per turn: the cooldown noted for `X:off` was keyed by `X`, so `X:low` was suppressed and the walk jumped to `Y`. A hard error belongs to the level the model rejected; a spent or overloaded account is unhealthy at every level, so those keep the model key.
+
+### Why an extension could not handle it
+
+Cooldown keys, the candidate scan and the revert gate are internal to the retry-fallback controller; no extension hook sees or changes them.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: the cooldown block of `tryFallback` and `originalRecovered`.
+- `packages/coding-agent/src/core/retry-fallback/candidates.ts`: the suppression check in `scanCandidates`.
+
 ## 2026-10-13 - A fallback rung is identified by its model AND its thinking level
 
 ### What changed
