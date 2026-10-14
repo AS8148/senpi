@@ -1,3 +1,25 @@
+## 2026-10-14 - A host's own sessions never hold it open (senpi#3272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-client-origin.ts` (new): the `origin_host_instance` request field, `originHostInstance()` (the generation a process runs in, from `SENPI_RPC_HOST_INSTANCE_ID`) and `requestOriginHostInstance()` (the generation a request line names).
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: a socket `RpcClient` running inside a host sends that host's generation as `origin_host_instance` on every request.
+- `packages/coding-agent/src/modes/rpc/host-client-occupancy.ts`: `ClientOccupancy` takes the host's own generation. A connection whose first non-observing request names it is DEPENDENT: not attached, not unclassified, and released without an unknown-admission report.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-activity.ts` and `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: the supervisor classifies its public clients against its generation, so dependents hold neither the idle-exit window nor the owner-death grace.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: a socket host classifies its own connections the same way for its empty-host exit.
+
+### Why
+
+omo keys a task tree's `p` shard by the root session, so a child running in that shard opens its own children on the same shard, through its public socket. Those connections were attached clients, so after the owner and every outside client were gone the shard still held itself open: the idle window never started and the owner-death grace never saw quiescence. A desktop machine kept such shards for days, one with 12 retained sessions and about 18 self-connections (each supervisor fd paired with a host fd in `lsof`), whose heap had peaked at 71 GB.
+
+### Why an extension could not handle it
+
+Occupancy is decided by the supervisor and the socket host from the raw request lines, and the client stamp lives in `RpcClient.send`; extensions see neither.
+
+### Expected merge conflict zones
+
+The classification loop in `ClientOccupancy.admit`, the `fullCommand` literal in `RpcClient.send`, the `SupervisorActivity` options, and the `ClientOccupancy` construction in `runSocketHost`.
+
 ## 2026-10-13 - No detach after a request timeout or a lost transport (senpi#3238 review)
 
 ### What changed

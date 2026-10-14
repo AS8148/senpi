@@ -1307,7 +1307,16 @@ poller (`senpi host status [--all]`, which marks both of its reads, a doctor loo
 endpoint as often as it likes without keeping any of them alive; the first request that is anything else attaches the
 connection from then on, and `observe` on any other command is ignored. While a connection has not sent its first
 line yet the host does not exit, and the window keeps running. Hosts that predate the field ignore it, so a marked read
-works against every generation. The supervisor learns about turns through
+works against every generation.
+
+A connection from one of the host's OWN sessions is DEPENDENT and never counts either. A host exports its generation
+id (`SENPI_RPC_HOST_INSTANCE_ID`) to the sessions it runs, and `RpcClient` sends that id as `"origin_host_instance"`
+on every socket request. When a connection's first non-observing request names the host's own generation, the
+connection neither holds the window open, nor blocks the owner-death grace, nor keeps an empty host alive. Without
+this, a task tree whose children open their own children on the shard they run in (omo's `p` shards are keyed by the
+root session) keeps that shard alive through its own connections after the owner and every outside client are gone.
+Turns still count as activity, so a dependent session mid-turn keeps the host open until the turn ends. Hosts that
+predate the field ignore it. The supervisor learns about turns through
 its observer connection to the host; while that connection is unhealthy it cannot see turns, so it treats activity as
 unknown and keeps the host open as if a turn were running — but only for one idle window, during which it keeps
 reconnecting. An observer that stays unhealthy for longer than the window stops counting as busy, and the connection

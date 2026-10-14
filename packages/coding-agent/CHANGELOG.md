@@ -12,6 +12,7 @@
 
 ### Fixed
 
+- An RPC host shard no longer keeps itself alive through its own sessions' connections. A task tree whose children open their own children on the shard they run in left that shard running for days after its owner and every outside client were gone, holding its sessions and memory. `RpcClient` now names the host generation it runs inside (`origin_host_instance`), and a host does not count connections from its own generation toward idle exit, owner-death exit or empty-host exit. A dependent session mid-turn still keeps the host open until the turn ends ([#3272](https://github.com/code-yeongyu/senpi/issues/3272)).
 - A provider whose credentials were locked when the store was first read no longer reports "not configured" to `get_auth_providers` after the lock clears, while its models already work. The status now re-reads the store the same way model availability does (omo-desktop-app#2249).
 
 ### Removed

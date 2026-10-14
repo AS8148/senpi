@@ -226,7 +226,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 	const connections = new Map<string, Connection>();
 	// The supervisor's rule for which clients hold a host open (host-client-occupancy.ts): a
 	// connection that has only sent observing reads (`status`) is not occupancy.
-	const occupancy = new ClientOccupancy(() => {});
+	const occupancy = new ClientOccupancy(() => {}, hostInstanceId());
 	let draining = false;
 	let handoffAnnounced = false;
 	const hostContext = hostSessionContext(socketPath);
