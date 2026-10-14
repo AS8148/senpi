@@ -34,7 +34,7 @@ import { projectRetainedMessages } from "./extensions/builtin/compaction/retaine
 import { resolveMovedPath } from "./extensions/builtin/moved-path-guard/resolve.ts";
 import type { ModelChangeOrigin, ModelChangeSource } from "./model-change-origin.ts";
 import { sessionCwdMatcher } from "./moved-session-cwd.ts";
-import { REPOSITORY_IDENTITY_ENTRY_TYPE, type RepositoryIdentity } from "./repository-identity.ts";
+import type { RepositoryIdentity } from "./repository-identity.ts";
 import {
 	ALL_SESSION_LIST_PUBLISH_INTERVAL,
 	listSessionFilesInDir,
@@ -303,6 +303,8 @@ export interface CustomEntry<T = unknown> extends SessionEntryBase {
 	type: "custom";
 	customType: string;
 	data?: T;
+	/** Written at session start without user action; see `AppendEntryOptions.startupBookkeeping` (senpi#3263). */
+	startupBookkeeping?: true;
 }
 
 /** Label entry for user-defined bookmarks/markers on entries. */
@@ -1106,21 +1108,9 @@ const SETUP_ENTRY_TYPES: ReadonlySet<FileEntry["type"]> = new Set([
 	"label",
 ]);
 
-/**
- * `custom` bookkeeping that extensions write at session start without any user action (senpi#3263).
- * Any other `custom` entry (a paid cache prewarm, a todo list, unknown extension state) keeps the file.
- */
-export const STARTUP_BOOKKEEPING_CUSTOM_TYPES: ReadonlySet<string> = new Set([
-	"pi-rules.scan",
-	REPOSITORY_IDENTITY_ENTRY_TYPE,
-	"claude-sdk-oauth-binding",
-	"nested-agents-md:debug",
-	// Written by the OmO memory extension, which lives outside this repository.
-	"senpi-memory.session-binding",
-]);
-
+/** A `custom` entry is disposable only when its writer marked it as startup bookkeeping (senpi#3263). */
 function isDisposableEntry(entry: FileEntry): boolean {
-	if (entry.type === "custom") return STARTUP_BOOKKEEPING_CUSTOM_TYPES.has(entry.customType);
+	if (entry.type === "custom") return entry.startupBookkeeping === true;
 	return SETUP_ENTRY_TYPES.has(entry.type);
 }
 
@@ -1523,8 +1513,8 @@ export class SessionManager {
 
 	/**
 	 * Removes the session file when this process created it with persistHeaderNow() and it holds only
-	 * setup entries (header, model, thinking level, configuration, labels) and the startup bookkeeping in
-	 * STARTUP_BOOKKEEPING_CUSTOM_TYPES (rules scan, memory binding, repository identity), then returns to
+	 * setup entries (header, model, thinking level, configuration, labels) and `custom` entries their
+	 * writer marked `startupBookkeeping` (rules scan, repository identity, subscription binding), then returns to
 	 * buffering so a later entry cannot recreate a header-less file; those entries reach disk again with
 	 * the first message (senpi#3263). Any message (user, assistant, `!cmd`), delivered `custom_message`,
 	 * session name, other `custom` entry (such as a paid cache prewarm or a todo list) or usage record
@@ -1965,11 +1955,12 @@ export class SessionManager {
 	}
 
 	/** Append a custom entry (for extensions) as child of current leaf, then advance leaf. */
-	appendCustomEntry(customType: string, data?: unknown): string {
+	appendCustomEntry(customType: string, data?: unknown, options?: { startupBookkeeping?: boolean }): string {
 		const entry: CustomEntry = {
 			type: "custom",
 			customType,
 			data,
+			...(options?.startupBookkeeping === true ? { startupBookkeeping: true as const } : {}),
 			id: generateId(this.idsInUse),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),

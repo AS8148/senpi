@@ -2,19 +2,23 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/session-manager.ts`: `discardHeaderOnlyFile()` removes only a file this process created with `persistHeaderNow()` (tracked as `ownedHeaderFile`, set when `_writeHeaderAsync` succeeds and cleared when an existing file is opened or a new session starts), and only when every entry is setup (`SETUP_ENTRY_TYPES`: header, model/thinking/configuration changes, labels) or startup bookkeeping named in `STARTUP_BOOKKEEPING_CUSTOM_TYPES` (`pi-rules.scan`, `repository-identity`, `claude-sdk-oauth-binding`, `nested-agents-md:debug`, and the OmO memory extension's `senpi-memory.session-binding`). Any other `custom` entry (a paid `prompt-cache-prewarm`, a `senpi.todo-state` list, unknown extension state), any message (including a `!cmd` `bashExecution`), a delivered `custom_message`, a `session_info` name or a `usage` record keeps the file. This replaces `SETUP_ONLY_ENTRY_TYPES`. The in-memory entries are kept and reach disk with the first message, as before.
+- `packages/coding-agent/src/core/session-manager.ts`: `discardHeaderOnlyFile()` removes only a file this process created with `persistHeaderNow()` (tracked as `ownedHeaderFile`, set when `_writeHeaderAsync` succeeds and cleared when an existing file is opened or a new session starts), and only when every entry is setup (`SETUP_ENTRY_TYPES`: header, model/thinking/configuration changes, labels) or a `custom` entry carrying `startupBookkeeping: true`. `appendCustomEntry()` takes `{ startupBookkeeping }` and persists it on the entry. Any unmarked `custom` entry (a paid `prompt-cache-prewarm`, a `senpi.todo-state` list, an extension that has not opted in), any message (including a `!cmd` `bashExecution`), a delivered `custom_message`, a `session_info` name or a `usage` record keeps the file. This replaces `SETUP_ONLY_ENTRY_TYPES`.
+- `packages/coding-agent/src/core/agent-session.ts`: the extension `appendEntry` action forwards the new options argument to `appendCustomEntry()`.
 
 ### Why
 
-- `packages/coding-agent/src/core/session-manager.ts`: the TUI control endpoint writes the header at startup (`persistHeaderNow()`), and extensions then append `custom` entries straight to that file. The old allow-list refused to discard a file holding them, so opening and closing the TUI, or `/new`, without a message left an empty session listed in `/resume` (senpi#3263). The ownership guard keeps a resumed or `--session`-opened file from ever being deleted on close.
+- `packages/coding-agent/src/core/session-manager.ts`: the TUI control endpoint writes the header at startup (`persistHeaderNow()`), and extensions then append `custom` entries straight to that file. The old allow-list refused to discard a file holding them, so opening and closing the TUI, or `/new`, without a message left an empty session listed in `/resume` (senpi#3263). Disposability is opt-in so core never names another package's entry types, and the ownership guard keeps a resumed file from ever being deleted on close.
+- `packages/coding-agent/src/core/agent-session.ts`: the opt-in has to reach the session manager from `pi.appendEntry`.
 
 ### Why an extension could not handle it
 
 - `packages/coding-agent/src/core/session-manager.ts`: the close-time discard is a `SessionManager` method called by the interactive control-endpoint lifecycle; no extension owns when a session file is removed.
+- `packages/coding-agent/src/core/agent-session.ts`: the extension action table that implements `pi.appendEntry` is built inside `AgentSession`.
 
 ### Expected merge conflict zones
 
-- `packages/coding-agent/src/core/session-manager.ts`: LOW, `discardHeaderOnlyFile()`, `_writeHeaderAsync`'s flushed branch, the open-existing-file branch, `newSession()`, and the `SETUP_ENTRY_TYPES` / `STARTUP_BOOKKEEPING_CUSTOM_TYPES` constants above the class.
+- `packages/coding-agent/src/core/session-manager.ts`: LOW, `discardHeaderOnlyFile()`, `appendCustomEntry()`, the `CustomEntry` interface, `_writeHeaderAsync`'s flushed branch, the open-existing-file branch, `newSession()`, and `SETUP_ENTRY_TYPES` / `isDisposableEntry` above the class.
+- `packages/coding-agent/src/core/agent-session.ts`: LOW, the `appendEntry` action in the extension action table.
 
 ## 2026-10-14 - The fallback circuit opens for a usage limit until its own reset window (senpi#3314)
 
