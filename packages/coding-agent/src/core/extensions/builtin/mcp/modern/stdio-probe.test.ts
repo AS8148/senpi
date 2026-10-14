@@ -106,59 +106,60 @@ describe("stdio legacy fallback after an unclean probe", () => {
 	});
 });
 
-/** One process that reads nothing for `startMs`, then answers in order: modern or legacy era. */
-function slowServer(era: "legacy" | "modern", startMs: number) {
-	const sent: string[] = [];
+type SlowEra = "legacy" | "legacy-exit-on-discover" | "dual" | "modern" | "modern-32601";
+
+/**
+ * A server that reads nothing until the SDK's initialize arrives, which only happens after the probe window
+ * closed: a deterministic slow start with no timers. Its first process then answers its backlog in order.
+ * "legacy-exit-on-discover" dies on the backlogged discover; every later process is a plain legacy server.
+ */
+function slowServer(era: SlowEra) {
+	const sent: { generation: number; method: string }[] = [];
+	let generation = 0;
+	let alive = false;
 	let ready = false;
 	const backlog: JSONRPCMessage[] = [];
 	const child: Transport & { readonly pid: number | null } = {
-		pid: 2_147_483_100,
+		get pid() {
+			return alive ? 2_147_483_100 + generation : null;
+		},
 		start: vi.fn(async () => {
-			setTimeout(() => {
-				ready = true;
-				for (const message of backlog.splice(0)) handle(message);
-			}, startMs);
+			generation++;
+			alive = true;
+			ready = generation > 1;
 		}),
-		close: async () => child.onclose?.(),
+		close: async () => {
+			if (!alive) return;
+			alive = false;
+			child.onclose?.();
+		},
 		send: async (message) => {
-			if (ready) handle(message);
-			else backlog.push(message);
+			if (!alive) throw new Error("Not connected");
+			if (ready) return handle(message);
+			backlog.push(message);
+			if ("method" in message && message.method === "initialize") {
+				ready = true;
+				for (const queued of backlog.splice(0)) if (alive) handle(queued);
+			}
 		},
 	};
 	const reply = (message: JSONRPCMessage) => queueMicrotask(() => child.onmessage?.(message));
+	const legacyEra = generation > 1 || era === "legacy" || era === "legacy-exit-on-discover" || era === "dual";
 	function handle(message: JSONRPCMessage): void {
-		sent.push("method" in message ? message.method : "");
+		sent.push({ generation, method: "method" in message ? message.method : "" });
 		if (!("method" in message) || !("id" in message)) return;
 		const meta = message.params?._meta as Record<string, unknown> | undefined;
-		if (era === "legacy") {
-			if (message.method === "server/discover") {
+		const modernRequest = meta?.["io.modelcontextprotocol/protocolVersion"] === MODERN_PROTOCOL_VERSION;
+		if (message.method === "server/discover") {
+			if (era === "legacy-exit-on-discover" && generation === 1) {
+				alive = false;
+				queueMicrotask(() => child.onclose?.());
+				return;
+			}
+			if (era === "legacy" || era === "legacy-exit-on-discover") {
 				reply({ jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "Method not found" } });
 				return;
 			}
-			if (message.method === "initialize") {
-				reply({
-					jsonrpc: "2.0",
-					id: message.id,
-					result: {
-						protocolVersion: message.params?.protocolVersion,
-						capabilities: { tools: {} },
-						serverInfo: { name: "slow-legacy", version: "1" },
-					},
-				});
-				return;
-			}
-			reply({ jsonrpc: "2.0", id: message.id, result: { tools: [] } });
-			return;
-		}
-		if (meta?.["io.modelcontextprotocol/protocolVersion"] !== MODERN_PROTOCOL_VERSION) {
-			reply({
-				jsonrpc: "2.0",
-				id: message.id,
-				error: { code: -32020, message: "initialize is not supported" },
-			});
-			return;
-		}
-		if (message.method === "server/discover") {
 			reply({
 				jsonrpc: "2.0",
 				id: message.id,
@@ -166,46 +167,111 @@ function slowServer(era: "legacy" | "modern", startMs: number) {
 					resultType: "complete",
 					supportedVersions: [MODERN_PROTOCOL_VERSION],
 					capabilities: { tools: {} },
-					_meta: { "io.modelcontextprotocol/serverInfo": { name: "slow-modern", version: "1" } },
+					_meta: { "io.modelcontextprotocol/serverInfo": { name: `slow-${era}`, version: "1" } },
 				},
 			});
 			return;
 		}
-		reply({ jsonrpc: "2.0", id: message.id, result: { resultType: "complete", tools: [], nextCursor: null } });
+		if (message.method === "initialize") {
+			if (era === "modern" || era === "modern-32601") {
+				const code = era === "modern" ? -32020 : -32601;
+				reply({ jsonrpc: "2.0", id: message.id, error: { code, message: "initialize is not supported" } });
+				return;
+			}
+			reply({
+				jsonrpc: "2.0",
+				id: message.id,
+				result: {
+					protocolVersion: message.params?.protocolVersion,
+					capabilities: { tools: {} },
+					serverInfo: { name: `slow-${era}`, version: "1" },
+				},
+			});
+			return;
+		}
+		if (!legacyEra && !modernRequest) {
+			reply({ jsonrpc: "2.0", id: message.id, error: { code: -32020, message: "missing _meta" } });
+			return;
+		}
+		reply({ jsonrpc: "2.0", id: message.id, result: { tools: [], nextCursor: undefined } });
 	}
 	return { child, sent };
 }
 
+async function connectSlow(era: SlowEra) {
+	const { child, sent } = slowServer(era);
+	const start = child.start;
+	const negotiated = vi.fn();
+	probeStdioTransport(child, options, logger(), 2000, "fixture", negotiated, 1);
+	const client = new Client(options.clientInfo, { capabilities: options.clientCapabilities });
+	await client.connect(child);
+	const tools = (await client.listTools()).tools;
+	return { client, start, sent, negotiated, tools };
+}
+
 describe("stdio servers that are slow to start", () => {
 	it("connects a slow legacy server on its first process", async () => {
-		const { child, sent } = slowServer("legacy", 200);
-		const start = child.start;
-		probeStdioTransport(child, options, logger(), 2000, "fixture", undefined, 50);
-		const client = new Client(options.clientInfo, { capabilities: options.clientCapabilities });
+		const { client, start, sent, negotiated, tools } = await connectSlow("legacy");
 		try {
-			await client.connect(child);
 			expect(client.getServerVersion()?.name).toBe("slow-legacy");
-			expect((await client.listTools()).tools).toEqual([]);
+			expect(tools).toEqual([]);
 			expect(start).toHaveBeenCalledTimes(1);
-			expect(sent).toEqual(["server/discover", "initialize", "notifications/initialized", "tools/list"]);
+			expect(negotiated).not.toHaveBeenCalled();
+			expect(sent.map((entry) => entry.method)).toEqual([
+				"server/discover",
+				"initialize",
+				"notifications/initialized",
+				"tools/list",
+			]);
 		} finally {
 			await client.close();
 		}
 	});
 
-	it("upgrades a slow modern server to modern on its first process when discovery answers late", async () => {
-		const { child, sent } = slowServer("modern", 200);
-		const start = child.start;
-		const negotiated = vi.fn();
-		probeStdioTransport(child, options, logger(), 2000, "fixture", negotiated, 50);
-		const client = new Client(options.clientInfo, { capabilities: options.clientCapabilities });
+	it("restarts a slow legacy server that exits on discover and replays initialize", async () => {
+		const { client, start, sent, tools } = await connectSlow("legacy-exit-on-discover");
 		try {
-			await client.connect(child);
-			expect(client.getServerVersion()?.name).toBe("slow-modern");
-			expect((await client.listTools()).tools).toEqual([]);
+			expect(tools).toEqual([]);
+			expect(start).toHaveBeenCalledTimes(2);
+			expect(sent).toEqual([
+				{ generation: 1, method: "server/discover" },
+				{ generation: 2, method: "initialize" },
+				{ generation: 2, method: "notifications/initialized" },
+				{ generation: 2, method: "tools/list" },
+			]);
+		} finally {
+			await client.close();
+		}
+	});
+
+	it.each(["modern", "modern-32601"] as const)(
+		"upgrades a slow %s server on its first process when its discovery answers late",
+		async (era) => {
+			const { client, start, sent, negotiated, tools } = await connectSlow(era);
+			try {
+				expect(client.getServerVersion()?.name).toBe(`slow-${era}`);
+				expect(tools).toEqual([]);
+				expect(start).toHaveBeenCalledTimes(1);
+				expect(negotiated).toHaveBeenCalledWith(MODERN_PROTOCOL_VERSION);
+				expect(sent.map((entry) => entry.method)).toEqual(["server/discover", "initialize", "tools/list"]);
+			} finally {
+				await client.close();
+			}
+		},
+	);
+
+	it("stays legacy for the connection's lifetime when a late discovery meets a successful initialize", async () => {
+		const { client, start, sent, negotiated, tools } = await connectSlow("dual");
+		try {
+			expect(tools).toEqual([]);
 			expect(start).toHaveBeenCalledTimes(1);
-			expect(negotiated).toHaveBeenCalledWith(MODERN_PROTOCOL_VERSION);
-			expect(sent).toEqual(["server/discover", "initialize", "tools/list"]);
+			expect(negotiated).not.toHaveBeenCalled();
+			expect(sent.map((entry) => entry.method)).toEqual([
+				"server/discover",
+				"initialize",
+				"notifications/initialized",
+				"tools/list",
+			]);
 		} finally {
 			await client.close();
 		}

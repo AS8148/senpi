@@ -1,4 +1,5 @@
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import { ConnectError } from "../errors.ts";
 import type { McpLogger } from "../log.ts";
 import { reapProcessTree } from "../process-tree.ts";
@@ -13,7 +14,7 @@ import {
 } from "./era.ts";
 import { modernInitializeResult, normalizeModernResult } from "./sdk-bridge.ts";
 import { ModernTransportError } from "./transport.ts";
-import { classifyModernError, MODERN_PROTOCOL_VERSION, modernizeRequest } from "./wire.ts";
+import { MODERN_PROTOCOL_VERSION, modernizeRequest } from "./wire.ts";
 
 /** How long a stdio child gets to answer discovery (at most a quarter of the connect timeout) before it is treated as legacy. */
 export const STDIO_PROBE_MS = 2_000;
@@ -111,14 +112,40 @@ export function probeStdioTransport(
 	}
 
 	/**
-	 * A silent child gets the SDK's legacy initialize on the same stream. If its discovery reply arrives late
-	 * (a slow-starting modern server), the modern rejection of that initialize is replaced by the local answer
-	 * and the stream switches to modern. Late probe replies never reach the SDK.
+	 * A silent child gets the SDK's legacy initialize on the same stream; a slow start is never killed. Until the
+	 * first reply to the SDK arrives the probe window is still open: an exit or non-JSON stdout then restarts the
+	 * child and replays initialize on the fresh process. A complete discovery reply that arrives late upgrades the
+	 * stream to modern when the server rejects initialize (any error: a legacy server cannot produce a complete
+	 * discovery). This relies on the server answering in order, as stdio servers do. Once settled, the wrappers
+	 * are removed.
 	 */
 	function awaitLateDiscovery(): void {
-		const deliver = transport.onmessage;
+		const { onmessage: deliver, onclose, onerror } = transport;
 		let late: DiscoveryResult | undefined;
+		let initialize: JSONRPCMessage | undefined;
 		let initializeId: string | number | undefined;
+		let restarting = false;
+		const settle = () => {
+			transport.onmessage = deliver;
+			transport.onclose = onclose;
+			transport.onerror = onerror;
+			transport.send = send;
+		};
+		const unclean = (report: () => void) => {
+			if (restarting) return report();
+			restarting = true;
+			void (async () => {
+				try {
+					await restart();
+					if (initialize) await send(initialize);
+				} catch (error) {
+					onerror?.(error instanceof Error ? error : new Error(String(error)));
+					onclose?.();
+				}
+			})();
+		};
+		transport.onclose = () => unclean(() => onclose?.());
+		transport.onerror = (error) => unclean(() => onerror?.(error));
 		transport.onmessage = (message, extra) => {
 			if ("id" in message && !("method" in message) && typeof message.id === "string") {
 				if (message.id.startsWith(STDIO_PROBE_ID)) {
@@ -126,31 +153,36 @@ export function probeStdioTransport(
 					return;
 				}
 			}
+			const isInitializeReply = initializeId !== undefined && "id" in message && message.id === initializeId;
 			if (
+				isInitializeReply &&
 				late &&
-				initializeId !== undefined &&
-				"id" in message &&
-				message.id === initializeId &&
 				"error" in message &&
-				classifyModernError(message) !== undefined &&
 				late.supportedVersions.includes(MODERN_PROTOCOL_VERSION)
 			) {
 				const discovery = late;
 				logger.info(`MCP server ${serverName}: late discovery reply; switching to modern`);
-				transport.send = send;
-				transport.onmessage = deliver;
+				settle();
 				speakModern(discovery, MODERN_PROTOCOL_VERSION);
 				onModern?.(MODERN_PROTOCOL_VERSION);
 				deliver?.(
-					{ jsonrpc: "2.0", id: initializeId, result: modernInitializeResult(discovery, MODERN_PROTOCOL_VERSION) },
+					{
+						jsonrpc: "2.0",
+						id: initializeId as string | number,
+						result: modernInitializeResult(discovery, MODERN_PROTOCOL_VERSION),
+					},
 					extra,
 				);
 				return;
 			}
+			if (isInitializeReply) settle();
 			deliver?.(message, extra);
 		};
 		transport.send = async (message, sendOptions) => {
-			if ("method" in message && message.method === "initialize" && "id" in message) initializeId = message.id;
+			if ("method" in message && message.method === "initialize" && "id" in message) {
+				initialize = message;
+				initializeId = message.id;
+			}
 			return send(message, sendOptions);
 		};
 	}

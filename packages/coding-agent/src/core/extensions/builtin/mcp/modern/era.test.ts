@@ -233,14 +233,12 @@ describe("stdio era detection", () => {
 		).toEqual({ kind: "legacy-fallback", silent: true });
 	});
 
-	it.each([
+	const retries: [string, (request: ProbeRequest) => Promise<unknown>][] = [
 		["silence", () => Promise.reject(new StdioProbeSilence())],
 		["an exit", () => Promise.reject(new Error("closed"))],
-		[
-			"a generic error",
-			async (request: ProbeRequest) => ({ ...rpcError(-32601, "Method not found"), id: request.id }),
-		],
-	] as const)(
+		["a generic error", async (request) => ({ ...rpcError(-32601, "Method not found"), id: request.id })],
+	];
+	it.each(retries)(
 		"never downgrades a server that already answered -32022 when the retry meets %s",
 		async (_name, retry) => {
 			const send = vi
