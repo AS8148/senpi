@@ -93,6 +93,8 @@ export interface DeadlineSessionOwner {
 	_recordDeadlineStop(deadline: TurnDeadline): void;
 	abortTurnForDeadline(): Promise<void>;
 	_emitIdle(): void;
+	/** True while a provider retry is in flight; the engine is actively recovering the turn. */
+	readonly isRetryInFlight: boolean;
 }
 
 /**
@@ -160,6 +162,13 @@ export class AgentDeadlineTracker {
 		const { inactivityMs, maxRuntimeMs } = this.settings();
 		const limitMs = kind === "inactivity" ? inactivityMs : maxRuntimeMs;
 		if (limitMs <= 0) return;
+		// A retry in flight is the engine actively recovering the turn, not a stuck turn;
+		// leave the turn unleased while it recovers and let the next tool event re-arm it.
+		if (this.session.isRetryInFlight) {
+			this.clearTimers();
+			this.startedAtMs = 0;
+			return;
+		}
 		this.clearTimers();
 		const deadline: TurnDeadline = { kind, limitMs, elapsedMs: this.now() - this.startedAtMs };
 		this.deadlineValue = deadline;

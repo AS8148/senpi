@@ -4168,6 +4168,11 @@ export class AgentSession {
 		return this._isAgentRunActive;
 	}
 
+	/** True while a provider retry is in flight; the deadline lease treats it as turn progress. */
+	get isRetryInFlight(): boolean {
+		return this._retryPromise !== undefined;
+	}
+
 	/** Whether the session has no active agent run, retry, or queued continuation. */
 	get isIdle(): boolean {
 		return !this._isAgentRunActive;
