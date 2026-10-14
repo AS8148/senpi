@@ -2,11 +2,11 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/session-manager.ts`: `discardHeaderOnlyFile()` removes the file when the session holds no user or assistant message (`_hasConversation()`, the rule `_persist` already uses to keep a new session in memory, #10000) and no `custom_message` entry (an external delivery the model sees in context keeps the file), instead of only when every entry is a header or model/thinking entry. `SETUP_ONLY_ENTRY_TYPES` is gone. The in-memory entries are kept and reach disk with the first message, as before.
+- `packages/coding-agent/src/core/session-manager.ts`: `discardHeaderOnlyFile()` removes only a file this process created with `persistHeaderNow()` (tracked as `ownedHeaderFile`, set when `_writeHeaderAsync` succeeds and cleared when an existing file is opened), and only when every entry is in `DISPOSABLE_ENTRY_TYPES`: the header, model/thinking/configuration setup, extension `custom` state (rules scans, memory bindings) and labels. Any message (including a `!cmd` `bashExecution`), a delivered `custom_message`, a `session_info` name or a `usage` record keeps the file. This replaces `SETUP_ONLY_ENTRY_TYPES`, which refused to discard a file holding `custom` entries. The in-memory entries are kept and reach disk with the first message, as before.
 
 ### Why
 
-- `packages/coding-agent/src/core/session-manager.ts`: the TUI control endpoint writes the header at startup (`persistHeaderNow()`), and extensions then append `custom` entries straight to that file (rules scan, memory session binding). The old allow-list refused to discard a file holding them, so opening and closing the TUI, or `/new`, without a message left an empty session listed in `/resume` (senpi#3263).
+- `packages/coding-agent/src/core/session-manager.ts`: the TUI control endpoint writes the header at startup (`persistHeaderNow()`), and extensions then append `custom` entries straight to that file. The old allow-list refused to discard a file holding them, so opening and closing the TUI, or `/new`, without a message left an empty session listed in `/resume` (senpi#3263). The ownership guard keeps a resumed or `--session`-opened file from ever being deleted on close.
 
 ### Why an extension could not handle it
 
@@ -14,7 +14,7 @@
 
 ### Expected merge conflict zones
 
-- `packages/coding-agent/src/core/session-manager.ts`: LOW, `discardHeaderOnlyFile()` and the removed `SETUP_ONLY_ENTRY_TYPES` constant above the class.
+- `packages/coding-agent/src/core/session-manager.ts`: LOW, `discardHeaderOnlyFile()`, `_writeHeaderAsync`'s flushed branch, the open-existing-file branch, and the `DISPOSABLE_ENTRY_TYPES` constant above the class.
 
 ## 2026-10-14 - The fallback circuit opens for a usage limit until its own reset window (senpi#3314)
 

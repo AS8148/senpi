@@ -1096,6 +1096,17 @@ export function setSessionEntryLoaderForTesting(loader: typeof loadEntriesFromFi
 	};
 }
 
+/** Setup and extension-state entries: a file this process created that holds only these is disposable (senpi#3263). */
+const DISPOSABLE_ENTRY_TYPES: ReadonlySet<FileEntry["type"]> = new Set([
+	"session",
+	"model_change",
+	"model_change_rejected",
+	"thinking_level_change",
+	"configuration_update",
+	"custom",
+	"label",
+]);
+
 /** A user or assistant message: the first one makes a new session worth a file (#10000). */
 function isConversationEntry(entry: FileEntry): boolean {
 	return entry.type === "message" && (entry.message.role === "user" || entry.message.role === "assistant");
@@ -1109,6 +1120,8 @@ export class SessionManager {
 	private persist: boolean;
 	private flushed: boolean = false;
 	private headerWrite: Promise<void> | undefined;
+	// The file persistHeaderNow() created in this process; only it may be discarded on close (senpi#3263).
+	private ownedHeaderFile: string | undefined;
 	// Set when an append to the flushed file failed and may have left a partial last line.
 	private tailMayBeTorn = false;
 	private fileEntries: FileEntry[] = [];
@@ -1280,6 +1293,7 @@ export class SessionManager {
 			this._buildIndex();
 			this.mutationCount++;
 			this.flushed = true;
+			this.ownedHeaderFile = undefined;
 		} else {
 			// Same here: the explicit path from --session stays the only granted one.
 			// The file does not exist yet, so this open CREATES the session: a caller-supplied
@@ -1490,18 +1504,20 @@ export class SessionManager {
 	}
 
 	/**
-	 * Removes the session file when it holds no conversation - no user or assistant message, the same
-	 * rule that keeps a new session in memory (#10000) - and returns to buffering, so a later entry
-	 * cannot recreate a header-less file. Setup and extension state entries (model, thinking level,
-	 * rules scans, memory bindings) do not make a session worth a file (senpi#3263); they stay in memory
-	 * and reach disk with the first message. A `custom_message` (a delivery the model sees) keeps it.
+	 * Removes the session file when this process created it with persistHeaderNow() and it holds only
+	 * setup or extension-state entries (header, model, thinking level, configuration, `custom` state such
+	 * as rules scans and memory bindings, labels), then returns to buffering so a later entry cannot
+	 * recreate a header-less file; those entries reach disk again with the first message (senpi#3263).
+	 * Any message (user, assistant, `!cmd`), delivered `custom_message`, session name or usage record
+	 * keeps the file, and a file opened from disk is never deleted here.
 	 */
 	async discardHeaderOnlyFile(): Promise<boolean> {
 		await this.headerWrite;
 		if (!this.persist || !this.sessionFile || !this.flushed) return false;
-		if (this._hasConversation()) return false;
-		if (this.fileEntries.some((entry) => entry.type === "custom_message")) return false;
+		if (this.ownedHeaderFile !== this.sessionFile) return false;
+		if (!this.fileEntries.every((entry) => DISPOSABLE_ENTRY_TYPES.has(entry.type))) return false;
 		await rm(this.sessionFile, { force: true });
+		this.ownedHeaderFile = undefined;
 		this.flushed = false;
 		return true;
 	}
@@ -1536,6 +1552,7 @@ export class SessionManager {
 		// Synchronous with the last check above: no entry can land between it and the flag.
 		if (this.sessionFile === sessionFile && this.fileEntries === entries && written === entries.length) {
 			this.flushed = true;
+			this.ownedHeaderFile = sessionFile;
 		}
 	}
 

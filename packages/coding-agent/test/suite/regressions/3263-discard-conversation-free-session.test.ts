@@ -65,6 +65,42 @@ describe("closing a session without a conversation leaves no file (#3263)", () =
 		expect(existsSync(file)).toBe(true);
 	});
 
+	it("keeps a shell command the user ran before the first prompt", async () => {
+		const { manager, file } = startedSession();
+		await manager.persistHeaderNow();
+		manager.appendMessage({
+			role: "bashExecution",
+			command: "git status",
+			output: "clean",
+			exitCode: 0,
+			cancelled: false,
+			truncated: false,
+			timestamp: Date.now(),
+		});
+
+		expect(await manager.discardHeaderOnlyFile()).toBe(false);
+		expect(existsSync(file)).toBe(true);
+	});
+
+	it("keeps a session the user named", async () => {
+		const { manager, file } = startedSession();
+		await manager.persistHeaderNow();
+		manager.appendSessionInfo("planning");
+
+		expect(await manager.discardHeaderOnlyFile()).toBe(false);
+		expect(existsSync(file)).toBe(true);
+	});
+
+	it("never deletes a file it reopened from disk, even one holding only extension state", async () => {
+		const { manager, file } = startedSession();
+		await manager.persistHeaderNow();
+		manager.appendCustomEntry("todo", { items: ["keep me"] });
+
+		const reopened = SessionManager.open(file, dir);
+		expect(await reopened.discardHeaderOnlyFile()).toBe(false);
+		expect(existsSync(file)).toBe(true);
+	});
+
 	it("writes the buffered custom entries again once a conversation starts after the discard", async () => {
 		const { manager, file } = startedSession();
 		await manager.persistHeaderNow();
