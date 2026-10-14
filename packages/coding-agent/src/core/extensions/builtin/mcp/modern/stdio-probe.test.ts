@@ -76,7 +76,6 @@ function restartableLegacy(misbehave: (child: FakeChild, kill: () => void) => vo
 
 describe("stdio legacy fallback after an unclean probe", () => {
 	it.each([
-		["ignores discover", (_child: FakeChild, _kill: () => void) => {}],
 		["exits on discover", (_child: FakeChild, kill: () => void) => kill()],
 		[
 			"prints junk on stdout instead of answering",
@@ -101,6 +100,112 @@ describe("stdio legacy fallback after an unclean probe", () => {
 				{ generation: 2, method: "tools/list" },
 			]);
 			expect(closed).not.toHaveBeenCalled();
+		} finally {
+			await client.close();
+		}
+	});
+});
+
+/** One process that reads nothing for `startMs`, then answers in order: modern or legacy era. */
+function slowServer(era: "legacy" | "modern", startMs: number) {
+	const sent: string[] = [];
+	let ready = false;
+	const backlog: JSONRPCMessage[] = [];
+	const child: Transport & { readonly pid: number | null } = {
+		pid: 2_147_483_100,
+		start: vi.fn(async () => {
+			setTimeout(() => {
+				ready = true;
+				for (const message of backlog.splice(0)) handle(message);
+			}, startMs);
+		}),
+		close: async () => child.onclose?.(),
+		send: async (message) => {
+			if (ready) handle(message);
+			else backlog.push(message);
+		},
+	};
+	const reply = (message: JSONRPCMessage) => queueMicrotask(() => child.onmessage?.(message));
+	function handle(message: JSONRPCMessage): void {
+		sent.push("method" in message ? message.method : "");
+		if (!("method" in message) || !("id" in message)) return;
+		const meta = message.params?._meta as Record<string, unknown> | undefined;
+		if (era === "legacy") {
+			if (message.method === "server/discover") {
+				reply({ jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "Method not found" } });
+				return;
+			}
+			if (message.method === "initialize") {
+				reply({
+					jsonrpc: "2.0",
+					id: message.id,
+					result: {
+						protocolVersion: message.params?.protocolVersion,
+						capabilities: { tools: {} },
+						serverInfo: { name: "slow-legacy", version: "1" },
+					},
+				});
+				return;
+			}
+			reply({ jsonrpc: "2.0", id: message.id, result: { tools: [] } });
+			return;
+		}
+		if (meta?.["io.modelcontextprotocol/protocolVersion"] !== MODERN_PROTOCOL_VERSION) {
+			reply({
+				jsonrpc: "2.0",
+				id: message.id,
+				error: { code: -32020, message: "initialize is not supported" },
+			});
+			return;
+		}
+		if (message.method === "server/discover") {
+			reply({
+				jsonrpc: "2.0",
+				id: message.id,
+				result: {
+					resultType: "complete",
+					supportedVersions: [MODERN_PROTOCOL_VERSION],
+					capabilities: { tools: {} },
+					_meta: { "io.modelcontextprotocol/serverInfo": { name: "slow-modern", version: "1" } },
+				},
+			});
+			return;
+		}
+		reply({ jsonrpc: "2.0", id: message.id, result: { resultType: "complete", tools: [], nextCursor: null } });
+	}
+	return { child, sent };
+}
+
+describe("stdio servers that are slow to start", () => {
+	it("connects a slow legacy server on its first process", async () => {
+		const { child, sent } = slowServer("legacy", 200);
+		const start = child.start;
+		probeStdioTransport(child, options, logger(), 2000, "fixture", undefined, 50);
+		const client = new Client(options.clientInfo, { capabilities: options.clientCapabilities });
+		try {
+			await client.connect(child);
+			expect(client.getServerVersion()?.name).toBe("slow-legacy");
+			expect((await client.listTools()).tools).toEqual([]);
+			expect(start).toHaveBeenCalledTimes(1);
+			expect(sent).toEqual(["server/discover", "initialize", "notifications/initialized", "tools/list"]);
+		} finally {
+			await client.close();
+		}
+	});
+
+	it("upgrades a slow modern server to modern on its first process when discovery answers late", async () => {
+		const { child, sent } = slowServer("modern", 200);
+		const start = child.start;
+		const negotiated = vi.fn();
+		probeStdioTransport(child, options, logger(), 2000, "fixture", negotiated, 50);
+		const client = new Client(options.clientInfo, { capabilities: options.clientCapabilities });
+		try {
+			await client.connect(child);
+			expect(client.getServerVersion()?.name).toBe("slow-modern");
+			expect((await client.listTools()).tools).toEqual([]);
+			expect(start).toHaveBeenCalledTimes(1);
+			expect(negotiated).toHaveBeenCalledWith(MODERN_PROTOCOL_VERSION);
+			expect(sent).toEqual(["server/discover", "initialize", "tools/list"]);
 		} finally {
 			await client.close();
 		}

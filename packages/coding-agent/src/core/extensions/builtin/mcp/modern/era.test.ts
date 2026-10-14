@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { loadMcpSdkAuth } from "../sdk.lazy.ts";
-import { type ProbeRequest, probeHttpEra, probeStdioEra } from "./era.ts";
+import { type ProbeRequest, probeHttpEra, probeStdioEra, StdioProbeSilence } from "./era.ts";
 
 const options = {
 	clientInfo: { name: "senpi", version: "test" },
@@ -225,7 +225,32 @@ describe("stdio era detection", () => {
 		},
 	);
 
-	it("asks for a fresh process after a transport failure, timeout or exit", async () => {
+	it("keeps the process on silence so a slow start is not killed", async () => {
+		expect(
+			await probeStdioEra(async () => {
+				throw new StdioProbeSilence();
+			}, options),
+		).toEqual({ kind: "legacy-fallback", silent: true });
+	});
+
+	it.each([
+		["silence", () => Promise.reject(new StdioProbeSilence())],
+		["an exit", () => Promise.reject(new Error("closed"))],
+		[
+			"a generic error",
+			async (request: ProbeRequest) => ({ ...rpcError(-32601, "Method not found"), id: request.id }),
+		],
+	] as const)(
+		"never downgrades a server that already answered -32022 when the retry meets %s",
+		async (_name, retry) => {
+			const send = vi
+				.fn(retry)
+				.mockImplementationOnce(answer(rpcError(-32022, "Unsupported", { supported: ["2026-06-01"] })));
+			expect(await probeStdioEra(send, options)).toMatchObject({ kind: "indeterminate", era: "modern" });
+		},
+	);
+
+	it("asks for a fresh process after a transport failure or exit", async () => {
 		expect(
 			await probeStdioEra(async () => {
 				throw new Error("closed");

@@ -2,10 +2,18 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { ConnectError } from "../errors.ts";
 import type { McpLogger } from "../log.ts";
 import { reapProcessTree } from "../process-tree.ts";
-import { type DiscoveryResult, type ProbeOptions, type ProbeRequest, probeStdioEra } from "./era.ts";
+import {
+	type DiscoveryResult,
+	discoveryReply,
+	type ProbeOptions,
+	type ProbeRequest,
+	probeStdioEra,
+	STDIO_PROBE_ID,
+	StdioProbeSilence,
+} from "./era.ts";
 import { modernInitializeResult, normalizeModernResult } from "./sdk-bridge.ts";
 import { ModernTransportError } from "./transport.ts";
-import { modernizeRequest } from "./wire.ts";
+import { classifyModernError, MODERN_PROTOCOL_VERSION, modernizeRequest } from "./wire.ts";
 
 /** How long a stdio child gets to answer discovery (at most a quarter of the connect timeout) before it is treated as legacy. */
 export const STDIO_PROBE_MS = 2_000;
@@ -13,8 +21,9 @@ export const STDIO_PROBE_MS = 2_000;
 /**
  * Probe the SDK's own child before initialize. A modern child keeps its process: `initialize` is answered
  * locally from discovery and every later request carries the per-request `_meta` at the negotiated version.
- * A clean non-modern error keeps the process for the legacy handshake. Anything unclean (silence, junk on
- * stdout, an exit) restarts the child, so the legacy handshake meets a fresh process exactly as before.
+ * A clean non-modern error reply, or no reply in time (a slow start, or a server that ignores unknown requests),
+ * keeps the same process for the legacy handshake; a discovery reply that arrives late still upgrades it to modern.
+ * Only a child that exited or wrote non-JSON to stdout is replaced by a fresh process for the legacy handshake.
  */
 export function probeStdioTransport(
 	transport: Transport,
@@ -39,6 +48,7 @@ export function probeStdioTransport(
 		abort.signal.throwIfAborted();
 		if (outcome.kind === "legacy-fallback") {
 			if (outcome.restart) await restart();
+			else if (outcome.silent) awaitLateDiscovery();
 			return;
 		}
 		if (outcome.kind === "indeterminate" || !outcome.discovery) {
@@ -55,7 +65,7 @@ export function probeStdioTransport(
 	async function exchange(request: ProbeRequest): Promise<unknown> {
 		const reply = Promise.withResolvers<unknown>();
 		const signal = AbortSignal.any([abort.signal, AbortSignal.timeout(Math.min(probeMs, Math.floor(timeoutMs / 4)))]);
-		const onabort = () => reply.reject(signal.reason);
+		const onabort = () => reply.reject(abort.signal.aborted ? abort.signal.reason : new StdioProbeSilence());
 		const { onmessage, onclose, onerror } = transport;
 		signal.addEventListener("abort", onabort, { once: true });
 		transport.onmessage = (message, extra) => {
@@ -89,8 +99,60 @@ export function probeStdioTransport(
 		// Kill the probed tree outright: a silent child may ignore the SDK's graceful stdin-close for seconds.
 		if (pid != null) await reapProcessTree(pid, { termWaitMs: 200, killWaitMs: 200 });
 		await close();
+		// SDK close() resolves only after the old child's close event, so nothing stale can arrive later.
+		stale = 0;
 		abort.signal.throwIfAborted();
 		await start();
+		// A dispose during the respawn found no process to close; close the one it raced with.
+		if (abort.signal.aborted) {
+			await close();
+			abort.signal.throwIfAborted();
+		}
+	}
+
+	/**
+	 * A silent child gets the SDK's legacy initialize on the same stream. If its discovery reply arrives late
+	 * (a slow-starting modern server), the modern rejection of that initialize is replaced by the local answer
+	 * and the stream switches to modern. Late probe replies never reach the SDK.
+	 */
+	function awaitLateDiscovery(): void {
+		const deliver = transport.onmessage;
+		let late: DiscoveryResult | undefined;
+		let initializeId: string | number | undefined;
+		transport.onmessage = (message, extra) => {
+			if ("id" in message && !("method" in message) && typeof message.id === "string") {
+				if (message.id.startsWith(STDIO_PROBE_ID)) {
+					late ??= discoveryReply(message, message.id);
+					return;
+				}
+			}
+			if (
+				late &&
+				initializeId !== undefined &&
+				"id" in message &&
+				message.id === initializeId &&
+				"error" in message &&
+				classifyModernError(message) !== undefined &&
+				late.supportedVersions.includes(MODERN_PROTOCOL_VERSION)
+			) {
+				const discovery = late;
+				logger.info(`MCP server ${serverName}: late discovery reply; switching to modern`);
+				transport.send = send;
+				transport.onmessage = deliver;
+				speakModern(discovery, MODERN_PROTOCOL_VERSION);
+				onModern?.(MODERN_PROTOCOL_VERSION);
+				deliver?.(
+					{ jsonrpc: "2.0", id: initializeId, result: modernInitializeResult(discovery, MODERN_PROTOCOL_VERSION) },
+					extra,
+				);
+				return;
+			}
+			deliver?.(message, extra);
+		};
+		transport.send = async (message, sendOptions) => {
+			if ("method" in message && message.method === "initialize" && "id" in message) initializeId = message.id;
+			return send(message, sendOptions);
+		};
 	}
 
 	function speakModern(discovery: DiscoveryResult, version: string): void {

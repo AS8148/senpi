@@ -43,8 +43,12 @@ type ModernOutcome = {
 };
 export type EraOutcome =
 	| ModernOutcome
-	/** `restart`: the probed stdio stream gave no clean answer, so the legacy handshake needs a fresh process. */
-	| { readonly kind: "legacy-fallback"; readonly restart?: true }
+	/**
+	 * stdio only. `restart`: the probed child exited or its stream failed, so the legacy handshake needs a fresh
+	 * process. `silent`: no answer in time; the same process gets the legacy handshake, and a late discovery reply
+	 * may still upgrade it.
+	 */
+	| { readonly kind: "legacy-fallback"; readonly restart?: true; readonly silent?: true }
 	| {
 			readonly kind: "indeterminate";
 			readonly reason: string;
@@ -60,6 +64,19 @@ export const modernError = classifyModernError;
 
 /** The SDK numbers its own requests from 0; a string id can never answer one of them. */
 export const STDIO_PROBE_ID = "senpi-era-probe";
+
+/** Rejection a stdio `ProbeSend` uses when the child gave no answer in time (as opposed to exiting). */
+export class StdioProbeSilence extends Error {
+	constructor() {
+		super("MCP stdio server did not answer discovery in time");
+		this.name = "StdioProbeSilence";
+	}
+}
+
+/** A complete discovery reply to `id`, or undefined. */
+export function discoveryReply(value: unknown, id: string | number): DiscoveryResult | undefined {
+	return complete(value, id);
+}
 
 function request(options: ProbeOptions, version: string, id: string | number = 1): ProbeRequest {
 	const built = buildModernRequest(id, "server/discover", options.clientInfo, options.clientCapabilities);
@@ -207,28 +224,36 @@ export async function probeHttpEra(url: URL, fetch: ProbeFetch, options: ProbeOp
 }
 
 /**
- * `send` resolves with the reply to its request id, and rejects on a timeout, a parse error on stdout or the
- * process exiting. Only a clean reply keeps the probed process; anything else asks for a fresh one.
+ * `send` resolves with the reply to its request id, and rejects with `StdioProbeSilence` when no reply came in time
+ * or with any other error when the child exited or its stream failed. Once a server has shown it is modern
+ * (a -32022), an unclean retry is never downgraded to legacy.
  */
 export async function probeStdioEra(send: ProbeSend, options: ProbeOptions): Promise<EraOutcome> {
 	let version = MODERN_PROTOCOL_VERSION;
+	const retryRejected = () =>
+		indeterminate("version-retry-rejected", "Update client or server; the single version retry was rejected.", {
+			era: "modern",
+		});
 	for (let attempt = 0; attempt < 2; attempt++) {
 		const id = attempt === 0 ? STDIO_PROBE_ID : `${STDIO_PROBE_ID}-${attempt}`;
 		let value: unknown;
 		try {
 			value = await send(request(options, version, id));
-		} catch {
-			return { kind: "legacy-fallback", restart: true };
+		} catch (error) {
+			if (attempt > 0) return retryRejected();
+			return error instanceof StdioProbeSilence
+				? { kind: "legacy-fallback", silent: true }
+				: { kind: "legacy-fallback", restart: true };
 		}
 		const kind = attempt === 0 ? "modern-OK" : "modern-version-retry";
 		const discovery = complete(value, id);
 		if (discovery) return { kind, version, discovery };
-		if (!errorReply(value, id)) return { kind: "legacy-fallback", restart: true };
+		if (!errorReply(value, id)) return attempt > 0 ? retryRejected() : { kind: "legacy-fallback", restart: true };
 		const error = modernError(value);
-		if (!error) return { kind: "legacy-fallback" };
+		if (!error) return attempt > 0 ? retryRejected() : { kind: "legacy-fallback" };
 		const mutual = attempt === 0 ? mutualVersion(error, options) : undefined;
 		if (!mutual) return { kind, version, error };
 		version = mutual;
 	}
-	return indeterminate("version-retry-rejected", "Update client or server protocol versions.", { era: "modern" });
+	return retryRejected();
 }
