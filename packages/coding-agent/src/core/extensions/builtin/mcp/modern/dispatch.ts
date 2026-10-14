@@ -69,7 +69,8 @@ export async function materializeNegotiatedTransport(
 				outcome.discovery,
 				outcome.version,
 			);
-			logVersion(transport, outcome.version);
+			const version = outcome.version;
+			logVersion(transport, () => version);
 			return {
 				client,
 				transport,
@@ -90,14 +91,21 @@ export async function materializeNegotiatedTransport(
 	}
 	// Unknown endpoints (including legacy session-required 404s and auth challenges) retain SDK diagnostics.
 	const legacy = await materializeMcpTransport(options);
-	if (spec.kind === "stdio") probeStdioTransport(legacy.transport, probeOptions, logger, timeoutMs, serverName);
-	logVersion(legacy.transport);
+	// A modern stdio child is detected when the SDK starts it, before its local initialize answer sets the version.
+	let stdioModernVersion: string | undefined;
+	if (spec.kind === "stdio") {
+		probeStdioTransport(legacy.transport, probeOptions, logger, timeoutMs, serverName, (version) => {
+			stdioModernVersion = version;
+		});
+	}
+	logVersion(legacy.transport, () => stdioModernVersion);
 	return legacy;
 
-	function logVersion(transport: Transport, modernVersion?: string): void {
+	function logVersion(transport: Transport, readModernVersion: () => string | undefined): void {
 		const setVersion = transport.setProtocolVersion?.bind(transport);
 		transport.setProtocolVersion = (sdkVersion) => {
 			setVersion?.(sdkVersion);
+			const modernVersion = readModernVersion();
 			logger.info(
 				`MCP server ${serverName} negotiated: era=${modernVersion ? "modern" : "legacy"} version=${modernVersion ?? sdkVersion}`,
 			);

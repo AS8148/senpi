@@ -74,7 +74,76 @@ describe("stdio discovery ownership", () => {
 		}
 	});
 
-	it("rejects modern stdio explicitly without sending initialize or restarting", async () => {
+	it("speaks 2026-07-28 to a modern-only stdio server with no legacy handshake on the wire", async () => {
+		const sent: JSONRPCMessage[] = [];
+		const negotiated = vi.fn();
+		const inner: Transport = {
+			start: vi.fn(async () => {}),
+			close: async () => inner.onclose?.(),
+			send: async (message) => {
+				sent.push(message);
+				if (!("method" in message) || !("id" in message)) return;
+				const meta = message.params?._meta as Record<string, unknown> | undefined;
+				if (meta?.["io.modelcontextprotocol/protocolVersion"] !== MODERN_PROTOCOL_VERSION) {
+					inner.onmessage?.({
+						jsonrpc: "2.0",
+						id: message.id,
+						error: { code: -32020, message: "missing per-request _meta" },
+					});
+				} else if (message.method === "server/discover") {
+					inner.onmessage?.({
+						jsonrpc: "2.0",
+						id: message.id,
+						result: {
+							resultType: "complete",
+							supportedVersions: [MODERN_PROTOCOL_VERSION],
+							capabilities: { tools: {} },
+							_meta: { "io.modelcontextprotocol/serverInfo": { name: "modern-stdio", version: "1" } },
+						},
+					});
+				} else if (message.method === "tools/list") {
+					inner.onmessage?.({
+						jsonrpc: "2.0",
+						id: message.id,
+						result: { resultType: "complete", tools: [], nextCursor: null },
+					});
+				} else {
+					inner.onmessage?.({
+						jsonrpc: "2.0",
+						id: message.id,
+						error: { code: -32601, message: "Method not found" },
+					});
+				}
+			},
+		};
+		const start = inner.start;
+		probeStdioTransport(inner, options, logger(), 2000, "fixture", negotiated);
+		const client = new Client(options.clientInfo, { capabilities: options.clientCapabilities });
+		try {
+			await client.connect(inner);
+			expect(client.getServerVersion()?.name).toBe("modern-stdio");
+			expect((await client.listTools()).tools).toEqual([]);
+			expect(start).toHaveBeenCalledTimes(1);
+			expect(negotiated).toHaveBeenCalledWith(MODERN_PROTOCOL_VERSION);
+			expect(sent.map((message) => ("method" in message ? message.method : ""))).toEqual([
+				"server/discover",
+				"tools/list",
+			]);
+			expect(sent[1]).toMatchObject({
+				params: {
+					_meta: {
+						"io.modelcontextprotocol/protocolVersion": MODERN_PROTOCOL_VERSION,
+						"io.modelcontextprotocol/clientInfo": options.clientInfo,
+						"io.modelcontextprotocol/clientCapabilities": options.clientCapabilities,
+					},
+				},
+			});
+		} finally {
+			await client.close();
+		}
+	});
+
+	it("fails a modern stdio server whose discovery errors without sending initialize or restarting", async () => {
 		const sent: JSONRPCMessage[] = [];
 		const log = logger();
 		const inner: Transport = {
@@ -95,9 +164,7 @@ describe("stdio discovery ownership", () => {
 		probeStdioTransport(inner, options, log, 2000, "fixture");
 		const client = new Client(options.clientInfo);
 		try {
-			await expect(client.connect(inner)).rejects.toThrow(
-				/modern stdio server detected.*configure an HTTP endpoint/,
-			);
+			await expect(client.connect(inner)).rejects.toThrow(/MCP server fixture modern discovery failed: Modern/);
 			expect(start).toHaveBeenCalledTimes(1);
 			expect(sent).toHaveLength(1);
 			expect(sent[0]).toMatchObject({ method: "server/discover" });

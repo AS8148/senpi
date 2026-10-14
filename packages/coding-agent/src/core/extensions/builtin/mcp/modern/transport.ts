@@ -1,6 +1,6 @@
 import type { FetchLike, Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { type JSONRPCMessage, JSONRPCMessageSchema } from "@modelcontextprotocol/sdk/types.js";
-import { buildModernRequest, deriveModernHeaders, MODERN_PROTOCOL_VERSION, type ModernClientInfo } from "./wire.ts";
+import { deriveModernHeaders, MODERN_PROTOCOL_VERSION, type ModernClientInfo, modernizeRequest } from "./wire.ts";
 
 export type ModernHttpTransportOptions = {
 	readonly url: string | URL;
@@ -56,20 +56,14 @@ export class ModernHttpTransport implements Transport {
 			headers.set("Accept", "application/json, text/event-stream");
 			let body: JSONRPCMessage = message;
 			if ("method" in message) {
-				const built = buildModernRequest(
+				const request = modernizeRequest(
 					"id" in message ? message.id : 0,
 					message.method,
 					this.#options.clientInfo,
 					this.#options.clientCapabilities,
+					version,
 					message.params,
 				);
-				const request = {
-					...built,
-					params: {
-						...built.params,
-						_meta: { ...built.params._meta, "io.modelcontextprotocol/protocolVersion": version },
-					},
-				};
 				for (const [name, value] of Object.entries(deriveModernHeaders(request))) headers.set(name, value);
 				if ("id" in message) {
 					body = request;

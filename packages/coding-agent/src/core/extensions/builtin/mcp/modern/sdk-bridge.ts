@@ -1,11 +1,31 @@
 import type { Transport, TransportSendOptions } from "@modelcontextprotocol/sdk/shared/transport.js";
 import {
+	type InitializeResult,
 	InitializeResultSchema,
 	type JSONRPCMessage,
 	LATEST_PROTOCOL_VERSION,
 } from "@modelcontextprotocol/sdk/types.js";
 import type { DiscoveryResult } from "./era.ts";
 import { ModernTransportError } from "./transport.ts";
+
+/** The SDK's local `initialize` answer, built from validated discovery; discovery must support the real wire version. */
+export function modernInitializeResult(discovery: DiscoveryResult, wireVersion: string): InitializeResult {
+	if (!discovery.supportedVersions.includes(wireVersion)) {
+		throw new ModernTransportError(`Discovery does not support negotiated MCP version ${wireVersion}`);
+	}
+	return InitializeResultSchema.parse({
+		protocolVersion: LATEST_PROTOCOL_VERSION,
+		capabilities: discovery.capabilities,
+		serverInfo: discovery._meta["io.modelcontextprotocol/serverInfo"],
+		...(discovery.instructions === undefined ? {} : { instructions: discovery.instructions }),
+	});
+}
+
+/** Modern results may carry `nextCursor: null`, which the SDK's list schemas reject. */
+export function normalizeModernResult(message: JSONRPCMessage): JSONRPCMessage {
+	if ("result" in message && message.result.nextCursor === null) delete message.result.nextCursor;
+	return message;
+}
 
 /** Local SDK lifecycle dialect; the negotiated wire version belongs only to the underlying transport. */
 export class ModernSdkBridge implements Transport {
@@ -17,22 +37,13 @@ export class ModernSdkBridge implements Transport {
 	#initialized = false;
 
 	constructor(transport: Transport, discovery: DiscoveryResult, wireVersion: string) {
-		if (!discovery.supportedVersions.includes(wireVersion)) {
-			throw new ModernTransportError(`Discovery does not support negotiated MCP version ${wireVersion}`);
-		}
+		this.#initializeResult = modernInitializeResult(discovery, wireVersion);
 		this.#transport = transport;
-		this.#initializeResult = InitializeResultSchema.parse({
-			protocolVersion: LATEST_PROTOCOL_VERSION,
-			capabilities: discovery.capabilities,
-			serverInfo: discovery._meta["io.modelcontextprotocol/serverInfo"],
-			...(discovery.instructions === undefined ? {} : { instructions: discovery.instructions }),
-		});
 	}
 
 	async start(): Promise<void> {
 		this.#transport.onmessage = (message, extra) => {
-			if ("result" in message && message.result.nextCursor === null) delete message.result.nextCursor;
-			this.onmessage?.(message, extra);
+			this.onmessage?.(normalizeModernResult(message), extra);
 		};
 		this.#transport.onclose = () => this.onclose?.();
 		this.#transport.onerror = (error) => this.onerror?.(error);

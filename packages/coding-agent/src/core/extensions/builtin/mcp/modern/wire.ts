@@ -48,6 +48,22 @@ export function buildModernRequest(
 	};
 }
 
+/** Rewrite an outgoing SDK request or notification into the modern wire shape at the negotiated version. */
+export function modernizeRequest(
+	id: string | number,
+	method: string,
+	clientInfo: ModernClientInfo,
+	clientCapabilities: Readonly<Record<string, unknown>>,
+	version: string,
+	params?: Readonly<Record<string, unknown>> & { readonly _meta?: Readonly<Record<string, unknown>> },
+): ModernRequest {
+	const built = buildModernRequest(id, method, clientInfo, clientCapabilities, params);
+	return {
+		...built,
+		params: { ...built.params, _meta: { ...built.params._meta, "io.modelcontextprotocol/protocolVersion": version } },
+	};
+}
+
 /** Derive protocol headers from the same request that will be serialized. */
 export function deriveModernHeaders(request: ModernRequest): Record<string, string> {
 	const headers: Record<string, string> = {
