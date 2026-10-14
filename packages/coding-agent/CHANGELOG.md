@@ -14,6 +14,8 @@
 
 - A flaky network no longer strands a session on a fallback model. A timeout or connection reset that outlasts the same-model retries may finish that one turn on the next model in the chain, but it no longer puts the primary on a cooldown or opens its circuit, so the next turn goes back to the primary. A rate limit, quota or overload error keeps its existing fallback behavior ([#3306](https://github.com/code-yeongyu/senpi/issues/3306), reported in the OmO community).
 
+- A tool named `eval` with its own `permissionParser` could answer for itself with a narrower class (for example `read`), so a preset that allows reads would run an arbitrary-code cell without asking. The `eval` permission request is now always carried alongside any tool-owned requests, so only a preset that allows everything allows a cell ([#3211](https://github.com/code-yeongyu/senpi/pull/3211), requested by @code-yeongyu).
+
 - A provider whose credentials were locked when the store was first read no longer reports "not configured" to `get_auth_providers` after the lock clears, while its models already work. The status now re-reads the store the same way model availability does (omo-desktop-app#2249).
 
 ### Removed
