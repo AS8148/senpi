@@ -11,12 +11,15 @@ import {
 
 const NOW = Date.UTC(2026, 9, 14, 12, 0, 0);
 
-function providerFailure(errorMessage: string) {
+function providerFailure(errorMessage: string, text?: string) {
+	const base = cleanAssistantStop();
+	const content =
+		text === undefined || base.role !== "assistant" ? {} : { content: [{ type: "text" as const, text }] };
 	return {
 		type: "agent_end" as const,
 		aborted: false,
 		willRetry: false,
-		messages: [{ ...cleanAssistantStop(), stopReason: "error" as const, errorMessage }],
+		messages: [{ ...base, ...content, stopReason: "error" as const, errorMessage }],
 	};
 }
 
@@ -26,9 +29,9 @@ async function goalSession(thread: string) {
 	await harness.tools
 		.get("create_goal")
 		?.execute("create", { objective: "Keep going" }, undefined, undefined, ctx as ExtensionToolContext);
-	const failTurn = async (errorMessage: string) => {
+	const failTurn = async (errorMessage: string, text?: string) => {
 		await runGoalHandlers(harness.handlers, "agent_start", { type: "agent_start" }, ctx);
-		await runGoalHandlers(harness.handlers, "agent_end", providerFailure(errorMessage), ctx);
+		await runGoalHandlers(harness.handlers, "agent_end", providerFailure(errorMessage, text), ctx);
 		await runGoalHandlers(harness.handlers, "agent_settled", { type: "agent_settled" }, ctx);
 	};
 	return { harness, ...harness, ctx, failTurn };
@@ -85,5 +88,34 @@ describe("goal continuation backs off while the provider is down (senpi#3264)", 
 		await vi.advanceTimersByTimeAsync(15 * 60_000 + 1_000);
 		await waitForSentCount(harness, 1, { timeoutMs: 5_000 });
 		expect(sent).toHaveLength(1);
+	});
+
+	it("starts over at an immediate retry after the user steps in", async () => {
+		vi.useFakeTimers({ now: NOW });
+		const { harness, sent, events, handlers, ctx, failTurn } = await goalSession("thread-3264-user-reset");
+		for (let attempt = 0; attempt < 3; attempt++) await failTurn("server_error: upstream unavailable");
+		const armedBefore = armedTimers(events.emitted).length;
+
+		await runGoalHandlers(handlers, "input", { type: "input", text: "try again", source: "interactive" }, ctx);
+		await runGoalHandlers(handlers, "before_agent_start", { type: "before_agent_start", prompt: "try again" }, ctx);
+		const sentBefore = sent.length;
+		await failTurn("server_error: upstream unavailable");
+
+		await waitForSentCount(harness, sentBefore + 1, { timeoutMs: 5_000 });
+		expect(armedTimers(events.emitted)).toHaveLength(armedBefore);
+	});
+
+	it("ignores timestamps in the assistant's own text when no error names one", async () => {
+		vi.useFakeTimers({ now: NOW });
+		const { harness, sent, failTurn } = await goalSession("thread-3264-text-timestamp");
+		await failTurn("server_error: upstream unavailable");
+		expect(sent).toHaveLength(1);
+		const deadline = new Date(NOW + 5 * 60 * 60_000).toISOString();
+
+		await failTurn("server_error: upstream unavailable", `Deadline noted: ${deadline}`);
+		await vi.advanceTimersByTimeAsync(15_000);
+
+		await waitForSentCount(harness, 2, { timeoutMs: 5_000 });
+		expect(sent).toHaveLength(2);
 	});
 });
