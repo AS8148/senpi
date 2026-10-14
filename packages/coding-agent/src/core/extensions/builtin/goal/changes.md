@@ -2,8 +2,8 @@
 
 ### What changed
 
-- New `provider-retry.ts`: `providerRetryDelayMs(attempt, retryAt, now)` (first retry immediate, then 15 s doubling to 30 min; a stated unblock time wins, capped at 6 h) and `providerRetryAt(messages, now)` (earliest future ISO instant in the failed turn, e.g. "blocked until ...").
-- `monitor-continuation.ts`: `afterAgentSettled` counts consecutive provider-recovery attempts (reset by a turn that ends cleanly) and, when the delay is positive, arms a `providerRetry` timer instead of queueing at once; the timer fires through the normal `providerRecovery` admission (same cap, same single-flight and unattended guards).
+- New `provider-retry.ts`: `providerRetryDelayMs(attempt, retryAt, now)` (first retry immediate, then 15 s doubling to 30 min; a stated unblock time wins, capped at 6 h) and `providerRetryAt(messages, now)` (earliest future ISO instant in the failed turn's `errorMessage`, e.g. "blocked until ..."; assistant text is never scanned).
+- `monitor-continuation.ts`: `afterAgentSettled` counts consecutive provider-recovery attempts (reset by a turn that ends cleanly and by every continuation-state reset: session start, accepted user input, a goal change) and, when the delay is positive, arms a `providerRetry` timer instead of queueing at once; the timer fires through the normal `providerRecovery` admission (same cap, same single-flight and unattended guards).
 - `wait-progress.ts`: `GoalWaitKind` gains `providerRetry`, rendered "provider unavailable · goal retries in ...". RPC clients see it as the `kind` of `goal_continuation_timer_state`.
 
 ### Why

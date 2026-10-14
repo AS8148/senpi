@@ -96,8 +96,18 @@ describe("goal continuation backs off while the provider is down (senpi#3264)", 
 		for (let attempt = 0; attempt < 3; attempt++) await failTurn("server_error: upstream unavailable");
 		const armedBefore = armedTimers(events.emitted).length;
 
-		await runGoalHandlers(handlers, "input", { type: "input", text: "try again", source: "interactive" }, ctx);
-		await runGoalHandlers(handlers, "before_agent_start", { type: "before_agent_start", prompt: "try again" }, ctx);
+		await runGoalHandlers(
+			handlers,
+			"input",
+			{ type: "input", inputId: "retry", text: "try again", source: "interactive" },
+			ctx,
+		);
+		await runGoalHandlers(
+			handlers,
+			"input_disposition",
+			{ type: "input_disposition", inputId: "retry", disposition: "started" },
+			ctx,
+		);
 		const sentBefore = sent.length;
 		await failTurn("server_error: upstream unavailable");
 

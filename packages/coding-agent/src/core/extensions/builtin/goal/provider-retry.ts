@@ -9,14 +9,11 @@ const WAKE_MARGIN_MS = 1_000;
 const ISO_INSTANT = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b/g;
 
 function failureText(messages: readonly AgentMessage[]): string {
-	const message = lastAssistantMessage(messages);
-	if (message === undefined) return "";
-	const parts = message.content.map((part) => (part.type === "text" ? part.text : ""));
-	return [message.errorMessage ?? "", ...parts].join("\n");
+	return lastAssistantMessage(messages)?.errorMessage ?? "";
 }
 
 /**
- * The earliest future instant the failed turn names, e.g. a credential pool's
+ * The earliest future instant the failed turn's error names (never the assistant's own text), e.g. a credential pool's
  * "blocked until 2026-10-14T12:15:00.000Z": the moment an account frees up.
  */
 export function providerRetryAt(messages: readonly AgentMessage[], now: number): number | undefined {

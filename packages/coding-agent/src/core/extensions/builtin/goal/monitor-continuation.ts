@@ -776,6 +776,7 @@ export class MonitorAwareGoalContinuation {
 	#resetContinuationState(): void {
 		this.#pendingSystemRecovery = undefined;
 		this.#pendingProviderRecovery = undefined;
+		this.#providerRetryAttempts = 0;
 		this.#consecutiveLengthRecoveries.clear();
 		this.#recentNormalizedOutputHashes = [];
 		this.#resetToollessContinuationStreak();

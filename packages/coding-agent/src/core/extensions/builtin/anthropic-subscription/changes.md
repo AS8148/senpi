@@ -15,6 +15,10 @@
 
 - This is the extension; the block lifecycle lives in its failover and affinity modules.
 
+### Known trade-off
+
+- This lane has no half-open lease, so every session sees an auth block expire at the same `blockedUntil`; a still-dead token costs about one fast 401 per live session every 15 minutes, each re-blocking. Grant redemption stays once-per-grant because `recoverSlot` re-checks under `store.modify`.
+
 ### Expected merge conflict zones
 
 - LOW: `blockedAccount` in `failover.ts`; `isAccountBlocked`/`clearExpiredBlocks` in `affinity.ts`; the candidate filter in `recoverAuthBlockedSlots`.
