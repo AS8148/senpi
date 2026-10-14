@@ -592,10 +592,6 @@ export class SessionCommandRouter {
 	private openWithBarrier(command: Extract<RpcCommand, { type: "open_session" }>): Promise<RpcResponse | undefined> {
 		const owner = this.writer.currentConnection();
 		if (owner === undefined) return this.open(command);
-		// A manual reopen-by-path supersedes the handover auto-reopen for that session: clear its
-		// record entry, or a later generation would reopen a second copy (MEDIUM-1, senpi#3282 review).
-		if (command.sessionPath !== undefined && this.handoverParkedDir !== undefined)
-			void clearHandoverParkedSession(this.handoverParkedDir, command.sessionPath).catch(() => {});
 		let resolveBarrier!: () => void;
 		const barrier = new Promise<void>((resolve) => {
 			resolveBarrier = resolve;
@@ -616,7 +612,20 @@ export class SessionCommandRouter {
 				position: inFlight + 1,
 				in_flight: inFlight,
 			});
-		return this.open(command, owner).finally(() => {
+		const opened = this.open(command, owner);
+		// A manual reopen-by-path supersedes the handover auto-reopen for that session: clear its
+		// record entry, or a later generation would reopen a second copy (MEDIUM-1, senpi#3282 review).
+		// Cleared only after the open SUCCEEDS (MEDIUM-A): if the open fails - a session_path_in_use
+		// during a handover, or a bad profile - the entry must stay so a later generation can still
+		// reopen the session.
+		if (command.sessionPath !== undefined && this.handoverParkedDir !== undefined) {
+			const dir = this.handoverParkedDir;
+			const sessionPath = command.sessionPath;
+			void opened.then((response) => {
+				if (response?.success === true) void clearHandoverParkedSession(dir, sessionPath).catch(() => {});
+			});
+		}
+		return opened.finally(() => {
 			resolveBarrier();
 			opens.delete(barrier);
 			if (opens.size === 0) this.opensByConnection.delete(owner);

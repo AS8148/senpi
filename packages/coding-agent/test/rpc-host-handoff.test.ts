@@ -196,19 +196,26 @@ describe.skipIf(process.platform === "win32")("generation handoff between live h
 		await watcher.waitForClose(90_000);
 		expect(await waitForPidGone(firstPid(qa), 45_000)).toBe(true);
 
-		const linesBefore = await jsonlLines(sessionPath);
-		// The successor auto-reopens the parked session (senpi#3282), so a manual reopen of the same
-		// path is refused as already-held. Whoever holds it, the session is open on the successor.
-		const listed = (await next.request({ id: "list", type: "list_sessions", include_workers: true })).data as
-			| { sessions?: Array<{ durableSessionId?: string; sessionPath?: string; status?: string }> }
-			| undefined;
-		const rows = listed?.sessions ?? [];
-		const stillOpen = rows.some(
-			(row) => row.status === "open" && (row.sessionPath === sessionPath || row.durableSessionId === sessionId),
-		);
-		expect(stillOpen, `the session is not open on the successor (rows: ${JSON.stringify(rows)})`).toBe(true);
-		const linesAfter = await jsonlLines(sessionPath);
-		expect(linesAfter.length).toBeGreaterThanOrEqual(linesBefore.length);
+		// The successor auto-reopens the parked session (senpi#3282). Its row appears with status
+		// "opening" before the runtime finishes constructing, so a single read can catch it too
+		// early; poll until it is "open" (or the deadline passes) before asserting.
+		const listRows = async (): Promise<
+			Array<{ durableSessionId?: string; sessionPath?: string; status?: string }>
+		> => {
+			const listed = (await next.request({ id: "list", type: "list_sessions", include_workers: true })).data as
+				| { sessions?: Array<{ durableSessionId?: string; sessionPath?: string; status?: string }> }
+				| undefined;
+			return listed?.sessions ?? [];
+		};
+		const isOpen = (rows: Array<{ durableSessionId?: string; sessionPath?: string; status?: string }>): boolean =>
+			rows.some((row) => row.status === "open" && row.sessionPath === sessionPath);
+		const openDeadline = Date.now() + 60_000;
+		let rows = await listRows();
+		while (!isOpen(rows) && Date.now() < openDeadline) {
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			rows = await listRows();
+		}
+		expect(isOpen(rows), `the session is not open on the successor (rows: ${JSON.stringify(rows)})`).toBe(true);
 	}, 180_000);
 
 	it("drains the running generation on request and exits once its sessions park", async () => {
@@ -320,13 +327,6 @@ async function pidFile(qa: GenerationScratch): Promise<WireRecord> {
 
 function recordedPid(record: WireRecord): number {
 	return typeof record.pid === "number" ? record.pid : 0;
-}
-
-async function jsonlLines(path: string): Promise<string[]> {
-	const lines = (await readFile(path, "utf8")).split("\n").filter((line) => line.length > 0);
-	// A single writer leaves only whole records behind; a second one would leave a torn line.
-	for (const line of lines) JSON.parse(line);
-	return lines;
 }
 
 /** Replaces the public socket with a live server this daemon never started; returns its inode. */

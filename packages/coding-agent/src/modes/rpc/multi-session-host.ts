@@ -43,7 +43,7 @@ import { computeRuntimeBuildId, RUNTIME_IDENTITY_HANDOVER_CAPABILITY } from "./r
 import { type RpcBindingFactory, SessionCommandRouter } from "./session-command-router.ts";
 import { SessionEventWriter } from "./session-event-writer.ts";
 import { canonicalSessionPath } from "./session-path-key.ts";
-import { RpcSessionRegistry } from "./session-registry.ts";
+import { RpcSessionRegistry, RpcSessionRegistryError } from "./session-registry.ts";
 import {
 	PUBLIC_SOCKET_IDENTITY_FILE,
 	readSocketIdentityFile,
@@ -172,12 +172,20 @@ async function reopenOne(
 		);
 		await clearHandoverParkedSession(daemonDir, entry.sessionPath);
 	} catch (cause) {
-		if (tried >= HANDOVER_PARKED_REOPEN_MAX_ATTEMPTS) {
-			process.stderr.write(
-				`senpi rpc successor gave up reopening parked session ${entry.sessionPath} after ${tried} attempts: ${String(cause)}\n`,
-			);
-			await clearHandoverParkedSession(daemonDir, entry.sessionPath);
-			return;
+		// A `session_path_in_use` refusal means the predecessor still holds the path's cross-generation
+		// claim (its drain has not released it yet): the holder is alive, so the park is not failing -
+		// it is waiting. Do not count it toward the attempt cap, or a slow loaded drain would exhaust
+		// the budget in a couple of seconds and the entry would be dropped while the session is still
+		// parked and recoverable. It is retried on the next poll, bounded only by the watch budget.
+		const heldByPredecessor = cause instanceof RpcSessionRegistryError && cause.code === "session_path_in_use";
+		if (!heldByPredecessor) {
+			if (tried >= HANDOVER_PARKED_REOPEN_MAX_ATTEMPTS) {
+				process.stderr.write(
+					`senpi rpc successor gave up reopening parked session ${entry.sessionPath} after ${tried} attempts: ${String(cause)}\n`,
+				);
+				await clearHandoverParkedSession(daemonDir, entry.sessionPath);
+				return;
+			}
 		}
 		process.stderr.write(`senpi rpc successor reopen parked session ${entry.sessionPath} failed: ${String(cause)}\n`);
 	}

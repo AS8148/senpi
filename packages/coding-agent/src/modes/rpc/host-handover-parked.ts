@@ -72,7 +72,7 @@ export function recordHandoverParkedSession(daemonDir: string, entry: HandoverPa
 export async function readHandoverParkedSessions(daemonDir: string): Promise<readonly HandoverParkedEntry[]> {
 	let names: string[];
 	try {
-		names = (await readdir(recordDir(daemonDir))).filter((name) => name.endsWith(".json") && !name.endsWith(".tmp"));
+		names = (await readdir(recordDir(daemonDir))).filter((name) => name.endsWith(".json"));
 	} catch {
 		return [];
 	}
@@ -81,7 +81,16 @@ export async function readHandoverParkedSessions(daemonDir: string): Promise<rea
 		try {
 			const parsed: unknown = JSON.parse(await readFile(join(recordDir(daemonDir), name), "utf8"));
 			if (isEntry(parsed)) entries.push(parsed);
-		} catch {}
+			else {
+				process.stderr.write(`senpi rpc handover-parked entry ${name} is malformed; dropping it\n`);
+				await rm(join(recordDir(daemonDir), name), { force: true });
+			}
+		} catch {
+			// An unreadable entry (truncated JSON, a torn write) would otherwise sit in the record
+			// forever and never be reopened; log and drop it so the record self-heals.
+			process.stderr.write(`senpi rpc handover-parked entry ${name} is unreadable; dropping it\n`);
+			await rm(join(recordDir(daemonDir), name), { force: true });
+		}
 	}
 	return entries;
 }
@@ -93,8 +102,4 @@ export function clearHandoverParkedSession(daemonDir: string, sessionPath: strin
 export function dropHandoverParkedSessionIfFileGone(daemonDir: string, sessionPath: string): Promise<void> {
 	if (existsSync(sessionPath)) return Promise.resolve();
 	return clearHandoverParkedSession(daemonDir, sessionPath);
-}
-
-export function clearHandoverParkedSessions(daemonDir: string): Promise<void> {
-	return enqueueMutation(() => rm(recordDir(daemonDir), { recursive: true, force: true }));
 }
