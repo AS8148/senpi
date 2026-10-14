@@ -1,20 +1,22 @@
-## 2026-10-14 - Extension runtime module resolves through a stable agent-dir copy (senpi#3300)
+## 2026-10-14 - An extension's transpile cache is keyed by the runtime path it bakes in (senpi#3300)
 
 ### What changed
 
-- `packages/coding-agent/src/core/extensions/bun-extension-registry.ts`: `resolveRuntimeModulePath` now returns a stable path under the agent dir (`<agentDir>/runtime/extension-runtime-module.js`) holding a COPY of the current runtime module, refreshed by content hash, instead of the versioned dist path.
+- `packages/coding-agent/src/core/extensions/bun-extension-importer.ts`: the metadata import injected into every extension module now ends with a same-line comment naming the resolved runtime module path (`// runtime "<path>"`, or `null` inside a compiled binary). Keeping it on the same line leaves diagnostic line numbers unchanged.
+- `packages/coding-agent/src/core/extensions/bun-extension-registry.ts`: `runtimeModulePath` is exported for that comment. Resolution is unchanged.
 
 ### Why
 
-Bun <= 1.4.2 bakes the resolved ABSOLUTE path of the runtime module into an extension's transpile cache. A runtime update prunes that versioned path, and the stale cache then fails to load an unchanged extension with "Cannot find module <old runtime>/.../extension-runtime-module.js" (reproduced on Bun 1.4.2 against the bundled dist; clean on 1.4.3, which keeps the specifier symbolic). A copy at a non-versioned path can never name a pruned file; a re-export could still name it, so the shim copies the content.
+Bun <= 1.4.2 bakes the resolved absolute path of `extension-runtime-module.js` into an extension's transpile cache, and it keys that cache by the module source. senpi injected the same source from every runtime version. After an update pruned the old runtime directory, the cached entry therefore still named the deleted file, and an unchanged extension failed with `Cannot find module <old runtime>/.../extension-runtime-module.js`. Naming the path in the source gives every runtime location its own cache key. It also heals users whose cache is already broken: their stale entries were keyed by source without the comment, so the first start on a fixed runtime misses them and re-transpiles.
 
 ### Why an extension could not handle it
 
-The runtime-module resolution lives in the core extension registry, below the extension API.
+The injected metadata import and the runtime-module resolution live in the core Bun extension importer and registry, below the extension API.
 
 ### Expected merge conflict zones
 
-- `packages/coding-agent/src/core/extensions/bun-extension-registry.ts`: `resolveRuntimeModulePath` and the new `stableRuntimeModulePath`.
+- `packages/coding-agent/src/core/extensions/bun-extension-importer.ts`: the `contents` line that injects the metadata import.
+- `packages/coding-agent/src/core/extensions/bun-extension-registry.ts`: the `runtimeModulePath` declaration.
 
 ## 2026-10-13 - Provider auth status re-reads a store that was busy on its first read (omo-desktop-app#2249)
 

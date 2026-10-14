@@ -1,8 +1,6 @@
-import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join } from "node:path";
+import { existsSync } from "node:fs";
+import { dirname, isAbsolute } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { getAgentDir } from "../../config.ts";
 import { publishRuntimeMetadata } from "./extension-runtime-module.ts";
 
 export type ModuleSource = { readonly contents: string; readonly loader: "js" };
@@ -46,48 +44,15 @@ const RUNTIME_SPECIFIER = "runtime";
 // Inside a `bun build --compile` binary the shim has no on-disk path (import.meta.url is a
 // $bunfs URL), so the file route is only available when the file is really there; the compiled
 // binary keeps the virtual module, which it never had a problem with.
-// Lazily computed on the first onResolve: a top-level getAgentDir() + file copy would run at
-// module import in every context (including the Node/test path that never resolves a Bun
-// extension), which the loader-ownership tests forbid. The resolution is cached after first use.
-let runtimeModulePathCache: string | undefined;
-let runtimeModulePathResolved = false;
+export const runtimeModulePath = resolveRuntimeModulePath();
 
 function resolveRuntimeModulePath(): string | undefined {
-	if (runtimeModulePathResolved) return runtimeModulePathCache;
-	runtimeModulePathResolved = true;
 	try {
 		const candidate = fileURLToPath(new URL("./extension-runtime-module.js", import.meta.url));
-		runtimeModulePathCache = existsSync(candidate) ? stableRuntimeModulePath(candidate) : undefined;
+		return existsSync(candidate) ? candidate : undefined;
 	} catch {
-		runtimeModulePathCache = undefined;
+		return undefined;
 	}
-	return runtimeModulePathCache;
-}
-
-// Bun <= 1.4.2 bakes the resolved ABSOLUTE path of the runtime module into an extension's
-// transpile cache; a runtime update prunes that versioned path and the stale cache then
-// fails with "Cannot find module <old runtime>/.../extension-runtime-module.js" (senpi#3300).
-// Resolve through a STABLE path under the agent dir that never prunes: it holds a COPY of the
-// current runtime module (not a re-export, which would still name the prunable versioned path),
-// so a runtime update rewrites the copy's content and Bun invalidates by content.
-function stableRuntimeModulePath(versionedPath: string, agentDir: string = getAgentDir()): string {
-	try {
-		const dir = join(agentDir, "runtime");
-		mkdirSync(dir, { recursive: true });
-		const shim = join(dir, "extension-runtime-module.js");
-		const source = readFileSync(versionedPath);
-		const version = createHash("sha256").update(source).digest("hex").slice(0, 16);
-		const marker = `// senpi runtime module copy ${version}\n`;
-		const current = existsSync(shim) ? readFileSync(shim, "utf8") : undefined;
-		if (current === undefined || !current.startsWith(marker)) writeFileSync(shim, `${marker}${source}`);
-		return shim;
-	} catch {
-		return versionedPath;
-	}
-}
-
-export function stableRuntimeModulePathForTest(versionedPath: string, agentDir: string): string {
-	return stableRuntimeModulePath(versionedPath, agentDir);
 }
 
 // An id is `<generation>/<encodeURIComponent(filename)>`. The encoded half never contains a
@@ -183,12 +148,10 @@ function installRegistry(virtualModules: Readonly<Record<string, Readonly<Record
 					loader: "object",
 				}));
 				builder.onResolve({ filter: /.*/, namespace: extensionNamespace }, ({ path }) => {
-					if (path === RUNTIME_SPECIFIER) {
-						const resolved = resolveRuntimeModulePath();
-						return resolved === undefined
+					if (path === RUNTIME_SPECIFIER)
+						return runtimeModulePath === undefined
 							? { path, namespace: extensionNamespace }
-							: { path: resolved, namespace: "file" };
-					}
+							: { path: runtimeModulePath, namespace: "file" };
 					const parsed = splitModuleId(path);
 					if (parsed === undefined) throw new ExtensionModuleIdError(path);
 					graphFor(parsed.generation);
