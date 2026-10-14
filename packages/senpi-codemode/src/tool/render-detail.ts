@@ -56,6 +56,16 @@ export function renderJsonOutputs(values: readonly unknown[], environment: Rende
 	}
 	return lines;
 }
+// The real legacy shape stores the screenshot as {buffer:{type:"Buffer",data},...metadata}; the buffer key
+// collapses to a placeholder and the remaining keys render as one scalar summary line each.
+function nestedSerializedBuffer(value: unknown): { readonly key: string } | undefined {
+	if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const record = value as Record<string, unknown>;
+	for (const key of Object.keys(record)) {
+		if (serializedBufferByteLength(record[key]) !== undefined) return { key };
+	}
+	return undefined;
+}
 
 function renderJsonEntryLines(
 	value: unknown,
@@ -71,6 +81,24 @@ function renderJsonEntryLines(
 		// those collapse to a bounded placeholder or summary instead of walking the whole value.
 		const bufferBytes = serializedBufferByteLength(value);
 		if (bufferBytes !== undefined) return fallback(bufferPlaceholder(bufferBytes));
+		const nested = nestedSerializedBuffer(value);
+		if (nested !== undefined) {
+			const record = value as Record<string, unknown>;
+			const lines = fallback(
+				`${nested.key}: ${bufferPlaceholder(serializedBufferByteLength(record[nested.key]) ?? 0)}`,
+			);
+			const keys = Object.keys(record).filter((key) => key !== nested.key);
+			for (const key of keys) {
+				appendLines(
+					lines,
+					renderAllVisualLines(
+						style(environment.theme, "dim", `  ${key}: ${formatScalar(record[key], scalarLen)}`),
+						environment.width,
+					),
+				);
+			}
+			return lines;
+		}
 		if (displayJsonSizeExceeds(value, MAX_DISPLAY_JSON_BYTES)) {
 			return fallback(
 				`… oversized display value elided (${formatScalar(value, scalarLen)}, ~${formatByteLength(MAX_DISPLAY_JSON_BYTES)}+ stored)`,
