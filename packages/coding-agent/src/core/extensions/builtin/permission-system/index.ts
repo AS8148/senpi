@@ -80,7 +80,9 @@ function persistAlways(agentDir: string, cwd: string, request: Request, persiste
 	try {
 		appendApproved(agentDir, cwd, rules);
 	} catch (error) {
-		console.error(`permission: failed to persist an Always answer; it will be retried at shutdown (${getReason(error)})`);
+		console.error(
+			`permission: failed to persist an Always answer; it will be retried at shutdown (${getReason(error)})`,
+		);
 		return;
 	}
 	for (const rule of rules) persisted.add(`${rule.permission}:${rule.pattern}`);
@@ -98,7 +100,15 @@ function findDenyProvenance(
 	cliRuleset: Ruleset,
 	permission: string,
 	patterns: readonly string[],
-): { layer: "global" | "project" | "cli"; permission: string; pattern: string; action: string; otherLayerDenies: boolean } | undefined {
+):
+	| {
+			layer: "global" | "project" | "cli";
+			permission: string;
+			pattern: string;
+			action: string;
+			otherLayerDenies: boolean;
+	  }
+	| undefined {
 	const matches = (rules: Ruleset) =>
 		rules.filter(
 			(rule) =>
@@ -116,10 +126,18 @@ function findDenyProvenance(
 	const projectMatches = matches(projectPermission ? fromConfig(projectPermission) : []);
 	const cliMatches = matches(cliRuleset);
 	if (cliMatches.length > 0) {
-		return { layer: "cli", ...cliMatches[cliMatches.length - 1], otherLayerDenies: projectMatches.length > 0 || globalMatches.length > 0 };
+		return {
+			layer: "cli",
+			...cliMatches[cliMatches.length - 1],
+			otherLayerDenies: projectMatches.length > 0 || globalMatches.length > 0,
+		};
 	}
 	if (projectMatches.length > 0) {
-		return { layer: "project", ...projectMatches[projectMatches.length - 1], otherLayerDenies: globalMatches.length > 0 };
+		return {
+			layer: "project",
+			...projectMatches[projectMatches.length - 1],
+			otherLayerDenies: globalMatches.length > 0,
+		};
 	}
 	if (globalMatches.length > 0) {
 		return { layer: "global", ...globalMatches[globalMatches.length - 1], otherLayerDenies: false };
@@ -155,7 +173,6 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 	let cliRuleset: Ruleset = [];
 	let staticRuleset: Ruleset = [];
 	let activePreset: PermissionPresetName | null = null;
-	let initialApprovedCount = 0;
 	let setupError: string | null = null;
 	let activeSettingsManager: SettingsManager | null = null;
 	// The `permission-preset` flag value the rules were last loaded from; absent until session_start.
@@ -225,7 +242,6 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 			cwd,
 			agentDir,
 		);
-		initialApprovedCount = approved.length;
 	};
 
 	const applyToolDenials = (onlyWhenNarrowed = false): void => {

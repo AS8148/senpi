@@ -133,7 +133,11 @@ describe("permission storage", () => {
 	describe("compactApproved", () => {
 		it("removes duplicate rules keeping the last occurrence", () => {
 			// given
-			appendApproved(agentDir, projectDir, [ALLOW_BASH, { permission: "bash", pattern: "git *", action: "allow" }, ALLOW_READ]);
+			appendApproved(agentDir, projectDir, [
+				ALLOW_BASH,
+				{ permission: "bash", pattern: "git *", action: "allow" },
+				ALLOW_READ,
+			]);
 
 			// when
 			compactApproved(agentDir, projectDir);

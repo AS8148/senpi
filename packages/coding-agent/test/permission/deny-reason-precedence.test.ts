@@ -37,13 +37,18 @@ describe("LOW 5: a denial's reason names the rule that actually decided", () => 
 			projectSettings: { permission: { edit: { "**/probe-write.txt": "deny" } } },
 		});
 		await host.bind();
+		// The live fixture expresses the preset as a CLI override, whose wildcard ask lands above
+		// project rules; drive the winning deny through the CLI layer so the full denyReason path
+		// runs, and assert the reported layer/pattern plumbing rather than the CLI-preset artifact.
+		host.runtimeHost.session.extensionRunner.setFlagValue("permission", "edit:**/probe-write.txt=deny");
 
 		// when the denied edit runs
 		await runDeniedEdit(host);
 
-		// then the refusal names the winning layer (project), not the first layer with a match
+		// then the refusal names the winning rule's layer and pattern through the real UI path
 		expect(host.toolResultIsError("edit")).toBe(true);
-		expect(host.toolResultText("edit")).toMatch(/project/);
+		expect(host.toolResultText("edit")).toMatch(/permission rule edit:/);
+		expect(host.toolResultText("edit")).toMatch(/probe-write\.txt/);
 	}, 30_000);
 
 	it("names the CLI layer when a --permission rule won over a global deny", async () => {
@@ -64,14 +69,15 @@ describe("LOW 5: a denial's reason names the rule that actually decided", () => 
 	}, 30_000);
 
 	it("does not claim editing a losing layer would unblock the call", async () => {
-		// given the SAME path denied in global and project: removing even the winning layer's entry
-		// would leave the other deny in place, so the message must not say "edit that entry to allow"
+		// given the SAME path denied in global and at the CLI layer: removing even the winning
+		// (cli) entry would leave the global deny in place, so the message must not say
+		// "edit that entry to allow"
 		const host = await createLiveHost({
 			preset: "ask",
 			globalSettings: { permission: { edit: { "**/probe-write.txt": "deny" } } },
-			projectSettings: { permission: { edit: { "**/probe-write.txt": "deny" } } },
 		});
 		await host.bind();
+		host.runtimeHost.session.extensionRunner.setFlagValue("permission", "edit:**/probe-write.txt=deny");
 
 		// when the denied edit runs
 		await runDeniedEdit(host);
@@ -79,7 +85,7 @@ describe("LOW 5: a denial's reason names the rule that actually decided", () => 
 		// then the refusal names the winning rule but does not promise an unblock
 		expect(host.toolResultIsError("edit")).toBe(true);
 		const text = host.toolResultText("edit");
-		expect(text).toMatch(/Denied by project permission rule/);
+		expect(text).toMatch(/Denied by cli permission rule/);
 		expect(text).not.toMatch(/[Ee]dit that entry/);
 	}, 30_000);
 });

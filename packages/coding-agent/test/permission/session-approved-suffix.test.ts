@@ -16,7 +16,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createLocalEventEmitter } from "../../src/core/extensions/builtin/permission-system/events.ts";
 import { PermissionService } from "../../src/core/extensions/builtin/permission-system/service.ts";
-import { appendApproved, approvedStorePath, loadApproved } from "../../src/core/extensions/builtin/permission-system/storage.ts";
+import { appendApproved, approvedStorePath } from "../../src/core/extensions/builtin/permission-system/storage.ts";
 import type { Request } from "../../src/core/extensions/builtin/permission-system/types.ts";
 
 function alwaysRequest(id: string, permission: string, always: string[]): Request {

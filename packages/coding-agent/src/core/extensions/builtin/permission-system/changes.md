@@ -1,5 +1,29 @@
 # Permission System Builtin Extension
 
+## 2026-10-14 - Approvals-store security hardening (#3301 review / #2465)
+
+### What changed
+
+- `storage.ts`: the approved store moved out of the workspace to `<agentDir>/permissions/approved/<project-hash>.jsonl`, keyed by the project's real path, so an agent can no longer write `<cwd>/.senpi/permissions-approved.jsonl` and have it honored in the same session. Loaded lines are validated (action `allow` only, a concrete non-wildcard permission, a well-formed pattern, and a `user-answer` source marker only the answer path writes); anything else is dropped. The legacy in-workspace file is imported once, validated, then removed — a line planted there later is never honored. Reads and appends never follow a symlink at the store path.
+- `service.ts`: `dispatchDecision` evaluates the configured ruleset alone first; a configured (global/project/CLI) deny outranks any approval in both the plain and presetBound paths, so an approved `allow` can only turn a configured ask into an allow, never a deny. A defence-in-depth deny on the store's real path (case-folded on macOS) keeps the agent's own tools from touching it whatever the rules say. The session-owned approved suffix is exposed by identity (`getSessionApproved`), not by a load-time index.
+- `index.ts`: a failed `persistAlways` write is caught and logged (the tool call proceeds) and the shutdown append retries it; the shutdown append uses `getSessionApproved` so a concurrent session's append is not duplicated and a deleted store does not resurrect or drop this session's answers. `denyReason`/`findDenyProvenance` now name the rule that actually decided, using the same global→project→CLI last-match precedence as the decision and all of the request's patterns, and only promise "edit that entry to allow" when no other layer still denies.
+- `settings.ts`: approvals load from the agent-dir store.
+
+### Why
+
+- A model or prompt injection could previously write a forged `{"permission":"*","pattern":"*","action":"allow"}` line into the in-workspace store and have it honored on the very next call, mid-session — a same-session privilege escalation.
+- An approved `allow` could override a configured settings `deny`, live, disabling a user policy such as `bash: {"rm -rf *": deny}`.
+- Index-based shutdown bookkeeping duplicated or dropped approvals once the store refreshed; a failed write aborted an already-answered tool call.
+- The refusal named the first matching layer, not the layer that actually decided, and could tell the user to edit an entry whose removal would not unblock the call.
+
+### Why an extension could not handle it
+
+- The store location, line validation, decision precedence, and shutdown persistence all live in the permission service's single decision point and its storage contract; an extension outside `permission-system` cannot intercept them.
+
+### Expected merge conflict zones
+
+- `storage.ts` store path / validation / migration; `service.ts` `dispatchDecision` precedence and `getSessionApproved`; `index.ts` `denyReason`/`findDenyProvenance` and the shutdown append; `settings.ts` `loadApproved` call.
+
 ## 2026-10-14 - Full-access central decision + cross-session approvals (#2465)
 
 ### What changed

@@ -17,18 +17,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createLocalEventEmitter } from "../../src/core/extensions/builtin/permission-system/events.ts";
 import { PermissionService } from "../../src/core/extensions/builtin/permission-system/service.ts";
 import { approvedStorePath, loadApproved } from "../../src/core/extensions/builtin/permission-system/storage.ts";
-import type { Request } from "../../src/core/extensions/builtin/permission-system/types.ts";
-
-function askRequest(overrides: Partial<Request> = {}): Request {
-	return {
-		id: overrides.id ?? "request-1",
-		sessionID: overrides.sessionID ?? "session-1",
-		permission: overrides.permission ?? "bash",
-		patterns: overrides.patterns ?? ["rm -rf node_modules"],
-		always: overrides.always ?? ["rm *"],
-		metadata: overrides.metadata ?? {},
-	};
-}
 
 describe("HIGH 1: the approvals store moves out of the workspace and resists forgery", () => {
 	let agentDir: string;

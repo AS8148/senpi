@@ -105,7 +105,9 @@ describe("HIGH 1/1b: an Always answer never turns a configured deny into an allo
 			projectSettings: { permission: { shell_fixture: { "echo *": "deny" } } },
 		});
 		await host.bind();
-		appendApproved(host.agentDir, host.cwd, [{ permission: "shell_fixture", pattern: "echo probe-2465", action: "allow" }]);
+		appendApproved(host.agentDir, host.cwd, [
+			{ permission: "shell_fixture", pattern: "echo probe-2465", action: "allow" },
+		]);
 
 		// when the call runs (the approval must not defeat the deny)
 		await host.runProbe("shell_fixture", SHELL_FIXTURE_INPUT, "shell");

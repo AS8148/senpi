@@ -52,9 +52,7 @@ export class PermissionService {
 		this.projectDir = projectDir;
 		this.agentDir = agentDir;
 		this.protectedStorePath =
-			agentDir !== undefined && projectDir !== undefined
-				? approvedStoreRealPath(agentDir, projectDir)
-				: undefined;
+			agentDir !== undefined && projectDir !== undefined ? approvedStoreRealPath(agentDir, projectDir) : undefined;
 		this.approvedVersion =
 			agentDir === undefined || projectDir === undefined ? undefined : approvedFileVersion(agentDir, projectDir);
 	}
