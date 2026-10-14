@@ -34,7 +34,7 @@ import { getAgentDir } from "../config.ts";
 import { raceWithAbortSignal } from "../utils/abort.ts";
 import { getFileContentRevision, normalizePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
-import { migrateLegacyProviderKeys } from "./auth-provider-key-migration.ts";
+import { migrateAnthropicOAuthToSubscription, migrateLegacyProviderKeys } from "./auth-provider-key-migration.ts";
 import {
 	CredentialStoreBusyError,
 	FILE_STORAGE_LOCK_OPTIONS,
@@ -504,7 +504,12 @@ export class AuthStorage implements CredentialStore {
 		}
 		const repaired = repairPoisonedPoolSlots(JSON.parse(stripBom(content)) as AuthStorageData);
 		const migrated = migrateLegacyProviderKeys(repaired.data);
-		return { data: migrated.data, repaired: repaired.repaired, migrated: migrated.migrated };
+		const moved = migrateAnthropicOAuthToSubscription(migrated.data);
+		return {
+			data: moved.data,
+			repaired: repaired.repaired,
+			migrated: migrated.migrated || moved.migrated,
+		};
 	}
 
 	private recordError(error: unknown): void {
