@@ -1,3 +1,8 @@
+## 2026-10-14 - Imported accounts remember their source grant (senpi#3259)
+
+- `accounts.ts`: `AccountSlot.importedFrom` (optional) holds the digest of the direct-`anthropic` OAuth grant an account was copied from by the core auth.json migration (`core/anthropic-oauth-migration.ts`). It survives token refresh (slots are rebuilt by spread), so the copy runs once and the source is retired only after the copy is read back. No behaviour in this extension reads it.
+- Expected conflict zones: the `AccountSlot` type only.
+
 ## 2026-10-08 - An auth-blocked account recovers once through its saved grant (senpi#2926)
 
 ### What changed
