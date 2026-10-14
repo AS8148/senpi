@@ -194,16 +194,14 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 			return undefined;
 		}
 
+		// Resolve the tool list lazily: getAllTools throws while the runtime initializes
+		// (the shutdown regression fires a tool_call during load), and a tool the builtin
+		// registry owns (bash, read, edit, write) never needs it, so it must run only for
+		// a genuinely tool-owned parse.
+		const getTools = () => pi.getAllTools();
 		const toolOwnedRequests = parserRegistry.has(event.toolName)
 			? undefined
-			: toolOwnedPermissionRequests(pi.getAllTools(), event.toolName, event.input, ctx.cwd);
-		const permissionRequests = permissionRequestsFor(
-			pi.getAllTools(),
-			parserRegistry,
-			event.toolName,
-			event.input,
-			ctx.cwd,
-		);
+			: toolOwnedPermissionRequests(getTools(), event.toolName, event.input, ctx.cwd);
 		// Parsing preserves a path monitor's approved parent. Only rearming is
 		// bookkeeping; path watches read file bytes and retain filesystem checks.
 		if (
@@ -212,6 +210,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		) {
 			return undefined;
 		}
+		const permissionRequests = permissionRequestsFor(getTools, parserRegistry, event.toolName, event.input, ctx.cwd);
 		const sessionID = ctx.sessionManager.getSessionId();
 		const approve = prepareMcpDispatchApproval(pi, event, ctx, dispatchAuthorizer);
 

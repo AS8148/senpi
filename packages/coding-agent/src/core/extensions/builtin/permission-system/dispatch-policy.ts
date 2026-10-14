@@ -27,7 +27,13 @@ export function createDispatchAuthorizer(
 			if (state.setupError !== null) throw new Error(`Permission setup failed: ${state.setupError}`);
 			const { service, parsers } = state;
 			if (!service || !parsers) throw new Error("Permission authorizer is not initialized");
-			const requests = permissionRequestsFor(pi.getAllTools(), parsers, request.toolName, request.input, ctx.cwd);
+			const requests = permissionRequestsFor(
+				() => pi.getAllTools(),
+				parsers,
+				request.toolName,
+				request.input,
+				ctx.cwd,
+			);
 			let action: DispatchPolicy["action"] = "allow";
 			const decisions = requests.map((permission) => {
 				const rules = permission.patterns.map((pattern) =>

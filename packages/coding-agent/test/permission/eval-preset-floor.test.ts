@@ -130,7 +130,13 @@ describe("eval is never looser than shell, edit or write (senpi#3210)", () => {
 		];
 
 		//#when
-		const requests = permissionRequestsFor([...tools], registry, "eval", { language: "js", code: "x" }, project);
+		const requests = permissionRequestsFor(
+			() => [...tools],
+			registry,
+			"eval",
+			{ language: "js", code: "x" },
+			project,
+		);
 
 		//#then: the narrower `read` answer is not the only request
 		expect(requests).toEqual(

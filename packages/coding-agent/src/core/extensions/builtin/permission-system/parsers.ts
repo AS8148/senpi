@@ -81,7 +81,7 @@ export function fallbackEvalPermissionRequest(): PermissionRequest {
  * alongside, and a narrower answer (for example `read`) can never approve it (senpi#3211).
  */
 export function permissionRequestsFor(
-	tools: readonly ToolInfo[],
+	getTools: () => readonly ToolInfo[],
 	registry: ParserRegistry,
 	toolName: string,
 	input: Record<string, unknown>,
@@ -89,7 +89,7 @@ export function permissionRequestsFor(
 ): PermissionRequest[] {
 	const requests = registry.has(toolName)
 		? registry.parse(toolName, input, cwd)
-		: (toolOwnedPermissionRequests(tools, toolName, input, cwd) ?? registry.parse(toolName, input, cwd));
+		: (toolOwnedPermissionRequests(getTools(), toolName, input, cwd) ?? registry.parse(toolName, input, cwd));
 	if (toolName === "eval" && !requests.some((request) => request.permission === "eval")) {
 		return [...requests, fallbackEvalPermissionRequest()];
 	}
