@@ -8,7 +8,7 @@ const fallback = "other-faux/faux-2";
 const MINUTE = 60_000;
 
 // The Kakao report: a primary that keeps hitting a short session limit must come back at each reset,
-// not slide onto a cooldown that doubles past the window with every failed retry (senpi#3300).
+// not slide onto a cooldown that doubles past the window with every failed retry (senpi#3314).
 const SESSION_LIMIT =
 	"Devin stream error resource_exhausted: Reached free model rate limit. Upgrade to Max for higher limits, or switch to a different model. Your limit will reset in 2 minutes.";
 

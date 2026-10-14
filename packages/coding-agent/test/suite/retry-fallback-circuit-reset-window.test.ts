@@ -51,6 +51,22 @@ describe("senpi#3303 the circuit honors a usage limit's reset window and nothing
 		["a Retry-After header", { retryAfterMs: 1_000 }],
 		["a 'try again in 2s' rate limit", { errorMessage: "429 Too Many Requests: please try again in 2s" }],
 		["an overload asking to retry in 1 second", { errorMessage: "overloaded, retry in 1 second" }],
+		[
+			"a spent quota asking to retry in 7s",
+			{
+				errorMessage:
+					"429 You exceeded your current quota, please check your plan and billing details. Please retry in 7s.",
+			},
+		],
+		[
+			"a usage limit asking to try again in 3 seconds",
+			{ errorMessage: "You've hit your usage limit. Try again in 3 seconds." },
+		],
+		["a usage limit asking to retry in 2s", { errorMessage: "You've hit your usage limit. Please retry in 2s." }],
+		[
+			"a usage limit resetting in 30 seconds",
+			{ errorMessage: "You've hit your usage limit. Your limit will reset in 30 seconds." },
+		],
 	])("#given repeated failures with %s #then the open keeps the doubling cooldown floor", (_label, failure) => {
 		const clock = { mono: 0, wall: WALL_EPOCH };
 		const circuit = circuitAt(clock);
@@ -63,6 +79,27 @@ describe("senpi#3303 the circuit honors a usage limit's reset window and nothing
 		}
 
 		expect(closesAfter).toEqual([MINUTE, 2 * MINUTE, 4 * MINUTE]);
+	});
+
+	it("#given a running Retry-After wait #when a usage limit names a shorter reset #then the open keeps the wait", () => {
+		const clock = { mono: 0, wall: WALL_EPOCH };
+		const circuit = circuitAt(clock);
+		circuit.noteFailure(SELECTOR, { retryAfterMs: 10 * MINUTE });
+		circuit.noteFailure(SELECTOR, { errorMessage: sessionLimitResetIn(2) });
+
+		clock.mono += 5 * MINUTE;
+		expect(circuit.isOpen(SELECTOR)).toBe(true);
+	});
+
+	it("#given a usage limit whose absolute reset is 30 seconds away #then the open ends at that reset", () => {
+		const clock = { mono: 0, wall: WALL_EPOCH };
+		const circuit = circuitAt(clock);
+		circuit.noteFailure(SELECTOR, {
+			errorMessage: `429 {"error":{"type":"usage_limit_reached","resets_at":${WALL_EPOCH / 1000 + 30}}}`,
+		});
+
+		clock.mono += 31_000;
+		expect(circuit.isOpen(SELECTOR)).toBe(false);
 	});
 
 	it("#given a monotonic clock that drifted from the wall clock after sleep #when a resets_at time is parsed #then the window follows the wall clock", () => {
