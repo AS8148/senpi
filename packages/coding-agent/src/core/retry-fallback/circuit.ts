@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { parseRetryAfterMsMarker } from "@earendil-works/pi-ai/utils/retry-hint";
+import { usageLimitResetMs } from "../credential-pool/reset-time.ts";
 import type { FallbackLogger } from "./log.ts";
 
 /**
@@ -90,10 +91,14 @@ export class FallbackCircuitBreaker {
 		// hint (a weekly window, or a gateway replaying a stale wait) still gets its single
 		// half-open probe once the ceiling elapses, so a recovered entry is re-checked instead
 		// of refused for the whole hint; a failed probe re-opens with the fresh hint (senpi#2446).
-		const openUntil = Math.max(
-			request.now + cooldownMs,
-			Math.min(retryFloorUntil, request.now + request.maxCooldownMs),
-		);
+		// A usage limit that names its own reset window is a rate limit that recovers, not a
+		// quota exhaustion: when that window is shorter than the cooldown, open only until it
+		// passes so the primary is retried at the window instead of held for the whole cooldown
+		// (senpi#3300; the Kakao report of a session that never returned to its rate-limited
+		// primary). A genuine quota exhaustion carries no short hint and keeps the cooldown floor.
+		const cooldownUntil = request.now + cooldownMs;
+		const hintUntil = Math.min(retryFloorUntil, request.now + request.maxCooldownMs);
+		const openUntil = hinted > 0 && hintUntil < cooldownUntil ? hintUntil : Math.max(cooldownUntil, hintUntil);
 		this.circuits.set(selector, {
 			openUntil,
 			retryFloorUntil,
@@ -192,9 +197,14 @@ export function createFallbackCircuitAccess(deps: FallbackCircuitAccessDeps): Fa
 			if (!enabled()) return;
 			const { cooldownMs, maxCooldownMs } = deps.settings();
 			const now = deps.now();
+			// A Retry-After header/marker wins; otherwise a usage-limit's own reset window
+			// ("resets 3pm", "resets in 9 minutes", resets_at) bounds the open so a recoverable
+			// rate limit is retried at its window, never held for the whole cooldown (senpi#3300).
 			const retryAfterMs =
 				failure.retryAfterMs ??
-				(failure.errorMessage === undefined ? undefined : parseRetryAfterMsMarker(failure.errorMessage));
+				(failure.errorMessage === undefined
+					? undefined
+					: (parseRetryAfterMsMarker(failure.errorMessage) ?? usageLimitResetMs(failure.errorMessage, now)));
 			deps.breaker.sweep(now);
 			const openUntil = deps.breaker.open(selector, { now, cooldownMs, maxCooldownMs, retryAfterMs });
 			deps.logger.info("circuit_opened", { selector, durationMs: openUntil - now, retryAfterMs });

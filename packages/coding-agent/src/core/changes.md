@@ -1,3 +1,22 @@
+## 2026-10-14 - Retry a rate-limited primary at its reset window instead of holding it for the cooldown (senpi#3300)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/circuit.ts`: a usage limit that names its own reset window is a rate limit that recovers, not a quota exhaustion. `noteFailure` resolves that window via `usageLimitResetMs` when a Retry-After header/marker yields nothing, and `open()` treats a reset window shorter than the cooldown as the open duration so the primary is retried at the window instead of held for the whole (doubling) cooldown.
+- `packages/coding-agent/test/suite/retry-fallback-usage-limit-revert.test.ts`: regression — two-step rate-limit fallback returns to the primary at the reset window.
+
+### Why
+
+- A community report: a session whose main model (Opus) hit a rate limit fell back and never returned after the limit reset. The reset window never reached the circuit as `retryAfterMs`, so the open floored at the generic cooldown, which doubles on consecutive failures past the actual window. The fix honors the parsed reset window as the recovery signal for a resettable rate limit while keeping the cooldown floor for genuine quota exhaustion (no short hint) and the 48h ceiling for real weekly limits.
+
+### Why an extension could not handle it
+
+- The open duration is computed inside the shared circuit breaker from the failure's `retryAfterMs`, which no extension hook observes or overrides; the fallback decision and revert gate live in `agent-session.ts`'s controller wiring.
+
+### Expected merge conflict zones
+
+- `circuit.open()`'s `openUntil` computation and `noteFailure`'s `retryAfterMs` resolution in `packages/coding-agent/src/core/retry-fallback/circuit.ts`.
+
 ## 2026-10-13 - Provider auth status re-reads a store that was busy on its first read (omo-desktop-app#2249)
 
 ### What changed
