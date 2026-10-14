@@ -64,6 +64,11 @@ describe("RPC auth and connection handler contracts", () => {
 		writeFileSync(modelsPath, JSON.stringify({ providers: {} }));
 		expect(await send({ type: "logout", provider: "gpu-box" })).toMatchObject({ success: true });
 		expect(await servesGpuBox()).toBe(false);
+		// Losing the key alone hides it from "available"; the models themselves must be gone too,
+		// which is what #1812 saw stay listed.
+		expect(harness.runtimeHost.session.modelRegistry.getAll().some((model) => model.provider === "gpu-box")).toBe(
+			false,
+		);
 		await handler.dispose();
 	});
 
