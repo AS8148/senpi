@@ -869,7 +869,12 @@ export function createRpcConnectionHandler(
 					// it for `get_state` because the getter clears once the turn settles.
 					const abortSource = session.currentAbortSource;
 					if (abortSource !== undefined) lastAbortSource = abortSource;
-					correlatedEvents.accept(abortSource === undefined ? event : { ...event, aborted: true, abortSource });
+					const deadline = session.currentDeadline;
+					correlatedEvents.accept({
+						...event,
+						...(abortSource === undefined ? {} : { aborted: true, abortSource }),
+						...(deadline === undefined ? {} : { deadline }),
+					});
 					return;
 				}
 				correlatedEvents.accept(event);

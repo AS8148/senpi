@@ -1,3 +1,21 @@
+## 2026-10-14 - RPC `agent_end` carries the turn deadline (senpi#3227)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the subscribe-path `agent_end` augmentation adds `deadline` alongside the existing `abortSource`, so an RPC client sees why a deadline-stopped turn ended.
+
+### Why
+
+A client driving a session over RPC must see the same deadline reason the TUI shows, not a bare abort.
+
+### Why an extension could not handle it
+
+The augmentation lives in the connection handler's own `agent_end` branch, the single point where the stripped subscribe-path event is rebuilt with provenance.
+
+### Expected merge conflict zones
+
+- LOW: `connection-handler.ts` the `agent_end` branch in `installSessionSubscriptions`.
+
 ## 2026-10-13 - No detach after a request timeout or a lost transport (senpi#3238 review)
 
 ### What changed

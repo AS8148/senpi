@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- A turn that stopped making progress no longer runs forever: a session-level inactivity lease (`turn_inactivity_ms`, default 60 min, renewed only by tool execution events and admitted user input) and a hard maximum runtime (`turn_max_runtime_ms`, default 6 h) end a stuck turn as a system abort that carries a `deadline` detail on `agent_end`. Partial text is kept, the reason names the setting and the action to resume, and a goal is never auto-continued past the stop until the user sends a message ([#3227](https://github.com/code-yeongyu/senpi/issues/3227)).
+
 - A provider whose credentials were locked when the store was first read no longer reports "not configured" to `get_auth_providers` after the lock clears, while its models already work. The status now re-reads the store the same way model availability does (omo-desktop-app#2249).
 
 ### Removed
