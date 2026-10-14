@@ -20,6 +20,27 @@
 - `packages/coding-agent/src/core/credential-pool/reset-time.ts`: `usageLimitResetMs` and the new `usageLimitReset`.
 - `packages/coding-agent/src/core/agent-session.ts`: the `createFallbackCircuitAccess` call in the constructor.
 
+## 2026-10-14 - Claude subscriptions move from the direct anthropic provider to the Agent SDK lane (senpi#3259)
+
+### What changed
+
+- `packages/coding-agent/src/core/anthropic-oauth-migration.ts` (new, fork-only): `migrateAnthropicOAuthToSubscription()` is additive and two-step. A load COPIES every OAuth grant of an `anthropic` OAuth entry (each pool slot, plus top-level fields that match no slot) not yet recorded into `anthropic-subscription` accounts once (`imported-anthropic[-<slot>]`, source `import`, de-duplicated by refresh token, display name carried, pool pin pointed at the copy or at an existing account holding that token, `importedFrom` = digest of the source grant) and, in the same write, records each source grant's digest on the `anthropic` entry (`importedToSubscription`); no credential is removed. A later load that finds every source grant recorded RETIRES only the OAuth part of `anthropic` (the record proves the copy was persisted with it). Recorded grants are never copied again, so an account the user removes between the two loads stays removed; an older binary that rotates the leftover grant meanwhile produces a new, unrecorded grant, copied as a new account. On retire: API-key slots stay, rebuilt as an API-key credential projecting the pinned key. Every entry is parsed defensively; anything it cannot parse (including a malformed `anthropic-subscription` entry) is left as stored with the reason in `skipped`, and the function never throws.
+- `packages/coding-agent/src/core/auth-storage.ts`: `parseStorageContent()` runs that move after the legacy-key migration, so the existing load seam writes it back once behind a timestamped 0600 backup of the original bytes; a `skipped` reason is reported once per store as an auth-storage diagnostic (startup warning) naming the fix.
+- `packages/coding-agent/src/core/model-resolver.ts`: `findInitialModel()` (saved default) and `restoreModelFromSession()` resolve a saved `anthropic/<id>` to `anthropic-subscription/<id>` when only the subscription lane holds auth (`resolveStoredModelWithAuth()`), and the restore notice names the provider actually restored.
+- Not changed: the subscription login's "move the existing Anthropic OAuth login here?" prompt (`anthropic-subscription/oauth-login.ts`) can no longer trigger once this migration has run; it is left in place as a harmless guard.
+
+### Why
+
+- Anthropic refuses a Claude subscription token used directly against the Messages API ("Third-party apps now draw from your extra usage, not your plan limits"), so users who signed in through the `anthropic` provider's OAuth could not use their plan at all (senpi#3259). The allowed path is the Claude Agent SDK lane; moving the grant and the saved selection keeps those users on the same Claude model without a re-login.
+
+### Why an extension could not handle it
+
+- The grant must move inside the locked auth.json load (one refresh owner, backup before rewrite), and the saved default and session restore are resolved in core before any extension runs.
+
+### Expected merge conflict zones
+
+- LOW: `parseStorageContent()` and the error fields in `auth-storage.ts`; the restore notice, the step-3 saved-default lookup in `findInitialModel()` and the first line of `restoreModelFromSession()` in `model-resolver.ts`.
+
 ## 2026-10-13 - Provider auth status re-reads a store that was busy on its first read (omo-desktop-app#2249)
 
 ### What changed
