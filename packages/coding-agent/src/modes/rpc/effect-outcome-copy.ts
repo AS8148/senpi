@@ -62,7 +62,13 @@ export const EFFECT_OUTCOMES = {
 		kind: "interrupted_by_reopen",
 		reason: "interrupted_by_reopen",
 		detail: "the session was reopened before the queued input was removed",
-		action: "re-read queue_update.queued and retry with a new effectId",
+		action: "re-read queue_update.ordered and retry with a new effectId",
+	},
+	editQueuedInterruptedByReopen: {
+		kind: "interrupted_by_reopen",
+		reason: "interrupted_by_reopen",
+		detail: "the session was reopened before the queued input was edited",
+		action: "re-read queue_update.ordered and retry with a new effectId",
 	},
 } as const satisfies Record<string, EffectOutcome>;
 

@@ -395,7 +395,6 @@ export type RpcErrorCode =
 	| typeof RPC_ERROR_RELEASE_FAILED
 	| typeof RPC_ERROR_HOST_DRAINING;
 
-/** What an effect command (`abort`/`set_model`/`set_thinking_level` with `effectId`) answers about its receipt. */
 /** What `dequeue_message` / `edit_queued_message` did; anything but removed/edited carries reason + action. */
 export interface RpcQueuedInputChange {
 	queuedId: string;
@@ -404,6 +403,7 @@ export interface RpcQueuedInputChange {
 	action?: string;
 }
 
+/** What an effect command (`abort`/`set_model`/`set_thinking_level` with `effectId`) answers about its receipt. */
 export interface RpcEffectAnswer {
 	effectId: string;
 	state: EffectState;
