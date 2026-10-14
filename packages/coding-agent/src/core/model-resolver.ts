@@ -1119,7 +1119,7 @@ export async function restoreModelFromSession(
 
 	if (restoredModel && hasConfiguredAuth) {
 		if (shouldPrintMessages) {
-			console.log(chalk.dim(`Restored model: ${savedProvider}/${savedModelId}`));
+			console.log(chalk.dim(`Restored model: ${restoredModel.provider}/${restoredModel.id}`));
 		}
 		return { model: restoredModel, thinkingSelection: restored.thinkingSelection, fallbackMessage: undefined };
 	}

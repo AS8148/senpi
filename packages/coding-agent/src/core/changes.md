@@ -2,9 +2,10 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/auth-provider-key-migration.ts`: new `migrateAnthropicOAuthToSubscription()` moves an `anthropic` OAuth entry (its pool slots, else its flat grant) into `anthropic-subscription` accounts named `imported-anthropic[-<slot>]` with source `import`, never overwriting an existing account or duplicating a refresh token, and deletes the `anthropic` entry. An Anthropic API key is untouched. Completion is derived from the data, like `migrateLegacyProviderKeys()`.
-- `packages/coding-agent/src/core/auth-storage.ts`: `parseStorageContent()` runs that move after the legacy-key migration, so the existing load seam writes it back once behind a timestamped backup.
-- `packages/coding-agent/src/core/model-resolver.ts`: `findInitialModel()` (saved default) and `restoreModelFromSession()` resolve a saved `anthropic/<id>` to `anthropic-subscription/<id>` when only the subscription lane holds auth (`resolveStoredModelWithAuth()`).
+- `packages/coding-agent/src/core/anthropic-oauth-migration.ts` (new, fork-only): `migrateAnthropicOAuthToSubscription()` moves only the OAuth slots of an `anthropic` OAuth entry (its pool slots, else its flat grant) into `anthropic-subscription` accounts named `imported-anthropic[-<slot>]` with source `import`, carrying each slot's display name and the pool pin. API-key slots in the same pool stay under `anthropic`, rebuilt as an API-key credential (with their pin); the entry is deleted only when nothing else is left. An existing account or refresh token is never overwritten or duplicated. An entry it cannot fully parse (a malformed grant, a non-object account, an account that is neither a grant nor a key, a non-object subscription entry) is left byte-for-byte and the reason is returned in `skipped`; nothing is written.
+- `packages/coding-agent/src/core/auth-storage.ts`: `parseStorageContent()` runs that move after the legacy-key migration, so the existing load seam writes it back once behind a timestamped 0600 backup of the original bytes; a `skipped` reason is reported once per store as an auth-storage diagnostic (startup warning) naming the fix.
+- `packages/coding-agent/src/core/model-resolver.ts`: `findInitialModel()` (saved default) and `restoreModelFromSession()` resolve a saved `anthropic/<id>` to `anthropic-subscription/<id>` when only the subscription lane holds auth (`resolveStoredModelWithAuth()`), and the restore notice names the provider actually restored.
+- Not changed: the subscription login's "move the existing Anthropic OAuth login here?" prompt (`anthropic-subscription/oauth-login.ts`) can no longer trigger once this migration has run; it is left in place as a harmless guard.
 
 ### Why
 
@@ -16,7 +17,7 @@
 
 ### Expected merge conflict zones
 
-- LOW: `parseStorageContent()` in `auth-storage.ts`; the step-3 saved-default lookup in `findInitialModel()` and the first line of `restoreModelFromSession()` in `model-resolver.ts`.
+- LOW: `parseStorageContent()` and the error fields in `auth-storage.ts`; the restore notice, the step-3 saved-default lookup in `findInitialModel()` and the first line of `restoreModelFromSession()` in `model-resolver.ts`.
 
 ## 2026-10-13 - Provider auth status re-reads a store that was busy on its first read (omo-desktop-app#2249)
 
