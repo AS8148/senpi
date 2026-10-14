@@ -1,5 +1,6 @@
 import { MAX_SLOT_BLOCK_MS } from "@earendil-works/pi-ai/auth/pool/failover";
 import { stripProviderRequestIds } from "@earendil-works/pi-ai/utils/retry";
+import { isValidThinkingLevel } from "../../cli/args.ts";
 import { usageLimitResetMs } from "../credential-pool/reset-time.ts";
 
 /**
@@ -36,10 +37,12 @@ export class SelectorCooldowns {
 		this.expiresAtBySelector.delete(baseSelector);
 	}
 
-	/** Clears `baseSelector` and every rung of it (`baseSelector:<level>`). */
+	/** Clears `baseSelector` and every rung of it (`baseSelector:<thinking level>`), never another model. */
 	clearModel(baseSelector: string): void {
 		for (const key of this.expiresAtBySelector.keys()) {
-			if (key === baseSelector || key.startsWith(`${baseSelector}:`)) this.expiresAtBySelector.delete(key);
+			// Only a rung of this model: a model id may itself contain ':' (openrouter's `x:batch`).
+			const rung = key.startsWith(`${baseSelector}:`) && isValidThinkingLevel(key.slice(baseSelector.length + 1));
+			if (key === baseSelector || rung) this.expiresAtBySelector.delete(key);
 		}
 	}
 
