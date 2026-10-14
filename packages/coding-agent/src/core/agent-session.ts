@@ -379,7 +379,7 @@ const EVAL_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set(["workflow", "monitor"
 /** Sample eval-cell call for an eval-only tool, using the argument name that tool actually takes. */
 function evalHelperCall(name: string): string {
 	if (name === "bash" || name === "powershell") return `tool.${name}({ command: "..." })`;
-	if (name === "grep") return `tool.grep({ pattern: "...", path: "..." })`;
+	if (name === "grep" || name === "glob") return `tool.${name}({ pattern: "...", path: "..." })`;
 	if (name === "workflow") return `tool.${name}({ action: "..." })`;
 	if (name === "monitor") return `tool.monitor({ description: "...", command: "...", filter: "..." })`;
 	return `tool.${name}({ ... })`;
@@ -4727,11 +4727,19 @@ export class AgentSession {
 		}
 		// Declared tools and SDK overrides outside the built-in groups still need eval guidance.
 		const otherHelpers = [...registered]
-			.filter((name) => name !== "bash" && name !== "powershell" && name !== "workflow" && name !== "grep")
+			.filter(
+				(name) =>
+					name !== "bash" && name !== "powershell" && name !== "workflow" && name !== "grep" && name !== "glob",
+			)
 			.map(evalHelperCall);
 		if (otherHelpers.length > 0) {
 			sentences.push(
 				`These tools run ONLY inside eval cells via ${otherHelpers.join(" or ")}; hooks and permissions still apply.`,
+			);
+		}
+		if (registered.has("glob")) {
+			sentences.push(
+				`File-name search runs ONLY inside eval cells via ${evalHelperCall("glob")}; it matches a glob such as **/*.ts, respects .gitignore, and applies hooks and permissions - prefer it over find/ls in tool.bash.`,
 			);
 		}
 		if (registered.has("grep")) {
@@ -9699,6 +9707,7 @@ export class AgentSession {
 					edit: { filesystemPolicy },
 					grep: { filesystemPolicy },
 					find: { filesystemPolicy },
+					glob: { filesystemPolicy },
 					ls: { filesystemPolicy },
 				});
 
