@@ -1,5 +1,24 @@
 # changes.md — dynamic-prompt
 
+## 2026-10-15 - The handoff block is for change and multi-step work, not for a researched answer (senpi#3323)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/handoff.ts`: `HANDOFF_MOMENTS` names "the creation of a todo list with more than one task" and "the final message of a turn that changed something or carried out multi-step work" (was "the todo list's creation" and "a turn that did work"), and says a reply that answers a question - an explanation, a lookup, a review, a one-task request - is the answer itself, with no block, even when finding the answer took tool calls.
+- `packages/coding-agent/src/core/dynamic-prompt/style.ts`: the final-message sentence uses the same condition.
+
+### Why
+
+- CLI users still got the block on plain answers after senpi#2723. "A turn that did work" covered a reply that only read files to answer, and the todo cue (`todotools/changes.md`, same date) demanded the block for the one-task list the first-turn opener makes of a question.
+
+### Why an extension could not handle it
+
+- These sections are built inside the shared prompt builder.
+
+### Expected merge conflict zones
+
+- Fork-only files. `HANDOFF_MOMENTS` in `handoff.ts`; the final-message sentence in `style.ts`.
+
 ## 2026-10-04 - Format examples are no longer markdown quote lines (senpi#2714)
 
 ### What changed

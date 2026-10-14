@@ -16,6 +16,8 @@
 
 ### Fixed
 
+- Plain answers in the terminal no longer come wrapped in the Ask / For you / Now / Next block. When a question did not end in `?`, the first-request todo list made it a one-task plan, and that list's result told the model to write the block. A one-task list now asks for nothing, and every preset reserves the block for turns that changed something or did multi-step work, even when finding an answer took tool calls ([#3323](https://github.com/code-yeongyu/senpi/issues/3323), reported by @devxoul).
+
 - `senpi host session` commands now return only after the host has dropped their attachment: on a host that advertises the new `detach_connection` capability the client asks for the detach and waits for the answer (bounded at 5 s, with one plain line if it never comes), so a listing right after `open` no longer shows the short-lived client as still attached. A connection leaving a session that another client also holds now releases its attachment at once, even while a turn runs; only the last attachment of a non-retained session still waits for the turn to settle. After a request timed out or the connection was lost, the client closes without asking for the detach. Older hosts keep the release on socket close. ([#3238](https://github.com/code-yeongyu/senpi/issues/3238))
 
 - A flaky network no longer strands a session on a fallback model. A timeout or connection reset that outlasts the same-model retries may finish that one turn on the next model in the chain, but it no longer puts the primary on a cooldown or opens its circuit, so the next turn goes back to the primary. A rate limit, quota or overload error keeps its existing fallback behavior ([#3306](https://github.com/code-yeongyu/senpi/issues/3306), reported in the OmO community).
