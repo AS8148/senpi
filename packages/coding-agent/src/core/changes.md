@@ -1,3 +1,23 @@
+## 2026-10-14 - Claude subscriptions move from the direct anthropic provider to the Agent SDK lane (senpi#3259)
+
+### What changed
+
+- `packages/coding-agent/src/core/auth-provider-key-migration.ts`: new `migrateAnthropicOAuthToSubscription()` moves an `anthropic` OAuth entry (its pool slots, else its flat grant) into `anthropic-subscription` accounts named `imported-anthropic[-<slot>]` with source `import`, never overwriting an existing account or duplicating a refresh token, and deletes the `anthropic` entry. An Anthropic API key is untouched. Completion is derived from the data, like `migrateLegacyProviderKeys()`.
+- `packages/coding-agent/src/core/auth-storage.ts`: `parseStorageContent()` runs that move after the legacy-key migration, so the existing load seam writes it back once behind a timestamped backup.
+- `packages/coding-agent/src/core/model-resolver.ts`: `findInitialModel()` (saved default) and `restoreModelFromSession()` resolve a saved `anthropic/<id>` to `anthropic-subscription/<id>` when only the subscription lane holds auth (`resolveStoredModelWithAuth()`).
+
+### Why
+
+- Anthropic refuses a Claude subscription token used directly against the Messages API ("Third-party apps now draw from your extra usage, not your plan limits"), so users who signed in through the `anthropic` provider's OAuth could not use their plan at all (senpi#3259). The allowed path is the Claude Agent SDK lane; moving the grant and the saved selection keeps those users on the same Claude model without a re-login.
+
+### Why an extension could not handle it
+
+- The grant must move inside the locked auth.json load (one refresh owner, backup before rewrite), and the saved default and session restore are resolved in core before any extension runs.
+
+### Expected merge conflict zones
+
+- LOW: `parseStorageContent()` in `auth-storage.ts`; the step-3 saved-default lookup in `findInitialModel()` and the first line of `restoreModelFromSession()` in `model-resolver.ts`.
+
 ## 2026-10-13 - Provider auth status re-reads a store that was busy on its first read (omo-desktop-app#2249)
 
 ### What changed
