@@ -9,6 +9,7 @@ import {
 	formatSelector,
 	parseFallbackSelector,
 	resolveChainKey,
+	rungSelector,
 } from "./chains.ts";
 import { CircuitProbes } from "./circuit-probes.ts";
 import type {
@@ -124,8 +125,7 @@ export class RetryFallbackController {
 		const model = this.deps.registry.find(selector.provider, selector.id);
 		if (!model) return false;
 		const stranded = this.unusable.isUnusable(current.model) && !this.unusable.isUnusable(model);
-		if (!stranded && (heldForNetworkBlip || !this.originalRecovered(state.originalSelector, revertPolicy)))
-			return false;
+		if (!stranded && (heldForNetworkBlip || !this.originalRecovered(state, revertPolicy))) return false;
 		// User override wins: only restore the original thinking level when the
 		// current level still equals the level the fallback switch applied. A manual
 		// setThinkingLevel clears lastAppliedThinkingLevel (see noteManualThinkingLevel).
@@ -143,8 +143,17 @@ export class RetryFallbackController {
 		return true;
 	}
 
-	private originalRecovered(originalSelector: string, revertPolicy: "cooldown-expiry" | "never"): boolean {
+	private originalRecovered(state: ActiveFallbackState, revertPolicy: "cooldown-expiry" | "never"): boolean {
 		if (revertPolicy !== "cooldown-expiry") return false;
+		const originalSelector = state.originalSelector;
+		// The original rung may be parked by its own hard error while the model as a whole is not.
+		const original = parseFallbackSelector(originalSelector, this.deps.registry);
+		if (
+			original &&
+			state.originalThinkingLevel !== undefined &&
+			this.deps.cooldowns.isSuppressed(rungSelector({ ...original, thinkingLevel: state.originalThinkingLevel }))
+		)
+			return false;
 		// An entry the breaker tracks recovers on the circuit's clock; the per-session
 		// cooldown only governs entries the breaker never opened (hard errors, breaker off).
 		const suppressed = this.probes.governs(originalSelector)
@@ -192,7 +201,7 @@ export class RetryFallbackController {
 		}
 		this.state = undefined;
 		this.heldForNetworkBlip = false;
-		this.deps.cooldowns.clear(formatSelector(model));
+		this.deps.cooldowns.clearModel(formatSelector(model));
 		this.unusable.clear(model);
 		this.probes.release();
 		this.deps.circuits?.close(formatSelector(model));
@@ -245,17 +254,37 @@ export class RetryFallbackController {
 			this.noteHealthFailure(current.model, current.thinkingLevel, failure);
 		const limit = usageLimitScope(failure.errorMessage);
 		if (failureObserved && current) this.unusable.note(current.model, failure);
-		let candidate = this.nextCandidate(false, true);
-		if (!current || !candidate) return false;
+		// A model-wide park (transient, billing) can rule out the current model's other rungs, so the
+		// walk re-scans after noting it; the first scan logs only when no re-scan follows.
+		const modelWidePark = failureObserved && (reason === "transient" || reason === "billing");
+		let candidate = this.nextCandidate(false, !modelWidePark);
+		if (!current || !candidate) {
+			if (modelWidePark) this.nextCandidate(false, true);
+			return false;
+		}
 		const currentBase = formatSelector(current.model);
 		if (
 			!networkBlip &&
 			failureObserved &&
 			(reason === "transient" || reason === "hard-error" || reason === "billing")
 		) {
-			this.deps.cooldowns.note(currentBase, failure);
-			this.deps.logger.info("cooldown_noted", { selector: currentBase, errorMessage: failure.errorMessage });
+			// A hard error is charged to the rung that failed (a level the model rejects, or any
+			// non-retryable failure there), so it parks only that rung and a
+			// later rung of the same model stays reachable; a transient or billing failure parks the
+			// whole model, which is unhealthy at every level (senpi#3311). A network blip parks
+			// nothing (senpi#3306).
+			const parked =
+				reason === "hard-error"
+					? rungSelector({
+							provider: current.model.provider,
+							id: current.model.id,
+							thinkingLevel: current.thinkingLevel,
+						})
+					: currentBase;
+			this.deps.cooldowns.note(parked, failure);
+			this.deps.logger.info("cooldown_noted", { selector: parked, errorMessage: failure.errorMessage });
 		}
+		if (modelWidePark) candidate = this.nextCandidate(false, true);
 		// A rung the switch itself refuses does not end the walk: the next rung may fit (senpi#2894).
 		while (candidate) {
 			try {
@@ -264,7 +293,7 @@ export class RetryFallbackController {
 				return true;
 			} catch (error) {
 				if (!this.deps.isCandidateRefusal?.(error)) throw error;
-				this.triedSelectors.add(baseSelector(candidate.selector));
+				this.triedSelectors.add(rungSelector(candidate.selector));
 				this.skip(formatSelector(candidate.model), "refused");
 			}
 			candidate = this.nextCandidate(false, true);
@@ -281,7 +310,7 @@ export class RetryFallbackController {
 		const thinking = this.selectThinking(candidate.selector, candidate.model, current.thinkingLevel);
 		this.probes.admit(baseSelector(candidate.selector));
 		await this.switchOrRelease(candidate.model, thinking, "fallback");
-		this.triedSelectors.add(baseSelector(candidate.selector));
+		this.triedSelectors.add(rungSelector(candidate.selector));
 		const from = formatSelector(current.model);
 		const to = formatSelector(candidate.model);
 		const prior = this.state;
@@ -324,7 +353,7 @@ export class RetryFallbackController {
 			skip: (raw, skipReason) => this.skip(raw, skipReason),
 		});
 		if (candidate) {
-			if (reserve) this.triedSelectors.add(baseSelector(candidate.selector));
+			if (reserve) this.triedSelectors.add(rungSelector(candidate.selector));
 			return { chainKey, ...candidate };
 		}
 		this.lastExhaustedChainKey = chainKey;

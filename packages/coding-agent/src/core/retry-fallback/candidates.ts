@@ -1,11 +1,12 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { Api, Model } from "@earendil-works/pi-ai";
+import { type Api, clampThinkingLevel, type Model } from "@earendil-works/pi-ai";
 import {
 	baseSelector,
 	candidatesAfter,
 	type FallbackSelector,
 	formatSelector,
 	parseFallbackSelector,
+	rungSelector,
 } from "./chains.ts";
 
 export interface CandidateRegistry {
@@ -39,6 +40,20 @@ export function firstUsableCandidate(
 	return scanCandidates(entries, current, filters, (provider) => filters.isProviderSpent?.(provider) ?? false);
 }
 
+/**
+ * Whether an entry names the rung already in flight: the same model, and either
+ * no explicit level (it inherits the running one) or the running level itself.
+ * The same model at another explicit level is a rung of its own and stays a
+ * candidate - that is how a chain retries one model with thinking turned off.
+ */
+function isCurrentRung(
+	selector: Pick<FallbackSelector, "provider" | "id" | "thinkingLevel">,
+	current: { model: Model<Api>; thinkingLevel?: ThinkingLevel },
+): boolean {
+	if (selector.provider !== current.model.provider || selector.id !== current.model.id) return false;
+	return selector.thinkingLevel === undefined || selector.thinkingLevel === current.thinkingLevel;
+}
+
 function scanCandidates(
 	entries: readonly string[],
 	current: { model: Model<Api>; thinkingLevel?: ThinkingLevel },
@@ -52,7 +67,7 @@ function scanCandidates(
 			filters.skip(raw, "unknown");
 			continue;
 		}
-		if (selector.provider === current.model.provider && selector.id === current.model.id) {
+		if (isCurrentRung(selector, current)) {
 			filters.skip(raw, "self");
 			continue;
 		}
@@ -61,7 +76,7 @@ function scanCandidates(
 			continue;
 		}
 		const base = baseSelector(selector);
-		if (filters.tried.has(base)) {
+		if (filters.tried.has(rungSelector(selector))) {
 			filters.skip(raw, "tried");
 			continue;
 		}
@@ -76,6 +91,13 @@ function scanCandidates(
 		const model = filters.registry.find(selector.provider, selector.id);
 		if (!model) {
 			filters.skip(raw, "unknown");
+			continue;
+		}
+		// A hard-error park is keyed by the level the rung ran at, so check the level this entry
+		// would run at: its own, or the inherited one, clamped like the switch does (senpi#3311).
+		const level = clampThinkingLevel(model, selector.thinkingLevel ?? current.thinkingLevel ?? "off");
+		if (filters.isSuppressed(rungSelector({ ...selector, thinkingLevel: level }))) {
+			filters.skip(raw, "suppressed");
 			continue;
 		}
 		if (filters.isCircuitOpen(base)) {
