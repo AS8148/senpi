@@ -70,6 +70,77 @@ describe("the #3259 move never drops a live grant or the store", () => {
 		expect(readFileSync(authPath, "utf-8")).toBe(original);
 	});
 
+	it("never re-imports a copied grant the user removed before the source was retired", () => {
+		const copied = migrateAnthropicOAuthToSubscription({
+			anthropic: { type: "oauth", access: "a", refresh: "old", expires: 1 },
+		}).data;
+		const removed: Store = {
+			...copied,
+			"anthropic-subscription": { ...subscriptionOf(copied), accounts: [] } as Credential,
+		};
+		const next = migrateAnthropicOAuthToSubscription(removed);
+		expect(subscriptionOf(next.data)?.accounts).toEqual([]);
+		expect(next.data.anthropic).toBeUndefined();
+	});
+
+	it("copies a refresh token shared by two source slots once, and points the pin at that copy", () => {
+		const result = migrateAnthropicOAuthToSubscription({
+			anthropic: {
+				type: "oauth",
+				access: "a",
+				refresh: "r",
+				expires: 1,
+				accounts: [
+					{ name: "x", access: "a", refresh: "r", expires: 1 },
+					{ name: "y", access: "a", refresh: "r", expires: 1 },
+				],
+				pinned: "y",
+			} as Credential,
+		});
+		const subscription = subscriptionOf(result.data);
+		expect(subscription?.accounts?.map((slot) => slot.refresh)).toEqual(["r"]);
+		expect(subscription?.pinned).toBe(subscription?.accounts?.[0]?.name);
+	});
+
+	it("retires without a second copy after the copied account's token rotated", () => {
+		const copied = migrateAnthropicOAuthToSubscription({
+			anthropic: { type: "oauth", access: "a", refresh: "r1", expires: 1 },
+		}).data;
+		const subscription = subscriptionOf(copied);
+		const rotated: Store = {
+			...copied,
+			"anthropic-subscription": {
+				...subscription,
+				accounts: subscription?.accounts?.map((slot) => ({ ...slot, refresh: "r2", access: "a2" })),
+			} as Credential,
+		};
+		const next = migrateAnthropicOAuthToSubscription(rotated);
+		expect(next.data.anthropic).toBeUndefined();
+		expect(subscriptionOf(next.data)?.accounts?.map((slot) => slot.refresh)).toEqual(["r2"]);
+	});
+
+	it("pins the existing subscription account when the pinned source slot is already there", () => {
+		const result = migrateAnthropicOAuthToSubscription({
+			anthropic: {
+				type: "oauth",
+				access: "a",
+				refresh: "r",
+				expires: 1,
+				accounts: [{ name: "work", access: "a", refresh: "r", expires: 1 }],
+				pinned: "work",
+			} as Credential,
+			"anthropic-subscription": {
+				type: "oauth",
+				access: "m",
+				refresh: "m",
+				expires: 1,
+				accounts: [{ name: "mine", access: "a", refresh: "r", expires: 1, source: "login" }],
+			} as Credential,
+		});
+		expect(subscriptionOf(result.data)?.pinned).toBe("mine");
+		expect(subscriptionOf(result.data)?.accounts).toHaveLength(1);
+	});
+
 	it("projects the pinned API-key slot onto the remaining top-level key", () => {
 		const copied = migrateAnthropicOAuthToSubscription({
 			anthropic: {

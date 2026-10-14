@@ -39,7 +39,8 @@ describe("subscription OAuth grant moves to the Agent SDK lane (#3259)", () => {
 		const source: Store = { anthropic: { type: "oauth", access: "acc-1", refresh: "ref-1", expires: 42 } };
 		const copied = migrateAnthropicOAuthToSubscription(source);
 		expect(copied.migrated).toBe(true);
-		expect(copied.data.anthropic).toEqual(source.anthropic);
+		expect(copied.data.anthropic).toMatchObject(source.anthropic as object);
+		expect(copied.data.anthropic).toHaveProperty("importedToSubscription");
 		expect(subscriptionOf(copied.data)?.accounts).toMatchObject([
 			{ name: "imported-anthropic", access: "acc-1", refresh: "ref-1", expires: 42, source: "import" },
 		]);

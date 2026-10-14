@@ -81,32 +81,52 @@ function remainingApiKeyEntry(keySlots: Slot[], pinned: unknown): PooledCredenti
 	return { type: "api_key", key, accounts, ...(pinnedSlot ? { pinned: pinnedSlot.name } : {}) };
 }
 
+/** Field on the source `anthropic` entry: digests of its grants already copied into the subscription lane. */
+export const IMPORTED_GRANTS_FIELD = "importedToSubscription";
+
+function importedDigests(entry: Slot): Set<string> {
+	const recorded = entry[IMPORTED_GRANTS_FIELD];
+	return new Set(Array.isArray(recorded) ? recorded.filter((digest) => typeof digest === "string") : []);
+}
+
 function copyGrants(
 	data: AuthStorageData,
+	entry: Slot,
 	source: Source,
 	subscription: AnthropicSubscriptionCredential,
-	pending: OAuthGrant[],
+	unrecorded: OAuthGrant[],
 ): AuthStorageData {
 	const accounts: AccountSlot[] = [...(subscription.accounts ?? [])];
 	const taken = new Set(accounts.map((slot) => slot.name));
 	let pinned = subscription.pinned;
-	for (const grant of pending) {
-		const name = importedSlotName(grant, source.pooled, taken);
-		taken.add(name);
-		const displayName = typeof grant.displayName === "string" ? { displayName: grant.displayName } : {};
-		accounts.push({
-			name,
-			...displayName,
-			access: grant.access,
-			refresh: grant.refresh,
-			expires: grant.expires,
-			source: "import",
-			importedFrom: authGrantDigest(grant.refresh),
-		});
-		if (pinned === undefined && typeof grant.name === "string" && grant.name === source.pinned) pinned = name;
+	for (const grant of unrecorded) {
+		const digest = authGrantDigest(grant.refresh);
+		let account = accounts.find((slot) => slot.refresh === grant.refresh || slot.importedFrom === digest);
+		if (!account) {
+			const name = importedSlotName(grant, source.pooled, taken);
+			taken.add(name);
+			const displayName = typeof grant.displayName === "string" ? { displayName: grant.displayName } : {};
+			account = {
+				name,
+				...displayName,
+				access: grant.access,
+				refresh: grant.refresh,
+				expires: grant.expires,
+				source: "import",
+				importedFrom: digest,
+			};
+			accounts.push(account);
+		}
+		if (pinned === undefined && typeof grant.name === "string" && grant.name === source.pinned) pinned = account.name;
 	}
-	const next = { ...subscription, accounts, ...(pinned === undefined ? {} : { pinned }) };
-	return { ...data, [ANTHROPIC_SUBSCRIPTION_PROVIDER_ID]: next };
+	const recorded = [
+		...new Set([...importedDigests(entry), ...source.grants.map((grant) => authGrantDigest(grant.refresh))]),
+	];
+	return {
+		...data,
+		anthropic: Object.assign({}, data.anthropic, { [IMPORTED_GRANTS_FIELD]: recorded }),
+		[ANTHROPIC_SUBSCRIPTION_PROVIDER_ID]: { ...subscription, accounts, ...(pinned === undefined ? {} : { pinned }) },
+	};
 }
 
 function migrate(data: AuthStorageData): AnthropicOAuthMigrationResult {
@@ -116,12 +136,10 @@ function migrate(data: AuthStorageData): AnthropicOAuthMigrationResult {
 	if (typeof source === "string") return { data, migrated: false, skipped: source };
 	const subscription = readSubscription(data[ANTHROPIC_SUBSCRIPTION_PROVIDER_ID]);
 	if (typeof subscription === "string") return { data, migrated: false, skipped: subscription };
-	const copied = (grant: OAuthGrant) =>
-		(subscription.accounts ?? []).some(
-			(account) => account.refresh === grant.refresh || account.importedFrom === authGrantDigest(grant.refresh),
-		);
-	const pending = source.grants.filter((grant) => !copied(grant));
-	if (pending.length > 0) return { data: copyGrants(data, source, subscription, pending), migrated: true };
+	const recorded = importedDigests(entry);
+	const unrecorded = source.grants.filter((grant) => !recorded.has(authGrantDigest(grant.refresh)));
+	if (unrecorded.length > 0)
+		return { data: copyGrants(data, entry, source, subscription, unrecorded), migrated: true };
 	const next: AuthStorageData = { ...data };
 	const remaining = remainingApiKeyEntry(source.keySlots, source.pinned);
 	if (remaining) next.anthropic = remaining;
@@ -136,11 +154,15 @@ function migrate(data: AuthStorageData): AnthropicOAuthMigrationResult {
  *
  * Two steps, one per auth.json load, so no credential is ever lost:
  * 1. Copy: every OAuth grant of the entry (each pool slot, and top-level fields that match no slot)
- *    that the subscription lane does not already hold is ADDED there, tagged `importedFrom` with the
- *    source grant's digest. The `anthropic` entry is not touched.
- * 2. Retire: a later load that reads every source grant back from the subscription lane removes the
- *    OAuth part of `anthropic`. API-key slots stay, rebuilt as an API-key credential projecting the
- *    pinned key. Nothing refreshes the leftover copy in between: `anthropic` has no OAuth method.
+ *    not yet recorded is ADDED to the subscription lane once (de-duplicated by refresh token, tagged
+ *    `importedFrom`), and the SAME write records its digest on the source entry. The source keeps
+ *    every credential it had.
+ * 2. Retire: a later load that finds every source grant recorded removes the OAuth part of
+ *    `anthropic`; seeing the record proves the copy was persisted with it. Recorded grants are never
+ *    copied again, so an account the user removed in between stays removed. API-key slots stay,
+ *    rebuilt as an API-key credential projecting the pinned key. Nothing refreshes the leftover copy in
+ *    between: `anthropic` has no OAuth method. An older binary that rotates it meanwhile produces a new,
+ *    unrecorded grant, which is copied as a new account (the old copy is then dead, nothing is lost).
  * Anything it cannot fully parse is left untouched and explained in `skipped`; it never throws, so a
  * broken entry can never take other providers' credentials down with it.
  */
