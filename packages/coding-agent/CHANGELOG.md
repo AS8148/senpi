@@ -16,6 +16,8 @@
 
 - Several sessions sharing one credential pool no longer fail requests with "Credential store is busy ... held for 5500ms". Reading pool health takes no lock, callers in one process queue for it instead of starving each other, and a health write that still cannot take the lock is skipped and logged instead of failing a reply that already arrived ([#3285](https://github.com/code-yeongyu/senpi/issues/3285)).
 
+- A tool named `eval` with its own `permissionParser` could answer for itself with a narrower class (for example `read`), so a preset that allows reads would run an arbitrary-code cell without asking. The `eval` permission request is now always carried alongside any tool-owned requests, so only a preset that allows everything allows a cell ([#3211](https://github.com/code-yeongyu/senpi/pull/3211), requested by @code-yeongyu).
+
 - A provider whose credentials were locked when the store was first read no longer reports "not configured" to `get_auth_providers` after the lock clears, while its models already work. The status now re-reads the store the same way model availability does (omo-desktop-app#2249).
 
 ### Removed
