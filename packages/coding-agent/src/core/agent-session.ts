@@ -366,6 +366,7 @@ import {
 	resolveTurnDeadlineSettings,
 	TURN_DEADLINE_ENTRY_TYPE,
 	type TurnDeadline,
+	type TurnDeadlineWarning,
 } from "./turn-deadline.ts";
 import { commandShapedName, findUnknownCommand } from "./unknown-command.ts";
 import { addUsageToTotals, combineUsage, createUsageTotals } from "./usage-totals.ts";
@@ -4225,7 +4226,7 @@ export class AgentSession {
 	}
 
 	/** Adapter for the deadline owner interface: a deadline stop that could not complete. */
-	_warnDeadline(event: "turn_deadline_record_failed" | "turn_deadline_unsettled", detail: string): void {
+	_warnDeadline(event: TurnDeadlineWarning, detail: string): void {
 		this._sessionLogger.warn(event, { detail });
 	}
 

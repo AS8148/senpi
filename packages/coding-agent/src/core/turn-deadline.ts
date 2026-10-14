@@ -89,6 +89,12 @@ export function resolveTurnDeadlineSettings(configured: {
  * The narrow AgentSession surface the tracker needs, declared here so the tracker lives
  * with the rest of the deadline contract instead of inside agent-session.ts.
  */
+export type TurnDeadlineWarning =
+	| "turn_deadline_record_failed"
+	| "turn_deadline_abort_failed"
+	| "turn_deadline_unsettled"
+	| "turn_deadline_failed";
+
 export interface DeadlineSessionOwner {
 	_recordDeadlineStop(deadline: TurnDeadline): void;
 	/** End the turn through the normal system abort (tools see the abort signal); resolves once the session is idle. */
@@ -97,7 +103,7 @@ export interface DeadlineSessionOwner {
 	readonly isRetryInFlight: boolean;
 	readonly isIdle: boolean;
 	/** A deadline stop that could not complete (the entry write failed, or the turn outlived the grace). */
-	_warnDeadline(event: "turn_deadline_record_failed" | "turn_deadline_unsettled", detail: string): void;
+	_warnDeadline(event: TurnDeadlineWarning, detail: string): void;
 }
 
 /** Resolves true when `work` settles within `ms`, false when the time runs out first. */
@@ -172,7 +178,12 @@ export class AgentDeadlineTracker {
 	 */
 	clearHold(): void {
 		// A stopped run that has not settled keeps its deadline (its agent_end reports it); the next arm resets it.
-		if (this.deadlineValue === undefined) this.renew();
+		if (this.deadlineValue === undefined) {
+			this.renew();
+			return;
+		}
+		// Once the stopped run has settled, its deadline is history: input clears it.
+		if (this.session.isIdle) this.deadlineValue = undefined;
 	}
 
 	private clearTimers(): void {
@@ -184,7 +195,7 @@ export class AgentDeadlineTracker {
 
 	private fire(kind: TurnDeadlineKind): void {
 		this.expire(kind).catch((error: unknown) =>
-			this.session._warnDeadline("turn_deadline_unsettled", error instanceof Error ? error.message : String(error)),
+			this.session._warnDeadline("turn_deadline_failed", error instanceof Error ? error.message : String(error)),
 		);
 	}
 
@@ -215,7 +226,13 @@ export class AgentDeadlineTracker {
 		// The abort signal reaches every running tool (the bash tool kills its process tree on it), and the
 		// normal settle path emits agent_idle once the run ends. A turn still running after the grace is held by
 		// something no abort can end (an extension handler that never returns): it is reported, never faked idle.
-		if (await within(this.session.abortTurnForDeadline(), TURN_DEADLINE_GRACE_MS)) return;
+		let abortError: string | undefined;
+		const aborting = this.session.abortTurnForDeadline().catch((error: unknown) => {
+			abortError = error instanceof Error ? error.message : String(error);
+		});
+		const settled = await within(aborting, TURN_DEADLINE_GRACE_MS);
+		if (abortError !== undefined) this.session._warnDeadline("turn_deadline_abort_failed", abortError);
+		if (settled && abortError === undefined) return;
 		if (!this.session.isIdle)
 			this.session._warnDeadline(
 				"turn_deadline_unsettled",

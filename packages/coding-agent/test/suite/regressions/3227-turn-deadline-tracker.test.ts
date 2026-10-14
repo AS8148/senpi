@@ -143,4 +143,21 @@ describe("turn deadline tracker (senpi#3227 review)", () => {
 			/60 min/,
 		);
 	});
+
+	it("reports an abort that rejects with its own error, and a settled stop's deadline clears on the next input", async () => {
+		const owner = fakeOwner();
+		owner.abortTurnForDeadline = () => {
+			owner.aborts += 1;
+			owner.isIdle = true;
+			return Promise.reject(new Error("abort exploded"));
+		};
+		const tracker = new AgentDeadlineTracker(owner, () => ({ inactivityMs: 60_000, maxRuntimeMs: 0 }));
+		tracker.arm();
+
+		await vi.advanceTimersByTimeAsync(60_000);
+		expect(owner.warnings).toEqual(["turn_deadline_abort_failed"]);
+
+		tracker.clearHold();
+		expect(tracker.current).toBeUndefined();
+	});
 });
