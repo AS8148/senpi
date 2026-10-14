@@ -3,7 +3,7 @@
 ### What changed
 
 - `packages/coding-agent/src/modes/rpc/effect-commands.ts`: `runAbort` takes `awaitIdle`, `clearQueue` and `graceMs` (0..60000, default 10000; out of range is `invalid_argument` with `reason` + `action`). `awaitIdle` races the dispatched abort against the grace and answers `stopped`/`idle`; `clearQueue` seals queued receipts then drains both queues before the abort and answers `cleared`. Plain `abort` is unchanged.
-- `packages/coding-agent/src/modes/rpc/client-admissions.ts`: `noteAbort` records `{ connectionId, effectId? }` as `abortedBy` until the turn's `agent_idle`; `clearQueuedByAbort` gives every queued input a `cleared_by_abort` receipt.
+- `packages/coding-agent/src/modes/rpc/client-admissions.ts`: `noteAbort` records `{ connectionId, effectId? }` as `abortedBy` until the turn's `agent_idle`, and `forgetAbort` / the next `agent_start` drop one that reached no turn, so a later system abort never inherits it; `clearQueuedByAbort` gives every queued input a `cleared_by_abort` receipt.
 - `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the abort dispatch returns its promise; `agent_end` (when aborted) and `session_abort` carry `abortedBy`.
 - `packages/coding-agent/src/modes/rpc/effect-outcome-copy.ts`, `effect-record.ts`, `effect-status.ts`: the `cleared_by_abort` outcome and its `failed` projection.
 - `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the abort fields, `RpcAbortQuiesce`, `RPC_ERROR_INVALID_ARGUMENT`.
