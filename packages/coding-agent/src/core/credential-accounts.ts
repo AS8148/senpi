@@ -70,7 +70,7 @@ function stringField(value: object, key: string): string | undefined {
 function slotBlocked(slot: object, sidecar: CredentialSlotState | undefined, now: number): boolean {
 	if (slotHealth(sidecar, now) === "blocked") return true;
 	const reason = stringField(slot, "blockReason");
-	if (reason === "auth_error" || reason === "account_disabled") return true;
+	if (reason === "account_disabled") return true;
 	const blockedUntil = numberField(slot, "blockedUntil");
 	return blockedUntil !== undefined && blockedUntil > now;
 }
