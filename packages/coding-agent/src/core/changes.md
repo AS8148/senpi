@@ -2,8 +2,9 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/retry-fallback/controller.ts`: `tryFallback` notes a `hard-error` cooldown under the failing rung (`provider/id:level`, via `rungSelector`) instead of the model, and re-scans the chain after noting it, so a model-wide park (`transient`, `billing`) also rules out that model's other rungs in the same walk. `originalRecovered` refuses a revert while the original rung (`originalSelector` at `originalThinkingLevel`) is parked by its own hard error.
-- `packages/coding-agent/src/core/retry-fallback/candidates.ts`: the scan skips an entry whose model or whose rung is suppressed.
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: `tryFallback` notes a `hard-error` cooldown under the failing rung (`provider/id:level`, via `rungSelector`) instead of the model, and, for a model-wide park (`transient`, `billing`), re-scans the chain after noting it so that model's other rungs are ruled out in the same walk. `originalRecovered` refuses a revert while the original rung (`originalSelector` at `originalThinkingLevel`) is parked by its own hard error.
+- `packages/coding-agent/src/core/retry-fallback/candidates.ts`: the scan skips an entry whose model is suppressed, or whose rung is suppressed at the level the entry would run at (its own level, or the inherited one, clamped like the switch), so a bare entry sees a park on the level it inherits.
+- `packages/coding-agent/src/core/retry-fallback/cooldown.ts`: new `clearModel(base)` clears the model key and every `base:<level>` rung; `clearForManualModelChange` uses it, so picking a model by hand lifts all its parks.
 
 ### Why
 
@@ -16,7 +17,8 @@ Cooldown keys, the candidate scan and the revert gate are internal to the retry-
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/core/retry-fallback/controller.ts`: the cooldown block of `tryFallback` and `originalRecovered`.
-- `packages/coding-agent/src/core/retry-fallback/candidates.ts`: the suppression check in `scanCandidates`.
+- `packages/coding-agent/src/core/retry-fallback/candidates.ts`: the suppression checks in `scanCandidates`.
+- `packages/coding-agent/src/core/retry-fallback/cooldown.ts`: the new `clearModel`.
 
 ## 2026-10-13 - A fallback rung is identified by its model AND its thinking level
 

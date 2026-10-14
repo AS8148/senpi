@@ -1,5 +1,5 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { Api, Model } from "@earendil-works/pi-ai";
+import { type Api, clampThinkingLevel, type Model } from "@earendil-works/pi-ai";
 import {
 	baseSelector,
 	candidatesAfter,
@@ -80,7 +80,7 @@ function scanCandidates(
 			filters.skip(raw, "tried");
 			continue;
 		}
-		if (filters.isSuppressed(base) || filters.isSuppressed(rungSelector(selector))) {
+		if (filters.isSuppressed(base)) {
 			filters.skip(raw, "suppressed");
 			continue;
 		}
@@ -91,6 +91,13 @@ function scanCandidates(
 		const model = filters.registry.find(selector.provider, selector.id);
 		if (!model) {
 			filters.skip(raw, "unknown");
+			continue;
+		}
+		// A hard-error park is keyed by the level the rung ran at, so check the level this entry
+		// would run at: its own, or the inherited one, clamped like the switch does (senpi#3311).
+		const level = clampThinkingLevel(model, selector.thinkingLevel ?? current.thinkingLevel ?? "off");
+		if (filters.isSuppressed(rungSelector({ ...selector, thinkingLevel: level }))) {
+			filters.skip(raw, "suppressed");
 			continue;
 		}
 		if (filters.isCircuitOpen(base)) {

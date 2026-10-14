@@ -229,4 +229,44 @@ describe("retry fallback thinking-level selection", () => {
 		expect(await controller.maybeRestorePrimary("cooldown-expiry")).toBe(true);
 		expect(switches.at(-1)).toEqual({ provider: "faux", id: "primary", thinking: "high", reason: "fallback-revert" });
 	});
+	it("keeps a hard-errored model parked on the next turn for a chain entry without a level (senpi#3311)", async () => {
+		const { controller, switches } = createController({
+			models: [primary, toggle, alwaysOn],
+			chains: { "faux/primary": ["faux/toggle", "faux/always-on"], "faux/always-on": ["faux/toggle"] },
+			current: { model: primary, thinkingLevel: "high" },
+		});
+
+		expect(await controller.tryFallback("hard-error", {})).toBe(true);
+		expect(await controller.tryFallback("hard-error", {})).toBe(true);
+		controller.resetTurn();
+
+		expect(await controller.tryFallback("hard-error", {})).toBe(false);
+		expect(switches.map((record) => `${record.id}:${record.thinking}`)).toEqual(["toggle:high", "always-on:high"]);
+	});
+
+	it("lifts every rung park of a model the user picks by hand", async () => {
+		const { controller, switches } = createController({
+			models: [primary, toggle],
+			chains: { "faux/primary": ["faux/toggle"], "faux/toggle": ["faux/primary:high"] },
+			current: { model: primary, thinkingLevel: "high" },
+		});
+
+		expect(await controller.tryFallback("hard-error", {})).toBe(true);
+		controller.clearForManualModelChange(primary);
+		controller.resetTurn();
+
+		expect(await controller.tryFallback("hard-error", {})).toBe(true);
+		expect(switches.map((record) => `${record.id}:${record.thinking}`)).toEqual(["toggle:high", "primary:high"]);
+	});
+
+	it("ends the walk when a transient failure parks the only model of a same-model chain", async () => {
+		const { controller, switches } = createController({
+			models: [primary],
+			chains: { "faux/primary": ["faux/primary:off"] },
+			current: { model: primary, thinkingLevel: "high" },
+		});
+
+		expect(await controller.tryFallback("transient", { errorMessage: "overloaded_error" })).toBe(false);
+		expect(switches).toEqual([]);
+	});
 });
