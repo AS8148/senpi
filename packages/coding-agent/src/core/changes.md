@@ -18,6 +18,27 @@
 
 - LOW: `CredentialSlotRepository` read/write paths in `state-store.ts`; `onSuccess`/`persistBlock` in `rotation-stream.ts`; the lease branch of both lanes in `rotation-slots.ts`.
 
+## 2026-10-14 - Credential-pool auth blocks are re-probed on a timer (senpi#3264)
+
+### What changed
+
+- New `packages/coding-agent/src/core/credential-pool/auth-reprobe.ts` (`AUTH_BLOCK_REPROBE_MS`, 15 min).
+- `packages/coding-agent/src/core/credential-pool/rotation-stream.ts`: `blockPatch` gives an `auth_error` block `blockedUntil = now + AUTH_BLOCK_REPROBE_MS`.
+- `packages/coding-agent/src/core/credential-pool/state-store.ts`, `failover.ts`: `auth_error` is no longer a permanent block; like a cooldown it holds until `blockedUntil`, after which one caller takes the half-open probe lease. `account_disabled` stays permanent.
+- `packages/coding-agent/src/core/credential-accounts.ts`: account summaries report an auth block only while it is live.
+
+### Why
+
+- An auth block cleared only when new credential material was written, so a token refreshed outside this process left the account excluded indefinitely (senpi#3264). Regression: `test/suite/regressions/3264-auth-block-reprobe.test.ts`.
+
+### Why an extension could not handle it
+
+- The pool sidecar and rotation engine are core modules every pooled provider goes through.
+
+### Expected merge conflict zones
+
+- LOW: `slotHealth`/`acquireHalfOpenLease` in `state-store.ts`; `isAvailable` in `failover.ts`; `blockPatch` in `rotation-stream.ts`; `slotBlocked` in `credential-accounts.ts`.
+
 ## 2026-10-14 - Claude subscriptions move from the direct anthropic provider to the Agent SDK lane (senpi#3259)
 
 ### What changed

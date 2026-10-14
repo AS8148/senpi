@@ -50,6 +50,7 @@ import type {
 } from "./monitor-continuation-types.ts";
 import { findParkedGoalWait, type ParkedGoalWait } from "./parked-wait.ts";
 import { buildContinuationPrompt, buildGoalStallNotice, buildTruncationRecoveryPrompt } from "./prompt.ts";
+import { PROVIDER_RETRY_BASE_MS, providerRetryAt, providerRetryDelayMs } from "./provider-retry.ts";
 import { isStaleExtensionContextError } from "./stale-context.ts";
 import { resetContinuationStreak } from "./store.ts";
 import { goalStoreRef } from "./store-ref.ts";
@@ -100,6 +101,8 @@ export class MonitorAwareGoalContinuation {
 	#directInputHolds = new Set<string>();
 	#pendingSystemRecovery: SystemAbortOptions | undefined;
 	#pendingProviderRecovery: ProviderRecoveryOptions | undefined;
+	#providerRetryAttempts = 0;
+	#providerRetryDelayMs: number | undefined;
 
 	constructor(
 		pi: ExtensionAPI,
@@ -127,6 +130,7 @@ export class MonitorAwareGoalContinuation {
 
 	async afterAgentEnd(options: AgentEndOptions): Promise<Goal | null> {
 		if (options.goal?.id !== this.#goal?.id) this.#resetContinuationState();
+		this.#providerRetryAttempts = 0;
 		this.#ctx = options.ctx;
 		this.#goal = options.goal;
 		this.#lastAgentEndMessages = options.messages;
@@ -236,6 +240,19 @@ export class MonitorAwareGoalContinuation {
 			pendingProvider.event.abortSource === "user"
 		) {
 			return undefined;
+		}
+		this.#providerRetryAttempts += 1;
+		const now = Date.now();
+		const delayMs = providerRetryDelayMs(
+			this.#providerRetryAttempts,
+			providerRetryAt(pendingProvider.messages, now),
+			now,
+		);
+		if (delayMs > 0) {
+			this.#cancelTimer();
+			this.#providerRetryDelayMs = delayMs;
+			this.#schedule(pendingProvider.goal, "providerRetry");
+			return pendingProvider.goal;
 		}
 		return (
 			await this.#admitAndQueue(
@@ -371,7 +388,9 @@ export class MonitorAwareGoalContinuation {
 							resolveGoalPromptCacheLifetime(this.#ctx?.model, process.env),
 						),
 					))
-				: GOAL_USER_GRACE_DELAY_MS;
+				: kind === "providerRetry"
+					? (this.#providerRetryDelayMs ?? PROVIDER_RETRY_BASE_MS)
+					: GOAL_USER_GRACE_DELAY_MS;
 		this.#scheduledDelayMs = delayMs;
 		let remainingMs = delayMs;
 		if (kind === "monitor") {
@@ -468,7 +487,11 @@ export class MonitorAwareGoalContinuation {
 		this.#waitTicker?.stop();
 		const delayMs =
 			this.#scheduledDelayMs ??
-			(kind === "monitor" ? GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS : GOAL_USER_GRACE_DELAY_MS);
+			(kind === "monitor"
+				? GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS
+				: kind === "providerRetry"
+					? PROVIDER_RETRY_BASE_MS
+					: GOAL_USER_GRACE_DELAY_MS);
 		const waitedMs = this.#scheduledAtMs === undefined ? delayMs : Math.max(0, Date.now() - this.#scheduledAtMs);
 		const dueAtMs = this.#scheduledAtMs === undefined ? undefined : this.#scheduledAtMs + delayMs;
 		const wakeCause = drainFire ? "sources-drained" : "timer";
@@ -485,7 +508,7 @@ export class MonitorAwareGoalContinuation {
 		const admission = await this.#admitAndQueue(
 			ctx,
 			goal,
-			kind === "monitor" ? "monitorDelayed" : "userGrace",
+			kind === "monitor" ? "monitorDelayed" : kind === "providerRetry" ? "providerRecovery" : "userGrace",
 			this.#lastAgentEndMessages,
 		);
 		if (kind !== "monitor" || !admission.admitted || iteration === undefined) return;
@@ -753,6 +776,7 @@ export class MonitorAwareGoalContinuation {
 	#resetContinuationState(): void {
 		this.#pendingSystemRecovery = undefined;
 		this.#pendingProviderRecovery = undefined;
+		this.#providerRetryAttempts = 0;
 		this.#consecutiveLengthRecoveries.clear();
 		this.#recentNormalizedOutputHashes = [];
 		this.#resetToollessContinuationStreak();

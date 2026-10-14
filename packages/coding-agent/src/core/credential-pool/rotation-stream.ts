@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
 import { rendezvousOrder, type SlotHasher } from "@earendil-works/pi-ai/auth/pool/select";
+import { AUTH_BLOCK_REPROBE_MS } from "./auth-reprobe.ts";
 import { type CredentialBlock, classifyCredentialFailure } from "./classify.ts";
 import { runCredentialFailover } from "./failover.ts";
 import { writeHealthUnlessStoreBusy } from "./health-write.ts";
@@ -72,6 +73,8 @@ function blockPatch(
 			blockReason: "rate_limit",
 		};
 	}
+	if (block.reason === "auth_error")
+		return { ...base, blockedUntil: now + AUTH_BLOCK_REPROBE_MS, blockReason: "auth_error" };
 	return { ...base, blockReason: block.reason };
 }
 
