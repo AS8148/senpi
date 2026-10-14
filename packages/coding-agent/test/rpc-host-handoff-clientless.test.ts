@@ -1,4 +1,6 @@
-import { rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { readdir, readFile, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { probeHost } from "../src/modes/rpc/host-probe.ts";
 import { readHostStatus } from "../src/modes/rpc/host-status.ts";
@@ -11,6 +13,44 @@ import {
 	waitForPidGone,
 } from "./helpers/rpc-generation-support.ts";
 import { beginHandoverCommand, connect, dataOf, startHandoverRig } from "./helpers/rpc-idle-handover-support.ts";
+
+// Diagnostic dump for a failure of the reopen assertion below: capture the listed durable ids, the
+// transcript's existence, and the handover-parked record tree (entry contents included) so a lost
+// session is identifiable from the test log instead of a bare assertion (senpi#3282).
+async function dumpReopenFailure(
+	rig: { qa: GenerationScratch },
+	openedState: { durableSessionId?: string; sessionFile?: string } | undefined,
+	lastListed: readonly string[],
+): Promise<void> {
+	const lines: string[] = [];
+	lines.push(`[reopen-dump] lastListed=${JSON.stringify(lastListed)}`);
+	const sessionFile = openedState?.sessionFile;
+	lines.push(
+		`[reopen-dump] sessionFile=${sessionFile ?? "<none>"} exists=${sessionFile !== undefined ? existsSync(sessionFile) : "n/a"}`,
+	);
+	const daemonRoot = join(rig.qa.agentDir, "rpc-host-daemon");
+	const walk = async (dir: string, depth: number): Promise<void> => {
+		if (depth > 4) return;
+		let names: string[] = [];
+		try {
+			names = await readdir(dir);
+		} catch {
+			return;
+		}
+		for (const name of names) {
+			const path = join(dir, name);
+			lines.push(`[reopen-dump] ${path}`);
+			if (name.endsWith(".json") && dir.endsWith("handover-parked")) {
+				try {
+					lines.push(`[reopen-dump] entry ${name}: ${await readFile(path, "utf8")}`);
+				} catch {}
+			}
+			if (name === "handover-parked" || depth < 3) await walk(path, depth + 1);
+		}
+	};
+	await walk(daemonRoot, 0);
+	process.stderr.write(`${lines.join("\n")}\n`);
+}
 
 const scratches: GenerationScratch[] = [];
 const peers: JsonlPeer[] = [];
@@ -96,10 +136,13 @@ describe.skipIf(process.platform === "win32")("client-less retained sessions acr
 		// exactly that the reopened session never comes back open (senpi#3282).
 		const deadline1 = Date.now() + 60_000;
 		let openAfterFirst = false;
+		let lastListed: string[] = [];
 		while (!openAfterFirst && Date.now() < deadline1) {
-			openAfterFirst = (await listDurableIds()).includes(durableId!);
+			lastListed = await listDurableIds();
+			openAfterFirst = lastListed.includes(durableId!);
 			if (!openAfterFirst) await new Promise((resolve) => setTimeout(resolve, 250));
 		}
+		if (!openAfterFirst) await dumpReopenFailure(rig, openedState, lastListed);
 		expect(openAfterFirst, `durable ${durableId} not open after the first handover`).toBe(true);
 
 		// After a SECOND handover the session is open again with the same durable id.

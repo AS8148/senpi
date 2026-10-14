@@ -32,7 +32,9 @@ function openInProgressWaitMs(): number {
 class OpenInProgressWaitError extends Error {}
 
 // The owner a still-opening path's rejection names: the current host, attached (the session is
-// being served, not stranded), so a reclaim never treats it as a stranded claim.
+// being served, not stranded). This is a signal, not a protection: a client may still treat a
+// current owner as locally reclaimable. What keeps the opening session alive is that this host
+// refuses abort and close on an "opening" entry (getForCommand, beginSessionClose).
 function openingOwner(sessionPath: string): SessionPathOwner {
 	return {
 		instanceId: hostInstanceId(),
@@ -84,9 +86,9 @@ export async function attachToOpenSession(
 					throw new RpcSessionRegistryError("session_path_in_use", "the session is still opening", {
 						reason: "open_in_progress",
 						retry_after_ms: OPEN_IN_PROGRESS_WAIT_RETRY_MS,
-						// The rejection names the current host as an ATTACHED owner: a reclaim of a path whose
-						// session is still opening must never close it, and an attached current owner keeps the
-						// claim standing (senpi#3282 review; the opening session is never stranded).
+						// The rejection names the current host as an attached owner. A client that reclaims the
+						// path anyway cannot close the opening session: abort and close on an "opening" entry are
+						// refused with unknown_session (senpi#3282 review round 9).
 						owner: openingOwner(sessionPath),
 					});
 				// The in-flight open FAILED: its rollback released the reservation, so the path is now
