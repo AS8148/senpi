@@ -2099,7 +2099,9 @@ effectId"` unless its `model_change` entry is already in the transcript, in whic
 it is `done`. The model a session runs is read from its transcript, never from a receipt.
 An unfinished `set_thinking_level` similarly becomes `done` if its stamped
 `thinking_level_change` exists, otherwise `failed` with an action to send
-`set_thinking_level` again with a new effect id.
+`set_thinking_level` again with a new effect id. An unfinished `dequeue` or `edit_queued`
+becomes `failed` with `reason: "interrupted_by_reopen"` and an action to re-read
+`queue_update.ordered` and retry with a new effect id.
 
 An `abort` without `effectId` writes nothing and behaves as before.
 
@@ -2271,7 +2273,7 @@ Every queued input carries a session-unique `queuedId` (`q_<n>`) in `get_state.o
 
 A `steer` or `follow_up` sent **without** a `clientMessageId` is still recorded durably under a host-minted id (`host:<durableSessionId>:<uuid>`), so it survives a host restart and a reopen restores it exactly once. The response never echoes that id; `get_effect_status` and `effect_status` report it as the input's `effectId`.
 
-`status` is `removed` / `edited`, or `already_delivered` (the input was already handed to the agent) or `not_found` (no such id in this session); those two also carry `reason` and `action`, and an `effectId` receipt ends `failed` with that outcome. A missing or over-long `queuedId` is refused.
+`status` is `removed` / `edited`, or `already_delivered` (the input was already handed to the agent) or `not_found` (no such id in this session); those two also carry `reason` and `action`, and an `effectId` receipt ends `failed` with that outcome. A missing or over-long `queuedId` is refused, and so is an edit whose `text` is empty or longer than `MAX_RPC_MESSAGE_CHARACTERS` (use `dequeue_message` to remove an input). An edited input that has a `clientMessageId` keeps the edit across a reopen, and a retry of its original send still replays.
 
 #### clear_queue
 
