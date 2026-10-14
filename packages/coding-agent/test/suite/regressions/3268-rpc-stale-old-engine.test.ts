@@ -87,9 +87,7 @@ describe.skipIf(process.platform === "win32")("stale old-engine hosts (#3268)", 
 	it("keeps a host that holds a session", async () => {
 		const { qa, supervisor } = await idleHost("session");
 		const peer = await attach(qa);
-		openedSessionId(
-			await peer.request({ id: "open", type: "open_session", cwd: qa.cwd, retainOnDisconnect: true }),
-		);
+		openedSessionId(await peer.request({ id: "open", type: "open_session", cwd: qa.cwd, retainOnDisconnect: true }));
 		peer.destroy();
 		const result = await gcHostEndpoints(qa.agentDir, { staleEngine });
 		expect(result.stopped).toEqual([]);
@@ -100,15 +98,19 @@ describe.skipIf(process.platform === "win32")("stale old-engine hosts (#3268)", 
 	it.each([
 		["the same engine", { client: engineBuildIdentity(), now: PAST_WINDOW }, "stale_not_older"],
 		["a host still inside its idle window", { client: NEWER_CLIENT, now: Date.now }, "stale_young"],
-	] as const)("keeps %s", async (_case, options, reason) => {
-		const { qa, supervisor } = await idleHost("keep");
-		const [row] = await readAllHostStatus({ agentDir: qa.agentDir, includeWorkers: true, staleEngine: options });
-		expect(row?.stale_old_engine).toBe(false);
-		const result = await gcHostEndpoints(qa.agentDir, { staleEngine: options });
-		expect(result.stopped).toEqual([]);
-		expect(result.kept).toEqual([expect.objectContaining({ socket: qa.socket, reason })]);
-		expect(processAlive(supervisor)).toBe(true);
-	}, 90_000);
+	] as const)(
+		"keeps %s",
+		async (_case, options, reason) => {
+			const { qa, supervisor } = await idleHost("keep");
+			const [row] = await readAllHostStatus({ agentDir: qa.agentDir, includeWorkers: true, staleEngine: options });
+			expect(row?.stale_old_engine).toBe(false);
+			const result = await gcHostEndpoints(qa.agentDir, { staleEngine: options });
+			expect(result.stopped).toEqual([]);
+			expect(result.kept).toEqual([expect.objectContaining({ socket: qa.socket, reason })]);
+			expect(processAlive(supervisor)).toBe(true);
+		},
+		90_000,
+	);
 
 	it("never judges a live host without the stale-engine option", async () => {
 		const { qa, supervisor } = await idleHost("plain");

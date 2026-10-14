@@ -14,6 +14,8 @@
 
 ### Fixed
 
+- `senpi host gc`, and the cleanup pass that runs after starting a host, now stop a host left behind by an older engine once it holds no session, no reservation and no client and has outlived its own idle window plus 10 minutes. Such hosts used to linger for days after an update, because their old idle logic was the only thing that could end them. `senpi host status --all` marks them `stale_old_engine`. A host with any session or connected client is never stopped ([#3268](https://github.com/code-yeongyu/senpi/issues/3268)).
+
 - Local extensions keep loading after a runtime update on Bun 1.4.2 and older. Bun's transpile cache had stored the previous runtime's path to `extension-runtime-module.js`, so once that runtime was pruned an unchanged extension failed with `Cannot find module`. The cache entry now changes whenever the runtime moves, and a cache that is already broken heals on the next start, with nothing to clear by hand ([#3300](https://github.com/code-yeongyu/senpi/issues/3300), reported in the OmO community).
 
 - A credential-pool account blocked for an authentication error is no longer excluded until someone logs in again. The block now lasts 15 minutes, then one request tries the account again (refreshing its saved login first when it can), so accounts whose token was renewed elsewhere come back on their own. A goal whose provider is down no longer fires eight retries within seconds and gives up: retries back off from 15 seconds up to 30 minutes, and when the pool names the time an account frees up, the goal waits until then and continues ([#3264](https://github.com/code-yeongyu/senpi/issues/3264)).
