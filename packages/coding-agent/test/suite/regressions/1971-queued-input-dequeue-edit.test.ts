@@ -3,6 +3,7 @@ import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHarness, getUserTexts, type Harness } from "../harness.ts";
+import { createIdentityHarness } from "../rpc-client-identity-harness.ts";
 
 // senpi#1971: every queued input has a queuedId; dequeue/edit act on the visible lists and the native queue alike.
 
@@ -93,5 +94,29 @@ describe("queued input identity, dequeue and edit (senpi#1971)", () => {
 		await harness.session.waitForIdle();
 
 		expect(getUserTexts(harness)).toEqual(["start", "same", "changed"]);
+	});
+});
+
+describe("an edited durable queued input across a reopen (senpi#1971)", () => {
+	const fixtures: Awaited<ReturnType<typeof createIdentityHarness>>[] = [];
+	afterEach(async () => {
+		for (const fixture of fixtures.splice(0)) await fixture.cleanup();
+	});
+
+	it("restores the edited text, not the text first sent", async () => {
+		const fixture = await createIdentityHarness();
+		fixtures.push(fixture);
+		fixture.harness.setResponses([fauxAssistantMessage("one")]);
+		const rpc = fixture.bind();
+		await rpc.send({ type: "follow_up", message: "use production", clientMessageId: "f1" });
+		const before = await rpc.send({ type: "get_state" });
+		const queuedId = (before.data?.ordered as { queuedId: string }[] | undefined)?.[0]?.queuedId;
+
+		const edited = await rpc.send({ type: "edit_queued_message", queuedId, text: "use staging" });
+		const reopened = await fixture.reopen();
+		const after = await reopened.send({ type: "get_state" });
+
+		expect(edited).toMatchObject({ data: { status: "edited" } });
+		expect(((after.data?.ordered ?? []) as { text: string }[]).map((input) => input.text)).toEqual(["use staging"]);
 	});
 });

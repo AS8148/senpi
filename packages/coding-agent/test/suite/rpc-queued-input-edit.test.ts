@@ -49,7 +49,7 @@ describe("RPC queued-input dequeue and edit", () => {
 		expect(invalid).toMatchObject({ success: false });
 		const state = await client.request({ type: "get_state", sessionId });
 		expect(state.data?.steering).toEqual(["kept and edited"]);
-		expect((state.data?.ordered as Ordered[]).map((input) => input.queuedId)).toEqual([keep?.queuedId]);
+		expect(((state.data?.ordered ?? []) as Ordered[]).map((input) => input.queuedId)).toEqual([keep?.queuedId]);
 		const replay = await client.request({
 			type: "dequeue_message",
 			sessionId,

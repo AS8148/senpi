@@ -100,8 +100,11 @@ export function rpcCommandPayloadError(command: unknown): string | undefined {
 	) {
 		return "queuedId must be a non-empty string of at most 256 characters; read it from get_state or queue_update.";
 	}
-	if (value.type === "edit_queued_message" && typeof value.text !== "string") {
-		return "text must be a string.";
+	if (
+		value.type === "edit_queued_message" &&
+		!(typeof value.text === "string" && value.text.length > 0 && value.text.length <= MAX_RPC_MESSAGE_CHARACTERS)
+	) {
+		return `text must be a non-empty string of at most ${MAX_RPC_MESSAGE_CHARACTERS} characters; dequeue_message removes an input.`;
 	}
 	if (
 		(value.type === "steer" || value.type === "follow_up") &&
