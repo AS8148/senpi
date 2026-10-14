@@ -1,12 +1,14 @@
 import { MAX_SLOT_BLOCK_MS } from "@earendil-works/pi-ai/auth/pool/failover";
 import { stripProviderRequestIds } from "@earendil-works/pi-ai/utils/retry";
+import { isValidThinkingLevel } from "../../cli/args.ts";
 import { usageLimitResetMs } from "../credential-pool/reset-time.ts";
 import { isTransportFailureText } from "./transient-network.ts";
 
 /**
  * Runtime-only selector suppression. A SelectorCooldowns instance belongs to one
  * AgentSession and is deliberately never persisted to settings or session files.
- * Callers provide canonical base selectors without a thinking suffix.
+ * Keys are canonical base selectors (`provider/id`), or a rung (`provider/id:level`) for a
+ * hard error that parks only the level that failed (senpi#3311).
  */
 export class SelectorCooldowns {
 	private readonly expiresAtBySelector = new Map<string, number>();
@@ -34,6 +36,15 @@ export class SelectorCooldowns {
 
 	clear(baseSelector: string): void {
 		this.expiresAtBySelector.delete(baseSelector);
+	}
+
+	/** Clears `baseSelector` and every rung of it (`baseSelector:<thinking level>`), never another model. */
+	clearModel(baseSelector: string): void {
+		for (const key of this.expiresAtBySelector.keys()) {
+			// Only a rung of this model: a model id may itself contain ':' (openrouter's `x:batch`).
+			const rung = key.startsWith(`${baseSelector}:`) && isValidThinkingLevel(key.slice(baseSelector.length + 1));
+			if (key === baseSelector || rung) this.expiresAtBySelector.delete(key);
+		}
 	}
 
 	clearAll(): void {
