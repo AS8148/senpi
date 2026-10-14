@@ -27,6 +27,9 @@ type AdmissionHooks = {
 const sessions = new WeakMap<AgentSession, ClientAdmissions>();
 
 /** One ledger per runtime; the transcript, not an attachment or request id, owns its history. */
+/** The client (and abort effect) an `abortedBy` names. */
+export type ClientAbort = { readonly connectionId: string; readonly effectId?: string };
+
 export class ClientAdmissions {
 	private readonly records = new Map<string, ClientAdmissionRecord>();
 	private readonly pending = new Map<
@@ -38,7 +41,7 @@ export class ClientAdmissions {
 	private turnOutcome: EffectOutcome | undefined;
 	/** The client whose `abort` reached the current turn, for `outcome.abortedBy`. */
 	private turnAbortedBy: EffectActor | undefined;
-	private lastAbort: { readonly connectionId: string; readonly effectId?: string } | undefined;
+	private lastAbort: ClientAbort | undefined;
 	private readonly session: AgentSession;
 	private readonly durableSessionId: string;
 	private readonly unsubscribeAgent: () => void;
@@ -139,9 +142,12 @@ export class ClientAdmissions {
 	}
 
 	/** Remember who aborted the running turn; the turn's receipts name them once it ends. */
-	noteAbort(by: EffectActor, effectId?: string): void {
+	/** Record who aborted; the returned record is the token `forgetAbort` takes. */
+	noteAbort(by: EffectActor, effectId?: string): ClientAbort {
 		if (this.session.isStreaming) this.turnAbortedBy = by;
-		this.lastAbort = { connectionId: by.connectionId, ...(effectId === undefined ? {} : { effectId }) };
+		const abort: ClientAbort = { connectionId: by.connectionId, ...(effectId === undefined ? {} : { effectId }) };
+		this.lastAbort = abort;
+		return abort;
 	}
 
 	/** The client (and abort effect) that aborted the current turn, for `agent_end`/`session_abort.abortedBy`. */
@@ -149,9 +155,12 @@ export class ClientAdmissions {
 		return this.lastAbort;
 	}
 
-	/** A client abort that reached no turn has settled: it must not name a later, unrelated abort. */
-	forgetAbort(): void {
-		this.lastAbort = undefined;
+	/**
+	 * A client abort that reached no turn has settled: it must not name a later, unrelated abort.
+	 * Only that abort is forgotten; a newer one recorded meanwhile stays.
+	 */
+	forgetAbort(abort: ClientAbort): void {
+		if (this.lastAbort === abort) this.lastAbort = undefined;
 	}
 
 	/**

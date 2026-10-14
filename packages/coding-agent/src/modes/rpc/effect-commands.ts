@@ -148,10 +148,11 @@ export async function runAbort(
 		const drained = ctx.session.clearQueue({ abortWillFollow: true });
 		cleared = drained.steering.length + drained.followUp.length;
 	}
-	admissions.noteAbort(ctx.by, effectId);
+	const noted = admissions.noteAbort(ctx.by, effectId);
 	const aborting = dispatch();
-	// No turn to name: once this abort settled (its session_abort, if any, already read it), forget it.
-	if (!streaming) void aborting.finally(() => admissions.forgetAbort());
+	// No turn to name: once this abort settled (its session_abort, if any, already read it), forget it,
+	// unless a newer abort has been recorded since.
+	if (!streaming) void aborting.finally(() => admissions.forgetAbort(noted));
 	const ledger = effectId === undefined ? undefined : EffectLedger.forSession(ctx.session);
 	let status =
 		effectId === undefined
