@@ -93,6 +93,10 @@ type RpcSessionCommand =
 	| { id?: string; type: "reload" }
 	| { id?: string; type: "check_reload_veto" }
 	| { id?: string; type: "clear_queue"; abortWillFollow?: boolean }
+	/** Remove one queued input by its `queuedId` (from `get_state` / `queue_update`) before it reaches a turn. */
+	| { id?: string; type: "dequeue_message"; queuedId: string; effectId?: string }
+	/** Replace the text of one queued input in place, keeping its order and identity. */
+	| { id?: string; type: "edit_queued_message"; queuedId: string; text: string; effectId?: string }
 	| { id?: string; type: "get_steering_messages" }
 	| { id?: string; type: "get_follow_up_messages" }
 	| { id?: string; type: "abort_branch_summary" }
@@ -392,6 +396,14 @@ export type RpcErrorCode =
 	| typeof RPC_ERROR_HOST_DRAINING;
 
 /** What an effect command (`abort`/`set_model`/`set_thinking_level` with `effectId`) answers about its receipt. */
+/** What `dequeue_message` / `edit_queued_message` did; anything but removed/edited carries reason + action. */
+export interface RpcQueuedInputChange {
+	queuedId: string;
+	status: "removed" | "edited" | "already_delivered" | "not_found";
+	reason?: string;
+	action?: string;
+}
+
 export interface RpcEffectAnswer {
 	effectId: string;
 	state: EffectState;
@@ -849,6 +861,13 @@ export type RpcResponse =
 			data?: ClientMessageIdentity & { disposition?: QueuedInputDisposition; admission?: ClientMessageAdmission };
 	  }
 	| { id?: string; type: "response"; command: "abort"; success: true; data?: RpcEffectAnswer }
+	| {
+			id?: string;
+			type: "response";
+			command: "dequeue_message" | "edit_queued_message";
+			success: true;
+			data: RpcQueuedInputChange & Partial<RpcEffectAnswer>;
+	  }
 	| {
 			id?: string;
 			type: "response";

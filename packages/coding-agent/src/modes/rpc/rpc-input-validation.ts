@@ -95,6 +95,15 @@ export function rpcCommandPayloadError(command: unknown): string | undefined {
 		return "clientMessageId and clientTurnId must be non-empty strings of at most 256 characters.";
 	}
 	if (
+		(value.type === "dequeue_message" || value.type === "edit_queued_message") &&
+		!(typeof value.queuedId === "string" && value.queuedId.length > 0 && value.queuedId.length <= 256)
+	) {
+		return "queuedId must be a non-empty string of at most 256 characters; read it from get_state or queue_update.";
+	}
+	if (value.type === "edit_queued_message" && typeof value.text !== "string") {
+		return "text must be a string.";
+	}
+	if (
 		(value.type === "steer" || value.type === "follow_up") &&
 		value.enqueueOrder !== undefined &&
 		!(typeof value.enqueueOrder === "number" && Number.isFinite(value.enqueueOrder))

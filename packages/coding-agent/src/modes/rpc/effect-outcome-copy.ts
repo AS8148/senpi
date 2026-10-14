@@ -11,6 +11,18 @@ export const EFFECT_OUTCOMES = {
 		detail: "the session was reopened while this input's turn was running, so that turn never finished",
 		action: "read the transcript for what the turn produced, then send the input again with a new clientMessageId",
 	},
+	queuedInputAlreadyDelivered: {
+		kind: "already_delivered",
+		reason: "already_delivered",
+		detail: "the queued message had already been handed to the agent, so it can no longer be removed or edited",
+		action: "send a follow-up message to correct it, or abort the turn",
+	},
+	queuedInputNotFound: {
+		kind: "not_found",
+		reason: "not_found",
+		detail: "no queued message has this queuedId in this session",
+		action: "read queuedId values from get_state or queue_update and retry with one that is still queued",
+	},
 	inputDroppedByReplace: {
 		kind: "dropped_by_replace",
 		reason: "dropped_by_replace",
