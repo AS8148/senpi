@@ -91,8 +91,8 @@ export class PermissionService {
 		target: string | readonly string[],
 		options: DecisionOptions = {},
 	): { readonly action: Rule["action"]; readonly rules: readonly Rule[] } {
+		this.refreshApproved();
 		if (!options.presetBound) {
-			this.refreshApproved();
 			const rule = evaluate(permission, target, this.staticRuleset, this.approved);
 			// Full access means no prompts: a settings/CLI ask collapses to allow here, while a deny
 			// stays denied. This is the one dedicated full-access decision (senpi#2465).
