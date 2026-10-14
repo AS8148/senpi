@@ -28,6 +28,7 @@ describe("multi-session RPC protocol info", () => {
 					"media_placeholders",
 					"durable_client_message_id",
 					"effect_ledger",
+					"steer_when_idle",
 					"continue_from_leaf",
 					"eval_cells",
 					"session_held",

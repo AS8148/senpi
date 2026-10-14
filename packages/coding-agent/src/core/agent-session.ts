@@ -4865,8 +4865,11 @@ export class AgentSession {
 			);
 		}
 
-		const ownsPromptStart =
-			!this.isStreaming && !this._promptStartPending && options?.streamingBehavior === undefined;
+		// An idle submission claims the start even when it carries a streamingBehavior, so input arriving
+		// while it is still starting (another `whenIdle: "start"`, a queued-or-start prompt) joins this turn
+		// instead of starting a second one. Queue decisions below read the claim state from before this call.
+		const startWasPending = this._promptStartPending;
+		const ownsPromptStart = !this.isStreaming && !startWasPending;
 		if (ownsPromptStart) this._promptStartPending = true;
 		// Extension bindings deliberately fire-and-forget sendUserMessage(), so an
 		// extension callback cannot deadlock on this wait. The resulting provider
@@ -4887,9 +4890,7 @@ export class AgentSession {
 		// goal chain) holds the barrier, making typed input invisible until the run
 		// ends or the user aborts.
 		const canQueueWhileStreaming =
-			(this.isStreaming || this._promptStartPending) &&
-			!this.isCompacting &&
-			options?.streamingBehavior !== undefined;
+			(this.isStreaming || startWasPending) && !this.isCompacting && options?.streamingBehavior !== undefined;
 		// Auto-compaction claims only _autoCompactionAbortController, which the
 		// admission guard above deliberately ignores so background compaction never
 		// rejects typed input. Without a queue route that message matched no branch
@@ -4900,7 +4901,7 @@ export class AgentSession {
 			this._autoCompactionAbortController !== undefined &&
 			this._compactionAbortController === undefined &&
 			!this.isStreaming &&
-			!this._promptStartPending &&
+			!startWasPending &&
 			options?.streamingBehavior !== undefined;
 		if (
 			shouldWaitForSessionWork &&
@@ -5073,6 +5074,8 @@ export class AgentSession {
 				if (options.thinkingLevel !== undefined) {
 					throw new Error("Cannot set thinkingLevel on a queued prompt; set it after the current turn completes.");
 				}
+				// Queued, not started: release the start claim before enqueueing, or a claimed start diverts it.
+				if (ownsPromptStart) this._promptStartPending = false;
 				if (options.streamingBehavior === "followUp") {
 					await this._queueFollowUp(expandedText, currentImages, options);
 				} else {
@@ -5092,6 +5095,8 @@ export class AgentSession {
 				if (options?.thinkingLevel !== undefined) {
 					throw new Error("Cannot set thinkingLevel on a queued prompt; set it after the current turn completes.");
 				}
+				// Queued, not started: release the start claim before enqueueing, or a claimed start diverts it.
+				if (ownsPromptStart) this._promptStartPending = false;
 				if (options?.streamingBehavior === "followUp") {
 					await this._queueFollowUp(expandedText, currentImages, options);
 				} else {
@@ -5112,6 +5117,8 @@ export class AgentSession {
 				if (options?.thinkingLevel !== undefined) {
 					throw new Error("Cannot set thinkingLevel on a queued prompt; set it after the current turn completes.");
 				}
+				// Queued, not started: release the start claim before enqueueing, or a claimed start diverts it.
+				if (ownsPromptStart) this._promptStartPending = false;
 				if (options?.streamingBehavior === "followUp") {
 					await this._queueFollowUp(expandedText, currentImages, options);
 				} else {
@@ -5141,6 +5148,8 @@ export class AgentSession {
 							"Cannot set thinkingLevel on a queued prompt; set it after the current turn completes.",
 						);
 					}
+					// Queued, not started: release the start claim before enqueueing, or a claimed start diverts it.
+					if (ownsPromptStart) this._promptStartPending = false;
 					if (options?.streamingBehavior === "followUp") {
 						await this._queueFollowUp(expandedText, currentImages, options);
 					} else {
@@ -5165,6 +5174,8 @@ export class AgentSession {
 					(this._compactionLifecycle.state.status === "failed" ||
 						this._compactionLifecycle.state.status === "aborted"))
 			) {
+				// Queued, not started: release the start claim before enqueueing, or a claimed start diverts it.
+				if (ownsPromptStart) this._promptStartPending = false;
 				if (options?.streamingBehavior === "followUp") {
 					await this._queueFollowUp(expandedText, currentImages, options);
 				} else {

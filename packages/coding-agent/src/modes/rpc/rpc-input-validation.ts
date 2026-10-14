@@ -102,6 +102,14 @@ export function rpcCommandPayloadError(command: unknown): string | undefined {
 		return "enqueueOrder must be a finite number.";
 	}
 	if (
+		(value.type === "steer" || value.type === "follow_up") &&
+		value.whenIdle !== undefined &&
+		value.whenIdle !== "queue" &&
+		value.whenIdle !== "start"
+	) {
+		return 'whenIdle must be "queue" or "start"; omit it to queue on an idle session.';
+	}
+	if (
 		(value.type === "abort" ||
 			value.type === "set_model" ||
 			value.type === "set_thinking_level" ||
