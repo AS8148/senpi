@@ -79,7 +79,10 @@ export class ClientAdmissions {
 		});
 		this.unsubscribeSession = session.subscribe((event) => {
 			if (this.restoring || this.durableSessionId !== session.sessionManager.getSessionId()) return;
-			if (event.type === "agent_end") {
+			if (event.type === "agent_start") {
+				// A new turn: an abort noted before it belongs to nothing this turn will report.
+				this.lastAbort = undefined;
+			} else if (event.type === "agent_end") {
 				if (!event.willRetry) this.turnOutcome = this.endOutcome(event.messages);
 			} else if (event.type === "agent_idle") {
 				const outcome = this.turnOutcome ?? { kind: "completed" as const };
@@ -144,6 +147,11 @@ export class ClientAdmissions {
 	/** The client (and abort effect) that aborted the current turn, for `agent_end`/`session_abort.abortedBy`. */
 	get abortedBy(): { readonly connectionId: string; readonly effectId?: string } | undefined {
 		return this.lastAbort;
+	}
+
+	/** A client abort that reached no turn has settled: it must not name a later, unrelated abort. */
+	forgetAbort(): void {
+		this.lastAbort = undefined;
 	}
 
 	/**

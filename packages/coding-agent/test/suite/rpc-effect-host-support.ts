@@ -56,6 +56,8 @@ export default function (pi) {
 	faux.setResponses(Array.from({ length: 32 }, () => held));
 	pi.registerProvider(faux.provider);
 	// On faux-stubborn an agent_end handler holds the turn open until the test writes \`release\`, past any abort.
+	// A non-client abort, the way an extension or a host-side watchdog stops a turn.
+	pi.registerCommand("sysabort", { description: "abort the running turn as the system", handler: async (_args, ctx) => ctx.abort("system") });
 	pi.on("agent_end", async (_event, ctx) => {
 		if (ctx.model?.id === "faux-stubborn") await whenReleased();
 	});

@@ -2245,7 +2245,7 @@ dispatched and the response carries the receipt; see
 Quiesce and queue options (both optional, combinable with `effectId`):
 
 - `awaitIdle: true` answers once the session is idle or `graceMs` (integer, 0 to 60000, default 10000) has
-  passed. The answer adds `stopped` and `idle`: both `true` only when idle was reached. On grace expiry they
+  passed (`graceMs` is validated but has no effect without `awaitIdle`). The answer adds `stopped` and `idle`: both `true` only when idle was reached. On grace expiry they
   are `false`, the abort keeps going, and an `effectId` receipt stays `applied` until the turn ends (`done`).
   A `graceMs` outside the range is refused with `errorCode: "invalid_argument"` and `errorData`
   `{ reason: "invalid_grace_ms", action }`.
@@ -2260,7 +2260,7 @@ Quiesce and queue options (both optional, combinable with `effectId`):
 ```
 
 An aborted turn's `agent_end` carries `aborted: true`, `abortSource` and, when an RPC client aborted it,
-`abortedBy: { connectionId, effectId? }`; a `session_abort` caused by a client carries the same `abortedBy`.
+`abortedBy: { connectionId, effectId? }`; a `session_abort` caused by a client carries the same `abortedBy`. `interrupt` records its caller the same way. An abort that reached no turn is forgotten once it settles, and a new turn starts with none, so a later system or extension abort never inherits an old client's `abortedBy`.
 Every attached client sees it. `abortSource` is `user` for a client or user abort, `provider` when the
 provider retry watchdog gave up, and `system` for a host-side stop such as a turn deadline.
 

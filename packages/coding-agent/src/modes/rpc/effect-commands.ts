@@ -150,6 +150,8 @@ export async function runAbort(
 	}
 	admissions.noteAbort(ctx.by, effectId);
 	const aborting = dispatch();
+	// No turn to name: once this abort settled (its session_abort, if any, already read it), forget it.
+	if (!streaming) void aborting.finally(() => admissions.forgetAbort());
 	const ledger = effectId === undefined ? undefined : EffectLedger.forSession(ctx.session);
 	let status =
 		effectId === undefined

@@ -403,16 +403,18 @@ export type RpcErrorCode =
 	| typeof RPC_ERROR_RELEASE_FAILED
 	| typeof RPC_ERROR_HOST_DRAINING;
 
-/** What an effect command (`abort`/`set_model`/`set_thinking_level` with `effectId`) answers about its receipt. */
 /** `abort` with `awaitIdle` or `clearQueue`: whether the turn stopped and what was cleared. */
 export interface RpcAbortQuiesce {
-	/** True only when the session reached idle within `graceMs`. */
+	/** The aborted turn ended within `graceMs` (with `clearQueue` alone: no turn was running). */
 	stopped: boolean;
+	/** The session was idle when the answer was sent. Equal to `stopped` today; kept separate so a later
+	 * host can report a stopped turn whose session immediately started queued work. */
 	idle: boolean;
 	/** Queued inputs `clearQueue` removed (0 when not requested). */
 	cleared: number;
 }
 
+/** What an effect command (`abort`/`set_model`/`set_thinking_level` with `effectId`) answers about its receipt. */
 export interface RpcEffectAnswer {
 	effectId: string;
 	state: EffectState;

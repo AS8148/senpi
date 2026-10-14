@@ -108,4 +108,22 @@ describe("RPC abort quiesce", () => {
 		expect(plain.data).toBeUndefined();
 		await host.stop();
 	}, 240_000);
+
+	it("does not name an old client's idle abort on a later system abort", async () => {
+		await using world = await effectHostWorld();
+		const host = await world.start();
+		const client = await host.connect();
+		const { sessionId } = await openSession(client, { cwd: world.cwd, ...MODEL });
+		const idleAbort = await client.request({ type: "abort", sessionId, effectId: "idle-abort" });
+		expect(idleAbort).toMatchObject({ success: true, data: { state: "done" } });
+		await streaming(client, sessionId);
+		const ended = client.wait((record) => record.type === "agent_end" && record.sessionId === sessionId);
+
+		await client.request({ type: "prompt", sessionId, message: "/sysabort" });
+
+		const end = await ended;
+		expect(end).toMatchObject({ aborted: true, abortSource: "system" });
+		expect(end.abortedBy).toBeUndefined();
+		await host.stop();
+	}, 240_000);
 });
