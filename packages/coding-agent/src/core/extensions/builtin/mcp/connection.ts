@@ -102,19 +102,24 @@ export class ServerConnection {
 		if (this.#pendingConnect) return this.#pendingConnect;
 
 		const generation = this.#generation;
-		this.#pendingConnect = this.#openConnection(generation).finally(() => {
+		let connection: McpTransportConnection;
+		try {
+			connection = this.#createTransportConnection();
+		} catch (error) {
+			return Promise.reject(error);
+		}
+		this.#pendingConnect = this.#openConnection(connection, generation).finally(() => {
 			if (this.#pendingConnect !== undefined && generation === this.#generation) this.#pendingConnect = undefined;
 		});
+		// Emit "connecting" only after the single-flight promise is published, so a listener that calls
+		// connect() joins this attempt instead of starting a second one.
+		if (generation === this.#generation) this.#setState("connecting");
 		return this.#pendingConnect;
 	}
 
-	// Publish the single-flight promise before emitting connecting. Own the
-	// connection before discovery so a concurrent dispose can abort the probe.
-	async #openConnection(generation: number): Promise<Client> {
-		const connection = this.#createTransportConnection();
+	// Own the connection before discovery so a concurrent dispose can abort the probe.
+	async #openConnection(connection: McpTransportConnection, generation: number): Promise<Client> {
 		this.#pendingConnection = connection;
-		await Promise.resolve();
-		if (generation === this.#generation && this.#state !== "disabled") this.#setState("connecting");
 		try {
 			return await this.#connectTransport(connection, generation);
 		} finally {

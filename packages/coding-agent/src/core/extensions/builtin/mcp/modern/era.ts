@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isMcpNeedsAuthError } from "../needs-auth.ts";
 import {
 	buildModernRequest,
 	classifyModernError,
@@ -42,7 +43,8 @@ type ModernOutcome = {
 };
 export type EraOutcome =
 	| ModernOutcome
-	| { readonly kind: "legacy-fallback" }
+	/** `restart`: the probed stdio stream gave no clean answer, so the legacy handshake needs a fresh process. */
+	| { readonly kind: "legacy-fallback"; readonly restart?: true }
 	| {
 			readonly kind: "indeterminate";
 			readonly reason: string;
@@ -56,8 +58,11 @@ export type ProbeSend = (request: ProbeRequest) => Promise<unknown>;
 
 export const modernError = classifyModernError;
 
-function request(options: ProbeOptions, version: string): ProbeRequest {
-	const built = buildModernRequest(1, "server/discover", options.clientInfo, options.clientCapabilities);
+/** The SDK numbers its own requests from 0; a string id can never answer one of them. */
+export const STDIO_PROBE_ID = "senpi-era-probe";
+
+function request(options: ProbeOptions, version: string, id: string | number = 1): ProbeRequest {
+	const built = buildModernRequest(id, "server/discover", options.clientInfo, options.clientCapabilities);
 	return {
 		...built,
 		params: {
@@ -69,9 +74,29 @@ function request(options: ProbeOptions, version: string): ProbeRequest {
 	};
 }
 
-function complete(value: unknown): DiscoveryResult | undefined {
-	const parsed = z.object({ jsonrpc: z.literal("2.0"), id: z.literal(1), result: discoverySchema }).safeParse(value);
+function complete(value: unknown, id: string | number = 1): DiscoveryResult | undefined {
+	const parsed = z.object({ jsonrpc: z.literal("2.0"), id: z.literal(id), result: discoverySchema }).safeParse(value);
 	return parsed.success ? parsed.data.result : undefined;
+}
+
+/** A well-formed JSON-RPC error reply (any code), optionally addressed to `id`. */
+function errorReply(value: unknown, id?: string | number): boolean {
+	return z
+		.object({
+			jsonrpc: z.literal("2.0"),
+			id: id === undefined ? z.union([z.string(), z.number(), z.null()]) : z.literal(id),
+			error: z.object({ code: z.number(), message: z.string() }),
+		})
+		.safeParse(value).success;
+}
+
+/** The newest version both sides support, from a -32022 rejection. */
+function mutualVersion(error: ModernError, options: ProbeOptions): string | undefined {
+	if (error.kind !== "UnsupportedProtocolVersionError" || !error.supportedVersions) return undefined;
+	return error.supportedVersions
+		.filter((candidate) => options.supportedVersions.includes(candidate))
+		.sort()
+		.at(-1);
 }
 
 function indeterminate(
@@ -129,6 +154,8 @@ export async function probeHttpEra(url: URL, fetch: ProbeFetch, options: ProbeOp
 			});
 			value = await body(response);
 		} catch (cause) {
+			// An authorization failure already started the OAuth flow; let the connect path report needs_auth.
+			if (isMcpNeedsAuthError(cause)) throw cause;
 			return indeterminate("transport", "Check the MCP endpoint connection and retry discovery.", { cause });
 		}
 		const error = modernError(value);
@@ -148,12 +175,7 @@ export async function probeHttpEra(url: URL, fetch: ProbeFetch, options: ProbeOp
 					{ era: "modern" },
 				);
 			}
-			const mutual = error.supportedVersions
-				? error.supportedVersions
-						.filter((candidate) => options.supportedVersions.includes(candidate))
-						.sort()
-						.at(-1)
-				: undefined;
+			const mutual = mutualVersion(error, options);
 			if (!mutual) {
 				return indeterminate(
 					"no-mutual-version",
@@ -163,6 +185,14 @@ export async function probeHttpEra(url: URL, fetch: ProbeFetch, options: ProbeOp
 			}
 			version = mutual;
 			continue;
+		}
+		// A generic JSON-RPC error (no modern code) means the server does not know discovery, whatever the status.
+		if (!error && errorReply(value)) {
+			return attempt === 0
+				? { kind: "legacy-fallback" }
+				: indeterminate("version-retry-rejected", "Check server version negotiation; the modern retry failed.", {
+						era: "modern",
+					});
 		}
 		if (!response.ok)
 			return indeterminate("http-status", "Check endpoint, authentication, or server health before retrying.", {
@@ -176,15 +206,29 @@ export async function probeHttpEra(url: URL, fetch: ProbeFetch, options: ProbeOp
 	return indeterminate("version-retry-rejected", "Update client or server protocol versions.", { era: "modern" });
 }
 
+/**
+ * `send` resolves with the reply to its request id, and rejects on a timeout, a parse error on stdout or the
+ * process exiting. Only a clean reply keeps the probed process; anything else asks for a fresh one.
+ */
 export async function probeStdioEra(send: ProbeSend, options: ProbeOptions): Promise<EraOutcome> {
-	let value: unknown;
-	try {
-		value = await send(request(options, MODERN_PROTOCOL_VERSION));
-	} catch (error) {
-		value = { jsonrpc: "2.0", error };
+	let version = MODERN_PROTOCOL_VERSION;
+	for (let attempt = 0; attempt < 2; attempt++) {
+		const id = attempt === 0 ? STDIO_PROBE_ID : `${STDIO_PROBE_ID}-${attempt}`;
+		let value: unknown;
+		try {
+			value = await send(request(options, version, id));
+		} catch {
+			return { kind: "legacy-fallback", restart: true };
+		}
+		const kind = attempt === 0 ? "modern-OK" : "modern-version-retry";
+		const discovery = complete(value, id);
+		if (discovery) return { kind, version, discovery };
+		if (!errorReply(value, id)) return { kind: "legacy-fallback", restart: true };
+		const error = modernError(value);
+		if (!error) return { kind: "legacy-fallback" };
+		const mutual = attempt === 0 ? mutualVersion(error, options) : undefined;
+		if (!mutual) return { kind, version, error };
+		version = mutual;
 	}
-	const discovery = complete(value);
-	if (discovery) return { kind: "modern-OK", version: MODERN_PROTOCOL_VERSION, discovery };
-	const error = modernError(value);
-	return error ? { kind: "modern-OK", version: MODERN_PROTOCOL_VERSION, error } : { kind: "legacy-fallback" };
+	return indeterminate("version-retry-rejected", "Update client or server protocol versions.", { era: "modern" });
 }

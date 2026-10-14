@@ -6,6 +6,6 @@
 		"exactOptionalPropertyTypes": true,
 		"verbatimModuleSyntax": true
 	},
-	"files": ["era.ts", "era-cache.ts", "era.test.ts", "era-cache.test.ts"],
+	"files": ["era.ts", "era.test.ts"],
 	"include": []
 }

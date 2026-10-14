@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { loadMcpSdkAuth } from "../sdk.lazy.ts";
 import { type ProbeRequest, probeHttpEra, probeStdioEra } from "./era.ts";
 
 const options = {
@@ -89,7 +90,9 @@ describe("HTTP era detection", () => {
 			expect(await probeHttpEra(new URL("https://fixture.test"), async () => reply(error, 400), options)).toEqual({
 				kind: "legacy-fallback",
 			});
-			expect(await probeStdioEra(async () => error, options)).toEqual({ kind: "legacy-fallback" });
+			expect(await probeStdioEra(async (request) => ({ ...error, id: request.id }), options)).toEqual({
+				kind: "legacy-fallback",
+			});
 		},
 	);
 
@@ -105,6 +108,26 @@ describe("HTTP era detection", () => {
 	it.each([401, 403, 404, 429, 500])("surfaces an actionable error on HTTP %s", async (status) => {
 		const result = await probeHttpEra(new URL("https://fixture.test"), async () => reply({}, status), options);
 		expect(result).toMatchObject({ kind: "indeterminate", reason: "http-status", status });
+	});
+
+	it.each([200, 404])("falls back when HTTP %s carries a generic JSON-RPC error", async (status) => {
+		const fetch = vi.fn(async () => reply(rpcError(-32601, "Method not found"), status));
+		expect(await probeHttpEra(new URL("https://fixture.test"), fetch, options)).toEqual({ kind: "legacy-fallback" });
+		expect(fetch).toHaveBeenCalledTimes(1);
+	});
+
+	it("passes an authorization failure through instead of hiding it as a transport error", async () => {
+		const { UnauthorizedError } = await loadMcpSdkAuth();
+		const unauthorized = new UnauthorizedError();
+		await expect(
+			probeHttpEra(
+				new URL("https://fixture.test"),
+				async () => {
+					throw unauthorized;
+				},
+				options,
+			),
+		).rejects.toBe(unauthorized);
 	});
 
 	it("surfaces network failures rather than selecting legacy", async () => {
@@ -160,27 +183,53 @@ describe("HTTP era detection", () => {
 });
 
 describe("stdio era detection", () => {
-	it("sends discover with only metadata and recognizes its complete envelope", async () => {
-		const send = vi.fn(async (_request: ProbeRequest) => discovery);
+	const answer = (body: Record<string, unknown>) => async (request: ProbeRequest) => ({ ...body, id: request.id });
+
+	it("sends discover with only metadata under an id the SDK never uses, and recognizes its envelope", async () => {
+		const send = vi.fn(answer(discovery));
 		expect(await probeStdioEra(send, options)).toMatchObject({ kind: "modern-OK" });
-		expect(send.mock.calls[0]?.[0]).toMatchObject({ method: "server/discover" });
-		expect(Object.keys(send.mock.calls[0]?.[0].params ?? {})).toEqual(["_meta"]);
+		const request = send.mock.calls[0]?.[0];
+		expect(request).toMatchObject({ method: "server/discover" });
+		expect(typeof request?.id).toBe("string");
+		expect(Object.keys(request?.params ?? {})).toEqual(["_meta"]);
 	});
 
-	it.each([-32022, -32020, -32021])("recognizes modern error %s", async (value) => {
-		const error = rpcError(value, String(value));
-		expect(await probeStdioEra(async () => error, options)).toMatchObject({ kind: "modern-OK" });
+	it("does not accept a discovery reply addressed to another id", async () => {
+		expect(await probeStdioEra(async () => discovery, options)).toEqual({ kind: "legacy-fallback", restart: true });
 	});
 
-	it.each([rpcError(-32601, "Method not found"), {}, undefined])("falls back for nonmodern replies", async (body) => {
-		expect(await probeStdioEra(async () => body, options)).toEqual({ kind: "legacy-fallback" });
+	it.each([-32020, -32021])("recognizes modern error %s", async (value) => {
+		expect(await probeStdioEra(answer(rpcError(value, String(value))), options)).toMatchObject({ kind: "modern-OK" });
 	});
 
-	it("falls back for nonmodern transport errors", async () => {
+	it("retries once with the newest mutual version on -32022", async () => {
+		const send = vi
+			.fn(answer(discovery))
+			.mockImplementationOnce(answer(rpcError(-32022, "Unsupported", { supported: ["2026-06-01", "2027-01-01"] })));
+		expect(await probeStdioEra(send, options)).toMatchObject({ kind: "modern-version-retry", version: "2026-06-01" });
+		expect(send).toHaveBeenCalledTimes(2);
+		expect(send.mock.calls[1]?.[0].params._meta["io.modelcontextprotocol/protocolVersion"]).toBe("2026-06-01");
+		expect(send.mock.calls[1]?.[0].id).not.toBe(send.mock.calls[0]?.[0].id);
+	});
+
+	it("keeps the process for a clean nonmodern error reply", async () => {
+		expect(await probeStdioEra(answer(rpcError(-32601, "Method not found")), options)).toEqual({
+			kind: "legacy-fallback",
+		});
+	});
+
+	it.each([{}, undefined, { jsonrpc: "2.0", result: {} }])(
+		"asks for a fresh process after an unclean reply %j",
+		async (body) => {
+			expect(await probeStdioEra(async () => body, options)).toEqual({ kind: "legacy-fallback", restart: true });
+		},
+	);
+
+	it("asks for a fresh process after a transport failure, timeout or exit", async () => {
 		expect(
 			await probeStdioEra(async () => {
 				throw new Error("closed");
 			}, options),
-		).toEqual({ kind: "legacy-fallback" });
+		).toEqual({ kind: "legacy-fallback", restart: true });
 	});
 });

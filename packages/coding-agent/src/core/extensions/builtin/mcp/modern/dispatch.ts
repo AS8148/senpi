@@ -8,7 +8,6 @@ import {
 	materializeMcpTransport,
 } from "../transport-sdk.ts";
 import { type EraOutcome, probeHttpEra } from "./era.ts";
-import { EraCache } from "./era-cache.ts";
 import { modernHttpFetch } from "./http-fetch.ts";
 import { ModernSdkBridge } from "./sdk-bridge.ts";
 import { probeStdioTransport } from "./stdio-probe.ts";
@@ -31,21 +30,10 @@ export async function materializeNegotiatedTransport(
 	signal.throwIfAborted();
 	const { spec, logger } = options;
 	let outcome: EraOutcome = { kind: "legacy-fallback" };
-	const cache = new EraCache();
 	if (spec.kind === "http") {
 		const fetch = modernHttpFetch(spec, signal);
 		const timeout = AbortSignal.timeout(timeoutMs);
-		outcome = await cache.resolve({ kind: "http", url: spec.url }, () =>
-			probeHttpEra(
-				spec.url,
-				(url, init) =>
-					fetch(url, {
-						...init,
-						signal: timeout,
-					}),
-				probeOptions,
-			),
-		);
+		outcome = await probeHttpEra(spec.url, (url, init) => fetch(url, { ...init, signal: timeout }), probeOptions);
 		signal.throwIfAborted();
 		timeout.throwIfAborted();
 		if (outcome.kind === "modern-OK" || outcome.kind === "modern-version-retry") {

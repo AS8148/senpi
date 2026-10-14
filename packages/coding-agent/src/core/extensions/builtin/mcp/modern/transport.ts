@@ -74,7 +74,6 @@ export class ModernHttpTransport implements Transport {
 			} else {
 				// JSON-RPC replies have no method or params; do not turn them into requests.
 				headers.set("MCP-Protocol-Version", version);
-				headers.set("Mcp-Method", "");
 			}
 			const response = await this.#options.fetch(this.#options.url, {
 				method: "POST",

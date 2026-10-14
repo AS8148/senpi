@@ -24,6 +24,89 @@ function logger(): McpLogger {
 	};
 }
 
+type FakeChild = Transport & { readonly pid: number | null };
+
+/** A legacy server whose first process misbehaves on discover; every later process is a well-behaved legacy server. */
+function restartableLegacy(misbehave: (child: FakeChild, kill: () => void) => void) {
+	const sent: { generation: number; method: string }[] = [];
+	let generation = 0;
+	let alive = false;
+	const kill = () => {
+		alive = false;
+		queueMicrotask(() => child.onclose?.());
+	};
+	const child: FakeChild = {
+		// Never a real process: the restart reaps this pid's tree.
+		get pid() {
+			return alive ? 2_147_483_000 + generation : null;
+		},
+		start: vi.fn(async () => {
+			generation++;
+			alive = true;
+		}),
+		close: vi.fn(async () => {
+			if (!alive) return;
+			alive = false;
+			child.onclose?.();
+		}),
+		send: async (message) => {
+			if (!alive) throw new Error("Not connected");
+			const method = "method" in message ? message.method : "";
+			sent.push({ generation, method });
+			if (!("method" in message) || !("id" in message)) return;
+			if (message.method === "server/discover" && generation === 1) return misbehave(child, kill);
+			if (message.method === "server/discover") throw new Error("a fresh process must not be probed again");
+			child.onmessage?.(
+				message.method === "initialize"
+					? {
+							jsonrpc: "2.0",
+							id: message.id,
+							result: {
+								protocolVersion: message.params?.protocolVersion,
+								capabilities: { tools: {} },
+								serverInfo: { name: "legacy", version: "1" },
+							},
+						}
+					: { jsonrpc: "2.0", id: message.id, result: { tools: [] } },
+			);
+		},
+	};
+	return { child, sent };
+}
+
+describe("stdio legacy fallback after an unclean probe", () => {
+	it.each([
+		["ignores discover", (_child: FakeChild, _kill: () => void) => {}],
+		["exits on discover", (_child: FakeChild, kill: () => void) => kill()],
+		[
+			"prints junk on stdout instead of answering",
+			(child: FakeChild) =>
+				child.onerror?.(new SyntaxError("Unexpected token 'S', \"Starting...\" is not valid JSON")),
+		],
+	])("connects a legacy server that %s on a fresh process", async (_name, misbehave) => {
+		const { child, sent } = restartableLegacy(misbehave);
+		const start = child.start;
+		probeStdioTransport(child, options, logger(), 2000, "fixture", undefined, 50);
+		const client = new Client(options.clientInfo, { capabilities: options.clientCapabilities });
+		const closed = vi.fn();
+		client.onclose = closed;
+		try {
+			await client.connect(child);
+			expect((await client.listTools()).tools).toEqual([]);
+			expect(start).toHaveBeenCalledTimes(2);
+			expect(sent).toEqual([
+				{ generation: 1, method: "server/discover" },
+				{ generation: 2, method: "initialize" },
+				{ generation: 2, method: "notifications/initialized" },
+				{ generation: 2, method: "tools/list" },
+			]);
+			expect(closed).not.toHaveBeenCalled();
+		} finally {
+			await client.close();
+		}
+	});
+});
+
 describe("stdio discovery ownership", () => {
 	it("probes and initializes the same started legacy transport without changing initialize bytes", async () => {
 		const sent: JSONRPCMessage[] = [];
