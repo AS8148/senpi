@@ -1,13 +1,17 @@
 /**
  * The `effect_status` record and the pending-transition bus behind it.
  *
- * Effect and admission ledgers call `noteSessionEffect` the moment they persist a transition; the host
- * delivers each note to matching `effects: true` subscriptions only AFTER the record that caused the
- * transition is on the connection's FIFO. Two drain points guarantee that ordering: the writer's
- * post-publish hook drains a session's notes synchronously after every record it publishes for that
- * session (the response to the effect command included), and a coalesced microtask flush covers
- * transitions a ledger records from inside a session event (an `agent_idle` seal, a `model_changed`),
- * which always run after that event's record was enqueued.
+ * Effect and admission ledgers call `noteSessionEffect` the moment they persist a transition. Each
+ * multi-session host installs its own sink and owns the sessions it holds; ownership is decided when the
+ * transition is noted, so a transition of a session no installed sink owns at that moment (classic stdio, a
+ * worker isolate, a replaced session, or one whose runtime is not registered yet) is dropped. A ledger must
+ * therefore not record receipts before its session is registered with a host.
+ *
+ * A held transition reaches `effects: true` subscriptions only AFTER the session record that caused it is on
+ * the connection's FIFO. Two drain points guarantee that ordering: the writer's post-publish hook drains a
+ * session's notes right after each session record it publishes, and a coalesced microtask flush covers
+ * transitions a ledger records from inside a session event (an `agent_idle` seal, a `model_changed`), which
+ * always run after that event's record was enqueued. The command's own response is never the causing record.
  */
 import type { AgentSession } from "../../core/agent-session.ts";
 import type { EffectStatus } from "./effect-record.ts";
