@@ -1425,6 +1425,7 @@ export class AgentSession {
 			},
 			owner: () => this.sessionId,
 			now: this._fallbackNow,
+			wallNow: config.fallbackWallNow ?? config.fallbackNow ?? Date.now,
 			settings: () => this.settingsManager.getFallbackCircuitSettings(),
 			logger: fallbackLogger,
 		});
