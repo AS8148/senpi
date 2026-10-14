@@ -79,20 +79,31 @@ export function openAICompatibleProviderDiagnosticFromError(error: unknown): Pro
  * no provider answer. Reads the error's own `code`, then `cause.code` (fetch
  * wraps the socket error), against a closed allowlist. Messages are never read.
  */
+/** How many `cause` links a transport code is looked for through (the error itself counts as one). */
+const TRANSPORT_CAUSE_DEPTH = 4;
+
 export function transportProviderDiagnosticFromError(error: unknown): ProviderDiagnostic | undefined {
 	try {
 		if (!(error instanceof Error)) return undefined;
-		const cause = Reflect.get(error, "cause");
-		for (const candidate of [
-			Reflect.get(error, "code"),
-			isRecord(cause) || cause instanceof Error ? Reflect.get(cause, "code") : undefined,
-		]) {
-			if (typeof candidate !== "string") continue;
-			const category = categoryForTransportCode(candidate);
-			if (category !== undefined)
-				return buildProviderDiagnostic({ category, code: candidate, evidence: "structured_transport" });
+		// SDK errors wrap the runtime's error: Bun puts the code one cause down, Node's fetch two
+		// (SDK error -> TypeError "fetch failed" -> { code }). Walk a bounded chain, reading only `code`;
+		// the SDK's own connection error class name is the fallback when no link carries a code.
+		let current: unknown = error;
+		let sdkConnectionError: string | undefined;
+		for (let depth = 0; depth < TRANSPORT_CAUSE_DEPTH && (isRecord(current) || current instanceof Error); depth++) {
+			const code = Reflect.get(current, "code");
+			if (typeof code === "string" && categoryForTransportCode(code) !== undefined)
+				return buildProviderDiagnostic({ category: "network", code, evidence: "structured_transport" });
+			// The SDKs keep `name` as "Error"; their class is what says connection error.
+			for (const name of current instanceof Error ? [current.name, current.constructor.name] : []) {
+				if (sdkConnectionError === undefined && categoryForTransportCode(name) !== undefined)
+					sdkConnectionError = name;
+			}
+			current = Reflect.get(current, "cause");
 		}
-		return undefined;
+		return sdkConnectionError === undefined
+			? undefined
+			: buildProviderDiagnostic({ category: "network", code: sdkConnectionError, evidence: "structured_transport" });
 	} catch {
 		return undefined;
 	}

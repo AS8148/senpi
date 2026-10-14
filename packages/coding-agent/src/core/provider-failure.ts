@@ -29,7 +29,7 @@ const ACTIONS: Record<Exclude<ProviderDiagnosticCategory, "unknown">, { reason: 
 	},
 	invalid_request: { reason: "the provider rejected the request as invalid", action: "report it with the code" },
 	provider_unavailable: { reason: "the provider is unavailable", action: "retry or switch provider" },
-	network: { reason: "the request never reached the provider", action: "check connectivity" },
+	network: { reason: "the connection to the provider failed", action: "check connectivity" },
 };
 
 function identifier(diagnostic: ProviderDiagnostic | undefined): string {
@@ -43,7 +43,7 @@ export function describeProviderFailure(diagnostic: ProviderDiagnostic | undefin
 	const detail =
 		category === "unknown"
 			? {
-					reason: `the provider returned an error OmO could not classify (${provider}, ${identifier(diagnostic)})`,
+					reason: `the provider returned an error that could not be classified (${provider}, ${identifier(diagnostic)})`,
 					action: "retry once; if it repeats, switch the model or report the code",
 				}
 			: ACTIONS[category];

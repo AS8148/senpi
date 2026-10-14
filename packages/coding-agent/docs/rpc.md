@@ -3772,7 +3772,7 @@ When the run ended with a provider error (the last assistant message has `stopRe
 | `network` | check connectivity |
 | `unknown` | retry once; if it repeats, switch the model or report the code |
 
-`unknown` is used when the error carries no diagnostic or its metadata matches no row; its `reason` names the provider and the code or status, for example `the provider returned an error OmO could not classify (openai, status 429)`. A bare 429 stays `unknown` because status alone cannot tell a rate limit from exhausted quota. Retry and fallback decisions do not read `failure`.
+`unknown` is used when the error carries no diagnostic or its metadata matches no row; its `reason` names the provider and the code or status, for example `the provider returned an error that could not be classified (openai, status 429)`. A bare 429 stays `unknown` because status alone cannot tell a rate limit from exhausted quota. Retry and fallback decisions do not read `failure`.
 
 ### agent_settled
 

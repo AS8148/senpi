@@ -68,7 +68,7 @@ describe("agent_end provider failure", () => {
 			}),
 		);
 		expect(end.failure?.category).toBe("unknown");
-		expect(end.failure?.reason).toMatch(/could not classify \(faux, code permission_error\)/);
+		expect(end.failure?.reason).toMatch(/could not be classified \(faux, code permission_error\)/);
 		expect(end.failure?.action).toMatch(/^retry once/);
 	});
 
@@ -98,7 +98,7 @@ describe("agent_end provider failure", () => {
 			),
 		).toMatch(/^The provider is rate limiting requests\. Action: retry later/);
 		expect(formatProviderFailure(describeProviderFailure(undefined, "openai"))).toMatch(
-			/could not classify .*Action: retry once/,
+			/could not be classified .*Action: retry once/,
 		);
 	});
 });

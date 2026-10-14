@@ -41,9 +41,9 @@ export function categoryForProviderCode(code: string): ProviderDiagnosticCategor
 }
 
 /**
- * Closed allowlist of transport error codes (Node `errno` names) that prove the
- * request never got a provider answer. Read only from the error's own `code` or
- * its `cause.code`, never from message text.
+ * Closed allowlist of transport failures: Node `errno` / undici `code` names, and the provider SDKs'
+ * connection error class names (`APIConnectionError`, `APIConnectionTimeoutError`). Read only from the
+ * error chain's `code` and `name` fields, never from message text.
  */
 export function categoryForTransportCode(code: string): ProviderDiagnosticCategory | undefined {
 	switch (code) {
@@ -55,6 +55,11 @@ export function categoryForTransportCode(code: string): ProviderDiagnosticCatego
 		case "EPIPE":
 		case "UND_ERR_SOCKET":
 		case "UND_ERR_CONNECT_TIMEOUT":
+		case "UND_ERR_HEADERS_TIMEOUT":
+		case "UND_ERR_BODY_TIMEOUT":
+		case "UND_ERR_CLOSED":
+		case "APIConnectionError":
+		case "APIConnectionTimeoutError":
 			return "network";
 		default:
 			return undefined;
