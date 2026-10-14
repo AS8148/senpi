@@ -5,8 +5,9 @@ import { CredentialStoreBusyError } from "../lockfile-policy.ts";
  * Runs a pool health write that must never decide the request's outcome
  * (senpi#3285). Health is advisory: when the state file stays locked past its
  * bound, the write is skipped and logged, and the request carries on. A lost
- * success marker or block costs at most one extra failover attempt later.
- * Every other failure still propagates.
+ * block costs at most one extra failover attempt later; a lost success marker
+ * also leaves that slot's half-open probe lease in place, so other callers skip
+ * the slot until the lease expires (30 s). Every other failure still propagates.
  */
 export async function writeHealthUnlessStoreBusy<T>(
 	what: string,

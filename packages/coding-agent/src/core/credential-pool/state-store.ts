@@ -3,7 +3,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import { getAgentDir } from "../../config.ts";
-import { FILE_STORAGE_LOCK_RETRY_BUDGET_MS } from "../lockfile-policy.ts";
+import { CredentialStoreBusyError, FILE_STORAGE_LOCK_RETRY_BUDGET_MS } from "../lockfile-policy.ts";
 import { acquireStateFileLock, readStateFile, writeStateFileAtomic } from "./state-file.ts";
 
 export const CREDENTIAL_POOL_STATE_FILENAME = "credential-pool-state.json";
@@ -104,10 +104,20 @@ export class CredentialSlotRepository {
 	/**
 	 * Reads take no lock: writes land by atomic rename, so the file always holds
 	 * one complete document. Only a missing or invalid file falls through to the
-	 * locked path, which creates or resets it (senpi#3285).
+	 * locked path, which creates or resets it (senpi#3285). When that lock stays
+	 * busy too, the read answers with an empty, unsaved document: health is
+	 * advisory, and its random installation key matches no stored revision, so
+	 * every slot simply reads as healthy for this one request.
 	 */
 	private async readDocument(): Promise<CredentialPoolStateDocument> {
-		return parseDocument(readStateFile(this.path)) ?? this.withDocument((document) => ({ result: document }));
+		const stored = parseDocument(readStateFile(this.path));
+		if (stored !== undefined) return stored;
+		try {
+			return await this.withDocument((document) => ({ result: document }));
+		} catch (error) {
+			if (error instanceof CredentialStoreBusyError) return freshDocument();
+			throw error;
+		}
 	}
 
 	/**

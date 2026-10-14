@@ -22,6 +22,39 @@ export function readStateFile(path: string): string | undefined {
 	}
 }
 
+// Windows refuses to replace a file another process (antivirus, the indexer, a
+// lock-free reader) has open for a moment; those codes clear on their own.
+const TRANSIENT_RENAME_CODES = new Set(["EPERM", "EBUSY", "EACCES"]);
+const RENAME_RETRY_DELAYS_MS = [10, 20, 40, 80, 160] as const;
+
+function isTransientRenameError(error: unknown): boolean {
+	return (
+		error instanceof Error &&
+		"code" in error &&
+		typeof error.code === "string" &&
+		TRANSIENT_RENAME_CODES.has(error.code)
+	);
+}
+
+function blockFor(ms: number): void {
+	Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/** Renames over the target, retrying a transiently refused replace; a refusal that outlasts the retries reads as a busy store. */
+function replaceFile(temporary: string, path: string): void {
+	const startedAt = Date.now();
+	for (const delayMs of [...RENAME_RETRY_DELAYS_MS, undefined]) {
+		try {
+			renameSync(temporary, path);
+			return;
+		} catch (error) {
+			if (!isTransientRenameError(error)) throw error;
+			if (delayMs === undefined) throw new CredentialStoreBusyError(path, Date.now() - startedAt, error);
+			blockFor(delayMs);
+		}
+	}
+}
+
 /**
  * Stages the document beside the file and renames it over the target, so a
  * reader that takes no lock always sees one complete document: the previous
@@ -33,7 +66,7 @@ export function writeStateFileAtomic(path: string, content: string): void {
 	try {
 		writeFileSync(temporary, content, FILE_WRITE_OPTIONS);
 		if (existsSync(path)) chmodSync(temporary, statSync(path).mode & 0o777);
-		renameSync(temporary, path);
+		replaceFile(temporary, path);
 	} catch (error) {
 		rmSync(temporary, { force: true });
 		throw error;

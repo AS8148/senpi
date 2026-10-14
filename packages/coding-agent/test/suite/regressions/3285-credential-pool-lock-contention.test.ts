@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AssistantMessage, AssistantMessageEvent } from "@earendil-works/pi-ai";
@@ -115,6 +115,19 @@ describe("credential pool state-file contention never fails a request (senpi#328
 
 		expect(slots.find((slot) => slot.name === "a")).toMatchObject({ blockReason: "rate_limit" });
 		expect(slots.find((slot) => slot.name === "b")?.blockReason).toBeUndefined();
+	});
+
+	test("an unreadable state file with a held lock reads as no health instead of failing the request", async () => {
+		await repository.listSlots("test", "stored");
+		writeFileSync(path, "{ torn");
+		await holdLock();
+
+		const slots = await listRotationSlots(sources(), { acquireLeases: false });
+
+		expect(slots.map((slot) => [slot.name, slot.blockReason])).toEqual([
+			["a", undefined],
+			["b", undefined],
+		]);
 	});
 
 	test("deriving a slot's credential revision neither rewrites the file nor needs the lock", async () => {
