@@ -9,6 +9,22 @@ Senpi uses JSON settings files with project settings overriding global settings.
 
 Edit directly or use `/settings` for common options. To save startup model defaults interactively, use `/model` and press Ctrl+S on the desired model. To save the startup thinking level, use `/thinking` and press Ctrl+S.
 
+`/reasoning`, `/efforts`, and the thinking-level cycle key change the current session and its per-model memory, not the startup default. The `/settings` thinking option is an explicit default save. RPC thinking changes follow the same memory-only rule; turn-scoped changes remain ephemeral.
+
+## state.json
+
+Senpi keeps automatically written bookkeeping in `<agentDir>/state.json`, beside the other `*-state.json` files. It contains `tipsHistory`, `changelogSeen`, legacy `lastChangelogVersion`, `modelThinkingLevels`, `modelLastOnThinkingLevels`, and `modelServiceTiers`. Showing tips, acknowledging changelogs, and remembering per-model reasoning or fast mode no longer rewrite your global settings file.
+
+Existing global state keys move silently on first load. Values already in `state.json` win; project settings are never migrated. Legacy settings values remain a read fallback for one release. Migration writes state first, then removes the keys from settings, so an interrupted migration can be repeated safely. JSONC comments are lost during that one-time rewrite. Downgrading to an older build can re-show tips once.
+
+A corrupt or unreadable state file is debug-logged once and ignored without disabling your configuration. Truncated state can be replaced by the next bookkeeping save. A failed migration is retried on the next process launch, not by every manager in the current process.
+
+During a mixed-version upgrade, an older session can re-add bookkeeping to settings. A new session preserves those keys until migration can safely copy them; old-session writes can still trigger config reloads. Restart older sessions to end that transition.
+
+## Keeping your config in git
+
+Commit `settings.json` (or `settings.jsonc`), `models.json`, and `mcp.json` after checking that your configuration contains no inline credentials. Ignore `auth.json`, `state.json`, `sessions/`, and caches. Credentials belong in `auth.json`, not settings or state. For a reasoning level that travels with your config, pin it in `favoriteModels`, such as `"provider/model:high"`, rather than copying per-model memory.
+
 ## Project Trust
 
 On interactive startup, senpi asks before trusting a project folder that contains project-local settings, resources, or project `.agents/skills` and has no saved decision for the folder or a parent folder in `~/.senpi/agent/trust.json`. Trusting a project allows senpi to load `.senpi/settings.json` and `.senpi` resources, install missing project packages, and execute project extensions.
@@ -87,9 +103,6 @@ Permission rules are a confirmation policy, not a sandbox. Senpi, extensions, pa
 | `defaultModel` | string | - | Startup model ID (saved with Ctrl+S in `/model`, or edited manually) |
 | `recommendedModels` | string[] | `kimi-k3`, `gpt-6-astra`, `gpt-5.6-sol`, `claude-fable-5-1`, `claude-opus-5-5`, `glm-5.2` | Preferred default model ids in priority order. Built-in thinking levels are kimi-k3/`max`, GPT-6 Astra/`high`, GPT-5.6 Sol/`medium`, claude-fable-5-1/`high`, claude-opus-5-5/`max`, glm-5.2/`max`. Override the list or disable auto-switch with `--no-recommended-models` / `warnings.offRecommendedModel`. |
 | `defaultThinkingLevel` | string | - | Startup thinking level (saved with Ctrl+S in `/thinking`, or edited manually): `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"` |
-| `modelThinkingLevels` | object | - | Per-model reasoning effort memory (`"provider/id": "level"`) |
-| `modelLastOnThinkingLevels` | object | - | Per-model last non-off reasoning level, used by `/reasoning on` to restore the previous effort |
-| `modelServiceTiers` | object | - | Per-model service tier memory (`"provider/id": "auto" \| "priority"`) |
 | `promptPreset` | string | `"auto"` | Force a system prompt preset: `"auto"`, `"kimi-k2-6"`, `"kimi-k2-7"`, `"kimi-k2-8"`, `"kimi-k3"`, `"glm-5.2"`, `"glm-5.3"`, `"grok-4.5"`, `"grok-4.6"`, `"grok-4.7"`, `"claude-fable-5"`, `"claude-fable-5-1"`, `"claude-opus-5-5"`, `"claude-opus-5"`, `"claude-sonnet-5-5"`, `"claude-haiku-5-5"`, `"claude-opus-4-5"`, `"claude-opus-4-6"`, `"claude-opus-4-7"`, `"claude-opus-4-8"`, `"deepseek-v4-flash"`, `"deepseek-v4-flash-0731"`, `"deepseek-v4-1-flash"`, `"deepseek-v4-pro"`, `"gpt-5"`, `"gpt-5.2"`, `"gpt-5.3-codex"`, `"gpt-5.4"`, `"gpt-5.5"`, `"gpt-5.6"`, or `"gpt-6-astra"` |
 | `hideThinkingBlock` | boolean | `false` | Hide thinking blocks in output |
 | `showCacheMissNotices` | boolean | `false` | Show transcript notices for significant prompt-cache misses, compaction or branch-summary usage, and provider recovery diagnostics such as dropped Anthropic thinking blocks |
@@ -129,10 +142,8 @@ When this value is anything other than `"auto"`, it overrides any model-level `p
 | `externalEditor` | string | `$VISUAL`, then `$EDITOR`, then Notepad on Windows or `nano` elsewhere | Command for Ctrl+G external editor; takes precedence over environment variables |
 | `quietStartup` | boolean \| `"header"` | `false` | `true` hides the startup header and loaded-resource listing. `"header"` keeps the header (version and key hints) but hides the model scope line and loaded-resource listing |
 | `tips` | boolean | `true` | Show the rotating startup and working-status tip lines |
-| `tipsHistory` | object | - | Internal record of which tips were shown last (managed automatically) |
 | `defaultProjectTrust` | string | `"ask"` | Fallback project trust behavior: `"ask"`, `"always"`, or `"never"`. Global setting only |
 | `collapseChangelog` | boolean | `false` | Show condensed changelog after updates |
-| `changelogSeen` | object | - | Internal per-source record of the latest changelog version acknowledged (managed automatically) |
 | `enableInstallTelemetry` | boolean | `true` | Send the anonymous install/update ping and selected provider attribution headers. This does not control update checks |
 | `enableAnalytics` | boolean | `false` | Opt-in analytics data sharing. Currently only asked for during the experimental first-time setup (`PI_EXPERIMENTAL=1`) |
 | `trackingId` | string | - | Analytics tracking identifier, generated when `enableAnalytics` is turned on |
@@ -566,6 +577,10 @@ While a question is pending, the terminal title shows `? <header>` unless an act
 | `todo.firstTurnPlan` | `"force"` \| `"remind"` \| `"off"` | `"force"` | First prompt of a session that is not a question (`?`/`!` ending): `"remind"` adds a hidden reminder to open the turn with a phased `todo` init; `"force"` also sends a named `tool_choice` for `todo` on that first request where the provider accepts one (Anthropic models whose compat allows forced tool choice with thinking off, OpenAI Responses, OpenAI Chat Completions unless `compat.supportsForcedToolChoice` is `false`), otherwise it falls back to the reminder. A provider that refuses the forced choice gets the request once more without it, and that model is not forced again for the rest of the process; `"off"` disables both. Print and JSON modes never arm |
 | `todo.turnEndBackstop` | `boolean` | `true` | When a main-session turn (not print/json, no active goal or continuation) ends text-only while the todo list still has open tasks and the final paragraph does not ask the user a question, queue a hidden `senpi.todo-owed` followUp nudging the next open task. At most two per chain of unattended turns; the third notifies once and stays silent until the next accepted user message |
 
+While open todo work has an active wake source (such as `senpi-task`), a running goal, a pending continuation, or pending messages, the backstop sends no nudge or warning. The footer shows `waiting: <sources>` until the next `agent_start`; session start and tree navigation also clear it. The `todo_owed_reminder` event reports `reason: "waiting"` and the source names, and the session log records suppression reasons at debug level.
+
+A goal whose continuation already stopped does not count as waiting: it keeps its own stop notice and gets no footer or nudge. With nothing on duty, the two automatic continuations stay hidden and count only while they close no task; when both end with open work, one notice says why the agent stopped and how to resume it (reply, or `/todo done` / `/todo drop`). The chain also resets on accepted direct input, session start, or tree navigation.
+
 ### Sessions
 
 | Setting | Type | Default | Description |
@@ -608,7 +623,7 @@ Only `session_shutdown` is bounded; other extension events (including ask-user a
 
 #### Per-model memory
 
-`modelThinkingLevels`, `modelLastOnThinkingLevels`, and `modelServiceTiers` are maps from `"provider/id"` to a level or tier value. They're managed automatically: switching models, using `/reasoning`, `/efforts`, or `/fast` writes the appropriate key. You rarely need to edit them by hand, but the shape looks like this:
+In `state.json`, `modelThinkingLevels`, `modelLastOnThinkingLevels`, and `modelServiceTiers` are maps from `"provider/id"` to a level or tier value. They're managed automatically: switching models, using `/reasoning`, `/efforts`, or `/fast` writes the appropriate key. You rarely need to edit them by hand, but the state file's shape looks like this:
 
 ```json
 {
@@ -742,9 +757,6 @@ See [packages.md](packages.md) for package management details.
   "defaultProvider": "anthropic",
   "defaultModel": "claude-sonnet-4-20250514",
   "defaultThinkingLevel": "medium",
-  "modelThinkingLevels": {
-    "anthropic/claude-sonnet-4-20250514": "high"
-  },
   "theme": "dark",
   "compaction": {
     "enabled": true,

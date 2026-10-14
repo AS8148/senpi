@@ -277,6 +277,7 @@ import {
 import { ModelRegistry } from "./model-registry.ts";
 import { type AvailableModelsSource, getModelNarrowingPatterns, resolveModelScope } from "./model-resolver.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
+import { ModelSwitchAuthError } from "./model-switch-auth-error.ts";
 import { NestedToolCallRunner } from "./nested-tool-calls.ts";
 import { PROMPT_CACHE_SAFE_WAIT_ENV, resolvePromptCacheSafeWaitSeconds } from "./prompt-cache-budget.ts";
 import { PromptCachePrefixBuilds } from "./prompt-cache-prefix-request.ts";
@@ -536,6 +537,12 @@ export type AgentSessionEvent =
 			shortfallTokens: number;
 			safetyMarginProfile: string;
 			direction: "forward" | "backward";
+	  }
+	| {
+			type: "model_change_cancelled";
+			origin: ModelChangeOrigin;
+			reason: "superseded" | "context-budget" | "error";
+			detail?: string;
 	  }
 	/** A switch accepted but held until the next send can compact for it (#1873). */
 	| {
@@ -1333,6 +1340,8 @@ export class AgentSession {
 	private readonly _shownHighReasoningWarningKeys = new Set<string>();
 	private readonly _shownThinkingClampWarningKeys = new Set<string>();
 	private readonly _startupThinkingClamp: ThinkingClampNotice | undefined;
+	/** Last manual preference for unremembered models, kept in the session rather than startup config. */
+	private _lastManualThinkingLevel: ThinkingLevel | undefined;
 	// Widened with the upstream BuildSystemPromptOptions user-override fields so
 	// extensions (prompt-preset) can see CLI/SDK custom prompts via
 	// before_agent_start/model_select systemPromptOptions and ctx.getSystemPromptOptions().
@@ -6272,6 +6281,7 @@ export class AgentSession {
 		origin: ModelChangeOrigin,
 	): void {
 		const pending = createPendingModelSwitch({ model, projection, persistDefault, origin });
+		this._clearPendingModelSwitch();
 		this._pendingModelSwitch = pending;
 		this._emit({
 			type: "model_change_pending",
@@ -6282,6 +6292,19 @@ export class AgentSession {
 			shortfallTokens: projection.shortfallTokens,
 			notice: pending.notice,
 		});
+	}
+
+	private _clearPendingModelSwitch(error?: ModelUsabilityBudgetError): void {
+		const pending = this._pendingModelSwitch;
+		this._pendingModelSwitch = undefined;
+		if (pending !== undefined) {
+			this._emit({
+				type: "model_change_cancelled",
+				origin: pending.origin,
+				reason: error === undefined ? "superseded" : "context-budget",
+				...(error === undefined ? {} : { detail: error.message }),
+			});
+		}
 	}
 
 	/**
@@ -6353,22 +6376,33 @@ export class AgentSession {
 			}
 		}
 
-		this._pendingModelSwitch = undefined;
 		if (!projection.usable) {
 			const error = new ModelUsabilityBudgetError(projection);
+			this._clearPendingModelSwitch(error);
 			this._recordRejectedModelChange(pending.model, error);
 			throw error;
 		}
+		this._pendingModelSwitch = undefined;
 
-		await this._switchActiveModel(pending.model, {
-			persistDefault: pending.persistDefault,
-			appendSessionEntry: true,
-			emitModelSelect: true,
-			modelSelectSource: "set",
-			invalidateCompaction: true,
-			allowDeferral: false,
-			origin: heldSwitchOrigin(pending.origin),
-		});
+		try {
+			await this._switchActiveModel(pending.model, {
+				persistDefault: pending.persistDefault,
+				appendSessionEntry: true,
+				emitModelSelect: true,
+				modelSelectSource: "set",
+				invalidateCompaction: true,
+				allowDeferral: false,
+				origin: heldSwitchOrigin(pending.origin),
+			});
+		} catch (error) {
+			this._emit({
+				type: "model_change_cancelled",
+				origin: pending.origin,
+				reason: error instanceof ModelUsabilityBudgetError ? "context-budget" : "error",
+				detail: error instanceof Error ? error.message : String(error),
+			});
+			throw error;
+		}
 		return true;
 	}
 
@@ -6543,7 +6577,7 @@ export class AgentSession {
 			this._assertModelUsableForSwitch(model, liveContextTokens);
 		}
 		if (!(await this._modelRuntime.checkAuth(model.provider))) {
-			const error = new Error(`No API key for ${model.provider}/${model.id}`);
+			const error = new ModelSwitchAuthError(model.provider, model.id);
 			this._recordRejectedModelChange(model, error);
 			throw error;
 		}
@@ -6708,7 +6742,7 @@ export class AgentSession {
 			// Without this a held switch survives its own resolution - an explicit
 			// /compact followed by a manual retry applies the switch here, and the stale
 			// hold would compact and re-switch again on the next message.
-			this._pendingModelSwitch = undefined;
+			this._clearPendingModelSwitch();
 			// Emit only after all admission hooks have accepted the candidate.
 			this._emit({
 				type: "model_changed",
@@ -6915,7 +6949,7 @@ export class AgentSession {
 			// #1873: the cycle commits here rather than through `_switchActiveModel`, so it
 			// has to supersede a held switch itself - otherwise cycling onto a model that
 			// fits leaves an older hold to reclaim the session on the next message.
-			this._pendingModelSwitch = undefined;
+			this._clearPendingModelSwitch();
 			// Post-switch, same contract as _switchActiveModel: the level in force AFTER the cycle.
 			this._emit({
 				type: "model_changed",
@@ -6954,25 +6988,26 @@ export class AgentSession {
 	/**
 	 * Set thinking level.
 	 * Clamps to model capabilities based on available thinking levels.
-	 * Persistent calls refresh per-model memory; session entries and events are emitted only on change.
+	 * Refreshes per-model memory, never the startup default; explicit save controls own that setting.
 	 */
-	setThinkingLevel(level: ThinkingLevel): void {
-		this._setThinkingLevel(level, true, { level, source: "explicit" });
+	setThinkingLevel(level: ThinkingLevel, origin?: ModelChangeOrigin): void {
+		this._setThinkingLevel(level, true, { level, source: "explicit" }, origin, true);
 	}
 
 	/**
 	 * Set the thinking level for this session without changing the global default.
 	 * The effective level is still persisted in this session's history.
 	 */
-	setSessionThinkingLevel(level: ThinkingLevel): void {
-		this._setThinkingLevel(level, false, { level, source: "explicit" });
+	setSessionThinkingLevel(level: ThinkingLevel, origin?: ModelChangeOrigin): void {
+		this._setThinkingLevel(level, false, { level, source: "explicit" }, origin, true);
 	}
 
 	private _setThinkingLevel(
 		level: ThinkingLevel,
-		updateGlobalDefault: boolean,
+		rememberModelLevel: boolean,
 		selection: ThinkingSelection | undefined,
 		trigger?: ModelChangeOrigin,
+		stampNoOpEffect = false,
 	): void {
 		const availableLevels = this.getAvailableThinkingLevels();
 		const effectiveLevel = availableLevels.includes(level) ? level : this._clampThinkingLevel(level, availableLevels);
@@ -6998,7 +7033,8 @@ export class AgentSession {
 		this.agent.state.thinkingLevel = effectiveLevel;
 		this.agent.state.thinkingSelection = effectiveSelection;
 
-		if (updateGlobalDefault) {
+		if (rememberModelLevel) {
+			if (this.supportsThinking() || effectiveLevel !== "off") this._lastManualThinkingLevel = effectiveLevel;
 			const model = this.model;
 			if (model) {
 				this.settingsManager.setModelThinkingLevel(model.provider, model.id, effectiveLevel);
@@ -7013,9 +7049,6 @@ export class AgentSession {
 				this.sessionManager.appendConfigurationUpdate(effectiveLevel);
 				this.agent.state.messages = this.sessionManager.buildSessionContext().messages;
 			}
-			if (updateGlobalDefault && (this.supportsThinking() || effectiveLevel !== "off")) {
-				this.settingsManager.setDefaultThinkingLevel(effectiveLevel);
-			}
 			this._emit({ type: "thinking_level_changed", level: effectiveLevel });
 			void this._extensionRunner.emit({
 				type: "thinking_level_select",
@@ -7024,6 +7057,9 @@ export class AgentSession {
 			});
 			this._emitHighReasoningWarningIfNeeded();
 			this._emitThinkingClampWarningIfNeeded();
+		} else if (stampNoOpEffect && trigger?.effectId !== undefined) {
+			// A no-op RPC effect still needs proof it applied if the process dies before its receipt.
+			this.sessionManager.appendThinkingLevelChange(effectiveLevel, effectiveSelection, trigger);
 		}
 	}
 
@@ -7121,7 +7157,7 @@ export class AgentSession {
 		requestedLevel ??= model.defaultThinkingLevel;
 		let fromGlobalDefault = false;
 		if (requestedLevel === undefined) {
-			const configuredDefault = this.settingsManager.getDefaultThinkingLevel();
+			const configuredDefault = this._lastManualThinkingLevel ?? this.settingsManager.getDefaultThinkingLevel();
 			if (configuredDefault !== undefined) {
 				requestedLevel = configuredDefault;
 				selection = { level: configuredDefault, source: "explicit" };

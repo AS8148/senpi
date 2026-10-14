@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import tpsExtension from "../../src/core/extensions/builtin/tps.ts";
 
 type ExtensionContextLike = {
+	mode: "tui";
 	hasUI: true;
 	ui: {
 		notify(message: string): void;
@@ -41,6 +42,7 @@ function createHarness() {
 
 function createContext(notifications: string[]): ExtensionContextLike {
 	return {
+		mode: "tui",
 		hasUI: true,
 		ui: {
 			notify: (message: string) => {
@@ -73,8 +75,18 @@ describe("tps builtin extension", () => {
 		const notifications: string[] = [];
 		const ctx = createContext(notifications);
 		const harness = createHarness();
-		const firstMessage = createAssistantMessage({ input: 10, output: 100, cacheRead: 30, cacheWrite: 0 });
-		const secondMessage = createAssistantMessage({ input: 20, output: 200, cacheRead: 40, cacheWrite: 0 });
+		const firstMessage = createAssistantMessage({
+			input: 10,
+			output: 100,
+			cacheRead: 30,
+			cacheWrite: 0,
+		});
+		const secondMessage = createAssistantMessage({
+			input: 20,
+			output: 200,
+			cacheRead: 40,
+			cacheWrite: 0,
+		});
 
 		await harness.emit("agent_start", { type: "agent_start" }, ctx);
 		vi.advanceTimersByTime(1_000);

@@ -1,3 +1,201 @@
+## 2026-10-13 - Provider auth status re-reads a store that was busy on its first read (omo-desktop-app#2249)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-registry.ts`: `getProviderAuthStatus()` now runs `retryBusyCredentialRead()` first, and while the runtime has no availability snapshot it answers from the live store through `AuthStorage.getAuthStatus()` (stored, `--api-key` runtime override, or environment key, each with its own source label), the same credentials `getAvailable()` already counts through `hasAuth()`. A configured runtime answer, and every answer once an availability pass has succeeded, is returned unchanged.
+
+### Why
+
+- When `auth.json` was locked on the store's first read (#2487), the runtime's stored-provider set stays empty until an availability pass succeeds. `hasConfiguredAuth()` and `getAvailable()` re-read the store live, so the provider's models worked, but `getProviderAuthStatus()` read only the empty set. The desktop provider card (fed by RPC `get_auth_providers`) therefore showed the provider as "Not connected" while its models ran (omo-desktop-app#2249). Regression: `test/suite/regressions/2249-auth-status-busy-store.test.ts`.
+
+### Why an extension could not handle it
+
+- The answer is computed inside `ModelRegistry`, which every auth consumer (RPC `get_auth_providers`, `authMethodStatus`, the selectors) calls directly; no hook sits between the store read and the status.
+
+### Expected merge conflict zones
+
+- LOW: `getProviderAuthStatus()` in `packages/coding-agent/src/core/model-registry.ts` (one method body).
+
+## 2026-10-12 - Stamp no-op thinking effects only at thinking setters (senpi#3199)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: only public thinking setters request a no-op effect stamp; a model switch with unchanged thinking writes no redundant thinking entry.
+- `packages/coding-agent/src/core/session-manager.ts`, `packages/coding-agent/src/core/model-change-origin.ts`: document RPC thinking request provenance, including requests without an effect id.
+
+### Why
+
+A model effect proves application through its model entry. Thinking entries also attribute explicit thinking requests.
+
+### Why an extension could not handle it
+
+Core setters own thinking persistence and the shared origin types.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: thinking setters and `_setThinkingLevel` signature.
+- `packages/coding-agent/src/core/session-manager.ts`, `packages/coding-agent/src/core/model-change-origin.ts`: origin field documentation.
+
+## 2026-10-12 - Settle unexpected held-switch failures (senpi#3199)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: a held switch whose final application throws emits `model_change_cancelled` with `reason: "error"` and the original detail before rethrowing. The held-switch comment belongs to `model_change_pending`.
+
+### Why
+
+The RPC receipt must fail when application fails, including unexpected exceptions.
+
+### Why an extension could not handle it
+
+The core session owns final held-switch application and its error boundary.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: model-change event union and `_applyPendingModelSwitch` catch.
+
+## 2026-10-12 - Thinking-level effect identity in the transcript (senpi#3199)
+
+### What changed
+
+- `agent-session.ts`: both thinking setters accept optional origin metadata. An effect-id-bearing no-op writes proof of application without emitting another selection.
+- `session-manager.ts`: `thinking_level_change` carries the origin's optional `effectId`.
+
+### Why
+
+Reopening after application but before the terminal receipt must derive the applied thinking effect from its transcript, not report an interrupted model switch.
+
+### Why an extension could not handle it
+
+The core thinking setter writes the authoritative transcript entry before RPC records completion.
+
+### Expected merge conflict zones
+
+- Thinking setter signatures and `ThinkingLevelChangeEntry` / `appendThinkingLevelChange`.
+
+## 2026-10-12 - Held model switch cancellation and typed auth refusal (senpi#3199)
+
+### What changed
+
+- `agent-session.ts`: clearing or replacing a held switch emits `model_change_cancelled` with its origin and either supersession or context-budget refusal. Applying its own switch clears the hold without cancellation.
+- `model-switch-auth-error.ts`: credential refusal is a typed error, so RPC can distinguish it from budget refusal and unrelated failures.
+
+### Why
+
+A held RPC effect must end when a newer choice displaces it or its repaired target refuses admission, rather than remaining accepted until restart.
+
+### Why an extension could not handle it
+
+Only the session owns every hold overwrite, direct selection, cycle and repaired-target admission.
+
+### Expected merge conflict zones
+
+- The model-change event union and held-switch assignments in `agent-session.ts`.
+
+## 2026-10-12 - Replacement-only session hook on AgentSessionRuntime (senpi#3199)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: new `AgentSessionRuntime.onBeforeSessionReplace(listener)`, returning its remover. Listeners run synchronously in `teardownCurrent` (new, switch, fork, resume), after `session_shutdown` handlers and just before `beforeSessionInvalidate`, while the outgoing session can still write its transcript. They never run from `dispose()`, and any number coexist.
+
+### Why
+
+The RPC host must give queued inputs that a replacement discards a terminal `dropped_by_replace` receipt in the outgoing transcript. The only existing hook, `setBeforeSessionInvalidate`, is a single slot that interactive mode owns, and it also fires from `dispose()`, so using it would have overwritten the TUI's teardown and marked queued input dropped on every graceful stop.
+
+### Why an extension could not handle it
+
+The write must happen inside the runtime's replacement sequence, after shutdown handlers and before the old session is disposed; extensions see `session_shutdown` but not the RPC host's admission ledger.
+
+### Expected merge conflict zones
+
+- The `AgentSessionRuntime` field list, the setter block after `setBeforeSessionInvalidate`, and the `mark("shutdown")` line in `teardownCurrent`.
+
+## 2026-10-12 - model_change entries carry the RPC effectId (senpi#3199)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-change-origin.ts`: `ModelChangeOrigin` takes an optional `effectId`; `heldSwitchOrigin` keeps it so a switch held for compaction still names its request.
+- `packages/coding-agent/src/core/session-manager.ts`: `ModelChangeEntry.effectId` is written when the origin carries one.
+
+### Why
+
+A host that dies between applying an RPC `set_model` and recording its receipt must be able to tell from the transcript alone that the switch landed, so the reopen seal answers `done` instead of guessing.
+
+### Why an extension could not handle it
+
+The `model_change` entry is written by the session's model switch itself; only its origin can carry the request identity to it.
+
+### Expected merge conflict zones
+
+- `ModelChangeOrigin` and `ModelChangeEntry` field lists, `appendModelChange`'s attribution spread.
+
+## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
+
+### What changed
+
+Remove the executable AppMode member while retaining the historical model-change source value so old entries remain readable.
+
+- `packages/coding-agent/src/core/model-change-origin.ts`
+- `packages/coding-agent/src/core/project-trust.ts`
+
+### Why
+
+The executable Codex compatibility layer is being removed. Shared Native runtime behavior and historical records must remain independent of that layer.
+
+### Why an extension could not handle it
+
+These host contracts, import paths and build or verification targets belong to the repository; an extension cannot retire them.
+
+### Expected merge conflict zones
+
+The listed paths, especially command dispatch, mode unions and process identity imports. Keep the supported runtime branches and the shared utility behavior.
+
+## 2026-10-12 - Review repairs for config/state separation (senpi#3178)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: persistent thinking selection remembers the per-model level only; startup default writes are owned by explicit UI save controls. A session-local last manual level preserves first-switch inheritance without writing config; favorite overrides, target memory, and the model's own default keep precedence. Session-only and turn-scoped changes remain ephemeral.
+- `packages/coding-agent/src/core/settings-manager.ts`: config saves retain unmodified legacy state keys; failed state saves are debug-logged separately and do not prevent config saves. State parsing normalizes model aliases before nested deletion. The fallback-removal TODO tracks the `state-fallback-removal` follow-up in PR #3213 rather than the issue this PR closes.
+- `packages/coding-agent/src/core/settings-state.ts`: corrupt/unreadable state is ignored and logged once, migration failures are memoized by source per process, and canonical model keys outrank legacy aliases.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: ordinary reasoning changes still dirtied settings. Removing that write also removed last-manual inheritance for unremembered models; the unchanged restore regression passes on `792eb9c38e` and `0e18075308` but fails on `fe3921bced`.
+- `packages/coding-agent/src/core/settings-manager.ts`: re-added keys were discarded without being copied to state, and state failures blocked configuration.
+- `packages/coding-agent/src/core/settings-state.ts`: disposable bookkeeping must not disable global configuration or resurrect deleted model memory.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: the shared setter serves UI, RPC and extension callers.
+- `packages/coding-agent/src/core/settings-manager.ts` and `packages/coding-agent/src/core/settings-state.ts`: persistence and loading run before extensions.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_setThinkingLevel` persistence block.
+- `packages/coding-agent/src/core/settings-manager.ts`: state merge and save queue.
+- `packages/coding-agent/src/core/settings-state.ts`: parsing and failure memoization.
+
+## 2026-10-12 - Bookkeeping persists separately from user settings (senpi#3178)
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts` keeps its public getters/setters and in-memory global settings, but routes the six `STATE_KEYS` to sibling `state.json`. Optional state-lock storage methods reuse the file backend's lock-free read, locked re-merge and temp/rename publish, including asynchronous contention handling. The in-memory backend also separates state; third-party backends without the optional methods retain legacy global persistence.
+- `packages/coding-agent/src/core/settings-state.ts` silently migrates raw global keys, writing missing state keys first and only then removing config keys. Existing state wins, project files are untouched, and failures go to the debug log while legacy reads remain available. Unrelated raw values and insertion order survive migration. No-value-change saves preserve config bytes.
+
+### Why
+
+- `packages/coding-agent/src/core/settings-manager.ts`: tip history, changelog acknowledgments and per-model memories made a version-controlled settings file dirty during ordinary use.
+- `packages/coding-agent/src/core/settings-state.ts`: existing bookkeeping must move without normalizing unrelated configuration.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/settings-manager.ts` and `packages/coding-agent/src/core/settings-state.ts`: settings load and persistence run before extensions and also serve SDK consumers without extensions.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/settings-manager.ts`: storage interface/file lock methods, `loadFromStorage`, `persistScopedSettings` and `save`; keep state outside settings source selection.
+- `packages/coding-agent/src/core/settings-state.ts`: fork-only new migration module.
+
 ## 2026-10-12 - Pre-prompt gates use projected context after compaction (senpi#3137)
 
 ### What changed
@@ -9721,3 +9919,22 @@ The invalid predicate was inside the session-owned compaction resolver.
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/core/agent-session.ts`: `_resolveCompactionModel`.
+## 2026-10-13 - Public holder endpoint evidence (senpi#3255)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts` carries host-owned `holderEndpoint` through initial holds and session replacement.
+- Holder records add optional `host_socket`/`host_instance`. `liveSessionHolders` exposes them only after the existing process identity validation and a stable-record read; legacy records remain live without endpoint fields.
+- A holder record replaced during that stable-record read now reports no `cwd` either; the pre-fence behavior published the second read's `cwd`, and the safer read is kept.
+
+### Why
+
+Another client needs the public endpoint of the single writer, without treating missing metadata as proof of absence.
+
+### Why an extension could not handle it
+
+Runtime ownership publication precedes extension attachment.
+
+### Expected merge conflict zones
+
+`AgentSessionLaunchProfile`, runtime hold calls, holder identity publication and listing.
