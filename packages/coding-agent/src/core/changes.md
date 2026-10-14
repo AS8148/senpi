@@ -41,6 +41,68 @@ A chain could not walk to a second rung of the same model at another thinking le
 
 - MEDIUM: `packages/coding-agent/src/core/retry-fallback/candidates.ts` (self/tried checks), `chains.ts` (`candidatesAfter`, `baseSelector`/`rungSelector`), `controller.ts` (`triedSelectors` writes), `validate.ts` (same-model warning).
 
+## 2026-10-14 - An extension's transpile cache is keyed by the runtime path it bakes in (senpi#3300)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/bun-extension-importer.ts`: the metadata import injected into every extension module now ends with a same-line comment naming the resolved runtime module path (`// runtime <encodeURI(path)>`, or `virtual` inside a compiled binary; `encodeURI` escapes every line terminator, U+2028/U+2029 included). Keeping it on the same line leaves diagnostic line numbers unchanged.
+- `packages/coding-agent/src/core/extensions/bun-extension-registry.ts`: `runtimeModulePath` is exported for that comment. Resolution is unchanged.
+
+### Why
+
+Bun <= 1.4.2 bakes the resolved absolute path of `extension-runtime-module.js` into an extension's transpile cache, and it keys that cache by the module source. senpi injected the same source from every runtime version. After an update pruned the old runtime directory, the cached entry therefore still named the deleted file, and an unchanged extension failed with `Cannot find module <old runtime>/.../extension-runtime-module.js`. Naming the path in the source gives every runtime location its own cache key. It also heals users whose cache is already broken: their stale entries were keyed by source without the comment, so the first start on a fixed runtime misses them and re-transpiles.
+
+### Why an extension could not handle it
+
+The injected metadata import and the runtime-module resolution live in the core Bun extension importer and registry, below the extension API.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/bun-extension-importer.ts`: the `contents` line that injects the metadata import.
+- `packages/coding-agent/src/core/extensions/bun-extension-registry.ts`: the `runtimeModulePath` declaration.
+
+## 2026-10-14 - Credential-pool auth blocks are re-probed on a timer (senpi#3264)
+
+### What changed
+
+- New `packages/coding-agent/src/core/credential-pool/auth-reprobe.ts` (`AUTH_BLOCK_REPROBE_MS`, 15 min).
+- `packages/coding-agent/src/core/credential-pool/rotation-stream.ts`: `blockPatch` gives an `auth_error` block `blockedUntil = now + AUTH_BLOCK_REPROBE_MS`.
+- `packages/coding-agent/src/core/credential-pool/state-store.ts`, `failover.ts`: `auth_error` is no longer a permanent block; like a cooldown it holds until `blockedUntil`, after which one caller takes the half-open probe lease. `account_disabled` stays permanent.
+- `packages/coding-agent/src/core/credential-accounts.ts`: account summaries report an auth block only while it is live.
+
+### Why
+
+- An auth block cleared only when new credential material was written, so a token refreshed outside this process left the account excluded indefinitely (senpi#3264). Regression: `test/suite/regressions/3264-auth-block-reprobe.test.ts`.
+
+### Why an extension could not handle it
+
+- The pool sidecar and rotation engine are core modules every pooled provider goes through.
+
+### Expected merge conflict zones
+
+- LOW: `slotHealth`/`acquireHalfOpenLease` in `state-store.ts`; `isAvailable` in `failover.ts`; `blockPatch` in `rotation-stream.ts`; `slotBlocked` in `credential-accounts.ts`.
+
+## 2026-10-14 - Claude subscriptions move from the direct anthropic provider to the Agent SDK lane (senpi#3259)
+
+### What changed
+
+- `packages/coding-agent/src/core/anthropic-oauth-migration.ts` (new, fork-only): `migrateAnthropicOAuthToSubscription()` is additive and two-step. A load COPIES every OAuth grant of an `anthropic` OAuth entry (each pool slot, plus top-level fields that match no slot) not yet recorded into `anthropic-subscription` accounts once (`imported-anthropic[-<slot>]`, source `import`, de-duplicated by refresh token, display name carried, pool pin pointed at the copy or at an existing account holding that token, `importedFrom` = digest of the source grant) and, in the same write, records each source grant's digest on the `anthropic` entry (`importedToSubscription`); no credential is removed. A later load that finds every source grant recorded RETIRES only the OAuth part of `anthropic` (the record proves the copy was persisted with it). Recorded grants are never copied again, so an account the user removes between the two loads stays removed; an older binary that rotates the leftover grant meanwhile produces a new, unrecorded grant, copied as a new account. On retire: API-key slots stay, rebuilt as an API-key credential projecting the pinned key. Every entry is parsed defensively; anything it cannot parse (including a malformed `anthropic-subscription` entry) is left as stored with the reason in `skipped`, and the function never throws.
+- `packages/coding-agent/src/core/auth-storage.ts`: `parseStorageContent()` runs that move after the legacy-key migration, so the existing load seam writes it back once behind a timestamped 0600 backup of the original bytes; a `skipped` reason is reported once per store as an auth-storage diagnostic (startup warning) naming the fix.
+- `packages/coding-agent/src/core/model-resolver.ts`: `findInitialModel()` (saved default) and `restoreModelFromSession()` resolve a saved `anthropic/<id>` to `anthropic-subscription/<id>` when only the subscription lane holds auth (`resolveStoredModelWithAuth()`), and the restore notice names the provider actually restored.
+- Not changed: the subscription login's "move the existing Anthropic OAuth login here?" prompt (`anthropic-subscription/oauth-login.ts`) can no longer trigger once this migration has run; it is left in place as a harmless guard.
+
+### Why
+
+- Anthropic refuses a Claude subscription token used directly against the Messages API ("Third-party apps now draw from your extra usage, not your plan limits"), so users who signed in through the `anthropic` provider's OAuth could not use their plan at all (senpi#3259). The allowed path is the Claude Agent SDK lane; moving the grant and the saved selection keeps those users on the same Claude model without a re-login.
+
+### Why an extension could not handle it
+
+- The grant must move inside the locked auth.json load (one refresh owner, backup before rewrite), and the saved default and session restore are resolved in core before any extension runs.
+
+### Expected merge conflict zones
+
+- LOW: `parseStorageContent()` and the error fields in `auth-storage.ts`; the restore notice, the step-3 saved-default lookup in `findInitialModel()` and the first line of `restoreModelFromSession()` in `model-resolver.ts`.
+
 ## 2026-10-13 - Provider auth status re-reads a store that was busy on its first read (omo-desktop-app#2249)
 
 ### What changed

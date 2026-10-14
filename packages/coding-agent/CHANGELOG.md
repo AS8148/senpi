@@ -6,6 +6,8 @@
 
 ### Added
 
+- Dual-era MCP client: servers speaking the 2026-07-28 stateless spec revision (no `initialize`, per-request `_meta`, `MCP-Protocol-Version` / `Mcp-Method` / `Mcp-Name` headers, `server/discover`) now connect, while legacy initialize-handshake servers keep working through spec-driven auto-negotiation (HTTP: modern request first with 400-body classification; stdio: discover-first probe; era cached per origin/process). Modern-only servers receive zero legacy handshake traffic through an SDK-compatibility bridge that answers the SDK client's `initialize` locally from the discovery result. Connect diagnostics log the negotiated era and protocol version per server. Modern-only stdio servers work too: the spawned process answers `server/discover` first, then every request carries the per-request `_meta`, with no `initialize` sent ([#3304](https://github.com/code-yeongyu/senpi/issues/3304), reported by @changeroa).
+
 - RPC effect ledger (capability `effect_ledger`): `abort`, `set_model` and `set_thinking_level` take an optional `effectId` and get a durable receipt written before the effect is applied; a retry with the same id replays the receipt instead of acting twice, and a different request under that id is refused with `effect_id_conflict`. `get_effect_status` answers any receipt by id, including inputs by `clientMessageId`, from a loaded session or from a transcript on disk. Input receipts now say how their turn ended (completed, aborted and by whom, error), a reopened session seals receipts its dead process left running, and queued input dropped by `new_session`/`switch_session` reads `failed` instead of vanishing ([#3199](https://github.com/code-yeongyu/senpi/issues/3199)).
 
 ### Changed
@@ -14,13 +16,21 @@
 
 - A fallback chain that lists one model at several thinking levels now walks every one of those levels. A rung that hard-errors parks only itself, so `models: [X:high, X:off, X:low, Y]` tries `X:low` after `X:off` fails instead of jumping to `Y`; a rate limit, quota or overload still skips every level of that model, so after one the walk moves on to the next model. This replaces the per-turn limit described in the previous entry. A model you pick by hand gets all its levels back ([#3311](https://github.com/code-yeongyu/senpi/issues/3311), reported by @tw-yshuang).
 
+- Local extensions keep loading after a runtime update on Bun 1.4.2 and older. Bun's transpile cache had stored the previous runtime's path to `extension-runtime-module.js`, so once that runtime was pruned an unchanged extension failed with `Cannot find module`. The cache entry now changes whenever the runtime moves, and a cache that is already broken heals on the next start, with nothing to clear by hand ([#3300](https://github.com/code-yeongyu/senpi/issues/3300), reported in the OmO community).
+
+- A credential-pool account blocked for an authentication error is no longer excluded until someone logs in again. The block now lasts 15 minutes, then one request tries the account again (refreshing its saved login first when it can), so accounts whose token was renewed elsewhere come back on their own. A goal whose provider is down no longer fires eight retries within seconds and gives up: retries back off from 15 seconds up to 30 minutes, and when the pool names the time an account frees up, the goal waits until then and continues ([#3264](https://github.com/code-yeongyu/senpi/issues/3264)).
+
+- A Claude Pro/Max subscription signed in through the Anthropic provider is moved to the Anthropic Subscription (Claude Agent SDK) lane on startup, together with saved model selections, because Anthropic bills direct-API subscription requests to extra usage and refused them. The rejection now ends the turn once with the reason and what to do, instead of replaying it on every Anthropic model ([#3259](https://github.com/code-yeongyu/senpi/issues/3259)).
+
+- A tool named `eval` with its own `permissionParser` could answer for itself with a narrower class (for example `read`), so a preset that allows reads would run an arbitrary-code cell without asking. The `eval` permission request is now always carried alongside any tool-owned requests, so only a preset that allows everything allows a cell ([#3211](https://github.com/code-yeongyu/senpi/pull/3211), requested by @code-yeongyu).
+
 - A provider whose credentials were locked when the store was first read no longer reports "not configured" to `get_auth_providers` after the lock clears, while its models already work. The status now re-reads the store the same way model availability does (omo-desktop-app#2249).
 
 - A fallback chain can walk to a rung that runs the same model at another thinking level. Such an entry used to disappear twice over: the chain scan consumed it as the entry in flight and then skipped it as a self-reference, and a model's remaining rungs were suppressed once one of them had been taken - so a chain written as `models: [X:high, X:off, Y]`, which is how the OMO/senpi adapter ships it (the entries `[X:off, Y]` under the bare `X` key), jumped straight to `Y`. Chain validation no longer reports `X:off` under the `X` key as referencing the same model. Cooldowns and circuits stay keyed by the model, because a rate-limited or spent account is unhealthy at every level, so one same-model rung remains reachable per turn before the current model's cooldown expires.
 
 ### Removed
 
-- Removed the Codex `app-server` command, daemon, generated protocol and compatibility QA harness. Process integrations use Native RPC (`senpi --mode rpc` or `senpi host`); OpenAI API and ChatGPT subscription models remain supported, and historical model-change records remain readable ([#3167](https://github.com/code-yeongyu/senpi/issues/3167), requested by @code-yeongyu).
+- Removed the Codex `app-server` command, daemon, generated protocol and compatibility QA harness. Process integrations use Native RPC (`senpi --mode rpc` or `senpi host`); OpenAI API and ChatGPT subscription models remain supported, and historical model-change records remain readable. Extensions that compared `ctx.mode` with `"app-server"` must drop that branch: `ExtensionMode` no longer includes it ([#3167](https://github.com/code-yeongyu/senpi/issues/3167), requested by @code-yeongyu).
 
 ## [2026.10.13] - 2026-10-13
 

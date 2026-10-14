@@ -239,6 +239,7 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 		isGrantRejected,
 		reload: async () => storedAccounts(await pool.store.read(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID), pool),
 		isUsable: (account) => !isBlockedFor(account, activeBoundary.now(), input.model),
+		now: activeBoundary.now(),
 		transientError: (error) => (error instanceof CredentialStoreBusyError ? error : refreshFailure(error)),
 	});
 	yield* runFailover({
