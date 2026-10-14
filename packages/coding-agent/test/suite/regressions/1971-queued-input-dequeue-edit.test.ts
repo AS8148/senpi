@@ -110,13 +110,14 @@ describe("an edited durable queued input across a reopen (senpi#1971)", () => {
 		const rpc = fixture.bind();
 		await rpc.send({ type: "follow_up", message: "use production", clientMessageId: "f1" });
 		const before = await rpc.send({ type: "get_state" });
-		const queuedId = (before.data?.ordered as { queuedId: string }[] | undefined)?.[0]?.queuedId;
+		const queuedId = (before.data as { ordered?: { queuedId: string }[] } | undefined)?.ordered?.[0]?.queuedId;
 
 		const edited = await rpc.send({ type: "edit_queued_message", queuedId, text: "use staging" });
 		const reopened = await fixture.reopen();
 		const after = await reopened.send({ type: "get_state" });
 
 		expect(edited).toMatchObject({ data: { status: "edited" } });
-		expect(((after.data?.ordered ?? []) as { text: string }[]).map((input) => input.text)).toEqual(["use staging"]);
+		const ordered = (after.data as { ordered?: { text: string }[] } | undefined)?.ordered ?? [];
+		expect(ordered.map((input) => input.text)).toEqual(["use staging"]);
 	});
 });
