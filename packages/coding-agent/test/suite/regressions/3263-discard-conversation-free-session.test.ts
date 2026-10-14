@@ -56,6 +56,15 @@ describe("closing a session without a conversation leaves no file (#3263)", () =
 		expect(existsSync(file)).toBe(true);
 	});
 
+	it("keeps the file once a delivered message reached the model context", async () => {
+		const { manager, file } = startedSession();
+		await manager.persistHeaderNow();
+		manager.appendCustomMessageEntry("session_control_delivery", "from outside", true, { delivery_id: "d1" });
+
+		expect(await manager.discardHeaderOnlyFile()).toBe(false);
+		expect(existsSync(file)).toBe(true);
+	});
+
 	it("writes the buffered custom entries again once a conversation starts after the discard", async () => {
 		const { manager, file } = startedSession();
 		await manager.persistHeaderNow();

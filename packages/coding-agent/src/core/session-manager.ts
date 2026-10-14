@@ -1492,14 +1492,15 @@ export class SessionManager {
 	/**
 	 * Removes the session file when it holds no conversation - no user or assistant message, the same
 	 * rule that keeps a new session in memory (#10000) - and returns to buffering, so a later entry
-	 * cannot recreate a header-less file. Setup and extension entries (model, thinking level, rules
-	 * scans, memory bindings) do not make a session worth a file (senpi#3263); they stay in memory and
-	 * reach disk with the first message.
+	 * cannot recreate a header-less file. Setup and extension state entries (model, thinking level,
+	 * rules scans, memory bindings) do not make a session worth a file (senpi#3263); they stay in memory
+	 * and reach disk with the first message. A `custom_message` (a delivery the model sees) keeps it.
 	 */
 	async discardHeaderOnlyFile(): Promise<boolean> {
 		await this.headerWrite;
 		if (!this.persist || !this.sessionFile || !this.flushed) return false;
 		if (this._hasConversation()) return false;
+		if (this.fileEntries.some((entry) => entry.type === "custom_message")) return false;
 		await rm(this.sessionFile, { force: true });
 		this.flushed = false;
 		return true;

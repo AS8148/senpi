@@ -2,19 +2,19 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/session-manager.ts`: `discardHeaderOnlyFile()` removes the file when the session holds no user or assistant message (`_hasConversation()`, the rule `_persist` already uses to keep a new session in memory, #10000), instead of only when every entry is a header or model/thinking entry. `SETUP_ONLY_ENTRY_TYPES` is gone. The in-memory entries are kept and reach disk with the first message, as before.
+- `packages/coding-agent/src/core/session-manager.ts`: `discardHeaderOnlyFile()` removes the file when the session holds no user or assistant message (`_hasConversation()`, the rule `_persist` already uses to keep a new session in memory, #10000) and no `custom_message` entry (an external delivery the model sees in context keeps the file), instead of only when every entry is a header or model/thinking entry. `SETUP_ONLY_ENTRY_TYPES` is gone. The in-memory entries are kept and reach disk with the first message, as before.
 
 ### Why
 
-- The TUI control endpoint writes the header at startup (`persistHeaderNow()`), and extensions then append `custom` entries straight to that file (rules scan, memory session binding). The old allow-list refused to discard a file holding them, so opening and closing the TUI, or `/new`, without a message left an empty session listed in `/resume` (senpi#3263).
+- `packages/coding-agent/src/core/session-manager.ts`: the TUI control endpoint writes the header at startup (`persistHeaderNow()`), and extensions then append `custom` entries straight to that file (rules scan, memory session binding). The old allow-list refused to discard a file holding them, so opening and closing the TUI, or `/new`, without a message left an empty session listed in `/resume` (senpi#3263).
 
 ### Why an extension could not handle it
 
-- The close-time discard is a `SessionManager` method called by the interactive control-endpoint lifecycle; no extension owns when a session file is removed.
+- `packages/coding-agent/src/core/session-manager.ts`: the close-time discard is a `SessionManager` method called by the interactive control-endpoint lifecycle; no extension owns when a session file is removed.
 
 ### Expected merge conflict zones
 
-- LOW: `discardHeaderOnlyFile()` and the removed `SETUP_ONLY_ENTRY_TYPES` constant above the class.
+- `packages/coding-agent/src/core/session-manager.ts`: LOW, `discardHeaderOnlyFile()` and the removed `SETUP_ONLY_ENTRY_TYPES` constant above the class.
 
 ## 2026-10-14 - The fallback circuit opens for a usage limit until its own reset window (senpi#3314)
 
