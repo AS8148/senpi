@@ -87,7 +87,7 @@ describe.skipIf(process.platform === "win32")("stale old-engine hosts (#3268)", 
 	it("keeps a host that holds a session", async () => {
 		const { qa, supervisor } = await idleHost("session");
 		const peer = await attach(qa);
-		openedSessionId(await peer.request({ id: "open", type: "open_session", cwd: qa.cwd, retainOnDisconnect: true }));
+		openedSessionId(await peer.request({ id: "open", type: "open_session", cwd: qa.cwd, retain_on_disconnect: true }));
 		peer.destroy();
 		const result = await gcHostEndpoints(qa.agentDir, { staleEngine });
 		expect(result.stopped).toEqual([]);

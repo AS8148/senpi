@@ -73,7 +73,8 @@ export interface HostGcEntry<Reason extends string> {
 
 export interface HostGcResult {
 	readonly removed: readonly HostGcEntry<SocketSilence>[];
-	readonly stopped: readonly (HostGcEntry<"stale_old_engine"> & { readonly pid: number })[];
+	/** Present only when the run judged stale older-engine hosts (`staleEngine`). */
+	readonly stopped?: readonly (HostGcEntry<"stale_old_engine"> & { readonly pid: number })[];
 	readonly kept: readonly HostGcEntry<HostGcKeptReason>[];
 }
 
@@ -115,7 +116,7 @@ export async function gcHostEndpoints(agentDir: string, options: HostGcOptions =
 			kept.push({ ...entry, reason: "failed", error: error instanceof Error ? error.message : String(error) });
 		}
 	}
-	return { removed, stopped, kept };
+	return options.staleEngine === undefined ? { removed, kept } : { removed, stopped, kept };
 }
 
 /** One endpoint, judged and removed exactly as a full run does; the budgeted pass (`host-gc-pass.ts`) reuses it. */
