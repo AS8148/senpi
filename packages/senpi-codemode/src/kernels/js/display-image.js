@@ -113,6 +113,28 @@ function isEncodableImage(value) {
 	return !isBinaryData(value) && (typeof value.arrayBuffer === "function" || typeof value.bytes === "function");
 }
 
+// { buffer: <bytes>, ...metadata } (e.g. an omowright screenshot): the bytes frame as an image when they
+// carry a known signature; the remaining own fields display as compact JSON text. Non-image bytes or a
+// non-plain wrapper stay on the JSON path.
+function wrappedBufferImageOps(value) {
+	if (Object.getPrototypeOf(value) !== Object.prototype || !("buffer" in value)) return undefined;
+	const bytes = bytesOf(value.buffer);
+	if (bytes === undefined) return undefined;
+	const mimeType = sniffImageMimeType(bytes);
+	if (mimeType === undefined) return undefined;
+	const frameOp = frame(mimeType, Buffer.from(bytes).toString("base64"));
+	const meta = {};
+	for (const key of Object.keys(value)) {
+		if (key !== "buffer") meta[key] = value[key];
+	}
+	if (Object.keys(meta).length === 0) return [frameOp];
+	try {
+		return [{ kind: "text", text: JSON.stringify(meta) }, frameOp];
+	} catch {
+		return [frameOp];
+	}
+}
+
 function frame(mimeType, dataBase64) {
 	return { kind: "frame", mimeType, dataBase64 };
 }
@@ -141,7 +163,7 @@ export function resolveDisplayOps(value) {
 		return [frame(payload.mimeType ?? "application/octet-stream", payload.dataBase64)];
 	}
 	if (isEncodableImage(value)) return [{ kind: "encode", value }];
-	return undefined;
+	return wrappedBufferImageOps(value);
 }
 
 export async function encodeDisplayImage(value) {

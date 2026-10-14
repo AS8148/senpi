@@ -1,6 +1,7 @@
 import type { AgentToolResult } from "@code-yeongyu/senpi";
 import { describe, expect, it, vi } from "vitest";
-import { resolveDisplayOps } from "../src/kernels/js/display-image.js";
+import type { KernelToHostMessage } from "../src/bridge/protocol.ts";
+import { JavaScriptKernel } from "../src/kernels/js/context-manager.ts";
 import { createEvalTool } from "../src/tool/eval-tool.ts";
 import type { RenderEnvironment } from "../src/tool/render-blocks.ts";
 import { renderJsonOutputs } from "../src/tool/render-detail.ts";
@@ -8,13 +9,8 @@ import { FakeKernel, FakeManager, fakeExtensionContext, result } from "./eval/fa
 import { plainTheme } from "./eval-render-fixtures.ts";
 
 type ToolContent = AgentToolResult<unknown>["content"][number];
-type TextPart = Extract<ToolContent, { type: "text" }>;
-
 function textOf(toolResult: AgentToolResult<unknown>): string {
-	return toolResult.content
-		.filter((part): part is TextPart => part.type === "text")
-		.map((part) => part.text)
-		.join("\n");
+	return toolResult.content.flatMap((part: ToolContent) => (part.type === "text" ? [part.text] : [])).join("\n");
 }
 
 function createTool(kernel: FakeKernel) {
@@ -29,8 +25,6 @@ function createTool(kernel: FakeKernel) {
 function renderEnvironment(expanded: boolean): RenderEnvironment {
 	return { expanded, theme: plainTheme(), spinnerFrame: undefined, width: 80, meta: undefined, now: 0 };
 }
-
-const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
 
 describe("eval display jsonOutputs bounds (#3261)", () => {
 	it("Given a displayed object wrapping a large Buffer when the cell settles then the stored jsonOutputs entry is bounded", async () => {
@@ -59,6 +53,7 @@ describe("eval display jsonOutputs bounds (#3261)", () => {
 		// and stays within the same order of budget as the model-facing text.
 		const stored = toolResult.details.jsonOutputs;
 		expect(stored).toHaveLength(1);
+		if (stored === undefined) throw new Error("jsonOutputs missing from eval result details");
 		expect(stored[0]).toEqual({ buffer: "<Buffer 2.9 MB>", width: 1, height: 1 });
 		expect(JSON.stringify(stored[0]).length).toBeLessThan(16_000);
 		// And the model-facing text still renders the capped JSON tree.
@@ -117,35 +112,75 @@ describe("eval display jsonOutputs bounds (#3261)", () => {
 });
 
 describe("eval display wrapped image detection (#3261)", () => {
-	it("Given an object whose buffer field holds image bytes when displayed then it resolves to an image frame plus metadata text", () => {
+	async function displayEvents(code: string): Promise<KernelToHostMessage[]> {
+		const kernel = new JavaScriptKernel({
+			sessionId: "wrapped-buffer-detection",
+			cwd: process.cwd(),
+			parallelPoolWidth: 1,
+			onMessage: () => {},
+		});
+		const messages: KernelToHostMessage[] = [];
+		try {
+			await kernel.run({
+				cellId: `cell-${crypto.randomUUID()}`,
+				code,
+				timeoutMs: 5_000,
+				onMessage: (message) => messages.push(message),
+			});
+		} finally {
+			await kernel.close();
+		}
+		return messages.filter((message) => message.type === "display" || message.type === "text");
+	}
+
+	it("Given an object whose buffer field holds image bytes when displayed then it resolves to an image frame plus metadata text", async () => {
 		// Given: the omowright screenshot shape { buffer, width, height }.
-		const value = { buffer: PNG_BYTES, width: 2, height: 3 };
+		const events = await displayEvents(
+			"display({ buffer: new Uint8Array([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,1,2,3,4]), width: 2, height: 3 })",
+		);
 
-		// When
-		const ops = resolveDisplayOps(value);
-
-		// Then
-		expect(ops).toEqual([
-			{ kind: "text", text: JSON.stringify({ width: 2, height: 3 }) },
-			{ kind: "frame", mimeType: "image/png", dataBase64: Buffer.from(PNG_BYTES).toString("base64") },
+		// Then: the metadata displays as compact JSON stdout text, then the bytes as an image frame.
+		expect(events).toEqual([
+			{ type: "text", stream: "stdout", data: `${JSON.stringify({ width: 2, height: 3 })}\n` },
+			{
+				type: "display",
+				mimeType: "image/png",
+				dataBase64: Buffer.from(
+					new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]),
+				).toString("base64"),
+			},
 		]);
 	});
 
-	it("Given an object whose buffer field holds non-image bytes when displayed then it stays on the JSON path", () => {
-		// Given
-		const value = { buffer: new Uint8Array([65, 66, 67]), note: "abc" };
+	it("Given an object whose buffer field holds non-image bytes when displayed then it stays on the JSON path", async () => {
+		const events = await displayEvents("display({ buffer: new Uint8Array([65,66,67]), note: 'abc' })");
 
-		// When / Then
-		expect(resolveDisplayOps(value)).toBeUndefined();
+		// Then: one JSON display carrying the serialized bytes, no image frame.
+		expect(events).toHaveLength(1);
+		const display = events[0];
+		expect(display.type).toBe("display");
+		if (display.type !== "display") return;
+		expect(display.mimeType).toBe("application/json");
+		expect(JSON.parse(Buffer.from(display.dataBase64, "base64").toString("utf8"))).toEqual({
+			buffer: { 0: 65, 1: 66, 2: 67 },
+			note: "abc",
+		});
 	});
 
-	it("Given an object holding only image bytes under buffer when displayed then just the frame resolves", () => {
-		// When
-		const ops = resolveDisplayOps({ buffer: PNG_BYTES });
+	it("Given an object holding only image bytes under buffer when displayed then just the frame resolves", async () => {
+		const events = await displayEvents(
+			"display({ buffer: new Uint8Array([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,1,2,3,4]) })",
+		);
 
 		// Then
-		expect(ops).toEqual([
-			{ kind: "frame", mimeType: "image/png", dataBase64: Buffer.from(PNG_BYTES).toString("base64") },
+		expect(events).toEqual([
+			{
+				type: "display",
+				mimeType: "image/png",
+				dataBase64: Buffer.from(
+					new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]),
+				).toString("base64"),
+			},
 		]);
 	});
 });

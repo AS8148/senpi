@@ -1,5 +1,13 @@
 import { type AgentToolResult, sanitizeTerminalLabel, type Theme } from "@code-yeongyu/senpi";
 import {
+	bufferPlaceholder,
+	displayJsonSizeExceeds,
+	formatByteLength,
+	MAX_DISPLAY_JSON_BYTES,
+	serializedBufferByteLength,
+} from "./display-json-bounds.ts";
+import {
+	formatScalar,
 	JSON_TREE_MAX_DEPTH_COLLAPSED,
 	JSON_TREE_MAX_DEPTH_EXPANDED,
 	JSON_TREE_MAX_LINES_COLLAPSED,
@@ -44,12 +52,39 @@ export function renderJsonOutputs(values: readonly unknown[], environment: Rende
 			lines,
 			renderAllVisualLines(style(environment.theme, "dim", `display[${index + 1}]`), environment.width),
 		);
+		appendLines(lines, renderJsonEntryLines(value, environment, depth, lineCap, scalarLen));
+	}
+	return lines;
+}
+
+function renderJsonEntryLines(
+	value: unknown,
+	environment: RenderEnvironment,
+	depth: number,
+	lineCap: number,
+	scalarLen: number,
+): string[] {
+	const fallback = (text: string): string[] =>
+		renderAllVisualLines(style(environment.theme, "dim", text), environment.width);
+	try {
+		// Sessions from before the storage bound can hold byte-per-number Buffer dumps or oversized entries;
+		// those collapse to a bounded placeholder or summary instead of walking the whole value.
+		const bufferBytes = serializedBufferByteLength(value);
+		if (bufferBytes !== undefined) return fallback(bufferPlaceholder(bufferBytes));
+		if (displayJsonSizeExceeds(value, MAX_DISPLAY_JSON_BYTES)) {
+			return fallback(
+				`… oversized display value elided (${formatScalar(value, scalarLen)}, ~${formatByteLength(MAX_DISPLAY_JSON_BYTES)}+ stored)`,
+			);
+		}
 		const tree = renderJsonTreeLines(value, environment.theme, depth, lineCap, scalarLen);
+		const lines: string[] = [];
 		for (const line of tree.lines) appendLines(lines, renderAllVisualLines(line, environment.width));
 		if (tree.truncated)
 			appendLines(lines, renderAllVisualLines(style(environment.theme, "dim", "…"), environment.width));
+		return lines;
+	} catch {
+		return fallback("[display value could not be rendered]");
 	}
-	return lines;
 }
 
 export function renderDetailedLines(
