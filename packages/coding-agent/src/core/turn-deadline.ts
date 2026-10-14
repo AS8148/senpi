@@ -91,10 +91,28 @@ export function resolveTurnDeadlineSettings(configured: {
  */
 export interface DeadlineSessionOwner {
 	_recordDeadlineStop(deadline: TurnDeadline): void;
+	/** End the turn through the normal system abort; resolves once the session is idle. */
 	abortTurnForDeadline(): Promise<void>;
-	_emitIdle(): void;
+	/** Kill the process trees of running tools; the hard stop after the grace. */
+	abortBash(): void;
 	/** True while a provider retry is in flight; the engine is actively recovering the turn. */
 	readonly isRetryInFlight: boolean;
+	readonly isIdle: boolean;
+	/** A deadline stop that could not complete (the entry write failed, or the turn outlived both graces). */
+	_warnDeadline(event: "turn_deadline_record_failed" | "turn_deadline_unsettled", detail: string): void;
+}
+
+/** Resolves true when `work` settles within `ms`, false when the time runs out first. */
+async function within(work: Promise<void>, ms: number): Promise<boolean> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const expired = new Promise<false>((resolve) => {
+		timer = setTimeout(() => resolve(false), ms);
+	});
+	try {
+		return await Promise.race([work.then(() => true), expired]);
+	} finally {
+		clearTimeout(timer);
+	}
 }
 
 /**
@@ -127,8 +145,8 @@ export class AgentDeadlineTracker {
 		this.deadlineValue = undefined;
 		this.startedAtMs = this.now();
 		const { inactivityMs, maxRuntimeMs } = this.settings();
-		if (inactivityMs > 0) this.inactivityTimer = setTimeout(() => void this.expire("inactivity"), inactivityMs);
-		if (maxRuntimeMs > 0) this.maxRuntimeTimer = setTimeout(() => void this.expire("max_runtime"), maxRuntimeMs);
+		if (inactivityMs > 0) this.inactivityTimer = setTimeout(() => this.fire("inactivity"), inactivityMs);
+		if (maxRuntimeMs > 0) this.maxRuntimeTimer = setTimeout(() => this.fire("max_runtime"), maxRuntimeMs);
 	}
 
 	renew(): void {
@@ -136,7 +154,7 @@ export class AgentDeadlineTracker {
 		const { inactivityMs } = this.settings();
 		if (inactivityMs <= 0) return;
 		if (this.inactivityTimer !== undefined) clearTimeout(this.inactivityTimer);
-		this.inactivityTimer = setTimeout(() => void this.expire("inactivity"), inactivityMs);
+		this.inactivityTimer = setTimeout(() => this.fire("inactivity"), inactivityMs);
 	}
 
 	disarm(): void {
@@ -144,10 +162,13 @@ export class AgentDeadlineTracker {
 		this.startedAtMs = 0;
 	}
 
-	/** Admitted user input releases the deadline-stopped hold and re-arms any live run. */
+	/**
+	 * Admitted user input releases the deadline-stopped hold. Input steered into a live run counts as
+	 * activity (the inactivity lease restarts) but never resets the max-runtime clock of that run.
+	 */
 	clearHold(): void {
 		this.deadlineValue = undefined;
-		if (this.startedAtMs !== 0) this.arm();
+		this.renew();
 	}
 
 	private clearTimers(): void {
@@ -157,32 +178,55 @@ export class AgentDeadlineTracker {
 		this.maxRuntimeTimer = undefined;
 	}
 
+	private fire(kind: TurnDeadlineKind): void {
+		this.expire(kind).catch((error: unknown) =>
+			this.session._warnDeadline(
+				"turn_deadline_record_failed",
+				error instanceof Error ? error.message : String(error),
+			),
+		);
+	}
+
 	private async expire(kind: TurnDeadlineKind): Promise<void> {
 		if (this.deadlineValue !== undefined || this.startedAtMs === 0) return;
 		const { inactivityMs, maxRuntimeMs } = this.settings();
 		const limitMs = kind === "inactivity" ? inactivityMs : maxRuntimeMs;
 		if (limitMs <= 0) return;
-		// A retry in flight is the engine actively recovering the turn, not a stuck turn;
-		// leave the turn unleased while it recovers and let the next tool event re-arm it.
-		if (this.session.isRetryInFlight) {
-			this.clearTimers();
-			this.startedAtMs = 0;
+		// A provider retry in flight is the engine recovering the turn: it renews the inactivity lease.
+		// The max-runtime cap is absolute and applies through retries.
+		if (kind === "inactivity" && this.session.isRetryInFlight) {
+			this.inactivityTimer = undefined;
+			this.renew();
 			return;
 		}
 		this.clearTimers();
 		const deadline: TurnDeadline = { kind, limitMs, elapsedMs: this.now() - this.startedAtMs };
 		this.deadlineValue = deadline;
 		this.session._recordDeadlineStop(deadline);
-		await this.session.abortTurnForDeadline();
-		this.session._emitIdle();
+		// The normal settle path emits agent_idle once the aborted run ends. Give the abort the grace, then
+		// kill tool process trees and give it the grace again; a turn still running after that is held by
+		// something no abort can end (an extension handler that never returns), which is reported, never
+		// papered over with a fake idle.
+		const aborting = this.session.abortTurnForDeadline();
+		if (await within(aborting, TURN_DEADLINE_GRACE_MS)) return;
+		this.session.abortBash();
+		if (await within(aborting, TURN_DEADLINE_GRACE_MS)) return;
+		if (!this.session.isIdle)
+			this.session._warnDeadline(
+				"turn_deadline_unsettled",
+				`turn still running ${2 * TURN_DEADLINE_GRACE_MS} ms after the ${kind} deadline abort`,
+			);
 	}
 }
 
 export function buildDeadlineStopNotice(deadline: TurnDeadline): string {
-	const minutes = Math.round(deadline.limitMs / 60_000);
+	const limit =
+		deadline.limitMs < 60_000
+			? `${Math.max(1, Math.round(deadline.limitMs / 1000))} s`
+			: `${Math.round(deadline.limitMs / 60_000)} min`;
 	const reason =
 		deadline.kind === "inactivity"
-			? `no tool progress for ${minutes} min (turn_inactivity_ms)`
-			: `turn hit its maximum runtime of ${minutes} min (turn_max_runtime_ms)`;
+			? `no tool progress for ${limit} (turn_inactivity_ms)`
+			: `turn hit its maximum runtime of ${limit} (turn_max_runtime_ms)`;
 	return `turn stopped: ${reason}. Action: send a message to continue, or raise the limit in settings`;
 }

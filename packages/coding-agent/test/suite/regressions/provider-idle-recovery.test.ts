@@ -317,6 +317,8 @@ describe("provider idle recovery", () => {
 					baseDelayMs: 0,
 					provider: { streamRetryTimeoutMs: retryTimeoutMs },
 				},
+				turn_inactivity_ms: 0,
+				turn_max_runtime_ms: 0,
 			},
 		});
 		harnesses.push(harness);

@@ -4224,9 +4224,9 @@ export class AgentSession {
 		return this._deadlineTracker.current;
 	}
 
-	/** Adapter for the deadline owner interface: emit the turn-idle signal the tracker ends on. */
-	_emitIdle(): void {
-		this._emit({ type: "agent_idle" });
+	/** Adapter for the deadline owner interface: a deadline stop that could not complete. */
+	_warnDeadline(event: "turn_deadline_record_failed" | "turn_deadline_unsettled", detail: string): void {
+		this._sessionLogger.warn(event, { detail });
 	}
 
 	/** Adapter for the deadline owner interface: end the turn through the normal system abort. */

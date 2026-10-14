@@ -3,9 +3,10 @@
 // The lease renews only on tool execution events and admitted user input.
 import { clearTimeout as clearRealTimeout, setTimeout as setRealTimeout } from "node:timers";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { fauxAssistantMessage } from "@earendil-works/pi-ai/compat";
+import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { deadlineStopPendingSinceLastTurn } from "../../../src/core/turn-deadline.ts";
 import { createHarness, getAssistantTexts, type Harness } from "../harness.ts";
 
 /** Bounded wait for a session event under fake timers: the escape hatch runs on the real clock. */
@@ -36,8 +37,6 @@ function waitForSessionEvent<K extends Harness["events"][number]["type"]>(
 
 const INACTIVITY_MS = 120_000;
 const MAX_RUNTIME_MS = 300_000;
-// In the hard-cap test the inactivity lease is set LONGER than the cap so the cap wins.
-const LONG_INACTIVITY_MS = 600_000;
 
 const quietTool: AgentTool = {
 	name: "tick",
@@ -99,12 +98,17 @@ describe("turn inactivity lease and max runtime (senpi#3227)", () => {
 	}, 60_000);
 
 	it("renews on tool execution progress so only the hard max runtime stops the turn", async () => {
-		// The inactivity lease is set far above the hard cap, so only the cap can end the turn.
+		// Each step streams ~80 s of text (faux: 4 chars per token, 1 token/s), then calls `tick`: only the tool events renew the 120 s lease,
+		// so the turn outlives several leases and the 300 s cap is what ends it.
 		const h = await createLeaseHarness(
-			{ turn_inactivity_ms: LONG_INACTIVITY_MS, turn_max_runtime_ms: MAX_RUNTIME_MS },
+			{ turn_inactivity_ms: INACTIVITY_MS, turn_max_runtime_ms: MAX_RUNTIME_MS },
 			true,
 		);
-		h.setResponses([fauxAssistantMessage(`work in progress ${"still going ".repeat(320)}`)]);
+		const step = () =>
+			fauxAssistantMessage([fauxText(`step ${"working ".repeat(40)}`), fauxToolCall("tick", {})], {
+				stopReason: "toolUse",
+			});
+		h.setResponses([step(), step(), step(), step(), step()]);
 		const ended = waitForSessionEvent(h, "agent_end", (event) => event.aborted === true);
 
 		const prompting = h.session.prompt("keep reporting without ever finishing");
@@ -115,6 +119,7 @@ describe("turn inactivity lease and max runtime (senpi#3227)", () => {
 		const deadline = agentEnd.deadline;
 		expect(deadline?.kind).toBe("max_runtime");
 		expect(deadline?.limitMs).toBe(MAX_RUNTIME_MS);
+		expect(h.eventsOfType("tool_execution_end").length).toBeGreaterThanOrEqual(2);
 	}, 60_000);
 
 	it("never fires when turn_inactivity_ms is 0", async () => {
@@ -152,11 +157,15 @@ describe("turn inactivity lease and max runtime (senpi#3227)", () => {
 		await vi.advanceTimersByTimeAsync(INACTIVITY_MS + 10_000);
 		await ended;
 		await first;
+		expect(deadlineStopPendingSinceLastTurn(h.session.sessionManager.getBranch())).toMatchObject({
+			kind: "inactivity",
+		});
 
 		h.setResponses([fauxAssistantMessage("recovered answer")]);
 		const resume = h.session.prompt("continue");
 		await vi.advanceTimersByTimeAsync(10_000);
 		await resume;
 		expect(getAssistantTexts(h).some((text) => text.includes("recovered answer"))).toBe(true);
+		expect(deadlineStopPendingSinceLastTurn(h.session.sessionManager.getBranch())).toBeUndefined();
 	}, 60_000);
 });
