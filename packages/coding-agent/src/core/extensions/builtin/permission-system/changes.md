@@ -1,5 +1,25 @@
 # Permission System Builtin Extension
 
+## 2026-10-14 - Unregistered-tool deny never masked; configured deny beats a preset wildcard (#3301 review)
+
+### What changed
+
+- `parsers.ts`: the unknown-tool fallback collapsed to a bare `"*"` target, so a pattern-specific configured deny (e.g. `my_tool: {"rm *": deny}`) could not match an unregistered tool and the decision widened to the preset. The fallback now derives the decision target from the tool's meaningful arg (path/command/url/input), keeping `"*"` only for a truly arg-less call.
+- `service.ts` (plain path): a preset's wildcard-ask (e.g. a CLI `ask` preset, merged after project rules) masked an explicit settings/CLI deny in last-match order. The user's configured (non-preset) rules are now evaluated with their own last-match order first; a user deny wins outright, and the preset only fills the gap the user left. The presetBound path already applied this split.
+
+### Why
+
+- An unregistered (custom/MCP) tool whose deny named a pattern was not denied at all — the call executed under the preset's wildcard, the same fail-open class as the forged-approval finding.
+- A CLI `ask` preset's wildcard, landing after a project deny, made the decision `ask` instead of `deny`, so a configured deny was prompted instead of refused.
+
+### Why an extension could not handle it
+
+- Both live in the parser registry's fallback and the service's single decision point; an extension cannot intercept either.
+
+### Expected merge conflict zones
+
+- `parsers.ts` `fallbackPermissionRequestFor` / the registry's no-parser branch; `service.ts` the plain-path user-rule split in `dispatchDecision`.
+
 ## 2026-10-14 - Approvals-store security hardening (#3301 review / #2465)
 
 ### What changed
