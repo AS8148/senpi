@@ -22,7 +22,24 @@ export async function attachToOpenSession(
 	now: number,
 ): Promise<OpenRpcSession> {
 	const existing = [...entries].find(([, entry]) => entry.reservationKey === sessionPath && entry.state === "open");
-	if (!existing) throw new RpcSessionRegistryError("session_path_in_use");
+	if (!existing) {
+		// An in-flight open for the same path holds the reservation. An explicit reopen WAITS for it
+		// to finish and attaches, rather than failing on a healthy in-flight open (senpi#3282
+		// review: the explicit reopen waits for, or attaches to, the in-flight open of the path).
+		const inFlight = [...entries].find(
+			([, entry]) => entry.reservationKey === sessionPath && entry.state === "opening",
+		);
+		if (inFlight?.[1].openCompletion !== undefined) {
+			try {
+				await inFlight[1].openCompletion;
+			} catch {
+				// The in-flight open failed; the path is free again, so this open can take it fresh.
+				throw new RpcSessionRegistryError("session_path_in_use");
+			}
+			return attachToOpenSession(entries, sessionPath, profile, options, pathReservations, now);
+		}
+		throw new RpcSessionRegistryError("session_path_in_use");
+	}
 	const [handle, entry] = existing;
 	const wasParked = entry.retainOnDisconnect === true && entry.attachments === 0;
 	entry.attachments += 1;
