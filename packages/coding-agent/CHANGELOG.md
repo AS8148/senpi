@@ -12,9 +12,11 @@
 
 ### Fixed
 
+- A provider whose credentials were locked when the store was first read no longer reports "not configured" to `get_auth_providers` after the lock clears, while its models already work. The status now re-reads the store the same way model availability does (omo-desktop-app#2249).
+
 ### Removed
 
-- Removed the Codex `app-server` command, daemon, generated protocol and compatibility QA harness. Process integrations use Native RPC (`senpi --mode rpc` or `senpi host`); OpenAI API and ChatGPT subscription models remain supported, and historical model-change records remain readable ([#3167](https://github.com/code-yeongyu/senpi/issues/3167), requested by @code-yeongyu).
+- Removed the Codex `app-server` command, daemon, generated protocol and compatibility QA harness. Process integrations use Native RPC (`senpi --mode rpc` or `senpi host`); OpenAI API and ChatGPT subscription models remain supported, and historical model-change records remain readable. Extensions that compared `ctx.mode` with `"app-server"` must drop that branch: `ExtensionMode` no longer includes it ([#3167](https://github.com/code-yeongyu/senpi/issues/3167), requested by @code-yeongyu).
 
 ## [2026.10.13] - 2026-10-13
 
