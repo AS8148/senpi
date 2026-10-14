@@ -58,7 +58,7 @@ describe("public prompt generation (#3104)", () => {
 
 	it("matches every forced preset and fallback captured from immutable main", () => {
 		const presets = ["auto", "gpt-5", ...AUTO_RESOLVED_PRESET_NAMES] as const;
-		expect(baseline.sourceCommit).toBe("93777707fc9c60045038de3f32f8590692cd64fa");
+		expect(baseline.sourceCommit).toBe("3cfe650bb5dd042a04a6db4231779ded1c0be4ca");
 		expect(expectedHashes.size).toBe(presets.length * BASELINE_SURFACES.length * BASELINE_OPTIONS.length);
 		for (const promptPreset of presets) {
 			for (const surface of BASELINE_SURFACES) {
