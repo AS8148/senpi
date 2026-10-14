@@ -84,8 +84,9 @@ export type SlotHealth = "ready" | "blocked" | "half_open";
 /** Deadlines are absolute so a restart never re-enables a cooling credential early. */
 export function slotHealth(state: CredentialSlotState | undefined, now: number): SlotHealth {
 	if (!state) return "ready";
-	// Auth and billing blocks have no expiry; only credential replacement clears them.
-	if (state.blockReason === "auth_error" || state.blockReason === "account_disabled") return "blocked";
+	// A billing block has no expiry; only credential replacement clears it. An auth
+	// block lasts until its re-probe time (senpi#3264), like a cooldown.
+	if (state.blockReason === "account_disabled") return "blocked";
 	if (state.blockedUntil !== undefined && state.blockedUntil > now) return "blocked";
 	if (state.blockedUntil !== undefined && state.lease !== undefined && state.lease.expiresAt > now) {
 		return "half_open";
@@ -246,7 +247,7 @@ export async function acquireHalfOpenLease(
 		if (!current) return current;
 		const expired = current.blockedUntil !== undefined && current.blockedUntil <= now;
 		const leaseLive = current.lease !== undefined && current.lease.expiresAt > now;
-		if (!expired || leaseLive || current.blockReason === "auth_error") return current;
+		if (!expired || leaseLive) return current;
 		lease = { leaseId: randomUUID(), expiresAt: now + leaseTtlMs };
 		return { ...current, lease: { id: lease.leaseId, expiresAt: lease.expiresAt } };
 	});

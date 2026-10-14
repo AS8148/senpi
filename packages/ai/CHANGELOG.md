@@ -8,7 +8,11 @@
 
 ### Changed
 
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`github-copilot`, `google`, `google-vertex`, `meta`, `opencode`, `opencode-go`, `opengateway`, `openrouter`, `vercel-ai-gateway`).
+
 ### Fixed
+
+- Anthropic's "Third-party apps now draw from your extra usage" rejection is classified as terminal account exhaustion with a plain explanation of the billing path, and the `anthropic` provider no longer offers a Claude subscription OAuth login; subscriptions use the Agent SDK lane ([#3259](https://github.com/code-yeongyu/senpi/issues/3259)).
 
 ### Removed
 
