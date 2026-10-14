@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { parseRetryAfterMsMarker } from "@earendil-works/pi-ai/utils/retry-hint";
 import { usageLimitResetMs } from "../credential-pool/reset-time.ts";
 import type { FallbackLogger } from "./log.ts";
+import { usageLimitScope } from "./usage-limit.ts";
 
 /**
  * Fallback-chain circuit breaker. An entry that fails out of a configured chain
@@ -35,6 +36,8 @@ export interface CircuitOpenRequest {
 	cooldownMs: number;
 	maxCooldownMs: number;
 	retryAfterMs?: number;
+	/** The reset window a usage limit named for itself; when present it alone sets the open. */
+	resetWindowMs?: number;
 }
 
 export interface ProbeToken {
@@ -91,14 +94,14 @@ export class FallbackCircuitBreaker {
 		// hint (a weekly window, or a gateway replaying a stale wait) still gets its single
 		// half-open probe once the ceiling elapses, so a recovered entry is re-checked instead
 		// of refused for the whole hint; a failed probe re-opens with the fresh hint (senpi#2446).
-		// A usage limit that names its own reset window is a rate limit that recovers, not a
-		// quota exhaustion: when that window is shorter than the cooldown, open only until it
-		// passes so the primary is retried at the window instead of held for the whole cooldown
-		// (senpi#3300; the Kakao report of a session that never returned to its rate-limited
-		// primary). A genuine quota exhaustion carries no short hint and keeps the cooldown floor.
-		const cooldownUntil = request.now + cooldownMs;
-		const hintUntil = Math.min(retryFloorUntil, request.now + request.maxCooldownMs);
-		const openUntil = hinted > 0 && hintUntil < cooldownUntil ? hintUntil : Math.max(cooldownUntil, hintUntil);
+		// Every other hint (Retry-After, a marker, "try again in 2s" on an overload) keeps the doubling
+		// cooldown as its floor. A usage limit's own reset window is when that limit recovers, so it
+		// alone sets the open, shorter or longer than the cooldown, up to the ceiling (senpi#3300).
+		const resetWindowMs = request.resetWindowMs;
+		const openUntil =
+			resetWindowMs !== undefined && Number.isFinite(resetWindowMs) && resetWindowMs > 0
+				? request.now + Math.min(resetWindowMs, request.maxCooldownMs)
+				: Math.max(request.now + cooldownMs, Math.min(retryFloorUntil, request.now + request.maxCooldownMs));
 		this.circuits.set(selector, {
 			openUntil,
 			retryFloorUntil,
@@ -186,6 +189,8 @@ export interface FallbackCircuitAccessDeps {
 	breaker: FallbackCircuitBreaker;
 	owner(): string;
 	now(): number;
+	/** Wall clock for parsing reset times; the open deadline itself stays on `now`. */
+	wallNow?(): number;
 	settings(): ResolvedFallbackCircuitSettings;
 	logger: FallbackLogger;
 }
@@ -197,17 +202,17 @@ export function createFallbackCircuitAccess(deps: FallbackCircuitAccessDeps): Fa
 			if (!enabled()) return;
 			const { cooldownMs, maxCooldownMs } = deps.settings();
 			const now = deps.now();
-			// A Retry-After header/marker wins; otherwise a usage-limit's own reset window
-			// ("resets 3pm", "resets in 9 minutes", resets_at) bounds the open so a recoverable
-			// rate limit is retried at its window, never held for the whole cooldown (senpi#3300).
+			const message = failure.errorMessage;
 			const retryAfterMs =
-				failure.retryAfterMs ??
-				(failure.errorMessage === undefined
-					? undefined
-					: (parseRetryAfterMsMarker(failure.errorMessage) ?? usageLimitResetMs(failure.errorMessage, now)));
+				failure.retryAfterMs ?? (message === undefined ? undefined : parseRetryAfterMsMarker(message));
+			// Reset times are wall-clock ("resets 3pm", resets_at); a monotonic clock drifts from them after sleep.
+			const resetWindowMs =
+				message !== undefined && usageLimitScope(message) !== undefined
+					? usageLimitResetMs(message, (deps.wallNow ?? deps.now)())
+					: undefined;
 			deps.breaker.sweep(now);
-			const openUntil = deps.breaker.open(selector, { now, cooldownMs, maxCooldownMs, retryAfterMs });
-			deps.logger.info("circuit_opened", { selector, durationMs: openUntil - now, retryAfterMs });
+			const openUntil = deps.breaker.open(selector, { now, cooldownMs, maxCooldownMs, retryAfterMs, resetWindowMs });
+			deps.logger.info("circuit_opened", { selector, durationMs: openUntil - now, retryAfterMs, resetWindowMs });
 		},
 		governs: (selector) => enabled() && deps.breaker.has(selector),
 		isOpen: (selector, lane = "turn") =>

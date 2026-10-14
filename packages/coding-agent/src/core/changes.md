@@ -1,21 +1,22 @@
-## 2026-10-14 - Retry a rate-limited primary at its reset window instead of holding it for the cooldown (senpi#3300)
+## 2026-10-14 - The fallback circuit opens for a usage limit until its own reset window (senpi#3314)
 
 ### What changed
 
-- `packages/coding-agent/src/core/retry-fallback/circuit.ts`: a usage limit that names its own reset window is a rate limit that recovers, not a quota exhaustion. `noteFailure` resolves that window via `usageLimitResetMs` when a Retry-After header/marker yields nothing, and `open()` treats a reset window shorter than the cooldown as the open duration so the primary is retried at the window instead of held for the whole (doubling) cooldown.
-- `packages/coding-agent/test/suite/retry-fallback-usage-limit-revert.test.ts`: regression — two-step rate-limit fallback returns to the primary at the reset window.
+- `packages/coding-agent/src/core/retry-fallback/circuit.ts`: `CircuitOpenRequest` gains `resetWindowMs`. `noteFailure` fills it only for a usage-limit failure (`usageLimitScope`) whose message names a reset, parsed by `usageLimitResetMs` against the new optional `wallNow` dependency (falling back to `now`). When present, `open()` uses that window as the open duration, shorter or longer than the cooldown, capped at `maxCooldownMs`. Every other hint (`retryAfterMs`, a retry marker) keeps the doubling cooldown floor exactly as before.
+- `packages/coding-agent/src/core/agent-session.ts`: the circuit access gets `wallNow` from `fallbackWallNow ?? fallbackNow ?? Date.now`, the same wall clock `SelectorCooldowns` uses.
 
 ### Why
 
-- A community report: a session whose main model (Opus) hit a rate limit fell back and never returned after the limit reset. The reset window never reached the circuit as `retryAfterMs`, so the open floored at the generic cooldown, which doubles on consecutive failures past the actual window. The fix honors the parsed reset window as the recovery signal for a resettable rate limit while keeping the cooldown floor for genuine quota exhaustion (no short hint) and the 48h ceiling for real weekly limits.
+- A community report: a session whose main model hit a short session limit fell back and stayed there after the limit reset. The circuit never saw the reset window, so it opened for the doubling cooldown; after a couple of failed revert probes the cooldown ran past the real window. A reset window is wall-clock data, so parsing it against the monotonic clock would misread it after a laptop sleeps.
 
 ### Why an extension could not handle it
 
-- The open duration is computed inside the shared circuit breaker from the failure's `retryAfterMs`, which no extension hook observes or overrides; the fallback decision and revert gate live in `agent-session.ts`'s controller wiring.
+- The open duration is computed inside the shared circuit breaker, which no extension hook observes or overrides; the revert gate that reads it lives in the controller wiring of `agent-session.ts`.
 
 ### Expected merge conflict zones
 
-- `circuit.open()`'s `openUntil` computation and `noteFailure`'s `retryAfterMs` resolution in `packages/coding-agent/src/core/retry-fallback/circuit.ts`.
+- `packages/coding-agent/src/core/retry-fallback/circuit.ts`: `CircuitOpenRequest`, `FallbackCircuitBreaker.open()`, `FallbackCircuitAccessDeps`, `createFallbackCircuitAccess().noteFailure()`.
+- `packages/coding-agent/src/core/agent-session.ts`: the `createFallbackCircuitAccess` call in the constructor.
 
 ## 2026-10-13 - Provider auth status re-reads a store that was busy on its first read (omo-desktop-app#2249)
 

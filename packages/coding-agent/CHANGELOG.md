@@ -12,7 +12,7 @@
 
 ### Fixed
 
-- A model that hit a rate limit and fell back now returns once the limit's own reset window passes, instead of staying on the fallback. A usage limit that names its reset window ("resets 3pm", "resets in 9 minutes") is a rate limit that recovers, so it is retried at that window rather than held for a generic cooldown that doubles on consecutive failures past it. A genuine quota or billing exhaustion still holds the fallback for the session ([#3303](https://github.com/code-yeongyu/senpi/pull/3303), requested by @code-yeongyu).
+- A model that hit a usage limit and fell back now returns when that limit's own reset window passes ("resets in 9 minutes", "resets 3pm", `resets_at`), instead of staying on the fallback for a cooldown that doubled past the window with every failed retry. A plain Retry-After or "try again in 2s" hint still keeps the doubling cooldown, so a failing provider is not retried every few seconds ([#3314](https://github.com/code-yeongyu/senpi/issues/3314), reported in the OmO community).
 
 - A provider whose credentials were locked when the store was first read no longer reports "not configured" to `get_auth_providers` after the lock clears, while its models already work. The status now re-reads the store the same way model availability does (omo-desktop-app#2249).
 

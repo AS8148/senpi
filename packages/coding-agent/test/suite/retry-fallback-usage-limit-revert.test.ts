@@ -5,18 +5,14 @@ import { createHarness, type Harness } from "./harness.ts";
 
 const primary = "faux/faux-1";
 const fallback = "other-faux/faux-2";
+const MINUTE = 60_000;
 
-// Kakao report: a model that hits a rate limit and falls back must be retried once the limit's
-// own reset window passes, not held for a generic cooldown that doubles on each consecutive
-// failure past that window. Two consecutive limit failures (the primary is still limited at the
-// first retry) double the circuit cooldown past the reset window; the session must still return
-// to the primary at the window (senpi#3300).
+// The Kakao report: a primary that keeps hitting a short session limit must come back at each reset,
+// not slide onto a cooldown that doubles past the window with every failed retry (senpi#3300).
 const SESSION_LIMIT =
-	"Devin stream error resource_exhausted: Reached free model rate limit. Upgrade to Max for higher limits, or switch to a different model. Your limit will reset in 9 minutes (at 16:56 UTC).";
+	"Devin stream error resource_exhausted: Reached free model rate limit. Upgrade to Max for higher limits, or switch to a different model. Your limit will reset in 2 minutes.";
 
-function errorTurn(errorMessage: string) {
-	return fauxAssistantMessage("", { stopReason: "error", errorMessage });
-}
+const limited = () => fauxAssistantMessage("", { stopReason: "error", errorMessage: SESSION_LIMIT });
 
 describe("a rate-limit fallback is retried at its reset window, not held for a doubling cooldown", () => {
 	const harnesses: Harness[] = [];
@@ -25,7 +21,7 @@ describe("a rate-limit fallback is retried at its reset window, not held for a d
 		while (harnesses.length) harnesses.pop()?.cleanup();
 	});
 
-	it("#given two consecutive rate-limit failures on the primary #when the reset window passes #then the session retries the primary", async () => {
+	it("#given a primary still limited at its first two resets #when the third reset passes #then the session is back on the primary", async () => {
 		let now = 0;
 		const harness = await createHarness({
 			models: [{ id: "faux-1" }, { id: "faux-2" }],
@@ -37,22 +33,30 @@ describe("a rate-limit fallback is retried at its reset window, not held for a d
 		harnesses.push(harness);
 		registerFallbackModels(harness, "other-faux", ["faux-2"]);
 		harness.setResponses([
-			errorTurn(SESSION_LIMIT),
-			fauxAssistantMessage("fallback answer"),
-			// The window passes; the primary is healthy again.
+			limited(),
+			fauxAssistantMessage("fallback 1"),
+			limited(),
+			fauxAssistantMessage("fallback 2"),
+			limited(),
+			fauxAssistantMessage("fallback 3"),
 			fauxAssistantMessage("primary answer"),
 		]);
 
-		await harness.session.prompt("first");
-		expect(harness.session.model?.id).toBe("faux-2");
+		for (const turn of ["one", "two", "three"]) {
+			await harness.session.prompt(turn);
+			now += 2.5 * MINUTE;
+		}
+		await harness.session.prompt("four");
 
-		now += 10 * 60_000; // past the 9-minute reset window
-		await harness.session.prompt("second");
-
-		const reverted = harness.eventsOfType("retry_fallback_reverted");
-		expect(reverted).toHaveLength(1);
-		expect(reverted[0]).toMatchObject({ from: fallback, to: primary });
+		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual([
+			"faux-1",
+			"faux-2",
+			"faux-1",
+			"faux-2",
+			"faux-1",
+			"faux-2",
+			"faux-1",
+		]);
 		expect(harness.session.model?.id).toBe("faux-1");
-		expect(harness.faux.getCallLog()[2]?.modelId).toBe("faux-1");
 	});
 });
