@@ -105,8 +105,10 @@ describe.skipIf(process.platform === "win32")("client-less retained sessions acr
 		// until it admits the handoff, so the test does not hinge on the abort's settle timing.
 		let answer: Record<string, unknown> = {};
 		const handoffDeadline = Date.now() + 120_000;
-		for (;;) {
-			answer = dataOf(await caller.request(beginHandoverCommand(rig), 120_000));
+		// Every request needs its own id: JsonlPeer.request resolves on the first stored response with
+		// that id, so a reused id hands every retry the first attempt's answer.
+		for (let attempt = 0; ; attempt++) {
+			answer = dataOf(await caller.request(beginHandoverCommand(rig, { id: `begin-${attempt}` }), 120_000));
 			if (answer.state === "handover_completed") break;
 			if (Date.now() >= handoffDeadline) break;
 			await new Promise((resolve) => setTimeout(resolve, 250));
@@ -124,8 +126,11 @@ describe.skipIf(process.platform === "win32")("client-less retained sessions acr
 		if (current !== undefined) pids.push(current.pid);
 
 		const lister = await connect(rig, peers);
+		let listRequests = 0;
 		const listDurableIds = async (): Promise<string[]> => {
-			const listed = dataOf(await lister.request({ id: "list", type: "list_sessions", include_workers: true }));
+			const listed = dataOf(
+				await lister.request({ id: `list-${listRequests++}`, type: "list_sessions", include_workers: true }),
+			);
 			return ((listed.sessions ?? []) as Array<{ durableSessionId?: string }>)
 				.map((row) => row.durableSessionId)
 				.filter((id): id is string => typeof id === "string");
