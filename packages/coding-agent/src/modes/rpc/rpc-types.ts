@@ -527,6 +527,22 @@ export type RpcCommand =
 	| {
 			id?: string;
 			/**
+			 * Free a session this host keeps loaded: the transcript stays, queued input is kept for the reopen,
+			 * and `session_parked { reason: "unloaded" }` reaches every attached client. Refused with a reason
+			 * and an action while work runs (unless `interrupt`), while other clients are attached (unless
+			 * `force`) or while child sessions it started are open here (unless `children: "detach"`).
+			 */
+			type: "unload_session";
+			sessionId: string;
+			effectId?: string;
+			interrupt?: boolean;
+			clearQueue?: boolean;
+			children?: "refuse" | "detach";
+			force?: boolean;
+	  }
+	| {
+			id?: string;
+			/**
 			 * Meant as the connection's last request: release every session attachment it holds, then answer.
 			 * Advertised as `detach_connection`. Closing the socket afterwards releases nothing more.
 			 */
@@ -770,6 +786,14 @@ export type RpcResponse =
 			data: { sessionId: string; state: RpcSessionState; attached?: boolean };
 	  }
 	| { id?: string; type: "response"; command: "close_session"; success: true; data: Record<string, never> }
+	| {
+			id?: string;
+			type: "response";
+			command: "unload_session";
+			success: true;
+			/** A refusal changes nothing and names why (`reason`, `detail`) and what to do (`action`). */
+			data: RpcUnloadAnswer;
+	  }
 	| {
 			id?: string;
 			type: "response";
@@ -1432,12 +1456,35 @@ export interface RpcSessionReplacedEvent {
  * client that does not know the type filters it out and learns the handle is gone
  * from its next command's `unknown_session`.
  */
+/** What `unload_session` answers. `effect` is the ledger receipt when the command carried an `effectId`. */
+export interface RpcUnloadAnswer {
+	outcome: "unloaded" | "refused";
+	sessionPath?: string;
+	reason?: UnloadRefusalReason;
+	detail?: string;
+	action?: string;
+	effectId?: string;
+	effect?: EffectStatus;
+	replayed?: boolean;
+}
+
+export type UnloadRefusalReason =
+	| "turn_active"
+	| "work_pending"
+	| "children_live"
+	| "attached"
+	| "host_draining"
+	| "unsupported"
+	| "session_closing";
+
 export type RpcSessionParkedEvent = {
 	type: "session_parked";
 	/** Routing handle that was released; it never resolves again. */
 	sessionId: string;
 	/** Session file to reopen this session by. */
 	sessionPath: string;
+	/** `idle`: the idle sweep parked it; `unloaded`: `unload_session` did. Absent from older hosts. */
+	reason?: "idle" | "unloaded";
 };
 
 /**

@@ -103,6 +103,12 @@ export function rpcCommandPayloadError(command: unknown): string | undefined {
 	if (value.type === "edit_queued_message" && typeof value.text !== "string") {
 		return "text must be a string.";
 	}
+	if (value.type === "unload_session") {
+		if (value.children !== undefined && value.children !== "refuse" && value.children !== "detach")
+			return 'children must be "refuse" or "detach".';
+		for (const flag of ["interrupt", "clearQueue", "force"] as const)
+			if (value[flag] !== undefined && typeof value[flag] !== "boolean") return `${flag} must be a boolean.`;
+	}
 	if (
 		(value.type === "steer" || value.type === "follow_up") &&
 		value.enqueueOrder !== undefined &&

@@ -71,12 +71,12 @@ function refuse(
 	};
 }
 
-function answer(status: EffectStatus, sessionId: string | undefined, replayed = false): RpcEffectAnswer {
+export function effectAnswer(status: EffectStatus, sessionId: string | undefined, replayed = false): RpcEffectAnswer {
 	const effect = sessionId === undefined ? status : { ...status, sessionId };
 	return { effectId: status.effectId, state: status.state, effect, ...(replayed ? { replayed: true } : {}) };
 }
 
-async function begin(
+export async function beginEffect(
 	ctx: EffectCommandContext,
 	kind: EffectCommandKind,
 	command: { readonly id?: string; readonly type: string; readonly effectId: string },
@@ -97,6 +97,10 @@ function isResponse(value: EffectBegin | RpcResponse): value is RpcResponse {
 	return "type" in value;
 }
 
+export function isEffectBegin(value: EffectBegin | RpcResponse): value is EffectBegin {
+	return !isResponse(value);
+}
+
 export async function runAbort(ctx: EffectCommandContext, command: Command<"abort">, dispatch: () => void) {
 	const { effectId } = command;
 	if (effectId === undefined) {
@@ -104,10 +108,10 @@ export async function runAbort(ctx: EffectCommandContext, command: Command<"abor
 		dispatch();
 		return respond(command.id, { command: "abort" });
 	}
-	const begun = await begin(ctx, "abort", { ...command, effectId });
+	const begun = await beginEffect(ctx, "abort", { ...command, effectId });
 	if (isResponse(begun)) return begun;
 	if ("replay" in begun)
-		return respond(command.id, { command: "abort", data: answer(begun.replay, ctx.sessionId, true) });
+		return respond(command.id, { command: "abort", data: effectAnswer(begun.replay, ctx.sessionId, true) });
 	ClientAdmissions.forSession(ctx.session).noteAbort(ctx.by);
 	const streaming = ctx.session.isStreaming;
 	dispatch();
@@ -115,7 +119,7 @@ export async function runAbort(ctx: EffectCommandContext, command: Command<"abor
 	const status = streaming
 		? ledger.transition(effectId, "applied")
 		: ledger.transition(effectId, "done", { disposition: "no_active_turn" });
-	return respond(command.id, { command: "abort", data: answer(status, ctx.sessionId) });
+	return respond(command.id, { command: "abort", data: effectAnswer(status, ctx.sessionId) });
 }
 
 /**
@@ -129,7 +133,7 @@ export async function runQueuedInputChange(
 ): Promise<RpcResponse> {
 	const kind = command.type === "dequeue_message" ? "dequeue" : "edit_queued";
 	const { effectId, queuedId } = command;
-	const begun = effectId === undefined ? undefined : await begin(ctx, kind, { ...command, effectId });
+	const begun = effectId === undefined ? undefined : await beginEffect(ctx, kind, { ...command, effectId });
 	if (begun !== undefined && isResponse(begun)) return begun;
 	if (begun !== undefined && "replay" in begun)
 		return respond(command.id, {
@@ -137,7 +141,7 @@ export async function runQueuedInputChange(
 			data: {
 				queuedId,
 				status: replayedStatus(begun.replay, command.type),
-				...answer(begun.replay, ctx.sessionId, true),
+				...effectAnswer(begun.replay, ctx.sessionId, true),
 			},
 		});
 	const status =
@@ -163,7 +167,7 @@ export async function runQueuedInputChange(
 			queuedId,
 			status,
 			...(outcome === undefined ? {} : { reason: outcome.reason, action: outcome.action }),
-			...(recorded === undefined ? {} : answer(recorded, ctx.sessionId)),
+			...(recorded === undefined ? {} : effectAnswer(recorded, ctx.sessionId)),
 		},
 	});
 }
@@ -175,10 +179,10 @@ function replayedStatus(status: EffectStatus, command: "dequeue_message" | "edit
 
 export async function runSetModel(ctx: EffectCommandContext, command: Command<"set_model">): Promise<RpcResponse> {
 	const { effectId } = command;
-	const begun = effectId === undefined ? undefined : await begin(ctx, "set_model", { ...command, effectId });
+	const begun = effectId === undefined ? undefined : await beginEffect(ctx, "set_model", { ...command, effectId });
 	if (begun !== undefined && isResponse(begun)) return begun;
 	if (begun !== undefined && "replay" in begun)
-		return respond(command.id, { command: "set_model", data: answer(begun.replay, ctx.sessionId, true) });
+		return respond(command.id, { command: "set_model", data: effectAnswer(begun.replay, ctx.sessionId, true) });
 	const ledger = effectId === undefined ? undefined : EffectLedger.forSession(ctx.session);
 	const models = await ctx.session.modelRegistry.getAvailable();
 	const model = models.find((m) => m.provider === command.provider && m.id === command.modelId);
@@ -195,7 +199,7 @@ export async function runSetModel(ctx: EffectCommandContext, command: Command<"s
 			"set_model",
 			message,
 			RPC_ERROR_MODEL_NOT_FOUND,
-			failed && answer(failed, ctx.sessionId),
+			failed && effectAnswer(failed, ctx.sessionId),
 		);
 	}
 	if (effectId === undefined || ledger === undefined) {
@@ -224,7 +228,7 @@ export async function runSetModel(ctx: EffectCommandContext, command: Command<"s
 			"set_model",
 			cause.message,
 			budget ? RPC_ERROR_CONTEXT_BUDGET : RPC_ERROR_PROVIDER_UNAVAILABLE,
-			answer(failed, ctx.sessionId),
+			effectAnswer(failed, ctx.sessionId),
 		);
 	}
 	// `done` was written by the ledger when `model_changed` carried this id; a switch held for compaction
@@ -235,19 +239,20 @@ export async function runSetModel(ctx: EffectCommandContext, command: Command<"s
 		data: {
 			...model,
 			systemPromptName,
-			...(status === undefined ? {} : answer(status, ctx.sessionId)),
+			...(status === undefined ? {} : effectAnswer(status, ctx.sessionId)),
 		},
 	});
 }
 
 export async function runSetThinkingLevel(ctx: EffectCommandContext, command: Command<"set_thinking_level">) {
 	const { effectId } = command;
-	const begun = effectId === undefined ? undefined : await begin(ctx, "set_thinking_level", { ...command, effectId });
+	const begun =
+		effectId === undefined ? undefined : await beginEffect(ctx, "set_thinking_level", { ...command, effectId });
 	if (begun !== undefined && isResponse(begun)) return begun;
 	if (begun !== undefined && "replay" in begun)
 		return respond(command.id, {
 			command: "set_thinking_level",
-			data: answer(begun.replay, ctx.sessionId, true),
+			data: effectAnswer(begun.replay, ctx.sessionId, true),
 		});
 	const ledger = effectId === undefined ? undefined : EffectLedger.forSession(ctx.session);
 	if (command.scope === "turn") {
@@ -259,7 +264,13 @@ export async function runSetThinkingLevel(ctx: EffectCommandContext, command: Co
 				effectId === undefined
 					? undefined
 					: ledger?.transition(effectId, "failed", { outcome: unsupportedThinkingLevelOutcome(message) });
-			return refuse(command.id, "set_thinking_level", message, undefined, failed && answer(failed, ctx.sessionId));
+			return refuse(
+				command.id,
+				"set_thinking_level",
+				message,
+				undefined,
+				failed && effectAnswer(failed, ctx.sessionId),
+			);
 		}
 		ctx.session.setSessionThinkingLevel(command.level, { source: "rpc", effectId });
 	} else {
@@ -267,7 +278,7 @@ export async function runSetThinkingLevel(ctx: EffectCommandContext, command: Co
 	}
 	if (effectId === undefined || ledger === undefined) return respond(command.id, { command: "set_thinking_level" });
 	const done = ledger.transition(effectId, "done", { disposition: "applied" });
-	return respond(command.id, { command: "set_thinking_level", data: answer(done, ctx.sessionId) });
+	return respond(command.id, { command: "set_thinking_level", data: effectAnswer(done, ctx.sessionId) });
 }
 
 /** `get_effect_status` on a loaded session; a `sessionPath` naming another transcript reads that file. */

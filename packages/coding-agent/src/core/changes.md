@@ -1,3 +1,21 @@
+## 2026-10-15 - AgentSession.activeWakeSources (senpi#3225)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `activeWakeSources` reads the wake-source tracker's live source names, so `unload_session` can tell child tasks from other extension work.
+
+### Why
+
+Unload eligibility depends on which extension work is live, not only on whether any is.
+
+### Why an extension could not handle it
+
+The tracker is private session state.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: next to `activitySnapshot`.
+
 ## 2026-10-15 - Queued inputs carry a queuedId and can be removed or edited (senpi#1971)
 
 ### What changed

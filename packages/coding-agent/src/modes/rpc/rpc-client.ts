@@ -67,6 +67,7 @@ import type {
 	RpcSessionReplacedEvent,
 	RpcSessionState,
 	RpcSlashCommand,
+	RpcUnloadAnswer,
 } from "./rpc-types.ts";
 import { RPC_ERROR_UNKNOWN_COMMAND } from "./rpc-types.ts";
 import {
@@ -505,6 +506,17 @@ export class RpcClient {
 	/** Draft update for an open `question` request; fire-and-forget like the response. */
 	async sendExtensionUIProgress(progress: RpcExtensionUIProgress): Promise<void> {
 		await this.send(progress, true, undefined, false);
+	}
+
+	/** `unload_session`: a refusal is an answer (`outcome: "refused"` with reason and action), not a throw. */
+	async unloadSession(
+		options: Omit<Extract<RpcCommand, { type: "unload_session" }>, "type" | "id" | "sessionId"> & {
+			readonly sessionId?: string;
+		},
+	): Promise<RpcUnloadAnswer> {
+		const sessionId = options.sessionId ?? this.sessionId;
+		if (!sessionId) throw new Error("unload_session needs a session");
+		return this.getData<RpcUnloadAnswer>(await this.send({ ...options, type: "unload_session", sessionId }, false));
 	}
 
 	async closeSession(sessionId = this.sessionId): Promise<void> {

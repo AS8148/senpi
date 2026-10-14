@@ -4001,6 +4001,11 @@ export class AgentSession {
 	}
 
 	/** Live in-session activity signals; see `session-activity.ts` for the contract. */
+	/** Extension-published wake sources that currently report live work, by `source` name. */
+	get activeWakeSources(): readonly string[] {
+		return this._wakeSources.activeSources;
+	}
+
 	get activitySnapshot(): SessionActivitySnapshot {
 		return {
 			isStreaming: this._isAgentRunActive,
