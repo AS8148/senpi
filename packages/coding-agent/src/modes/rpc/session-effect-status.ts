@@ -48,20 +48,35 @@ export function effectStatusRecord(
 	};
 }
 
-export type SessionEffectFlusher = (session: AgentSession, statuses: readonly EffectStatus[]) => void;
+/** A host that publishes `effect_status` for the sessions it owns. */
+export interface SessionEffectSink {
+	owns(session: AgentSession): boolean;
+	flush(session: AgentSession, statuses: readonly EffectStatus[]): void;
+}
 
+const sinks = new Set<SessionEffectSink>();
 const pending = new WeakMap<AgentSession, EffectStatus[]>();
-const dirty = new Set<AgentSession>();
-let flusher: SessionEffectFlusher | undefined;
+const dirty = new Map<AgentSession, SessionEffectSink>();
 let scheduled = false;
 
-/** A ledger persisted a transition: hold it until the causing record is published, then deliver. */
+/**
+ * A ledger persisted a transition: hold it until the causing record is published, then deliver. A session
+ * no installed sink owns (classic stdio, a worker isolate, a session already replaced) has no reader, so its
+ * transition is dropped rather than held for the life of the process.
+ */
 export function noteSessionEffect(session: AgentSession, status: EffectStatus): void {
+	let owner: SessionEffectSink | undefined;
+	for (const sink of sinks) {
+		if (!sink.owns(session)) continue;
+		owner = sink;
+		break;
+	}
+	if (owner === undefined) return;
 	const list = pending.get(session) ?? [];
 	list.push(status);
 	pending.set(session, list);
-	dirty.add(session);
-	if (!scheduled && flusher !== undefined) {
+	dirty.set(session, owner);
+	if (!scheduled) {
 		scheduled = true;
 		queueMicrotask(flushDirty);
 	}
@@ -76,18 +91,22 @@ export function drainSessionEffects(session: AgentSession): readonly EffectStatu
 
 function flushDirty(): void {
 	scheduled = false;
-	for (const session of [...dirty]) {
+	for (const [session, sink] of [...dirty]) {
 		dirty.delete(session);
 		const drained = drainSessionEffects(session);
-		if (drained.length > 0) flusher?.(session, drained);
+		if (drained.length > 0 && sinks.has(sink)) sink.flush(session, drained);
 	}
 }
 
-/** The host installs exactly one flusher; it resolves the session's routing id and publishes. */
-export function installSessionEffectFlusher(install: SessionEffectFlusher): void {
-	flusher = install;
-	if (!scheduled && dirty.size > 0) {
-		scheduled = true;
-		queueMicrotask(flushDirty);
-	}
+/** Each host installs its own sink; the returned function removes it (and stops holding for its sessions). */
+export function installSessionEffectSink(sink: SessionEffectSink): () => void {
+	sinks.add(sink);
+	return () => {
+		sinks.delete(sink);
+		for (const [session, owner] of [...dirty]) {
+			if (owner !== sink) continue;
+			dirty.delete(session);
+			drainSessionEffects(session);
+		}
+	};
 }

@@ -1,4 +1,5 @@
 import { VERSION } from "../../config.ts";
+import type { AgentSession } from "../../core/agent-session.ts";
 import { detachConnection } from "./connection-detach.ts";
 import { buildRpcSessionState } from "./connection-handler.ts";
 import { answerEffectFromTranscript } from "./effect-commands.ts";
@@ -28,7 +29,7 @@ import {
 import { runWithSessionAttribution } from "./session-attribution.ts";
 import { createRpcSessionBinding, type RpcSessionBinding } from "./session-binding.ts";
 import { readDrainVerdicts } from "./session-drain.ts";
-import { drainSessionEffects, installSessionEffectFlusher } from "./session-effect-status.ts";
+import { drainSessionEffects, installSessionEffectSink } from "./session-effect-status.ts";
 import type { SessionEventWriter } from "./session-event-writer.ts";
 import { dispatchSessionBinding, sessionHeldCheck } from "./session-held.ts";
 import type { OpenRpcSession, RpcSessionLaunchProfile, RpcSessionRegistry } from "./session-registry.ts";
@@ -135,6 +136,7 @@ export class SessionCommandRouter {
 	private readonly onEmptyExit?: () => void;
 	private readonly canExitWhenEmpty?: () => boolean;
 	private sweepTimer: ReturnType<typeof setInterval> | undefined;
+	private uninstallEffectSink: (() => void) | undefined;
 	private drainTimer: ReturnType<typeof setInterval> | undefined;
 	private draining = false;
 	private handoffParks = 0;
@@ -189,12 +191,13 @@ export class SessionCommandRouter {
 			if (session === undefined) return;
 			for (const status of drainSessionEffects(session)) this.writer.status.publishEffect(sessionId, status);
 		};
-		installSessionEffectFlusher((session, statuses) => {
-			for (const row of this.registry.list()) {
-				if (this.registry.peek(row.sessionId)?.runtime?.session !== session) continue;
-				for (const status of statuses) this.writer.status.publishEffect(row.sessionId, status);
-				return;
-			}
+		this.uninstallEffectSink = installSessionEffectSink({
+			owns: (session) => this.routingIdOf(session) !== undefined,
+			flush: (session, statuses) => {
+				const sessionId = this.routingIdOf(session);
+				if (sessionId === undefined) return;
+				for (const status of statuses) this.writer.status.publishEffect(sessionId, status);
+			},
 		});
 		if (Number.isFinite(this.idleEvictionMs) || Number.isFinite(this.emptyExitMs)) {
 			// Unref'd: occupancy hygiene must never be the reason the event loop stays open.
@@ -480,6 +483,8 @@ export class SessionCommandRouter {
 			}),
 		);
 		this.bindings.clear();
+		this.uninstallEffectSink?.();
+		this.uninstallEffectSink = undefined;
 	}
 
 	/**
@@ -610,6 +615,14 @@ export class SessionCommandRouter {
 			owned.delete(sessionId);
 			if (owned.size === 0) this.sessionsByConnection.delete(connection);
 		}
+	}
+
+	/** The routing id this host answers `session` on, if it holds it. */
+	private routingIdOf(session: AgentSession): string | undefined {
+		for (const row of this.registry.list()) {
+			if (this.registry.peek(row.sessionId)?.runtime?.session === session) return row.sessionId;
+		}
+		return undefined;
 	}
 
 	private stopSweep(): void {
