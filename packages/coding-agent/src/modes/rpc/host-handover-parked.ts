@@ -78,18 +78,21 @@ export async function readHandoverParkedSessions(daemonDir: string): Promise<rea
 	}
 	const entries: HandoverParkedEntry[] = [];
 	for (const name of names) {
+		const file = join(recordDir(daemonDir), name);
 		try {
-			const parsed: unknown = JSON.parse(await readFile(join(recordDir(daemonDir), name), "utf8"));
+			const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
 			if (isEntry(parsed)) entries.push(parsed);
-			else {
-				process.stderr.write(`senpi rpc handover-parked entry ${name} is malformed; dropping it\n`);
-				await rm(join(recordDir(daemonDir), name), { force: true });
+			// A well-formed JSON value that fails the shape check is not corrupt: it may be an entry a
+			// different-version generation wrote (a rollback handover). Leave it alone.
+		} catch (cause) {
+			// Writes are atomic (renameSync), so a torn write cannot happen; only a genuinely corrupt
+			// payload (SyntaxError) is dropped. ENOENT is a normal race with a concurrent clear, and
+			// EMFILE/EACCES are transient - dropping an entry for any of those loses a retained session
+			// for good. On any of those, skip the entry and leave the file for the next read.
+			if (cause instanceof SyntaxError) {
+				process.stderr.write(`senpi rpc handover-parked entry ${name} is corrupt; dropping it\n`);
+				await rm(file, { force: true });
 			}
-		} catch {
-			// An unreadable entry (truncated JSON, a torn write) would otherwise sit in the record
-			// forever and never be reopened; log and drop it so the record self-heals.
-			process.stderr.write(`senpi rpc handover-parked entry ${name} is unreadable; dropping it\n`);
-			await rm(join(recordDir(daemonDir), name), { force: true });
 		}
 	}
 	return entries;

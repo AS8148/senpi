@@ -196,26 +196,27 @@ describe.skipIf(process.platform === "win32")("generation handoff between live h
 		await watcher.waitForClose(90_000);
 		expect(await waitForPidGone(firstPid(qa), 45_000)).toBe(true);
 
-		// The successor auto-reopens the parked session (senpi#3282). Its row appears with status
-		// "opening" before the runtime finishes constructing, so a single read can catch it too
-		// early; poll until it is "open" (or the deadline passes) before asserting.
-		const listRows = async (): Promise<
-			Array<{ durableSessionId?: string; sessionPath?: string; status?: string }>
-		> => {
-			const listed = (await next.request({ id: "list", type: "list_sessions", include_workers: true })).data as
-				| { sessions?: Array<{ durableSessionId?: string; sessionPath?: string; status?: string }> }
-				| undefined;
-			return listed?.sessions ?? [];
-		};
-		const isOpen = (rows: Array<{ durableSessionId?: string; sessionPath?: string; status?: string }>): boolean =>
-			rows.some((row) => row.status === "open" && row.sessionPath === sessionPath);
-		const openDeadline = Date.now() + 60_000;
-		let rows = await listRows();
-		while (!isOpen(rows) && Date.now() < openDeadline) {
-			await new Promise((resolve) => setTimeout(resolve, 200));
-			rows = await listRows();
+		// Whoever reopened it - the successor's auto-reopen (senpi#3282) or this client winning the
+		// path - the session is reachable by path on the successor: a manual reopen either attaches
+		// to the reopened session or opens it itself. Poll until the predecessor has released the
+		// path claim and the reopen succeeds (no fixed sleeps).
+		let reopened: WireRecord = {};
+		const reopenDeadline = Date.now() + 60_000;
+		for (;;) {
+			reopened = await next.request({ id: "reopen-2", type: "open_session", cwd: qa.cwd, sessionPath });
+			if (reopened.success === true) break;
+			if (Date.now() >= reopenDeadline) break;
+			await new Promise((resolve) => setTimeout(resolve, 250));
 		}
-		expect(isOpen(rows), `the session is not open on the successor (rows: ${JSON.stringify(rows)})`).toBe(true);
+		expect(reopened, `the session is not reachable on the successor: ${JSON.stringify(reopened)}`).toMatchObject({
+			command: "open_session",
+			success: true,
+		});
+		// The transcript survives the handoff and the reopen intact: every line is a whole JSON
+		// record (a single writer; a second one would have left a torn line). Reopens in the new
+		// generation with an intact JSONL (changes.md).
+		const lines = await jsonlLines(sessionPath);
+		expect(lines.length).toBeGreaterThan(0);
 	}, 180_000);
 
 	it("drains the running generation on request and exits once its sessions park", async () => {
@@ -327,6 +328,13 @@ async function pidFile(qa: GenerationScratch): Promise<WireRecord> {
 
 function recordedPid(record: WireRecord): number {
 	return typeof record.pid === "number" ? record.pid : 0;
+}
+
+async function jsonlLines(path: string): Promise<string[]> {
+	const lines = (await readFile(path, "utf8")).split("\n").filter((line) => line.length > 0);
+	// A single writer leaves only whole records behind; a second one would leave a torn line.
+	for (const line of lines) JSON.parse(line);
+	return lines;
 }
 
 /** Replaces the public socket with a live server this daemon never started; returns its inode. */

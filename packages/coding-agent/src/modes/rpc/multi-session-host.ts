@@ -111,6 +111,7 @@ async function reopenHandoverParkedSessions(
 	registry: Pick<RpcSessionRegistry, "openSession"> & { readonly size?: number },
 	agentDir: string,
 	socket: string,
+	holder?: { readonly hostInstance: string; readonly hostSocket?: string },
 ): Promise<void> {
 	const daemonDir = createHostDaemonPaths({ socket, agentDir }).dir;
 	// The predecessor parks its retained sessions AFTER this generation binds the public socket (its
@@ -130,13 +131,14 @@ async function reopenHandoverParkedSessions(
 	// drain is finished and the watch returns early.
 	const deadline = Date.now() + HANDOVER_PARKED_REOPEN_BUDGET_MS;
 	const reopenAttempts = new Map<string, number>();
+	const heldPolls = new Map<string, number>();
 	let emptyStreak = 0;
 	let sawAnyPark = false;
 	for (;;) {
 		const parked = await readHandoverParkedSessions(daemonDir);
 		for (const entry of parked) {
 			sawAnyPark = true;
-			await reopenOne(daemonDir, registry, entry, reopenAttempts);
+			await reopenOne(daemonDir, registry, entry, reopenAttempts, holder, heldPolls);
 		}
 		const remaining = (await readHandoverParkedSessions(daemonDir)).length;
 		emptyStreak = remaining === 0 ? emptyStreak + 1 : 0;
@@ -151,19 +153,27 @@ async function reopenOne(
 	registry: { openSession: RpcSessionRegistry["openSession"] },
 	entry: HandoverParkedEntry,
 	attempts: Map<string, number>,
+	holder?: { readonly hostInstance: string; readonly hostSocket?: string },
+	heldPolls?: Map<string, number>,
 ): Promise<void> {
 	await dropHandoverParkedSessionIfFileGone(daemonDir, entry.sessionPath);
 	if (!existsSync(entry.sessionPath)) {
 		process.stderr.write(`senpi rpc successor dropped a parked session whose file is gone: ${entry.sessionPath}\n`);
 		return;
 	}
-	const tried = (attempts.get(entry.sessionPath) ?? 0) + 1;
-	attempts.set(entry.sessionPath, tried);
 	try {
 		await registry.openSession(
 			{
 				...(entry.cwd !== undefined ? { cwd: entry.cwd } : { cwd: process.cwd() }),
 				sessionPath: entry.sessionPath,
+				...(holder !== undefined
+					? {
+							holderEndpoint: {
+								host_instance: holder.hostInstance,
+								...(holder.hostSocket !== undefined ? { host_socket: holder.hostSocket } : {}),
+							},
+						}
+					: {}),
 				...(entry.durableSessionId !== undefined ? { durableSessionId: entry.durableSessionId } : {}),
 				...(entry.model !== undefined ? { creationModel: entry.model } : {}),
 				...(entry.thinkingLevel !== undefined ? { initialThinkingLevel: entry.thinkingLevel } : {}),
@@ -174,18 +184,30 @@ async function reopenOne(
 	} catch (cause) {
 		// A `session_path_in_use` refusal means the predecessor still holds the path's cross-generation
 		// claim (its drain has not released it yet): the holder is alive, so the park is not failing -
-		// it is waiting. Do not count it toward the attempt cap, or a slow loaded drain would exhaust
-		// the budget in a couple of seconds and the entry would be dropped while the session is still
-		// parked and recoverable. It is retried on the next poll, bounded only by the watch budget.
+		// it is waiting. It is retried on the next poll, bounded only by the watch budget, and it is
+		// NOT counted toward the attempt cap. Only a genuine failure consumes an attempt: if held
+		// refusals also counted, ~2s of holding would push the count past the cap, and the first real
+		// failure after the predecessor releases the path would drop the entry at once (M1).
 		const heldByPredecessor = cause instanceof RpcSessionRegistryError && cause.code === "session_path_in_use";
-		if (!heldByPredecessor) {
-			if (tried >= HANDOVER_PARKED_REOPEN_MAX_ATTEMPTS) {
+		if (heldByPredecessor) {
+			// Throttle the hold log: a slow drain can hold the path for the whole budget, and a line
+			// every 250 ms is ~480 lines of noise. Log the first hold, then about once every 10 s.
+			const polls = (heldPolls?.get(entry.sessionPath) ?? 0) + 1;
+			heldPolls?.set(entry.sessionPath, polls);
+			if (polls === 1 || polls % 40 === 0)
 				process.stderr.write(
-					`senpi rpc successor gave up reopening parked session ${entry.sessionPath} after ${tried} attempts: ${String(cause)}\n`,
+					`senpi rpc successor reopen parked session ${entry.sessionPath} waiting on the holder: ${String(cause)}\n`,
 				);
-				await clearHandoverParkedSession(daemonDir, entry.sessionPath);
-				return;
-			}
+			return;
+		}
+		const tried = (attempts.get(entry.sessionPath) ?? 0) + 1;
+		attempts.set(entry.sessionPath, tried);
+		if (tried >= HANDOVER_PARKED_REOPEN_MAX_ATTEMPTS) {
+			process.stderr.write(
+				`senpi rpc successor gave up reopening parked session ${entry.sessionPath} after ${tried} attempts: ${String(cause)}\n`,
+			);
+			await clearHandoverParkedSession(daemonDir, entry.sessionPath);
+			return;
 		}
 		process.stderr.write(`senpi rpc successor reopen parked session ${entry.sessionPath} failed: ${String(cause)}\n`);
 	}
@@ -268,7 +290,10 @@ export function createHostCore(
 		},
 	);
 	if (endpointSocket !== undefined)
-		reopenHandoverParkedSessions(registry, options.agentDir, endpointSocket).catch((cause: unknown) => {
+		reopenHandoverParkedSessions(registry, options.agentDir, endpointSocket, {
+			hostInstance: hostInstanceId(),
+			hostSocket: endpointSocket,
+		}).catch((cause: unknown) => {
 			process.stderr.write(`senpi rpc successor reopen parked set failed: ${String(cause)}\n`);
 		});
 	const gate = new HostCoreGate(registry, (command) => router.handle(command), hooks);

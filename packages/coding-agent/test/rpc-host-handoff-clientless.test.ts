@@ -1,5 +1,7 @@
 import { rm } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
+import { createHostDaemonPaths } from "../src/modes/rpc/host-daemon-paths.ts";
+import { readHandoverParkedSessions, recordHandoverParkedSession } from "../src/modes/rpc/host-handover-parked.ts";
 import { probeHost } from "../src/modes/rpc/host-probe.ts";
 import { readHostStatus } from "../src/modes/rpc/host-status.ts";
 import { signalGeneration } from "../src/modes/rpc/host-stop.ts";
@@ -128,4 +130,52 @@ describe.skipIf(process.platform === "win32")("client-less retained sessions acr
 		}
 		expect(openAgain, `durable ${durableId} not open after the second handover`).toBe(true);
 	}, 300_000);
+
+	// M-A (round-5 review H1): a manual open-by-path supersedes the handover auto-reopen, and its
+	// record entry must be gone after the manual open SUCCEEDS - otherwise the next generation
+	// reopens a second copy. open() resolves `undefined` on success, so the clear keys on that.
+	it("clears the handover-parked record entry after a successful manual reopen-by-path", async () => {
+		const rig = await startHandoverRig("ih-manual-clear");
+		scratches.push(rig.qa);
+		pids.push(rig.firstPid);
+
+		const opener = await connect(rig, peers);
+		const opened = dataOf(
+			await opener.request({ id: "open", type: "open_session", cwd: rig.qa.cwd, retain_on_disconnect: true }),
+		);
+		const sessionPath = (opened.state as { sessionFile?: string } | undefined)?.sessionFile;
+		expect(typeof sessionPath).toBe("string");
+		await opener.request({ id: "turn", type: "prompt", sessionId: opened.sessionId, message: "say ok" }, 120_000);
+		await opener.request({ id: "abort", type: "abort", sessionId: opened.sessionId }, 120_000);
+		// Close it fully so the manual reopen-by-path is a FRESH open (resolves `undefined` on success),
+		// not an attach - that is the path the M-A clear must fire on.
+		await opener.request({ id: "close", type: "close_session", sessionId: opened.sessionId }, 120_000);
+		opener.destroy();
+
+		// Seed the record for this path directly (the host's auto-reopen already ran at startup and
+		// found nothing, so only the manual clear can remove the entry).
+		const daemonDir = createHostDaemonPaths({ socket: rig.qa.socket, agentDir: rig.qa.agentDir }).dir;
+		await recordHandoverParkedSession(daemonDir, {
+			sessionPath: sessionPath!,
+			retainOnDisconnect: true,
+			cwd: rig.qa.cwd,
+		});
+		expect((await readHandoverParkedSessions(daemonDir)).some((entry) => entry.sessionPath === sessionPath)).toBe(
+			true,
+		);
+
+		const reopen = await connect(rig, peers);
+		const reopened = await reopen.request({ id: "reopen", type: "open_session", cwd: rig.qa.cwd, sessionPath });
+		expect(reopened).toMatchObject({ command: "open_session", success: true });
+
+		// After the successful manual reopen, the record entry for that path is gone. The clear runs
+		// after the open resolves, so poll briefly for it to land (no fixed sleeps).
+		const deadline = Date.now() + 30_000;
+		let cleared = false;
+		while (!cleared && Date.now() < deadline) {
+			cleared = !(await readHandoverParkedSessions(daemonDir)).some((entry) => entry.sessionPath === sessionPath);
+			if (!cleared) await new Promise((resolve) => setTimeout(resolve, 100));
+		}
+		expect(cleared, `record entry for ${sessionPath} still present after the manual reopen`).toBe(true);
+	}, 180_000);
 });
