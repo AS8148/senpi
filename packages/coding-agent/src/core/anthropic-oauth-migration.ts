@@ -4,12 +4,13 @@ import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./extensions/builtin/anthrop
 import {
 	type AccountSlot,
 	type AnthropicSubscriptionCredential,
+	authGrantDigest,
 	emptyCredential,
 } from "./extensions/builtin/anthropic-subscription/accounts.ts";
 
 type AuthStorageData = Record<string, Credential>;
 type Slot = Record<string, unknown>;
-type OAuthSlot = Slot & { access: string; refresh: string; expires: number };
+type OAuthGrant = Slot & { access: string; refresh: string; expires: number };
 
 export type AnthropicOAuthMigrationResult = {
 	data: AuthStorageData;
@@ -22,12 +23,46 @@ function isPlainObject(value: unknown): value is Slot {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isOAuthSlot(value: Slot): value is OAuthSlot {
+function isOAuthGrant(value: Slot): value is OAuthGrant {
 	return typeof value.access === "string" && typeof value.refresh === "string" && typeof value.expires === "number";
 }
 
 function isKeySlot(value: Slot): boolean {
 	return typeof value.key === "string" && value.access === undefined && value.refresh === undefined;
+}
+
+function isSlotList(value: unknown): value is Slot[] {
+	return Array.isArray(value) && value.every(isPlainObject);
+}
+
+type Source = { grants: OAuthGrant[]; keySlots: Slot[]; pooled: boolean; pinned: unknown };
+
+function readSource(entry: Slot): Source | string {
+	if (entry.accounts === undefined) {
+		return isOAuthGrant(entry)
+			? { grants: [entry], keySlots: [], pooled: false, pinned: undefined }
+			: "it holds no complete OAuth grant";
+	}
+	if (!isSlotList(entry.accounts)) return "its accounts list is not a list of account objects";
+	const slotGrants = entry.accounts.filter(isOAuthGrant);
+	const keySlots = entry.accounts.filter(isKeySlot);
+	if (slotGrants.length + keySlots.length !== entry.accounts.length) {
+		return "an account in it is neither a complete OAuth grant nor an API key";
+	}
+	const flatIsExtra = isOAuthGrant(entry) && !slotGrants.some((slot) => slot.refresh === entry.refresh);
+	const grants = flatIsExtra ? [...slotGrants, { ...entry, name: undefined } as OAuthGrant] : slotGrants;
+	if (grants.length === 0) return "it holds no complete OAuth grant";
+	return { grants, keySlots, pooled: true, pinned: entry.pinned };
+}
+
+function readSubscription(stored: unknown): AnthropicSubscriptionCredential | string {
+	if (stored === undefined) return emptyCredential();
+	if (!isPlainObject(stored)) return "the existing anthropic-subscription entry is not an object";
+	if (stored.accounts === undefined) return stored as AnthropicSubscriptionCredential;
+	if (!isSlotList(stored.accounts) || !stored.accounts.every((slot) => typeof slot.name === "string")) {
+		return "the existing anthropic-subscription accounts are not account objects";
+	}
+	return stored as AnthropicSubscriptionCredential;
 }
 
 function importedSlotName(slot: Slot, pooled: boolean, taken: ReadonlySet<string>): string {
@@ -38,78 +73,82 @@ function importedSlotName(slot: Slot, pooled: boolean, taken: ReadonlySet<string
 	return name;
 }
 
-function entrySlots(entry: Slot): { slots: Slot[]; pooled: boolean } | string {
-	if (entry.accounts === undefined) return { slots: [entry], pooled: false };
-	if (!Array.isArray(entry.accounts) || !entry.accounts.every(isPlainObject)) {
-		return "its accounts list is not a list of account objects";
-	}
-	return { slots: entry.accounts, pooled: true };
-}
-
 function remainingApiKeyEntry(keySlots: Slot[], pinned: unknown): PooledCredential | undefined {
 	const accounts = keySlots as CredentialSlot[];
-	const [first] = accounts;
-	if (!first) return undefined;
-	const pin = typeof pinned === "string" && accounts.some((slot) => slot.name === pinned) ? { pinned } : {};
-	return { type: "api_key", key: first.key, accounts, ...pin };
+	const pinnedSlot = typeof pinned === "string" ? accounts.find((slot) => slot.name === pinned) : undefined;
+	const projected = pinnedSlot ?? accounts[0];
+	if (!projected) return undefined;
+	return { type: "api_key", key: projected.key, accounts, ...(pinnedSlot ? { pinned } : {}) };
 }
 
-/**
- * One-shot move of a Claude subscription OAuth grant out of the direct `anthropic` provider into the
- * Agent SDK lane (senpi#3259). Anthropic bills a subscription token sent straight to the Messages API
- * as a third-party app (extra usage, not plan limits), so the grant must run through Claude Code.
- *
- * Only OAuth slots move, and each MOVES (omo#7084: one refresh owner). API-key slots stay under
- * `anthropic` exactly as stored, rebuilt as an API-key credential; the entry is deleted only when
- * nothing else is left in it. Pin and display names travel with their slot; existing subscription
- * accounts are never overwritten. Anything the function cannot fully parse is left untouched and
- * reported in `skipped`, so no credential is ever dropped. Completion is derived from the data.
- */
-export function migrateAnthropicOAuthToSubscription(data: AuthStorageData): AnthropicOAuthMigrationResult {
-	const entry: unknown = data.anthropic;
-	if (!isPlainObject(entry) || entry.type !== "oauth") return { data, migrated: false };
-	const parsed = entrySlots(entry);
-	if (typeof parsed === "string") return { data, migrated: false, skipped: parsed };
-	const { slots, pooled } = parsed;
-	const oauthSlots = slots.filter(isOAuthSlot);
-	const keySlots = pooled ? slots.filter(isKeySlot) : [];
-	if (oauthSlots.length === 0) return { data, migrated: false, skipped: "it holds no complete OAuth grant" };
-	if (oauthSlots.length + keySlots.length !== slots.length) {
-		return { data, migrated: false, skipped: "an account in it is neither a complete OAuth grant nor an API key" };
-	}
-	const stored = data[ANTHROPIC_SUBSCRIPTION_PROVIDER_ID];
-	if (stored !== undefined && !isPlainObject(stored)) {
-		return { data, migrated: false, skipped: "the existing anthropic-subscription entry is not an object" };
-	}
-	const subscription: AnthropicSubscriptionCredential = stored
-		? (stored as AnthropicSubscriptionCredential)
-		: emptyCredential();
+function copyGrants(
+	data: AuthStorageData,
+	source: Source,
+	subscription: AnthropicSubscriptionCredential,
+	pending: OAuthGrant[],
+): AuthStorageData {
 	const accounts: AccountSlot[] = [...(subscription.accounts ?? [])];
 	const taken = new Set(accounts.map((slot) => slot.name));
 	let pinned = subscription.pinned;
-	for (const slot of oauthSlots) {
-		const duplicate = accounts.find((account) => account.refresh === slot.refresh);
-		const name = duplicate?.name ?? importedSlotName(slot, pooled, taken);
-		if (!duplicate) {
-			taken.add(name);
-			const displayName = typeof slot.displayName === "string" ? { displayName: slot.displayName } : {};
-			accounts.push({
-				name,
-				...displayName,
-				access: slot.access,
-				refresh: slot.refresh,
-				expires: slot.expires,
-				source: "import",
-			});
-		}
-		if (pinned === undefined && pooled && slot.name !== undefined && slot.name === entry.pinned) pinned = name;
+	for (const grant of pending) {
+		const name = importedSlotName(grant, source.pooled, taken);
+		taken.add(name);
+		const displayName = typeof grant.displayName === "string" ? { displayName: grant.displayName } : {};
+		accounts.push({
+			name,
+			...displayName,
+			access: grant.access,
+			refresh: grant.refresh,
+			expires: grant.expires,
+			source: "import",
+			importedFrom: authGrantDigest(grant.refresh),
+		});
+		if (pinned === undefined && typeof grant.name === "string" && grant.name === source.pinned) pinned = name;
 	}
-	const next: AuthStorageData = {
-		...data,
-		[ANTHROPIC_SUBSCRIPTION_PROVIDER_ID]: { ...subscription, accounts, ...(pinned === undefined ? {} : { pinned }) },
-	};
-	const remaining = remainingApiKeyEntry(keySlots, entry.pinned);
+	const next = { ...subscription, accounts, ...(pinned === undefined ? {} : { pinned }) };
+	return { ...data, [ANTHROPIC_SUBSCRIPTION_PROVIDER_ID]: next };
+}
+
+function migrate(data: AuthStorageData): AnthropicOAuthMigrationResult {
+	const entry: unknown = data.anthropic;
+	if (!isPlainObject(entry) || entry.type !== "oauth") return { data, migrated: false };
+	const source = readSource(entry);
+	if (typeof source === "string") return { data, migrated: false, skipped: source };
+	const subscription = readSubscription(data[ANTHROPIC_SUBSCRIPTION_PROVIDER_ID]);
+	if (typeof subscription === "string") return { data, migrated: false, skipped: subscription };
+	const copied = (grant: OAuthGrant) =>
+		(subscription.accounts ?? []).some(
+			(account) => account.refresh === grant.refresh || account.importedFrom === authGrantDigest(grant.refresh),
+		);
+	const pending = source.grants.filter((grant) => !copied(grant));
+	if (pending.length > 0) return { data: copyGrants(data, source, subscription, pending), migrated: true };
+	const next: AuthStorageData = { ...data };
+	const remaining = remainingApiKeyEntry(source.keySlots, source.pinned);
 	if (remaining) next.anthropic = remaining;
 	else delete next.anthropic;
 	return { data: next, migrated: true };
+}
+
+/**
+ * Moves a Claude subscription login out of the direct `anthropic` provider into the Agent SDK lane
+ * (senpi#3259). Anthropic bills a subscription token sent straight to the Messages API as a
+ * third-party app (extra usage, not plan limits), so the grant must run through Claude Code.
+ *
+ * Two steps, one per auth.json load, so no credential is ever lost:
+ * 1. Copy: every OAuth grant of the entry (each pool slot, and top-level fields that match no slot)
+ *    that the subscription lane does not already hold is ADDED there, tagged `importedFrom` with the
+ *    source grant's digest. The `anthropic` entry is not touched.
+ * 2. Retire: a later load that reads every source grant back from the subscription lane removes the
+ *    OAuth part of `anthropic`. API-key slots stay, rebuilt as an API-key credential projecting the
+ *    pinned key. Nothing refreshes the leftover copy in between: `anthropic` has no OAuth method.
+ * Anything it cannot fully parse is left untouched and explained in `skipped`; it never throws, so a
+ * broken entry can never take other providers' credentials down with it.
+ */
+export function migrateAnthropicOAuthToSubscription(data: AuthStorageData): AnthropicOAuthMigrationResult {
+	try {
+		return migrate(data);
+	} catch (error) {
+		const reason = error instanceof Error ? error.message : String(error);
+		return { data, migrated: false, skipped: `it could not be read (${reason})` };
+	}
 }

@@ -20,24 +20,38 @@ const THIRD_PARTY_400 =
 
 type Store = Record<string, Credential>;
 
+function settle(data: Store): Store {
+	let current = data;
+	for (let step = 0; step < 5; step++) {
+		const result = migrateAnthropicOAuthToSubscription(current);
+		if (!result.migrated) return current;
+		current = result.data;
+	}
+	throw new Error("migration did not settle");
+}
+
 function subscriptionOf(data: Store): AnthropicSubscriptionCredential | undefined {
 	return data["anthropic-subscription"] as AnthropicSubscriptionCredential | undefined;
 }
 
 describe("subscription OAuth grant moves to the Agent SDK lane (#3259)", () => {
-	it("moves a flat anthropic OAuth grant into anthropic-subscription accounts", () => {
-		const result = migrateAnthropicOAuthToSubscription({
-			anthropic: { type: "oauth", access: "acc-1", refresh: "ref-1", expires: 42 },
-		});
-		expect(result.migrated).toBe(true);
-		expect(result.data.anthropic).toBeUndefined();
-		expect(subscriptionOf(result.data)?.accounts).toEqual([
+	it("copies a flat grant first and retires the source only on a later pass", () => {
+		const source: Store = { anthropic: { type: "oauth", access: "acc-1", refresh: "ref-1", expires: 42 } };
+		const copied = migrateAnthropicOAuthToSubscription(source);
+		expect(copied.migrated).toBe(true);
+		expect(copied.data.anthropic).toEqual(source.anthropic);
+		expect(subscriptionOf(copied.data)?.accounts).toMatchObject([
 			{ name: "imported-anthropic", access: "acc-1", refresh: "ref-1", expires: 42, source: "import" },
 		]);
+		const retired = migrateAnthropicOAuthToSubscription(copied.data);
+		expect(retired.migrated).toBe(true);
+		expect(retired.data.anthropic).toBeUndefined();
+		expect(subscriptionOf(retired.data)?.accounts).toEqual(subscriptionOf(copied.data)?.accounts);
+		expect(migrateAnthropicOAuthToSubscription(retired.data).migrated).toBe(false);
 	});
 
 	it("moves every pooled slot next to existing subscription accounts without overwriting them", () => {
-		const result = migrateAnthropicOAuthToSubscription({
+		const settled = settle({
 			anthropic: {
 				type: "oauth",
 				access: "acc-1",
@@ -56,9 +70,8 @@ describe("subscription OAuth grant moves to the Agent SDK lane (#3259)", () => {
 				accounts: [{ name: "imported-anthropic", access: "keep", refresh: "keep", expires: 9, source: "login" }],
 			} as Credential,
 		});
-		expect(result.migrated).toBe(true);
-		expect(result.data.anthropic).toBeUndefined();
-		expect(subscriptionOf(result.data)?.accounts?.map((slot) => [slot.name, slot.refresh])).toEqual([
+		expect(settled.anthropic).toBeUndefined();
+		expect(subscriptionOf(settled)?.accounts?.map((slot) => [slot.name, slot.refresh])).toEqual([
 			["imported-anthropic", "keep"],
 			["imported-anthropic-default", "ref-1"],
 			["imported-anthropic-work", "ref-2"],
@@ -66,7 +79,7 @@ describe("subscription OAuth grant moves to the Agent SDK lane (#3259)", () => {
 	});
 
 	it("moves only the OAuth slots of a mixed pool and keeps the API key slot in place", () => {
-		const result = migrateAnthropicOAuthToSubscription({
+		const settled = settle({
 			anthropic: {
 				type: "oauth",
 				access: "acc-1",
@@ -79,14 +92,13 @@ describe("subscription OAuth grant moves to the Agent SDK lane (#3259)", () => {
 				pinned: "login-2",
 			} as Credential,
 		});
-		expect(result.migrated).toBe(true);
-		expect(result.data.anthropic).toEqual({
+		expect(settled.anthropic).toEqual({
 			type: "api_key",
 			key: "sk-ant-api03-KEEP",
 			accounts: [{ name: "login-2", key: "sk-ant-api03-KEEP", source: "login" }],
 			pinned: "login-2",
 		});
-		expect(subscriptionOf(result.data)?.accounts?.map((slot) => slot.refresh)).toEqual(["ref-1"]);
+		expect(subscriptionOf(settled)?.accounts?.map((slot) => slot.refresh)).toEqual(["ref-1"]);
 	});
 
 	it("leaves an OAuth entry it cannot parse untouched and reports why", () => {
@@ -201,7 +213,7 @@ describe("the move runs once at the auth.json load seam behind a private backup 
 		dir = undefined;
 	});
 
-	it("rewrites the store once, keeps a 0600 backup of the original, and is stable on the next load", async () => {
+	it("copies, then retires behind 0600 backups, and settles with no further writes", async () => {
 		dir = mkdtempSync(join(tmpdir(), "auth-3259-"));
 		const authPath = join(dir, "auth.json");
 		const original = JSON.stringify({
@@ -209,25 +221,30 @@ describe("the move runs once at the auth.json load seam behind a private backup 
 			anthropic: { type: "oauth", access: "acc-1", refresh: "ref-1", expires: 42 },
 		});
 		writeFileSync(authPath, original, { mode: 0o600 });
+		const backups = () =>
+			readdirSync(dir ?? "")
+				.filter((name) => name.startsWith("auth.json.backup-"))
+				.sort();
 
 		const first = AuthStorage.create(authPath);
-		expect(await first.read("anthropic")).toBeUndefined();
 		expect(await first.read("anthropic-subscription")).toMatchObject({
 			accounts: [{ name: "imported-anthropic", refresh: "ref-1" }],
 		});
 		expect(await first.read("openai")).toEqual({ type: "api_key", key: "sk-openai" });
-
-		const backups = readdirSync(dir).filter((name) => name.startsWith("auth.json.backup-"));
-		expect(backups).toHaveLength(1);
-		const backupPath = join(dir, backups[0] ?? "");
-		expect(readFileSync(backupPath, "utf-8")).toBe(original);
-		expect(statSync(backupPath).mode & 0o777).toBe(0o600);
-
-		const migrated = readFileSync(authPath, "utf-8");
 		const second = AuthStorage.create(authPath);
+		expect(await second.read("anthropic")).toBeUndefined();
 		expect(await second.read("anthropic-subscription")).toMatchObject({ accounts: [{ refresh: "ref-1" }] });
-		expect(readFileSync(authPath, "utf-8")).toBe(migrated);
-		expect(readdirSync(dir).filter((name) => name.startsWith("auth.json.backup-"))).toHaveLength(1);
+
+		const written = backups();
+		expect(written.length).toBeGreaterThanOrEqual(1);
+		expect(readFileSync(join(dir, written[0] ?? ""), "utf-8")).toBe(original);
+		for (const name of written) expect(statSync(join(dir, name)).mode & 0o777).toBe(0o600);
+
+		const settled = readFileSync(authPath, "utf-8");
+		const third = AuthStorage.create(authPath);
+		expect(await third.read("anthropic-subscription")).toMatchObject({ accounts: [{ refresh: "ref-1" }] });
+		expect(readFileSync(authPath, "utf-8")).toBe(settled);
+		expect(backups()).toEqual(written);
 	});
 });
 
