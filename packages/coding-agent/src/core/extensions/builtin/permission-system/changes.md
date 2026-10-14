@@ -1,5 +1,29 @@
 # Permission System Builtin Extension
 
+## 2026-10-14 - Full-access central decision + cross-session approvals (#2465)
+
+### What changed
+
+- `service.ts`: `dispatchDecision` now applies the dedicated full-access decision — when the active preset is `full-access`, an `ask` result collapses to `allow` while a `deny` stays denied — so a settings/CLI `ask` rule can never re-introduce a prompt under Full access. The service takes the active preset at construction for this.
+- `service.ts`: the approved store is re-read per decision when its mtime+size changed (`refreshApproved`), replacing only the persisted prefix and keeping this session's own answers, so an "Always" answer one open session writes takes effect on another open session's next decision.
+- `storage.ts`: adds `approvedFileVersion` (mtime+size) for the cheap change check behind that re-read.
+- `index.ts`: passes the active preset and the session cwd into the service; persists each "Always" answer at answer time (`persistAlways`) instead of only at session shutdown, and the shutdown append skips rules already persisted so the JSONL contract keeps one line per rule.
+- `index.ts`: permission loading now uses the session's own `agentDir` (`ctx.agentDir`) at `session_start` and on every `followPresetFlag` reload, so global settings a host session actually runs with are honored; a denial's block reason names the matching rule and its layer (global/project/CLI) via `denyReason`.
+- `settings.ts`: no longer re-appends the CLI `full-access` preset's wildcard allow (redundant with the default), which had masked a user's explicit settings deny.
+
+### Why
+
+- Under Full access nothing may prompt, and a mode change must apply immediately to running and idle sessions; a settings `ask` rule was silently prompting, and a settings `deny` was silently allowed.
+- An "Always allow" answer must reach other open sessions of the same project at once, not only after their next session start.
+
+### Why an extension could not handle it
+
+- The decision lives in the permission service's single decision point and the approved store's read path; an extension outside `permission-system` cannot intercept either without replacing the evaluator and storage contract.
+
+### Expected merge conflict zones
+
+- `service.ts` `dispatchDecision` / `refreshApproved` and the constructor signature; `index.ts` `authorizeToolCall` block reasons, `loadPermissionRules` signature, and the shutdown append; `settings.ts` `loadPermissionSettings` merge order; `storage.ts` approved-store helpers.
+
 ## 2026-10-06 - Invocation-scoped dispatch authorization (#2843)
 
 ### What changed

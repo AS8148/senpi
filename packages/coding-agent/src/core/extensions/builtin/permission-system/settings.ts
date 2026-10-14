@@ -37,7 +37,10 @@ export function loadPermissionSettings(
 	const projectPresetRuleset = projectPreset ? rulesForPreset(projectPreset) : [];
 	const projectRuleset = projectSettings.permission ? fromConfig(projectSettings.permission) : [];
 
-	const cliPresetRuleset = cliPresetOverride ? rulesForPreset(cliPresetOverride) : [];
+	// The default already opens with full-access's wildcard allow, so a CLI full-access preset is
+	// redundant; re-appending it would only mask a user's explicit settings/CLI deny (senpi#2465).
+	const cliPresetRuleset =
+		cliPresetOverride && cliPresetOverride !== DEFAULT_PERMISSION_PRESET ? rulesForPreset(cliPresetOverride) : [];
 	const staticRuleset = merge(
 		rulesForPreset(DEFAULT_PERMISSION_PRESET),
 		globalPresetRuleset,

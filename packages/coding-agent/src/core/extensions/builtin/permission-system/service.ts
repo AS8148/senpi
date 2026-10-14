@@ -1,10 +1,12 @@
 import { isPresetRule } from "./config.ts";
 import { evaluate } from "./evaluate.ts";
 import { createLocalEventEmitter, type PermissionEventEmitter } from "./events.ts";
+import { approvedFileVersion, loadApproved } from "./storage.ts";
 import {
 	CorrectedError,
 	DeniedError,
 	type PendingEntry,
+	type PermissionPresetName,
 	RejectedError,
 	type ReplyInput,
 	type Request,
@@ -30,10 +32,42 @@ export class PermissionService {
 	private emitter: PermissionEventEmitter;
 	private idCounter = 0;
 
-	constructor(staticRuleset: Ruleset, approved: Ruleset, emitter: PermissionEventEmitter = createLocalEventEmitter()) {
+	constructor(
+		staticRuleset: Ruleset,
+		approved: Ruleset,
+		emitter: PermissionEventEmitter = createLocalEventEmitter(),
+		preset?: PermissionPresetName,
+		projectDir?: string,
+	) {
 		this.staticRuleset = [...staticRuleset];
 		this.approved = [...approved];
 		this.emitter = emitter;
+		this.preset = preset;
+		// The approved rules this service was seeded with are the persisted prefix; anything after
+		// is this session's own (unsaved or just-saved) answers and survives a re-read.
+		this.persistedApprovedCount = approved.length;
+		this.projectDir = projectDir;
+		this.approvedVersion = projectDir === undefined ? undefined : approvedFileVersion(projectDir);
+	}
+
+	private readonly preset?: PermissionPresetName;
+	private readonly projectDir?: string;
+	private persistedApprovedCount: number;
+	private approvedVersion: string | undefined;
+
+	/**
+	 * An "Always" answer another open session just persisted is honored on this session's very next
+	 * decision (senpi#2465): the approved store is re-read only when its mtime+size changed, and the
+	 * re-read replaces the persisted prefix while keeping this session's own answers.
+	 */
+	private refreshApproved(): void {
+		if (this.projectDir === undefined) return;
+		const version = approvedFileVersion(this.projectDir);
+		if (version === this.approvedVersion) return;
+		const fresh = loadApproved(this.projectDir);
+		this.approved = [...fresh, ...this.approved.slice(this.persistedApprovedCount)];
+		this.persistedApprovedCount = fresh.length;
+		this.approvedVersion = version;
 	}
 
 	/** deny > ask > allow. */
@@ -58,8 +92,12 @@ export class PermissionService {
 		options: DecisionOptions = {},
 	): { readonly action: Rule["action"]; readonly rules: readonly Rule[] } {
 		if (!options.presetBound) {
+			this.refreshApproved();
 			const rule = evaluate(permission, target, this.staticRuleset, this.approved);
-			return { action: rule.action, rules: [{ ...rule }] };
+			// Full access means no prompts: a settings/CLI ask collapses to allow here, while a deny
+			// stays denied. This is the one dedicated full-access decision (senpi#2465).
+			const action = this.preset === "full-access" && rule.action === "ask" ? "allow" : rule.action;
+			return { action, rules: [{ ...rule }] };
 		}
 		const presetRules = this.staticRuleset.filter((rule) => isPresetRule(rule));
 		const userRules = this.staticRuleset.filter((rule) => !isPresetRule(rule));

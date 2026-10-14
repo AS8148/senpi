@@ -3,7 +3,7 @@ import type { ExtensionAPI, ExtensionContext, ToolCallEvent, ToolCallEventResult
 import { extractPatchedPaths } from "../gpt-apply-patch/index.ts";
 import { decideAuto } from "./auto-policy.ts";
 import { PERMISSION_PRESET_NAMES, parsePermissionFlag, parsePermissionPresetFlag } from "./cli.ts";
-import { disabled } from "./config.ts";
+import { disabled, fromConfig } from "./config.ts";
 import { forgetDispatchApproval, registerDispatchAuthorizer } from "./dispatch.ts";
 import { prepareMcpDispatchApproval } from "./dispatch-metadata.ts";
 import { createDispatchAuthorizer } from "./dispatch-policy.ts";
@@ -18,11 +18,13 @@ import { appendApproved } from "./storage.ts";
 import {
 	CorrectedError,
 	DeniedError,
+	type PermissionConfig,
 	type PermissionPresetName,
 	RejectedError,
 	type Request,
 	type Ruleset,
 } from "./types.ts";
+import { Wildcard } from "./wildcard.ts";
 
 function createRequestIDFactory(): () => string {
 	let counter = 0;
@@ -42,6 +44,68 @@ function getReason(error: unknown): string {
 	}
 
 	return "Permission request was rejected.";
+}
+
+/** A DeniedError's refusal, naming the exact settings rule and its layer so the user can change it. */
+function denyReason(
+	error: DeniedError,
+	settingsManager: SettingsManager | null,
+	cliRuleset: Ruleset,
+	request: Request,
+): string {
+	if (settingsManager === null) return error.message;
+	const pattern = request.patterns[0] ?? "*";
+	const provenance = findDenyProvenance(settingsManager, cliRuleset, request.permission, pattern);
+	if (!provenance) return error.message;
+	const source = provenance.layer === "cli" ? "--permission" : `${provenance.layer} settings.json`;
+	return `Denied by ${provenance.layer} permission rule ${provenance.permission}:${provenance.pattern} = deny (${source}). Edit that entry to allow this call.`;
+}
+
+/**
+ * An "Always" answer takes effect for other open sessions at once: it is appended to the approved
+ * store now, not at session shutdown (senpi#2465). The shutdown append then skips the rules this
+ * session already persisted, so the JSONL contract keeps one line per rule.
+ */
+function persistAlways(cwd: string, request: Request, persisted: Set<string>): void {
+	const rules = request.always.map((pattern) => ({
+		permission: request.permission,
+		pattern,
+		action: "allow" as const,
+	}));
+	if (rules.length > 0) appendApproved(cwd, rules);
+	for (const rule of rules) persisted.add(`${rule.permission}:${rule.pattern}`);
+}
+
+/** The most specific settings rule (global/project/CLI) denying this permission, for the refusal message. */
+function findDenyProvenance(
+	settingsManager: SettingsManager,
+	cliRuleset: Ruleset,
+	permission: string,
+	pattern: string,
+): { layer: "global" | "project" | "cli"; permission: string; pattern: string; action: string } | undefined {
+	const matches = (rules: Ruleset) =>
+		rules.filter(
+			(rule) =>
+				rule.action === "deny" &&
+				Wildcard.match(permission, rule.permission) &&
+				(Wildcard.match(pattern, rule.pattern) ||
+					(rule.pattern.endsWith(" *") && Wildcard.match(pattern, rule.pattern.slice(0, -2)))),
+		);
+	const globalPermission = (settingsManager.getGlobalSettings() as { permission?: PermissionConfig }).permission;
+	const globalMatches = matches(globalPermission ? fromConfig(globalPermission) : []);
+	if (globalMatches.length > 0) {
+		return { layer: "global", ...globalMatches[globalMatches.length - 1] };
+	}
+	const projectPermission = (settingsManager.getProjectSettings() as { permission?: PermissionConfig }).permission;
+	const projectMatches = matches(projectPermission ? fromConfig(projectPermission) : []);
+	if (projectMatches.length > 0) {
+		return { layer: "project", ...projectMatches[projectMatches.length - 1] };
+	}
+	const cliMatches = matches(cliRuleset);
+	if (cliMatches.length > 0) {
+		return { layer: "cli", ...cliMatches[cliMatches.length - 1] };
+	}
+	return undefined;
 }
 
 function createRequestMetadata(toolName: string, input: Record<string, unknown>): Record<string, unknown> {
@@ -74,12 +138,15 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 	let activePreset: PermissionPresetName | null = null;
 	let initialApprovedCount = 0;
 	let setupError: string | null = null;
+	let activeSettingsManager: SettingsManager | null = null;
 	// The `permission-preset` flag value the rules were last loaded from; absent until session_start.
 	let loadedPresetFlag: { readonly value: boolean | string | undefined } | undefined;
 	let loadedPermissionFlag: boolean | string | undefined;
 	const retireAuthorizers = new WeakMap<object, () => void>();
 
 	const nextRequestID = createRequestIDFactory();
+	// Rules this session already persisted at answer time; shutdown skips re-appending them.
+	const persistedAtAnswer = new Set<string>();
 
 	pi.registerFlag("permission", {
 		description: "Set permission rules (format: tool=action or tool:pattern=action)",
@@ -93,7 +160,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 	pi.on("session_start", async (_event, ctx) => {
 		setupError = null;
 		try {
-			loadPermissionRules(ctx.cwd);
+			loadPermissionRules(ctx.cwd, [], ctx.agentDir);
 		} catch (error) {
 			// The runner reports a throwing handler and keeps the session running, so a rules
 			// failure must block tool calls itself instead of leaving them unchecked (#2617).
@@ -106,8 +173,12 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 	});
 
 	// `sessionApproved` carries this session's "Always" answers, not yet written to disk, across a reload.
-	const loadPermissionRules = (cwd: string, sessionApproved: Ruleset = []): void => {
-		const settingsManager = SettingsManager.create(cwd);
+	const loadPermissionRules = (cwd: string, sessionApproved: Ruleset = [], agentDir?: string): void => {
+		// The session's own agentDir scopes global settings; an ambient default would miss the
+		// settings a host session actually runs with (senpi#2465).
+		const settingsManager =
+			agentDir === undefined ? SettingsManager.create(cwd) : SettingsManager.create(cwd, agentDir);
+		activeSettingsManager = settingsManager;
 		const permissionFlag = pi.getFlag("permission");
 		loadedPermissionFlag = permissionFlag;
 		const permissionPresetFlag = pi.getFlag("permission-preset");
@@ -127,7 +198,13 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		activePreset = loadedSettings.preset;
 		const approved = loadedSettings.approved;
 		parserRegistry = createBuiltinParserRegistry();
-		service = new PermissionService(staticRuleset, [...approved, ...sessionApproved], createEventEmitter(pi));
+		service = new PermissionService(
+			staticRuleset,
+			[...approved, ...sessionApproved],
+			createEventEmitter(pi),
+			activePreset,
+			cwd,
+		);
 		initialApprovedCount = approved.length;
 	};
 
@@ -144,7 +221,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 
 	// A host moves a live session to another preset (an attach naming one) by changing the flag;
 	// the rules follow from the next tool call on, and a failed reload refuses calls like session_start.
-	const followPresetFlag = (cwd: string): void => {
+	const followPresetFlag = (cwd: string, agentDir?: string): void => {
 		if (
 			loadedPresetFlag === undefined ||
 			(loadedPresetFlag.value === pi.getFlag("permission-preset") &&
@@ -155,7 +232,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		const sessionApproved = service ? service.getApproved().slice(initialApprovedCount) : [];
 		setupError = null;
 		try {
-			loadPermissionRules(cwd, sessionApproved);
+			loadPermissionRules(cwd, sessionApproved, agentDir);
 		} catch (error) {
 			setupError = getReason(error);
 			return;
@@ -166,7 +243,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 	const dispatchAuthorizer = createDispatchAuthorizer(
 		pi,
 		(ctx) => {
-			followPresetFlag(ctx.cwd);
+			followPresetFlag(ctx.cwd, ctx.agentDir);
 			return { service, parsers: parserRegistry, preset: activePreset, setupError };
 		},
 		(event, ctx, signal) => authorizeToolCall(event, ctx, signal),
@@ -177,7 +254,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		ctx: ExtensionContext,
 		signal?: AbortSignal,
 	): Promise<ToolCallEventResult | undefined> => {
-		followPresetFlag(ctx.cwd);
+		followPresetFlag(ctx.cwd, ctx.agentDir);
 		if (setupError !== null) {
 			return { block: true, reason: `Permission setup failed: ${setupError}` };
 		}
@@ -238,7 +315,13 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 			if (!isPending) {
 				const askResult = await askResultPromise;
 				if (!askResult.ok) {
-					return { block: true, reason: getReason(askResult.error) };
+					return {
+						block: true,
+						reason:
+							askResult.error instanceof DeniedError
+								? denyReason(askResult.error, activeSettingsManager, cliRuleset, request)
+								: getReason(askResult.error),
+					};
 				}
 				continue;
 			}
@@ -246,6 +329,9 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 			if (ctx.hasUI) {
 				const reply = await showPermissionPrompt(ctx, request, signal);
 				activeService.reply(reply);
+				if (reply.reply === "always") {
+					persistAlways(ctx.cwd, request, persistedAtAnswer);
+				}
 			} else {
 				activeService.reply(
 					handleNoUI(request, {
@@ -261,7 +347,13 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 
 			const askResult = await askResultPromise;
 			if (!askResult.ok) {
-				return { block: true, reason: getReason(askResult.error) };
+				return {
+					block: true,
+					reason:
+						askResult.error instanceof DeniedError
+							? denyReason(askResult.error, activeSettingsManager, cliRuleset, request)
+							: getReason(askResult.error),
+				};
 			}
 		}
 
@@ -280,7 +372,10 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 			return;
 		}
 
-		const approved = service.getApproved().slice(initialApprovedCount);
+		const approved = service
+			.getApproved()
+			.slice(initialApprovedCount)
+			.filter((rule) => !persistedAtAnswer.has(`${rule.permission}:${rule.pattern}`));
 		if (approved.length > 0) {
 			appendApproved(ctx.cwd, approved);
 		}

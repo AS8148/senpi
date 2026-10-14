@@ -30,6 +30,17 @@ export function loadApproved(projectDir: string): Ruleset {
 	return rules;
 }
 
+/** Cheap identity of the approved store: mtime + size, so a service re-reads only on change. */
+export function approvedFileVersion(projectDir: string): string | undefined {
+	const filePath = getPermissionsPath(projectDir);
+	try {
+		const stat = fs.statSync(filePath);
+		return `${stat.mtimeMs}:${stat.size}`;
+	} catch {
+		return undefined;
+	}
+}
+
 export function appendApproved(projectDir: string, rules: Rule[]): void {
 	if (rules.length === 0) {
 		return;
