@@ -66,7 +66,7 @@ describe("an account's cooldown can be cleared on request (senpi#3285)", () => {
 			...pooled(),
 			accounts: [
 				{ name: "a", key: "key-a", source: "login" },
-				{ name: "b", key: "key-b", source: "login", blockReason: "auth_error" },
+				{ name: "b", key: "key-b", source: "login", blockReason: "auth_error", blockedUntil: FAR_FUTURE },
 			],
 		}));
 		expect(await blocked("b")).toBe(true);
