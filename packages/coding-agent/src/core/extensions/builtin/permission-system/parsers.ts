@@ -69,6 +69,33 @@ function withExternalDirectoryRequests(
 	];
 }
 
+/** The `eval` class a cell carries on its own, used when its tool-owned parser names anything narrower. */
+export function fallbackEvalPermissionRequest(): PermissionRequest {
+	return { permission: "eval", patterns: ["*"], always: ["*"] };
+}
+
+/**
+ * The permission requests for one call: the builtin registry's answer, or the tool's own parser
+ * when the builtin registry does not own it. An `eval` call is arbitrary code, so its tool's own
+ * parser can never speak for everything the cell does: the `eval` request is always carried
+ * alongside, and a narrower answer (for example `read`) can never approve it (senpi#3211).
+ */
+export function permissionRequestsFor(
+	getTools: () => readonly ToolInfo[],
+	registry: ParserRegistry,
+	toolName: string,
+	input: Record<string, unknown>,
+	cwd: string,
+): PermissionRequest[] {
+	const requests = registry.has(toolName)
+		? registry.parse(toolName, input, cwd)
+		: (toolOwnedPermissionRequests(getTools(), toolName, input, cwd) ?? registry.parse(toolName, input, cwd));
+	if (toolName === "eval" && !requests.some((request) => request.permission === "eval")) {
+		return [...requests, fallbackEvalPermissionRequest()];
+	}
+	return requests;
+}
+
 /** The requests a tool's own `permissionParser` derives from this call, or undefined when the tool declares none. */
 export function toolOwnedPermissionRequests(
 	tools: readonly ToolInfo[],

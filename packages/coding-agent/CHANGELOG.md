@@ -14,6 +14,8 @@
 
 - Local extensions keep loading after a runtime update on Bun 1.4.2 and older. Bun's transpile cache had stored the previous runtime's path to `extension-runtime-module.js`, so once that runtime was pruned an unchanged extension failed with `Cannot find module`. The cache entry now changes whenever the runtime moves, and a cache that is already broken heals on the next start, with nothing to clear by hand ([#3300](https://github.com/code-yeongyu/senpi/issues/3300), reported in the OmO community).
 
+- A tool named `eval` with its own `permissionParser` could answer for itself with a narrower class (for example `read`), so a preset that allows reads would run an arbitrary-code cell without asking. The `eval` permission request is now always carried alongside any tool-owned requests, so only a preset that allows everything allows a cell ([#3211](https://github.com/code-yeongyu/senpi/pull/3211), requested by @code-yeongyu).
+
 - A provider whose credentials were locked when the store was first read no longer reports "not configured" to `get_auth_providers` after the lock clears, while its models already work. The status now re-reads the store the same way model availability does (omo-desktop-app#2249).
 
 ### Removed
