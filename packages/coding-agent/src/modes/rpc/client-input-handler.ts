@@ -89,7 +89,7 @@ export async function handleClientInput(
 					case "steer":
 					case "follow_up": {
 						const options = {
-							...clientMessageIdentity(command),
+							...clientMessageIdentity(hooks.identity),
 							enqueueOrder: command.enqueueOrder,
 							source: "rpc" as const,
 							onQueuedInput: hooks.queued,

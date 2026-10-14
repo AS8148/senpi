@@ -1,7 +1,9 @@
+import { randomUUID } from "node:crypto";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AgentSession, PromptDisposition } from "../../core/agent-session.ts";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
 import {
+	type ClientMessageIdentity,
 	clientMessageIdentity,
 	type PreparedClientInput,
 	readClientMessageIdentity,
@@ -20,6 +22,8 @@ import { EFFECT_OUTCOMES, turnErrorOutcome } from "./effect-outcome-copy.ts";
 import type { EffectActor, EffectOutcome } from "./effect-record.ts";
 
 type AdmissionHooks = {
+	/** The identity to stamp on the input: the client's, or the one the host minted for an id-less queued input. */
+	readonly identity: ClientMessageIdentity;
 	readonly queued: (input: PreparedClientInput) => void;
 	readonly accepted: (disposition: PromptDisposition) => ClientMessageAdmission | undefined;
 };
@@ -198,11 +202,15 @@ export class ClientAdmissions {
 		// including deliveries that reach a freshly rebound session before its bind awaited this.
 		await this.ready;
 		this.hasIdentities ||= command.clientMessageId !== undefined || command.clientTurnId !== undefined;
-		if (command.clientMessageId === undefined) {
-			await invoke({ queued: () => {}, accepted: () => undefined });
+		// An id-less steer/follow_up is still made durable under a host-minted id, so a reopen restores it;
+		// that id is never answered back as the client's own. An id-less prompt keeps today's path.
+		const hostMinted = command.clientMessageId === undefined && command.type !== "prompt";
+		if (command.clientMessageId === undefined && !hostMinted) {
+			await invoke({ identity: {}, queued: () => {}, accepted: () => undefined });
 			return undefined;
 		}
-		const clientMessageId = command.clientMessageId;
+		const clientMessageId =
+			command.clientMessageId ?? `host:${this.session.sessionManager.getSessionId()}:${randomUUID()}`;
 		const fingerprint = clientInputFingerprint(command);
 		const pending = this.pending.get(clientMessageId);
 		const existing = this.records.get(clientMessageId);
@@ -223,8 +231,10 @@ export class ClientAdmissions {
 				clientMessageId,
 				durableSessionId: this.session.sessionManager.getSessionId(),
 				fingerprint,
+				...(hostMinted ? { hostMinted: true as const } : {}),
 			};
 			const disposition = await invoke({
+				identity: { ...clientMessageIdentity(command), clientMessageId },
 				queued: (prepared) => this.save({ ...base, state: "queued", disposition: "queued", prepared }),
 				accepted: (accepted) => {
 					const record = this.records.get(clientMessageId) ?? {
@@ -240,7 +250,7 @@ export class ClientAdmissions {
 			if (!record) throw new Error(`RPC input was ${disposition} without a durable admission`);
 			const snapshot = admissionSnapshot(record);
 			result.resolve(snapshot);
-			return snapshot;
+			return hostMinted ? undefined : snapshot;
 		} catch (error) {
 			result.reject(error);
 			throw error;

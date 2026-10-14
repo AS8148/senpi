@@ -2269,6 +2269,8 @@ Every queued input carries a session-unique `queuedId` (`q_<n>`) in `get_state.o
 {"type": "edit_queued_message", "queuedId": "q_4", "text": "use the staging database"}
 ```
 
+A `steer` or `follow_up` sent **without** a `clientMessageId` is still recorded durably under a host-minted id (`host:<durableSessionId>:<uuid>`), so it survives a host restart and a reopen restores it exactly once. The response never echoes that id; `get_effect_status` and `effect_status` report it as the input's `effectId`.
+
 `status` is `removed` / `edited`, or `already_delivered` (the input was already handed to the agent) or `not_found` (no such id in this session); those two also carry `reason` and `action`, and an `effectId` receipt ends `failed` with that outcome. A missing or over-long `queuedId` is refused.
 
 #### clear_queue
