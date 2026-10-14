@@ -8,6 +8,8 @@
 
 - `/account <provider> reset <id>` clears one account's cooldown or block (the credential-pool health record and any block a provider lane stored on the account), so the next request tries it again ([#3285](https://github.com/code-yeongyu/senpi/issues/3285)).
 
+- Dual-era MCP client: servers speaking the 2026-07-28 stateless spec revision (no `initialize`, per-request `_meta`, `MCP-Protocol-Version` / `Mcp-Method` / `Mcp-Name` headers, `server/discover`) now connect, while legacy initialize-handshake servers keep working through spec-driven auto-negotiation (HTTP: modern request first with 400-body classification; stdio: discover-first probe; era cached per origin/process). Modern-only servers receive zero legacy handshake traffic through an SDK-compatibility bridge that answers the SDK client's `initialize` locally from the discovery result. Connect diagnostics log the negotiated era and protocol version per server. Modern-only stdio servers work too: the spawned process answers `server/discover` first, then every request carries the per-request `_meta`, with no `initialize` sent ([#3304](https://github.com/code-yeongyu/senpi/issues/3304), reported by @changeroa).
+
 - RPC effect ledger (capability `effect_ledger`): `abort`, `set_model` and `set_thinking_level` take an optional `effectId` and get a durable receipt written before the effect is applied; a retry with the same id replays the receipt instead of acting twice, and a different request under that id is refused with `effect_id_conflict`. `get_effect_status` answers any receipt by id, including inputs by `clientMessageId`, from a loaded session or from a transcript on disk. Input receipts now say how their turn ended (completed, aborted and by whom, error), a reopened session seals receipts its dead process left running, and queued input dropped by `new_session`/`switch_session` reads `failed` instead of vanishing ([#3199](https://github.com/code-yeongyu/senpi/issues/3199)).
 
 ### Changed
@@ -16,8 +18,8 @@
 
 - Several sessions sharing one credential pool no longer fail requests with "Credential store is busy ... held for 5500ms". Reading pool health takes no lock, callers in one process queue for it instead of starving each other, and a health write that still cannot take the lock is skipped and logged instead of failing a reply that already arrived ([#3285](https://github.com/code-yeongyu/senpi/issues/3285)).
 
+- A Claude Pro/Max subscription signed in through the Anthropic provider is moved to the Anthropic Subscription (Claude Agent SDK) lane on startup, together with saved model selections, because Anthropic bills direct-API subscription requests to extra usage and refused them. The rejection now ends the turn once with the reason and what to do, instead of replaying it on every Anthropic model ([#3259](https://github.com/code-yeongyu/senpi/issues/3259)).
 - A tool named `eval` with its own `permissionParser` could answer for itself with a narrower class (for example `read`), so a preset that allows reads would run an arbitrary-code cell without asking. The `eval` permission request is now always carried alongside any tool-owned requests, so only a preset that allows everything allows a cell ([#3211](https://github.com/code-yeongyu/senpi/pull/3211), requested by @code-yeongyu).
-
 - A provider whose credentials were locked when the store was first read no longer reports "not configured" to `get_auth_providers` after the lock clears, while its models already work. The status now re-reads the store the same way model availability does (omo-desktop-app#2249).
 
 ### Removed
