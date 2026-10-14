@@ -431,16 +431,6 @@ type WithParentToolCallId<E> = E extends {
 	? E & { parentToolCallId?: string }
 	: E;
 
-/** Session-specific events that extend the core AgentEvent */
-/** Whether a run's final assistant message stopped because it was aborted. */
-function endedAborted(messages: readonly AgentMessage[]): boolean {
-	for (let index = messages.length - 1; index >= 0; index--) {
-		const message = messages[index];
-		if (message?.role === "assistant") return message.stopReason === "aborted";
-	}
-	return false;
-}
-
 /** Why a session-level abort happened, when the caller knows: today only a session replacement says so. */
 export interface AgentAbortCause {
 	readonly kind: "session_replaced";
@@ -457,6 +447,7 @@ type AgentSessionAgentEndEvent = Extract<AgentEvent, { type: "agent_end" }> & {
 	abortCause?: AgentAbortCause;
 };
 
+/** Session-specific events that extend the core AgentEvent */
 export type AgentSessionEvent =
 	| WithParentToolCallId<Exclude<AgentEvent, { type: "agent_end" | "message_update" }>>
 	| AgentSessionAgentEndEvent
@@ -3289,7 +3280,9 @@ export class AgentSession {
 		const agentEndWillRetry = event.type === "agent_end" && this._willRetryAfterAgentEnd(event.messages);
 		// A cause belongs to the run it stopped: a new run drops a stale one, the aborted run's agent_end takes it.
 		if (event.type === "agent_start") this._abortCause = undefined;
-		const abortCause = event.type === "agent_end" && endedAborted(event.messages) ? this._abortCause : undefined;
+		// Abort provenance, not the last message's shape: a run stopped mid-tool ends on a toolUse message.
+		const abortCause =
+			event.type === "agent_end" && this.currentAbortSource !== undefined ? this._abortCause : undefined;
 		if (abortCause !== undefined) this._abortCause = undefined;
 
 		// Emit to extensions first. Agent event persistence is intentionally

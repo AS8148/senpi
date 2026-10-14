@@ -719,7 +719,7 @@ describe("AgentSessionRuntime characterization", () => {
 		await runtime.fork(userMessage.entryId);
 
 		const replacement = runtime.session.sessionManager;
-		expect(causes).toEqual([
+		expect(causes).toStrictEqual([
 			inMemory
 				? { kind: "session_replaced", reason: "fork" }
 				: {
