@@ -36,12 +36,8 @@ function isTransientRenameError(error: unknown): boolean {
 	);
 }
 
-function blockFor(ms: number): void {
-	Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
 /** Renames over the target, retrying a transiently refused replace; a refusal that outlasts the retries reads as a busy store. */
-function replaceFile(temporary: string, path: string): void {
+async function replaceFile(temporary: string, path: string): Promise<void> {
 	const startedAt = Date.now();
 	for (const delayMs of [...RENAME_RETRY_DELAYS_MS, undefined]) {
 		try {
@@ -50,7 +46,7 @@ function replaceFile(temporary: string, path: string): void {
 		} catch (error) {
 			if (!isTransientRenameError(error)) throw error;
 			if (delayMs === undefined) throw new CredentialStoreBusyError(path, Date.now() - startedAt, error);
-			blockFor(delayMs);
+			await sleep(delayMs);
 		}
 	}
 }
@@ -61,12 +57,12 @@ function replaceFile(temporary: string, path: string): void {
  * one or the next one, never a torn write. Writers stay serialized by the
  * lock the caller holds, so the pid-suffixed temp cannot collide.
  */
-export function writeStateFileAtomic(path: string, content: string): void {
+export async function writeStateFileAtomic(path: string, content: string): Promise<void> {
 	const temporary = `${path}.${process.pid}.tmp`;
 	try {
 		writeFileSync(temporary, content, FILE_WRITE_OPTIONS);
 		if (existsSync(path)) chmodSync(temporary, statSync(path).mode & 0o777);
-		replaceFile(temporary, path);
+		await replaceFile(temporary, path);
 	} catch (error) {
 		rmSync(temporary, { force: true });
 		throw error;

@@ -134,7 +134,8 @@ export class CredentialSlotRepository {
 			const stored = parseDocument(readStateFile(this.path));
 			const document = stored ?? freshDocument();
 			const { result, next } = fn(document);
-			if (next !== undefined || stored === undefined) writeStateFileAtomic(this.path, serialize(next ?? document));
+			if (next !== undefined || stored === undefined)
+				await writeStateFileAtomic(this.path, serialize(next ?? document));
 			return result;
 		} finally {
 			await release();

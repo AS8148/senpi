@@ -28,7 +28,7 @@ afterEach(() => {
 });
 
 describe("a replace Windows refuses for a moment does not fail the write (senpi#3285)", () => {
-	test("a transient EPERM/EBUSY on the rename is retried until it lands", () => {
+	test("a transient EPERM/EBUSY on the rename is retried until it lands", async () => {
 		vi.mocked(fs.renameSync)
 			.mockImplementationOnce(() => {
 				throw refused("EPERM");
@@ -37,25 +37,25 @@ describe("a replace Windows refuses for a moment does not fail the write (senpi#
 				throw refused("EBUSY");
 			});
 
-		writeStateFileAtomic(path, "{}");
+		await writeStateFileAtomic(path, "{}");
 
 		expect(readFileSync(path, "utf-8")).toBe("{}");
 	});
 
-	test("a refusal that outlasts the retries reads as a busy store, which health writes skip", () => {
+	test("a refusal that outlasts the retries reads as a busy store, which health writes skip", async () => {
 		vi.mocked(fs.renameSync).mockImplementation(() => {
 			throw refused("EACCES");
 		});
 
-		expect(() => writeStateFileAtomic(path, "{}")).toThrow(CredentialStoreBusyError);
+		await expect(writeStateFileAtomic(path, "{}")).rejects.toThrow(CredentialStoreBusyError);
 		expect(fs.existsSync(`${path}.${process.pid}.tmp`)).toBe(false);
 	});
 
-	test("any other rename failure still propagates as itself", () => {
+	test("any other rename failure still propagates as itself", async () => {
 		vi.mocked(fs.renameSync).mockImplementation(() => {
 			throw refused("ENOSPC");
 		});
 
-		expect(() => writeStateFileAtomic(path, "{}")).toThrow("ENOSPC");
+		await expect(writeStateFileAtomic(path, "{}")).rejects.toThrow("ENOSPC");
 	});
 });
