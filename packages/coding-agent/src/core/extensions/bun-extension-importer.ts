@@ -263,7 +263,7 @@ export function createBunExtensionImporter(
 			// Bun <= 1.4.2 bakes the resolved runtime path into its transpile cache, keyed by this source; naming
 			// the path re-keys the cache when an update moves the runtime and heals entries an older runtime
 			// baked before the prune (senpi#3300). Same line, so diagnostics keep their line numbers.
-			contents = `import { metadata as ${name}Factory } from "${extensionNamespace}:runtime"; // runtime ${JSON.stringify(runtimeModulePath ?? null)}\nconst ${name} = ${name}Factory(${JSON.stringify(registration.generation)}, ${JSON.stringify(filename)});\n${contents}`;
+			contents = `import { metadata as ${name}Factory } from "${extensionNamespace}:runtime"; // runtime ${runtimeModulePath === undefined ? "virtual" : encodeURI(runtimeModulePath)}\nconst ${name} = ${name}Factory(${JSON.stringify(registration.generation)}, ${JSON.stringify(filename)});\n${contents}`;
 			const prepared = { contents, loader: "js" } satisfies ModuleSource;
 			sources.set(filename, prepared);
 			fingerprints.set(filename, createHash("sha256").update(source).digest("hex"));

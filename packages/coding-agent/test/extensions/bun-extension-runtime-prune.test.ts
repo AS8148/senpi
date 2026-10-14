@@ -1,12 +1,12 @@
 import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 const sourceDir = fileURLToPath(new URL("../../src/core/extensions/", import.meta.url));
-const repoNodeModules = fileURLToPath(new URL("../../../../node_modules", import.meta.url));
 const RUNTIME_FILES = [
 	"bun-extension-commonjs.ts",
 	"bun-extension-error.ts",
@@ -14,7 +14,10 @@ const RUNTIME_FILES = [
 	"bun-extension-registry.ts",
 ];
 // The runtime-path tag the importer appends to its metadata import; a runtime built before senpi#3300 had none.
-const RUNTIME_TAG = / \/\/ runtime \$\{JSON\.stringify\(runtimeModulePath \?\? null\)\}/;
+const RUNTIME_TAG = / \/\/ runtime \$\{runtimeModulePath === undefined \? "virtual" : encodeURI\(runtimeModulePath\)\}/;
+// The runtime copy imports these; each is linked from wherever the install placed it (hoisted or not).
+const RUNTIME_PACKAGES = ["es-module-lexer", "zod"];
+const requireFromSource = createRequire(join(sourceDir, "bun-extension-importer.ts"));
 // Bun caches a transpile only past a size threshold, so the extension is padded well over it.
 const PAD = "x".repeat(80_000);
 const bun = process.env.SENPI_TEST_BUN ?? "bun";
@@ -41,6 +44,17 @@ function installRuntime(root: string, name: string, builtBeforeFix: boolean): st
 	return dir;
 }
 
+function packageDir(name: string): string {
+	const entry = requireFromSource.resolve(name);
+	const marker = `${join("node_modules", name)}`;
+	return entry.slice(0, entry.lastIndexOf(marker) + marker.length);
+}
+
+function linkRuntimePackages(root: string): void {
+	mkdirSync(join(root, "node_modules"), { recursive: true });
+	for (const name of RUNTIME_PACKAGES) symlinkSync(packageDir(name), join(root, "node_modules", name), "junction");
+}
+
 function loadExtension(runtimeDir: string, extension: string, cacheDir: string): string {
 	return execFileSync(
 		bun,
@@ -63,7 +77,7 @@ describe("senpi#3300 an unchanged extension survives a runtime update that prune
 		(_label, builtBeforeFix) => {
 			const root = mkdtempSync(join(tmpdir(), "senpi-runtime-prune-"));
 			roots.push(root);
-			symlinkSync(repoNodeModules, join(root, "node_modules"), "dir");
+			linkRuntimePackages(root);
 			const cacheDir = join(root, "transpile-cache");
 			const extension = join(root, "extension.ts");
 			writeFileSync(extension, `export const pad = ${JSON.stringify(PAD)};\nexport default () => "loaded";\n`);

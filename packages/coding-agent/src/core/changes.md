@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/extensions/bun-extension-importer.ts`: the metadata import injected into every extension module now ends with a same-line comment naming the resolved runtime module path (`// runtime "<path>"`, or `null` inside a compiled binary). Keeping it on the same line leaves diagnostic line numbers unchanged.
+- `packages/coding-agent/src/core/extensions/bun-extension-importer.ts`: the metadata import injected into every extension module now ends with a same-line comment naming the resolved runtime module path (`// runtime <encodeURI(path)>`, or `virtual` inside a compiled binary; `encodeURI` escapes every line terminator, U+2028/U+2029 included). Keeping it on the same line leaves diagnostic line numbers unchanged.
 - `packages/coding-agent/src/core/extensions/bun-extension-registry.ts`: `runtimeModulePath` is exported for that comment. Resolution is unchanged.
 
 ### Why
