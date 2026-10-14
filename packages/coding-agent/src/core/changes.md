@@ -1,3 +1,48 @@
+## 2026-10-14 - A network blip falls back for one turn at most and never opens the fallback circuit (senpi#3306)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/transient-network.ts` (new): `isPureNetworkTransient` matches a transport failure (timeout, reset, DNS, connection or stream drop) that names no limit, quota, rate limit, overload, reset window or server-side failure (a 5xx status, "server", "unavailable", "high demand", "overflow"), matching the precedence `cooldown.ts` already gives those. `isTransportFailureText` is the one transport pattern, shared with the cooldown.
+- `packages/coding-agent/src/core/retry-fallback/cooldown.ts`: the transport-blip branch of `durationFor` uses `isTransportFailureText` instead of its own copy of the pattern.
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: when a network blip outlasts the same-model retries, `tryFallback` still switches to the next chain entry, but it notes no cooldown on the primary, and `noteHealthFailure` does not open the shared circuit for it. The switch is held for the rest of that turn, even if a later failure in the same turn switches again: `maybeRestorePrimary(policy, "continuation")` refuses to revert it, and the next `"turn"` boundary reverts it.
+- `packages/coding-agent/src/core/agent-session.ts`: `_maybeRestoreFallbackPrimary` takes the boundary kind. The retry continuation and the post-compaction continuation pass `"continuation"`; the prompt boundary keeps `"turn"`.
+
+### Why
+
+A guest tester on a flaky office network saw OmO fall back to another model again and again. A timeout or ECONNRESET that outlasted the same-model retries opened the shared circuit with its doubling cooldown and put the primary on a cooldown, so the session stayed on the fallback long after the network recovered. A network fault is the transport's, not the model's or the account's. It may move one turn to the fallback, but it must not hold the primary away from the next one.
+
+### Why an extension could not handle it
+
+Fallback switching, circuit opening and the revert gate live in the core retry-fallback controller and its `AgentSession` wiring, below the extension API. No extension can reclassify a failure or hold a revert there.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: `tryFallback`, `noteHealthFailure`, `maybeRestorePrimary`, `clear`, `clearForManualModelChange`.
+- `packages/coding-agent/src/core/retry-fallback/cooldown.ts`: `durationFor`.
+- `packages/coding-agent/src/core/agent-session.ts`: `_maybeRestoreFallbackPrimary` and its two continuation call sites.
+
+## 2026-10-14 - The fallback circuit opens for a usage limit until its own reset window (senpi#3314)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/circuit.ts`: `CircuitOpenRequest` gains `resetWindowMs`. `noteFailure` fills it only for a usage-limit failure (`usageLimitScope`) whose reset is absolute (`resets_at`, "resets 3pm") or relative and at least the base cooldown, parsed by `usageLimitReset` against the new optional `wallNow` dependency (falling back to `now`). When present, `open()` uses that window as the open duration, shorter or longer than the cooldown, capped at `maxCooldownMs`, and never shorter than a Retry-After wait still running. A short relative hint ("retry in 7s" on a spent quota) and every other hint keep the doubling cooldown floor exactly as before.
+- `packages/coding-agent/src/core/credential-pool/reset-time.ts`: new `usageLimitReset` returns the reset with its kind (`absolute` or `relative`); `usageLimitResetMs` is unchanged and delegates to it.
+- `packages/coding-agent/src/core/agent-session.ts`: the circuit access gets `wallNow` from `fallbackWallNow ?? fallbackNow ?? Date.now`, the same wall clock `SelectorCooldowns` uses.
+
+### Why
+
+- A community report: a session whose main model hit a short session limit fell back and stayed there after the limit reset. The circuit never saw the reset window, so it opened for the doubling cooldown; after a couple of failed revert probes the cooldown ran past the real window. A reset window is wall-clock data, so parsing it against the monotonic clock would misread it after a laptop sleeps.
+
+### Why an extension could not handle it
+
+- The open duration is computed inside the shared circuit breaker, which no extension hook observes or overrides; the revert gate that reads it lives in the controller wiring of `agent-session.ts`.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/retry-fallback/circuit.ts`: `CircuitOpenRequest`, `FallbackCircuitBreaker.open()`, `FallbackCircuitAccessDeps`, `createFallbackCircuitAccess().noteFailure()`.
+- `packages/coding-agent/src/core/credential-pool/reset-time.ts`: `usageLimitResetMs` and the new `usageLimitReset`.
+- `packages/coding-agent/src/core/agent-session.ts`: the `createFallbackCircuitAccess` call in the constructor.
+
 ## 2026-10-14 - An extension's transpile cache is keyed by the runtime path it bakes in (senpi#3300)
 
 ### What changed

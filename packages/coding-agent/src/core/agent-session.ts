@@ -1425,6 +1425,7 @@ export class AgentSession {
 			},
 			owner: () => this.sessionId,
 			now: this._fallbackNow,
+			wallNow: config.fallbackWallNow ?? config.fallbackNow ?? Date.now,
 			settings: () => this.settingsManager.getFallbackCircuitSettings(),
 			logger: fallbackLogger,
 		});
@@ -6608,9 +6609,12 @@ export class AgentSession {
 		});
 	}
 
-	private async _maybeRestoreFallbackPrimary(): Promise<void> {
+	private async _maybeRestoreFallbackPrimary(boundary: "turn" | "continuation" = "turn"): Promise<void> {
 		try {
-			await this._retryFallback.maybeRestorePrimary(this.settingsManager.getRetryFallbackSettings().revertPolicy);
+			await this._retryFallback.maybeRestorePrimary(
+				this.settingsManager.getRetryFallbackSettings().revertPolicy,
+				boundary,
+			);
 			await this._retryFallback.rerouteAroundOpenCircuit();
 		} catch (error) {
 			this._retryFallback.clear();
@@ -6626,7 +6630,7 @@ export class AgentSession {
 	 */
 	private async _onCompactionContextChanged(): Promise<void> {
 		const released = this._retryFallback.notifyCompactionApplied();
-		if (released && !this.isStreaming) await this._maybeRestoreFallbackPrimary();
+		if (released && !this.isStreaming) await this._maybeRestoreFallbackPrimary("turn");
 	}
 
 	private async _switchActiveModel(
@@ -8729,7 +8733,7 @@ export class AgentSession {
 			// on the primary, and precedes the admission revalidation below so that
 			// check samples the restored model's context window - the same ordering
 			// the retry-continuation restore uses.
-			await this._maybeRestoreFallbackPrimary();
+			await this._maybeRestoreFallbackPrimary("continuation");
 
 			await this._revalidateScheduledContinuationAdmission();
 			if (this.agent.state.isStreaming) return "taken-over";
@@ -10614,7 +10618,7 @@ export class AgentSession {
 
 		// Turn boundary: a suppression that expired during the backoff sleep lets
 		// the retry continue on the restored primary instead of the fallback model.
-		await this._maybeRestoreFallbackPrimary();
+		await this._maybeRestoreFallbackPrimary("continuation");
 
 		// Model fallback (or reversion) can select a smaller context window after
 		// the prior retry checks. Revalidate canonical session context immediately
