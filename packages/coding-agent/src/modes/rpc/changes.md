@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/modes/rpc/host-client-origin.ts` (new): the `origin_host_instance` request field, `originHostInstance()` (the generation a process runs in, from `SENPI_RPC_HOST_INSTANCE_ID`) and `requestOriginHostInstance()` (the generation a request line names).
+- `packages/coding-agent/src/modes/rpc/host-observe-request.ts`: the `origin_host_instance` request field, `originHostInstance()` (the generation a process runs in, from `SENPI_RPC_HOST_INSTANCE_ID`) and `requestOriginHostInstance()` (the generation a request line names). They live in this module, which the supervisor already loads, so its import graph stays inside its 55-module budget.
 - `packages/coding-agent/src/modes/rpc/rpc-client.ts`: a socket `RpcClient` running inside a host sends that host's generation as `origin_host_instance` on every request.
 - `packages/coding-agent/src/modes/rpc/host-client-occupancy.ts`: `ClientOccupancy` takes the host's own generation. A connection whose first non-observing request names it is DEPENDENT: not attached, not unclassified, and released without an unknown-admission report.
 - `packages/coding-agent/src/modes/rpc/host-lifecycle-activity.ts` and `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: the supervisor classifies its public clients against its generation, so dependents hold neither the idle-exit window nor the owner-death grace.

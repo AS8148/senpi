@@ -6,13 +6,12 @@
  * sent is an observing read (`host-observe-request.ts`), and ATTACHED from the first line that is
  * anything else - or from a first line too long to be a read. Only attached clients are occupancy.
  * A client whose first such line names this host's own generation as its origin is DEPENDENT
- * instead (`host-client-origin.ts`): one of the host's own sessions, which never holds it open.
+ * instead (`host-observe-request.ts`): one of the host's own sessions, which never holds it open.
  * An unclassified client neither counts nor lets the host exit: its first line may be the readiness
  * probe of an ensure that is about to open a session.
  */
 import type { Socket } from "node:net";
-import { requestOriginHostInstance } from "./host-client-origin.ts";
-import { isObservingRequest } from "./host-observe-request.ts";
+import { isObservingRequest, requestOriginHostInstance } from "./host-observe-request.ts";
 
 const MAX_CLASSIFIED_LINE_BYTES = 64 * 1024;
 const NEWLINE = 0x0a;

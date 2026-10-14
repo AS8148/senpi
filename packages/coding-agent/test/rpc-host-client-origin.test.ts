@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ClientOccupancy } from "../src/modes/rpc/host-client-occupancy.ts";
-import { ORIGIN_HOST_INSTANCE_FIELD, requestOriginHostInstance } from "../src/modes/rpc/host-client-origin.ts";
 import { HOST_INSTANCE_ID_ENV } from "../src/modes/rpc/host-identity-env.ts";
+import { ORIGIN_HOST_INSTANCE_FIELD, requestOriginHostInstance } from "../src/modes/rpc/host-observe-request.ts";
 import { RpcClient } from "../src/modes/rpc/rpc-client.ts";
 
 const OWN = "own-generation";

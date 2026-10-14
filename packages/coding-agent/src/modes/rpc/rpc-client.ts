@@ -19,7 +19,7 @@ import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts"
 import { MissingSessionCwdError } from "../../core/session-cwd.ts";
 import { unknownCommandErrorFromWire } from "../../core/unknown-command.ts";
 import { DETACH_CONNECTION_CAPABILITY } from "./custom-capability.ts";
-import { ORIGIN_HOST_INSTANCE_FIELD, originHostInstance } from "./host-client-origin.ts";
+import { ORIGIN_HOST_INSTANCE_FIELD, originHostInstance } from "./host-observe-request.ts";
 
 /** A command the host refused; `errorCode` carries the typed code when the command defines one. */
 export class RpcCommandError extends Error {
