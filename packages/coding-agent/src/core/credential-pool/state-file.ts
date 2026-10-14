@@ -1,0 +1,110 @@
+import { chmodSync, existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import lockfile from "proper-lockfile";
+import { CredentialStoreBusyError, FILE_STORAGE_LOCK_OPTIONS, isLockError } from "../lockfile-policy.ts";
+
+const FILE_WRITE_OPTIONS = { encoding: "utf-8", mode: 0o600 } as const;
+
+// Critical sections here last a few milliseconds, so a contender re-checks often;
+// full jitter keeps processes polling in lockstep from starving one another.
+const RETRY_MIN_DELAY_MS = 25;
+const RETRY_MAX_DELAY_MS = 250;
+
+/** Same-process callers queue here in arrival order, so only the head contends for the file lock. */
+const queueTails = new Map<string, Promise<void>>();
+
+/** The file's content, or undefined when it does not exist yet. */
+export function readStateFile(path: string): string | undefined {
+	try {
+		return readFileSync(path, "utf-8");
+	} catch (error) {
+		if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+		throw error;
+	}
+}
+
+/**
+ * Stages the document beside the file and renames it over the target, so a
+ * reader that takes no lock always sees one complete document: the previous
+ * one or the next one, never a torn write. Writers stay serialized by the
+ * lock the caller holds, so the pid-suffixed temp cannot collide.
+ */
+export function writeStateFileAtomic(path: string, content: string): void {
+	const temporary = `${path}.${process.pid}.tmp`;
+	try {
+		writeFileSync(temporary, content, FILE_WRITE_OPTIONS);
+		if (existsSync(path)) chmodSync(temporary, statSync(path).mode & 0o777);
+		renameSync(temporary, path);
+	} catch (error) {
+		rmSync(temporary, { force: true });
+		throw error;
+	}
+}
+
+function sleep(ms: number): Promise<void> {
+	return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+/** Resolves true when `turn` settles before `deadline`, false when the deadline passes first. */
+async function reachedBefore(turn: Promise<void>, deadline: number): Promise<boolean> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const expired = new Promise<false>((resolve) => {
+		timer = setTimeout(() => resolve(false), Math.max(0, deadline - Date.now()));
+	});
+	try {
+		return await Promise.race([turn.then(() => true), expired]);
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+async function lockFileBefore(path: string, startedAt: number, deadline: number): Promise<() => Promise<void>> {
+	let attempt = 0;
+	while (true) {
+		try {
+			return await lockfile.lock(path, FILE_STORAGE_LOCK_OPTIONS);
+		} catch (error) {
+			if (!isLockError(error)) throw error;
+			const remainingMs = deadline - Date.now();
+			if (remainingMs <= 0) throw new CredentialStoreBusyError(path, Date.now() - startedAt, error);
+			const ceilingMs = Math.min(RETRY_MIN_DELAY_MS * 2 ** attempt, RETRY_MAX_DELAY_MS);
+			attempt++;
+			await sleep(Math.min(remainingMs, Math.max(1, Math.random() * ceilingMs)));
+		}
+	}
+}
+
+/**
+ * Waits for the file lock within `budgetMs` (queueing behind same-process
+ * callers counts against it), then fails naming the lock and the wait.
+ */
+export async function acquireStateFileLock(path: string, budgetMs: number): Promise<() => Promise<void>> {
+	const startedAt = Date.now();
+	const deadline = startedAt + budgetMs;
+	const previous = queueTails.get(path) ?? Promise.resolve();
+	let endTurn = (): void => {};
+	const turn = new Promise<void>((resolve) => {
+		endTurn = resolve;
+	});
+	const tail = previous.then(() => turn);
+	queueTails.set(path, tail);
+	const finishTurn = (): void => {
+		endTurn();
+		if (queueTails.get(path) === tail) queueTails.delete(path);
+	};
+	try {
+		if (!(await reachedBefore(previous, deadline))) {
+			throw new CredentialStoreBusyError(path, Date.now() - startedAt);
+		}
+		const releaseFile = await lockFileBefore(path, startedAt, deadline);
+		return async () => {
+			try {
+				await releaseFile();
+			} finally {
+				finishTurn();
+			}
+		};
+	} catch (error) {
+		finishTurn();
+		throw error;
+	}
+}

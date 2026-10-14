@@ -1,17 +1,10 @@
 import { createHmac, randomBytes, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import lockfile from "proper-lockfile";
 import { z } from "zod";
 import { getAgentDir } from "../../config.ts";
-import {
-	CredentialStoreBusyError,
-	FILE_STORAGE_LOCK_OPTIONS,
-	FILE_STORAGE_LOCK_RETRY_BUDGET_MS,
-	FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS,
-	FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS,
-	isLockError,
-} from "../lockfile-policy.ts";
+import { FILE_STORAGE_LOCK_RETRY_BUDGET_MS } from "../lockfile-policy.ts";
+import { acquireStateFileLock, readStateFile, writeStateFileAtomic } from "./state-file.ts";
 
 export const CREDENTIAL_POOL_STATE_FILENAME = "credential-pool-state.json";
 
@@ -59,23 +52,23 @@ export function credentialPoolStatePath(agentDir: string = getAgentDir()): strin
 	return join(agentDir, CREDENTIAL_POOL_STATE_FILENAME);
 }
 
-const FILE_WRITE_OPTIONS = { encoding: "utf-8", mode: 0o600 } as const;
-
 function freshDocument(): CredentialPoolStateDocument {
 	return { schemaVersion: 1, installationKey: randomBytes(32).toString("hex"), providers: {} };
 }
 
-/**
- * The sidecar holds only health, so an unreadable or invalid document resets to
- * a fresh one instead of failing auth resolution; the worst outcome of a reset
- * is a cleared cooldown, never lost credential material.
- */
-function parseDocument(content: string): CredentialPoolStateDocument {
+function serialize(document: CredentialPoolStateDocument): string {
+	return JSON.stringify(document, null, 2);
+}
+
+/** The valid document in `content`, or undefined when it is missing, unreadable or invalid. */
+function parseDocument(content: string | undefined): CredentialPoolStateDocument | undefined {
+	if (content === undefined) return undefined;
 	try {
 		const parsed = documentSchema.safeParse(JSON.parse(content));
-		return parsed.success ? parsed.data : freshDocument();
-	} catch {
-		return freshDocument();
+		return parsed.success ? parsed.data : undefined;
+	} catch (error) {
+		if (error instanceof SyntaxError) return undefined;
+		throw error;
 	}
 }
 
@@ -101,57 +94,45 @@ export function slotHealth(state: CredentialSlotState | undefined, now: number):
  */
 export class CredentialSlotRepository {
 	private readonly path: string;
+	private readonly lockWaitBudgetMs: number;
 
-	constructor(path: string = credentialPoolStatePath()) {
+	constructor(path: string = credentialPoolStatePath(), options: { readonly lockWaitBudgetMs?: number } = {}) {
 		this.path = path;
+		this.lockWaitBudgetMs = options.lockWaitBudgetMs ?? FILE_STORAGE_LOCK_RETRY_BUDGET_MS;
 	}
 
-	private ensureFile(): void {
-		if (existsSync(this.path)) return;
-		mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 });
-		writeFileSync(this.path, JSON.stringify(freshDocument(), null, 2), FILE_WRITE_OPTIONS);
+	/**
+	 * Reads take no lock: writes land by atomic rename, so the file always holds
+	 * one complete document. Only a missing or invalid file falls through to the
+	 * locked path, which creates or resets it (senpi#3285).
+	 */
+	private async readDocument(): Promise<CredentialPoolStateDocument> {
+		return parseDocument(readStateFile(this.path)) ?? this.withDocument((document) => ({ result: document }));
 	}
 
+	/**
+	 * The sidecar holds only health, so an unreadable or invalid document resets to
+	 * a fresh one instead of failing auth resolution; the worst outcome of a reset
+	 * is a cleared cooldown, never lost credential material.
+	 */
 	private async withDocument<T>(
 		fn: (document: CredentialPoolStateDocument) => { result: T; next?: CredentialPoolStateDocument },
 	): Promise<T> {
-		this.ensureFile();
-		const release = await this.acquire();
+		if (!existsSync(this.path)) mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 });
+		const release = await acquireStateFileLock(this.path, this.lockWaitBudgetMs);
 		try {
-			const document = parseDocument(readFileSync(this.path, "utf-8"));
+			const stored = parseDocument(readStateFile(this.path));
+			const document = stored ?? freshDocument();
 			const { result, next } = fn(document);
-			if (next) writeFileSync(this.path, JSON.stringify(next, null, 2), FILE_WRITE_OPTIONS);
+			if (next !== undefined || stored === undefined) writeStateFileAtomic(this.path, serialize(next ?? document));
 			return result;
 		} finally {
 			await release();
 		}
 	}
 
-	private async acquire(): Promise<() => Promise<void>> {
-		const startedAt = Date.now();
-		let attempt = 0;
-		while (true) {
-			try {
-				return await lockfile.lock(this.path, FILE_STORAGE_LOCK_OPTIONS);
-			} catch (error) {
-				if (!isLockError(error)) throw error;
-				const waitedMs = Date.now() - startedAt;
-				if (waitedMs >= FILE_STORAGE_LOCK_RETRY_BUDGET_MS) {
-					throw new CredentialStoreBusyError(this.path, waitedMs, error);
-				}
-				const delayMs = Math.min(
-					FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS * 2 ** attempt,
-					FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS,
-					FILE_STORAGE_LOCK_RETRY_BUDGET_MS - waitedMs,
-				);
-				attempt++;
-				await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
-			}
-		}
-	}
-
 	async installationKey(): Promise<string> {
-		return this.withDocument((document) => ({ result: document.installationKey, next: document }));
+		return (await this.readDocument()).installationKey;
 	}
 
 	/**
@@ -184,9 +165,8 @@ export class CredentialSlotRepository {
 	}
 
 	async listSlots(providerId: string, laneId: string): Promise<Record<string, CredentialSlotState>> {
-		return this.withDocument((document) => ({
-			result: { ...document.providers[providerId]?.lanes[laneId]?.slots },
-		}));
+		const document = await this.readDocument();
+		return { ...document.providers[providerId]?.lanes[laneId]?.slots };
 	}
 
 	/**

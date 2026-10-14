@@ -3,6 +3,7 @@ import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
 import { rendezvousOrder, type SlotHasher } from "@earendil-works/pi-ai/auth/pool/select";
 import { type CredentialBlock, classifyCredentialFailure } from "./classify.ts";
 import { runCredentialFailover } from "./failover.ts";
+import { writeHealthUnlessStoreBusy } from "./health-write.ts";
 import { modelBlockKey, pruneModelBlocks, withModelBlock } from "./model-scope.ts";
 import { isCommittedRotationOutput, isRotationStreamStart, rotationErrorFromEvent } from "./rotation-events.ts";
 import { listRotationSlots, type RotationSlot, type RotationSources } from "./rotation-slots.ts";
@@ -125,19 +126,21 @@ export function streamWithCredentialRotation(
 				cooldownCapMs: sources.policy?.cooldownCapMs,
 			}),
 		onSuccess: async (slot) => {
-			await sources.repository.mutateSlotState(sources.providerId, slot.lane, slot.name, (current) =>
-				current
-					? {
-							...current,
-							lastSuccessAt: now(),
-							lease: undefined,
-							blockedUntil: undefined,
-							blockReason: undefined,
-							// Serving one model says nothing about another model's quota:
-							// only the blocks on the model that just served are lifted.
-							modelBlocks: pruneModelBlocks(current.modelBlocks, now(), options.modelId),
-						}
-					: undefined,
+			await writeHealthUnlessStoreBusy(`success on ${slot.name}`, () =>
+				sources.repository.mutateSlotState(sources.providerId, slot.lane, slot.name, (current) =>
+					current
+						? {
+								...current,
+								lastSuccessAt: now(),
+								lease: undefined,
+								blockedUntil: undefined,
+								blockReason: undefined,
+								// Serving one model says nothing about another model's quota:
+								// only the blocks on the model that just served are lifted.
+								modelBlocks: pruneModelBlocks(current.modelBlocks, now(), options.modelId),
+							}
+						: undefined,
+				),
 			);
 		},
 		persistBlock: async (slot, block) => {
@@ -145,8 +148,10 @@ export function streamWithCredentialRotation(
 				slot.lane === "env" && slot.envVarName !== undefined && slot.envKey !== undefined
 					? await sources.repository.envCredentialRevision(slot.envVarName, slot.envKey)
 					: slot.storedRevision;
-			await sources.repository.mutateSlotState(sources.providerId, slot.lane, slot.name, (current) =>
-				blockPatch(block, current, now(), revision, sources.policy, options.modelId),
+			await writeHealthUnlessStoreBusy(`${block.reason} block on ${slot.name}`, () =>
+				sources.repository.mutateSlotState(sources.providerId, slot.lane, slot.name, (current) =>
+					blockPatch(block, current, now(), revision, sources.policy, options.modelId),
+				),
 			);
 		},
 		now,
