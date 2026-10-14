@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- Local extensions keep loading after a runtime update. Bun's transpile cache stored the absolute path of the previous runtime's `extension-runtime-module.js`, so once that runtime was pruned an unchanged extension failed with `Cannot find module`. Extensions now import the runtime module through a stable copy under the agent directory that every runtime version refreshes ([#3300](https://github.com/code-yeongyu/senpi/issues/3300), reported in the OmO community).
+
 - A provider whose credentials were locked when the store was first read no longer reports "not configured" to `get_auth_providers` after the lock clears, while its models already work. The status now re-reads the store the same way model availability does (omo-desktop-app#2249).
 
 ### Removed
