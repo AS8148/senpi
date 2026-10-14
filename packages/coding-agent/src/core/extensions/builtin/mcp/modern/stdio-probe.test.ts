@@ -144,8 +144,14 @@ function slowServer(era: SlowEra) {
 		},
 	};
 	const reply = (message: JSONRPCMessage) => queueMicrotask(() => child.onmessage?.(message));
-	const legacyEra = generation > 1 || era === "legacy" || era === "legacy-exit-on-discover" || era === "dual";
+	/** The child process exits on its own. */
+	const kill = () => {
+		alive = false;
+		backlog.length = 0;
+		queueMicrotask(() => child.onclose?.());
+	};
 	function handle(message: JSONRPCMessage): void {
+		const legacyEra = generation > 1 || era === "legacy" || era === "legacy-exit-on-discover" || era === "dual";
 		sent.push({ generation, method: "method" in message ? message.method : "" });
 		if (!("method" in message) || !("id" in message)) return;
 		const meta = message.params?._meta as Record<string, unknown> | undefined;
@@ -195,7 +201,7 @@ function slowServer(era: SlowEra) {
 		}
 		reply({ jsonrpc: "2.0", id: message.id, result: { tools: [], nextCursor: undefined } });
 	}
-	return { child, sent };
+	return { child, sent, kill };
 }
 
 async function connectSlow(era: SlowEra) {
@@ -239,6 +245,31 @@ describe("stdio servers that are slow to start", () => {
 				{ generation: 2, method: "notifications/initialized" },
 				{ generation: 2, method: "tools/list" },
 			]);
+		} finally {
+			await client.close();
+		}
+	});
+
+	it("waits for the fresh process when the child dies before the SDK sends initialize, and sends it once", async () => {
+		const { child, sent, kill } = slowServer("legacy");
+		const start = child.start;
+		probeStdioTransport(child, options, logger(), 2000, "fixture", undefined, 1);
+		// The first process dies the moment the probe window closes, before the SDK's initialize goes out.
+		const probed = child.start;
+		let killed = false;
+		child.start = async () => {
+			await probed();
+			if (!killed) {
+				killed = true;
+				kill();
+			}
+		};
+		const client = new Client(options.clientInfo, { capabilities: options.clientCapabilities });
+		try {
+			await client.connect(child);
+			expect((await client.listTools()).tools).toEqual([]);
+			expect(sent.filter((entry) => entry.method === "initialize")).toHaveLength(1);
+			expect(start).toHaveBeenCalledTimes(2);
 		} finally {
 			await client.close();
 		}

@@ -124,7 +124,8 @@ export function probeStdioTransport(
 		let late: DiscoveryResult | undefined;
 		let initialize: JSONRPCMessage | undefined;
 		let initializeId: string | number | undefined;
-		let restarting = false;
+		// Set while the child is replaced; sends that arrive meanwhile wait for the fresh process.
+		let restarting: Promise<void> | undefined;
 		const settle = () => {
 			transport.onmessage = deliver;
 			transport.onclose = onclose;
@@ -133,13 +134,15 @@ export function probeStdioTransport(
 		};
 		const unclean = (report: () => void) => {
 			if (restarting) return report();
-			restarting = true;
-			void (async () => {
+			// Only an initialize sent before the old child died needs replaying; a later one waits and goes once.
+			const replay = initialize;
+			restarting = (async () => {
 				try {
 					await restart();
-					if (initialize) await send(initialize);
+					if (replay) await send(replay);
 				} catch (error) {
-					onerror?.(error instanceof Error ? error : new Error(String(error)));
+					// A dispose during the window is not a failure to report.
+					if (!abort.signal.aborted) onerror?.(error instanceof Error ? error : new Error(String(error)));
 					onclose?.();
 				}
 			})();
@@ -183,6 +186,7 @@ export function probeStdioTransport(
 				initialize = message;
 				initializeId = message.id;
 			}
+			if (restarting) await restarting;
 			return send(message, sendOptions);
 		};
 	}
