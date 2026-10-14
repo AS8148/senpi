@@ -102,7 +102,7 @@ async function seedSelfClient(qa: GenerationScratch, ready: string): Promise<voi
 	const outside = await JsonlPeer.connect(qa.socket);
 	peers.push(outside);
 	const written = fileWritten(ready, 20_000);
-	openedSessionId(await outside.request({ id: "open", type: "open_session", cwd: qa.cwd, retainOnDisconnect: true }));
+	openedSessionId(await outside.request({ id: "open", type: "open_session", cwd: qa.cwd, retain_on_disconnect: true }));
 	await written;
 	outside.destroy();
 }
