@@ -153,18 +153,28 @@ describe.skipIf(process.platform === "win32")("client-less retained sessions acr
 		// After a SECOND handover the session is open again with the same durable id.
 		const successorInfo = answer.successor as { instanceId: string; generation: number; runtimeBuildId: string };
 		const caller2 = await connect(rig, peers);
-		const answer2 = dataOf(
-			await caller2.request(
-				beginHandoverCommand(rig, {
-					operation_id: "op-2",
-					if_instance_id: successorInfo.instanceId,
-					if_generation: successorInfo.generation,
-					target_runtime_build_id: rig.buildA.runtimeBuildId,
-					host_args: rig.buildA.hostArgs,
-				}),
-				120_000,
-			),
-		);
+		// The successor answers handover_pending until its just-reopened session settles; retry like the
+		// first handover does.
+		let answer2: Record<string, unknown> = {};
+		const handoff2Deadline = Date.now() + 120_000;
+		for (let attempt = 0; ; attempt++) {
+			answer2 = dataOf(
+				await caller2.request(
+					beginHandoverCommand(rig, {
+						id: `begin2-${attempt}`,
+						operation_id: "op-2",
+						if_instance_id: successorInfo.instanceId,
+						if_generation: successorInfo.generation,
+						target_runtime_build_id: rig.buildA.runtimeBuildId,
+						host_args: rig.buildA.hostArgs,
+					}),
+					120_000,
+				),
+			);
+			if (answer2.state === "handover_completed") break;
+			if (Date.now() >= handoff2Deadline) break;
+			await new Promise((resolve) => setTimeout(resolve, 250));
+		}
 		expect(answer2, `second handover did not complete: ${JSON.stringify(answer2)}`).toMatchObject({
 			state: "handover_completed",
 		});
