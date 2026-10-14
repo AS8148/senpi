@@ -15,7 +15,9 @@ import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
 export const ORIGIN_HOST_INSTANCE_FIELD = "origin_host_instance";
 
 /** The host generation this process runs in, or undefined outside any host. */
-export function originHostInstance(env: Readonly<Record<string, string | undefined>> = process.env): string | undefined {
+export function originHostInstance(
+	env: Readonly<Record<string, string | undefined>> = process.env,
+): string | undefined {
 	const instance = env[HOST_INSTANCE_ID_ENV]?.trim();
 	return instance ? instance : undefined;
 }
