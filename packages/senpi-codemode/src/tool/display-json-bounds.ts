@@ -24,13 +24,19 @@ function elisionMarker(elided: number): string {
 }
 
 /** The longest prefix of value whose serialized length with its elision marker fits limit, or undefined. */
+/** keptLength moved back so the prefix never ends on the high half of a surrogate pair. */
+function characterBoundary(value: string, keptLength: number): number {
+	const last = value.charCodeAt(keptLength - 1);
+	return keptLength > 0 && last >= 0xd800 && last <= 0xdbff ? keptLength - 1 : keptLength;
+}
+
 function trimmedString(value: string, maxChars: number, limit: number): string | undefined {
-	let keptLength = Math.min(maxChars, value.length);
+	let keptLength = characterBoundary(value, Math.min(maxChars, value.length));
 	while (keptLength >= 0) {
 		const candidate = `${value.slice(0, keptLength)}${elisionMarker(value.length - keptLength)}`;
 		if (serializedStringLength(candidate) <= limit) return candidate;
 		if (keptLength === 0) return undefined;
-		keptLength = Math.floor(keptLength / 2);
+		keptLength = characterBoundary(value, Math.floor(keptLength / 2));
 	}
 	return undefined;
 }
@@ -41,13 +47,18 @@ function boundString(value: string, limit: number): string {
 }
 
 /** Keys are display data too: long or escape-heavy keys keep a prefix and stay unique (#3261 review). */
+function fittedKey(key: string, maxChars: number): string {
+	return key.length <= maxChars && serializedStringLength(key) <= maxChars + 2
+		? key
+		: (trimmedString(key, maxChars, maxChars + 2) ?? STUB);
+}
+
 function boundKey(key: string, taken: Set<string>): string {
-	const base =
-		key.length <= MAX_KEY_CHARS && serializedStringLength(key) <= MAX_KEY_CHARS + 2
-			? key
-			: (trimmedString(key, MAX_KEY_CHARS, MAX_KEY_CHARS + 2) ?? STUB);
-	let unique = base;
-	for (let suffix = 2; taken.has(unique); suffix += 1) unique = `${base}#${suffix}`;
+	let unique = fittedKey(key, MAX_KEY_CHARS);
+	for (let suffix = 2; taken.has(unique); suffix += 1) {
+		// The suffix fits inside the key limit so every stored key stays within MAX_KEY_CHARS.
+		unique = `${fittedKey(key, MAX_KEY_CHARS - String(suffix).length - 1)}#${suffix}`;
+	}
 	taken.add(unique);
 	return unique;
 }
@@ -172,10 +183,9 @@ function unchangedLength(value: unknown, depth: number, cap: number): number {
 		let count = 0;
 		for (const key in value) {
 			count += 1;
+			if (count > JSON_TREE_MAX_LINES_EXPANDED || key.length > MAX_KEY_CHARS) return Number.POSITIVE_INFINITY;
 			const keyLength = serializedStringLength(key);
-			if (count > JSON_TREE_MAX_LINES_EXPANDED || key.length > MAX_KEY_CHARS || keyLength > MAX_KEY_CHARS + 2) {
-				return Number.POSITIVE_INFINITY;
-			}
+			if (keyLength > MAX_KEY_CHARS + 2) return Number.POSITIVE_INFINITY;
 			total += 2 + keyLength + unchangedLength(value[key], depth + 1, cap - total);
 			if (total > cap) return Number.POSITIVE_INFINITY;
 		}

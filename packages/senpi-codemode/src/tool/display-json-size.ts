@@ -42,8 +42,11 @@ export function serializedStringLength(value: string): number {
 	let length = 2;
 	for (const character of value) {
 		const codePoint = character.codePointAt(0) ?? 0;
-		// Control characters, quotes and backslashes escape (up to \uXXXX); everything else is one char.
-		length += codePoint < 0x20 || character === '"' || character === "\\" ? JSON.stringify(character).length : 1;
+		// Control characters, quotes, backslashes and lone surrogates escape (up to \uXXXX); everything else
+		// costs its UTF-16 length, so a character above U+FFFF counts as the two units JSON.stringify writes.
+		const escaped =
+			codePoint < 0x20 || character === '"' || character === "\\" || (codePoint >= 0xd800 && codePoint <= 0xdfff);
+		length += escaped ? JSON.stringify(character).length : character.length;
 	}
 	return length;
 }
