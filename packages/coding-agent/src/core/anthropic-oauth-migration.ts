@@ -76,9 +76,9 @@ function importedSlotName(slot: Slot, pooled: boolean, taken: ReadonlySet<string
 function remainingApiKeyEntry(keySlots: Slot[], pinned: unknown): PooledCredential | undefined {
 	const accounts = keySlots as CredentialSlot[];
 	const pinnedSlot = typeof pinned === "string" ? accounts.find((slot) => slot.name === pinned) : undefined;
-	const projected = pinnedSlot ?? accounts[0];
-	if (!projected) return undefined;
-	return { type: "api_key", key: projected.key, accounts, ...(pinnedSlot ? { pinned } : {}) };
+	const key = (pinnedSlot ?? accounts[0])?.key;
+	if (key === undefined) return undefined;
+	return { type: "api_key", key, accounts, ...(pinnedSlot ? { pinned: pinnedSlot.name } : {}) };
 }
 
 function copyGrants(

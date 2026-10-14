@@ -26,7 +26,12 @@ function credentialStrings(value: unknown, into: Set<string>): Set<string> {
 function randomStore(next: () => number): Store {
 	const pick = <T>(options: readonly T[]): T => options[Math.floor(next() * options.length)] as T;
 	const token = () => `t${Math.floor(next() * 6)}`;
-	const grant = (name?: string) => ({ ...(name ? { name } : {}), access: `a-${token()}`, refresh: token(), expires: 1 });
+	const grant = (name?: string) => ({
+		...(name ? { name } : {}),
+		access: `a-${token()}`,
+		refresh: token(),
+		expires: 1,
+	});
 	const slot = (index: number): unknown =>
 		pick([
 			() => grant(`s${index}`),
@@ -41,12 +46,23 @@ function randomStore(next: () => number): Store {
 		() => Array.from({ length: Math.floor(next() * 4) }, (_, index) => slot(index)),
 	])();
 	const flat = pick([() => grant(), () => ({ access: "x" }), () => ({})])();
-	const anthropic = { type: "oauth", ...flat, ...(accounts === undefined ? {} : { accounts }), pinned: pick(["s0", "k1", undefined]) };
+	const anthropic = {
+		type: "oauth",
+		...flat,
+		...(accounts === undefined ? {} : { accounts }),
+		pinned: pick(["s0", "k1", undefined]),
+	};
 	const subscription = pick([
 		() => undefined,
 		() => "not an object",
 		() => ({ type: "oauth", access: "m", refresh: "m", expires: 1 }),
-		() => ({ type: "oauth", access: "m", refresh: "m", expires: 1, accounts: [{ name: "imported-anthropic", ...grant() }] }),
+		() => ({
+			type: "oauth",
+			access: "m",
+			refresh: "m",
+			expires: 1,
+			accounts: [{ name: "imported-anthropic", ...grant() }],
+		}),
 		() => ({ type: "oauth", access: "m", refresh: "m", expires: 1, accounts: [null] }),
 		() => ({ type: "oauth", access: "m", refresh: "m", expires: 1, accounts: { bad: true } }),
 	])();

@@ -31,17 +31,24 @@ describe("the #3259 move never drops a live grant or the store", () => {
 			} as Credential,
 		});
 		expect(result.migrated).toBe(true);
-		expect(subscriptionOf(result.data)?.accounts?.map((slot) => slot.refresh).sort()).toEqual([
-			"flat-refresh",
-			"slot-refresh",
-		]);
+		expect(
+			subscriptionOf(result.data)
+				?.accounts?.map((slot) => slot.refresh)
+				.sort(),
+		).toEqual(["flat-refresh", "slot-refresh"]);
 	});
 
 	it("skips and reports a subscription entry whose accounts are not account objects", () => {
 		for (const accounts of [{ bad: true }, [null]]) {
 			const data: Store = {
 				anthropic: { type: "oauth", access: "a", refresh: "r", expires: 1 },
-				"anthropic-subscription": { type: "oauth", access: "s", refresh: "s", expires: 1, accounts } as unknown as Credential,
+				"anthropic-subscription": {
+					type: "oauth",
+					access: "s",
+					refresh: "s",
+					expires: 1,
+					accounts,
+				} as unknown as Credential,
 			};
 			const result = migrateAnthropicOAuthToSubscription(data);
 			expect(result).toMatchObject({ migrated: false, data });
