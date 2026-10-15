@@ -22,6 +22,7 @@ import type {
 	ProviderAuth,
 } from "./auth/types.ts";
 import { builtinCatalogAdvertisesMax } from "./model-catalog.ts";
+import { costCardAt } from "./model-cost.ts";
 import { InMemoryModelsStore, type ModelsStore, type ModelsStoreEntry } from "./models-store.ts";
 import type {
 	AnyModel,
@@ -1241,11 +1242,12 @@ export function hasApi<TApi extends Api>(model: AnyModel, api: TApi): model is M
 	return isModelType(model, "chat") && model.api === api;
 }
 
-export function calculateCost(model: AnyModel, usage: Usage): Usage["cost"] {
+export function calculateCost(model: AnyModel, usage: Usage, atMs: number = Date.now()): Usage["cost"] {
 	const inputTokens = usage.input + usage.cacheRead + usage.cacheWrite;
-	let rates: ModelCostRates = model.cost;
+	const card = costCardAt(model.cost, atMs);
+	let rates: ModelCostRates = card;
 	let matchedThreshold = -1;
-	for (const tier of model.cost.tiers ?? []) {
+	for (const tier of card.tiers ?? []) {
 		if (inputTokens > tier.inputTokensAbove && tier.inputTokensAbove > matchedThreshold) {
 			rates = tier;
 			matchedThreshold = tier.inputTokensAbove;

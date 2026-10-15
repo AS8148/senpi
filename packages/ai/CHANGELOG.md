@@ -6,6 +6,8 @@
 
 ### Added
 
+- Model cost cards can carry scheduled list-price changes (`cost.effectiveRates`, each with an ISO UTC `effectiveFrom`). Usage is billed with the card in force when it is computed, and the Argon model rows on `google` and `google-vertex` now carry the provider's 2026-12-01 price change ($2/$10 to $4/$20 per 1M tokens), so cost totals stay right across the switch without a catalog refresh ([#3378](https://github.com/code-yeongyu/senpi/issues/3378)).
+
 ### Changed
 
 ### Fixed
