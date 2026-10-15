@@ -1294,6 +1294,8 @@ The command response reports only `{ cancelled }`, so this event is the only pus
 
 ### Session lifecycle: unload and reopen
 
+#### unload_session
+
 ```
 open --(turns)--> idle --unload_session / idle sweep--> unloaded (session_parked) --open_session { sessionPath }--> open
                                                         close_session / release_session --> closed (session_closed, terminal for this handle)
