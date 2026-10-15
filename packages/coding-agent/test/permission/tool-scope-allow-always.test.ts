@@ -121,7 +121,6 @@ describe("widerAlwaysScope (#3403)", () => {
 		expect(allowedUnder(grant, "https://example.invalid?x=1")).toBe(true);
 		expect(allowedUnder(grant, "https://EXAMPLE.invalid/x")).toBe(true);
 		expect(allowedUnder(grant, "https://example.invalid:443/x")).toBe(true);
-		expect(allowedUnder(grant, "https://user:pass@example.invalid/x")).toBe(true);
 	});
 
 	it("refuses look-alike hosts, other ports, other schemes and paths that mention the host", () => {
@@ -134,6 +133,25 @@ describe("widerAlwaysScope (#3403)", () => {
 		expect(allowedUnder(grant, "http://example.invalid/")).toBe(false);
 	});
 
+	it("refuses any raw URL other parsers could read as another host (parser differentials)", () => {
+		const grant = "https://example.invalid/a";
+		// WHATWG reads these as example.invalid; curl and Python's urlsplit go to evil.test.
+		expect(allowedUnder(grant, "https://example.invalid\\@evil.test/")).toBe(false);
+		expect(allowedUnder(grant, "https://example.invalid\\.evil.test/")).toBe(false);
+		// Userinfo, percent-escapes, whitespace and control characters never get an origin alias.
+		expect(allowedUnder(grant, "https://user:pass@example.invalid/x")).toBe(false);
+		expect(allowedUnder(grant, "https://example%2Einvalid/x")).toBe(false);
+		expect(allowedUnder(grant, " https://example.invalid/x")).toBe(false);
+		expect(allowedUnder(grant, "https://example.invalid/x\t")).toBe(false);
+		expect(allowedUnder(grant, "https://exa\tmple.invalid/x")).toBe(false);
+		expect(allowedUnder(grant, "https://example.invalid\r\n.evil.test/")).toBe(false);
+		// Fullwidth letters fold under NFKC in some parsers but not others.
+		expect(allowedUnder(grant, "https://ｅxample.invalid/x")).toBe(false);
+		// And none of them is offered a domain scope of its own.
+		expect(widerAlwaysScope("fetch_fixture", "url", "https://example.invalid\\@evil.test/")).toBeUndefined();
+		expect(widerAlwaysScope("fetch_fixture", "url", "https://user@example.invalid/")).toBeUndefined();
+	});
+
 	it("never offers a domain scope for a host with glob or regex characters", () => {
 		expect(widerAlwaysScope("fetch_fixture", "url", "https://*.example.invalid/a")).toBeUndefined();
 		expect(widerAlwaysScope("fetch_fixture", "url", "https://*/a")).toBeUndefined();
@@ -143,11 +161,20 @@ describe("widerAlwaysScope (#3403)", () => {
 		);
 	});
 
-	it("names an IDN host by its punycode and matches its other spellings", () => {
-		const scope = widerAlwaysScope("fetch_fixture", "url", "https://bücher.example/a");
+	it("gives an IDN host a scope only when it is written in punycode", () => {
+		// Parsers disagree on Unicode hosts (IDNA 2003 vs 2008, NFKC), so the raw Unicode spelling asks.
+		expect(widerAlwaysScope("fetch_fixture", "url", "https://bücher.example/a")).toBeUndefined();
+		const scope = widerAlwaysScope("fetch_fixture", "url", "https://xn--bcher-kva.example/a");
 		expect(scope?.label).toBe("Allow fetch_fixture on xn--bcher-kva.example always in this project");
-		expect(allowedUnder("https://bücher.example/a", "https://xn--bcher-kva.example/b")).toBe(true);
-		expect(allowedUnder("https://bücher.example/a", "https://BÜCHER.example/c")).toBe(true);
+		expect(allowedUnder("https://xn--bcher-kva.example/a", "https://XN--BCHER-KVA.example/b")).toBe(true);
+		expect(allowedUnder("https://xn--bcher-kva.example/a", "https://bücher.example/c")).toBe(false);
+	});
+
+	it("refuses IPv6 literals, trailing-dot hosts and an '@' anywhere", () => {
+		expect(widerAlwaysScope("fetch_fixture", "url", "https://[::1]/a")).toBeUndefined();
+		expect(widerAlwaysScope("fetch_fixture", "url", "https://example.invalid./a")).toBeUndefined();
+		expect(allowedUnder("https://example.invalid/a", "https://example.invalid./b")).toBe(false);
+		expect(allowedUnder("https://example.invalid/a", "https://example.invalid/path@evil.test")).toBe(false);
 	});
 
 	it("keeps a non-default port in the scope and its label", () => {
