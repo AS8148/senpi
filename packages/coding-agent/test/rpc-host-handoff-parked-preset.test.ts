@@ -9,7 +9,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { handoffHost } from "../src/modes/rpc/host-handoff.ts";
 import { probeHost } from "../src/modes/rpc/host-probe.ts";
-import { JsonlPeer, MOCK_MODEL, openedSessionId, type WireRecord } from "./helpers/rpc-generation-support.ts";
+import { JsonlPeer, openedSessionId, type WireRecord } from "./helpers/rpc-generation-support.ts";
+import { MOCK_MODEL } from "./helpers/rpc-hermetic.ts";
 import {
 	type EndpointScratch,
 	endpointScratch,
