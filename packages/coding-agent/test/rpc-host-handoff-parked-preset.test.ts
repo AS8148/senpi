@@ -4,6 +4,7 @@
  * The fake model ends a turn only when the LAST message carries the tool_result, so a reopened
  * session with older tool results in its history still makes a fresh gated call (senpi#3363).
  */
+import { realpathSync } from "node:fs";
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -177,6 +178,8 @@ async function handover(qa: EndpointScratch): Promise<void> {
 
 /** Waits until the successor itself has the parked session open again, before any client attaches. */
 async function waitForSuccessorReopen(qa: EndpointScratch, sessionPath: string): Promise<void> {
+	// The host lists canonical paths (macOS resolves /var to /private/var), so compare canonically.
+	const canonical = realpathSync(sessionPath);
 	const deadline = Date.now() + 120_000;
 	while (Date.now() < deadline) {
 		const lister = await JsonlPeer.connect(qa.legacy);
@@ -187,7 +190,13 @@ async function waitForSuccessorReopen(qa: EndpointScratch, sessionPath: string):
 				include_workers: true,
 			})) as WireRecord;
 			const rows = (listed.data as { sessions?: Array<{ sessionPath?: string; status?: string }> })?.sessions ?? [];
-			if (rows.some((row) => row.sessionPath === sessionPath && row.status === "open")) return;
+			if (
+				rows.some(
+					(row) =>
+						row.sessionPath !== undefined && realpathSync(row.sessionPath) === canonical && row.status === "open",
+				)
+			)
+				return;
 		} finally {
 			lister.destroy();
 		}

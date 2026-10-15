@@ -19,6 +19,7 @@ import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { BrowserEngine } from "../../core/browser-engine.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
+import { parsePermissionPresetName } from "../../core/extensions/builtin/permission-system/cli.ts";
 import { sessionBrowserEngineError, sessionPromptSurfaceError } from "./rpc-input-validation.ts";
 
 export interface HandoverParkedEntry {
@@ -60,7 +61,9 @@ function isEntry(value: unknown): value is HandoverParkedEntry {
 		(record.durableSessionId === undefined || typeof record.durableSessionId === "string") &&
 		(record.cwd === undefined || typeof record.cwd === "string") &&
 		(record.thinkingLevel === undefined || typeof record.thinkingLevel === "string") &&
-		(record.permissionPreset === undefined || typeof record.permissionPreset === "string") &&
+		(record.permissionPreset === undefined ||
+			(typeof record.permissionPreset === "string" &&
+				parsePermissionPresetName(record.permissionPreset) !== undefined)) &&
 		sessionPromptSurfaceError(record.promptSurface) === undefined &&
 		sessionBrowserEngineError(record.browserEngine) === undefined &&
 		(record.model === undefined ||

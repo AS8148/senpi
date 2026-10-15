@@ -91,4 +91,18 @@ describe("host-handover-parked record reads", () => {
 		expect(await readHandoverParkedSessions(dir)).toEqual([]);
 		await expect(stat(file)).resolves.toBeDefined();
 	});
+
+	it("keeps, but does not return, an entry whose permission preset this version does not know", async () => {
+		const dir = scratch();
+		const sessionPath = join(dir, "future-preset.jsonl");
+		const file = entryFile(dir, sessionPath);
+		await mkdir(join(dir, "handover-parked"), { recursive: true });
+		await writeFile(
+			file,
+			`${JSON.stringify({ sessionPath, retainOnDisconnect: true, permissionPreset: "future-preset" })}\n`,
+			"utf8",
+		);
+		expect(await readHandoverParkedSessions(dir)).toEqual([]);
+		await expect(stat(file)).resolves.toBeDefined();
+	});
 });
