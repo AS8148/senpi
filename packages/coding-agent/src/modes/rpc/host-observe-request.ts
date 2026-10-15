@@ -23,6 +23,7 @@ const OBSERVING_COMMANDS: ReadonlySet<unknown> = new Set([
 	"subscribe_sessions",
 	"unsubscribe_sessions",
 	"get_effect_status",
+	"get_subscription_limits",
 ]);
 
 export function isObservingRequest(line: string): boolean {

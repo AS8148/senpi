@@ -490,6 +490,15 @@ export class SessionEventWriter {
 					pauseMs: record.pauseMs,
 				};
 				break;
+			case "subscription_limits":
+				wire = {
+					type: "subscription_limits",
+					provider: record.provider,
+					account: record.account,
+					windows: record.windows,
+					reportedAt: record.reportedAt,
+				};
+				break;
 			default: {
 				const exhaustive: never = record;
 				throw new Error(`unexpected host record ${exhaustive}`);

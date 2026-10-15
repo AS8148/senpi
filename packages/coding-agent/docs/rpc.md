@@ -2302,6 +2302,13 @@ Response:
 
 `data.disposition` is `"handled"` if an input handler consumed this steer, or `"queued"` if senpi queued it (including after a handler transformed it). It does not guarantee the message stays queued. Like the prompt response, `data` is optional: older hosts omit it.
 
+On an idle session a plain `steer` only queues; it waits for the next turn. Pass `whenIdle: "start"` (capability `steer_when_idle`) to start a turn with the message when no turn is running or starting. The session decides atomically, through the same path as `prompt` with `streamingBehavior`: an idle session answers `"started"` (the admission records `started`), and a session that is running or already starting a turn answers `"queued"`. Two `whenIdle: "start"` inputs that arrive together start one turn; the other is queued into it. If the input that claimed the start never starts its turn (it is rejected, or an extension or command handles it), the input that joined it starts the turn instead, so nothing is left queued on an idle session. The message runs through `prompt` handling (input handlers, templates, slash and unknown-command handling); `enqueueOrder` is kept when it ends up queued. `whenIdle: "queue"` (the default) keeps today's behavior; any other value is refused with an error that names the valid values.
+
+```json
+{"type": "steer", "message": "Look at the failing test", "clientMessageId": "m-7", "whenIdle": "start"}
+{"type": "response", "command": "steer", "success": true, "data": {"disposition": "started", "clientMessageId": "m-7"}}
+```
+
 See [set_steering_mode](#set_steering_mode) for controlling how steering messages are processed.
 
 #### follow_up
@@ -2324,7 +2331,7 @@ Response:
 {"type": "response", "command": "follow_up", "success": true, "data": {"disposition": "queued"}}
 ```
 
-`data.disposition` has the same optional `"handled"` or `"queued"` meaning as for `steer`, applied to this follow-up.
+`data.disposition` has the same optional `"handled"` or `"queued"` meaning as for `steer`, applied to this follow-up. `follow_up` accepts the same `whenIdle: "start"` (answering `"started"` on an idle session, `"queued"` otherwise).
 
 See [set_follow_up_mode](#set_follow_up_mode) for controlling how follow-up messages are processed.
 
@@ -2367,6 +2374,25 @@ answers after the turn settled.
 ```json
 {"type": "response", "command": "interrupt", "success": true, "data": {"interrupted": true, "turnId": "3"}}
 ```
+
+#### dequeue_message
+
+Every queued input carries a session-unique `queuedId` (`q_<n>`) in `get_state.ordered` and `queue_update.ordered`. `dequeue_message` removes one queued input before it reaches a turn. It acts on the visible lists (`steering`, `followUp`) and the queue the agent drains, so a removed input is never delivered. With `effectId` (capability `effect_ledger`) it is a ledger effect (`kind: "dequeue"`) and a same-id retry replays.
+
+```json
+{"type": "dequeue_message", "queuedId": "q_3", "effectId": "dq-1"}
+{"type": "response", "command": "dequeue_message", "success": true, "data": {"queuedId": "q_3", "status": "removed", "effectId": "dq-1", "state": "done", "effect": {"effectId": "dq-1", "kind": "dequeue", "state": "done", "disposition": "removed"}}}
+```
+
+#### edit_queued_message
+
+`edit_queued_message` replaces a queued input's text in place, keeping its order, mode and `clientMessageId`, in the visible lists and the queue the agent drains alike. With `effectId` it is a ledger effect (`kind: "edit_queued"`).
+
+```json
+{"type": "edit_queued_message", "queuedId": "q_4", "text": "use the staging database"}
+```
+
+For both commands, `status` is `removed` / `edited`, or `already_delivered` (the input was already handed to the agent) or `not_found` (no such id in this session); those two also carry `reason` and `action`, and an `effectId` receipt ends `failed` with that outcome. A missing or over-long `queuedId` is refused.
 
 #### clear_queue
 
@@ -2454,6 +2480,26 @@ The `model` field is a full [Model](#model) object or `null`. `pendingModelSwitc
 `serviceTier` is the tier a request would carry right now (`"auto"`, `"flex"`, or `"priority"`), omitted when no tier applies. `fastMode` is `true` when the active model is served at the priority ("fast") tier — either because fast mode is on for this session or because the model selection itself pins `priority`. The two never disagree: whenever `fastMode` is `true`, `serviceTier` is `"priority"`.
 
 `lastProviderDiagnostic` is present after a failed turn whose provider supplied structured evidence: `{"category": "rate_limit", "httpStatus": 429, "code": "rate_limit_error", "evidence": "structured_code"}`. `category` is one of `auth`, `rate_limit`, `quota`, `context_limit`, `invalid_request`, `provider_unavailable`, `unknown`; `httpStatus` is absent for errors delivered inside a streamed response. It describes the same failure as the latest assistant `errorMessage` and is replaced or cleared with it. The failed assistant message in `message_end`, `agent_end`, `get_messages` and the session file carries the same object as `providerDiagnostic`. See [Provider failure diagnostics](sdk.md#provider-failure-diagnostics) for how it is derived.
+
+#### get_subscription_limits
+
+Every subscription account's latest limit windows (capability `subscription_limits`): what the provider
+reported with its most recent response for that account. An account nothing has reported for is absent -
+unknown, never 0%. The command only reads and may be sent with `observe: true`.
+
+```json
+{"type": "get_subscription_limits"}
+{"type": "response", "command": "get_subscription_limits", "success": true, "data": {"accounts": [{"provider": "chatgpt-subscription", "account": "default", "windows": [{"id": "codex:primary", "label": "7d", "windowMinutes": 10080, "usedPercent": 99, "resetsAt": "2026-10-21T03:29:11.000Z"}], "reportedAt": "2026-10-15T02:58:10.412Z"}]}}
+```
+
+`account` is the credential slot that served the request: a stored account's name, `env` for an
+environment key, `default` for a single credential; it never carries key material. Each window has an `id`
+stable within the account (`<limit>:<slot>`, for example `codex:primary` or `claude:5h`), a `label`
+(`5h`, `7d`, `7d opus`), the window length in minutes when the provider sent it, `usedPercent` (0-100) and
+`resetsAt` (ISO) when known. ChatGPT subscriptions report them in `x-codex-primary-*`/`x-codex-secondary-*`
+response headers (one family per metered limit); Claude subscriptions in `anthropic-ratelimit-unified-*`
+headers, and through the Claude SDK lane in its `rate_limit_event` messages. A window the latest response did not mention keeps its last value. Every connection also hears a
+`subscription_limits` record (below) when an account's windows change.
 
 #### get_effect_status
 
@@ -3684,6 +3730,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 | `session_parked` | Multi-session host: a retained session was released to disk at the idle window (`sessionId`, `sessionPath`). Replaces `session_closed` for that handle |
 | `host_stalled` | Multi-session host: the event loop was blocked past `SENPI_RPC_LOOP_LAG_ERROR_MS`, with the drift and the session/tool blamed for it |
 | `host_memory_pressure` | Multi-session host: the memory footprint is above `SENPI_RPC_HOST_RSS_WARN_MB`, with RSS beside it and the live session count |
+| `subscription_limits` | A subscription account reported new limit windows: `{ provider, account, windows, reportedAt }`, the same shape as one `get_subscription_limits` account; every connection hears it once per report |
 | `host_trimmed` | Multi-session host: it collected (at zero sessions, or at 2 GB+ after a session-count drop), with the footprint before and after, the sessions still open and the pause |
 | `session_opened` | Multi-session host: a session was created on this host (`sessionId`, `durableSessionId`, `sessionPath`, `kind`, `cwd`); a worker's reaches only attached connections and `subscribe_sessions` subscribers with `include_workers` |
 | `session_status` | Multi-session host: a `subscribe_sessions` subscription's per-session status change; see [Session status stream](#session-status-stream-subscribe_sessions) |
@@ -3693,7 +3740,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 
 Event types are additive: a client that does not recognise a type must ignore that record rather than fail. `model_changed`
 and `service_tier_changed` were added after the initial protocol and are safe to ignore. `session_parked`, `host_stalled`,
-`host_memory_pressure` and `host_trimmed` are the same: ignore them if unknown. `session_closed.reason` is optional; ignore an unknown
+`host_memory_pressure`, `host_trimmed` and `subscription_limits` are the same: ignore them if unknown. `session_closed.reason` is optional; ignore an unknown
 value the same way.
 
 ### session_closed.reason
