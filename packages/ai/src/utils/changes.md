@@ -17,6 +17,24 @@ The diagnostic is minted inside the provider transport wrappers in `pi-ai`, belo
 
 - `packages/ai/src/utils/provider-diagnostic-sources.ts`: `awaitProviderTransport` and `iterateProviderTransport`.
 
+## 2026-10-14 - Thinking-mode refusal of a forced tool_choice is retried without it (senpi#3324)
+
+### What changed
+
+- `packages/ai/src/utils/tool-choice-fallback.ts`: the "does not support … tool_choice" refusal pattern accepts "this" and "the" besides "forced", so opencode-go's DeepSeek thinking models' `400 … Thinking mode does not support this tool_choice` is recognised by `isForcedToolChoiceUnsupportedError`. `sendWithForcedToolChoiceFallback` then retries once without `tool_choice`, and does not remember the refusal because it names thinking.
+
+### Why
+
+- The wording matched none of the six refusal patterns, and the message names no tool, so the forced first-turn `todo` choice was fatal. Subagents on `opencode-go/deepseek-v4.1-flash:high` died at launch (0 tool calls, about 1.6 s) whenever the upstream refused (senpi#3324, measured 1 to 2 of 3 launches by the reporter).
+
+### Why an extension could not handle it
+
+- The forced-choice retry runs inside the provider request path that every API shares; no hook sees the refusal before it is thrown.
+
+### Expected merge conflict zones
+
+- LOW: the third pattern in `isForcedToolChoiceUnsupportedError`.
+
 ## 2026-10-14 - Anthropic third-party billing rejection is terminal account exhaustion with its own explanation (senpi#3259)
 
 ### What changed

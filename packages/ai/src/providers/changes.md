@@ -1,3 +1,41 @@
+## 2026-10-15 - Faux provider reports configurable response headers (senpi#3370)
+
+### What changed
+
+`RegisterFauxProviderOptions.responseHeaders` sets the headers every scripted response reports through `onResponse` (default none, unchanged behaviour).
+
+- `packages/ai/src/providers/faux.ts`
+
+### Why
+
+Tests of code that reads provider response headers (subscription limit windows) need a provider that sends them, without a network call.
+
+### Why an extension could not handle it
+
+The faux provider is the in-tree test transport; an extension cannot change what it passes to `onResponse`.
+
+### Expected merge conflict zones
+
+The `onResponse` calls in the faux core and the options interface.
+
+## 2026-10-14 - OpenCode Go registers the Google Generative AI transport (senpi#3342)
+
+### What changed
+
+- `packages/ai/src/providers/opencode-go.ts`: `opencodeGoProvider()` registers `google-generative-ai` (`withOpenCodeSessionHeader(googleGenerativeAIApi())`) beside its Anthropic Messages and OpenAI Completions/Responses transports, the same registration the OpenCode Zen provider (`opencode.ts`) already has. The provider's API union gains `google-generative-ai`.
+
+### Why
+
+- The refreshed models.dev catalog lists an OpenCode Go model in a `google-generative-ai` API group. Without a transport for it the typed catalog no longer fit the provider (TS2322), main stopped type-checking, and the v2026.10.14 release could not be cut. Registering the transport gives that model a working route instead of filtering it out.
+
+### Why an extension could not handle it
+
+- The builtin provider factory owns its transport map; an extension can register a separate provider but cannot add a transport to a builtin provider's catalog models.
+
+### Expected merge conflict zones
+
+- LOW: the import block, the API type union, and the `api` map of `opencodeGoProvider()`.
+
 ## 2026-10-14 - The direct anthropic provider offers no Claude subscription OAuth (senpi#3259)
 
 ### What changed
