@@ -30,6 +30,7 @@ describe("multi-session RPC protocol info", () => {
 					"effect_ledger",
 					"continue_from_leaf",
 					"eval_cells",
+					"auth_key_verify",
 					"session_held",
 					"retain_on_disconnect",
 					"detach_connection",
