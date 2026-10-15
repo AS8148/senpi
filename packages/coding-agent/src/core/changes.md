@@ -16,6 +16,26 @@
 
 - LOW: the `cost` branch of the model override merge.
 
+## 2026-10-15 - An idle prompt with streamingBehavior claims the turn start (senpi#3224)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_prompt` claims `_promptStartPending` for every idle submission, `streamingBehavior` or not; the queue decisions read the claim state from before the call (`startWasPending`), and a claimed call that ends up queueing releases the claim before it enqueues.
+
+- `packages/coding-agent/src/core/agent-session.ts` (review fix): a start claim records whether it started its turn; releasing one that did not (rejected, or handled by an extension or command) schedules a continuation that runs the input that joined it, and only when something joined that claim (input queued on an idle session by default still waits) (`continueWithQueuedMessages`, so an empty or assistant-ended transcript cannot refuse it), and a later joiner that sees a failed claim takes the start over. `PromptOptions.enqueueOrder` keeps a replaying client's order when a `whenIdle: "start"` input ends up queued.
+
+### Why
+
+Two queue-or-start submissions arriving together on an idle session both started a turn, because neither claimed the start. Releasing the claim before enqueueing keeps a queued input from being diverted into the post-compaction deferred list.
+
+### Why an extension could not handle it
+
+Turn admission is `AgentSession` state.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the start of `_prompt` (`ownsPromptStart`, `canQueueWhileStreaming`, `canQueueDuringAutoCompaction`) and its queue branches.
+
 ## 2026-10-15 - Requests record subscription limit windows (senpi#3370)
 
 ### What changed

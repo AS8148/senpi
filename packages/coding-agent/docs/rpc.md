@@ -2209,6 +2209,13 @@ Response:
 
 `data.disposition` is `"handled"` if an input handler consumed this steer, or `"queued"` if senpi queued it (including after a handler transformed it). It does not guarantee the message stays queued. Like the prompt response, `data` is optional: older hosts omit it.
 
+On an idle session a plain `steer` only queues; it waits for the next turn. Pass `whenIdle: "start"` (capability `steer_when_idle`) to start a turn with the message when no turn is running or starting. The session decides atomically, through the same path as `prompt` with `streamingBehavior`: an idle session answers `"started"` (the admission records `started`), and a session that is running or already starting a turn answers `"queued"`. Two `whenIdle: "start"` inputs that arrive together start one turn; the other is queued into it. If the input that claimed the start never starts its turn (it is rejected, or an extension or command handles it), the input that joined it starts the turn instead, so nothing is left queued on an idle session. The message runs through `prompt` handling (input handlers, templates, slash and unknown-command handling); `enqueueOrder` is kept when it ends up queued. `whenIdle: "queue"` (the default) keeps today's behavior; any other value is refused with an error that names the valid values.
+
+```json
+{"type": "steer", "message": "Look at the failing test", "clientMessageId": "m-7", "whenIdle": "start"}
+{"type": "response", "command": "steer", "success": true, "data": {"disposition": "started", "clientMessageId": "m-7"}}
+```
+
 See [set_steering_mode](#set_steering_mode) for controlling how steering messages are processed.
 
 #### follow_up
@@ -2231,7 +2238,7 @@ Response:
 {"type": "response", "command": "follow_up", "success": true, "data": {"disposition": "queued"}}
 ```
 
-`data.disposition` has the same optional `"handled"` or `"queued"` meaning as for `steer`, applied to this follow-up.
+`data.disposition` has the same optional `"handled"` or `"queued"` meaning as for `steer`, applied to this follow-up. `follow_up` accepts the same `whenIdle: "start"` (answering `"started"` on an idle session, `"queued"` otherwise).
 
 See [set_follow_up_mode](#set_follow_up_mode) for controlling how follow-up messages are processed.
 

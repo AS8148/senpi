@@ -963,6 +963,8 @@ export interface QueuedInputOptions extends ClientMessageIdentity {
 }
 
 export interface PromptOptions extends ClientMessageIdentity {
+	/** Where the input sorts among queued inputs if it ends up queued (a replaying client keeps its order). */
+	enqueueOrder?: number;
 	/** Whether to dispatch extension commands and expand skill commands and prompt templates (default: true) */
 	expandPromptTemplates?: boolean;
 	/** Image attachments */
@@ -1115,6 +1117,10 @@ export class AgentSession {
 	private _toolExecutionDepth = 0;
 	private readonly _toolContextDisposers = new Set<() => void>();
 	private _promptStartPending = false;
+	/** The pending start claim; `started` is set when it is released (true only for a turn about to start). */
+	private _promptStartClaim: { started?: boolean; joined?: boolean } | undefined;
+	/** The next scheduled continuation runs queued input, not the transcript tail (a failed start's joiners). */
+	private _continueWithQueuedInput = false;
 	/** True while a reload's `session_start` handlers run; a nested reload would retire the runner they run on. */
 	private _sessionStartDispatching = false;
 	/** User-abort generation at the start of an idle trigger turn's awaited admission hooks. */
@@ -4883,9 +4889,37 @@ export class AgentSession {
 			);
 		}
 
-		const ownsPromptStart =
-			!this.isStreaming && !this._promptStartPending && options?.streamingBehavior === undefined;
-		if (ownsPromptStart) this._promptStartPending = true;
+		// An idle submission claims the start even when it carries a streamingBehavior, so input arriving
+		// while it is still starting (another `whenIdle: "start"`, a queued-or-start prompt) joins this turn
+		// instead of starting a second one. Queue decisions below read the claim state from before this call.
+		// The claim this input joins, if it joins one; checked (synchronously) again before the input queues.
+		const joinedClaim = this._promptStartPending && !this.isStreaming ? this._promptStartClaim : undefined;
+		let startWasPending = this._promptStartPending;
+		let ownsPromptStart = false;
+		let claim: { started?: boolean; joined?: boolean } | undefined;
+		const claimStart = (): void => {
+			ownsPromptStart = true;
+			claim = {};
+			this._promptStartPending = true;
+			this._promptStartClaim = claim;
+		};
+		if (!this.isStreaming && !startWasPending) claimStart();
+		// Releasing a claim that never started its turn runs the input that joined it, and only that: input
+		// queued on an idle session by default (`whenIdle: "queue"`) still waits for the next turn.
+		const releaseStart = (started: boolean): void => {
+			if (!ownsPromptStart || claim === undefined) return;
+			claim.started = started;
+			this._promptStartPending = false;
+			if (!started && claim.joined === true && !this.isStreaming) this._drainJoinedInput();
+		};
+		// A joiner marks the claim it queued into; one that queues after that claim already failed (it awaited in
+		// between) drains its own input, since the claimer has nothing left to release.
+		const noteJoined = (): void => {
+			if (ownsPromptStart || joinedClaim === undefined) return;
+			if (joinedClaim.started === false) {
+				if (!this.isStreaming) this._drainJoinedInput();
+			} else joinedClaim.joined = true;
+		};
 		// Extension bindings deliberately fire-and-forget sendUserMessage(), so an
 		// extension callback cannot deadlock on this wait. The resulting provider
 		// turn must still serialize behind compaction and other session work just
@@ -4904,10 +4938,14 @@ export class AgentSession {
 		// call for the rest of the run whenever a queued continuation (e.g. an active
 		// goal chain) holds the barrier, making typed input invisible until the run
 		// ends or the user aborts.
+		// A joiner whose claimer already ended without starting (rejected, or handled by an extension or command)
+		// takes the start over instead of queueing onto an idle session.
+		if (joinedClaim?.started === false && !this.isStreaming) {
+			startWasPending = this._promptStartPending;
+			if (!startWasPending) claimStart();
+		}
 		const canQueueWhileStreaming =
-			(this.isStreaming || this._promptStartPending) &&
-			!this.isCompacting &&
-			options?.streamingBehavior !== undefined;
+			(this.isStreaming || startWasPending) && !this.isCompacting && options?.streamingBehavior !== undefined;
 		// Auto-compaction claims only _autoCompactionAbortController, which the
 		// admission guard above deliberately ignores so background compaction never
 		// rejects typed input. Without a queue route that message matched no branch
@@ -4918,7 +4956,7 @@ export class AgentSession {
 			this._autoCompactionAbortController !== undefined &&
 			this._compactionAbortController === undefined &&
 			!this.isStreaming &&
-			!this._promptStartPending &&
+			!startWasPending &&
 			options?.streamingBehavior !== undefined;
 		if (
 			shouldWaitForSessionWork &&
@@ -4945,7 +4983,7 @@ export class AgentSession {
 					}
 				}
 			} catch (error) {
-				if (ownsPromptStart) this._promptStartPending = false;
+				releaseStart(false);
 				throw error;
 			}
 		}
@@ -5091,11 +5129,14 @@ export class AgentSession {
 				if (options.thinkingLevel !== undefined) {
 					throw new Error("Cannot set thinkingLevel on a queued prompt; set it after the current turn completes.");
 				}
+				// Queued, not started: release the start claim before enqueueing, or a claimed start diverts it.
+				releaseStart(false);
 				if (options.streamingBehavior === "followUp") {
 					await this._queueFollowUp(expandedText, currentImages, options);
 				} else {
 					await this._queueSteer(expandedText, currentImages, options);
 				}
+				noteJoined();
 				emitPendingCommandInvocation();
 				await emitInputDisposition("queued");
 				promptDisposition?.("queued");
@@ -5110,11 +5151,14 @@ export class AgentSession {
 				if (options?.thinkingLevel !== undefined) {
 					throw new Error("Cannot set thinkingLevel on a queued prompt; set it after the current turn completes.");
 				}
+				// Queued, not started: release the start claim before enqueueing, or a claimed start diverts it.
+				releaseStart(false);
 				if (options?.streamingBehavior === "followUp") {
 					await this._queueFollowUp(expandedText, currentImages, options);
 				} else {
 					await this._queueSteer(expandedText, currentImages, options);
 				}
+				noteJoined();
 				emitPendingCommandInvocation();
 				await emitInputDisposition("queued");
 				promptDisposition?.("queued");
@@ -5130,11 +5174,14 @@ export class AgentSession {
 				if (options?.thinkingLevel !== undefined) {
 					throw new Error("Cannot set thinkingLevel on a queued prompt; set it after the current turn completes.");
 				}
+				// Queued, not started: release the start claim before enqueueing, or a claimed start diverts it.
+				releaseStart(false);
 				if (options?.streamingBehavior === "followUp") {
 					await this._queueFollowUp(expandedText, currentImages, options);
 				} else {
 					await this._queueSteer(expandedText, currentImages, options);
 				}
+				noteJoined();
 				emitPendingCommandInvocation();
 				await emitInputDisposition("queued");
 				promptDisposition?.("queued");
@@ -5159,11 +5206,14 @@ export class AgentSession {
 							"Cannot set thinkingLevel on a queued prompt; set it after the current turn completes.",
 						);
 					}
+					// Queued, not started: release the start claim before enqueueing, or a claimed start diverts it.
+					releaseStart(false);
 					if (options?.streamingBehavior === "followUp") {
 						await this._queueFollowUp(expandedText, currentImages, options);
 					} else {
 						await this._queueSteer(expandedText, currentImages, options);
 					}
+					noteJoined();
 					emitPendingCommandInvocation();
 					await emitInputDisposition("queued");
 					promptDisposition?.("queued");
@@ -5183,11 +5233,14 @@ export class AgentSession {
 					(this._compactionLifecycle.state.status === "failed" ||
 						this._compactionLifecycle.state.status === "aborted"))
 			) {
+				// Queued, not started: release the start claim before enqueueing, or a claimed start diverts it.
+				releaseStart(false);
 				if (options?.streamingBehavior === "followUp") {
 					await this._queueFollowUp(expandedText, currentImages, options);
 				} else {
 					await this._queueSteer(expandedText, currentImages, options);
 				}
+				noteJoined();
 				emitPendingCommandInvocation();
 				await emitInputDisposition("queued");
 				promptDisposition?.("queued");
@@ -5254,7 +5307,8 @@ export class AgentSession {
 			preflightResult?.(false);
 			throw error;
 		} finally {
-			if (ownsPromptStart) this._promptStartPending = false;
+			// Resolved before the run starts below, so a joiner enqueues into this turn.
+			releaseStart(messages !== undefined);
 		}
 
 		if (!messages) {
@@ -8842,7 +8896,11 @@ export class AgentSession {
 
 			await runBoundedRetryContinuation({
 				continueRun: async () => {
-					if (this._scheduledContinuationRecompacted) {
+					if (this._continueWithQueuedInput) {
+						// Joined input of a start that never ran: the transcript tail may be anything, even empty.
+						this._continueWithQueuedInput = false;
+						await this.agent.continueWithQueuedMessages(options);
+					} else if (this._scheduledContinuationRecompacted) {
 						const tail = this.agent.state.messages.at(-1);
 						if (tail?.role === "assistant" && (tail.stopReason === "error" || tail.stopReason === "aborted")) {
 							this._retireFailedRetryAssistant(tail);
@@ -8885,6 +8943,7 @@ export class AgentSession {
 			throw error;
 		} finally {
 			this._scheduledContinuationRecompacted = false;
+			this._continueWithQueuedInput = false;
 		}
 	}
 
@@ -8907,6 +8966,13 @@ export class AgentSession {
 		if (!failure) return;
 		const message = failure.error instanceof Error ? failure.error.message : String(failure.error);
 		this._emit({ type: "continuation_error", errorMessage: `The session file did not save this run: ${message}` });
+	}
+
+	/** Runs input that joined a start which never ran: the transcript tail may be anything, even empty. */
+	private _drainJoinedInput(): void {
+		if (!this.agent.hasQueuedMessages()) return;
+		this._continueWithQueuedInput = true;
+		this._scheduleContinuationAfterCurrentEvent();
 	}
 
 	private _scheduleContinuationAfterCurrentEvent(
