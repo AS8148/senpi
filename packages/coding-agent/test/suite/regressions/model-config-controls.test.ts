@@ -11,8 +11,8 @@ import { SettingsManager } from "../../../src/core/settings-manager.ts";
 import { builtinChatModelId } from "../../support/catalog-ids.ts";
 
 // A built-in OpenAI model the catalog ships today: an override target a regen cannot remove (senpi#1955).
-const OPENAI_TARGET = builtinChatModelId("openai", (id) => id.startsWith("gpt-"));
-const ANTHROPIC_FAVORITE = builtinChatModelId("anthropic", (id) => id.startsWith("claude-"));
+const OPENAI_TARGET = builtinChatModelId("openai", (model) => model.id.startsWith("gpt-"));
+const ANTHROPIC_FAVORITE = builtinChatModelId("anthropic", (model) => model.id.startsWith("claude-"));
 
 function registerOpenAiModels(registry: ModelRegistry, ids: string[]): void {
 	registry.registerProvider("openai", {

@@ -11,9 +11,10 @@ import { clearApiKeyCache, type ModelRegistry, type ProviderConfigInput } from "
 import { createModelRegistry } from "./model-runtime-test-utils.ts";
 import { builtinChatModelIdPair } from "./support/catalog-ids.ts";
 
-// Two Anthropic-backed models the OpenRouter catalog ships today: override targets that a regen cannot remove (senpi#1955).
-const [OPENROUTER_TARGET, OPENROUTER_SIBLING] = builtinChatModelIdPair("openrouter", (id) =>
-	id.startsWith("anthropic/"),
+// Two openai-completions models the OpenRouter catalog ships today: override targets that a regen cannot remove (senpi#1955).
+const [OPENROUTER_TARGET, OPENROUTER_SIBLING] = builtinChatModelIdPair(
+	"openrouter",
+	(model) => model.api === "openai-completions",
 );
 
 describe("ModelRegistry", () => {
