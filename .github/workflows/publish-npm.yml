@@ -18,6 +18,11 @@ name: Release
         required: false
         type: boolean
         default: false
+      force_tests:
+        description: 'Run the CI=1 test suite inside this release job instead of waiting for the release commit''s green "Check and test" CI run (use when CI runners are backlogged; needs a full local suite receipt at the release sha).'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   actions: read
@@ -128,6 +133,9 @@ jobs:
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             ARGS+=(--dry-run)
           fi
+          if [ "${{ inputs.force_tests }}" = "true" ]; then
+            ARGS+=(--force-tests)
+          fi
           npm run release -- "${ARGS[@]}"
 
       - name: Publish prepared version
@@ -164,6 +172,7 @@ jobs:
             echo "| Job status | ${{ job.status }} |"
             echo "| Mode | ${{ inputs.publish-only && 'publish-only' || 'release' }} |"
             echo "| Dry run | ${{ inputs.dry_run }} |"
+            echo "| Force tests | ${{ inputs.force_tests }} |"
             echo "| Version | ${{ inputs.version || 'auto' }} |"
             echo "| Commit | ${{ github.sha }} |"
           } >> "$GITHUB_STEP_SUMMARY"
