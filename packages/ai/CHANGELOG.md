@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- A `chatgpt-subscription` response that the backend drops mid-stream is retried on a fresh WebSocket. One drop used to move the whole session to SSE for 60 seconds; the session now falls back only after two drops in a row ([#3442](https://github.com/code-yeongyu/senpi/issues/3442)).
+
 - OpenCode Go models now use the documented `https://opencode.ai/inference/go` base. The legacy `/zen/go` base has no route for the native generate-content wire, so the Argon Contributor model failed with a 404 page ([#3377](https://github.com/code-yeongyu/senpi/issues/3377)).
 
 - Newer-generation provider models that accept only discrete thinking levels now get a thinking level instead of a thinking budget, which they reject with HTTP 400. Rows without a thinking-level map, such as custom or discovered models, no longer offer the off and minimal levels those models reject ([#3292](https://github.com/code-yeongyu/senpi/issues/3292)).

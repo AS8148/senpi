@@ -291,3 +291,23 @@ The thinking wire form is chosen inside the shared Google request builder, below
 ### Expected merge conflict zones
 
 The id matchers in `usesGoogleThinkingLevel`.
+
+## 2026-10-16 - One mid-stream WebSocket drop no longer moves a chatgpt-subscription session to SSE (senpi#3442)
+
+### What changed
+
+- `packages/ai/src/api/openai-codex-responses.ts`: the WebSocket catch block passes the failure phase (`before_message_stream_start` or `after_message_stream_start`) to `recordWebSocketFailure`, and a completed WebSocket response calls `recordWebSocketSuccess`.
+- `packages/ai/src/api/openai-codex-responses/fallback-state.ts`: `recordWebSocketFailure` takes that phase. A failure before output still arms the 60 s SSE cooldown at once. A failure after output starts arms it only on the second one in a row (`CODEX_WEBSOCKET_MID_STREAM_FAILURES_BEFORE_FALLBACK`); `recordWebSocketSuccess` and `clearWebSocketFallbackState` reset the run.
+
+### Why
+
+Every mid-stream close (1006 reset, 1011, 1001, even 1000) armed the cooldown, so the agent's retry of that turn and every request in the next minute went over SSE. Upstream Codex retries a dropped stream on a fresh WebSocket and switches to HTTPS only after `stream_max_retries` (`codex-rs/core/src/responses_retry.rs`). A before-output failure keeps the cooldown because that same request is served over SSE with no visible error.
+
+### Why an extension could not handle it
+
+Transport selection and the fallback cooldown live inside the provider adapter, below every extension hook.
+
+### Expected merge conflict zones
+
+- MEDIUM: the WebSocket `catch` block in `stream()` of `openai-codex-responses.ts` (upstream calls a two-argument `recordWebSocketFailure` that adds the session to a permanent fallback set).
+- LOW: `fallback-state.ts` has no upstream counterpart.
