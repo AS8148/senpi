@@ -21,6 +21,7 @@ export const ASK_TIMEOUT_MS = 5_000;
 
 export interface PendingPrompt {
 	readonly title: string;
+	readonly options: readonly string[];
 	resolve: (choice: string | undefined) => void;
 }
 
@@ -34,6 +35,8 @@ export const FIXTURE_TOOLS: readonly FixtureTool[] = [
 	{ name: "browser", input: { action: "navigate", url: "https://example.invalid" } },
 	{ name: "mcp_fixture", input: { value: "probe" } },
 	{ name: "fetch_fixture", input: { url: "https://example.invalid" } },
+	// A custom tool whose meaningful argument is free `input` (no URL, command or path).
+	{ name: "query_fixture", input: { input: "probe" } },
 	// Command-class stand-in for bash (bash itself is eval-exposed and never reaches the
 	// tool_call permission gate): a no-network gated tool in the same permission family.
 	{ name: "shell_fixture", input: { command: "echo probe-2465" } },
@@ -226,10 +229,10 @@ export async function createLiveHost(options: LiveHostOptions): Promise<LivePerm
 		bind: async () => {
 			await runtimeHost.session.bindExtensions({
 				uiContext: createTestUiContext({
-					select: (title: string) => {
+					select: (title: string, options: string[] = []) => {
 						promptCount += 1;
 						return new Promise<string | undefined>((resolve) => {
-							const prompt: PendingPrompt = { title, resolve };
+							const prompt: PendingPrompt = { title, options, resolve };
 							const waiter = waiters.shift();
 							if (waiter) waiter(prompt);
 							else pending.push(prompt);

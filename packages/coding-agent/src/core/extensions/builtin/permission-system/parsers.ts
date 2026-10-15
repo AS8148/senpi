@@ -1,3 +1,4 @@
+import { widerAlwaysScope } from "./always-scope.ts";
 import { dirname, resolve } from "node:path";
 import { realpathWithoutOpen } from "../../../../utils/paths.ts";
 import type { ToolInfo } from "../../types.ts";
@@ -14,7 +15,7 @@ import { setApprovedMonitorParent } from "../terminal/monitor-permission.ts";
 import { parseReadPermission } from "./read-permission.ts";
 
 /** Simplified permission request without ID/session metadata */
-export type PermissionRequest = Pick<Request, "permission" | "patterns" | "always"> & {
+export type PermissionRequest = Pick<Request, "permission" | "patterns" | "always" | "widerAlways"> & {
 	readonly autoApproveAsk?: true;
 	readonly ruleAliases?: readonly string[];
 };
@@ -41,11 +42,22 @@ function fallbackPermissionRequest(permission: string): PermissionRequest {
  * meaningful arg — path, command, url, or input — and keeps `*` only for a truly arg-less call.
  */
 function fallbackPermissionRequestFor(toolName: string, input: Record<string, unknown>): PermissionRequest {
-	const arg = getString(input, "path", "file_path", "command", "url", "input", "pattern", "filePath");
-	if (arg === undefined) return fallbackPermissionRequest(toolName);
+	const found = getStringEntry(input, "path", "file_path", "command", "url", "input", "pattern", "filePath");
+	if (found === undefined) return fallbackPermissionRequest(toolName);
+	const [argKey, arg] = found;
 	// A bare `*` alongside the concrete arg would still match an ask/all rule and widen past a
 	// pattern-specific deny, so the concrete arg is the only target; `*` is the arg-less fallback.
-	return { permission: toolName, patterns: [arg], always: [arg] };
+	// "Allow always" keeps the exact arg; a wider scope is a separate, labelled choice (senpi#3403).
+	const widerAlways = widerAlwaysScope(toolName, argKey, arg);
+	return { permission: toolName, patterns: [arg], always: [arg], ...(widerAlways ? { widerAlways } : {}) };
+}
+
+function getStringEntry(input: Record<string, unknown>, ...keys: string[]): [string, string] | undefined {
+	for (const key of keys) {
+		const value = input[key];
+		if (typeof value === "string") return [key, value];
+	}
+	return undefined;
 }
 
 function getString(input: Record<string, unknown>, ...keys: string[]): string | undefined {
