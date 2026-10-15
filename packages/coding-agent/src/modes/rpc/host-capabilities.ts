@@ -25,8 +25,14 @@ import {
 import { EFFECT_LEDGER_CAPABILITY } from "./effect-record.ts";
 import { STEER_WHEN_IDLE_CAPABILITY } from "./rpc-types.ts";
 
+/** `unload_session` and `session_parked.reason` (senpi#3225). */
+export const UNLOAD_SESSION_CAPABILITY = "unload_session";
+
 /** `get_subscription_limits` and the `subscription_limits` host record (senpi#3370). */
 export const SUBSCRIPTION_LIMITS_CAPABILITY = "subscription_limits";
+
+/** `resolve_path`: which file a message's path means, the engine's one rule (senpi#3415). */
+export const RESOLVE_PATH_CAPABILITY = "resolve_path";
 
 /**
  * The capabilities a multi-session host advertises in `get_protocol_info`, in their wire order. `warm` is added only
@@ -45,6 +51,7 @@ export function multiSessionHostCapabilities(options: {
 			DURABLE_CLIENT_MESSAGE_ID_CAPABILITY,
 			EFFECT_LEDGER_CAPABILITY,
 			SUBSCRIPTION_LIMITS_CAPABILITY,
+			RESOLVE_PATH_CAPABILITY,
 			STEER_WHEN_IDLE_CAPABILITY,
 			CONTINUE_FROM_LEAF_CAPABILITY,
 			EVAL_CELLS_CAPABILITY,
@@ -57,6 +64,8 @@ export function multiSessionHostCapabilities(options: {
 			RETAIN_ON_DISCONNECT_CAPABILITY,
 			// Only a multi-session host tracks attachments per connection, so only it can drop them on request.
 			DETACH_CONNECTION_CAPABILITY,
+			// Only a multi-session host keeps sessions loaded that a client can ask it to free.
+			UNLOAD_SESSION_CAPABILITY,
 			SESSION_CONTEXT_CAPABILITY,
 			SESSION_KIND_CAPABILITY,
 			AUTO_TITLE_PER_SESSION_CAPABILITY,
