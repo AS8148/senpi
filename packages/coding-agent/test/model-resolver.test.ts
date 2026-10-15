@@ -715,20 +715,42 @@ describe("default model selection", () => {
 		expect(defaultModelPerProvider["ant-ling"]).toBe("Ring-2.6-1T");
 	});
 
-	test("every bundled provider default resolves in its catalog", () => {
-		for (const provider of Object.keys(defaultModelPerProvider)) {
+	// Names every provider whose built-in default is missing from its catalog. The release prepare regenerates the
+	// catalog from models.dev, which drops a model marked deprecated upstream, so this is the check that stops a
+	// release whose default just disappeared (senpi v2026.10.16: xiaomi mimo-v2.5-pro).
+	const providersMissingDefault = (
+		defaults: Record<string, string>,
+		catalogIds: (provider: string) => readonly string[],
+	): string[] => {
+		const missing: string[] = [];
+		for (const [provider, defaultModelId] of Object.entries(defaults)) {
 			// radius/ollama are dynamic catalogs; cursor is authentication-only until
 			// its chat protocol is ported.
 			if (provider === "radius" || provider === "ollama" || provider === "cursor") continue;
-			const defaultModelId = defaultModelPerProvider[provider];
+			const ids = catalogIds(provider);
+			if (!ids.includes(defaultModelId)) missing.push(`${provider}: ${defaultModelId} (catalog has ${ids.length} models)`);
+		}
+		return missing;
+	};
+
+	test("every bundled provider default resolves in its catalog", () => {
+		const missing = providersMissingDefault(defaultModelPerProvider, (provider) => {
 			// The anthropic-subscription builtin extension serves the bundled anthropic catalog.
 			const catalogProvider = provider === "anthropic-subscription" ? "anthropic" : provider;
 			// `KnownProvider` deliberately retains the legacy `openai-codex` id, which is no longer a
 			// catalog key, so the catalog lookup takes its own narrower parameter type.
-			const modelIds = getModels(catalogProvider as Parameters<typeof getModels>[0]).map((model) => model.id);
-			expect(modelIds.length, `${provider} should expose a bundled catalog`).toBeGreaterThan(0);
-			expect(modelIds, `${provider} should include its default ${defaultModelId}`).toContain(defaultModelId);
-		}
+			return getModels(catalogProvider as Parameters<typeof getModels>[0]).map((model) => model.id);
+		});
+		expect(missing, "built-in defaults missing from their bundled catalog").toEqual([]);
+	});
+
+	test("a default dropped from a regenerated catalog as deprecated is named by provider", () => {
+		// models.dev marked mimo-v2.5-pro deprecated, so a regenerated xiaomi catalog keeps only these ids.
+		const regenerated: Record<string, readonly string[]> = { xiaomi: ["mimo-v2.6-pro", "mimo-v2.6-flash", "mimo-v2.6-pro-ultraspeed"] };
+		expect(providersMissingDefault({ xiaomi: "mimo-v2.5-pro" }, (provider) => regenerated[provider] ?? [])).toEqual([
+			"xiaomi: mimo-v2.5-pro (catalog has 3 models)",
+		]);
+		expect(providersMissingDefault({ xiaomi: defaultModelPerProvider.xiaomi }, (provider) => regenerated[provider] ?? [])).toEqual([]);
 	});
 
 	test("built-in chat providers have defaults in their generated catalogs", () => {
