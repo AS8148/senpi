@@ -728,7 +728,8 @@ describe("default model selection", () => {
 			// its chat protocol is ported.
 			if (provider === "radius" || provider === "ollama" || provider === "cursor") continue;
 			const ids = catalogIds(provider);
-			if (!ids.includes(defaultModelId)) missing.push(`${provider}: ${defaultModelId} (catalog has ${ids.length} models)`);
+			if (!ids.includes(defaultModelId))
+				missing.push(`${provider}: ${defaultModelId} (catalog has ${ids.length} models)`);
 		}
 		return missing;
 	};
@@ -746,11 +747,15 @@ describe("default model selection", () => {
 
 	test("a default dropped from a regenerated catalog as deprecated is named by provider", () => {
 		// models.dev marked mimo-v2.5-pro deprecated, so a regenerated xiaomi catalog keeps only these ids.
-		const regenerated: Record<string, readonly string[]> = { xiaomi: ["mimo-v2.6-pro", "mimo-v2.6-flash", "mimo-v2.6-pro-ultraspeed"] };
+		const regenerated: Record<string, readonly string[]> = {
+			xiaomi: ["mimo-v2.6-pro", "mimo-v2.6-flash", "mimo-v2.6-pro-ultraspeed"],
+		};
 		expect(providersMissingDefault({ xiaomi: "mimo-v2.5-pro" }, (provider) => regenerated[provider] ?? [])).toEqual([
 			"xiaomi: mimo-v2.5-pro (catalog has 3 models)",
 		]);
-		expect(providersMissingDefault({ xiaomi: defaultModelPerProvider.xiaomi }, (provider) => regenerated[provider] ?? [])).toEqual([]);
+		expect(
+			providersMissingDefault({ xiaomi: defaultModelPerProvider.xiaomi }, (provider) => regenerated[provider] ?? []),
+		).toEqual([]);
 	});
 
 	test("built-in chat providers have defaults in their generated catalogs", () => {
