@@ -1,3 +1,22 @@
+## 2026-10-15 - Print and RPC processes contain a retired extension ctx too (senpi#3389)
+
+### What changed
+
+- `packages/coding-agent/src/cli-main.ts`: installs `installStaleExtensionContainment()` (fork-only `core/stale-extension-containment.ts`) right after the early inspector seam. It adds one process `uncaughtException` listener that logs and contains only the stale-ctx guard (`StaleExtensionContextError`) and keeps every other uncaught throw fatal (`console.error` + exit 1), unless interactive mode has registered its own handler (`markModeCrashHandler`). It adds no `unhandledRejection` listener: that would change the default routing of every rejection, including the Inspector rejection the early seam recovers. So under Bun an async stale throw in print or RPC mode still exits, as before; the TUI already logs rejections and keeps running.
+- `packages/coding-agent/src/inspector-policy.ts`: the early inspector listener defers only to a handler interactive mode registered with `markModeCrashHandler` (fork-only `core/bootstrap-crash-listeners.ts`), never to another bootstrap or library listener; it leaves a stale-ctx error to the containment seam, and the containment seam leaves the recoverable Inspector rejection to it. Before this, with `SENPI_RECOVER_INSPECTOR_VM_IMPORT=1`, the two bootstrap listeners each deferred to the other and a real crash kept the process running.
+
+### Why
+
+- Print mode and the RPC host have no crash handler of their own, so the same stale-ctx throw from a timer ended a headless run or every session on a host (senpi#3389, oh-my-openagent#7114).
+
+### Why an extension could not handle it
+
+- The listener has to exist before any extension loads, and process-wide; the entry point is the only place that covers every mode.
+
+### Expected merge conflict zones
+
+- LOW: the bootstrap block in `cli-main.ts` beside `installEarlyInspectorVmImportRecovery()`; the listener registration and `otherHandlerActive` check in `inspector-policy.ts`.
+
 ## 2026-10-14 - A model that cannot start is reported, not crashed on (senpi#3333)
 
 ### What changed

@@ -45,6 +45,7 @@ import {
 	extensionModuleImporter,
 	rememberExtensionFactory,
 } from "./extension-module-cache.ts";
+import { StaleExtensionContextError } from "./stale-context-error.ts";
 import type {
 	AppendEntryOptions,
 	BeforeAgentStartHandlerOptions,
@@ -256,7 +257,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
 	const eventBusUnsubscribers = new Set<() => void>();
 	const assertActive = () => {
 		if (state.staleMessage) {
-			throw new Error(state.staleMessage);
+			throw new StaleExtensionContextError(state.staleMessage);
 		}
 	};
 
