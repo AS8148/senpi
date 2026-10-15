@@ -64,6 +64,14 @@ function createAssistantMessage(usage: UsageFixture): unknown {
 	};
 }
 
+function streamDelta(message: unknown): unknown {
+	return {
+		type: "message_update",
+		message,
+		assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "x", partial: message },
+	};
+}
+
 describe("tps builtin extension", () => {
 	afterEach(() => {
 		vi.useRealTimers();
@@ -92,12 +100,16 @@ describe("tps builtin extension", () => {
 		vi.advanceTimersByTime(1_000);
 
 		await harness.emit("message_start", { type: "message_start", message: firstMessage }, ctx);
+		await harness.emit("message_update", streamDelta(firstMessage), ctx);
 		vi.advanceTimersByTime(2_000);
+		await harness.emit("message_update", streamDelta(firstMessage), ctx);
 		await harness.emit("message_end", { type: "message_end", message: firstMessage }, ctx);
 		vi.advanceTimersByTime(5_000);
 
 		await harness.emit("message_start", { type: "message_start", message: secondMessage }, ctx);
+		await harness.emit("message_update", streamDelta(secondMessage), ctx);
 		vi.advanceTimersByTime(1_000);
+		await harness.emit("message_update", streamDelta(secondMessage), ctx);
 		await harness.emit("message_end", { type: "message_end", message: secondMessage }, ctx);
 		vi.advanceTimersByTime(5_000);
 
@@ -117,7 +129,9 @@ describe("tps builtin extension", () => {
 
 		await harness.emit("agent_start", { type: "agent_start" }, ctx);
 		await harness.emit("message_start", { type: "message_start", message }, ctx);
+		await harness.emit("message_update", streamDelta(message), ctx);
 		vi.advanceTimersByTime(1_000);
+		await harness.emit("message_update", streamDelta(message), ctx);
 		await harness.emit("message_end", { type: "message_end", message }, ctx);
 		await harness.emit("agent_end", { type: "agent_end", messages: [message] }, ctx);
 
@@ -137,7 +151,9 @@ describe("tps builtin extension", () => {
 		vi.advanceTimersByTime(1_000);
 
 		await harness.emit("message_start", { type: "message_start", message }, ctx);
+		await harness.emit("message_update", streamDelta(message), ctx);
 		vi.advanceTimersByTime(1_000);
+		await harness.emit("message_update", streamDelta(message), ctx);
 		// Wall clock jumps backward (NTP adjustment / manual change) while
 		// monotonic time keeps moving forward.
 		vi.setSystemTime(0);
@@ -146,5 +162,61 @@ describe("tps builtin extension", () => {
 		await harness.emit("agent_end", { type: "agent_end", messages: [message] }, ctx);
 
 		expect(notifications).toEqual(["TPS 100.0 tok/s. Cache hit 0.0%, 1.0s"]);
+	});
+	it("#3393: shows no tok/s for a reply that was not streamed", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(0);
+		const notifications: string[] = [];
+		const ctx = createContext(notifications);
+		const harness = createHarness();
+		const message = createAssistantMessage({ input: 10, output: 100, cacheRead: 0, cacheWrite: 0 });
+
+		await harness.emit("agent_start", { type: "agent_start" }, ctx);
+		await harness.emit("message_start", { type: "message_start", message }, ctx);
+		vi.advanceTimersByTime(8);
+		await harness.emit("message_end", { type: "message_end", message }, ctx);
+		await harness.emit("agent_end", { type: "agent_end", messages: [message] }, ctx);
+
+		expect(notifications).toEqual(["Cache hit 0.0%, 0.0s"]);
+	});
+
+	it("#3393: shows no tok/s when the streamed generation took under half a second", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(0);
+		const notifications: string[] = [];
+		const ctx = createContext(notifications);
+		const harness = createHarness();
+		const message = createAssistantMessage({ input: 10, output: 100, cacheRead: 0, cacheWrite: 0 });
+
+		await harness.emit("agent_start", { type: "agent_start" }, ctx);
+		await harness.emit("message_start", { type: "message_start", message }, ctx);
+		vi.advanceTimersByTime(2_000);
+		await harness.emit("message_update", streamDelta(message), ctx);
+		vi.advanceTimersByTime(300);
+		await harness.emit("message_update", streamDelta(message), ctx);
+		await harness.emit("message_end", { type: "message_end", message }, ctx);
+		await harness.emit("agent_end", { type: "agent_end", messages: [message] }, ctx);
+
+		expect(notifications).toEqual(["Cache hit 0.0%, 2.3s"]);
+	});
+
+	it("#3393: measures tok/s from the first streamed token to the last, not from message start", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(0);
+		const notifications: string[] = [];
+		const ctx = createContext(notifications);
+		const harness = createHarness();
+		const message = createAssistantMessage({ input: 10, output: 100, cacheRead: 0, cacheWrite: 0 });
+
+		await harness.emit("agent_start", { type: "agent_start" }, ctx);
+		await harness.emit("message_start", { type: "message_start", message }, ctx);
+		vi.advanceTimersByTime(3_000);
+		await harness.emit("message_update", streamDelta(message), ctx);
+		vi.advanceTimersByTime(2_000);
+		await harness.emit("message_update", streamDelta(message), ctx);
+		await harness.emit("message_end", { type: "message_end", message }, ctx);
+		await harness.emit("agent_end", { type: "agent_end", messages: [message] }, ctx);
+
+		expect(notifications).toEqual(["TPS 50.0 tok/s. Cache hit 0.0%, 5.0s"]);
 	});
 });

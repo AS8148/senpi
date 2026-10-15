@@ -16,9 +16,18 @@ function isAssistantMessage(message: unknown): message is AssistantMessageLike {
 	return role === "assistant";
 }
 
+const STREAMED_DELTA_TYPES = new Set(["text_delta", "thinking_delta", "toolcall_delta"]);
+
+/** Below this much streamed generation time a rate is mostly timer noise, so none is shown (senpi#3393). */
+const MIN_GENERATION_MS = 500;
+
 export default function (pi: ExtensionAPI) {
 	let activeAssistantStartMs: number | null = null;
 	let assistantElapsedMs = 0;
+	let firstDeltaMs: number | null = null;
+	let lastDeltaMs: number | null = null;
+	let generationMs = 0;
+	let streamedOutput = 0;
 
 	const finishActiveAssistantTiming = () => {
 		if (activeAssistantStartMs === null) return;
@@ -33,30 +42,60 @@ export default function (pi: ExtensionAPI) {
 		activeAssistantStartMs = null;
 	};
 
+	const resetStreamWindow = () => {
+		firstDeltaMs = null;
+		lastDeltaMs = null;
+	};
+
 	pi.on("agent_start", () => {
 		activeAssistantStartMs = null;
 		assistantElapsedMs = 0;
+		generationMs = 0;
+		streamedOutput = 0;
+		resetStreamWindow();
 	});
 
 	pi.on("message_start", (event) => {
 		if (!isAssistantMessage(event.message)) return;
 
 		finishActiveAssistantTiming();
+		resetStreamWindow();
 		activeAssistantStartMs = performance.now();
+	});
+
+	pi.on("message_update", (event) => {
+		if (!isAssistantMessage(event.message)) return;
+		if (!STREAMED_DELTA_TYPES.has(event.assistantMessageEvent.type)) return;
+
+		const now = performance.now();
+		firstDeltaMs ??= now;
+		lastDeltaMs = now;
 	});
 
 	pi.on("message_end", (event) => {
 		if (!isAssistantMessage(event.message)) return;
 
 		finishActiveAssistantTiming();
+		// The rate counts only messages that streamed, timed from their first token to their last, so
+		// time-to-first-token and a reply delivered in one piece cannot skew it (senpi#3393).
+		if (firstDeltaMs !== null && lastDeltaMs !== null && lastDeltaMs > firstDeltaMs) {
+			generationMs += lastDeltaMs - firstDeltaMs;
+			streamedOutput += event.message.usage?.output ?? 0;
+		}
+		resetStreamWindow();
 	});
 
 	pi.on("agent_end", (event, ctx) => {
 		finishActiveAssistantTiming();
 
 		const elapsedMs = assistantElapsedMs;
+		const measuredGenerationMs = generationMs;
+		const measuredOutput = streamedOutput;
 		activeAssistantStartMs = null;
 		assistantElapsedMs = 0;
+		generationMs = 0;
+		streamedOutput = 0;
+		resetStreamWindow();
 
 		if (!ctx.hasUI) return;
 		// senpi#3236: the per-run stats notice is a TUI footer nicety; in RPC
@@ -81,10 +120,13 @@ export default function (pi: ExtensionAPI) {
 		if (output <= 0) return;
 
 		const elapsedSeconds = elapsedMs / 1000;
-		const tokensPerSecond = output / elapsedSeconds;
 		const promptTokens = input + cacheRead + cacheWrite;
 		const cacheHitRate = promptTokens > 0 ? (cacheRead / promptTokens) * 100 : 0;
-		const message = `TPS ${tokensPerSecond.toFixed(1)} tok/s. Cache hit ${cacheHitRate.toFixed(1)}%, ${elapsedSeconds.toFixed(1)}s`;
-		ctx.ui.notify(message, "info");
+		const stats = `Cache hit ${cacheHitRate.toFixed(1)}%, ${elapsedSeconds.toFixed(1)}s`;
+		const rate =
+			measuredGenerationMs >= MIN_GENERATION_MS && measuredOutput > 0
+				? `TPS ${(measuredOutput / (measuredGenerationMs / 1000)).toFixed(1)} tok/s. `
+				: "";
+		ctx.ui.notify(`${rate}${stats}`, "info");
 	});
 }

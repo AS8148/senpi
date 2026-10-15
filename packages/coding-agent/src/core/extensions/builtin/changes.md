@@ -1,3 +1,21 @@
+## 2026-10-15 - TPS is timed from the first streamed token to the last (senpi#3393)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/tps.ts`: the rate divides the output of assistant messages that actually streamed by their first-to-last delta time (`text_delta`, `thinking_delta`, `toolcall_delta` from `message_update`). No tok/s is shown when nothing streamed or the streamed time is under 0.5 s. The rest of the notice (cache hit, elapsed message time) is unchanged.
+
+### Why
+
+- Timing from `message_start` to `message_end` made a non-streamed reply read thousands of tok/s (`12853.9 tok/s ... 0.0s` on 5.1.30), and counted time-to-first-token for streamed ones. Regression: `test/suite/tps-extension.test.ts` (#3393 cases).
+
+### Why an extension could not handle it
+
+- This is the extension.
+
+### Expected merge conflict zones
+
+- LOW: the `message_update` handler and the rate line in `agent_end`.
+
 ## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
 
 ### What changed
