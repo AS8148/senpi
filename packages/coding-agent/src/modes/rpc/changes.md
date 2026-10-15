@@ -40,6 +40,48 @@ Admission records and their restore on reopen live in the RPC admission ledger.
 
 - `packages/coding-agent/src/modes/rpc/client-admissions.ts`: the top of `admit`.
 
+## 2026-10-15 - A parked session reopened by the successor keeps its permission preset (senpi#3364)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-handover-parked.ts`: a parked entry also records the session's `permissionPreset`, `promptSurface` and `browserEngine`. A read validates them (the two enums through `rpc-input-validation.ts`) and leaves an entry it does not understand in place instead of reopening it wrong.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: `evictIdleSession` writes those three fields from the session's launch profile when it parks a retained session.
+- `packages/coding-agent/src/modes/rpc/host-handover-reopen.ts`: `reopenOne` passes them into the successor's `openSession`.
+
+### Why
+
+A client-less retained `ask` session reopened by the successor got the host's default preset, because the record had no preset to pass. A client that then attached without naming one kept that default (an attach applies a preset only when it names one), so gated tools ran without asking. Proven by `test/rpc-host-handoff-parked-preset.test.ts` over a real socket host.
+
+A read also requires a known preset name (`parsePermissionPresetName`): an entry naming a preset this version does not know, or an unknown prompt surface or browser engine, stays on disk and is not reopened, rather than reopening under a preset the permission system would refuse at session start. Such an entry is never cleared by this version; a newer generation that understands it reopens it. A rollback to a host older than this change reads a new entry without the three fields and reopens the session under the host default for that one generation, which cannot be avoided from the newer side.
+
+### Why an extension could not handle it
+
+The park record and the successor's reopen are host lifecycle; no extension hook runs there.
+
+### Expected merge conflict zones
+
+The `recordHandoverParkedSession` call in `evictIdleSession` (`session-command-router.ts`).
+
+## 2026-10-15 - get_subscription_limits and the subscription_limits record (senpi#3370)
+
+### What changed
+
+`RpcCommand` gains `get_subscription_limits` and its response (`data.accounts`), and the host record union gains `RpcSubscriptionLimitsEvent`; the router and the single-session handler answer the command and broadcast the record when an account's windows change. Capability `subscription_limits`.
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`
+
+### Why
+
+Clients such as the desktop need the windows in a stable RPC shape.
+
+### Why an extension could not handle it
+
+RPC commands and host records are defined by the RPC mode itself.
+
+### Expected merge conflict zones
+
+The command and response unions in `rpc-types.ts`, the host-record switch in `session-event-writer.ts`, and the router dispatch.
+
 ## 2026-10-15 - dequeue_message and edit_queued_message as ledger effects (senpi#1971)
 
 ### What changed
@@ -86,6 +128,27 @@ Endpoint collection and host stops live in the RPC host's gc and stop paths, und
 ### Expected merge conflict zones
 
 `gcEndpoint` and the result shape in `host-gc.ts`, the hard-stop guard in `stopHost`, the per-endpoint call in `gcHostEndpointsOpportunistically`, the `gc` branch of `host-runner.ts`, and `endpointStatus` in `host-status-all.ts`.
+
+## 2026-10-13 - The successor host reopens its predecessor's handoff-parked retained sessions (senpi#3282)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-handover-parked.ts` (new): the handoff-parked residency record (`<daemonDir>/handover-parked/<sha256(sessionPath)[:16]>.json`, one file per parked session) - the set of `retain_on_disconnect` sessions a host held resident and parked, persisted atomically so the successor can reopen them by path with the same durable session id. Removal happens only after a successful reopen (crash-safe, at most once, never lost); an entry whose session file is gone is logged and dropped. Per-entry files (not one shared JSON document) make a successor's reopen-clear and a predecessor's late park independent writes, so a cross-process lost-update cannot drop a park.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: every `retain_on_disconnect` park - from the handoff drain OR the idle sweep - is recorded into the handover record in `evictIdleSession`, the single choke point. The record write happens only after the close claim wins (`tryClaimClose`), so an explicitly-closed session is never recorded and resurrected on the next host start; an explicit close and an open-by-path both clear the entry. A removal without recording it was the bug.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: a successor host reopens exactly its predecessor's parked set on startup, watching the record until it has been drained and stayed empty for a quiet streak. The watch does not end on the first empty reads: before any park has been seen, only the budget ends it, because under load the predecessor parks late (it parks after the successor binds, and a starved drain delays the write). A failing reopen is retried a bounded number of times, then the entry is dropped. Both generations derive the record's daemon directory from the supervisor's PUBLIC socket, never the private hop - the mismatch that made the record unreadable across generations.
+- `packages/coding-agent/src/modes/rpc/host-handover-reopen.ts` (new, moved out of `multi-session-host.ts`): the reopen watch. Every socket host runs it, the predecessor included, so it is gated on the host not draining: a draining host stops consuming the record, and a reopen that lands after the drain started leaves its entry in place. Without the gate the predecessor reopened the session it had just parked, cleared the record, and its own drain then closed the session, so the successor came up with nothing to reopen.
+
+### Why
+
+A client-less retained session (opened over the host socket with `retain_on_disconnect`, then disconnected) was dropped on every idle handover (~15 min): the design says the predecessor "parks its idle sessions for the successor to reopen by path," but no successor code read a parked list, so nobody reopened them. Q's MacBook RPC lanes vanished on every host generation swap.
+
+### Why an extension could not handle it
+
+The park/reopen decision lives in the host's drain and startup lifecycle; no extension hook runs there.
+
+### Expected merge conflict zones
+
+The park branch in `evictIdleSession` (`session-command-router.ts`) and the `createHostCore` idle options (`multi-session-host.ts`).
 
 ## 2026-10-13 - No detach after a request timeout or a lost transport (senpi#3238 review)
 
