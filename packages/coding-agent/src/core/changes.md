@@ -1,3 +1,45 @@
+## 2026-10-14 - A session closed without a conversation leaves no file, whatever extensions wrote (senpi#3263)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: `discardHeaderOnlyFile()` removes only a file this process created with `persistHeaderNow()` (tracked as `ownedHeaderFile`, set when `_writeHeaderAsync` succeeds and cleared when an existing file is opened or a new session starts), and only when every entry is setup (`SETUP_ENTRY_TYPES`: header, model/thinking/configuration changes, labels) or a `custom` entry carrying `startupBookkeeping: true`. `appendCustomEntry()` takes `{ startupBookkeeping }` and persists it on the entry. Any unmarked `custom` entry (a paid `prompt-cache-prewarm`, a `senpi.todo-state` list, an extension that has not opted in), any message (including a `!cmd` `bashExecution`), a delivered `custom_message`, a `session_info` name or a `usage` record keeps the file. This replaces `SETUP_ONLY_ENTRY_TYPES`.
+- `packages/coding-agent/src/core/agent-session.ts`: the extension `appendEntry` action forwards the new options argument to `appendCustomEntry()`.
+
+### Why
+
+- `packages/coding-agent/src/core/session-manager.ts`: the TUI control endpoint writes the header at startup (`persistHeaderNow()`), and extensions then append `custom` entries straight to that file. The old allow-list refused to discard a file holding them, so opening and closing the TUI, or `/new`, without a message left an empty session listed in `/resume` (senpi#3263). Disposability is opt-in so core never names another package's entry types, and the ownership guard keeps a resumed file from ever being deleted on close.
+- `packages/coding-agent/src/core/agent-session.ts`: the opt-in has to reach the session manager from `pi.appendEntry`.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/session-manager.ts`: the close-time discard is a `SessionManager` method called by the interactive control-endpoint lifecycle; no extension owns when a session file is removed.
+- `packages/coding-agent/src/core/agent-session.ts`: the extension action table that implements `pi.appendEntry` is built inside `AgentSession`.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/session-manager.ts`: LOW, `discardHeaderOnlyFile()`, `appendCustomEntry()`, the `CustomEntry` interface, `_writeHeaderAsync`'s flushed branch, the open-existing-file branch, `newSession()`, and `SETUP_ENTRY_TYPES` / `isDisposableEntry` above the class.
+- `packages/coding-agent/src/core/agent-session.ts`: LOW, the `appendEntry` action in the extension action table.
+
+## 2026-10-14 - Credential-pool state-file contention never fails a request; accounts can be reset (senpi#3285)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/state-store.ts`: reads (`listSlots`, `installationKey` and the revision helpers built on it) take no lock and never write; writes land by atomic rename through the new `credential-pool/state-file.ts`, which also owns the lock wait. Same-process callers queue FIFO per path so only the head contends for the file lock, and cross-process retries poll every 25-250 ms with full jitter inside the unchanged 5.5 s bound. A missing or invalid file still falls through to the locked path that creates or resets it; if that lock is busy too, the read answers with an empty unsaved document (no health) instead of failing. A rename Windows refuses for a moment (`EPERM`/`EBUSY`/`EACCES`) is retried asynchronously for up to ~310 ms (no blocking wait on the session path) and then reads as a busy store. `test/suite/no-sync-in-session-path.ledger.json` moves the store's two remaining sync calls to `state-file.ts` (one fewer than before). The constructor takes an optional `lockWaitBudgetMs` (tests).
+- `packages/coding-agent/src/core/credential-pool/rotation-stream.ts`, `rotation-slots.ts`, new `health-write.ts`: the success marker, failover block, half-open lease and lease release are health writes; when the state file stays locked past its bound they are skipped with one debug-log line instead of failing the request. A slot whose cooldown elapsed is probed without a lease when the lease cannot be written.
+- New `packages/coding-agent/src/core/credential-account-reset.ts` and `/account <provider> reset <id>` (`extensions/builtin/account/index.ts`): clears one account's sidecar health and any block a provider lane stored on the account in auth.json. `credential-accounts.ts` exports the default sidecar repository as `credentialPoolRepository`.
+
+### Why
+
+- With about six sessions on one pool, a request failed with "Credential store is busy ... held for 5500ms". Each request took the lock (and rewrote the file) once per account just to derive revisions, and in-process waiters starved one another under the 100 ms-1 s backoff: 60 concurrent writes from six repositories failed on main with no stalled holder at all. A success write that could not take the lock also failed a reply that had already streamed to completion. Regressions: `test/suite/regressions/3285-credential-pool-lock-contention.test.ts`, `3285-credential-account-reset.test.ts`.
+
+### Why an extension could not handle it
+
+- The sidecar store and the rotation engine are core modules every pooled provider goes through; no hook sits between a request and its health writes.
+
+### Expected merge conflict zones
+
+- LOW: `CredentialSlotRepository` read/write paths in `state-store.ts`; `onSuccess`/`persistBlock` in `rotation-stream.ts`; the lease branch of both lanes in `rotation-slots.ts`.
+
 ## 2026-10-14 - A hard error parks only its rung, so a later rung of the same model stays reachable (senpi#3311)
 
 ### What changed
@@ -63,6 +105,26 @@ Fallback switching, circuit opening and the revert gate live in the core retry-f
 - `packages/coding-agent/src/core/retry-fallback/controller.ts`: `tryFallback`, `noteHealthFailure`, `maybeRestorePrimary`, `clear`, `clearForManualModelChange`.
 - `packages/coding-agent/src/core/retry-fallback/cooldown.ts`: `durationFor`.
 - `packages/coding-agent/src/core/agent-session.ts`: `_maybeRestoreFallbackPrimary` and its two continuation call sites.
+
+## 2026-10-14 - An automatic startup pick that cannot start moves to a model that can (senpi#3333)
+
+### What changed
+
+- `packages/coding-agent/src/core/sdk.ts`: when a fresh session's model was picked automatically (`provider-default` / `first-available`) and fails the start admission, `createAgentSession` measures the other available models against the same session's prompt and tools. It rebuilds on the first one the automatic order would choose that fits, and reports why in `modelFallbackMessage`. A refused start keeps the `ModelUsabilityBudgetError` breakdown and appends one line naming how the model was chosen and what to do; a replacement that also cannot start (internal `startupReplacement` option) is described as automatic, not as the user's choice. A new session's initial `model_change` and `thinking_level_change` entries are written only after start admission passes, so a refused pick never lands in the session log. A model the caller chose is never replaced.
+- `packages/coding-agent/src/core/startup-model-pick.ts` (new, fork-only): `isAutomaticPick`, `nextStartableModel`, `canStartOn`, and the two messages.
+- `packages/coding-agent/src/main.ts`: the CLI prints a refused start as one red line and exits 1, stopping the loading indicator first so the message gets its own line.
+
+### Why
+
+A user migrating from OpenCode had no carried default model, so startup took the first keyed model: an imported custom provider with a 32k window. It crashed with a raw stack, naming a model the user never chose.
+
+### Why an extension could not handle it
+
+Initial model selection and start admission happen in `createAgentSession`, before any extension runs.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/sdk.ts`: the start-admission `catch` block, the new-session initial entries (moved after admission), `CreateAgentSessionOptions`, and imports.
 
 ## 2026-10-14 - The fallback circuit opens for a usage limit until its own reset window (senpi#3314)
 
@@ -10106,3 +10168,21 @@ Runtime ownership publication precedes extension attachment.
 ### Expected merge conflict zones
 
 `AgentSessionLaunchProfile`, runtime hold calls, holder identity publication and listing.
+
+## 2026-10-14 - Eval-only glob file search (#3330)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: builds the eval-only `glob` tool with the same filesystem policy as `find`, gives it the `tool.glob({ pattern: "...", path: "..." })` sample call, excludes it from the generic eval-helper list, and adds a file-name search sentence to the eval-only prompt suffix just before the grep sentence.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: models inside eval called `tool.glob` and got "Unknown tool glob"; file-name search should be reachable only inside eval, like `tool.grep`.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts` owns the builtin tool definitions, their filesystem policy wiring, and the eval-only prompt suffix.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: `evalHelperCall`, the eval-only suffix sentences (keep grep last), and the `createAllToolDefinitions` options in `_buildRuntime`.
