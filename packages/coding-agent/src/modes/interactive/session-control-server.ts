@@ -8,17 +8,25 @@ import { chmod } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS, serializeJsonLine } from "../rpc/jsonl.ts";
 import { rpcCommandShapeError } from "../rpc/rpc-input-validation.ts";
+import type { SessionEventWriterConnection } from "../rpc/session-event-fanout.ts";
 import { authenticateSocket } from "../rpc/socket-transport.ts";
 
 export interface ControlConnection {
 	readonly id: number;
 	send(record: object): void;
+	/** The raw socket writer, for an endpoint that orders this connection's output through a record writer. */
+	readonly transport: SessionEventWriterConnection;
 }
 
 export type ControlCommand = Readonly<Record<string, unknown>> & { readonly type: string; readonly id?: unknown };
 
 export interface ControlServerHandlers {
-	command(connection: ControlConnection, command: ControlCommand): Promise<object>;
+	/** `null`: the command already answered on its own (through the endpoint's record writer). */
+	command(connection: ControlConnection, command: ControlCommand): Promise<object | null>;
+	/** An authenticated connection is about to send its first line. */
+	opened?(connection: ControlConnection): void;
+	/** Writes a command's answer; without it the answer goes straight to the socket. */
+	respond?(connection: ControlConnection, answer: object): void;
 	closed(connection: ControlConnection): void;
 	listenerError(error: Error): void;
 }
@@ -58,7 +66,21 @@ function acceptConnection(socket: Socket, id: number, handlers: ControlServerHan
 		send: (record) => {
 			if (!socket.destroyed) socket.write(serializeJsonLine(record));
 		},
+		transport: {
+			writeRaw: (chunk) => {
+				if (!socket.destroyed) socket.write(chunk);
+			},
+			waitForBackpressure: () =>
+				socket.destroyed || !socket.writableNeedDrain
+					? Promise.resolve()
+					: new Promise<void>((resolve) => {
+							socket.once("drain", resolve);
+							socket.once("close", resolve);
+						}),
+			close: () => socket.destroy(),
+		},
 	};
+	handlers.opened?.(connection);
 	const detach = attachJsonlLineReader(socket, (line) => void answer(connection, line, handlers), {
 		maxLineLength: MAX_RPC_LINE_CHARACTERS,
 		onOversizedLine: () => connection.send(failure(undefined, "parse", "RPC line exceeds the size limit.")),
@@ -82,7 +104,10 @@ async function answer(connection: ControlConnection, line: string, handlers: Con
 		connection.send(failure(undefined, "parse", shapeError ?? "RPC command needs a string `type`."));
 		return;
 	}
-	connection.send(await handlers.command(connection, parsed));
+	const answer = await handlers.command(connection, parsed);
+	if (answer === null) return;
+	if (handlers.respond === undefined) connection.send(answer);
+	else handlers.respond(connection, answer);
 }
 
 function isCommand(value: unknown): value is ControlCommand {
