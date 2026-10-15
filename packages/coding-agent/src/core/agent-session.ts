@@ -9252,8 +9252,8 @@ export class AgentSession {
 					}
 					this.sendUserMessage(content, options).catch(reportError);
 				},
-				appendEntry: (customType, data) => {
-					const entryId = this.sessionManager.appendCustomEntry(customType, data);
+				appendEntry: (customType, data, options) => {
+					const entryId = this.sessionManager.appendCustomEntry(customType, data, options);
 					const entry = this.sessionManager.getEntry(entryId);
 					if (entry) {
 						this._emit({ type: "entry_appended", entry });

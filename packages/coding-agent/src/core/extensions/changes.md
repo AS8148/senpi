@@ -1,3 +1,25 @@
+## 2026-10-14 - `pi.appendEntry` takes `{ startupBookkeeping }` (senpi#3263)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionAPI.appendEntry` and `AppendEntryHandler` take an optional third argument, `AppendEntryOptions` with `startupBookkeeping?: boolean`. Existing two-argument calls are unchanged.
+- `packages/coding-agent/src/core/extensions/loader.ts`: the extension API wrapper forwards the options argument to the runtime action.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts`: a session closed without a conversation should leave no file, but only the extension that wrote a `custom` entry knows whether it is disposable startup bookkeeping or user-created or billed state (senpi#3263). The default stays "keep the file".
+- `packages/coding-agent/src/core/extensions/loader.ts`: the option has to cross the loader's API wrapper to reach the session.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts`: the `pi.appendEntry` signature is the public extension contract itself.
+- `packages/coding-agent/src/core/extensions/loader.ts`: the API wrapper that every extension calls is built by the loader.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: LOW, the `appendEntry` declaration in `ExtensionAPI` and the `AppendEntryHandler` type.
+- `packages/coding-agent/src/core/extensions/loader.ts`: LOW, the `appendEntry` wrapper and the `./types.ts` import list.
+
 ## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
 
 ### What changed

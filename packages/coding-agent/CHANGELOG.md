@@ -6,6 +6,8 @@
 
 ### Added
 
+- `pi.appendEntry(customType, data, { startupBookkeeping: true })` marks an entry an extension writes at session start without user action. A session closed without a conversation is removed when it holds only setup entries and marked bookkeeping; any unmarked entry keeps the file ([#3263](https://github.com/code-yeongyu/senpi/issues/3263)).
+
 - `/account <provider> reset <id>` clears one account's cooldown or block (the credential-pool health record and any block a provider lane stored on the account), so the next request tries it again ([#3285](https://github.com/code-yeongyu/senpi/issues/3285)).
 
 - `tool.glob({ pattern, path })` finds files by glob inside eval, the same way `tool.grep` searches text there. It is never a top-level tool, and the eval prompt now names it, so a model that reached for `tool.glob` no longer gets "Unknown tool glob" ([#3330](https://github.com/code-yeongyu/senpi/issues/3330)).
@@ -15,6 +17,8 @@
 - The terminal transcript folds a handoff block into one muted line, `▸ Handoff · Now: … · Next: …`, and keeps its `For you` answer as ordinary text. Ctrl+O, or a click on the line, opens the block as written ([#3323](https://github.com/code-yeongyu/senpi/issues/3323), proposed by @devxoul).
 
 ### Fixed
+
+- Opening the TUI and quitting, or running `/new`, without sending a message no longer leaves an empty session in `/resume`: entries that extensions write at startup no longer keep the empty file ([#3263](https://github.com/code-yeongyu/senpi/issues/3263)).
 
 - Several sessions sharing one credential pool no longer fail requests with "Credential store is busy ... held for 5500ms". Reading pool health takes no lock, callers in one process queue for it instead of starving each other, and a health write that still cannot take the lock is skipped and logged instead of failing a reply that already arrived ([#3285](https://github.com/code-yeongyu/senpi/issues/3285)).
 
