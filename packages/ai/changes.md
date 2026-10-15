@@ -6,15 +6,15 @@
 
 ### Why
 
-- `src/api/google-vertex-adc.ts` imports `GoogleAuth` to mint ADC access tokens for the `vertex-model-garden` open-model extension; a transitive import would violate pinned-dependency rules. No Claude-specific AI transport is included.
+- `packages/ai/package.json`: the direct dependency supports `src/api/google-vertex-adc.ts`, which imports `GoogleAuth` to mint ADC access tokens for the `vertex-model-garden` open-model extension; a transitive import would violate pinned-dependency rules. No Claude-specific AI transport is included.
 
 ### Why an extension could not handle it
 
-- Package dependencies are declared by the package that imports them.
+- `packages/ai/package.json`: package dependencies must be declared by the package that imports them, before runtime extensions load.
 
 ### Expected merge conflict zones
 
-- LOW: one line in the `dependencies` block.
+- LOW: `packages/ai/package.json`, one line in the `dependencies` block.
 
 ## 2026-10-15 - OpenCode Go uses its documented inference base (senpi#3377)
 

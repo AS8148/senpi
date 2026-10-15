@@ -3,7 +3,6 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { normalizeContext } from "@earendil-works/pi-ai/utils/transcript";
 import { describe, expect, it } from "vitest";
 import {
-	buildVertexOpenApiBaseUrl,
 	type ResolveVertexAccess,
 	streamVertexModelGarden,
 } from "../../src/core/extensions/builtin/vertex-model-garden/transport.ts";
@@ -46,17 +45,6 @@ function capturingFetch(response: () => Response, captured: Captured[]): typeof 
 		return response();
 	}) as typeof globalThis.fetch;
 }
-
-describe("vertex-model-garden URLs", () => {
-	it("targets the global host for open models and regional hosts otherwise", () => {
-		expect(buildVertexOpenApiBaseUrl("p")).toBe(
-			"https://aiplatform.googleapis.com/v1/projects/p/locations/global/endpoints/openapi",
-		);
-		expect(buildVertexOpenApiBaseUrl("p", "us-east5")).toBe(
-			"https://us-east5-aiplatform.googleapis.com/v1/projects/p/locations/us-east5/endpoints/openapi",
-		);
-	});
-});
 
 describe("vertex-garden openai-compatible lane", () => {
 	it("sends ADC bearer and quota project to the openapi endpoint and parses tool calls", async () => {

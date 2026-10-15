@@ -7,15 +7,15 @@
 
 ### Why
 
-- The `vertex-model-garden` builtin extension calls Vertex Model Garden open models through the OpenAI-compatible endpoint with a bearer token, so it needs the token and project the google-vertex provider already resolves, without a second credential path.
+- `packages/ai/src/api/google-vertex.ts`: sharing its credential and project environment helpers lets the `vertex-model-garden` builtin call Vertex Model Garden open models through the OpenAI-compatible endpoint with a bearer token, without a second credential path.
 
 ### Why an extension could not handle it
 
-- The extension owns registration and transport, but the ADC resolution it must reuse lived as private helpers inside this adapter; sharing them requires moving them to an importable module.
+- `packages/ai/src/api/google-vertex.ts`: the extension owns registration and transport, but the credential and project environment helpers it must reuse were private to this adapter; sharing them requires moving them to an importable module.
 
 ### Expected merge conflict zones
 
-- LOW: the import block and the two helper bodies (`buildGoogleAuthOptions`, `resolveProject`) in `google-vertex.ts`.
+- LOW: `packages/ai/src/api/google-vertex.ts`, the import block and the two helper bodies (`buildGoogleAuthOptions`, `resolveProject`).
 
 ## 2026-10-13 - Advertised [CC] floor 2.1.296 (senpi#3258)
 

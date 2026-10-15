@@ -20,7 +20,7 @@ export function vertexHost(location: string): string {
 	return location === "global" ? "aiplatform.googleapis.com" : `${location}-aiplatform.googleapis.com`;
 }
 
-export function buildVertexOpenApiBaseUrl(project: string, location: string = VERTEX_MODEL_GARDEN_LOCATION): string {
+function buildVertexOpenApiBaseUrl(project: string, location: string = VERTEX_MODEL_GARDEN_LOCATION): string {
 	return `https://${vertexHost(location)}/v1/projects/${encodeURIComponent(project)}/locations/${location}/endpoints/openapi`;
 }
 
