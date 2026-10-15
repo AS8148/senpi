@@ -19,6 +19,7 @@ import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import type { EngineOrdinal } from "../../core/engine-build-identity.ts";
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
 import type { ContextUsage, SessionControlAdmission, SessionKind } from "../../core/extensions/types.ts";
+import type { ResolvedMessagePath } from "../../core/message-path-resolution.ts";
 import type { SessionEntry, SessionMessageEntry, SessionTreeNode, UsageTotals } from "../../core/session-manager.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import type { ClientMessageAdmission } from "./client-admission-record.ts";
@@ -216,6 +217,7 @@ type RpcSessionCommand =
 
 	// Session
 	| { id?: string; type: "get_session_stats" }
+	| { id?: string; type: "resolve_path"; path: string }
 	| { id?: string; type: "memory_report" }
 	| { id?: string; type: "export_html"; outputPath?: string; themeName?: string }
 	| { id?: string; type: "export_jsonl"; outputPath?: string }
@@ -1090,6 +1092,7 @@ export type RpcResponse =
 
 	// Session
 	| { id?: string; type: "response"; command: "get_session_stats"; success: true; data: SessionStats }
+	| { id?: string; type: "response"; command: "resolve_path"; success: true; data: ResolvedMessagePath }
 	| {
 			id?: string;
 			type: "response";
