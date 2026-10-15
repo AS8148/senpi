@@ -34,6 +34,20 @@ function fallbackPermissionRequest(permission: string): PermissionRequest {
 	};
 }
 
+/**
+ * An unregistered tool has no declared parser. Falling back to a bare `*` target would let a
+ * pattern-specific configured deny miss the call entirely (an unregistered tool's decision widens
+ * to the preset, not to its actual arg), so the fallback derives the target from the tool's
+ * meaningful arg — path, command, url, or input — and keeps `*` only for a truly arg-less call.
+ */
+function fallbackPermissionRequestFor(toolName: string, input: Record<string, unknown>): PermissionRequest {
+	const arg = getString(input, "path", "file_path", "command", "url", "input", "pattern", "filePath");
+	if (arg === undefined) return fallbackPermissionRequest(toolName);
+	// A bare `*` alongside the concrete arg would still match an ask/all rule and widen past a
+	// pattern-specific deny, so the concrete arg is the only target; `*` is the arg-less fallback.
+	return { permission: toolName, patterns: [arg], always: [arg] };
+}
+
 function getString(input: Record<string, unknown>, ...keys: string[]): string | undefined {
 	for (const key of keys) {
 		const value = input[key];
@@ -129,7 +143,7 @@ export class ParserRegistry {
 	parse(toolName: string, input: Record<string, unknown>, cwd: string): PermissionRequest[] {
 		const parser = this.parsers.get(toolName);
 		if (!parser) {
-			return [fallbackPermissionRequest(toolName)];
+			return [fallbackPermissionRequestFor(toolName, input)];
 		}
 		return parser(toolName, input, cwd);
 	}
@@ -275,6 +289,7 @@ export function createBuiltinParserRegistry(): ParserRegistry {
 	};
 
 	registry.register("find", listParser);
+	registry.register("glob", listParser);
 	registry.register("ls", listParser);
 
 	return registry;
