@@ -12,6 +12,11 @@
 
 The successor's reopen went straight to `registry.openSession`, so a reopened session skipped everything the router's open does: the host-context merge, `writer.setSessionKind` (a retained worker session became visible in a default `list_sessions`, breaking I4), media persistence, its binding and the drain's settle wake-up. One open implementation for every open, the successor's reopen included, removes the second path instead of copying fields into it. `test/rpc-host-handoff-parked-kind.test.ts` proves the I4 break and its fix; the #3364 preset tests stay green on the same path.
 
+Two consequences of going through the one open, kept deliberately:
+
+- A field the park did not record (an older record, or a session opened without it) now takes the successor's own default exactly as a client's `open_session` does: `permissionPreset`, model, thinking level and `cwd` (`defaults.cwd`, where the old direct call used `process.cwd()`).
+- A record written by a predecessor older than this change carries no `sessionKind`, so that one upgrade handover still reopens a worker session as interactive. Every handover after it records the kind.
+
 ### Why an extension could not handle it
 
 The park record and the successor's reopen are host lifecycle; no extension hook runs there.
