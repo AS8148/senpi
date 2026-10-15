@@ -17,10 +17,19 @@ import { createHash } from "node:crypto";
 import { existsSync, renameSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { SessionRetryFallbackProfile } from "../../core/agent-session-runtime.ts";
 import type { BrowserEngine } from "../../core/browser-engine.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import { parsePermissionPresetName } from "../../core/extensions/builtin/permission-system/cli.ts";
-import { sessionBrowserEngineError, sessionPromptSurfaceError } from "./rpc-input-validation.ts";
+import type { SessionContext, SessionKind } from "../../core/extensions/types.ts";
+import {
+	sessionAutoTitleError,
+	sessionBrowserEngineError,
+	sessionContextError,
+	sessionKindError,
+	sessionPromptSurfaceError,
+	sessionRetryFallbackError,
+} from "./rpc-input-validation.ts";
 
 export interface HandoverParkedEntry {
 	readonly sessionPath: string;
@@ -37,6 +46,16 @@ export interface HandoverParkedEntry {
 	readonly permissionPreset?: string;
 	readonly promptSurface?: PromptSurface;
 	readonly browserEngine?: BrowserEngine;
+	/**
+	 * The rest of the client's `open_session` choices, so the successor reopens the session through
+	 * the same open as any client would (senpi#3368): its visibility class (a worker stays invisible by
+	 * default, I4), the CLIENT part of its context (the host-owned keys are the successor's own and
+	 * are re-merged on open), its auto-titling and its retry fallback.
+	 */
+	readonly sessionKind?: SessionKind;
+	readonly sessionContext?: SessionContext;
+	readonly autoTitle?: boolean;
+	readonly retryFallback?: SessionRetryFallbackProfile;
 }
 
 const recordDir = (daemonDir: string): string => join(daemonDir, "handover-parked");
@@ -66,6 +85,10 @@ function isEntry(value: unknown): value is HandoverParkedEntry {
 				parsePermissionPresetName(record.permissionPreset) !== undefined)) &&
 		sessionPromptSurfaceError(record.promptSurface) === undefined &&
 		sessionBrowserEngineError(record.browserEngine) === undefined &&
+		sessionKindError(record.sessionKind) === undefined &&
+		sessionContextError(record.sessionContext) === undefined &&
+		sessionAutoTitleError(record.autoTitle) === undefined &&
+		sessionRetryFallbackError(record.retryFallback) === undefined &&
 		(record.model === undefined ||
 			(typeof record.model === "object" &&
 				record.model !== null &&

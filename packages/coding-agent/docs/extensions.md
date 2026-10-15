@@ -2258,6 +2258,18 @@ if (pi.getFlag("plan")) {
 }
 ```
 
+### pi.getPermissionPreset()
+
+The permission preset the built-in permission system enforces for this session right now (`"full-access"`, `"workspace"`, `"accept-edits"`, `"auto"`, `"read-only"` or `"ask"`). It resolves like the permission system does: the `--permission-preset` flag, then project and global settings (with the same untrusted-project handling), then the `full-access` default. A preset flag changed on a live session is applied before the read. It returns `undefined` when the permission system is not running for the session, its setup failed, or the session is not bound yet (during extension loading).
+
+```typescript
+pi.on("tool_call", () => {
+  if (pi.getPermissionPreset() === "full-access") {
+    // Nothing will prompt for permission in this session.
+  }
+});
+```
+
 ### pi.exec(command, args, options?)
 
 Execute a shell command.
