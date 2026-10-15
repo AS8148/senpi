@@ -4,7 +4,7 @@
 
 - `packages/coding-agent/src/core/agent-session.ts`: `_prompt` claims `_promptStartPending` for every idle submission, `streamingBehavior` or not; the queue decisions read the claim state from before the call (`startWasPending`), and a claimed call that ends up queueing releases the claim before it enqueues.
 
-- `packages/coding-agent/src/core/agent-session.ts` (review fix): a start claim records whether it started its turn; releasing one that did not (rejected, or handled by an extension or command) schedules a continuation that runs the input that joined it (`continueWithQueuedMessages`, so an empty or assistant-ended transcript cannot refuse it), and a later joiner that sees a failed claim takes the start over. `PromptOptions.enqueueOrder` keeps a replaying client's order when a `whenIdle: "start"` input ends up queued.
+- `packages/coding-agent/src/core/agent-session.ts` (review fix): a start claim records whether it started its turn; releasing one that did not (rejected, or handled by an extension or command) schedules a continuation that runs the input that joined it, and only when something joined that claim (input queued on an idle session by default still waits) (`continueWithQueuedMessages`, so an empty or assistant-ended transcript cannot refuse it), and a later joiner that sees a failed claim takes the start over. `PromptOptions.enqueueOrder` keeps a replaying client's order when a `whenIdle: "start"` input ends up queued.
 
 ### Why
 

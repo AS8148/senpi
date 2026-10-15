@@ -1113,7 +1113,7 @@ export class AgentSession {
 	private readonly _toolContextDisposers = new Set<() => void>();
 	private _promptStartPending = false;
 	/** The pending start claim; `started` is set when it is released (true only for a turn about to start). */
-	private _promptStartClaim: { started?: boolean } | undefined;
+	private _promptStartClaim: { started?: boolean; joined?: boolean } | undefined;
 	/** The next scheduled continuation runs queued input, not the transcript tail (a failed start's joiners). */
 	private _continueWithQueuedInput = false;
 	/** True while a reload's `session_start` handlers run; a nested reload would retire the runner they run on. */
@@ -4878,7 +4878,7 @@ export class AgentSession {
 		const joinedClaim = this._promptStartPending && !this.isStreaming ? this._promptStartClaim : undefined;
 		let startWasPending = this._promptStartPending;
 		let ownsPromptStart = false;
-		let claim: { started?: boolean } | undefined;
+		let claim: { started?: boolean; joined?: boolean } | undefined;
 		const claimStart = (): void => {
 			ownsPromptStart = true;
 			claim = {};
@@ -4886,16 +4886,21 @@ export class AgentSession {
 			this._promptStartClaim = claim;
 		};
 		if (!this.isStreaming && !startWasPending) claimStart();
-		// Releasing a claim that never started its turn drains input that joined it, so none stays queued on an
-		// idle session (a joiner queues without waiting, which keeps a successful start's timing unchanged).
+		// Releasing a claim that never started its turn runs the input that joined it, and only that: input
+		// queued on an idle session by default (`whenIdle: "queue"`) still waits for the next turn.
 		const releaseStart = (started: boolean): void => {
 			if (!ownsPromptStart || claim === undefined) return;
 			claim.started = started;
 			this._promptStartPending = false;
-			if (!started && !this.isStreaming && this.agent.hasQueuedMessages()) {
-				this._continueWithQueuedInput = true;
-				this._scheduleContinuationAfterCurrentEvent();
-			}
+			if (!started && claim.joined === true && !this.isStreaming) this._drainJoinedInput();
+		};
+		// A joiner marks the claim it queued into; one that queues after that claim already failed (it awaited in
+		// between) drains its own input, since the claimer has nothing left to release.
+		const noteJoined = (): void => {
+			if (ownsPromptStart || joinedClaim === undefined) return;
+			if (joinedClaim.started === false) {
+				if (!this.isStreaming) this._drainJoinedInput();
+			} else joinedClaim.joined = true;
 		};
 		// Extension bindings deliberately fire-and-forget sendUserMessage(), so an
 		// extension callback cannot deadlock on this wait. The resulting provider
@@ -5113,6 +5118,7 @@ export class AgentSession {
 				} else {
 					await this._queueSteer(expandedText, currentImages, options);
 				}
+				noteJoined();
 				emitPendingCommandInvocation();
 				await emitInputDisposition("queued");
 				promptDisposition?.("queued");
@@ -5134,6 +5140,7 @@ export class AgentSession {
 				} else {
 					await this._queueSteer(expandedText, currentImages, options);
 				}
+				noteJoined();
 				emitPendingCommandInvocation();
 				await emitInputDisposition("queued");
 				promptDisposition?.("queued");
@@ -5156,6 +5163,7 @@ export class AgentSession {
 				} else {
 					await this._queueSteer(expandedText, currentImages, options);
 				}
+				noteJoined();
 				emitPendingCommandInvocation();
 				await emitInputDisposition("queued");
 				promptDisposition?.("queued");
@@ -5187,6 +5195,7 @@ export class AgentSession {
 					} else {
 						await this._queueSteer(expandedText, currentImages, options);
 					}
+					noteJoined();
 					emitPendingCommandInvocation();
 					await emitInputDisposition("queued");
 					promptDisposition?.("queued");
@@ -5213,6 +5222,7 @@ export class AgentSession {
 				} else {
 					await this._queueSteer(expandedText, currentImages, options);
 				}
+				noteJoined();
 				emitPendingCommandInvocation();
 				await emitInputDisposition("queued");
 				promptDisposition?.("queued");
@@ -8832,6 +8842,7 @@ export class AgentSession {
 			throw error;
 		} finally {
 			this._scheduledContinuationRecompacted = false;
+			this._continueWithQueuedInput = false;
 		}
 	}
 
@@ -8854,6 +8865,13 @@ export class AgentSession {
 		if (!failure) return;
 		const message = failure.error instanceof Error ? failure.error.message : String(failure.error);
 		this._emit({ type: "continuation_error", errorMessage: `The session file did not save this run: ${message}` });
+	}
+
+	/** Runs input that joined a start which never ran: the transcript tail may be anything, even empty. */
+	private _drainJoinedInput(): void {
+		if (!this.agent.hasQueuedMessages()) return;
+		this._continueWithQueuedInput = true;
+		this._scheduleContinuationAfterCurrentEvent();
 	}
 
 	private _scheduleContinuationAfterCurrentEvent(

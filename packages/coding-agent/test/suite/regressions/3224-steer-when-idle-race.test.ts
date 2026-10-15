@@ -148,6 +148,32 @@ describe("a start claim that never starts its turn (senpi#3224 review)", () => {
 	});
 });
 
+describe("a failed start drains only what joined it (senpi#3224 review)", () => {
+	let harness: Harness | undefined;
+	afterEach(() => harness?.cleanup());
+
+	it("leaves input queued on an idle session by default alone when a later prompt is rejected", async () => {
+		harness = await createHarness({ settings: { retry: { enabled: false } } });
+		const session = harness.session;
+		harness.setResponses([fauxAssistantMessage("should not run")]);
+		let starts = 0;
+		session.subscribe((event) => {
+			if (event.type === "agent_start") starts += 1;
+		});
+		const io = { output: () => {}, promptCalls: new Set<Promise<unknown>>() };
+
+		await handleClientInput(session, { id: "held", type: "steer", message: "held" }, io);
+		await handleClientInput(session, { id: "bad", type: "prompt", message: "/nosuchcommand" }, io);
+		await Promise.allSettled([...io.promptCalls]);
+		await session.waitForIdle();
+		await session.waitForSettledSessionWork();
+
+		expect(starts).toBe(0);
+		expect(session.pendingMessageCount).toBe(1);
+		expect(getUserTexts(harness)).toEqual([]);
+	});
+});
+
 describe("whenIdle start keeps the client's enqueueOrder when it queues (senpi#3224 review)", () => {
 	let harness: Harness | undefined;
 	afterEach(() => harness?.cleanup());
