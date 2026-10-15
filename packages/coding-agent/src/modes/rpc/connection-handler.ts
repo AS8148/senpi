@@ -79,6 +79,7 @@ import {
 	type EffectCommandContext,
 	runAbort,
 	runGetEffectStatus,
+	runQueuedInputChange,
 	runSetModel,
 	runSetThinkingLevel,
 } from "./effect-commands.ts";
@@ -1090,6 +1091,10 @@ export function createRpcConnectionHandler(
 			case "check_reload_veto": {
 				return success(id, "check_reload_veto", await session.checkReloadVeto());
 			}
+
+			case "dequeue_message":
+			case "edit_queued_message":
+				return runQueuedInputChange(effectContext(), command);
 
 			case "clear_queue": {
 				const cleared = session.clearQueue({ abortWillFollow: command.abortWillFollow ?? false });
