@@ -2,8 +2,36 @@ import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { teardownChildProcessesAndRoots } from "./helpers/process-teardown.ts";
+
+// Every wait below is on an exact child event, subscribed before the action that
+// triggers it. These bounds only turn a lost event into a named failure; they never
+// decide success. The churners do 20,000+ directory operations whose cost is a
+// filesystem property (seconds on Linux, over half a minute per phase on a loaded
+// macOS APFS volume, #3437), so no wall-clock budget can be tight and still correct.
+const EVENT_DEADLINE_MS = 120_000;
+// Hang backstop for the synchronous rmSync calls, which no event deadline can bound.
+const HANG_CEILING_MS = 600_000;
+
+const spawned: ChildProcessWithoutNullStreams[] = [];
+const scratch: string[] = [];
+
+// A failed or timed-out test must not orphan a live writer: it keeps filling the temp
+// directory forever after the worker exits (#3437 found several left by earlier runs).
+afterEach(async () => {
+	for (const child of spawned.splice(0)) {
+		const exited = waitForExit(child);
+		child.kill("SIGKILL");
+		await exited;
+	}
+	for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true });
+}, HANG_CEILING_MS);
+
+function scratchPath(path: string): string {
+	scratch.push(path);
+	return path;
+}
 
 function spawnChurner(root: string, termMarker: string, exitsOnTerm = false): ChildProcessWithoutNullStreams {
 	const script = `
@@ -42,23 +70,39 @@ function spawnChurner(root: string, termMarker: string, exitsOnTerm = false): Ch
 			} catch {}
 		}, 0);
 	`;
-	return spawn(process.execPath, ["-e", script, root, termMarker, String(exitsOnTerm)], {
+	const child = spawn(process.execPath, ["-e", script, root, termMarker, String(exitsOnTerm)], {
 		stdio: ["pipe", "pipe", "pipe"],
+	});
+	spawned.push(child);
+	return child;
+}
+
+function waitForExit(child: ChildProcessWithoutNullStreams): Promise<void> {
+	if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+	return new Promise<void>((resolve, reject) => {
+		const deadline = setTimeout(
+			() => reject(new Error(`child did not exit within ${EVENT_DEADLINE_MS}ms`)),
+			EVENT_DEADLINE_MS,
+		);
+		child.once("exit", () => {
+			clearTimeout(deadline);
+			resolve();
+		});
 	});
 }
 
-async function waitForExit(child: ChildProcessWithoutNullStreams): Promise<void> {
-	if (child.exitCode !== null || child.signalCode !== null) return;
-	await new Promise<void>((resolve) => child.once("exit", () => resolve()));
-}
-
-async function waitForOutput(child: ChildProcessWithoutNullStreams, expected: string): Promise<void> {
-	await new Promise<void>((resolve, reject) => {
+function waitForOutput(child: ChildProcessWithoutNullStreams, expected: string): Promise<void> {
+	return new Promise<void>((resolve, reject) => {
 		let output = "";
 		let settled = false;
+		const deadline = setTimeout(
+			() => finish(new Error(`child did not write "${expected}" within ${EVENT_DEADLINE_MS}ms`)),
+			EVENT_DEADLINE_MS,
+		);
 		const finish = (error?: Error) => {
 			if (settled) return;
 			settled = true;
+			clearTimeout(deadline);
 			child.stdout.off("data", onData);
 			child.off("close", onClose);
 			child.off("error", onError);
@@ -84,62 +128,75 @@ async function waitForOutput(child: ChildProcessWithoutNullStreams, expected: st
 }
 
 describe("process teardown", () => {
-	it("proves immediate removal races a live writer, while event-driven teardown is clean", async () => {
-		const oldRoot = mkdtempSync(join(tmpdir(), "senpi-teardown-old-"));
-		const oldMarker = join(tmpdir(), `senpi-teardown-old-marker-${process.pid}`);
-		const oldChild = spawnChurner(oldRoot, oldMarker);
-		await waitForOutput(oldChild, "ready");
-		oldChild.kill("SIGTERM");
-		await waitForOutput(oldChild, "term-observed");
-		let oldError: unknown;
-		try {
-			rmSync(oldRoot, { recursive: true, force: true });
-		} catch (error) {
-			oldError = error;
-		}
-		oldChild.kill("SIGKILL");
-		await waitForExit(oldChild);
-		if (!oldError) rmSync(oldRoot, { recursive: true, force: true });
-		expect(oldError).toMatchObject({ code: "ENOTEMPTY" });
+	it(
+		"proves immediate removal races a live writer, while event-driven teardown is clean",
+		async () => {
+			const oldRoot = scratchPath(mkdtempSync(join(tmpdir(), "senpi-teardown-old-")));
+			const oldMarker = scratchPath(join(tmpdir(), `senpi-teardown-old-marker-${process.pid}`));
+			const oldChild = spawnChurner(oldRoot, oldMarker);
+			await waitForOutput(oldChild, "ready");
+			const oldTermObserved = waitForOutput(oldChild, "term-observed");
+			oldChild.kill("SIGTERM");
+			await oldTermObserved;
+			let oldError: unknown;
+			try {
+				rmSync(oldRoot, { recursive: true, force: true });
+			} catch (error) {
+				oldError = error;
+			}
+			const oldExited = waitForExit(oldChild);
+			oldChild.kill("SIGKILL");
+			await oldExited;
+			if (!oldError) rmSync(oldRoot, { recursive: true, force: true });
+			expect(oldError).toMatchObject({ code: "ENOTEMPTY" });
 
-		rmSync(oldMarker, { force: true });
+			rmSync(oldMarker, { force: true });
 
-		const newRoot = mkdtempSync(join(tmpdir(), "senpi-teardown-new-"));
-		const newMarker = join(tmpdir(), `senpi-teardown-new-marker-${process.pid}`);
-		const newChild = spawnChurner(newRoot, newMarker);
-		await waitForOutput(newChild, "ready");
-		await teardownChildProcessesAndRoots(
-			[newChild],
-			[newRoot],
-			100,
-			// This churner acknowledges SIGTERM but never exits, so teardown
-			// must escalate to SIGKILL; the acknowledgement wait guarantees the
-			// marker is written before escalation can fire.
-			(termChild) => waitForOutput(termChild, "term-observed"),
-		);
-		expect(readFileSync(newMarker, "utf8")).toBe("term-observed");
-		rmSync(newMarker, { force: true });
-		expect(() => rmSync(newRoot, { recursive: true })).toThrow(/ENOENT/);
-	}, 15000);
+			const newRoot = scratchPath(mkdtempSync(join(tmpdir(), "senpi-teardown-new-")));
+			const newMarker = scratchPath(join(tmpdir(), `senpi-teardown-new-marker-${process.pid}`));
+			const newChild = spawnChurner(newRoot, newMarker);
+			await waitForOutput(newChild, "ready");
+			// Subscribed before teardown sends SIGTERM, so the acknowledgement cannot be missed.
+			const newTermObserved = waitForOutput(newChild, "term-observed");
+			await teardownChildProcessesAndRoots(
+				[newChild],
+				[newRoot],
+				100,
+				// This churner acknowledges SIGTERM but never exits, so teardown
+				// must escalate to SIGKILL; the acknowledgement wait guarantees the
+				// marker is written before escalation can fire.
+				() => newTermObserved,
+			);
+			expect(readFileSync(newMarker, "utf8")).toBe("term-observed");
+			rmSync(newMarker, { force: true });
+			expect(() => rmSync(newRoot, { recursive: true })).toThrow(/ENOENT/);
+		},
+		HANG_CEILING_MS,
+	);
 
-	it("waits for a child that exits gracefully on SIGTERM", async () => {
-		const root = mkdtempSync(join(tmpdir(), "senpi-teardown-graceful-"));
-		const marker = join(tmpdir(), `senpi-teardown-graceful-marker-${process.pid}`);
-		const child = spawnChurner(root, marker, true);
-		await waitForOutput(child, "ready");
-		await teardownChildProcessesAndRoots(
-			[child],
-			[root],
-			undefined,
-			// Await the child's own acknowledgement that it handled SIGTERM
-			// (it exits in the same handler turn), so the exit deadline can
-			// never preempt the graceful path under load.
-			(termChild) => waitForOutput(termChild, "term-observed"),
-		);
-		expect(readFileSync(marker, "utf8")).toBe("term-observed");
-		expect(child.exitCode).toBe(0);
-		expect(child.signalCode).not.toBe("SIGKILL");
-		rmSync(marker, { force: true });
-		expect(() => rmSync(root, { recursive: true })).toThrow(/ENOENT/);
-	});
+	it(
+		"waits for a child that exits gracefully on SIGTERM",
+		async () => {
+			const root = scratchPath(mkdtempSync(join(tmpdir(), "senpi-teardown-graceful-")));
+			const marker = scratchPath(join(tmpdir(), `senpi-teardown-graceful-marker-${process.pid}`));
+			const child = spawnChurner(root, marker, true);
+			await waitForOutput(child, "ready");
+			const termObserved = waitForOutput(child, "term-observed");
+			await teardownChildProcessesAndRoots(
+				[child],
+				[root],
+				undefined,
+				// Await the child's own acknowledgement that it handled SIGTERM
+				// (it exits in the same handler turn), so the exit deadline can
+				// never preempt the graceful path under load.
+				() => termObserved,
+			);
+			expect(readFileSync(marker, "utf8")).toBe("term-observed");
+			expect(child.exitCode).toBe(0);
+			expect(child.signalCode).not.toBe("SIGKILL");
+			rmSync(marker, { force: true });
+			expect(() => rmSync(root, { recursive: true })).toThrow(/ENOENT/);
+		},
+		HANG_CEILING_MS,
+	);
 });
