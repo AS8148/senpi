@@ -1,3 +1,59 @@
+## 2026-10-15 - Requests record subscription limit windows (senpi#3370)
+
+### What changed
+
+`attemptWithTokenRecovery` wraps the prepared request options with `withLimitCapture`: the response headers are read for limit windows (Codex, Claude unified) and kept per provider and credential slot in `core/subscription-limits/limit-store.ts`; the caller's own `onResponse` still runs.
+
+- `packages/coding-agent/src/core/model-runtime.ts`
+
+### Why
+
+Subscription limit windows (5-hour, weekly) arrive only on responses; nothing read them, so hosts could not show them (desktop Usage > Limits was empty).
+
+### Why an extension could not handle it
+
+The credential slot that served a request (the account) is known only inside the model runtime's rotation path; the `after_provider_response` extension event carries headers but not the slot.
+
+### Expected merge conflict zones
+
+`attemptWithTokenRecovery` in `model-runtime.ts` (the send call site) and its imports.
+
+## 2026-10-15 - Queued inputs carry a queuedId and can be removed or edited (senpi#1971)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `QueuedInput.queuedId` (`q_<n>`, assigned in `_recordQueuedInput`); the exact queued `AgentMessage` per id; `dequeueQueuedInput` / `editQueuedInput` change the visible lists, the post-compaction deferred lists and the agent's native queue by identity; delivered ids are remembered (bounded) so a late change answers `already_delivered`.
+
+### Why
+
+Removing or editing one queued message needs an identity that survives duplicate texts and reaches the queue the agent drains.
+
+### Why an extension could not handle it
+
+The queues are `AgentSession` and agent-core state.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: `QueuedInput`, `_recordQueuedInput`, `_removeQueuedInput`, `_enqueuePreparedInput`, `clearQueue`.
+
+## 2026-10-15 - The startup-bookkeeping doc comment names only real startup writers (senpi#3263 review)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: the `discardHeaderOnlyFile()` doc comment lists the startup rules scan and repository identity as marked writers and no longer names the subscription binding marker, which is now written unmarked.
+
+### Why
+
+- `packages/coding-agent/src/core/session-manager.ts`: the binding marker is written only after a clean assistant turn, so it is never startup bookkeeping; naming it taught extension authors to mark entries written after user activity (Opus review LOW-1 on senpi#3329).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/session-manager.ts`: the comment documents the core discard rule itself.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/session-manager.ts`: LOW, the `discardHeaderOnlyFile()` doc comment.
+
 ## 2026-10-14 - A session closed without a conversation leaves no file, whatever extensions wrote (senpi#3263)
 
 ### What changed
@@ -39,6 +95,25 @@
 ### Expected merge conflict zones
 
 - LOW: `CredentialSlotRepository` read/write paths in `state-store.ts`; `onSuccess`/`persistBlock` in `rotation-stream.ts`; the lease branch of both lanes in `rotation-slots.ts`.
+
+## 2026-10-15 - Two fallback-walk fixes on rungs of one model (senpi#3321, senpi#3344)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/candidates.ts`: after the registry lookup, an entry whose clamped level equals the running level on the current model is skipped as `self` (`toggle:xhigh` on a model without xhigh, while running `toggle:high`). The new optional `isModelSkipped(base)` filter skips every rung of a model.
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: `tryFallback` records the model a pure network blip just failed on and passes it as `isModelSkipped` for that walk only, so a blip never falls back to a sibling rung on the same transport. `modelWidePark` now excludes network blips, which park nothing, so their walk is scanned once.
+
+### Why
+
+#3321: the self check compared the unclamped level, so the walk returned to the rung that had just hard-errored. #3344: a blip on `X:high` with a chain `X:off -> Y` retried `X:off` on the same failing transport, and a blip walk scanned the chain twice.
+
+### Why an extension could not handle it
+
+The candidate scan and the walk are internal to the retry-fallback controller.
+
+### Expected merge conflict zones
+
+- `candidates.ts` `scanCandidates`; `controller.ts` `tryFallback` (now split into `tryFallback` + `walkFallback`) and `nextCandidate`.
 
 ## 2026-10-14 - A hard error parks only its rung, so a later rung of the same model stays reachable (senpi#3311)
 
@@ -379,6 +454,26 @@ The listed paths, especially command dispatch, mode unions and process identity 
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/core/model-resolver.ts`: the `anthropic` and `anthropic-subscription` rows of `defaultModelPerProvider`.
+
+## 2026-10-13 - Transport image elision moves its cutoff in steps (senpi#2768)
+
+### What changed
+
+- `packages/coding-agent/src/core/messages.ts`: `elideOldImages` no longer recomputes its recency cutoff on every request. Images are dropped once they end below a threshold that rises in half-budget steps (half-limit steps for `maxHistoricalImages`), measured from the oldest image, so a request that only adds an image re-sends every earlier image unchanged until the next step. Elided images stay as `IMAGE_ELISION_PLACEHOLDER` in their original message; the newest protected images, the current turn and the newest historical images under the limit are still kept, and the kept total stays within the budget.
+- `packages/coding-agent/src/core/messages.ts`: a run of elided images becomes one placeholder that names each image by a 12-hex digest of its bytes (`... (image ids: a, b)`, built by the fork-only `image-elision-placeholder.ts`, which now owns `IMAGE_ELISION_PLACEHOLDER`; `messages.ts` re-exports it). `dedupeConsecutivePlaceholder` remains for `BLOCKED_IMAGE_PLACEHOLDER` only.
+
+### Why
+
+- `packages/coding-agent/src/core/messages.ts`: past 24 MB of images, each new image moved the cutoff and changed older tool results, so the anthropic-subscription resident lane's sent-stream hash diverged and it flattened and re-sent the whole conversation on almost every image turn (#2768: 20 of 20 predicted flattens, 87% of one session's cache writes).
+- `packages/coding-agent/src/core/messages.ts`: the steps alone still diverge every few turns with computer-use screenshots (up to 5 MB each). The image ids let the lane hash an elided image exactly like the image it replaced (`anthropic-subscription/changes.md`, 2026-10-15), so elision never reads as divergence while a different or missing image still does.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/messages.ts`: `convertToLlmForTransport` builds the provider context for every lane inside the core request path (`sdk.ts`), before any extension sees the request.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/messages.ts`: the body of `elideOldImages` and its doc comment; the `IMAGE_ELISION_PLACEHOLDER` re-export and the `replaceElidedImages` import.
 
 ## 2026-10-12 - Review repairs for config/state separation (senpi#3178)
 

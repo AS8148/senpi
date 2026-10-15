@@ -32,6 +32,8 @@ export class RetryFallbackController {
 	private lastExhaustedChainKey: string | undefined;
 	// A fallback forced by a network blip serves out its turn; only the next turn boundary reverts it.
 	private heldForNetworkBlip = false;
+	// The model a network blip just failed on: none of its rungs is tried in that walk (senpi#3344).
+	private blipModel: string | undefined;
 	private readonly unusable: UnusableEntries;
 	readonly probes: CircuitProbes;
 	// Content-keyed memo of canonicalizeFallbackChains. Provider-error handling calls
@@ -244,6 +246,21 @@ export class RetryFallbackController {
 		failureObserved = true,
 	): Promise<boolean> {
 		const current = this.deps.getCurrentSelector();
+		const blip = reason === "transient" && isPureNetworkTransient(failure.errorMessage);
+		this.blipModel = blip && current ? formatSelector(current.model) : undefined;
+		try {
+			return await this.walkFallback(reason, failure, failureObserved);
+		} finally {
+			this.blipModel = undefined;
+		}
+	}
+
+	private async walkFallback(
+		reason: FallbackReason,
+		failure: { errorMessage?: string; retryAfterMs?: number },
+		failureObserved: boolean,
+	): Promise<boolean> {
+		const current = this.deps.getCurrentSelector();
 		// A network blip that outlasted the same-model retries may fall back for this turn, but it
 		// leaves no cooldown or open circuit on the primary, so the next turn boundary reverts (senpi#3306).
 		const networkBlip = reason === "transient" && isPureNetworkTransient(failure.errorMessage);
@@ -256,7 +273,7 @@ export class RetryFallbackController {
 		if (failureObserved && current) this.unusable.note(current.model, failure);
 		// A model-wide park (transient, billing) can rule out the current model's other rungs, so the
 		// walk re-scans after noting it; the first scan logs only when no re-scan follows.
-		const modelWidePark = failureObserved && (reason === "transient" || reason === "billing");
+		const modelWidePark = !networkBlip && failureObserved && (reason === "transient" || reason === "billing");
 		let candidate = this.nextCandidate(false, !modelWidePark);
 		if (!current || !candidate) {
 			if (modelWidePark) this.nextCandidate(false, true);
@@ -350,6 +367,7 @@ export class RetryFallbackController {
 			isAuthAvailable: (provider) => this.deps.isAuthAvailable(provider),
 			isCircuitOpen: (base) => this.deps.circuits?.isOpen(base) ?? false,
 			isProviderSpent: (provider) => this.unusable.isProviderSpent(provider),
+			isModelSkipped: (base) => base === this.blipModel,
 			skip: (raw, skipReason) => this.skip(raw, skipReason),
 		});
 		if (candidate) {

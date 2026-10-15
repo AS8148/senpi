@@ -186,7 +186,7 @@ export function registerSessionRegistry(
 		// Validate before touching the branch: a rejected closed-entry fallback must
 		// not leave a marker-only entry that retires the still-valid older sidecar.
 		if (!recordFor("pending")) return;
-		pi.appendEntry(BINDING_ENTRY_TYPE, BINDING_MARKER, { startupBookkeeping: true });
+		pi.appendEntry(BINDING_ENTRY_TYPE, BINDING_MARKER);
 		// The marker is now the newest ledger record, so any earlier cause is retired.
 		rememberBindingInvalidation(sessionId, undefined);
 		const markerEntryId = ctx.sessionManager.getLeafId();

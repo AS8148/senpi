@@ -1,8 +1,15 @@
 import { VERSION } from "../../config.ts";
+import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { detachConnection } from "./connection-detach.ts";
 import { buildRpcSessionState } from "./connection-handler.ts";
 import { answerEffectFromTranscript } from "./effect-commands.ts";
 import { multiSessionHostCapabilities } from "./host-capabilities.ts";
+import {
+	clearHandoverParkedSession,
+	type HandoverParkedEntry,
+	recordHandoverParkedSession,
+} from "./host-handover-parked.ts";
+import { parkedEntryFromProfile, parkedOpenCommand } from "./host-handover-parked-open.ts";
 import { answerWarm } from "./host-warm.ts";
 import { hostInstanceId, protocolIdentity } from "./protocol-identity.ts";
 import {
@@ -68,6 +75,12 @@ export interface RpcSessionIdlePolicy {
 	/** Close connections whose last attached session has finished handoff parking. */
 	onHandoffParked?: (connections: readonly string[]) => Promise<void>;
 	/**
+	 * Endpoint daemon directory the drain appends the handoff-parked residency record to
+	 * (senpi#3282), so the successor reopens exactly the set this host held resident. Absent,
+	 * the park is not persisted (the old behavior).
+	 */
+	handoverParkedDir?: string;
+	/**
 	 * Consulted every tick before the empty-exit window advances. Returning false
 	 * both blocks the exit and resets the window, so a host with a connected but
 	 * sessionless client stays up instead of exiting under its supervisor.
@@ -103,6 +116,7 @@ function error(
 /** Routes control messages and enforces a routing handle for every session command. */
 export class SessionCommandRouter {
 	private readonly bindings = new Map<string, RpcSessionBinding>();
+	private readonly stopLimitBroadcast: () => void;
 	/** Session handles opened by each connection, with one count per attachment. */
 	private readonly sessionsByConnection = new Map<string, Map<string, number>>();
 	/** Opens currently awaiting runtime/binding setup, keyed by connection. */
@@ -135,6 +149,7 @@ export class SessionCommandRouter {
 	/** Called after any request for that session settles; a release waits here for the others to finish. */
 	private readonly requestSettledListeners = new Map<string, Set<() => void>>();
 	private readonly onHandoffParked?: RpcSessionIdlePolicy["onHandoffParked"];
+	private readonly handoverParkedDir?: string;
 	private emptySince: number | undefined;
 	/** Halves the idle window while the host reports memory pressure; never refuses work. */
 	private memoryPressure = false;
@@ -155,6 +170,10 @@ export class SessionCommandRouter {
 		connectionOptions: Parameters<typeof createRpcSessionBinding>[4] = {},
 		idle?: RpcSessionIdlePolicy,
 	) {
+		// Every connection hears an account's new limit windows, whichever session's request reported them.
+		this.stopLimitBroadcast = subscriptionLimits.subscribe((limits) =>
+			writer.broadcastHostRecord({ type: "subscription_limits", ...limits }),
+		);
 		this.registry = registry;
 		this.writer = writer;
 		this.defaults = defaults;
@@ -165,6 +184,7 @@ export class SessionCommandRouter {
 		this.emptyExitMs = idle?.emptyExitMs ?? Number.POSITIVE_INFINITY;
 		this.onEmptyExit = idle?.onEmptyExit;
 		this.onHandoffParked = idle?.onHandoffParked;
+		this.handoverParkedDir = idle?.handoverParkedDir;
 		this.canExitWhenEmpty = idle?.canExitWhenEmpty;
 		if (Number.isFinite(this.idleEvictionMs) || Number.isFinite(this.emptyExitMs)) {
 			// Unref'd: occupancy hygiene must never be the reason the event loop stays open.
@@ -320,6 +340,15 @@ export class SessionCommandRouter {
 				},
 			};
 		}
+		if (command.type === "get_subscription_limits") {
+			return {
+				id: command.id,
+				type: "response",
+				command: "get_subscription_limits",
+				success: true,
+				data: { accounts: subscriptionLimits.snapshot() },
+			};
+		}
 		if (command.type === "list_sessions") {
 			// Worker sessions are machine-driven work: a client sees them only by asking, and
 			// the opaque context blob travels only on that listing, never to every connection.
@@ -385,6 +414,7 @@ export class SessionCommandRouter {
 	}
 
 	async dispose(): Promise<void> {
+		this.stopLimitBroadcast();
 		this.drainExitRequested = true;
 		this.stopSweep();
 		if (this.drainTimer !== undefined) clearInterval(this.drainTimer);
@@ -464,9 +494,35 @@ export class SessionCommandRouter {
 		const owners = handoff
 			? [...this.sessionsByConnection].filter(([, owned]) => owned.has(sessionId)).map(([connection]) => connection)
 			: [];
-		// A failed claim means an explicit close raced us and owns the entry now.
+		// A failed claim means an explicit close raced us and owns the entry now; nothing is recorded,
+		// or a closed session would come back on the next host start (MEDIUM-1, senpi#3282 review).
 		const claim = this.tryClaimClose(sessionId, { drainAttachments: true });
 		if (!claim) return;
+		// A retain_on_disconnect session survives EVERY generation: park it to disk AND into the
+		// handover record, whether the park came from the handoff drain or the idle sweep, so the
+		// successor reopens it. Recorded only after the claim wins, and only when the teardown parks
+		// (parkedPath set) - never for an explicit close. The write is awaited before the drain
+		// proceeds, or the generation can hand over and exit before it lands and the park is lost.
+		if (
+			this.handoverParkedDir !== undefined &&
+			parkedPath !== undefined &&
+			retained?.retainOnDisconnect === true &&
+			retained.sessionPath !== undefined
+		) {
+			await recordHandoverParkedSession(
+				this.handoverParkedDir,
+				parkedEntryFromProfile(
+					{
+						sessionPath: retained.sessionPath,
+						...(retained.durableSessionId !== undefined ? { durableSessionId: retained.durableSessionId } : {}),
+					},
+					retained.profile,
+					Object.keys(this.defaults.hostContext ?? {}),
+				),
+			).catch((cause: unknown) => {
+				process.stderr.write(`senpi rpc handover park record ${sessionId} failed: ${String(cause)}\n`);
+			});
+		}
 		const binding = this.bindings.get(sessionId);
 		binding?.cancelPendingExtensionUiRequests?.();
 		if (!handoff) this.forgetSessionOwnership(sessionId);
@@ -578,17 +634,49 @@ export class SessionCommandRouter {
 				position: inFlight + 1,
 				in_flight: inFlight,
 			});
-		return this.open(command, owner).finally(() => {
+		const opened = this.open(command, owner);
+		// A manual reopen-by-path supersedes the handover auto-reopen for that session: clear its
+		// record entry, or a later generation would reopen a second copy (MEDIUM-1, senpi#3282 review).
+		// Cleared only after the open SUCCEEDS (MEDIUM-A): if the open fails - a session_path_in_use
+		// during a handover, or a bad profile - the entry must stay so a later generation can still
+		// reopen the session. open() resolves `undefined` on success (the response is written through
+		// the writer) and an RpcResponse only on failure, so success is `response === undefined`.
+		if (command.sessionPath !== undefined && this.handoverParkedDir !== undefined) {
+			const dir = this.handoverParkedDir;
+			const sessionPath = command.sessionPath;
+			void opened.then(
+				(response) => {
+					if (response === undefined) void clearHandoverParkedSession(dir, sessionPath).catch(() => {});
+				},
+				() => {
+					// A rejection means the open failed before producing a response; the entry stays.
+				},
+			);
+		}
+		return opened.finally(() => {
 			resolveBarrier();
 			opens.delete(barrier);
 			if (opens.size === 0) this.opensByConnection.delete(owner);
 		});
 	}
 
+	/**
+	 * The successor's reopen of a handoff-parked session: the same open as an `open_session`, with no
+	 * requesting connection and nothing to reply to (senpi#3368). Resolves `undefined` on success and
+	 * the failure response otherwise, exactly as an open does.
+	 */
+	reopenParked(entry: HandoverParkedEntry): Promise<RpcResponse | undefined> {
+		return this.open(parkedOpenCommand(entry), undefined, { reply: false, defaults: false });
+	}
+
 	private async open(
 		command: Extract<RpcCommand, { type: "open_session" }>,
 		owner?: string,
+		options?: { readonly reply?: boolean; readonly defaults?: boolean },
 	): Promise<RpcResponse | undefined> {
+		// A parked session's reopen replays what its park recorded; a field it left empty stays empty
+		// rather than taking THIS host's default (senpi#3376 review).
+		const defaults = options?.defaults === false ? undefined : this.defaults;
 		const instanceId = this.defaults.hostContext?.host_instance ?? hostInstanceId();
 		if (command.expectedHostInstance !== undefined) {
 			if (typeof command.expectedHostInstance !== "string" || command.expectedHostInstance.trim() === "")
@@ -651,12 +739,12 @@ export class SessionCommandRouter {
 							? {}
 							: { host_socket: this.defaults.hostContext.host_socket }),
 					},
-					permissionPreset: command.permissionPreset ?? this.defaults.permissionPreset,
+					permissionPreset: command.permissionPreset ?? defaults?.permissionPreset,
 					creationModel:
 						command.provider && command.modelId
 							? { provider: command.provider, modelId: command.modelId }
-							: this.defaults.creationModel,
-					initialThinkingLevel: command.thinkingLevel ?? this.defaults.initialThinkingLevel,
+							: defaults?.creationModel,
+					initialThinkingLevel: command.thinkingLevel ?? defaults?.initialThinkingLevel,
 					sessionKind: command.kind,
 					sessionContext: this.defaults.hostContext
 						? { ...command.context, ...this.defaults.hostContext }
@@ -758,17 +846,18 @@ export class SessionCommandRouter {
 			const replyState =
 				entry.worker?.snapshot?.state ?? (entry.runtime ? buildRpcSessionState(entry.runtime.session) : undefined);
 			if (!replyState) throw new Error("Session state was not created");
-			this.writer.enqueue(opened.sessionId, {
-				id: command.id,
-				type: "response",
-				command: "open_session",
-				success: true,
-				data: {
-					sessionId: opened.sessionId,
-					state: replyState,
-					...(opened.attached ? { attached: true } : {}),
-				},
-			});
+			if (options?.reply !== false)
+				this.writer.enqueue(opened.sessionId, {
+					id: command.id,
+					type: "response",
+					command: "open_session",
+					success: true,
+					data: {
+						sessionId: opened.sessionId,
+						state: replyState,
+						...(opened.attached ? { attached: true } : {}),
+					},
+				});
 			return undefined;
 		} catch (cause) {
 			if (opened) {
@@ -963,6 +1052,11 @@ export class SessionCommandRouter {
 		try {
 			if (owner !== undefined) this.releaseOwnerAttachment(owner, command.sessionId);
 			if (claim.finalizer) {
+				// An explicit close ends the session for good: drop any handover-parked record entry, or
+				// the session would come back on the next host start (MEDIUM-1, senpi#3282 review).
+				const entry = this.registry.peek(command.sessionId);
+				if (this.handoverParkedDir !== undefined && entry?.sessionPath !== undefined)
+					await clearHandoverParkedSession(this.handoverParkedDir, entry.sessionPath).catch(() => {});
 				await this.finalizeClose(command.sessionId, this.bindings.get(command.sessionId), () =>
 					reply.complete(true, "client_close"),
 				);

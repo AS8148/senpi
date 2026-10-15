@@ -2034,7 +2034,7 @@ See [send-user-message.ts](../examples/extensions/send-user-message.ts) for a co
 
 Persist extension data. Custom entries do NOT participate in LLM context. In interactive mode, they can also render inside the chat transcript when paired with `pi.registerEntryRenderer()`.
 
-Pass `{ startupBookkeeping: true }` for an entry your extension writes at session start without any user action (a scan record, a binding marker). A session that closes without a conversation then leaves no file behind if it holds only setup entries and such bookkeeping. Leave the option unset for anything a user created or anything billed: an unmarked entry keeps the session file.
+Pass `{ startupBookkeeping: true }` for an entry your extension writes at session start without any user action (a scan record, an environment fingerprint). A session that closes without a conversation then leaves no file behind if it holds only setup entries and such bookkeeping. Leave the option unset for anything a user created or anything billed: an unmarked entry keeps the session file.
 
 ```typescript
 pi.on("session_start", () => {
@@ -2256,6 +2256,18 @@ pi.registerFlag("plan", {
 if (pi.getFlag("plan")) {
   // Plan mode enabled
 }
+```
+
+### pi.getPermissionPreset()
+
+The permission preset the built-in permission system enforces for this session right now (`"full-access"`, `"workspace"`, `"accept-edits"`, `"auto"`, `"read-only"` or `"ask"`). It resolves like the permission system does: the `--permission-preset` flag, then project and global settings (with the same untrusted-project handling), then the `full-access` default. A preset flag changed on a live session is applied before the read. It returns `undefined` when the permission system is not running for the session, its setup failed, or the session is not bound yet (during extension loading).
+
+```typescript
+pi.on("tool_call", () => {
+  if (pi.getPermissionPreset() === "full-access") {
+    // Nothing will prompt for permission in this session.
+  }
+});
 ```
 
 ### pi.exec(command, args, options?)

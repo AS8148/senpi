@@ -37,6 +37,8 @@ import { time } from "../timings.ts";
 import { type ReadClassifier, registerReadClassifier } from "../tools/read-classifiers.ts";
 import type { ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
 import { validateMcpServerDeclaration } from "./builtin/mcp/config-schema.ts";
+import { readPermissionPreset } from "./builtin/permission-system/preset-registry.ts";
+import type { PermissionPresetName } from "./builtin/permission-system/types.ts";
 import type { EvalHandleHost } from "./eval-handle-host.ts";
 import { recordExtensionLoadKey } from "./extension-load-key.ts";
 import {
@@ -45,6 +47,7 @@ import {
 	extensionModuleImporter,
 	rememberExtensionFactory,
 } from "./extension-module-cache.ts";
+import { StaleExtensionContextError } from "./stale-context-error.ts";
 import type {
 	AppendEntryOptions,
 	BeforeAgentStartHandlerOptions,
@@ -256,7 +259,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
 	const eventBusUnsubscribers = new Set<() => void>();
 	const assertActive = () => {
 		if (state.staleMessage) {
-			throw new Error(state.staleMessage);
+			throw new StaleExtensionContextError(state.staleMessage);
 		}
 	};
 
@@ -593,6 +596,18 @@ function createExtensionAPI(
 			assertActive();
 			if (!extension.flags.has(name)) return undefined;
 			return runtime.flagValues.has(name) ? runtime.flagValues.get(name) : pendingFlagValues.get(name);
+		},
+
+		getPermissionPreset(): PermissionPresetName | undefined {
+			assertActive();
+			let sessionManager: object;
+			try {
+				sessionManager = runtime.createContext().sessionManager;
+			} catch {
+				// Before the host binds the runtime there is no session to read a preset for.
+				return undefined;
+			}
+			return readPermissionPreset(sessionManager);
 		},
 
 		// Action methods - delegate to shared runtime
