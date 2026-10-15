@@ -11,7 +11,11 @@
 
 Clients (the desktop's Full-access UI) must show the preset actually enforced, including a settings-only Full access and the `full-access` default, not just the flag.
 
-### Expected merge-conflict zones
+### Why an extension could not handle it
+
+The value lives inside the permission-system builtin, and another extension can only reach it through the public `pi` object. Adding a member to `ExtensionAPI` that every loaded extension's `pi` carries is the loader's job; no extension can extend another extension's API object.
+
+### Expected merge conflict zones
 
 `types.ts` (the Flags block of `ExtensionAPI`) and `loader.ts` (beside `getFlag`).
 
