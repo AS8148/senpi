@@ -497,6 +497,11 @@ export class SessionCommandRouter {
 				...(retained.profile?.initialThinkingLevel !== undefined
 					? { thinkingLevel: retained.profile.initialThinkingLevel }
 					: {}),
+				...(retained.profile?.permissionPreset !== undefined
+					? { permissionPreset: retained.profile.permissionPreset }
+					: {}),
+				...(retained.profile?.promptSurface !== undefined ? { promptSurface: retained.profile.promptSurface } : {}),
+				...(retained.profile?.browserEngine !== undefined ? { browserEngine: retained.profile.browserEngine } : {}),
 			}).catch((cause: unknown) => {
 				process.stderr.write(`senpi rpc handover park record ${sessionId} failed: ${String(cause)}\n`);
 			});

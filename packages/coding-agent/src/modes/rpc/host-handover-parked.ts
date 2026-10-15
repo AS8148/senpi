@@ -17,6 +17,9 @@ import { createHash } from "node:crypto";
 import { existsSync, renameSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { BrowserEngine } from "../../core/browser-engine.ts";
+import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
+import { sessionBrowserEngineError, sessionPromptSurfaceError } from "./rpc-input-validation.ts";
 
 export interface HandoverParkedEntry {
 	readonly sessionPath: string;
@@ -25,6 +28,14 @@ export interface HandoverParkedEntry {
 	readonly cwd?: string;
 	readonly model?: { readonly provider: string; readonly modelId: string };
 	readonly thinkingLevel?: string;
+	/**
+	 * The session's launch-profile choices a client-less reopen has no other source for: without them
+	 * the successor opens the session under the host defaults, and an `ask` session runs gated tools
+	 * without asking (senpi#3364).
+	 */
+	readonly permissionPreset?: string;
+	readonly promptSurface?: PromptSurface;
+	readonly browserEngine?: BrowserEngine;
 }
 
 const recordDir = (daemonDir: string): string => join(daemonDir, "handover-parked");
@@ -49,6 +60,9 @@ function isEntry(value: unknown): value is HandoverParkedEntry {
 		(record.durableSessionId === undefined || typeof record.durableSessionId === "string") &&
 		(record.cwd === undefined || typeof record.cwd === "string") &&
 		(record.thinkingLevel === undefined || typeof record.thinkingLevel === "string") &&
+		(record.permissionPreset === undefined || typeof record.permissionPreset === "string") &&
+		sessionPromptSurfaceError(record.promptSurface) === undefined &&
+		sessionBrowserEngineError(record.browserEngine) === undefined &&
 		(record.model === undefined ||
 			(typeof record.model === "object" &&
 				record.model !== null &&
