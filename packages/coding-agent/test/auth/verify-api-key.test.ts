@@ -1,7 +1,7 @@
 import type { Api, Model } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
-import type { ModelRegistry } from "../src/core/model-registry.ts";
-import { storedKeyHint, verifyApiKey } from "../src/core/verify-api-key.ts";
+import type { ModelRegistry } from "../../src/core/model-registry.ts";
+import { storedKeyHint, verifyApiKey } from "../../src/core/verify-api-key.ts";
 
 const KEY = "sk-test-0123456789abcd";
 
@@ -11,14 +11,19 @@ const model = (provider: string, api: Api, baseUrl: string) =>
 const MODELS = [
 	model("openai", "openai-completions", "https://api.example.test/v1/"),
 	model("anthropic", "anthropic-messages", "https://anthropic.example.test/v1"),
+	model("mistral", "mistral-conversations", "https://mistral.example.test"),
 	model("odd", "bedrock-converse-stream" as Api, "https://bedrock.example.test"),
 ];
 
-const answering = (status: number) => {
+// `status` answers KEY; any other key (the made-up control key) gets `others`, as a provider that
+// checks keys answers 401. A public model list answers 200 to every key.
+const answering = (status: number, others = 401) => {
 	const seen: Array<{ url: string; headers: Record<string, string> }> = [];
 	const fetch = (async (url: string, init?: RequestInit) => {
-		seen.push({ url, headers: init?.headers as Record<string, string> });
-		return new Response("{}", { status });
+		const headers = init?.headers as Record<string, string>;
+		seen.push({ url, headers });
+		const sent = headers.authorization ?? headers["x-api-key"] ?? "";
+		return new Response(null, { status: sent.includes(KEY) ? status : others });
 	}) as unknown as typeof globalThis.fetch;
 	return { fetch, seen };
 };
@@ -32,6 +37,35 @@ describe("verifyApiKey (desktop #2510)", () => {
 		expect(await verify("openai", provider.fetch)).toEqual({ ok: true });
 		expect(provider.seen[0]?.url).toBe("https://api.example.test/v1/models");
 		expect(provider.seen[0]?.headers.authorization).toBe(`Bearer ${KEY}`);
+	});
+
+	// #3372 review: OpenRouter's and keyless servers' model lists answer any key.
+	it("does not call a key valid when the model list answers any key", async () => {
+		expect(await verify("openai", answering(200, 200).fetch)).toEqual({ ok: false, reason: "unsupported" });
+	});
+
+	it("probes Mistral's list under /v1", async () => {
+		const provider = answering(200);
+		expect(await verify("mistral", provider.fetch)).toEqual({ ok: true });
+		expect(provider.seen[0]?.url).toBe("https://mistral.example.test/v1/models");
+	});
+
+	it("drops configured auth headers whatever their case", async () => {
+		const provider = answering(200);
+		const withHeaders = [
+			{ ...MODELS[0], headers: { Authorization: "Bearer configured", "X-Extra": "1" } } as unknown as Model<Api>,
+		];
+		await verifyApiKey({
+			models: withHeaders,
+			provider: "openai",
+			key: KEY,
+			signal: AbortSignal.timeout(5_000),
+			fetch: provider.fetch,
+		});
+		expect(
+			Object.keys(provider.seen[0]?.headers ?? {}).filter((name) => name.toLowerCase() === "authorization"),
+		).toEqual(["authorization"]);
+		expect(provider.seen[0]?.headers["X-Extra"]).toBe("1");
 	});
 
 	it("uses the Anthropic header and path", async () => {
@@ -53,6 +87,11 @@ describe("verifyApiKey (desktop #2510)", () => {
 			ok: false,
 			reason: "unsupported",
 			status: 404,
+		});
+		expect(await verify("openai", answering(302).fetch)).toEqual({
+			ok: false,
+			reason: "unsupported",
+			status: 302,
 		});
 		const offline = (async () => {
 			throw new TypeError("fetch failed");

@@ -5896,3 +5896,22 @@ The desktop's Replace key checks a new key before saving it, and shows which sav
 ### Expected merge conflict zones
 
 RPC command and response unions, `RpcAuthProvider`, the auth cases in the connection handler.
+
+## 2026-10-15 - verify_api_key review fixes (desktop #2510, senpi#3372 review)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts` is unchanged here. `connection-handler.ts` also advertises `auth_key_verify` on the classic `get_protocol_info`, because classic hosts answer `verify_api_key` too.
+- `docs/rpc.md` documents `verify_api_key` and `keyHint`.
+
+### Why
+
+A client that checks the capability first would wrongly skip classic hosts. The docs-parity test requires every command to be documented.
+
+### Why an extension could not handle it
+
+Capability advertisement is core RPC.
+
+### Expected merge conflict zones
+
+The classic capability list in `connection-handler.ts`.

@@ -65,6 +65,7 @@ import { handleClientInput } from "./client-input-handler.ts";
 import { ClientMessageEvents } from "./client-message-events.ts";
 import { ConnectionQuestionBridge, degradeQuestion, sessionQuestionBridges } from "./connection-question-bridge.ts";
 import {
+	AUTH_KEY_VERIFY_CAPABILITY,
 	AUTO_TITLE_SESSIONS_CAPABILITY,
 	buildCustomUnsupportedRequest,
 	CONTINUE_FROM_LEAF_CAPABILITY,
@@ -987,6 +988,7 @@ export function createRpcConnectionHandler(
 								EFFECT_LEDGER_CAPABILITY,
 								CONTINUE_FROM_LEAF_CAPABILITY,
 								EVAL_CELLS_CAPABILITY,
+								AUTH_KEY_VERIFY_CAPABILITY,
 								...(options.retryFallbackCommand ? [RETRY_FALLBACK_COMMAND_CAPABILITY] : []),
 								// Client flags cannot advertise a host guard this classic binding does not run.
 								...(options.capabilities ?? []).filter((capability) => capability !== SESSION_HELD_CAPABILITY),

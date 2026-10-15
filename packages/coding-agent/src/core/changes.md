@@ -10106,3 +10106,24 @@ It serves core RPC auth commands.
 ### Expected merge conflict zones
 
 None (new file).
+
+## 2026-10-15 - verify-api-key.ts review fixes (senpi#3372 review)
+
+### What changed
+
+- A model list that also answers a made-up control key is public (OpenRouter, keyless local servers), so its 200 is reported `unsupported`, never `ok`. `ok` requires the control key to be refused.
+- Mistral is probed at `/v1/models`.
+- Configured auth headers are dropped whatever their case.
+- A 3xx is `unsupported`.
+
+### Why
+
+A public model list made any key look valid.
+
+### Why an extension could not handle it
+
+It serves core RPC auth commands.
+
+### Expected merge conflict zones
+
+None (fork-only file).

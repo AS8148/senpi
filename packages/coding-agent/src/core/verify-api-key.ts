@@ -23,14 +23,24 @@ type Probe = { readonly url: string; readonly headers: Record<string, string> };
 
 const trimSlash = (value: string) => value.replace(/\/+$/, "");
 
+const AUTH_HEADERS = new Set(["authorization", "x-api-key", "x-goog-api-key"]);
+
 function probeFor(model: Model<Api>, key: string): Probe | undefined {
 	const base = trimSlash(model.baseUrl);
-	const extra = model.headers ?? {};
+	// Configured auth headers would be merged with (or replace) the probe's, whatever their case.
+	const extra = Object.fromEntries(
+		Object.entries(model.headers ?? {}).filter(([name]) => !AUTH_HEADERS.has(name.toLowerCase())),
+	);
 	switch (model.api) {
 		case "openai-completions":
 		case "openai-responses":
-		case "mistral-conversations":
 			return { url: `${base}/models`, headers: { ...extra, authorization: `Bearer ${key}` } };
+		case "mistral-conversations":
+			// The Mistral runtime calls `${base}/v1/...`; its model list lives there too.
+			return {
+				url: `${base.replace(/\/v1$/, "")}/v1/models`,
+				headers: { ...extra, authorization: `Bearer ${key}` },
+			};
 		case "anthropic-messages":
 			return {
 				url: `${base.replace(/\/v1$/, "")}/v1/models`,
@@ -52,26 +62,36 @@ export async function verifyApiKey(input: {
 }): Promise<ApiKeyVerification> {
 	const model = input.models.find((candidate) => candidate.provider === input.provider);
 	if (model === undefined) return { ok: false, reason: "unknown-provider" };
-	const probe = probeFor(model, input.key);
-	if (probe === undefined) return { ok: false, reason: "unsupported" };
-	let response: Response;
-	try {
-		response = await (input.fetch ?? globalThis.fetch)(probe.url, {
-			method: "GET",
-			headers: probe.headers,
-			redirect: "manual",
-			signal: input.signal,
-		});
-	} catch {
-		return { ok: false, reason: "unreachable" };
-	}
-	await response.body?.cancel().catch(() => {});
-	const { status } = response;
-	if (status >= 200 && status < 300) return { ok: true };
+	if (probeFor(model, input.key) === undefined) return { ok: false, reason: "unsupported" };
+	const ask = async (candidate: string): Promise<number | "unreachable"> => {
+		const target = probeFor(model, candidate);
+		if (target === undefined) return "unreachable";
+		try {
+			const response = await (input.fetch ?? globalThis.fetch)(target.url, {
+				method: "GET",
+				headers: target.headers,
+				redirect: "manual",
+				signal: input.signal,
+			});
+			await response.body?.cancel().catch(() => {});
+			return response.status;
+		} catch {
+			return "unreachable";
+		}
+	};
+	const status = await ask(input.key);
+	if (status === "unreachable") return { ok: false, reason: "unreachable" };
 	if (status === 401 || status === 403) return { ok: false, reason: "rejected", status };
-	if (status === 404 || status === 405) return { ok: false, reason: "unsupported", status };
-	return { ok: false, reason: "unreachable", status };
+	if (status >= 500) return { ok: false, reason: "unreachable", status };
+	if (status < 200 || status >= 300) return { ok: false, reason: "unsupported", status };
+	// A model list that also answers a made-up key is public (OpenRouter, keyless local servers):
+	// its 200 says nothing about this key.
+	const control = await ask(UNCHECKABLE_CONTROL_KEY);
+	if (control === 401 || control === 403) return { ok: true };
+	return { ok: false, reason: "unsupported" };
 }
+
+const UNCHECKABLE_CONTROL_KEY = "senpi-verify-control-not-a-real-key";
 
 /**
  * `{ keyHint }` for the api_key row of a provider whose key the app stored as a literal, long enough

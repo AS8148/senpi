@@ -4170,6 +4170,23 @@ Example exchange (Anthropic, user pastes the code instead of finishing in the br
 
 If the user completes the flow in the browser instead, the same `extension_ui_request` is emitted, no response is needed, and `auth_login_end` arrives on its own.
 
+#### verify_api_key
+
+Checks an API key with its provider before a client saves it. The key is used for one authenticated read of the provider's model list and is never stored, logged, or echoed. Hosts that support it advertise `auth_key_verify`.
+
+```json
+{"type": "verify_api_key", "provider": "openai", "key": "<key>"}
+```
+
+Response `data` is `{ok: true}` or `{ok: false, reason, status?}`:
+
+- `rejected`: the provider answered 401 or 403.
+- `unreachable`: no answer, a timeout, or a 5xx.
+- `unsupported`: the key cannot be checked this way. Either the provider's API has no probe, the list is not where it was expected (another 4xx or 3xx), or the list answers any key (OpenRouter, keyless local servers). In that last case a 200 proves nothing, so the host also asks with a made-up key and reports `ok` only when that one is refused.
+- `unknown-provider`: no model is configured for the provider.
+
+`get_auth_providers` API-key rows carry `keyHint`, the last four characters of a literal key the app stored when it is at least 12 characters long. OAuth rows, `!command` and `$ENV` references, and short keys have none.
+
 ## Extension UI Protocol
 
 Extensions can request user interaction via `ctx.ui.select()`, `ctx.ui.confirm()`, etc. In RPC mode, these are translated into a request/response sub-protocol on top of the base command/event flow.
