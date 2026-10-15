@@ -9,7 +9,9 @@ import { createModelRegistry } from "./model-runtime-test-utils.ts";
 import { builtinChatModelIdPair } from "./support/catalog-ids.ts";
 
 // Override targets the OpenRouter catalog ships today, so a catalog regen cannot remove them (senpi#1955).
-const [OPENROUTER_TARGET, OPENROUTER_SIBLING] = builtinChatModelIdPair("openrouter", (id) => id.startsWith("anthropic/"));
+const [OPENROUTER_TARGET, OPENROUTER_SIBLING] = builtinChatModelIdPair("openrouter", (id) =>
+	id.startsWith("anthropic/"),
+);
 
 describe("ModelRegistry recovery configuration", () => {
 	let tempDir: string;

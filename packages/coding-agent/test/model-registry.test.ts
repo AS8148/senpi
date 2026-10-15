@@ -12,7 +12,9 @@ import { createModelRegistry } from "./model-runtime-test-utils.ts";
 import { builtinChatModelIdPair } from "./support/catalog-ids.ts";
 
 // Two Anthropic-backed models the OpenRouter catalog ships today: override targets that a regen cannot remove (senpi#1955).
-const [OPENROUTER_TARGET, OPENROUTER_SIBLING] = builtinChatModelIdPair("openrouter", (id) => id.startsWith("anthropic/"));
+const [OPENROUTER_TARGET, OPENROUTER_SIBLING] = builtinChatModelIdPair("openrouter", (id) =>
+	id.startsWith("anthropic/"),
+);
 
 describe("ModelRegistry", () => {
 	let tempDir: string;
@@ -657,9 +659,7 @@ describe("ModelRegistry", () => {
 			const models = getModelsForProvider(registry, "openrouter");
 
 			expect(models.some((m) => m.id === "custom/openrouter-model")).toBe(true);
-			expect(
-				models.some((m) => m.id === OPENROUTER_TARGET && m.name === "Overridden Built-in Sonnet"),
-			).toBe(true);
+			expect(models.some((m) => m.id === OPENROUTER_TARGET && m.name === "Overridden Built-in Sonnet")).toBe(true);
 		});
 
 		test("refresh() reloads merged custom models from disk", async () => {
@@ -1122,9 +1122,9 @@ describe("ModelRegistry", () => {
 			});
 
 			const registry = await createModelRegistry(authStorage, modelsJsonPath);
-			expect(
-				getModelsForProvider(registry, "openrouter").find((m) => m.id === OPENROUTER_TARGET)?.name,
-			).toBe("First Name");
+			expect(getModelsForProvider(registry, "openrouter").find((m) => m.id === OPENROUTER_TARGET)?.name).toBe(
+				"First Name",
+			);
 
 			// Update and refresh
 			writeRawModelsJson({
@@ -1138,9 +1138,9 @@ describe("ModelRegistry", () => {
 			});
 			await registry.refresh();
 
-			expect(
-				getModelsForProvider(registry, "openrouter").find((m) => m.id === OPENROUTER_TARGET)?.name,
-			).toBe("Second Name");
+			expect(getModelsForProvider(registry, "openrouter").find((m) => m.id === OPENROUTER_TARGET)?.name).toBe(
+				"Second Name",
+			);
 		});
 
 		test("removing model override restores built-in values", async () => {
@@ -1155,9 +1155,7 @@ describe("ModelRegistry", () => {
 			});
 
 			const registry = await createModelRegistry(authStorage, modelsJsonPath);
-			const customName = getModelsForProvider(registry, "openrouter").find(
-				(m) => m.id === OPENROUTER_TARGET,
-			)?.name;
+			const customName = getModelsForProvider(registry, "openrouter").find((m) => m.id === OPENROUTER_TARGET)?.name;
 			expect(customName).toBe("Custom Name");
 
 			// Remove override and refresh

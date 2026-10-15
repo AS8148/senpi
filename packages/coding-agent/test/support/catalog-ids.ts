@@ -10,7 +10,13 @@ export function builtinChatModelIds(
 	count: number,
 	accept: (id: string) => boolean = () => true,
 ): string[] {
-	return pick(provider, "chat", getBuiltinModels(provider).map((model) => model.id), count, accept);
+	return pick(
+		provider,
+		"chat",
+		getBuiltinModels(provider).map((model) => model.id),
+		count,
+		accept,
+	);
 }
 
 /** One catalog id. */
