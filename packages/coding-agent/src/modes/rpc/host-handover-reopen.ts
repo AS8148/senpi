@@ -109,6 +109,9 @@ async function reopenOne(
 				...(entry.durableSessionId !== undefined ? { durableSessionId: entry.durableSessionId } : {}),
 				...(entry.model !== undefined ? { creationModel: entry.model } : {}),
 				...(entry.thinkingLevel !== undefined ? { initialThinkingLevel: entry.thinkingLevel } : {}),
+				...(entry.permissionPreset !== undefined ? { permissionPreset: entry.permissionPreset } : {}),
+				...(entry.promptSurface !== undefined ? { promptSurface: entry.promptSurface } : {}),
+				...(entry.browserEngine !== undefined ? { browserEngine: entry.browserEngine } : {}),
 			},
 			{ retainOnDisconnect: entry.retainOnDisconnect },
 		);
