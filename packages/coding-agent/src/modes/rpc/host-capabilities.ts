@@ -23,6 +23,7 @@ import {
 	WARM_CAPABILITY,
 } from "./custom-capability.ts";
 import { EFFECT_LEDGER_CAPABILITY } from "./effect-record.ts";
+import { STEER_WHEN_IDLE_CAPABILITY } from "./rpc-types.ts";
 
 /** `unload_session` and `session_parked.reason` (senpi#3225). */
 export const UNLOAD_SESSION_CAPABILITY = "unload_session";
@@ -47,6 +48,7 @@ export function multiSessionHostCapabilities(options: {
 			DURABLE_CLIENT_MESSAGE_ID_CAPABILITY,
 			EFFECT_LEDGER_CAPABILITY,
 			SUBSCRIPTION_LIMITS_CAPABILITY,
+			STEER_WHEN_IDLE_CAPABILITY,
 			CONTINUE_FROM_LEAF_CAPABILITY,
 			EVAL_CELLS_CAPABILITY,
 			// Both shared runtimes dispatch through the active session-writing holder guard.

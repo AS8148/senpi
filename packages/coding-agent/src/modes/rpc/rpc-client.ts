@@ -19,6 +19,7 @@ import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts"
 import { MissingSessionCwdError } from "../../core/session-cwd.ts";
 import { unknownCommandErrorFromWire } from "../../core/unknown-command.ts";
 import { DETACH_CONNECTION_CAPABILITY } from "./custom-capability.ts";
+import { ORIGIN_HOST_INSTANCE_FIELD, originHostInstance } from "./host-observe-request.ts";
 
 /** A command the host refused; `errorCode` carries the typed code when the command defines one. */
 export class RpcCommandError extends Error {
@@ -222,6 +223,8 @@ export class RpcClient {
 	private disconnectNotified = false;
 	private stopping = false;
 	private options: RpcClientOptions;
+	/** The host generation this client runs inside, named on every socket request (#3272). */
+	private readonly originHost = originHostInstance();
 
 	constructor(options: RpcClientOptions = {}) {
 		this.options = options;
@@ -1356,6 +1359,7 @@ export class RpcClient {
 			...command,
 			...(route && this.sessionId && !("sessionId" in command) ? { sessionId: this.sessionId } : {}),
 			...(ownId === undefined ? { id } : {}),
+			...(this.socket && this.originHost ? { [ORIGIN_HOST_INSTANCE_FIELD]: this.originHost } : {}),
 		} as RpcCommand;
 
 		if (!expectResponse) {

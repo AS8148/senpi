@@ -6,7 +6,14 @@ import {
 	type HandoverParkedEntry,
 	readHandoverParkedSessions,
 } from "./host-handover-parked.ts";
-import { type RpcSessionRegistry, RpcSessionRegistryError } from "./session-registry.ts";
+import { RpcSessionRegistryError } from "./session-registry.ts";
+
+/**
+ * Opens one parked session on this host, throwing an RpcSessionRegistryError on a refusal. The host
+ * supplies one that runs the same open as an `open_session` (senpi#3368), so a reopened session is
+ * set up exactly like any other.
+ */
+export type ParkedSessionOpener = (entry: HandoverParkedEntry) => Promise<void>;
 
 // The watch budget must outlast a heavily loaded drain: a predecessor whose event loop is blocked
 // (parallel hosts, a busy turn settling) can take tens of seconds to write its park after this
@@ -35,7 +42,7 @@ export interface ReopenHolder {
  * entry whose session file is gone is logged and dropped. Runs once at host startup.
  */
 export async function reopenHandoverParkedSessions(
-	registry: Pick<RpcSessionRegistry, "openSession"> & { readonly size?: number },
+	open: ParkedSessionOpener,
 	agentDir: string,
 	socket: string,
 	holder?: ReopenHolder,
@@ -70,7 +77,7 @@ export async function reopenHandoverParkedSessions(
 		const parked = await readHandoverParkedSessions(daemonDir);
 		for (const entry of parked) {
 			sawAnyPark = true;
-			await reopenOne(daemonDir, registry, entry, reopenAttempts, heldPolls, holder);
+			await reopenOne(daemonDir, open, entry, reopenAttempts, heldPolls, holder);
 		}
 		const remaining = (await readHandoverParkedSessions(daemonDir)).length;
 		emptyStreak = remaining === 0 ? emptyStreak + 1 : 0;
@@ -82,7 +89,7 @@ export async function reopenHandoverParkedSessions(
 
 async function reopenOne(
 	daemonDir: string,
-	registry: Pick<RpcSessionRegistry, "openSession">,
+	open: ParkedSessionOpener,
 	entry: HandoverParkedEntry,
 	attempts: Map<string, number>,
 	heldPolls?: Map<string, number>,
@@ -94,27 +101,7 @@ async function reopenOne(
 		return;
 	}
 	try {
-		await registry.openSession(
-			{
-				...(entry.cwd !== undefined ? { cwd: entry.cwd } : { cwd: process.cwd() }),
-				sessionPath: entry.sessionPath,
-				...(holder !== undefined
-					? {
-							holderEndpoint: {
-								host_instance: holder.hostInstance,
-								...(holder.hostSocket !== undefined ? { host_socket: holder.hostSocket } : {}),
-							},
-						}
-					: {}),
-				...(entry.durableSessionId !== undefined ? { durableSessionId: entry.durableSessionId } : {}),
-				...(entry.model !== undefined ? { creationModel: entry.model } : {}),
-				...(entry.thinkingLevel !== undefined ? { initialThinkingLevel: entry.thinkingLevel } : {}),
-				...(entry.permissionPreset !== undefined ? { permissionPreset: entry.permissionPreset } : {}),
-				...(entry.promptSurface !== undefined ? { promptSurface: entry.promptSurface } : {}),
-				...(entry.browserEngine !== undefined ? { browserEngine: entry.browserEngine } : {}),
-			},
-			{ retainOnDisconnect: entry.retainOnDisconnect },
-		);
+		await open(entry);
 		// The host started draining while this reopen was in flight: the session landed in a registry
 		// that is handing off, and the drain parks it again. Keep the record so the successor still
 		// reopens it; clearing it here would lose the session when the drain closes it (senpi#3282).

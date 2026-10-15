@@ -79,6 +79,8 @@ type RpcSessionCommand =
 			message: string;
 			images?: ImageContent[];
 			enqueueOrder?: number;
+			/** `"start"` starts a turn with this message when the session is idle (capability `steer_when_idle`). */
+			whenIdle?: RpcWhenIdle;
 	  } & ClientMessageIdentity)
 	| ({
 			id?: string;
@@ -86,6 +88,8 @@ type RpcSessionCommand =
 			message: string;
 			images?: ImageContent[];
 			enqueueOrder?: number;
+			/** `"start"` starts a turn with this message when the session is idle (capability `steer_when_idle`). */
+			whenIdle?: RpcWhenIdle;
 	  } & ClientMessageIdentity)
 	/**
 	 * `effectId` (1-256 chars, capability `effect_ledger`) records the abort as a durable effect BEFORE it is
@@ -398,6 +402,12 @@ export type RpcErrorCode =
 	| typeof RPC_ERROR_RELEASE_UNSUPPORTED
 	| typeof RPC_ERROR_RELEASE_FAILED
 	| typeof RPC_ERROR_HOST_DRAINING;
+
+/** Capability: `steer`/`follow_up` accept `whenIdle: "start"`. */
+export const STEER_WHEN_IDLE_CAPABILITY = "steer_when_idle";
+
+/** What `steer`/`follow_up` do on an idle session: queue (default) or start a turn. */
+export type RpcWhenIdle = "queue" | "start";
 
 /** What `dequeue_message` / `edit_queued_message` did; anything but removed/edited carries reason + action. */
 export interface RpcQueuedInputChange {

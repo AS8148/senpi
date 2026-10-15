@@ -40,6 +40,76 @@ Admission records and their restore on reopen live in the RPC admission ledger.
 
 - `packages/coding-agent/src/modes/rpc/client-admissions.ts`: the top of `admit`.
 
+## 2026-10-14 - A host's own sessions never hold it open (senpi#3272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-observe-request.ts`: the `origin_host_instance` request field, `originHostInstance()` (the generation a process runs in, from `SENPI_RPC_HOST_INSTANCE_ID`) and `requestOriginHostInstance()` (the generation a request line names). They live in this module, which the supervisor already loads, so its import graph stays inside its 55-module budget.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: a socket `RpcClient` running inside a host sends that host's generation as `origin_host_instance` on every request.
+- `packages/coding-agent/src/modes/rpc/host-client-occupancy.ts`: `ClientOccupancy` takes the host's own generation. A connection whose first non-observing request names it is DEPENDENT: not attached, not unclassified, and released without an unknown-admission report.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-activity.ts` and `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: the supervisor classifies its public clients against its generation, so dependents hold neither the idle-exit window nor the owner-death grace.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: a socket host classifies its own connections the same way for its empty-host exit.
+
+### Why
+
+omo keys a task tree's `p` shard by the root session, so a child running in that shard opens its own children on the same shard, through its public socket. Those connections were attached clients, so after the owner and every outside client were gone the shard still held itself open: the idle window never started and the owner-death grace never saw quiescence. A desktop machine kept such shards for days, one with 12 retained sessions and about 18 self-connections (each supervisor fd paired with a host fd in `lsof`), whose heap had peaked at 71 GB.
+
+### Why an extension could not handle it
+
+Occupancy is decided by the supervisor and the socket host from the raw request lines, and the client stamp lives in `RpcClient.send`; extensions see neither.
+
+### Expected merge conflict zones
+
+The classification loop in `ClientOccupancy.admit`, the `fullCommand` literal in `RpcClient.send`, the `SupervisorActivity` options, and the `ClientOccupancy` construction in `runSocketHost`.
+
+## 2026-10-15 - steer and follow_up can start a turn on an idle session (senpi#3224)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `steer` / `follow_up` take `whenIdle?: "queue" | "start"`; capability `steer_when_idle`.
+- `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`: any other `whenIdle` is refused with the valid values.
+- `packages/coding-agent/src/modes/rpc/client-input-handler.ts`: `prompt` and `whenIdle: "start"` share one `promptPath`; the start-or-queue decision is the session's `prompt` with `streamingBehavior`.
+- `packages/coding-agent/src/modes/rpc/host-capabilities.ts`, `connection-handler.ts`: advertise `steer_when_idle`.
+
+### Why
+
+A client could not hand the agent a message that should start work if the agent is idle and join the run otherwise; a steer on an idle session sat in the queue until something else started a turn.
+
+### Why an extension could not handle it
+
+The RPC command surface and its admission receipts live in the RPC handler.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/client-input-handler.ts`: the `prompt` / `steer` / `follow_up` cases.
+
+## 2026-10-15 - The successor reopens a parked session through the host's one open (senpi#3368)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-handover-parked-open.ts` (new): `parkedEntryFromProfile` records a retained session's `open_session` choices from its launch profile (model, thinking level, preset, prompt surface, browser engine, kind, the CLIENT part of its context, auto-titling, retry fallback), stripping the context keys this host merged in. `parkedOpenCommand` replays them as the `open_session` a client would send.
+- `packages/coding-agent/src/modes/rpc/host-handover-parked.ts`: the entry carries `sessionKind`, `sessionContext`, `autoTitle` and `retryFallback` too, each validated on read with the same wire validator `open_session` uses.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: the park records `parkedEntryFromProfile`. A new `reopenParked(entry)` runs the same private `open` as `open_session`, with no requesting connection and no reply.
+- `packages/coding-agent/src/modes/rpc/host-handover-reopen.ts`: the watch takes a `ParkedSessionOpener` instead of the registry; `reopenOne` no longer builds a launch profile of its own.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `createHostCore` gives the watch an opener over `router.reopenParked`, mapping a `session_path_in_use` reply back to the registry error the watch retries on.
+
+### Why
+
+The successor's reopen went straight to `registry.openSession`, so a reopened session skipped everything the router's open does: the host-context merge, `writer.setSessionKind` (a retained worker session became visible in a default `list_sessions`, breaking I4), media persistence, its binding and the drain's settle wake-up. One open implementation for every open, the successor's reopen included, removes the second path instead of copying fields into it. `test/rpc-host-handoff-parked-kind.test.ts` proves the I4 break and its fix; the #3364 preset tests stay green on the same path.
+
+Two consequences of going through the one open, kept deliberately:
+
+- The replay is faithful: `reopenParked` opens with `defaults: false`, so a field the park did not record (`permissionPreset`, model, thinking level) stays empty instead of taking THIS host's default, which the predecessor's session never had (senpi#3376 review, `test/rpc-reopen-parked-defaults.test.ts`). `cwd` is always recorded.
+- A record written by a predecessor older than this change carries no `sessionKind`, so that one upgrade handover still reopens a worker session as interactive. Every handover after it records the kind.
+
+### Why an extension could not handle it
+
+The park record and the successor's reopen are host lifecycle; no extension hook runs there.
+
+### Expected merge conflict zones
+
+`open` and the park record in `session-command-router.ts`; the watch wiring in `createHostCore` (`multi-session-host.ts`).
+
 ## 2026-10-15 - A parked session reopened by the successor keeps its permission preset (senpi#3364)
 
 ### What changed

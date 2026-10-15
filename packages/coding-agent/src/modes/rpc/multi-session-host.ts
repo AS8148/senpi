@@ -37,7 +37,7 @@ import { computeRuntimeBuildId, RUNTIME_IDENTITY_HANDOVER_CAPABILITY } from "./r
 import { type RpcBindingFactory, SessionCommandRouter } from "./session-command-router.ts";
 import { SessionEventWriter } from "./session-event-writer.ts";
 import { canonicalSessionPath } from "./session-path-key.ts";
-import { RpcSessionRegistry } from "./session-registry.ts";
+import { RpcSessionRegistry, RpcSessionRegistryError } from "./session-registry.ts";
 import {
 	PUBLIC_SOCKET_IDENTITY_FILE,
 	readSocketIdentityFile,
@@ -163,11 +163,26 @@ export function createHostCore(
 		},
 	);
 	if (endpointSocket !== undefined)
-		reopenHandoverParkedSessions(registry, options.agentDir, endpointSocket, {
-			hostInstance: hostInstanceId(),
-			hostSocket: endpointSocket,
-			...(hooks.shouldReopenParked !== undefined ? { shouldReopen: hooks.shouldReopenParked } : {}),
-		}).catch((cause: unknown) => {
+		reopenHandoverParkedSessions(
+			async (entry) => {
+				const refused = await router.reopenParked(entry);
+				if (refused?.success !== false) return;
+				const detail =
+					typeof refused.errorData === "object" && refused.errorData !== null && !Array.isArray(refused.errorData)
+						? Object.fromEntries(Object.entries(refused.errorData))
+						: undefined;
+				throw refused.error === "session_path_in_use"
+					? new RpcSessionRegistryError("session_path_in_use", undefined, detail)
+					: new RpcSessionRegistryError("open_failed", refused.error);
+			},
+			options.agentDir,
+			endpointSocket,
+			{
+				hostInstance: hostInstanceId(),
+				hostSocket: endpointSocket,
+				...(hooks.shouldReopenParked !== undefined ? { shouldReopen: hooks.shouldReopenParked } : {}),
+			},
+		).catch((cause: unknown) => {
 			process.stderr.write(`senpi rpc successor reopen parked set failed: ${String(cause)}\n`);
 		});
 	const gate = new HostCoreGate(registry, (command) => router.handle(command), hooks);
@@ -246,7 +261,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 	const connections = new Map<string, Connection>();
 	// The supervisor's rule for which clients hold a host open (host-client-occupancy.ts): a
 	// connection that has only sent observing reads (`status`) is not occupancy.
-	const occupancy = new ClientOccupancy(() => {});
+	const occupancy = new ClientOccupancy(() => {}, hostInstanceId());
 	let draining = false;
 	let handoffAnnounced = false;
 	const hostContext = hostSessionContext(socketPath);
