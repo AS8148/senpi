@@ -40,6 +40,7 @@ import type { OpenRpcSession, RpcSessionLaunchProfile, RpcSessionRegistry } from
 import { RpcSessionRegistryError } from "./session-registry.ts";
 import { releaseSession } from "./session-release.ts";
 import { selectSweepEvictions } from "./session-sweep.ts";
+import { unloadSession } from "./session-unload.ts";
 import { liveToolMediaScope, toolMediaPersister } from "./tool-media-store.ts";
 
 /** How often a draining host re-checks whether the work it is waiting for has settled. */
@@ -385,6 +386,37 @@ export class SessionCommandRouter {
 				},
 				command,
 			);
+		if (command.type === "unload_session") {
+			const caller = this.writer.currentConnection();
+			return unloadSession(
+				{
+					draining: () => this.draining,
+					by: { connectionId: caller ?? "host" },
+					lookup: (sessionId) => this.registry.getForCommand(sessionId, "unload_session"),
+					code: (cause) => this.code(cause),
+					// The unload is itself one of the session's in-flight requests.
+					otherRequests: (sessionId) => Math.max(0, (this.activeRequests.get(sessionId) ?? 1) - 1),
+					otherRequestsSettled: (sessionId) => this.otherRequestsSettled(sessionId),
+					pendingPrompts: (sessionId) => this.bindings.get(sessionId)?.pendingPrompts?.() ?? [],
+					otherAttachments: (sessionId) => {
+						const attachments = Math.max(0, this.registry.peek(sessionId)?.attachments ?? 0);
+						const own = caller !== undefined && this.sessionsByConnection.get(caller)?.has(sessionId) === true;
+						return own ? Math.max(0, attachments - 1) : attachments;
+					},
+					openChildSessions: (durableSessionId) =>
+						this.registry
+							.list()
+							.filter(
+								(row) =>
+									row.durableSessionId !== durableSessionId &&
+									(row.context?.parent_session_id === durableSessionId ||
+										row.context?.root_session_id === durableSessionId),
+							).length,
+					tearDown: (sessionId, sessionPath) => this.tearDownUnloaded(sessionId, sessionPath),
+				},
+				command,
+			);
+		}
 		if (command.type === "set_client_info" && !command.sessionId) {
 			const connection = this.writer.currentConnection();
 			if (connection !== undefined) {
@@ -531,7 +563,7 @@ export class SessionCommandRouter {
 				// A drain names ITS reason on the close record. An idle sweep of a RETAINED
 				// session parks instead: the file reopens by path. Anything else is a close.
 				parkedPath !== undefined && reason === undefined
-					? this.writer.parkSession(sessionId, parkedPath)
+					? this.writer.parkSession(sessionId, parkedPath, "idle")
 					: this.writer.closeSession(
 							sessionId,
 							{ type: "response", command: "close_session", success: true, data: {} },
@@ -580,6 +612,22 @@ export class SessionCommandRouter {
 		this.forgetSessionOwnership(sessionId);
 		if (claim.finalizer)
 			await this.finalizeClose(sessionId, binding, () => this.writer.releaseSession(sessionId, sessionPath));
+		else await this.finalizations.get(sessionId)?.promise;
+		this.writer.forgetSession(sessionId);
+		return true;
+	}
+
+	/** The idle park on request: every attachment drained, sealed `session_parked { reason: "unloaded" }`. */
+	private async tearDownUnloaded(sessionId: string, sessionPath: string): Promise<boolean> {
+		const claim = this.tryClaimClose(sessionId, { drainAttachments: true });
+		if (!claim) return false;
+		const binding = this.bindings.get(sessionId);
+		binding?.cancelPendingExtensionUiRequests?.();
+		this.forgetSessionOwnership(sessionId);
+		if (claim.finalizer)
+			await this.finalizeClose(sessionId, binding, () =>
+				this.writer.parkSession(sessionId, sessionPath, "unloaded"),
+			);
 		else await this.finalizations.get(sessionId)?.promise;
 		this.writer.forgetSession(sessionId);
 		return true;

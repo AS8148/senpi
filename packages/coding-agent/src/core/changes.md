@@ -1,3 +1,79 @@
+## 2026-10-15 - AgentSession.activeWakeSources (senpi#3225)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `activeWakeSources` reads the wake-source tracker's live source names, so `unload_session` can tell child tasks from other extension work.
+
+### Why
+
+Unload eligibility depends on which extension work is live, not only on whether any is.
+
+### Why an extension could not handle it
+
+The tracker is private session state.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: next to `activitySnapshot`.
+
+## 2026-10-15 - A user cost override drops scheduled catalog cards (senpi#3378)
+
+### What changed
+
+- `packages/coding-agent/src/core/provider-composer.ts`: when `models.json` overrides any part of a model's `cost`, the merged cost keeps the override's rates and tiers but not the catalog's `effectiveRates`.
+
+### Why
+
+- A user-set price is the price. Keeping the catalog's scheduled cards would silently replace it on their start date (senpi#3378).
+
+### Why an extension could not handle it
+
+- The override merge runs inside the core provider composer before any extension sees the model.
+
+### Expected merge conflict zones
+
+- LOW: the `cost` branch of the model override merge.
+
+## 2026-10-15 - A replacement's abort names the replacement on agent_end (senpi#3357)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `abort({ cause })` records the cause (the first one wins) until the aborted run's `agent_end` carries it as `abortCause` (type `AgentAbortCause`, exported); a new run drops a stale one.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `teardownCurrent` passes `{ kind: "session_replaced", reason, targetSessionFile, targetSessionId }` for `new` / `fork` / `resume` (the in-memory fork names no file or id: it gets its id only after the teardown); `reload` and `quit` pass none.
+
+### Why
+
+A replacement aborts the running turn before `session_replaced`; a client that did not ask for the abort saw a bare aborted turn with no reason (omo#10112).
+
+### Why an extension could not handle it
+
+The teardown abort and the `agent_end` it produces are runtime internals that run before any extension learns of the replacement.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: `abort()` and the `agent_end` emit in `_processAgentEvent`.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `teardownCurrent` and its callers.
+
+## 2026-10-15 - An idle prompt with streamingBehavior claims the turn start (senpi#3224)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_prompt` claims `_promptStartPending` for every idle submission, `streamingBehavior` or not; the queue decisions read the claim state from before the call (`startWasPending`), and a claimed call that ends up queueing releases the claim before it enqueues.
+
+- `packages/coding-agent/src/core/agent-session.ts` (review fix): a start claim records whether it started its turn; releasing one that did not (rejected, or handled by an extension or command) schedules a continuation that runs the input that joined it, and only when something joined that claim (input queued on an idle session by default still waits) (`continueWithQueuedMessages`, so an empty or assistant-ended transcript cannot refuse it), and a later joiner that sees a failed claim takes the start over. `PromptOptions.enqueueOrder` keeps a replaying client's order when a `whenIdle: "start"` input ends up queued.
+
+### Why
+
+Two queue-or-start submissions arriving together on an idle session both started a turn, because neither claimed the start. Releasing the claim before enqueueing keeps a queued input from being diverted into the post-compaction deferred list.
+
+### Why an extension could not handle it
+
+Turn admission is `AgentSession` state.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the start of `_prompt` (`ownsPromptStart`, `canQueueWhileStreaming`, `canQueueDuringAutoCompaction`) and its queue branches.
+
 ## 2026-10-15 - Requests record subscription limit windows (senpi#3370)
 
 ### What changed
