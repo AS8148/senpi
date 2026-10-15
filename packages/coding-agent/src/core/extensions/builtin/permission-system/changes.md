@@ -7,6 +7,7 @@
 - `storage.ts`:
   - `readRules(path, requireSource)`: the one-time import of `<cwd>/.senpi/permissions-approved.jsonl` still requires an allow, a concrete permission and a well-formed pattern, but not the `source` marker. Store reads keep requiring the marker.
   - A failed import removes the partial store and marker, so the next load retries.
+  - The legacy file is deleted only when every line was imported; a file with a refused line stays on disk (the marker keeps it from being read again).
   - The comments no longer call the marker a security boundary.
 - `service.ts`:
   - `canonicalForCompare` resolves a path that does not exist yet through its parent's real path, so the agent cannot create the store before the first answer is written.
@@ -20,6 +21,7 @@ senpi never wrote a `source` field before the store moved. Requiring it made the
 
 `test/permission/approved-store-security.test.ts`:
 - "migrates a pre-PR approval line, which never carried a source marker, and keeps it working";
+- "never deletes a legacy file it did not fully import";
 - the forgery case drops only the wildcard permission and non-allow lines;
 - the forgery test file's symlink and post-migration-plant cases.
 

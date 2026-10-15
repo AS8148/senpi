@@ -95,8 +95,9 @@ function readRules(filePath: string, requireSource = true): Ruleset {
 /**
  * Loads the project's approved rules from the agent-dir store. On first load for a project, a
  * legacy `<cwd>/.senpi/permissions-approved.jsonl` is imported ONCE (allow-only, concrete
- * permission, well-formed pattern; no source marker, which pre-store lines never had) and then
- * REMOVED, so a line planted there later is never honored. A failed import removes any partial store
+ * permission, well-formed pattern; no source marker, which pre-store lines never had). The file is
+ * removed only when every line was imported; either way the marker means a line planted there later
+ * is never honored. A failed import removes any partial store
  * and leaves the legacy file, so the next load retries. Later loads read only the store.
  */
 export function loadApproved(agentDir: string, projectDir: string): Ruleset {
@@ -107,13 +108,19 @@ export function loadApproved(agentDir: string, projectDir: string): Ruleset {
 
 	if (!alreadyMigrated && fs.existsSync(legacyPath)) {
 		const imported = readRules(legacyPath, false);
+		const legacyLines = fs
+			.readFileSync(legacyPath, "utf-8")
+			.split("\n")
+			.filter((line) => line.trim() !== "").length;
 		try {
 			const dir = path.dirname(storePath);
 			if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 			const lines = imported.map((rule) => JSON.stringify({ ...rule, source: USER_ANSWER_SOURCE })).join("\n");
 			fs.writeFileSync(storePath, lines ? `${lines}\n` : "", { flag: "w" });
 			fs.writeFileSync(migratedMarker, "");
-			fs.rmSync(legacyPath, { force: true });
+			// Remove the legacy file only when every line made it into the store: a line the import
+			// refused stays on disk for the user to see, and the marker keeps it from ever being read.
+			if (imported.length === legacyLines) fs.rmSync(legacyPath, { force: true });
 		} catch (error) {
 			// Undo a partial import, so "already migrated" stays false and the next load retries it.
 			fs.rmSync(storePath, { force: true });

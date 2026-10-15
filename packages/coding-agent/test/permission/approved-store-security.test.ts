@@ -75,6 +75,26 @@ describe("HIGH 1: the approvals store moves out of the workspace and resists for
 		expect(fs.existsSync(path.join(legacyDir, "permissions-approved.jsonl"))).toBe(false);
 	});
 
+	it("never deletes a legacy file it did not fully import", () => {
+		// given a legacy file with one importable allow and one line the import must refuse
+		const legacyDir = path.join(projectDir, ".senpi");
+		const legacy = path.join(legacyDir, "permissions-approved.jsonl");
+		fs.mkdirSync(legacyDir, { recursive: true });
+		const content =
+			'{"permission":"bash","pattern":"git status","action":"allow"}\n{"permission":"bash","pattern":"rm *","action":"deny"}\n';
+		fs.writeFileSync(legacy, content);
+
+		// when the one-time import runs, and the store loads again later
+		const migrated = loadApproved(agentDir, projectDir);
+		const later = loadApproved(agentDir, projectDir);
+
+		// then the importable line is in the store, and the file (with the line it skipped) is untouched
+		const expected = [{ permission: "bash", pattern: "git status", action: "allow" }];
+		expect(migrated).toEqual(expected);
+		expect(later).toEqual(expected);
+		expect(fs.readFileSync(legacy, "utf8")).toBe(content);
+	});
+
 	it("drops a forged line planted in the legacy file (wildcard permission, non-allow)", () => {
 		// given a legacy file mixing forged lines with valid pre-PR and user-answer lines
 		const legacyDir = path.join(projectDir, ".senpi");
