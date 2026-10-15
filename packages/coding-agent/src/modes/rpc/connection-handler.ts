@@ -1,3 +1,4 @@
+import { messagePathProjectRoot, resolveMessagePath } from "../../core/message-path-resolution.ts";
 import { clientFacingIdentity } from "./client-admission-record.ts";
 /**
  * Per-connection RPC handler.
@@ -1439,6 +1440,17 @@ export function createRpcConnectionHandler(
 				const stats = session.getSessionStats();
 				return success(id, "get_session_stats", stats);
 			}
+
+			case "resolve_path":
+				return success(
+					id,
+					"resolve_path",
+					resolveMessagePath({
+						path: command.path,
+						cwd: session.cwd,
+						projectRoot: messagePathProjectRoot(session.cwd),
+					}),
+				);
 
 			case "memory_report": {
 				const answer = await answerMemoryReport(session);
