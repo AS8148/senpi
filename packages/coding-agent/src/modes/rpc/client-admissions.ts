@@ -16,6 +16,7 @@ import {
 	ClientMessageIdConflict,
 	clientAdmissionRecordSchema,
 	clientInputFingerprint,
+	HOST_MINTED_ID_PREFIX,
 	type RpcClientInput,
 } from "./client-admission-record.ts";
 import { EFFECT_OUTCOMES, turnErrorOutcome } from "./effect-outcome-copy.ts";
@@ -63,7 +64,8 @@ export class ClientAdmissions {
 				this.records.set(parsed.data.clientMessageId, parsed.data);
 			}
 		}
-		this.hasIdentities = this.records.size > 0;
+		// Only ids a client sent switch on event correlation; ids the host minted stay internal.
+		this.hasIdentities = [...this.records.values()].some((record) => record.hostMinted !== true);
 		// A ledger is built once per loaded session, so no turn can be live for a `running` record it
 		// reads: that turn belonged to a process or load that is gone. Seal it before queued input is
 		// restored, or the receipt reads `running` forever.
@@ -221,7 +223,8 @@ export class ClientAdmissions {
 			return undefined;
 		}
 		const clientMessageId =
-			command.clientMessageId ?? `host:${this.session.sessionManager.getSessionId()}:${randomUUID()}`;
+			command.clientMessageId ??
+			`${HOST_MINTED_ID_PREFIX}${this.session.sessionManager.getSessionId()}:${randomUUID()}`;
 		const fingerprint = clientInputFingerprint(command);
 		const pending = this.pending.get(clientMessageId);
 		const existing = this.records.get(clientMessageId);

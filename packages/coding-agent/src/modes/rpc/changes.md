@@ -2,7 +2,8 @@
 
 ### What changed
 
-- `packages/coding-agent/src/modes/rpc/client-admissions.ts`: an id-less `steer` / `follow_up` is admitted under a host-minted `host:<durableSessionId>:<uuid>` and recorded like a client id (`hostMinted: true`); the identity reaches the input through `AdmissionHooks.identity`; the response does not echo it, and `hasIdentities` is not flipped by it.
+- `packages/coding-agent/src/modes/rpc/client-admissions.ts`: an id-less `steer` / `follow_up` is admitted under a host-minted `host:<durableSessionId>:<uuid>` and recorded like a client id (`hostMinted: true`); the identity reaches the input through `AdmissionHooks.identity`; the response does not echo it, and `hasIdentities` is not flipped by it (including after a reopen: only records a client sent count).
+- `packages/coding-agent/src/modes/rpc/client-admission-record.ts`, `client-message-events.ts`, `rpc-session-state.ts`, `connection-handler.ts`: `HOST_MINTED_ID_PREFIX` / `clientFacingIdentity` take a minted id out of every client-facing projection: `ordered` in `get_state` and `queue_update`, the steering/follow-up listings, and event correlation.
 - `packages/coding-agent/src/modes/rpc/client-admission-record.ts`: the optional `hostMinted` marker.
 - `packages/coding-agent/src/modes/rpc/client-input-handler.ts`: `steer` / `follow_up` stamp `hooks.identity`.
 

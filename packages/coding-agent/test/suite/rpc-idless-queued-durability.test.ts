@@ -25,6 +25,8 @@ describe("id-less queued input durability", () => {
 		const minted = (admissions[0]?.data as { clientMessageId?: string; hostMinted?: boolean } | undefined) ?? {};
 		expect(minted.hostMinted).toBe(true);
 		expect(minted.clientMessageId).toMatch(/^host:/);
+		const before = await client.request({ type: "get_state", sessionId: opened.sessionId });
+		expect(((before.data?.ordered ?? []) as Ordered[]).map((input) => input.clientMessageId)).toEqual([undefined]);
 		await first.stop();
 
 		const second = await world.start();
@@ -34,6 +36,8 @@ describe("id-less queued input durability", () => {
 		const state = await reader.request({ type: "get_state", sessionId: reopened.sessionId });
 		const ordered = (state.data?.ordered as Ordered[] | undefined) ?? [];
 		expect(ordered.map((input) => input.text)).toEqual(["no-id steer"]);
+		// The minted id is internal: no client-facing projection carries it, before or after the restart.
+		expect(ordered.map((input) => input.clientMessageId)).toEqual([undefined]);
 
 		const queuedStatus = await reader.request({
 			type: "get_effect_status",
@@ -42,6 +46,7 @@ describe("id-less queued input durability", () => {
 		});
 		expect(queuedStatus.data?.effect).toMatchObject({ kind: "input", state: "accepted" });
 
+		const firstRecord = reader.records.length;
 		const started = reader.wait((record) => record.type === "agent_start" && record.sessionId === reopened.sessionId);
 		await reader.request({ type: "prompt", sessionId: reopened.sessionId, message: "go" });
 		await started;
@@ -54,6 +59,15 @@ describe("id-less queued input durability", () => {
 				JSON.stringify((entry as { message?: unknown }).message ?? {}).includes("no-id steer"),
 		);
 		expect(delivered).toHaveLength(1);
+		// Correlation fields are client-facing: none may name the minted id (the stored user message keeps it).
+		const leaked = reader.records
+			.slice(firstRecord)
+			.filter(
+				(record) =>
+					String(record.clientMessageId ?? "").startsWith("host:") ||
+					JSON.stringify(record.clientMessages ?? []).includes("host:"),
+			);
+		expect(leaked.map((record) => record.type)).toEqual([]);
 		const finalStatus = await reader.request({
 			type: "get_effect_status",
 			sessionId: reopened.sessionId,
