@@ -6,18 +6,27 @@
 
 ### Added
 
-- Multi-session RPC hosts stream session status: `subscribe_sessions` returns a snapshot, then a `session_status` record (status, attachments, model, queue counts, cause) per change with a gap-free per-subscription `seq`, without attaching or refreshing the idle window. Filters cover all sessions, ids or `childrenOf`; `include_workers`, `include_context` and an opt-in `mirror` of content kinds are available. `session_opened` is now emitted for every new session, `set_session_context` patches a session's published context, and a connection attached to several sessions hears one `loaded_surfaces_changed` per surface change. Each subscription's snapshot answer arrives before its first `seq 1` record, subscriptions are capped at 64 per connection (`subscription_limit`), `childrenOf` matches the lineage frozen at open (`set_session_context` refuses `parent_session_id` and `root_session_id`), a rolled-back open leaves subscribers a terminal record, and stdio hosts refuse subscriptions with `unsupported_transport` ([#3157](https://github.com/code-yeongyu/senpi/issues/3157), [#3155](https://github.com/code-yeongyu/senpi/issues/3155)).
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.15] - 2026-10-15
+
+### Breaking Changes
+
+### Added
 
 - Shared RPC hosts publish each session holder's public socket and host instance in validated lease evidence. Clients can pass `open_session.expectedHostInstance` to attach only to that live host generation; a changed owner or released path returns a typed refusal with a rediscovery action instead of creating another writer ([#3255](https://github.com/code-yeongyu/senpi/issues/3255), [#3257](https://github.com/code-yeongyu/senpi/pull/3257)).
 
 - Dual-era MCP client: servers speaking the 2026-07-28 stateless spec revision (no `initialize`, per-request `_meta`, `MCP-Protocol-Version` / `Mcp-Method` / `Mcp-Name` headers, `server/discover`) now connect, while legacy initialize-handshake servers keep working through spec-driven auto-negotiation (HTTP: modern request first with 400-body classification; stdio: discover-first probe; era cached per origin/process). Modern-only servers receive zero legacy handshake traffic through an SDK-compatibility bridge that answers the SDK client's `initialize` locally from the discovery result. Connect diagnostics log the negotiated era and protocol version per server. Modern-only stdio servers work too: the spawned process answers `server/discover` first, then every request carries the per-request `_meta`, with no `initialize` sent ([#3304](https://github.com/code-yeongyu/senpi/issues/3304), reported by @changeroa).
 
-- `subscribe_sessions` gains `effects` (default on for `childrenOf`): matched sessions stream `effect_status` receipts (`accepted`/`applied`/`done`/`failed`) on the subscription's gap-free `seq`, each emitted after the record that caused the transition, and `session_status.lastEffect` names a session's latest receipt ([#3157](https://github.com/code-yeongyu/senpi/issues/3157)).
-
 - RPC effect ledger (capability `effect_ledger`): `abort`, `set_model` and `set_thinking_level` take an optional `effectId` and get a durable receipt written before the effect is applied; a retry with the same id replays the receipt instead of acting twice, and a different request under that id is refused with `effect_id_conflict`. `get_effect_status` answers any receipt by id, including inputs by `clientMessageId`, from a loaded session or from a transcript on disk. Input receipts now say how their turn ended (completed, aborted and by whom, error), a reopened session seals receipts its dead process left running, and queued input dropped by `new_session`/`switch_session` reads `failed` instead of vanishing ([#3199](https://github.com/code-yeongyu/senpi/issues/3199)).
 
 ### Changed
 
+- The built-in default model for `anthropic-subscription` and `anthropic` is now `claude-opus-5-5` (was `claude-opus-4-8`). It applies only when no model is saved in settings and none is passed on the command line ([#3179](https://github.com/code-yeongyu/senpi/pull/3179)).
 ### Fixed
 
 - `senpi host gc`, and the cleanup pass that runs after starting a host, now stop a host left behind by an older engine once it holds no session, no reservation and no client and has outlived its own idle window plus 10 minutes. Such hosts used to linger for days after an update, because their old idle logic was the only thing that could end them. `senpi host status --all` marks them `stale_old_engine`. A host with any session or connected client is never stopped ([#3268](https://github.com/code-yeongyu/senpi/issues/3268)).
@@ -26,6 +35,8 @@
 - `senpi host session` commands now return only after the host has dropped their attachment: on a host that advertises the new `detach_connection` capability the client asks for the detach and waits for the answer (bounded at 5 s, with one plain line if it never comes), so a listing right after `open` no longer shows the short-lived client as still attached. A connection leaving a session that another client also holds now releases its attachment at once, even while a turn runs; only the last attachment of a non-retained session still waits for the turn to settle. After a request timed out or the connection was lost, the client closes without asking for the detach. Older hosts keep the release on socket close. ([#3238](https://github.com/code-yeongyu/senpi/issues/3238))
 
 - A flaky network no longer strands a session on a fallback model. A timeout or connection reset that outlasts the same-model retries may finish that one turn on the next model in the chain, but it no longer puts the primary on a cooldown or opens its circuit, so the next turn goes back to the primary. A rate limit, quota or overload error keeps its existing fallback behavior ([#3306](https://github.com/code-yeongyu/senpi/issues/3306), reported in the OmO community).
+
+- With no default model set, startup no longer settles on a model too small to start (for example a small custom model imported from OpenCode) and crashes with a stack trace. It moves to the next available model that fits and says why. If none fits, it prints one line naming the model, how it was chosen and what to do, then exits. A model you chose yourself is never swapped ([#3333](https://github.com/code-yeongyu/senpi/issues/3333), reported by @taxilian).
 
 - A model that hit a usage limit and fell back now returns when that limit's own reset passes ("resets 3pm", `resets_at`, or "resets in 9 minutes"), instead of staying on the fallback for a cooldown that doubled past the window with every failed retry. A short hint such as "retry in 7s", even on a spent quota, and a plain Retry-After still keep the doubling cooldown, so a failing provider is not retried every few seconds ([#3314](https://github.com/code-yeongyu/senpi/issues/3314), reported in the OmO community).
 
