@@ -1,6 +1,7 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
+import { elidedImageIds, imageContentId } from "../src/core/image-elision-placeholder.ts";
 import {
 	BLOCKED_IMAGE_PLACEHOLDER,
 	convertToLlmForTransport,
@@ -8,6 +9,8 @@ import {
 	IMAGE_ELISION_PLACEHOLDER,
 	TRANSPORT_IMAGE_BUDGET_BYTES,
 } from "../src/core/messages.ts";
+
+const ELIDED = expect.stringMatching(/^\[Image elided: .+ \(image ids?: [0-9a-f]{12}(, [0-9a-f]{12})*\)$/);
 
 function img(data: string) {
 	return { type: "image", data, mimeType: "image/png" } as const;
@@ -59,7 +62,7 @@ describe("elideOldImages", () => {
 			"image",
 			"image",
 		]);
-		expect((result[0].content as Array<{ type: string; text?: string }>)[0].text).toBe(IMAGE_ELISION_PLACEHOLDER);
+		expect((result[0].content as Array<{ type: string; text?: string }>)[0].text).toEqual(ELIDED);
 	});
 
 	it("keeps the newest block regardless of size and charges it to the budget", () => {
@@ -97,7 +100,7 @@ describe("elideOldImages", () => {
 
 		expect(result[0].content).toEqual([
 			{ type: "text", text: "Read image file [image/png]" },
-			{ type: "text", text: IMAGE_ELISION_PLACEHOLDER },
+			{ type: "text", text: ELIDED },
 		]);
 	});
 
@@ -109,7 +112,12 @@ describe("elideOldImages", () => {
 
 		const result = elideOldImages(messages, { budgetBytes: 60, alwaysKeepNewest: 0 });
 
-		expect(result[0].content).toEqual([{ type: "text", text: IMAGE_ELISION_PLACEHOLDER }]);
+		expect(result[0].content).toEqual([
+			{
+				type: "text",
+				text: `${IMAGE_ELISION_PLACEHOLDER} (image ids: ${imageContentId("A".repeat(60))}, ${imageContentId("B".repeat(60))})`,
+			},
+		]);
 	});
 
 	it("treats later blocks within a message as newer", () => {
@@ -177,8 +185,8 @@ describe("elideOldImages", () => {
 			maxHistoricalImages: 1,
 		});
 
-		expect(result[0].content).toEqual([{ type: "text", text: IMAGE_ELISION_PLACEHOLDER }]);
-		expect(result[2].content).toEqual([{ type: "text", text: IMAGE_ELISION_PLACEHOLDER }]);
+		expect(result[0].content).toEqual([{ type: "text", text: ELIDED }]);
+		expect(result[2].content).toEqual([{ type: "text", text: ELIDED }]);
 		expect(result[4].content).toEqual([img("recent-history")]);
 		expect(result[6].content).toEqual([img("current-a"), img("current-b")]);
 	});
@@ -201,7 +209,7 @@ describe("elideOldImages", () => {
 			toolCallId: "c1",
 			toolName: "read",
 			content: [
-				{ type: "text", text: IMAGE_ELISION_PLACEHOLDER },
+				{ type: "text", text: ELIDED },
 				{ type: "text", text: "OCR result" },
 			],
 		});
@@ -228,7 +236,7 @@ describe("elideOldImages across a growing session (senpi#2768)", () => {
 	const elidedIndexes = (result: Message[]): number[] =>
 		result.flatMap((message, index) =>
 			(message.content as Array<{ type: string; text?: string }>).some(
-				(block) => block.text === IMAGE_ELISION_PLACEHOLDER,
+				(block) => elidedImageIds(block.text ?? "") !== undefined,
 			)
 				? [index]
 				: [],
@@ -303,7 +311,7 @@ describe("convertToLlmForTransport", () => {
 
 		expect((result[0].content as Array<{ type: string; text?: string }>)[0]).toEqual({
 			type: "text",
-			text: IMAGE_ELISION_PLACEHOLDER,
+			text: ELIDED,
 		});
 		expect((result[1].content as Array<{ type: string }>)[0].type).toBe("image");
 	});

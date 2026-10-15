@@ -109,4 +109,29 @@ describe("anthropic-subscription: transport image elision must not read as a div
 		expect(decision.kind).not.toBe("delta");
 		expect(decision.reason).toBe("sent_stream_diverged");
 	});
+
+	for (const [change, edit] of [
+		[
+			"replaced by different bytes",
+			(content: { type: string; data?: string }[]) =>
+				content.splice(1, 1, { type: "image", data: "Z".repeat(1024) }),
+		],
+		["removed", (content: { type: string; data?: string }[]) => content.splice(1, 1)],
+	] as const) {
+		it(`still reports an already-sent image ${change} as sent_stream_diverged`, () => {
+			const messages: Message[] = [
+				{ role: "user", content: [{ type: "text", text: "use the computer" }], timestamp: 0 },
+			];
+			appendScreenshotTurn(messages, 1, 1024);
+			appendScreenshotTurn(messages, 2, 1024);
+			const sent = transportHashes(messages);
+			const changed = structuredClone(messages);
+			edit((changed[2] as unknown as { content: { type: string; data?: string }[] }).content);
+			appendScreenshotTurn(changed, 3, 1024);
+
+			const decision = decide(sent, transportHashes(changed));
+			expect(decision.kind).not.toBe("delta");
+			expect(decision.reason).toBe("sent_stream_diverged");
+		});
+	}
 });

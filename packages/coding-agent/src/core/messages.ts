@@ -14,6 +14,7 @@ import {
 	type TextContent,
 } from "@earendil-works/pi-ai";
 import { ENVIRONMENT_CONTEXT_MESSAGE_TYPE, foldEnvironmentContextIntoNextUserMessage } from "./environment-context.ts";
+import { replaceElidedImages } from "./image-elision-placeholder.ts";
 import { omitProviderRejectedImages } from "./provider-rejected-images.ts";
 import { appendToolResultUserWords } from "./tool-result-user-words.ts";
 
@@ -276,8 +277,7 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
  */
 export const TRANSPORT_IMAGE_BUDGET_BYTES = 24 * 1024 * 1024;
 
-export const IMAGE_ELISION_PLACEHOLDER =
-	"[Image elided: an older image was removed to keep the request within the provider's size limit. Re-read the source file if you need to view it again.]";
+export { IMAGE_ELISION_PLACEHOLDER } from "./image-elision-placeholder.ts";
 
 export const BLOCKED_IMAGE_PLACEHOLDER = "Image reading is disabled.";
 
@@ -393,12 +393,11 @@ export function elideOldImages(messages: Message[], options?: ElideOldImagesOpti
 			return message;
 		}
 
-		const replaced = message.content.map((block, blockIndex): TextContent | ImageContent =>
-			imagesToElide.has(`${messageIndex}:${blockIndex}`) ? { type: "text", text: IMAGE_ELISION_PLACEHOLDER } : block,
-		);
 		return {
 			...message,
-			content: dedupeConsecutivePlaceholder(replaced, IMAGE_ELISION_PLACEHOLDER) as typeof message.content,
+			content: replaceElidedImages(message.content, (blockIndex) =>
+				imagesToElide.has(`${messageIndex}:${blockIndex}`),
+			) as typeof message.content,
 		};
 	});
 }
