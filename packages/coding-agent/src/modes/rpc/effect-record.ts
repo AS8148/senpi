@@ -27,6 +27,7 @@ export const effectOutcomeSchema = z.object({
 		"context_budget",
 		"already_delivered",
 		"not_found",
+		"refused",
 	]),
 	reason: z.string().optional(),
 	detail: z.string().optional(),
