@@ -1,7 +1,9 @@
-import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { handleClientInput } from "../../../src/modes/rpc/client-input-handler.ts";
-import { createHarness, type Harness } from "../harness.ts";
+import { createHarness, getUserTexts, type Harness } from "../harness.ts";
 
 // senpi#3224: a `steer { whenIdle: "start" }` that arrives right after agent_end, before agent_idle, never
 // starts a second concurrent turn and is never left queued on an idle session.
@@ -103,5 +105,88 @@ describe("steer whenIdle start in the agent_end window (senpi#3224)", () => {
 		expect(dispositions).toEqual(["queued", "started"]);
 		expect(starts).toBe(1);
 		expect(session.pendingMessageCount).toBe(0);
+	});
+});
+
+describe("a start claim that never starts its turn (senpi#3224 review)", () => {
+	let harness: Harness | undefined;
+	afterEach(() => harness?.cleanup());
+
+	it.each([
+		{ form: "steer whenIdle start", second: { type: "steer", whenIdle: "start" } },
+		{ form: "prompt streamingBehavior steer", second: { type: "prompt", streamingBehavior: "steer" } },
+	] as const)("starts the joined input when the claimer is rejected ($form)", async ({ second }) => {
+		harness = await createHarness({ settings: { retry: { enabled: false } } });
+		const session = harness.session;
+		harness.setResponses([fauxAssistantMessage("answered second")]);
+		let starts = 0;
+		session.subscribe((event) => {
+			if (event.type === "agent_start") starts += 1;
+		});
+		const responses: Array<Record<string, unknown>> = [];
+		const io = {
+			output: (record: object) => responses.push(record as Record<string, unknown>),
+			promptCalls: new Set<Promise<unknown>>(),
+		};
+
+		const first = handleClientInput(
+			session,
+			{ id: "a", type: "prompt", message: "/nosuchcommand", streamingBehavior: "steer" },
+			io,
+		);
+		const joined = handleClientInput(session, { id: "b", message: "second", ...second }, io);
+		await Promise.all([first, joined]);
+		await Promise.allSettled([...io.promptCalls]);
+		await session.waitForIdle();
+		await session.waitForSettledSessionWork();
+
+		// The joined input was accepted into the start it joined and, that start having failed, runs anyway.
+		expect(starts).toBe(1);
+		expect(session.pendingMessageCount).toBe(0);
+		expect(getUserTexts(harness)).toEqual(["second"]);
+		expect(responses.find((record) => record.id === "b")).toMatchObject({ success: true });
+	});
+});
+
+describe("whenIdle start keeps the client's enqueueOrder when it queues (senpi#3224 review)", () => {
+	let harness: Harness | undefined;
+	afterEach(() => harness?.cleanup());
+
+	it("sorts a queued whenIdle start input by the enqueueOrder it carried", async () => {
+		const gate = Promise.withResolvers<void>();
+		const wait: AgentTool = {
+			name: "wait",
+			label: "Wait",
+			description: "Wait for release",
+			parameters: Type.Object({}),
+			execute: async () => {
+				await gate.promise;
+				return { content: [{ type: "text", text: "released" }], details: {} };
+			},
+		};
+		harness = await createHarness({ tools: [wait], settings: { retry: { enabled: false } } });
+		const session = harness.session;
+		harness.setResponses([
+			fauxAssistantMessage([fauxToolCall("wait", {})], { stopReason: "toolUse" }),
+			fauxAssistantMessage("done"),
+		]);
+		const toolStarted = Promise.withResolvers<void>();
+		session.subscribe((event) => {
+			if (event.type === "tool_execution_start") toolStarted.resolve();
+		});
+		const io = { output: () => {}, promptCalls: new Set<Promise<unknown>>() };
+		const run = session.prompt("start");
+		await toolStarted.promise;
+
+		await handleClientInput(
+			session,
+			{ id: "late", type: "steer", message: "sent first", whenIdle: "start", enqueueOrder: 10 },
+			io,
+		);
+		await handleClientInput(session, { id: "early", type: "steer", message: "sent second", enqueueOrder: 5 }, io);
+
+		expect(session.getQueuedInputs().map((input) => input.text)).toEqual(["sent second", "sent first"]);
+		gate.resolve();
+		await run;
 	});
 });

@@ -13,7 +13,12 @@ import { RPC_ERROR_UNKNOWN_COMMAND } from "./rpc-types.ts";
 
 type PromptPathOptions = Pick<
 	PromptOptions,
-	"streamingBehavior" | "thinkingLevel" | "sessionTitlePrompt" | "expandPromptTemplates" | "unknownCommandAsText"
+	| "streamingBehavior"
+	| "thinkingLevel"
+	| "sessionTitlePrompt"
+	| "expandPromptTemplates"
+	| "unknownCommandAsText"
+	| "enqueueOrder"
 >;
 
 type InputOutput = {
@@ -101,7 +106,10 @@ export async function handleClientInput(
 					case "steer":
 					case "follow_up": {
 						if (command.whenIdle === "start")
-							return promptPath({ streamingBehavior: command.type === "steer" ? "steer" : "followUp" });
+							return promptPath({
+								streamingBehavior: command.type === "steer" ? "steer" : "followUp",
+								enqueueOrder: command.enqueueOrder,
+							});
 						const options = {
 							...clientMessageIdentity(command),
 							enqueueOrder: command.enqueueOrder,
