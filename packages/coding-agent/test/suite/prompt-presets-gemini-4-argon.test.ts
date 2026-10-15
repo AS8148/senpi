@@ -72,7 +72,7 @@ function render(surface: PromptSurface, selectedTools: string[]): { argon: strin
 	return { argon, base: buildDynamicSystemPrompt(input) };
 }
 
-describe("Gemini 4 Argon prompt preset (#3385)", () => {
+describe("Argon prompt preset (#3385)", () => {
 	it.each([
 		"gemini-4-argon",
 		"google/gemini-4-argon",
@@ -93,7 +93,7 @@ describe("Gemini 4 Argon prompt preset (#3385)", () => {
 		},
 	);
 
-	it("returns the preset for every Gemini 4 Argon built-in catalog model", () => {
+	it("returns the preset for every Argon built-in catalog model", () => {
 		const catalogModels = getArgonCatalogModels();
 		expect(catalogModels.length).toBeGreaterThan(0);
 		const misses = catalogModels

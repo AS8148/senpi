@@ -251,12 +251,12 @@ export function isClaudeHaiku55Model(modelId: string): boolean {
 	return CLAUDE_HAIKU_55_MARKERS.some((marker) => normalized.includes(marker));
 }
 
-// Gemini 4 Argon id shapes verified against the generated catalogs (2026-10-15):
+// Argon id shapes verified against the generated catalogs (2026-10-15):
 // gemini-4-argon (google, google-vertex, github-copilot, opencode, venice),
 // google/gemini-4-argon and its :batch row (openrouter, vercel-ai-gateway),
 // opencode-go's gemini-4-argon-contributor, the Antigravity -low/-medium/-high
-// SKUs, and the display names "Gemini 4 Argon" / "Google: Gemini 4 Argon (batch)".
-// Bare gemini-4, other Gemini generations and unknown siblings stay out.
+// SKUs, and the catalog display names of the plain and batch rows.
+// Bare gemini-4, other generations of the family and unknown siblings stay out.
 export function hasGemini4ArgonSignal(value: string): boolean {
 	return /(?:^|[/@:._-])gemini[._-]?4[._-]argon(?:$|[/@:._-])/.test(normalizeModelId(value));
 }

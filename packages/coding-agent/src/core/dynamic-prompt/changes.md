@@ -12,7 +12,7 @@
 
 ### Why
 
-- The Gemini 4 Argon preset keeps the default core and changes four sentences at their source. Options on the builders let it do that without copying the sections or replacing strings in rendered output, so later wording changes in the core reach the preset and a moved anchor cannot fail silently.
+- The Argon preset keeps the default core and changes four sentences at their source. Options on the builders let it do that without copying the sections or replacing strings in rendered output, so later wording changes in the core reach the preset and a moved anchor cannot fail silently.
 
 ---
 

@@ -1,8 +1,8 @@
-// Gemini 4 Argon system prompt (senpi#3385).
+// Argon system prompt (senpi#3385).
 //
-// 2026-10-15. Google's guidance for the Gemini 3 family, which Argon continues
-// (ai.google.dev/gemini-api/docs/latest-model, prompting-strategies "Gemini 3" and
-// "Agentic workflows", function-calling "Workarounds for pre-tool text", gemini-3 FAQ 8),
+// 2026-10-15. The provider's published guidance for the previous generation, which
+// Argon continues (model docs: latest-model, prompting-strategies and "Agentic
+// workflows", function-calling "Workarounds for pre-tool text", FAQ 8),
 // says the model answers direct, concise instructions best and over-analyzes the
 // shouting style older prompts used; structured text demanded right before a tool
 // call can fail the call; the Pro line reaches for shell commands over custom
@@ -14,7 +14,7 @@
 //   which model is loaded).
 // - Intent Gate (terminal): the routing line is plain prose and the tool calls that
 //   start the work follow in the same response (B: the pre-tool-text warning and
-//   the Gemini 3-era "narrates instead of calling" failure the 2026-02-22 omo
+//   the previous generation's "narrates instead of calling" failure the 2026-02-22 omo
 //   overlays and oh-my-pi's reasoning-stall interrupt both guard against).
 // - Working the Task opening, only when `eval` is a session tool: writing code is
 //   the model's superpower, one eval cell per step with real control flow and

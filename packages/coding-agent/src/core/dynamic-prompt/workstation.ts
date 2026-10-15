@@ -22,8 +22,8 @@ export interface WorkstationFacts {
  * Families follow the prompt-preset conventions: Claude/GLM take direct
  * imperatives in a tagged block, GPT (codex) takes terse bounded rules, Kimi
  * takes positive operational constraints (all-caps directives make K2.x
- * overthink), Gemini takes one plain sentence pair (Google's Gemini 3+
- * guidance: direct instructions, no persuasive emphasis), and `default` is
+ * overthink), the `gemini` dialect takes one plain sentence pair (the
+ * provider's guidance: direct instructions, no persuasive emphasis), and `default` is
  * the maximum-emphasis fallback for unmatched models.
  */
 export type WorkstationDialect = "default" | "claude" | "codex" | "kimi" | "gemini";
