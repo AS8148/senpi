@@ -156,3 +156,23 @@ export function awaitCiEvidence({ timeoutMs, pollMs }, deps) {
 		deps.sleep(pollMs);
 	}
 }
+
+/**
+ * The in-job suite `--force-tests` runs (`CI=1 npm test`) once stopped producing output in packages/ai vitest and
+ * held the release job until the job timeout killed it with no diagnostic (senpi#2291). A hard budget turns that
+ * into a loud, named failure well inside the job's own timeout.
+ */
+export const FORCED_TEST_SUITE_TIMEOUT_MS = 25 * 60_000;
+
+export function runForcedTestSuite({ bin = "npm", args = ["test"], timeoutMs = FORCED_TEST_SUITE_TIMEOUT_MS, env = process.env } = {}) {
+	try {
+		execFileSync(bin, args, { stdio: "inherit", env: { ...env, CI: "1" }, timeout: timeoutMs, killSignal: "SIGKILL" });
+	} catch (err) {
+		const timedOut = err && typeof err === "object" && "code" in err && err.code === "ETIMEDOUT";
+		if (timedOut) {
+			throw new Error(`${bin} ${args.join(" ")} did not finish within ${timeoutMs / 60_000} min (senpi#2291: the in-job suite hung)`, { cause: err });
+		}
+		const message = err && typeof err === "object" && "message" in err ? err.message : String(err);
+		throw new Error(`${bin} ${args.join(" ")} failed: ${message}`, { cause: err });
+	}
+}

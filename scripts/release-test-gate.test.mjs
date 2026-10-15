@@ -12,6 +12,7 @@ import {
 	discardTimestampOnlyCatalogChange,
 	isTimestampOnlyManifestChange,
 	planCiEvidence,
+	runForcedTestSuite,
 } from "./release-test-gate.mjs";
 
 const CHECK_NAME = "Check and test";
@@ -281,5 +282,22 @@ describe("catalogChangedSinceHead (senpi#2645)", () => {
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
+	});
+});
+
+describe("runForcedTestSuite (senpi#2291)", () => {
+	it("fails loudly, naming the budget, when the in-job suite outlives it", () => {
+		const started = Date.now();
+		assert.throws(
+			() => runForcedTestSuite({ bin: process.execPath, args: ["-e", "setInterval(() => {}, 1000)"], timeoutMs: 300 }),
+			/did not finish within 0\.005 min/,
+		);
+		assert.ok(Date.now() - started < 10_000, "the hung child is killed at the budget, not left running");
+	});
+
+	it("passes CI=1 to a suite that finishes inside the budget", () => {
+		assert.doesNotThrow(() =>
+			runForcedTestSuite({ bin: process.execPath, args: ["-e", "process.exit(process.env.CI === '1' ? 0 : 3)"], timeoutMs: 10_000 }),
+		);
 	});
 });
