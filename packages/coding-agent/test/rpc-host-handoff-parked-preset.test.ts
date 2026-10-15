@@ -177,9 +177,17 @@ async function handover(qa: EndpointScratch): Promise<void> {
 }
 
 /** Waits until the successor itself has the parked session open again, before any client attaches. */
+function canonicalPath(path: string): string {
+	try {
+		return realpathSync(path);
+	} catch {
+		return path;
+	}
+}
+
 async function waitForSuccessorReopen(qa: EndpointScratch, sessionPath: string): Promise<void> {
 	// The host lists canonical paths (macOS resolves /var to /private/var), so compare canonically.
-	const canonical = realpathSync(sessionPath);
+	const canonical = canonicalPath(sessionPath);
 	const deadline = Date.now() + 120_000;
 	while (Date.now() < deadline) {
 		const lister = await JsonlPeer.connect(qa.legacy);
@@ -193,7 +201,9 @@ async function waitForSuccessorReopen(qa: EndpointScratch, sessionPath: string):
 			if (
 				rows.some(
 					(row) =>
-						row.sessionPath !== undefined && realpathSync(row.sessionPath) === canonical && row.status === "open",
+						row.sessionPath !== undefined &&
+						canonicalPath(row.sessionPath) === canonical &&
+						row.status === "open",
 				)
 			)
 				return;
