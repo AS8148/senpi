@@ -3126,6 +3126,36 @@ Response:
 
 `contextUsage` is omitted when no model or context window is available. `contextUsage.tokens` and `contextUsage.percent` are `null` immediately after compaction until a fresh post-compaction assistant response provides valid usage data.
 
+#### resolve_path
+
+Resolve a path from a message to the file it means, with the same rule the TUI uses for links. A relative `path` is tried against the session's working directory first, then the project root (the nearest ancestor of the working directory holding `.git`, else the nearest project marker); the first candidate that exists wins. An absolute path or `~/...` is only resolved. The answer is the realpath (symlinks and `..` resolved). It says which file a link means, not whether a client may read it.
+
+```json
+{"type": "resolve_path", "path": "docs/plan.md"}
+```
+
+Response when a candidate exists (`kind` is `file` or `directory`; `base` is `cwd`, `project-root` or `absolute`):
+```json
+{
+  "type": "response",
+  "command": "resolve_path",
+  "success": true,
+  "data": {"status": "found", "realpath": "/repo/docs/plan.md", "kind": "file", "base": "project-root"}
+}
+```
+
+When nothing is there, `tried` lists every candidate in order:
+```json
+{
+  "type": "response",
+  "command": "resolve_path",
+  "success": true,
+  "data": {"status": "not_found", "tried": ["/repo/packages/app/docs/plan.md", "/repo/docs/plan.md"]}
+}
+```
+
+An empty `path` or one with a NUL byte answers `not_found` with no candidates; a non-string or longer than 4096 characters is a payload error.
+
 #### memory_report
 
 Write a per-layer memory report for this session on demand. Available only when the host process runs with `SENPI_MEMORY_REPORT=1`; without it nothing is installed and the request fails with `memory_report_disabled`. On POSIX the same report is also written when the process receives `SIGUSR2`, for every live session registered in that process: a TUI, print, or single-session RPC host, or a multi-session host with the in-process runtime (`--listen`, the shared daemon default), reports all of its sessions. On a worker-runtime multi-session host (the stdio default), sessions live in worker isolates the signalled main isolate cannot see, so the signal writes nothing; send the `memory_report` request to each session instead. Nothing runs on a timer.
