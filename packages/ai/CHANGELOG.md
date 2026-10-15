@@ -12,6 +12,8 @@
 
 - OpenCode Go models now use the documented `https://opencode.ai/inference/go` base. The legacy `/zen/go` base has no route for the native generate-content wire, so the Argon Contributor model failed with a 404 page ([#3377](https://github.com/code-yeongyu/senpi/issues/3377)).
 
+- A model that refuses a forced first-turn tool choice with "Thinking mode does not support this tool_choice" (opencode-go DeepSeek thinking models) no longer kills the turn at launch: the request is retried once without the forced choice ([#3324](https://github.com/code-yeongyu/senpi/issues/3324)).
+
 ### Removed
 
 ## [2026.10.15] - 2026-10-15
