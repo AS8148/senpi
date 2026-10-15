@@ -19,6 +19,42 @@ The lease owns the abort path and the settings shape itself; only the session co
 - MEDIUM: `agent-session.ts` around `_promptAgent` (the arm), `_handleAgentEvent` tool-execution branches (the renewals), the `agent_idle` emission (the disarm), and `dispose()`.
 - LOW: `settings-manager.ts` beside `getEngineTurnSettings()`; `settings-shapes.ts` beside `ProviderConcurrencySettings`; `turn-deadline.ts` is fork-only.
 
+## 2026-10-15 - AgentSession.activeWakeSources (senpi#3225)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `activeWakeSources` reads the wake-source tracker's live source names, so `unload_session` can tell child tasks from other extension work.
+
+### Why
+
+Unload eligibility depends on which extension work is live, not only on whether any is.
+
+### Why an extension could not handle it
+
+The tracker is private session state.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: next to `activitySnapshot`.
+
+## 2026-10-15 - A user cost override drops scheduled catalog cards (senpi#3378)
+
+### What changed
+
+- `packages/coding-agent/src/core/provider-composer.ts`: when `models.json` overrides any part of a model's `cost`, the merged cost keeps the override's rates and tiers but not the catalog's `effectiveRates`.
+
+### Why
+
+- A user-set price is the price. Keeping the catalog's scheduled cards would silently replace it on their start date (senpi#3378).
+
+### Why an extension could not handle it
+
+- The override merge runs inside the core provider composer before any extension sees the model.
+
+### Expected merge conflict zones
+
+- LOW: the `cost` branch of the model override merge.
+
 ## 2026-10-15 - A replacement's abort names the replacement on agent_end (senpi#3357)
 
 ### What changed

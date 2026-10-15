@@ -237,6 +237,7 @@ function applyModelOverride(model: Model<Api>, override: ModelsJsonModelOverride
 					cacheRead: override.cost.cacheRead ?? model.cost.cacheRead,
 					cacheWrite: override.cost.cacheWrite ?? model.cost.cacheWrite,
 					tiers: override.cost.tiers ?? model.cost.tiers,
+					// A user-set price is the price: the catalog's scheduled cards would replace it on their date.
 				}
 			: model.cost,
 		promptCache: override.promptCache ? { ...model.promptCache, ...override.promptCache } : model.promptCache,

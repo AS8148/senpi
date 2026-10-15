@@ -4058,6 +4058,11 @@ export class AgentSession {
 		this.sessionManager.dispose();
 	}
 
+	/** Extension-published wake sources that currently report live work, by `source` name. */
+	get activeWakeSources(): readonly string[] {
+		return this._wakeSources.activeSources;
+	}
+
 	/** Live in-session activity signals; see `session-activity.ts` for the contract. */
 	get activitySnapshot(): SessionActivitySnapshot {
 		return {

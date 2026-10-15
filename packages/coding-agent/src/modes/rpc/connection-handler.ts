@@ -1,3 +1,4 @@
+import { clientFacingIdentity } from "./client-admission-record.ts";
 /**
  * Per-connection RPC handler.
  *
@@ -858,6 +859,11 @@ export function createRpcConnectionHandler(
 					correlatedEvents.accept(event satisfies RpcCommandInvocationEvent);
 					return;
 				}
+				if (event.type === "queue_update") {
+					// Same route as every other event; only the minted ids are taken out of the projection.
+					correlatedEvents.accept({ ...event, ordered: event.ordered.map(clientFacingIdentity) });
+					return;
+				}
 				if (event.type === "thinking_level_changed" || event.type === "model_changed") {
 					// Core emits the effective level only; the selection provenance lives beside it
 					// on the session and is what distinguishes an explicit choice from a default.
@@ -1116,13 +1122,19 @@ export function createRpcConnectionHandler(
 			case "get_steering_messages":
 				return success(id, "get_steering_messages", {
 					messages: [...session.getSteeringMessages()],
-					ordered: session.getQueuedInputs().filter((input) => input.mode === "steer"),
+					ordered: session
+						.getQueuedInputs()
+						.filter((input) => input.mode === "steer")
+						.map(clientFacingIdentity),
 				});
 
 			case "get_follow_up_messages":
 				return success(id, "get_follow_up_messages", {
 					messages: [...session.getFollowUpMessages()],
-					ordered: session.getQueuedInputs().filter((input) => input.mode === "followUp"),
+					ordered: session
+						.getQueuedInputs()
+						.filter((input) => input.mode === "followUp")
+						.map(clientFacingIdentity),
 				});
 
 			case "abort_branch_summary":
