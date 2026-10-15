@@ -1,3 +1,21 @@
+## 2026-10-15 - Remove or replace one queued message by identity (senpi#1971)
+
+### What changed
+
+- `packages/agent/src/agent.ts`: `PendingMessageQueue.remove/replace` and `Agent.removeQueuedMessage/replaceQueuedMessage` act on one exact message object; false once it was drained into a turn.
+
+### Why
+
+The session's dequeue/edit must reach the queue the agent drains, not only its own visible lists.
+
+### Why an extension could not handle it
+
+The queues are private agent-core state.
+
+### Expected merge conflict zones
+
+- `packages/agent/src/agent.ts`: `PendingMessageQueue` and the queue methods next to `clearSteeringQueue`.
+
 ## 2026-10-07 - Terminal auth failures preserve retry diagnostics (senpi#2893)
 
 ### What changed
