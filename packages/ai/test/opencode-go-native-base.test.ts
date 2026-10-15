@@ -15,7 +15,9 @@ describe("opencode-go base URL (senpi#3377)", () => {
 		const rows = opencodeGoProvider().getModels();
 		expect(rows.length).toBeGreaterThan(0);
 
-		const offBase = rows.filter((model) => !model.baseUrl.startsWith(`${DOCUMENTED_BASE}/`) && model.baseUrl !== DOCUMENTED_BASE);
+		const offBase = rows.filter(
+			(model) => !model.baseUrl.startsWith(`${DOCUMENTED_BASE}/`) && model.baseUrl !== DOCUMENTED_BASE,
+		);
 
 		expect(offBase.map((model) => `${model.id} ${model.baseUrl}`)).toEqual([]);
 	});
