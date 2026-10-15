@@ -12,6 +12,7 @@ import { builtinChatModelId } from "../../support/catalog-ids.ts";
 
 // A built-in OpenAI model the catalog ships today: an override target a regen cannot remove (senpi#1955).
 const OPENAI_TARGET = builtinChatModelId("openai", (id) => id.startsWith("gpt-"));
+const ANTHROPIC_FAVORITE = builtinChatModelId("anthropic", (id) => id.startsWith("claude-"));
 
 function registerOpenAiModels(registry: ModelRegistry, ids: string[]): void {
 	registry.registerProvider("openai", {
@@ -334,7 +335,7 @@ describe("model configuration controls", () => {
 		});
 		const modelRegistry = ModelRegistry.inMemory(authStorage);
 		const settingsManager = SettingsManager.inMemory({
-			favoriteModels: ["anthropic/claude-sonnet-4-5", "openai/gpt-5.4"],
+			favoriteModels: [`anthropic/${ANTHROPIC_FAVORITE}`, `openai/${OPENAI_TARGET}`],
 		});
 		const { session } = await createAgentSession({
 			cwd: tempDir,
@@ -345,24 +346,24 @@ describe("model configuration controls", () => {
 
 		expect(session.scopedModels).toEqual([]);
 		expect(session.favoriteModels.map((favorite) => `${favorite.model.provider}/${favorite.model.id}`)).toEqual([
-			"anthropic/claude-sonnet-4-5",
-			"openai/gpt-5.4",
+			`anthropic/${ANTHROPIC_FAVORITE}`,
+			`openai/${OPENAI_TARGET}`,
 		]);
 
 		const firstCycle = await session.cycleModel();
 		expect(firstCycle?.model.provider).toBe("anthropic");
-		expect(firstCycle?.model.id).toBe("claude-sonnet-4-5");
+		expect(firstCycle?.model.id).toBe(ANTHROPIC_FAVORITE);
 		const secondCycle = await session.cycleModel();
 		expect(secondCycle?.model.provider).toBe("openai");
 		expect(secondCycle?.model.id).toBe(OPENAI_TARGET);
 
-		settingsManager.setFavoriteModels(["anthropic/claude-sonnet-4-5"]);
+		settingsManager.setFavoriteModels([`anthropic/${ANTHROPIC_FAVORITE}`]);
 		await settingsManager.flush();
 		await session.reload();
 
 		expect(session.scopedModels).toEqual([]);
 		expect(session.favoriteModels.map((favorite) => `${favorite.model.provider}/${favorite.model.id}`)).toEqual([
-			"anthropic/claude-sonnet-4-5",
+			`anthropic/${ANTHROPIC_FAVORITE}`,
 		]);
 		expect(await session.cycleModel()).toBeUndefined();
 	});
@@ -370,7 +371,7 @@ describe("model configuration controls", () => {
 	it("keeps exact favorite model ids that end in -fast", async () => {
 		const authStorage = AuthStorage.inMemory({ openai: { type: "api_key", key: "test-openai-key" } });
 		const modelRegistry = ModelRegistry.inMemory(authStorage);
-		registerOpenAiModels(modelRegistry, ["gpt-5-4-mini-fast", OPENAI_TARGET]);
+		registerOpenAiModels(modelRegistry, ["gpt-5-4-mini-fast", "gpt-5.4"]);
 		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
 		const scopedModels = await resolveModelScope(["openai/gpt-5-4-mini-fast", "openai/gpt-5.4"], modelRegistry);
@@ -387,7 +388,7 @@ describe("model configuration controls", () => {
 	it("uses legacy enabledModels for global narrowing but not Ctrl+P favorites", async () => {
 		const authStorage = AuthStorage.inMemory({ openai: { type: "api_key", key: "test-openai-key" } });
 		const modelRegistry = ModelRegistry.inMemory(authStorage);
-		registerOpenAiModels(modelRegistry, ["gpt-5-4-mini-fast", OPENAI_TARGET]);
+		registerOpenAiModels(modelRegistry, ["gpt-5-4-mini-fast", "gpt-5.4"]);
 		const { session } = await createAgentSession({
 			cwd: tempDir,
 			agentDir,
