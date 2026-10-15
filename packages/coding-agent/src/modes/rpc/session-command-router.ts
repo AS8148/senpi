@@ -3,7 +3,12 @@ import { detachConnection } from "./connection-detach.ts";
 import { buildRpcSessionState } from "./connection-handler.ts";
 import { answerEffectFromTranscript } from "./effect-commands.ts";
 import { multiSessionHostCapabilities } from "./host-capabilities.ts";
-import { clearHandoverParkedSession, recordHandoverParkedSession } from "./host-handover-parked.ts";
+import {
+	clearHandoverParkedSession,
+	type HandoverParkedEntry,
+	recordHandoverParkedSession,
+} from "./host-handover-parked.ts";
+import { parkedEntryFromProfile, parkedOpenCommand } from "./host-handover-parked-open.ts";
 import { answerWarm } from "./host-warm.ts";
 import { hostInstanceId, protocolIdentity } from "./protocol-identity.ts";
 import {
@@ -488,21 +493,17 @@ export class SessionCommandRouter {
 			retained?.retainOnDisconnect === true &&
 			retained.sessionPath !== undefined
 		) {
-			await recordHandoverParkedSession(this.handoverParkedDir, {
-				sessionPath: retained.sessionPath,
-				...(retained.durableSessionId !== undefined ? { durableSessionId: retained.durableSessionId } : {}),
-				retainOnDisconnect: true,
-				...(retained.profile?.cwd !== undefined ? { cwd: retained.profile.cwd } : {}),
-				...(retained.profile?.creationModel !== undefined ? { model: retained.profile.creationModel } : {}),
-				...(retained.profile?.initialThinkingLevel !== undefined
-					? { thinkingLevel: retained.profile.initialThinkingLevel }
-					: {}),
-				...(retained.profile?.permissionPreset !== undefined
-					? { permissionPreset: retained.profile.permissionPreset }
-					: {}),
-				...(retained.profile?.promptSurface !== undefined ? { promptSurface: retained.profile.promptSurface } : {}),
-				...(retained.profile?.browserEngine !== undefined ? { browserEngine: retained.profile.browserEngine } : {}),
-			}).catch((cause: unknown) => {
+			await recordHandoverParkedSession(
+				this.handoverParkedDir,
+				parkedEntryFromProfile(
+					{
+						sessionPath: retained.sessionPath,
+						...(retained.durableSessionId !== undefined ? { durableSessionId: retained.durableSessionId } : {}),
+					},
+					retained.profile,
+					Object.keys(this.defaults.hostContext ?? {}),
+				),
+			).catch((cause: unknown) => {
 				process.stderr.write(`senpi rpc handover park record ${sessionId} failed: ${String(cause)}\n`);
 			});
 		}
@@ -643,9 +644,19 @@ export class SessionCommandRouter {
 		});
 	}
 
+	/**
+	 * The successor's reopen of a handoff-parked session: the same open as an `open_session`, with no
+	 * requesting connection and nothing to reply to (senpi#3368). Resolves `undefined` on success and
+	 * the failure response otherwise, exactly as an open does.
+	 */
+	reopenParked(entry: HandoverParkedEntry): Promise<RpcResponse | undefined> {
+		return this.open(parkedOpenCommand(entry), undefined, { reply: false });
+	}
+
 	private async open(
 		command: Extract<RpcCommand, { type: "open_session" }>,
 		owner?: string,
+		options?: { readonly reply?: boolean },
 	): Promise<RpcResponse | undefined> {
 		const instanceId = this.defaults.hostContext?.host_instance ?? hostInstanceId();
 		if (command.expectedHostInstance !== undefined) {
@@ -816,17 +827,18 @@ export class SessionCommandRouter {
 			const replyState =
 				entry.worker?.snapshot?.state ?? (entry.runtime ? buildRpcSessionState(entry.runtime.session) : undefined);
 			if (!replyState) throw new Error("Session state was not created");
-			this.writer.enqueue(opened.sessionId, {
-				id: command.id,
-				type: "response",
-				command: "open_session",
-				success: true,
-				data: {
-					sessionId: opened.sessionId,
-					state: replyState,
-					...(opened.attached ? { attached: true } : {}),
-				},
-			});
+			if (options?.reply !== false)
+				this.writer.enqueue(opened.sessionId, {
+					id: command.id,
+					type: "response",
+					command: "open_session",
+					success: true,
+					data: {
+						sessionId: opened.sessionId,
+						state: replyState,
+						...(opened.attached ? { attached: true } : {}),
+					},
+				});
 			return undefined;
 		} catch (cause) {
 			if (opened) {
