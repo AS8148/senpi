@@ -3,11 +3,12 @@
 ### What changed
 
 - `packages/coding-agent/src/core/extensions/builtin/index.ts`: registers the new `vertex-model-garden` builtin after `cursor-cli-oauth`.
-- `packages/coding-agent/src/core/extensions/builtin/vertex-model-garden/` (fork-only): registers `vertex-garden` (Model Garden partner models through `.../locations/global/endpoints/openapi`, `openai-completions`) and `vertex-claude` (Claude through `publishers/anthropic/models/<id>:streamRawPredict`, `anthropic-messages`). Both wrap the builtin API streams, inject an ADC bearer token plus `x-goog-user-project`, and are gated on `GOOGLE_CLOUD_PROJECT`. Claude requests are rewritten in a fetch wrapper: model moves to the URL, `anthropic_version: vertex-2023-10-16` joins the body, `x-api-key` is dropped.
+- `packages/coding-agent/src/core/extensions/builtin/vertex-model-garden/` (fork-only): registers only `vertex-garden` for Model Garden open models through `.../locations/global/endpoints/openapi` (`openai-completions`). It wraps the builtin API stream, injects an ADC bearer token plus `x-goog-user-project`, and is gated on `GOOGLE_CLOUD_PROJECT`. The starter catalog is exactly `deepseek-ai/deepseek-v4.1-flash-maas` and `zai-org/glm-5.2-maas`; DeepSeek is global-only, with reasoning enabled and a 1,000,000-token context from the existing `deepseek-v4-1-flash` catalog data. Claude registration, catalog, rawPredict transport and tests are removed.
 
 ### Why
 
-- Vertex partner models and Claude on Vertex previously needed a hand-written models.json, a token script and a local proxy.
+- Vertex Model Garden open models previously needed a hand-written models.json and a token script.
+- Marketplace partner models, including Claude and Grok, are excluded because they are card-billed and promotional credits do not apply.
 
 ### Why an extension could not handle it
 

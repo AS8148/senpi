@@ -1,4 +1,4 @@
-## 2026-10-14 - Shared Vertex ADC resolution for Model Garden and Claude on Vertex
+## 2026-10-14 - Shared Vertex ADC resolution for Model Garden open models
 
 ### What changed
 
@@ -7,7 +7,7 @@
 
 ### Why
 
-- The `vertex-model-garden` builtin extension calls Vertex partner models (OpenAI-compatible endpoint) and Claude (rawPredict) with a bearer token, so it needs the token and project the google-vertex provider already resolves, without a second credential path.
+- The `vertex-model-garden` builtin extension calls Vertex Model Garden open models through the OpenAI-compatible endpoint with a bearer token, so it needs the token and project the google-vertex provider already resolves, without a second credential path.
 
 ### Why an extension could not handle it
 

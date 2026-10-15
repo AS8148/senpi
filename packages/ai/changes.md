@@ -6,7 +6,7 @@
 
 ### Why
 
-- `src/api/google-vertex-adc.ts` imports `GoogleAuth` to mint Vertex access tokens for the `vertex-model-garden` extension; a transitive import would violate pinned-dependency rules.
+- `src/api/google-vertex-adc.ts` imports `GoogleAuth` to mint ADC access tokens for the `vertex-model-garden` open-model extension; a transitive import would violate pinned-dependency rules. No Claude-specific AI transport is included.
 
 ### Why an extension could not handle it
 
