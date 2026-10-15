@@ -1,3 +1,23 @@
+## 2026-10-15 - get_subscription_limits and the subscription_limits record (senpi#3370)
+
+### What changed
+
+`RpcCommand` gains `get_subscription_limits` and its response (`data.accounts`), and the host record union gains `RpcSubscriptionLimitsEvent`; the router and the single-session handler answer the command and broadcast the record when an account's windows change. Capability `subscription_limits`.
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`
+
+### Why
+
+Clients such as the desktop need the windows in a stable RPC shape.
+
+### Why an extension could not handle it
+
+RPC commands and host records are defined by the RPC mode itself.
+
+### Expected merge conflict zones
+
+The command and response unions in `rpc-types.ts`, the host-record switch in `session-event-writer.ts`, and the router dispatch.
+
 ## 2026-10-14 - gc stops stale older-engine hosts (senpi#3268)
 
 ### What changed
