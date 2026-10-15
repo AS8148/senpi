@@ -6,15 +6,15 @@
 
 ### Why
 
-The `vertex-model-garden` builtin registers through `pi.registerProvider(name, config)`; without the field on the public type, no extension can declare the ambient credential source the composer now understands.
+- `packages/coding-agent/src/core/extensions/types.ts`: the `vertex-model-garden` builtin registers through `pi.registerProvider(name, config)`; without the field on the public type, no extension can declare the ambient credential source the composer now understands.
 
 ### Why an extension could not handle it
 
-It is the public type declaration of the provider registration contract; `pi.registerProvider` is typed here and extensions cannot widen it themselves.
+- `packages/coding-agent/src/core/extensions/types.ts`: it is the public type declaration of the provider registration contract; `pi.registerProvider` is typed here and extensions cannot widen it themselves.
 
 ### Expected merge conflict zones
 
-LOW: the `ProviderConfig` field list, beside `oauth` and `fallbackEligible`.
+- `packages/coding-agent/src/core/extensions/types.ts`: LOW, the `ProviderConfig` field list, beside `oauth` and `fallbackEligible`.
 
 ## 2026-10-15 - pi.getPermissionPreset() (#3301, senpi#2465)
 
