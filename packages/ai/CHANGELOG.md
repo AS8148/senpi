@@ -8,6 +8,20 @@
 
 ### Changed
 
+### Fixed
+
+- A model that refuses a forced first-turn tool choice with "Thinking mode does not support this tool_choice" (opencode-go DeepSeek thinking models) no longer kills the turn at launch: the request is retried once without the forced choice ([#3324](https://github.com/code-yeongyu/senpi/issues/3324)).
+
+### Removed
+
+## [2026.10.15] - 2026-10-15
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
 - The bundled model catalog is refreshed from models.dev and the providers' model listings (`github-copilot`, `google`, `google-vertex`, `meta`, `opencode`, `opencode-go`, `opengateway`, `openrouter`, `vercel-ai-gateway`).
 
 ### Fixed
