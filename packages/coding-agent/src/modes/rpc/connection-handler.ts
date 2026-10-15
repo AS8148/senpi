@@ -57,6 +57,7 @@ import type {
 } from "../../core/extensions/index.ts";
 import { ExtensionRpcRequestNotFoundError } from "../../core/extensions/runner.ts";
 import { describeUsageLimitEntry, describeUsageLimitMessage } from "../../core/retry-fallback/usage-limit.ts";
+import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
 import { DURABLE_CLIENT_MESSAGE_ID_CAPABILITY } from "./client-admission-record.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
@@ -1602,6 +1603,10 @@ export function createRpcConnectionHandler(
 			// Messages
 			// =================================================================
 
+			case "get_subscription_limits": {
+				return success(id, "get_subscription_limits", { accounts: subscriptionLimits.snapshot() });
+			}
+
 			case "get_messages": {
 				return success(id, "get_messages", {
 					messages: session.messages.map((message) =>
@@ -1820,7 +1825,12 @@ export function createRpcConnectionHandler(
 		}
 	};
 
+	// A single-session connection hears its account's new limit windows as they are reported.
+	const stopLimitEvents = subscriptionLimits.subscribe((limits) =>
+		eventOutput.enqueueEvent({ type: "subscription_limits", ...limits }),
+	);
 	const dispose = async (): Promise<void> => {
+		stopLimitEvents();
 		sessionControl?.dispose();
 		sessionControl = undefined;
 		questions.cancelAll();
