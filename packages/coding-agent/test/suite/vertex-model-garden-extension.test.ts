@@ -243,6 +243,20 @@ describe("vertex-garden registration and availability", () => {
 			runtime.getAvailableSnapshot().some((available) => available.provider === VERTEX_MODEL_GARDEN_PROVIDER_ID),
 		).toBe(false);
 	});
+
+	// senpi#3296 second review: ADC alone must not make the models selectable when no project resolves.
+	it("#given Vertex ADC without a project #when the provider is registered #then it stays unavailable", async () => {
+		vi.stubEnv("GOOGLE_APPLICATION_CREDENTIALS", fixture.path);
+		vi.stubEnv("GOOGLE_CLOUD_PROJECT", "");
+		vi.stubEnv("GCLOUD_PROJECT", "");
+
+		const runtime = await runtimeWithGarden();
+
+		expect(runtime.getProviderAuthStatus(VERTEX_MODEL_GARDEN_PROVIDER_ID)).toMatchObject({ configured: false });
+		expect(
+			runtime.getAvailableSnapshot().some((available) => available.provider === VERTEX_MODEL_GARDEN_PROVIDER_ID),
+		).toBe(false);
+	});
 });
 
 describe("vertex-garden automatic default selection", () => {
