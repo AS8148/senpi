@@ -23,6 +23,8 @@ type Probe = { readonly url: string; readonly headers: Record<string, string> };
 
 const trimSlash = (value: string) => value.replace(/\/+$/, "");
 
+const UNCHECKABLE_CONTROL_KEY = "senpi-verify-control-not-a-real-key";
+
 const AUTH_HEADERS = new Set(["authorization", "x-api-key", "x-goog-api-key"]);
 
 function probeFor(model: Model<Api>, key: string): Probe | undefined {
@@ -63,9 +65,9 @@ export async function verifyApiKey(input: {
 	const model = input.models.find((candidate) => candidate.provider === input.provider);
 	if (model === undefined) return { ok: false, reason: "unknown-provider" };
 	if (probeFor(model, input.key) === undefined) return { ok: false, reason: "unsupported" };
-	const ask = async (candidate: string): Promise<number | "unreachable"> => {
+	const ask = async (candidate: string): Promise<number | "no-answer"> => {
 		const target = probeFor(model, candidate);
-		if (target === undefined) return "unreachable";
+		if (target === undefined) return "no-answer";
 		try {
 			const response = await (input.fetch ?? globalThis.fetch)(target.url, {
 				method: "GET",
@@ -76,22 +78,24 @@ export async function verifyApiKey(input: {
 			await response.body?.cancel().catch(() => {});
 			return response.status;
 		} catch {
-			return "unreachable";
+			return "no-answer";
 		}
 	};
+	// A rate limit or an outage means "try again", never "cannot be checked".
+	const temporary = (status: number | "no-answer") => status === "no-answer" || status === 429 || status >= 500;
+	const unreachable = (status: number | "no-answer"): ApiKeyVerification =>
+		status === "no-answer" ? { ok: false, reason: "unreachable" } : { ok: false, reason: "unreachable", status };
 	const status = await ask(input.key);
-	if (status === "unreachable") return { ok: false, reason: "unreachable" };
+	if (temporary(status)) return unreachable(status);
 	if (status === 401 || status === 403) return { ok: false, reason: "rejected", status };
-	if (status >= 500) return { ok: false, reason: "unreachable", status };
 	if (status < 200 || status >= 300) return { ok: false, reason: "unsupported", status };
 	// A model list that also answers a made-up key is public (OpenRouter, keyless local servers):
 	// its 200 says nothing about this key.
 	const control = await ask(UNCHECKABLE_CONTROL_KEY);
 	if (control === 401 || control === 403) return { ok: true };
+	if (temporary(control)) return unreachable(control);
 	return { ok: false, reason: "unsupported" };
 }
-
-const UNCHECKABLE_CONTROL_KEY = "senpi-verify-control-not-a-real-key";
 
 /**
  * `{ keyHint }` for the api_key row of a provider whose key the app stored as a literal, long enough

@@ -44,6 +44,28 @@ describe("verifyApiKey (desktop #2510)", () => {
 		expect(await verify("openai", answering(200, 200).fetch)).toEqual({ ok: false, reason: "unsupported" });
 	});
 
+	// #3372 delta review: a temporary failure is "try again", never "cannot be checked".
+	it("reports a rate limit or outage as unreachable, on either request", async () => {
+		expect(await verify("openai", answering(429).fetch)).toEqual({ ok: false, reason: "unreachable", status: 429 });
+		expect(await verify("openai", answering(200, 429).fetch)).toEqual({
+			ok: false,
+			reason: "unreachable",
+			status: 429,
+		});
+		expect(await verify("openai", answering(200, 503).fetch)).toEqual({
+			ok: false,
+			reason: "unreachable",
+			status: 503,
+		});
+		let calls = 0;
+		const controlOffline = (async () => {
+			calls += 1;
+			if (calls === 1) return new Response(null, { status: 200 });
+			throw new TypeError("fetch failed");
+		}) as unknown as typeof globalThis.fetch;
+		expect(await verify("openai", controlOffline)).toEqual({ ok: false, reason: "unreachable" });
+	});
+
 	it("probes Mistral's list under /v1", async () => {
 		const provider = answering(200);
 		expect(await verify("mistral", provider.fetch)).toEqual({ ok: true });

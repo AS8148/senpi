@@ -10127,3 +10127,21 @@ It serves core RPC auth commands.
 ### Expected merge conflict zones
 
 None (fork-only file).
+
+## 2026-10-15 - verify-api-key.ts: temporary failures are unreachable (senpi#3372 delta review)
+
+### What changed
+
+A 429, 5xx or no answer, on either the key's request or the control request, is `unreachable` ("try again"), never `unsupported`. The control key constant moved above its use.
+
+### Why
+
+A rate-limited provider was told its valid key "cannot be checked".
+
+### Why an extension could not handle it
+
+It serves core RPC auth commands.
+
+### Expected merge conflict zones
+
+None (fork-only file).
