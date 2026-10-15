@@ -6,6 +6,8 @@
 
 ### Added
 
+- Two queue-or-start prompts arriving together on an idle session no longer start two turns; the second joins the first ([#3224](https://github.com/code-yeongyu/senpi/issues/3224)).
+- RPC `steer` and `follow_up` take `whenIdle: "start"` (capability `steer_when_idle`): on an idle session the message starts a turn (`disposition: "started"`), otherwise it is queued; two such inputs arriving together start one turn ([#3224](https://github.com/code-yeongyu/senpi/issues/3224)).
 - `pi.getPermissionPreset()` returns the permission preset the permission system enforces for the session right now (flag, settings, or the `full-access` default), or `undefined` when no permission system runs or its setup failed.
 - Subscription limit windows reach RPC clients: senpi reads the windows a ChatGPT subscription reports with each response (`x-codex-primary-*`/`x-codex-secondary-*`) and Claude's unified rate-limit headers, keeps the latest per provider and credential slot (never key material), and serves them as `get_subscription_limits` plus a `subscription_limits` record on change; an account nothing reported for is absent, not 0%. Thanks to jaeyoung for asking ([#3370](https://github.com/code-yeongyu/senpi/issues/3370)).
 - Every queued input has a `queuedId` (`get_state.ordered`, `queue_update.ordered`); RPC `dequeue_message` removes one and `edit_queued_message` replaces its text in place, optionally as ledger effects, with `already_delivered` / `not_found` answers that carry an action ([#1971](https://github.com/code-yeongyu/senpi/issues/1971)).
@@ -22,6 +24,7 @@
 ### Fixed
 
 - An RPC host shard no longer keeps itself alive through its own sessions' connections. A task tree whose children open their own children on the shard they run in left that shard running for days after its owner and every outside client were gone, holding its sessions and memory. `RpcClient` now names the host generation it runs inside (`origin_host_instance`), and a host does not count connections from its own generation toward idle exit, owner-death exit or empty-host exit. A dependent session mid-turn still keeps the host open until the turn ends ([#3272](https://github.com/code-yeongyu/senpi/issues/3272)).
+- A turn stopped because its session was replaced (`new_session`, `fork`, `switch_session`) now says so: its `agent_end` carries `abortCause: { kind: "session_replaced", reason, targetSessionFile, targetSessionId }`, before `session_replaced` ([#3357](https://github.com/code-yeongyu/senpi/issues/3357)).
 - Full access never prompts: under the `full-access` preset a configured `ask` rule no longer raises a permission prompt, while a configured `deny` still refuses (#2465).
 - A refusal by a configured deny names the rule and the settings layer it came from, after the sentence that tells the model not to retry the call.
 - An "Allow always" answer reaches every open session at once and is stored under the agent directory, outside the project the agent can write.
