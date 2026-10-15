@@ -10,7 +10,9 @@ import { registerClaudeAccountCommand } from "./account-command.ts";
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./account-management.ts";
 import type { AnthropicSubscriptionCredential } from "./accounts.ts";
 import { CLAUDE_SDK_OAUTH_API_ID } from "./api-id.ts";
+import { longContextAvailable, onLongContextAvailabilityChange } from "./long-context.ts";
 import { createOAuthConfig } from "./oauth-login.ts";
+import { CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW } from "./options.ts";
 import { registerSessionRegistry } from "./session-registry-wiring.ts";
 import {
 	type AnthropicSubscriptionProviderSettings,
@@ -25,19 +27,27 @@ export type AnthropicSubscriptionExtensionDeps = {
 	readSettings?: () => AnthropicSubscriptionProviderSettings;
 };
 
-const MODELS = getModels("anthropic").map((model) => ({
-	id: model.id,
-	name: model.name,
-	reasoning: model.reasoning,
-	input: model.input,
-	cost: model.cost,
-	contextWindow: model.contextWindow,
-	maxTokens: model.maxTokens,
-	thinkingLevelMap: {
-		...model.thinkingLevelMap,
-		minimal: null,
-	},
-}));
+/**
+ * The lane's models carry the window their requests actually get, which is what compaction plans
+ * against: the catalog window while the 1M window is available, Claude Code's 200k default after the
+ * account refused it (senpi#3408).
+ */
+export const anthropicSubscriptionModels = (longContext = longContextAvailable()) =>
+	getModels("anthropic").map((model) => ({
+		id: model.id,
+		name: model.name,
+		reasoning: model.reasoning,
+		input: model.input,
+		cost: model.cost,
+		contextWindow: longContext
+			? model.contextWindow
+			: Math.min(model.contextWindow, CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW),
+		maxTokens: model.maxTokens,
+		thinkingLevelMap: {
+			...model.thinkingLevelMap,
+			minimal: null,
+		},
+	}));
 
 function readStoredCredential(providerId: string): AnthropicSubscriptionCredential | undefined {
 	const authPath = join(getAgentDir(), "auth.json");
@@ -61,10 +71,13 @@ export function registerAnthropicSubscriptionExtension(
 ): void {
 	registerClaudeAccountCommand(pi);
 	registerSessionRegistry(pi);
+	onLongContextAvailabilityChange((available) => {
+		pi.registerProvider(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, { models: anthropicSubscriptionModels(available) });
+	});
 	pi.registerProvider(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, {
 		baseUrl: CLAUDE_SDK_OAUTH_API_ID,
 		api: CLAUDE_SDK_OAUTH_API_ID,
-		models: MODELS,
+		models: anthropicSubscriptionModels(),
 		streamSimple: (model, context, options) =>
 			streamAnthropicSubscription(model, toBuiltinProviderContext(context), options),
 		// A verbatim `enabled: false` is the kill switch: the lane cannot serve, so

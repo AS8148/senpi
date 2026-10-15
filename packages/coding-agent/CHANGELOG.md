@@ -23,6 +23,7 @@
 
 ### Fixed
 
+- Claude subscription sessions on 1M-window models (Opus 5.5 and others) no longer fail with "Prompt is too long" once they grow past 200k tokens. The request now asks for the 1M window that compaction already planned against. If the account cannot use 1M ("Extra usage is required for long context"), the turn retries once at 200k on the same account, and the lane plans compaction for 200k. That refusal no longer blocks the account as if it were a usage limit ([#3408](https://github.com/code-yeongyu/senpi/issues/3408)).
 - A turn stopped because its session was replaced (`new_session`, `fork`, `switch_session`) now says so: its `agent_end` carries `abortCause: { kind: "session_replaced", reason, targetSessionFile, targetSessionId }`, before `session_replaced` ([#3357](https://github.com/code-yeongyu/senpi/issues/3357)).
 - Full access never prompts: under the `full-access` preset a configured `ask` rule no longer raises a permission prompt, while a configured `deny` still refuses (#2465).
 - A refusal by a configured deny names the rule and the settings layer it came from, after the sentence that tells the model not to retry the call.

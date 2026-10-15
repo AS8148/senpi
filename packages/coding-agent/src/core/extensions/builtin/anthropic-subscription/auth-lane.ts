@@ -22,6 +22,7 @@ import { hasRequestOauthToken, mergeRequestAuthEnvironment, stripManagedAuthEnvi
 import { writeConfigDirCredential } from "./config-dir-credentials.ts";
 import { classifySdkError, sdkAssistantFailure, sdkResultFailure } from "./errors.ts";
 import { runFailover } from "./failover.ts";
+import { markLongContextRefused } from "./long-context.ts";
 import { isGrantRejected, refreshFailure } from "./refresh-failure.ts";
 import { refusalError } from "./refusal.ts";
 import type { Options, SDKMessage, SdkQuery } from "./sdk-boundary.ts";
@@ -209,25 +210,49 @@ function visibleSdkMessage(message: SDKMessage): boolean {
 	return /^(?:content_block_start|content_block_delta|content_block_stop)$/.test(message.event.type);
 }
 
+/**
+ * The ambient lane has no account failover, so a refused 1M window is retried here: once, before
+ * anything visible streamed, after recording the refusal so the rebuilt options ask for 200k (senpi#3408).
+ */
+async function* retryAtStandardWindowOnce(
+	attempt: () => Promise<AsyncIterable<SDKMessage>>,
+): AsyncGenerator<SDKMessage> {
+	const held: SDKMessage[] = [];
+	let visible = false;
+	for await (const message of await attempt()) {
+		const failure = visible ? undefined : sdkFailure(message);
+		if (failure !== undefined && classifySdkError(failure).kind === "long_context_unavailable") {
+			markLongContextRefused();
+			yield* await attempt();
+			return;
+		}
+		if (!visible && visibleSdkMessage(message)) {
+			visible = true;
+			yield* held.splice(0);
+		}
+		if (visible) yield message;
+		else held.push(message);
+	}
+	yield* held;
+}
+
 /** Resolves managed OAuth immediately before each subprocess spawn and retries only pre-delta failures. */
 export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncGenerator<SDKMessage> {
 	const signal = input.signal ?? new AbortController().signal;
 	const pool = await managedPool(input.providerSettings, input.env);
 	if (!pool) {
-		const options = input.buildOptions("ambient");
 		const parentEnvironment = mergeRequestAuthEnvironment(activeBoundary.env(), input.env);
 		const ambientEnvironment: Record<string, string | undefined> = { ...parentEnvironment };
 		for (const name of Object.keys(ambientEnvironment)) {
 			if (name.startsWith("SENPI_")) delete ambientEnvironment[name];
 		}
 		// Lane-owned variables from buildOptions (the compaction-owner overlay) win over the host.
-		options.env = { ...ambientEnvironment, ...options.env };
-		yield* await createAttemptMessages(input, {
-			accountName: "ambient",
-			accounts: [],
-			authLane: "ambient",
-			options,
-		});
+		const ambientAttempt = async () => {
+			const options = input.buildOptions("ambient");
+			options.env = { ...ambientEnvironment, ...options.env };
+			return createAttemptMessages(input, { accountName: "ambient", accounts: [], authLane: "ambient", options });
+		};
+		yield* retryAtStandardWindowOnce(ambientAttempt);
 		return;
 	}
 	pool.accounts = await recoverAuthBlockedSlots({
@@ -266,6 +291,7 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 			});
 		},
 		classify: classifySdkError,
+		onLongContextRefused: () => markLongContextRefused(),
 		store: pool.store,
 		providerId: ANTHROPIC_SUBSCRIPTION_PROVIDER_ID,
 		...(input.model === undefined ? {} : { model: input.model }),

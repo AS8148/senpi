@@ -1923,3 +1923,26 @@ The prompt adapter is the fork's OAuth interaction shim for the subscription pro
 ### Expected merge conflict zones
 
 Upstream edits to the Anthropic subscription login adapter at the next sync.
+
+## 2026-10-15 - The window compaction plans against is the window the request gets (senpi#3408)
+
+### What changed
+- `options.ts`: `requestedContextWindow(options)` returns the window Claude Code gives a request: 1M with the `context-1m-2025-08-07` beta, otherwise its 200k default. A model whose window is over 200k now requests the beta while the 1M window is available.
+- `long-context.ts` (new): records a refused 1M window ("Extra usage is required for long context") for 6 hours. The record is persisted under the agent directory, and listeners are told when it flips.
+- `errors.ts`: that refusal classifies as `long_context_unavailable` (retryable), checked before the rate-limit codes.
+- `failover.ts`: the refusal retries once on the same account, through `onLongContextRefused`. It never blocks or rotates the account.
+- `auth-lane.ts`: the ambient lane retries once at the standard window before anything visible streams. The pool lane wires `onLongContextRefused`.
+- `index.ts`: the lane's models carry `anthropicSubscriptionModels()` windows, capped at 200k while refused. The lane re-registers the moment a refusal is recorded, so the session's current model, and with it compaction, plans for 200k.
+
+### Why
+`claude-opus-5-5` (and every other 1M model on this lane) advertised a 1M window, so compaction planned for 1M. But the request carried no long-context beta, so Claude Code ran it in 200k. Long sessions crossed 200k with no proactive compaction, failed with "Prompt is too long", and only then compacted. The refusal Claude Code returns when an account lacks the 1M window uses the `rate_limit` code, so it would also have blocked the account like a usage limit.
+
+### Why an extension could not handle it
+This is the anthropic-subscription builtin itself: its query options, error classification, failover and model registration.
+
+### Expected merge conflict zones
+- `options.ts`, around the query-options assembly (the betas line);
+- `errors.ts`, at the top of `classifyErrorKind`;
+- `failover.ts`, the catch block after the retryable check;
+- `auth-lane.ts`, the ambient branch of `queryWithAuthLane`;
+- `index.ts`, the model list and the extension registration.

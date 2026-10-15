@@ -10,6 +10,7 @@ import {
 	PROJECT_RULES_START_MARKER,
 } from "../rules/rules/constants.ts";
 import { presetAppendDeprecationGuidance } from "./guidance.ts";
+import { longContextAvailable } from "./long-context.ts";
 import type { EffortLevel, Options, SettingSource, ThinkingConfig } from "./sdk-boundary.ts";
 import {
 	type AnthropicSubscriptionProviderSettings,
@@ -35,6 +36,19 @@ export interface AnthropicSubscriptionQueryOptionsInput {
 	readonly pathToClaudeCodeExecutable?: string;
 	readonly sessionId?: string;
 	readonly onGuidance?: (text: string) => void;
+}
+
+/** Claude Code's default window when a request asks for no long context (its `A68`). */
+export const CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW = 200_000;
+const LONG_CONTEXT_BETA = "context-1m-2025-08-07";
+const LONG_CONTEXT_WINDOW = 1_000_000;
+
+/**
+ * The window Claude Code gives a request built from these options: 1M only when the long-context
+ * beta is requested, its 200k default otherwise (senpi#3408). Compaction must plan against this.
+ */
+export function requestedContextWindow(options: Pick<Options, "betas">): number {
+	return options.betas?.includes(LONG_CONTEXT_BETA) ? LONG_CONTEXT_WINDOW : CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW;
 }
 
 const ADAPTIVE_THINKING_MODEL_MARKERS = [
@@ -269,6 +283,11 @@ export function buildAnthropicSubscriptionQueryOptions(input: AnthropicSubscript
 	// prompt-cache reuse; senpi's compaction carries its own budget reminder. The auth lane
 	// layers this over the subprocess environment it builds.
 	if (senpiOwnsCompaction) queryOptions.env = { CLAUDE_CODE_TOTAL_TOKENS_REMINDER: "off" };
+	// The model's advertised window is what senpi plans compaction against, so a model above Claude
+	// Code's default must request the long-context window, or every request silently runs in 200k.
+	if (input.model.contextWindow > CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW && longContextAvailable()) {
+		queryOptions.betas = [LONG_CONTEXT_BETA];
+	}
 	if (input.pathToClaudeCodeExecutable) queryOptions.pathToClaudeCodeExecutable = input.pathToClaudeCodeExecutable;
 	if (toolLessRequest) queryOptions.maxTurns = 1;
 	if (strictMcpConfig) queryOptions.extraArgs = { "strict-mcp-config": null };
