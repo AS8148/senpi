@@ -1,3 +1,24 @@
+## 2026-10-15 - steer and follow_up can start a turn on an idle session (senpi#3224)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `steer` / `follow_up` take `whenIdle?: "queue" | "start"`; capability `steer_when_idle`.
+- `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`: any other `whenIdle` is refused with the valid values.
+- `packages/coding-agent/src/modes/rpc/client-input-handler.ts`: `prompt` and `whenIdle: "start"` share one `promptPath`; the start-or-queue decision is the session's `prompt` with `streamingBehavior`.
+- `packages/coding-agent/src/modes/rpc/host-capabilities.ts`, `connection-handler.ts`: advertise `steer_when_idle`.
+
+### Why
+
+A client could not hand the agent a message that should start work if the agent is idle and join the run otherwise; a steer on an idle session sat in the queue until something else started a turn.
+
+### Why an extension could not handle it
+
+The RPC command surface and its admission receipts live in the RPC handler.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/client-input-handler.ts`: the `prompt` / `steer` / `follow_up` cases.
+
 ## 2026-10-15 - The successor reopens a parked session through the host's one open (senpi#3368)
 
 ### What changed

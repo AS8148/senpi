@@ -6,6 +6,8 @@
 
 ### Added
 
+- Two queue-or-start prompts arriving together on an idle session no longer start two turns; the second joins the first ([#3224](https://github.com/code-yeongyu/senpi/issues/3224)).
+- RPC `steer` and `follow_up` take `whenIdle: "start"` (capability `steer_when_idle`): on an idle session the message starts a turn (`disposition: "started"`), otherwise it is queued; two such inputs arriving together start one turn ([#3224](https://github.com/code-yeongyu/senpi/issues/3224)).
 - `pi.getPermissionPreset()` returns the permission preset the permission system enforces for the session right now (flag, settings, or the `full-access` default), or `undefined` when no permission system runs or its setup failed.
 - Subscription limit windows reach RPC clients: senpi reads the windows a ChatGPT subscription reports with each response (`x-codex-primary-*`/`x-codex-secondary-*`) and Claude's unified rate-limit headers, keeps the latest per provider and credential slot (never key material), and serves them as `get_subscription_limits` plus a `subscription_limits` record on change; an account nothing reported for is absent, not 0%. Thanks to jaeyoung for asking ([#3370](https://github.com/code-yeongyu/senpi/issues/3370)).
 - Every queued input has a `queuedId` (`get_state.ordered`, `queue_update.ordered`); RPC `dequeue_message` removes one and `edit_queued_message` replaces its text in place, optionally as ledger effects, with `already_delivered` / `not_found` answers that carry an action ([#1971](https://github.com/code-yeongyu/senpi/issues/1971)).
