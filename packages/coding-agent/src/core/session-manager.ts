@@ -1514,7 +1514,7 @@ export class SessionManager {
 	/**
 	 * Removes the session file when this process created it with persistHeaderNow() and it holds only
 	 * setup entries (header, model, thinking level, configuration, labels) and `custom` entries their
-	 * writer marked `startupBookkeeping` (rules scan, repository identity, subscription binding), then returns to
+	 * writer marked `startupBookkeeping` (the startup rules scan, repository identity), then returns to
 	 * buffering so a later entry cannot recreate a header-less file; those entries reach disk again with
 	 * the first message (senpi#3263). Any message (user, assistant, `!cmd`), delivered `custom_message`,
 	 * session name, other `custom` entry (such as a paid cache prewarm or a todo list) or usage record
