@@ -407,6 +407,15 @@ export class SessionEventWriter {
 					pauseMs: record.pauseMs,
 				};
 				break;
+			case "subscription_limits":
+				wire = {
+					type: "subscription_limits",
+					provider: record.provider,
+					account: record.account,
+					windows: record.windows,
+					reportedAt: record.reportedAt,
+				};
+				break;
 			default: {
 				const exhaustive: never = record;
 				throw new Error(`unexpected host record ${exhaustive}`);
@@ -460,8 +469,8 @@ export class SessionEventWriter {
 	 * session's reaches every connection. No client asked for this teardown, so there is
 	 * no close response to answer.
 	 */
-	parkSession(sessionId: string, sessionPath: string): void {
-		this.sealWithLifecycle(sessionId, { type: "session_parked", sessionId, sessionPath });
+	parkSession(sessionId: string, sessionPath: string, reason: "idle" | "unloaded"): void {
+		this.sealWithLifecycle(sessionId, { type: "session_parked", sessionId, sessionPath, reason });
 	}
 
 	/**
