@@ -1292,6 +1292,14 @@ When `new_session`, `switch_session`, or `fork` swaps the live session - includi
 
 The command response reports only `{ cancelled }`, so this event is the only push channel carrying the new identity. The identity is `durableSessionId`, never `sessionId`: top-level `sessionId` is reserved for the per-connection routing handle that multi-session hosts tag every record with, and that tag is applied last, so reusing the key would overwrite the identity the event exists to deliver. Classic mode emits the event untagged.
 
+A replacement first stops the session's running turn. That turn's `agent_end` (`aborted: true`) arrives before `session_replaced` and names the cause, so a client that did not ask for the abort can tell it apart from a failure:
+
+```json
+{ "type": "agent_end", "aborted": true, "abortCause": { "kind": "session_replaced", "reason": "new", "targetSessionFile": "…", "targetSessionId": "…" } }
+```
+
+`reason` is `new`, `fork` or `resume` (`switch_session`); when present, `targetSessionId` equals the `durableSessionId` of the `session_replaced` that follows. A fork of a session that was never saved gets its new id only after the teardown, so it names no target. The first named cause wins until the `agent_end` it explains: a plain `abort` arriving meanwhile does not erase it. An ordinary `abort`, a `reload` and a shutdown carry no `abortCause`.
+
 ### Multi-session host lifecycle (cold start + idle exit)
 
 The lifecycle supervisor is also available to bundled/rebranded runtimes through the hidden internal launch route `--internal-rpc-host-supervisor`. This route is wire-invisible and intended only for desktop launchers: it receives the public socket, ownership directory, and the runtime command/arguments to wrap, then runs the same `host-lifecycle.ts` implementation used by `ensureHost()`. Normal CLI modes do not use or advertise this route. Compiled standalone binaries also re-enter themselves through this route automatically: a bun executable always boots its embedded entrypoint, so the script-path re-entry used under a JS runtime would be parsed as CLI arguments (`Unknown option: --socket`) and the host could never start.
@@ -3794,7 +3802,7 @@ Emitted when the agent begins processing a prompt.
 
 ### agent_end
 
-Emitted when one low-level agent run completes. Contains all messages generated during this run. If `willRetry` is true, an automatic retry will follow.
+Emitted when one low-level agent run completes. Contains all messages generated during this run. If `willRetry` is true, an automatic retry will follow. A run stopped because its session was replaced also carries `abortCause: { kind: "session_replaced", reason, targetSessionFile?, targetSessionId? }` (see `session_replaced`); extensions' own `agent_end` does not carry it, they learn of the replacement from `session_shutdown`.
 
 ```json
 {

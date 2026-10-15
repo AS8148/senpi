@@ -1,3 +1,23 @@
+## 2026-10-15 - A replacement's abort names the replacement on agent_end (senpi#3357)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `abort({ cause })` records the cause (the first one wins) until the aborted run's `agent_end` carries it as `abortCause` (type `AgentAbortCause`, exported); a new run drops a stale one.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `teardownCurrent` passes `{ kind: "session_replaced", reason, targetSessionFile, targetSessionId }` for `new` / `fork` / `resume` (the in-memory fork names no file or id: it gets its id only after the teardown); `reload` and `quit` pass none.
+
+### Why
+
+A replacement aborts the running turn before `session_replaced`; a client that did not ask for the abort saw a bare aborted turn with no reason (omo#10112).
+
+### Why an extension could not handle it
+
+The teardown abort and the `agent_end` it produces are runtime internals that run before any extension learns of the replacement.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: `abort()` and the `agent_end` emit in `_processAgentEvent`.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `teardownCurrent` and its callers.
+
 ## 2026-10-15 - An idle prompt with streamingBehavior claims the turn start (senpi#3224)
 
 ### What changed
