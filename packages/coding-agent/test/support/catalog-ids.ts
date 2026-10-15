@@ -1,5 +1,7 @@
 import { type BuiltinProvider, getBuiltinImageModels, getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 
+const MIN_SESSION_CONTEXT_WINDOW = 128_000;
+
 /**
  * Ids the built-in catalog ships today, for fixtures that need a real catalog model (a `modelOverrides` entry only
  * decorates an existing one). Never write a catalog id as a literal in a test: a catalog regen can drop it and the
@@ -10,10 +12,12 @@ export function builtinChatModelIds(
 	count: number,
 	accept: (id: string) => boolean = () => true,
 ): string[] {
+	// Only models a session can start on: a tiny legacy context window fails the usability budget on a model switch.
+	const usable = getBuiltinModels(provider).filter((model) => model.contextWindow >= MIN_SESSION_CONTEXT_WINDOW);
 	return pick(
 		provider,
 		"chat",
-		getBuiltinModels(provider).map((model) => model.id),
+		usable.map((model) => model.id),
 		count,
 		accept,
 	);
