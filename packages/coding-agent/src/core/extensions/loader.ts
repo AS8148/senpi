@@ -45,7 +45,9 @@ import {
 	extensionModuleImporter,
 	rememberExtensionFactory,
 } from "./extension-module-cache.ts";
+import { StaleExtensionContextError } from "./stale-context-error.ts";
 import type {
+	AppendEntryOptions,
 	BeforeAgentStartHandlerOptions,
 	ContextHandlerOptions,
 	EntryRenderer,
@@ -255,7 +257,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
 	const eventBusUnsubscribers = new Set<() => void>();
 	const assertActive = () => {
 		if (state.staleMessage) {
-			throw new Error(state.staleMessage);
+			throw new StaleExtensionContextError(state.staleMessage);
 		}
 	};
 
@@ -605,9 +607,9 @@ function createExtensionAPI(
 			runtime.sendUserMessage(content, options);
 		},
 
-		appendEntry(customType: string, data?: unknown): void {
+		appendEntry(customType: string, data?: unknown, options?: AppendEntryOptions): void {
 			assertActive();
-			runtime.appendEntry(customType, data);
+			runtime.appendEntry(customType, data, options);
 		},
 
 		setSessionName(name: string): void {

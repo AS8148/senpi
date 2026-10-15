@@ -47,6 +47,47 @@ The park record and the successor's reopen are host lifecycle; no extension hook
 
 The `recordHandoverParkedSession` call in `evictIdleSession` (`session-command-router.ts`).
 
+## 2026-10-15 - get_subscription_limits and the subscription_limits record (senpi#3370)
+
+### What changed
+
+`RpcCommand` gains `get_subscription_limits` and its response (`data.accounts`), and the host record union gains `RpcSubscriptionLimitsEvent`; the router and the single-session handler answer the command and broadcast the record when an account's windows change. Capability `subscription_limits`.
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`
+
+### Why
+
+Clients such as the desktop need the windows in a stable RPC shape.
+
+### Why an extension could not handle it
+
+RPC commands and host records are defined by the RPC mode itself.
+
+### Expected merge conflict zones
+
+The command and response unions in `rpc-types.ts`, the host-record switch in `session-event-writer.ts`, and the router dispatch.
+
+## 2026-10-15 - dequeue_message and edit_queued_message as ledger effects (senpi#1971)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/effect-commands.ts`: `runQueuedInputChange` runs `dequeue_message` / `edit_queued_message`, optionally as `dequeue` / `edit_queued` effects (`done` on removed/edited, `failed` with `already_delivered` / `not_found` outcomes).
+- `packages/coding-agent/src/modes/rpc/effect-record.ts`, `effect-outcome-copy.ts`: the `edit_queued` kind and the two outcomes with reason and action.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `rpc-input-validation.ts`, `connection-handler.ts`: the two commands, their `queuedId` validation and dispatch.
+- `packages/coding-agent/src/modes/rpc/rpc-session-state.ts`: `get_state.ordered` comes from `getQueuedInputs()` (now carrying `queuedId`) instead of a private field.
+
+### Why
+
+A client could see queued messages but not remove or correct one (desktop #2263).
+
+### Why an extension could not handle it
+
+The RPC command surface and the effect ledger live in the RPC handler.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the command switch near `clear_queue`.
+
 ## 2026-10-14 - gc stops stale older-engine hosts (senpi#3268)
 
 ### What changed

@@ -24,6 +24,9 @@ import {
 } from "./custom-capability.ts";
 import { EFFECT_LEDGER_CAPABILITY } from "./effect-record.ts";
 
+/** `get_subscription_limits` and the `subscription_limits` host record (senpi#3370). */
+export const SUBSCRIPTION_LIMITS_CAPABILITY = "subscription_limits";
+
 /**
  * The capabilities a multi-session host advertises in `get_protocol_info`, in their wire order. `warm` is added only
  * when the runtime is in-process, and `negotiated` carries the launch capabilities this connection was given.
@@ -40,6 +43,7 @@ export function multiSessionHostCapabilities(options: {
 			MEDIA_PLACEHOLDERS_CAPABILITY,
 			DURABLE_CLIENT_MESSAGE_ID_CAPABILITY,
 			EFFECT_LEDGER_CAPABILITY,
+			SUBSCRIPTION_LIMITS_CAPABILITY,
 			CONTINUE_FROM_LEAF_CAPABILITY,
 			EVAL_CELLS_CAPABILITY,
 			// Both shared runtimes dispatch through the active session-writing holder guard.

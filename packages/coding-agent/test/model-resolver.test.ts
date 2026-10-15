@@ -696,6 +696,11 @@ describe("resolveCliModel", () => {
 });
 
 describe("default model selection", () => {
+	test("anthropic defaults track current models", () => {
+		expect(defaultModelPerProvider.anthropic).toBe("claude-opus-5-5");
+		expect(defaultModelPerProvider["anthropic-subscription"]).toBe("claude-opus-5-5");
+	});
+
 	test("openai defaults track current models", () => {
 		expect(defaultModelPerProvider.openai).toBe("gpt-6.1-sol");
 		expect(defaultModelPerProvider["chatgpt-subscription"]).toBe("gpt-6.1-sol");

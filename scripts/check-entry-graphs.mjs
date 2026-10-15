@@ -35,7 +35,8 @@ const BUDGETS = {
 		"./models": {
 			// Fork: models.ts also carries credential-pool slots, models-store and catalog max lookup (21 files at the v1.0.0 sync).
 			// +1 (senpi#2893): utils/oauth-refresh-error.ts, the typed transient/permanent refresh classification auth/resolve.ts raises.
-			maxFiles: 22,
+			// +1 (senpi#3292): google-thinking-generation.ts, the type-only leaf inferring the level map of generation-4 rows.
+			maxFiles: 23,
 			forbid: ["providers/", "models.generated.ts", "index.ts", "utils/validation.ts", "utils/typebox-helpers.ts"],
 		},
 		"./utils/*": { maxFiles: 3, forbid: ["providers/", "api/", "index.ts"] },

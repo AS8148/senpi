@@ -20,6 +20,8 @@ export interface CandidateFilters {
 	isSuppressed(base: string): boolean;
 	isAuthAvailable(provider: string): boolean;
 	isCircuitOpen(base: string): boolean;
+	/** A model whose every rung is out for this walk (a network blip on it, senpi#3344). */
+	isModelSkipped?(base: string): boolean;
 	/** Providers whose account-wide usage limit or billing failure this session saw: their entries are skipped. */
 	isProviderSpent?(provider: string): boolean;
 	skip(candidate: string, skipReason: string): void;
@@ -76,6 +78,10 @@ function scanCandidates(
 			continue;
 		}
 		const base = baseSelector(selector);
+		if (filters.isModelSkipped?.(base)) {
+			filters.skip(raw, "network-blip");
+			continue;
+		}
 		if (filters.tried.has(rungSelector(selector))) {
 			filters.skip(raw, "tried");
 			continue;
@@ -96,6 +102,11 @@ function scanCandidates(
 		// A hard-error park is keyed by the level the rung ran at, so check the level this entry
 		// would run at: its own, or the inherited one, clamped like the switch does (senpi#3311).
 		const level = clampThinkingLevel(model, selector.thinkingLevel ?? current.thinkingLevel ?? "off");
+		// An explicit level that clamps to the running one is the rung in flight (senpi#3321).
+		if (base === formatSelector(current.model) && level === (current.thinkingLevel ?? "off")) {
+			filters.skip(raw, "self");
+			continue;
+		}
 		if (filters.isSuppressed(rungSelector({ ...selector, thinkingLevel: level }))) {
 			filters.skip(raw, "suppressed");
 			continue;

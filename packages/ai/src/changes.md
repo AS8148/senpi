@@ -1,3 +1,21 @@
+## 2026-10-14 - Map-less generation-4 rows offer only the levels the provider accepts (senpi#3292 review)
+
+### What changed
+
+- `packages/ai/src/models.ts`: new `inferThinkingLevelMap` returns the row's own map, else the OpenAI inference, else `inferGoogleThinkingLevelMap` from the fork-only `packages/ai/src/google-thinking-generation.ts`. `getSupportedThinkingLevels` reads it, so a generation-4-or-later Google row without a `thinkingLevelMap` offers only `low`, `medium` and `high`, and `clampThinkingLevel` raises `off` and `minimal` to `low`.
+
+### Why
+
+Custom `models.json` and discovered rows usually carry no map. Before this, such a row still offered `off` (sent as a zero budget) and `minimal`, both rejected with HTTP 400; the review of #3293 found the fix only worked for rows that shipped a map.
+
+### Why an extension could not handle it
+
+Supported levels and clamping are computed in the core model runtime before any adapter or extension sees the request.
+
+### Expected merge conflict zones
+
+- LOW: the import block of `packages/ai/src/models.ts` and the line in `getSupportedThinkingLevels` that reads the inferred map.
+
 ## 2026-10-11 - Usage-limit advice retains structured cause (senpi#3131 review)
 
 ### What changed
