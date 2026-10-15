@@ -1,3 +1,44 @@
+## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
+
+### What changed
+
+Remove the retired mode from recommendation policy and update the shared async-answer ownership comment. Existing mode behavior and model provenance checks stay intact.
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`
+- `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`
+
+### Why
+
+The executable Codex compatibility layer is being removed. Shared Native runtime behavior and historical records must remain independent of that layer.
+
+### Why an extension could not handle it
+
+These host contracts, import paths and build or verification targets belong to the repository; an extension cannot retire them.
+
+### Expected merge conflict zones
+
+The listed paths, especially command dispatch, mode unions and process identity imports. Keep the supported runtime branches and the shared utility behavior.
+
+## 2026-10-13 - tps: per-run stats notify is TUI-only (senpi#3236)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/tps.ts`: the `agent_end` handler returns early when `ctx.mode !== "tui"`, so the TPS/cache-hit notice is sent only to the TUI footer. Message text, timing accumulation, and the `output > 0`/`elapsedMs > 0` guards are unchanged.
+- `packages/coding-agent/test/suite/tps-extension.test.ts`: the ctx mock carries `mode: "tui"`, matching `ExtensionContext`.
+- `packages/coding-agent/test/suite/regressions/3236-tps-notify-tui-only.test.ts` (new): a TUI ctx still receives exactly one unchanged notice; rpc/app-server/json/print ctxs receive none.
+
+### Why
+
+In RPC mode `ctx.ui.notify` becomes an `extension_ui_request`, and the desktop rendered each one as an info warning row ("Work Log") once per agent run. The notice is a TUI footer nicety and has no RPC-mode consumer; the desktop now drops the string server-side (omo-desktop-app #2327), and this change stops the engine from emitting it outside the TUI in the first place.
+
+### Why an extension could not handle it
+
+It is an extension — the guard lives inside the existing `tps` builtin, whose notify call site is the only emitter of this string.
+
+### Expected merge conflict zones
+
+- LOW in `tps.ts` around the `agent_end` early-return block; LOW in `tps-extension.test.ts` around the ctx mock shape.
+
 ## 2026-10-11 - Restore shipped defaults and cache-preserving search policy (senpi#3125 delta)
 
 ### What changed
@@ -544,7 +585,6 @@ The provider id is resolved inside the package before any extension loads, and t
 
 - `packages/coding-agent/src/core/extensions/builtin/ask-user/render.ts`: renderer exports.
 - `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: attachment options.
-
 
 ## 2026-09-20 - Recover unsettled async questions after restart (#1857 I3)
 

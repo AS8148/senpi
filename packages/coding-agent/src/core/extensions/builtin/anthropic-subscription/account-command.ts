@@ -31,9 +31,9 @@ function asCredential(value: Credential | undefined): AnthropicSubscriptionCrede
 }
 
 function accountStatus(slot: AccountSlot, now: number): string | undefined {
-	if (slot.blockReason === "auth_error") return "blocked until re-login";
 	if (slot.blockedUntil !== undefined && slot.blockedUntil > now) {
-		return `blocked until ${new Date(slot.blockedUntil).toISOString()}`;
+		const until = new Date(slot.blockedUntil).toISOString();
+		return slot.blockReason === "auth_error" ? `login rejected; re-checked at ${until}` : `blocked until ${until}`;
 	}
 	return undefined;
 }

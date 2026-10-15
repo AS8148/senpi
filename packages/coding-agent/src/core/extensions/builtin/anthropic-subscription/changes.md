@@ -1,3 +1,33 @@
+## 2026-10-14 - Auth blocks are re-probed on a timer instead of waiting for a token write (senpi#3264)
+
+### What changed
+
+- `failover.ts`: an `auth_error` block now carries `blockedUntil = now + AUTH_BLOCK_REPROBE_MS` (15 min, `credential-pool/auth-reprobe.ts`) instead of no expiry.
+- `affinity.ts`: an account is blocked only while `blockedUntil` is in the future; `clearExpiredBlocks` clears elapsed auth blocks too, and an auth block persisted before this change (no `blockedUntil`) clears at once so the next request probes it.
+- `auth-block-recovery.ts` / `auth-lane.ts`: recovery also runs for a recoverable account whose re-probe is due, even while a sibling can serve, so a probe never re-sends the rejected token when the saved grant can still refresh. With no usable account every recoverable account is recovered, as before.
+- `guidance.ts`, `account-command.ts`, `account-management.ts`: auth blocks show their re-check time instead of "until re-login".
+
+### Why
+
+- A lead session stayed down ~12 h after every account was marked `auth_error` with quota left on all of them: the token was refreshed outside this process (config-dir lane), and an auth block cleared only on a token write. Regressions: `test/suite/regressions/3264-auth-block-reprobe.test.ts`, the new due-refresh case in `2926-anthropic-subscription-auth-block-refresh-recovery.test.ts`.
+
+### Why an extension could not handle it
+
+- This is the extension; the block lifecycle lives in its failover and affinity modules.
+
+### Known trade-off
+
+- This lane has no half-open lease, so every session sees an auth block expire at the same `blockedUntil`; a still-dead token costs about one fast 401 per live session every 15 minutes, each re-blocking. Grant redemption stays once-per-grant because `recoverSlot` re-checks under `store.modify`.
+
+### Expected merge conflict zones
+
+- LOW: `blockedAccount` in `failover.ts`; `isAccountBlocked`/`clearExpiredBlocks` in `affinity.ts`; the candidate filter in `recoverAuthBlockedSlots`.
+
+## 2026-10-14 - Imported accounts remember their source grant (senpi#3259)
+
+- `accounts.ts`: `AccountSlot.importedFrom` (optional) holds the digest of the direct-`anthropic` OAuth grant an account was copied from by the core auth.json migration (`core/anthropic-oauth-migration.ts`). It survives token refresh (slots are rebuilt by spread), so the copy runs once and the source is retired only after the copy is read back. No behaviour in this extension reads it.
+- Expected conflict zones: the `AccountSlot` type only.
+
 ## 2026-10-08 - An auth-blocked account recovers once through its saved grant (senpi#2926)
 
 ### What changed

@@ -12,6 +12,41 @@
 
 ### Removed
 
+## [2026.10.15] - 2026-10-15
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`github-copilot`, `google`, `google-vertex`, `meta`, `opencode`, `opencode-go`, `opengateway`, `openrouter`, `vercel-ai-gateway`).
+
+### Fixed
+
+- OpenCode Go models served over the Google Generative AI API now have a working transport; the refreshed catalog had added one, which broke the typed catalog. Two entries the provider no longer offers are removed from OpenCode Go.
+- Venice deepseek models (`deepseek-v4-1-flash`, `deepseek-v4-pro-0813` and the other deepseek-v4 entries) work again: requests no longer carry DeepSeek's `thinking` key, which Venice rejected with 400 on every call, and thinking runs through Venice's `reasoning_effort` instead ([#3308](https://github.com/code-yeongyu/senpi/issues/3308)).
+- Anthropic's "Third-party apps now draw from your extra usage" rejection is classified as terminal account exhaustion with a plain explanation of the billing path, and the `anthropic` provider no longer offers a Claude subscription OAuth login; subscriptions use the Agent SDK lane ([#3259](https://github.com/code-yeongyu/senpi/issues/3259)).
+
+### Removed
+
+## [2026.10.13] - 2026-10-13
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The advertised Claude Code fingerprint floor that Anthropic OAuth requests declare follows the bundled Claude Agent SDK to Claude Code 2.1.296 ([#3258](https://github.com/code-yeongyu/senpi/pull/3258)).
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`cloudflare-ai-gateway`, `meta`, `opengateway`, `openrouter`, `vercel-ai-gateway`) ([#3248](https://github.com/code-yeongyu/senpi/pull/3248)).
+
+### Fixed
+
+- Tool parameter schemas sent to OpenAI Chat Completions providers now always declare a root `type: "object"`, including when a root `anyOf`/`oneOf` union cannot be merged into a single object schema. DeepSeek's official API (and gateways that forward to it, such as OpenGateway's DeepSeek route) rejected such requests with `400 Invalid schema ... got 'type: null'` ([#3245](https://github.com/code-yeongyu/senpi/issues/3245)).
+
+### Removed
+
 ## [2026.10.12] - 2026-10-12
 
 ### Breaking Changes

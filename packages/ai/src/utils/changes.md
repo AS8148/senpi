@@ -1,3 +1,46 @@
+## 2026-10-14 - Anthropic third-party billing rejection is terminal account exhaustion with its own explanation (senpi#3259)
+
+### What changed
+
+- `packages/ai/src/utils/retry.ts`: `ANTHROPIC_THIRD_PARTY_BILLING_MARKER` ("Third-party apps now draw from your extra usage") joins `QUOTA_EXHAUSTION_PATTERNS`, so the 400 classifies as non-retryable account exhaustion; `isAnthropicThirdPartyBillingMessage()` exposes the match.
+- `packages/ai/src/utils/provider-failure-description.ts`: `describeProviderFailureForUser()` explains that rejection by billing path: on `anthropic` it names the subscription login ("Anthropic Subscription (Claude Pro/Max)" via `/login`), extra usage at https://claude.ai/settings/usage, or `/model`; on `anthropic-subscription` it offers extra usage or `/model` only.
+
+### Why
+
+- The 400 matched no classifier, so the hard-error fallback walked Opus 5.5 -> 5 -> 4.8 -> 4.6 on the same credential and every hop drew the same rejection (five requests, measured against a local mock), and the user saw only the raw body (senpi#3259).
+
+### Why an extension could not handle it
+
+- Retry classification and the user-facing failure text are shared by every provider and consumed inside the session retry/fallback engine; there is no hook between a provider error and its classification.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `QUOTA_EXHAUSTION_PATTERNS` and the new constant above it in `retry.ts`; the import block and the first branch of `describeProviderFailureForUser()`.
+
+## 2026-10-13 - Every typeless tool-parameter root gets `type: "object"` (senpi#3245, senpi#3250)
+
+### What changed
+
+- `packages/ai/src/utils/tool-schema-compat.ts`: `ensureRootObjectSchema` now adds `type: "object"` to a typeless root
+  `allOf` and to an `anyOf`/`oneOf` union that cannot merge because a branch is not an object shape. Both previously
+  went out typeless. The combiner stays beside the added type. (A typeless `$ref` root already got `type: "object"`
+  before this change.) This supersedes the 2026-08-05 rule in `packages/ai/src/changes.md` that scalar and mixed root
+  unions are left typeless.
+
+### Why
+
+DeepSeek and gateways forwarding to it reject every tool whose root parameters schema has no `type`
+(`got 'type: null'`), so an unmergeable root union failed every tool call. Tool arguments are always JSON objects and
+are validated locally against the original schema, so the stricter wire schema costs nothing in practice.
+
+### Why an extension could not handle it
+
+Tool-parameter normalization runs inside the OpenAI-compatible request builder after extensions hand over tools.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/utils/tool-schema-compat.ts`: the tail of `ensureRootObjectSchema` and its doc comment.
+
 ## 2026-10-09 - Restore utils-tracker coverage for upstream-modified paths (senpi#3006)
 
 ### What changed

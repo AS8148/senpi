@@ -1,3 +1,41 @@
+## 2026-10-14 - Venice deepseek models take thinking through reasoning_effort (senpi#3308)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: the deepseek-v4 compat post-pass treats `venice` like `openrouter` and `opencode`. It keeps only `requiresReasoningContentOnAssistantMessages` and leaves Venice's auto-detected `reasoning_effort` format in place, instead of stamping DeepSeek's native `thinkingFormat: "deepseek"`. `src/providers/data/venice.json` was regenerated with `--providers venice` (no model added or removed). The six Venice deepseek-v4 entries lost `thinkingFormat: "deepseek"`, and their `thinkingLevelMap` now follows Venice's published efforts (`off: "none"`, then `low`/`medium`/`high`/`max` as models.dev lists them per model).
+
+### Why
+
+- Venice's chat schema is `additionalProperties: false` and has no `thinking` field. The deepseek format always sent `thinking: { type: "enabled" | "disabled" }`, so every request to a Venice deepseek model failed with `400 Invalid request parameters` ("Unrecognized key(s) in object: 'thinking'"), whatever the thinking level (senpi#3308, captured on the wire by the reporter).
+
+### Why an extension could not handle it
+
+- The compat flags are baked into the generated catalog that every provider request reads; an extension cannot change a builtin model's request shape before the provider builds the payload.
+
+### Expected merge conflict zones
+
+- LOW: the `preservesNativeReasoningEffort` line in the deepseek-v4 post-pass of `generate-models.ts`; `venice.json` and `.manifest.json` are generated.
+
+## 2026-10-13 - Idempotent catalog generation (whole-manifest key)
+
+### What changed
+
+- `packages/ai/scripts/model-data.ts`: `stableGeneratedAt(newManifest, committedManifest)` keeps the committed `generatedAt` when the new manifest equals the committed one on `structureHash` AND every `files` hash; otherwise the fresh timestamp.
+- `packages/ai/scripts/generate-models.ts`: builds the new manifest after `fileContents` is populated and applies the stable timestamp only when no explicit `--generatedAt` was passed.
+- The committed catalog (`.manifest.json`, `opencode.json`, `openrouter.json`) is refreshed from the live providers.
+
+### Why
+
+The releasability drift check regenerated the catalog with a fresh `generatedAt` and diffed the whole file, so it always failed on the timestamp. An idempotent key that covers the whole manifest except the timestamp keeps the drift check green on unchanged content while still tripping on a real change (a new/removed model, or a field edit).
+
+### Why an extension could not handle it
+
+The catalog's `generatedAt` and the manifest comparison are build-time constants in the generator, not something an extension can override at runtime.
+
+### Expected merge conflict zones
+
+The manifest's `generatedAt` and `structureHash` lines.
+
 ## 2026-10-10 - Test-run temporary storage has an owner (senpi#3064)
 
 ### What changed

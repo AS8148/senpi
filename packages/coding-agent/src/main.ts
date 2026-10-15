@@ -1,4 +1,4 @@
-// allow: SIZE_OK - CLI coordinator is pre-existing oversized glue; app-server command handling is extracted for this branch and a full main split needs behavior-locked follow-up coverage.
+// allow: SIZE_OK - CLI coordinator is pre-existing oversized glue; a full main split needs behavior-locked follow-up coverage.
 /**
  * Main entry point for the coding agent CLI.
  *
@@ -33,7 +33,6 @@ import { movedSessionToContinue } from "./cli/continue-moved.ts";
 import { resolveCredentialForPrint } from "./cli/credential-print.ts";
 import { chooseCrossProjectAction, confirmSameRepositoryRebind } from "./cli/cross-project-session.ts";
 import {
-	dispatchAppServerCommand,
 	dispatchConfigCommand,
 	dispatchHostCommand,
 	dispatchPackageCommand,
@@ -78,6 +77,7 @@ import { AuthStorage, ReadOnlyAuthStorage } from "./core/auth-storage.ts";
 import { envValue } from "./core/brand.ts";
 import { type CredentialAccountSummary, summarizeCredentialAccounts } from "./core/credential-accounts.ts";
 import { exportFromFile } from "./core/export-html/index.ts";
+import { ModelUsabilityBudgetError } from "./core/extensions/builtin/compaction/model-usability-budget.ts";
 import { resolveMovedPath } from "./core/extensions/builtin/moved-path-guard/resolve.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
 import { applyHttpProxySettings, configureHttpDispatcher } from "./core/http-dispatcher.ts";
@@ -177,9 +177,6 @@ function isTruthyEnvFlag(value: string | undefined): boolean {
 }
 
 function resolveAppMode(parsed: Args, stdinIsTTY: boolean, stdoutIsTTY: boolean): AppMode {
-	if (parsed.mode === undefined && parsed.messages[0] === "app-server") {
-		return "app-server";
-	}
 	if (parsed.mode === "rpc") {
 		return "rpc";
 	}
@@ -194,10 +191,6 @@ function resolveAppMode(parsed: Args, stdinIsTTY: boolean, stdoutIsTTY: boolean)
 
 function toPrintOutputMode(appMode: AppMode): Exclude<Mode, "rpc"> {
 	return appMode === "json" ? "json" : "text";
-}
-
-function toProjectTrustMode(appMode: AppMode): AppMode {
-	return appMode === "app-server" ? "print" : appMode;
 }
 
 /**
@@ -581,7 +574,7 @@ export async function createSessionManager(
 				if (resolved.cwd !== "" && resolvePath(resolveMovedPath(resolved.cwd)) === resolvePath(cwd))
 					return openSessionOrExit(resolved.path, sessionDir);
 				// The confirmation blocks on readline, which only an interactive session can
-				// answer. Print, JSON, RPC, and app-server runs reach here with a TTY attached
+				// answer. Print, JSON, and RPC runs reach here with a TTY attached
 				// too (`-p` from a terminal), where the question hangs the process or resolves
 				// as "no" on stdin EOF, so they get the exact commands and a non-zero exit.
 				const action = await chooseCrossProjectAction({
@@ -865,7 +858,7 @@ export function createCliRuntimeFactory(
 	const trustStore = new ProjectTrustStore(agentDir);
 	const projectTrustByCwd = new Map<string, boolean>();
 	const trustPromptMode: AppMode =
-		parsed.help || parsed.listModels !== undefined || parsed.listTips ? "print" : toProjectTrustMode(appMode);
+		parsed.help || parsed.listModels !== undefined || parsed.listTips ? "print" : appMode;
 	const resolvedExtensionPaths = resolveCliPaths(cwd, parsed.extensions);
 	const resolvedSkillPaths = resolveCliPaths(cwd, parsed.skills);
 	const resolvedPromptTemplatePaths = resolveCliPaths(cwd, parsed.promptTemplates);
@@ -917,7 +910,7 @@ export function createCliRuntimeFactory(
 									pauseIndicatorDuringPrompts(
 										createProjectTrustContext({
 											cwd,
-											mode: isInitialRuntime ? trustPromptMode : toProjectTrustMode(appMode),
+											mode: isInitialRuntime ? trustPromptMode : appMode,
 											settingsManager: startupSettingsManager,
 											hasUI: isInitialRuntime && trustPromptMode === "interactive",
 										}),
@@ -1142,10 +1135,6 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	if (await dispatchConfigCommand(args, { extensionFactories })) {
-		return;
-	}
-
-	if (await dispatchAppServerCommand(args)) {
 		return;
 	}
 
@@ -1412,9 +1401,18 @@ export async function main(args: string[], options?: MainOptions) {
 		cwd: sessionManager.getCwd(),
 		agentDir,
 		sessionManager,
-	}).finally(() => {
-		startupLoadingIndicator.stop();
-	});
+	})
+		.catch((error: unknown) => {
+			// A model that cannot start is the user's to fix, not a crash: one line and its fix (senpi#3333).
+			if (!(error instanceof ModelUsabilityBudgetError)) throw error;
+			// Stop the spinner first: exit runs before `.finally`, and its line has no newline.
+			startupLoadingIndicator.stop();
+			console.error(chalk.red(error.message));
+			process.exit(1);
+		})
+		.finally(() => {
+			startupLoadingIndicator.stop();
+		});
 	time("createAgentSessionRuntime");
 	await prepareSessionOpening(sessionManager, appMode);
 	const { services, session, modelFallbackMessage } = runtime;

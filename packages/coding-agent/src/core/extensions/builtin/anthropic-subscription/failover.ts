@@ -1,4 +1,5 @@
 import type { CredentialStore } from "@earendil-works/pi-ai";
+import { AUTH_BLOCK_REPROBE_MS } from "../../../credential-pool/auth-reprobe.ts";
 import {
 	activeModelBlockUntil,
 	mergeModelBlocks,
@@ -104,8 +105,7 @@ function blockedAccount(
 	model: string | undefined,
 ): AccountSlot {
 	if (classification.kind === "auth_error") {
-		const { blockedUntil: _blockedUntil, ...withoutExpiry } = account;
-		return { ...withoutExpiry, blockReason: "auth_error" };
+		return { ...account, blockedUntil: now + AUTH_BLOCK_REPROBE_MS, blockReason: "auth_error" };
 	}
 	const fallback = Math.min(MAX_RATE_LIMIT_BLOCK_MS, baseBlockMs * 2 ** attempt);
 	if (classification.modelFamily !== undefined && model !== undefined) {
