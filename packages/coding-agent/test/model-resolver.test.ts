@@ -3,6 +3,7 @@ import { getModels } from "@earendil-works/pi-ai/compat";
 import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import { describe, expect, test, vi } from "vitest";
 import {
+import { providersMissingDefault } from "./helpers/provider-defaults-check.ts";
 	defaultModelPerProvider,
 	findInitialModel,
 	parseModelPattern,
@@ -715,25 +716,6 @@ describe("default model selection", () => {
 		expect(defaultModelPerProvider["ant-ling"]).toBe("Ring-2.6-1T");
 	});
 
-	// Names every provider whose built-in default is missing from its catalog. The release prepare regenerates the
-	// catalog from models.dev, which drops a model marked deprecated upstream, so this is the check that stops a
-	// release whose default just disappeared (senpi v2026.10.16: xiaomi mimo-v2.5-pro).
-	const providersMissingDefault = (
-		defaults: Record<string, string>,
-		catalogIds: (provider: string) => readonly string[],
-	): string[] => {
-		const missing: string[] = [];
-		for (const [provider, defaultModelId] of Object.entries(defaults)) {
-			// radius/ollama are dynamic catalogs; cursor is authentication-only until
-			// its chat protocol is ported.
-			if (provider === "radius" || provider === "ollama" || provider === "cursor") continue;
-			const ids = catalogIds(provider);
-			if (!ids.includes(defaultModelId))
-				missing.push(`${provider}: ${defaultModelId} (catalog has ${ids.length} models)`);
-		}
-		return missing;
-	};
-
 	test("every bundled provider default resolves in its catalog", () => {
 		const missing = providersMissingDefault(defaultModelPerProvider, (provider) => {
 			// The anthropic-subscription builtin extension serves the bundled anthropic catalog.
@@ -745,6 +727,7 @@ describe("default model selection", () => {
 		expect(missing, "built-in defaults missing from their bundled catalog").toEqual([]);
 	});
 
+	// The release prepare runs this group as `check:provider-defaults`; both tests call the same check.
 	test("a default dropped from a regenerated catalog as deprecated is named by provider", () => {
 		// models.dev marked mimo-v2.5-pro deprecated, so a regenerated xiaomi catalog keeps only these ids.
 		const regenerated: Record<string, readonly string[]> = {
