@@ -70,7 +70,7 @@ describe("unload_session", () => {
 		await host.stop();
 	}, 240_000);
 
-	it("with clearQueue: true restores nothing on the reopen and closes each cleared input as dropped_by_clear (senpi#3412)", async () => {
+	it("with clearQueue: true restores nothing on the reopen and closes each cleared input as cleared (senpi#3412)", async () => {
 		await using world = await effectHostWorld();
 		const host = await world.start();
 		const client = await host.connect();
@@ -98,7 +98,35 @@ describe("unload_session", () => {
 		expect(effectOf(status)).toMatchObject({
 			kind: "input",
 			state: "failed",
-			outcome: { kind: "dropped_by_clear", action: expect.any(String) },
+			outcome: { kind: "cleared", action: expect.any(String) },
+		});
+		await host.stop();
+	}, 240_000);
+
+	it("clear_queue closes a queued input as cleared, not completed (senpi#3412)", async () => {
+		await using world = await effectHostWorld();
+		const host = await world.start();
+		const client = await host.connect();
+		const opened = await openSession(client, { cwd: world.cwd, ...MODEL });
+		await client.request({
+			type: "steer",
+			sessionId: opened.sessionId,
+			message: "never sent",
+			clientMessageId: "q1",
+		});
+
+		const cleared = await client.request({ type: "clear_queue", sessionId: opened.sessionId });
+		const status = await client.request({
+			type: "get_effect_status",
+			effectId: "q1",
+			sessionPath: opened.sessionPath,
+		});
+
+		expect(cleared).toMatchObject({ success: true });
+		expect(effectOf(status)).toMatchObject({
+			kind: "input",
+			state: "failed",
+			outcome: { kind: "cleared", action: expect.any(String) },
 		});
 		await host.stop();
 	}, 240_000);

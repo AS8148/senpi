@@ -1117,6 +1117,7 @@ export function createRpcConnectionHandler(
 				return runQueuedInputChange(effectContext(), command);
 
 			case "clear_queue": {
+				ClientAdmissions.clearQueuedFor(session);
 				const cleared = session.clearQueue({ abortWillFollow: command.abortWillFollow ?? false });
 				return success(id, "clear_queue", {
 					steering: cleared.steering,

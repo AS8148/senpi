@@ -2317,7 +2317,9 @@ Quiesce and queue options (both optional, combinable with `effectId`):
   `{ reason: "invalid_grace_ms", action }`.
 - `clearQueue: true` drains the steering and follow-up queues atomically before the abort, emits
   `queue_update`, and gives each drained input with a `clientMessageId` a `failed` receipt with outcome
-  `cleared_by_abort` (with `reason`, `detail` and `action`). The answer's `cleared` counts the drained inputs.
+  `cleared` (with `reason`, `detail` and `action`). The answer's `cleared` counts the drained inputs.
+  `clear_queue` and `unload_session { clearQueue: true }` close drained input with the same `cleared` outcome; a
+  session release does not (its queued deliveries stay unwritten so the sender redelivers them).
   It also empties the queue of an idle session.
 
 ```json
