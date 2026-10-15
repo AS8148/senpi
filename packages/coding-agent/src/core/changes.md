@@ -1,3 +1,23 @@
+## 2026-10-16 - Full access never asks "Trust project folder?"; the trust walk stops below home (senpi#3414)
+
+### What changed
+
+- `project-trust.ts`: `presetTrustsProject(presetFlag, globalPreset)`. An explicit `full-access` preset (the session's `permission-preset` flag from the CLI or `open_session.permissionPreset`, else the user's global setting) trusts the project. Project settings and the implicit default never count.
+- `../main.ts` `createServices` (inside `createCliRuntimeFactory`, which builds every interactive and RPC host session): a full-access session skips the trust prompt and is trusted for that session only, with no cache and no trust-store write. A saved "do not trust", `--no-trust` and an answer already given in this host still win.
+- `trust-manager.ts` `hasTrustRequiringProjectResources`: home and every folder above it are never project resources, so their config dirs and `.agents/skills` (the user's own global resources) never require trust. This replaces the exact `~/.agents/skills` special case.
+
+### Why
+
+Full access means no prompt anywhere (sisyphuslabs/omo-desktop-app#2465). The trust prompt never read the preset, and the desktop relays it as a dialog. Opening home as a project read the user's global config dir as project config, and `.agents/skills` above home counted.
+
+### Why an extension could not handle it
+
+Project trust is decided before extensions load, and it decides whether project extensions load at all.
+
+### Expected merge conflict zones
+
+`../main.ts` (`createServices`'s trust block), `trust-manager.ts` (`hasTrustRequiringProjectResources`).
+
 ## 2026-10-15 - AgentSession.activeWakeSources (senpi#3225)
 
 ### What changed

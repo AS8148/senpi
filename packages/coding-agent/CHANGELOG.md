@@ -25,6 +25,7 @@
 
 ### Fixed
 
+- A session with the Full access preset no longer asks "Trust project folder?": it trusts its project for that session without saving the decision (a saved "do not trust" still wins). Home and the folders above it no longer count as project folders, so opening home as a project doesn't ask to trust your own global config.
 - An RPC host shard no longer keeps itself alive through its own sessions' connections. A task tree whose children open their own children on the shard they run in left that shard running for days after its owner and every outside client were gone, holding its sessions and memory. `RpcClient` now names the host generation it runs inside (`origin_host_instance`), and a host does not count connections from its own generation toward idle exit, owner-death exit or empty-host exit. A dependent session mid-turn still keeps the host open until the turn ends ([#3272](https://github.com/code-yeongyu/senpi/issues/3272)).
 - A turn stopped because its session was replaced (`new_session`, `fork`, `switch_session`) now says so: its `agent_end` carries `abortCause: { kind: "session_replaced", reason, targetSessionFile, targetSessionId }`, before `session_replaced` ([#3357](https://github.com/code-yeongyu/senpi/issues/3357)).
 - Full access never prompts: under the `full-access` preset a configured `ask` rule no longer raises a permission prompt, while a configured `deny` still refuses (#2465).

@@ -46,8 +46,9 @@ describe("ProjectTrustStore", () => {
 			expect(hasTrustRequiringProjectResources(tempDir)).toBe(false);
 			expect(hasTrustRequiringProjectResources(cwd)).toBe(false);
 
+			// Home's config dir is the user's own global config, never a project (#2465).
 			writeFileSync(join(tempDir, CONFIG_DIR_NAME, "settings.json"), "{}");
-			expect(hasTrustRequiringProjectResources(tempDir)).toBe(true);
+			expect(hasTrustRequiringProjectResources(tempDir)).toBe(false);
 			rmSync(join(tempDir, CONFIG_DIR_NAME, "settings.json"), { force: true });
 
 			mkdirSync(join(cwd, CONFIG_DIR_NAME), { recursive: true });
@@ -133,5 +134,47 @@ describe("ProjectTrustStore", () => {
 		const realKey = realpathSync.native(reachedThroughSymlink);
 		writeFileSync(join(agentDir, "trust.json"), JSON.stringify({ [realKey]: true }, null, 2), "utf-8");
 		expect(new ProjectTrustStore(agentDir).get(reachedThroughSymlink)).toBe(true);
+	});
+});
+
+describe("the trust walk stops below the user's home (sisyphuslabs/omo-desktop-app#2465)", () => {
+	let root: string;
+	let home: string;
+	let originalHome: string | undefined;
+
+	beforeEach(() => {
+		root = realpathSync(tmpdir());
+		root = join(root, `trust-home-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+		home = join(root, "home", "user");
+		mkdirSync(home, { recursive: true });
+		originalHome = process.env.HOME;
+		process.env.HOME = home;
+	});
+
+	afterEach(() => {
+		process.env.HOME = originalHome;
+		rmSync(root, { recursive: true, force: true });
+	});
+
+	it("never counts home itself, even with project-shaped config and skills there", () => {
+		mkdirSync(join(home, CONFIG_DIR_NAME, "extensions"), { recursive: true });
+		writeFileSync(join(home, CONFIG_DIR_NAME, "settings.json"), "{}");
+		mkdirSync(join(home, ".agents", "skills"), { recursive: true });
+		expect(hasTrustRequiringProjectResources(home)).toBe(false);
+		mkdirSync(join(home, "code", "app"), { recursive: true });
+		expect(hasTrustRequiringProjectResources(join(home, "code", "app"))).toBe(false);
+	});
+
+	it("ignores .agents/skills above home", () => {
+		mkdirSync(join(root, ".agents", "skills"), { recursive: true });
+		mkdirSync(join(root, "home", ".agents", "skills"), { recursive: true });
+		mkdirSync(join(home, "code", "app"), { recursive: true });
+		expect(hasTrustRequiringProjectResources(join(home, "code", "app"))).toBe(false);
+	});
+
+	it("still asks for a project's own .agents/skills between the folder and home", () => {
+		mkdirSync(join(home, "code", "app", ".agents", "skills"), { recursive: true });
+		mkdirSync(join(home, "code", "app", "src"), { recursive: true });
+		expect(hasTrustRequiringProjectResources(join(home, "code", "app", "src"))).toBe(true);
 	});
 });
