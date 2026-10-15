@@ -1,5 +1,28 @@
 # Permission System Builtin Extension
 
+## 2026-10-16 - The legacy approvals import keeps pre-store answers (#3301 review round 2)
+
+### What changed
+
+- `storage.ts`:
+  - `readRules(path, requireSource)`: the one-time import of `<cwd>/.senpi/permissions-approved.jsonl` still requires an allow, a concrete permission and a well-formed pattern, but not the `source` marker. Store reads keep requiring the marker.
+  - A failed import removes the partial store and marker, so the next load retries.
+  - The comments no longer call the marker a security boundary.
+- `service.ts`:
+  - `canonicalForCompare` resolves a path that does not exist yet through its parent's real path, so the agent cannot create the store before the first answer is written.
+  - The user-rule filter is computed once.
+
+### Why
+
+senpi never wrote a `source` field before the store moved. Requiring it made the import keep nothing, write an empty store and delete the legacy file, silently losing every saved "Always" answer.
+
+### Must not break
+
+`test/permission/approved-store-security.test.ts`:
+- "migrates a pre-PR approval line, which never carried a source marker, and keeps it working";
+- the forgery case drops only the wildcard permission and non-allow lines;
+- the forgery test file's symlink and post-migration-plant cases.
+
 ## 2026-10-15 - A named deny keeps the model's do-not-retry sentence (#3301)
 
 ### What changed

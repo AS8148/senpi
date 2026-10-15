@@ -52,8 +52,31 @@ describe("HIGH 1: the approvals store moves out of the workspace and resists for
 		expect(fs.existsSync(approvedStorePath(agentDir, projectDir))).toBe(true);
 	});
 
-	it("drops a forged line planted in the legacy file (wildcard permission, missing marker, non-allow)", () => {
-		// given a legacy file mixing forged lines with ONE valid user-answer line
+	it("migrates a pre-PR approval line, which never carried a source marker, and keeps it working", () => {
+		// given the legacy file exactly as senpi wrote it before this PR (no source field)
+		const legacyDir = path.join(projectDir, ".senpi");
+		fs.mkdirSync(legacyDir, { recursive: true });
+		fs.writeFileSync(
+			path.join(legacyDir, "permissions-approved.jsonl"),
+			'{"permission":"bash","pattern":"git status","action":"allow"}\n{"permission":"edit","pattern":"src/**","action":"allow"}\n',
+		);
+
+		// when the store loads (the one-time migration) and again later (the store alone)
+		const migrated = loadApproved(agentDir, projectDir);
+		const later = loadApproved(agentDir, projectDir);
+
+		// then the user's saved "Always" answers survive the move and the legacy file is gone
+		const expected = [
+			{ permission: "bash", pattern: "git status", action: "allow" },
+			{ permission: "edit", pattern: "src/**", action: "allow" },
+		];
+		expect(migrated).toEqual(expected);
+		expect(later).toEqual(expected);
+		expect(fs.existsSync(path.join(legacyDir, "permissions-approved.jsonl"))).toBe(false);
+	});
+
+	it("drops a forged line planted in the legacy file (wildcard permission, non-allow)", () => {
+		// given a legacy file mixing forged lines with valid pre-PR and user-answer lines
 		const legacyDir = path.join(projectDir, ".senpi");
 		fs.mkdirSync(legacyDir, { recursive: true });
 		fs.writeFileSync(
@@ -69,9 +92,12 @@ describe("HIGH 1: the approvals store moves out of the workspace and resists for
 		// when the store loads
 		const approved = loadApproved(agentDir, projectDir);
 
-		// then every forged line (wildcard permission, non-allow, no source marker) is dropped; only
-		// the valid, user-marked allow survives
-		expect(approved).toEqual([{ permission: "bash", pattern: "echo *", action: "allow" }]);
+		// then the wildcard permission and the non-allow line are dropped; both concrete allows survive
+		// (a pre-PR line never had a source marker, so the one-time import does not require it)
+		expect(approved).toEqual([
+			{ permission: "bash", pattern: "ls *", action: "allow" },
+			{ permission: "bash", pattern: "echo *", action: "allow" },
+		]);
 	});
 
 	it("ignores a line planted in the legacy file AFTER migration ran", () => {

@@ -111,12 +111,8 @@ export class PermissionService {
 			// approval. Evaluate the user's rules with their own last-match order; when the user's
 			// decision is a deny it wins outright, and a preset wildcard-ask never masks it. The preset
 			// only fills the gap the user left (no user rule matched, or the user decision is an ask).
-			const userRule = evaluate(
-				permission,
-				target,
-				this.staticRuleset.filter((rule) => !isPresetRule(rule)),
-			);
 			const userRules = this.staticRuleset.filter((rule) => !isPresetRule(rule));
+			const userRule = evaluate(permission, target, userRules);
 			if (userRules.includes(userRule) && userRule.action === "deny") {
 				return { action: "deny", rules: [{ ...userRule }] };
 			}
@@ -162,13 +158,23 @@ export class PermissionService {
 		return false;
 	}
 
+	/**
+	 * The real path to compare, case-folded on macOS. A path that does not exist yet (the store before
+	 * the first answer is written) resolves through its parent's real path, so the agent cannot create
+	 * the store first. A bare name has no directory part and cannot name the store, which lives
+	 * outside the workspace.
+	 */
 	private canonicalForCompare(value: string): string | undefined {
 		if (!value.includes("/") && !value.includes(path.sep)) return undefined;
+		const fold = (real: string) => (process.platform === "darwin" ? real.toLowerCase() : real);
 		try {
-			const real = fs.realpathSync.native(value);
-			return process.platform === "darwin" ? real.toLowerCase() : real;
+			return fold(fs.realpathSync.native(value));
 		} catch {
-			return undefined;
+			try {
+				return fold(path.join(fs.realpathSync.native(path.dirname(value)), path.basename(value)));
+			} catch {
+				return undefined;
+			}
 		}
 	}
 

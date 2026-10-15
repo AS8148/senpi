@@ -7,7 +7,11 @@ import type { Rule, Ruleset } from "./types.ts";
 const PERMISSIONS_FILE = "permissions-approved.jsonl";
 const MIGRATED_MARKER = ".migrated";
 
-/** Marker only the user-answer path (persistAlways / migration) writes; forgery without it is dropped. */
+/**
+ * Stamp the answer path (persistAlways / migration) puts on every store line. It is bookkeeping, not
+ * a security boundary: whoever can write the store can write the marker too. The protection is the
+ * store's location outside the workspace and the dispatch guard that refuses the agent's tools on it.
+ */
 const USER_ANSWER_SOURCE = "user-answer";
 
 function getLegacyPermissionsPath(projectDir: string): string {
@@ -53,20 +57,22 @@ function isConcretePermission(permission: unknown): permission is string {
 	return typeof permission === "string" && permission.length > 0 && permission !== "*" && !permission.includes("\n");
 }
 /**
- * Validates one loaded line: action 'allow', a concrete (non-wildcard) permission kind, a well-formed
- * pattern, and the user-answer source marker only the answer path writes. Anything else is dropped.
+ * Validates one loaded line: action 'allow', a concrete (non-wildcard) permission kind and a
+ * well-formed pattern. Store lines must also carry the source marker; the one-time legacy import does
+ * not require it, because senpi never wrote one before the store moved (requiring it dropped every
+ * saved "Always" answer). Anything else is dropped.
  */
-function toApprovedRule(value: unknown): Rule | undefined {
+function toApprovedRule(value: unknown, requireSource: boolean): Rule | undefined {
 	if (typeof value !== "object" || value === null) return undefined;
 	const candidate = value as Record<string, unknown>;
 	if (candidate.action !== "allow") return undefined;
 	if (!isConcretePermission(candidate.permission)) return undefined;
 	if (!isWellFormedPattern(candidate.pattern)) return undefined;
-	if (candidate.source !== USER_ANSWER_SOURCE) return undefined;
+	if (requireSource && candidate.source !== USER_ANSWER_SOURCE) return undefined;
 	return { permission: candidate.permission, pattern: candidate.pattern, action: "allow" };
 }
 
-function readRules(filePath: string): Ruleset {
+function readRules(filePath: string, requireSource = true): Ruleset {
 	if (!fs.existsSync(filePath)) return [];
 	// Never read through a symlink at the store path: a linked-in line is not honored.
 	try {
@@ -79,7 +85,7 @@ function readRules(filePath: string): Ruleset {
 	const rules: Rule[] = [];
 	for (const line of lines) {
 		try {
-			const rule = toApprovedRule(JSON.parse(line));
+			const rule = toApprovedRule(JSON.parse(line), requireSource);
 			if (rule) rules.push(rule);
 		} catch {}
 	}
@@ -88,9 +94,10 @@ function readRules(filePath: string): Ruleset {
 
 /**
  * Loads the project's approved rules from the agent-dir store. On first load for a project, a
- * legacy `<cwd>/.senpi/permissions-approved.jsonl` is imported ONCE (validated, user-marked lines
- * only) and then REMOVED, so a line planted there later is never honored. A failed import leaves
- * the legacy file in place. Later loads read only the store.
+ * legacy `<cwd>/.senpi/permissions-approved.jsonl` is imported ONCE (allow-only, concrete
+ * permission, well-formed pattern; no source marker, which pre-store lines never had) and then
+ * REMOVED, so a line planted there later is never honored. A failed import removes any partial store
+ * and leaves the legacy file, so the next load retries. Later loads read only the store.
  */
 export function loadApproved(agentDir: string, projectDir: string): Ruleset {
 	const storePath = approvedStorePath(agentDir, projectDir);
@@ -99,7 +106,7 @@ export function loadApproved(agentDir: string, projectDir: string): Ruleset {
 	const alreadyMigrated = fs.existsSync(migratedMarker) || fs.existsSync(storePath);
 
 	if (!alreadyMigrated && fs.existsSync(legacyPath)) {
-		const imported = readRules(legacyPath);
+		const imported = readRules(legacyPath, false);
 		try {
 			const dir = path.dirname(storePath);
 			if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -107,8 +114,13 @@ export function loadApproved(agentDir: string, projectDir: string): Ruleset {
 			fs.writeFileSync(storePath, lines ? `${lines}\n` : "", { flag: "w" });
 			fs.writeFileSync(migratedMarker, "");
 			fs.rmSync(legacyPath, { force: true });
-		} catch {
-			// A failed import leaves the legacy file and logs nothing here; the next load retries it.
+		} catch (error) {
+			// Undo a partial import, so "already migrated" stays false and the next load retries it.
+			fs.rmSync(storePath, { force: true });
+			fs.rmSync(migratedMarker, { force: true });
+			console.error(
+				`permission: importing the legacy approvals file failed; retrying on the next load (${String(error)})`,
+			);
 		}
 		return imported;
 	}
