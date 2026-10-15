@@ -827,6 +827,22 @@ which prints the bare socket path).
   `legacy_layout` (a flat directory without `layout.json` - a legacy host's, never touched), `unknown_identity`
   (nothing names the socket, so its lock cannot be taken), or `failed` (reading the evidence or removing threw;
   the entry carries `error`) - and a `failed` endpoint never stops gc from going on to the others.
+  One RUNNING host is different (#3268): a host of an OLDER engine runs that engine's idle decision, so when that
+  decision is stuck no newer build can end it from inside. For an endpoint otherwise kept as `live_generation` or
+  `reachable`, gc (`senpi host gc` and the budgeted pass `ensureHost` schedules) also judges, still under the
+  lock and with observing reads only, whether the host is a stale older-engine leftover. A host that is no
+  candidate at all - its owner is not proven, it does not answer, or its `engineOrdinal` is not strictly older
+  than the caller's (an uncomparable ordinal is equal), which is every host of the caller's own engine - keeps
+  the reason above. A candidate is stopped through the `host stop` path only when ALL of these hold, and is
+  otherwise kept with the first `stale_*` reason that failed: its recorded policy is not `persistent` (`stale_persistent`), it lists no
+  session, workers included (`stale_sessions`), `reservations/` holds no claim (`stale_claims`), it has been up
+  longer than its own recorded `idleExitMs` plus 10 minutes (`stale_young`), and its supervisor holds no
+  accepted connection on the public socket, read from the operating system (`lsof` on macOS, `/proc` on
+  Linux), counted before the judge's own reads connect; an unreadable count, and Windows, keep it (`stale_clients`). A stopped host is listed under
+  `stopped: [{ socket, dir, reason: "stale_old_engine", pid }]` (the key is absent when nothing was stopped), and
+  its directory is collected by a later gc. The stop itself re-reads the host with 2 s budgets and is refused
+  unless both reads answer and report no session, so a host that went silent after it was judged is not stopped.
+  `senpi host status --all` marks such a host `stale_old_engine: true`.
   An `unknown_identity` directory is never removed by gc; remove it by hand only after checking that no pid in
   its `generations/*/host.pid` or `reservations/*.json` is running and that no process holds files under it.
   An ensure that raced a gc simply re-creates `endpoint.json` under the lock after gc released it.
@@ -2267,6 +2283,25 @@ answers after the turn settled.
 ```json
 {"type": "response", "command": "interrupt", "success": true, "data": {"interrupted": true, "turnId": "3"}}
 ```
+
+#### dequeue_message
+
+Every queued input carries a session-unique `queuedId` (`q_<n>`) in `get_state.ordered` and `queue_update.ordered`. `dequeue_message` removes one queued input before it reaches a turn. It acts on the visible lists (`steering`, `followUp`) and the queue the agent drains, so a removed input is never delivered. With `effectId` (capability `effect_ledger`) it is a ledger effect (`kind: "dequeue"`) and a same-id retry replays.
+
+```json
+{"type": "dequeue_message", "queuedId": "q_3", "effectId": "dq-1"}
+{"type": "response", "command": "dequeue_message", "success": true, "data": {"queuedId": "q_3", "status": "removed", "effectId": "dq-1", "state": "done", "effect": {"effectId": "dq-1", "kind": "dequeue", "state": "done", "disposition": "removed"}}}
+```
+
+#### edit_queued_message
+
+`edit_queued_message` replaces a queued input's text in place, keeping its order, mode and `clientMessageId`, in the visible lists and the queue the agent drains alike. With `effectId` it is a ledger effect (`kind: "edit_queued"`).
+
+```json
+{"type": "edit_queued_message", "queuedId": "q_4", "text": "use the staging database"}
+```
+
+For both commands, `status` is `removed` / `edited`, or `already_delivered` (the input was already handed to the agent) or `not_found` (no such id in this session); those two also carry `reason` and `action`, and an `effectId` receipt ends `failed` with that outcome. A missing or over-long `queuedId` is refused.
 
 #### clear_queue
 
