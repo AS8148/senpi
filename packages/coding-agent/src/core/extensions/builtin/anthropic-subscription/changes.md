@@ -1,3 +1,27 @@
+## 2026-10-15 - Transport image elision is hash-neutral in the sent stream (senpi#2768)
+
+### What changed
+
+- `core/image-elision-placeholder.ts` (new; `IMAGE_ELISION_PLACEHOLDER` moved here and re-exported from `core/messages.ts`): `elideOldImages` now replaces a run of elided images with one placeholder that names each image by a 12-hex digest of its bytes (`[Image elided: ...] (image ids: a, b)`), replacing `dedupeConsecutivePlaceholder` for elision. `BLOCKED_IMAGE_PLACEHOLDER` is unchanged.
+- `sent-image-slots.ts` (new) + `session-sync.ts`: `sentMessageHashes` digests every image as `{type:"image", id}` and every elision placeholder as the ids it names. An elided image therefore hashes exactly like the image it replaced. A different image, a missing image, or a changed text or tool output still diverges.
+
+### Why
+
+- The transport image budget (24 MB) swaps older images for a placeholder as new ones arrive. The resident SDK session already holds every image it was sent, so the swap changes nothing it receives. Hashing it read as `sent_stream_diverged`, flattened the session, and re-sent the whole history with a full prompt-cache miss. Computer use makes this happen on most turns, because a screenshot may carry up to 5 MB inline. Measured over 30 screenshot turns with the real functions: 24 of 29 turns diverged at 4 MB per screenshot on `main`, 8 of 29 with the stepped cutoff alone, 0 with this change. Regression: `test/suite/regressions/2768-anthropic-subscription-elision-hash-neutral.test.ts`, including controls that a rewritten caption, an image replaced by different bytes, and a removed image still report `sent_stream_diverged`.
+- Side effect: the branch-derived hashes recorded for persisted restarts (`session-registry-wiring.ts`, from `convertToLlm`, which never elides) now agree with the transport-derived hashes on image-heavy sessions.
+
+### Why an extension could not handle it
+
+- The sent-stream digest lives in this extension. The placeholder ids have to be written where the elision happens (`core/messages.ts`); without them, a digest cannot tell an elided image from a different one.
+
+### Upgrade note
+
+- Hashes of messages that carry images change format. A resident or persisted binding recorded by an older build sees one `sent_stream_diverged` cold seed on its first image-bearing turn after the upgrade, then continues normally.
+
+### Expected merge conflict zones
+
+- LOW: the two `content:` lines in `sentMessageHashes`; the elided-message `map` in `elideOldImages` (`core/messages.ts`).
+
 ## 2026-10-14 - Auth blocks are re-probed on a timer instead of waiting for a token write (senpi#3264)
 
 ### What changed
@@ -179,6 +203,26 @@
 
 - LOW: `blockedAccount`/`persistBlock`/`usable` in `failover.ts`, `selectUnblocked`/`clearExpiredBlocks`/`AllAccountsBlockedError` in `affinity.ts`, the `selectAccount`/`runFailover` call in `queryWithAuthLane`, `slotStatus` in `account-command.ts`.
 - All production paths are fork-only.
+
+## 2026-10-13 - Cold seeds stop re-sending answered tool images, and a mid-turn replay says there is no new user message (senpi#2768)
+
+### What changed
+
+- `cold-seed-images.ts`: a tool image that a later assistant message already answered is no longer re-sent in a cold seed; it becomes `coldSeedImageText.answered` (`[image returned earlier by the <tool> tool, id=<id>: already seen earlier in this conversation; run the tool again if you need it]`) in its own turn. Pending tool images are labeled `[image returned by the <tool> tool to your own call (tool output, not a user attachment)]`; the user's own uploads from finished turns are labeled `coldSeedImageText.userHistory`, and an upload in the turn still in progress stays unlabeled. The cap (8) ranks only the images still replayed: user uploads first, then the newest.
+- `prompt-bridge.ts`: a replay with no new user message whose history ends with a tool result (a model switch or fallback in the middle of a turn) closes with `CONTINUE_TURN_INSTRUCTION` instead of "respond to the user message below", and passes `inProgressTurn` to `replayHistoryImages` so that turn's own images count as current work.
+
+### Why
+
+- A cold seed packs the whole history into one user message. With up to 8 earlier tool screenshots in it, the model answered plain questions as if the user had just sent those images ("checking the 8 images you sent"); in a mid-turn replay it read its own just-generated images as a new upload ("the 6 images you newly sent").
+
+### Why an extension could not handle it
+
+- This is the anthropic-subscription lane's own replay builder; nothing outside the lane assembles the cold-seed prompt.
+
+### Expected merge conflict zones
+
+- `cold-seed-images.ts`: `coldSeedImageText`, `collectOccurrences`, `replayHistoryImages`.
+- `prompt-bridge.ts`: the closing instruction in `buildPromptBlocks`.
 
 ## 2026-10-01 - Cold seed replays tool-read images as tool output, deduplicated and capped (senpi#2490)
 
