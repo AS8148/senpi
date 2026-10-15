@@ -1825,10 +1825,14 @@ export function createRpcConnectionHandler(
 		}
 	};
 
-	// A single-session connection hears its account's new limit windows as they are reported.
-	const stopLimitEvents = subscriptionLimits.subscribe((limits) =>
-		eventOutput.enqueueEvent({ type: "subscription_limits", ...limits }),
-	);
+	// A single-session connection hears its account's new limit windows as they are reported. A host
+	// session's handler (it has a routing `sessionId`) does not: the host broadcasts the record once.
+	const stopLimitEvents =
+		options.sessionId === undefined
+			? subscriptionLimits.subscribe((limits) =>
+					eventOutput.enqueueEvent({ type: "subscription_limits", ...limits }),
+				)
+			: () => {};
 	const dispose = async (): Promise<void> => {
 		stopLimitEvents();
 		sessionControl?.dispose();

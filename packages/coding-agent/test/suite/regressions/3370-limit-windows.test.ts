@@ -9,7 +9,6 @@ import { describe, expect, it } from "vitest";
 import {
 	claudeWindowsFromHeaders,
 	claudeWindowsFromSdkEvent,
-	codexWindowsFromEvent,
 	codexWindowsFromHeaders,
 	windowLabel,
 } from "../../../src/core/subscription-limits/limit-windows.ts";
@@ -43,24 +42,6 @@ describe("subscription limit windows (senpi#3370)", () => {
 			["codex:primary", "5h", 12.5],
 			["codex_other:primary", "7d codex_other", 40],
 		]);
-	});
-
-	it("reads a codex.rate_limits stream event and ignores other events", () => {
-		const windows = codexWindowsFromEvent({
-			type: "codex.rate_limits",
-			rate_limits: { primary: { used_percent: 30, window_minutes: 300, reset_at: 1704069000 } },
-		});
-
-		expect(windows).toEqual([
-			{
-				id: "codex:primary",
-				label: "5h",
-				windowMinutes: 300,
-				usedPercent: 30,
-				resetsAt: "2024-01-01T00:30:00.000Z",
-			},
-		]);
-		expect(codexWindowsFromEvent({ type: "response.completed" })).toEqual([]);
 	});
 
 	it("reads Claude's unified headers (utilization is a 0-1 fraction)", () => {

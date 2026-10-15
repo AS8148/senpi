@@ -4,6 +4,7 @@
  * is named by its credential slot - the stored account's name, `env` for an environment key, `default`
  * for a single credential - never by key material. Nothing reported yet means the account is absent.
  */
+import type { StreamOptions } from "@earendil-works/pi-ai";
 import type { LimitWindow } from "./limit-windows.ts";
 import { claudeWindowsFromHeaders, codexWindowsFromHeaders } from "./limit-windows.ts";
 
@@ -29,7 +30,15 @@ export class SubscriptionLimitStore {
 		for (const window of windows) merged.set(window.id, window);
 		const limits: AccountLimits = { provider, account, windows: [...merged.values()], reportedAt: now.toISOString() };
 		this.#accounts.set(key, limits);
-		for (const listener of this.#listeners) listener(limits);
+		// A listener is a broadcast to clients: its failure (a closed sink) must never reach the provider
+		// response this runs inside, so it is reported and contained here.
+		for (const listener of this.#listeners) {
+			try {
+				listener(limits);
+			} catch (error) {
+				process.stderr.write(`senpi subscription limits: a listener failed: ${String(error)}\n`);
+			}
+		}
 	}
 
 	snapshot(): readonly AccountLimits[] {
@@ -52,23 +61,19 @@ export function limitAccountOf(slotAuth: { apiKey?: string; slotName?: string } 
 }
 
 /** Request options whose `onResponse` also records the windows the response headers carry. */
-export function withLimitCapture<TOptions extends { onResponse?: unknown }>(
+export function withLimitCapture<TOptions extends Pick<StreamOptions, "onResponse">>(
 	options: TOptions,
 	provider: string,
 	account: string,
 	store: SubscriptionLimitStore = subscriptionLimits,
 ): TOptions {
-	const inner = options.onResponse as
-		| ((response: { status: number; headers: Record<string, string> }, model: unknown) => unknown)
-		| undefined;
-	return {
-		...options,
-		onResponse: (response: { status: number; headers: Record<string, string> }, model: unknown) => {
-			store.record(provider, account, [
-				...codexWindowsFromHeaders(response.headers),
-				...claudeWindowsFromHeaders(response.headers),
-			]);
-			return inner?.(response, model);
-		},
+	const inner = options.onResponse;
+	const onResponse: NonNullable<StreamOptions["onResponse"]> = (response, model) => {
+		store.record(provider, account, [
+			...codexWindowsFromHeaders(response.headers),
+			...claudeWindowsFromHeaders(response.headers),
+		]);
+		return inner?.(response, model);
 	};
+	return { ...options, onResponse };
 }

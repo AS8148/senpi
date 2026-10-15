@@ -2379,7 +2379,7 @@ stable within the account (`<limit>:<slot>`, for example `codex:primary` or `cla
 (`5h`, `7d`, `7d opus`), the window length in minutes when the provider sent it, `usedPercent` (0-100) and
 `resetsAt` (ISO) when known. ChatGPT subscriptions report them in `x-codex-primary-*`/`x-codex-secondary-*`
 response headers (one family per metered limit); Claude subscriptions in `anthropic-ratelimit-unified-*`
-headers. A window the latest response did not mention keeps its last value. Every connection also hears a
+headers, and through the Claude SDK lane in its `rate_limit_event` messages. A window the latest response did not mention keeps its last value. Every connection also hears a
 `subscription_limits` record (below) when an account's windows change.
 
 #### get_effect_status
@@ -3611,7 +3611,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 | `session_parked` | Multi-session host: a retained session was released to disk at the idle window (`sessionId`, `sessionPath`). Replaces `session_closed` for that handle |
 | `host_stalled` | Multi-session host: the event loop was blocked past `SENPI_RPC_LOOP_LAG_ERROR_MS`, with the drift and the session/tool blamed for it |
 | `host_memory_pressure` | Multi-session host: the memory footprint is above `SENPI_RPC_HOST_RSS_WARN_MB`, with RSS beside it and the live session count |
-| `subscription_limits` | A subscription account reported new limit windows: `{ provider, account, windows, reportedAt }`, the same shape as one `get_subscription_limits` account; every connection hears it |
+| `subscription_limits` | A subscription account reported new limit windows: `{ provider, account, windows, reportedAt }`, the same shape as one `get_subscription_limits` account; every connection hears it once per report |
 | `host_trimmed` | Multi-session host: it collected (at zero sessions, or at 2 GB+ after a session-count drop), with the footprint before and after, the sessions still open and the pause |
 | `session_opened` | Multi-session host: a session was opened on this host (content-free lifecycle record) |
 | `session_closed` | Multi-session host: a routing handle ended, with an optional `reason` (`handoff_parked` = a generation handoff put the session back on disk; reopen it by `sessionPath`) |

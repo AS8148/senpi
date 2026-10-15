@@ -2,7 +2,7 @@
  * The limit windows a subscription reports with its responses, read into one shape: which window
  * (5-hour, weekly, ...), how much of it is used, and when it resets. ChatGPT subscriptions (Codex) send
  * `x-codex-primary-*`/`x-codex-secondary-*` headers (percent used, window minutes, reset epoch seconds),
- * one family per metered limit, and a `codex.rate_limits` stream event; Claude subscriptions send
+ * one family per metered limit; Claude subscriptions send
  * `anthropic-ratelimit-unified-{5h,7d}-*` headers (utilization as a 0-1 fraction, reset epoch seconds), and
  * the Claude SDK a `rate_limit_event`. A window nothing reported is absent, never 0%.
  */
@@ -78,31 +78,6 @@ export function codexWindowsFromHeaders(raw: Readonly<Record<string, string>>): 
 		.flatMap((family) =>
 			(["primary", "secondary"] as const).flatMap((slot) => codexWindow(headers, family, slot) ?? []),
 		);
-}
-
-/** A `codex.rate_limits` stream event; [] for anything else. */
-export function codexWindowsFromEvent(data: unknown): LimitWindow[] {
-	if (typeof data !== "object" || data === null || !("type" in data) || data.type !== "codex.rate_limits") return [];
-	const event = data as { rate_limits?: Record<string, unknown>; metered_limit_name?: unknown; limit_name?: unknown };
-	const named = typeof event.metered_limit_name === "string" ? event.metered_limit_name : event.limit_name;
-	const limit = typeof named === "string" && named.trim() !== "" ? named.trim().toLowerCase() : "codex";
-	return (["primary", "secondary"] as const).flatMap((slot) => {
-		const window = event.rate_limits?.[slot] as
-			| { used_percent?: unknown; window_minutes?: unknown; reset_at?: unknown }
-			| undefined;
-		if (typeof window?.used_percent !== "number") return [];
-		const minutes = typeof window.window_minutes === "number" ? window.window_minutes : undefined;
-		const resetsAt = iso(typeof window.reset_at === "number" ? window.reset_at : undefined);
-		return [
-			{
-				id: `${limit}:${slot}`,
-				label: limit === "codex" ? windowLabel(minutes, slot) : `${windowLabel(minutes, slot)} ${limit}`,
-				...(minutes === undefined ? {} : { windowMinutes: minutes }),
-				usedPercent: window.used_percent,
-				...(resetsAt === undefined ? {} : { resetsAt }),
-			},
-		];
-	});
 }
 
 const CLAUDE_WINDOWS = [
