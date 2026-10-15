@@ -47,7 +47,6 @@ export interface CreateAgentSessionServicesOptions {
 	agentDir?: string;
 	settingsManager?: SettingsManager;
 	modelRuntime?: ModelRuntime;
-	authStorage?: AuthStorage;
 	mcpRegistry?: HostMcpRegistry;
 	modelRuntimeSignal?: AbortSignal;
 	extensionFlagValues?: Map<string, boolean | string>;
@@ -170,8 +169,7 @@ export async function createAgentSessionServices(
 	const agentDir = options.agentDir ? resolvePath(options.agentDir) : getAgentDir();
 	// A shared runtime's providers register into its own store: read that one, as a session that
 	// builds its runtime does (senpi#3434).
-	const authStorage =
-		options.modelRuntime?.authStorage ?? options.authStorage ?? AuthStorage.create(join(agentDir, "auth.json"));
+	const authStorage = options.modelRuntime?.authStorage ?? AuthStorage.create(join(agentDir, "auth.json"));
 	const runtimePromise =
 		options.modelRuntime !== undefined
 			? Promise.resolve(options.modelRuntime)
