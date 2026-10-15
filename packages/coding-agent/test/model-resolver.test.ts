@@ -3,7 +3,6 @@ import { getModels } from "@earendil-works/pi-ai/compat";
 import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import { describe, expect, test, vi } from "vitest";
 import {
-import { providersMissingDefault } from "./helpers/provider-defaults-check.ts";
 	defaultModelPerProvider,
 	findInitialModel,
 	parseModelPattern,
@@ -11,6 +10,7 @@ import { providersMissingDefault } from "./helpers/provider-defaults-check.ts";
 	resolveModelScope,
 	resolveModelScopeWithDiagnostics,
 } from "../src/core/model-resolver.ts";
+import { providersMissingDefault } from "./helpers/provider-defaults-check.ts";
 
 // Mock models for testing
 const mockModels: Model<"anthropic-messages">[] = [
