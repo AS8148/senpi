@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Cache keep-alive pings, session prewarm usage, and the goal cache-warm savings estimate now price tokens with the model's cost card in force, so a scheduled list-price change applies to them too. A cost override in `models.json` keeps its own price and ignores the catalog's scheduled cards ([#3378](https://github.com/code-yeongyu/senpi/issues/3378)).
+
 ### Removed
 
 ## [2026.10.15] - 2026-10-15
