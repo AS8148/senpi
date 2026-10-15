@@ -1,3 +1,30 @@
+## 2026-10-15 - The successor reopens a parked session through the host's one open (senpi#3368)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-handover-parked-open.ts` (new): `parkedEntryFromProfile` records a retained session's `open_session` choices from its launch profile (model, thinking level, preset, prompt surface, browser engine, kind, the CLIENT part of its context, auto-titling, retry fallback), stripping the context keys this host merged in. `parkedOpenCommand` replays them as the `open_session` a client would send.
+- `packages/coding-agent/src/modes/rpc/host-handover-parked.ts`: the entry carries `sessionKind`, `sessionContext`, `autoTitle` and `retryFallback` too, each validated on read with the same wire validator `open_session` uses.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: the park records `parkedEntryFromProfile`. A new `reopenParked(entry)` runs the same private `open` as `open_session`, with no requesting connection and no reply.
+- `packages/coding-agent/src/modes/rpc/host-handover-reopen.ts`: the watch takes a `ParkedSessionOpener` instead of the registry; `reopenOne` no longer builds a launch profile of its own.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: `createHostCore` gives the watch an opener over `router.reopenParked`, mapping a `session_path_in_use` reply back to the registry error the watch retries on.
+
+### Why
+
+The successor's reopen went straight to `registry.openSession`, so a reopened session skipped everything the router's open does: the host-context merge, `writer.setSessionKind` (a retained worker session became visible in a default `list_sessions`, breaking I4), media persistence, its binding and the drain's settle wake-up. One open implementation for every open, the successor's reopen included, removes the second path instead of copying fields into it. `test/rpc-host-handoff-parked-kind.test.ts` proves the I4 break and its fix; the #3364 preset tests stay green on the same path.
+
+Two consequences of going through the one open, kept deliberately:
+
+- The replay is faithful: `reopenParked` opens with `defaults: false`, so a field the park did not record (`permissionPreset`, model, thinking level) stays empty instead of taking THIS host's default, which the predecessor's session never had (senpi#3376 review, `test/rpc-reopen-parked-defaults.test.ts`). `cwd` is always recorded.
+- A record written by a predecessor older than this change carries no `sessionKind`, so that one upgrade handover still reopens a worker session as interactive. Every handover after it records the kind.
+
+### Why an extension could not handle it
+
+The park record and the successor's reopen are host lifecycle; no extension hook runs there.
+
+### Expected merge conflict zones
+
+`open` and the park record in `session-command-router.ts`; the watch wiring in `createHostCore` (`multi-session-host.ts`).
+
 ## 2026-10-15 - A parked session reopened by the successor keeps its permission preset (senpi#3364)
 
 ### What changed

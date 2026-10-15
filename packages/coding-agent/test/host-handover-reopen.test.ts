@@ -6,7 +6,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createHostDaemonPaths } from "../src/modes/rpc/host-daemon-paths.ts";
 import { readHandoverParkedSessions, recordHandoverParkedSession } from "../src/modes/rpc/host-handover-parked.ts";
 import { reopenHandoverParkedSessions } from "../src/modes/rpc/host-handover-reopen.ts";
-import type { RpcSessionRegistry } from "../src/modes/rpc/session-registry.ts";
 
 const dirs: string[] = [];
 
@@ -34,14 +33,11 @@ describe("handover-parked reopen watch on a draining host (senpi#3282)", () => {
 	it("never consumes the park while its host drains", async () => {
 		const { agentDir, socket, daemonDir } = await parkedRig();
 		const opened: string[] = [];
-		const registry: Pick<RpcSessionRegistry, "openSession"> = {
-			openSession: async (profile) => {
-				opened.push(profile.sessionPath ?? "");
-				return { sessionId: "rpc-1" } as Awaited<ReturnType<RpcSessionRegistry["openSession"]>>;
-			},
+		const open = async (entry: { readonly sessionPath: string }): Promise<void> => {
+			opened.push(entry.sessionPath);
 		};
 
-		await reopenHandoverParkedSessions(registry, agentDir, socket, {
+		await reopenHandoverParkedSessions(open, agentDir, socket, {
 			hostInstance: "draining-predecessor",
 			shouldReopen: () => false,
 		});
@@ -53,14 +49,11 @@ describe("handover-parked reopen watch on a draining host (senpi#3282)", () => {
 	it("keeps the park when the drain starts while a reopen is in flight", async () => {
 		const { agentDir, socket, daemonDir } = await parkedRig();
 		let draining = false;
-		const registry: Pick<RpcSessionRegistry, "openSession"> = {
-			openSession: async () => {
-				draining = true;
-				return { sessionId: "rpc-1" } as Awaited<ReturnType<RpcSessionRegistry["openSession"]>>;
-			},
+		const open = async (): Promise<void> => {
+			draining = true;
 		};
 
-		await reopenHandoverParkedSessions(registry, agentDir, socket, {
+		await reopenHandoverParkedSessions(open, agentDir, socket, {
 			hostInstance: "predecessor",
 			shouldReopen: () => !draining,
 		});
