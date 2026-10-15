@@ -4,7 +4,7 @@
  * arming is missed and nothing before arming is injected as an event.
  */
 import { getAgentDir } from "../../../../../config.ts";
-import { parseRpcTarget, type RpcEvents } from "../rpc-monitor-targets.ts";
+import { defaultEvents, parseRpcTarget, type RpcEvents } from "../rpc-monitor-targets.ts";
 import { DURABLE_MONITOR_EXPIRY_MS } from "../shared.ts";
 import type { TerminalManifestRpcCheckpoint } from "../terminal-manifest-model.ts";
 import { errorResult, type TerminalToolContext, type TerminalToolResult, textResult } from "./context.ts";
@@ -61,7 +61,7 @@ export async function createRpcMonitor(ctx: TerminalToolContext, input: MonitorI
 		description,
 		target,
 		targetText: input.target ?? "",
-		events: events ?? (target.kind === "children" ? ["session_status", "effect_status"] : ["session_status"]),
+		events: events ?? defaultEvents(target),
 		exclude: input.exclude ?? [],
 		...(filter === undefined ? {} : { filter }),
 		persistent,

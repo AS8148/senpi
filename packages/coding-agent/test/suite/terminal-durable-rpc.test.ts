@@ -60,6 +60,7 @@ describe("checkpointed-rpc durability (senpi#3226)", () => {
 		const bound: Array<[string, string]> = [];
 		const handler = createCheckpointedRpcRestoreHandler({
 			registry: {
+				pause: (ids: readonly string[]) => [...ids],
 				registerRpc: async (options) => {
 					armed.push(options);
 					return { id: "rpc_9", monitorId: options.monitorId ?? "?", rows: [] };
@@ -84,12 +85,28 @@ describe("checkpointed-rpc durability (senpi#3226)", () => {
 
 	it("loses an entry that is not an rpc watch instead of arming it", async () => {
 		const handler = createCheckpointedRpcRestoreHandler({
-			registry: { registerRpc: async () => ({ id: "x", monitorId: "x", rows: [] }) },
+			registry: { pause: (ids: readonly string[]) => [...ids], registerRpc: async () => ({ id: "x", monitorId: "x", rows: [] }) },
 			sessionId: () => undefined,
 		});
 
 		const result = await handler({ ...parsedEntry(), runtimeKind: "file" }, { downtimeMs: 0 });
 
 		expect(result.outcome).toBe("lost");
+	});
+
+	it("a watch muted before the restart comes back muted (senpi#3381 review)", async () => {
+		const paused: string[][] = [];
+		const handler = createCheckpointedRpcRestoreHandler({
+			registry: {
+				pause: (ids: readonly string[]) => paused.push([...ids]),
+				registerRpc: async () => ({ id: "rpc_9", monitorId: "mon_RPC", rows: [] }),
+			} as never,
+			sessionId: () => "owner",
+		});
+
+		const result = await handler({ ...parsedEntry(), deliveryPaused: true }, { remainingMs: undefined } as never);
+
+		expect(result.outcome).toBe("muted");
+		expect(paused).toEqual([["rpc_9"]]);
 	});
 });

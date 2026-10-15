@@ -29,6 +29,17 @@ export class RpcMonitorRenderer {
 		});
 	}
 
+	/** Drops every session an endpoint reported; returns how many. */
+	forgetSocket(socket: string): number {
+		let count = 0;
+		for (const key of [...this.#sessions.keys()])
+			if (key.startsWith(`${socket}#`)) {
+				this.#sessions.delete(key);
+				count++;
+			}
+		return count;
+	}
+
 	/** Every session this renderer knows, with its last status: what a checkpoint records. */
 	statuses(): ReadonlyMap<string, string> {
 		return new Map([...this.#sessions].map(([key, view]) => [key, view.status]));

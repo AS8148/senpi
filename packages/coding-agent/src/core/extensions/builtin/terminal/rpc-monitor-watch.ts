@@ -81,7 +81,17 @@ export class RpcMonitorWatch {
 		for (const [key, status] of Object.entries(saved.statuses)) {
 			const label = key.slice(key.lastIndexOf("#") + 1).slice(0, 8);
 			const current = now.get(key);
-			if (current === undefined) lines.push(`rpc ${label} closed (gone while detached)`);
+			// Only a host that answered can say a session is gone; otherwise it may be alive but unreachable
+			// or no longer matched by the re-resolved target.
+			const socket = key.slice(0, key.lastIndexOf("#"));
+			if (current === undefined)
+				lines.push(
+					this.#hosts.has(socket) && this.#options.target.kind !== "children"
+						? `rpc ${label} closed (gone while detached)`
+						: this.#hosts.has(socket)
+							? `rpc ${label} no longer listed (closed or no longer a child while detached)`
+							: `rpc ${label} unreachable (its host did not answer)`,
+				);
 			else if (current !== status)
 				lines.push(`rpc ${label} status ${status} -> ${current} (changed while detached)`);
 		}
@@ -110,16 +120,25 @@ export class RpcMonitorWatch {
 		let observer: RpcObserver;
 		try {
 			observer = await openRpcObserver(socket, subscriptionFor(target, events), {
-				record: (record) => this.#record(socket, record),
-				closed: () => {
-					this.#observers.delete(socket);
+				record: (record) => {
+					if (!this.#stopped) this.#record(socket, record);
 				},
+				closed: () => this.#lost(socket, observer),
 			});
 		} catch {
 			return [];
 		}
+		// A stop that landed while this observer was connecting has already closed every other one.
+		if (this.#stopped) {
+			observer.close();
+			return [];
+		}
 		this.#observers.set(socket, observer);
 		const answer = await observer.subscribed.catch(() => undefined);
+		if (this.#stopped) {
+			observer.close();
+			return [];
+		}
 		const data = answer?.data as Record<string, unknown> | undefined;
 		if (data === undefined) return [];
 		this.#hosts.set(socket, { instanceId: String(data.hostInstanceId), generation: String(data.hostGeneration) });
@@ -135,6 +154,21 @@ export class RpcMonitorWatch {
 		const rows = this.#renderer.seed(socket, matched);
 		this.#options.checkpoint?.(this.checkpoint());
 		return rows;
+	}
+
+	/** An endpoint's connection ended: say so once, and forget what it reported until it is joined again. */
+	#lost(socket: string, observer: RpcObserver): void {
+		if (this.#observers.get(socket) !== observer) return;
+		this.#observers.delete(socket);
+		if (this.#stopped) return;
+		const forgotten = this.#renderer.forgetSocket(socket);
+		for (const key of [...this.#taskSessions]) if (key.startsWith(`${socket}#`)) this.#taskSessions.delete(key);
+		if (this.#hosts.delete(socket) || forgotten > 0) {
+			this.#options.line(
+				`rpc host ${socket} gone (${forgotten} session${forgotten === 1 ? "" : "s"} no longer watched)`,
+			);
+			this.#options.checkpoint?.(this.checkpoint());
+		}
 	}
 
 	#record(socket: string, record: RpcRecord): void {

@@ -6,13 +6,19 @@
  */
 import { getAgentDir } from "../../../../config.ts";
 import type { MonitorRegistry } from "./monitor-registry.ts";
-import type { RestoreContext, RestoreHandler, RestoreHandlerResult } from "./restore.ts";
-import { parseRpcTarget } from "./rpc-monitor-targets.ts";
+import {
+	type PersistedMuteRegistry,
+	type RestoreContext,
+	type RestoreHandler,
+	type RestoreHandlerResult,
+	reapplyPersistedMute,
+} from "./restore.ts";
+import { defaultEvents, parseRpcTarget } from "./rpc-monitor-targets.ts";
 import type { TerminalManifestWriter } from "./terminal-manifest.ts";
 import type { ManifestMonitor } from "./terminal-manifest-model.ts";
 
 export interface CheckpointedRpcRestoreDeps {
-	readonly registry: Pick<MonitorRegistry, "registerRpc">;
+	readonly registry: Pick<MonitorRegistry, "registerRpc"> & PersistedMuteRegistry;
 	readonly writer?: Pick<TerminalManifestWriter, "scheduleRpcCheckpoint">;
 	readonly bindMonitorId?: (monitorId: string, runtimeId: string) => void;
 	/** This session's durable id, which a `children` target names. */
@@ -41,9 +47,7 @@ export function createCheckpointedRpcRestoreHandler(deps: CheckpointedRpcRestore
 				description: monitor.description,
 				target,
 				targetText: monitor.target,
-				events:
-					monitor.events ??
-					(target.kind === "children" ? ["session_status", "effect_status"] : ["session_status"]),
+				events: monitor.events ?? defaultEvents(target),
 				exclude: monitor.exclude ?? [],
 				...(filter === undefined ? {} : { filter }),
 				persistent: monitor.persistent,
@@ -55,7 +59,8 @@ export function createCheckpointedRpcRestoreHandler(deps: CheckpointedRpcRestore
 				onCheckpoint: (monitorId, checkpoint) => deps.writer?.scheduleRpcCheckpoint(monitorId, checkpoint),
 			});
 			deps.bindMonitorId?.(monitor.monitorId, id);
-			return { outcome: "restored" };
+			// A watch muted before the restart stays muted, as a file watch does.
+			return { outcome: reapplyPersistedMute(deps.registry, monitor, id) };
 		} catch (error) {
 			return lost(`cannot re-watch ${monitor.target}: ${error instanceof Error ? error.message : String(error)}`);
 		}

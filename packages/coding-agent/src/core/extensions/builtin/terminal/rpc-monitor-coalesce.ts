@@ -66,7 +66,13 @@ export class RpcMonitorCoalescer {
 
 function lastText(record: RpcRecord): string {
 	const event = record.assistantMessageEvent as Record<string, unknown> | undefined;
-	const text = typeof event?.delta === "string" ? event.delta : typeof record.output === "string" ? record.output : "";
+	// Only answer text: a thinking delta is not what the session is saying.
+	const text =
+		event?.type === "text_delta" && typeof event.delta === "string"
+			? event.delta
+			: typeof record.output === "string"
+				? record.output
+				: "";
 	const flat = text.replace(/\s+/g, " ").trim();
 	return flat.length > LAST_TEXT_LIMIT ? flat.slice(-LAST_TEXT_LIMIT) : flat;
 }
