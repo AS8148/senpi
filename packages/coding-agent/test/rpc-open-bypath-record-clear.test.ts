@@ -47,6 +47,8 @@ function sessionEntry(sessionFile: string | undefined, cwd: string) {
 		isFastModeActive: () => false,
 		getSteeringMessages: () => [],
 		getFollowUpMessages: () => [],
+		// buildRpcSessionState spreads this; the catch-all proxy below would return undefined (senpi#3396).
+		getQueuedInputs: () => [],
 		getContextUsage: () => undefined,
 	};
 	// Any member buildRpcSessionState touches that the base does not define resolves to a value
