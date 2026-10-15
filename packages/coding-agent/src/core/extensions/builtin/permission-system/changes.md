@@ -1,5 +1,38 @@
 # Permission System Builtin Extension
 
+## 2026-10-16 - A wider "Allow always" for tools without a parser (senpi#3403)
+
+### What changed
+
+- `always-scope.ts` (new): `widerAlwaysScope(toolName, argKey, arg)` returns the extra option a prompt may offer when the request came from the fallback parser (a tool with no parser of its own):
+  - a URL argument gets its DOMAIN, "Allow <tool> on <host> always in this project", with patterns `<origin>` and `<origin>/*`;
+  - a free `input`/`pattern` argument gets the tool, "Allow <tool> always in this project", with pattern `*`;
+  - a command or a path gets nothing wider, and built-in tools never do.
+- `parsers.ts`: the fallback records which argument it used and attaches `widerAlways` to the request.
+- `prompt.ts`: the option appears after "Allow always" and replies `always` with the wider patterns.
+- `service.ts` and `index.ts`: the reply's patterns become the session's approvals and are persisted to the agent-dir store, so other open sessions of the project stop asking too.
+
+### Why
+
+"Allow always" stored only the exact argument, so a browser or MCP tool asked again for the next URL or input (sisyphuslabs/omo-desktop-app#2465). A tool-wide allow for a browser would mean "go anywhere", so URLs are scoped to their domain.
+
+### Why an extension could not handle it
+
+The prompt, its options and the stored approvals belong to this builtin's decision path; another extension cannot add an option to a permission prompt or write this store.
+
+### Expected merge conflict zones
+
+`prompt.ts` (the option list and reply mapping), `parsers.ts` (`fallbackPermissionRequestFor`), `types.ts` (`Request`, `ReplyInput`).
+
+### Must not break
+
+`test/permission/tool-scope-allow-always.test.ts`:
+- the same domain stops asking; a look-alike, `@` or port variant asks again;
+- a second open session stops asking;
+- a free-input tool is allowed tool-wide;
+- a command-shaped tool gets no wider option;
+- no `?*` pattern, because the matcher reads `?` as any one character.
+
 ## 2026-10-16 - The legacy approvals import keeps pre-store answers (#3301 review round 2)
 
 ### What changed
