@@ -3,6 +3,7 @@ import type { ExtensionAPI } from "../types.ts";
 type AssistantMessageLike = {
 	role: "assistant";
 	stopReason?: string;
+	content?: ReadonlyArray<{ type?: string }>;
 	usage?: {
 		input?: number;
 		output?: number;
@@ -16,6 +17,11 @@ function isAssistantMessage(message: unknown): message is AssistantMessageLike {
 	if (!message || typeof message !== "object") return false;
 	const role = (message as { role?: unknown }).role;
 	return role === "assistant";
+}
+
+function generatedReasoning(message: AssistantMessageLike): boolean {
+	if ((message.usage?.reasoning ?? 0) > 0) return true;
+	return message.content?.some((block) => block.type === "thinking" || block.type === "redacted_thinking") ?? false;
 }
 
 const STREAMED_DELTA_TYPES = new Set(["text_delta", "thinking_delta", "toolcall_delta"]);
@@ -84,9 +90,10 @@ export default function (pi: ExtensionAPI) {
 		// The rate counts only messages that streamed, timed from their first token to their last, so
 		// time-to-first-token and a reply delivered in one piece cannot skew it (senpi#3393). Reasoning
 		// counted in usage.output may be hidden or only summarised after it finished, so it was generated
-		// before the first delta: such a message is timed from its start instead, never overstating.
+		// before the first delta: a message that reasoned (usage.reasoning, or any thinking block, since
+		// Bedrock and omitted display report no reasoning count) is timed from its start, never overstating.
 		const output = event.message.usage?.output ?? 0;
-		const windowStart = (event.message.usage?.reasoning ?? 0) > 0 ? messageStartMs : firstDeltaMs;
+		const windowStart = generatedReasoning(event.message) ? messageStartMs : firstDeltaMs;
 		const counted = event.message.stopReason !== "aborted" && event.message.stopReason !== "error" && output > 0;
 		if (counted && windowStart !== null && lastDeltaMs !== null && lastDeltaMs > windowStart) {
 			generationMs += lastDeltaMs - windowStart;

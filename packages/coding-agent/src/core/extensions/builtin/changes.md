@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/extensions/builtin/tps.ts`: the rate divides the output of assistant messages that actually streamed by their first-to-last delta time (`text_delta`, `thinking_delta`, `toolcall_delta` from `message_update`). No tok/s is shown when nothing streamed or the streamed time is under 0.5 s. The rest of the notice (cache hit, elapsed message time) is unchanged. A message whose usage reports reasoning tokens is timed from its own start instead: reasoning can be hidden, or only summarised after it finished, so the first delta comes after most of it was generated. Aborted, errored and zero-output messages add nothing to the rate.
+- `packages/coding-agent/src/core/extensions/builtin/tps.ts`: the rate divides the output of assistant messages that actually streamed by their first-to-last delta time (`text_delta`, `thinking_delta`, `toolcall_delta` from `message_update`). No tok/s is shown when nothing streamed or the streamed time is under 0.5 s. The rest of the notice (cache hit, elapsed message time) is unchanged. A message that reasoned (its usage reports reasoning tokens, or it carries any thinking or redacted-thinking block, which covers Bedrock and omitted-display thinking that report no reasoning count) is timed from its own start instead: reasoning can be hidden, or only summarised after it finished, so the first delta comes after most of it was generated. Aborted, errored and zero-output messages add nothing to the rate.
 
 ### Why
 
