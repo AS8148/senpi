@@ -16,6 +16,7 @@
 
 ### Fixed
 
+- `senpi host gc`, and the cleanup pass that runs after starting a host, now stop a host left behind by an older engine once it holds no session, no reservation and no client and has outlived its own idle window plus 10 minutes. Such hosts used to linger for days after an update, because their old idle logic was the only thing that could end them. `senpi host status --all` marks them `stale_old_engine`. A host with any session or connected client is never stopped ([#3268](https://github.com/code-yeongyu/senpi/issues/3268)).
 - After a hot reload (`/reload`, a settings or extension change, `omo update`), a control endpoint registered by the previous extension generation is closed with that generation, so inbox and command wakes no longer repeat "control endpoint drain failed: stale extension generation after reload" and stop delivering ([#3246](https://github.com/code-yeongyu/senpi/issues/3246)).
 
 - A fallback chain that lists one model at several thinking levels now walks every one of those levels. A rung that hard-errors parks only itself, so `models: [X:high, X:off, X:low, Y]` tries `X:low` after `X:off` fails instead of jumping to `Y`; a rate limit, quota or overload still skips every level of that model, so after one the walk moves on to the next model. This replaces the per-turn limit described in the previous entry. A model you pick by hand gets all its levels back ([#3311](https://github.com/code-yeongyu/senpi/issues/3311), reported by @tw-yshuang).
