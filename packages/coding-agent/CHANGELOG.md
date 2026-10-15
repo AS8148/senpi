@@ -28,6 +28,8 @@
 
 - Plain answers in the terminal no longer come wrapped in the Ask / For you / Now / Next block. When a question did not end in `?`, the first-request todo list made it a one-task plan, and that list's result told the model to write the block. A one-task list now asks for nothing, and every preset reserves the block for turns that changed something, so an answer stays an answer even when finding it took tool calls ([#3323](https://github.com/code-yeongyu/senpi/issues/3323), reported by @devxoul).
 
+- A client-less retained session (opened over the host socket with `retain_on_disconnect`, then disconnected) is no longer dropped on every idle host generation handover: the successor host now reopens exactly its predecessor's handoff-parked retained sessions on startup, by path and with the same durable session id, instead of coming up empty ([#3282](https://github.com/code-yeongyu/senpi/issues/3282)). A path whose open is already in flight attaches to that open once it finishes rather than failing `session_path_in_use`, and a waiting reopen is bounded on the waiter only so a slow-but-healthy open is never treated as stuck. The predecessor no longer reopens into its own registry a session it has just parked for its successor, which under load let its drain close the session and left the successor with nothing to reopen.
+
 ### Removed
 
 ## [2026.10.15] - 2026-10-15
