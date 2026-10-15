@@ -1,99 +1,32 @@
-import type { Api, Model } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
-import {
-	overrideSdkBoundary,
-	resetSdkBoundary,
-	type SDKMessage,
-	type SdkQueryInput,
-} from "../../../src/core/extensions/builtin/anthropic-subscription/sdk-boundary.ts";
-import { streamAnthropicSubscription } from "../../../src/core/extensions/builtin/anthropic-subscription/stream.ts";
-import {
-	HOST_TOOL_DENIAL_HOOKS,
-	TOOL_EXECUTION_DENIED_MESSAGE,
-} from "../../../src/core/extensions/builtin/anthropic-subscription/tools.ts";
+import { describe, expect, it } from "vitest";
+import { HOST_TOOL_DENIAL_HOOKS } from "../../../src/core/extensions/builtin/anthropic-subscription/tools.ts";
 
-const model: Model<Api> = {
-	id: "claude-test",
-	name: "Claude",
-	api: "claude-sdk-oauth",
-	provider: "anthropic-subscription",
-	baseUrl: "",
-	reasoning: true,
-	input: ["text"],
-	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-	contextWindow: 200_000,
-	maxTokens: 8_192,
-};
+/**
+ * Claude Code labels every PreToolUse deny "PreToolUse:<Tool> hook error: <reason>" with is_error true,
+ * and that label cannot be changed (senpi#3417). This test owns the contract that the reason the deny
+ * hook returns tells the model the handoff is expected and not to report it, while still telling it to
+ * wait for senpi's result.
+ */
+describe("#3417: the host deny hook's reason defuses Claude Code's 'hook error' label", () => {
+	it("returns a reason that says the handoff is not an error and must not be mentioned, and still waits for the result", async () => {
+		const hook = HOST_TOOL_DENIAL_HOOKS.PreToolUse?.[0]?.hooks?.[0];
+		if (!hook) throw new Error("the host deny hook is missing");
 
-const sdk = (value: unknown): SDKMessage => value as SDKMessage;
+		const output = (await hook(
+			{ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: {} } as never,
+			"toolu_bash",
+			{ signal: new AbortController().signal },
+		)) as {
+			continue?: boolean;
+			hookSpecificOutput?: { permissionDecision?: string; permissionDecisionReason?: string };
+		};
 
-/** What Claude Code turns every PreToolUse deny into: it prefixes "PreToolUse:<Tool> hook error:" itself. */
-const claudeCodeDenial = `PreToolUse:Bash hook error: ${TOOL_EXECUTION_DENIED_MESSAGE}`;
-
-function deniedBashTurn(): SDKMessage[] {
-	return [
-		sdk({
-			type: "stream_event",
-			event: { type: "message_start", message: { usage: { input_tokens: 1, output_tokens: 1 } } },
-		}),
-		sdk({
-			type: "stream_event",
-			event: {
-				type: "content_block_start",
-				index: 0,
-				content_block: { type: "tool_use", id: "toolu_bash", name: "Bash", input: {} },
-			},
-		}),
-		sdk({
-			type: "stream_event",
-			event: {
-				type: "content_block_delta",
-				index: 0,
-				delta: { type: "input_json_delta", partial_json: JSON.stringify({ command: "ls" }) },
-			},
-		}),
-		sdk({ type: "stream_event", event: { type: "content_block_stop", index: 0 } }),
-		sdk({
-			type: "stream_event",
-			event: { type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 5 } },
-		}),
-		sdk({
-			type: "user",
-			parent_tool_use_id: null,
-			message: {
-				role: "user",
-				content: [{ type: "tool_result", tool_use_id: "toolu_bash", is_error: true, content: claudeCodeDenial }],
-			},
-		}),
-		sdk({ type: "result", subtype: "success", is_error: false, stop_reason: "tool_use", result: "" }),
-	];
-}
-
-afterEach(() => resetSdkBoundary());
-
-describe("#3417: the host tool handoff never reads or shows as an error", () => {
-	it("tells the model the handoff is expected and never to mention it to the user", () => {
-		expect(HOST_TOOL_DENIAL_HOOKS.PreToolUse?.[0]?.hooks?.length).toBe(1);
-		expect(TOOL_EXECUTION_DENIED_MESSAGE).toMatch(/^Not an error\b/);
-		expect(TOOL_EXECUTION_DENIED_MESSAGE).toMatch(/do not mention/i);
-	});
-
-	it("keeps Claude Code's denial out of senpi's message: one host tool call, no error, no hook text", async () => {
-		overrideSdkBoundary({
-			query: (_input: SdkQueryInput) => ({
-				async *[Symbol.asyncIterator]() {
-					yield* deniedBashTurn();
-				},
-				async interrupt() {},
-				close() {},
-			}),
-		});
-
-		const message = await streamAnthropicSubscription(model, { messages: [], tools: [] }).result();
-
-		expect(message.stopReason).toBe("toolUse");
-		expect(message.errorMessage).toBeUndefined();
-		expect(message.content.filter((block) => block.type === "toolCall")).toHaveLength(1);
-		expect(JSON.stringify(message.content)).not.toContain("hook error");
+		const reason = output.hookSpecificOutput?.permissionDecisionReason ?? "";
+		expect(output.continue).toBe(false);
+		expect(output.hookSpecificOutput?.permissionDecision).toBe("deny");
+		expect(reason).toMatch(/^Not an error\b/);
+		expect(reason).toMatch(/ignore the 'hook error' label/);
+		expect(reason).toMatch(/do not mention this message to the user/i);
+		expect(reason).toMatch(/returns its result as the next user message/);
 	});
 });
