@@ -19,9 +19,10 @@ function isAssistantMessage(message: unknown): message is AssistantMessageLike {
 	return role === "assistant";
 }
 
-function generatedReasoning(message: AssistantMessageLike): boolean {
+function reasonedBeforeFirstDelta(message: AssistantMessageLike, thinkingStreamed: boolean): boolean {
 	if ((message.usage?.reasoning ?? 0) > 0) return true;
-	return message.content?.some((block) => block.type === "thinking" || block.type === "redacted_thinking") ?? false;
+	if (thinkingStreamed) return false;
+	return message.content?.some((block) => block.type === "thinking") ?? false;
 }
 
 const STREAMED_DELTA_TYPES = new Set(["text_delta", "thinking_delta", "toolcall_delta"]);
@@ -34,6 +35,7 @@ export default function (pi: ExtensionAPI) {
 	let assistantElapsedMs = 0;
 	let messageStartMs: number | null = null;
 	let firstDeltaMs: number | null = null;
+	let thinkingStreamed = false;
 	let lastDeltaMs: number | null = null;
 	let generationMs = 0;
 	let streamedOutput = 0;
@@ -55,6 +57,7 @@ export default function (pi: ExtensionAPI) {
 		messageStartMs = null;
 		firstDeltaMs = null;
 		lastDeltaMs = null;
+		thinkingStreamed = false;
 	};
 
 	pi.on("agent_start", () => {
@@ -79,6 +82,7 @@ export default function (pi: ExtensionAPI) {
 		if (!STREAMED_DELTA_TYPES.has(event.assistantMessageEvent.type)) return;
 
 		const now = performance.now();
+		if (event.assistantMessageEvent.type === "thinking_delta") thinkingStreamed = true;
 		firstDeltaMs ??= now;
 		lastDeltaMs = now;
 	});
@@ -90,10 +94,10 @@ export default function (pi: ExtensionAPI) {
 		// The rate counts only messages that streamed, timed from their first token to their last, so
 		// time-to-first-token and a reply delivered in one piece cannot skew it (senpi#3393). Reasoning
 		// counted in usage.output may be hidden or only summarised after it finished, so it was generated
-		// before the first delta: a message that reasoned (usage.reasoning, or any thinking block, since
-		// Bedrock and omitted display report no reasoning count) is timed from its start, never overstating.
+		// before the first delta. Such a message (usage.reasoning, or a thinking block whose text never
+		// streamed: Bedrock and omitted display report no reasoning count) is timed from its start.
 		const output = event.message.usage?.output ?? 0;
-		const windowStart = generatedReasoning(event.message) ? messageStartMs : firstDeltaMs;
+		const windowStart = reasonedBeforeFirstDelta(event.message, thinkingStreamed) ? messageStartMs : firstDeltaMs;
 		const counted = event.message.stopReason !== "aborted" && event.message.stopReason !== "error" && output > 0;
 		if (counted && windowStart !== null && lastDeltaMs !== null && lastDeltaMs > windowStart) {
 			generationMs += lastDeltaMs - windowStart;
