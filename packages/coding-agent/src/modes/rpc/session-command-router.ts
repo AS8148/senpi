@@ -1,4 +1,5 @@
 import { VERSION } from "../../config.ts";
+import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { detachConnection } from "./connection-detach.ts";
 import { buildRpcSessionState } from "./connection-handler.ts";
 import { answerEffectFromTranscript } from "./effect-commands.ts";
@@ -110,6 +111,7 @@ function error(
 /** Routes control messages and enforces a routing handle for every session command. */
 export class SessionCommandRouter {
 	private readonly bindings = new Map<string, RpcSessionBinding>();
+	private readonly stopLimitBroadcast: () => void;
 	/** Session handles opened by each connection, with one count per attachment. */
 	private readonly sessionsByConnection = new Map<string, Map<string, number>>();
 	/** Opens currently awaiting runtime/binding setup, keyed by connection. */
@@ -163,6 +165,10 @@ export class SessionCommandRouter {
 		connectionOptions: Parameters<typeof createRpcSessionBinding>[4] = {},
 		idle?: RpcSessionIdlePolicy,
 	) {
+		// Every connection hears an account's new limit windows, whichever session's request reported them.
+		this.stopLimitBroadcast = subscriptionLimits.subscribe((limits) =>
+			writer.broadcastHostRecord({ type: "subscription_limits", ...limits }),
+		);
 		this.registry = registry;
 		this.writer = writer;
 		this.defaults = defaults;
@@ -329,6 +335,15 @@ export class SessionCommandRouter {
 				},
 			};
 		}
+		if (command.type === "get_subscription_limits") {
+			return {
+				id: command.id,
+				type: "response",
+				command: "get_subscription_limits",
+				success: true,
+				data: { accounts: subscriptionLimits.snapshot() },
+			};
+		}
 		if (command.type === "list_sessions") {
 			// Worker sessions are machine-driven work: a client sees them only by asking, and
 			// the opaque context blob travels only on that listing, never to every connection.
@@ -394,6 +409,7 @@ export class SessionCommandRouter {
 	}
 
 	async dispose(): Promise<void> {
+		this.stopLimitBroadcast();
 		this.drainExitRequested = true;
 		this.stopSweep();
 		if (this.drainTimer !== undefined) clearInterval(this.drainTimer);
@@ -497,6 +513,11 @@ export class SessionCommandRouter {
 				...(retained.profile?.initialThinkingLevel !== undefined
 					? { thinkingLevel: retained.profile.initialThinkingLevel }
 					: {}),
+				...(retained.profile?.permissionPreset !== undefined
+					? { permissionPreset: retained.profile.permissionPreset }
+					: {}),
+				...(retained.profile?.promptSurface !== undefined ? { promptSurface: retained.profile.promptSurface } : {}),
+				...(retained.profile?.browserEngine !== undefined ? { browserEngine: retained.profile.browserEngine } : {}),
 			}).catch((cause: unknown) => {
 				process.stderr.write(`senpi rpc handover park record ${sessionId} failed: ${String(cause)}\n`);
 			});

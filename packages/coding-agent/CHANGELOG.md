@@ -6,6 +6,7 @@
 
 ### Added
 
+- Subscription limit windows reach RPC clients: senpi reads the windows a ChatGPT subscription reports with each response (`x-codex-primary-*`/`x-codex-secondary-*`) and Claude's unified rate-limit headers, keeps the latest per provider and credential slot (never key material), and serves them as `get_subscription_limits` plus a `subscription_limits` record on change; an account nothing reported for is absent, not 0%. Thanks to jaeyoung for asking ([#3370](https://github.com/code-yeongyu/senpi/issues/3370)).
 - Every queued input has a `queuedId` (`get_state.ordered`, `queue_update.ordered`); RPC `dequeue_message` removes one and `edit_queued_message` replaces its text in place, optionally as ledger effects, with `already_delivered` / `not_found` answers that carry an action ([#1971](https://github.com/code-yeongyu/senpi/issues/1971)).
 - `pi.appendEntry(customType, data, { startupBookkeeping: true })` marks an entry an extension writes at session start without user action. A session closed without a conversation is removed when it holds only setup entries and marked bookkeeping; any unmarked entry keeps the file ([#3263](https://github.com/code-yeongyu/senpi/issues/3263)).
 
@@ -31,6 +32,7 @@
 
 - Plain answers in the terminal no longer come wrapped in the Ask / For you / Now / Next block. When a question did not end in `?`, the first-request todo list made it a one-task plan, and that list's result told the model to write the block. A one-task list now asks for nothing, and every preset reserves the block for turns that changed something, so an answer stays an answer even when finding it took tool calls ([#3323](https://github.com/code-yeongyu/senpi/issues/3323), reported by @devxoul).
 
+- A client-less retained session opened with `permissionPreset: "ask"` keeps asking before gated tools after an idle host generation handover. The successor host reopened it under the host's default preset, so a client that attached without naming a preset ran gated tools without a prompt. The parked record now carries the session's permission preset, prompt surface and browser engine ([#3364](https://github.com/code-yeongyu/senpi/issues/3364)).
 - A client-less retained session (opened over the host socket with `retain_on_disconnect`, then disconnected) is no longer dropped on every idle host generation handover: the successor host now reopens exactly its predecessor's handoff-parked retained sessions on startup, by path and with the same durable session id, instead of coming up empty ([#3282](https://github.com/code-yeongyu/senpi/issues/3282)). A path whose open is already in flight attaches to that open once it finishes rather than failing `session_path_in_use`, and a waiting reopen is bounded on the waiter only so a slow-but-healthy open is never treated as stuck. The predecessor no longer reopens into its own registry a session it has just parked for its successor, which under load let its drain close the session and left the successor with nothing to reopen.
 
 ### Removed
