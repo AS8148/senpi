@@ -4,7 +4,12 @@ import { detachConnection } from "./connection-detach.ts";
 import { buildRpcSessionState } from "./connection-handler.ts";
 import { answerEffectFromTranscript } from "./effect-commands.ts";
 import { multiSessionHostCapabilities } from "./host-capabilities.ts";
-import { clearHandoverParkedSession, recordHandoverParkedSession } from "./host-handover-parked.ts";
+import {
+	clearHandoverParkedSession,
+	type HandoverParkedEntry,
+	recordHandoverParkedSession,
+} from "./host-handover-parked.ts";
+import { parkedEntryFromProfile, parkedOpenCommand } from "./host-handover-parked-open.ts";
 import { answerWarm } from "./host-warm.ts";
 import { hostInstanceId, protocolIdentity } from "./protocol-identity.ts";
 import {
@@ -35,6 +40,7 @@ import type { OpenRpcSession, RpcSessionLaunchProfile, RpcSessionRegistry } from
 import { RpcSessionRegistryError } from "./session-registry.ts";
 import { releaseSession } from "./session-release.ts";
 import { selectSweepEvictions } from "./session-sweep.ts";
+import { unloadSession } from "./session-unload.ts";
 import { liveToolMediaScope, toolMediaPersister } from "./tool-media-store.ts";
 
 /** How often a draining host re-checks whether the work it is waiting for has settled. */
@@ -380,6 +386,37 @@ export class SessionCommandRouter {
 				},
 				command,
 			);
+		if (command.type === "unload_session") {
+			const caller = this.writer.currentConnection();
+			return unloadSession(
+				{
+					draining: () => this.draining,
+					by: { connectionId: caller ?? "host" },
+					lookup: (sessionId) => this.registry.getForCommand(sessionId, "unload_session"),
+					code: (cause) => this.code(cause),
+					// The unload is itself one of the session's in-flight requests.
+					otherRequests: (sessionId) => Math.max(0, (this.activeRequests.get(sessionId) ?? 1) - 1),
+					otherRequestsSettled: (sessionId) => this.otherRequestsSettled(sessionId),
+					pendingPrompts: (sessionId) => this.bindings.get(sessionId)?.pendingPrompts?.() ?? [],
+					otherAttachments: (sessionId) => {
+						const attachments = Math.max(0, this.registry.peek(sessionId)?.attachments ?? 0);
+						const own = caller !== undefined && this.sessionsByConnection.get(caller)?.has(sessionId) === true;
+						return own ? Math.max(0, attachments - 1) : attachments;
+					},
+					openChildSessions: (durableSessionId) =>
+						this.registry
+							.list()
+							.filter(
+								(row) =>
+									row.durableSessionId !== durableSessionId &&
+									(row.context?.parent_session_id === durableSessionId ||
+										row.context?.root_session_id === durableSessionId),
+							).length,
+					tearDown: (sessionId, sessionPath) => this.tearDownUnloaded(sessionId, sessionPath),
+				},
+				command,
+			);
+		}
 		if (command.type === "set_client_info" && !command.sessionId) {
 			const connection = this.writer.currentConnection();
 			if (connection !== undefined) {
@@ -504,16 +541,17 @@ export class SessionCommandRouter {
 			retained?.retainOnDisconnect === true &&
 			retained.sessionPath !== undefined
 		) {
-			await recordHandoverParkedSession(this.handoverParkedDir, {
-				sessionPath: retained.sessionPath,
-				...(retained.durableSessionId !== undefined ? { durableSessionId: retained.durableSessionId } : {}),
-				retainOnDisconnect: true,
-				...(retained.profile?.cwd !== undefined ? { cwd: retained.profile.cwd } : {}),
-				...(retained.profile?.creationModel !== undefined ? { model: retained.profile.creationModel } : {}),
-				...(retained.profile?.initialThinkingLevel !== undefined
-					? { thinkingLevel: retained.profile.initialThinkingLevel }
-					: {}),
-			}).catch((cause: unknown) => {
+			await recordHandoverParkedSession(
+				this.handoverParkedDir,
+				parkedEntryFromProfile(
+					{
+						sessionPath: retained.sessionPath,
+						...(retained.durableSessionId !== undefined ? { durableSessionId: retained.durableSessionId } : {}),
+					},
+					retained.profile,
+					Object.keys(this.defaults.hostContext ?? {}),
+				),
+			).catch((cause: unknown) => {
 				process.stderr.write(`senpi rpc handover park record ${sessionId} failed: ${String(cause)}\n`);
 			});
 		}
@@ -525,7 +563,7 @@ export class SessionCommandRouter {
 				// A drain names ITS reason on the close record. An idle sweep of a RETAINED
 				// session parks instead: the file reopens by path. Anything else is a close.
 				parkedPath !== undefined && reason === undefined
-					? this.writer.parkSession(sessionId, parkedPath)
+					? this.writer.parkSession(sessionId, parkedPath, "idle")
 					: this.writer.closeSession(
 							sessionId,
 							{ type: "response", command: "close_session", success: true, data: {} },
@@ -574,6 +612,22 @@ export class SessionCommandRouter {
 		this.forgetSessionOwnership(sessionId);
 		if (claim.finalizer)
 			await this.finalizeClose(sessionId, binding, () => this.writer.releaseSession(sessionId, sessionPath));
+		else await this.finalizations.get(sessionId)?.promise;
+		this.writer.forgetSession(sessionId);
+		return true;
+	}
+
+	/** The idle park on request: every attachment drained, sealed `session_parked { reason: "unloaded" }`. */
+	private async tearDownUnloaded(sessionId: string, sessionPath: string): Promise<boolean> {
+		const claim = this.tryClaimClose(sessionId, { drainAttachments: true });
+		if (!claim) return false;
+		const binding = this.bindings.get(sessionId);
+		binding?.cancelPendingExtensionUiRequests?.();
+		this.forgetSessionOwnership(sessionId);
+		if (claim.finalizer)
+			await this.finalizeClose(sessionId, binding, () =>
+				this.writer.parkSession(sessionId, sessionPath, "unloaded"),
+			);
 		else await this.finalizations.get(sessionId)?.promise;
 		this.writer.forgetSession(sessionId);
 		return true;
@@ -654,10 +708,23 @@ export class SessionCommandRouter {
 		});
 	}
 
+	/**
+	 * The successor's reopen of a handoff-parked session: the same open as an `open_session`, with no
+	 * requesting connection and nothing to reply to (senpi#3368). Resolves `undefined` on success and
+	 * the failure response otherwise, exactly as an open does.
+	 */
+	reopenParked(entry: HandoverParkedEntry): Promise<RpcResponse | undefined> {
+		return this.open(parkedOpenCommand(entry), undefined, { reply: false, defaults: false });
+	}
+
 	private async open(
 		command: Extract<RpcCommand, { type: "open_session" }>,
 		owner?: string,
+		options?: { readonly reply?: boolean; readonly defaults?: boolean },
 	): Promise<RpcResponse | undefined> {
+		// A parked session's reopen replays what its park recorded; a field it left empty stays empty
+		// rather than taking THIS host's default (senpi#3376 review).
+		const defaults = options?.defaults === false ? undefined : this.defaults;
 		const instanceId = this.defaults.hostContext?.host_instance ?? hostInstanceId();
 		if (command.expectedHostInstance !== undefined) {
 			if (typeof command.expectedHostInstance !== "string" || command.expectedHostInstance.trim() === "")
@@ -720,12 +787,12 @@ export class SessionCommandRouter {
 							? {}
 							: { host_socket: this.defaults.hostContext.host_socket }),
 					},
-					permissionPreset: command.permissionPreset ?? this.defaults.permissionPreset,
+					permissionPreset: command.permissionPreset ?? defaults?.permissionPreset,
 					creationModel:
 						command.provider && command.modelId
 							? { provider: command.provider, modelId: command.modelId }
-							: this.defaults.creationModel,
-					initialThinkingLevel: command.thinkingLevel ?? this.defaults.initialThinkingLevel,
+							: defaults?.creationModel,
+					initialThinkingLevel: command.thinkingLevel ?? defaults?.initialThinkingLevel,
 					sessionKind: command.kind,
 					sessionContext: this.defaults.hostContext
 						? { ...command.context, ...this.defaults.hostContext }
@@ -827,17 +894,18 @@ export class SessionCommandRouter {
 			const replyState =
 				entry.worker?.snapshot?.state ?? (entry.runtime ? buildRpcSessionState(entry.runtime.session) : undefined);
 			if (!replyState) throw new Error("Session state was not created");
-			this.writer.enqueue(opened.sessionId, {
-				id: command.id,
-				type: "response",
-				command: "open_session",
-				success: true,
-				data: {
-					sessionId: opened.sessionId,
-					state: replyState,
-					...(opened.attached ? { attached: true } : {}),
-				},
-			});
+			if (options?.reply !== false)
+				this.writer.enqueue(opened.sessionId, {
+					id: command.id,
+					type: "response",
+					command: "open_session",
+					success: true,
+					data: {
+						sessionId: opened.sessionId,
+						state: replyState,
+						...(opened.attached ? { attached: true } : {}),
+					},
+				});
 			return undefined;
 		} catch (cause) {
 			if (opened) {

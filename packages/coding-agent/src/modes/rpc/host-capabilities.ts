@@ -23,6 +23,10 @@ import {
 	WARM_CAPABILITY,
 } from "./custom-capability.ts";
 import { EFFECT_LEDGER_CAPABILITY } from "./effect-record.ts";
+import { STEER_WHEN_IDLE_CAPABILITY } from "./rpc-types.ts";
+
+/** `unload_session` and `session_parked.reason` (senpi#3225). */
+export const UNLOAD_SESSION_CAPABILITY = "unload_session";
 
 /** `get_subscription_limits` and the `subscription_limits` host record (senpi#3370). */
 export const SUBSCRIPTION_LIMITS_CAPABILITY = "subscription_limits";
@@ -44,6 +48,7 @@ export function multiSessionHostCapabilities(options: {
 			DURABLE_CLIENT_MESSAGE_ID_CAPABILITY,
 			EFFECT_LEDGER_CAPABILITY,
 			SUBSCRIPTION_LIMITS_CAPABILITY,
+			STEER_WHEN_IDLE_CAPABILITY,
 			CONTINUE_FROM_LEAF_CAPABILITY,
 			EVAL_CELLS_CAPABILITY,
 			// Both shared runtimes dispatch through the active session-writing holder guard.
@@ -55,6 +60,8 @@ export function multiSessionHostCapabilities(options: {
 			RETAIN_ON_DISCONNECT_CAPABILITY,
 			// Only a multi-session host tracks attachments per connection, so only it can drop them on request.
 			DETACH_CONNECTION_CAPABILITY,
+			// Only a multi-session host keeps sessions loaded that a client can ask it to free.
+			UNLOAD_SESSION_CAPABILITY,
 			SESSION_CONTEXT_CAPABILITY,
 			SESSION_KIND_CAPABILITY,
 			AUTO_TITLE_PER_SESSION_CAPABILITY,
