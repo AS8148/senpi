@@ -17,6 +17,7 @@
 - The terminal transcript folds a handoff block into one muted line, `▸ Handoff · Now: … · Next: …`, and keeps its `For you` answer as ordinary text. Ctrl+O, or a click on the line, opens the block as written ([#3323](https://github.com/code-yeongyu/senpi/issues/3323), proposed by @devxoul).
 
 ### Fixed
+- A fallback chain no longer returns to the level that just failed when an entry's explicit level clamps to it (for example `X:xhigh` on a model without xhigh while `X:high` is running), and a network blip no longer falls back to another thinking level of the same model on the same failing connection ([#3321](https://github.com/code-yeongyu/senpi/issues/3321), [#3344](https://github.com/code-yeongyu/senpi/issues/3344)).
 
 - Opening the TUI and quitting, or running `/new`, without sending a message no longer leaves an empty session in `/resume`: entries that extensions write at startup no longer keep the empty file ([#3263](https://github.com/code-yeongyu/senpi/issues/3263)).
 
