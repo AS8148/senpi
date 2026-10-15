@@ -28,6 +28,9 @@ import type { RpcSlashCommand } from "./rpc-command-surface.ts";
 export type { SessionContext, SessionKind } from "../../core/extensions/types.ts";
 export type { RpcCommandInvocationEvent } from "./rpc-command-invocation.ts";
 export type { RpcCommandsChangedEvent, RpcSlashCommand } from "./rpc-command-surface.ts";
+
+import type { RpcSubscriptionLimitsEvent } from "./rpc-host-lifecycle-types.ts";
+
 export type {
 	RpcHostKernelMemory,
 	RpcHostLifecycleEvent,
@@ -35,6 +38,7 @@ export type {
 	RpcHostStalledEvent,
 	RpcHostSupersededEvent,
 	RpcHostTrimmedEvent,
+	RpcSubscriptionLimitsEvent,
 } from "./rpc-host-lifecycle-types.ts";
 
 // ============================================================================
@@ -93,6 +97,10 @@ type RpcSessionCommand =
 	| { id?: string; type: "reload" }
 	| { id?: string; type: "check_reload_veto" }
 	| { id?: string; type: "clear_queue"; abortWillFollow?: boolean }
+	/** Remove one queued input by its `queuedId` (from `get_state` / `queue_update`) before it reaches a turn. */
+	| { id?: string; type: "dequeue_message"; queuedId: string; effectId?: string }
+	/** Replace the text of one queued input in place, keeping its order and identity. */
+	| { id?: string; type: "edit_queued_message"; queuedId: string; text: string; effectId?: string }
 	| { id?: string; type: "get_steering_messages" }
 	| { id?: string; type: "get_follow_up_messages" }
 	| { id?: string; type: "abort_branch_summary" }
@@ -272,6 +280,8 @@ export const RPC_ERROR_MISSING_SESSION_ID = "missing_session_id";
 export const RPC_ERROR_MULTI_SESSION_DISABLED = "multi_session_disabled";
 export const RPC_ERROR_INVALID_PATH = "invalid_path";
 export const RPC_ERROR_OPEN_FAILED = "open_failed";
+export const RPC_ERROR_OWNER_CHANGED = "owner_changed";
+export const RPC_ERROR_SESSION_NOT_HELD = "session_not_held";
 export const RPC_ERROR_MEDIA_NOT_FOUND = "media_not_found";
 /** `open_session.context` broke a documented cap (key count, key syntax, value or total bytes). */
 export const RPC_ERROR_INVALID_SESSION_CONTEXT = "invalid_session_context";
@@ -346,6 +356,8 @@ export const RPC_ERROR_HOST_DRAINING = "host_draining";
 export const RPC_ERROR_HOST_STOPPING = "host_stopping";
 
 export type RpcErrorCode =
+	| typeof RPC_ERROR_OWNER_CHANGED
+	| typeof RPC_ERROR_SESSION_NOT_HELD
 	| typeof RPC_ERROR_HOST_STOPPING
 	| typeof RPC_ERROR_UNKNOWN_SESSION
 	| typeof RPC_ERROR_SESSION_CLOSING
@@ -387,6 +399,14 @@ export type RpcErrorCode =
 	| typeof RPC_ERROR_RELEASE_FAILED
 	| typeof RPC_ERROR_HOST_DRAINING;
 
+/** What `dequeue_message` / `edit_queued_message` did; anything but removed/edited carries reason + action. */
+export interface RpcQueuedInputChange {
+	queuedId: string;
+	status: "removed" | "edited" | "already_delivered" | "not_found";
+	reason?: string;
+	action?: string;
+}
+
 /** What an effect command (`abort`/`set_model`/`set_thinking_level` with `effectId`) answers about its receipt. */
 export interface RpcEffectAnswer {
 	effectId: string;
@@ -408,6 +428,12 @@ export type RpcCommand =
 	| {
 			id?: string;
 			type: "open_session";
+			/**
+			 * Attach only to an existing session on this host generation. Requires
+			 * `expected_host_instance`; mismatch returns `owner_changed`, a released
+			 * session returns `session_not_held`. Neither refusal creates a writer.
+			 */
+			expectedHostInstance?: string;
 			sessionPath?: string;
 			cwd?: string;
 			provider?: string;
@@ -501,6 +527,21 @@ export type RpcCommand =
 			reason: "takeover";
 			interrupt?: boolean;
 			force?: boolean;
+	  }
+	| {
+			id?: string;
+			/**
+			 * Meant as the connection's last request: release every session attachment it holds, then answer.
+			 * Advertised as `detach_connection`. Closing the socket afterwards releases nothing more.
+			 */
+			type: "detach_connection";
+	  }
+	| {
+			id?: string;
+			/** Every subscription account's latest limit windows (senpi#3370); capability `subscription_limits`. */
+			type: "get_subscription_limits";
+			/** An observing read, as on `get_protocol_info`. */
+			observe?: boolean;
 	  }
 	| {
 			id?: string;
@@ -775,6 +816,25 @@ export type RpcResponse =
 	| {
 			id?: string;
 			type: "response";
+			command: "detach_connection";
+			success: true;
+			/**
+			 * Sessions that still count this connection: releasing it would end a turn still running (it
+			 * releases when the turn settles), or the host is draining. Empty when every attachment is gone.
+			 */
+			data: { deferred: string[] };
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "get_subscription_limits";
+			success: true;
+			/** An account nothing has reported for is absent: unknown, never 0%. */
+			data: { accounts: ReadonlyArray<Omit<RpcSubscriptionLimitsEvent, "type">> };
+	  }
+	| {
+			id?: string;
+			type: "response";
 			command: "list_sessions";
 			success: true;
 			data: {
@@ -820,6 +880,13 @@ export type RpcResponse =
 			data?: ClientMessageIdentity & { disposition?: QueuedInputDisposition; admission?: ClientMessageAdmission };
 	  }
 	| { id?: string; type: "response"; command: "abort"; success: true; data?: RpcEffectAnswer }
+	| {
+			id?: string;
+			type: "response";
+			command: "dequeue_message" | "edit_queued_message";
+			success: true;
+			data: RpcQueuedInputChange & Partial<RpcEffectAnswer>;
+	  }
 	| {
 			id?: string;
 			type: "response";

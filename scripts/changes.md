@@ -1,3 +1,23 @@
+## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
+
+### What changed
+
+Remove the retired generated protocol-tree example from the runtime dependency auditor comment; the audit rules are unchanged.
+
+- `scripts/check-runtime-deps.mjs`
+
+### Why
+
+The executable Codex compatibility layer is being removed. Shared Native runtime behavior and historical records must remain independent of that layer.
+
+### Why an extension could not handle it
+
+These host contracts, import paths and build or verification targets belong to the repository; an extension cannot retire them.
+
+### Expected merge conflict zones
+
+The listed paths, especially command dispatch, mode unions and process identity imports. Keep the supported runtime branches and the shared utility behavior.
+
 ## 2026-10-12 - System-temp scan safeguards have mutation-tested contracts (Refs senpi#3064)
 
 ### What changed
@@ -125,6 +145,24 @@ Release orchestration is repository tooling.
 ### Expected merge conflict zones
 
 - `main()` and the test-gate section of `scripts/release.mjs`; the `release` job comment and timeout in `publish-npm.yml`.
+
+## 2026-10-15 - The ./models entry graph reaches the generation-4 thinking leaf (senpi#3292)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs`: the `@earendil-works/pi-ai` `./models` budget is 23 files (was 22). The added file is `google-thinking-generation.ts`, a type-only leaf that gives a generation-4 row with no level map its low/medium/high levels; the reason is recorded beside the budget and the forbid rules are unchanged.
+
+### Why
+
+senpi#3292: generation-4 rows reject a thinking budget with HTTP 400, so `getSupportedThinkingLevels` in `models.ts` must know their levels even when the catalog row ships no map. That brings the leaf into the `./models` graph.
+
+### Why an extension could not handle it
+
+The entry-graph budgets are a repository build check.
+
+### Expected merge conflict zones
+
+- The `./models` row in `check-entry-graphs.mjs`.
 
 ## 2026-10-07 - The ./models entry graph allows one more file (senpi#2893)
 

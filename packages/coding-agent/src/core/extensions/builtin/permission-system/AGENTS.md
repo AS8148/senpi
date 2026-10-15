@@ -25,6 +25,14 @@ permission-system/
 └── changes.md          # Fork tracker (apply_patch path extraction 2026-04-13)
 ```
 
+## EVAL CELLS (senpi#3210)
+
+- An `eval` call is decided like any tool without a parser of its own: one `eval` request with pattern `*`, evaluated against the active preset. Approving it approves running the cell's code with this process's rights. Plain Node/Bun side effects inside the cell (`fs`, `child_process`, `Bun.*`, network) do not reach the permission system.
+- Calls a cell makes through `tool.*` (bash, write, edit, …) go through the dispatch authorizer (`dispatch-policy.ts`) and get their own decision, as if the model had called them directly.
+- An "always" answer on `eval` therefore allows arbitrary code for the rest of the session.
+- An `eval` tool's own `permissionParser` never downgrades the class: the shared resolver (`permissionRequestsFor` in `parsers.ts`, used by both the `tool_call` handler and `dispatch-policy.ts`) adds the `eval` request to any call whose tool-owned requests don't include it, so a `read`-class answer can never approve a cell (`fallbackEvalPermissionRequest`). It matches the exact name `eval`; a differently named tool whose execution is arbitrary code would need the same guard.
+- Invariant, pinned by `test/permission/eval-preset-floor.test.ts`: under every preset the `eval` call is at least as strict as the strictest of `bash`, `edit` and `write`, and it is `allow` only when every permission is allowed. `decideAuto` never approves `eval`, and any reviewer or judge layered on `auto` must decline it (or review only the nested `tool.*` calls), never approve a cell wholesale.
+
 ## WHERE TO LOOK
 
 | Task | File |

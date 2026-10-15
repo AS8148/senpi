@@ -55,6 +55,13 @@ export interface RpcSessionEntry {
 	/** Timestamp of the last routed command / observed activity; drives idle eviction. */
 	lastCommandAt: number;
 	/**
+	 * Set when the entry is "opening" (runtime construction in flight); resolves when it reaches
+	 * "open", rejects if the construction fails. An explicit open-by-path for the same file WAITS on
+	 * this to attach to the in-flight open instead of failing session_path_in_use on a healthy
+	 * in-flight open (senpi#3282 review: an explicit reopen waits for the in-flight open).
+	 */
+	openCompletion?: Promise<void>;
+	/**
 	 * When the last attachment left (a retained session now standing detached), on the registry's
 	 * clock; `undefined` while anyone is attached. A detached observational read does not refresh
 	 * `lastCommandAt`, and the early-retirement sweep honors a minimum detach age so a transient
@@ -77,6 +84,7 @@ export class RpcSessionRegistryError extends Error {
 		| "session_reservation_limit"
 		| "invalid_path"
 		| "invalid_session_id"
+		| "session_not_held"
 		| "open_failed";
 	/** Machine-readable context for the wire (`errorData`): who holds a path, when to retry. */
 	readonly detail?: Readonly<Record<string, unknown>>;
@@ -110,6 +118,8 @@ export interface RpcSessionRegistryOptions {
 
 /** Host-side lifecycle policy for one `open_session`, distinct from the session's launch profile. */
 export interface RpcSessionOpenOptions {
+	/** Refuse unless the registry already owns the path; never prepare or construct a writer. */
+	attachOnly?: boolean;
 	/** Keep the session alive when its last client disconnects (`open_session.retain_on_disconnect`). */
 	retainOnDisconnect?: boolean;
 }
@@ -139,6 +149,7 @@ export interface OpenRpcSession {
 export function frozenProfile(profile: RpcSessionLaunchProfile): Readonly<RpcSessionLaunchProfile> {
 	return Object.freeze({
 		...profile,
+		...(profile.holderEndpoint ? { holderEndpoint: Object.freeze({ ...profile.holderEndpoint }) } : {}),
 		...(profile.creationModel ? { creationModel: Object.freeze({ ...profile.creationModel }) } : {}),
 		...(profile.sessionContext ? { sessionContext: Object.freeze({ ...profile.sessionContext }) } : {}),
 		...(profile.retryFallback

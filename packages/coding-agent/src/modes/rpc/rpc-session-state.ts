@@ -70,13 +70,7 @@ export function buildRpcSessionState(session: AgentSession, lastAbortSource?: Ag
 			: {}),
 		steering: typeof session.getSteeringMessages === "function" ? [...session.getSteeringMessages()] : [],
 		followUp: typeof session.getFollowUpMessages === "function" ? [...session.getFollowUpMessages()] : [],
-		ordered: [
-			...((
-				session as unknown as {
-					_queuedInputOrder?: Array<{ text: string; mode: "steer" | "followUp"; enqueueOrder: number }>;
-				}
-			)._queuedInputOrder ?? []),
-		].sort((a, b) => a.enqueueOrder - b.enqueueOrder),
+		ordered: typeof session.getQueuedInputs === "function" ? [...session.getQueuedInputs()] : [],
 		autoCompactionEnabled: session.autoCompactionEnabled,
 		messageCount: session.messages.length,
 		pendingMessageCount: session.pendingMessageCount,

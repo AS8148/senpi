@@ -292,3 +292,21 @@ The Mistral message mapping runs inside the provider adapter after every extensi
 ### Expected merge conflict zones
 
 - LOW: the `msg.role === "user"` branch of `toChatMessages` and the new `appendUserMessage` helper above it in `mistral-conversations.ts`.
+
+## 2026-10-13 - Generation-4 ids use discrete thinking levels (senpi#3292)
+
+### What changed
+
+- `packages/ai/src/api/google-shared.ts`: `usesGoogleThinkingLevel` also matches generation-4 and later ids through `isGoogleGeneration4OrLaterModelId` (`packages/ai/src/google-thinking-generation.ts`, anchored to a complete id or a `models/` namespace), so both adapters (`google-generative-ai`, `google-vertex`) send `thinkingLevel` and, when thinking is off, clamp to the lowest supported level instead of sending `thinkingBudget`.
+
+### Why
+
+The provider documents that its generation-4 models support only `LOW`, `MEDIUM` and `HIGH`, and reject a thinking budget (or `MINIMAL`) with HTTP 400. Under the generation-3-only match, every request to those models failed.
+
+### Why an extension could not handle it
+
+The thinking wire form is chosen inside the shared Google request builder, below any extension hook.
+
+### Expected merge conflict zones
+
+The id matchers in `usesGoogleThinkingLevel`.

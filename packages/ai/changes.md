@@ -16,6 +16,42 @@
 
 - LOW: one line in the `dependencies` block.
 
+## 2026-10-15 - OpenCode Go uses its documented inference base (senpi#3377)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: the `opencode-go` variant's base path is `https://opencode.ai/inference/go` instead of `https://opencode.ai/zen/go`. `src/providers/data/opencode-go.json` was regenerated with `--providers opencode-go`: all 31 rows kept, and only `baseUrl` changed (`/zen/go` -> `/inference/go`, `/zen/go/v1` -> `/inference/go/v1`).
+
+### Why
+
+- The legacy base still proxies the OpenAI and Anthropic wires but has no route for the native generate-content wire: `POST /zen/go/v1/models/<id>:streamGenerateContent` returns a 404 HTML page, while the same path on `/inference/go/v1` reaches the API. The Argon Contributor row is served only over that wire, so every request to it failed (senpi#3377; measured 2026-10-15).
+
+### Why an extension could not handle it
+
+- The base URL is baked into the generated catalog every builtin provider request reads; an extension cannot move a builtin row's endpoint.
+
+### Expected merge conflict zones
+
+- LOW: the `opencodeVariants` entry in `generate-models.ts`; `opencode-go.json` and `.manifest.json` are generated.
+
+## 2026-10-14 - Venice deepseek models take thinking through reasoning_effort (senpi#3308)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: the deepseek-v4 compat post-pass treats `venice` like `openrouter` and `opencode`. It keeps only `requiresReasoningContentOnAssistantMessages` and leaves Venice's auto-detected `reasoning_effort` format in place, instead of stamping DeepSeek's native `thinkingFormat: "deepseek"`. `src/providers/data/venice.json` was regenerated with `--providers venice` (no model added or removed). The six Venice deepseek-v4 entries lost `thinkingFormat: "deepseek"`, and their `thinkingLevelMap` now follows Venice's published efforts (`off: "none"`, then `low`/`medium`/`high`/`max` as models.dev lists them per model).
+
+### Why
+
+- Venice's chat schema is `additionalProperties: false` and has no `thinking` field. The deepseek format always sent `thinking: { type: "enabled" | "disabled" }`, so every request to a Venice deepseek model failed with `400 Invalid request parameters` ("Unrecognized key(s) in object: 'thinking'"), whatever the thinking level (senpi#3308, captured on the wire by the reporter).
+
+### Why an extension could not handle it
+
+- The compat flags are baked into the generated catalog that every provider request reads; an extension cannot change a builtin model's request shape before the provider builds the payload.
+
+### Expected merge conflict zones
+
+- LOW: the `preservesNativeReasoningEffort` line in the deepseek-v4 post-pass of `generate-models.ts`; `venice.json` and `.manifest.json` are generated.
+
 ## 2026-10-13 - Idempotent catalog generation (whole-manifest key)
 
 ### What changed
