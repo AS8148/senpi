@@ -2,9 +2,11 @@ import type { ExtensionAPI } from "../types.ts";
 
 type AssistantMessageLike = {
 	role: "assistant";
+	stopReason?: string;
 	usage?: {
 		input?: number;
 		output?: number;
+		reasoning?: number;
 		cacheRead?: number;
 		cacheWrite?: number;
 	};
@@ -24,6 +26,7 @@ const MIN_GENERATION_MS = 500;
 export default function (pi: ExtensionAPI) {
 	let activeAssistantStartMs: number | null = null;
 	let assistantElapsedMs = 0;
+	let messageStartMs: number | null = null;
 	let firstDeltaMs: number | null = null;
 	let lastDeltaMs: number | null = null;
 	let generationMs = 0;
@@ -43,6 +46,7 @@ export default function (pi: ExtensionAPI) {
 	};
 
 	const resetStreamWindow = () => {
+		messageStartMs = null;
 		firstDeltaMs = null;
 		lastDeltaMs = null;
 	};
@@ -61,6 +65,7 @@ export default function (pi: ExtensionAPI) {
 		finishActiveAssistantTiming();
 		resetStreamWindow();
 		activeAssistantStartMs = performance.now();
+		messageStartMs = activeAssistantStartMs;
 	});
 
 	pi.on("message_update", (event) => {
@@ -77,10 +82,15 @@ export default function (pi: ExtensionAPI) {
 
 		finishActiveAssistantTiming();
 		// The rate counts only messages that streamed, timed from their first token to their last, so
-		// time-to-first-token and a reply delivered in one piece cannot skew it (senpi#3393).
-		if (firstDeltaMs !== null && lastDeltaMs !== null && lastDeltaMs > firstDeltaMs) {
-			generationMs += lastDeltaMs - firstDeltaMs;
-			streamedOutput += event.message.usage?.output ?? 0;
+		// time-to-first-token and a reply delivered in one piece cannot skew it (senpi#3393). Reasoning
+		// counted in usage.output may be hidden or only summarised after it finished, so it was generated
+		// before the first delta: such a message is timed from its start instead, never overstating.
+		const output = event.message.usage?.output ?? 0;
+		const windowStart = (event.message.usage?.reasoning ?? 0) > 0 ? messageStartMs : firstDeltaMs;
+		const counted = event.message.stopReason !== "aborted" && event.message.stopReason !== "error" && output > 0;
+		if (counted && windowStart !== null && lastDeltaMs !== null && lastDeltaMs > windowStart) {
+			generationMs += lastDeltaMs - windowStart;
+			streamedOutput += output;
 		}
 		resetStreamWindow();
 	});

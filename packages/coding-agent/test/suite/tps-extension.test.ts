@@ -219,4 +219,82 @@ describe("tps builtin extension", () => {
 
 		expect(notifications).toEqual(["TPS 50.0 tok/s. Cache hit 0.0%, 5.0s"]);
 	});
+	it("#3393: counts hidden reasoning time when usage.output includes reasoning that never streamed", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(0);
+		const notifications: string[] = [];
+		const ctx = createContext(notifications);
+		const harness = createHarness();
+		const base = createAssistantMessage({ input: 10, output: 3_400, cacheRead: 0, cacheWrite: 0 }) as {
+			usage: Record<string, unknown>;
+		};
+		const message = { ...base, usage: { ...base.usage, reasoning: 3_000 } };
+
+		await harness.emit("agent_start", { type: "agent_start" }, ctx);
+		await harness.emit("message_start", { type: "message_start", message }, ctx);
+		vi.advanceTimersByTime(30_000);
+		await harness.emit("message_update", streamDelta(message), ctx);
+		vi.advanceTimersByTime(4_000);
+		await harness.emit("message_update", streamDelta(message), ctx);
+		await harness.emit("message_end", { type: "message_end", message }, ctx);
+		await harness.emit("agent_end", { type: "agent_end", messages: [message] }, ctx);
+
+		expect(notifications).toEqual(["TPS 100.0 tok/s. Cache hit 0.0%, 34.0s"]);
+	});
+
+	it("#3393: a reasoning summary streamed after hidden reasoning still counts the reasoning time", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(0);
+		const notifications: string[] = [];
+		const ctx = createContext(notifications);
+		const harness = createHarness();
+		const base = createAssistantMessage({ input: 10, output: 3_400, cacheRead: 0, cacheWrite: 0 }) as {
+			usage: Record<string, unknown>;
+		};
+		const message = { ...base, usage: { ...base.usage, reasoning: 3_000 } };
+		const summary = {
+			type: "message_update",
+			message,
+			assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "s", partial: message },
+		};
+
+		await harness.emit("agent_start", { type: "agent_start" }, ctx);
+		await harness.emit("message_start", { type: "message_start", message }, ctx);
+		vi.advanceTimersByTime(30_000);
+		await harness.emit("message_update", summary, ctx);
+		vi.advanceTimersByTime(4_000);
+		await harness.emit("message_update", streamDelta(message), ctx);
+		await harness.emit("message_end", { type: "message_end", message }, ctx);
+		await harness.emit("agent_end", { type: "agent_end", messages: [message] }, ctx);
+
+		expect(notifications).toEqual(["TPS 100.0 tok/s. Cache hit 0.0%, 34.0s"]);
+	});
+
+	it("#3393: an aborted message adds neither its time nor its tokens to the rate", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(0);
+		const notifications: string[] = [];
+		const ctx = createContext(notifications);
+		const harness = createHarness();
+		const aborted = {
+			...(createAssistantMessage({ input: 10, output: 0, cacheRead: 0, cacheWrite: 0 }) as object),
+			stopReason: "aborted",
+		};
+		const message = createAssistantMessage({ input: 10, output: 100, cacheRead: 0, cacheWrite: 0 });
+
+		await harness.emit("agent_start", { type: "agent_start" }, ctx);
+		await harness.emit("message_start", { type: "message_start", message: aborted }, ctx);
+		await harness.emit("message_update", streamDelta(aborted), ctx);
+		vi.advanceTimersByTime(5_000);
+		await harness.emit("message_update", streamDelta(aborted), ctx);
+		await harness.emit("message_end", { type: "message_end", message: aborted }, ctx);
+		await harness.emit("message_start", { type: "message_start", message }, ctx);
+		await harness.emit("message_update", streamDelta(message), ctx);
+		vi.advanceTimersByTime(1_000);
+		await harness.emit("message_update", streamDelta(message), ctx);
+		await harness.emit("message_end", { type: "message_end", message }, ctx);
+		await harness.emit("agent_end", { type: "agent_end", messages: [aborted, message] }, ctx);
+
+		expect(notifications).toEqual(["TPS 100.0 tok/s. Cache hit 0.0%, 6.0s"]);
+	});
 });
