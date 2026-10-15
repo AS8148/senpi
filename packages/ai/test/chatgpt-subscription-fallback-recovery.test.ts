@@ -285,7 +285,12 @@ describe("OpenAI Codex WebSocket fallback recovery", () => {
 	});
 
 	it("falls back to SSE after two consecutive mid-stream drops, and a completed response resets the count", async () => {
-		const transport = installMidStreamDropHarness(["drop-mid-stream", "complete", "drop-mid-stream", "drop-mid-stream"]);
+		const transport = installMidStreamDropHarness([
+			"drop-mid-stream",
+			"complete",
+			"drop-mid-stream",
+			"drop-mid-stream",
+		]);
 
 		expect((await runSession("repeated-drops")).stopReason).toBe("error");
 		expect((await runSession("repeated-drops")).stopReason).toBe("stop");

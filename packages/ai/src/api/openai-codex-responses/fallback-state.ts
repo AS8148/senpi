@@ -95,7 +95,8 @@ export function recordWebSocketSseFallback(sessionId: string | undefined): void 
  * A failure before any output arms the SSE cooldown at once, because that same
  * request is retried over SSE. A failure after output started is retried by the
  * caller; it arms the cooldown only once it repeats without a completed
- * WebSocket response in between.
+ * WebSocket response in between. Aborts and non-transport errors never reach
+ * here, so they neither count nor reset the run.
  */
 export function recordWebSocketFailure(
 	sessionId: string | undefined,
