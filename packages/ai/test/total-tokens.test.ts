@@ -742,11 +742,11 @@ describe("totalTokens field", () => {
 	// =========================================================================
 
 	describe.skipIf(!openRouterApiKey)("OpenRouter", () => {
-		it("anthropic/claude-sonnet-4 - should return totalTokens equal to sum of components", {
+		it("anthropic/claude-sonnet-4.5 - should return totalTokens equal to sum of components", {
 			retry: 3,
 			timeout: 60000,
 		}, async () => {
-			const llm = getModel("openrouter", "anthropic/claude-sonnet-4");
+			const llm = getModel("openrouter", "anthropic/claude-sonnet-4.5");
 
 			console.log(`\nOpenRouter / ${llm.id}:`);
 			const { first, second } = await testTotalTokensWithCache(llm, { apiKey: openRouterApiKey });

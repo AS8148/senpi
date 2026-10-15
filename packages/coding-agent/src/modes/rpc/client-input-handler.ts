@@ -111,7 +111,7 @@ export async function handleClientInput(
 								enqueueOrder: command.enqueueOrder,
 							});
 						const options = {
-							...clientMessageIdentity(command),
+							...clientMessageIdentity(hooks.identity),
 							enqueueOrder: command.enqueueOrder,
 							source: "rpc" as const,
 							onQueuedInput: hooks.queued,
