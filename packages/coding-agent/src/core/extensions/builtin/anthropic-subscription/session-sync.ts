@@ -3,6 +3,7 @@ import type { Context, Message } from "@earendil-works/pi-ai";
 import { appendSdkContentBlocks } from "./content-blocks.ts";
 import type { AnthropicSubscriptionAuthLane } from "./options.ts";
 import type { ContentBlockParam, Options } from "./sdk-boundary.ts";
+import { imageNeutralContent } from "./sent-image-slots.ts";
 import type { AnthropicSubscriptionSessionEntry } from "./session-registry.ts";
 import { HOST_TOOL_POLICY_FINGERPRINT, mapPiToolNameToSdk } from "./tools.ts";
 
@@ -81,12 +82,12 @@ export function sentMessageHashes(messages: readonly SentMessage[]): string[] {
 	const hashes = messages.filter(isTransmittedMessage).map((message) =>
 		digest(
 			message.role === "user"
-				? { role: message.role, content: message.content }
+				? { role: message.role, content: imageNeutralContent(message.content) }
 				: {
 						role: message.role,
 						toolCallId: message.toolCallId,
 						toolName: message.toolName,
-						content: message.content,
+						content: imageNeutralContent(message.content),
 					},
 		),
 	);

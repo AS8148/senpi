@@ -289,6 +289,7 @@ export function createBuiltinParserRegistry(): ParserRegistry {
 	};
 
 	registry.register("find", listParser);
+	registry.register("glob", listParser);
 	registry.register("ls", listParser);
 
 	return registry;

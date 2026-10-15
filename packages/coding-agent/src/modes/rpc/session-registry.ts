@@ -179,6 +179,12 @@ export class RpcSessionRegistry {
 			: storedProfile;
 
 		const handle = `rpc-${++this.nextHandle}`;
+		let settleOpen!: { resolve: () => void; reject: (cause: unknown) => void };
+		const openCompletion = new Promise<void>((resolve, reject) => {
+			settleOpen = { resolve, reject };
+		});
+		// A concurrent explicit open for the same path waits on this to attach, never to time it out.
+		openCompletion.catch(() => {});
 		const entry: RpcSessionEntry = {
 			state: "opening",
 			scope: new ProviderScope(),
@@ -191,6 +197,7 @@ export class RpcSessionRegistry {
 			retainOnDisconnect: options?.retainOnDisconnect === true,
 			lastCommandAt: this.now(),
 			lifecycleMutex: Promise.resolve(),
+			openCompletion,
 		};
 		entry.switchSession = createEntrySwitchSession(entry, this.options.createRuntime, () =>
 			this.syncRuntimeMetadata(),
@@ -221,6 +228,7 @@ export class RpcSessionRegistry {
 			entry.durableSessionId = manager.getSessionId();
 			entry.sessionPath ??= manager.getSessionFile();
 			entry.state = "open";
+			settleOpen.resolve();
 			return { sessionId: handle, durableSessionId: entry.durableSessionId, sessionPath: entry.sessionPath };
 		} catch (error) {
 			// Runtime construction may have started extensions, watchers, and provider
@@ -240,8 +248,13 @@ export class RpcSessionRegistry {
 					if (sessionPath) await releaseWithinGrace(this.teardownHost, handle, sessionPath);
 				}
 			}
-			if (error instanceof RpcSessionRegistryError) throw error;
-			throw new RpcSessionRegistryError("open_failed", error instanceof Error ? error.message : undefined);
+			if (error instanceof RpcSessionRegistryError) {
+				settleOpen.reject(error);
+				throw error;
+			}
+			const wrapped = new RpcSessionRegistryError("open_failed", error instanceof Error ? error.message : undefined);
+			settleOpen.reject(wrapped);
+			throw wrapped;
 		}
 	}
 
