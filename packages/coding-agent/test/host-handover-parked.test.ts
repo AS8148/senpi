@@ -57,4 +57,52 @@ describe("host-handover-parked record reads", () => {
 		expect(entries).toHaveLength(1);
 		expect(entries[0]).toMatchObject({ sessionPath, durableSessionId: "29510000-0000-4000-8000-000000000010" });
 	});
+
+	it("round-trips the session's preset, prompt surface and browser engine (senpi#3364)", async () => {
+		const dir = scratch();
+		const sessionPath = join(dir, "preset.jsonl");
+		await recordHandoverParkedSession(dir, {
+			sessionPath,
+			retainOnDisconnect: true,
+			permissionPreset: "ask",
+			promptSurface: "app",
+			browserEngine: "builtin",
+		});
+		expect(await readHandoverParkedSessions(dir)).toEqual([
+			expect.objectContaining({
+				sessionPath,
+				permissionPreset: "ask",
+				promptSurface: "app",
+				browserEngine: "builtin",
+			}),
+		]);
+	});
+
+	it("keeps, but does not return, an entry whose prompt surface this version does not know", async () => {
+		const dir = scratch();
+		const sessionPath = join(dir, "future.jsonl");
+		const file = entryFile(dir, sessionPath);
+		await mkdir(join(dir, "handover-parked"), { recursive: true });
+		await writeFile(
+			file,
+			`${JSON.stringify({ sessionPath, retainOnDisconnect: true, promptSurface: "hologram" })}\n`,
+			"utf8",
+		);
+		expect(await readHandoverParkedSessions(dir)).toEqual([]);
+		await expect(stat(file)).resolves.toBeDefined();
+	});
+
+	it("keeps, but does not return, an entry whose permission preset this version does not know", async () => {
+		const dir = scratch();
+		const sessionPath = join(dir, "future-preset.jsonl");
+		const file = entryFile(dir, sessionPath);
+		await mkdir(join(dir, "handover-parked"), { recursive: true });
+		await writeFile(
+			file,
+			`${JSON.stringify({ sessionPath, retainOnDisconnect: true, permissionPreset: "future-preset" })}\n`,
+			"utf8",
+		);
+		expect(await readHandoverParkedSessions(dir)).toEqual([]);
+		await expect(stat(file)).resolves.toBeDefined();
+	});
 });

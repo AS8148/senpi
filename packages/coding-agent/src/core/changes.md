@@ -1,3 +1,23 @@
+## 2026-10-15 - Requests record subscription limit windows (senpi#3370)
+
+### What changed
+
+`attemptWithTokenRecovery` wraps the prepared request options with `withLimitCapture`: the response headers are read for limit windows (Codex, Claude unified) and kept per provider and credential slot in `core/subscription-limits/limit-store.ts`; the caller's own `onResponse` still runs.
+
+- `packages/coding-agent/src/core/model-runtime.ts`
+
+### Why
+
+Subscription limit windows (5-hour, weekly) arrive only on responses; nothing read them, so hosts could not show them (desktop Usage > Limits was empty).
+
+### Why an extension could not handle it
+
+The credential slot that served a request (the account) is known only inside the model runtime's rotation path; the `after_provider_response` extension event carries headers but not the slot.
+
+### Expected merge conflict zones
+
+`attemptWithTokenRecovery` in `model-runtime.ts` (the send call site) and its imports.
+
 ## 2026-10-15 - Queued inputs carry a queuedId and can be removed or edited (senpi#1971)
 
 ### What changed
@@ -434,6 +454,26 @@ The listed paths, especially command dispatch, mode unions and process identity 
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/core/model-resolver.ts`: the `anthropic` and `anthropic-subscription` rows of `defaultModelPerProvider`.
+
+## 2026-10-13 - Transport image elision moves its cutoff in steps (senpi#2768)
+
+### What changed
+
+- `packages/coding-agent/src/core/messages.ts`: `elideOldImages` no longer recomputes its recency cutoff on every request. Images are dropped once they end below a threshold that rises in half-budget steps (half-limit steps for `maxHistoricalImages`), measured from the oldest image, so a request that only adds an image re-sends every earlier image unchanged until the next step. Elided images stay as `IMAGE_ELISION_PLACEHOLDER` in their original message; the newest protected images, the current turn and the newest historical images under the limit are still kept, and the kept total stays within the budget.
+- `packages/coding-agent/src/core/messages.ts`: a run of elided images becomes one placeholder that names each image by a 12-hex digest of its bytes (`... (image ids: a, b)`, built by the fork-only `image-elision-placeholder.ts`, which now owns `IMAGE_ELISION_PLACEHOLDER`; `messages.ts` re-exports it). `dedupeConsecutivePlaceholder` remains for `BLOCKED_IMAGE_PLACEHOLDER` only.
+
+### Why
+
+- `packages/coding-agent/src/core/messages.ts`: past 24 MB of images, each new image moved the cutoff and changed older tool results, so the anthropic-subscription resident lane's sent-stream hash diverged and it flattened and re-sent the whole conversation on almost every image turn (#2768: 20 of 20 predicted flattens, 87% of one session's cache writes).
+- `packages/coding-agent/src/core/messages.ts`: the steps alone still diverge every few turns with computer-use screenshots (up to 5 MB each). The image ids let the lane hash an elided image exactly like the image it replaced (`anthropic-subscription/changes.md`, 2026-10-15), so elision never reads as divergence while a different or missing image still does.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/messages.ts`: `convertToLlmForTransport` builds the provider context for every lane inside the core request path (`sdk.ts`), before any extension sees the request.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/messages.ts`: the body of `elideOldImages` and its doc comment; the `IMAGE_ELISION_PLACEHOLDER` re-export and the `replaceElidedImages` import.
 
 ## 2026-10-12 - Review repairs for config/state separation (senpi#3178)
 

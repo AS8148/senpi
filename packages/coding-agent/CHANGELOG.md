@@ -6,6 +6,8 @@
 
 ### Added
 
+- `pi.getPermissionPreset()` returns the permission preset the permission system enforces for the session right now (flag, settings, or the `full-access` default), or `undefined` when no permission system runs or its setup failed.
+- Subscription limit windows reach RPC clients: senpi reads the windows a ChatGPT subscription reports with each response (`x-codex-primary-*`/`x-codex-secondary-*`) and Claude's unified rate-limit headers, keeps the latest per provider and credential slot (never key material), and serves them as `get_subscription_limits` plus a `subscription_limits` record on change; an account nothing reported for is absent, not 0%. Thanks to jaeyoung for asking ([#3370](https://github.com/code-yeongyu/senpi/issues/3370)).
 - Every queued input has a `queuedId` (`get_state.ordered`, `queue_update.ordered`); RPC `dequeue_message` removes one and `edit_queued_message` replaces its text in place, optionally as ledger effects, with `already_delivered` / `not_found` answers that carry an action ([#1971](https://github.com/code-yeongyu/senpi/issues/1971)).
 - `pi.appendEntry(customType, data, { startupBookkeeping: true })` marks an entry an extension writes at session start without user action. A session closed without a conversation is removed when it holds only setup entries and marked bookkeeping; any unmarked entry keeps the file ([#3263](https://github.com/code-yeongyu/senpi/issues/3263)).
 
@@ -19,6 +21,12 @@
 
 ### Fixed
 
+- Full access never prompts: under the `full-access` preset a configured `ask` rule no longer raises a permission prompt, while a configured `deny` still refuses (#2465).
+- A refusal by a configured deny names the rule and the settings layer it came from, after the sentence that tells the model not to retry the call.
+- An "Allow always" answer reaches every open session at once and is stored under the agent directory, outside the project the agent can write.
+
+- A long image-heavy session no longer answers plain questions as if you had just sent a batch of images. When the session switches to the Claude subscription lane and replays its history, screenshots and other tool images the assistant already answered are no longer re-sent; each becomes a one-line note in its own turn ("already seen, run the tool again if you need it"), so at most your own earlier uploads and images still waiting for a reply are replayed, labeled as history. Older images past the 24 MB request budget are also dropped in fixed steps instead of on every new image, so long sessions stop re-sending their whole history on each image turn. On the Claude subscription lane, dropping an older image no longer counts as a change to the conversation at all, so a computer-use session full of large screenshots keeps its session and prompt cache instead of showing `Session continuity lost (sent_stream_diverged)` and re-billing the whole history on almost every turn ([#2768](https://github.com/code-yeongyu/senpi/issues/2768)). Thanks to @jcwleo for the analysis in the issue and to a guest for the report and the session data.
+
 - The TPS notice after a run no longer shows thousands of tok/s for a reply that arrived in one piece. The rate is now timed from the first streamed token to the last, so waiting for the first token no longer lowers it, and no rate is shown when nothing streamed or generation took under half a second ([#3393](https://github.com/code-yeongyu/senpi/issues/3393)).
 - A fallback chain no longer returns to the level that just failed when an entry's explicit level clamps to it (for example `X:xhigh` on a model without xhigh while `X:high` is running), and a network blip no longer falls back to another thinking level of the same model on the same failing connection ([#3321](https://github.com/code-yeongyu/senpi/issues/3321), [#3344](https://github.com/code-yeongyu/senpi/issues/3344)).
 
@@ -30,6 +38,8 @@
 
 - Plain answers in the terminal no longer come wrapped in the Ask / For you / Now / Next block. When a question did not end in `?`, the first-request todo list made it a one-task plan, and that list's result told the model to write the block. A one-task list now asks for nothing, and every preset reserves the block for turns that changed something, so an answer stays an answer even when finding it took tool calls ([#3323](https://github.com/code-yeongyu/senpi/issues/3323), reported by @devxoul).
 
+- A retained worker session that the successor host reopens after an idle handover stays hidden from a default `list_sessions` and keeps its context, auto-titling and retry fallback. The successor now reopens a parked session through the same open as a client's `open_session` ([#3368](https://github.com/code-yeongyu/senpi/issues/3368)).
+- A client-less retained session opened with `permissionPreset: "ask"` keeps asking before gated tools after an idle host generation handover. The successor host reopened it under the host's default preset, so a client that attached without naming a preset ran gated tools without a prompt. The parked record now carries the session's permission preset, prompt surface and browser engine ([#3364](https://github.com/code-yeongyu/senpi/issues/3364)).
 - A client-less retained session (opened over the host socket with `retain_on_disconnect`, then disconnected) is no longer dropped on every idle host generation handover: the successor host now reopens exactly its predecessor's handoff-parked retained sessions on startup, by path and with the same durable session id, instead of coming up empty ([#3282](https://github.com/code-yeongyu/senpi/issues/3282)). A path whose open is already in flight attaches to that open once it finishes rather than failing `session_path_in_use`, and a waiting reopen is bounded on the waiter only so a slow-but-healthy open is never treated as stuck. The predecessor no longer reopens into its own registry a session it has just parked for its successor, which under load let its drain close the session and left the successor with nothing to reopen.
 
 ### Removed
