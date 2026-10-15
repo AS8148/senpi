@@ -1,5 +1,7 @@
+import { spawn } from "node:child_process";
+import { createInterface } from "node:readline";
 import { describe, expect, it } from "vitest";
-import type { KernelToHostMessage } from "../../../src/bridge/protocol.ts";
+import { decodeBridgeFrame } from "../../../src/bridge/protocol.ts";
 import { resolveCommandPath } from "../../../src/interpreters/resolve-command.ts";
 import { JuliaKernel } from "../../../src/kernels/jl/kernel.ts";
 
@@ -18,17 +20,26 @@ describe("Julia startup frames (Refs senpi#3048)", () => {
 	it.skipIf(julia === undefined)(
 		"reports every startup stage without running the frame encoder in the first or the replacement interpreter",
 		async () => {
-			// Given: a real kernel whose startup stages are observed per interpreter.
+			// Given: a real kernel whose startup stages are observed on each interpreter's stdout.
 			const stages: string[] = [];
 			const kernel = JuliaKernel.start({
 				command: julia,
 				cwd: process.cwd(),
 				sessionId: "jl-startup-frames",
 				connection: { port: 1, token: "unused" },
-				onMessage: (message: KernelToHostMessage) => {
-					if (message.type === "status" && message.event.op === "kernel-startup") {
-						stages.push(String(message.event.stage));
-					}
+				spawn: (command, args, options) => {
+					const child = spawn(command, [...args], { ...options, detached: true, stdio: ["pipe", "pipe", "pipe"] });
+					const frames = createInterface({ input: child.stdout });
+					frames.on("line", (line) => {
+						const decoded = decodeBridgeFrame(line);
+						if (!decoded.ok) return;
+						const message = decoded.message;
+						if (message.type === "status" && message.event.op === "kernel-startup") {
+							stages.push(String(message.event.stage));
+						}
+					});
+					child.once("exit", () => frames.close());
+					return child;
 				},
 			});
 			try {
