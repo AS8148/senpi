@@ -1923,3 +1923,30 @@ The prompt adapter is the fork's OAuth interaction shim for the subscription pro
 ### Expected merge conflict zones
 
 Upstream edits to the Anthropic subscription login adapter at the next sync.
+
+## 2026-10-15 - The window compaction plans against is the window the request gets (senpi#3408)
+
+### What changed
+- `options.ts`: `sdkModelId(model)` gives Claude Code `<id>[1m]` while the model's window is over 200k and the account has not refused 1M. That suffix is Claude Code's own subscription path to the 1M window: the installed CLI sends `context-1m-2025-08-07` on the wire for it, while `options.betas` is ignored for OAuth ("Custom betas are only available for API key users"). `queryOptions.model` uses it.
+- `session-entry-annotations.ts`, `session-registry.ts`, `session-registry-wiring.ts`: a resident model switch passes the same SDK model id to `setModel`, while the entry keeps senpi's model id for continuity.
+- `session-sync.ts`: the config fingerprint hashes only whether a 1M refusal is active, so a refusal or its expiry restarts the resident process at the matching window, while a live model switch stays in place (it reaches the process through `setModel`).
+- `long-context.ts` (new): records a refused 1M window for 6 hours, with an atomic persisted write under the agent directory. It tells listeners when the state flips, isolating a failing (stale) listener. Expiry is signalled by an unref'd timer, never by reading the state.
+- `errors.ts`: "Extra usage / Usage credits are required for long context" classifies as `long_context_unavailable` (retryable), ahead of the rate-limit codes.
+- `failover.ts`: that refusal retries once on the same account through `onLongContextRefused`, without blocking or rotating it.
+- `auth-lane.ts`: the ambient lane passes SDK messages through unchanged. On a pre-visible refusal it closes the first query, records the refusal and retries once.
+- `index.ts`: each registration is the whole provider config (`providerConfig(longContext)`), with windows capped at 200k while refused. The lane re-registers on every flip and stops following on `session_shutdown`.
+
+### Why
+1M models on this lane advertised 1M, so compaction planned for 1M, but Claude Code ran them in its 200k default. Sessions failed with "Prompt is too long" before compaction. The refusal for an account without 1M uses the `rate_limit` code, so it would also have blocked the account.
+
+### Why an extension could not handle it
+This is the anthropic-subscription builtin's own model ids, error classification, failover and registration.
+
+### Expected merge conflict zones
+- `options.ts`: the query-options model line and the helper above the thinking markers;
+- `errors.ts`: the top of `classifyErrorKind`;
+- `failover.ts`: the catch block after the retryable check;
+- `auth-lane.ts`: the ambient branch;
+- `index.ts`: the registration;
+- `session-sync.ts`: the fingerprint toolset hash;
+- `session-entry-annotations.ts` and `session-registry.ts`: `switchEntryModel` / `switchSessionModel`.

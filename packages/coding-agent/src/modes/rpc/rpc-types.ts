@@ -19,6 +19,7 @@ import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import type { EngineOrdinal } from "../../core/engine-build-identity.ts";
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
 import type { ContextUsage, SessionControlAdmission, SessionKind } from "../../core/extensions/types.ts";
+import type { ResolvedMessagePath } from "../../core/message-path-resolution.ts";
 import type { SessionEntry, SessionMessageEntry, SessionTreeNode, UsageTotals } from "../../core/session-manager.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import type { ClientMessageAdmission } from "./client-admission-record.ts";
@@ -206,6 +207,7 @@ type RpcSessionCommand =
 
 	// Session
 	| { id?: string; type: "get_session_stats" }
+	| { id?: string; type: "resolve_path"; path: string }
 	| { id?: string; type: "memory_report" }
 	| { id?: string; type: "export_html"; outputPath?: string; themeName?: string }
 	| { id?: string; type: "export_jsonl"; outputPath?: string }
@@ -541,6 +543,22 @@ export type RpcCommand =
 	| {
 			id?: string;
 			/**
+			 * Free a session this host keeps loaded: the transcript stays, queued input is kept for the reopen,
+			 * and `session_parked { reason: "unloaded" }` reaches every attached client. Refused with a reason
+			 * and an action while work runs (unless `interrupt`), while other clients are attached (unless
+			 * `force`) or while child sessions it started are open here (unless `children: "detach"`).
+			 */
+			type: "unload_session";
+			sessionId: string;
+			effectId?: string;
+			interrupt?: boolean;
+			clearQueue?: boolean;
+			children?: "refuse" | "detach";
+			force?: boolean;
+	  }
+	| {
+			id?: string;
+			/**
 			 * Meant as the connection's last request: release every session attachment it holds, then answer.
 			 * Advertised as `detach_connection`. Closing the socket afterwards releases nothing more.
 			 */
@@ -794,6 +812,14 @@ export type RpcResponse =
 	| {
 			id?: string;
 			type: "response";
+			command: "unload_session";
+			success: true;
+			/** A refusal changes nothing and names why (`reason`, `detail`) and what to do (`action`). */
+			data: RpcUnloadAnswer;
+	  }
+	| {
+			id?: string;
+			type: "response";
 			command: "release_session";
 			success: true;
 			/**
@@ -1037,6 +1063,7 @@ export type RpcResponse =
 
 	// Session
 	| { id?: string; type: "response"; command: "get_session_stats"; success: true; data: SessionStats }
+	| { id?: string; type: "response"; command: "resolve_path"; success: true; data: ResolvedMessagePath }
 	| {
 			id?: string;
 			type: "response";
@@ -1451,6 +1478,28 @@ export interface RpcSessionReplacedEvent {
 	sessionName?: string;
 }
 
+/** What `unload_session` answers. `effect` is the ledger receipt when the command carried an `effectId`. */
+export interface RpcUnloadAnswer {
+	outcome: "unloaded" | "refused";
+	sessionPath?: string;
+	reason?: UnloadRefusalReason;
+	detail?: string;
+	action?: string;
+	effectId?: string;
+	effect?: EffectStatus;
+	replayed?: boolean;
+}
+
+export type UnloadRefusalReason =
+	| "turn_active"
+	| "work_pending"
+	| "extension_work"
+	| "children_live"
+	| "attached"
+	| "host_draining"
+	| "unsupported"
+	| "session_closing";
+
 /**
  * Emitted when a shared host PARKS a session instead of closing it: the idle window
  * elapsed for a session opened with `retain_on_disconnect`, so the host released the
@@ -1467,6 +1516,8 @@ export type RpcSessionParkedEvent = {
 	sessionId: string;
 	/** Session file to reopen this session by. */
 	sessionPath: string;
+	/** `idle`: the idle sweep parked it; `unloaded`: `unload_session` did. Absent from older hosts. */
+	reason?: "idle" | "unloaded";
 };
 
 /**
