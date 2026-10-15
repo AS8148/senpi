@@ -28,7 +28,12 @@ import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
 export const OBSERVE_REQUEST_FIELD = "observe";
 export const ORIGIN_HOST_INSTANCE_FIELD = "origin_host_instance";
 
-const OBSERVING_COMMANDS: ReadonlySet<unknown> = new Set(["get_protocol_info", "list_sessions", "get_effect_status"]);
+const OBSERVING_COMMANDS: ReadonlySet<unknown> = new Set([
+	"get_protocol_info",
+	"list_sessions",
+	"get_effect_status",
+	"get_subscription_limits",
+]);
 
 export function isObservingRequest(line: string): boolean {
 	let request: unknown;

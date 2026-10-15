@@ -21,6 +21,9 @@ vi.mock("@aws-sdk/client-bedrock-runtime", () => {
 	class BedrockRuntimeServiceException extends Error {}
 
 	class BedrockRuntimeClient {
+		// Like the real client: requests that carry onResponse or custom headers register middleware (senpi#3400).
+		middlewareStack = { add: () => undefined };
+
 		constructor(config: Record<string, unknown>) {
 			bedrockMock.constructorCalls.push(config);
 		}

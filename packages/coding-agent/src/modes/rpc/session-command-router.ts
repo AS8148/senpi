@@ -1,9 +1,15 @@
 import { VERSION } from "../../config.ts";
+import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { detachConnection } from "./connection-detach.ts";
 import { buildRpcSessionState } from "./connection-handler.ts";
 import { answerEffectFromTranscript } from "./effect-commands.ts";
 import { multiSessionHostCapabilities } from "./host-capabilities.ts";
-import { clearHandoverParkedSession, recordHandoverParkedSession } from "./host-handover-parked.ts";
+import {
+	clearHandoverParkedSession,
+	type HandoverParkedEntry,
+	recordHandoverParkedSession,
+} from "./host-handover-parked.ts";
+import { parkedEntryFromProfile, parkedOpenCommand } from "./host-handover-parked-open.ts";
 import { answerWarm } from "./host-warm.ts";
 import { hostInstanceId, protocolIdentity } from "./protocol-identity.ts";
 import {
@@ -110,6 +116,7 @@ function error(
 /** Routes control messages and enforces a routing handle for every session command. */
 export class SessionCommandRouter {
 	private readonly bindings = new Map<string, RpcSessionBinding>();
+	private readonly stopLimitBroadcast: () => void;
 	/** Session handles opened by each connection, with one count per attachment. */
 	private readonly sessionsByConnection = new Map<string, Map<string, number>>();
 	/** Opens currently awaiting runtime/binding setup, keyed by connection. */
@@ -163,6 +170,10 @@ export class SessionCommandRouter {
 		connectionOptions: Parameters<typeof createRpcSessionBinding>[4] = {},
 		idle?: RpcSessionIdlePolicy,
 	) {
+		// Every connection hears an account's new limit windows, whichever session's request reported them.
+		this.stopLimitBroadcast = subscriptionLimits.subscribe((limits) =>
+			writer.broadcastHostRecord({ type: "subscription_limits", ...limits }),
+		);
 		this.registry = registry;
 		this.writer = writer;
 		this.defaults = defaults;
@@ -329,6 +340,15 @@ export class SessionCommandRouter {
 				},
 			};
 		}
+		if (command.type === "get_subscription_limits") {
+			return {
+				id: command.id,
+				type: "response",
+				command: "get_subscription_limits",
+				success: true,
+				data: { accounts: subscriptionLimits.snapshot() },
+			};
+		}
 		if (command.type === "list_sessions") {
 			// Worker sessions are machine-driven work: a client sees them only by asking, and
 			// the opaque context blob travels only on that listing, never to every connection.
@@ -394,6 +414,7 @@ export class SessionCommandRouter {
 	}
 
 	async dispose(): Promise<void> {
+		this.stopLimitBroadcast();
 		this.drainExitRequested = true;
 		this.stopSweep();
 		if (this.drainTimer !== undefined) clearInterval(this.drainTimer);
@@ -488,16 +509,17 @@ export class SessionCommandRouter {
 			retained?.retainOnDisconnect === true &&
 			retained.sessionPath !== undefined
 		) {
-			await recordHandoverParkedSession(this.handoverParkedDir, {
-				sessionPath: retained.sessionPath,
-				...(retained.durableSessionId !== undefined ? { durableSessionId: retained.durableSessionId } : {}),
-				retainOnDisconnect: true,
-				...(retained.profile?.cwd !== undefined ? { cwd: retained.profile.cwd } : {}),
-				...(retained.profile?.creationModel !== undefined ? { model: retained.profile.creationModel } : {}),
-				...(retained.profile?.initialThinkingLevel !== undefined
-					? { thinkingLevel: retained.profile.initialThinkingLevel }
-					: {}),
-			}).catch((cause: unknown) => {
+			await recordHandoverParkedSession(
+				this.handoverParkedDir,
+				parkedEntryFromProfile(
+					{
+						sessionPath: retained.sessionPath,
+						...(retained.durableSessionId !== undefined ? { durableSessionId: retained.durableSessionId } : {}),
+					},
+					retained.profile,
+					Object.keys(this.defaults.hostContext ?? {}),
+				),
+			).catch((cause: unknown) => {
 				process.stderr.write(`senpi rpc handover park record ${sessionId} failed: ${String(cause)}\n`);
 			});
 		}
@@ -638,10 +660,23 @@ export class SessionCommandRouter {
 		});
 	}
 
+	/**
+	 * The successor's reopen of a handoff-parked session: the same open as an `open_session`, with no
+	 * requesting connection and nothing to reply to (senpi#3368). Resolves `undefined` on success and
+	 * the failure response otherwise, exactly as an open does.
+	 */
+	reopenParked(entry: HandoverParkedEntry): Promise<RpcResponse | undefined> {
+		return this.open(parkedOpenCommand(entry), undefined, { reply: false, defaults: false });
+	}
+
 	private async open(
 		command: Extract<RpcCommand, { type: "open_session" }>,
 		owner?: string,
+		options?: { readonly reply?: boolean; readonly defaults?: boolean },
 	): Promise<RpcResponse | undefined> {
+		// A parked session's reopen replays what its park recorded; a field it left empty stays empty
+		// rather than taking THIS host's default (senpi#3376 review).
+		const defaults = options?.defaults === false ? undefined : this.defaults;
 		const instanceId = this.defaults.hostContext?.host_instance ?? hostInstanceId();
 		if (command.expectedHostInstance !== undefined) {
 			if (typeof command.expectedHostInstance !== "string" || command.expectedHostInstance.trim() === "")
@@ -704,12 +739,12 @@ export class SessionCommandRouter {
 							? {}
 							: { host_socket: this.defaults.hostContext.host_socket }),
 					},
-					permissionPreset: command.permissionPreset ?? this.defaults.permissionPreset,
+					permissionPreset: command.permissionPreset ?? defaults?.permissionPreset,
 					creationModel:
 						command.provider && command.modelId
 							? { provider: command.provider, modelId: command.modelId }
-							: this.defaults.creationModel,
-					initialThinkingLevel: command.thinkingLevel ?? this.defaults.initialThinkingLevel,
+							: defaults?.creationModel,
+					initialThinkingLevel: command.thinkingLevel ?? defaults?.initialThinkingLevel,
 					sessionKind: command.kind,
 					sessionContext: this.defaults.hostContext
 						? { ...command.context, ...this.defaults.hostContext }
@@ -811,17 +846,18 @@ export class SessionCommandRouter {
 			const replyState =
 				entry.worker?.snapshot?.state ?? (entry.runtime ? buildRpcSessionState(entry.runtime.session) : undefined);
 			if (!replyState) throw new Error("Session state was not created");
-			this.writer.enqueue(opened.sessionId, {
-				id: command.id,
-				type: "response",
-				command: "open_session",
-				success: true,
-				data: {
-					sessionId: opened.sessionId,
-					state: replyState,
-					...(opened.attached ? { attached: true } : {}),
-				},
-			});
+			if (options?.reply !== false)
+				this.writer.enqueue(opened.sessionId, {
+					id: command.id,
+					type: "response",
+					command: "open_session",
+					success: true,
+					data: {
+						sessionId: opened.sessionId,
+						state: replyState,
+						...(opened.attached ? { attached: true } : {}),
+					},
+				});
 			return undefined;
 		} catch (cause) {
 			if (opened) {
