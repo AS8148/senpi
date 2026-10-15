@@ -2282,6 +2282,25 @@ answers after the turn settled.
 {"type": "response", "command": "interrupt", "success": true, "data": {"interrupted": true, "turnId": "3"}}
 ```
 
+#### dequeue_message
+
+Every queued input carries a session-unique `queuedId` (`q_<n>`) in `get_state.ordered` and `queue_update.ordered`. `dequeue_message` removes one queued input before it reaches a turn. It acts on the visible lists (`steering`, `followUp`) and the queue the agent drains, so a removed input is never delivered. With `effectId` (capability `effect_ledger`) it is a ledger effect (`kind: "dequeue"`) and a same-id retry replays.
+
+```json
+{"type": "dequeue_message", "queuedId": "q_3", "effectId": "dq-1"}
+{"type": "response", "command": "dequeue_message", "success": true, "data": {"queuedId": "q_3", "status": "removed", "effectId": "dq-1", "state": "done", "effect": {"effectId": "dq-1", "kind": "dequeue", "state": "done", "disposition": "removed"}}}
+```
+
+#### edit_queued_message
+
+`edit_queued_message` replaces a queued input's text in place, keeping its order, mode and `clientMessageId`, in the visible lists and the queue the agent drains alike. With `effectId` it is a ledger effect (`kind: "edit_queued"`).
+
+```json
+{"type": "edit_queued_message", "queuedId": "q_4", "text": "use the staging database"}
+```
+
+For both commands, `status` is `removed` / `edited`, or `already_delivered` (the input was already handed to the agent) or `not_found` (no such id in this session); those two also carry `reason` and `action`, and an `effectId` receipt ends `failed` with that outcome. A missing or over-long `queuedId` is refused.
+
 #### clear_queue
 
 Remove queued steering and follow-up messages and return their text.

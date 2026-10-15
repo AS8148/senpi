@@ -97,6 +97,10 @@ type RpcSessionCommand =
 	| { id?: string; type: "reload" }
 	| { id?: string; type: "check_reload_veto" }
 	| { id?: string; type: "clear_queue"; abortWillFollow?: boolean }
+	/** Remove one queued input by its `queuedId` (from `get_state` / `queue_update`) before it reaches a turn. */
+	| { id?: string; type: "dequeue_message"; queuedId: string; effectId?: string }
+	/** Replace the text of one queued input in place, keeping its order and identity. */
+	| { id?: string; type: "edit_queued_message"; queuedId: string; text: string; effectId?: string }
 	| { id?: string; type: "get_steering_messages" }
 	| { id?: string; type: "get_follow_up_messages" }
 	| { id?: string; type: "abort_branch_summary" }
@@ -400,6 +404,14 @@ export const STEER_WHEN_IDLE_CAPABILITY = "steer_when_idle";
 
 /** What `steer`/`follow_up` do on an idle session: queue (default) or start a turn. */
 export type RpcWhenIdle = "queue" | "start";
+
+/** What `dequeue_message` / `edit_queued_message` did; anything but removed/edited carries reason + action. */
+export interface RpcQueuedInputChange {
+	queuedId: string;
+	status: "removed" | "edited" | "already_delivered" | "not_found";
+	reason?: string;
+	action?: string;
+}
 
 /** What an effect command (`abort`/`set_model`/`set_thinking_level` with `effectId`) answers about its receipt. */
 export interface RpcEffectAnswer {
@@ -859,6 +871,13 @@ export type RpcResponse =
 			data?: ClientMessageIdentity & { disposition?: QueuedInputDisposition; admission?: ClientMessageAdmission };
 	  }
 	| { id?: string; type: "response"; command: "abort"; success: true; data?: RpcEffectAnswer }
+	| {
+			id?: string;
+			type: "response";
+			command: "dequeue_message" | "edit_queued_message";
+			success: true;
+			data: RpcQueuedInputChange & Partial<RpcEffectAnswer>;
+	  }
 	| {
 			id?: string;
 			type: "response";

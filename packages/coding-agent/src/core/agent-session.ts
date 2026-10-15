@@ -379,7 +379,7 @@ const EVAL_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set(["workflow", "monitor"
 /** Sample eval-cell call for an eval-only tool, using the argument name that tool actually takes. */
 function evalHelperCall(name: string): string {
 	if (name === "bash" || name === "powershell") return `tool.${name}({ command: "..." })`;
-	if (name === "grep") return `tool.grep({ pattern: "...", path: "..." })`;
+	if (name === "grep" || name === "glob") return `tool.${name}({ pattern: "...", path: "..." })`;
 	if (name === "workflow") return `tool.${name}({ action: "..." })`;
 	if (name === "monitor") return `tool.monitor({ description: "...", command: "...", filter: "..." })`;
 	return `tool.${name}({ ... })`;
@@ -935,7 +935,12 @@ export type QueuedInput = ClientMessageIdentity & {
 	readonly text: string;
 	readonly mode: "steer" | "followUp";
 	readonly enqueueOrder: number;
+	/** Session-unique id of this queued input (`q_<n>`), stable until it is delivered or removed. */
+	readonly queuedId: string;
 };
+
+/** What a dequeue or edit of one queued input did; `already_delivered` once the input reached a turn. */
+export type QueuedInputChange = "removed" | "edited" | "already_delivered" | "not_found";
 
 export type ClearedQueue = {
 	steering: string[];
@@ -1136,6 +1141,11 @@ export class AgentSession {
 	/** Recovery-only order across both native queue modes and TUI compaction ownership. */
 	private _queuedInputOrder: QueuedInput[] = [];
 	private _nextQueuedInputOrder = 0;
+	private _nextQueuedId = 0;
+	/** The exact message object queued for each `queuedId`, so removal and edits hit the native queue by identity. */
+	private readonly _queuedMessages = new Map<string, AgentMessage>();
+	/** Recently delivered `queuedId`s (bounded), so a late dequeue answers `already_delivered`, not `not_found`. */
+	private readonly _deliveredQueuedIds = new Set<string>();
 	private _sessionLogger: SessionLogger;
 	private _activeCompactionLogAttempt:
 		| { id: string; reason: CompactionReason; tokensBefore: number | undefined }
@@ -2830,7 +2840,7 @@ export class AgentSession {
 				for (const message of queuedMessages) this.agent.steer(message);
 				if (prepared) {
 					this._steeringMessages.push(prepared.text);
-					this._recordQueuedInput(prepared.text, "steer", prepared);
+					this._recordQueuedInput(prepared.text, "steer", prepared, userMessage);
 					this._emitQueueUpdate();
 				}
 				return;
@@ -4733,11 +4743,19 @@ export class AgentSession {
 		}
 		// Declared tools and SDK overrides outside the built-in groups still need eval guidance.
 		const otherHelpers = [...registered]
-			.filter((name) => name !== "bash" && name !== "powershell" && name !== "workflow" && name !== "grep")
+			.filter(
+				(name) =>
+					name !== "bash" && name !== "powershell" && name !== "workflow" && name !== "grep" && name !== "glob",
+			)
 			.map(evalHelperCall);
 		if (otherHelpers.length > 0) {
 			sentences.push(
 				`These tools run ONLY inside eval cells via ${otherHelpers.join(" or ")}; hooks and permissions still apply.`,
+			);
+		}
+		if (registered.has("glob")) {
+			sentences.push(
+				`File-name search runs ONLY inside eval cells via ${evalHelperCall("glob")}; it matches a glob such as **/*.ts, respects .gitignore, and applies hooks and permissions - prefer it over find/ls in tool.bash.`,
 			);
 		}
 		if (registered.has("grep")) {
@@ -5692,12 +5710,11 @@ export class AgentSession {
 		input.onQueuedInput?.(prepared);
 		const queue = input.mode === "steer" ? this._steeringMessages : this._followUpMessages;
 		queue.push(input.text);
-		this._recordQueuedInput(input.text, input.mode, prepared);
+		const queuedId = this._recordQueuedInput(input.text, input.mode, prepared);
 		this._sessionLogger.debug("queue_enqueue", {
 			mode: input.mode,
 			count: queue.length,
 		});
-		this._emitQueueUpdate();
 		const content: (TextContent | ImageContent)[] = [
 			...userTextContent(input.text, input.textBlocks),
 			...(input.images ?? []),
@@ -5708,22 +5725,20 @@ export class AgentSession {
 			timestamp: Date.now(),
 			...clientMessageIdentity(input),
 		};
+		this._queuedMessages.set(queuedId, message);
 		if (this._promptStartPending && this._skipNextPostCompactionAssistantCheck) {
 			const deferred =
 				input.mode === "steer"
 					? this._postCompactionDeferredSteeringMessages
 					: this._postCompactionDeferredFollowUpMessages;
 			deferred.push(message);
-			return;
+		} else if (input.mode === "steer") {
+			this.agent.steer(message);
+		} else {
+			this.agent.followUp(message);
 		}
-		switch (input.mode) {
-			case "steer":
-				this.agent.steer(message);
-				break;
-			case "followUp":
-				this.agent.followUp(message);
-				break;
-		}
+		// Announce the input only once it is queued everywhere, so a listener can already change it by queuedId.
+		this._emitQueueUpdate();
 	}
 
 	private _flushPostCompactionDeferredMessages(): void {
@@ -6118,19 +6133,104 @@ export class AgentSession {
 		return this._nextQueuedInputOrder;
 	}
 
-	private _recordQueuedInput(text: string, mode: QueuedInput["mode"], options?: QueuedInputOptions): void {
+	private _recordQueuedInput(
+		text: string,
+		mode: QueuedInput["mode"],
+		options?: QueuedInputOptions,
+		message?: AgentMessage,
+	): string {
 		const order = options?.enqueueOrder ?? this.reserveQueuedInputOrder();
 		this._nextQueuedInputOrder = Math.max(this._nextQueuedInputOrder, order);
-		this._queuedInputOrder.push({ text, mode, enqueueOrder: order, ...clientMessageIdentity(options) });
+		this._nextQueuedId += 1;
+		const queuedId = `q_${this._nextQueuedId}`;
+		this._queuedInputOrder.push({ text, mode, enqueueOrder: order, queuedId, ...clientMessageIdentity(options) });
+		if (message !== undefined) this._queuedMessages.set(queuedId, message);
+		return queuedId;
 	}
 
+	/** A queued input reached a turn: forget its record and remember its id as delivered. */
 	private _removeQueuedInput(text: string, mode: QueuedInput["mode"], clientMessageId?: string): void {
 		const index = this._queuedInputOrder.findIndex((message) =>
 			clientMessageId === undefined
 				? message.mode === mode && message.text === text
 				: message.clientMessageId === clientMessageId,
 		);
-		if (index !== -1) this._queuedInputOrder.splice(index, 1);
+		if (index === -1) return;
+		const [delivered] = this._queuedInputOrder.splice(index, 1);
+		if (delivered === undefined) return;
+		this._queuedMessages.delete(delivered.queuedId);
+		this._deliveredQueuedIds.add(delivered.queuedId);
+		if (this._deliveredQueuedIds.size > 256) {
+			const oldest = this._deliveredQueuedIds.values().next().value;
+			if (oldest !== undefined) this._deliveredQueuedIds.delete(oldest);
+		}
+	}
+
+	/**
+	 * Removes one queued input before it reaches a turn, from the visible lists and the native queue alike.
+	 * An input already drained into a turn answers `already_delivered`.
+	 */
+	dequeueQueuedInput(queuedId: string): QueuedInputChange {
+		return this._changeQueuedInput(queuedId, undefined);
+	}
+
+	/** Replaces the text of one queued input in place, keeping its order and identity. */
+	editQueuedInput(queuedId: string, text: string): QueuedInputChange {
+		return this._changeQueuedInput(queuedId, text);
+	}
+
+	private _changeQueuedInput(queuedId: string, nextText: string | undefined): QueuedInputChange {
+		const index = this._queuedInputOrder.findIndex((input) => input.queuedId === queuedId);
+		if (index === -1) return this._deliveredQueuedIds.has(queuedId) ? "already_delivered" : "not_found";
+		const record = this._queuedInputOrder[index]!;
+		const message = this._queuedMessages.get(queuedId);
+		// Only user input is queued by id; anything else cannot be edited, and must not be removed by an edit.
+		if (nextText !== undefined && message?.role !== "user") return "not_found";
+		const deferred =
+			record.mode === "steer"
+				? this._postCompactionDeferredSteeringMessages
+				: this._postCompactionDeferredFollowUpMessages;
+		const nextMessage: AgentMessage | undefined =
+			nextText === undefined || message?.role !== "user"
+				? undefined
+				: {
+						...message,
+						content: [
+							...userTextContent(nextText),
+							...(typeof message.content === "string"
+								? []
+								: message.content.filter((part) => part.type === "image")),
+						],
+					};
+		const deferredIndex = message === undefined ? -1 : deferred.indexOf(message);
+		const stillQueued =
+			message !== undefined &&
+			(deferredIndex !== -1 ||
+				(nextMessage === undefined
+					? this.agent.removeQueuedMessage(message)
+					: this.agent.replaceQueuedMessage(message, nextMessage)));
+		if (!stillQueued) return "already_delivered";
+		if (deferredIndex !== -1) {
+			if (nextMessage === undefined) deferred.splice(deferredIndex, 1);
+			else deferred[deferredIndex] = nextMessage;
+		}
+		const texts = record.mode === "steer" ? this._steeringMessages : this._followUpMessages;
+		const occurrence = this._queuedInputOrder
+			.slice(0, index)
+			.filter((input) => input.mode === record.mode && input.text === record.text).length;
+		let seen = -1;
+		const textIndex = texts.findIndex((text) => text === record.text && ++seen === occurrence);
+		if (nextText === undefined || nextMessage === undefined) {
+			if (textIndex !== -1) texts.splice(textIndex, 1);
+			this._queuedInputOrder.splice(index, 1);
+			this._queuedMessages.delete(queuedId);
+		} else {
+			if (textIndex !== -1) texts[textIndex] = nextText;
+			this._queuedInputOrder[index] = { ...record, text: nextText };
+			this._queuedMessages.set(queuedId, nextMessage);
+		}
+		this._emitQueueUpdate();
+		return nextText === undefined ? "removed" : "edited";
 	}
 
 	/**
@@ -6151,6 +6251,7 @@ export class AgentSession {
 		this._steeringMessages = [];
 		this._followUpMessages = [];
 		this._queuedInputOrder = [];
+		this._queuedMessages.clear();
 		this._postCompactionDeferredSteeringMessages = [];
 		this._postCompactionDeferredFollowUpMessages = [];
 		this.agent.clearAllQueues();
@@ -9310,8 +9411,8 @@ export class AgentSession {
 					}
 					this.sendUserMessage(content, options).catch(reportError);
 				},
-				appendEntry: (customType, data) => {
-					const entryId = this.sessionManager.appendCustomEntry(customType, data);
+				appendEntry: (customType, data, options) => {
+					const entryId = this.sessionManager.appendCustomEntry(customType, data, options);
 					const entry = this.sessionManager.getEntry(entryId);
 					if (entry) {
 						this._emit({ type: "entry_appended", entry });
@@ -9768,6 +9869,7 @@ export class AgentSession {
 					edit: { filesystemPolicy },
 					grep: { filesystemPolicy },
 					find: { filesystemPolicy },
+					glob: { filesystemPolicy },
 					ls: { filesystemPolicy },
 				});
 

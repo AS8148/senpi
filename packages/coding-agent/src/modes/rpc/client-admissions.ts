@@ -133,6 +133,17 @@ export class ClientAdmissions {
 		return this.records.get(clientMessageId);
 	}
 
+	/**
+	 * An edit of a still-queued input: its stored prepared content takes the new text (images kept), so a
+	 * reopen restores what the client edited, not what it first sent. The fingerprint stays the original
+	 * send's, so a retry of that send still replays.
+	 */
+	editQueuedText(clientMessageId: string, text: string): void {
+		const record = this.records.get(clientMessageId);
+		if (record?.state !== "queued") return;
+		this.save({ ...record, prepared: { ...record.prepared, text } });
+	}
+
 	/** Remember who aborted the running turn; the turn's receipts name them once it ends. */
 	noteAbort(by: EffectActor): void {
 		if (this.session.isStreaming) this.turnAbortedBy = by;
