@@ -1,3 +1,21 @@
+## 2026-10-15 - The ./models entry graph reaches the cost-card leaf (senpi#3378)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs`: the `@earendil-works/pi-ai` `./models` budget is 24 files (was 23 after senpi#3292). The added file is `model-cost.ts`, the type-only leaf that picks the cost card in force; the reason is recorded beside the budget and the forbid rules are unchanged.
+
+### Why
+
+- senpi#3378: `calculateCost` in `models.ts` selects the dated card, which brings the leaf into the `./models` graph.
+
+### Why an extension could not handle it
+
+- The entry-graph budgets are a repository build check.
+
+### Expected merge conflict zones
+
+- The `./models` row in `check-entry-graphs.mjs`, which senpi#3292 also raised.
+
 ## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
 
 ### What changed

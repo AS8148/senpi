@@ -1,3 +1,22 @@
+## 2026-10-15 - Effective-dated cost cards in the generated catalog (senpi#3378)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: the per-model post-pass calls `applyDatedListPrice` (new fork file `scripts/dated-list-prices.ts`), which pins the Argon rows on `google` and `google-vertex` to the introductory card plus a `2026-12-01T08:00:00Z` list-price card. `google.json` and `google-vertex.json` were regenerated with `--strict --providers google,google-vertex`: no row added or removed, and only the two Argon rows' `cost` changed.
+- `packages/ai/scripts/model-data.ts`: `cost.effectiveRates` is validated: a non-empty array, ISO UTC `effectiveFrom` (seconds or milliseconds, `Z` only), no two cards starting at the same instant, and four finite non-negative rates per card.
+
+### Why
+
+- senpi#3378: the provider moves the 2026-10-13 Argon model from $2/$10 to $4/$20 per 1M tokens on 2026-12-01 08:00Z. A single static card under-reports every request after that instant by 2x until a catalog refresh, and a session loaded before the refresh keeps the old card even after it.
+
+### Why an extension could not handle it
+
+- The cost card is baked into the generated catalog and its validator is the generator's schema authority; an extension cannot change either.
+
+### Expected merge conflict zones
+
+- LOW: the post-pass loop in `generate-models.ts` (one line) and the cost block of `validateModelEntry` in `model-data.ts`.
+
 ## 2026-10-15 - OpenCode Go uses its documented inference base (senpi#3377)
 
 ### What changed

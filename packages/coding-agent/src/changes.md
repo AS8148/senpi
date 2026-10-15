@@ -1,3 +1,21 @@
+## 2026-10-15 - The package exports the abort cause type (senpi#3357)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: exports the `AgentAbortCause` type, so RPC and SDK callers can read `agent_end.abortCause` (set when a turn stops because its session was replaced) with its type.
+
+### Why
+
+- A caller reacting to a replaced session needs the cause's shape; the runtime change is tracked in `core/changes.md`.
+
+### Why an extension could not handle it
+
+- The package's public type surface is defined only by its entry point.
+
+### Expected merge conflict zones
+
+- LOW: the type export list in `src/index.ts`.
+
 ## 2026-10-15 - Print and RPC processes contain a retired extension ctx too (senpi#3389)
 
 ### What changed

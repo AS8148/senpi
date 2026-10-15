@@ -553,8 +553,8 @@ export class SessionEventWriter {
 	 * session's reaches every connection. No client asked for this teardown, so there is
 	 * no close response to answer.
 	 */
-	parkSession(sessionId: string, sessionPath: string): void {
-		this.sealWithLifecycle(sessionId, { type: "session_parked", sessionId, sessionPath });
+	parkSession(sessionId: string, sessionPath: string, reason: "idle" | "unloaded"): void {
+		this.sealWithLifecycle(sessionId, { type: "session_parked", sessionId, sessionPath, reason });
 	}
 
 	/**
