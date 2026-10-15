@@ -6,11 +6,25 @@
 
 ### Added
 
+- `pi.appendEntry(customType, data, { startupBookkeeping: true })` marks an entry an extension writes at session start without user action. A session closed without a conversation is removed when it holds only setup entries and marked bookkeeping; any unmarked entry keeps the file ([#3263](https://github.com/code-yeongyu/senpi/issues/3263)).
+
+- `/account <provider> reset <id>` clears one account's cooldown or block (the credential-pool health record and any block a provider lane stored on the account), so the next request tries it again ([#3285](https://github.com/code-yeongyu/senpi/issues/3285)).
+
+- `tool.glob({ pattern, path })` finds files by glob inside eval, the same way `tool.grep` searches text there. It is never a top-level tool, and the eval prompt now names it, so a model that reached for `tool.glob` no longer gets "Unknown tool glob" ([#3330](https://github.com/code-yeongyu/senpi/issues/3330)).
+
 ### Changed
+
+- The terminal transcript folds a handoff block into one muted line, `▸ Handoff · Now: … · Next: …`, and keeps its `For you` answer as ordinary text. Ctrl+O, or a click on the line, opens the block as written ([#3323](https://github.com/code-yeongyu/senpi/issues/3323), proposed by @devxoul).
 
 ### Fixed
 
 - Cache keep-alive pings, session prewarm usage, and the goal cache-warm savings estimate now price tokens with the model's cost card in force, so a scheduled list-price change applies to them too. A cost override in `models.json` keeps its own price and ignores the catalog's scheduled cards ([#3378](https://github.com/code-yeongyu/senpi/issues/3378)).
+
+- Opening the TUI and quitting, or running `/new`, without sending a message no longer leaves an empty session in `/resume`: entries that extensions write at startup no longer keep the empty file ([#3263](https://github.com/code-yeongyu/senpi/issues/3263)).
+
+- Several sessions sharing one credential pool no longer fail requests with "Credential store is busy ... held for 5500ms". Reading pool health takes no lock, callers in one process queue for it instead of starving each other, and a health write that still cannot take the lock is skipped and logged instead of failing a reply that already arrived ([#3285](https://github.com/code-yeongyu/senpi/issues/3285)).
+
+- Plain answers in the terminal no longer come wrapped in the Ask / For you / Now / Next block. When a question did not end in `?`, the first-request todo list made it a one-task plan, and that list's result told the model to write the block. A one-task list now asks for nothing, and every preset reserves the block for turns that changed something, so an answer stays an answer even when finding it took tool calls ([#3323](https://github.com/code-yeongyu/senpi/issues/3323), reported by @devxoul).
 
 ### Removed
 
@@ -28,6 +42,7 @@
 
 ### Changed
 
+- The built-in default model for `anthropic-subscription` and `anthropic` is now `claude-opus-5-5` (was `claude-opus-4-8`). It applies only when no model is saved in settings and none is passed on the command line ([#3179](https://github.com/code-yeongyu/senpi/pull/3179)).
 ### Fixed
 
 - `senpi host gc`, and the cleanup pass that runs after starting a host, now stop a host left behind by an older engine once it holds no session, no reservation and no client and has outlived its own idle window plus 10 minutes. Such hosts used to linger for days after an update, because their old idle logic was the only thing that could end them. `senpi host status --all` marks them `stale_old_engine`. A host with any session or connected client is never stopped ([#3268](https://github.com/code-yeongyu/senpi/issues/3268)).
@@ -36,6 +51,8 @@
 - `senpi host session` commands now return only after the host has dropped their attachment: on a host that advertises the new `detach_connection` capability the client asks for the detach and waits for the answer (bounded at 5 s, with one plain line if it never comes), so a listing right after `open` no longer shows the short-lived client as still attached. A connection leaving a session that another client also holds now releases its attachment at once, even while a turn runs; only the last attachment of a non-retained session still waits for the turn to settle. After a request timed out or the connection was lost, the client closes without asking for the detach. Older hosts keep the release on socket close. ([#3238](https://github.com/code-yeongyu/senpi/issues/3238))
 
 - A flaky network no longer strands a session on a fallback model. A timeout or connection reset that outlasts the same-model retries may finish that one turn on the next model in the chain, but it no longer puts the primary on a cooldown or opens its circuit, so the next turn goes back to the primary. A rate limit, quota or overload error keeps its existing fallback behavior ([#3306](https://github.com/code-yeongyu/senpi/issues/3306), reported in the OmO community).
+
+- With no default model set, startup no longer settles on a model too small to start (for example a small custom model imported from OpenCode) and crashes with a stack trace. It moves to the next available model that fits and says why. If none fits, it prints one line naming the model, how it was chosen and what to do, then exits. A model you chose yourself is never swapped ([#3333](https://github.com/code-yeongyu/senpi/issues/3333), reported by @taxilian).
 
 - A model that hit a usage limit and fell back now returns when that limit's own reset passes ("resets 3pm", `resets_at`, or "resets in 9 minutes"), instead of staying on the fallback for a cooldown that doubled past the window with every failed retry. A short hint such as "retry in 7s", even on a spent quota, and a plain Retry-After still keep the doubling cooldown, so a failing provider is not retried every few seconds ([#3314](https://github.com/code-yeongyu/senpi/issues/3314), reported in the OmO community).
 
