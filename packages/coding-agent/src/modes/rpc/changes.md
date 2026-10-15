@@ -1,3 +1,25 @@
+## 2026-10-15 - A parked session reopened by the successor keeps its permission preset (senpi#3364)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-handover-parked.ts`: a parked entry also records the session's `permissionPreset`, `promptSurface` and `browserEngine`. A read validates them (the two enums through `rpc-input-validation.ts`) and leaves an entry it does not understand in place instead of reopening it wrong.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: `evictIdleSession` writes those three fields from the session's launch profile when it parks a retained session.
+- `packages/coding-agent/src/modes/rpc/host-handover-reopen.ts`: `reopenOne` passes them into the successor's `openSession`.
+
+### Why
+
+A client-less retained `ask` session reopened by the successor got the host's default preset, because the record had no preset to pass. A client that then attached without naming one kept that default (an attach applies a preset only when it names one), so gated tools ran without asking. Proven by `test/rpc-host-handoff-parked-preset.test.ts` over a real socket host.
+
+A read also requires a known preset name (`parsePermissionPresetName`): an entry naming a preset this version does not know, or an unknown prompt surface or browser engine, stays on disk and is not reopened, rather than reopening under a preset the permission system would refuse at session start. Such an entry is never cleared by this version; a newer generation that understands it reopens it. A rollback to a host older than this change reads a new entry without the three fields and reopens the session under the host default for that one generation, which cannot be avoided from the newer side.
+
+### Why an extension could not handle it
+
+The park record and the successor's reopen are host lifecycle; no extension hook runs there.
+
+### Expected merge conflict zones
+
+The `recordHandoverParkedSession` call in `evictIdleSession` (`session-command-router.ts`).
+
 ## 2026-10-15 - get_subscription_limits and the subscription_limits record (senpi#3370)
 
 ### What changed
