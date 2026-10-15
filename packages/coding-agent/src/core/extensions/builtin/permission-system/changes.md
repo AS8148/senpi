@@ -1,5 +1,24 @@
 # Permission System Builtin Extension
 
+## 2026-10-15 - A named deny keeps the model's do-not-retry sentence (#3301)
+
+### What changed
+
+- `index.ts` `denyReason`: the refusal that names the settings rule now starts with the DeniedError's own sentence ("The user has specified a rule which prevents you from using this specific tool call.") and then names the rule and its layer. Replacing that sentence dropped the model's cue not to retry the call.
+- Tests updated to this PR's rules:
+  - `final-qa` S3/S4/S7 and `codemode-bridge` name a prompting preset, because the full-access default never prompts;
+  - S3 reads the agent-dir approved store;
+  - the P0 host writes global settings into the session's own agent dir.
+- `rpc-host-handover-permission-preset.test.ts`:
+  - `probeTurn` drops replayed records, so its loops can no longer spin and OOM;
+  - prompt answers carry `sessionId`;
+  - `open_session` retries the documented `session_path_in_use` while a predecessor parks;
+  - the fake model decides on the latest message only (the senpi#3363 false alarm).
+
+### Must not break
+
+`issue-2513-bundled-read-permissions` and `final-qa` S2 assert the do-not-retry sentence; `deny-reason-precedence` asserts the named rule.
+
 ## 2026-10-15 - The enforced preset is readable per session (#3301)
 
 ### What changed

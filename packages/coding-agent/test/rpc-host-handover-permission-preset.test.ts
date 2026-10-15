@@ -16,6 +16,7 @@ import { createServer, type Server, type ServerResponse } from "node:http";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { CONFIG_DIR_NAME } from "../src/config.ts";
+import { approvedStorePath } from "../src/core/extensions/builtin/permission-system/storage.ts";
 import { handoffHost } from "../src/modes/rpc/host-handoff.ts";
 import { probeHost } from "../src/modes/rpc/host-probe.ts";
 import { JsonlPeer, MOCK_MODEL, openedSessionId, type WireRecord } from "./helpers/rpc-generation-support.ts";
@@ -69,7 +70,25 @@ function messageStart(): readonly [string, Record<string, unknown>] {
 	];
 }
 
-/** Anthropic-Messages fake: one `shell_fixture` tool_use first, a plain "done" once the result returns. */
+/**
+ * True when the request's LAST message carries a tool result: a tool_result block, or, for a tool
+ * the session does not offer (a settings deny hides it), the transcript's unavailable-tool-result
+ * note. Only the latest message counts: a reopened session's history already holds earlier turns'
+ * results, and keying on the whole body made every later turn answer "done" without calling the
+ * tool, which read as "no prompt, tool ran" (the false alarm in senpi#3363).
+ */
+function latestMessageIsToolResult(raw: string): boolean {
+	const messages = (JSON.parse(raw) as { messages?: Array<{ content?: unknown }> }).messages ?? [];
+	const content = messages.at(-1)?.content;
+	if (!Array.isArray(content)) return false;
+	return content.some(
+		(part: { type?: string; text?: string }) =>
+			part.type === "tool_result" ||
+			(part.type === "text" && part.text?.includes("<unavailable-tool-result") === true),
+	);
+}
+
+/** Anthropic-Messages fake: one `shell_fixture` tool_use per turn, a plain "done" once that turn's result returns. */
 async function startProbeModel(): Promise<{ origin: string }> {
 	const server = createServer((req, res) => {
 		const chunks: Buffer[] = [];
@@ -81,7 +100,7 @@ async function startProbeModel(): Promise<{ origin: string }> {
 				res.end(JSON.stringify({ error: { message: "no route" } }));
 				return;
 			}
-			if (raw.includes('"tool_result"')) {
+			if (latestMessageIsToolResult(raw)) {
 				writeSse(res, [
 					messageStart(),
 					["content_block_start", { index: 0, content_block: { type: "text", text: "" } }],
@@ -143,6 +162,9 @@ let probeCounter = 0;
 async function probeTurn(peer: JsonlPeer, sessionId: string, answer?: string): Promise<ProbeResult> {
 	probeCounter += 1;
 	const text = `probe-${probeCounter}`;
+	// `waitFor` replays seen records, and every probe on one session id ends with the same
+	// agent_end shape: drop them so this probe settles on its own turn, not an earlier one.
+	peer.messages.length = 0;
 	const observed = peer.waitFor(
 		(record) =>
 			(record.type === "extension_ui_request" && record.method === "select") ||
@@ -155,7 +177,11 @@ async function probeTurn(peer: JsonlPeer, sessionId: string, answer?: string): P
 	while (record.type !== "agent_end") {
 		prompts += 1;
 		if (answer === undefined) throw new Error(`unexpected permission prompt: ${JSON.stringify(record)}`);
-		peer.send({ type: "extension_ui_response", id: String(record.id), value: answer });
+		// Drop the answered prompt before waiting again, or the replaying `waitFor` returns it forever.
+		peer.messages.length = 0;
+		// A multi-session host routes the answer by session; without it the host refuses it
+		// (`missing_session_id`) and the prompt stays open.
+		peer.send({ type: "extension_ui_response", id: String(record.id), sessionId, value: answer });
 		record = await peer.waitFor(
 			(next) =>
 				(next.type === "extension_ui_request" && next.method === "select") ||
@@ -187,11 +213,29 @@ async function openSession(
 	peer: JsonlPeer,
 	profile: Record<string, unknown>,
 ): Promise<{ sessionId: string; sessionPath: string }> {
-	const opened = await peer.request({
-		id: `open-${probeCounter}-${peer.messages.length}`,
-		type: "open_session",
-		...profile,
-	});
+	// docs/rpc.md (`session_path_in_use`): a path a previous generation still parks answers with
+	// `owner.current: false` and `retry_after_ms`, and the open is a retry, not a failure. Retry only
+	// that case, at the host's pace and within a bound; a current owner, or a claim that outlives the
+	// bound, fails the test.
+	const deadline = Date.now() + 60_000;
+	let attempt = 0;
+	let opened: WireRecord;
+	for (;;) {
+		attempt += 1;
+		opened = await peer.request({
+			id: `open-${probeCounter}-${peer.messages.length}-${attempt}`,
+			type: "open_session",
+			...profile,
+		});
+		const data = opened.errorData as { owner?: { current?: boolean }; retry_after_ms?: number } | undefined;
+		const parkingPredecessor =
+			opened.success !== true &&
+			opened.errorCode === "session_path_in_use" &&
+			data?.owner?.current === false &&
+			typeof data.retry_after_ms === "number";
+		if (!parkingPredecessor || Date.now() + (data?.retry_after_ms ?? 0) > deadline) break;
+		await new Promise((resolve) => setTimeout(resolve, data?.retry_after_ms));
+	}
 	if (opened.success !== true) throw new Error(`open_session failed: ${JSON.stringify(opened)}`);
 	const data = opened.data as { sessionPath?: string; state?: { sessionFile?: string } };
 	const sessionPath = data.sessionPath ?? data.state?.sessionFile;
@@ -420,7 +464,8 @@ describe.skipIf(process.platform === "win32")(
 			expect(first.toolError).toBe(false);
 			peer.messages.length = 0;
 
-			const approvedFile = join(qa.cwd, CONFIG_DIR_NAME, "permissions-approved.jsonl");
+			// Approvals live in the agent-dir store, outside the project the agent can write (senpi#2465).
+			const approvedFile = approvedStorePath(qa.agentDir, qa.cwd);
 			const stored = await readFile(approvedFile, "utf8");
 			expect(stored).toContain('"shell_fixture"');
 

@@ -52,7 +52,10 @@ function getReason(error: unknown): string {
 	return "Permission request was rejected.";
 }
 
-/** A DeniedError's refusal, naming the exact settings rule and its layer so the user can change it. */
+/**
+ * A DeniedError's refusal: the model-facing sentence that tells it not to retry, then the exact
+ * settings rule and its layer so the user can change it.
+ */
 function denyReason(
 	error: DeniedError,
 	settingsManager: SettingsManager | null,
@@ -66,7 +69,7 @@ function denyReason(
 	// Only promise an unblock when no other layer still denies the call: naming the winning rule and
 	// telling the user to edit it is wrong when a second deny would keep blocking.
 	const unblock = provenance.otherLayerDenies ? "" : " Edit that entry to allow this call.";
-	return `Denied by ${provenance.layer} permission rule ${provenance.permission}:${provenance.pattern} = deny (${source}).${unblock}`;
+	return `${error.message} Denied by ${provenance.layer} permission rule ${provenance.permission}:${provenance.pattern} = deny (${source}).${unblock}`;
 }
 
 /**
