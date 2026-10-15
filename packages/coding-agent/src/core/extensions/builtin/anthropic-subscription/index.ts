@@ -4,7 +4,7 @@ import { readByProviderId } from "@earendil-works/pi-ai";
 import { getModels } from "@earendil-works/pi-ai/compat";
 import { getAgentDir } from "../../../../config.ts";
 import { FileAuthStorageBackend } from "../../../auth-storage.ts";
-import type { ExtensionAPI } from "../../types.ts";
+import type { ExtensionAPI, ProviderConfig } from "../../types.ts";
 import { toBuiltinProviderContext } from "../provider-context.ts";
 import { registerClaudeAccountCommand } from "./account-command.ts";
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./account-management.ts";
@@ -71,13 +71,13 @@ export function registerAnthropicSubscriptionExtension(
 ): void {
 	registerClaudeAccountCommand(pi);
 	registerSessionRegistry(pi);
-	onLongContextAvailabilityChange((available) => {
-		pi.registerProvider(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, { models: anthropicSubscriptionModels(available) });
-	});
-	pi.registerProvider(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, {
+	// The lane re-registers whenever the 1M window is refused or offered again, so the session's current
+	// model, and compaction with it, plans against the window the requests get. Each registration is the
+	// whole config: the runtime validates a registration on its own, not merged with the previous one.
+	const providerConfig = (longContext: boolean): ProviderConfig => ({
 		baseUrl: CLAUDE_SDK_OAUTH_API_ID,
 		api: CLAUDE_SDK_OAUTH_API_ID,
-		models: anthropicSubscriptionModels(),
+		models: anthropicSubscriptionModels(longContext),
 		streamSimple: (model, context, options) =>
 			streamAnthropicSubscription(model, toBuiltinProviderContext(context), options),
 		// A verbatim `enabled: false` is the kill switch: the lane cannot serve, so
@@ -126,6 +126,11 @@ export function registerAnthropicSubscriptionExtension(
 			},
 		}),
 	});
+	pi.registerProvider(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, providerConfig(longContextAvailable()));
+	const stopFollowingLongContext = onLongContextAvailabilityChange((available) => {
+		pi.registerProvider(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, providerConfig(available));
+	});
+	pi.on("session_shutdown", () => stopFollowingLongContext());
 }
 
 export default function anthropicSubscriptionExtension(pi: ExtensionAPI): void {

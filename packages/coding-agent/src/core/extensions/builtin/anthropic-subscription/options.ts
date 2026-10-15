@@ -38,17 +38,20 @@ export interface AnthropicSubscriptionQueryOptionsInput {
 	readonly onGuidance?: (text: string) => void;
 }
 
-/** Claude Code's default window when a request asks for no long context (its `A68`). */
+/** Claude Code's default window when a request does not ask for the long context (its `A68`). */
 export const CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW = 200_000;
-const LONG_CONTEXT_BETA = "context-1m-2025-08-07";
-const LONG_CONTEXT_WINDOW = 1_000_000;
 
 /**
- * The window Claude Code gives a request built from these options: 1M only when the long-context
- * beta is requested, its 200k default otherwise (senpi#3408). Compaction must plan against this.
+ * The model id Claude Code is given. A subscription (OAuth) session ignores `options.betas` ("Custom
+ * betas are only available for API key users"); the `[1m]` suffix is Claude Code's own way to ask for
+ * the 1M window, and it then sends `context-1m-2025-08-07` on the wire. A model above the default
+ * window gets the suffix while the account has not refused it, so the window senpi plans against is
+ * the window the request gets (senpi#3408).
  */
-export function requestedContextWindow(options: Pick<Options, "betas">): number {
-	return options.betas?.includes(LONG_CONTEXT_BETA) ? LONG_CONTEXT_WINDOW : CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW;
+export function sdkModelId(model: Pick<Model<Api>, "id" | "contextWindow">): string {
+	return model.contextWindow > CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW && longContextAvailable()
+		? `${model.id}[1m]`
+		: model.id;
 }
 
 const ADAPTIVE_THINKING_MODEL_MARKERS = [
@@ -266,7 +269,7 @@ export function buildAnthropicSubscriptionQueryOptions(input: AnthropicSubscript
 	const senpiOwnsCompaction = resolveCompactionOwner(providerSettings) === "senpi";
 	const queryOptions: Options = {
 		cwd,
-		model: input.model.id,
+		model: sdkModelId(input.model),
 		tools: toolLessRequest || emptyToolContext ? [] : input.tools ? [...input.tools] : [...BUILTIN_SDK_TOOLS],
 		permissionMode: "dontAsk",
 		includePartialMessages: true,
@@ -283,11 +286,6 @@ export function buildAnthropicSubscriptionQueryOptions(input: AnthropicSubscript
 	// prompt-cache reuse; senpi's compaction carries its own budget reminder. The auth lane
 	// layers this over the subprocess environment it builds.
 	if (senpiOwnsCompaction) queryOptions.env = { CLAUDE_CODE_TOTAL_TOKENS_REMINDER: "off" };
-	// The model's advertised window is what senpi plans compaction against, so a model above Claude
-	// Code's default must request the long-context window, or every request silently runs in 200k.
-	if (input.model.contextWindow > CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW && longContextAvailable()) {
-		queryOptions.betas = [LONG_CONTEXT_BETA];
-	}
 	if (input.pathToClaudeCodeExecutable) queryOptions.pathToClaudeCodeExecutable = input.pathToClaudeCodeExecutable;
 	if (toolLessRequest) queryOptions.maxTurns = 1;
 	if (strictMcpConfig) queryOptions.extraArgs = { "strict-mcp-config": null };

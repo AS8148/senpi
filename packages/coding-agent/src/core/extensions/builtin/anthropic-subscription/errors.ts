@@ -115,7 +115,7 @@ function classifyErrorKind(error: unknown): SdkErrorClassification {
 	const text = errorText(error).toLowerCase();
 	// Claude Code reports an account without the 1M window under the rate_limit code. It is a window
 	// entitlement, not a limit: retry at the standard window instead of blocking the account (senpi#3408).
-	if (text.includes("extra usage is required for long context")) {
+	if (/\b(?:extra usage|usage credits) (?:is|are) required for long context\b/.test(text)) {
 		return { kind: "long_context_unavailable", retryable: true };
 	}
 	if (

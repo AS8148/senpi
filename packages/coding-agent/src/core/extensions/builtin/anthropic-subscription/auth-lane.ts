@@ -211,29 +211,40 @@ function visibleSdkMessage(message: SDKMessage): boolean {
 }
 
 /**
- * The ambient lane has no account failover, so a refused 1M window is retried here: once, before
- * anything visible streamed, after recording the refusal so the rebuilt options ask for 200k (senpi#3408).
+ * The ambient lane has no account failover, so a refused 1M window is retried here: once, and only
+ * before anything visible streamed. Messages pass through as they arrive (system/init, api_retry and
+ * refusals keep their order and timing); the refused attempt is closed before the retry starts, after
+ * the refusal is recorded so the rebuilt options ask for the standard window (senpi#3408).
  */
 async function* retryAtStandardWindowOnce(
 	attempt: () => Promise<AsyncIterable<SDKMessage>>,
 ): AsyncGenerator<SDKMessage> {
-	const held: SDKMessage[] = [];
-	let visible = false;
-	for await (const message of await attempt()) {
-		const failure = visible ? undefined : sdkFailure(message);
-		if (failure !== undefined && classifySdkError(failure).kind === "long_context_unavailable") {
-			markLongContextRefused();
-			yield* await attempt();
-			return;
+	const first = (await attempt())[Symbol.asyncIterator]();
+	let refused = false;
+	let finished = false;
+	try {
+		let visible = false;
+		for (;;) {
+			const next = await first.next();
+			if (next.done) {
+				finished = true;
+				return;
+			}
+			const failure = visible ? undefined : sdkFailure(next.value);
+			if (failure !== undefined && classifySdkError(failure).kind === "long_context_unavailable") {
+				refused = true;
+				break;
+			}
+			visible ||= visibleSdkMessage(next.value);
+			yield next.value;
 		}
-		if (!visible && visibleSdkMessage(message)) {
-			visible = true;
-			yield* held.splice(0);
-		}
-		if (visible) yield message;
-		else held.push(message);
+	} finally {
+		// Closes the first query on every exit (refusal, consumer return, error) before any retry spawns.
+		if (!finished) await first.return?.();
 	}
-	yield* held;
+	if (!refused) return;
+	markLongContextRefused();
+	yield* await attempt();
 }
 
 /** Resolves managed OAuth immediately before each subprocess spawn and retries only pre-delta failures. */

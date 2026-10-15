@@ -1927,22 +1927,26 @@ Upstream edits to the Anthropic subscription login adapter at the next sync.
 ## 2026-10-15 - The window compaction plans against is the window the request gets (senpi#3408)
 
 ### What changed
-- `options.ts`: `requestedContextWindow(options)` returns the window Claude Code gives a request: 1M with the `context-1m-2025-08-07` beta, otherwise its 200k default. A model whose window is over 200k now requests the beta while the 1M window is available.
-- `long-context.ts` (new): records a refused 1M window ("Extra usage is required for long context") for 6 hours. The record is persisted under the agent directory, and listeners are told when it flips.
-- `errors.ts`: that refusal classifies as `long_context_unavailable` (retryable), checked before the rate-limit codes.
-- `failover.ts`: the refusal retries once on the same account, through `onLongContextRefused`. It never blocks or rotates the account.
-- `auth-lane.ts`: the ambient lane retries once at the standard window before anything visible streams. The pool lane wires `onLongContextRefused`.
-- `index.ts`: the lane's models carry `anthropicSubscriptionModels()` windows, capped at 200k while refused. The lane re-registers the moment a refusal is recorded, so the session's current model, and with it compaction, plans for 200k.
+- `options.ts`: `sdkModelId(model)` gives Claude Code `<id>[1m]` while the model's window is over 200k and the account has not refused 1M. That suffix is Claude Code's own subscription path to the 1M window: the installed CLI sends `context-1m-2025-08-07` on the wire for it, while `options.betas` is ignored for OAuth ("Custom betas are only available for API key users"). `queryOptions.model` uses it.
+- `session-entry-annotations.ts`, `session-registry.ts`, `session-registry-wiring.ts`: a resident model switch passes the same SDK model id to `setModel`, while the entry keeps senpi's model id for continuity.
+- `session-sync.ts`: the config fingerprint includes the SDK model, so a refused window restarts the resident process at the standard window.
+- `long-context.ts` (new): records a refused 1M window for 6 hours, with an atomic persisted write under the agent directory. It tells listeners when the state flips, including when it expires, and isolates a failing (stale) listener.
+- `errors.ts`: "Extra usage / Usage credits are required for long context" classifies as `long_context_unavailable` (retryable), ahead of the rate-limit codes.
+- `failover.ts`: that refusal retries once on the same account through `onLongContextRefused`, without blocking or rotating it.
+- `auth-lane.ts`: the ambient lane passes SDK messages through unchanged. On a pre-visible refusal it closes the first query, records the refusal and retries once.
+- `index.ts`: each registration is the whole provider config (`providerConfig(longContext)`), with windows capped at 200k while refused. The lane re-registers on every flip and stops following on `session_shutdown`.
 
 ### Why
-`claude-opus-5-5` (and every other 1M model on this lane) advertised a 1M window, so compaction planned for 1M. But the request carried no long-context beta, so Claude Code ran it in 200k. Long sessions crossed 200k with no proactive compaction, failed with "Prompt is too long", and only then compacted. The refusal Claude Code returns when an account lacks the 1M window uses the `rate_limit` code, so it would also have blocked the account like a usage limit.
+1M models on this lane advertised 1M, so compaction planned for 1M, but Claude Code ran them in its 200k default. Sessions failed with "Prompt is too long" before compaction. The refusal for an account without 1M uses the `rate_limit` code, so it would also have blocked the account.
 
 ### Why an extension could not handle it
-This is the anthropic-subscription builtin itself: its query options, error classification, failover and model registration.
+This is the anthropic-subscription builtin's own model ids, error classification, failover and registration.
 
 ### Expected merge conflict zones
-- `options.ts`, around the query-options assembly (the betas line);
-- `errors.ts`, at the top of `classifyErrorKind`;
-- `failover.ts`, the catch block after the retryable check;
-- `auth-lane.ts`, the ambient branch of `queryWithAuthLane`;
-- `index.ts`, the model list and the extension registration.
+- `options.ts`: the query-options model line and the helper above the thinking markers;
+- `errors.ts`: the top of `classifyErrorKind`;
+- `failover.ts`: the catch block after the retryable check;
+- `auth-lane.ts`: the ambient branch;
+- `index.ts`: the registration;
+- `session-sync.ts`: the fingerprint toolset hash;
+- `session-entry-annotations.ts` and `session-registry.ts`: `switchEntryModel` / `switchSessionModel`.

@@ -142,6 +142,9 @@ export function configFingerprint(
 			// Bump HOST_TOOL_POLICY_FINGERPRINT in tools.ts when denial copy or hooks change.
 			hostToolPolicy: HOST_TOOL_POLICY_FINGERPRINT,
 			settingSources: options.settingSources,
+			// The SDK model id carries the 1M request (`[1m]`, senpi#3408): a refused window must restart
+			// the resident process at the standard one rather than keep asking for 1M.
+			sdkModel: options.model,
 			extraArgs: options.extraArgs,
 			pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
 			includePartialMessages: options.includePartialMessages,

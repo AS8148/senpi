@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getAgentDir } from "../../../../config.ts";
 
@@ -36,7 +36,22 @@ function load(): void {
  */
 export function longContextAvailable(now = Date.now()): boolean {
 	load();
-	return refusedUntil === undefined || now >= refusedUntil;
+	if (refusedUntil === undefined) return true;
+	if (now < refusedUntil) return false;
+	// The refusal expired: the account may have enabled extra usage, so the 1M window is offered again.
+	refusedUntil = undefined;
+	notify(true);
+	return true;
+}
+
+function notify(available: boolean): void {
+	for (const listener of [...listeners]) {
+		try {
+			listener(available);
+		} catch {
+			// One stale listener (a disposed runtime) must not stop the live session's re-registration.
+		}
+	}
 }
 
 export function markLongContextRefused(now = Date.now()): void {
@@ -45,11 +60,13 @@ export function markLongContextRefused(now = Date.now()): void {
 	refusedUntil = now + LONG_CONTEXT_REFUSAL_TTL_MS;
 	try {
 		mkdirSync(dirname(statePath()), { recursive: true });
-		writeFileSync(statePath(), `${JSON.stringify({ refusedUntil })}\n`);
+		const temporary = `${statePath()}.${process.pid}.tmp`;
+		writeFileSync(temporary, `${JSON.stringify({ refusedUntil })}\n`);
+		renameSync(temporary, statePath());
 	} catch {
 		// Persisting only spares the next process one refused request; this process already holds the state.
 	}
-	if (wasAvailable) for (const listener of listeners) listener(false);
+	if (wasAvailable) notify(false);
 }
 
 export function onLongContextAvailabilityChange(listener: Listener): () => void {

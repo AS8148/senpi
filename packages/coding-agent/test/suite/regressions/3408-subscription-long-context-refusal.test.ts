@@ -1,27 +1,24 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Api, Model } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { AuthStorage } from "../../../src/core/auth-storage.ts";
 import type { AccountSlot } from "../../../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
 import { classifySdkError } from "../../../src/core/extensions/builtin/anthropic-subscription/errors.ts";
 import { runFailover } from "../../../src/core/extensions/builtin/anthropic-subscription/failover.ts";
-import {
-	anthropicSubscriptionModels,
-	registerAnthropicSubscriptionExtension,
-} from "../../../src/core/extensions/builtin/anthropic-subscription/index.ts";
+import { registerAnthropicSubscriptionExtension } from "../../../src/core/extensions/builtin/anthropic-subscription/index.ts";
 import {
 	_resetLongContextForTesting,
+	LONG_CONTEXT_REFUSAL_TTL_MS,
 	longContextAvailable,
 	markLongContextRefused,
 } from "../../../src/core/extensions/builtin/anthropic-subscription/long-context.ts";
-import {
-	buildAnthropicSubscriptionQueryOptions,
-	requestedContextWindow,
-} from "../../../src/core/extensions/builtin/anthropic-subscription/options.ts";
-import type { ExtensionAPI } from "../../../src/core/extensions/types.ts";
+import type { ExtensionAPI, ProviderConfig } from "../../../src/core/extensions/types.ts";
+import { createInMemoryModelRegistry, getModelRuntime } from "../../model-runtime-test-utils.ts";
 
-const REFUSAL = "Extra usage is required for long context · enable extra usage at claude.ai/settings/usage (rate_limit)";
+const REFUSAL =
+	"Extra usage is required for long context · enable extra usage at claude.ai/settings/usage (rate_limit)";
+const PROVIDER = "anthropic-subscription";
 let directory: string;
 
 beforeEach(() => {
@@ -34,53 +31,88 @@ afterEach(() => {
 	rmSync(directory, { recursive: true, force: true });
 });
 
-function opus(): Model<Api> {
-	const catalog = anthropicSubscriptionModels(true).find((model) => model.id === "claude-opus-5-5");
-	if (!catalog) throw new Error("claude-opus-5-5 is missing from the catalog");
-	return { ...catalog, api: "claude-sdk-oauth", provider: "anthropic-subscription", baseUrl: "claude-sdk-oauth" } as Model<Api>;
+/** The extension's provider registrations applied to a real model runtime, which validates each one. */
+async function liveLane(): Promise<{
+	window: () => number | undefined;
+	shutdown: () => void;
+	staleRegistration: () => void;
+}> {
+	const runtime = getModelRuntime(await createInMemoryModelRegistry(AuthStorage.inMemory()));
+	const shutdownHandlers: Array<(event: unknown, ctx: unknown) => unknown> = [];
+	let active = true;
+	const pi = new Proxy({} as ExtensionAPI, {
+		get: (_target, key) => {
+			if (key === "registerProvider")
+				return (name: string, config: ProviderConfig) => {
+					if (!active) throw new Error("stale extension context");
+					void runtime.registerProvider(name, config, { refresh: false });
+				};
+			if (key === "on")
+				return (event: string, handler: (event: unknown, ctx: unknown) => unknown) => {
+					if (event === "session_shutdown") shutdownHandlers.push(handler);
+				};
+			return () => undefined;
+		},
+	});
+	registerAnthropicSubscriptionExtension(pi);
+	return {
+		window: () => runtime.getModel(PROVIDER, "claude-opus-5-5")?.contextWindow,
+		shutdown: () => {
+			const ctx = { sessionManager: { getSessionId: () => "session-3408" } };
+			for (const handler of shutdownHandlers) void handler({ type: "session_shutdown" }, ctx);
+		},
+		staleRegistration: () => {
+			active = false;
+		},
+	};
 }
 
 describe("#3408: an account that refuses the 1M window plans and requests 200k", () => {
-	it("plans against 200k after a refusal, and the request no longer asks for 1M", () => {
+	it("re-registers the lane on the real runtime at 200k the moment the refusal is recorded", async () => {
+		const lane = await liveLane();
+		const before = lane.window();
+
 		markLongContextRefused();
 
-		const planned = anthropicSubscriptionModels().find((model) => model.id === "claude-opus-5-5");
-		const options = buildAnthropicSubscriptionQueryOptions({
-			model: { ...opus(), contextWindow: 1_000_000 },
-			context: { messages: [] },
-			cwd: directory,
-			providerSettings: {},
-		});
-
-		expect(planned?.contextWindow).toBe(200_000);
-		expect(options.betas).toBeUndefined();
-		expect(requestedContextWindow(options)).toBe(planned?.contextWindow);
+		expect(before).toBe(1_000_000);
+		expect(lane.window()).toBe(200_000);
 	});
 
-	it("re-registers the lane's models at 200k the moment the refusal is recorded", () => {
-		const registrations: Array<{ models?: Array<{ id: string; contextWindow: number }> }> = [];
-		const pi = new Proxy({} as ExtensionAPI, {
-			get: (_target, key) =>
-				key === "registerProvider"
-					? (_id: string, config: { models?: Array<{ id: string; contextWindow: number }> }) => registrations.push(config)
-					: () => undefined,
-		});
-		registerAnthropicSubscriptionExtension(pi);
-		const initial = registrations[0]?.models?.find((model) => model.id === "claude-opus-5-5");
+	it("offers 1M again once the refusal expires", async () => {
+		const lane = await liveLane();
+		const refusedAt = Date.now();
+		markLongContextRefused(refusedAt);
+
+		const available = longContextAvailable(refusedAt + LONG_CONTEXT_REFUSAL_TTL_MS);
+
+		expect(available).toBe(true);
+		expect(lane.window()).toBe(1_000_000);
+	});
+
+	it("still re-registers the live session when an older runtime's extension context is stale", async () => {
+		const stale = await liveLane();
+		stale.staleRegistration();
+		const live = await liveLane();
+
+		expect(() => markLongContextRefused()).not.toThrow();
+
+		expect(live.window()).toBe(200_000);
+	});
+
+	it("stops following the refusal state after the session shuts down", async () => {
+		const lane = await liveLane();
+		lane.shutdown();
 
 		markLongContextRefused();
 
-		const after = registrations.at(-1)?.models?.find((model) => model.id === "claude-opus-5-5");
-		expect(initial?.contextWindow).toBe(1_000_000);
-		expect(after?.contextWindow).toBe(200_000);
+		expect(lane.window()).toBe(1_000_000);
 	});
 
 	it("retries once on the same account without blocking it, after recording the refusal", async () => {
-		const account: AccountSlot = { name: "main" } as AccountSlot;
+		const account = { name: "main" } as AccountSlot;
 		const tried: string[] = [];
-		const store = {} as Parameters<typeof runFailover>[0]["store"];
-
 		const events: string[] = [];
+
 		for await (const event of runFailover<string>({
 			accounts: [account],
 			selectFn: (accounts) => accounts[0] as AccountSlot,
@@ -90,8 +122,8 @@ describe("#3408: an account that refuses the 1M window plans and requests 200k",
 				yield "answer";
 			},
 			classify: classifySdkError,
-			store,
-			providerId: "anthropic-subscription",
+			store: {} as Parameters<typeof runFailover>[0]["store"],
+			providerId: PROVIDER,
 			onLongContextRefused: () => markLongContextRefused(),
 		})) {
 			events.push(event);
