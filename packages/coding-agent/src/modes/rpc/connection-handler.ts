@@ -57,6 +57,7 @@ import type {
 } from "../../core/extensions/index.ts";
 import { ExtensionRpcRequestNotFoundError } from "../../core/extensions/runner.ts";
 import { describeUsageLimitEntry, describeUsageLimitMessage } from "../../core/retry-fallback/usage-limit.ts";
+import { storedKeyHint, verifyApiKey } from "../../core/verify-api-key.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
 import { DURABLE_CLIENT_MESSAGE_ID_CAPABILITY } from "./client-admission-record.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
@@ -1686,6 +1687,7 @@ export function createRpcConnectionHandler(
 					name: info.name,
 					authType: info.authType,
 					status: authMethodStatus(modelRegistry, info, apiKeyRows.has(info.id)),
+					...storedKeyHint(modelRegistry, info),
 				}));
 				return success(id, "get_auth_providers", { providers });
 			}
@@ -1711,6 +1713,16 @@ export function createRpcConnectionHandler(
 				// response must not get the pre-login snapshot (#2384).
 				await session.modelRegistry.refresh();
 				return success(id, "login_api_key");
+			}
+
+			case "verify_api_key": {
+				const verification = await verifyApiKey({
+					models: session.modelRegistry.getAll(),
+					provider: command.provider,
+					key: command.key,
+					signal: AbortSignal.timeout(15_000),
+				});
+				return success(id, "verify_api_key", verification);
 			}
 
 			case "logout": {

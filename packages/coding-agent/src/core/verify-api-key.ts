@@ -1,0 +1,91 @@
+/**
+ * Checks an API key against its provider without storing it (desktop #2510): one cheap authenticated
+ * read (the model list) with the key in memory only. The answer is `ok`, `rejected` (the provider
+ * said 401/403), `unreachable` (no answer, 5xx, timeout) or `unsupported` (no probe for this API, or
+ * the endpoint has no model list), so a client can say "we could not check" instead of guessing.
+ * Neither the key nor the request headers ever reach a log, an error message or the result.
+ */
+import type { Api, Model } from "@earendil-works/pi-ai/compat";
+
+import type { AuthProviderInfo } from "./auth-providers.ts";
+import type { ModelRegistry } from "./model-registry.ts";
+import { getConfigValueEnvVarNames, isCommandConfigValue } from "./resolve-config-value.ts";
+
+export type ApiKeyVerification =
+	| { readonly ok: true }
+	| {
+			readonly ok: false;
+			readonly reason: "rejected" | "unreachable" | "unsupported" | "unknown-provider";
+			readonly status?: number;
+	  };
+
+type Probe = { readonly url: string; readonly headers: Record<string, string> };
+
+const trimSlash = (value: string) => value.replace(/\/+$/, "");
+
+function probeFor(model: Model<Api>, key: string): Probe | undefined {
+	const base = trimSlash(model.baseUrl);
+	const extra = model.headers ?? {};
+	switch (model.api) {
+		case "openai-completions":
+		case "openai-responses":
+		case "mistral-conversations":
+			return { url: `${base}/models`, headers: { ...extra, authorization: `Bearer ${key}` } };
+		case "anthropic-messages":
+			return {
+				url: `${base.replace(/\/v1$/, "")}/v1/models`,
+				headers: { ...extra, "x-api-key": key, "anthropic-version": "2023-06-01" },
+			};
+		case "google-generative-ai":
+			return { url: `${base}/models`, headers: { ...extra, "x-goog-api-key": key } };
+		default:
+			return undefined;
+	}
+}
+
+export async function verifyApiKey(input: {
+	readonly models: readonly Model<Api>[];
+	readonly provider: string;
+	readonly key: string;
+	readonly signal: AbortSignal;
+	readonly fetch?: typeof globalThis.fetch;
+}): Promise<ApiKeyVerification> {
+	const model = input.models.find((candidate) => candidate.provider === input.provider);
+	if (model === undefined) return { ok: false, reason: "unknown-provider" };
+	const probe = probeFor(model, input.key);
+	if (probe === undefined) return { ok: false, reason: "unsupported" };
+	let response: Response;
+	try {
+		response = await (input.fetch ?? globalThis.fetch)(probe.url, {
+			method: "GET",
+			headers: probe.headers,
+			redirect: "manual",
+			signal: input.signal,
+		});
+	} catch {
+		return { ok: false, reason: "unreachable" };
+	}
+	await response.body?.cancel().catch(() => {});
+	const { status } = response;
+	if (status >= 200 && status < 300) return { ok: true };
+	if (status === 401 || status === 403) return { ok: false, reason: "rejected", status };
+	if (status === 404 || status === 405) return { ok: false, reason: "unsupported", status };
+	return { ok: false, reason: "unreachable", status };
+}
+
+/**
+ * `{ keyHint }` for the api_key row of a provider whose key the app stored as a literal, long enough
+ * that four characters reveal nothing useful. A command (`!...`) or `$ENV` reference is never hinted:
+ * any slice of it would describe where the secret lives, not which key it is.
+ */
+export function storedKeyHint(
+	modelRegistry: ModelRegistry,
+	info: Pick<AuthProviderInfo, "id" | "authType">,
+): { keyHint?: string } {
+	if (info.authType !== "api_key") return {};
+	const credential = modelRegistry.authStorage.get(info.id);
+	if (credential?.type !== "api_key" || credential.key === undefined) return {};
+	const key = credential.key;
+	if (isCommandConfigValue(key) || getConfigValueEnvVarNames(key).length > 0 || key.length < 12) return {};
+	return { keyHint: key.slice(-4) };
+}
