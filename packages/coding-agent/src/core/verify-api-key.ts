@@ -82,18 +82,24 @@ export async function verifyApiKey(input: {
 		}
 	};
 	// A rate limit or an outage means "try again", never "cannot be checked".
-	const temporary = (status: number | "no-answer") => status === "no-answer" || status === 429 || status >= 500;
-	const unreachable = (status: number | "no-answer"): ApiKeyVerification =>
-		status === "no-answer" ? { ok: false, reason: "unreachable" } : { ok: false, reason: "unreachable", status };
+	const temporary = (status: number | "no-answer"): ApiKeyVerification | undefined =>
+		status === "no-answer"
+			? { ok: false, reason: "unreachable" }
+			: status === 429 || status >= 500
+				? { ok: false, reason: "unreachable", status }
+				: undefined;
 	const status = await ask(input.key);
-	if (temporary(status)) return unreachable(status);
+	if (status === "no-answer") return { ok: false, reason: "unreachable" };
+	const failedFirst = temporary(status);
+	if (failedFirst !== undefined) return failedFirst;
 	if (status === 401 || status === 403) return { ok: false, reason: "rejected", status };
 	if (status < 200 || status >= 300) return { ok: false, reason: "unsupported", status };
 	// A model list that also answers a made-up key is public (OpenRouter, keyless local servers):
 	// its 200 says nothing about this key.
 	const control = await ask(UNCHECKABLE_CONTROL_KEY);
 	if (control === 401 || control === 403) return { ok: true };
-	if (temporary(control)) return unreachable(control);
+	const failedControl = temporary(control);
+	if (failedControl !== undefined) return failedControl;
 	return { ok: false, reason: "unsupported" };
 }
 
