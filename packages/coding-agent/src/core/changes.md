@@ -1,3 +1,23 @@
+## 2026-10-14 - Credential-pool state-file contention never fails a request; accounts can be reset (senpi#3285)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/state-store.ts`: reads (`listSlots`, `installationKey` and the revision helpers built on it) take no lock and never write; writes land by atomic rename through the new `credential-pool/state-file.ts`, which also owns the lock wait. Same-process callers queue FIFO per path so only the head contends for the file lock, and cross-process retries poll every 25-250 ms with full jitter inside the unchanged 5.5 s bound. A missing or invalid file still falls through to the locked path that creates or resets it; if that lock is busy too, the read answers with an empty unsaved document (no health) instead of failing. A rename Windows refuses for a moment (`EPERM`/`EBUSY`/`EACCES`) is retried asynchronously for up to ~310 ms (no blocking wait on the session path) and then reads as a busy store. `test/suite/no-sync-in-session-path.ledger.json` moves the store's two remaining sync calls to `state-file.ts` (one fewer than before). The constructor takes an optional `lockWaitBudgetMs` (tests).
+- `packages/coding-agent/src/core/credential-pool/rotation-stream.ts`, `rotation-slots.ts`, new `health-write.ts`: the success marker, failover block, half-open lease and lease release are health writes; when the state file stays locked past its bound they are skipped with one debug-log line instead of failing the request. A slot whose cooldown elapsed is probed without a lease when the lease cannot be written.
+- New `packages/coding-agent/src/core/credential-account-reset.ts` and `/account <provider> reset <id>` (`extensions/builtin/account/index.ts`): clears one account's sidecar health and any block a provider lane stored on the account in auth.json. `credential-accounts.ts` exports the default sidecar repository as `credentialPoolRepository`.
+
+### Why
+
+- With about six sessions on one pool, a request failed with "Credential store is busy ... held for 5500ms". Each request took the lock (and rewrote the file) once per account just to derive revisions, and in-process waiters starved one another under the 100 ms-1 s backoff: 60 concurrent writes from six repositories failed on main with no stalled holder at all. A success write that could not take the lock also failed a reply that had already streamed to completion. Regressions: `test/suite/regressions/3285-credential-pool-lock-contention.test.ts`, `3285-credential-account-reset.test.ts`.
+
+### Why an extension could not handle it
+
+- The sidecar store and the rotation engine are core modules every pooled provider goes through; no hook sits between a request and its health writes.
+
+### Expected merge conflict zones
+
+- LOW: `CredentialSlotRepository` read/write paths in `state-store.ts`; `onSuccess`/`persistBlock` in `rotation-stream.ts`; the lease branch of both lanes in `rotation-slots.ts`.
+
 ## 2026-10-14 - A hard error parks only its rung, so a later rung of the same model stays reachable (senpi#3311)
 
 ### What changed

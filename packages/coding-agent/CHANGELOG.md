@@ -6,6 +6,8 @@
 
 ### Added
 
+- `/account <provider> reset <id>` clears one account's cooldown or block (the credential-pool health record and any block a provider lane stored on the account), so the next request tries it again ([#3285](https://github.com/code-yeongyu/senpi/issues/3285)).
+
 - `tool.glob({ pattern, path })` finds files by glob inside eval, the same way `tool.grep` searches text there. It is never a top-level tool, and the eval prompt now names it, so a model that reached for `tool.glob` no longer gets "Unknown tool glob" ([#3330](https://github.com/code-yeongyu/senpi/issues/3330)).
 
 ### Changed
@@ -13,6 +15,8 @@
 - The terminal transcript folds a handoff block into one muted line, `▸ Handoff · Now: … · Next: …`, and keeps its `For you` answer as ordinary text. Ctrl+O, or a click on the line, opens the block as written ([#3323](https://github.com/code-yeongyu/senpi/issues/3323), proposed by @devxoul).
 
 ### Fixed
+
+- Several sessions sharing one credential pool no longer fail requests with "Credential store is busy ... held for 5500ms". Reading pool health takes no lock, callers in one process queue for it instead of starving each other, and a health write that still cannot take the lock is skipped and logged instead of failing a reply that already arrived ([#3285](https://github.com/code-yeongyu/senpi/issues/3285)).
 
 - Plain answers in the terminal no longer come wrapped in the Ask / For you / Now / Next block. When a question did not end in `?`, the first-request todo list made it a one-task plan, and that list's result told the model to write the block. A one-task list now asks for nothing, and every preset reserves the block for turns that changed something, so an answer stays an answer even when finding it took tool calls ([#3323](https://github.com/code-yeongyu/senpi/issues/3323), reported by @devxoul).
 
