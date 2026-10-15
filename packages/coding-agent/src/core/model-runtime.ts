@@ -332,6 +332,16 @@ export class ModelRuntime implements Models {
 		this.rebuildProviders();
 	}
 
+	/**
+	 * The AuthStorage this runtime's providers register into, when it was built on one. A session
+	 * built on a shared runtime must read this same store, or extension OAuth providers are never
+	 * listed (senpi#3434).
+	 */
+	get authStorage(): DefaultAuthStorage | undefined {
+		const store = this.credentials.backingStore;
+		return store instanceof DefaultAuthStorage ? store : undefined;
+	}
+
 	static async create(options: CreateModelRuntimeOptions = {}): Promise<ModelRuntime> {
 		const credentials = new RuntimeCredentials(options.credentials ?? DefaultAuthStorage.create(options.authPath));
 		const modelsPath =
