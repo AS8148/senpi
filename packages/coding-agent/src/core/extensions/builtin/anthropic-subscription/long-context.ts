@@ -23,7 +23,10 @@ function load(): void {
 			parsed !== null && typeof parsed === "object"
 				? (parsed as { refusedUntil?: unknown }).refusedUntil
 				: undefined;
-		if (typeof until === "number" && Number.isFinite(until)) refusedUntil = until;
+		if (typeof until === "number" && Number.isFinite(until)) {
+			refusedUntil = until;
+			scheduleExpiry(Date.now());
+		}
 	} catch {
 		// No state yet, or an unreadable file: the 1M window is assumed available and the next refusal records it.
 	}
@@ -36,12 +39,21 @@ function load(): void {
  */
 export function longContextAvailable(now = Date.now()): boolean {
 	load();
-	if (refusedUntil === undefined) return true;
-	if (now < refusedUntil) return false;
-	// The refusal expired: the account may have enabled extra usage, so the 1M window is offered again.
-	refusedUntil = undefined;
-	notify(true);
-	return true;
+	return refusedUntil === undefined || now >= refusedUntil;
+}
+
+let expiryTimer: ReturnType<typeof setTimeout> | undefined;
+
+/** Offers the 1M window again when the refusal expires (the account may have enabled extra usage). */
+function scheduleExpiry(now: number): void {
+	if (expiryTimer !== undefined) clearTimeout(expiryTimer);
+	expiryTimer = undefined;
+	if (refusedUntil === undefined || now >= refusedUntil) return;
+	expiryTimer = setTimeout(() => {
+		expiryTimer = undefined;
+		notify(true);
+	}, refusedUntil - now);
+	expiryTimer.unref?.();
 }
 
 function notify(available: boolean): void {
@@ -66,6 +78,7 @@ export function markLongContextRefused(now = Date.now()): void {
 	} catch {
 		// Persisting only spares the next process one refused request; this process already holds the state.
 	}
+	scheduleExpiry(now);
 	if (wasAvailable) notify(false);
 }
 
@@ -75,6 +88,8 @@ export function onLongContextAvailabilityChange(listener: Listener): () => void 
 }
 
 export function _resetLongContextForTesting(path?: string): void {
+	if (expiryTimer !== undefined) clearTimeout(expiryTimer);
+	expiryTimer = undefined;
 	refusedUntil = undefined;
 	loaded = false;
 	listeners.clear();

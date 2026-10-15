@@ -1929,8 +1929,8 @@ Upstream edits to the Anthropic subscription login adapter at the next sync.
 ### What changed
 - `options.ts`: `sdkModelId(model)` gives Claude Code `<id>[1m]` while the model's window is over 200k and the account has not refused 1M. That suffix is Claude Code's own subscription path to the 1M window: the installed CLI sends `context-1m-2025-08-07` on the wire for it, while `options.betas` is ignored for OAuth ("Custom betas are only available for API key users"). `queryOptions.model` uses it.
 - `session-entry-annotations.ts`, `session-registry.ts`, `session-registry-wiring.ts`: a resident model switch passes the same SDK model id to `setModel`, while the entry keeps senpi's model id for continuity.
-- `session-sync.ts`: the config fingerprint includes the SDK model, so a refused window restarts the resident process at the standard window.
-- `long-context.ts` (new): records a refused 1M window for 6 hours, with an atomic persisted write under the agent directory. It tells listeners when the state flips, including when it expires, and isolates a failing (stale) listener.
+- `session-sync.ts`: the config fingerprint hashes only whether a 1M refusal is active, so a refusal or its expiry restarts the resident process at the matching window, while a live model switch stays in place (it reaches the process through `setModel`).
+- `long-context.ts` (new): records a refused 1M window for 6 hours, with an atomic persisted write under the agent directory. It tells listeners when the state flips, isolating a failing (stale) listener. Expiry is signalled by an unref'd timer, never by reading the state.
 - `errors.ts`: "Extra usage / Usage credits are required for long context" classifies as `long_context_unavailable` (retryable), ahead of the rate-limit codes.
 - `failover.ts`: that refusal retries once on the same account through `onLongContextRefused`, without blocking or rotating it.
 - `auth-lane.ts`: the ambient lane passes SDK messages through unchanged. On a pre-visible refusal it closes the first query, records the refusal and retries once.

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Context, Message } from "@earendil-works/pi-ai";
 import { appendSdkContentBlocks } from "./content-blocks.ts";
+import { longContextAvailable } from "./long-context.ts";
 import type { AnthropicSubscriptionAuthLane } from "./options.ts";
 import type { ContentBlockParam, Options } from "./sdk-boundary.ts";
 import { imageNeutralContent } from "./sent-image-slots.ts";
@@ -142,9 +143,9 @@ export function configFingerprint(
 			// Bump HOST_TOOL_POLICY_FINGERPRINT in tools.ts when denial copy or hooks change.
 			hostToolPolicy: HOST_TOOL_POLICY_FINGERPRINT,
 			settingSources: options.settingSources,
-			// The SDK model id carries the 1M request (`[1m]`, senpi#3408): a refused window must restart
-			// the resident process at the standard one rather than keep asking for 1M.
-			sdkModel: options.model,
+			// A refused 1M window must restart the resident process at the standard one (senpi#3408). Only
+			// the refusal state is hashed: a live model switch reaches the process through setModel.
+			longContextRefused: !longContextAvailable(),
 			extraArgs: options.extraArgs,
 			pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
 			includePartialMessages: options.includePartialMessages,

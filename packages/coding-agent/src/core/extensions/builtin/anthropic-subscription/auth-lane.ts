@@ -240,7 +240,13 @@ async function* retryAtStandardWindowOnce(
 		}
 	} finally {
 		// Closes the first query on every exit (refusal, consumer return, error) before any retry spawns.
-		if (!finished) await first.return?.();
+		if (!finished) {
+			try {
+				await first.return?.();
+			} catch {
+				// Closing the first query must never replace the error (or the refusal) that ended it.
+			}
+		}
 	}
 	if (!refused) return;
 	markLongContextRefused();

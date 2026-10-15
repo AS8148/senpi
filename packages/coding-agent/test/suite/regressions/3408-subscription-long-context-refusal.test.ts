@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../../../src/core/auth-storage.ts";
 import type { AccountSlot } from "../../../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
 import { classifySdkError } from "../../../src/core/extensions/builtin/anthropic-subscription/errors.ts";
@@ -13,8 +13,25 @@ import {
 	longContextAvailable,
 	markLongContextRefused,
 } from "../../../src/core/extensions/builtin/anthropic-subscription/long-context.ts";
+import { buildAnthropicSubscriptionQueryOptions } from "../../../src/core/extensions/builtin/anthropic-subscription/options.ts";
+import { configFingerprint } from "../../../src/core/extensions/builtin/anthropic-subscription/session-sync.ts";
 import type { ExtensionAPI, ProviderConfig } from "../../../src/core/extensions/types.ts";
 import { createInMemoryModelRegistry, getModelRuntime } from "../../model-runtime-test-utils.ts";
+
+function modelFor(id: string) {
+	return {
+		id,
+		name: id,
+		api: "claude-sdk-oauth",
+		provider: PROVIDER,
+		baseUrl: "claude-sdk-oauth",
+		reasoning: true,
+		input: ["text" as const],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 1_000_000,
+		maxTokens: 128_000,
+	};
+}
 
 const REFUSAL =
 	"Extra usage is required for long context · enable extra usage at claude.ai/settings/usage (rate_limit)";
@@ -78,7 +95,23 @@ describe("#3408: an account that refuses the 1M window plans and requests 200k",
 		expect(lane.window()).toBe(200_000);
 	});
 
-	it("offers 1M again once the refusal expires", async () => {
+	it("offers 1M again when the refusal expires, without a read having to trigger it", async () => {
+		vi.useFakeTimers();
+		try {
+			const lane = await liveLane();
+			markLongContextRefused();
+			const whileRefused = lane.window();
+
+			vi.advanceTimersByTime(LONG_CONTEXT_REFUSAL_TTL_MS);
+
+			expect(whileRefused).toBe(200_000);
+			expect(lane.window()).toBe(1_000_000);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("reading the refusal state never re-registers the provider", async () => {
 		const lane = await liveLane();
 		const refusedAt = Date.now();
 		markLongContextRefused(refusedAt);
@@ -86,7 +119,31 @@ describe("#3408: an account that refuses the 1M window plans and requests 200k",
 		const available = longContextAvailable(refusedAt + LONG_CONTEXT_REFUSAL_TTL_MS);
 
 		expect(available).toBe(true);
-		expect(lane.window()).toBe(1_000_000);
+		expect(lane.window()).toBe(200_000);
+	});
+
+	it("keeps the resident fingerprint across a live model switch, and changes it only on a refusal", () => {
+		const fingerprintFor = (id: string, contextWindow: number) =>
+			configFingerprint(
+				buildAnthropicSubscriptionQueryOptions({
+					model: { ...modelFor(id), contextWindow },
+					context: { messages: [] },
+					cwd: directory,
+					providerSettings: {},
+				}),
+				{ messages: [] },
+				"ambient",
+				"ambient",
+			).toolsetHash;
+		const opus = fingerprintFor("claude-opus-5-5", 1_000_000);
+		const sonnet = fingerprintFor("claude-sonnet-5-5", 1_000_000);
+		const haiku = fingerprintFor("claude-haiku-4-5", 200_000);
+
+		markLongContextRefused();
+
+		expect(sonnet).toBe(opus);
+		expect(haiku).toBe(opus);
+		expect(fingerprintFor("claude-opus-5-5", 200_000)).not.toBe(opus);
 	});
 
 	it("still re-registers the live session when an older runtime's extension context is stale", async () => {
