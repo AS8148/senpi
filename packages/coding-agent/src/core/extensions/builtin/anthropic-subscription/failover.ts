@@ -45,6 +45,8 @@ export type FailoverOptions<TEvent> = {
 	/** Waits before a transient same-account retry; injectable for tests. */
 	sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
 	signal?: AbortSignal;
+	/** Records a refused 1M window so the retry, built by `runAttempt`, requests the standard one. */
+	onLongContextRefused?: () => void;
 };
 
 export class ClassifiedSdkError extends Error {
@@ -226,6 +228,7 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 	let lastError: ClassifiedSdkError | undefined;
 	const retriedOnStoredMaterial = new Set<string>();
 	let transientRetriesUsed = 0;
+	let longContextRetried = false;
 	let retryAccountName: string | undefined;
 
 	for (let attempt = 0; attempt < accounts.length; attempt++) {
@@ -250,6 +253,17 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 			const classified = new ClassifiedSdkError(classification, error, visibleDeltaEmitted);
 			lastError = classified;
 			if (!classification.retryable) throw classified;
+
+			// A refused 1M window is the account's entitlement, not a limit: never block or rotate it.
+			// Retry once on the same account at the standard window (senpi#3408).
+			if (classification.kind === "long_context_unavailable") {
+				if (visibleDeltaEmitted || longContextRetried) throw classified;
+				longContextRetried = true;
+				options.onLongContextRefused?.();
+				retryAccountName = account.name;
+				attempt--;
+				continue;
+			}
 
 			// A transient failure says nothing about the account, and on the config-dir lane moving
 			// to another account re-sends the whole conversation (senpi#2891): retry it in place first.

@@ -1,3 +1,38 @@
+## 2026-10-16 - Message paths never reach the file system unless local (senpi#3419 review)
+
+### What changed
+
+- `packages/coding-agent/src/core/message-path-resolution.ts`: `isLocalMessagePath` (win32: a drive-letter path only; elsewhere absolute and not `//`) is checked on every candidate before any file-system call and on the realpath; `resolveMessagePath` takes `platform`; `messagePathProjectRoot` ignores a `.git` in the home folder.
+
+### Why
+
+Opus review H1: resolving a `\\host\share` path named in a message made Windows connect to that host and offer the user's credentials; L1: a dotfiles repository made `~` the project root.
+
+### Why an extension could not handle it
+
+It is the core resolver's own guard.
+
+### Expected merge conflict zones
+
+- None: the file is new in this PR.
+
+## 2026-10-16 - One rule for what a message path means (senpi#3415)
+
+### What changed
+
+- `packages/coding-agent/src/core/message-path-resolution.ts` (new): `resolveMessagePath({ path, cwd, projectRoot })` tries a relative path against the session's working directory, then the project root (`messagePathProjectRoot`: nearest `.git`, else the nearest project marker), and answers the first existing candidate's realpath with its kind and base, or every candidate tried.
+
+### Why
+
+The TUI, RPC clients and the desktop app each guessed what a relative link meant. The engine knows the working directory and the project root, so it owns the answer once (sisyphuslabs/omo-desktop-app#2748).
+
+### Why an extension could not handle it
+
+The RPC host and the TUI link renderer both need it; it is a core contract, not a tool.
+
+### Expected merge conflict zones
+
+- None: a new file.
 ## 2026-10-16 - Extension providers can declare ambient api-key auth (senpi#2327)
 
 ### What changed
@@ -16,7 +51,6 @@
 ### Expected merge conflict zones
 
 - LOW: the `ProviderConfigInput` field list and the `ProviderAmbientAuth` interface in `provider-composer.ts`; the ambient branch of `composeApiKeyAuth` in `provider-api-key-auth.ts`.
-
 ## 2026-10-15 - AgentSession.activeWakeSources (senpi#3225)
 
 ### What changed

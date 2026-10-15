@@ -1,3 +1,20 @@
+## 2026-10-15 - TPS is timed from the first streamed token to the last (senpi#3393)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/tps.ts`: the rate divides the output of assistant messages that actually streamed by their first-to-last delta time (`text_delta`, `thinking_delta`, `toolcall_delta` from `message_update`). No tok/s is shown when nothing streamed or the streamed time is under 0.5 s. The rest of the notice (cache hit, elapsed message time) is unchanged. A message that reasoned before its first delta (its usage reports reasoning tokens, or it carries a thinking block, redacted included, whose text never streamed: Bedrock and omitted-display thinking report no reasoning count) is timed from its own start instead; thinking that streamed as `thinking_delta` keeps the first-to-last-delta window: reasoning can be hidden, or only summarised after it finished, so the first delta comes after most of it was generated. Aborted, errored and zero-output messages add nothing to the rate.
+
+### Why
+
+- Timing from `message_start` to `message_end` made a non-streamed reply read thousands of tok/s (`12853.9 tok/s ... 0.0s` on 5.1.30), and counted time-to-first-token for streamed ones. Regression: `test/suite/tps-extension.test.ts` (#3393 cases).
+
+### Why an extension could not handle it
+
+- This is the extension.
+
+### Expected merge conflict zones
+
+- LOW: the `message_update` handler and the rate line in `agent_end`.
 ## 2026-10-14 - vertex-model-garden provider extension
 
 ### What changed
@@ -18,7 +35,6 @@
 ### Expected merge conflict zones
 
 - LOW: one import and one `builtinExtensions` entry.
-
 ## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
 
 ### What changed
