@@ -18,7 +18,7 @@
 
 ### Fixed
 
-- An extension that used its old context after an automatic session switch, compaction hand-off or reload no longer ends the whole session with `exiting due to uncaughtException: ... extension ctx is stale ...`. The retired extension is already stopped at that point, so the error now goes to the debug log with its stack (which names the extension) and the session keeps running, in the TUI, print mode and RPC hosts alike. Every other crash still exits as before ([#3389](https://github.com/code-yeongyu/senpi/issues/3389), [oh-my-openagent#7114](https://github.com/code-yeongyu/oh-my-openagent/issues/7114)).
+- An extension that used its old context after an automatic session switch, compaction hand-off or reload no longer ends the whole session with `exiting due to uncaughtException: ... extension ctx is stale ...`. The retired extension is already stopped at that point, so the error now goes to the debug log with its stack (which names the extension) and the session keeps running, in the TUI, print mode and RPC hosts alike, whether the extension threw directly or from an async callback. Every other crash still exits as before, including with `SENPI_RECOVER_INSPECTOR_VM_IMPORT=1` ([#3389](https://github.com/code-yeongyu/senpi/issues/3389), [oh-my-openagent#7114](https://github.com/code-yeongyu/oh-my-openagent/issues/7114)).
 
 - Opening the TUI and quitting, or running `/new`, without sending a message no longer leaves an empty session in `/resume`: entries that extensions write at startup no longer keep the empty file ([#3263](https://github.com/code-yeongyu/senpi/issues/3263)).
 

@@ -3,6 +3,7 @@
  * timer throws the stale guard synchronously, which reached `uncaughtException` and exited the TUI
  * mid-task. The guard throws before the operation runs, so the live session must keep running.
  */
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -82,6 +83,40 @@ describe("a retired extension ctx never ends the session", () => {
 		expect(containStaleExtensionError("not an error", "unhandledRejection")).toBe(false);
 		expect(readFileSync(getDebugLogPath(), "utf8")).toContain("memory/status-live.ts:64:5");
 	});
+
+	const child = join(import.meta.dirname, "../../fixtures/stale-ctx-crash-child.ts");
+	const runtimes = [
+		["bun", ["bun", child]],
+		["node", ["node", "--import", "tsx", child]],
+	] as const;
+	for (const [runtime, [command, ...prefix]] of runtimes) {
+		for (const recoverInspector of [false, true]) {
+			const label = `${runtime}${recoverInspector ? " with SENPI_RECOVER_INSPECTOR_VM_IMPORT=1" : ""}`;
+			const run = (scenario: string) => {
+				const agentDir = mkdtempSync(join(tmpdir(), "senpi-stale-child-"));
+				tempDirs.push(agentDir);
+				const env: NodeJS.ProcessEnv = { ...process.env, [ENV_AGENT_DIR]: agentDir };
+				if (recoverInspector) env.SENPI_RECOVER_INSPECTOR_VM_IMPORT = "1";
+				else delete env.SENPI_RECOVER_INSPECTOR_VM_IMPORT;
+				return spawnSync(command, [...prefix, scenario], { env, encoding: "utf8", timeout: 60_000 });
+			};
+			for (const scenario of ["stale-sync", "stale-async"]) {
+				test(`a headless ${label} process keeps running after a ${scenario} stale ctx throw`, () => {
+					const result = run(scenario);
+					expect(result.status, result.stderr).toBe(0);
+					expect(result.stdout).toContain("STILL ALIVE");
+				});
+			}
+			for (const scenario of ["real-sync", "real-async"]) {
+				test(`a headless ${label} process still exits 1 on a ${scenario} real crash`, () => {
+					const result = run(scenario);
+					expect(result.status).toBe(1);
+					expect(result.stdout).not.toContain("STILL ALIVE");
+					expect(result.stderr).toContain("real bug");
+				});
+			}
+		}
+	}
 
 	test("a real bug still exits the interactive session", () => {
 		useTempAgentDir();

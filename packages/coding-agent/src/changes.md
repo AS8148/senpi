@@ -2,11 +2,12 @@
 
 ### What changed
 
-- `packages/coding-agent/src/cli-main.ts`: installs `installStaleExtensionContainment()` (fork-only `core/stale-extension-containment.ts`) right after the early inspector seam. It is a process `uncaughtException` listener that logs and contains the stale-ctx guard, and keeps every other uncaught throw fatal (`console.error` + exit 1) when no other handler is registered.
+- `packages/coding-agent/src/cli-main.ts`: installs `installStaleExtensionContainment()` (fork-only `core/stale-extension-containment.ts`) right after the early inspector seam. It adds process `uncaughtException` and `unhandledRejection` listeners that log and contain the stale-ctx guard, and keep every other uncaught throw or rejection fatal (`console.error` + exit 1) unless a mode handler (interactive) is registered.
+- `packages/coding-agent/src/inspector-policy.ts`: the early inspector listener is marked as a bootstrap listener (fork-only `core/bootstrap-crash-listeners.ts`) and defers only to a MODE handler, never to another bootstrap listener; it leaves a stale-ctx error to the containment seam. Before this, with `SENPI_RECOVER_INSPECTOR_VM_IMPORT=1`, the two bootstrap listeners each deferred to the other and a real crash kept the process running.
 
 ### Why
 
-- Print mode and the RPC host have no crash handler of their own, so the same stale-ctx throw from a timer ended a headless run or every session on a host (senpi#3389, oh-my-openagent#7114).
+- Print mode and the RPC host have no crash handler of their own, so the same stale-ctx throw from a timer ended a headless run or every session on a host (senpi#3389, oh-my-openagent#7114). Under Bun (the preferred runtime) an async stale throw arrives as an unhandled rejection, which Bun also turns into exit 1 when nothing listens.
 
 ### Why an extension could not handle it
 
@@ -14,7 +15,7 @@
 
 ### Expected merge conflict zones
 
-- LOW: the bootstrap block in `cli-main.ts` beside `installEarlyInspectorVmImportRecovery()`.
+- LOW: the bootstrap block in `cli-main.ts` beside `installEarlyInspectorVmImportRecovery()`; the listener registration and `otherHandlerActive` check in `inspector-policy.ts`.
 
 ## 2026-10-14 - A model that cannot start is reported, not crashed on (senpi#3333)
 
