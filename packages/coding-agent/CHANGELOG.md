@@ -18,6 +18,8 @@
 
 ### Fixed
 
+- An extension that used its old context after an automatic session switch, compaction hand-off or reload no longer ends the whole session with `exiting due to uncaughtException: ... extension ctx is stale ...`. The retired extension is already stopped at that point, so the error now goes to the debug log with its stack (which names the extension) and the session keeps running, in the TUI, print mode and RPC hosts alike. Every other crash still exits as before ([#3389](https://github.com/code-yeongyu/senpi/issues/3389), [oh-my-openagent#7114](https://github.com/code-yeongyu/oh-my-openagent/issues/7114)).
+
 - Opening the TUI and quitting, or running `/new`, without sending a message no longer leaves an empty session in `/resume`: entries that extensions write at startup no longer keep the empty file ([#3263](https://github.com/code-yeongyu/senpi/issues/3263)).
 
 - Several sessions sharing one credential pool no longer fail requests with "Credential store is busy ... held for 5500ms". Reading pool health takes no lock, callers in one process queue for it instead of starving each other, and a health write that still cannot take the lock is skipped and logged instead of failing a reply that already arrived ([#3285](https://github.com/code-yeongyu/senpi/issues/3285)).

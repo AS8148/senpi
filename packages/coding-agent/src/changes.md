@@ -1,3 +1,21 @@
+## 2026-10-15 - Print and RPC processes contain a retired extension ctx too (senpi#3389)
+
+### What changed
+
+- `packages/coding-agent/src/cli-main.ts`: installs `installStaleExtensionContainment()` (fork-only `core/stale-extension-containment.ts`) right after the early inspector seam. It is a process `uncaughtException` listener that logs and contains the stale-ctx guard, and keeps every other uncaught throw fatal (`console.error` + exit 1) when no other handler is registered.
+
+### Why
+
+- Print mode and the RPC host have no crash handler of their own, so the same stale-ctx throw from a timer ended a headless run or every session on a host (senpi#3389, oh-my-openagent#7114).
+
+### Why an extension could not handle it
+
+- The listener has to exist before any extension loads, and process-wide; the entry point is the only place that covers every mode.
+
+### Expected merge conflict zones
+
+- LOW: the bootstrap block in `cli-main.ts` beside `installEarlyInspectorVmImportRecovery()`.
+
 ## 2026-10-14 - A model that cannot start is reported, not crashed on (senpi#3333)
 
 ### What changed
