@@ -52,6 +52,8 @@ import {
 	planCiEvidence,
 	REGENERATED_CATALOG_PATHS,
 	REQUIRED_CHECK_NAME,
+	FORCED_TEST_SUITE_TIMEOUT_MS,
+	runForcedTestSuite,
 } from "./release-test-gate.mjs";
 import { applyWorkspaceVersions, runSyncVersions } from "./release-packages.mjs";
 
@@ -369,8 +371,8 @@ function runForcedTests(dryRun, forceTests) {
 	// Run with CI=1 so packages reproduce their CI test behavior — notably the coding-agent vitest suite serializes
 	// its subprocess-heavy tests to a single fork (see packages/coding-agent/vitest.config.ts). App code never
 	// branches on CI.
-	log("CI=1 npm test");
-	runCommand("npm", ["test"], { CI: "1" });
+	log(`CI=1 npm test (budget ${FORCED_TEST_SUITE_TIMEOUT_MS / 60_000} min)`);
+	runForcedTestSuite();
 }
 
 function main() {
