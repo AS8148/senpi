@@ -13,7 +13,7 @@ import { RpcSessionRegistry } from "../../src/modes/rpc/session-registry.ts";
 import {
 	breadcrumbBody,
 	createMovedLayout,
-	DESKTOP_FILE_MODE,
+	DESKTOP_DIR_MODE,
 	HOME_ID,
 	MOVED_SESSIONS,
 	MOVED_WORKTREE,
@@ -93,7 +93,7 @@ describe("moved-path-guard breadcrumb trust (#2898)", () => {
 	it("ignores a breadcrumb planted in a repository that points anywhere else", () => {
 		const moved = layout();
 		const repo = join(moved.home, "repo");
-		mkdirSync(join(repo, "src"), { recursive: true });
+		mkdirSync(join(repo, "src"), { recursive: true, mode: DESKTOP_DIR_MODE });
 		writeBreadcrumb(repo, { ...breadcrumbBody("/etc/somewhere", ["src"]) });
 
 		expect(findMovedPath(join(repo, "src", "x"))).toBeUndefined();
@@ -194,7 +194,6 @@ describe("moved-path-guard breadcrumb trust (#2898)", () => {
 		writeFileSync(
 			join(moved.newRoot, "omo-desktop-home.json"),
 			JSON.stringify({ kind: "omo-desktop-data-home", appId: "com.omo.desktop", schemaVersion: 2, homeId: HOME_ID }),
-			{ mode: DESKTOP_FILE_MODE },
 		);
 
 		expect(findMovedPath(join(moved.oldWorktree, "a.ts"))).toBeUndefined();
