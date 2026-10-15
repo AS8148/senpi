@@ -13,8 +13,13 @@ export const VERTEX_MODEL_GARDEN_LOCATION = "global";
 
 export type ResolveVertexAccess = (options?: SimpleStreamOptions) => Promise<VertexAdcAccess>;
 
-export const defaultResolveVertexAccess: ResolveVertexAccess = (options) =>
-	getVertexAdcAccess({ project: options?.apiKey, env: options?.env });
+/**
+ * The project comes from its own environment (`options.env`, then the ADC quota
+ * project, then `getProjectId()`), never from the API-key slot: a stored secret
+ * must not end up in the request URL, and the project may legitimately come from
+ * ADC alone.
+ */
+export const defaultResolveVertexAccess: ResolveVertexAccess = (options) => getVertexAdcAccess({ env: options?.env });
 
 export function vertexHost(location: string): string {
 	return location === "global" ? "aiplatform.googleapis.com" : `${location}-aiplatform.googleapis.com`;
