@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "fs";
+import { applyDatedListPrice } from "./dated-list-prices.ts";
 import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { getBaiModels } from "./generate-models-bai.ts";
@@ -4273,6 +4274,7 @@ async function generateModels() {
 		applyBaiReasoningConsistency(model);
 		applyPromptCacheMetadata(model);
 		applyImageInputMetadata(model);
+		applyDatedListPrice(model);
 	}
 	applyAnthropicAllowedFallbackModelMetadata(allModels.filter(isAnthropicFallbackMetadataModel));
 
