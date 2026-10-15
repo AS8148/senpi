@@ -24,13 +24,13 @@ import {
 } from "./custom-capability.ts";
 import { EFFECT_LEDGER_CAPABILITY } from "./effect-record.ts";
 
+/** `unload_session` and `session_parked.reason` (senpi#3225). */
+export const UNLOAD_SESSION_CAPABILITY = "unload_session";
+
 /**
  * The capabilities a multi-session host advertises in `get_protocol_info`, in their wire order. `warm` is added only
  * when the runtime is in-process, and `negotiated` carries the launch capabilities this connection was given.
  */
-/** `unload_session` and `session_parked.reason` (senpi#3225). */
-export const UNLOAD_SESSION_CAPABILITY = "unload_session";
-
 export function multiSessionHostCapabilities(options: {
 	readonly warm: boolean;
 	readonly negotiated: readonly string[];

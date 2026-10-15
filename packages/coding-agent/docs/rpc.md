@@ -1290,7 +1290,8 @@ The answer is always `success: true` with `data.outcome`: `unloaded` (with `sess
 | `reason` | When | Override |
 |---|---|---|
 | `turn_active` | an agent run, a prompt about to start, compaction, barrier-held work | `interrupt: true` aborts and waits (bounded) first |
-| `work_pending` | bash, an admitted delivery not yet written, another request for the session, extension-published work | `interrupt: true` (extension work resumes on the reopen) |
+| `work_pending` | bash, an admitted delivery not yet written, another request for the session | `interrupt: true` |
+| `extension_work` | extension-published work: background terminal jobs, non-persistent monitors, detached eval cells, a pending question; `detail` names the sources | `force: true` (that work is stopped; only persistent monitors come back on the reopen) |
 | `children_live` | child tasks still working, or worker sessions here whose `context` names this session as parent or root | `children: "detach"` leaves them running |
 | `attached` | other clients hold the session (the caller's own attachment does not count) | `force: true`; they receive the park |
 | `host_draining`, `session_closing`, `unsupported` | the host is draining, the session is already closing, or it has no file / a worker isolate owns it | none |

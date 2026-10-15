@@ -9,9 +9,11 @@
  *
  * Refusals change nothing and answer `outcome: "refused"` with `reason`, `detail` and `action`:
  * - `turn_active` / `work_pending`: an agent run, a prompt in preflight, compaction, barrier-held work,
- *   bash, an admitted delivery or another request for the session, or a published wake source other
- *   than child tasks. `interrupt` aborts the run and bash and waits (bounded) before the final check;
- *   wake sources then no longer block, because they resume when the file is reopened.
+ *   bash, an admitted delivery or another request for the session. `interrupt` aborts the run and bash
+ *   and waits (bounded) before the final check.
+ * - `extension_work`: a published wake source other than child tasks (background terminal jobs, monitors,
+ *   detached eval cells, a pending question). The teardown stops that work and most of it does not come
+ *   back on reopen, so only `force` unloads past it; the refusal names the sources.
  * - `children_live`: the session started child tasks that are still working (a `senpi-task` wake source)
  *   or worker sessions here name it as their parent or root. `children: "detach"` leaves them running.
  * - `attached`: other clients hold the session. `force` unloads anyway; they receive the park.
@@ -49,11 +51,10 @@ interface Refusal {
 	readonly reason: UnloadRefusalReason;
 	readonly detail: string;
 	readonly action?: string;
-	/** Extension-owned work that resumes on the reopen: an `interrupt` unload does not wait for it. */
-	readonly resumesOnReopen?: true;
 }
 
 const ACTIONS = {
+	extension_work: "let the named work finish, or unload with force: true (it is stopped, not resumed on reopen)",
 	turn_active: "wait for the turn to end, or unload with interrupt: true to stop it first",
 	work_pending: "wait for the work to finish, or unload with interrupt: true",
 	children_live: 'wait for the child tasks, or unload with children: "detach" to leave them running',
@@ -78,6 +79,8 @@ export async function unloadSession(port: SessionUnloadPort, command: UnloadSess
 		if ("replay" in begun)
 			return answer(command, {
 				outcome: begun.replay.state === "failed" ? "refused" : "unloaded",
+				// A replayed refusal answers the same reason, detail and action as the first one.
+				...refusalFields(begun.replay.outcome),
 				...effectAnswer(begun.replay, command.sessionId, true),
 			});
 	}
@@ -85,8 +88,7 @@ export async function unloadSession(port: SessionUnloadPort, command: UnloadSess
 	// Never stop work for an unload that would still be refused: only interruptible blockers are interrupted.
 	const standing = blocked.find((refusal) => !interruptible(refusal) || command.interrupt !== true);
 	if (standing !== undefined) return fail(command, first.session, standing);
-	if (blocked.some((refusal) => refusal.resumesOnReopen !== true))
-		await abortAndSettle(port, command.sessionId, first.session);
+	if (blocked.length > 0) await abortAndSettle(port, command.sessionId, first.session);
 	return claimAndUnload(port, command);
 }
 
@@ -95,9 +97,7 @@ async function claimAndUnload(port: SessionUnloadPort, command: UnloadSessionCom
 	const ready = loaded(port, command.sessionId);
 	if ("reason" in ready) return answer(command, refused(ready));
 	const stillBlocked = blockers(port, command, ready.session, ready.durableSessionId);
-	const blocking =
-		command.interrupt === true ? stillBlocked.filter((refusal) => refusal.resumesOnReopen !== true) : stillBlocked;
-	if (blocking.length > 0) return fail(command, ready.session, blocking[0] as Refusal);
+	if (stillBlocked.length > 0) return fail(command, ready.session, stillBlocked[0] as Refusal);
 	if (command.clearQueue === true) ready.session.clearQueue();
 	const effect =
 		command.effectId === undefined
@@ -147,12 +147,11 @@ function blockers(
 	const sources = session.activeWakeSources;
 	const childSources = sources.filter((source) => CHILD_TASK_SOURCE.test(source));
 	const otherSources = sources.filter((source) => !CHILD_TASK_SOURCE.test(source));
-	if (otherSources.length > 0)
+	if (otherSources.length > 0 && command.force !== true)
 		found.push({
-			reason: "work_pending",
+			reason: "extension_work",
 			detail: `work published by ${otherSources.join(", ")}`,
-			action: ACTIONS.work_pending,
-			resumesOnReopen: true,
+			action: ACTIONS.extension_work,
 		});
 	const childSessions = port.openChildSessions(durableSessionId);
 	if (command.children !== "detach" && (childSources.length > 0 || childSessions > 0)) {
@@ -201,6 +200,17 @@ function fail(command: UnloadSessionCommand, session: AgentSession, refusal: Ref
 		},
 	});
 	return answer(command, { ...refused(refusal), ...effectAnswer(status, command.sessionId) });
+}
+
+function refusalFields(
+	outcome: { reason?: string; detail?: string; action?: string } | undefined,
+): Partial<RpcUnloadAnswer> {
+	if (outcome?.reason === undefined) return {};
+	return {
+		reason: outcome.reason as UnloadRefusalReason,
+		...(outcome.detail === undefined ? {} : { detail: outcome.detail }),
+		...(outcome.action === undefined ? {} : { action: outcome.action }),
+	};
 }
 
 function refused(refusal: Refusal): RpcUnloadAnswer {

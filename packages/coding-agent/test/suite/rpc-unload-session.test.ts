@@ -22,7 +22,7 @@ describe("unload_session", () => {
 		});
 		expect(await parked).toMatchObject({ sessionPath: opened.sessionPath, reason: "unloaded" });
 		const listed = await client.request({ type: "list_sessions" });
-		expect((listed.data?.sessions as { sessionId: string }[]).map((row) => row.sessionId)).not.toContain(
+		expect(((listed.data?.sessions ?? []) as { sessionId: string }[]).map((row) => row.sessionId)).not.toContain(
 			opened.sessionId,
 		);
 		const reopened = await openSession(client, { sessionPath: opened.sessionPath });
@@ -66,7 +66,7 @@ describe("unload_session", () => {
 		const state = await client.request({ type: "get_state", sessionId: reopened.sessionId });
 
 		expect(unloaded).toMatchObject({ data: { outcome: "unloaded" } });
-		expect((state.data?.ordered as { text: string }[]).map((input) => input.text)).toEqual(["still owed"]);
+		expect(((state.data?.ordered ?? []) as { text: string }[]).map((input) => input.text)).toEqual(["still owed"]);
 		await host.stop();
 	}, 240_000);
 
@@ -94,9 +94,26 @@ describe("unload_session", () => {
 		expect(refused).toMatchObject({ data: { outcome: "refused", reason: "children_live" } });
 		expect(String(refused.data?.action)).toContain("detach");
 		expect(detached).toMatchObject({ data: { outcome: "unloaded" } });
-		const rows = (listed.data?.sessions as { sessionId: string }[]).map((row) => row.sessionId);
+		const rows = ((listed.data?.sessions ?? []) as { sessionId: string }[]).map((row) => row.sessionId);
 		expect(rows).toContain(child.sessionId);
 		expect(rows).not.toContain(parent.sessionId);
+		await host.stop();
+	}, 240_000);
+
+	it("refuses while extension work is live, even with interrupt, and unloads it only with force", async () => {
+		await using world = await effectHostWorld();
+		const host = await world.start();
+		const client = await host.connect();
+		const opened = await openSession(client, { cwd: world.cwd, ...MODEL });
+		await client.request({ type: "prompt", sessionId: opened.sessionId, message: "/busyext" });
+
+		const refused = await client.request({ type: "unload_session", sessionId: opened.sessionId, interrupt: true });
+		const forced = await client.request({ type: "unload_session", sessionId: opened.sessionId, force: true });
+
+		expect(refused).toMatchObject({ data: { outcome: "refused", reason: "extension_work" } });
+		expect(String(refused.data?.detail)).toContain("test-background-job");
+		expect(String(refused.data?.action)).toContain("force");
+		expect(forced).toMatchObject({ data: { outcome: "unloaded" } });
 		await host.stop();
 	}, 240_000);
 
