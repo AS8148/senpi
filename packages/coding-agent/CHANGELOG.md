@@ -22,6 +22,7 @@
 ### Changed
 
 - The terminal transcript folds a handoff block into one muted line, `▸ Handoff · Now: … · Next: …`, and keeps its `For you` answer as ordinary text. Ctrl+O, or a click on the line, opens the block as written ([#3323](https://github.com/code-yeongyu/senpi/issues/3323), proposed by @devxoul).
+- The built-in default model for `anthropic-subscription` and `anthropic` is now `claude-opus-5-5` (was `claude-opus-4-8`). It applies only when no model is saved in settings and none is passed on the command line ([#3179](https://github.com/code-yeongyu/senpi/pull/3179)).
 
 ### Fixed
 
@@ -47,6 +48,7 @@
 - A retained worker session that the successor host reopens after an idle handover stays hidden from a default `list_sessions` and keeps its context, auto-titling and retry fallback. The successor now reopens a parked session through the same open as a client's `open_session` ([#3368](https://github.com/code-yeongyu/senpi/issues/3368)).
 - A client-less retained session opened with `permissionPreset: "ask"` keeps asking before gated tools after an idle host generation handover. The successor host reopened it under the host's default preset, so a client that attached without naming a preset ran gated tools without a prompt. The parked record now carries the session's permission preset, prompt surface and browser engine ([#3364](https://github.com/code-yeongyu/senpi/issues/3364)).
 - A client-less retained session (opened over the host socket with `retain_on_disconnect`, then disconnected) is no longer dropped on every idle host generation handover: the successor host now reopens exactly its predecessor's handoff-parked retained sessions on startup, by path and with the same durable session id, instead of coming up empty ([#3282](https://github.com/code-yeongyu/senpi/issues/3282)). A path whose open is already in flight attaches to that open once it finishes rather than failing `session_path_in_use`, and a waiting reopen is bounded on the waiter only so a slow-but-healthy open is never treated as stuck. The predecessor no longer reopens into its own registry a session it has just parked for its successor, which under load let its drain close the session and left the successor with nothing to reopen.
+- With no default model set, startup no longer settles on a model too small to start (for example a small custom model imported from OpenCode) and crashes with a stack trace. It moves to the next available model that fits and says why. If none fits, it prints one line naming the model, how it was chosen and what to do, then exits. A model you chose yourself is never swapped ([#3333](https://github.com/code-yeongyu/senpi/issues/3333), reported by @taxilian).
 
 ### Removed
 
