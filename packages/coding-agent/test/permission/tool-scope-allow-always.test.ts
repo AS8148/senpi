@@ -5,8 +5,8 @@
  * "go anywhere"), tool-wide for a free `input` argument, and nothing wider for a command or path.
  */
 import { afterEach, describe, expect, it } from "vitest";
+import { urlOriginAlias, widerAlwaysScope } from "../../src/core/extensions/builtin/permission-system/always-scope.ts";
 import { evaluate } from "../../src/core/extensions/builtin/permission-system/evaluate.ts";
-import { widerAlwaysScope } from "../../src/core/extensions/builtin/permission-system/always-scope.ts";
 import { closeLiveHosts, createLiveHost, type LivePermissionHost } from "./live-permission-host.ts";
 
 afterEach(closeLiveHosts);
@@ -76,6 +76,17 @@ describe("a wider Allow always for tools without a parser (#3403)", () => {
 		expect(host.prompts()).toBe(1);
 	}, 30_000);
 
+	it("a URL whose host is a wildcard never offers a domain scope", async () => {
+		const host = await createLiveHost({ preset: "ask" });
+		await host.bind();
+
+		const run = host.runProbe("fetch_fixture", { url: "https://*.example.invalid/a" });
+		const prompt = await host.waitForPrompt();
+		expect(prompt.options.filter((option) => option.endsWith("always in this project"))).toEqual([]);
+		prompt.resolve("Deny");
+		await run;
+	}, 30_000);
+
 	it("a command-shaped tool never offers a wider scope", async () => {
 		const host = await createLiveHost({ preset: "ask" });
 		await host.bind();
@@ -89,23 +100,64 @@ describe("a wider Allow always for tools without a parser (#3403)", () => {
 });
 
 describe("widerAlwaysScope (#3403)", () => {
-	const domain = widerAlwaysScope("fetch_fixture", "url", "https://example.invalid/a");
+	/** Decides `url` under the domain grant offered for `grantUrl`, as the permission system does. */
+	const allowedUnder = (grantUrl: string, url: string): boolean => {
+		const scope = widerAlwaysScope("fetch_fixture", "url", grantUrl);
+		if (scope === undefined) throw new Error(`no domain scope for ${grantUrl}`);
+		const rules = scope.patterns.map((pattern) => ({
+			permission: "fetch_fixture",
+			pattern,
+			action: "allow" as const,
+		}));
+		const alias = urlOriginAlias(url);
+		return evaluate("fetch_fixture", alias === undefined ? [url] : [url, alias], rules).action === "allow";
+	};
 
-	it("covers the URL's own origin, and nothing that only starts like it", () => {
-		const rules = (domain?.patterns ?? []).map((pattern) => ({ permission: "fetch_fixture", pattern, action: "allow" as const }));
-		const allowed = (url: string) => evaluate("fetch_fixture", url, rules).action === "allow";
-		expect(allowed("https://example.invalid")).toBe(true);
-		expect(allowed("https://example.invalid/deep/path")).toBe(true);
-		expect(allowed("https://example.invalid/?x=1")).toBe(true);
-		// "?" is a one-character wildcard in patterns, so no query pattern is offered: a bare query asks
-		expect(allowed("https://example.invalid?x=1")).toBe(false);
-		expect(allowed("https://example.invalid.evil.test/")).toBe(false);
-		expect(allowed("https://example.invalid@evil.test/")).toBe(false);
-		expect(allowed("https://example.invalid:8443/")).toBe(false);
-		expect(allowed("http://example.invalid/")).toBe(false);
+	it("allows only the grant's own origin, written any way the URL parser normalizes it", () => {
+		const grant = "https://example.invalid/a";
+		expect(allowedUnder(grant, "https://example.invalid")).toBe(true);
+		expect(allowedUnder(grant, "https://example.invalid/deep/path")).toBe(true);
+		expect(allowedUnder(grant, "https://example.invalid/?x=1")).toBe(true);
+		expect(allowedUnder(grant, "https://example.invalid?x=1")).toBe(true);
+		expect(allowedUnder(grant, "https://EXAMPLE.invalid/x")).toBe(true);
+		expect(allowedUnder(grant, "https://example.invalid:443/x")).toBe(true);
+		expect(allowedUnder(grant, "https://user:pass@example.invalid/x")).toBe(true);
 	});
 
-	it("offers nothing for a command, a path, a non-http URL or an arg-less call", () => {
+	it("refuses look-alike hosts, other ports, other schemes and paths that mention the host", () => {
+		const grant = "https://example.invalid/a";
+		expect(allowedUnder(grant, "https://example.invalid.evil.test/")).toBe(false);
+		expect(allowedUnder(grant, "https://example.invalid@evil.test/")).toBe(false);
+		expect(allowedUnder(grant, "https://evil.test/example.invalid")).toBe(false);
+		expect(allowedUnder(grant, "https://evil.test/.example.invalid/x")).toBe(false);
+		expect(allowedUnder(grant, "https://example.invalid:8443/")).toBe(false);
+		expect(allowedUnder(grant, "http://example.invalid/")).toBe(false);
+	});
+
+	it("never offers a domain scope for a host with glob or regex characters", () => {
+		expect(widerAlwaysScope("fetch_fixture", "url", "https://*.example.invalid/a")).toBeUndefined();
+		expect(widerAlwaysScope("fetch_fixture", "url", "https://*/a")).toBeUndefined();
+		expect(widerAlwaysScope("fetch_fixture", "url", "https://exa[mple.invalid/")).toBeUndefined();
+		expect(widerAlwaysScope("fetch_fixture", "url", "https://exa?mple.invalid/")?.label).toBe(
+			"Allow fetch_fixture on exa always in this project",
+		);
+	});
+
+	it("names an IDN host by its punycode and matches its other spellings", () => {
+		const scope = widerAlwaysScope("fetch_fixture", "url", "https://bücher.example/a");
+		expect(scope?.label).toBe("Allow fetch_fixture on xn--bcher-kva.example always in this project");
+		expect(allowedUnder("https://bücher.example/a", "https://xn--bcher-kva.example/b")).toBe(true);
+		expect(allowedUnder("https://bücher.example/a", "https://BÜCHER.example/c")).toBe(true);
+	});
+
+	it("keeps a non-default port in the scope and its label", () => {
+		expect(widerAlwaysScope("fetch_fixture", "url", "https://example.invalid:8443/a")?.label).toBe(
+			"Allow fetch_fixture on example.invalid:8443 always in this project",
+		);
+		expect(allowedUnder("https://example.invalid:8443/a", "https://example.invalid/")).toBe(false);
+	});
+
+	it("offers nothing for a command, a path, a non-http URL or a built-in tool", () => {
 		expect(widerAlwaysScope("shell_fixture", "command", "echo hi")).toBeUndefined();
 		expect(widerAlwaysScope("tool", "path", "/etc/passwd")).toBeUndefined();
 		expect(widerAlwaysScope("tool", "url", "file:///etc/passwd")).toBeUndefined();

@@ -5,10 +5,10 @@
 ### What changed
 
 - `always-scope.ts` (new): `widerAlwaysScope(toolName, argKey, arg)` returns the extra option a prompt may offer when the request came from the fallback parser (a tool with no parser of its own):
-  - a URL argument gets its DOMAIN, "Allow <tool> on <host> always in this project", with patterns `<origin>` and `<origin>/*`;
+  - a URL argument gets its DOMAIN, "Allow <tool> on <host> always in this project". The grant is ONE literal, `origin=<canonical origin>`, matched by equality. `canonicalUrlOrigin` gives the scheme, the parser's lowercased punycode host, and the port only when it is not the default; no userinfo. A host with anything but DNS characters (`*`, `?`, `[` ...) gets no domain option (#3416 review HIGH: `https://*/a` became `https://*` and allowed any site).
   - a free `input`/`pattern` argument gets the tool, "Allow <tool> always in this project", with pattern `*`;
   - a command or a path gets nothing wider, and built-in tools never do.
-- `parsers.ts`: the fallback records which argument it used and attaches `widerAlways` to the request.
+- `parsers.ts`: the fallback records which argument it used and attaches `widerAlways`. A URL request is decided against `[raw URL, origin=<canonical origin>]` (`ruleAliases`), so the grant applies to every spelling of the origin, and a rule on the raw URL (a deny included) still matches it.
 - `prompt.ts`: the option appears after "Allow always" and replies `always` with the wider patterns.
 - `service.ts` and `index.ts`: the reply's patterns become the session's approvals and are persisted to the agent-dir store, so other open sessions of the project stop asking too.
 
@@ -31,7 +31,8 @@ The prompt, its options and the stored approvals belong to this builtin's decisi
 - a second open session stops asking;
 - a free-input tool is allowed tool-wide;
 - a command-shaped tool gets no wider option;
-- no `?*` pattern, because the matcher reads `?` as any one character.
+- `*`, `?` and `[` hosts get no domain option;
+- uppercase, `:443`, userinfo and IDN spellings match the grant, while another port or a host named only in the path does not.
 
 ## 2026-10-16 - The legacy approvals import keeps pre-store answers (#3301 review round 2)
 

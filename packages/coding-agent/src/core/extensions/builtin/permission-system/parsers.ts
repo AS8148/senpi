@@ -1,4 +1,3 @@
-import { widerAlwaysScope } from "./always-scope.ts";
 import { dirname, resolve } from "node:path";
 import { realpathWithoutOpen } from "../../../../utils/paths.ts";
 import type { ToolInfo } from "../../types.ts";
@@ -12,6 +11,7 @@ import {
 } from "../permission-system/external-dir.ts";
 import type { Request } from "../permission-system/types.ts";
 import { setApprovedMonitorParent } from "../terminal/monitor-permission.ts";
+import { urlOriginAlias, widerAlwaysScope } from "./always-scope.ts";
 import { parseReadPermission } from "./read-permission.ts";
 
 /** Simplified permission request without ID/session metadata */
@@ -49,7 +49,16 @@ function fallbackPermissionRequestFor(toolName: string, input: Record<string, un
 	// pattern-specific deny, so the concrete arg is the only target; `*` is the arg-less fallback.
 	// "Allow always" keeps the exact arg; a wider scope is a separate, labelled choice (senpi#3403).
 	const widerAlways = widerAlwaysScope(toolName, argKey, arg);
-	return { permission: toolName, patterns: [arg], always: [arg], ...(widerAlways ? { widerAlways } : {}) };
+	// A URL is also matched as its canonical origin, so a domain grant (a literal origin) applies to
+	// every spelling of that origin; rules on the raw URL, a deny included, still match the raw URL.
+	const originAlias = argKey === "url" ? urlOriginAlias(arg) : undefined;
+	return {
+		permission: toolName,
+		patterns: [arg],
+		always: [arg],
+		...(originAlias === undefined ? {} : { ruleAliases: [arg, originAlias] }),
+		...(widerAlways ? { widerAlways } : {}),
+	};
 }
 
 function getStringEntry(input: Record<string, unknown>, ...keys: string[]): [string, string] | undefined {
