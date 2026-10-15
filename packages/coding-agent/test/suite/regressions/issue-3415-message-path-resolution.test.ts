@@ -1,10 +1,14 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { messagePathProjectRoot, resolveMessagePath } from "../../../src/core/message-path-resolution.ts";
+import {
+	isLocalMessagePath,
+	messagePathProjectRoot,
+	resolveMessagePath,
+} from "../../../src/core/message-path-resolution.ts";
 import { rpcCommandPayloadError } from "../../../src/modes/rpc/rpc-input-validation.ts";
 
 const dirs: string[] = [];
@@ -74,6 +78,31 @@ describe("resolveMessagePath (#3415)", () => {
 		for (const path of ["", "   ", "docs\0/both.md"]) {
 			expect(resolveMessagePath({ path, cwd, projectRoot: root })).toEqual({ status: "not_found", tried: [] });
 		}
+	});
+});
+
+describe("network and device paths never reach the file system (#3419 review H1)", () => {
+	it("refuses every non-local Windows form before any file-system call", () => {
+		for (const path of [
+			"\\\\attacker\\share\\x.pdf",
+			"//attacker/share/x.pdf",
+			"\\\\?\\UNC\\host\\s\\x",
+			"\\??\\UNC\\host\\s\\x",
+			"\\\\.\\pipe\\x",
+			"\\\\?\\C:\\x",
+		]) {
+			expect(resolveMessagePath({ path, cwd: "C:\\work", platform: "win32" })).toEqual({
+				status: "not_found",
+				tried: [],
+			});
+		}
+		expect(isLocalMessagePath("C:\\work\\a.md", "win32")).toBe(true);
+		expect(isLocalMessagePath("\\\\host\\s\\a.md", "win32")).toBe(false);
+		expect(isLocalMessagePath("//host/s/a.md", "linux")).toBe(false);
+	});
+
+	it("ignores a .git in the home folder when choosing the project root", () => {
+		expect(messagePathProjectRoot(homedir())).not.toBe(homedir());
 	});
 });
 
