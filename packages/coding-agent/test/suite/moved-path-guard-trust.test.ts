@@ -13,6 +13,7 @@ import { RpcSessionRegistry } from "../../src/modes/rpc/session-registry.ts";
 import {
 	breadcrumbBody,
 	createMovedLayout,
+	DESKTOP_FILE_MODE,
 	HOME_ID,
 	MOVED_SESSIONS,
 	MOVED_WORKTREE,
@@ -193,6 +194,7 @@ describe("moved-path-guard breadcrumb trust (#2898)", () => {
 		writeFileSync(
 			join(moved.newRoot, "omo-desktop-home.json"),
 			JSON.stringify({ kind: "omo-desktop-data-home", appId: "com.omo.desktop", schemaVersion: 2, homeId: HOME_ID }),
+			{ mode: DESKTOP_FILE_MODE },
 		);
 
 		expect(findMovedPath(join(moved.oldWorktree, "a.ts"))).toBeUndefined();
