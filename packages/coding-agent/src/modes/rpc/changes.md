@@ -1,3 +1,23 @@
+## 2026-10-16 - resolve_path RPC (senpi#3415)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `rpc-input-validation.ts`, `connection-handler.ts`: `resolve_path { path }` answers `resolveMessagePath` for the session (cwd, then project root); `path` must be a non-empty string of at most 4096 characters.
+- `packages/coding-agent/src/modes/rpc/session-command-activity.ts`, `session-held.ts`: `resolve_path` is a read that neither refreshes activity nor needs the writing holder.
+- `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: `resolve_path` capability on multi-session hosts.
+
+### Why
+
+RPC clients (the desktop app) open message links with the same rule the TUI uses (sisyphuslabs/omo-desktop-app#2753).
+
+### Why an extension could not handle it
+
+The command surface and its validation live in the RPC host.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the Session cases next to `get_session_stats`.
+
 ## 2026-10-15 - unload_session and session_parked.reason (senpi#3225)
 
 ### What changed

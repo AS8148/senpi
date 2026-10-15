@@ -205,6 +205,7 @@ import { formatKeyText, keyDisplayText, keyHint, keyText, rawKeyHint } from "./c
 import { LoadedResourceSection } from "./components/loaded-resource-section.ts";
 import { LoginDialogComponent } from "./components/login-dialog.ts";
 import { createMermaidMarkdownTransformer } from "./components/mermaid.ts";
+import { createMessagePathLinkTransformer } from "./components/message-path-links.ts";
 import {
 	type FavoriteModelIds,
 	getModelFullId,
@@ -1053,6 +1054,7 @@ export class InteractiveMode {
 		getMode: () => this.settingsManager.getMermaidRenderingMode(),
 		theme,
 	});
+	private readonly messagePathLinkTransformer = createMessagePathLinkTransformer(() => this.sessionManager.getCwd());
 
 	// Skill commands: command name -> skill file path
 	private skillCommands = new Map<string, string>();
@@ -2921,7 +2923,11 @@ export class InteractiveMode {
 	}
 
 	private getMarkdownTransformers(): MarkdownTransformer[] {
-		return [this.mermaidMarkdownTransformer, ...this.session.extensionRunner.getMarkdownTransformers()];
+		return [
+			this.mermaidMarkdownTransformer,
+			this.messagePathLinkTransformer,
+			...this.session.extensionRunner.getMarkdownTransformers(),
+		];
 	}
 
 	/**

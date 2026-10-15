@@ -6,6 +6,7 @@
 
 ### Added
 
+- Paths in messages mean one file everywhere: RPC `resolve_path { path }` (capability `resolve_path`) resolves a relative path against the session's working directory, then the project root, and answers the realpath or every candidate tried; the TUI turns such links into `file://` links to the same file ([#3415](https://github.com/code-yeongyu/senpi/issues/3415)).
 - RPC `unload_session` frees a loaded session and keeps it reopenable: it refuses with a reason and an action while work runs, child sessions are open or other clients are attached (unless `interrupt`, `children: "detach"` or `force`), keeps queued input for the reopen, and parks it with `session_parked { reason: "unloaded" }`; the idle sweep's park now says `reason: "idle"`. CLI: `senpi host session unload` ([#3225](https://github.com/code-yeongyu/senpi/issues/3225)).
 - A queued `steer` / `follow_up` sent without a `clientMessageId` is recorded durably under a host-minted id and restored exactly once after a host restart ([#1971](https://github.com/code-yeongyu/senpi/issues/1971)).
 - Two queue-or-start prompts arriving together on an idle session no longer start two turns; the second joins the first ([#3224](https://github.com/code-yeongyu/senpi/issues/3224)).

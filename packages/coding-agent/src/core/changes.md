@@ -1,3 +1,21 @@
+## 2026-10-16 - One rule for what a message path means (senpi#3415)
+
+### What changed
+
+- `packages/coding-agent/src/core/message-path-resolution.ts` (new): `resolveMessagePath({ path, cwd, projectRoot })` tries a relative path against the session's working directory, then the project root (`messagePathProjectRoot`: nearest `.git`, else the nearest project marker), and answers the first existing candidate's realpath with its kind and base, or every candidate tried.
+
+### Why
+
+The TUI, RPC clients and the desktop app each guessed what a relative link meant. The engine knows the working directory and the project root, so it owns the answer once (sisyphuslabs/omo-desktop-app#2748).
+
+### Why an extension could not handle it
+
+The RPC host and the TUI link renderer both need it; it is a core contract, not a tool.
+
+### Expected merge conflict zones
+
+- None: a new file.
+
 ## 2026-10-15 - AgentSession.activeWakeSources (senpi#3225)
 
 ### What changed
