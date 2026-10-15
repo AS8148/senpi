@@ -159,21 +159,25 @@ export class PermissionService {
 	}
 
 	/**
-	 * The real path to compare, case-folded on macOS. A path that does not exist yet (the store before
-	 * the first answer is written) resolves through its parent's real path, so the agent cannot create
-	 * the store first. A bare name has no directory part and cannot name the store, which lives
-	 * outside the workspace.
+	 * The real path to compare, case-folded on macOS. A path that does not exist yet (the store, and
+	 * possibly its directories, before the first answer is written) resolves through its nearest
+	 * EXISTING ancestor's real path at any depth, plus the missing tail, so the agent cannot create the
+	 * store first. A bare name has no directory part and cannot name the store, which lives outside the
+	 * workspace.
 	 */
 	private canonicalForCompare(value: string): string | undefined {
 		if (!value.includes("/") && !value.includes(path.sep)) return undefined;
 		const fold = (real: string) => (process.platform === "darwin" ? real.toLowerCase() : real);
-		try {
-			return fold(fs.realpathSync.native(value));
-		} catch {
+		let existing = path.resolve(value);
+		const missing: string[] = [];
+		for (;;) {
 			try {
-				return fold(path.join(fs.realpathSync.native(path.dirname(value)), path.basename(value)));
+				return fold(path.join(fs.realpathSync.native(existing), ...missing));
 			} catch {
-				return undefined;
+				const parent = path.dirname(existing);
+				if (parent === existing) return undefined;
+				missing.unshift(path.basename(existing));
+				existing = parent;
 			}
 		}
 	}

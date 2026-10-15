@@ -10,7 +10,7 @@
   - The legacy file is deleted only when every line was imported; a file with a refused line stays on disk (the marker keeps it from being read again).
   - The comments no longer call the marker a security boundary.
 - `service.ts`:
-  - `canonicalForCompare` resolves a path that does not exist yet through its parent's real path, so the agent cannot create the store before the first answer is written.
+  - `canonicalForCompare` resolves a path that does not exist yet through its nearest EXISTING ancestor's real path at any depth, plus the missing tail, so the agent cannot create the store (or its directories) before the first answer is written (round-3 LOW: one level up missed a store whose directories were absent).
   - The user-rule filter is computed once.
 
 ### Why
@@ -22,6 +22,7 @@ senpi never wrote a `source` field before the store moved. Requiring it made the
 `test/permission/approved-store-security.test.ts`:
 - "migrates a pre-PR approval line, which never carried a source marker, and keeps it working";
 - "never deletes a legacy file it did not fully import";
+- "refuses a write to the store even when its directories do not exist yet";
 - the forgery case drops only the wildcard permission and non-allow lines;
 - the forgery test file's symlink and post-migration-plant cases.
 
