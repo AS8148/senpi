@@ -1,3 +1,5 @@
+import { messagePathProjectRoot, resolveMessagePath } from "../../core/message-path-resolution.ts";
+import { clientFacingIdentity } from "./client-admission-record.ts";
 /**
  * Per-connection RPC handler.
  *
@@ -57,6 +59,7 @@ import type {
 } from "../../core/extensions/index.ts";
 import { ExtensionRpcRequestNotFoundError } from "../../core/extensions/runner.ts";
 import { describeUsageLimitEntry, describeUsageLimitMessage } from "../../core/retry-fallback/usage-limit.ts";
+import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { storedKeyHint, verifyApiKey } from "../../core/verify-api-key.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
 import { DURABLE_CLIENT_MESSAGE_ID_CAPABILITY } from "./client-admission-record.ts";
@@ -81,6 +84,7 @@ import {
 	type EffectCommandContext,
 	runAbort,
 	runGetEffectStatus,
+	runQueuedInputChange,
 	runSetModel,
 	runSetThinkingLevel,
 } from "./effect-commands.ts";
@@ -121,6 +125,7 @@ import {
 	RPC_ERROR_EVAL_CELLS_UNAVAILABLE,
 	RPC_ERROR_INVALID_EVAL_CELL_REQUEST,
 	RPC_ERROR_MEDIA_NOT_FOUND,
+	STEER_WHEN_IDLE_CAPABILITY,
 } from "./rpc-types.ts";
 import { availableModelsData, interruptRunningTurn } from "./session-control-actions-data.ts";
 import { SessionExtensionUiRequests } from "./session-extension-ui-requests.ts";
@@ -857,6 +862,11 @@ export function createRpcConnectionHandler(
 					correlatedEvents.accept(event satisfies RpcCommandInvocationEvent);
 					return;
 				}
+				if (event.type === "queue_update") {
+					// Same route as every other event; only the minted ids are taken out of the projection.
+					correlatedEvents.accept({ ...event, ordered: event.ordered.map(clientFacingIdentity) });
+					return;
+				}
 				if (event.type === "thinking_level_changed" || event.type === "model_changed") {
 					// Core emits the effective level only; the selection provenance lives beside it
 					// on the session and is what distinguishes an explicit choice from a default.
@@ -986,6 +996,7 @@ export function createRpcConnectionHandler(
 								MEDIA_PLACEHOLDERS_CAPABILITY,
 								DURABLE_CLIENT_MESSAGE_ID_CAPABILITY,
 								EFFECT_LEDGER_CAPABILITY,
+								STEER_WHEN_IDLE_CAPABILITY,
 								CONTINUE_FROM_LEAF_CAPABILITY,
 								EVAL_CELLS_CAPABILITY,
 								AUTH_KEY_VERIFY_CAPABILITY,
@@ -1094,6 +1105,10 @@ export function createRpcConnectionHandler(
 				return success(id, "check_reload_veto", await session.checkReloadVeto());
 			}
 
+			case "dequeue_message":
+			case "edit_queued_message":
+				return runQueuedInputChange(effectContext(), command);
+
 			case "clear_queue": {
 				const cleared = session.clearQueue({ abortWillFollow: command.abortWillFollow ?? false });
 				return success(id, "clear_queue", {
@@ -1106,13 +1121,19 @@ export function createRpcConnectionHandler(
 			case "get_steering_messages":
 				return success(id, "get_steering_messages", {
 					messages: [...session.getSteeringMessages()],
-					ordered: session.getQueuedInputs().filter((input) => input.mode === "steer"),
+					ordered: session
+						.getQueuedInputs()
+						.filter((input) => input.mode === "steer")
+						.map(clientFacingIdentity),
 				});
 
 			case "get_follow_up_messages":
 				return success(id, "get_follow_up_messages", {
 					messages: [...session.getFollowUpMessages()],
-					ordered: session.getQueuedInputs().filter((input) => input.mode === "followUp"),
+					ordered: session
+						.getQueuedInputs()
+						.filter((input) => input.mode === "followUp")
+						.map(clientFacingIdentity),
 				});
 
 			case "abort_branch_summary":
@@ -1418,6 +1439,17 @@ export function createRpcConnectionHandler(
 				return success(id, "get_session_stats", stats);
 			}
 
+			case "resolve_path":
+				return success(
+					id,
+					"resolve_path",
+					resolveMessagePath({
+						path: command.path,
+						cwd: session.cwd,
+						projectRoot: messagePathProjectRoot(session.cwd),
+					}),
+				);
+
 			case "memory_report": {
 				const answer = await answerMemoryReport(session);
 				return answer.ok ? success(id, "memory_report", answer.data) : error(id, "memory_report", answer.error);
@@ -1604,6 +1636,10 @@ export function createRpcConnectionHandler(
 			// =================================================================
 			// Messages
 			// =================================================================
+
+			case "get_subscription_limits": {
+				return success(id, "get_subscription_limits", { accounts: subscriptionLimits.snapshot() });
+			}
 
 			case "get_messages": {
 				return success(id, "get_messages", {
@@ -1834,7 +1870,16 @@ export function createRpcConnectionHandler(
 		}
 	};
 
+	// A single-session connection hears its account's new limit windows as they are reported. A host
+	// session's handler (it has a routing `sessionId`) does not: the host broadcasts the record once.
+	const stopLimitEvents =
+		options.sessionId === undefined
+			? subscriptionLimits.subscribe((limits) =>
+					eventOutput.enqueueEvent({ type: "subscription_limits", ...limits }),
+				)
+			: () => {};
 	const dispose = async (): Promise<void> => {
+		stopLimitEvents();
 		sessionControl?.dispose();
 		sessionControl = undefined;
 		questions.cancelAll();

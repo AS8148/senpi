@@ -110,6 +110,7 @@ import type {
 import type { ReadClassifier } from "../tools/read-classifiers.ts";
 import type { ModelRoute, ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
 import type { McpServerDeclaration } from "./builtin/mcp/config-schema.ts";
+import type { PermissionPresetName } from "./builtin/permission-system/types.ts";
 import type { EvalHandleHost } from "./eval-handle-host.ts";
 import type { ExtensionKernelTools } from "./kernel-tools-context.ts";
 import type { SessionControlActions, SessionControlWakeEvent } from "./session-control-types.ts";
@@ -2398,6 +2399,14 @@ export interface ExtensionAPI {
 	/** Get the value of a registered CLI flag. */
 	getFlag(name: string): boolean | string | undefined;
 
+	/**
+	 * The permission preset the permission system enforces for this session right now: the flag, then
+	 * project and global settings (with the same untrusted-project handling), then the `full-access`
+	 * default. A preset flag changed since the last tool call is applied first. `undefined` when the
+	 * permission system is not running for the session, its setup failed, or the session is not bound yet.
+	 */
+	getPermissionPreset(): PermissionPresetName | undefined;
+
 	// =========================================================================
 	// Message Rendering
 	// =========================================================================
@@ -2447,7 +2456,7 @@ export interface ExtensionAPI {
 	): void;
 
 	/** Append a custom entry to the session for state persistence (not sent to LLM). */
-	appendEntry<T = unknown>(customType: string, data?: T): void;
+	appendEntry<T = unknown>(customType: string, data?: T, options?: AppendEntryOptions): void;
 
 	// =========================================================================
 	// Session Metadata
@@ -2848,7 +2857,16 @@ export type SendUserMessageHandler = (
 	options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean },
 ) => void;
 
-export type AppendEntryHandler = <T = unknown>(customType: string, data?: T) => void;
+export interface AppendEntryOptions {
+	/**
+	 * Mark the entry as bookkeeping written at session start without any user action. A session file this
+	 * process created that holds only setup entries and such bookkeeping is removed when the session closes
+	 * without a conversation (senpi#3263). Leave it unset for anything a user created or anything billed.
+	 */
+	startupBookkeeping?: boolean;
+}
+
+export type AppendEntryHandler = <T = unknown>(customType: string, data?: T, options?: AppendEntryOptions) => void;
 
 export type SetSessionNameHandler = (name: string) => void;
 

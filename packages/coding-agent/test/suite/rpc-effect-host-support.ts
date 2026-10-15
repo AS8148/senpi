@@ -40,6 +40,10 @@ export default function (pi) {
 	const faux = fauxProvider({ api: "fauxeffect", provider: "fauxeffect", models: [{ id: "faux-1" }, { id: "faux-2" }] });
 	faux.setResponses(Array.from({ length: 32 }, () => held));
 	pi.registerProvider(faux.provider);
+	// Publishes live extension work, the way background terminal jobs or monitors do.
+	pi.registerCommand("busyext", { description: "publish one live wake source", handler: async () => {
+		pi.events.emit("wake_source_state", { source: "test-background-job", activeCount: 1 });
+	} });
 }`;
 
 export async function rawClient(socketPath: string) {

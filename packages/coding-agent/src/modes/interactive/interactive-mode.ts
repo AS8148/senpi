@@ -80,6 +80,7 @@ import {
 import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.ts";
 import { formatNoModelsAvailableMessage } from "../../core/auth-guidance.ts";
 import { isApiKeyLoginProvider } from "../../core/auth-providers.ts";
+import { markModeCrashHandler } from "../../core/bootstrap-crash-listeners.ts";
 import { envValue } from "../../core/brand.ts";
 import {
 	CACHE_TTL_MS,
@@ -138,6 +139,7 @@ import { type SessionEntry, SessionManager, sessionEntryToContextMessages } from
 import type { FullscreenExitOutput, QuietStartup, TuiMode } from "../../core/settings-manager.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
+import { containStaleExtensionError } from "../../core/stale-extension-containment.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
 import { formatThinkingClampWarning } from "../../core/thinking-levels.ts";
 import { formatTimings, resetTimings, time } from "../../core/timings.ts";
@@ -203,6 +205,7 @@ import { formatKeyText, keyDisplayText, keyHint, keyText, rawKeyHint } from "./c
 import { LoadedResourceSection } from "./components/loaded-resource-section.ts";
 import { LoginDialogComponent } from "./components/login-dialog.ts";
 import { createMermaidMarkdownTransformer } from "./components/mermaid.ts";
+import { createMessagePathLinkTransformer } from "./components/message-path-links.ts";
 import {
 	type FavoriteModelIds,
 	getModelFullId,
@@ -1051,6 +1054,7 @@ export class InteractiveMode {
 		getMode: () => this.settingsManager.getMermaidRenderingMode(),
 		theme,
 	});
+	private readonly messagePathLinkTransformer = createMessagePathLinkTransformer(() => this.sessionManager.getCwd());
 
 	// Skill commands: command name -> skill file path
 	private skillCommands = new Map<string, string>();
@@ -2919,7 +2923,11 @@ export class InteractiveMode {
 	}
 
 	private getMarkdownTransformers(): MarkdownTransformer[] {
-		return [this.mermaidMarkdownTransformer, ...this.session.extensionRunner.getMarkdownTransformers()];
+		return [
+			this.mermaidMarkdownTransformer,
+			this.messagePathLinkTransformer,
+			...this.session.extensionRunner.getMarkdownTransformers(),
+		];
 	}
 
 	/**
@@ -6726,6 +6734,7 @@ export class InteractiveMode {
 			this.showWarning(INSPECTOR_VM_IMPORT_WARNING);
 			return;
 		}
+		if (containStaleExtensionError(error, origin)) return;
 		this.isShuttingDown = true;
 		try {
 			this.unregisterSignalHandlers();
@@ -6839,9 +6848,11 @@ export class InteractiveMode {
 		// in pi) leaves the terminal in raw mode with no cursor.
 		const uncaughtExceptionHandler = (error: Error, origin: "uncaughtException" | "unhandledRejection") =>
 			this.uncaughtCrash(error, origin);
+		markModeCrashHandler(uncaughtExceptionHandler);
 		process.prependListener("uncaughtException", uncaughtExceptionHandler);
 		this.signalCleanupHandlers.push(() => process.off("uncaughtException", uncaughtExceptionHandler));
 		const unhandledRejectionHandler = (reason: unknown) => this.unhandledRejection(reason);
+		markModeCrashHandler(unhandledRejectionHandler);
 		process.prependListener("unhandledRejection", unhandledRejectionHandler);
 		this.signalCleanupHandlers.push(() => process.off("unhandledRejection", unhandledRejectionHandler));
 
