@@ -17,6 +17,18 @@ export const EFFECT_OUTCOMES = {
 		detail: "an abort with clearQueue removed this queued input before it was delivered",
 		action: "send the input again with a new clientMessageId if it is still needed",
 	},
+	queuedInputAlreadyDelivered: {
+		kind: "already_delivered",
+		reason: "already_delivered",
+		detail: "the queued message had already been handed to the agent, so it can no longer be removed or edited",
+		action: "send a follow-up message to correct it, or abort the turn",
+	},
+	queuedInputNotFound: {
+		kind: "not_found",
+		reason: "not_found",
+		detail: "no queued message has this queuedId in this session",
+		action: "read queuedId values from get_state or queue_update and retry with one that is still queued",
+	},
 	inputDroppedByReplace: {
 		kind: "dropped_by_replace",
 		reason: "dropped_by_replace",
@@ -56,7 +68,13 @@ export const EFFECT_OUTCOMES = {
 		kind: "interrupted_by_reopen",
 		reason: "interrupted_by_reopen",
 		detail: "the session was reopened before the queued input was removed",
-		action: "re-read queue_update.queued and retry with a new effectId",
+		action: "re-read queue_update.ordered and retry with a new effectId",
+	},
+	editQueuedInterruptedByReopen: {
+		kind: "interrupted_by_reopen",
+		reason: "interrupted_by_reopen",
+		detail: "the session was reopened before the queued input was edited",
+		action: "re-read queue_update.ordered and retry with a new effectId",
 	},
 } as const satisfies Record<string, EffectOutcome>;
 

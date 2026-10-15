@@ -61,6 +61,10 @@ export default function (pi) {
 	pi.on("agent_end", async (_event, ctx) => {
 		if (ctx.model?.id === "faux-stubborn") await whenReleased();
 	});
+	// Publishes live extension work, the way background terminal jobs or monitors do.
+	pi.registerCommand("busyext", { description: "publish one live wake source", handler: async () => {
+		pi.events.emit("wake_source_state", { source: "test-background-job", activeCount: 1 });
+	} });
 }`;
 
 export async function rawClient(socketPath: string) {
