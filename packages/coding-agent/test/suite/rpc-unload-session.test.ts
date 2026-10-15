@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { effectHostWorld, openSession, settledTurn } from "./rpc-effect-host-support.ts";
+import { effectHostWorld, effectOf, openSession, settledTurn } from "./rpc-effect-host-support.ts";
 
 // senpi#3225: unload_session frees a loaded session, parks it with a reason, and open_session reopens it.
 
@@ -67,6 +67,39 @@ describe("unload_session", () => {
 
 		expect(unloaded).toMatchObject({ data: { outcome: "unloaded" } });
 		expect(((state.data?.ordered ?? []) as { text: string }[]).map((input) => input.text)).toEqual(["still owed"]);
+		await host.stop();
+	}, 240_000);
+
+	it("with clearQueue: true restores nothing on the reopen and closes each cleared input as dropped_by_clear (senpi#3412)", async () => {
+		await using world = await effectHostWorld();
+		const host = await world.start();
+		const client = await host.connect();
+		const opened = await openSession(client, { cwd: world.cwd, ...MODEL });
+		const queued = await client.request({
+			type: "steer",
+			sessionId: opened.sessionId,
+			message: "with an id",
+			clientMessageId: "c1",
+		});
+		await client.request({ type: "steer", sessionId: opened.sessionId, message: "without an id" });
+		expect(queued).toMatchObject({ success: true, data: { admission: { state: "queued" } } });
+
+		const unloaded = await client.request({ type: "unload_session", sessionId: opened.sessionId, clearQueue: true });
+		const reopened = await openSession(client, { sessionPath: opened.sessionPath });
+		const state = await client.request({ type: "get_state", sessionId: reopened.sessionId });
+		const status = await client.request({
+			type: "get_effect_status",
+			effectId: "c1",
+			sessionPath: opened.sessionPath,
+		});
+
+		expect(unloaded).toMatchObject({ data: { outcome: "unloaded" } });
+		expect(state.data?.ordered ?? []).toEqual([]);
+		expect(effectOf(status)).toMatchObject({
+			kind: "input",
+			state: "failed",
+			outcome: { kind: "dropped_by_clear", action: expect.any(String) },
+		});
 		await host.stop();
 	}, 240_000);
 
