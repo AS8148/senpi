@@ -21,6 +21,7 @@ import type {
 	LoginOptions,
 	ProviderAuth,
 } from "./auth/types.ts";
+import { inferGoogleThinkingLevelMap } from "./google-thinking-generation.ts";
 import { builtinCatalogAdvertisesMax } from "./model-catalog.ts";
 import { costCardAt } from "./model-cost.ts";
 import { InMemoryModelsStore, type ModelsStore, type ModelsStoreEntry } from "./models-store.ts";
@@ -1297,11 +1298,16 @@ export function inferOpenAIThinkingLevelMap<TApi extends Api>(model: Model<TApi>
 	return undefined;
 }
 
+/** The level map a row carries, else the one inferred from documented provider controls. */
+export function inferThinkingLevelMap<TApi extends Api>(model: Model<TApi>): ThinkingLevelMap | undefined {
+	return inferOpenAIThinkingLevelMap(model) ?? inferGoogleThinkingLevelMap(model);
+}
+
 export function getSupportedThinkingLevels<TApi extends Api>(model: Model<TApi>): ModelThinkingLevel[] {
 	if (!model.reasoning) return ["off"];
 
 	return EXTENDED_THINKING_LEVELS.filter((level) => {
-		const mapped = inferOpenAIThinkingLevelMap(model)?.[level];
+		const mapped = inferThinkingLevelMap(model)?.[level];
 		if (mapped === null) return false;
 		if (level === "xhigh") return supportsXhigh(model);
 		if (level === "max") return supportsMax(model);

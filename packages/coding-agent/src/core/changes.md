@@ -16,6 +16,42 @@
 
 - LOW: the `cost` branch of the model override merge.
 
+## 2026-10-15 - Queued inputs carry a queuedId and can be removed or edited (senpi#1971)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `QueuedInput.queuedId` (`q_<n>`, assigned in `_recordQueuedInput`); the exact queued `AgentMessage` per id; `dequeueQueuedInput` / `editQueuedInput` change the visible lists, the post-compaction deferred lists and the agent's native queue by identity; delivered ids are remembered (bounded) so a late change answers `already_delivered`.
+
+### Why
+
+Removing or editing one queued message needs an identity that survives duplicate texts and reaches the queue the agent drains.
+
+### Why an extension could not handle it
+
+The queues are `AgentSession` and agent-core state.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: `QueuedInput`, `_recordQueuedInput`, `_removeQueuedInput`, `_enqueuePreparedInput`, `clearQueue`.
+
+## 2026-10-15 - The startup-bookkeeping doc comment names only real startup writers (senpi#3263 review)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: the `discardHeaderOnlyFile()` doc comment lists the startup rules scan and repository identity as marked writers and no longer names the subscription binding marker, which is now written unmarked.
+
+### Why
+
+- `packages/coding-agent/src/core/session-manager.ts`: the binding marker is written only after a clean assistant turn, so it is never startup bookkeeping; naming it taught extension authors to mark entries written after user activity (Opus review LOW-1 on senpi#3329).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/session-manager.ts`: the comment documents the core discard rule itself.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/session-manager.ts`: LOW, the `discardHeaderOnlyFile()` doc comment.
+
 ## 2026-10-14 - A session closed without a conversation leaves no file, whatever extensions wrote (senpi#3263)
 
 ### What changed
@@ -57,6 +93,25 @@
 ### Expected merge conflict zones
 
 - LOW: `CredentialSlotRepository` read/write paths in `state-store.ts`; `onSuccess`/`persistBlock` in `rotation-stream.ts`; the lease branch of both lanes in `rotation-slots.ts`.
+
+## 2026-10-15 - Two fallback-walk fixes on rungs of one model (senpi#3321, senpi#3344)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/candidates.ts`: after the registry lookup, an entry whose clamped level equals the running level on the current model is skipped as `self` (`toggle:xhigh` on a model without xhigh, while running `toggle:high`). The new optional `isModelSkipped(base)` filter skips every rung of a model.
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: `tryFallback` records the model a pure network blip just failed on and passes it as `isModelSkipped` for that walk only, so a blip never falls back to a sibling rung on the same transport. `modelWidePark` now excludes network blips, which park nothing, so their walk is scanned once.
+
+### Why
+
+#3321: the self check compared the unclamped level, so the walk returned to the rung that had just hard-errored. #3344: a blip on `X:high` with a chain `X:off -> Y` retried `X:off` on the same failing transport, and a blip walk scanned the chain twice.
+
+### Why an extension could not handle it
+
+The candidate scan and the walk are internal to the retry-fallback controller.
+
+### Expected merge conflict zones
+
+- `candidates.ts` `scanCandidates`; `controller.ts` `tryFallback` (now split into `tryFallback` + `walkFallback`) and `nextCandidate`.
 
 ## 2026-10-14 - A hard error parks only its rung, so a later rung of the same model stays reachable (senpi#3311)
 

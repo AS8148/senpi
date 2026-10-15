@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `scripts/check-entry-graphs.mjs`: the `@earendil-works/pi-ai` `./models` budget is 23 files (was 22). The added file is `model-cost.ts`, the type-only leaf that picks the cost card in force; the reason is recorded beside the budget and the forbid rules are unchanged.
+- `scripts/check-entry-graphs.mjs`: the `@earendil-works/pi-ai` `./models` budget is 24 files (was 23 after senpi#3292). The added file is `model-cost.ts`, the type-only leaf that picks the cost card in force; the reason is recorded beside the budget and the forbid rules are unchanged.
 
 ### Why
 
@@ -14,7 +14,7 @@
 
 ### Expected merge conflict zones
 
-- The `./models` row in `check-entry-graphs.mjs` (senpi#3293 raises the same row; whichever lands second takes 24).
+- The `./models` row in `check-entry-graphs.mjs`, which senpi#3292 also raised.
 
 ## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
 
@@ -163,6 +163,24 @@ Release orchestration is repository tooling.
 ### Expected merge conflict zones
 
 - `main()` and the test-gate section of `scripts/release.mjs`; the `release` job comment and timeout in `publish-npm.yml`.
+
+## 2026-10-15 - The ./models entry graph reaches the generation-4 thinking leaf (senpi#3292)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs`: the `@earendil-works/pi-ai` `./models` budget is 23 files (was 22). The added file is `google-thinking-generation.ts`, a type-only leaf that gives a generation-4 row with no level map its low/medium/high levels; the reason is recorded beside the budget and the forbid rules are unchanged.
+
+### Why
+
+senpi#3292: generation-4 rows reject a thinking budget with HTTP 400, so `getSupportedThinkingLevels` in `models.ts` must know their levels even when the catalog row ships no map. That brings the leaf into the `./models` graph.
+
+### Why an extension could not handle it
+
+The entry-graph budgets are a repository build check.
+
+### Expected merge conflict zones
+
+- The `./models` row in `check-entry-graphs.mjs`.
 
 ## 2026-10-07 - The ./models entry graph allows one more file (senpi#2893)
 

@@ -6,6 +6,7 @@
 
 ### Added
 
+- Every queued input has a `queuedId` (`get_state.ordered`, `queue_update.ordered`); RPC `dequeue_message` removes one and `edit_queued_message` replaces its text in place, optionally as ledger effects, with `already_delivered` / `not_found` answers that carry an action ([#1971](https://github.com/code-yeongyu/senpi/issues/1971)).
 - `pi.appendEntry(customType, data, { startupBookkeeping: true })` marks an entry an extension writes at session start without user action. A session closed without a conversation is removed when it holds only setup entries and marked bookkeeping; any unmarked entry keeps the file ([#3263](https://github.com/code-yeongyu/senpi/issues/3263)).
 
 - `/account <provider> reset <id>` clears one account's cooldown or block (the credential-pool health record and any block a provider lane stored on the account), so the next request tries it again ([#3285](https://github.com/code-yeongyu/senpi/issues/3285)).
@@ -17,6 +18,7 @@
 - The terminal transcript folds a handoff block into one muted line, `▸ Handoff · Now: … · Next: …`, and keeps its `For you` answer as ordinary text. Ctrl+O, or a click on the line, opens the block as written ([#3323](https://github.com/code-yeongyu/senpi/issues/3323), proposed by @devxoul).
 
 ### Fixed
+- A fallback chain no longer returns to the level that just failed when an entry's explicit level clamps to it (for example `X:xhigh` on a model without xhigh while `X:high` is running), and a network blip no longer falls back to another thinking level of the same model on the same failing connection ([#3321](https://github.com/code-yeongyu/senpi/issues/3321), [#3344](https://github.com/code-yeongyu/senpi/issues/3344)).
 
 - Cache keep-alive pings, session prewarm usage, and the goal cache-warm savings estimate now price tokens with the model's cost card in force, so a scheduled list-price change applies to them too. A cost override in `models.json` keeps its own price and ignores the catalog's scheduled cards ([#3378](https://github.com/code-yeongyu/senpi/issues/3378)).
 

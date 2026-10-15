@@ -2034,7 +2034,7 @@ See [send-user-message.ts](../examples/extensions/send-user-message.ts) for a co
 
 Persist extension data. Custom entries do NOT participate in LLM context. In interactive mode, they can also render inside the chat transcript when paired with `pi.registerEntryRenderer()`.
 
-Pass `{ startupBookkeeping: true }` for an entry your extension writes at session start without any user action (a scan record, a binding marker). A session that closes without a conversation then leaves no file behind if it holds only setup entries and such bookkeeping. Leave the option unset for anything a user created or anything billed: an unmarked entry keeps the session file.
+Pass `{ startupBookkeeping: true }` for an entry your extension writes at session start without any user action (a scan record, an environment fingerprint). A session that closes without a conversation then leaves no file behind if it holds only setup entries and such bookkeeping. Leave the option unset for anything a user created or anything billed: an unmarked entry keeps the session file.
 
 ```typescript
 pi.on("session_start", () => {
