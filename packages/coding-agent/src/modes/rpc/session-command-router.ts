@@ -650,14 +650,17 @@ export class SessionCommandRouter {
 	 * the failure response otherwise, exactly as an open does.
 	 */
 	reopenParked(entry: HandoverParkedEntry): Promise<RpcResponse | undefined> {
-		return this.open(parkedOpenCommand(entry), undefined, { reply: false });
+		return this.open(parkedOpenCommand(entry), undefined, { reply: false, defaults: false });
 	}
 
 	private async open(
 		command: Extract<RpcCommand, { type: "open_session" }>,
 		owner?: string,
-		options?: { readonly reply?: boolean },
+		options?: { readonly reply?: boolean; readonly defaults?: boolean },
 	): Promise<RpcResponse | undefined> {
+		// A parked session's reopen replays what its park recorded; a field it left empty stays empty
+		// rather than taking THIS host's default (senpi#3376 review).
+		const defaults = options?.defaults === false ? undefined : this.defaults;
 		const instanceId = this.defaults.hostContext?.host_instance ?? hostInstanceId();
 		if (command.expectedHostInstance !== undefined) {
 			if (typeof command.expectedHostInstance !== "string" || command.expectedHostInstance.trim() === "")
@@ -720,12 +723,12 @@ export class SessionCommandRouter {
 							? {}
 							: { host_socket: this.defaults.hostContext.host_socket }),
 					},
-					permissionPreset: command.permissionPreset ?? this.defaults.permissionPreset,
+					permissionPreset: command.permissionPreset ?? defaults?.permissionPreset,
 					creationModel:
 						command.provider && command.modelId
 							? { provider: command.provider, modelId: command.modelId }
-							: this.defaults.creationModel,
-					initialThinkingLevel: command.thinkingLevel ?? this.defaults.initialThinkingLevel,
+							: defaults?.creationModel,
+					initialThinkingLevel: command.thinkingLevel ?? defaults?.initialThinkingLevel,
 					sessionKind: command.kind,
 					sessionContext: this.defaults.hostContext
 						? { ...command.context, ...this.defaults.hostContext }

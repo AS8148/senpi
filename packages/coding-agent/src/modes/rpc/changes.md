@@ -14,7 +14,7 @@ The successor's reopen went straight to `registry.openSession`, so a reopened se
 
 Two consequences of going through the one open, kept deliberately:
 
-- A field the park did not record (an older record, or a session opened without it) now takes the successor's own default exactly as a client's `open_session` does: `permissionPreset`, model, thinking level and `cwd` (`defaults.cwd`, where the old direct call used `process.cwd()`).
+- The replay is faithful: `reopenParked` opens with `defaults: false`, so a field the park did not record (`permissionPreset`, model, thinking level) stays empty instead of taking THIS host's default, which the predecessor's session never had (senpi#3376 review, `test/rpc-reopen-parked-defaults.test.ts`). `cwd` is always recorded.
 - A record written by a predecessor older than this change carries no `sessionKind`, so that one upgrade handover still reopens a worker session as interactive. Every handover after it records the kind.
 
 ### Why an extension could not handle it

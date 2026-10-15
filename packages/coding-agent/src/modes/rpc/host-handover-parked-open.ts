@@ -59,6 +59,10 @@ export function parkedEntryFromProfile(
 /** The `open_session` a parked entry replays on the successor. */
 export function parkedOpenCommand(entry: HandoverParkedEntry): OpenSessionCommand {
 	const thinkingLevel = thinkingLevelOf(entry.thinkingLevel);
+	if (entry.thinkingLevel !== undefined && thinkingLevel === undefined)
+		process.stderr.write(
+			`senpi rpc successor reopens ${entry.sessionPath} without its unknown thinking level "${entry.thinkingLevel}"\n`,
+		);
 	const command: OpenSessionCommand = {
 		type: "open_session",
 		sessionPath: entry.sessionPath,
