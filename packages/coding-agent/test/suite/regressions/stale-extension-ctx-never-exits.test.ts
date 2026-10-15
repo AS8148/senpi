@@ -100,7 +100,10 @@ describe("a retired extension ctx never ends the session", () => {
 				else delete env.SENPI_RECOVER_INSPECTOR_VM_IMPORT;
 				return spawnSync(command, [...prefix, scenario], { env, encoding: "utf8", timeout: 60_000 });
 			};
-			for (const scenario of ["stale-sync", "stale-async"]) {
+			// Bun never routes an unhandled rejection to `uncaughtException`, and containment deliberately adds no
+			// `unhandledRejection` listener (it would change every rejection's default), so under Bun only the
+			// synchronous throw is contained headless; the TUI's own rejection handler already logs and continues.
+			for (const scenario of runtime === "node" ? ["stale-sync", "stale-async"] : ["stale-sync"]) {
 				test(`a headless ${label} process keeps running after a ${scenario} stale ctx throw`, () => {
 					const result = run(scenario);
 					expect(result.status, result.stderr).toBe(0);

@@ -1,16 +1,16 @@
 type CrashEvent = "uncaughtException" | "unhandledRejection";
 
-const bootstrapListeners = new WeakSet<(...args: never[]) => unknown>();
+const modeHandlers = new WeakSet<(...args: never[]) => unknown>();
 
-/** Marks a process listener installed during bootstrap, before any mode registers its own crash handler. */
-export function markBootstrapCrashListener(listener: (...args: never[]) => unknown): void {
-	bootstrapListeners.add(listener);
+/** Registers a mode's own crash handler (interactive); bootstrap listeners defer only to these. */
+export function markModeCrashHandler(listener: (...args: never[]) => unknown): void {
+	modeHandlers.add(listener);
 }
 
 /**
- * True when a mode (interactive) has registered its own handler for `event`. Bootstrap listeners never
- * count, so two of them cannot each defer to the other and leave a real crash running.
+ * True when a mode has registered its own handler for `event`. Only explicitly marked handlers count,
+ * so neither another bootstrap listener nor an unrelated library listener can silence a real crash.
  */
 export function hasModeCrashHandler(event: CrashEvent): boolean {
-	return process.listeners(event).some((listener) => !bootstrapListeners.has(listener));
+	return process.listeners(event).some((listener) => modeHandlers.has(listener));
 }

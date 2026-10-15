@@ -1,5 +1,5 @@
 import { close as closeInspector, url as inspectorUrl } from "node:inspector";
-import { hasModeCrashHandler, markBootstrapCrashListener } from "./core/bootstrap-crash-listeners.ts";
+import { hasModeCrashHandler } from "./core/bootstrap-crash-listeners.ts";
 import { envValue } from "./core/brand.ts";
 import { isStaleExtensionContextError } from "./core/extensions/builtin/goal/stale-context.ts";
 
@@ -95,7 +95,6 @@ export function installEarlyInspectorVmImportRecovery(): void {
 		console.error(error);
 		process.exit(1);
 	};
-	markBootstrapCrashListener(listener);
 	process.on("uncaughtException", listener);
 }
 

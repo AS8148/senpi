@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `uncaughtCrash` returns early when the error is the runner's stale-ctx guard (`containStaleExtensionError` from the new fork-only `core/stale-extension-containment.ts`). The full stack goes to the debug log, and the session keeps running. Every other uncaught throw still stops the UI and exits 1.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `uncaughtCrash` returns early when the error is the runner's stale-ctx guard (`containStaleExtensionError` from the new fork-only `core/stale-extension-containment.ts`). The full stack goes to the debug log, and the session keeps running. Every other uncaught throw still stops the UI and exits 1. Its two crash handlers are registered with `markModeCrashHandler`, so the bootstrap listeners in `cli-main.ts` defer to them.
 
 ### Why
 
@@ -14,7 +14,7 @@
 
 ### Expected merge conflict zones
 
-- LOW: the early returns at the top of `uncaughtCrash`; the hidden-stdout-log import block.
+- LOW: the early returns at the top of `uncaughtCrash`; the `markModeCrashHandler` calls beside the two `prependListener` calls; the hidden-stdout-log import block.
 
 ## 2026-10-15 - The handoff block folds into one muted line in the transcript (senpi#3323)
 

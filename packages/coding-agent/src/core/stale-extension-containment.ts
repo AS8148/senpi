@@ -1,4 +1,5 @@
-import { hasModeCrashHandler, markBootstrapCrashListener } from "./bootstrap-crash-listeners.ts";
+import { isRecoverableInspectorVmImportError } from "../inspector-policy.ts";
+import { hasModeCrashHandler } from "./bootstrap-crash-listeners.ts";
 import { isStaleExtensionContextError } from "./extensions/builtin/goal/stale-context.ts";
 import { appendDebugLogEntry } from "./hidden-stdout-log.ts";
 
@@ -16,33 +17,23 @@ export function containStaleExtensionError(error: unknown, origin: CrashOrigin):
 	return true;
 }
 
-function fatal(error: unknown): void {
-	console.error(error);
-	process.exit(1);
-}
-
 let installed = false;
 
 /**
- * Print, RPC and host processes have no crash handler of their own, and Bun ends a process on an
- * unhandled rejection: contain a stale ctx on both channels and keep everything else fatal. Interactive
- * mode registers its own handlers, which apply the same containment first.
+ * Print, RPC and host processes have no crash handler of their own. This contains only the stale-ctx
+ * error and keeps every other uncaught throw fatal, exactly like the runtime default. It adds no
+ * `unhandledRejection` listener: that would change the default routing of every rejection, including
+ * the Inspector rejection the early seam recovers through `uncaughtException`.
  */
 export function installStaleExtensionContainment(): void {
 	if (installed) return;
 	installed = true;
-	const onException = (error: Error, origin?: CrashOrigin) => {
+	process.on("uncaughtException", (error: Error, origin?: CrashOrigin) => {
 		if (containStaleExtensionError(error, origin ?? "uncaughtException")) return;
 		if (hasModeCrashHandler("uncaughtException")) return;
-		fatal(error);
-	};
-	const onRejection = (reason: unknown) => {
-		if (containStaleExtensionError(reason, "unhandledRejection")) return;
-		if (hasModeCrashHandler("unhandledRejection")) return;
-		fatal(reason);
-	};
-	markBootstrapCrashListener(onException);
-	markBootstrapCrashListener(onRejection);
-	process.on("uncaughtException", onException);
-	process.on("unhandledRejection", onRejection);
+		// The early Inspector seam (installed just before this one) owns its recoverable rejection.
+		if (isRecoverableInspectorVmImportError(error, origin ?? "uncaughtException")) return;
+		console.error(error);
+		process.exit(1);
+	});
 }

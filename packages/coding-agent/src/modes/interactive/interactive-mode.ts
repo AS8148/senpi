@@ -80,6 +80,7 @@ import {
 import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.ts";
 import { formatNoModelsAvailableMessage } from "../../core/auth-guidance.ts";
 import { isApiKeyLoginProvider } from "../../core/auth-providers.ts";
+import { markModeCrashHandler } from "../../core/bootstrap-crash-listeners.ts";
 import { envValue } from "../../core/brand.ts";
 import {
 	CACHE_TTL_MS,
@@ -6841,9 +6842,11 @@ export class InteractiveMode {
 		// in pi) leaves the terminal in raw mode with no cursor.
 		const uncaughtExceptionHandler = (error: Error, origin: "uncaughtException" | "unhandledRejection") =>
 			this.uncaughtCrash(error, origin);
+		markModeCrashHandler(uncaughtExceptionHandler);
 		process.prependListener("uncaughtException", uncaughtExceptionHandler);
 		this.signalCleanupHandlers.push(() => process.off("uncaughtException", uncaughtExceptionHandler));
 		const unhandledRejectionHandler = (reason: unknown) => this.unhandledRejection(reason);
+		markModeCrashHandler(unhandledRejectionHandler);
 		process.prependListener("unhandledRejection", unhandledRejectionHandler);
 		this.signalCleanupHandlers.push(() => process.off("unhandledRejection", unhandledRejectionHandler));
 
