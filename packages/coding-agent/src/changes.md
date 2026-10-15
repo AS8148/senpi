@@ -1,3 +1,21 @@
+## 2026-10-14 - A model that cannot start is reported, not crashed on (senpi#3333)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: a `ModelUsabilityBudgetError` from `createAgentSessionRuntime` prints its one-line message in red and exits 1, instead of escaping as an uncaught error with a stack and minified bundle source.
+
+### Why
+
+The startup refusal is the user's to fix; a stack trace hid the reason and the fix.
+
+### Why an extension could not handle it
+
+The error is thrown while the runtime is created, before extensions are bound.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: the `createAgentSessionRuntime` call.
+
 ## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
 
 ### What changed
