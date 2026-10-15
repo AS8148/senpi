@@ -431,11 +431,23 @@ type WithParentToolCallId<E> = E extends {
 	? E & { parentToolCallId?: string }
 	: E;
 
-/** Session-specific events that extend the core AgentEvent */
+/** Why a session-level abort happened, when the caller knows: today only a session replacement says so. */
+export interface AgentAbortCause {
+	readonly kind: "session_replaced";
+	/** What replaced the session: `new_session`, `fork` or a `switch_session`/resume. */
+	readonly reason: "new" | "fork" | "resume";
+	/** The replacement's transcript and durable session id, when they are known before the teardown. */
+	readonly targetSessionFile?: string;
+	readonly targetSessionId?: string;
+}
+
 type AgentSessionAgentEndEvent = Extract<AgentEvent, { type: "agent_end" }> & {
 	willRetry: boolean;
+	/** Present when the run was aborted by an abort that named its cause (for example a session replacement). */
+	abortCause?: AgentAbortCause;
 };
 
+/** Session-specific events that extend the core AgentEvent */
 export type AgentSessionEvent =
 	| WithParentToolCallId<Exclude<AgentEvent, { type: "agent_end" | "message_update" }>>
 	| AgentSessionAgentEndEvent
@@ -1140,6 +1152,8 @@ export class AgentSession {
 	private _followUpMessages: string[] = [];
 	/** Recovery-only order across both native queue modes and TUI compaction ownership. */
 	private _queuedInputOrder: QueuedInput[] = [];
+	/** The cause of the abort in flight, reported on the `agent_end` it produces. */
+	private _abortCause: AgentAbortCause | undefined;
 	private _nextQueuedInputOrder = 0;
 	private _nextQueuedId = 0;
 	/** The exact message object queued for each `queuedId`, so removal and edits hit the native queue by identity. */
@@ -3280,6 +3294,12 @@ export class AgentSession {
 		}
 
 		const agentEndWillRetry = event.type === "agent_end" && this._willRetryAfterAgentEnd(event.messages);
+		// A cause belongs to the run it stopped: a new run drops a stale one, the aborted run's agent_end takes it.
+		if (event.type === "agent_start") this._abortCause = undefined;
+		// Abort provenance, not the last message's shape: a run stopped mid-tool ends on a toolUse message.
+		const abortCause =
+			event.type === "agent_end" && this.currentAbortSource !== undefined ? this._abortCause : undefined;
+		if (abortCause !== undefined) this._abortCause = undefined;
 
 		// Emit to extensions first. Agent event persistence is intentionally
 		// asynchronous, so retain the source run signal while dispatching.
@@ -3294,7 +3314,11 @@ export class AgentSession {
 		// Notify all listeners
 		this._emit(
 			event.type === "agent_end"
-				? { ...event, willRetry: agentEndWillRetry }
+				? {
+						...event,
+						willRetry: agentEndWillRetry,
+						...(abortCause === undefined ? {} : { abortCause }),
+					}
 				: event.type === "message_update"
 					? withResolvedToolName(event, (name) => this.resolveToolCallName(name))
 					: event,
@@ -6291,7 +6315,14 @@ export class AgentSession {
 	/**
 	 * Abort current operation and wait for agent to become idle.
 	 */
-	async abort(): Promise<void> {
+	async abort(options?: { readonly cause?: AgentAbortCause }): Promise<void> {
+		// The first named cause wins until the `agent_end` it explains is emitted (or a new run starts):
+		// a plain abort racing a replacement's teardown never erases the replacement's cause.
+		if (options?.cause !== undefined && this._abortCause === undefined) this._abortCause = options.cause;
+		await this._abortWithProvenance();
+	}
+
+	private async _abortWithProvenance(): Promise<void> {
 		// Streaming aborts are carried by agent_end provenance; only gaps need session_abort.
 		const wasMidRun = this.isStreaming && this._retryAbortController === undefined;
 		const hadRetryBackoff = this._retryAbortController !== undefined;
