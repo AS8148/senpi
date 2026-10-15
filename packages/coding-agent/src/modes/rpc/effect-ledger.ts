@@ -134,6 +134,13 @@ export class EffectLedger {
 				case "dequeue":
 					this.transition(record.effectId, "failed", { outcome: EFFECT_OUTCOMES.dequeueInterruptedByReopen });
 					break;
+				case "edit_queued":
+					this.transition(record.effectId, "failed", { outcome: EFFECT_OUTCOMES.editQueuedInterruptedByReopen });
+					break;
+				default: {
+					const unsealed: never = record.kind;
+					throw new Error(`no reopen seal for effect kind ${unsealed}`);
+				}
 			}
 		}
 	}

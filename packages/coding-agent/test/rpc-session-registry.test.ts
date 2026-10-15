@@ -152,9 +152,12 @@ describe("RPC session registry", () => {
 		});
 		const samePath = join(dir, "same.jsonl");
 		const first = registry.openSession(profile(dir, samePath));
-		await expect(registry.openSession(profile(dir, samePath))).rejects.toMatchObject({ code: "session_path_in_use" });
+		// A concurrent open of the still-constructing path waits on the in-flight open and attaches to
+		// it once it completes (one session per path, never a second copy), rather than failing fast.
+		const second = registry.openSession(profile(dir, samePath));
 		release();
-		await first;
+		const [firstSession, secondSession] = await Promise.all([first, second]);
+		expect(secondSession.sessionId).toBe(firstSession.sessionId);
 	});
 
 	test("rejects commands while closing, then releases the reservation after disposal", async () => {

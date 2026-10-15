@@ -1,3 +1,23 @@
+## 2026-10-15 - Faux provider reports configurable response headers (senpi#3370)
+
+### What changed
+
+`RegisterFauxProviderOptions.responseHeaders` sets the headers every scripted response reports through `onResponse` (default none, unchanged behaviour).
+
+- `packages/ai/src/providers/faux.ts`
+
+### Why
+
+Tests of code that reads provider response headers (subscription limit windows) need a provider that sends them, without a network call.
+
+### Why an extension could not handle it
+
+The faux provider is the in-tree test transport; an extension cannot change what it passes to `onResponse`.
+
+### Expected merge conflict zones
+
+The `onResponse` calls in the faux core and the options interface.
+
 ## 2026-10-14 - OpenCode Go registers the Google Generative AI transport (senpi#3342)
 
 ### What changed
