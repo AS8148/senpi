@@ -1,3 +1,26 @@
+## 2026-10-14 - gc stops stale older-engine hosts (senpi#3268)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-stale-engine.ts` (new): `judgeStaleEngine` decides, with observing reads only, whether a running host is a stale older-engine leftover: proven owner, answering, strictly older `engineOrdinal`, not `persistent`, no session, no claim, up longer than its own `idleExitMs` plus 10 minutes, and no accepted public client.
+- `packages/coding-agent/src/modes/rpc/host-public-clients.ts` (new): counts a supervisor's accepted public connections from the operating system (`lsof` on macOS, `/proc` on Linux); unreadable means "a client may be there".
+- `packages/coding-agent/src/modes/rpc/host-gc.ts`: with `staleEngine`, an endpoint kept as `live_generation` or `reachable` is judged under its ensure lock, and a stale host is stopped through `stopHost` and reported under `stopped` (absent when empty). A host that is no candidate (owner unproven, not answering, or not strictly older, which includes every host of this engine) keeps its evidence reason, so `senpi host gc` output is unchanged for them; a kept candidate carries its `stale_*` reason.
+- `packages/coding-agent/src/modes/rpc/host-stop.ts`: `requireAnswer` refuses a hard stop unless the host answers both its protocol and its session read; the stale path uses it with 2 s budgets.
+- `packages/coding-agent/src/modes/rpc/host-gc-pass.ts` and `packages/coding-agent/src/modes/rpc/host-runner.ts`: the budgeted pass and `senpi host gc` judge with this build's identity.
+- `packages/coding-agent/src/modes/rpc/host-status-all.ts`: each row carries `stale_old_engine`.
+
+### Why
+
+A host of an older engine runs that engine's idle decision. One left by a 2026.10.10 build stayed up for hours with no session and no client under a 15-minute transient policy, and nothing in a newer build could reach it: gc collected only provably dead endpoints.
+
+### Why an extension could not handle it
+
+Endpoint collection and host stops live in the RPC host's gc and stop paths, under the endpoint ensure lock; no extension sees other hosts.
+
+### Expected merge conflict zones
+
+`gcEndpoint` and the result shape in `host-gc.ts`, the hard-stop guard in `stopHost`, the per-endpoint call in `gcHostEndpointsOpportunistically`, the `gc` branch of `host-runner.ts`, and `endpointStatus` in `host-status-all.ts`.
+
 ## 2026-10-13 - No detach after a request timeout or a lost transport (senpi#3238 review)
 
 ### What changed
