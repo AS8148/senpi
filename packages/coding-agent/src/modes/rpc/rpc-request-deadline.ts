@@ -2,17 +2,17 @@ import {
 	SUMMARIZATION_MAX_DURATION_CAP_MS,
 	SUMMARIZATION_TOTAL_BUDGET_MS,
 } from "../../core/compaction/stream-watchdog.ts";
+import { ABORT_DEFAULT_GRACE_MS, isAbortGraceInRange } from "./abort-grace.ts";
 
 /** How long any request waits for the host's answer - for an open, for its `queued` acknowledgement. */
 export const REQUEST_DEADLINE_MS = 30_000;
 
-/** The host's `abort { awaitIdle }` wait when no `graceMs` is given (docs/rpc.md `abort`). */
-export const ABORT_DEFAULT_GRACE_MS = 10_000;
-
 /**
  * How long one request may wait for its answer before the client gives up. An awaited abort answers only
  * after the turn stopped or its `graceMs` ran out (up to 60 s), so its wait is that grace plus the
- * ordinary allowance; every other command keeps the plain request deadline.
+ * ordinary allowance; every other command keeps the plain request deadline. A `graceMs` the host would
+ * refuse (out of range, fractional, NaN, Infinity) gets the plain deadline too: the host answers it at once
+ * with `invalid_argument`, and the client must still be listening for that refusal.
  */
 export function requestDeadlineMs(command: {
 	readonly type: string;
@@ -20,8 +20,8 @@ export function requestDeadlineMs(command: {
 	readonly graceMs?: unknown;
 }): number {
 	if (command.type !== "abort" || command.awaitIdle !== true) return REQUEST_DEADLINE_MS;
-	const grace = typeof command.graceMs === "number" ? command.graceMs : ABORT_DEFAULT_GRACE_MS;
-	return grace + REQUEST_DEADLINE_MS;
+	if (command.graceMs === undefined) return ABORT_DEFAULT_GRACE_MS + REQUEST_DEADLINE_MS;
+	return isAbortGraceInRange(command.graceMs) ? command.graceMs + REQUEST_DEADLINE_MS : REQUEST_DEADLINE_MS;
 }
 
 /** Remote compaction may exhaust its budget before a local summary uses its maximum override. */

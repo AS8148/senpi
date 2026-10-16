@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { attachJsonlLineReader, serializeJsonLine } from "../../../src/modes/rpc/jsonl.ts";
 import { RpcClient } from "../../../src/modes/rpc/rpc-client.ts";
-import { REQUEST_DEADLINE_MS } from "../../../src/modes/rpc/rpc-request-deadline.ts";
+import { ABORT_DEFAULT_GRACE_MS, ABORT_MAX_GRACE_MS } from "../../../src/modes/rpc/abort-grace.ts";
+import { REQUEST_DEADLINE_MS, requestDeadlineMs } from "../../../src/modes/rpc/rpc-request-deadline.ts";
 
 async function abortHost() {
 	const directory = await mkdtemp(join(tmpdir(), "rpc-abort-deadline-"));
@@ -69,6 +70,48 @@ describe("RpcClient waits for an awaited abort as long as the host may take (sen
 				host.answer(id);
 
 				// Then: the client was still waiting and returns the typed answer
+				expect(await answer).toEqual({ stopped: true, idle: true });
+			} finally {
+				await host.close();
+			}
+		},
+	);
+});
+
+describe("A graceMs the host would refuse leaves the client listening for that refusal (senpi#3453)", () => {
+	afterEach(() => vi.useRealTimers());
+
+	test.each([
+		{ graceMs: undefined, deadline: ABORT_DEFAULT_GRACE_MS + REQUEST_DEADLINE_MS },
+		{ graceMs: 0, deadline: REQUEST_DEADLINE_MS },
+		{ graceMs: 45_000, deadline: 45_000 + REQUEST_DEADLINE_MS },
+		{ graceMs: ABORT_MAX_GRACE_MS, deadline: ABORT_MAX_GRACE_MS + REQUEST_DEADLINE_MS },
+		{ graceMs: -50_000, deadline: REQUEST_DEADLINE_MS },
+		{ graceMs: -1, deadline: REQUEST_DEADLINE_MS },
+		{ graceMs: ABORT_MAX_GRACE_MS + 1, deadline: REQUEST_DEADLINE_MS },
+		{ graceMs: 1.5, deadline: REQUEST_DEADLINE_MS },
+		{ graceMs: Number.NaN, deadline: REQUEST_DEADLINE_MS },
+		{ graceMs: Number.POSITIVE_INFINITY, deadline: REQUEST_DEADLINE_MS },
+		{ graceMs: 1e12, deadline: REQUEST_DEADLINE_MS },
+	])("an awaited abort with graceMs $graceMs waits $deadline ms", ({ graceMs, deadline }) => {
+		expect(requestDeadlineMs({ type: "abort", awaitIdle: true, graceMs })).toBe(deadline);
+	});
+
+	test.each([{ graceMs: -50_000 }, { graceMs: Number.NaN }, { graceMs: 1e12 }])(
+		"abort({ awaitIdle, graceMs: $graceMs }) still receives the host's answer one second later",
+		async ({ graceMs }) => {
+			// Given: a host that answers one second after it receives the abort, as it does for a refusal
+			const host = await abortHost();
+			try {
+				vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+				const answer = host.client.abort({ effectId: "stop-2", awaitIdle: true, graceMs }).catch((error: unknown) => error);
+				const { id } = await host.abort;
+
+				// When: one second passes before the answer
+				await vi.advanceTimersByTimeAsync(1_000);
+				host.answer(id);
+
+				// Then: the client was still waiting, so the caller gets the host's answer, not a client timeout
 				expect(await answer).toEqual({ stopped: true, idle: true });
 			} finally {
 				await host.close();

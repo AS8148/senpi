@@ -1,6 +1,7 @@
 import type { AgentSession } from "../../core/agent-session.ts";
 import { ModelUsabilityBudgetError } from "../../core/extensions/builtin/compaction/model-usability-budget.ts";
 import { ModelSwitchAuthError } from "../../core/model-switch-auth-error.ts";
+import { ABORT_DEFAULT_GRACE_MS, ABORT_MAX_GRACE_MS, isAbortGraceInRange } from "./abort-grace.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
 import { type EffectBegin, EffectLedger } from "./effect-ledger.ts";
 import {
@@ -102,13 +103,11 @@ export function isEffectBegin(value: EffectBegin | RpcResponse): value is Effect
 	return !isResponse(value);
 }
 
-export const ABORT_DEFAULT_GRACE_MS = 10_000;
-export const ABORT_MAX_GRACE_MS = 60_000;
 
 function invalidGrace(command: Command<"abort">): RpcResponse | undefined {
 	const { graceMs } = command;
 	if (graceMs === undefined) return undefined;
-	if (Number.isInteger(graceMs) && graceMs >= 0 && graceMs <= ABORT_MAX_GRACE_MS) return undefined;
+	if (isAbortGraceInRange(graceMs)) return undefined;
 	const reason = "invalid_grace_ms";
 	const action = `send graceMs as a whole number of milliseconds from 0 to ${ABORT_MAX_GRACE_MS}`;
 	return refuse(
