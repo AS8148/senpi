@@ -3,6 +3,8 @@
 ### What changed
 
 - `failover.ts`: a transient classification (`overloaded`, retryable `other`) is retried on the same account up to `TRANSIENT_RETRIES_PER_TURN` times, then the classified error is thrown. It no longer falls through to `blockedAccount`/`persistBlock`, so no account is blocked and no other account is attempted. A post-delta transient also throws without a block.
+- `failover.ts` + `usage-limit-block.ts` (`isConfirmedAccountUsageLimit`) + `auth-lane.ts`: only a verdict that the account cannot serve anyone is written to the shared credential record: a confirmed account-level usage limit (Claude Code's anchored prose or `blocking_limit`, under no status other than 429), a billing or organization refusal, or a rejected token. Every other session then leaves the spent account, which is right. A plain rate limit and a one-model limit still rotate this turn, but the block is kept in memory for the session that hit it only (`sessionKey`, passed from `auth-lane.ts`); another session on the account keeps using it and finds out on its own request. A success clears the session's own block, and `/claude-account unblock` (`account-management.ts`) lifts session blocks in every session.
+- Accepted trade-off: an account that keeps failing transiently never fails over to another account in the pool. The turn fails after the bounded retries and the session's own retry, then model fallback, take over, which costs about (session retries x 3) attempts before fallback during a long single-account outage.
 
 ### Why
 
@@ -139,7 +141,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/failover.ts`: `runFailover` retries a transient failure (`overloaded`, or a retryable `other`: network errors, `server_error`) on the SAME account with a budget of `TRANSIENT_RETRIES_PER_TURN` (2) per turn, not per account, and a doubling delay from `TRANSIENT_RETRY_DELAY_MS` (1 s, abortable), before blocking it and rotating. Usage limits, rate limits, auth and billing failures still rotate at once. New options: `sleep` (injectable wait) and `signal`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/failover.ts`: `runFailover` retries a transient failure (`overloaded`, or a retryable `other`: network errors, `server_error`) on the SAME account with a budget of `TRANSIENT_RETRIES_PER_TURN` (2) per turn, not per account, and a doubling delay from `TRANSIENT_RETRY_DELAY_MS` (1 s, abortable); since senpi#3466 it then fails the turn on that account instead of blocking it and rotating. Usage limits, rate limits, auth and billing failures still rotate at once. New options: `sleep` (injectable wait) and `signal`.
 - `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/affinity.ts`: `selectAccount` takes `preferredAccount`, the account the session's SDK transcript lives under; it is chosen after a valid pin and before HRW order while it can serve the model.
 - `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-lane.ts`: `AuthenticatedQueryInput.preferredAccount` is passed to selection, and the request signal to `runFailover`.
 - `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-stream.ts`: the resident path prefers the live session's or restored binding's account.

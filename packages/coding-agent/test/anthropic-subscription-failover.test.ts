@@ -95,12 +95,13 @@ describe("Claude SDK OAuth failover", () => {
 		expect(classifySdkError("connection reset by peer")).toEqual({ kind: "other", retryable: true });
 	});
 
-	it("walks HRW order after a rate limit, persists the cooldown, and emits failover", async () => {
+	it("walks HRW order after a rate limit and emits failover, keeping the cooldown off the shared record (senpi#3466)", async () => {
 		const store = await storeWithAccounts();
 		const sessionId = "failover-session";
 		const expected = rendezvousOrder(sessionId, accountPool).map((account) => account.name);
 		const attempts: string[] = [];
 		const failovers: string[] = [];
+		let blockedInTurn: AccountSlot | undefined;
 		const events = await collect(
 			runFailover({
 				accounts: accountPool,
@@ -116,6 +117,7 @@ describe("Claude SDK OAuth failover", () => {
 				now: () => now,
 				onFailover: (event) => {
 					failovers.push(`${event.account.name}:${event.classification.kind}`);
+					blockedInTurn = event.account;
 				},
 			}),
 		);
@@ -123,12 +125,13 @@ describe("Claude SDK OAuth failover", () => {
 		expect(attempts).toEqual(expected.slice(0, 2));
 		expect(events).toEqual([{ type: "done", value: expected[1] }]);
 		expect(failovers).toEqual([`${expected[0]}:rate_limit`]);
+		expect(blockedInTurn).toMatchObject({ blockReason: "rate_limit", blockedUntil: now + 2_500 });
 		const credential = (await store.read("anthropic-subscription")) as AnthropicSubscriptionCredential;
-		const blocked = credential.accounts?.find((account) => account.name === expected[0]);
-		expect(blocked).toMatchObject({ blockReason: "rate_limit", blockedUntil: now + 2_500 });
+		const stored = credential.accounts?.find((account) => account.name === expected[0]);
+		expect(stored?.blockedUntil).toBeUndefined();
 	});
 
-	it("does not transparently retry after text or a tool-call delta, but still blocks and emits failover", async () => {
+	it("does not transparently retry after text or a tool-call delta, and emits failover without a shared block (senpi#3466)", async () => {
 		const store = await storeWithAccounts();
 		const attempts: string[] = [];
 		const failovers: string[] = [];
@@ -169,9 +172,7 @@ describe("Claude SDK OAuth failover", () => {
 		expect(attempts).toHaveLength(1);
 		expect(failovers).toEqual(attempts);
 		const credential = (await store.read("anthropic-subscription")) as AnthropicSubscriptionCredential;
-		expect(credential.accounts?.find((account) => account.name === attempts[0])).toMatchObject({
-			blockReason: "rate_limit",
-		});
+		expect(credential.accounts?.find((account) => account.name === attempts[0])?.blockedUntil).toBeUndefined();
 	});
 
 	it("fails over on non-success result events before the first delta", async () => {

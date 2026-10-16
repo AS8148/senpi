@@ -165,8 +165,12 @@ describe("senpi#2891 a session stays on its account unless the account cannot se
 			() => undefined,
 		);
 
-		// when a second session homed on the same account picks its account
-		const selected = selectAccount(await storedPool(store), { sessionId: SESSION, now: 10_001 });
+		// when a second session, pinned to that account, picks its account
+		const selected = selectAccount(await storedPool(store), {
+			sessionId: "senpi-3466-second-session",
+			pinnedAccount: home,
+			now: 10_001,
+		});
 
 		// then it stays on that account
 		expect(selected.name).toBe(home);

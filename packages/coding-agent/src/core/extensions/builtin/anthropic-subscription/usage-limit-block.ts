@@ -59,6 +59,17 @@ function spentWindow(accountName: string, now: number): SpentWindow | undefined 
 }
 
 /**
+ * Claude Code's own verdict that the account's subscription is spent: its anchored usage-limit prose
+ * or its structured terminal reason, under no status other than 429 (senpi#3462, senpi#3466).
+ */
+export function isConfirmedAccountUsageLimit(text: string): boolean {
+	const trimmed = text.trim();
+	if (!CLAUDE_USAGE_LIMIT.test(trimmed) && !TERMINAL_LIMIT_REASON.test(trimmed)) return false;
+	const status = NAMED_STATUS.exec(trimmed)?.[1];
+	return status === undefined || status === "429";
+}
+
+/**
  * How long a spent account stays blocked: until the reset its limit names, or the reset its spent
  * window reported, never past the window the limit belongs to. Undefined when the error is not
  * Claude Code's account usage limit or names no reset, so the caller keeps its short default
@@ -66,10 +77,8 @@ function spentWindow(accountName: string, now: number): SpentWindow | undefined 
  */
 export function usageLimitBlockMs(text: string, accountName: string, now: number): number | undefined {
 	const trimmed = text.trim();
+	if (!isConfirmedAccountUsageLimit(trimmed)) return undefined;
 	const shape = CLAUDE_USAGE_LIMIT.exec(trimmed);
-	if (!shape && !TERMINAL_LIMIT_REASON.test(trimmed)) return undefined;
-	const status = NAMED_STATUS.exec(trimmed)?.[1];
-	if (status !== undefined && status !== "429") return undefined;
 	const window = spentWindow(accountName, now);
 	const parsed = usageLimitResetMs(trimmed, now);
 	const resetMs = parsed !== undefined && parsed > 0 ? parsed : window?.resetMs;
