@@ -14,7 +14,7 @@
 
 ### Fixed
 
-- `anthropic-subscription`: a transient failure (overload, server error, network) no longer rotates the account or blocks it in the shared credential store. The account is still retried twice in place; after that the turn fails on the same account, and the session's own retry and model fallback take over. Moving accounts wrote the whole conversation to a cold prompt cache, and the persisted block moved every other session off a healthy account. Usage limits, rate limits, billing and auth failures still rotate ([#3466](https://github.com/code-yeongyu/senpi/issues/3466)).
+- `anthropic-subscription`: a transient failure (overload, server error, network) no longer rotates the account or blocks it in the shared credential store. The account is still retried twice in place; after that the turn fails on the same account, and the session's own retry and model fallback take over. Moving accounts wrote the whole conversation to a cold prompt cache, and the persisted block moved every other session off a healthy account. A plain rate limit (429), a one-model limit or a refill breaker still rotates the turn that hit it, but no longer moves other sessions off the account; only a confirmed account usage limit, billing or an auth failure does ([#3466](https://github.com/code-yeongyu/senpi/issues/3466)).
 
 - A session with the Full access preset no longer asks "Trust project folder?": it trusts its project for that session without saving the decision (a saved "do not trust" still wins). Home and the folders above it no longer count as project folders, so opening home as a project doesn't ask to trust your own global config. ([#3420](https://github.com/code-yeongyu/senpi/pull/3420))
 
