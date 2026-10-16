@@ -48,6 +48,7 @@ import {
 	promptStalledMessage,
 	REQUEST_DEADLINE_MS,
 	RpcRequestTimeoutError,
+	requestDeadlineMs,
 } from "./rpc-request-deadline.ts";
 import type {
 	EditAssistantMessageResult,
@@ -177,6 +178,13 @@ export function isTransportGoneError(error: unknown): error is RpcTransportGoneE
 				error.message === "RPC socket closed"))
 	);
 }
+
+/** The options of a typed `abort` (see `docs/rpc.md`, `abort`). */
+export type RpcAbortOptions = Omit<Extract<RpcCommand, { type: "abort" }>, "type" | "id" | "sessionId">;
+/** The host's answer to a typed `abort`; an older host answers with no data. */
+export type RpcAbortAnswer = Extract<RpcResponse, { command: "abort"; success: true }>["data"];
+/** `get_effect_status`: the receipt, or proof the whole transcript holds none. */
+export type RpcEffectStatusAnswer = Extract<RpcResponse, { command: "get_effect_status"; success: true }>["data"];
 
 export class RpcClientOpenInFlightError extends Error {
 	readonly code = "open_session_in_flight" as const;
@@ -700,14 +708,40 @@ export class RpcClient {
 	}
 
 	/**
-	 * Abort current operation.
+	 * Abort current operation. With no options this is the fire-and-forget abort it always was (transport
+	 * loss resolves). With options it is the typed abort: `effectId` records a receipt, `awaitIdle` answers
+	 * once the turn stopped (or `graceMs` passed), `clearQueue` drains queued input first; the host's
+	 * answer (`effectId`, `state`, `effect`, `stopped`, `idle`, `cleared`) is returned.
 	 */
-	async abort(): Promise<void> {
-		try {
-			await this.send({ type: "abort" });
-		} catch (error) {
-			if (!isTransportGoneError(error)) throw error;
+	async abort(): Promise<void>;
+	async abort(options: RpcAbortOptions): Promise<RpcAbortAnswer>;
+	async abort(options?: RpcAbortOptions): Promise<RpcAbortAnswer | undefined>;
+	async abort(options?: RpcAbortOptions): Promise<unknown> {
+		if (options === undefined) {
+			try {
+				await this.send({ type: "abort" });
+			} catch (error) {
+				if (!isTransportGoneError(error)) throw error;
+			}
+			return;
 		}
+		return this.getData<RpcAbortAnswer>(await this.send({ ...options, type: "abort" }));
+	}
+
+	/**
+	 * The newest receipt of one effect (`get_effect_status`, capability `effect_ledger`). With `sessionPath`
+	 * the host reads that transcript from disk, so a session no host holds is answered without loading it.
+	 */
+	async getEffectStatus(
+		effectId: string,
+		options: { readonly sessionPath?: string } = {},
+	): Promise<RpcEffectStatusAnswer> {
+		const command = {
+			type: "get_effect_status" as const,
+			effectId,
+			...(options.sessionPath === undefined ? {} : { sessionPath: options.sessionPath }),
+		};
+		return this.getData<RpcEffectStatusAnswer>(await this.send(command, options.sessionPath === undefined));
 	}
 
 	/** Abort with host refusals and transport loss surfaced to machine callers. */
@@ -1387,7 +1421,7 @@ export class RpcClient {
 			const deadline = armRequestDeadline(
 				command.type === "prompt" && sessionId === this.sessionId && this.isCompacting()
 					? PROMPT_COMPACTION_DEADLINE_MS
-					: REQUEST_DEADLINE_MS,
+					: requestDeadlineMs(command),
 				timeoutMessage,
 				expire,
 			);
