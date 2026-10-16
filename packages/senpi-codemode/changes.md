@@ -1,5 +1,24 @@
 # senpi-codemode fork changes
 
+## 2026-10-15 - Write Julia startup frames pre-encoded (Fixes senpi#3048)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/jl/runner.jl`: the host-init status and ready frames are constant strings written through `senpi_emit_line`, the same locked println and flush path `senpi_emit` now uses for encoded frames. Frame bytes, order and flush points are unchanged.
+- `packages/senpi-codemode/test/kernels/jl/startup-frames.test.ts` and `test/gate/allowlist.json`: a real-Julia interrupt contract reads the encoder's recorded specializations in the first and in the replacement interpreter and requires none before the first cell, while all three startup stages still reach the host for both interpreters.
+
+### Why
+
+- Every fresh or replacement interpreter ran the generic frame encoder at host-init on a nested heterogeneous dictionary, which interpreted 8 `senpi_json` and 10 `senpi_escape` calls and built 7 specializations before any cell existed. Constant frames remove that work from startup reporting; the first encode now happens with the first result, as before startup reporting existed.
+
+### Why an extension could not handle it
+
+- Startup protocol emission belongs to the embedded Julia runner before user cells execute.
+
+### Expected merge conflict zones
+
+- Julia frame emission and the init branch. The watchdog, replacement, queued-cell ownership and state-loss reporting are unchanged.
+
 ## 2026-10-14 - Bound stored display jsonOutputs and render them safely (Fixes senpi#3261)
 
 ### What changed

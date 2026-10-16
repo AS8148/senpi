@@ -7,6 +7,19 @@
 ### Added
 
 - Added lazy Google Application Default Credentials access-token resolution for Vertex Model Garden open-model integrations, reusing the existing Vertex credential and project environment helpers ([#3296](https://github.com/code-yeongyu/senpi/pull/3296) by [@sleegme](https://github.com/sleegme)).
+- Provider diagnostics classify a dropped connection as `network` from a closed set of structured transport codes (`ECONNRESET`, `ECONNREFUSED`, `ENOTFOUND`, ...) read from the error or its `cause`, with `evidence: "structured_transport"` ([#3228](https://github.com/code-yeongyu/senpi/issues/3228)).
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.16] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
 - Model cost cards can carry scheduled list-price changes (`cost.effectiveRates`, each with an ISO UTC `effectiveFrom`). Usage is billed with the card in force when it is computed, and the Argon model rows on `google` and `google-vertex` now carry the provider's 2026-12-01 price change ($2/$10 to $4/$20 per 1M tokens), so cost totals stay right across the switch without a catalog refresh ([#3378](https://github.com/code-yeongyu/senpi/issues/3378)).
 
 ### Changed
