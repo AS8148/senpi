@@ -74,17 +74,30 @@ export async function reopenHandoverParkedSessions(
 		// (senpi#3282). The watch returns, the record persists, and the successor's own watch reopens
 		// it by path with the same durable id.
 		if (holder?.shouldReopen !== undefined && !holder.shouldReopen()) return;
-		const parked = await readHandoverParkedSessions(daemonDir);
+		const parked = await inheritedParks(daemonDir, holder);
 		for (const entry of parked) {
 			sawAnyPark = true;
 			await reopenOne(daemonDir, open, entry, reopenAttempts, heldPolls, holder);
 		}
-		const remaining = (await readHandoverParkedSessions(daemonDir)).length;
+		const remaining = (await inheritedParks(daemonDir, holder)).length;
 		emptyStreak = remaining === 0 ? emptyStreak + 1 : 0;
 		if (sawAnyPark && emptyStreak >= HANDOVER_PARKED_REOPEN_QUIET_STREAK) return;
 		if (Date.now() >= deadline) return;
 		await new Promise((resolve) => setTimeout(resolve, HANDOVER_PARKED_REOPEN_POLL_MS));
 	}
+}
+
+/**
+ * The parks a PREVIOUS generation left for this one. A park this host wrote itself (its idle sweep
+ * parks retained sessions into the same record) is for its successor: reopening it here would put a
+ * second open of the path in flight against the client reopening it (senpi#3485).
+ */
+async function inheritedParks(
+	daemonDir: string,
+	holder: ReopenHolder | undefined,
+): Promise<readonly HandoverParkedEntry[]> {
+	const parked = await readHandoverParkedSessions(daemonDir);
+	return parked.filter((entry) => entry.parkedBy === undefined || entry.parkedBy !== holder?.hostInstance);
 }
 
 async function reopenOne(
