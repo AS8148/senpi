@@ -165,6 +165,84 @@ describe("senpi#3462 a long usage-limit block never outlives the limit and alway
 		expect((await slotOf(store, accounts[0]!.name))?.blockedUntil).toBeUndefined();
 	});
 
+	it("keeps a finished turn and the block when writing the clear fails", async () => {
+		// given a stale block stored before the turn, and a store whose writes fail
+		const accounts = pool("write-down");
+		const store = await storeWith(accounts);
+		await store.modify(PROVIDER, async (current) => ({
+			...(current as AnthropicSubscriptionCredential),
+			accounts: ((current as AnthropicSubscriptionCredential).accounts ?? []).map((account) =>
+				account.name === accounts[0]!.name
+					? { ...account, blockedUntil: T0 + HOUR, blockReason: "rate_limit", blockedAt: T0 - 1 }
+					: account,
+			),
+		}));
+		const failing: CredentialStore = Object.assign(Object.create(store), {
+			modify: async () => {
+				throw new Error("Credential store is busy: lock");
+			},
+		});
+		const attempts: string[] = [];
+
+		// when the turn completes on that account
+		const events: string[] = [];
+		for await (const event of runFailover<{ type: "text_delta"; delta: string }>({
+			accounts,
+			selectFn: (slots) => slots[0]!,
+			runAttempt: async function* (slot) {
+				attempts.push(slot.name);
+				yield { type: "text_delta", delta: "done" };
+			},
+			classify: classifySdkError,
+			store: failing,
+			providerId: PROVIDER,
+			now: () => T0,
+			sleep: async () => {},
+		})) {
+			events.push(event.delta);
+		}
+
+		// then the answer stands, nothing is replayed, and the block waits for the next success
+		expect(events).toEqual(["done"]);
+		expect(attempts).toEqual([accounts[0]!.name]);
+		expect((await slotOf(store, accounts[0]!.name))?.blockedUntil).toBe(T0 + HOUR);
+	});
+
+	it("never clears a block stored after the successful turn started", async () => {
+		// given a turn that starts at T0 on an account another session blocks one second later
+		const accounts = pool("newer-block");
+		const store = await storeWith(accounts);
+		let clock = T0;
+
+		// when the long turn finishes after that block was stored
+		for await (const _event of runFailover<{ type: "done" }>({
+			accounts,
+			selectFn: (slots) => slots[0]!,
+			runAttempt: async function* () {
+				clock = T0 + 1_000;
+				await store.modify(PROVIDER, async (current) => ({
+					...(current as AnthropicSubscriptionCredential),
+					accounts: ((current as AnthropicSubscriptionCredential).accounts ?? []).map((account) =>
+						account.name === accounts[0]!.name
+							? { ...account, blockedUntil: clock + HOUR, blockReason: "rate_limit", blockedAt: clock }
+							: account,
+					),
+				}));
+				clock = T0 + 60_000;
+				yield { type: "done" };
+			},
+			classify: classifySdkError,
+			store,
+			providerId: PROVIDER,
+			now: () => clock,
+		})) {
+			// drained
+		}
+
+		// then the newer block stays: it is fresher evidence than this success
+		expect((await slotOf(store, accounts[0]!.name))?.blockedUntil).toBe(T0 + 1_000 + HOUR);
+	});
+
 	it("reads Claude Code's limit with a typographic apostrophe", async () => {
 		expect(await blockFor("You\u2019ve hit your session limit \u00b7 resets in 1 hour", "curly")).toBe(HOUR);
 	});

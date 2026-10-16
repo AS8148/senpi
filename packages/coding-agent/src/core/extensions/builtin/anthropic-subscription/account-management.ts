@@ -113,7 +113,12 @@ export async function unblockProviderAccount(
 					}),
 			accounts: (credential.accounts ?? []).map((candidate) => {
 				if (candidate.name !== name) return candidate;
-				const { blockedUntil: _blockedUntil, blockReason: _blockReason, ...rest } = candidate;
+				const {
+					blockedUntil: _blockedUntil,
+					blockReason: _blockReason,
+					blockedAt: _blockedAt,
+					...rest
+				} = candidate;
 				return rest;
 			}),
 		};

@@ -108,7 +108,7 @@ function blockedAccount(
 	model: string | undefined,
 ): AccountSlot {
 	if (classification.kind === "auth_error") {
-		return { ...account, blockedUntil: now + AUTH_BLOCK_REPROBE_MS, blockReason: "auth_error" };
+		return { ...account, blockedUntil: now + AUTH_BLOCK_REPROBE_MS, blockReason: "auth_error", blockedAt: now };
 	}
 	const fallback = Math.min(MAX_RATE_LIMIT_BLOCK_MS, baseBlockMs * 2 ** attempt);
 	if (classification.modelFamily !== undefined && model !== undefined) {
@@ -123,34 +123,41 @@ function blockedAccount(
 	// short block sent a pinned account back to the same limit every minute (senpi#3462).
 	const hinted = retryAfterMs(error) ?? usageLimitBlockMs(errorText(error), account.name, now);
 	const duration = Math.min(MAX_RATE_LIMIT_BLOCK_MS, hinted ?? fallback);
-	return { ...account, blockedUntil: now + duration, blockReason: classification.kind };
+	return { ...account, blockedUntil: now + duration, blockReason: classification.kind, blockedAt: now };
 }
 
 /**
- * An account that just served a turn is not spent: a limit block another request stored meanwhile
- * (a misread reset, a sibling's stale failure) is cleared so it cannot hold a working account out.
- * Auth blocks are left to their own re-probe.
+ * An account that just served a turn is not spent: a limit block stored before the turn started (a
+ * misread reset, a stale failure) is cleared so it cannot hold a working account out. A block stored
+ * after the turn started is newer evidence than this success and stays. Auth blocks keep their re-probe.
  */
-async function clearBlockAfterSuccess(store: CredentialStore, providerId: string, name: string): Promise<void> {
+async function clearBlockAfterSuccess(
+	store: CredentialStore,
+	providerId: string,
+	name: string,
+	startedAt: number,
+): Promise<void> {
+	const clearable = (slot: { blockedUntil?: number; blockReason?: string; blockedAt?: number } | undefined) =>
+		slot?.blockedUntil !== undefined && slot.blockReason !== "auth_error" && (slot.blockedAt ?? 0) <= startedAt;
 	const stored = await store.read(providerId);
 	if (stored?.type !== "oauth") return;
 	const read = stored as AnthropicSubscriptionCredential;
 	const slot = read.accounts?.find((account) => account.name === name) ?? read.slotState?.[name];
-	if (slot?.blockedUntil === undefined || slot.blockReason === "auth_error") return;
+	if (!clearable(slot)) return;
 	await store.modify(providerId, async (current) => {
 		if (current?.type !== "oauth") return current;
 		const credential = current as AnthropicSubscriptionCredential;
 		const state = credential.slotState?.[name];
 		const slotState =
-			state === undefined || state.blockReason === "auth_error"
+			state === undefined || !clearable(state)
 				? credential.slotState
 				: { ...credential.slotState, [name]: { ...(state.modelBlocks ? { modelBlocks: state.modelBlocks } : {}) } };
 		return {
 			...credential,
 			...(slotState === undefined ? {} : { slotState }),
 			accounts: (credential.accounts ?? []).map((account) => {
-				if (account.name !== name || account.blockReason === "auth_error") return account;
-				const { blockedUntil: _blockedUntil, blockReason: _blockReason, ...rest } = account;
+				if (account.name !== name || !clearable(account)) return account;
+				const { blockedUntil: _blockedUntil, blockReason: _blockReason, blockedAt: _blockedAt, ...rest } = account;
 				return rest;
 			}),
 		};
@@ -208,6 +215,7 @@ async function persistBlock(
 					[account.name]: {
 						blockedUntil: account.blockedUntil,
 						blockReason: account.blockReason,
+						...(account.blockedAt === undefined ? {} : { blockedAt: account.blockedAt }),
 						// Union with what a concurrent request stored meanwhile, later expiry winning.
 						modelBlocks: mergeModelBlocks(
 							credential.slotState?.[account.name]?.modelBlocks,
@@ -233,6 +241,7 @@ async function persistBlock(
 						...existing,
 						blockedUntil: account.blockedUntil,
 						blockReason: account.blockReason,
+						...(account.blockedAt === undefined ? {} : { blockedAt: account.blockedAt }),
 						modelBlocks: mergeModelBlocks(existing.modelBlocks, account.modelBlocks, now),
 					}
 				: existing,
@@ -275,6 +284,7 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 		const account = { ...(retrySlot ?? options.selectFn(accounts)) };
 		let visibleDeltaEmitted = false;
 		let completed = false;
+		const startedAt = now();
 		try {
 			const attemptStream = await options.runAttempt(account);
 			for await (const event of attemptStream) {
@@ -352,11 +362,13 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 		if (completed) {
 			// Outside the attempt's try: clearing is best-effort hygiene after a finished turn, so a store
 			// failure is logged and the block stays for the next success; it never fails or replays the turn.
-			await clearBlockAfterSuccess(options.store, options.providerId, account.name).catch((error: unknown) => {
-				process.stderr.write(
-					`senpi anthropic-subscription: could not clear a stored block on ${account.name}: ${error instanceof Error ? error.message : String(error)}\n`,
-				);
-			});
+			await clearBlockAfterSuccess(options.store, options.providerId, account.name, startedAt).catch(
+				(error: unknown) => {
+					process.stderr.write(
+						`senpi anthropic-subscription: could not clear a stored block on ${account.name}: ${error instanceof Error ? error.message : String(error)}\n`,
+					);
+				},
+			);
 			return;
 		}
 	}
