@@ -52,24 +52,27 @@ describe("RpcClient waits for an awaited abort as long as the host may take (sen
 	test.each([
 		{ graceMs: 45_000, waited: 45_000 },
 		{ graceMs: undefined, waited: 10_000 },
-	])("abort({ awaitIdle, graceMs: $graceMs }) still gets the host's answer after $waited ms", async ({ graceMs, waited }) => {
-		// Given: a socket host that answers the awaited abort only when its grace runs out
-		const host = await abortHost();
-		try {
-			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-			const answer = host.client
-				.abort({ effectId: "stop-1", awaitIdle: true, ...(graceMs === undefined ? {} : { graceMs }) })
-				.catch((error: unknown) => error);
-			const { id } = await host.abort;
+	])(
+		"abort({ awaitIdle, graceMs: $graceMs }) still gets the host's answer after $waited ms",
+		async ({ graceMs, waited }) => {
+			// Given: a socket host that answers the awaited abort only when its grace runs out
+			const host = await abortHost();
+			try {
+				vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+				const answer = host.client
+					.abort({ effectId: "stop-1", awaitIdle: true, ...(graceMs === undefined ? {} : { graceMs }) })
+					.catch((error: unknown) => error);
+				const { id } = await host.abort;
 
-			// When: the grace (past the plain 30 s request deadline for 45 s) elapses before the host answers
-			await vi.advanceTimersByTimeAsync(Math.max(waited, REQUEST_DEADLINE_MS) + 1_000);
-			host.answer(id);
+				// When: the grace (past the plain 30 s request deadline for 45 s) elapses before the host answers
+				await vi.advanceTimersByTimeAsync(Math.max(waited, REQUEST_DEADLINE_MS) + 1_000);
+				host.answer(id);
 
-			// Then: the client was still waiting and returns the typed answer
-			expect(await answer).toEqual({ stopped: true, idle: true });
-		} finally {
-			await host.close();
-		}
-	});
+				// Then: the client was still waiting and returns the typed answer
+				expect(await answer).toEqual({ stopped: true, idle: true });
+			} finally {
+				await host.close();
+			}
+		},
+	);
 });

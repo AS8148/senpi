@@ -2,11 +2,19 @@
 
 ### What changed
 
-- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `abort(options)` overload sends `effectId`/`awaitIdle`/`clearQueue`/`graceMs` and returns the host's answer (`RpcAbortAnswer`); `abort()` without options is unchanged. New `getEffectStatus(effectId, { sessionPath? })` returns `RpcEffectStatusAnswer` (unrouted when reading a transcript by path). Exported types `RpcAbortOptions`, `RpcAbortAnswer`, `RpcEffectStatusAnswer`.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `abort(options)` overload sends `effectId`/`awaitIdle`/`clearQueue`/`graceMs` and returns the host's answer (`RpcAbortAnswer`); `abort()` without options is unchanged. New `getEffectStatus(effectId, { sessionPath? })` returns `RpcEffectStatusAnswer` (unrouted when reading a transcript by path). An awaited abort's request deadline is its `graceMs` (default 10 s) plus the plain 30 s (`requestDeadlineMs` in `packages/coding-agent/src/modes/rpc/rpc-request-deadline.ts`), so the host's answer is never dropped. Exported types `RpcAbortOptions`, `RpcAbortAnswer`, `RpcEffectStatusAnswer`.
 
 ### Why
 
-- The host already supported the typed abort and receipts, but embedders of `RpcClient` (omo's task runner) could only send a bare abort and guess when the turn stopped.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the host already supported the typed abort and receipts, but embedders of `RpcClient` (omo's task runner) could only send a bare abort and guess when the turn stopped, and an awaited abort with `graceMs` above 30 s timed out in the client before the host answered.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `RpcClient` is the transport class embedders import directly; an extension runs inside the host and cannot add client methods or change the client's request deadlines.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/rpc-client.ts`, the `abort` / `abortStrict` region and the initial deadline choice in its `send()`; `rpc-request-deadline.ts` gains `requestDeadlineMs` and `ABORT_DEFAULT_GRACE_MS`.
 
 ## 2026-10-14 - RPC `agent_end` carries the turn deadline (senpi#3227)
 

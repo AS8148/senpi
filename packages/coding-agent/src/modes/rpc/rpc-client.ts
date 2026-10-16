@@ -48,6 +48,7 @@ import {
 	promptStalledMessage,
 	REQUEST_DEADLINE_MS,
 	RpcRequestTimeoutError,
+	requestDeadlineMs,
 } from "./rpc-request-deadline.ts";
 import type {
 	EditAssistantMessageResult,
@@ -714,6 +715,7 @@ export class RpcClient {
 	 */
 	async abort(): Promise<void>;
 	async abort(options: RpcAbortOptions): Promise<RpcAbortAnswer>;
+	async abort(options?: RpcAbortOptions): Promise<RpcAbortAnswer | undefined>;
 	async abort(options?: RpcAbortOptions): Promise<unknown> {
 		if (options === undefined) {
 			try {
@@ -1419,7 +1421,7 @@ export class RpcClient {
 			const deadline = armRequestDeadline(
 				command.type === "prompt" && sessionId === this.sessionId && this.isCompacting()
 					? PROMPT_COMPACTION_DEADLINE_MS
-					: REQUEST_DEADLINE_MS,
+					: requestDeadlineMs(command),
 				timeoutMessage,
 				expire,
 			);
