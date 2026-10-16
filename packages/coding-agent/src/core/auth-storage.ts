@@ -17,6 +17,7 @@ import type {
 	OAuthLoginCallbacks,
 } from "@earendil-works/pi-ai";
 import { findEnvKeys, getEnvApiKey, readByProviderId } from "@earendil-works/pi-ai";
+import { type CredentialKind, repairMixedKindPool } from "@earendil-works/pi-ai/auth/pool/kinds";
 import {
 	appendLoginSlot,
 	type CredentialSlot,
@@ -57,6 +58,18 @@ type AuthStorageData = Record<string, Credential>;
  * so it is dropped the moment auth.json is read and the repair is written back
  * once by the mutable store.
  */
+function repairMixedKindPools(data: AuthStorageData): { data: AuthStorageData; repaired: boolean } {
+	let next: AuthStorageData | undefined;
+	for (const [providerId, credential] of Object.entries(data)) {
+		if (typeof credential !== "object" || credential === null) continue;
+		const repair = repairMixedKindPool(credential);
+		if (!repair) continue;
+		next ??= { ...data };
+		next[providerId] = repair.credential;
+	}
+	return next ? { data: next, repaired: true } : { data, repaired: false };
+}
+
 function repairPoisonedPoolSlots(data: AuthStorageData): { data: AuthStorageData; repaired: boolean } {
 	let repaired: AuthStorageData | undefined;
 	for (const [providerId, credential] of Object.entries(data)) {
@@ -515,10 +528,13 @@ export class AuthStorage implements CredentialStore {
 				),
 			);
 		}
+		// After the Anthropic move, so a grant it copies is recorded before the pool is reduced (senpi#3448).
+		const unmixed = repairMixedKindPools(moved.data);
 		return {
-			data: moved.data,
+			data: unmixed.data,
 			repaired: repaired.repaired,
-			migrated: migrated.migrated || moved.migrated,
+			// A mixed pool loses the other kind's slots, so it is backed up like a migration.
+			migrated: migrated.migrated || moved.migrated || unmixed.repaired,
 		};
 	}
 
@@ -625,13 +641,20 @@ export class AuthStorage implements CredentialStore {
 		return credential?.type === "api_key" && credential.env ? { ...credential.env } : undefined;
 	}
 
-	set(provider: string, credential: Credential): void {
-		this.storage.withLock((content) => {
+	/**
+	 * Stores a login. A login of the other kind replaces the provider's credential (senpi#3448); the
+	 * replaced bytes are backed up first and the kind it replaced is returned, so callers can say so.
+	 */
+	set(provider: string, credential: Credential): { replaced?: CredentialKind } {
+		return this.storage.withLock((content) => {
 			const currentData = this.parseStorageData(content);
-			const next = appendLoginSlot(currentData[provider], credential);
+			const current = currentData[provider];
+			const replaced = current !== undefined && current.type !== credential.type ? current.type : undefined;
+			if (replaced) this.backupAuthFile(content);
+			const next = appendLoginSlot(current, credential);
 			const nextData = { ...currentData, [provider]: next };
 			this.data = nextData;
-			return { result: undefined, next: JSON.stringify(nextData, null, 2) };
+			return { result: replaced ? { replaced } : {}, next: JSON.stringify(nextData, null, 2) };
 		});
 	}
 

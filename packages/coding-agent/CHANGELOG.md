@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Saving an API key for a provider that already holds an OAuth login now replaces that login (backed up first) instead of storing a key that is never used; `login_api_key` answers `data.replaced`, each login row reads its status from the logins actually stored, and a mixed pool written by older builds is repaired on load ([#3448](https://github.com/code-yeongyu/senpi/issues/3448))
+
 ### Removed
 
 ## [2026.10.16] - 2026-10-16

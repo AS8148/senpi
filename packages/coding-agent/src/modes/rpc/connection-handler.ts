@@ -1742,11 +1742,15 @@ export function createRpcConnectionHandler(
 			}
 
 			case "login_api_key": {
-				session.modelRegistry.authStorage.set(command.provider, { type: "api_key", key: command.key });
+				const { replaced } = session.modelRegistry.authStorage.set(command.provider, {
+					type: "api_key",
+					key: command.key,
+				});
 				// Answer after the registry sees the key: a client re-reading auth status on this
 				// response must not get the pre-login snapshot (#2384).
 				await session.modelRegistry.refresh();
-				return success(id, "login_api_key");
+				// `replaced` names the login of the other kind this key replaced (senpi#3448).
+				return success(id, "login_api_key", replaced ? { replaced } : undefined);
 			}
 
 			case "logout": {
