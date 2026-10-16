@@ -121,16 +121,16 @@ export class ClientAdmissions {
 		this.ready = Promise.resolve().then(() => this.restore());
 	}
 
-	/**
-	 * Whenever `runtime` replaces its session, give the outgoing session's still-queued inputs a
-	 * `dropped_by_replace` receipt. Only a ledger that already exists is touched: building one now would
-	 * restore (replay) persisted queued input into a session that is being torn down.
-	 */
 	/** Mark queued input cleared on a session whose ledger exists; never builds one (that would restore queued input). */
 	static clearQueuedFor(session: AgentSession): void {
 		sessions.get(session)?.clearQueued();
 	}
 
+	/**
+	 * Whenever `runtime` replaces its session, give the outgoing session's still-queued inputs a
+	 * `dropped_by_replace` receipt. Only a ledger that already exists is touched: building one now would
+	 * restore (replay) persisted queued input into a session that is being torn down.
+	 */
 	static sealQueuedOnReplace(runtime: AgentSessionRuntime): () => void {
 		return runtime.onBeforeSessionReplace(() => sessions.get(runtime.session)?.dropQueuedByReplace());
 	}

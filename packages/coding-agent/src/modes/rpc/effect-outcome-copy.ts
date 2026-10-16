@@ -15,7 +15,7 @@ export const EFFECT_OUTCOMES = {
 		kind: "cleared",
 		reason: "cleared",
 		detail:
-			"the queue was cleared (clear_queue, abort or unload_session with clearQueue, or a session release) before this queued input was delivered",
+			"the queue was cleared (clear_queue, or abort or unload_session with clearQueue) before this queued input was delivered",
 		action: "send the input again with a new clientMessageId if it is still needed",
 	},
 	queuedInputAlreadyDelivered: {

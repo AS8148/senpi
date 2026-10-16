@@ -5,7 +5,7 @@
 - `packages/coding-agent/src/modes/rpc/client-admissions.ts`: `clearQueuedByAbort` is now `clearQueued`, giving each still-queued input a `cleared` receipt; `ClientAdmissions.clearQueuedFor(session)` does it only on a ledger that already exists.
 - `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `clear_queue` marks queued input cleared before draining.
 - `packages/coding-agent/src/modes/rpc/session-unload.ts`: `unload_session { clearQueue: true }` does the same before draining.
-- `packages/coding-agent/src/modes/rpc/effect-commands.ts`, `effect-outcome-copy.ts`, `effect-record.ts`, `effect-status.ts`: `abort { clearQueue }` uses the same outcome, renamed from `cleared_by_abort` to `cleared` (unreleased).
+- `packages/coding-agent/src/modes/rpc/effect-commands.ts`, `effect-outcome-copy.ts`, `effect-record.ts`, `effect-status.ts`: `abort { clearQueue }` uses the same outcome, renamed from `cleared_by_abort` (released in 2026.10.16-2) to `cleared`; the schema still accepts `cleared_by_abort` and `projectAdmission` reads it as `failed`, so receipts that release wrote stay readable and their input is never restored on reopen.
 
 ### Why
 
