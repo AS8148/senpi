@@ -186,6 +186,12 @@
 		"gpt-6-astra:app:0": "4fa77a591cc6fa0756534292dbb2c793b37be48cb0e0dc8a963bf5541d4d540e",
 		"gpt-6-astra:app:1": "fe4fc27105d776b7aab368596aba6aa18e3cb7ba7c94becb9071f25d75e580d3",
 		"gpt-6-astra:chat:0": "cffe73ed361805632dd1ae2c83cb37c50ac936fd58e821c6de957a21a09ef319",
-		"gpt-6-astra:chat:1": "6eb55ed641867c7fd4cf24125e18190fbf4a3680051b3e4b4103bed2ad5e8808"
+		"gpt-6-astra:chat:1": "6eb55ed641867c7fd4cf24125e18190fbf4a3680051b3e4b4103bed2ad5e8808",
+		"gemini-4-argon:terminal:0": "66081751deb4d66ff52e1a3d2d5607805d0bbed9a36eb72ba94ac98cec332a1f",
+		"gemini-4-argon:terminal:1": "89cb5f5219e40c2d43ebf3cf8f6edf6829ce41ad8aad25e535c7362660d3c0a3",
+		"gemini-4-argon:app:0": "34c8e063a53c5e63b917262809d52cddc27ed8a3093dc2c57c61bd6e61fa1dda",
+		"gemini-4-argon:app:1": "ccaa1bd8dcbdd8924fd8dd77f548f98ba4cb2ac4216f6042588b6d03ff161223",
+		"gemini-4-argon:chat:0": "8c2880a25ba8a87f687291c8204d81af5451fef0c86c3e09d1f28c5845cb1b61",
+		"gemini-4-argon:chat:1": "fa68f885f8fc040fad4ff0c23632bfd618b73c744e2f10f5e976a58ef119dc9b"
 	}
 }

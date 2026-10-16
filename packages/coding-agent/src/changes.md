@@ -1,3 +1,21 @@
+## 2026-10-16 - A full-access session trusts its project without asking (senpi#3414)
+
+### What changed
+
+- `main.ts` `createServices` (inside `createCliRuntimeFactory`, which builds every interactive and RPC host session): an explicit `full-access` preset (`presetTrustsProject` in `core/project-trust.ts`) skips the "Trust project folder?" prompt and trusts the project for that session only, with no cache and no trust-store write. A saved "do not trust", `--no-trust` and an answer already given in this host still win. Details: `core/changes.md`.
+
+### Why
+
+Full access means no prompt anywhere (sisyphuslabs/omo-desktop-app#2465); the trust prompt never read the preset.
+
+### Why an extension could not handle it
+
+Project trust is decided before extensions load and decides whether project extensions load at all.
+
+### Expected merge conflict zones
+
+`main.ts` `createServices`, the trust block before `createAgentSessionServices`.
+
 ## 2026-10-15 - The package exports the abort cause type (senpi#3357)
 
 ### What changed

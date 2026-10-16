@@ -1,6 +1,7 @@
 import type { AgentSession } from "../../core/agent-session.ts";
 import { ModelUsabilityBudgetError } from "../../core/extensions/builtin/compaction/model-usability-budget.ts";
 import { ModelSwitchAuthError } from "../../core/model-switch-auth-error.ts";
+import { ABORT_DEFAULT_GRACE_MS, ABORT_MAX_GRACE_MS, isAbortGraceInRange } from "./abort-grace.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
 import { type EffectBegin, EffectLedger } from "./effect-ledger.ts";
 import {
@@ -16,6 +17,7 @@ import { lookupEffectInTranscript, TranscriptUnreadable } from "./effect-transcr
 import {
 	RPC_ERROR_CONTEXT_BUDGET,
 	RPC_ERROR_EFFECT_ID_CONFLICT,
+	RPC_ERROR_INVALID_ARGUMENT,
 	RPC_ERROR_MODEL_NOT_FOUND,
 	RPC_ERROR_PROVIDER_UNAVAILABLE,
 	RPC_ERROR_TRANSCRIPT_UNREADABLE,
@@ -101,25 +103,90 @@ export function isEffectBegin(value: EffectBegin | RpcResponse): value is Effect
 	return !isResponse(value);
 }
 
-export async function runAbort(ctx: EffectCommandContext, command: Command<"abort">, dispatch: () => void) {
-	const { effectId } = command;
-	if (effectId === undefined) {
-		ClientAdmissions.forSession(ctx.session).noteAbort(ctx.by);
-		dispatch();
-		return respond(command.id, { command: "abort" });
+function invalidGrace(command: Command<"abort">): RpcResponse | undefined {
+	const { graceMs } = command;
+	if (graceMs === undefined) return undefined;
+	if (isAbortGraceInRange(graceMs)) return undefined;
+	const reason = "invalid_grace_ms";
+	const action = `send graceMs as a whole number of milliseconds from 0 to ${ABORT_MAX_GRACE_MS}`;
+	return refuse(
+		command.id,
+		"abort",
+		`graceMs must be an integer from 0 to ${ABORT_MAX_GRACE_MS}`,
+		RPC_ERROR_INVALID_ARGUMENT,
+		{
+			reason,
+			action,
+		},
+	);
+}
+
+/** Resolves true once `aborting` settles with the session idle, false when `graceMs` runs out first. */
+async function quiesce(session: AgentSession, aborting: Promise<void>, graceMs: number): Promise<boolean> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const expired = new Promise<false>((resolve) => {
+		timer = setTimeout(() => resolve(false), graceMs);
+	});
+	try {
+		return await Promise.race([aborting.then(() => !session.isStreaming), expired]);
+	} finally {
+		clearTimeout(timer);
 	}
-	const begun = await beginEffect(ctx, "abort", { ...command, effectId });
-	if (isResponse(begun)) return begun;
-	if ("replay" in begun)
+}
+
+/**
+ * `abort`: with `clearQueue` the queued inputs are drained (each gets a `cleared` receipt) before
+ * the abort; with `awaitIdle` the answer waits until the session is idle or `graceMs` passes. Without
+ * either, the abort is acknowledged on dispatch exactly as before.
+ */
+export async function runAbort(
+	ctx: EffectCommandContext,
+	command: Command<"abort">,
+	dispatch: () => Promise<void>,
+): Promise<RpcResponse> {
+	const invalid = invalidGrace(command);
+	if (invalid !== undefined) return invalid;
+	const { effectId } = command;
+	const quiesced = command.awaitIdle === true || command.clearQueue === true;
+	const begun = effectId === undefined ? undefined : await beginEffect(ctx, "abort", { ...command, effectId });
+	if (begun !== undefined && isResponse(begun)) return begun;
+	if (begun !== undefined && "replay" in begun)
 		return respond(command.id, { command: "abort", data: effectAnswer(begun.replay, ctx.sessionId, true) });
-	ClientAdmissions.forSession(ctx.session).noteAbort(ctx.by);
+	const admissions = ClientAdmissions.forSession(ctx.session);
 	const streaming = ctx.session.isStreaming;
-	dispatch();
-	const ledger = EffectLedger.forSession(ctx.session);
-	const status = streaming
-		? ledger.transition(effectId, "applied")
-		: ledger.transition(effectId, "done", { disposition: "no_active_turn" });
-	return respond(command.id, { command: "abort", data: effectAnswer(status, ctx.sessionId) });
+	let cleared = 0;
+	if (command.clearQueue === true) {
+		admissions.clearQueued();
+		const drained = ctx.session.clearQueue({ abortWillFollow: true });
+		cleared = drained.steering.length + drained.followUp.length;
+	}
+	const noted = admissions.noteAbort(ctx.by, effectId);
+	const aborting = dispatch();
+	// No turn to name: once this abort settled (its session_abort, if any, already read it), forget it,
+	// unless a newer abort has been recorded since.
+	if (!streaming) void aborting.finally(() => admissions.forgetAbort(noted));
+	const ledger = effectId === undefined ? undefined : EffectLedger.forSession(ctx.session);
+	let status =
+		effectId === undefined
+			? undefined
+			: streaming
+				? ledger?.transition(effectId, "applied")
+				: ledger?.transition(effectId, "done", { disposition: "no_active_turn" });
+	if (!quiesced)
+		return respond(command.id, {
+			command: "abort",
+			...(status === undefined ? {} : { data: effectAnswer(status, ctx.sessionId) }),
+		});
+	const idle =
+		command.awaitIdle === true
+			? await quiesce(ctx.session, aborting, command.graceMs ?? ABORT_DEFAULT_GRACE_MS)
+			: !streaming;
+	// The ledger moves an applied abort to `done` on `agent_idle`; read it again after the wait.
+	if (effectId !== undefined) status = ledger?.status(effectId) ?? status;
+	return respond(command.id, {
+		command: "abort",
+		data: { ...(status === undefined ? {} : effectAnswer(status, ctx.sessionId)), stopped: idle, idle, cleared },
+	});
 }
 
 /**

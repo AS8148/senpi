@@ -4,6 +4,7 @@ import {
 } from "../../core/extensions/builtin/permission-system/config.ts";
 import { DURABLE_CLIENT_MESSAGE_ID_CAPABILITY } from "./client-admission-record.ts";
 import {
+	AUTH_KEY_VERIFY_CAPABILITY,
 	AUTO_TITLE_PER_SESSION_CAPABILITY,
 	AUTO_TITLE_SESSIONS_CAPABILITY,
 	BROWSER_ENGINE_CAPABILITY,
@@ -20,6 +21,7 @@ import {
 	SESSION_CONTEXT_CAPABILITY,
 	SESSION_HELD_CAPABILITY,
 	SESSION_KIND_CAPABILITY,
+	SESSION_STATUS_CAPABILITY,
 	WARM_CAPABILITY,
 } from "./custom-capability.ts";
 import { EFFECT_LEDGER_CAPABILITY } from "./effect-record.ts";
@@ -55,6 +57,7 @@ export function multiSessionHostCapabilities(options: {
 			STEER_WHEN_IDLE_CAPABILITY,
 			CONTINUE_FROM_LEAF_CAPABILITY,
 			EVAL_CELLS_CAPABILITY,
+			AUTH_KEY_VERIFY_CAPABILITY,
 			// Both shared runtimes dispatch through the active session-writing holder guard.
 			SESSION_HELD_CAPABILITY,
 			// Host capabilities, not client opt-ins: only a multi-session host owns the
@@ -68,6 +71,8 @@ export function multiSessionHostCapabilities(options: {
 			UNLOAD_SESSION_CAPABILITY,
 			SESSION_CONTEXT_CAPABILITY,
 			SESSION_KIND_CAPABILITY,
+			// Only a multi-session host sees every session, so only it can stream their status.
+			SESSION_STATUS_CAPABILITY,
 			AUTO_TITLE_PER_SESSION_CAPABILITY,
 			// Only a multi-session host can refuse a duplicate durable id, because only it
 			// sees every live session's identity.

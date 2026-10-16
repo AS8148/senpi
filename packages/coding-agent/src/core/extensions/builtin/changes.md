@@ -15,7 +15,26 @@
 ### Expected merge conflict zones
 
 - LOW: the `message_update` handler and the rate line in `agent_end`.
+## 2026-10-14 - vertex-model-garden provider extension
 
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/index.ts`: registers the new `vertex-model-garden` builtin after `cursor-cli-oauth`.
+- `packages/coding-agent/src/core/extensions/builtin/vertex-model-garden/transport.ts`: keeps the URL builder private; the SDK-wire test owns the global endpoint contract without a duplicate helper test or test-only export.
+- `packages/coding-agent/src/core/extensions/builtin/vertex-model-garden/` (fork-only): registers only `vertex-garden` for Model Garden open models through `.../locations/global/endpoints/openapi` (`openai-completions`). It wraps the builtin API stream, injects an ADC bearer token plus `x-goog-user-project`, and is gated on the ADC credential chain through `ambientAuth` (`auth.ts`, composed by `provider-composer.ts`), so the lane is available while ADC is present without counting as a configured provider and never takes the automatic default over one the user configured (senpi#2327). The target project comes from `GOOGLE_CLOUD_PROJECT`/`GCLOUD_PROJECT`, else the ADC quota project, else `getProjectId()`; the API-key slot is never read, so a stored secret cannot reach the request URL. The starter catalog is exactly `deepseek-ai/deepseek-v4.1-flash-maas` (1,000,000-token context from the existing `deepseek-v4-1-flash` catalog data) and `zai-org/glm-5.2-maas`, priced at the model card's published MaaS list prices — DeepSeek V4.1 Flash $0.30/$1.20 per 1M tokens with a $0.03 cache hit, GLM 5.2 $1.40/$4.40 with a $0.14 cached input rate (https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing, "Deepseek's models" and "GLM's models"; DeepSeek V4.1 Flash is listed at no charge through 2026-10-16). Both models declare reasoning with every thinking level marked unsupported, so no level is offered that these endpoints cannot steer. Claude registration, catalog, rawPredict transport and tests are removed.
+
+### Why
+
+- Vertex Model Garden open models previously needed a hand-written models.json and a token script.
+- Marketplace partner models, including Claude and Grok, are excluded because they are card-billed and promotional credits do not apply.
+
+### Why an extension could not handle it
+
+- It is an extension; only the one-line registration in `builtin/index.ts` sits outside it.
+
+### Expected merge conflict zones
+
+- LOW: one import and one `builtinExtensions` entry.
 ## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
 
 ### What changed

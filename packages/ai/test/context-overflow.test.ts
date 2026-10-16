@@ -576,9 +576,10 @@ describe("Context overflow error handling", () => {
 	// =============================================================================
 
 	describe.skipIf(!openRouterApiKey)("OpenRouter", () => {
-		// Anthropic backend
-		it("anthropic/claude-sonnet-4.5 via OpenRouter - should detect overflow via isContextOverflow", async () => {
-			const model = getModel("openrouter", "anthropic/claude-sonnet-4.5");
+		// Anthropic backend. Haiku 4.5 keeps the 200k window the retired claude-sonnet-4 had, so the
+		// oversized prompt stays the same size; the 1M-window Sonnet/Opus ids would make it 5x larger.
+		it("anthropic/claude-haiku-4.5 via OpenRouter - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("openrouter", "anthropic/claude-haiku-4.5");
 			const result = await testContextOverflow(model, openRouterApiKey!);
 			logResult(result);
 

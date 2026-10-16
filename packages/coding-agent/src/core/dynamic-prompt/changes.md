@@ -1,5 +1,21 @@
 # changes.md — dynamic-prompt
 
+## 2026-10-15 - Preset-overridable sentences in three section builders (senpi#3385)
+
+### What changed
+
+- `intent-gate.ts`: `buildIntentGate({ routingLineRule })` replaces the terminal lead's first clause (default `DEFAULT_ROUTING_LINE_RULE`, "The line keeps your reading transparent"); the app lead is unchanged.
+- `working-task.ts`: `buildWorkingTaskSection({ opening })` replaces the first paragraph (default `DEFAULT_WORKING_TASK_OPENING`).
+- `policies.ts`: `buildPoliciesSection({ errorRule })` replaces the swallow-errors bullet (default `DEFAULT_ERROR_RULE`).
+- `workstation.ts`: `WorkstationDialect` gains `gemini`: one plain sentence pair with the full fact list and no tags or caps.
+- With no option every builder renders the exact previous bytes (the native baseline hashes are unchanged).
+
+### Why
+
+- The Argon preset keeps the default core and changes four sentences at their source. Options on the builders let it do that without copying the sections or replacing strings in rendered output, so later wording changes in the core reach the preset and a moved anchor cannot fail silently.
+
+---
+
 ## 2026-10-15 - The handoff block is for change and multi-step work, not for a researched answer (senpi#3323)
 
 ### What changed
