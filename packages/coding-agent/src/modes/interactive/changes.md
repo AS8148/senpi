@@ -1,3 +1,21 @@
+## 2026-10-16 - Context size warnings use resource notices (senpi#3460)
+
+### What changed
+
+- `interactive-mode.ts`: `showLoadedResources` groups returned context diagnostics and skill catalog warnings tagged `category: "size-limit"` in the "Context size limits" notice with a size-specific explanation, including during quiet startup when diagnostics are requested. Ordinary skill diagnostics retain the "Skill conflicts" notice and are not mixed with size warnings.
+
+### Why
+
+Size warnings written to stderr disappear once the TUI owns the terminal.
+
+### Why an extension could not handle it
+
+The loaded-resource notices are rendered by interactive mode.
+
+### Expected merge conflict zones
+
+- `interactive-mode.ts`: the `addDiagnosticNotice` calls in `showLoadedResources`.
+
 ## 2026-10-15 - A failed turn shows its provider failure reason and action (senpi#3228)
 
 ### What changed
