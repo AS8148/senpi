@@ -121,16 +121,28 @@ describe("issue #3460: context files are size-capped so one file cannot inflate 
 		for (const file of files) expect(Buffer.byteLength(file.content)).toBeLessThanOrEqual(CAP);
 	});
 
-	it("cuts at a nearby newline and closes an open fence before the note", () => {
+	it.each(["```", "~~~", "````", "``````"])("cuts at a nearby newline and closes an open %s fence", (marker) => {
 		// Given
 		const { cwd, agentDir } = workspace();
-		const complete = `# Rules\n\`\`\`ts\n${"x".repeat(3200)}\n`;
+		const complete = `# Rules\n${marker}ts\n${"x".repeat(3200)}\n`;
 		writeFileSync(join(cwd, "AGENTS.md"), complete + "partial".repeat(1000));
 		// When
 		const [file] = loadProjectContextFiles({ cwd, agentDir, maxBytesPerFile: 4096 });
 		// Then
-		expect(file?.content.startsWith(`${complete}\`\`\`\n`)).toBe(true);
+		expect(file?.content.startsWith(`${complete}${marker}\n`)).toBe(true);
 		expect(Buffer.byteLength(file?.content ?? "")).toBeLessThanOrEqual(4096);
+	});
+
+	it("attributes an unusably small per-file cap to that limit, not nearer files", () => {
+		// Given
+		const { cwd, agentDir } = workspace();
+		writeFileSync(join(cwd, "AGENTS.md"), "x".repeat(2048));
+		// When
+		const files = loadProjectContextFiles({ cwd, agentDir, maxBytesPerFile: 512 });
+		// Then
+		expect(files).toHaveLength(0);
+		expect(files.diagnostics[0]?.message).toContain("per-file limit is too small");
+		expect(files.diagnostics[0]?.message).not.toContain("nearer context files");
 	});
 
 	it("returns size diagnostics from the loader without printing over the TUI", async () => {

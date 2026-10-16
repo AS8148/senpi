@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `interactive-mode.ts`: `showLoadedResources` displays returned context diagnostics as a "Context size limits" notice, including during quiet startup when diagnostics are requested. Skill catalog size warnings use the existing skill diagnostics notice.
+- `interactive-mode.ts`: `showLoadedResources` groups returned context diagnostics and skill catalog warnings tagged `category: "size-limit"` in the "Context size limits" notice with a size-specific explanation, including during quiet startup when diagnostics are requested. Ordinary skill diagnostics retain the "Skill conflicts" notice and are not mixed with size warnings.
 
 ### Why
 

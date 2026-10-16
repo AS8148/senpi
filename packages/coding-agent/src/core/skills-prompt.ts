@@ -19,6 +19,7 @@ export function warnIfLargeSkillCatalog(skills: readonly Skill[]): ResourceDiagn
 	return [
 		{
 			type: "warning",
+			category: "size-limit",
 			message: catalog.namesOnly
 				? `The skills section is limited to ${MAX_SKILL_CATALOG_BYTES / 1024} KiB: descriptions were dropped and ${catalog.omitted} skills were omitted. Remove unused skills to shrink every request.`
 				: `The skills catalog uses one-line descriptions to limit request size (above ${COMPACT_SKILL_CATALOG_COUNT} skills, ${COMPACT_SKILL_CATALOG_DESCRIPTION_BYTES / 1024} KiB of descriptions, or ${MAX_SKILL_CATALOG_BYTES / 1024} KiB rendered). Remove unused skills to shrink every request.`,

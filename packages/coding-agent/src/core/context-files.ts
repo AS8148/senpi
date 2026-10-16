@@ -78,6 +78,7 @@ function kib(bytes: number): string {
 }
 
 function utf8Prefix(content: string, maxBytes: number): string {
+	if (maxBytes <= 0) return "";
 	const bytes = Buffer.from(content, "utf8");
 	let end = Math.min(maxBytes, bytes.length);
 	while (end > 0 && end < bytes.length && ((bytes[end] ?? 0) & 0xc0) === 0x80) end--;
@@ -111,24 +112,42 @@ function applyContextFileLimits(files: ContextFile[], limits: ContextFileLimits)
 			continue;
 		}
 		if (allowed < MIN_USEFUL_BYTES) {
+			const reason =
+				perFile < MIN_USEFUL_BYTES ? "the per-file limit is too small" : "nearer context files used the budget";
 			diagnostics.push({
 				type: "warning",
+				category: "size-limit",
 				path: file.path,
-				message: `Context file ${file.path} (${kib(size)}) was not loaded: nearer context files used the budget (${limitText}).`,
+				message: `Context file (${kib(size)}) was not loaded: ${reason} (${limitText}).`,
 			});
 			continue;
 		}
 		const note = `\n\n[This file was truncated from ${kib(size)}.]`;
-		// Reserve the note and a closing fence before choosing the content boundary.
-		const prefix = utf8Prefix(file.content, allowed - Buffer.byteLength(note) - 5);
+		const contentBudget = allowed - Buffer.byteLength(note);
+		let prefix = utf8Prefix(file.content, contentBudget);
+		let content: string;
+		while (true) {
+			let openFence: string | undefined;
+			for (const match of prefix.matchAll(/^[ \t]*(`{3,}|~{3,})([^\n]*)$/gm)) {
+				const marker = match[1];
+				if (!marker) continue;
+				if (openFence === undefined) openFence = marker;
+				else if (marker[0] === openFence[0] && marker.length >= openFence.length && match[2]?.trim() === "") {
+					openFence = undefined;
+				}
+			}
+			const closingFence = openFence ? `${prefix.endsWith("\n") ? "" : "\n"}${openFence}\n` : "";
+			content = `${prefix}${closingFence}${note}`;
+			if (Buffer.byteLength(content) <= allowed) break;
+			// A longer closing marker can expose another opener when the prefix shrinks.
+			prefix = utf8Prefix(prefix, Math.max(0, contentBudget - Buffer.byteLength(closingFence)));
+		}
 		const loaded = Buffer.byteLength(prefix, "utf8");
-		const openFence = [...prefix.matchAll(/^[ \t]*```[^\n]*$/gm)].length % 2 === 1;
-		const closingFence = openFence ? `${prefix.endsWith("\n") ? "" : "\n"}\`\`\`\n` : "";
-		const content = `${prefix}${closingFence}${note}`;
 		diagnostics.push({
 			type: "warning",
+			category: "size-limit",
 			path: file.path,
-			message: `Context file ${file.path} is ${kib(size)}; only the first ${kib(loaded)} was loaded (${limitText}).`,
+			message: `Context file is ${kib(size)}; only the first ${kib(loaded)} was loaded (${limitText}).`,
 		});
 		kept.unshift({
 			path: file.path,

@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `main.ts`: print, JSON, and RPC startup report the loader's returned context-file and skill warnings through `reportDiagnostics`. The checks themselves no longer print, and interactive startup leaves these warnings to the TUI resource notices.
+- `main.ts`: print, JSON, and RPC startup report only the loader warnings tagged `category: "size-limit"` through `reportDiagnostics`, retaining a diagnostic's path as a prefix. Pre-existing skill validation warnings stay silent on stderr. The size checks themselves no longer print, and interactive startup leaves their warnings to the TUI resource notices.
 
 ### Why
 
