@@ -1,3 +1,22 @@
+## 2026-10-14 - Shared Vertex ADC resolution for Model Garden open models
+
+### What changed
+
+- `packages/ai/src/api/google-vertex.ts`: `buildGoogleAuthOptions` and the GOOGLE_CLOUD_PROJECT/GCLOUD_PROJECT lookup move to the new fork-only, browser-safe `google-vertex-env.ts` and are imported back, unchanged in behavior.
+- `packages/ai/src/api/google-vertex-adc.ts` (fork-only): `getVertexAdcAccess` returns an ADC access token, target project and quota project through google-auth-library, the same credential chain `@google/genai` uses; it is Node-only and reached solely through its lazy boundary `google-vertex-adc.lazy.ts`, so browser bundles that include `google-vertex.ts` never pull google-auth-library.
+
+### Why
+
+- `packages/ai/src/api/google-vertex.ts`: sharing its credential and project environment helpers lets the `vertex-model-garden` builtin call Vertex Model Garden open models through the OpenAI-compatible endpoint with a bearer token, without a second credential path.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/google-vertex.ts`: the extension owns registration and transport, but the credential and project environment helpers it must reuse were private to this adapter; sharing them requires moving them to an importable module.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/api/google-vertex.ts`, the import block and the two helper bodies (`buildGoogleAuthOptions`, `resolveProject`).
+
 ## 2026-10-13 - Advertised [CC] floor 2.1.296 (senpi#3258)
 
 ### What changed

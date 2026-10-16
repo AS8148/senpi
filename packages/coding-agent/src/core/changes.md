@@ -112,7 +112,24 @@ The RPC host and the TUI link renderer both need it; it is a core contract, not 
 ### Expected merge conflict zones
 
 - None: a new file.
+## 2026-10-16 - Extension providers can declare ambient api-key auth (senpi#2327)
 
+### What changed
+
+- `packages/coding-agent/src/core/provider-composer.ts`: `ProviderConfigInput` gains optional `ambientAuth` plus the `ProviderAmbientAuth` hook (`name`, `resolve({ ctx, signal })`): the extension-owned ambient credential source (Google ADC, AWS env).
+- `packages/coding-agent/src/core/provider-api-key-auth.ts`: `composeApiKeyAuth` composes `ambientAuth` into an ambient `ApiKeyAuth` (`ambientOnly`, no login) when no base provider, API key, or credential header already supplies auth. Availability is the resolution itself, so `Models.checkAuth` carries the `ambient` marker into the provider's auth status and automatic default selection.
+
+### Why
+
+- The `vertex-model-garden` builtin needed to be available while Google ADC is present without counting as an explicitly configured provider: an env-var `apiKey` registration made the provider outrank configured providers in automatic default selection (senpi#2327) and reported it available with no ADC at all.
+
+### Why an extension could not handle it
+
+- Ambient provenance is decided inside provider composition and flows through `Models.checkAuth` into the auth status the default-model resolver reads; the extension's own registration cannot reach either.
+
+### Expected merge conflict zones
+
+- LOW: the `ProviderConfigInput` field list and the `ProviderAmbientAuth` interface in `provider-composer.ts`; the ambient branch of `composeApiKeyAuth` in `provider-api-key-auth.ts`.
 ## 2026-10-15 - AgentSession.activeWakeSources (senpi#3225)
 
 ### What changed

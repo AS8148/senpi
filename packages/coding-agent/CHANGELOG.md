@@ -4,9 +4,13 @@
 
 ### Breaking Changes
 
+- RPC: the outcome for input dropped from the queue is now `cleared`, written by `clear_queue`, `unload_session { clearQueue: true }` and `abort { clearQueue: true }` alike; 2026.10.16-2 wrote it as `cleared_by_abort`, and only for `abort`. Receipts written under the old name are still read and reported as they were stored, so an input cleared on 2026.10.16-2 is never restored on reopen. Clients matching `outcome.kind` should accept both values ([#3412](https://github.com/code-yeongyu/senpi/issues/3412)).
+
 ### Added
 
 - `RpcClient.abort(options)` sends a typed abort (`effectId`, `awaitIdle`, `clearQueue`, `graceMs`) and returns the host's answer (`stopped`, `idle`, `cleared`, receipt); `RpcClient.getEffectStatus(effectId, { sessionPath? })` reads an effect receipt. `abort()` without options is unchanged ([#3453](https://github.com/code-yeongyu/senpi/issues/3453)).
+
+- Added the `vertex-garden` provider for DeepSeek V4.1 Flash and GLM 5.2 through Vertex Model Garden's global OpenAI-compatible endpoint, using shared Google Application Default Credentials token resolution without a token script or proxy. Availability follows the ADC chain: the lane is selectable while ADC is present but never counts as configured, so it cannot take the automatic default over a provider you configured. The request project comes from `GOOGLE_CLOUD_PROJECT`/`GCLOUD_PROJECT`, the ADC quota project, or `gcloud`'s configured project, and both models carry their published MaaS list prices. Marketplace partner models such as Claude and Grok are excluded because promotional credits do not apply ([#3296](https://github.com/code-yeongyu/senpi/pull/3296) by [@sleegme](https://github.com/sleegme)).
 
 - A turn that stopped making progress no longer runs forever: a session-level inactivity lease (`turn_inactivity_ms`, default 60 min, renewed only by tool execution events and admitted user input) and a hard maximum runtime (`turn_max_runtime_ms`, default 6 h) end a stuck turn as a system abort that carries a `deadline` detail on `agent_end`. Partial text is kept, the reason names the setting and the action to resume, and a goal is never auto-continued past the stop until the user sends a message ([#3227](https://github.com/code-yeongyu/senpi/issues/3227)).
 
