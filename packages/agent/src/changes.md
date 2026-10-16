@@ -1,3 +1,21 @@
+## 2026-10-16 - The pre-stream bound leaves a caller abort as it was (fixes the #3472 regression)
+
+### What changed
+
+- `packages/agent/src/agent-loop.ts`: `createPreStreamBound`'s `run()` no longer races the caller's abort. Only the bound ends a pre-stream step; a caller abort reaches the step through the request signal and the request proceeds as it did before #3472 (the provider is still called with the aborted signal, and the turn reads aborted).
+
+### Why
+
+- `packages/agent/src/agent-loop.ts`: #3472 made `run()` reject the moment the caller aborted, so an abort during the context transform or key lookup ended the turn before the provider call. That changed the caller's abort semantics and broke `post-compaction-stale-usage-queue-exemption.test.ts` ("does not resurrect deferred work after InteractiveMode abort clears the visible queue": one provider call instead of two).
+
+### Why an extension could not handle it
+
+- `packages/agent/src/agent-loop.ts`: the bound and the request it aborts are internal to one provider request in the agent loop.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/agent-loop.ts`, `createPreStreamBound`'s `run()`.
+
 ## 2026-10-16 - The start bound covers the work before a provider stream (senpi#3471)
 
 ### What changed
