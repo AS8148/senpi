@@ -12,7 +12,7 @@ const HOUR_MS = 60 * 60 * 1_000;
  * limit, a warning ("approaching your usage limit") or ordinary prose never takes a long block.
  */
 const CLAUDE_USAGE_LIMIT =
-	/^(?:You've|You have) (?:hit|reached) your (?:(session|weekly|daily|monthly|\d+-hour|usage) )?limit(?=$|\s*[\u00b7\u2219.,{(]|\s+resets?\b)|^Claude AI usage limit reached\b/i;
+	/^(?:You['\u2019]ve|You have) (?:hit|reached) your (?:(session|weekly|daily|monthly|\d+-hour|usage) )?limit(?=$|\s*[\u00b7\u2219.,{(]|\s+resets?\b)|^Claude AI usage limit reached\b/i;
 /** Claude Code's structured terminal reasons for a spent subscription. */
 const TERMINAL_LIMIT_REASON = /\b(?:blocking_limit|rapid_refill_breaker)\b/;
 /** A status the error names; a usage limit is a 429, so any other status is not one. */

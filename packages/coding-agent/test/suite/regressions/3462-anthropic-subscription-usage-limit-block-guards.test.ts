@@ -130,6 +130,45 @@ describe("senpi#3462 a long usage-limit block never outlives the limit and alway
 		expect((await slotOf(store, accounts[0]!.name))?.blockedUntil).toBeUndefined();
 	});
 
+	it("keeps a finished turn when clearing the block fails", async () => {
+		// given a credential store that fails every read after the turn has streamed
+		const accounts = pool("store-down");
+		const store = await storeWith(accounts);
+		const failing: CredentialStore = Object.assign(Object.create(store), {
+			read: async () => {
+				throw new Error("Credential store is busy: lock");
+			},
+		});
+		const attempts: string[] = [];
+
+		// when the turn completes
+		const events: string[] = [];
+		for await (const event of runFailover<{ type: "text_delta"; delta: string }>({
+			accounts,
+			selectFn: (slots) => slots[0]!,
+			runAttempt: async function* (slot) {
+				attempts.push(slot.name);
+				yield { type: "text_delta", delta: "done" };
+			},
+			classify: classifySdkError,
+			store: failing,
+			providerId: PROVIDER,
+			now: () => T0,
+			sleep: async () => {},
+		})) {
+			events.push(event.delta);
+		}
+
+		// then it is not replayed, not failed, and nothing is blocked
+		expect(events).toEqual(["done"]);
+		expect(attempts).toEqual([accounts[0]!.name]);
+		expect((await slotOf(store, accounts[0]!.name))?.blockedUntil).toBeUndefined();
+	});
+
+	it("reads Claude Code's limit with a typographic apostrophe", async () => {
+		expect(await blockFor("You\u2019ve hit your session limit \u00b7 resets in 1 hour", "curly")).toBe(HOUR);
+	});
+
 	it("lifts a usage block on '/claude-account unblock' but keeps an auth block", async () => {
 		const storage = AuthStorage.inMemory();
 		const [limited, rejected] = pool("manual") as [AccountSlot, AccountSlot];

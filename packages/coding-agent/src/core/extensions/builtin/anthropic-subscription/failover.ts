@@ -7,7 +7,6 @@ import {
 	withModelBlock,
 } from "../../../credential-pool/model-scope.ts";
 import { usageLimitResetMs } from "../../../credential-pool/reset-time.ts";
-
 import type { AccountSlot, AnthropicSubscriptionCredential } from "./accounts.ts";
 import { clearExpiredBlocks } from "./affinity.ts";
 import type { SdkErrorClassification } from "./errors.ts";
@@ -283,7 +282,12 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 				visibleDeltaEmitted ||= (options.isVisibleDelta ?? defaultIsVisibleDelta)(event);
 				yield event;
 			}
-			await clearBlockAfterSuccess(options.store, options.providerId, account.name);
+			// Best-effort hygiene after a finished turn: a store failure here must never fail or replay it.
+			await clearBlockAfterSuccess(options.store, options.providerId, account.name).catch((error: unknown) => {
+				process.stderr.write(
+					`senpi anthropic-subscription: could not clear a stored block on ${account.name}: ${error instanceof Error ? error.message : String(error)}\n`,
+				);
+			});
 			return;
 		} catch (error) {
 			const classification = options.classify(error);
