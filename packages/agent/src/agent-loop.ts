@@ -658,7 +658,11 @@ async function streamAssistantResponse(
 					: {}),
 			}),
 			// A stream that arrives after the bound ended the turn is closed here, not left to the provider.
-			(late) => closeAssistantIterator(late[Symbol.asyncIterator]()),
+			// A custom stream function may resolve to something that is not a stream; there is nothing to close then.
+			(late) => {
+				if (typeof late?.[Symbol.asyncIterator] === "function")
+					closeAssistantIterator(late[Symbol.asyncIterator]());
+			},
 		);
 		// Record the requested level, whichever stream function answered.
 		const result = async () => Object.assign(await response.result(), { thinkingLevel: config.reasoning ?? "off" });

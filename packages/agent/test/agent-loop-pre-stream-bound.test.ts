@@ -296,4 +296,34 @@ describe("the start bound covers the work before the provider stream (senpi#3471
 		expect(assistantOf(messages)?.errorMessage).toContain("Provider stream start timed out after 30ms");
 		await closed.promise;
 	});
+
+	it("leaves no unhandled rejection when the stream function resolves late to something that is not a stream", async () => {
+		// given
+		const unhandled: unknown[] = [];
+		const onUnhandled = (reason: unknown) => unhandled.push(reason);
+		process.on("unhandledRejection", onUnhandled);
+		const late = Promise.withResolvers<AssistantEventStream>();
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			streamStartTimeoutMs: 30,
+			timeoutMs: 10_000,
+		};
+
+		try {
+			// when
+			const messages = await settledTurn(
+				agentLoop([userMessage("Hello")], context(), config, undefined, () => late.promise),
+			);
+			late.resolve({} as AssistantEventStream);
+			await new Promise((resolve) => setImmediate(resolve));
+			await new Promise((resolve) => setImmediate(resolve));
+
+			// then
+			expect(assistantOf(messages)?.errorMessage).toContain("Provider stream start timed out after 30ms");
+			expect(unhandled).toEqual([]);
+		} finally {
+			process.off("unhandledRejection", onUnhandled);
+		}
+	});
 });
