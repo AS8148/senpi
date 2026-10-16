@@ -22,6 +22,7 @@ import type { ContextUsage, SessionControlAdmission, SessionKind } from "../../c
 import type { ResolvedMessagePath } from "../../core/message-path-resolution.ts";
 import type { SessionEntry, SessionMessageEntry, SessionTreeNode, UsageTotals } from "../../core/session-manager.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
+import type { ApiKeyVerification } from "../../core/verify-api-key.ts";
 import type { ClientMessageAdmission } from "./client-admission-record.ts";
 import type { EffectState, EffectStatus } from "./effect-record.ts";
 import type { RpcSlashCommand } from "./rpc-command-surface.ts";
@@ -267,6 +268,8 @@ type RpcSessionCommand =
 	| { id?: string; type: "login_cancel"; provider: string }
 	| { id?: string; type: "login_api_key"; provider: string; key: string }
 	| { id?: string; type: "logout"; provider: string }
+	// Checks a key with the provider's model list without storing it (desktop #2510).
+	| { id?: string; type: "verify_api_key"; provider: string; key: string }
 
 	// Provider accounts (task 13) are additive. The desktop consumer contract
 	// lives in ../omo-desktop-app/packages/contracts/src/rpc.ts and is updated separately.
@@ -610,6 +613,8 @@ export interface RpcAuthProvider {
 	authType: "oauth" | "api_key";
 	/** Auth status without exposing or refreshing any credential. */
 	status: RpcAuthStatus;
+	/** Last four characters of an API key stored by the app; absent for OAuth, env, models.json and short keys. */
+	keyHint?: string;
 }
 
 /** Auth status mirror (no credential values), from getProviderAuthStatus. */
@@ -1176,6 +1181,13 @@ export type RpcResponse =
 	| { id?: string; type: "response"; command: "login_cancel"; success: true }
 	| { id?: string; type: "response"; command: "login_api_key"; success: true }
 	| { id?: string; type: "response"; command: "logout"; success: true }
+	| {
+			id?: string;
+			type: "response";
+			command: "verify_api_key";
+			success: true;
+			data: ApiKeyVerification;
+	  }
 	| {
 			id?: string;
 			type: "response";

@@ -6,10 +6,12 @@
 
 ### Added
 
+- `agent_end` carries `failure: { category, provider, httpStatus?, code?, reason, action }` when a turn ends with a provider error, built only from the structured provider diagnostic (never from message text); every category, `unknown` included, has a reason and an action, and the TUI shows them as one line. Absent on success and abort ([#3228](https://github.com/code-yeongyu/senpi/issues/3228)).
 ### Changed
 
 ### Fixed
 
+- `show_html_page` no longer fails a report with screenshots with only "html: must not have more than 512000 characters". The refusal now counts the base64 images that pushed the page over the limit and says to pass them as absolute file paths, which the tool inlines itself after the check. The tool description and guideline say the same up front ([#3418](https://github.com/code-yeongyu/senpi/issues/3418), reported by @devswha).
 - On the Claude subscription lane, the agent no longer reports "PreToolUse hook error … this denial is not a failure" as a problem on every tool call. Claude Code labels each host-tool handoff that way itself, and the handoff reason now tells the model it is expected and not to mention it ([#3417](https://github.com/code-yeongyu/senpi/issues/3417), reported by @devswha).
 
 ### Removed
@@ -33,6 +35,8 @@
 - `/account <provider> reset <id>` clears one account's cooldown or block (the credential-pool health record and any block a provider lane stored on the account), so the next request tries it again ([#3285](https://github.com/code-yeongyu/senpi/issues/3285)).
 
 - `tool.glob({ pattern, path })` finds files by glob inside eval, the same way `tool.grep` searches text there. It is never a top-level tool, and the eval prompt now names it, so a model that reached for `tool.glob` no longer gets "Unknown tool glob" ([#3330](https://github.com/code-yeongyu/senpi/issues/3330)).
+
+- RPC `verify_api_key {provider, key}` checks an API key with one authenticated read of the provider's model list, without storing it, and answers `ok` or a reason (`rejected`, `unreachable`, `unsupported`, `unknown-provider`). `get_auth_providers` API-key rows carry `keyHint`, the last four characters of a key the app stored (none for OAuth, command or env references, or short keys). Hosts advertise `auth_key_verify`.
 
 ### Changed
 

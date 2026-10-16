@@ -1,3 +1,21 @@
+## 2026-10-15 - A failed turn shows its provider failure reason and action (senpi#3228)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: on an `agent_end` with `failure` and no retry pending, the TUI shows one error line, `<reason>. Action: <action>.`, from `formatProviderFailure`.
+
+### Why
+
+The raw provider error said what failed but not what the user should do.
+
+### Why an extension could not handle it
+
+The line is part of the built-in turn-end rendering in `InteractiveMode`, which extensions do not own.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the `agent_end` case of the session event handler.
+
 ## 2026-10-16 - Message path links: per-link errors, cached misses, hyperlink terminals only (senpi#3419 review)
 
 ### What changed

@@ -6,6 +6,7 @@
 
 ### Added
 
+- Provider diagnostics classify a dropped connection as `network` from a closed set of structured transport codes (`ECONNRESET`, `ECONNREFUSED`, `ENOTFOUND`, ...) read from the error or its `cause`, with `evidence: "structured_transport"` ([#3228](https://github.com/code-yeongyu/senpi/issues/3228)).
 ### Changed
 
 ### Fixed
