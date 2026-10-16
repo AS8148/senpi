@@ -2410,13 +2410,18 @@ Quiesce and queue options (both optional, combinable with `effectId`):
   `{ reason: "invalid_grace_ms", action }`.
 - `clearQueue: true` drains the steering and follow-up queues atomically before the abort, emits
   `queue_update`, and gives each drained input with a `clientMessageId` a `failed` receipt with outcome
-  `cleared_by_abort` (with `reason`, `detail` and `action`). The answer's `cleared` counts the drained inputs.
+  `cleared` (with `reason`, `detail` and `action`). 2026.10.16-2 wrote this outcome as `cleared_by_abort`;
+  receipts stored under that name are still read and reported unchanged, so accept both. The answer's `cleared` counts the drained inputs.
+  `clear_queue` and `unload_session { clearQueue: true }` close drained input with the same `cleared` outcome; a
+  session release does not (its queued deliveries stay unwritten so the sender redelivers them).
   It also empties the queue of an idle session.
 
 ```json
 {"type": "abort", "effectId": "stop-2", "awaitIdle": true, "clearQueue": true}
 {"type": "response", "command": "abort", "success": true, "data": {"effectId": "stop-2", "state": "done", "effect": {"effectId": "stop-2", "kind": "abort", "state": "done", "durableSessionId": "session-id"}, "stopped": true, "idle": true, "cleared": 1}}
 ```
+
+The typed `RpcClient` sends these with `abort({ effectId, awaitIdle, clearQueue, graceMs })` and returns the answer; `abort()` with no options keeps the old fire-and-forget contract. `getEffectStatus(effectId, { sessionPath? })` reads a receipt.
 
 An aborted turn's `agent_end` carries `aborted: true`, `abortSource` and, when an RPC client aborted it,
 `abortedBy: { connectionId, effectId? }`; a `session_abort` caused by a client carries the same `abortedBy`. `interrupt` records its caller the same way. An abort that reached no turn is forgotten once it settles, and a new turn starts with none, so a later system or extension abort never inherits an old client's `abortedBy`.

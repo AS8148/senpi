@@ -348,6 +348,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 				permission: permissionRequest.permission,
 				patterns: permissionRequest.patterns,
 				always: permissionRequest.always,
+				...(permissionRequest.widerAlways ? { widerAlways: permissionRequest.widerAlways } : {}),
 				metadata: createRequestMetadata(event.toolName, event.input),
 				tool: {
 					callID: event.toolCallId,
@@ -390,7 +391,8 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 				const reply = await showPermissionPrompt(ctx, request, signal);
 				activeService.reply(reply);
 				if (reply.reply === "always") {
-					persistAlways(ctx.agentDir, ctx.cwd, request, persistedAtAnswer);
+					const answered = reply.always ? { ...request, always: reply.always } : request;
+					persistAlways(ctx.agentDir, ctx.cwd, answered, persistedAtAnswer);
 				}
 			} else {
 				activeService.reply(

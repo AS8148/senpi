@@ -1,3 +1,47 @@
+## 2026-10-16 - RpcClient sends a typed abort and reads effect receipts (senpi#3453)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `abort(options)` overload sends `effectId`/`awaitIdle`/`clearQueue`/`graceMs` and returns the host's answer (`RpcAbortAnswer`); `abort()` without options is unchanged. New `getEffectStatus(effectId, { sessionPath? })` returns `RpcEffectStatusAnswer` (unrouted when reading a transcript by path). An awaited abort's request deadline is its `graceMs` (default 10 s) plus the plain 30 s (`requestDeadlineMs` in `packages/coding-agent/src/modes/rpc/rpc-request-deadline.ts`), so the host's answer is never dropped; a `graceMs` the host would refuse gets the plain deadline, so its `invalid_argument` still arrives. Exported types `RpcAbortOptions`, `RpcAbortAnswer`, `RpcEffectStatusAnswer`.
+- `packages/coding-agent/src/modes/rpc/abort-grace.ts` (new): `ABORT_DEFAULT_GRACE_MS`, `ABORT_MAX_GRACE_MS` and `isAbortGraceInRange`, with no host imports, so the client and the host share one definition.
+- `packages/coding-agent/src/modes/rpc/effect-commands.ts`: the host's `graceMs` check uses `isAbortGraceInRange` from `abort-grace.ts`; the accepted range is unchanged (an integer from 0 to 60 000).
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the host already supported the typed abort and receipts, but embedders of `RpcClient` (omo's task runner) could only send a bare abort and guess when the turn stopped, and an awaited abort with `graceMs` above 30 s timed out in the client before the host answered.
+- `packages/coding-agent/src/modes/rpc/abort-grace.ts`, `packages/coding-agent/src/modes/rpc/effect-commands.ts`: the client sizes its deadline from the same grace rule the host enforces; two copies of the default could drift and silently shorten the client's wait.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `RpcClient` is the transport class embedders import directly; an extension runs inside the host and cannot add client methods or change the client's request deadlines.
+- `packages/coding-agent/src/modes/rpc/abort-grace.ts`, `packages/coding-agent/src/modes/rpc/effect-commands.ts`: the `abort` command's validation is RPC host code that extensions do not reach.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/rpc-client.ts`, the `abort` / `abortStrict` region and the initial deadline choice in its `send()`; `rpc-request-deadline.ts` gains `requestDeadlineMs`.
+- LOW: `packages/coding-agent/src/modes/rpc/effect-commands.ts`, the grace constants and `invalidGrace`; `packages/coding-agent/src/modes/rpc/abort-grace.ts` is new.
+
+## 2026-10-16 - Every queue clear closes drained input as `cleared` (senpi#3412)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/client-admissions.ts`: `clearQueuedByAbort` is now `clearQueued`, giving each still-queued input a `cleared` receipt; `ClientAdmissions.clearQueuedFor(session)` does it only on a ledger that already exists.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `clear_queue` marks queued input cleared before draining.
+- `packages/coding-agent/src/modes/rpc/session-unload.ts`: `unload_session { clearQueue: true }` does the same before draining.
+- `packages/coding-agent/src/modes/rpc/effect-commands.ts`, `effect-outcome-copy.ts`, `effect-record.ts`, `effect-status.ts`: `abort { clearQueue }` uses the same outcome, renamed from `cleared_by_abort` (released in 2026.10.16-2) to `cleared`; the schema still accepts `cleared_by_abort` and `projectAdmission` reads it as `failed`, so receipts that release wrote stay readable and their input is never restored on reopen.
+
+### Why
+
+- Input dropped by `clear_queue` or by an unload with `clearQueue` closed with a plain `completed` receipt, which reads as delivered (senpi#3412). One outcome now covers every clear path; a session release is not one of them, because its queued deliveries are redelivered by the sender.
+
+### Why an extension could not handle it
+
+- The admission ledger and the RPC command handlers are host internals; no extension hook sees a queue clear before the drain.
+
+### Expected merge conflict zones
+
+- LOW: the `clear_queue` case in `connection-handler.ts`; the `clearQueue` branch in `session-unload.ts`.
+
 ## 2026-10-14 - RPC `agent_end` carries the turn deadline (senpi#3227)
 
 ### What changed
