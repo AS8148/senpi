@@ -37,6 +37,7 @@ import {
 	compactionReserveTokens,
 } from "./compaction-settings-access.ts";
 import { type ResolvedCompactionSettings, resolveCompactionSettings } from "./compaction-settings-resolver.ts";
+import type { ContextFileLimits } from "./context-files.ts";
 import { MAX_ENGINE_TURNS_PER_USER_INPUT, MAX_TOOL_FREE_ENGINE_TURNS_PER_WINDOW } from "./engine-turn-limit.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
 import {
@@ -192,6 +193,7 @@ export interface Settings {
 	followUpMode?: "all" | "one-at-a-time";
 	theme?: string;
 	compaction?: CompactionSettings & { model?: string };
+	contextFiles?: ContextFileLimits;
 	branchSummary?: BranchSummarySettings;
 	retry?: RetrySettingsConfig;
 	fallback?: FallbackCircuitSettings;

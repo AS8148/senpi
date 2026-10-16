@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Bounded what context files and the skills catalog add to every request: AGENTS.md/CLAUDE.md files are cut at 64 KiB each and 128 KiB in total, nearest file first, with a warning naming each cut file (`contextFiles.maxBytesPerFile` / `contextFiles.maxTotalBytes` raise the limits); above 100 skills each skill is listed with a one-line description ([#3460](https://github.com/code-yeongyu/senpi/issues/3460), [#3463](https://github.com/code-yeongyu/senpi/pull/3463)).
+
 ### Removed
 
 ## [2026.10.16-3] - 2026-10-16

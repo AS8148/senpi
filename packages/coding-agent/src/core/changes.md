@@ -10547,3 +10547,27 @@ It serves core RPC auth commands.
 ### Expected merge conflict zones
 
 None (fork-only file).
+
+## 2026-10-16 - Context files and a large skills catalog are size-bounded (senpi#3460)
+
+### What changed
+
+- `packages/coding-agent/src/core/context-files.ts` (new): context-file discovery moved here from `resource-loader.ts` unchanged, plus `applyContextFileLimits`. Files are budgeted nearest-first (the cwd's file, then its ancestors, then the global file): each file is cut at 64 KiB and all files together at 128 KiB, on a UTF-8 character boundary, with an in-content truncation note. Every cut or skipped file gets a warning naming its path, its size and the limits. `contextFiles.maxBytesPerFile` / `contextFiles.maxTotalBytes` in settings override both.
+- `packages/coding-agent/src/core/resource-loader.ts`: imports and re-exports `loadProjectContextFiles`, passes the settings limits, and calls `warnIfLargeSkillCatalog` after skills load.
+- `packages/coding-agent/src/core/skills-prompt.ts` (new): `formatSkillsForPrompt` moved here from `skills.ts`; above 100 visible skills or 32 KiB of descriptions, each skill keeps its name and location but its description becomes its first line, capped at 160 characters.
+- `packages/coding-agent/src/core/skills.ts`: re-exports `formatSkillsForPrompt` from `skills-prompt.ts`.
+- `packages/coding-agent/src/core/settings-manager.ts`: `Settings.contextFiles`.
+
+### Why
+
+Context files and the skills catalog are sent on every request with no bound. On a synthetic run, one 360 KiB AGENTS.md put about 91K tokens into each call and 400 skills about 43K, so a pay-per-token run paid that on every tool turn (senpi#3460, oh-my-openagent#10305).
+
+### Why an extension could not handle it
+
+Context files and the skills section are assembled by core before extensions see the prompt; an extension can only rewrite the finished prompt, after the size and the warnings are already decided.
+
+### Expected merge conflict zones
+
+- `resource-loader.ts`: the import block and the `loadProjectContextFiles` call in `reload`.
+- `skills.ts`: the area where `formatSkillsForPrompt` used to live.
+- `settings-manager.ts`: the `Settings` interface beside `compaction`.
