@@ -10,6 +10,7 @@ import {
 	queryWithAuthLane,
 	resetAuthLaneBoundary,
 } from "../../../src/core/extensions/builtin/anthropic-subscription/auth-lane.ts";
+import { forgetSessionBlocksFor } from "../../../src/core/extensions/builtin/anthropic-subscription/failover.ts";
 import type { SDKMessage, SdkQuery } from "../../../src/core/extensions/builtin/anthropic-subscription/sdk-boundary.ts";
 import { loadAnthropicSubscriptionProviderSettings } from "../../../src/core/extensions/builtin/anthropic-subscription/settings.ts";
 import { InMemorySettingsStorage, SettingsManager } from "../../../src/core/settings-manager.ts";
@@ -93,6 +94,8 @@ function request(
 }
 
 afterEach(() => {
+	// A plain rate limit is held per session in process memory (senpi#3466); every case reuses one session.
+	for (const name of ["primary", "secondary", "alpha", "bravo"]) forgetSessionBlocksFor(name);
 	resetAuthLaneBoundary();
 	vi.useRealTimers();
 });
