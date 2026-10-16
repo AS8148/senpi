@@ -7,6 +7,7 @@
 ### Added
 
 - Provider diagnostics classify a dropped connection as `network` from a closed set of structured transport codes (`ECONNRESET`, `ECONNREFUSED`, `ENOTFOUND`, ...) read from the error or its `cause`, with `evidence: "structured_transport"` ([#3228](https://github.com/code-yeongyu/senpi/issues/3228)).
+- Model cost cards can carry scheduled list-price changes (`cost.effectiveRates`, each with an ISO UTC `effectiveFrom`). Usage is billed with the card in force when it is computed, and the Argon model rows on `google` and `google-vertex` now carry the provider's 2026-12-01 price change ($2/$10 to $4/$20 per 1M tokens), so cost totals stay right across the switch without a catalog refresh ([#3378](https://github.com/code-yeongyu/senpi/issues/3378)).
 
 ### Changed
 

@@ -16,6 +16,43 @@ The line is part of the built-in turn-end rendering in `InteractiveMode`, which 
 
 - `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the `agent_end` case of the session event handler.
 
+## 2026-10-16 - Message path links: per-link errors, cached misses, hyperlink terminals only (senpi#3419 review)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/message-path-links.ts`: a bad `%` encoding skips only that link (M1); answers (found or not) and project roots are cached per working directory with LRU order (M2, L5); links are rewritten only when the terminal shows hyperlinks (M3); indented code, images and `<...>` targets are skipped, a fence closes only on a matching marker, link titles are kept, drive-letter targets are paths (M4, L2, L3); network or device paths are never resolved (H1). Options inject `hyperlinks` and `resolve` for tests.
+
+### Why
+
+The Opus review of senpi#3419 found these.
+
+### Why an extension could not handle it
+
+It is the built-in link transformer.
+
+### Expected merge conflict zones
+
+- None beyond the file this PR adds.
+
+## 2026-10-16 - Message path links open the file the engine resolves (senpi#3415)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/message-path-links.ts` (new): a Markdown transformer that rewrites a link whose target is a path into a `file://` link to `resolveMessagePath`'s realpath (cwd, then project root); URLs, anchors, code blocks and inline code are untouched, a path that resolves to nothing keeps its text.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `getMarkdownTransformers` adds it after mermaid.
+
+### Why
+
+A relative link in a message opened nothing in the terminal; the TUI now opens what RPC clients open.
+
+### Why an extension could not handle it
+
+It uses the core resolver and must run for every transcript message.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `getMarkdownTransformers` and the transformer fields.
+
 ## 2026-10-15 - A retired extension ctx never exits the session (senpi#3389)
 
 ### What changed

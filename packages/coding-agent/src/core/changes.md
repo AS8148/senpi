@@ -17,6 +17,96 @@ Clients could not tell an expired login from a rate limit or an outage without p
 
 - `packages/coding-agent/src/core/agent-session.ts`: the `AgentSessionAgentEndEvent` type and the `agent_end` branch of the listener emit.
 
+## 2026-10-16 - The xiaomi built-in defaults move to mimo-v2.6-pro (senpi v2026.10.16 release)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-resolver.ts`: `defaultModelPerProvider` for `xiaomi` and the three `xiaomi-token-plan-*` providers is `mimo-v2.6-pro` (was `mimo-v2.5-pro`).
+
+### Why
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the release prepare regenerates the catalog from models.dev, which now marks `mimo-v2.5-pro` deprecated; the generator skips deprecated models, so the default vanished and `check:provider-defaults` stopped the v2026.10.16 release.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the built-in default table is read by core model resolution before extensions load.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the xiaomi rows of `defaultModelPerProvider`.
+
+## 2026-10-16 - Message paths never reach the file system unless local (senpi#3419 review)
+
+### What changed
+
+- `packages/coding-agent/src/core/message-path-resolution.ts`: `isLocalMessagePath` (win32: a drive-letter path only; elsewhere absolute and not `//`) is checked on every candidate before any file-system call and on the realpath; `resolveMessagePath` takes `platform`; `messagePathProjectRoot` ignores a `.git` in the home folder.
+
+### Why
+
+Opus review H1: resolving a `\\host\share` path named in a message made Windows connect to that host and offer the user's credentials; L1: a dotfiles repository made `~` the project root.
+
+### Why an extension could not handle it
+
+It is the core resolver's own guard.
+
+### Expected merge conflict zones
+
+- None: the file is new in this PR.
+
+## 2026-10-16 - One rule for what a message path means (senpi#3415)
+
+### What changed
+
+- `packages/coding-agent/src/core/message-path-resolution.ts` (new): `resolveMessagePath({ path, cwd, projectRoot })` tries a relative path against the session's working directory, then the project root (`messagePathProjectRoot`: nearest `.git`, else the nearest project marker), and answers the first existing candidate's realpath with its kind and base, or every candidate tried.
+
+### Why
+
+The TUI, RPC clients and the desktop app each guessed what a relative link meant. The engine knows the working directory and the project root, so it owns the answer once (sisyphuslabs/omo-desktop-app#2748).
+
+### Why an extension could not handle it
+
+The RPC host and the TUI link renderer both need it; it is a core contract, not a tool.
+
+### Expected merge conflict zones
+
+- None: a new file.
+
+## 2026-10-15 - AgentSession.activeWakeSources (senpi#3225)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `activeWakeSources` reads the wake-source tracker's live source names, so `unload_session` can tell child tasks from other extension work.
+
+### Why
+
+Unload eligibility depends on which extension work is live, not only on whether any is.
+
+### Why an extension could not handle it
+
+The tracker is private session state.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: next to `activitySnapshot`.
+
+## 2026-10-15 - A user cost override drops scheduled catalog cards (senpi#3378)
+
+### What changed
+
+- `packages/coding-agent/src/core/provider-composer.ts`: when `models.json` overrides any part of a model's `cost`, the merged cost keeps the override's rates and tiers but not the catalog's `effectiveRates`.
+
+### Why
+
+- A user-set price is the price. Keeping the catalog's scheduled cards would silently replace it on their start date (senpi#3378).
+
+### Why an extension could not handle it
+
+- The override merge runs inside the core provider composer before any extension sees the model.
+
+### Expected merge conflict zones
+
+- LOW: the `cost` branch of the model override merge.
+
 ## 2026-10-15 - A replacement's abort names the replacement on agent_end (senpi#3357)
 
 ### What changed
