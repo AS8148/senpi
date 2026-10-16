@@ -37,7 +37,10 @@ export const realisticOptions: BuildDynamicSystemPromptOptions = {
 // exercise whitespace, multiple resource roots, and the >100-skill compact path.
 export const goldenCases = [
 	{ name: "realistic", options: realisticOptions },
-	{ name: "compact", options: { ...realisticOptions, skills: Array.from({ length: 101 }, (_, i) => fixtureSkill(i)) } },
+	{
+		name: "compact",
+		options: { ...realisticOptions, skills: Array.from({ length: 101 }, (_, i) => fixtureSkill(i)) },
+	},
 	{ name: "app", options: { ...realisticOptions, surface: "app" as const, contextFiles: [], skills: [] } },
 	{ name: "core", options: { ...realisticOptions, corePrompt: () => "Custom model core.\n" } },
 	{ name: "custom", options: { ...realisticOptions, customPrompt: "Loader system prompt.\n" } },
