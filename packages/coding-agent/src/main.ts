@@ -148,10 +148,22 @@ async function readPipedStdin(): Promise<string | undefined> {
 }
 
 function collectAuthDiagnostics(authStorage: AuthStorage, context: string): AgentSessionRuntimeDiagnostic[] {
-	return authStorage.drainErrors().map((error) => ({
-		type: "warning",
-		message: `(${context}, auth storage) ${error.message}`,
-	}));
+	return [
+		...authStorage.drainErrors().map((error) => error.message),
+		...authStorage.pendingNotices().map((notice) => notice.message),
+	].map((message) => ({ type: "warning", message: `(${context}, auth storage) ${message}` }));
+}
+
+/** The TUI shows auth problems at startup; credential notices are marked seen once shown (senpi#3486). */
+function interactiveAuthNotices(authStorage: AuthStorage): { messages: string[]; markSeen: () => void } {
+	const pending = authStorage.pendingNotices();
+	return {
+		messages: [
+			...authStorage.drainErrors().map((error) => error.message),
+			...pending.map((notice) => notice.message),
+		],
+		markSeen: () => authStorage.markNoticesSeen(pending.map((notice) => notice.id)),
+	};
 }
 
 export function collectExtensionLoadDiagnostics(
@@ -1540,6 +1552,7 @@ export async function main(args: string[], options?: MainOptions) {
 		const { InteractiveMode } = await import("./modes/interactive/interactive-mode.ts");
 		const interactiveMode = new InteractiveMode(runtime, {
 			migratedProviders,
+			authNotices: interactiveAuthNotices(services.authStorage),
 			legacyPiEditNotice: legacyPiEditStartupNotice(),
 			modelFallbackMessage,
 			autoTrustOnReloadCwd,

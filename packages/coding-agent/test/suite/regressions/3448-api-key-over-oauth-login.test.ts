@@ -123,7 +123,37 @@ describe("an API key saved over an OAuth login (senpi#3448)", () => {
 		// Then the OAuth login that pays today stays in use, nothing is deleted, and the user is told what to do
 		expect(storage.get("openrouter")?.type).toBe("oauth");
 		expect(JSON.parse(readFileSync(authPath, "utf-8"))).toEqual(mixed);
-		const notices = storage.drainErrors().map((error) => error.message);
+		const notices = storage.pendingNotices().map((notice) => notice.message);
 		expect(notices.some((message) => message.includes("openrouter") && message.includes("/login"))).toBe(true);
+	});
+
+	it("raises the mixed-pool notice once per change, not on every launch (#3486 review)", () => {
+		const authPath = join(tempDir, "agent", "auth.json");
+		mkdirSync(dirname(authPath), { recursive: true });
+		const slots = [
+			{ name: "default", source: "login", access: "old-access", refresh: "old-refresh", expires: oauth.expires },
+			{ name: "login-2", source: "login", key: "sk-saved-later" },
+		];
+		writeFileSync(authPath, JSON.stringify({ openrouter: { ...oauth, accounts: slots } }));
+
+		const first = AuthStorage.create(authPath).pendingNotices();
+		expect(first.map((notice) => notice.provider)).toEqual(["openrouter"]);
+		AuthStorage.create(authPath).markNoticesSeen(first.map((notice) => notice.id));
+
+		// Seen: a later launch stays quiet
+		expect(AuthStorage.create(authPath).pendingNotices()).toEqual([]);
+
+		// A new unused key is a new change, so it is raised again
+		writeFileSync(
+			authPath,
+			JSON.stringify({
+				openrouter: { ...oauth, accounts: [...slots, { name: "login-3", source: "login", key: "sk-newer" }] },
+			}),
+		);
+		expect(
+			AuthStorage.create(authPath)
+				.pendingNotices()
+				.map((notice) => notice.provider),
+		).toEqual(["openrouter"]);
 	});
 });

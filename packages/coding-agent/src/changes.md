@@ -5006,3 +5006,21 @@ The package barrel is the only public entry point; an extension cannot add expor
 ### Expected merge conflict zones
 
 - LOW: the `core/skills.ts` export block in `packages/coding-agent/src/index.ts`.
+
+## 2026-10-16 - Auth notices reach the TUI at startup, once per change (#3448)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `collectAuthDiagnostics` also reports the store's pending credential notices for non-interactive runs; the interactive branch passes `authNotices` (auth errors plus pending notices, with `markSeen`) to `InteractiveMode`.
+
+### Why
+
+- `packages/coding-agent/src/main.ts`: the credential and billing notices reached only model listing, print mode and RPC; the TUI, the main surface, never showed them (#3486 review).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/main.ts` builds the startup options every mode receives.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: `collectAuthDiagnostics`, `interactiveAuthNotices`, and the `InteractiveMode` options in the interactive branch.

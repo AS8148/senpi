@@ -17,7 +17,7 @@ import type {
 	OAuthLoginCallbacks,
 } from "@earendil-works/pi-ai";
 import { findEnvKeys, getEnvApiKey, readByProviderId } from "@earendil-works/pi-ai";
-import { type CredentialKind, unusedSlotKinds } from "@earendil-works/pi-ai/auth/pool/kinds";
+import { type CredentialKind, slotKind, unusedSlotKinds } from "@earendil-works/pi-ai/auth/pool/kinds";
 import {
 	appendLoginSlot,
 	type CredentialSlot,
@@ -28,6 +28,7 @@ import {
 	upsertSlot,
 } from "@earendil-works/pi-ai/auth/pool/slots";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
+import { createHash } from "crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
@@ -72,19 +73,29 @@ function repairPoisonedPoolSlots(data: AuthStorageData): { data: AuthStorageData
 
 const KIND_LABEL: Readonly<Record<CredentialKind, string>> = { oauth: "OAuth login", api_key: "API key" };
 
+/** A credential problem the user should see once per change: `id` changes when the problem does. */
+export type AuthNotice = { readonly id: string; readonly provider: string; readonly message: string };
+
 /**
  * One notice per provider whose stored credential holds slots its type cannot use (senpi#3448).
  * Nothing is changed: which credential pays stays the user's choice, so the notice names the
- * unused login and the action that switches to it.
+ * unused login, where it still is, and the action that switches to it.
  */
-function unusedLoginNotices(data: AuthStorageData): Array<{ provider: string; message: string }> {
-	const notices: Array<{ provider: string; message: string }> = [];
+function unusedLoginNotices(data: AuthStorageData): AuthNotice[] {
+	const notices: AuthNotice[] = [];
 	for (const [provider, credential] of Object.entries(data)) {
 		if (typeof credential !== "object" || credential === null) continue;
 		for (const kind of unusedSlotKinds(credential)) {
+			const slots = listSlots(credential).filter((slot) => slotKind(slot) === kind);
+			const inUse = KIND_LABEL[credential.type];
+			const fingerprint = createHash("sha256")
+				.update(JSON.stringify(slots.map((slot) => [slot.name, slot.key ?? "", slot.refresh ?? ""])))
+				.digest("hex")
+				.slice(0, 16);
 			notices.push({
+				id: `${provider}:${kind}:${fingerprint}`,
 				provider,
-				message: `${provider}: an ${KIND_LABEL[kind]} saved earlier is stored next to your ${KIND_LABEL[credential.type]} but is never used; the ${KIND_LABEL[credential.type]} stays in use. To switch to the ${KIND_LABEL[kind]}, save it again with /login (the ${KIND_LABEL[credential.type]} is backed up first).`,
+				message: `${provider}: an ${KIND_LABEL[kind]} saved earlier is stored next to your ${inUse} but is never used; the ${inUse} stays in use. It is still in auth.json (${slots.map((slot) => slot.name).join(", ")}); to switch to it, save it again with /login (the ${inUse} is backed up first).`,
 			});
 		}
 	}
@@ -464,7 +475,8 @@ export class AuthStorage implements CredentialStore {
 	private readonly extensionOAuthProviders = new Map<string, OAuthAuth>();
 	private errors: Error[] = [];
 	private readonly reportedMigrationSkips = new Set<string>();
-	private readonly reportedUnusedLogins = new Set<string>();
+	private notices: AuthNotice[] = [];
+	private readonly seenInMemory = new Set<string>();
 	private readonly replacements = new Map<string, CredentialReplacement>();
 	private storage: AuthStorageBackend;
 	private authPath: string | undefined;
@@ -547,11 +559,7 @@ export class AuthStorage implements CredentialStore {
 				),
 			);
 		}
-		for (const notice of unusedLoginNotices(moved.data)) {
-			if (this.reportedUnusedLogins.has(notice.provider)) continue;
-			this.reportedUnusedLogins.add(notice.provider);
-			this.recordError(new Error(notice.message));
-		}
+		this.notices = unusedLoginNotices(moved.data);
 		return {
 			data: moved.data,
 			repaired: repaired.repaired,
@@ -668,14 +676,14 @@ export class AuthStorage implements CredentialStore {
 	 * previous bytes are backed up first, and the replacement is returned and kept for
 	 * `takeReplacement`, so no credential disappears without the user being told where it went.
 	 */
-	set(provider: string, credential: Credential): CredentialReplacement | Record<string, never> {
+	set(provider: string, credential: Credential): CredentialReplacement | undefined {
 		return this.storage.withLock((content) => {
 			const currentData = this.parseStorageData(content);
 			const replacement = this.noteReplacement(provider, currentData[provider], credential, content);
 			const next = appendLoginSlot(currentData[provider], credential);
 			const nextData = { ...currentData, [provider]: next };
 			this.data = nextData;
-			return { result: replacement ?? {}, next: JSON.stringify(nextData, null, 2) };
+			return { result: replacement, next: JSON.stringify(nextData, null, 2) };
 		});
 	}
 
@@ -684,6 +692,39 @@ export class AuthStorage implements CredentialStore {
 		const replacement = this.replacements.get(provider);
 		this.replacements.delete(provider);
 		return replacement;
+	}
+
+	/** Credential notices not yet marked seen; a changed problem gets a new id and shows again. */
+	pendingNotices(): ReadonlyArray<AuthNotice> {
+		const seen = this.seenNoticeIds();
+		return this.notices.filter((notice) => !seen.has(notice.id));
+	}
+
+	/** Records notices as shown, so the next launch stays quiet until the problem changes. */
+	markNoticesSeen(ids: readonly string[]): void {
+		if (ids.length === 0) return;
+		const path = this.seenNoticesPath();
+		if (!path) {
+			for (const id of ids) this.seenInMemory.add(id);
+			return;
+		}
+		const seen = [...new Set([...this.seenNoticeIds(), ...ids])];
+		writeFileSync(path, JSON.stringify(seen, null, 2), AUTH_FILE_WRITE_OPTIONS);
+	}
+
+	private seenNoticesPath(): string | undefined {
+		return this.authPath ? join(dirname(this.authPath), "auth-notices-seen.json") : undefined;
+	}
+
+	private seenNoticeIds(): Set<string> {
+		const path = this.seenNoticesPath();
+		if (!path) return new Set(this.seenInMemory);
+		try {
+			const parsed: unknown = JSON.parse(readFileSync(path, "utf-8"));
+			return new Set(Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : []);
+		} catch {
+			return new Set();
+		}
 	}
 
 	private noteReplacement(

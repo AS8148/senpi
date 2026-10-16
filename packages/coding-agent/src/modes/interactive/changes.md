@@ -2847,7 +2847,7 @@ The editor theme is built by the interactive mode itself; extensions cannot inje
 
 ### What changed
 
-- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `loginProvider` takes the store's pending replacement after a login and shows `describeCredentialReplacement` as a warning: which login was replaced, where its backup is, and how to switch back.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `loginProvider` clears any stale replacement first, then after the login shows `describeCredentialReplacement` as a warning: which login was replaced, where its backup is, and how to switch back. At startup, `run` shows the `authNotices` option and then calls its `markSeen`, so each credential notice appears once per change.
 
 ### Why
 

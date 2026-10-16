@@ -10588,7 +10588,7 @@ None (fork-only file).
 
 ### What changed
 
-- `packages/coding-agent/src/core/auth-storage.ts`: when a login of the other kind replaces a provider's credential, `set` and `modify` (the interactive `/login` path) first back up auth.json, then record `{ replaced, backupPath }`; `set` returns it and `takeReplacement(provider)` hands it to the caller once. `describeCredentialReplacement` words the notice. Loading never rewrites a mixed-kind pool written by older builds: the credential that pays stays in use, and one notice per provider names the unused login and the `/login` step that switches to it.
+- `packages/coding-agent/src/core/auth-storage.ts`: when a login of the other kind replaces a provider's credential, `set` and `modify` (the interactive `/login` path) first back up auth.json, then record `{ replaced, backupPath }`; `set` returns it and `takeReplacement(provider)` hands it to the caller once. `describeCredentialReplacement` words the notice. Loading never rewrites a mixed-kind pool written by older builds: the credential that pays stays in use, and `pendingNotices()` returns one notice per provider naming the unused login, its slots in auth.json and the `/login` step that switches to it. `markNoticesSeen(ids)` records shown ids in `auth-notices-seen.json` beside auth.json; an id is derived from the unused slots, so a changed problem is shown again. `set` returns `CredentialReplacement | undefined`.
 
 ### Why
 

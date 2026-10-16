@@ -1774,7 +1774,7 @@ export function createRpcConnectionHandler(
 				await session.modelRegistry.refresh();
 				// The client shows what this key replaced and where the previous login is (senpi#3448).
 				session.modelRegistry.authStorage.takeReplacement(command.provider);
-				return success(id, "login_api_key", "replaced" in replacement ? replacement : undefined);
+				return success(id, "login_api_key", replacement);
 			}
 
 			case "verify_api_key": {
