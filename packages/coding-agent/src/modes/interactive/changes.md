@@ -2860,3 +2860,21 @@ The editor theme is built by the interactive mode itself; extensions cannot inje
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the end of `loginProvider` and its imports.
+
+## 2026-10-16 - The footer never names a mixed pool's unusable slot (#3486)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/footer.ts`: `accountFooterSuffix` picks from `slotsOfOwnKind(credential)`, the same slots rotation offers, so the footer names the slot that serves.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/components/footer.ts`: with a mixed pool from older builds the footer showed `openrouter@login-2`, an API-key slot the OAuth credential cannot use (#3486 review, TUI capture).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/components/footer.ts` renders the built-in footer.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/components/footer.ts`: the start of `accountFooterSuffix` and its imports.
