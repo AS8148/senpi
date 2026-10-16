@@ -25,6 +25,9 @@ export const effectOutcomeSchema = z.object({
 		"unsupported_thinking_level",
 		"superseded",
 		"context_budget",
+		"cleared",
+		// 2026.10.16-2 wrote an abort-drained input under this name; it must stay readable.
+		"cleared_by_abort",
 		"already_delivered",
 		"not_found",
 		"refused",

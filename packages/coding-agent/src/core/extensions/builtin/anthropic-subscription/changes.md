@@ -1950,3 +1950,17 @@ This is the anthropic-subscription builtin's own model ids, error classification
 - `index.ts`: the registration;
 - `session-sync.ts`: the fingerprint toolset hash;
 - `session-entry-annotations.ts` and `session-registry.ts`: `switchEntryModel` / `switchSessionModel`.
+
+## 2026-10-16 - The host tool handoff never reads as an error (senpi#3417)
+
+### What changed
+- `tools.ts`: `TOOL_EXECUTION_DENIED_MESSAGE` now opens "Not an error: this is the normal host handoff, so ignore the 'hook error' label". It tells the model not to mention the message to the user. `HOST_TOOL_POLICY_FINGERPRINT` moves to `host-tool-denial-v4`, so resident sessions reattach with the new reason.
+
+### Why
+Claude Code turns every PreToolUse deny into the tool_result `PreToolUse:<Tool> hook error: <reason>` with `is_error: true`. Wire captures with the installed CLI confirmed this for the hookSpecificOutput deny, the legacy `decision: "block"`, and with `suppressOutput` or `systemMessage`. The label can't be changed, and a hook that doesn't deny (or a `canUseTool` deny) lets Claude Code execute the tool itself. senpi never shows that SDK tool_result, but the model read it as a failure on every host-run tool and told the user. Only the reason text can carry the correction.
+
+### Why an extension could not handle it
+This is the builtin's own denial reason, which the deny hook hands to Claude Code.
+
+### Expected merge conflict zones
+- `tools.ts`: the denial constant and the fingerprint version.

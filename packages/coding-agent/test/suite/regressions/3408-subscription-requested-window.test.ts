@@ -88,7 +88,7 @@ async function captureRequest(target: Model<Api>): Promise<Captured> {
 			HOME: join(directory, "home"),
 			CLAUDE_CONFIG_DIR: join(directory, "claude-config"),
 			ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}`,
-			CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-3408-capture-probe",
+			CLAUDE_CODE_OAUTH_TOKEN: "fake-oauth-token-for-local-mock-server",
 			CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
 			...options.env,
 		};
@@ -178,7 +178,7 @@ describe("#3408: the subscription request carries the window senpi plans against
 				HOME: join(directory, "home"),
 				CLAUDE_CONFIG_DIR: join(directory, "claude-config"),
 				ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}`,
-				CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-3408-capture-probe",
+				CLAUDE_CODE_OAUTH_TOKEN: "fake-oauth-token-for-local-mock-server",
 				CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
 				...options.env,
 			};
