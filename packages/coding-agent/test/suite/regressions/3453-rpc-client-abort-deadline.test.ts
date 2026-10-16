@@ -3,9 +3,9 @@ import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { ABORT_DEFAULT_GRACE_MS, ABORT_MAX_GRACE_MS } from "../../../src/modes/rpc/abort-grace.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "../../../src/modes/rpc/jsonl.ts";
 import { RpcClient } from "../../../src/modes/rpc/rpc-client.ts";
-import { ABORT_DEFAULT_GRACE_MS, ABORT_MAX_GRACE_MS } from "../../../src/modes/rpc/abort-grace.ts";
 import { REQUEST_DEADLINE_MS, requestDeadlineMs } from "../../../src/modes/rpc/rpc-request-deadline.ts";
 
 async function abortHost() {
@@ -104,7 +104,9 @@ describe("A graceMs the host would refuse leaves the client listening for that r
 			const host = await abortHost();
 			try {
 				vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-				const answer = host.client.abort({ effectId: "stop-2", awaitIdle: true, graceMs }).catch((error: unknown) => error);
+				const answer = host.client
+					.abort({ effectId: "stop-2", awaitIdle: true, graceMs })
+					.catch((error: unknown) => error);
 				const { id } = await host.abort;
 
 				// When: one second passes before the answer
