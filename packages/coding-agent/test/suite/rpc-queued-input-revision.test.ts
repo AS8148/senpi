@@ -87,4 +87,44 @@ describe("RPC queued-input expected revision", () => {
 		]);
 		await host.stop();
 	}, 240_000);
+
+	it("answers a same-id retry with exactly the fields of the live answer, for every outcome", async () => {
+		await using world = await effectHostWorld();
+		const host = await world.start();
+		const client = await host.connect();
+		const { sessionId } = await openSession(client, { cwd: world.cwd, ...MODEL });
+		const started = client.wait((record) => record.type === "agent_start" && record.sessionId === sessionId);
+		await client.request({ type: "prompt", sessionId, message: "hold" });
+		await started;
+		await client.request({ type: "follow_up", sessionId, message: "edit me" });
+		await client.request({ type: "follow_up", sessionId, message: "remove me" });
+		const [editTarget, removeTarget] = await queued(client, sessionId);
+		const requests = [
+			{
+				type: "edit_queued_message",
+				queuedId: editTarget?.queuedId,
+				text: "edited",
+				expectedRevision: 1,
+				effectId: "r-edit",
+			},
+			{
+				type: "edit_queued_message",
+				queuedId: editTarget?.queuedId,
+				text: "stale",
+				expectedRevision: 1,
+				effectId: "r-conflict",
+			},
+			{ type: "dequeue_message", queuedId: removeTarget?.queuedId, effectId: "r-remove" },
+			{ type: "dequeue_message", queuedId: "q_999", effectId: "r-missing" },
+		];
+		for (const request of requests) {
+			const live = await client.request({ ...request, sessionId });
+			const replay = await client.request({ ...request, sessionId });
+			const { replayed, ...replayData } = (replay.data ?? {}) as Record<string, unknown>;
+			const { replayed: _live, ...liveData } = (live.data ?? {}) as Record<string, unknown>;
+			expect(replayed).toBe(true);
+			expect(replayData).toEqual(liveData);
+		}
+		await host.stop();
+	}, 240_000);
 });

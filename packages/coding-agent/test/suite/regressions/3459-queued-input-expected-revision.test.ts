@@ -115,4 +115,26 @@ describe("queued input expected revision (senpi#3459)", () => {
 			"already_delivered",
 		);
 	});
+
+	it("refuses a stale revision on an input held back after a compaction, and edits it at the current one", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		// The post-compaction window: a restored input waits in the deferred lists until the next prompt starts.
+		const internals = harness.session as unknown as {
+			_promptStartPending: boolean;
+			_skipNextPostCompactionAssistantCheck: boolean;
+		};
+		internals._promptStartPending = true;
+		internals._skipNextPostCompactionAssistantCheck = true;
+		await harness.session.restoreQueuedInput({ text: "deferred draft", mode: "followUp", enqueueOrder: 1 });
+		const [seen] = harness.session.getQueuedInputs();
+		expect(harness.session.editQueuedInput(seen!.queuedId, "edited once", { expectedRevision: 1 })).toBe("edited");
+
+		expect(harness.session.editQueuedInput(seen!.queuedId, "stale edit", { expectedRevision: 1 })).toBe("conflict");
+		expect(harness.session.dequeueQueuedInput(seen!.queuedId, { expectedRevision: 1 })).toBe("conflict");
+		expect(harness.session.getQueuedInputs()).toMatchObject([{ text: "edited once", revision: 2 }]);
+		expect(harness.session.getFollowUpMessages()).toEqual(["edited once"]);
+		expect(harness.session.editQueuedInput(seen!.queuedId, "edited twice", { expectedRevision: 2 })).toBe("edited");
+		expect(harness.session.getQueuedInputs()).toMatchObject([{ text: "edited twice", revision: 3 }]);
+	});
 });

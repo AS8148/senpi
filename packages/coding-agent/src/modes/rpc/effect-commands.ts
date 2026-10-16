@@ -210,6 +210,10 @@ export async function runQueuedInputChange(
 			data: {
 				queuedId,
 				status: replayedStatus(begun.replay, command.type),
+				...begun.replay.answer,
+				...(begun.replay.outcome === undefined
+					? {}
+					: { reason: begun.replay.outcome.reason, action: begun.replay.outcome.action }),
 				...effectAnswer(begun.replay, ctx.sessionId, true),
 			},
 		});
@@ -232,20 +236,27 @@ export async function runQueuedInputChange(
 				: status === "conflict"
 					? EFFECT_OUTCOMES.queuedInputConflict
 					: undefined;
+	const answer =
+		status === "edited" && current !== undefined
+			? { text: current.text, revision: current.revision }
+			: status === "conflict" && current !== undefined
+				? { currentRevision: current.revision }
+				: undefined;
+	// The receipt keeps the answer too: a same-id retry after a dropped response must answer exactly as this call did.
+	const stored = answer === undefined ? {} : { answer };
 	const ledger = effectId === undefined ? undefined : EffectLedger.forSession(ctx.session);
 	const recorded =
 		effectId === undefined || ledger === undefined
 			? undefined
 			: outcome === undefined
-				? ledger.transition(effectId, "done", { disposition: status })
-				: ledger.transition(effectId, "failed", { outcome });
+				? ledger.transition(effectId, "done", { disposition: status, ...stored })
+				: ledger.transition(effectId, "failed", { outcome, ...stored });
 	return respond(command.id, {
 		command: command.type,
 		data: {
 			queuedId,
 			status,
-			...(status === "edited" && current !== undefined ? { text: current.text, revision: current.revision } : {}),
-			...(status === "conflict" && current !== undefined ? { currentRevision: current.revision } : {}),
+			...answer,
 			...(outcome === undefined ? {} : { reason: outcome.reason, action: outcome.action }),
 			...(recorded === undefined ? {} : effectAnswer(recorded, ctx.sessionId)),
 		},

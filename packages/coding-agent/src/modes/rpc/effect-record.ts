@@ -41,6 +41,12 @@ export const effectOutcomeSchema = z.object({
 });
 export type EffectOutcome = z.infer<typeof effectOutcomeSchema>;
 
+export interface QueuedChangeAnswer {
+	readonly text?: string;
+	readonly revision?: number;
+	readonly currentRevision?: number;
+}
+
 export type EffectKind = "input" | "abort" | "unload" | "set_model" | "set_thinking_level" | "dequeue" | "edit_queued";
 export type EffectState = "accepted" | "applied" | "done" | "failed";
 
@@ -50,6 +56,14 @@ export const rpcEffectRecordSchema = z.object({
 	state: z.enum(["accepted", "applied", "done", "failed"]),
 	disposition: z.string().optional(),
 	outcome: effectOutcomeSchema.optional(),
+	// What a queued-input change answered beyond its status, so a replay answers exactly as the live call did.
+	answer: z
+		.object({
+			text: z.string().optional(),
+			revision: z.number().int().positive().optional(),
+			currentRevision: z.number().int().positive().optional(),
+		})
+		.optional(),
 	by: actorSchema,
 	acceptedAt: z.string(),
 	updatedAt: z.string(),
@@ -65,6 +79,8 @@ export interface EffectStatus {
 	readonly state: EffectState;
 	readonly disposition?: string;
 	readonly outcome?: EffectOutcome;
+	/** A queued-input change's answer fields (`text`/`revision` for edited, `currentRevision` for conflict). */
+	readonly answer?: QueuedChangeAnswer;
 	readonly by?: EffectActor;
 	readonly acceptedAt?: string;
 	readonly updatedAt?: string;
