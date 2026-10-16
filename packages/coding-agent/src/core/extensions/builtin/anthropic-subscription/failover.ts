@@ -14,7 +14,7 @@ import { usageLimitBlockMs } from "./usage-limit-block.ts";
 
 export const MAX_RATE_LIMIT_BLOCK_MS = 48 * 60 * 60 * 1_000;
 export const DEFAULT_RATE_LIMIT_BLOCK_MS = 60_000;
-/** Same-account retries per turn for a transient failure (overload, network, server error) before rotating. */
+/** Same-account retries per turn for a transient failure (overload, network, server error); it never rotates. */
 export const TRANSIENT_RETRIES_PER_TURN = 2;
 export const TRANSIENT_RETRY_DELAY_MS = 1_000;
 export const TURN_RETRY_SUPPRESSION_PREFIX = "senpi:no-turn-retry:";
@@ -311,11 +311,13 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 				continue;
 			}
 
-			// A transient failure says nothing about the account, and on the config-dir lane moving
-			// to another account re-sends the whole conversation (senpi#2891): retry it in place first.
-			// The budget is per turn, not per account: an outage that fails every account must not
-			// multiply into retries on each of them.
-			if (!visibleDeltaEmitted && isTransient(classification) && transientRetriesUsed < TRANSIENT_RETRIES_PER_TURN) {
+			// A transient failure says nothing about the account: it is retried in place a bounded
+			// number of times, then the turn fails on this account and the session's own retry and
+			// model fallback take over. It never blocks or rotates the account: moving to another
+			// account writes the whole conversation to a cold prompt cache, and a persisted block would
+			// move every other session off a healthy account too (senpi#2891, senpi#3466).
+			if (isTransient(classification)) {
+				if (visibleDeltaEmitted || transientRetriesUsed >= TRANSIENT_RETRIES_PER_TURN) throw classified;
 				const delayMs = TRANSIENT_RETRY_DELAY_MS * 2 ** transientRetriesUsed;
 				transientRetriesUsed += 1;
 				try {

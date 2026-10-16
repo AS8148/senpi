@@ -1,3 +1,21 @@
+## 2026-10-16 - A transient failure never rotates or blocks an account (senpi#3466)
+
+### What changed
+
+- `failover.ts`: a transient classification (`overloaded`, retryable `other`) is retried on the same account up to `TRANSIENT_RETRIES_PER_TURN` times, then the classified error is thrown. It no longer falls through to `blockedAccount`/`persistBlock`, so no account is blocked and no other account is attempted. A post-delta transient also throws without a block.
+
+### Why
+
+- Each rotation made the next request on the new account write the whole conversation to a cold cache (about $4 at 850K on Opus 5.5), and the persisted block moved every other session off a healthy account at its next turn. Offline, four accounts with two overloading gave one turn of max20 x3, max5 x1, proA. Regression: the rewritten cases in `test/suite/regressions/2891-anthropic-subscription-account-stickiness.test.ts` (three fail on `main`).
+
+### Why an extension could not handle it
+
+- This is the extension; account rotation lives in its failover module.
+
+### Expected merge conflict zones
+
+- LOW: the transient branch inside `runFailover`.
+
 ## 2026-10-16 - An account usage limit blocks the account until its reset (senpi#3462)
 
 ### What changed
