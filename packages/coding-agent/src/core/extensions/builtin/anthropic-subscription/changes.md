@@ -1,3 +1,25 @@
+## 2026-10-16 - A transient failure never rotates or blocks an account (senpi#3466)
+
+### What changed
+
+- `failover.ts`: a transient classification (`overloaded`, retryable `other`) is retried on the same account up to `TRANSIENT_RETRIES_PER_TURN` times, then the classified error is thrown. It no longer falls through to `blockedAccount`/`persistBlock`, so no account is blocked and no other account is attempted. A post-delta transient also throws without a block.
+- `failover.ts` + `usage-limit-block.ts` (`isConfirmedAccountUsageLimit`) + `auth-lane.ts`: only a verdict that the account cannot serve anyone is written to the shared credential record: a confirmed account-level usage limit (Claude Code's anchored prose or `blocking_limit`, under no status other than 429), a billing or organization refusal, or a rejected token. Every other session then leaves the spent account, which is right. A plain rate limit and a one-model limit still rotate this turn, but the block is kept in memory for the session that hit it only (`sessionKey`, passed from `auth-lane.ts`; a request with no session id keeps the shared block as before); another session on the account keeps using it and finds out on its own request. A success clears the session's own block. Elapsed session blocks of every session are pruned on each turn.
+- `account-management.ts`: `unblockProviderAccount` also calls `forgetSessionBlocksFor`, so `/claude-account unblock` lifts session-scoped blocks in every session.
+- `usage-limit-block.ts`: `rapid_refill_breaker` is no longer a confirmed account verdict; it keeps the short, session-scoped block.
+- Accepted trade-off: an account that keeps failing transiently never fails over to another account in the pool. The turn fails after the bounded retries and the session's own retry, then model fallback, take over. A session prefers the account its transcript lives under and model fallback stays on that account, so if one account alone keeps failing transiently, the session stays broken until the outage ends or the user switches accounts with `/claude-account`. 529s and network failures are almost always provider-wide or local rather than per account, so this is accepted for the hotfix; rotating after N failed turns on one account is a follow-up.
+
+### Why
+
+- Each rotation made the next request on the new account write the whole conversation to a cold cache (about $4 at 850K on Opus 5.5), and the persisted block moved every other session off a healthy account at its next turn. Offline, four accounts with two overloading gave one turn of max20 x3, max5 x1, proA. Regression: the rewritten cases in `test/suite/regressions/2891-anthropic-subscription-account-stickiness.test.ts` (three fail on `main`).
+
+### Why an extension could not handle it
+
+- This is the extension; account rotation lives in its failover module.
+
+### Expected merge conflict zones
+
+- LOW: the transient branch inside `runFailover`.
+
 ## 2026-10-16 - An account usage limit blocks the account until its reset (senpi#3462)
 
 ### What changed

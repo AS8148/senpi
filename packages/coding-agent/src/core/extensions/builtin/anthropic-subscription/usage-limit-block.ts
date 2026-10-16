@@ -13,8 +13,11 @@ const HOUR_MS = 60 * 60 * 1_000;
  */
 const CLAUDE_USAGE_LIMIT =
 	/^(?:You['\u2019]ve|You have) (?:hit|reached) your (?:(session|weekly|daily|monthly|\d+-hour|usage) )?limit(?=$|\s*[\u00b7\u2219.,{(]|\s+resets?\b)|^Claude AI usage limit reached\b/i;
-/** Claude Code's structured terminal reasons for a spent subscription. */
-const TERMINAL_LIMIT_REASON = /\b(?:blocking_limit|rapid_refill_breaker)\b/;
+/**
+ * Claude Code's structured terminal reason for a spent subscription. `rapid_refill_breaker` is a short burst
+ * breaker, not a spent account, so it keeps the short, session-scoped block (senpi#3466).
+ */
+const TERMINAL_LIMIT_REASON = /\bblocking_limit\b/;
 /** A status the error names; a usage limit is a 429, so any other status is not one. */
 const NAMED_STATUS = /\b(?:HTTP|status(?: code)?)\s*(\d{3})\b/i;
 
@@ -59,6 +62,17 @@ function spentWindow(accountName: string, now: number): SpentWindow | undefined 
 }
 
 /**
+ * Claude Code's own verdict that the account's subscription is spent: its anchored usage-limit prose
+ * or its structured terminal reason, under no status other than 429 (senpi#3462, senpi#3466).
+ */
+export function isConfirmedAccountUsageLimit(text: string): boolean {
+	const trimmed = text.trim();
+	if (!CLAUDE_USAGE_LIMIT.test(trimmed) && !TERMINAL_LIMIT_REASON.test(trimmed)) return false;
+	const status = NAMED_STATUS.exec(trimmed)?.[1];
+	return status === undefined || status === "429";
+}
+
+/**
  * How long a spent account stays blocked: until the reset its limit names, or the reset its spent
  * window reported, never past the window the limit belongs to. Undefined when the error is not
  * Claude Code's account usage limit or names no reset, so the caller keeps its short default
@@ -66,10 +80,8 @@ function spentWindow(accountName: string, now: number): SpentWindow | undefined 
  */
 export function usageLimitBlockMs(text: string, accountName: string, now: number): number | undefined {
 	const trimmed = text.trim();
+	if (!isConfirmedAccountUsageLimit(trimmed)) return undefined;
 	const shape = CLAUDE_USAGE_LIMIT.exec(trimmed);
-	if (!shape && !TERMINAL_LIMIT_REASON.test(trimmed)) return undefined;
-	const status = NAMED_STATUS.exec(trimmed)?.[1];
-	if (status !== undefined && status !== "429") return undefined;
 	const window = spentWindow(accountName, now);
 	const parsed = usageLimitResetMs(trimmed, now);
 	const resetMs = parsed !== undefined && parsed > 0 ? parsed : window?.resetMs;

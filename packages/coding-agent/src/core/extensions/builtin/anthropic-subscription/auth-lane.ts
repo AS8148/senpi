@@ -310,6 +310,7 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 			});
 		},
 		classify: classifySdkError,
+		...(input.sessionId === undefined ? {} : { sessionKey: input.sessionId }),
 		onLongContextRefused: () => markLongContextRefused(),
 		store: pool.store,
 		providerId: ANTHROPIC_SUBSCRIPTION_PROVIDER_ID,
