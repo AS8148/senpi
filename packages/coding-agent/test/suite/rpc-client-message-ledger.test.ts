@@ -127,13 +127,15 @@ describe("RPC client admission ledger", () => {
 			.filter((entry) => entry.type === "custom" && entry.customType === CLIENT_ADMISSION_ENTRY)
 			.map((entry) => (entry as { data: Record<string, unknown> }).data)
 			.findLast((record) => record.clientMessageId === "legacy-cleared");
+		// The exact record v2026.10.16-2 wrote: a completed record carries no `prepared` input.
+		const { prepared: _prepared, ...settled } = queued ?? {};
 		fixture.session.sessionManager.appendCustomEntry(CLIENT_ADMISSION_ENTRY, {
-			...queued,
+			...settled,
 			state: "completed",
 			outcome: {
 				kind: "cleared_by_abort",
 				reason: "cleared_by_abort",
-				detail: "abort { clearQueue } drained the queue before this input was delivered",
+				detail: "an abort with clearQueue removed this queued input before it was delivered",
 				action: "send the input again with a new clientMessageId if it is still needed",
 			},
 		});
