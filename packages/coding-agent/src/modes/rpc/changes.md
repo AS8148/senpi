@@ -5,7 +5,9 @@
 - `packages/coding-agent/src/modes/rpc/host-handover-parked.ts`: a handover-parked entry carries `parkedBy`, the host instance that wrote it; `isEntry` accepts it as an optional string, and an entry without it (written by an older generation) reads as before.
 - `packages/coding-agent/src/modes/rpc/session-command-router.ts`: `evictIdleSession` stamps `parkedBy` with this host's instance when it records a retained session's park.
 - `packages/coding-agent/src/modes/rpc/host-handover-reopen.ts`: the startup watch reopens only parks a PREVIOUS generation wrote (`inheritedParks`); a park this host wrote is left for its successor and does not count toward the watch's quiet streak.
-- `packages/coding-agent/src/modes/rpc/session-registry-claims.ts` and `packages/coding-agent/src/modes/rpc/session-registry.ts`: an open records its path as mid-claim (`beginPendingClaim`) from its in-process reservation until its entry is recorded or the reservation is given back; a concurrent open of that path waits for it (`settlePendingClaim`, bounded by `closeGraceMs`) and then attaches through the existing in-flight-open wait. A claim that does not settle in that window refuses with `session_path_in_use { reason: "claim_in_progress", retry_after_ms }`. A `claim()` that throws now gives the reservation back instead of holding the path for the host's life.
+- `packages/coding-agent/src/modes/rpc/session-registry-claims.ts` and `packages/coding-agent/src/modes/rpc/session-registry.ts`: an open records its path as mid-claim (`beginPendingClaim`) from its in-process reservation until its entry is recorded or the reservation is given back; a concurrent open of that path waits for it (`settlePendingClaim`, bounded by `closeGraceMs`) and then attaches through the existing in-flight-open wait. The wait is re-checked in a loop immediately before the reservation decision, with no await in between, so when the claim it waited on is REFUSED, the next waiter takes the claim itself and the ones behind it wait on that one. A claim that does not settle in that window refuses with `session_path_in_use { reason: "claim_in_progress", retry_after_ms }`. A `claim()` that throws now gives the reservation back instead of holding the path for the host's life.
+- `packages/coding-agent/src/modes/rpc/session-registry-opening.ts` (new): `buildOpeningEntry` builds the "opening" entry in one synchronous step, moved out of `openSession`; if it throws, `openSession` gives the reservation and claim back before waking waiters.
+- `packages/coding-agent/src/modes/rpc/session-registry-attach.ts`: a path still reserved by a session that is neither open nor opening (a teardown past its grace window) refuses with `session_path_in_use { reason: "path_still_held", retry_after_ms }` instead of a bare code.
 
 ### Why
 
@@ -18,7 +20,8 @@
 
 ### Expected merge conflict zones
 
-- LOW: `packages/coding-agent/src/modes/rpc/session-registry.ts`, the claim block of `openSession` and the line after `this.entries.set(handle, entry)`.
+- MEDIUM: `packages/coding-agent/src/modes/rpc/session-registry.ts`, `openSession` from the closing-reservation wait to `this.entries.set(handle, entry)`; the entry construction moved to `session-registry-opening.ts`.
+- LOW: `packages/coding-agent/src/modes/rpc/session-registry-attach.ts`, the last refusal of `attachToOpenSession`.
 - LOW: `packages/coding-agent/src/modes/rpc/session-command-router.ts`, the `recordHandoverParkedSession` call in `evictIdleSession`.
 - LOW: `packages/coding-agent/src/modes/rpc/host-handover-reopen.ts`, the two record reads in `reopenHandoverParkedSessions`; `packages/coding-agent/src/modes/rpc/host-handover-parked.ts`, the entry type and `isEntry`; `packages/coding-agent/src/modes/rpc/session-registry-claims.ts`, the new helpers at the top.
 

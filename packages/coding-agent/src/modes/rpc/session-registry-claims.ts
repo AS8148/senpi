@@ -51,17 +51,6 @@ export async function takeCrossGenerationClaim(
 	});
 }
 
-/** Everything an open of `sessionPath` waits out before it decides: a teardown, then another open's claim. */
-export async function settleOpenWaits(
-	entries: Iterable<RpcSessionEntry>,
-	pending: ReadonlyMap<string, Promise<void>>,
-	sessionPath: string,
-	graceMs: number,
-): Promise<void> {
-	await settleClosingReservation(entries, sessionPath, graceMs);
-	if (pending.has(sessionPath)) await settlePendingClaim(pending, sessionPath, graceMs);
-}
-
 /**
  * Waits out another open of this path that is still taking its claim (senpi#3485). Without the wait
  * the path looked reserved by no session at all and a reopen was refused for a session about to be

@@ -1,8 +1,6 @@
-import { existsSync } from "node:fs";
 import { isAbsolute } from "node:path";
-import { ProviderScope, runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
+import { runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import { createAgentSessionRuntime } from "../../core/agent-session-runtime.ts";
-import type { SessionStartEvent } from "../../core/extensions/types.ts";
 import { assertValidSessionId, SessionManager } from "../../core/session-manager.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
 import { EffectLedger } from "./effect-ledger.ts";
@@ -14,14 +12,14 @@ import { canonicalSessionPath } from "./session-path-key.ts";
 import { attachToOpenSession } from "./session-registry-attach.ts";
 import {
 	type PendingClaims,
-	settleOpenWaits,
+	settleClosingReservation,
+	settlePendingClaim,
 	syncRuntimeMetadata,
 	takeCrossGenerationClaim,
 } from "./session-registry-claims.ts";
 import { resolveMovedProfile } from "./session-registry-moved-path.ts";
-import { createEntrySwitchSession } from "./session-registry-switch.ts";
+import { buildOpeningEntry, type OpeningEntry } from "./session-registry-opening.ts";
 import {
-	frozenProfile,
 	type OpenRpcSession,
 	type RpcSessionEntry,
 	type RpcSessionLaunchProfile,
@@ -29,7 +27,6 @@ import {
 	RpcSessionRegistryError,
 	type RpcSessionRegistryOptions,
 	type RpcSessionRow,
-	sessionIdentity,
 } from "./session-registry-types.ts";
 import {
 	beginSessionClose,
@@ -129,7 +126,14 @@ export class RpcSessionRegistry {
 				throw new RpcSessionRegistryError("session_id_in_use");
 			}
 		}
-		if (sessionPath) await settleOpenWaits(this.entries.values(), this.pendingClaims, sessionPath, this.closeGraceMs);
+		if (sessionPath) {
+			await settleClosingReservation(this.entries.values(), sessionPath, this.closeGraceMs);
+			// Re-checked right before the reservation decision, with no await in between: a waiter woken
+			// by a FAILED claim must see the next open's claim, not a bare reservation (senpi#3485 review).
+			const deadline = Date.now() + this.closeGraceMs;
+			while (this.pendingClaims.has(sessionPath))
+				await settlePendingClaim(this.pendingClaims, sessionPath, Math.max(0, deadline - Date.now()));
+		}
 		if (sessionPath && this.reservations.has(sessionPath)) {
 			return attachToOpenSession(
 				this.entries,
@@ -166,52 +170,28 @@ export class RpcSessionRegistry {
 				);
 		}
 
-		// Resume vs create parity (D1 + omo SenpiSessionRuntime.ts:198-200):
-		// Create-only launch semantics mirror classic startup flags. A resumed
-		// session restores its persisted model and thinking level instead of being
-		// overridden by the new open_session request.
-		const isResume = sessionPath !== undefined && existsSync(sessionPath);
-		// Re-opening an existing session file is a resume, exactly like interactive
-		// /resume (AgentSessionRuntime.switchSession). Without the event the session
-		// starts with reason "startup" and every extension that only rebuilds state
-		// on a resume - the ask-user dangling-question hook - stays unreachable from
-		// the RPC restart path. A session created by this open stays "startup".
-		const sessionStartEvent: SessionStartEvent | undefined = isResume
-			? { type: "session_start", reason: "resume" }
-			: undefined;
-		const storedProfile = frozenProfile({ ...profile, ...(sessionPath ? { sessionPath } : {}) });
-		const runtimeProfile = isResume
-			? frozenProfile({ ...storedProfile, creationModel: undefined, initialThinkingLevel: undefined })
-			: storedProfile;
-
 		const handle = `rpc-${++this.nextHandle}`;
-		let settleOpen!: { resolve: () => void; reject: (cause: unknown) => void };
-		const openCompletion = new Promise<void>((resolve, reject) => {
-			settleOpen = { resolve, reject };
-		});
-		// A concurrent explicit open for the same path waits on this to attach, never to time it out.
-		openCompletion.catch(() => {});
-		const entry: RpcSessionEntry = {
-			state: "opening",
-			scope: new ProviderScope(),
-			profile: storedProfile,
-			...sessionIdentity(storedProfile),
-			sessionPath,
-			reservationKey: sessionPath,
-			cwd: storedProfile.cwd,
-			attachments: 1,
-			retainOnDisconnect: options?.retainOnDisconnect === true,
-			lastCommandAt: this.now(),
-			lifecycleMutex: Promise.resolve(),
-			openCompletion,
-		};
-		entry.switchSession = createEntrySwitchSession(entry, this.options.createRuntime, () =>
-			this.syncRuntimeMetadata(),
-		);
-		// Recorded before the first await so the synchronous collision guard above sees an open
-		// that is still being built. `manager.getSessionId()` overwrites it below with the
-		// authoritative value, which on a resume is the header's id, not the requested one.
-		if (requestedDurableId !== undefined) entry.durableSessionId = requestedDurableId;
+		let opening: OpeningEntry;
+		try {
+			opening = buildOpeningEntry({
+				profile,
+				sessionPath,
+				requestedDurableId,
+				options,
+				now: this.now(),
+				createRuntime: this.options.createRuntime,
+				sync: () => this.syncRuntimeMetadata(),
+			});
+		} catch (cause) {
+			// Give the path back before waking waiters, or they find a reservation no entry backs.
+			if (sessionPath) {
+				this.reservations.delete(sessionPath);
+				await this.options.pathReservations?.release(sessionPath);
+			}
+			claimSettled?.();
+			throw cause;
+		}
+		const { entry, storedProfile, runtimeProfile, sessionStartEvent, settleOpen } = opening;
 		this.entries.set(handle, entry);
 		claimSettled?.();
 		this.options.onSizeChange?.(this.entries.size);
