@@ -1,3 +1,24 @@
+## 2026-10-16 — A session on a shared ModelRuntime reads that runtime's auth storage (senpi#3434)
+
+### What changed
+
+- `packages/coding-agent/src/core/runtime-credentials.ts`: `RuntimeCredentials.backingStore` exposes the credential store it wraps.
+- `packages/coding-agent/src/core/model-runtime.ts`: `ModelRuntime.authStorage` returns that store when the runtime was built on an `AuthStorage`.
+- `packages/coding-agent/src/core/agent-session-services.ts`: `createAgentSessionServices` uses `options.modelRuntime?.authStorage` for the session's `ModelRegistry`, and a new store only when it builds its own runtime. There is no separate `authStorage` option: a session's store always comes from its runtime (one path, per the review).
+
+### Why
+
+A session on the multi-session host shares the host's `ModelRuntime` but built its own `AuthStorage`. Extension providers register their OAuth login into the runtime's store (`ModelRuntime` calls `credentials.registerOAuthProvider`), while `get_auth_providers` reads `modelRegistry.authStorage`. The two were different objects, so `anthropic-subscription` and `cursor-cli-oauth` never appeared in a host session and the OmO desktop's Anthropic card offered only an API key (sisyphuslabs/omo-desktop-app#2644). A session that builds its own runtime was never affected, because both sides came from the one store.
+
+### Why an extension could not handle it
+
+The mismatch is in core's service construction, before any extension runs.
+
+### Expected merge conflict zones
+
+- `agent-session-services.ts` around the `authStorage` line and the options interface.
+- `model-runtime.ts` just above `static async create`.
+
 ## 2026-10-16 - The xiaomi built-in defaults move to mimo-v2.6-pro (senpi v2026.10.16 release)
 
 ### What changed
