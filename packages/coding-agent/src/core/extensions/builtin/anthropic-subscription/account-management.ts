@@ -10,6 +10,7 @@ import {
 	pinAccount,
 	removeAccount,
 } from "./accounts.ts";
+import { forgetSessionBlocksFor } from "./failover.ts";
 
 export const ANTHROPIC_SUBSCRIPTION_PROVIDER_ID = "anthropic-subscription";
 
@@ -123,8 +124,9 @@ export async function unblockProviderAccount(
 			}),
 		};
 	});
-	if (lifted) emitProviderAccountsChanged(provider);
-	return lifted;
+	const sessionScoped = forgetSessionBlocksFor(name);
+	if (lifted || sessionScoped) emitProviderAccountsChanged(provider);
+	return lifted || sessionScoped;
 }
 
 function assertManagedProvider(provider: string): void {

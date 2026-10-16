@@ -2644,13 +2644,17 @@ export class InteractiveMode {
 		}
 
 		if (showDiagnostics) {
-			const addDiagnosticNotice = (title: string, diagnostics: readonly ResourceDiagnostic[]): void => {
+			const addDiagnosticNotice = (
+				title: string,
+				diagnostics: readonly ResourceDiagnostic[],
+				why = "Conflicting or invalid loaded resources were found.",
+			): void => {
 				this.loadedResourcesContainer.addChild(
 					buildNoticeBox(
 						{
 							title,
 							tone: "warning",
-							why: "Conflicting or invalid loaded resources were found.",
+							why,
 							extra: this.formatDiagnostics(diagnostics, sourceInfos),
 						},
 						{ expanded: this.toolOutputExpanded },
@@ -2660,7 +2664,19 @@ export class InteractiveMode {
 				this.loadedResourcesContainer.addChild(new Spacer(1));
 			};
 
-			const skillDiagnostics = skillsResult.diagnostics;
+			const contextDiagnostics = [
+				...(this.session.resourceLoader.getAgentsFiles().diagnostics ?? []),
+				...skillsResult.diagnostics.filter((diagnostic) => diagnostic.category === "size-limit"),
+			];
+			if (contextDiagnostics.length > 0) {
+				addDiagnosticNotice(
+					"Context size limits",
+					contextDiagnostics,
+					"Context files or skill catalogs were limited to keep requests bounded.",
+				);
+			}
+
+			const skillDiagnostics = skillsResult.diagnostics.filter((diagnostic) => diagnostic.category !== "size-limit");
 			if (skillDiagnostics.length > 0) {
 				addDiagnosticNotice("Skill conflicts", skillDiagnostics);
 			}

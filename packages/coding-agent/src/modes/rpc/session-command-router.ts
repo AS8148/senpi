@@ -621,9 +621,8 @@ export class SessionCommandRouter {
 			retained?.retainOnDisconnect === true &&
 			retained.sessionPath !== undefined
 		) {
-			await recordHandoverParkedSession(
-				this.handoverParkedDir,
-				parkedEntryFromProfile(
+			await recordHandoverParkedSession(this.handoverParkedDir, {
+				...parkedEntryFromProfile(
 					{
 						sessionPath: retained.sessionPath,
 						...(retained.durableSessionId !== undefined ? { durableSessionId: retained.durableSessionId } : {}),
@@ -631,7 +630,8 @@ export class SessionCommandRouter {
 					retained.profile,
 					Object.keys(this.defaults.hostContext ?? {}),
 				),
-			).catch((cause: unknown) => {
+				parkedBy: this.defaults.hostContext?.host_instance ?? hostInstanceId(),
+			}).catch((cause: unknown) => {
 				process.stderr.write(`senpi rpc handover park record ${sessionId} failed: ${String(cause)}\n`);
 			});
 		}
