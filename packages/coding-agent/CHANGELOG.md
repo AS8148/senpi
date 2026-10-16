@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- `anthropic-subscription`: a spent account is now blocked until the reset its usage-limit message names ("resets in 1 hour", "resets 5am"), or, when the message names none, until the reset its fully used limit window last reported. Before, every account-level usage limit was blocked for 60 s. A pinned account therefore went back to the same spent limit every minute, and each round trip re-forked the session on the healthy account and re-wrote its prompt cache. A limit with no known reset and a plain rate limit keep the 60 s block ([#3462](https://github.com/code-yeongyu/senpi/issues/3462)).
+
 ### Removed
 
 ## [2026.10.16-3] - 2026-10-16

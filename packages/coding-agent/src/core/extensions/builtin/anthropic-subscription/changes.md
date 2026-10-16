@@ -1,3 +1,21 @@
+## 2026-10-16 - An account usage limit blocks the account until its reset (senpi#3462)
+
+### What changed
+
+- `failover.ts`: `blockedAccount` reads the reset for an account-level usage limit (`isAccountUsageLimitText`): first an explicit Retry-After, then `usageLimitResetMs` on the message text, then the latest reset among the account's fully used windows in `subscriptionLimits` (recorded from the SDK's `rate_limit_event`). Only when none is known does it keep the `60 s x 2^attempt` block. Model-family limits and plain rate limits are unchanged.
+
+### Why
+
+- Claude Code's usage-limit prose carries no Retry-After, so every spent account was blocked for 60 s. A pinned account outranks the account the session moved to (`affinity.ts`), so after each 60 s block the session retried the spent account, failed, and fork-resumed its healthy account again. omo#10304 measured that fork at 0.8-0.9M cache-write tokens. Regression: `test/suite/regressions/3462-anthropic-subscription-usage-limit-reset-block.test.ts` (10 of 20 turns retried the spent account on `main`, 0 now).
+
+### Why an extension could not handle it
+
+- This is the extension; the block duration lives in its failover module.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `blockedAccount` in `failover.ts`.
+
 ## 2026-10-15 - Transport image elision is hash-neutral in the sent stream (senpi#2768)
 
 ### What changed
