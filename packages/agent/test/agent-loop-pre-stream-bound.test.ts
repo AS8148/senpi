@@ -32,8 +32,8 @@ class AssistantEventStream extends EventStream<AssistantMessageEvent, AssistantM
 const never = <T>(): Promise<T> => new Promise<T>(() => {});
 
 class NeverStartingStream extends AssistantEventStream {
-	override async *[Symbol.asyncIterator](): AsyncIterator<AssistantMessageEvent> {
-		await never<void>();
+	override [Symbol.asyncIterator](): AsyncIterator<AssistantMessageEvent> {
+		return { next: () => never<IteratorResult<AssistantMessageEvent>>() };
 	}
 }
 
