@@ -7,6 +7,7 @@
 ### Added
 
 - `RpcClient.abort(options)` sends a typed abort (`effectId`, `awaitIdle`, `clearQueue`, `graceMs`) and returns the host's answer (`stopped`, `idle`, `cleared`, receipt); `RpcClient.getEffectStatus(effectId, { sessionPath? })` reads an effect receipt. `abort()` without options is unchanged ([#3453](https://github.com/code-yeongyu/senpi/issues/3453)).
+- `anthropicSubscriptionProvider.accountFallback: false` keeps managed Claude requests on the selected account instead of automatically switching accounts, including subsequent requests while that account is blocked. Automatic account fallback remains enabled by default and is independent of model fallback ([#3473](https://github.com/code-yeongyu/senpi/pull/3473) by [@Yoonkeee](https://github.com/Yoonkeee)).
 
 ### Changed
 
