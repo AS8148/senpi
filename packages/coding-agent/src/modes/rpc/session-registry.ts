@@ -183,12 +183,20 @@ export class RpcSessionRegistry {
 				sync: () => this.syncRuntimeMetadata(),
 			});
 		} catch (cause) {
-			// Give the path back before waking waiters, or they find a reservation no entry backs.
-			if (sessionPath) {
-				this.reservations.delete(sessionPath);
-				await this.options.pathReservations?.release(sessionPath);
+			// Give the path back before waking waiters, or they find a reservation no entry backs. A failed
+			// claim release is reported, never allowed to strand the waiters or replace the build error.
+			try {
+				if (sessionPath) {
+					this.reservations.delete(sessionPath);
+					await this.options.pathReservations?.release(sessionPath);
+				}
+			} catch (releaseCause) {
+				process.stderr.write(
+					`senpi rpc open of ${sessionPath} could not release its claim: ${String(releaseCause)}\n`,
+				);
+			} finally {
+				claimSettled?.();
 			}
-			claimSettled?.();
 			throw cause;
 		}
 		const { entry, storedProfile, runtimeProfile, sessionStartEvent, settleOpen } = opening;

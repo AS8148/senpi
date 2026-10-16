@@ -14,7 +14,7 @@
 
 ### Fixed
 
-- Reopening a session right after the host parked it is no longer refused with `session_path_in_use`. A host no longer reopens the sessions it parked itself (those are for its next generation), and an open that arrives while another open of the same path is still claiming it waits and attaches instead of being refused; if that claim stalls past the close grace window, the refusal now says `claim_in_progress` with a retry delay, and no racing open gets a refusal without a reason ([#3485](https://github.com/code-yeongyu/senpi/issues/3485)).
+- Reopening a session right after parking it no longer fails with `session_path_in_use`. A host no longer reopens the sessions it parked itself (those are for its next generation), and an open that arrives while another open of the same path is still claiming it waits and attaches instead of being refused; if that claim stalls past the close grace window, the refusal says `claim_in_progress` with a retry delay, and no racing open gets a refusal without a reason ([#3485](https://github.com/code-yeongyu/senpi/issues/3485), [#3490](https://github.com/code-yeongyu/senpi/pull/3490)).
 
 - A slow model no longer sends every session to its fallback for up to 30 minutes. Failures that arrive while the fallback circuit is already open no longer double its cooldown: the circuit takes one backoff step per open episode. A session that never failed on the model keeps it; only a billing, quota or account-limit failure moves other sessions off it, while a Retry-After stays with the session that received it ([#3467](https://github.com/code-yeongyu/senpi/issues/3467)).
 
