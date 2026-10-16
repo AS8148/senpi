@@ -25,6 +25,7 @@ export const effectOutcomeSchema = z.object({
 		"unsupported_thinking_level",
 		"superseded",
 		"context_budget",
+		"cleared_by_abort",
 		"already_delivered",
 		"not_found",
 		"refused",

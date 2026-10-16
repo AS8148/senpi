@@ -882,11 +882,18 @@ export function createRpcConnectionHandler(
 					const abortSource = session.currentAbortSource;
 					if (abortSource !== undefined) lastAbortSource = abortSource;
 					const deadline = session.currentDeadline;
+					const abortedBy = abortSource === undefined ? undefined : ClientAdmissions.forSession(session).abortedBy;
 					correlatedEvents.accept({
 						...event,
 						...(abortSource === undefined ? {} : { aborted: true, abortSource }),
+						...(abortedBy === undefined ? {} : { abortedBy }),
 						...(deadline === undefined ? {} : { deadline }),
 					});
+					return;
+				}
+				if (event.type === "session_abort") {
+					const abortedBy = ClientAdmissions.forSession(session).abortedBy;
+					correlatedEvents.accept(abortedBy === undefined ? event : { ...event, abortedBy });
 					return;
 				}
 				correlatedEvents.accept(event);
@@ -1079,12 +1086,12 @@ export function createRpcConnectionHandler(
 			}
 
 			case "abort":
-				return runAbort(effectContext(), command, () => {
-					void session.abort().catch((cause: unknown) => {
-						// Abort is acknowledged once dispatched; report quiesce failures out of band.
+				return runAbort(effectContext(), command, () =>
+					session.abort().catch((cause: unknown) => {
+						// Report quiesce failures out of band; the answer never waits on them.
 						outputEvent({ type: "rpc_error", error: String(cause) });
-					});
-				});
+					}),
+				);
 
 			case "interrupt":
 				return success(
