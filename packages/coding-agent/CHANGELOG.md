@@ -6,6 +6,8 @@
 
 ### Added
 
+- Argon sessions get their own system prompt preset (`gemini-4-argon`, auto-resolved for every catalog id shape and forceable from settings). It is the default prompt with four spots tuned to the provider's published prompting guidance: the identity names the model, the terminal routing line is declared plain prose with the tool calls following in the same response, the Working the Task opening makes one `eval` cell with real control flow and `parallel(thunks)` the way a step is done when `eval` is available, the error rule retries transient failures and changes strategy on others, plus a plain workstation wording and a search-grounding paragraph when `web_search` is active. Every other model's prompt is byte-identical to before ([#3385](https://github.com/code-yeongyu/senpi/issues/3385)).
+
 ### Changed
 
 ### Fixed
