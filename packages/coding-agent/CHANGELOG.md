@@ -14,6 +14,8 @@
 
 ### Fixed
 
+- A session with the Full access preset no longer asks "Trust project folder?": it trusts its project for that session without saving the decision (a saved "do not trust" still wins). Home and the folders above it no longer count as project folders, so opening home as a project doesn't ask to trust your own global config. ([#3420](https://github.com/code-yeongyu/senpi/pull/3420))
+
 ### Removed
 
 ## [2026.10.16-3] - 2026-10-16
