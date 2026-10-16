@@ -14,6 +14,7 @@ import {
 } from "../../../src/modes/rpc/host-handover-parked.ts";
 import { reopenHandoverParkedSessions } from "../../../src/modes/rpc/host-handover-reopen.ts";
 import type { SessionPathOwner, SessionPathReservations } from "../../../src/modes/rpc/host-reservations.ts";
+import { canonicalSessionPath } from "../../../src/modes/rpc/session-path-key.ts";
 import { RpcSessionRegistry, RpcSessionRegistryError } from "../../../src/modes/rpc/session-registry.ts";
 import { fakeSessionBase } from "../../helpers/fake-session-base.ts";
 
@@ -51,7 +52,7 @@ function runtime(options: Parameters<CreateAgentSessionRuntimeFactory>[0]): Crea
 	} as unknown as CreateAgentSessionRuntimeResult;
 }
 
-function gatedClaims() {
+function gatedClaims(firstHolder?: SessionPathOwner) {
 	const entered = Promise.withResolvers<void>();
 	const gate = Promise.withResolvers<void>();
 	let claims = 0;
@@ -61,6 +62,7 @@ function gatedClaims() {
 			if (claims === 1) {
 				entered.resolve();
 				await gate.promise;
+				return firstHolder;
 			}
 			return undefined;
 		},
@@ -127,19 +129,48 @@ describe("reopening a path whose open is still taking its claim (senpi#3485)", (
 		expect(refusal.code).toBe("session_path_in_use");
 		expect(refusal.detail).toMatchObject({ reason: "claim_in_progress", retry_after_ms: expect.any(Number) });
 		claims.open();
-		expect(await first).toEqual({ value: expect.objectContaining({ sessionPath: path }) });
+		expect(await first).toEqual({ value: expect.objectContaining({ sessionPath: canonicalSessionPath(path) }) });
+	});
+
+	test("when the first of three racing opens is refused, the next takes the claim and the third attaches", async () => {
+		const foreign: SessionPathOwner = {
+			instanceId: "predecessor",
+			pid: 1,
+			processStartTime: null,
+			sessionPath: "",
+			attached: true,
+			current: true,
+		};
+		const claims = gatedClaims(foreign);
+		const { dir, registry, path } = await registryRig(claims.reservations);
+		const first = settled(registry.openSession({ cwd: dir, sessionPath: path }));
+		await claims.entered;
+		const second = settled(registry.openSession({ cwd: dir, sessionPath: path }));
+		const third = settled(registry.openSession({ cwd: dir, sessionPath: path }));
+
+		claims.open();
+
+		const refused = await first;
+		expect(refused).toEqual({ error: expect.any(RpcSessionRegistryError) });
+		expect((refused as { error: RpcSessionRegistryError }).error.detail).toMatchObject({ owner: foreign });
+		const opened = await second;
+		expect(opened).toEqual({ value: expect.objectContaining({ sessionPath: canonicalSessionPath(path) }) });
+		const { sessionId } = (opened as { value: { sessionId: string } }).value;
+		expect(await third).toEqual({ value: expect.objectContaining({ sessionId, attached: true }) });
+		expect(registry.list()).toHaveLength(1);
 	});
 });
 
 describe("a host's handover-parked watch and its own parks (senpi#3485)", () => {
-	test("reopens a predecessor's park but never the park this host wrote itself", async () => {
+	test("reopens a predecessor's parks, including one that lands mid-watch, but never this host's own", async () => {
 		const agentDir = await mkdtemp(join(tmpdir(), "senpi-3485-watch-"));
 		directories.push(agentDir);
 		const socket = join(agentDir, "host.sock");
 		const daemonDir = createHostDaemonPaths({ socket, agentDir }).dir;
 		const own = join(agentDir, "own.jsonl");
 		const inherited = join(agentDir, "inherited.jsonl");
-		for (const path of [own, inherited]) await writeFile(path, "", "utf8");
+		const late = join(agentDir, "late.jsonl");
+		for (const path of [own, inherited, late]) await writeFile(path, "", "utf8");
 		await recordHandoverParkedSession(daemonDir, {
 			sessionPath: own,
 			retainOnDisconnect: true,
@@ -155,13 +186,20 @@ describe("a host's handover-parked watch and its own parks (senpi#3485)", () => 
 		await reopenHandoverParkedSessions(
 			async (entry) => {
 				opened.push(entry.sessionPath);
+				// The predecessor's drain parks another session while this watch is already running.
+				if (entry.sessionPath === inherited)
+					await recordHandoverParkedSession(daemonDir, {
+						sessionPath: late,
+						retainOnDisconnect: true,
+						parkedBy: "predecessor",
+					});
 			},
 			agentDir,
 			socket,
 			{ hostInstance: "this-host" },
 		);
 
-		expect(opened).toEqual([inherited]);
+		expect(opened).toEqual([inherited, late]);
 		expect((await readHandoverParkedSessions(daemonDir)).map((entry) => entry.sessionPath)).toEqual([own]);
 	});
 });
