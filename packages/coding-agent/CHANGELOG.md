@@ -10,7 +10,7 @@
 
 ### Fixed
 
-- `anthropic-subscription`: a spent account is now blocked until the reset its usage-limit message names ("resets in 1 hour", "resets 5am"), or, when the message names none, until the reset its fully used limit window last reported. Before, every account-level usage limit was blocked for 60 s. A pinned account therefore went back to the same spent limit every minute, and each round trip re-forked the session on the healthy account and re-wrote its prompt cache. A limit with no known reset and a plain rate limit keep the 60 s block ([#3462](https://github.com/code-yeongyu/senpi/issues/3462)).
+- `anthropic-subscription`: a spent account is now blocked until the reset its usage-limit message names ("resets in 1 hour", "resets 5am"), or, when the message names none, until the reset its fully used limit window last reported. Before, every account-level usage limit was blocked for 60 s. A pinned account therefore went back to the same spent limit every minute, and each round trip re-forked the session on the healthy account and re-wrote its prompt cache. The long block applies only to Claude Code's own usage-limit error and never lasts past that limit's window (5 hours for a session or 5-hour limit). A working account that serves a turn has its block cleared, and `/claude-account unblock <id>` lifts one by hand. Any other limit text and a plain rate limit keep the 60 s block ([#3462](https://github.com/code-yeongyu/senpi/issues/3462)).
 
 ### Removed
 

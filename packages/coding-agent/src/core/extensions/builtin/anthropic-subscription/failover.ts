@@ -7,11 +7,11 @@ import {
 	withModelBlock,
 } from "../../../credential-pool/model-scope.ts";
 import { usageLimitResetMs } from "../../../credential-pool/reset-time.ts";
-import { isAccountUsageLimitText } from "../../../credential-pool/usage-limit.ts";
-import { subscriptionLimits } from "../../../subscription-limits/limit-store.ts";
+
 import type { AccountSlot, AnthropicSubscriptionCredential } from "./accounts.ts";
 import { clearExpiredBlocks } from "./affinity.ts";
 import type { SdkErrorClassification } from "./errors.ts";
+import { usageLimitBlockMs } from "./usage-limit-block.ts";
 
 export const MAX_RATE_LIMIT_BLOCK_MS = 48 * 60 * 60 * 1_000;
 export const DEFAULT_RATE_LIMIT_BLOCK_MS = 60_000;
@@ -19,8 +19,6 @@ export const DEFAULT_RATE_LIMIT_BLOCK_MS = 60_000;
 export const TRANSIENT_RETRIES_PER_TURN = 2;
 export const TRANSIENT_RETRY_DELAY_MS = 1_000;
 export const TURN_RETRY_SUPPRESSION_PREFIX = "senpi:no-turn-retry:";
-// The subscription-limit store keys accounts by this provider id (auth-attempt.ts).
-const ANTHROPIC_SUBSCRIPTION_PROVIDER = "anthropic-subscription";
 
 type RecordValue = Record<string, unknown>;
 
@@ -122,29 +120,42 @@ function blockedAccount(
 		const key = modelBlockKey(classification.modelFamily, model);
 		return { ...account, modelBlocks: withModelBlock(account.modelBlocks, key, now + duration, now) };
 	}
-	// A spent account is out until the reset it names, or the reset its spent limit window reported;
-	// a fixed short block sends a pinned account back to the same limit every minute (senpi#3462).
-	const text = errorText(error);
-	const usageResetMs = isAccountUsageLimitText(text)
-		? (usageLimitResetMs(text, now) ?? spentWindowResetMs(account.name, now))
-		: undefined;
-	const hinted = retryAfterMs(error) ?? (usageResetMs !== undefined && usageResetMs > 0 ? usageResetMs : undefined);
+	// A spent account is out until its limit resets, capped at the limit's own window; a fixed
+	// short block sent a pinned account back to the same limit every minute (senpi#3462).
+	const hinted = retryAfterMs(error) ?? usageLimitBlockMs(errorText(error), account.name, now);
 	const duration = Math.min(MAX_RATE_LIMIT_BLOCK_MS, hinted ?? fallback);
 	return { ...account, blockedUntil: now + duration, blockReason: classification.kind };
 }
 
-/** Time until the latest reset among this account's fully used limit windows, as the SDK last reported them. */
-function spentWindowResetMs(accountName: string, now: number): number | undefined {
-	const limits = subscriptionLimits
-		.snapshot()
-		.find((entry) => entry.provider === ANTHROPIC_SUBSCRIPTION_PROVIDER && entry.account === accountName);
-	let latest: number | undefined;
-	for (const window of limits?.windows ?? []) {
-		if (window.usedPercent < 100 || window.resetsAt === undefined) continue;
-		const resetsAt = Date.parse(window.resetsAt);
-		if (Number.isFinite(resetsAt) && resetsAt > now && (latest === undefined || resetsAt > latest)) latest = resetsAt;
-	}
-	return latest === undefined ? undefined : latest - now;
+/**
+ * An account that just served a turn is not spent: a limit block another request stored meanwhile
+ * (a misread reset, a sibling's stale failure) is cleared so it cannot hold a working account out.
+ * Auth blocks are left to their own re-probe.
+ */
+async function clearBlockAfterSuccess(store: CredentialStore, providerId: string, name: string): Promise<void> {
+	const stored = await store.read(providerId);
+	if (stored?.type !== "oauth") return;
+	const read = stored as AnthropicSubscriptionCredential;
+	const slot = read.accounts?.find((account) => account.name === name) ?? read.slotState?.[name];
+	if (slot?.blockedUntil === undefined || slot.blockReason === "auth_error") return;
+	await store.modify(providerId, async (current) => {
+		if (current?.type !== "oauth") return current;
+		const credential = current as AnthropicSubscriptionCredential;
+		const state = credential.slotState?.[name];
+		const slotState =
+			state === undefined || state.blockReason === "auth_error"
+				? credential.slotState
+				: { ...credential.slotState, [name]: { ...(state.modelBlocks ? { modelBlocks: state.modelBlocks } : {}) } };
+		return {
+			...credential,
+			...(slotState === undefined ? {} : { slotState }),
+			accounts: (credential.accounts ?? []).map((account) => {
+				if (account.name !== name || account.blockReason === "auth_error") return account;
+				const { blockedUntil: _blockedUntil, blockReason: _blockReason, ...rest } = account;
+				return rest;
+			}),
+		};
+	});
 }
 
 function isTransient(classification: SdkErrorClassification): boolean {
@@ -272,6 +283,7 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 				visibleDeltaEmitted ||= (options.isVisibleDelta ?? defaultIsVisibleDelta)(event);
 				yield event;
 			}
+			await clearBlockAfterSuccess(options.store, options.providerId, account.name);
 			return;
 		} catch (error) {
 			const classification = options.classify(error);

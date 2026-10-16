@@ -2,7 +2,9 @@
 
 ### What changed
 
-- `failover.ts`: `blockedAccount` reads the reset for an account-level usage limit (`isAccountUsageLimitText`): first an explicit Retry-After, then `usageLimitResetMs` on the message text, then the latest reset among the account's fully used windows in `subscriptionLimits` (recorded from the SDK's `rate_limit_event`). Only when none is known does it keep the `60 s x 2^attempt` block. Model-family limits and plain rate limits are unchanged.
+- `usage-limit-block.ts` (new) + `failover.ts`: `blockedAccount` blocks a spent account until its limit resets, read from an explicit Retry-After, then the reset the message names, then the latest reset among the account's fully used windows in `subscriptionLimits` (from the SDK's `rate_limit_event`). A long block is taken only for Claude Code's own usage-limit error: the message starts with "You've hit/reached your [session|5-hour|daily|weekly|monthly|usage] limit" or "Claude AI usage limit reached", or carries `blocking_limit`/`rapid_refill_breaker`, and names no status other than 429. It never lasts past the limit's own window (5-hour/session 5 h, daily 24 h, weekly 7 d, monthly 31 d, unnamed 5 h; then the 48 h ceiling). Everything else keeps the `60 s x 2^attempt` block.
+- `failover.ts`: an account that serves a turn has any stored usage or rate-limit block cleared (an auth block keeps its re-probe).
+- `account-management.ts` / `account-command.ts`: `/claude-account unblock <id>` lifts a usage or rate-limit block by hand; auth blocks still need a login or the re-probe.
 
 ### Why
 
@@ -14,7 +16,7 @@
 
 ### Expected merge conflict zones
 
-- LOW: the tail of `blockedAccount` in `failover.ts`.
+- LOW: the tail of `blockedAccount` and the success return in `runFailover` (`failover.ts`); the `/claude-account` action list.
 
 ## 2026-10-15 - Transport image elision is hash-neutral in the sent stream (senpi#2768)
 
