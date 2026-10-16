@@ -234,22 +234,47 @@ function withTrustFileLock<T>(path: string, fn: () => T): T {
 	}
 }
 
+/** True when `dir` is the user's home or a folder above it: never a project (#2465). */
+function isHomeOrAboveDir(dir: string, homeDir: string): boolean {
+	return dir === homeDir || homeDir.startsWith(dir.endsWith(sep) ? dir : `${dir}${sep}`);
+}
+
+/**
+ * The project `.agents/skills` directories for `cwd`, nearest first: one per folder from cwd up to
+ * the git root (or the filesystem root), stopping below the user's home. Home and every folder
+ * above it are never a project; `~/.agents/skills` is the user's own global skills. The single
+ * source for both the trust check and the loader (#3420 review).
+ */
+export function projectAgentsSkillDirs(cwd: string, gitRepoRoot?: string): string[] {
+	// Paths are returned as the caller spelled them (resource paths are compared by string); the home
+	// check uses each folder's real path, so a symlinked or differently cased spelling can't slip past.
+	const homeDir = canonicalizePath(resolvePath(process.env.HOME || homedir()));
+	const stopAt = gitRepoRoot === undefined ? undefined : resolvePath(gitRepoRoot);
+	const dirs: string[] = [];
+	let currentDir = resolvePath(cwd);
+	while (!isHomeOrAboveDir(canonicalizePath(currentDir), homeDir)) {
+		dirs.push(join(currentDir, ".agents", "skills"));
+		if (stopAt !== undefined && currentDir === stopAt) break;
+		const parentDir = dirname(currentDir);
+		if (parentDir === currentDir) break;
+		currentDir = parentDir;
+	}
+	return dirs;
+}
+
 /**
  * Returns true when cwd has project-local resources that must be gated by
  * project trust: trust-requiring entries under the project config dir or the
- * legacy cwd/.pi dir (whose resources are also discovered), or .agents/skills in
- * cwd or one of its ancestors. The user's home and every folder above it are
- * never a project: their config dirs and .agents/skills are the user's own
- * global resources, so they never require trust, even when cwd is $HOME
- * (sisyphuslabs/omo-desktop-app#2465).
+ * legacy cwd/.pi dir (whose resources are also discovered), or a project
+ * `.agents/skills` (`projectAgentsSkillDirs`, the same walk the loader uses).
+ * The user's home and every folder above it are never a project: their config
+ * dirs and .agents/skills are the user's own global resources (#2465).
  */
 export function hasTrustRequiringProjectResources(cwd: string): boolean {
 	const homeDir = canonicalizePath(resolvePath(process.env.HOME || homedir()));
-	const isHomeOrAbove = (dir: string): boolean =>
-		dir === homeDir || homeDir.startsWith(dir.endsWith(sep) ? dir : `${dir}${sep}`);
-	let currentDir = canonicalizePath(resolvePath(cwd));
+	const currentDir = canonicalizePath(resolvePath(cwd));
 
-	if (!isHomeOrAbove(currentDir)) {
+	if (!isHomeOrAboveDir(currentDir, homeDir)) {
 		const configDirs = [join(currentDir, CONFIG_DIR_NAME), join(currentDir, LEGACY_PROJECT_CONFIG_DIR_NAME)];
 		if (
 			configDirs.some((configDir) =>
@@ -261,17 +286,7 @@ export function hasTrustRequiringProjectResources(cwd: string): boolean {
 		if (projectCodemodeNamesExecutable(join(currentDir, CONFIG_DIR_NAME))) return true;
 	}
 
-	while (true) {
-		if (!isHomeOrAbove(currentDir) && existsSync(join(currentDir, ".agents", "skills"))) {
-			return true;
-		}
-
-		const parentDir = dirname(currentDir);
-		if (parentDir === currentDir) {
-			return false;
-		}
-		currentDir = parentDir;
-	}
+	return projectAgentsSkillDirs(currentDir).some((dir) => existsSync(dir));
 }
 
 export class ProjectTrustStore {

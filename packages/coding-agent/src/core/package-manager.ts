@@ -13,6 +13,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { stripBom } from "../utils/text.ts";
+import { projectAgentsSkillDirs } from "./trust-manager.ts";
 
 function getEnv(): NodeJS.ProcessEnv {
 	if (process.platform !== "linux" || Object.keys(process.env).length > 0) {
@@ -386,24 +387,8 @@ function findGitRepoRoot(startDir: string): string | null {
 }
 
 function collectAncestorAgentsSkillDirs(startDir: string): string[] {
-	const skillDirs: string[] = [];
-	const resolvedStartDir = resolve(startDir);
-	const gitRepoRoot = findGitRepoRoot(resolvedStartDir);
-
-	let dir = resolvedStartDir;
-	while (true) {
-		skillDirs.push(join(dir, ".agents", "skills"));
-		if (gitRepoRoot && dir === gitRepoRoot) {
-			break;
-		}
-		const parent = dirname(dir);
-		if (parent === dir) {
-			break;
-		}
-		dir = parent;
-	}
-
-	return skillDirs;
+	// The same walk the trust check uses: home and above are never project skills (#3420 review).
+	return projectAgentsSkillDirs(startDir, findGitRepoRoot(resolve(startDir)) ?? undefined);
 }
 
 function collectAutoPromptEntries(dir: string): string[] {
@@ -2395,9 +2380,7 @@ export class DefaultPackageManager implements PackageManager {
 		};
 		const userAgentsSkillsDir = join(getHomeDir(), ".agents", "skills");
 		const projectTrusted = this.settingsManager.isProjectTrusted();
-		const projectAgentsSkillDirs = projectTrusted
-			? collectAncestorAgentsSkillDirs(this.cwd).filter((dir) => resolve(dir) !== resolve(userAgentsSkillsDir))
-			: [];
+		const projectAgentsSkillDirs = projectTrusted ? collectAncestorAgentsSkillDirs(this.cwd) : [];
 
 		const addResources = (
 			resourceType: ResourceType,

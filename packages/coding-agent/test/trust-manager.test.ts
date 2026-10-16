@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CONFIG_DIR_NAME } from "../src/config.ts";
-import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../src/core/trust-manager.ts";
+import {
+	hasTrustRequiringProjectResources,
+	ProjectTrustStore,
+	projectAgentsSkillDirs,
+} from "../src/core/trust-manager.ts";
 
 describe("ProjectTrustStore", () => {
 	let tempDir: string;
@@ -170,6 +174,14 @@ describe("the trust walk stops below the user's home (sisyphuslabs/omo-desktop-a
 		mkdirSync(join(root, "home", ".agents", "skills"), { recursive: true });
 		mkdirSync(join(home, "code", "app"), { recursive: true });
 		expect(hasTrustRequiringProjectResources(join(home, "code", "app"))).toBe(false);
+	});
+
+	it("gives the loader and the trust check one walk: nothing at or above home", () => {
+		mkdirSync(join(home, "code", "app"), { recursive: true });
+		const dirs = projectAgentsSkillDirs(join(home, "code", "app"));
+		expect(dirs).toEqual([join(home, "code", "app", ".agents", "skills"), join(home, "code", ".agents", "skills")]);
+		expect(projectAgentsSkillDirs(home)).toEqual([]);
+		expect(projectAgentsSkillDirs(root)).toEqual([]);
 	});
 
 	it("still asks for a project's own .agents/skills between the folder and home", () => {

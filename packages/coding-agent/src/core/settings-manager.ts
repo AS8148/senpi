@@ -1111,6 +1111,20 @@ export class SettingsManager {
 		return this.projectTrusted;
 	}
 
+	/**
+	 * True when this session's project trust came only from its Full access preset (never asked,
+	 * never saved): moving the session off Full access must withdraw it (senpi#3414, #3420 T5).
+	 */
+	private trustFromFullAccess = false;
+
+	markTrustFromFullAccess(): void {
+		this.trustFromFullAccess = true;
+	}
+
+	isTrustFromFullAccess(): boolean {
+		return this.trustFromFullAccess && this.projectTrusted;
+	}
+
 	setProjectTrusted(trusted: boolean): void {
 		if (this.projectTrusted === trusted) {
 			return;
