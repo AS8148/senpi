@@ -3,7 +3,7 @@
 ### What changed
 
 - `packages/ai/src/types.ts`: `AssistantImages` gains optional `providerDiagnostic`, the same bounded classification `AssistantMessage` already carries.
-- `packages/ai/src/api/openai-images.ts`: a failed request sets it from `readProviderDiagnostic(error)`, exactly as the chat adapters do.
+- `packages/ai/src/api/openai-images.ts`: the SDK images call runs inside `awaitProviderTransport` with `openAICompatibleProviderDiagnosticFromError`, as the chat adapters' calls do, and a failed request sets `providerDiagnostic` from `readProviderDiagnostic(error)`.
 
 ### Why
 
@@ -16,7 +16,7 @@ The coding agent's `generate_image` tool needs the HTTP status of a rejected ima
 ### Expected merge conflict zones
 
 - `packages/ai/src/types.ts`: the `AssistantImages` field list, beside `errorMessage`.
-- `packages/ai/src/api/openai-images.ts`: the `catch` block of `generateImages`.
+- `packages/ai/src/api/openai-images.ts`: the request callback and the `catch` block of `generateImages`.
 
 ## 2026-10-15 - ProviderDiagnostic gains the network category and structured_transport evidence (senpi#3228)
 

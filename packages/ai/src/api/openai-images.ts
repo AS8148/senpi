@@ -13,6 +13,7 @@ import type {
 import { readProviderDiagnostic } from "../provider-diagnostic.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { headersToRecord } from "../utils/headers.ts";
+import { awaitProviderTransport, openAICompatibleProviderDiagnosticFromError } from "../utils/provider-diagnostic-sources.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { resolveOpenAIClientAuth } from "./openai-client-auth.ts";
 import { buildEditParams } from "./openai-images-edit.ts";
@@ -75,11 +76,14 @@ export const generateImages: ImagesFunction<OpenAIImagesOptions> = async (
 			() => {
 				// openai SDK pinned at 6.26.0 predates gpt-image-2.5 quality tiers
 				const sdkParams = params as ImageGenerateParamsNonStreaming & ImageEditParamsNonStreaming;
-				return (
-					method === "edit"
-						? client.images.edit(sdkParams, requestOptions)
-						: client.images.generate(sdkParams, requestOptions)
-				).withResponse();
+				return awaitProviderTransport(
+					() =>
+						(method === "edit"
+							? client.images.edit(sdkParams, requestOptions)
+							: client.images.generate(sdkParams, requestOptions)
+						).withResponse(),
+					openAICompatibleProviderDiagnosticFromError,
+				);
 			},
 			{
 				maxRetries: options?.maxRetries,
