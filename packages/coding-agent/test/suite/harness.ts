@@ -113,6 +113,8 @@ export interface HarnessOptions {
 	models?: FauxModelDefinition[];
 	api?: string;
 	provider?: string;
+	/** Forwarded to the faux provider so a stream can be held open deterministically. */
+	fauxStreamOptions?: { tokensPerSecond?: number };
 	settings?: Partial<Settings>;
 	systemPrompt?: string;
 	tools?: AgentTool[];
@@ -189,6 +191,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 			api: options.api,
 			provider: options.provider,
 			models: options.models,
+			tokensPerSecond: options.fauxStreamOptions?.tokensPerSecond,
 			...(options.fauxResponseHeaders === undefined ? {} : { responseHeaders: options.fauxResponseHeaders }),
 		});
 	if (!sibling) fauxProvider.setResponses([]);

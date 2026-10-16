@@ -229,6 +229,8 @@ export interface Settings {
 	askUser?: AskUserSettings;
 	/** Bounds on turns the engine starts without a user message (senpi#2967). */
 	engineTurns?: { maxPerUserInput?: number; maxToolFreePerMinute?: number };
+	turn_inactivity_ms?: number; // default: 3_600_000, min 60_000, 0 disables; see core/turn-deadline.ts
+	turn_max_runtime_ms?: number; // default: 21_600_000, 0 disables
 	todo?: TodoSettings;
 	recommendedModels?: string[]; // Preferred default model ids, in priority order
 	favoriteModels?: string[]; // Model patterns for Ctrl+P cycling (same format as --models CLI flag)
@@ -1095,6 +1097,14 @@ export class SettingsManager {
 			maxPerUserInput: limit(configured?.maxPerUserInput, MAX_ENGINE_TURNS_PER_USER_INPUT),
 			maxToolFreePerMinute: limit(configured?.maxToolFreePerMinute, MAX_TOOL_FREE_ENGINE_TURNS_PER_WINDOW),
 		};
+	}
+
+	getTurnInactivityMs(): number | undefined {
+		return this.settings.turn_inactivity_ms;
+	}
+
+	getTurnMaxRuntimeMs(): number | undefined {
+		return this.settings.turn_max_runtime_ms;
 	}
 
 	getTodoFirstTurnPlan(): TodoFirstTurnPlan {

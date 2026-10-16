@@ -1,3 +1,22 @@
+## 2026-10-15 - Connection failures classify as network from structured transport codes (senpi#3228)
+
+### What changed
+
+- `packages/ai/src/utils/provider-diagnostic-vocabulary.ts`: `categoryForTransportCode` (closed allowlist: ECONNRESET, ECONNREFUSED, ETIMEDOUT, ENOTFOUND, EAI_AGAIN, EPIPE, UND_ERR_SOCKET, UND_ERR_CONNECT_TIMEOUT, UND_ERR_HEADERS_TIMEOUT, UND_ERR_BODY_TIMEOUT, UND_ERR_CLOSED, and the SDK class names APIConnectionError / APIConnectionTimeoutError -> `network`); `network` is a recognized category.
+- `packages/ai/src/utils/provider-diagnostic-sources.ts`: `transportProviderDiagnosticFromError` walks up to 4 links of the `cause` chain reading only `code` (Node's fetch puts it two causes below the SDK error, Bun one), and falls back to the SDK connection error's class name (`name` or `constructor.name`) when no link has a code; never the message. The transport wrappers use it only when the adapter's classifier finds nothing.
+
+### Why
+
+A dropped connection had no category, so clients could not say "check connectivity".
+
+### Why an extension could not handle it
+
+The diagnostic is minted inside the provider transport wrappers in `pi-ai`, below any extension.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/utils/provider-diagnostic-sources.ts`: `awaitProviderTransport` and `iterateProviderTransport`.
+
 ## 2026-10-14 - Thinking-mode refusal of a forced tool_choice is retried without it (senpi#3324)
 
 ### What changed

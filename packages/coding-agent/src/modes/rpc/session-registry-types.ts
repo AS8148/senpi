@@ -6,6 +6,8 @@ import type { SessionContext, SessionKind } from "../../core/extensions/types.ts
 import { EMPTY_SESSION_CONTEXT } from "../../core/extensions/types.ts";
 import type { SessionPathReservations } from "./host-reservations.ts";
 import type { PreparableRuntimeFactory } from "./host-warm.ts";
+import type { SessionContextOverlay } from "./session-context-patch.ts";
+import type { PublishedSessionContext } from "./session-status.ts";
 import type { SessionWorkerClient } from "./session-worker-client.ts";
 
 /** The immutable flags selected when a routing session is opened. */
@@ -29,6 +31,8 @@ export interface RpcSessionEntry {
 	readonly kind: SessionKind;
 	/** Frozen opaque labels the open attached; `{}` when it attached none. */
 	readonly context: SessionContext;
+	/** `set_session_context` patches published over `context`; `context` itself stays frozen for extensions. */
+	contextOverlay?: SessionContextOverlay;
 	/** Resolves replacement against the runtime currently owned by this entry. */
 	switchSession?: SessionRuntime["switchSession"];
 	/** Rebind callback installed by the shared RPC connection handler. */
@@ -134,7 +138,9 @@ export interface RpcSessionRow {
 	status: Exclude<RpcSessionState, "quarantined">;
 	attachments: number;
 	kind: SessionKind;
-	context: SessionContext;
+	context: PublishedSessionContext;
+	/** Milliseconds since the last routed command or session-owned activity refreshed the idle window. */
+	idleMs: number;
 }
 
 export interface OpenRpcSession {
