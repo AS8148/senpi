@@ -4,9 +4,23 @@
 
 ### Breaking Changes
 
+- RPC: the outcome for input dropped from the queue is now `cleared`, written by `clear_queue`, `unload_session { clearQueue: true }` and `abort { clearQueue: true }` alike; 2026.10.16-2 wrote it as `cleared_by_abort`, and only for `abort`. Receipts written under the old name are still read and reported as they were stored, so an input cleared on 2026.10.16-2 is never restored on reopen. Clients matching `outcome.kind` should accept both values ([#3412](https://github.com/code-yeongyu/senpi/issues/3412)).
+
 ### Added
 
-- RPC `abort` takes `awaitIdle` (answer once the turn stopped, or `stopped: false` after `graceMs`, default 10 s, max 60 s), `clearQueue` (drain queued input first; each drained input gets a `cleared` receipt) and reports `cleared`; aborted `agent_end` and `session_abort` carry `abortedBy: { connectionId, effectId? }` ([#3156](https://github.com/code-yeongyu/senpi/issues/3156)).
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.16-2] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+- RPC `verify_api_key {provider, key}` checks an API key with one authenticated read of the provider's model list, without storing it, and answers `ok` or a reason (`rejected`, `unreachable`, `unsupported`, `unknown-provider`). `get_auth_providers` API-key rows carry `keyHint`, the last four characters of a key the app stored (none for OAuth, command or env references, or short keys). Hosts advertise `auth_key_verify` ([#3372](https://github.com/code-yeongyu/senpi/pull/3372), for the OmO desktop app).
 
 - `subscribe_sessions` gains `effects` (default on for `childrenOf`): matched sessions stream `effect_status` receipts (`accepted`/`applied`/`done`/`failed`) on the subscription's gap-free `seq`, each emitted after the record that caused the transition, and `session_status.lastEffect` names a session's latest receipt ([#3157](https://github.com/code-yeongyu/senpi/issues/3157)).
 
@@ -15,13 +29,13 @@
 - RPC `abort` takes `awaitIdle` (answer once the turn stopped, or `stopped: false` after `graceMs`, default 10 s, max 60 s), `clearQueue` (drain queued input first; each drained input gets a `cleared_by_abort` receipt) and reports `cleared`; aborted `agent_end` and `session_abort` carry `abortedBy: { connectionId, effectId? }` ([#3156](https://github.com/code-yeongyu/senpi/issues/3156)).
 
 - `agent_end` carries `failure: { category, provider, httpStatus?, code?, reason, action }` when a turn ends with a provider error, built only from the structured provider diagnostic (never from message text); every category, `unknown` included, has a reason and an action, and the TUI shows them as one line. Absent on success and abort ([#3228](https://github.com/code-yeongyu/senpi/issues/3228)).
+
 ### Changed
 
 ### Fixed
 
-- RPC `clear_queue` and `unload_session { clearQueue: true }` close each drained input with the `cleared` outcome (with `reason` and `action`) instead of a plain `completed` receipt that read as delivered; `abort { clearQueue }` uses the same outcome ([#3412](https://github.com/code-yeongyu/senpi/issues/3412)).
-
 - `show_html_page` no longer fails a report with screenshots with only "html: must not have more than 512000 characters". The refusal now counts the base64 images that pushed the page over the limit and says to pass them as absolute file paths, which the tool inlines itself after the check. The tool description and guideline say the same up front ([#3418](https://github.com/code-yeongyu/senpi/issues/3418), reported by @devswha).
+- On the Claude subscription lane, the agent no longer reports "PreToolUse hook error … this denial is not a failure" as a problem on every tool call. Claude Code labels each host-tool handoff that way itself, and the handoff reason now tells the model it is expected and not to mention it ([#3417](https://github.com/code-yeongyu/senpi/issues/3417), reported by @devswha).
 
 ### Removed
 
@@ -44,8 +58,6 @@
 - `/account <provider> reset <id>` clears one account's cooldown or block (the credential-pool health record and any block a provider lane stored on the account), so the next request tries it again ([#3285](https://github.com/code-yeongyu/senpi/issues/3285)).
 
 - `tool.glob({ pattern, path })` finds files by glob inside eval, the same way `tool.grep` searches text there. It is never a top-level tool, and the eval prompt now names it, so a model that reached for `tool.glob` no longer gets "Unknown tool glob" ([#3330](https://github.com/code-yeongyu/senpi/issues/3330)).
-
-- RPC `verify_api_key {provider, key}` checks an API key with one authenticated read of the provider's model list, without storing it, and answers `ok` or a reason (`rejected`, `unreachable`, `unsupported`, `unknown-provider`). `get_auth_providers` API-key rows carry `keyHint`, the last four characters of a key the app stored (none for OAuth, command or env references, or short keys). Hosts advertise `auth_key_verify`.
 
 ### Changed
 
