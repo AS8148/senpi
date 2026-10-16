@@ -137,7 +137,7 @@ async function quiesce(session: AgentSession, aborting: Promise<void>, graceMs: 
 }
 
 /**
- * `abort`: with `clearQueue` the queued inputs are drained (each gets a `cleared_by_abort` receipt) before
+ * `abort`: with `clearQueue` the queued inputs are drained (each gets a `cleared` receipt) before
  * the abort; with `awaitIdle` the answer waits until the session is idle or `graceMs` passes. Without
  * either, the abort is acknowledged on dispatch exactly as before.
  */
@@ -158,7 +158,7 @@ export async function runAbort(
 	const streaming = ctx.session.isStreaming;
 	let cleared = 0;
 	if (command.clearQueue === true) {
-		admissions.clearQueuedByAbort();
+		admissions.clearQueued();
 		const drained = ctx.session.clearQueue({ abortWillFollow: true });
 		cleared = drained.steering.length + drained.followUp.length;
 	}

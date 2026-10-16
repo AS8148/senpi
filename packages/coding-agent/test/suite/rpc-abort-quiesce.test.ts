@@ -63,7 +63,7 @@ describe("RPC abort quiesce", () => {
 		await host.stop();
 	}, 240_000);
 
-	it("clearQueue drains queued input with a cleared_by_abort receipt and a queue_update", async () => {
+	it("clearQueue drains queued input with a cleared receipt and a queue_update", async () => {
 		await using world = await effectHostWorld();
 		const host = await world.start();
 		const client = await host.connect();
@@ -88,7 +88,7 @@ describe("RPC abort quiesce", () => {
 		const receipt = await client.request({ type: "get_effect_status", sessionId, effectId: "q1" });
 		expect(receipt.data?.effect).toMatchObject({
 			state: "failed",
-			outcome: { kind: "cleared_by_abort", action: expect.any(String) },
+			outcome: { kind: "cleared", action: expect.any(String) },
 		});
 		await host.stop();
 	}, 240_000);

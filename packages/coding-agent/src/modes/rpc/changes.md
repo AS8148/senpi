@@ -1,3 +1,24 @@
+## 2026-10-16 - Every queue clear closes drained input as `cleared` (senpi#3412)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/client-admissions.ts`: `clearQueuedByAbort` is now `clearQueued`, giving each still-queued input a `cleared` receipt; `ClientAdmissions.clearQueuedFor(session)` does it only on a ledger that already exists.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `clear_queue` marks queued input cleared before draining.
+- `packages/coding-agent/src/modes/rpc/session-unload.ts`: `unload_session { clearQueue: true }` does the same before draining.
+- `packages/coding-agent/src/modes/rpc/effect-commands.ts`, `effect-outcome-copy.ts`, `effect-record.ts`, `effect-status.ts`: `abort { clearQueue }` uses the same outcome, renamed from `cleared_by_abort` (released in 2026.10.16-2) to `cleared`; the schema still accepts `cleared_by_abort` and `projectAdmission` reads it as `failed`, so receipts that release wrote stay readable and their input is never restored on reopen.
+
+### Why
+
+- Input dropped by `clear_queue` or by an unload with `clearQueue` closed with a plain `completed` receipt, which reads as delivered (senpi#3412). One outcome now covers every clear path; a session release is not one of them, because its queued deliveries are redelivered by the sender.
+
+### Why an extension could not handle it
+
+- The admission ledger and the RPC command handlers are host internals; no extension hook sees a queue clear before the drain.
+
+### Expected merge conflict zones
+
+- LOW: the `clear_queue` case in `connection-handler.ts`; the `clearQueue` branch in `session-unload.ts`.
+
 ## 2026-10-14 - RPC `agent_end` carries the turn deadline (senpi#3227)
 
 ### What changed
