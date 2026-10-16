@@ -20,14 +20,14 @@ interface ImageServer {
 	hits: string[];
 }
 
-/** `/no-images/v1` answers like a chat-only gateway (404); `/images/v1` returns one PNG. */
+/** `/no-images/v1` answers like a chat-only gateway (404); `/with-pngs/v1` returns one PNG (an images base URL may not itself contain `/images`). */
 async function startImageServer(): Promise<ImageServer> {
 	const hits: string[] = [];
 	const server = createServer((request, response) => {
 		hits.push(`${request.method} ${request.url}`);
 		request.resume();
 		request.on("end", () => {
-			if (request.url?.startsWith("/images/v1/images/generations")) {
+			if (request.url?.startsWith("/with-pngs/v1/images/generations")) {
 				response.writeHead(200, { "content-type": "application/json" });
 				response.end(JSON.stringify({ created: 0, data: [{ b64_json: PNG_BASE64 }] }));
 				return;
@@ -82,7 +82,7 @@ describe("omo#10285: generate_image never silently strands on a gateway without 
 		setImageGenRegistry(
 			gatewayRegistry({
 				"aaa-compat": `${images.baseUrl}/no-images/v1`,
-				"bbb-compat": `${images.baseUrl}/images/v1`,
+				"bbb-compat": `${images.baseUrl}/with-pngs/v1`,
 			}),
 		);
 
@@ -91,7 +91,7 @@ describe("omo#10285: generate_image never silently strands on a gateway without 
 			output_path: "fox.png",
 		});
 
-		expect(images.hits).toEqual(["POST /no-images/v1/images/generations", "POST /images/v1/images/generations"]);
+		expect(images.hits).toEqual(["POST /no-images/v1/images/generations", "POST /with-pngs/v1/images/generations"]);
 		expect(existsSync(join(harness.tempDir, "fox.png"))).toBe(true);
 		expect(result.details.source).toBe("provider-config:bbb-compat");
 		expect(resultText(result)).toContain("skipped aaa-compat");
@@ -120,7 +120,7 @@ describe("omo#10285: generate_image never silently strands on a gateway without 
 			setImageGenRegistry(
 				gatewayRegistry({
 					"aaa-compat": `${images.baseUrl}/no-images/v1`,
-					"bbb-compat": `${images.baseUrl}/images/v1`,
+					"bbb-compat": `${images.baseUrl}/with-pngs/v1`,
 				}),
 			);
 
