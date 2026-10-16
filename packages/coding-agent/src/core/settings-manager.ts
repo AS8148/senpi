@@ -478,6 +478,8 @@ export function getInMemorySettingsPath(scope: SettingsScope): string {
 
 export interface SettingsManagerCreateOptions {
 	projectTrusted?: boolean;
+	/** The project trust exists only because the session runs Full access (senpi#3414): leaving it withdraws the trust. */
+	trustFromFullAccess?: boolean;
 }
 
 export interface SettingsStorage {
@@ -834,7 +836,7 @@ export class SettingsManager {
 			initialErrors.push(toSettingsError("project", projectLoad.error, settingsPaths.project));
 		}
 
-		return new SettingsManager(
+		const manager = new SettingsManager(
 			storage,
 			globalLoad.settings,
 			projectLoad.settings,
@@ -845,6 +847,8 @@ export class SettingsManager {
 			initialSources,
 			settingsPaths,
 		);
+		manager.trustFromFullAccess = options.trustFromFullAccess === true;
+		return manager;
 	}
 
 	/** Create an in-memory SettingsManager (no file I/O) */
@@ -1116,10 +1120,6 @@ export class SettingsManager {
 	 * never saved): moving the session off Full access must withdraw it (senpi#3414, #3420 T5).
 	 */
 	private trustFromFullAccess = false;
-
-	markTrustFromFullAccess(): void {
-		this.trustFromFullAccess = true;
-	}
 
 	isTrustFromFullAccess(): boolean {
 		return this.trustFromFullAccess && this.projectTrusted;

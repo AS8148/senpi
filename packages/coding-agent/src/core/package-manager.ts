@@ -372,23 +372,9 @@ function collectFiles(
 	return files;
 }
 
-function findGitRepoRoot(startDir: string): string | null {
-	let dir = resolve(startDir);
-	while (true) {
-		if (existsSync(join(dir, ".git"))) {
-			return dir;
-		}
-		const parent = dirname(dir);
-		if (parent === dir) {
-			return null;
-		}
-		dir = parent;
-	}
-}
-
 function collectAncestorAgentsSkillDirs(startDir: string): string[] {
 	// The same walk the trust check uses: home and above are never project skills (#3420 review).
-	return projectAgentsSkillDirs(startDir, findGitRepoRoot(resolve(startDir)) ?? undefined);
+	return projectAgentsSkillDirs(startDir);
 }
 
 function collectAutoPromptEntries(dir: string): string[] {

@@ -184,6 +184,16 @@ describe("the trust walk stops below the user's home (sisyphuslabs/omo-desktop-a
 		expect(projectAgentsSkillDirs(root)).toEqual([]);
 	});
 
+	it("walks the folder as spelled: a link from outside home into home still counts the folders around the link", () => {
+		mkdirSync(join(home, "proj"), { recursive: true });
+		const shared = join(root, "shared");
+		mkdirSync(join(shared, ".agents", "skills"), { recursive: true });
+		symlinkSync(join(home, "proj"), join(shared, "link"));
+		const cwd = join(shared, "link");
+		expect(projectAgentsSkillDirs(cwd)).toContain(join(shared, ".agents", "skills"));
+		expect(hasTrustRequiringProjectResources(cwd)).toBe(true);
+	});
+
 	it("still asks for a project's own .agents/skills between the folder and home", () => {
 		mkdirSync(join(home, "code", "app", ".agents", "skills"), { recursive: true });
 		mkdirSync(join(home, "code", "app", "src"), { recursive: true });

@@ -239,22 +239,34 @@ function isHomeOrAboveDir(dir: string, homeDir: string): boolean {
 	return dir === homeDir || homeDir.startsWith(dir.endsWith(sep) ? dir : `${dir}${sep}`);
 }
 
+/** The nearest folder at or above `dir` that holds `.git`, as spelled; undefined outside a repository. */
+function findGitRepoRoot(dir: string): string | undefined {
+	let currentDir = dir;
+	while (!existsSync(join(currentDir, ".git"))) {
+		const parentDir = dirname(currentDir);
+		if (parentDir === currentDir) return undefined;
+		currentDir = parentDir;
+	}
+	return currentDir;
+}
+
 /**
  * The project `.agents/skills` directories for `cwd`, nearest first: one per folder from cwd up to
  * the git root (or the filesystem root), stopping below the user's home. Home and every folder
- * above it are never a project; `~/.agents/skills` is the user's own global skills. The single
- * source for both the trust check and the loader (#3420 review).
+ * above it are never a project; `~/.agents/skills` is the user's own global skills. The ONE walk
+ * both the trust check and the loader use, over the same spelling and the same git root (#3420
+ * review): paths stay as spelled (resources are compared as strings), and each folder's real path
+ * decides whether it is home or above, so a symlink can't carry the walk past home either way.
  */
-export function projectAgentsSkillDirs(cwd: string, gitRepoRoot?: string): string[] {
-	// Paths are returned as the caller spelled them (resource paths are compared by string); the home
-	// check uses each folder's real path, so a symlinked or differently cased spelling can't slip past.
+export function projectAgentsSkillDirs(cwd: string): string[] {
 	const homeDir = canonicalizePath(resolvePath(process.env.HOME || homedir()));
-	const stopAt = gitRepoRoot === undefined ? undefined : resolvePath(gitRepoRoot);
+	const startDir = resolvePath(cwd);
+	const gitRepoRoot = findGitRepoRoot(startDir);
 	const dirs: string[] = [];
-	let currentDir = resolvePath(cwd);
+	let currentDir = startDir;
 	while (!isHomeOrAboveDir(canonicalizePath(currentDir), homeDir)) {
 		dirs.push(join(currentDir, ".agents", "skills"));
-		if (stopAt !== undefined && currentDir === stopAt) break;
+		if (currentDir === gitRepoRoot) break;
 		const parentDir = dirname(currentDir);
 		if (parentDir === currentDir) break;
 		currentDir = parentDir;
@@ -286,7 +298,7 @@ export function hasTrustRequiringProjectResources(cwd: string): boolean {
 		if (projectCodemodeNamesExecutable(join(currentDir, CONFIG_DIR_NAME))) return true;
 	}
 
-	return projectAgentsSkillDirs(currentDir).some((dir) => existsSync(dir));
+	return projectAgentsSkillDirs(cwd).some((dir) => existsSync(dir));
 }
 
 export class ProjectTrustStore {

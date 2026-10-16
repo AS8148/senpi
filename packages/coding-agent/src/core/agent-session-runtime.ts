@@ -228,20 +228,18 @@ export class AgentSessionRuntime {
 		this._launchProfile = Object.freeze({ ...(this._launchProfile ?? { cwd: this.cwd }), permissionPreset: preset });
 		this._session.extensionRunner.setFlagValue("permission-preset", preset);
 		// A project trusted only because the session was Full access is no longer trusted once it isn't:
-		// drop project settings and reload, so project extensions, skills and MCP servers unload. The
-		// trust was never saved, so the next session that can ask, asks (senpi#3414, #3420 T5).
+		// drop project settings and rebuild the runtime so project extensions, skills, hooks and MCP servers
+		// unload. Nothing can cancel that rebuild (`revokeProjectTrust`); the trust was never saved, so
+		// the next session that can ask, asks (senpi#3414, #3420).
 		const settings = this._session.settingsManager;
 		if (preset !== "full-access" && settings.isTrustFromFullAccess()) {
 			settings.setProjectTrusted(false);
-			this._trustRevocation = this._session.reload().then(
-				() => undefined,
-				(error: unknown) => {
-					this._diagnostics = [
-						...this._diagnostics,
-						{ type: "warning", message: `Reloading after leaving Full access failed: ${String(error)}` },
-					];
-				},
-			);
+			this._trustRevocation = this._session.revokeProjectTrust().catch((error: unknown) => {
+				this._diagnostics = [
+					...this._diagnostics,
+					{ type: "error", message: `Unloading project code after leaving Full access failed: ${String(error)}` },
+				];
+			});
 		}
 	}
 

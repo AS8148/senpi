@@ -895,17 +895,15 @@ export function createCliRuntimeFactory(
 			: (cachedProjectTrust ??
 				parsed.projectTrustOverride ??
 				(fullAccessTrust || !hasTrustRequiringResources || trustStore.get(cwd) === true));
-		const runtimeSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted });
 		// Trusted only because of Full access (resources need trust and nothing else granted it): leaving
 		// Full access withdraws it (#3420 review T5).
-		if (
+		const trustFromFullAccess =
 			fullAccessTrust &&
 			hasTrustRequiringResources &&
 			cachedProjectTrust === undefined &&
 			parsed.projectTrustOverride === undefined &&
-			trustStore.get(cwd) !== true
-		)
-			runtimeSettingsManager.markTrustFromFullAccess();
+			trustStore.get(cwd) !== true;
+		const runtimeSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted, trustFromFullAccess });
 		// The opener's per-session fallback policy is an in-memory override: never saved, never shared.
 		if (launchProfile?.retryFallback) applyRetryFallbackProfile(runtimeSettingsManager, launchProfile.retryFallback);
 		const services = await createAgentSessionServices({

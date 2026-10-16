@@ -8,7 +8,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseArgs } from "../../../src/cli/args.ts";
 import { CONFIG_DIR_NAME } from "../../../src/config.ts";
@@ -42,7 +42,7 @@ beforeEach(async () => {
 	);
 	vi.stubEnv("HOME", home);
 	records.length = 0;
-	const parsed = parseArgs(["--mode", "rpc", "--multi-session", "--no-skills", "--no-context-files"]);
+	const parsed = parseArgs(["--mode", "rpc", "--multi-session", "--no-context-files"]);
 	registry = new RpcSessionRegistry({
 		agentDir,
 		createRuntime: createCliRuntimeFactory({ parsed, cwd, agentDir, appMode: "rpc" }),
@@ -121,5 +121,36 @@ describe("Full access trusts the project without asking (#3414)", { timeout: 60_
 				.filter((path) => path.includes("marker.ts")),
 		).toEqual([]);
 		expect(new ProjectTrustStore(agentDir).get(cwd)).toBeNull();
+	});
+
+	it("leaving Full access unloads project code even when a project extension cancels reloads", async () => {
+		await writeFile(
+			join(cwd, CONFIG_DIR_NAME, "extensions", "veto.ts"),
+			'export default function (pi) { pi.on("session_before_reload", () => ({ cancel: true, reason: "kept by the project" })); }\n',
+		);
+		await mkdir(join(cwd, ".agents", "skills", "project-skill"), { recursive: true });
+		await writeFile(
+			join(cwd, ".agents", "skills", "project-skill", "SKILL.md"),
+			"---\nname: project-skill\ndescription: probe\n---\nbody\n",
+		);
+		const runtime = runtimeOf(await open("full-access"));
+		const projectExtensions = (): string[] =>
+			runtime.session.extensionRunner
+				.getExtensionPaths()
+				.filter((path) => path.includes(`${sep}project${sep}${CONFIG_DIR_NAME}${sep}extensions${sep}`));
+		const skillNames = (): string[] => runtime.session.resourceLoader.getSkills().skills.map((skill) => skill.name);
+		expect(projectExtensions()).toHaveLength(2);
+		expect(skillNames()).toContain("project-skill");
+		// The project's veto is live: an ordinary reload would be cancelled.
+		expect((await runtime.session.checkReloadVeto()).cancelled).toBe(true);
+
+		runtime.setPermissionPreset("ask");
+		await runtime.trustRevocation;
+
+		expect(runtime.session.settingsManager.isProjectTrusted()).toBe(false);
+		expect(projectExtensions()).toEqual([]);
+		expect(skillNames()).not.toContain("project-skill");
+		expect((await runtime.session.checkReloadVeto()).cancelled).toBe(false);
+		expect(runtime.diagnostics.filter((diagnostic) => diagnostic.type === "error")).toEqual([]);
 	});
 });

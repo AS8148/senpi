@@ -1135,6 +1135,8 @@ export class AgentSession {
 	private _continueWithQueuedInput = false;
 	/** True while a reload's `session_start` handlers run; a nested reload would retire the runner they run on. */
 	private _sessionStartDispatching = false;
+	/** Waiters for the moment no prompt start is pending and no session start is dispatching (revokeProjectTrust). */
+	private _admissionIdleWaiters: Array<() => void> = [];
 	/** User-abort generation at the start of an idle trigger turn's awaited admission hooks. */
 	private _triggerTurnAdmissionAbortGeneration: number | undefined;
 	private _engineTurnStarts: EngineTurnStartRecord[] = [];
@@ -4939,6 +4941,7 @@ export class AgentSession {
 			if (!ownsPromptStart || claim === undefined) return;
 			claim.started = started;
 			this._promptStartPending = false;
+			this._notifyAdmissionIdle();
 			if (!started && claim.joined === true && !this.isStreaming) this._drainJoinedInput();
 		};
 		// A joiner marks the claim it queued into; one that queues after that claim already failed (it awaited in
@@ -9963,6 +9966,32 @@ export class AgentSession {
 		}
 	}
 
+	/**
+	 * Unloads the project's code after the session lost a trust it held only through Full access
+	 * (senpi#3420): rebuilds the runtime exactly like reload(), but nothing can cancel it. No
+	 * `session_before_reload` handler runs (a project extension must not keep itself loaded); a prompt
+	 * that is being admitted, or a session start in dispatch, is waited out instead of cancelling, and
+	 * prompts admitted after that wait for the rebuilt runtime.
+	 */
+	async revokeProjectTrust(): Promise<void> {
+		while (this._promptStartPending || this._sessionStartDispatching) {
+			await new Promise<void>((resolve) => this._admissionIdleWaiters.push(resolve));
+		}
+		const finishReloadWork = this._sessionWorkBarrier.begin();
+		try {
+			await this._rebuildRuntimeForReload();
+		} finally {
+			finishReloadWork();
+		}
+	}
+
+	private _notifyAdmissionIdle(): void {
+		if (this._promptStartPending || this._sessionStartDispatching) return;
+		const waiters = this._admissionIdleWaiters;
+		this._admissionIdleWaiters = [];
+		for (const resolve of waiters) resolve();
+	}
+
 	private async _rebuildRuntimeForReload(options?: {
 		beforeSessionStart?: () => void | Promise<void>;
 	}): Promise<{ cancelled: false }> {
@@ -10083,6 +10112,7 @@ export class AgentSession {
 			} finally {
 				this._sessionStartDispatching = false;
 				settleSessionStart();
+				this._notifyAdmissionIdle();
 			}
 		}
 		time("lifecycle", "reload");
