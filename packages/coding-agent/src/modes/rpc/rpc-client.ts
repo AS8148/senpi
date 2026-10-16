@@ -714,14 +714,14 @@ export class RpcClient {
 	 */
 	async abort(): Promise<void>;
 	async abort(options: RpcAbortOptions): Promise<RpcAbortAnswer>;
-	async abort(options?: RpcAbortOptions): Promise<RpcAbortAnswer | undefined> {
+	async abort(options?: RpcAbortOptions): Promise<unknown> {
 		if (options === undefined) {
 			try {
 				await this.send({ type: "abort" });
 			} catch (error) {
 				if (!isTransportGoneError(error)) throw error;
 			}
-			return undefined;
+			return;
 		}
 		return this.getData<RpcAbortAnswer>(await this.send({ ...options, type: "abort" }));
 	}
@@ -730,7 +730,10 @@ export class RpcClient {
 	 * The newest receipt of one effect (`get_effect_status`, capability `effect_ledger`). With `sessionPath`
 	 * the host reads that transcript from disk, so a session no host holds is answered without loading it.
 	 */
-	async getEffectStatus(effectId: string, options: { readonly sessionPath?: string } = {}): Promise<RpcEffectStatusAnswer> {
+	async getEffectStatus(
+		effectId: string,
+		options: { readonly sessionPath?: string } = {},
+	): Promise<RpcEffectStatusAnswer> {
 		const command = {
 			type: "get_effect_status" as const,
 			effectId,
