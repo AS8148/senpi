@@ -11,6 +11,7 @@ import {
 	type CreateAgentSessionRuntimeResult,
 } from "../src/core/agent-session-runtime.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
+import { SettingsManager } from "../src/core/settings-manager.ts";
 import { ProjectTrustStore } from "../src/core/trust-manager.ts";
 import { SessionCommandRouter } from "../src/modes/rpc/session-command-router.ts";
 import { SessionEventWriter } from "../src/modes/rpc/session-event-writer.ts";
@@ -54,6 +55,7 @@ function runtime(
 		session: {
 			sessionManager: options.sessionManager,
 			agentDir: options.agentDir,
+			settingsManager: SettingsManager.inMemory(),
 			// Projected into the `open_session` wire state, which shares one builder with get_state.
 			isFastModeActive: () => false,
 			agent: { state: {} },
@@ -559,6 +561,7 @@ describe("RPC session registry", () => {
 			const flagValues = new Map<string, boolean | string>();
 			return {
 				sessionManager,
+				settingsManager: SettingsManager.inMemory(),
 				extensionRunner: {
 					hasHandlers: () => false,
 					setFlagValue: (name: string, value: boolean | string) => flagValues.set(name, value),

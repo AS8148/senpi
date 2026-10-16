@@ -7,6 +7,7 @@ import type {
 	CreateAgentSessionRuntimeResult,
 } from "../src/core/agent-session-runtime.ts";
 import { isSessionBusySnapshot } from "../src/core/session-activity.ts";
+import { SettingsManager } from "../src/core/settings-manager.ts";
 import { ProjectTrustStore } from "../src/core/trust-manager.ts";
 import type { MultiSessionHostOptions } from "../src/modes/rpc/multi-session-host.ts";
 import * as multiSessionHost from "../src/modes/rpc/multi-session-host.ts";
@@ -65,6 +66,7 @@ function createRuntimeFactory(): {
 			session: {
 				sessionManager: options.sessionManager,
 				agentDir: options.agentDir,
+				settingsManager: SettingsManager.inMemory(),
 				isFastModeActive: () => false,
 				agent: { state: {} },
 				getContextUsage: () => undefined,
