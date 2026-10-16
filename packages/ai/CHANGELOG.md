@@ -7,6 +7,19 @@
 ### Added
 
 - Added lazy Google Application Default Credentials access-token resolution for Vertex Model Garden open-model integrations, reusing the existing Vertex credential and project environment helpers ([#3296](https://github.com/code-yeongyu/senpi/pull/3296) by [@sleegme](https://github.com/sleegme)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.16-2] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
 - Provider diagnostics classify a dropped connection as `network` from a closed set of structured transport codes (`ECONNRESET`, `ECONNREFUSED`, `ENOTFOUND`, ...) read from the error or its `cause`, with `evidence: "structured_transport"` ([#3228](https://github.com/code-yeongyu/senpi/issues/3228)).
 ### Changed
 

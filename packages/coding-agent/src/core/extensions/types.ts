@@ -1470,6 +1470,12 @@ export interface AgentEndEvent {
 	willRetry?: boolean;
 	/** Present when the host can attribute the abort to a user action or internal operation. */
 	abortSource?: "user" | "system" | "provider";
+	/**
+	 * Present on a system abort the turn deadline lease caused (`turn_inactivity_ms` or
+	 * `turn_max_runtime_ms`). A deadline stop is never auto-continued: goal continuations,
+	 * monitor backstops and hidden nudges hold off until admitted user input clears the hold.
+	 */
+	deadline?: { kind: "inactivity" | "max_runtime"; limitMs: number; elapsedMs: number };
 }
 
 export type AgentActivityOutcome = "completed" | "aborted" | "error";

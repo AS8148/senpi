@@ -1,3 +1,24 @@
+## 2026-10-14 - Turn inactivity lease and hard max runtime end a stuck turn (senpi#3227)
+
+### What changed
+
+- `packages/coding-agent/src/core/turn-deadline.ts` (new): the turn-deadline contract — `turn_inactivity_ms` (default 3_600_000, min 60_000, `0` disables) and `turn_max_runtime_ms` (default 21_600_000, `0` disables), the 10 s terminalization grace, the durable `deadline-stop` session entry, `deadlineStopPendingSinceLastTurn` (the goal-engine hold, read from the branch so it survives reload and reopen and is released only by a user message), and `AgentDeadlineTracker`.
+- `packages/coding-agent/src/core/agent-session.ts`: `AgentDeadlineTracker` arms the lease and the hard cap at prompt accept, renews the lease only on `tool_execution_start/update/end` (never on text deltas or heartbeats), clears the hold on admitted user input, and disarms at `agent_idle`. On expiry it records the `deadline-stop` entry, then ends the turn through the normal system-abort path with `aborted`, `abortSource: "system"` and the additive `deadline` field on `agent_end`, keeping partial text; `agent_idle` comes from the normal settle path. The abort signal reaches every running tool (the bash tool kills its process tree on it); a turn still running 10 s after the abort is held by something no abort ends (an extension handler that never returns) and is logged (`turn_deadline_unsettled`), never faked idle. A provider retry renews the inactivity lease; the max-runtime cap applies through retries, and input steered into a live run never resets it. A failed stop-entry write is logged (`turn_deadline_record_failed`) and the turn is still stopped.
+- `packages/coding-agent/src/core/settings-shapes.ts`, `packages/coding-agent/src/core/settings-manager.ts`: the two `turn_inactivity_ms` / `turn_max_runtime_ms` settings with the spec defaults and `0`-disables semantics.
+
+### Why
+
+Nothing ended a turn that stopped making progress; a provider that streams nothing or a tool that hangs without output kept the turn running until someone killed it.
+
+### Why an extension could not handle it
+
+The lease owns the abort path and the settings shape itself; only the session core can end a turn through the normal system-abort path with the deadline detail, and the hold must be read from the durable branch so it survives reload and reopen.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-session.ts` around `_promptAgent` (the arm), `_handleAgentEvent` tool-execution branches (the renewals), the `agent_idle` emission (the disarm), and `dispose()`.
+- LOW: `settings-manager.ts` beside `getEngineTurnSettings()`; `settings-shapes.ts` beside `ProviderConcurrencySettings`; `turn-deadline.ts` is fork-only.
+
 ## 2026-10-15 - agent_end carries a structured provider failure with a reason and an action (senpi#3228)
 
 ### What changed
