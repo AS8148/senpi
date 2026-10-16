@@ -277,7 +277,7 @@ export class PermissionService {
 			return;
 		}
 
-		for (const pattern of existing.info.always) {
+		for (const pattern of input.always ?? existing.info.always) {
 			this.approved.push({
 				permission: existing.info.permission,
 				pattern,
