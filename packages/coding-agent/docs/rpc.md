@@ -2431,7 +2431,7 @@ The `model` field is a full [Model](#model) object or `null`. `pendingModelSwitc
 
 `serviceTier` is the tier a request would carry right now (`"auto"`, `"flex"`, or `"priority"`), omitted when no tier applies. `fastMode` is `true` when the active model is served at the priority ("fast") tier — either because fast mode is on for this session or because the model selection itself pins `priority`. The two never disagree: whenever `fastMode` is `true`, `serviceTier` is `"priority"`.
 
-`lastProviderDiagnostic` is present after a failed turn whose provider supplied structured evidence: `{"category": "rate_limit", "httpStatus": 429, "code": "rate_limit_error", "evidence": "structured_code"}`. `category` is one of `auth`, `rate_limit`, `quota`, `context_limit`, `invalid_request`, `provider_unavailable`, `unknown`; `httpStatus` is absent for errors delivered inside a streamed response. It describes the same failure as the latest assistant `errorMessage` and is replaced or cleared with it. The failed assistant message in `message_end`, `agent_end`, `get_messages` and the session file carries the same object as `providerDiagnostic`. See [Provider failure diagnostics](sdk.md#provider-failure-diagnostics) for how it is derived.
+`lastProviderDiagnostic` is present after a failed turn whose provider supplied structured evidence: `{"category": "rate_limit", "httpStatus": 429, "code": "rate_limit_error", "evidence": "structured_code"}`. `category` is one of `auth`, `rate_limit`, `quota`, `context_limit`, `invalid_request`, `provider_unavailable`, `network`, `unknown` (`network` comes from a structured transport error code such as `ECONNRESET`, with `"evidence": "structured_transport"`); `httpStatus` is absent for errors delivered inside a streamed response. It describes the same failure as the latest assistant `errorMessage` and is replaced or cleared with it. The failed assistant message in `message_end`, `agent_end`, `get_messages` and the session file carries the same object as `providerDiagnostic`. See [Provider failure diagnostics](sdk.md#provider-failure-diagnostics) for how it is derived.
 
 #### get_subscription_limits
 
@@ -3878,6 +3878,39 @@ Emitted when one low-level agent run completes. Contains all messages generated 
   "willRetry": false
 }
 ```
+
+When the run ended with a provider error (the last assistant message has `stopReason: "error"`), `agent_end` also carries `failure`; it is absent on success and on abort:
+
+```json
+{
+  "type": "agent_end",
+  "messages": [...],
+  "willRetry": false,
+  "failure": {
+    "category": "rate_limit",
+    "provider": "anthropic",
+    "httpStatus": 429,
+    "code": "rate_limit_error",
+    "reason": "the provider is rate limiting requests",
+    "action": "retry later or set a fallback model"
+  }
+}
+```
+
+`failure` is built only from the failed message's structured `providerDiagnostic`, never from `errorMessage` text. `httpStatus` and `code` are copied from it when present. Every category carries a `reason` and an `action`:
+
+| `category` | `action` |
+| --- | --- |
+| `auth` | re-authenticate the provider |
+| `rate_limit` | retry later or set a fallback model |
+| `quota` | check the plan or credits |
+| `context_limit` | compact or shorten the conversation |
+| `invalid_request` | report it with the code |
+| `provider_unavailable` | retry or switch provider |
+| `network` | check connectivity |
+| `unknown` | retry once; if it repeats, switch the model or report the code |
+
+`unknown` is used when the error carries no diagnostic or its metadata matches no row; its `reason` names the provider and the code or status, for example `the provider returned an error that could not be classified (openai, status 429)`. A bare 429 stays `unknown` because status alone cannot tell a rate limit from exhausted quota. Retry and fallback decisions do not read `failure`.
 
 ### agent_settled
 
