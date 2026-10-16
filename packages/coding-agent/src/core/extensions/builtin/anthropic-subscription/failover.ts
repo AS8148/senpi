@@ -274,6 +274,7 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 		retryAccountName = undefined;
 		const account = { ...(retrySlot ?? options.selectFn(accounts)) };
 		let visibleDeltaEmitted = false;
+		let completed = false;
 		try {
 			const attemptStream = await options.runAttempt(account);
 			for await (const event of attemptStream) {
@@ -282,13 +283,7 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 				visibleDeltaEmitted ||= (options.isVisibleDelta ?? defaultIsVisibleDelta)(event);
 				yield event;
 			}
-			// Best-effort hygiene after a finished turn: a store failure here must never fail or replay it.
-			await clearBlockAfterSuccess(options.store, options.providerId, account.name).catch((error: unknown) => {
-				process.stderr.write(
-					`senpi anthropic-subscription: could not clear a stored block on ${account.name}: ${error instanceof Error ? error.message : String(error)}\n`,
-				);
-			});
-			return;
+			completed = true;
 		} catch (error) {
 			const classification = options.classify(error);
 			const classified = new ClassifiedSdkError(classification, error, visibleDeltaEmitted);
@@ -353,6 +348,16 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 				await options.onFailover?.(event);
 			}
 			if (visibleDeltaEmitted) throw classified;
+		}
+		if (completed) {
+			// Outside the attempt's try: clearing is best-effort hygiene after a finished turn, so a store
+			// failure is logged and the block stays for the next success; it never fails or replays the turn.
+			await clearBlockAfterSuccess(options.store, options.providerId, account.name).catch((error: unknown) => {
+				process.stderr.write(
+					`senpi anthropic-subscription: could not clear a stored block on ${account.name}: ${error instanceof Error ? error.message : String(error)}\n`,
+				);
+			});
+			return;
 		}
 	}
 	throw lastError ?? new Error("Anthropic Subscription failover exhausted without an attempt");
