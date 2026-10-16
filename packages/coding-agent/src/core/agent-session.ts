@@ -3415,7 +3415,7 @@ export class AgentSession {
 					assistantMsg.stopReason !== "error" &&
 					assistantMsg.stopReason !== "aborted" &&
 					!isClassifierRefusal(assistantMsg);
-				if (succeeded) this._retryFallback.probes.accept(`${assistantMsg.provider}/${assistantMsg.model}`);
+				if (succeeded) this._retryFallback.noteServed(`${assistantMsg.provider}/${assistantMsg.model}`);
 				if (succeeded && assistantMsg.stopReason !== "length") {
 					this._overflowRecoveryRungs = 0;
 				}
