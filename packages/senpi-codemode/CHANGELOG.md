@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Julia writes its startup status and ready frames pre-encoded, so neither a fresh nor an interrupt-replacement interpreter runs the frame encoder before its first cell; all startup stages are still reported ([#3048](https://github.com/code-yeongyu/senpi/issues/3048)).
+
 ### Removed
 
 ## [2026.10.16] - 2026-10-16
