@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- A `chatgpt-subscription` response that the backend drops mid-stream is retried on a fresh WebSocket. One drop used to move the whole session to SSE for 60 seconds; the session now falls back only after two drops in a row ([#3442](https://github.com/code-yeongyu/senpi/issues/3442)).
+
 ### Removed
 
 ## [2026.10.16-2] - 2026-10-16
@@ -24,8 +26,6 @@
 ### Changed
 
 ### Fixed
-
-- A `chatgpt-subscription` response that the backend drops mid-stream is retried on a fresh WebSocket. One drop used to move the whole session to SSE for 60 seconds; the session now falls back only after two drops in a row ([#3442](https://github.com/code-yeongyu/senpi/issues/3442)).
 
 ### Removed
 
