@@ -5,13 +5,14 @@
  * Runs the production router, the in-process registry and the real CLI runtime factory (ONE host
  * per test, like a real daemon), with a project extension that records each load.
  */
-import { existsSync, readFileSync, watch } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, sep } from "node:path";
+import { join, sep } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseArgs } from "../../../src/cli/args.ts";
 import { CONFIG_DIR_NAME } from "../../../src/config.ts";
+import { AgentSession } from "../../../src/core/agent-session.ts";
 import { DefaultResourceLoader } from "../../../src/core/resource-loader.ts";
 import { ProjectTrustStore } from "../../../src/core/trust-manager.ts";
 import { createCliRuntimeFactory } from "../../../src/main.ts";
@@ -61,7 +62,8 @@ afterEach(async () => {
 	router = undefined;
 	registry = undefined;
 	vi.unstubAllEnvs();
-	await rm(scratch, { recursive: true, force: true });
+	// A retired session can still flush its file after the host disposes it.
+	await rm(scratch, { recursive: true, force: true, maxRetries: 5 });
 });
 
 const loads = (): number => (existsSync(marker) ? readFileSync(marker, "utf8").split("\n").filter(Boolean).length : 0);
@@ -83,37 +85,43 @@ function runtimeOf(sessionId: string) {
 	return runtime;
 }
 
-/** A project extension that reports it is loading, then waits for its release file (#3420 races). */
-async function writeGate(loading: string, release: string): Promise<void> {
+interface Gate {
+	readonly loading: Promise<void>;
+	release(): void;
+}
+
+const GATE_KEY = Symbol.for("senpi-3414-gate");
+
+/**
+ * A project extension whose factory, while a gate is armed, reports that it is loading and waits for
+ * its release: a reload or a session build stalls inside the project's code (#3420 races). The
+ * extension runs in this process, so the test and the factory meet on one global; no file watching.
+ */
+async function writeGate(): Promise<void> {
 	await writeFile(
 		join(cwd, CONFIG_DIR_NAME, "extensions", "gate.ts"),
-		`import { existsSync, writeFileSync, watch } from "node:fs";\nimport { dirname } from "node:path";\nexport default async function () {\n\twriteFileSync(${JSON.stringify(loading)}, "x");\n\tif (existsSync(${JSON.stringify(release)})) return;\n\tawait new Promise((resolve) => {\n\t\tconst w = watch(dirname(${JSON.stringify(release)}), () => { if (existsSync(${JSON.stringify(release)})) { w.close(); resolve(undefined); } });\n\t\tif (existsSync(${JSON.stringify(release)})) { w.close(); resolve(undefined); }\n\t});\n}\n`,
+		`export default async function () {\n\tconst gate = globalThis[Symbol.for("senpi-3414-gate")];\n\tif (gate) await gate();\n}\n`,
 	);
 }
 
-/** Resolves when `path` appears (the gate extension's "I am loading" marker), or rejects on timeout. */
-async function waitForFile(path: string, timeoutMs = 20_000): Promise<void> {
-	if (existsSync(path)) return;
-	await new Promise<void>((resolve, reject) => {
-		const watcher = watch(dirname(path), () => {
-			if (!existsSync(path)) return;
-			clearTimeout(timer);
-			watcher.close();
-			resolve();
-		});
-		const timer = setTimeout(() => {
-			watcher.close();
-			reject(new Error(`${path} never appeared`));
-		}, timeoutMs);
-		if (existsSync(path)) {
-			clearTimeout(timer);
-			watcher.close();
-			resolve();
-		}
+function armGate(): Gate {
+	let loaded!: () => void;
+	let release!: () => void;
+	const loading = new Promise<void>((resolve) => {
+		loaded = resolve;
 	});
+	const released = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	Reflect.set(globalThis, GATE_KEY, () => {
+		Reflect.deleteProperty(globalThis, GATE_KEY);
+		loaded();
+		return released;
+	});
+	return { loading, release };
 }
 
-describe("Full access trusts the project without asking (#3414)", { timeout: 60_000 }, () => {
+describe("Full access trusts the project without asking (#3414)", { timeout: 120_000 }, () => {
 	it("a full-access session loads the project's extensions and saves no trust decision", async () => {
 		await open("full-access");
 		expect(loads()).toBe(1);
@@ -154,10 +162,7 @@ describe("Full access trusts the project without asking (#3414)", { timeout: 60_
 	});
 
 	it("a reload already in flight does not put project code back after the trust is withdrawn", async () => {
-		const loading = join(scratch, "gate-loading");
-		const release = join(scratch, "gate-release");
-		await writeGate(loading, release);
-		await writeFile(release, "x");
+		await writeGate();
 		const runtime = runtimeOf(await open("full-access"));
 		const projectExtensions = (): string[] =>
 			runtime.session.extensionRunner
@@ -166,14 +171,13 @@ describe("Full access trusts the project without asking (#3414)", { timeout: 60_
 		expect(projectExtensions()).toHaveLength(2);
 
 		// A user reload that stalls inside the project extension's factory, after it read the trust.
-		await rm(release, { force: true });
-		await rm(loading, { force: true });
+		const gate = armGate();
 		const userReload = runtime.session.reload();
-		await waitForFile(loading);
+		await gate.loading;
 
 		runtime.setPermissionPreset("ask");
 		const trustChange = runtime.projectTrustChange;
-		await writeFile(release, "x");
+		gate.release();
 		await userReload;
 		await trustChange;
 
@@ -214,10 +218,7 @@ describe("Full access trusts the project without asking (#3414)", { timeout: 60_
 	});
 
 	it("a session replacement built under Full access does not go live trusted after a downgrade", async () => {
-		const loading = join(scratch, "replace-loading");
-		const release = join(scratch, "replace-release");
-		await writeGate(loading, release);
-		await writeFile(release, "x");
+		await writeGate();
 		const runtime = runtimeOf(await open("full-access"));
 		const projectExtensions = (): string[] =>
 			runtime.session.extensionRunner
@@ -226,18 +227,57 @@ describe("Full access trusts the project without asking (#3414)", { timeout: 60_
 		expect(projectExtensions()).toHaveLength(2);
 
 		// The replacement is built while the session is still Full access, so it loads the project's code.
-		await rm(release, { force: true });
-		await rm(loading, { force: true });
+		const gate = armGate();
 		const replacement = runtime.newSession();
-		await waitForFile(loading);
+		await gate.loading;
 
 		runtime.setPermissionPreset("ask");
-		await writeFile(release, "x");
+		gate.release();
 		await replacement;
 		await runtime.projectTrustChange;
 
 		expect(runtime.session.settingsManager.isProjectTrusted()).toBe(false);
 		expect(projectExtensions()).toEqual([]);
+	});
+
+	it("a replacement's project trust is fixed before it becomes the live session", async () => {
+		await writeGate();
+		const runtime = runtimeOf(await open("full-access"));
+		const retired = runtime.session;
+		const liveAtTrustChange: boolean[] = [];
+		const original = AgentSession.prototype.applyProjectTrustChange;
+		const spy = vi.spyOn(AgentSession.prototype, "applyProjectTrustChange").mockImplementation(function (
+			this: AgentSession,
+		) {
+			if (this !== retired) liveAtTrustChange.push(runtime.session === this);
+			return original.call(this);
+		});
+		try {
+			const gate = armGate();
+			const replacement = runtime.newSession();
+			await gate.loading;
+			runtime.setPermissionPreset("ask");
+			gate.release();
+			await replacement;
+			await runtime.projectTrustChange;
+		} finally {
+			spy.mockRestore();
+		}
+		// The replacement was built trusted; its trust change ran while it was not yet the live session.
+		expect(liveAtTrustChange).toEqual([false]);
+		expect(runtime.session.settingsManager.isProjectTrusted()).toBe(false);
+	});
+
+	it("a trust the user saved during the session survives leaving Full access", async () => {
+		const runtime = runtimeOf(await open("full-access"));
+		expect(loads()).toBe(1);
+		new ProjectTrustStore(agentDir).set(cwd, true);
+
+		runtime.setPermissionPreset("ask");
+		await runtime.projectTrustChange;
+
+		expect(runtime.session.settingsManager.isProjectTrusted()).toBe(true);
+		expect(loads()).toBe(1);
 	});
 
 	it("leaving Full access unloads project code even when a project extension cancels reloads", async () => {

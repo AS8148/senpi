@@ -1,5 +1,4 @@
 import { constants, copyFileSync, existsSync, mkdirSync } from "node:fs";
-import { ProjectTrustStore } from "./trust-manager.ts";
 import { basename, join, parse, resolve } from "node:path";
 import { resolvePath } from "../utils/paths.ts";
 import type { AgentSession } from "./agent-session.ts";
@@ -24,6 +23,7 @@ import { SessionManager } from "./session-manager.ts";
 import { reserveSessionWrite, unregisterSessionWriter } from "./session-write-reservation.ts";
 import type { SettingsManager } from "./settings-manager.ts";
 import { resetTimings, time } from "./timings.ts";
+import { ProjectTrustStore } from "./trust-manager.ts";
 
 /**
  * Result returned by runtime creation.
@@ -230,25 +230,22 @@ export class AgentSessionRuntime {
 	setPermissionPreset(preset: string): void {
 		this._launchProfile = Object.freeze({ ...(this._launchProfile ?? { cwd: this.cwd }), permissionPreset: preset });
 		this._session.extensionRunner.setFlagValue("permission-preset", preset);
-		this.syncFullAccessTrust(preset);
+		this.syncFullAccessTrust(this._session, preset);
 	}
 
 	/**
 	 * Keeps a Full-access-only project trust in step with the preset (senpi#3414, #3420). Leaving Full
-	 * access withdraws it; going back restores it unless the user saved "do not trust". Either way the
-	 * runtime is rebuilt so project extensions, skills, hooks and MCP servers load or unload, and nothing
-	 * can cancel that rebuild. The trust is never saved. Returns the rebuild, or undefined when the
-	 * trust did not change.
+	 * access withdraws it, unless the user has since saved "trust"; going back restores it, unless the
+	 * user saved "do not trust". Either way the session's runtime is rebuilt so project extensions,
+	 * skills, hooks and MCP servers load or unload, and nothing can cancel that rebuild. The trust is
+	 * never saved. Returns the rebuild, or undefined when the trust did not change.
 	 */
-	private syncFullAccessTrust(preset: string): Promise<void> | undefined {
-		const session = this._session;
+	private syncFullAccessTrust(session: AgentSession, preset: string): Promise<void> | undefined {
 		const settings = session.settingsManager;
-		if (preset !== "full-access" && settings.isTrustFromFullAccess()) settings.setProjectTrusted(false);
-		else if (
-			preset === "full-access" &&
-			settings.canRestoreFullAccessTrust() &&
-			new ProjectTrustStore(this.services.agentDir).get(this.cwd) !== false
-		)
+		const saved = new ProjectTrustStore(this.services.agentDir).get(this.cwd);
+		if (preset !== "full-access" && settings.isTrustFromFullAccess() && saved !== true)
+			settings.setProjectTrusted(false);
+		else if (preset === "full-access" && settings.canRestoreFullAccessTrust() && saved !== false)
 			settings.setProjectTrusted(true);
 		else return undefined;
 		this._projectTrustChange = session.applyProjectTrustChange().catch((error: unknown) => {
@@ -422,10 +419,14 @@ export class AgentSessionRuntime {
 	private async apply(result: CreateAgentSessionRuntimeResult, hold?: SessionHold): Promise<void> {
 		this._sessionHold =
 			hold ?? holdActiveSession(result.session.sessionManager, false, this._launchProfile?.holderEndpoint);
-		this._session = result.session;
 		// The replacement was built from the profile read before its runtime was created; an attach
 		// that moved a setting while it was being built reached only the retired session (senpi#2842).
 		const profile = this._launchProfile;
+		// Its project trust follows the CURRENT preset before it goes live: a replacement built while the
+		// session was still Full access must not be reachable with that trust's project code (#3420).
+		if (profile?.permissionPreset !== undefined)
+			await this.syncFullAccessTrust(result.session, profile.permissionPreset);
+		this._session = result.session;
 		if (profile?.permissionPreset !== undefined)
 			this._session.extensionRunner.setFlagValue("permission-preset", profile.permissionPreset);
 		if (profile?.promptSurface !== undefined) this._session.setPromptSurface(profile.promptSurface);
@@ -433,9 +434,6 @@ export class AgentSessionRuntime {
 		this._services = result.services;
 		this._diagnostics = result.diagnostics;
 		this._modelFallbackMessage = result.modelFallbackMessage;
-		// The replacement was built while the preset was still Full access: bring its trust (and its
-		// project code) in line before it goes live (#3420 review).
-		if (profile?.permissionPreset !== undefined) await this.syncFullAccessTrust(profile.permissionPreset);
 		await this.reportRemovedExtensions();
 	}
 
