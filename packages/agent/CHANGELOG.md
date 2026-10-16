@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- A turn no longer waits forever when the context transform, the API key lookup or the provider's stream function never finishes: the start bound (or the idle bound when none is set) now covers that work and ends the turn with a provider timeout ([#3471](https://github.com/code-yeongyu/senpi/issues/3471)).
+
 ### Removed
 
 ## [2026.10.16-3] - 2026-10-16
