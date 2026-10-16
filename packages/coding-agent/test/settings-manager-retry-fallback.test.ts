@@ -103,7 +103,6 @@ describe("SettingsManager retry fallback settings", () => {
 			modelFallback: true,
 			chains: shipped,
 			revertPolicy: "cooldown-expiry",
-			maxCostRatio: 3,
 		});
 
 		writeFileSync(
@@ -121,7 +120,6 @@ describe("SettingsManager retry fallback settings", () => {
 			modelFallback: true,
 			chains: shipped,
 			revertPolicy: "cooldown-expiry",
-			maxCostRatio: 3,
 		});
 	});
 
@@ -148,7 +146,6 @@ describe("SettingsManager retry fallback settings", () => {
 				"claude-opus-5-5": ["claude-opus-5:max", "claude-opus-4-8:max", "claude-opus-4-6:max"],
 			},
 			revertPolicy: "never",
-			maxCostRatio: 3,
 		});
 
 		reloaded.removeFallbackChain("missing/model");

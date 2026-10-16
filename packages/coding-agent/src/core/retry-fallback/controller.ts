@@ -19,23 +19,11 @@ import type {
 	RetryFallbackControllerDeps,
 } from "./controller-types.ts";
 import { pinAfterSwitch } from "./pin.ts";
-import { DEFAULT_FALLBACK_MAX_COST_RATIO } from "./settings.ts";
 import { isPureNetworkTransient } from "./transient-network.ts";
 import { UnusableEntries } from "./unusable.ts";
 import { type UsageLimitScope, usageLimitScope } from "./usage-limit.ts";
 
 export type { ActiveFallbackState, RetryFallbackControllerDeps } from "./controller-types.ts";
-
-/**
- * Whether `candidate` costs more than `ratio` times `current` per input token. Unknown or free prices
- * (0) never block: a subscription or local model gives no basis to compare (senpi#3467).
- */
-export function isMuchCostlier(candidate: Model<Api>, current: Model<Api>, ratio: number): boolean {
-	if (ratio <= 0) return false;
-	const from = current.cost?.input ?? 0;
-	const to = candidate.cost?.input ?? 0;
-	return from > 0 && to > 0 && to > from * ratio;
-}
 
 export class RetryFallbackController {
 	private readonly deps: RetryFallbackControllerDeps;
@@ -389,12 +377,6 @@ export class RetryFallbackController {
 			isCircuitOpen: (base) => this.deps.circuits?.isOpen(base) ?? false,
 			isProviderSpent: (provider) => this.unusable.isProviderSpent(provider),
 			isModelSkipped: (base) => base === this.blipModel,
-			isTooCostly: (model) =>
-				isMuchCostlier(
-					model,
-					current.model,
-					this.deps.getSettings().maxCostRatio ?? DEFAULT_FALLBACK_MAX_COST_RATIO,
-				),
 			skip: (raw, skipReason) => this.skip(raw, skipReason),
 		});
 		if (candidate) {

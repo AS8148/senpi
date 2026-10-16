@@ -235,12 +235,11 @@ export function createFallbackCircuitAccess(deps: FallbackCircuitAccessDeps): Fa
 			const resetWindowMs =
 				reset !== undefined && (reset.kind === "absolute" || reset.ms >= cooldownMs) ? reset.ms : undefined;
 			deps.breaker.sweep(now);
-			// A verdict other sessions should act on without asking themselves: the entry is spent, or the
-			// provider named when to come back. A bare slow or failed request is only this session's view.
+			// Only a verdict that the entry is spent for everyone (billing, quota, an account usage limit) moves
+			// sessions that never failed on it. A slow request, an overload or a rate limit with a Retry-After is
+			// this session's view: siblings keep their model and find out on their own request (senpi#3467).
 			const exhausted =
-				(message !== undefined && (isHealthExhaustionFailure(message) || usageLimitScope(message) === "account")) ||
-				(retryAfterMs !== undefined && retryAfterMs > 0) ||
-				resetWindowMs !== undefined;
+				message !== undefined && (isHealthExhaustionFailure(message) || usageLimitScope(message) === "account");
 			const openUntil = deps.breaker.open(selector, {
 				now,
 				cooldownMs,

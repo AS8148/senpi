@@ -267,7 +267,6 @@ See [compaction.md](compaction.md) for trigger and summarization behavior.
 | `retry.modelFallback` | boolean | `true` | Let eligible retry failures advance through configured per-model fallback chains |
 | `retry.fallbackChains` | `Record<string, string[]>` | `{}` | Ordered exact model-selector to fallback-selector chains |
 | `retry.fallbackRevertPolicy` | `"cooldown-expiry"` \| `"never"` | `"cooldown-expiry"` | Automatic primary-model restoration policy |
-| `retry.fallbackMaxCostRatio` | number | `3` | Skip a fallback whose input price is more than this multiple of the running model's; raise it to allow pricier fallbacks, `0` turns the guard off |
 | `retry.abortServerSideFallback` | boolean | `true` | Abort a turn when the provider substitutes a different model after a classifier decline |
 | `fallback.circuitCooldownMs` | number | `60000` | First circuit-breaker cooldown for a chain entry that failed out of its chain; doubles on each consecutive failure; `0` disables the breaker |
 | `fallback.circuitMaxCooldownMs` | number | `1800000` | Ceiling for the doubled circuit-breaker cooldown (30 minutes) |

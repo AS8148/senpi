@@ -163,7 +163,7 @@ describe("fallback-chain circuit breaker across sessions sharing one runtime", (
 		expect(last).toMatchObject({ role: "assistant", stopReason: "stop" });
 	});
 
-	it("honours a provider Retry-After longer than the local cooldown", async () => {
+	it("honours a provider Retry-After for its own session; a sibling that never failed keeps its model (senpi#3467)", async () => {
 		const origin = await first({ fallback: { circuitCooldownMs: 1_000 } });
 		origin.setResponses([
 			fauxAssistantMessage("", {
@@ -176,10 +176,11 @@ describe("fallback-chain circuit breaker across sessions sharing one runtime", (
 
 		await origin.session.prompt("rate limited for ten minutes");
 		now += 5_000;
+		expect(fallbackCircuitsFor(join(origin.tempDir, "agent")).isOpen(primary, now, "observer")).toBe(true);
 		const next = await sibling(origin, { fallback: { circuitCooldownMs: 1_000 } });
 		await next.session.prompt("local cooldown elapsed, provider wait did not");
 
-		expect(calledModels(origin)).toEqual(["faux-1", "faux-2", "faux-2"]);
+		expect(calledModels(origin)).toEqual(["faux-1", "faux-2", "faux-1"]);
 	});
 
 	it("does not open a circuit for a refusal fallback", async () => {

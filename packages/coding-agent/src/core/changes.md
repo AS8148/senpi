@@ -1,18 +1,15 @@
-## 2026-10-16 - The fallback circuit takes one step per open episode, only reroutes sessions it concerns, and never jumps to a much pricier model (senpi#3467)
+## 2026-10-16 - The fallback circuit takes one step per open episode and only reroutes sessions it concerns (senpi#3467)
 
 ### What changed
 
-- `packages/coding-agent/src/core/retry-fallback/circuit.ts`: `FallbackCircuitBreaker.open` counts a failure that arrives while the circuit is still open as the same open episode: no doubling and no extension beyond a provider hint. Only a failure once the open has elapsed (a failed half-open probe) advances the backoff, up to the ceiling. Each circuit records `exhausted` when the failure is a verdict for every session: billing, quota or an account usage limit, or a provider-named wait (Retry-After, reset window). `FallbackCircuitAccess.isExhausted` exposes it.
+- `packages/coding-agent/src/core/retry-fallback/circuit.ts`: `FallbackCircuitBreaker.open` counts a failure that arrives while the circuit is still open as the same open episode: no doubling and no extension beyond a provider hint. Only a failure once the open has elapsed (a failed half-open probe) advances the backoff, up to the ceiling. Each circuit records `exhausted` only when the failure is a verdict for every session: billing, quota or an account usage limit. A Retry-After, a reset window, an overload or a slow request stays with the session that got it: it sets that circuit's open time, never another session's model. `FallbackCircuitAccess.isExhausted` exposes it.
 - `packages/coding-agent/src/core/retry-fallback/circuit-probes.ts`: `CircuitProbes.isExhausted`.
-- `packages/coding-agent/src/core/retry-fallback/controller.ts`: `rerouteAroundOpenCircuit` still claims a half-open probe, but moves the session off its model only when this session itself saw the entry fail out of a chain (`ownFailures`) or the circuit is `exhausted`. Another session's bare slowness or failure no longer reroutes it. New `isMuchCostlier(candidate, current, ratio)`.
-- `packages/coding-agent/src/core/retry-fallback/candidates.ts`: `isTooCostly` filter. A rung whose input price is more than `maxCostRatio` times the running model's is skipped (`costlier`). Unknown or free prices never block.
-- `packages/coding-agent/src/core/retry-fallback/controller-types.ts`: `FallbackSettings.maxCostRatio`.
-- `packages/coding-agent/src/core/retry-fallback/settings.ts`: `retry.fallbackMaxCostRatio` (default 3; raise it to opt in, 0 disables) resolved to `maxCostRatio`.
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: `rerouteAroundOpenCircuit` still claims a half-open probe, but moves the session off its model only when this session itself saw the entry fail out of a chain (`ownFailures`) or the circuit is `exhausted`. Another session's bare slowness or failure no longer reroutes it.
 
 ### Why
 
 - Six sessions failing one second apart on a slow GPT opened its shared circuit for 60, 120, 240, 480, 960 and 1800 s. For up to 30 minutes every session in the process, including parents that never failed, moved to the fallback model and wrote a cold full-context cache there. That matches the reports of switching to Claude while the GPT quota was left.
-- A cheap model could fall back to one about 12x its price with no notice. Regressions: `retry-fallback-circuit-breaker.test.ts` (one step per episode), `retry-fallback-circuit.test.ts` and `retry-fallback-circuit-probes.test.ts` (untouched siblings keep their model), `retry-fallback-cost-guard.test.ts`.
+- Regressions: `retry-fallback-circuit-breaker.test.ts` (one step per episode), `retry-fallback-circuit.test.ts` and `retry-fallback-circuit-probes.test.ts` (untouched siblings keep their model).
 
 ### Why an extension could not handle it
 
@@ -20,7 +17,7 @@
 
 ### Expected merge conflict zones
 
-- MEDIUM: `FallbackCircuitBreaker.open` in `circuit.ts`; `rerouteAroundOpenCircuit` in `controller.ts`. LOW: the model branch of `scanCandidates` in `candidates.ts`; `resolveRetryFallbackSettings`.
+- MEDIUM: `FallbackCircuitBreaker.open` in `circuit.ts`; `rerouteAroundOpenCircuit` in `controller.ts`.
 
 ## 2026-10-16 - Full access never asks "Trust project folder?"; the trust walk stops below home (senpi#3414, [#3420](https://github.com/code-yeongyu/senpi/pull/3420))
 
