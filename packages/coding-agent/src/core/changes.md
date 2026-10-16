@@ -13,7 +13,8 @@
   - `SettingsManager.getTrustEpoch()` counts trust changes. Every rebuild captures it at start and loads again while it moved, so a reload already in flight never installs project code loaded under the old trust. The check and the install run in one synchronous step.
   - Project settings, extensions, skills, hooks and MCP servers load or unload. A failure is an error diagnostic that survives session replacement.
   - Code that already ran cannot be undone, including a factory run by a reload that started before the downgrade; it is never installed.
-  - (#3420 review: T5, a cancelled reload, a reload in flight and a replacement in flight each left project code live.)
+  - A replacement's trust is synced before it becomes the live session, against the saved decision of ITS OWN project (`session.sessionManager.getCwd()`, through the store's normalized nearest-entry lookup), never the retired session's: a switch into another project must not inherit project A's saved trust. While a replacement is in flight the retired session is already disposed, so `setPermissionPreset` only records the preset (`_sessionRetired`) and `apply()` re-syncs the replacement until the preset stops moving.
+  - (#3420 review: T5, a cancelled reload, a reload in flight and a replacement in flight each left project code live; a cross-project switch read the old project's saved trust.)
 
 ### Why
 

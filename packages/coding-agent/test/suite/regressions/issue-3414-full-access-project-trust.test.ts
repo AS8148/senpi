@@ -97,9 +97,10 @@ const GATE_KEY = Symbol.for("senpi-3414-gate");
  * its release: a reload or a session build stalls inside the project's code (#3420 races). The
  * extension runs in this process, so the test and the factory meet on one global; no file watching.
  */
-async function writeGate(): Promise<void> {
+async function writeGate(projectDir: string = cwd): Promise<void> {
+	await mkdir(join(projectDir, CONFIG_DIR_NAME, "extensions"), { recursive: true });
 	await writeFile(
-		join(cwd, CONFIG_DIR_NAME, "extensions", "gate.ts"),
+		join(projectDir, CONFIG_DIR_NAME, "extensions", "gate.ts"),
 		`export default async function () {\n\tconst gate = globalThis[Symbol.for("senpi-3414-gate")];\n\tif (gate) await gate();\n}\n`,
 	);
 }
@@ -266,6 +267,62 @@ describe("Full access trusts the project without asking (#3414)", { timeout: 120
 		// The replacement was built trusted; its trust change ran while it was not yet the live session.
 		expect(liveAtTrustChange).toEqual([false]);
 		expect(runtime.session.settingsManager.isProjectTrusted()).toBe(false);
+	});
+
+	it("a switch into another project checks that project's saved trust, not the retired one's", async () => {
+		// Project A is saved "trust"; project B has no decision, so B is trusted only through Full access.
+		new ProjectTrustStore(agentDir).set(cwd, true);
+		const other = join(home, "other");
+		await writeGate(other);
+		const runtime = runtimeOf(await open("full-access"));
+
+		const gate = armGate();
+		const switching = runtime.switchSession(join(scratch, "other-session.jsonl"), { cwdOverride: other });
+		await gate.loading;
+		runtime.setPermissionPreset("ask");
+		gate.release();
+		await switching;
+		await runtime.projectTrustChange;
+
+		expect(runtime.session.sessionManager.getCwd()).toBe(other);
+		expect(runtime.session.settingsManager.isProjectTrusted()).toBe(false);
+		expect(
+			runtime.session.extensionRunner
+				.getExtensionPaths()
+				.filter((path) => path.startsWith(join(other, CONFIG_DIR_NAME))),
+		).toEqual([]);
+	});
+
+	it("a preset change that lands while a replacement's trust is being fixed still reaches the replacement", async () => {
+		await writeGate();
+		const runtime = runtimeOf(await open("full-access"));
+		const retired = runtime.session;
+		const original = AgentSession.prototype.applyProjectTrustChange;
+		let moved = false;
+		const spy = vi.spyOn(AgentSession.prototype, "applyProjectTrustChange").mockImplementation(function (
+			this: AgentSession,
+		) {
+			// The first rebuild of the replacement: the user flips back to Full access meanwhile.
+			if (this !== retired && !moved) {
+				moved = true;
+				runtime.setPermissionPreset("full-access");
+			}
+			return original.call(this);
+		});
+		try {
+			const gate = armGate();
+			const replacement = runtime.newSession();
+			await gate.loading;
+			runtime.setPermissionPreset("ask");
+			gate.release();
+			await replacement;
+			await runtime.projectTrustChange;
+		} finally {
+			spy.mockRestore();
+		}
+		expect(moved).toBe(true);
+		expect(runtime.session.settingsManager.isProjectTrusted()).toBe(true);
+		expect(runtime.session.extensionRunner.getFlagValues().get("permission-preset")).toBe("full-access");
 	});
 
 	it("a trust the user saved during the session survives leaving Full access", async () => {
