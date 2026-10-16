@@ -2287,7 +2287,8 @@ See [set_follow_up_mode](#set_follow_up_mode) for controlling how follow-up mess
 
 #### abort
 
-Abort the current operation and wait for the session to become idle before responding.
+Abort the current operation. A plain `abort` is acknowledged once the abort is dispatched, before the
+turn has stopped; pass `awaitIdle` to answer only once it has.
 
 ```json
 {"type": "abort"}
@@ -2306,6 +2307,28 @@ dispatched and the response carries the receipt; see
 {"type": "abort", "effectId": "stop-1"}
 {"type": "response", "command": "abort", "success": true, "data": {"effectId": "stop-1", "state": "applied", "effect": {"effectId": "stop-1", "kind": "abort", "state": "applied", "durableSessionId": "session-id"}}}
 ```
+
+Quiesce and queue options (both optional, combinable with `effectId`):
+
+- `awaitIdle: true` answers once the session is idle or `graceMs` (integer, 0 to 60000, default 10000) has
+  passed (`graceMs` is validated but has no effect without `awaitIdle`). The answer adds `stopped` and `idle`: both `true` only when idle was reached. On grace expiry they
+  are `false`, the abort keeps going, and an `effectId` receipt stays `applied` until the turn ends (`done`).
+  A `graceMs` outside the range is refused with `errorCode: "invalid_argument"` and `errorData`
+  `{ reason: "invalid_grace_ms", action }`.
+- `clearQueue: true` drains the steering and follow-up queues atomically before the abort, emits
+  `queue_update`, and gives each drained input with a `clientMessageId` a `failed` receipt with outcome
+  `cleared_by_abort` (with `reason`, `detail` and `action`). The answer's `cleared` counts the drained inputs.
+  It also empties the queue of an idle session.
+
+```json
+{"type": "abort", "effectId": "stop-2", "awaitIdle": true, "clearQueue": true}
+{"type": "response", "command": "abort", "success": true, "data": {"effectId": "stop-2", "state": "done", "effect": {"effectId": "stop-2", "kind": "abort", "state": "done", "durableSessionId": "session-id"}, "stopped": true, "idle": true, "cleared": 1}}
+```
+
+An aborted turn's `agent_end` carries `aborted: true`, `abortSource` and, when an RPC client aborted it,
+`abortedBy: { connectionId, effectId? }`; a `session_abort` caused by a client carries the same `abortedBy`. `interrupt` records its caller the same way. An abort that reached no turn is forgotten once it settles, and a new turn starts with none, so a later system or extension abort never inherits an old client's `abortedBy`.
+Every attached client sees it. `abortSource` is `user` for a client or user abort, `provider` when the
+provider retry watchdog gave up, and `system` for a host-side stop such as a turn deadline.
 
 
 #### interrupt

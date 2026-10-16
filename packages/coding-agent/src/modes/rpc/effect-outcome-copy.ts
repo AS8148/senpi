@@ -11,6 +11,12 @@ export const EFFECT_OUTCOMES = {
 		detail: "the session was reopened while this input's turn was running, so that turn never finished",
 		action: "read the transcript for what the turn produced, then send the input again with a new clientMessageId",
 	},
+	inputClearedByAbort: {
+		kind: "cleared_by_abort",
+		reason: "cleared_by_abort",
+		detail: "an abort with clearQueue removed this queued input before it was delivered",
+		action: "send the input again with a new clientMessageId if it is still needed",
+	},
 	queuedInputAlreadyDelivered: {
 		kind: "already_delivered",
 		reason: "already_delivered",
