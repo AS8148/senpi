@@ -48,9 +48,10 @@
 				"legacyContracts/test/kernels/jl/lazy-handles.test.ts/Julia lazy handles (Refs senpi#3048) wraps the first completion handle without predeclared types",
 				"legacyContracts/test/bench/rescore.test.ts/rescoring a saved measurement refuses legacy embedded-clock samples instead of treating them as post-result CPU",
 				"legacyContracts/test/bench/session-postresult.test.ts/benchmark post-result CPU boundary (Refs senpi#3048) counts cold encoding before-value and flush work before sampling the received result",
-				"legacyContracts/test/bench/session-postresult.test.ts/benchmark post-result CPU boundary (Refs senpi#3048) counts cold encoding during-result and flush work before sampling the received result"
+				"legacyContracts/test/bench/session-postresult.test.ts/benchmark post-result CPU boundary (Refs senpi#3048) counts cold encoding during-result and flush work before sampling the received result",
+				"legacyContracts/test/kernels/jl/startup-frames.test.ts/Julia startup frames (Refs senpi#3048) reports every startup stage without running the frame encoder in the first or the replacement interpreter"
 			],
-			"reason": "Refs senpi#3048: reviewed additive real-Julia contracts cover zero eager sizing bindings below the memory threshold, zero eager handle declarations, empty-cwd first use in async and threaded tasks, empty diagnostic replies for missing/invalid sizing assets, atomic concurrent first inclusion, named types, first-use serialization/display and reference recreation after reset; existing contracts prove complete post-result CPU sampling and refuse legacy saved CPU boundaries without changing the frozen baseline."
+			"reason": "Refs senpi#3048: reviewed additive real-Julia contracts cover zero eager sizing bindings below the memory threshold, zero eager handle declarations, empty-cwd first use in async and threaded tasks, empty diagnostic replies for missing/invalid sizing assets, atomic concurrent first inclusion, named types, first-use serialization/display and reference recreation after reset; existing contracts prove complete post-result CPU sampling and refuse legacy saved CPU boundaries without changing the frozen baseline; a real-Julia interrupt contract proves pre-encoded startup frames keep the first and replacement interpreters from running the frame encoder before their first cell."
 		},
 		"senpi#3034": {
 			"additions": [

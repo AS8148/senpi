@@ -1,3 +1,21 @@
+## 2026-10-16 - A forced release tests its code before stamping the version and changelogs (senpi#3446)
+
+### What changed
+
+- `scripts/release.mjs`: with `--force-tests`, the suite (clean, build, then `CI=1 npm test`) runs right after the test-evidence step (catalog regeneration and its commit), before any version bump or CHANGELOG stamping. The release still cleans and builds again after stamping. Without `--force-tests` the order of commands is unchanged.
+
+### Why
+
+- `scripts/release.mjs`: the suite used to run after `stampChangelogs`, so any test that reads a real CHANGELOG.md saw no `[Unreleased]` section; the v2026.10.16 forced release (run 38824836070) failed on `scripts/model-catalog-refresh.test.mjs`. CI always tests the unstamped commit, so the forced path never matched it.
+
+### Why an extension could not handle it
+
+- `scripts/release.mjs`: release orchestration is repository build tooling.
+
+### Expected merge conflict zones
+
+- `scripts/release.mjs`: `main()`'s step list and `runForcedTests`.
+
 ## 2026-10-15 - The forced release test suite is bounded and dispatchable (senpi#3426, Refs senpi#2291)
 
 ### What changed
