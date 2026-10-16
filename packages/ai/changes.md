@@ -17,6 +17,24 @@
 
 - LOW: the post-pass loop in `generate-models.ts` (one line) and the cost block of `validateModelEntry` in `model-data.ts`.
 
+## 2026-10-14 - Direct google-auth-library dependency
+
+### What changed
+
+- `packages/ai/package.json`: adds `google-auth-library` 10.6.2 as a direct dependency (already installed at that version through `@google/genai`; lockfiles gain only the workspace edge).
+
+### Why
+
+- `packages/ai/package.json`: the direct dependency supports `src/api/google-vertex-adc.ts`, which imports `GoogleAuth` to mint ADC access tokens for the `vertex-model-garden` open-model extension; a transitive import would violate pinned-dependency rules. No Claude-specific AI transport is included.
+
+### Why an extension could not handle it
+
+- `packages/ai/package.json`: package dependencies must be declared by the package that imports them, before runtime extensions load.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/package.json`, one line in the `dependencies` block.
+
 ## 2026-10-15 - OpenCode Go uses its documented inference base (senpi#3377)
 
 ### What changed
