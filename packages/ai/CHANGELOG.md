@@ -6,11 +6,25 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.16-3] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
 - Added lazy Google Application Default Credentials access-token resolution for Vertex Model Garden open-model integrations, reusing the existing Vertex credential and project environment helpers ([#3296](https://github.com/code-yeongyu/senpi/pull/3296) by [@sleegme](https://github.com/sleegme)).
 
 ### Changed
 
 ### Fixed
+
+- A `chatgpt-subscription` response that the backend drops mid-stream is retried on a fresh WebSocket. One drop used to move the whole session to SSE for 60 seconds; the session now falls back only after two drops in a row ([#3442](https://github.com/code-yeongyu/senpi/issues/3442)).
 
 ### Removed
 

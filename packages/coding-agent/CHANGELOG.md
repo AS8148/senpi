@@ -4,6 +4,18 @@
 
 ### Breaking Changes
 
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.16-3] - 2026-10-16
+
+### Breaking Changes
+
 - RPC: the outcome for input dropped from the queue is now `cleared`, written by `clear_queue`, `unload_session { clearQueue: true }` and `abort { clearQueue: true }` alike; 2026.10.16-2 wrote it as `cleared_by_abort`, and only for `abort`. Receipts written under the old name are still read and reported as they were stored, so an input cleared on 2026.10.16-2 is never restored on reopen. Clients matching `outcome.kind` should accept both values ([#3412](https://github.com/code-yeongyu/senpi/issues/3412)).
 
 ### Added
