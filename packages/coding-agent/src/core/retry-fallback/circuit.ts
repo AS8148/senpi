@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { parseRetryAfterMsMarker } from "@earendil-works/pi-ai/utils/retry-hint";
 import { usageLimitReset } from "../credential-pool/reset-time.ts";
+import { isHealthExhaustionFailure } from "./circuit-probes.ts";
 import type { FallbackLogger } from "./log.ts";
 import { usageLimitScope } from "./usage-limit.ts";
 
@@ -38,6 +39,8 @@ export interface CircuitOpenRequest {
 	retryAfterMs?: number;
 	/** The reset window a usage limit named for itself; when present it alone sets the open. */
 	resetWindowMs?: number;
+	/** The failure is a verdict for every session: the entry is spent (billing, quota, an account limit) or the provider named a wait. */
+	exhausted?: boolean;
 }
 
 export interface ProbeToken {
@@ -55,6 +58,7 @@ interface SelectorCircuit {
 	cooldownMs: number;
 	maxCooldownMs: number;
 	probe: { owner: string; generation: number } | undefined;
+	exhausted: boolean;
 }
 
 function nonNegativeMs(value: unknown, fallback: number): number {
@@ -79,8 +83,14 @@ export class FallbackCircuitBreaker {
 
 	open(selector: string, request: CircuitOpenRequest): number {
 		const previous = this.circuits.get(selector);
-		const consecutiveOpens = (previous?.consecutiveOpens ?? 0) + 1;
-		const cooldownMs = Math.min(request.cooldownMs * 2 ** (consecutiveOpens - 1), request.maxCooldownMs);
+		// A failure while the circuit is still open (concurrent sessions failing together) belongs to
+		// the same open episode: it takes no backoff step. Only a failure once the open has elapsed, a
+		// failed half-open probe, advances it (senpi#3467).
+		const sameEpisode = previous !== undefined && request.now < previous.openUntil;
+		const consecutiveOpens = (previous?.consecutiveOpens ?? 0) + (sameEpisode ? 0 : 1);
+		const cooldownMs = sameEpisode
+			? previous.cooldownMs
+			: Math.min(request.cooldownMs * 2 ** (consecutiveOpens - 1), request.maxCooldownMs);
 		const retryAfterMs = request.retryAfterMs;
 		const hinted =
 			retryAfterMs !== undefined && Number.isFinite(retryAfterMs) && retryAfterMs > 0
@@ -103,7 +113,7 @@ export class FallbackCircuitBreaker {
 		const openUntil =
 			resetWindowMs !== undefined && Number.isFinite(resetWindowMs) && resetWindowMs > 0
 				? Math.max(request.now + Math.min(resetWindowMs, request.maxCooldownMs), hintedUntil)
-				: Math.max(request.now + cooldownMs, hintedUntil);
+				: Math.max(sameEpisode ? previous.openUntil : request.now + cooldownMs, hintedUntil);
 		this.circuits.set(selector, {
 			openUntil,
 			retryFloorUntil,
@@ -111,6 +121,7 @@ export class FallbackCircuitBreaker {
 			cooldownMs,
 			maxCooldownMs: request.maxCooldownMs,
 			probe: undefined,
+			exhausted: request.exhausted === true || (sameEpisode && previous.exhausted),
 		});
 		return openUntil;
 	}
@@ -161,6 +172,10 @@ export class FallbackCircuitBreaker {
 		return this.circuits.has(selector);
 	}
 
+	isExhausted(selector: string): boolean {
+		return this.circuits.get(selector)?.exhausted === true;
+	}
+
 	sweep(now: number): void {
 		for (const [selector, circuit] of this.circuits) {
 			if (!circuit.probe && now >= circuit.openUntil + circuit.maxCooldownMs) this.circuits.delete(selector);
@@ -181,6 +196,8 @@ export interface FallbackCircuitAccess {
 	/** Whether the breaker holds any state for the selector, i.e. it, not a session cooldown, governs recovery. */
 	governs(selector: string): boolean;
 	isOpen(selector: string, lane?: CircuitLane): boolean;
+	/** Whether the open circuit records a verdict every session should act on (spent entry or a provider-named wait). */
+	isExhausted(selector: string): boolean;
 	admit(selector: string, lane?: CircuitLane): CircuitAdmission;
 	release(token: ProbeToken): void;
 	releaseAll(): void;
@@ -218,10 +235,24 @@ export function createFallbackCircuitAccess(deps: FallbackCircuitAccessDeps): Fa
 			const resetWindowMs =
 				reset !== undefined && (reset.kind === "absolute" || reset.ms >= cooldownMs) ? reset.ms : undefined;
 			deps.breaker.sweep(now);
-			const openUntil = deps.breaker.open(selector, { now, cooldownMs, maxCooldownMs, retryAfterMs, resetWindowMs });
+			// A verdict other sessions should act on without asking themselves: the entry is spent, or the
+			// provider named when to come back. A bare slow or failed request is only this session's view.
+			const exhausted =
+				(message !== undefined && (isHealthExhaustionFailure(message) || usageLimitScope(message) === "account")) ||
+				(retryAfterMs !== undefined && retryAfterMs > 0) ||
+				resetWindowMs !== undefined;
+			const openUntil = deps.breaker.open(selector, {
+				now,
+				cooldownMs,
+				maxCooldownMs,
+				retryAfterMs,
+				resetWindowMs,
+				exhausted,
+			});
 			deps.logger.info("circuit_opened", { selector, durationMs: openUntil - now, retryAfterMs, resetWindowMs });
 		},
 		governs: (selector) => enabled() && deps.breaker.has(selector),
+		isExhausted: (selector) => enabled() && deps.breaker.isExhausted(selector),
 		isOpen: (selector, lane = "turn") =>
 			enabled() && deps.breaker.isOpen(selector, deps.now(), laneOwner(deps.owner(), lane)),
 		admit: (selector, lane = "turn") =>

@@ -24,6 +24,8 @@ export interface CandidateFilters {
 	isModelSkipped?(base: string): boolean;
 	/** Providers whose account-wide usage limit or billing failure this session saw: their entries are skipped. */
 	isProviderSpent?(provider: string): boolean;
+	/** A rung that costs much more than the model it would replace, unless the user opted in (senpi#3467). */
+	isTooCostly?(model: Model<Api>): boolean;
 	skip(candidate: string, skipReason: string): void;
 }
 
@@ -97,6 +99,10 @@ function scanCandidates(
 		const model = filters.registry.find(selector.provider, selector.id);
 		if (!model) {
 			filters.skip(raw, "unknown");
+			continue;
+		}
+		if (filters.isTooCostly?.(model)) {
+			filters.skip(raw, "costlier");
 			continue;
 		}
 		// A hard-error park is keyed by the level the rung ran at, so check the level this entry

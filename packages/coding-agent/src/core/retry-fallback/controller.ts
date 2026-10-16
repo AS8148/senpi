@@ -19,11 +19,23 @@ import type {
 	RetryFallbackControllerDeps,
 } from "./controller-types.ts";
 import { pinAfterSwitch } from "./pin.ts";
+import { DEFAULT_FALLBACK_MAX_COST_RATIO } from "./settings.ts";
 import { isPureNetworkTransient } from "./transient-network.ts";
 import { UnusableEntries } from "./unusable.ts";
 import { type UsageLimitScope, usageLimitScope } from "./usage-limit.ts";
 
 export type { ActiveFallbackState, RetryFallbackControllerDeps } from "./controller-types.ts";
+
+/**
+ * Whether `candidate` costs more than `ratio` times `current` per input token. Unknown or free prices
+ * (0) never block: a subscription or local model gives no basis to compare (senpi#3467).
+ */
+export function isMuchCostlier(candidate: Model<Api>, current: Model<Api>, ratio: number): boolean {
+	if (ratio <= 0) return false;
+	const from = current.cost?.input ?? 0;
+	const to = candidate.cost?.input ?? 0;
+	return from > 0 && to > 0 && to > from * ratio;
+}
 
 export class RetryFallbackController {
 	private readonly deps: RetryFallbackControllerDeps;
@@ -34,6 +46,9 @@ export class RetryFallbackController {
 	private heldForNetworkBlip = false;
 	// The model a network blip just failed on: none of its rungs is tried in that walk (senpi#3344).
 	private blipModel: string | undefined;
+	// Entries this session itself saw fail out of a chain: only these (or an entry spent for everyone)
+	// may move the session off its model at a turn boundary (senpi#3467).
+	private readonly ownFailures = new Set<string>();
 	private readonly unusable: UnusableEntries;
 	readonly probes: CircuitProbes;
 	// Content-keyed memo of canonicalizeFallbackChains. Provider-error handling calls
@@ -203,6 +218,7 @@ export class RetryFallbackController {
 		}
 		this.state = undefined;
 		this.heldForNetworkBlip = false;
+		this.ownFailures.delete(formatSelector(model));
 		this.deps.cooldowns.clearModel(formatSelector(model));
 		this.unusable.clear(model);
 		this.probes.release();
@@ -219,6 +235,7 @@ export class RetryFallbackController {
 		if (!this.managedChainKey({ model, thinkingLevel })) return;
 		// A pure network fault is the transport's, not the model's: it never opens the shared circuit (senpi#3306).
 		if (isPureNetworkTransient(failure.errorMessage)) return;
+		this.ownFailures.add(formatSelector(model));
 		this.probes.noteFailure(formatSelector(model), failure);
 	}
 
@@ -232,7 +249,11 @@ export class RetryFallbackController {
 		const current = this.deps.getCurrentSelector();
 		if (!this.deps.circuits || !current) return false;
 		const currentBase = formatSelector(current.model);
+		// A half-open entry is still claimed as this session's single probe whoever opened it.
 		if (this.probes.admit(currentBase) !== "open") return false;
+		// Another session's bare failure says this entry was slow for that session, not that it is
+		// down for this one: a session that never failed on it keeps its model and finds out itself.
+		if (!this.ownFailures.has(currentBase) && !this.probes.isExhausted(currentBase)) return false;
 		const candidate = this.nextCandidate(false, true);
 		if (!candidate || candidate.circuitOpen) return false;
 		this.deps.logger.info("circuit_open_skip", { selector: currentBase });
@@ -368,6 +389,12 @@ export class RetryFallbackController {
 			isCircuitOpen: (base) => this.deps.circuits?.isOpen(base) ?? false,
 			isProviderSpent: (provider) => this.unusable.isProviderSpent(provider),
 			isModelSkipped: (base) => base === this.blipModel,
+			isTooCostly: (model) =>
+				isMuchCostlier(
+					model,
+					current.model,
+					this.deps.getSettings().maxCostRatio ?? DEFAULT_FALLBACK_MAX_COST_RATIO,
+				),
 			skip: (raw, skipReason) => this.skip(raw, skipReason),
 		});
 		if (candidate) {

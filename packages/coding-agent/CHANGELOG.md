@@ -14,6 +14,8 @@
 
 ### Fixed
 
+- A slow model no longer sends every session to its fallback for up to 30 minutes. Failures that arrive while the fallback circuit is already open no longer double its cooldown: the circuit takes one backoff step per open episode. A session that never failed on the model keeps it; only a billing, quota or account-limit failure, or a provider-named wait, moves other sessions off it. A fallback also never jumps to a model whose input price is more than 3x the running model's; set `retry.fallbackMaxCostRatio` higher to allow that, or 0 to turn the guard off ([#3467](https://github.com/code-yeongyu/senpi/issues/3467)).
+
 - A session with the Full access preset no longer asks "Trust project folder?": it trusts its project for that session without saving the decision (a saved "do not trust" still wins). Home and the folders above it no longer count as project folders, so opening home as a project doesn't ask to trust your own global config. ([#3420](https://github.com/code-yeongyu/senpi/pull/3420))
 
 ### Removed

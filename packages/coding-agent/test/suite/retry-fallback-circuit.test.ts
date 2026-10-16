@@ -1,5 +1,7 @@
+import { join } from "node:path";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
+import { fallbackCircuitsFor } from "../../src/core/retry-fallback/circuit.ts";
 import type { Settings } from "../../src/core/settings-manager.ts";
 import { registerFallbackModels } from "./fallback-provider-fixture.ts";
 import { createHarness, type Harness } from "./harness.ts";
@@ -48,7 +50,7 @@ describe("fallback-chain circuit breaker across sessions sharing one runtime", (
 
 	const calledModels = (harness: Harness) => harness.faux.getCallLog().map((call) => call.modelId);
 
-	it("a sibling session skips an entry that failed out of the chain without sending it a request", async () => {
+	it("a sibling session keeps its model when another session's transient failure opened the circuit (senpi#3467)", async () => {
 		const origin = await first();
 		origin.setResponses([overloaded(), answer("fallback answer"), answer("sibling answer")]);
 
@@ -58,14 +60,14 @@ describe("fallback-chain circuit breaker across sessions sharing one runtime", (
 		const next = await sibling(origin);
 		await next.session.prompt("sibling starts on the chain head");
 
-		// given: the head failed out of the chain in another session sharing the runtime
-		// then: the sibling's only request goes to the next entry
-		expect(calledModels(origin)).toEqual(["faux-1", "faux-2", "faux-2"]);
-		expect(next.session.model?.id).toBe("faux-2");
-		expect(next.eventsOfType("retry_fallback_applied")).toMatchObject([{ from: primary, to: fallback }]);
+		// given: an overload opened the head's circuit in another session sharing the runtime
+		// then: the sibling still sends its own request to the head and is not switched
+		expect(calledModels(origin)).toEqual(["faux-1", "faux-2", "faux-1"]);
+		expect(next.session.model?.id).toBe("faux-1");
+		expect(next.eventsOfType("retry_fallback_applied")).toEqual([]);
 	});
 
-	it("shares circuits with a session on a fresh model runtime in the same agent dir, as after /new", async () => {
+	it("a session on a fresh runtime in the same agent dir, as after /new, also keeps its model (senpi#3467)", async () => {
 		const origin = await first();
 		origin.setResponses([overloaded(), answer("fallback answer"), answer("new session answer")]);
 
@@ -73,7 +75,7 @@ describe("fallback-chain circuit breaker across sessions sharing one runtime", (
 		const next = await sibling(origin, {}, true);
 		await next.session.prompt("the CLI built a new runtime for this session");
 
-		expect(calledModels(origin)).toEqual(["faux-1", "faux-2", "faux-2"]);
+		expect(calledModels(origin)).toEqual(["faux-1", "faux-2", "faux-1"]);
 	});
 
 	it("a billing failure opens the circuit for sibling sessions", async () => {
@@ -94,15 +96,14 @@ describe("fallback-chain circuit breaker across sessions sharing one runtime", (
 		expect(calledModels(origin)).toEqual(["faux-1", "faux-2", "faux-2"]);
 	});
 
-	it("a failed half-open probe re-opens the circuit with a doubled cooldown", async () => {
+	it("a failed half-open probe re-opens the circuit with a doubled cooldown, and siblings still use the head (senpi#3467)", async () => {
 		const origin = await first();
 		origin.setResponses([
 			overloaded(),
 			answer("fallback 1"),
 			overloaded(),
 			answer("fallback 2"),
-			answer("still skipped"),
-			answer("second probe"),
+			answer("sibling inside the doubled cooldown"),
 		]);
 
 		await origin.session.prompt("open for 60s");
@@ -111,19 +112,16 @@ describe("fallback-chain circuit breaker across sessions sharing one runtime", (
 		await prober.session.prompt("half-open probe fails");
 		expect(calledModels(origin)).toEqual(["faux-1", "faux-2", "faux-1", "faux-2"]);
 
-		// when: the first cooldown has elapsed again, but the re-opened circuit waits 120s
+		// then: the re-opened circuit waits 120s, but a sibling that never failed still sends to the head
 		now += 60_001;
-		const skipped = await sibling(origin);
-		await skipped.session.prompt("still inside the doubled cooldown");
-		expect(calledModels(origin).at(-1)).toBe("faux-2");
-
-		now += 60_000;
-		const nextProbe = await sibling(origin);
-		await nextProbe.session.prompt("doubled cooldown elapsed");
+		expect(fallbackCircuitsFor(join(origin.tempDir, "agent")).isOpen(primary, now, "observer")).toBe(true);
+		const untouched = await sibling(origin);
+		await untouched.session.prompt("still inside the doubled cooldown");
 		expect(calledModels(origin).at(-1)).toBe("faux-1");
+		expect(untouched.session.model?.id).toBe("faux-1");
 	});
 
-	it("keeps siblings off a half-open head while another session holds its single probe", async () => {
+	it("only the session holding the half-open probe treats a failure as a failed probe; a sibling keeps its own model (senpi#3467)", async () => {
 		const origin = await first();
 		let waiting: Harness | undefined;
 		origin.setResponses([
@@ -136,7 +134,6 @@ describe("fallback-chain circuit breaker across sessions sharing one runtime", (
 				return answer("probe succeeded");
 			},
 			answer("waiting sibling answer"),
-			answer("after the probe closed the circuit"),
 		]);
 
 		await origin.session.prompt("open");
@@ -145,13 +142,10 @@ describe("fallback-chain circuit breaker across sessions sharing one runtime", (
 		waiting = await sibling(origin);
 		await prober.session.prompt("claims the probe");
 
-		// then: only the prober reached the head; the waiting sibling used the next entry
-		expect(calledModels(origin)).toEqual(["faux-1", "faux-2", "faux-1", "faux-2"]);
-		expect(waiting.session.model?.id).toBe("faux-2");
-
-		const after = await sibling(origin);
-		await after.session.prompt("the probe succeeded");
-		expect(calledModels(origin).at(-1)).toBe("faux-1");
+		// then: the waiting sibling was not moved off the head by a circuit it never failed on
+		expect(calledModels(origin)).toEqual(["faux-1", "faux-2", "faux-1", "faux-1"]);
+		expect(waiting.session.model?.id).toBe("faux-1");
+		expect(waiting.eventsOfType("retry_fallback_applied")).toEqual([]);
 	});
 
 	it("still sends the request when every entry of the chain is open", async () => {

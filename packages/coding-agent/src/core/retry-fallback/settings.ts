@@ -19,6 +19,11 @@ export interface RetrySettings {
 	modelFallback?: boolean;
 	fallbackChains?: Record<string, string[]>;
 	fallbackRevertPolicy?: "cooldown-expiry" | "never";
+	/**
+	 * The most a fallback may cost per input token, as a multiple of the model it replaces; a pricier rung
+	 * is skipped. Default 3. Raise it to opt in to more expensive fallbacks; 0 turns the guard off.
+	 */
+	fallbackMaxCostRatio?: number;
 	abortServerSideFallback?: boolean;
 	hintedWaitCapMs?: number;
 	probeBackMaxMs?: number;
@@ -28,7 +33,11 @@ export interface ResolvedRetryFallbackSettings {
 	modelFallback: boolean;
 	chains: FallbackChains;
 	revertPolicy: "cooldown-expiry" | "never";
+	/** 0 = no cost guard; absent = DEFAULT_FALLBACK_MAX_COST_RATIO. */
+	maxCostRatio?: number;
 }
+
+export const DEFAULT_FALLBACK_MAX_COST_RATIO = 3;
 
 /**
  * Shipped defaults are declared as model families (bare ids, no provider prefix).
@@ -95,6 +104,12 @@ export function resolveRetryFallbackSettings(settings: RetrySettings | undefined
 		modelFallback: typeof settings?.modelFallback === "boolean" ? settings.modelFallback : true,
 		chains: resolveFallbackChains(settings?.fallbackChains),
 		revertPolicy: settings?.fallbackRevertPolicy === "never" ? "never" : "cooldown-expiry",
+		maxCostRatio:
+			typeof settings?.fallbackMaxCostRatio === "number" &&
+			Number.isFinite(settings.fallbackMaxCostRatio) &&
+			settings.fallbackMaxCostRatio >= 0
+				? settings.fallbackMaxCostRatio
+				: DEFAULT_FALLBACK_MAX_COST_RATIO,
 	};
 }
 

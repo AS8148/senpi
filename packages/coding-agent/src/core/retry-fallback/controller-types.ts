@@ -25,6 +25,8 @@ export type CircuitFailure = { errorMessage?: string; retryAfterMs?: number };
 export interface FallbackSettings {
 	modelFallback: boolean;
 	chains: Readonly<Record<string, readonly string[]>>;
+	/** Most a fallback may cost per input token, as a multiple of the running model; 0 = no guard (senpi#3467). */
+	maxCostRatio?: number;
 }
 
 export interface RetryFallbackControllerDeps {
