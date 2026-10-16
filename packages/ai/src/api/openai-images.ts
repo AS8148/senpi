@@ -10,6 +10,7 @@ import type {
 	ProviderHeaders,
 	TextContent,
 } from "../types.ts";
+import { readProviderDiagnostic } from "../provider-diagnostic.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
@@ -107,6 +108,8 @@ export const generateImages: ImagesFunction<OpenAIImagesOptions> = async (
 	} catch (error) {
 		output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 		output.errorMessage = formatProviderError(normalizeProviderError(error));
+		const providerDiagnostic = output.stopReason === "error" ? readProviderDiagnostic(error) : undefined;
+		if (providerDiagnostic !== undefined) output.providerDiagnostic = providerDiagnostic;
 		return output;
 	}
 };
