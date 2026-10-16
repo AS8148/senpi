@@ -3,12 +3,16 @@ import { basename, dirname, join, sep } from "node:path";
 import chalk from "chalk";
 import { canonicalizePath, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
+import type { ResourceDiagnostic } from "./diagnostics.ts";
 import { findGitPaths } from "./footer-data-provider.ts";
 
 export interface ContextFile {
 	path: string;
 	content: string;
 }
+
+/** Preserve the public array API while returning diagnostics to the owning mode. */
+export type ContextFiles = ContextFile[] & { readonly diagnostics: ResourceDiagnostic[] };
 
 /** Size limits for AGENTS.md / CLAUDE.md context files, which ride along on every model request. */
 export interface ContextFileLimits {
@@ -77,6 +81,8 @@ function utf8Prefix(content: string, maxBytes: number): string {
 	const bytes = Buffer.from(content, "utf8");
 	let end = Math.min(maxBytes, bytes.length);
 	while (end > 0 && end < bytes.length && ((bytes[end] ?? 0) & 0xc0) === 0x80) end--;
+	const newline = bytes.lastIndexOf(10, end - 1);
+	if (newline >= maxBytes * 0.75) end = newline + 1;
 	return bytes.subarray(0, end).toString("utf8");
 }
 
@@ -89,11 +95,12 @@ function positiveLimit(value: number | undefined, fallback: number): number {
  * (the cwd's file before its ancestors, the global file last), so the most specific
  * instructions survive; every cut or skipped file is named in a warning.
  */
-function applyContextFileLimits(files: ContextFile[], limits: ContextFileLimits): ContextFile[] {
+function applyContextFileLimits(files: ContextFile[], limits: ContextFileLimits): ContextFiles {
 	const perFile = positiveLimit(limits.maxBytesPerFile, DEFAULT_CONTEXT_FILE_MAX_BYTES);
 	const total = positiveLimit(limits.maxTotalBytes, DEFAULT_CONTEXT_FILES_MAX_TOTAL_BYTES);
 	const limitText = `limit ${kib(perFile)} per file, ${kib(total)} total; raise contextFiles.maxBytesPerFile / contextFiles.maxTotalBytes in settings to load more`;
 	const kept: ContextFile[] = [];
+	const diagnostics: ResourceDiagnostic[] = [];
 	let remaining = total;
 	for (const file of [...files].reverse()) {
 		const size = Buffer.byteLength(file.content, "utf8");
@@ -104,30 +111,35 @@ function applyContextFileLimits(files: ContextFile[], limits: ContextFileLimits)
 			continue;
 		}
 		if (allowed < MIN_USEFUL_BYTES) {
-			console.error(
-				chalk.yellow(
-					`Warning: context file ${file.path} (${kib(size)}) was not loaded: nearer context files used the budget (${limitText}).`,
-				),
-			);
+			diagnostics.push({
+				type: "warning",
+				path: file.path,
+				message: `Context file ${file.path} (${kib(size)}) was not loaded: nearer context files used the budget (${limitText}).`,
+			});
 			continue;
 		}
-		const prefix = utf8Prefix(file.content, allowed);
+		const note = `\n\n[This file was truncated from ${kib(size)}.]`;
+		// Reserve the note and a closing fence before choosing the content boundary.
+		const prefix = utf8Prefix(file.content, allowed - Buffer.byteLength(note) - 5);
 		const loaded = Buffer.byteLength(prefix, "utf8");
-		console.error(
-			chalk.yellow(
-				`Warning: context file ${file.path} is ${kib(size)}; only the first ${kib(loaded)} was loaded (${limitText}).`,
-			),
-		);
+		const openFence = [...prefix.matchAll(/^[ \t]*```[^\n]*$/gm)].length % 2 === 1;
+		const closingFence = openFence ? `${prefix.endsWith("\n") ? "" : "\n"}\`\`\`\n` : "";
+		const content = `${prefix}${closingFence}${note}`;
+		diagnostics.push({
+			type: "warning",
+			path: file.path,
+			message: `Context file ${file.path} is ${kib(size)}; only the first ${kib(loaded)} was loaded (${limitText}).`,
+		});
 		kept.unshift({
 			path: file.path,
-			content: `${prefix}\n\n[This file was truncated: ${kib(loaded)} of ${kib(size)} loaded.]`,
+			content,
 		});
-		remaining -= loaded;
+		remaining -= Buffer.byteLength(content);
 	}
-	return kept;
+	return Object.assign(kept, { diagnostics });
 }
 
-export function loadProjectContextFiles(options: { cwd: string; agentDir: string } & ContextFileLimits): ContextFile[] {
+export function loadProjectContextFiles(options: { cwd: string; agentDir: string } & ContextFileLimits): ContextFiles {
 	const resolvedCwd = resolvePath(options.cwd);
 	const resolvedAgentDir = resolvePath(options.agentDir);
 

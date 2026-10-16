@@ -2,8 +2,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { loadProjectContextFiles } from "../../../src/core/resource-loader.ts";
+import { DefaultResourceLoader, loadProjectContextFiles } from "../../../src/core/resource-loader.ts";
 import { formatSkillsForPrompt, type Skill } from "../../../src/core/skills.ts";
+import { isLargeSkillCatalog, warnIfLargeSkillCatalog } from "../../../src/core/skills-prompt.ts";
 
 const CAP = 64 * 1024;
 const tempDirs: string[] = [];
@@ -36,7 +37,7 @@ describe("issue #3460: context files are size-capped so one file cannot inflate 
 
 		const [file] = loadProjectContextFiles({ cwd, agentDir });
 
-		expect(Buffer.byteLength(file?.content ?? "", "utf8")).toBeLessThanOrEqual(CAP + 512);
+		expect(Buffer.byteLength(file?.content ?? "", "utf8")).toBeLessThanOrEqual(CAP);
 		expect(file?.content).toContain("truncated");
 		expect(file?.content.startsWith("# Project rules\n")).toBe(true);
 	});
@@ -45,12 +46,15 @@ describe("issue #3460: context files are size-capped so one file cannot inflate 
 		const { cwd, agentDir } = workspace();
 		const path = join(cwd, "AGENTS.md");
 		writeFileSync(path, hugeRules(360 * 1024));
-		const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+		const files = loadProjectContextFiles({ cwd, agentDir });
 
-		loadProjectContextFiles({ cwd, agentDir });
-
-		expect(consoleError).toHaveBeenCalledWith(expect.stringContaining(path));
-		expect(consoleError).toHaveBeenCalledWith(expect.stringMatching(/36\d(\.\d)? ?KiB.*64 ?KiB/));
+		expect(files.diagnostics).toContainEqual(
+			expect.objectContaining({
+				type: "warning",
+				path,
+				message: expect.stringMatching(/36\d(\.\d)? ?KiB.*64 ?KiB/),
+			}),
+		);
 	});
 
 	it("leaves a file under the cap byte-identical and silent", () => {
@@ -72,7 +76,7 @@ describe("issue #3460: context files are size-capped so one file cannot inflate 
 
 		const [file] = loadProjectContextFiles({ cwd, agentDir, maxBytesPerFile: 16 * 1024 });
 
-		expect(Buffer.byteLength(file?.content ?? "", "utf8")).toBeLessThanOrEqual(16 * 1024 + 512);
+		expect(Buffer.byteLength(file?.content ?? "", "utf8")).toBeLessThanOrEqual(16 * 1024);
 	});
 
 	it("caps the total walk-up, keeping the nearest files and naming what was cut", () => {
@@ -82,18 +86,16 @@ describe("issue #3460: context files are size-capped so one file cannot inflate 
 		writeFileSync(join(agentDir, "AGENTS.md"), `global\n${hugeRules(60 * 1024)}`);
 		writeFileSync(join(cwd, "AGENTS.md"), `project\n${hugeRules(60 * 1024)}`);
 		writeFileSync(join(nested, "AGENTS.md"), `service\n${hugeRules(60 * 1024)}`);
-		const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-
 		const files = loadProjectContextFiles({ cwd: nested, agentDir });
 		const total = files.reduce((sum, file) => sum + Buffer.byteLength(file.content, "utf8"), 0);
 		const serviceFile = files.find((file) => file.path === join(nested, "AGENTS.md"));
 		const projectFile = files.find((file) => file.path === join(cwd, "AGENTS.md"));
 
-		expect(total).toBeLessThanOrEqual(128 * 1024 + 1024);
+		expect(total).toBeLessThanOrEqual(128 * 1024);
 		expect(serviceFile?.content.startsWith("service\n")).toBe(true);
 		expect(serviceFile?.content).not.toContain("truncated");
 		expect(projectFile?.content.startsWith("project\n")).toBe(true);
-		expect(consoleError).toHaveBeenCalledWith(expect.stringContaining(join(agentDir, "AGENTS.md")));
+		expect(files.diagnostics).toContainEqual(expect.objectContaining({ path: join(agentDir, "AGENTS.md") }));
 	});
 
 	it("never splits a multi-byte character at the cut point", () => {
@@ -104,6 +106,59 @@ describe("issue #3460: context files are size-capped so one file cannot inflate 
 		const [file] = loadProjectContextFiles({ cwd, agentDir, maxBytesPerFile: 16 * 1024 + 1 });
 
 		expect(file?.content).not.toContain("\uFFFD");
+	});
+
+	it("includes truncation notes in both file and aggregate budgets", () => {
+		// Given
+		const { cwd, agentDir } = workspace();
+		const nested = join(cwd, "nested");
+		mkdirSync(nested);
+		for (const dir of [agentDir, cwd, nested]) writeFileSync(join(dir, "AGENTS.md"), "x".repeat(100 * 1024));
+		// When
+		const files = loadProjectContextFiles({ cwd: nested, agentDir });
+		// Then
+		expect(files.reduce((sum, file) => sum + Buffer.byteLength(file.content), 0)).toBeLessThanOrEqual(131072);
+		for (const file of files) expect(Buffer.byteLength(file.content)).toBeLessThanOrEqual(CAP);
+	});
+
+	it("cuts at a nearby newline and closes an open fence before the note", () => {
+		// Given
+		const { cwd, agentDir } = workspace();
+		const complete = `# Rules\n\`\`\`ts\n${"x".repeat(3200)}\n`;
+		writeFileSync(join(cwd, "AGENTS.md"), complete + "partial".repeat(1000));
+		// When
+		const [file] = loadProjectContextFiles({ cwd, agentDir, maxBytesPerFile: 4096 });
+		// Then
+		expect(file?.content.startsWith(`${complete}\`\`\`\n`)).toBe(true);
+		expect(Buffer.byteLength(file?.content ?? "")).toBeLessThanOrEqual(4096);
+	});
+
+	it("returns size diagnostics from the loader without printing over the TUI", async () => {
+		// Given
+		const { cwd, agentDir } = workspace();
+		const path = join(cwd, "AGENTS.md");
+		writeFileSync(path, hugeRules(100 * 1024));
+		const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+		const loader = new DefaultResourceLoader({
+			cwd,
+			agentDir,
+			noExtensions: true,
+			noSkills: true,
+			noThemes: true,
+			noPromptTemplates: true,
+			skillsOverride: () => ({
+				skills: Array.from({ length: 400 }, (_, i) => skill(i, "d".repeat(900))),
+				diagnostics: [],
+			}),
+		});
+		// When
+		await loader.reload();
+		// Then
+		expect(loader.getAgentsFiles()).toMatchObject({
+			diagnostics: [expect.objectContaining({ type: "warning", path })],
+		});
+		expect(loader.getSkills().diagnostics).toContainEqual(expect.objectContaining({ type: "warning" }));
+		expect(consoleError).not.toHaveBeenCalled();
 	});
 });
 
@@ -122,6 +177,28 @@ const LONG_DESCRIPTION =
 	"Use this skill when the task involves the workflow, including setup, migration, validation, reporting, and cleanup steps.\nIt also covers every edge case of the platform, the retry rules, the logging format, and the release checklist in full detail.";
 
 describe("issue #3460: a large skills catalog is listed compactly", () => {
+	it.each([400, 2000])("bounds the rendered section for %i long single-line descriptions", (count) => {
+		// Given
+		const skills = Array.from({ length: count }, (_, index) => skill(index, "d".repeat(900)));
+		// When
+		const prompt = formatSkillsForPrompt(skills);
+		// Then
+		expect(Buffer.byteLength(prompt)).toBeLessThanOrEqual(48 * 1024);
+		expect(prompt).toContain("<name>skill-0</name>");
+		expect(prompt).not.toContain("<description>");
+		const listed = [...prompt.matchAll(/<name>/g)].length;
+		if (listed < count) expect(prompt).toContain(`<omitted_skills>${count - listed}</omitted_skills>`);
+		expect(warnIfLargeSkillCatalog(skills)).toContainEqual(expect.objectContaining({ type: "warning" }));
+	});
+
+	it("keeps 70 descriptions below 64 KiB out of compact mode", () => {
+		// Given
+		const skills = Array.from({ length: 70 }, (_, index) => skill(index, "d".repeat(480)));
+		// When
+		const compact = isLargeSkillCatalog(skills);
+		// Then
+		expect(compact).toBe(false);
+	});
 	it("lists 400 skills by name with a one-line description, bounded in size", () => {
 		const skills = Array.from({ length: 400 }, (_, index) => skill(index, LONG_DESCRIPTION));
 

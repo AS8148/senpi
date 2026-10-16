@@ -919,6 +919,7 @@ describe("InteractiveMode.showLoadedResources", () => {
 		toolOutputExpanded?: boolean;
 		cwd?: string;
 		contextFiles?: Array<{ path: string; content?: string }>;
+		contextDiagnostics?: Array<{ type: "warning"; message: string; path?: string }>;
 		systemPromptSource?: { path: string };
 		appendSystemPromptSources?: Array<{ path: string }>;
 		extensions?: ExtensionFixture[];
@@ -946,7 +947,10 @@ describe("InteractiveMode.showLoadedResources", () => {
 				},
 				resourceLoader: {
 					getPathMetadata: () => new Map(),
-					getAgentsFiles: () => ({ agentsFiles: options.contextFiles ?? [] }),
+					getAgentsFiles: () => ({
+						agentsFiles: options.contextFiles ?? [],
+						diagnostics: options.contextDiagnostics ?? [],
+					}),
 					getSystemPromptSource: () => options.systemPromptSource,
 					getAppendSystemPromptSources: () => options.appendSystemPromptSources ?? [],
 					getSkills: () => ({
@@ -1675,6 +1679,21 @@ describe("InteractiveMode.showLoadedResources", () => {
 		expect(output).toContain("Skill conflicts");
 		expect(output).toContain(theme.getBgAnsi("customMessageBg"));
 		expect(output).not.toContain("[Skills]");
+	});
+
+	test("shows context size warnings in the resource notices on quiet startup", () => {
+		// Given
+		const fakeThis = createShowLoadedResourcesThis({
+			quietStartup: true,
+			contextDiagnostics: [{ type: "warning", message: "context budget exceeded", path: "/tmp/AGENTS.md" }],
+		});
+		// When
+		Reflect.get(InteractiveMode.prototype, "showLoadedResources").call(fakeThis, {
+			force: false,
+			showDiagnosticsWhenQuiet: true,
+		});
+		// Then
+		expect(renderAll(fakeThis.loadedResourcesContainer)).toContain("Context size limits");
 	});
 
 	test("formats builtin synthetic extension paths with readable builtin labels", () => {

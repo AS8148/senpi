@@ -1,3 +1,21 @@
+## 2026-10-16 - Non-interactive startup reports context size warnings once (senpi#3460)
+
+### What changed
+
+- `main.ts`: print, JSON, and RPC startup report the loader's returned context-file and skill warnings through `reportDiagnostics`. The checks themselves no longer print, and interactive startup leaves these warnings to the TUI resource notices.
+
+### Why
+
+Returning diagnostics lets the owning mode display them without duplicate stderr output.
+
+### Why an extension could not handle it
+
+Core resources load before mode startup.
+
+### Expected merge conflict zones
+
+- `main.ts`: the non-interactive diagnostics block after runtime creation.
+
 ## 2026-10-15 - The package exports the abort cause type (senpi#3357)
 
 ### What changed

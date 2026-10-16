@@ -2652,6 +2652,11 @@ export class InteractiveMode {
 				this.loadedResourcesContainer.addChild(new Spacer(1));
 			};
 
+			const contextDiagnostics = this.session.resourceLoader.getAgentsFiles().diagnostics ?? [];
+			if (contextDiagnostics.length > 0) {
+				addDiagnosticNotice("Context size limits", contextDiagnostics);
+			}
+
 			const skillDiagnostics = skillsResult.diagnostics;
 			if (skillDiagnostics.length > 0) {
 				addDiagnosticNotice("Skill conflicts", skillDiagnostics);

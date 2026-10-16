@@ -198,7 +198,7 @@ export interface ResourceLoader {
 	getSkills(): { skills: Skill[]; diagnostics: ResourceDiagnostic[] };
 	getPrompts(): { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] };
 	getThemes(): { themes: Theme[]; diagnostics: ResourceDiagnostic[] };
-	getAgentsFiles(): { agentsFiles: Array<{ path: string; content: string }> };
+	getAgentsFiles(): { agentsFiles: Array<{ path: string; content: string }>; diagnostics?: ResourceDiagnostic[] };
 	getSystemPrompt(): string | undefined;
 	getSystemPromptSource(): { path: string } | undefined;
 	getAppendSystemPrompt(): string[];
@@ -464,6 +464,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private themes: Theme[];
 	private themeDiagnostics: ResourceDiagnostic[];
 	private agentsFiles: Array<{ path: string; content: string }>;
+	private contextDiagnostics: ResourceDiagnostic[] = [];
 	private systemPrompt?: string;
 	private systemPromptSourcePath?: string;
 	private appendSystemPrompt: string[];
@@ -577,8 +578,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 		return { themes: this.themes, diagnostics: this.themeDiagnostics };
 	}
 
-	getAgentsFiles(): { agentsFiles: Array<{ path: string; content: string }> } {
-		return { agentsFiles: this.agentsFiles };
+	getAgentsFiles(): { agentsFiles: Array<{ path: string; content: string }>; diagnostics: ResourceDiagnostic[] } {
+		return { agentsFiles: this.agentsFiles, diagnostics: this.contextDiagnostics };
 	}
 
 	getSystemPrompt(): string | undefined {
@@ -825,7 +826,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 		const agentsFiles = {
 			agentsFiles: this.noContextFiles
-				? []
+				? Object.assign([], { diagnostics: [] })
 				: loadProjectContextFiles({
 						cwd: this.cwd,
 						agentDir: this.agentDir,
@@ -833,7 +834,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 					}),
 		};
 		const resolvedAgentsFiles = this.agentsFilesOverride ? this.agentsFilesOverride(agentsFiles) : agentsFiles;
-		this.agentsFiles = resolvedAgentsFiles.agentsFiles;
+		this.agentsFiles = [...resolvedAgentsFiles.agentsFiles];
+		this.contextDiagnostics = agentsFiles.agentsFiles.diagnostics;
 		time("contextFiles", "extensions");
 
 		// SYSTEM.md / APPEND_SYSTEM.md file discovery was intentionally removed; the explicit
@@ -1146,8 +1148,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 				skill.sourceInfo ??
 				this.getDefaultSourceInfoForPath(skill.filePath),
 		}));
-		this.skillDiagnostics = resolvedSkills.diagnostics;
-		warnIfLargeSkillCatalog(this.skills);
+		this.skillDiagnostics = [...resolvedSkills.diagnostics, ...warnIfLargeSkillCatalog(this.skills)];
 	}
 
 	private updatePromptsFromPaths(promptPaths: string[], metadataByPath?: Map<string, PathMetadata>): void {
