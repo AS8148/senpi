@@ -6,7 +6,7 @@
  * per test, like a real daemon), with a project extension that records each load.
  */
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -323,6 +323,66 @@ describe("Full access trusts the project without asking (#3414)", { timeout: 120
 		expect(moved).toBe(true);
 		expect(runtime.session.settingsManager.isProjectTrusted()).toBe(true);
 		expect(runtime.session.extensionRunner.getFlagValues().get("permission-preset")).toBe("full-access");
+	});
+
+	it("a replacement that fails after teardown leaves permission changes working for the next session", async () => {
+		const runtime = runtimeOf(await open("full-access"));
+		const build = Reflect.get(runtime, "createRuntime");
+		Reflect.set(runtime, "createRuntime", async () => {
+			throw new Error("replacement build failed");
+		});
+		await expect(runtime.newSession()).rejects.toThrow("replacement build failed");
+		Reflect.set(runtime, "createRuntime", build);
+
+		// The live session is the disposed one now: the change is recorded, nothing rebuilds it, and the
+		// next replacement goes live under it.
+		runtime.setPermissionPreset("ask");
+		expect(runtime.session.extensionRunner.getFlagValues().get("permission-preset")).toBe("ask");
+		await runtime.newSession();
+		await runtime.projectTrustChange;
+
+		expect(runtime.session.extensionRunner.getFlagValues().get("permission-preset")).toBe("ask");
+		expect(runtime.session.settingsManager.isProjectTrusted()).toBe(false);
+	});
+
+	it("a project reached through a symlink is keyed by its real path: its own saved decision applies", async () => {
+		// B's saved "trust" is stored under its real path; the session reaches B through a link.
+		const other = join(home, "other");
+		await writeGate(other);
+		const link = join(home, "other-link");
+		await symlink(other, link);
+		new ProjectTrustStore(agentDir).set(other, true);
+		const runtime = runtimeOf(await open("full-access"));
+
+		const gate = armGate();
+		const switching = runtime.switchSession(join(scratch, "linked-session.jsonl"), { cwdOverride: link });
+		await gate.loading;
+		runtime.setPermissionPreset("ask");
+		gate.release();
+		await switching;
+		await runtime.projectTrustChange;
+
+		expect(runtime.session.settingsManager.isProjectTrusted()).toBe(true);
+		expect(new ProjectTrustStore(agentDir).get(link)).toBe(true);
+	});
+
+	it("a symlinked project without its own decision does not inherit the project it was opened from", async () => {
+		new ProjectTrustStore(agentDir).set(cwd, true);
+		const other = join(home, "other");
+		await writeGate(other);
+		const link = join(home, "other-link");
+		await symlink(other, link);
+		const runtime = runtimeOf(await open("full-access"));
+
+		const gate = armGate();
+		const switching = runtime.switchSession(join(scratch, "linked-session.jsonl"), { cwdOverride: link });
+		await gate.loading;
+		runtime.setPermissionPreset("ask");
+		gate.release();
+		await switching;
+		await runtime.projectTrustChange;
+
+		expect(runtime.session.settingsManager.isProjectTrusted()).toBe(false);
 	});
 
 	it("a trust the user saved during the session survives leaving Full access", async () => {

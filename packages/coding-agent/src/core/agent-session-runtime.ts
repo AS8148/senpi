@@ -230,13 +230,14 @@ export class AgentSessionRuntime {
 	setPermissionPreset(preset: string): void {
 		this._launchProfile = Object.freeze({ ...(this._launchProfile ?? { cwd: this.cwd }), permissionPreset: preset });
 		this._session.extensionRunner.setFlagValue("permission-preset", preset);
-		// While a replacement is in flight the live session is already disposed: apply() syncs the
-		// replacement to the latest preset before it goes live, so nothing runs on the retired one.
-		if (!this._sessionRetired) this.syncFullAccessTrust(this._session, preset);
+		// While a replacement is in flight (or after one failed) the live session is the disposed one:
+		// nothing may rebuild it. The preset is recorded above, and apply() syncs the next replacement to
+		// it before that one goes live. There is no flag to clear: the check is the session itself.
+		if (this._session !== this._disposedSession) this.syncFullAccessTrust(this._session, preset);
 	}
 
-	/** True from the moment teardownCurrent disposes the session until apply() installs its replacement. */
-	private _sessionRetired = false;
+	/** The session teardownCurrent disposed; it stays the live session only until apply() installs a replacement. */
+	private _disposedSession: AgentSession | undefined;
 
 	/**
 	 * Keeps a Full-access-only project trust in step with the preset (senpi#3414, #3420). Leaving Full
@@ -403,7 +404,7 @@ export class AgentSessionRuntime {
 		this.beforeSessionInvalidate?.();
 		const replaced = this.session.sessionManager;
 		this.session.dispose();
-		this._sessionRetired = true;
+		this._disposedSession = this.session;
 		// Nothing writes to the replaced manager once its session is disposed, so the
 		// shared host may hand its session file to another worker.
 		unregisterSessionWriter(replaced);
@@ -442,7 +443,6 @@ export class AgentSessionRuntime {
 		}
 		const profile = this._launchProfile;
 		this._session = result.session;
-		this._sessionRetired = false;
 		if (profile?.permissionPreset !== undefined)
 			this._session.extensionRunner.setFlagValue("permission-preset", profile.permissionPreset);
 		if (profile?.promptSurface !== undefined) this._session.setPromptSurface(profile.promptSurface);
