@@ -24,6 +24,7 @@
 
 - The terminal transcript folds a handoff block into one muted line, `▸ Handoff · Now: … · Next: …`, and keeps its `For you` answer as ordinary text. Ctrl+O, or a click on the line, opens the block as written ([#3323](https://github.com/code-yeongyu/senpi/issues/3323), proposed by @devxoul).
 - The built-in default model for `anthropic-subscription` and `anthropic` is now `claude-opus-5-5` (was `claude-opus-4-8`). It applies only when no model is saved in settings and none is passed on the command line ([#3179](https://github.com/code-yeongyu/senpi/pull/3179)).
+- The built-in default model for `xiaomi` and the three `xiaomi-token-plan-*` providers is now `mimo-v2.6-pro` (was `mimo-v2.5-pro`, which models.dev marks deprecated and a regenerated catalog no longer carries). It applies only when no model is saved in settings and none is passed on the command line.
 
 ### Fixed
 
