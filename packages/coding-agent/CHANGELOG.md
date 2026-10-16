@@ -8,6 +8,18 @@
 
 - Argon sessions get their own system prompt preset (`gemini-4-argon`, auto-resolved for every catalog id shape and forceable from settings). It is the default prompt with four spots tuned to the provider's published prompting guidance: the identity names the model, the terminal routing line is declared plain prose with the tool calls following in the same response, the Working the Task opening makes one `eval` cell with real control flow and `parallel(thunks)` the way a step is done when `eval` is available, the error rule retries transient failures and changes strategy on others, plus a plain workstation wording and a search-grounding paragraph when `web_search` is active. Every other model's prompt is byte-identical to before ([#3385](https://github.com/code-yeongyu/senpi/issues/3385)).
 
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.16-2] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
 - RPC `verify_api_key {provider, key}` checks an API key with one authenticated read of the provider's model list, without storing it, and answers `ok` or a reason (`rejected`, `unreachable`, `unsupported`, `unknown-provider`). `get_auth_providers` API-key rows carry `keyHint`, the last four characters of a key the app stored (none for OAuth, command or env references, or short keys). Hosts advertise `auth_key_verify` ([#3372](https://github.com/code-yeongyu/senpi/pull/3372), for the OmO desktop app).
 
 - `subscribe_sessions` gains `effects` (default on for `childrenOf`): matched sessions stream `effect_status` receipts (`accepted`/`applied`/`done`/`failed`) on the subscription's gap-free `seq`, each emitted after the record that caused the transition, and `session_status.lastEffect` names a session's latest receipt ([#3157](https://github.com/code-yeongyu/senpi/issues/3157)).
