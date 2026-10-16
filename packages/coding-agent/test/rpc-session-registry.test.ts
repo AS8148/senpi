@@ -11,11 +11,11 @@ import {
 	type CreateAgentSessionRuntimeResult,
 } from "../src/core/agent-session-runtime.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
-import { SettingsManager } from "../src/core/settings-manager.ts";
 import { ProjectTrustStore } from "../src/core/trust-manager.ts";
 import { SessionCommandRouter } from "../src/modes/rpc/session-command-router.ts";
 import { SessionEventWriter } from "../src/modes/rpc/session-event-writer.ts";
 import { type RpcSessionLaunchProfile, RpcSessionRegistry } from "../src/modes/rpc/session-registry.ts";
+import { fakeSessionBase } from "./helpers/fake-session-base.ts";
 
 const profile = (cwd: string, sessionPath: string): RpcSessionLaunchProfile => ({
 	cwd,
@@ -53,10 +53,7 @@ function runtime(
 	const flagValues = new Map<string, boolean | string>();
 	return {
 		session: {
-			sessionManager: options.sessionManager,
-			// Required on every real AgentSession; the runtime reads it whenever the permission preset changes (#3420).
-			settingsManager: SettingsManager.create(options.cwd, options.agentDir),
-			agentDir: options.agentDir,
+			...fakeSessionBase(options),
 			// Projected into the `open_session` wire state, which shares one builder with get_state.
 			isFastModeActive: () => false,
 			agent: { state: {} },
