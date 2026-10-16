@@ -11,6 +11,7 @@ import {
 	type CreateAgentSessionRuntimeResult,
 } from "../src/core/agent-session-runtime.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
+import { SettingsManager } from "../src/core/settings-manager.ts";
 import { ProjectTrustStore } from "../src/core/trust-manager.ts";
 import { SessionCommandRouter } from "../src/modes/rpc/session-command-router.ts";
 import { SessionEventWriter } from "../src/modes/rpc/session-event-writer.ts";
@@ -53,6 +54,8 @@ function runtime(
 	return {
 		session: {
 			sessionManager: options.sessionManager,
+			// Required on every real AgentSession; the runtime reads it whenever the permission preset changes (#3420).
+			settingsManager: SettingsManager.create(options.cwd, options.agentDir),
 			agentDir: options.agentDir,
 			// Projected into the `open_session` wire state, which shares one builder with get_state.
 			isFastModeActive: () => false,
@@ -555,19 +558,10 @@ describe("RPC session registry", () => {
 		const launchProfile = Object.freeze(profile(dir, join(dir, "profile.jsonl")));
 		const manager = SessionManager.create(dir, dir);
 		const captured: Array<RpcSessionLaunchProfile | undefined> = [];
-		const fakeSession = (sessionManager: SessionManager) => {
-			const flagValues = new Map<string, boolean | string>();
-			return {
-				sessionManager,
-				extensionRunner: {
-					hasHandlers: () => false,
-					setFlagValue: (name: string, value: boolean | string) => flagValues.set(name, value),
-					getFlagValues: () => new Map(flagValues),
-				},
-				abort: async () => {},
-				dispose: () => {},
-			} as never;
-		};
+		// The one fake session shape of this file, so it cannot drift from what the runtime reads.
+		const fakeSession = (sessionManager: SessionManager) =>
+			runtime({ cwd: dir, agentDir: dir, sessionManager } as Parameters<CreateAgentSessionRuntimeFactory>[0])
+				.session as never;
 		const factory: CreateAgentSessionRuntimeFactory = async (options) => {
 			captured.push(options.launchProfile as RpcSessionLaunchProfile | undefined);
 			return {
