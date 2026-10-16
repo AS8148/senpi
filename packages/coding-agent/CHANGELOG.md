@@ -8,11 +8,17 @@
 
 - `dequeue_message` and `edit_queued_message` accept `expectedRevision`: every queued input carries a `revision` (1 when queued, +1 per edit), and a change based on a stale revision answers `conflict` with `currentRevision` and changes nothing, so two clients editing one queued message can no longer overwrite each other silently. Capability `queued_message_revision` ([#3459](https://github.com/code-yeongyu/senpi/issues/3459)).
 
+- A permission prompt for a tool without its own parser offers a wider "Allow always": for a URL, that domain in this project ("Allow <tool> on <host> always in this project"); for other tools, the tool in this project. Commands, paths and built-in tools never get it.
+
 - `RpcClient.abort(options)` sends a typed abort (`effectId`, `awaitIdle`, `clearQueue`, `graceMs`) and returns the host's answer (`stopped`, `idle`, `cleared`, receipt); `RpcClient.getEffectStatus(effectId, { sessionPath? })` reads an effect receipt. `abort()` without options is unchanged ([#3453](https://github.com/code-yeongyu/senpi/issues/3453)).
 
 ### Changed
 
 ### Fixed
+
+- A session with the Full access preset no longer asks "Trust project folder?": it trusts its project for that session without saving the decision (a saved "do not trust" still wins). Home and the folders above it no longer count as project folders, so opening home as a project doesn't ask to trust your own global config. ([#3420](https://github.com/code-yeongyu/senpi/pull/3420))
+
+- `anthropic-subscription`: a spent account is now blocked until the reset its usage-limit message names ("resets in 1 hour", "resets 5am"), or, when the message names none, until the reset its fully used limit window last reported. Before, every account-level usage limit was blocked for 60 s. A pinned account therefore went back to the same spent limit every minute, and each round trip re-forked the session on the healthy account and re-wrote its prompt cache. The long block applies only to Claude Code's own usage-limit error and never lasts past that limit's window (5 hours for a session or 5-hour limit). A working account that serves a turn has its block cleared, and `/claude-account unblock <id>` lifts one by hand. Any other limit text and a plain rate limit keep the 60 s block ([#3462](https://github.com/code-yeongyu/senpi/issues/3462)).
 
 ### Removed
 

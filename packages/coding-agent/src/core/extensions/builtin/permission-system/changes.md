@@ -1,5 +1,39 @@
 # Permission System Builtin Extension
 
+## 2026-10-16 - A wider "Allow always" for tools without a parser (senpi#3403)
+
+### What changed
+
+- `always-scope.ts` (new): `widerAlwaysScope(toolName, argKey, arg)` returns the extra option a prompt may offer when the request came from the fallback parser (a tool with no parser of its own):
+  - a URL argument gets its DOMAIN, "Allow <tool> on <host> always in this project". The grant is ONE literal, `origin=<canonical origin>`, matched by equality. `canonicalUrlOrigin` gives the scheme, the parser's lowercased punycode host, and the port only when it is not the default; no userinfo. A domain origin is given only for raw text every parser reads as the same host: a strict `http(s)://<ASCII DNS host>[:port]` prefix followed by `/`, `?`, `#` or the end; no backslash, `@`, `%`, whitespace or control character anywhere; no IPv6 literal, trailing dot or non-ASCII host; and the same host and port as `new URL()`. Anything else gets no alias and no domain option, so it asks. #3416 review: `https://*/a` became `https://*` and allowed any site; `https://example.invalid\@evil.test/` is example.invalid to WHATWG and evil.test to curl and Python. A parser-less tool parses the URL itself, so the permission layer cannot make it reuse one parse.
+  - a free `input`/`pattern` argument gets the tool, "Allow <tool> always in this project", with pattern `*`;
+  - a command or a path gets nothing wider, and built-in tools never do.
+- `parsers.ts`: the fallback records which argument it used and attaches `widerAlways`. A URL request is decided against `[raw URL, origin=<canonical origin>]` (`ruleAliases`), so the grant applies to every spelling of the origin, and a rule on the raw URL (a deny included) still matches it.
+- `prompt.ts`: the option appears after "Allow always" and replies `always` with the wider patterns.
+- `service.ts` and `index.ts`: the reply's patterns become the session's approvals and are persisted to the agent-dir store, so other open sessions of the project stop asking too.
+
+### Why
+
+"Allow always" stored only the exact argument, so a browser or MCP tool asked again for the next URL or input (sisyphuslabs/omo-desktop-app#2465). A tool-wide allow for a browser would mean "go anywhere", so URLs are scoped to their domain.
+
+### Why an extension could not handle it
+
+The prompt, its options and the stored approvals belong to this builtin's decision path; another extension cannot add an option to a permission prompt or write this store.
+
+### Expected merge conflict zones
+
+`prompt.ts` (the option list and reply mapping), `parsers.ts` (`fallbackPermissionRequestFor`), `types.ts` (`Request`, `ReplyInput`).
+
+### Must not break
+
+`test/permission/tool-scope-allow-always.test.ts`:
+- the same domain stops asking; a look-alike, `@` or port variant asks again;
+- a second open session stops asking;
+- a free-input tool is allowed tool-wide;
+- a command-shaped tool gets no wider option;
+- `*`, `?` and `[` hosts get no domain option;
+- uppercase, `:443`, userinfo and IDN spellings match the grant, while another port or a host named only in the path does not.
+
 ## 2026-10-16 - The legacy approvals import keeps pre-store answers (#3301 review round 2)
 
 ### What changed

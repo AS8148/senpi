@@ -82,6 +82,51 @@ export async function removeProviderAccount(storage: AuthStorage, provider: stri
 	emitProviderAccountsChanged(provider);
 }
 
+/**
+ * Lifts a usage or rate-limit block the user knows is wrong (extra usage bought, a misread reset).
+ * Auth blocks stay: only a login or the re-probe can lift those. Returns whether a block was lifted.
+ */
+export async function unblockProviderAccount(
+	storage: AuthStorage,
+	provider: string,
+	name: string,
+	env: NodeJS.ProcessEnv = process.env,
+): Promise<boolean> {
+	assertManagedProvider(provider);
+	let lifted = false;
+	await storage.modify(provider, async (current) => {
+		const credential = credentialFrom(current);
+		const account = listAccounts(credential, (key) => env[key]).find((candidate) => candidate.name === name);
+		if (!account) throw new Error(`Provider account not found: ${name}`);
+		if (account.blockedUntil === undefined || account.blockReason === "auth_error") return current;
+		lifted = true;
+		const state = credential.slotState?.[name];
+		return {
+			...credential,
+			...(state === undefined
+				? {}
+				: {
+						slotState: {
+							...credential.slotState,
+							[name]: state.modelBlocks ? { modelBlocks: state.modelBlocks } : {},
+						},
+					}),
+			accounts: (credential.accounts ?? []).map((candidate) => {
+				if (candidate.name !== name) return candidate;
+				const {
+					blockedUntil: _blockedUntil,
+					blockReason: _blockReason,
+					blockedAt: _blockedAt,
+					...rest
+				} = candidate;
+				return rest;
+			}),
+		};
+	});
+	if (lifted) emitProviderAccountsChanged(provider);
+	return lifted;
+}
+
 function assertManagedProvider(provider: string): void {
 	if (provider !== ANTHROPIC_SUBSCRIPTION_PROVIDER_ID) {
 		throw new Error(`Provider account management is unavailable for: ${provider}`);
