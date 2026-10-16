@@ -166,3 +166,6 @@ export function buildCustomUnsupportedRequest(
 		extensionName: name,
 	};
 }
+
+/** `verify_api_key` and `keyHint` on `get_auth_providers` rows (desktop #2510). */
+export const AUTH_KEY_VERIFY_CAPABILITY = "auth_key_verify";
