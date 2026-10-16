@@ -213,17 +213,17 @@ export class RetryFallbackController {
 		this.deps.circuits?.close(formatSelector(model));
 	}
 
-	/**
-	 * Records a failure that makes the entry unusable for every session - billing
-	 * or quota exhaustion, or a transient failure that spent its budget or failed a
-	 * half-open probe - independent of whether a fallback candidate remains.
-	 */
 	/** A response this session got from `selector` succeeded: the entry serves it again (senpi#3467). */
 	noteServed(selector: string): void {
 		this.ownFailures.delete(selector);
 		this.probes.accept(selector);
 	}
 
+	/**
+	 * Records a failure that makes the entry unusable for every session - billing
+	 * or quota exhaustion, or a transient failure that spent its budget or failed a
+	 * half-open probe - independent of whether a fallback candidate remains.
+	 */
 	noteHealthFailure(model: Model<Api>, thinkingLevel: ThinkingLevel | undefined, failure: CircuitFailure): void {
 		this.unusable.note(model, failure);
 		if (!this.managedChainKey({ model, thinkingLevel })) return;
