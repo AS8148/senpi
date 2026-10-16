@@ -157,6 +157,8 @@ export interface RpcConnectionOptions {
 		setCapabilities: (connectionId: string | undefined, capabilities: readonly string[]) => void;
 		connectionId: () => string | undefined;
 	};
+	/** Shared hosts dedupe `loaded_surfaces_changed` per connection by inventory digest; absent emits inline. */
+	publishLoadedSurfacesChanged?: (previous: string | undefined, digest: string) => void;
 }
 
 /**
@@ -359,12 +361,16 @@ export function createRpcConnectionHandler(
 
 	const recordLoadedSurfaces = (emitChange: boolean): ReturnType<typeof currentLoadedSurfaces> => {
 		const current = currentLoadedSurfaces();
-		const changed = loadedSurfacesDigest !== undefined && loadedSurfacesDigest !== current.digest;
+		const previous = loadedSurfacesDigest;
+		const changed = previous !== undefined && previous !== current.digest;
 		loadedSurfacesDigest = current.digest;
-		if (emitChange && changed && !suppressLoadedSurfaceEvents) {
-			outputEvent({ type: "loaded_surfaces_changed" });
-		}
+		if (emitChange && changed && !suppressLoadedSurfaceEvents) emitLoadedSurfacesChanged(previous, current.digest);
 		return current;
+	};
+
+	const emitLoadedSurfacesChanged = (previous: string | undefined, digest: string): void => {
+		if (options.publishLoadedSurfacesChanged) options.publishLoadedSurfacesChanged(previous, digest);
+		else outputEvent({ type: "loaded_surfaces_changed" });
 	};
 
 	const requestMcpWireStatus = async (): Promise<void> => {
@@ -713,7 +719,7 @@ export function createRpcConnectionHandler(
 			outputEvent(commandsChanged);
 		}
 		if (!wasSuppressed && previousDigest !== undefined && previousDigest !== loadedSurfacesDigest) {
-			outputEvent({ type: "loaded_surfaces_changed" });
+			emitLoadedSurfacesChanged(previousDigest, loadedSurfacesDigest);
 		}
 	};
 

@@ -21,6 +21,7 @@ import {
 	SESSION_CONTEXT_CAPABILITY,
 	SESSION_HELD_CAPABILITY,
 	SESSION_KIND_CAPABILITY,
+	SESSION_STATUS_CAPABILITY,
 	WARM_CAPABILITY,
 } from "./custom-capability.ts";
 import { EFFECT_LEDGER_CAPABILITY } from "./effect-record.ts";
@@ -70,6 +71,8 @@ export function multiSessionHostCapabilities(options: {
 			UNLOAD_SESSION_CAPABILITY,
 			SESSION_CONTEXT_CAPABILITY,
 			SESSION_KIND_CAPABILITY,
+			// Only a multi-session host sees every session, so only it can stream their status.
+			SESSION_STATUS_CAPABILITY,
 			AUTO_TITLE_PER_SESSION_CAPABILITY,
 			// Only a multi-session host can refuse a duplicate durable id, because only it
 			// sees every live session's identity.

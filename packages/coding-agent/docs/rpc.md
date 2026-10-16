@@ -1115,6 +1115,93 @@ requests (select, confirm, input, and editor) are requester-only; other extensio
 attached connections. To observe a foreign session, open it by its existing
 `sessionPath`; the host attaches that connection during `open_session`.
 
+### Session status stream (`subscribe_sessions`)
+
+A multi-session host advertising the capability `session_status` pushes one `session_status` record per change of every session a subscription matches: opened, running, waiting on a question, compacting, idle, unloaded or closed, plus attachment, model, queue and context changes. A subscription is activity-neutral: it never counts as an attachment, never refreshes a session's idle window, and an `observe: true` request never counts as host activity either.
+
+#### subscribe_sessions
+
+```json
+{"id": "s1", "type": "subscribe_sessions", "sessions": "all", "include_workers": false, "include_context": false, "mirror": "none", "effects": false}
+```
+
+- `sessions`: `"all"` (default), `{ "ids": [...] }` (routing ids, durable session ids or session paths), or `{ "childrenOf": "<durableSessionId>" }` (sessions whose `context.parent_session_id`, or else `context.root_session_id`, equals it).
+- `include_workers`: include `kind: "worker"` sessions; default `true` for `childrenOf`, `false` otherwise.
+- `include_context`: carry each session's published `context` on its records; default `false`.
+- `mirror`: `"none"` (default), `"all"` or an array of record types (`["message_update", "tool_execution_start"]`). The matched sessions' records of those types are also delivered to this connection. Mirroring is an explicit opt-in open to every subscriber of the host (the socket is per user, mode 0600): it is not an attachment and does not keep a session alive. Worker content is mirrored only with `include_workers: true`.
+- `effects`: also deliver `effect_status` receipts of matched sessions; default `true` for `childrenOf`, `false` otherwise. Each `effect_status` is enqueued after the record that caused the transition and shares the subscription's `seq`.
+
+Response:
+
+```json
+{"id": "s1", "type": "response", "command": "subscribe_sessions", "success": true,
+ "data": {"subscriptionId": "sub-1", "seq": 0, "hostGeneration": "0", "hostInstanceId": "<uuid>", "snapshot": [ /* session_status records, seq 0 */ ]}}
+```
+
+The snapshot is the state at subscription time. The response carrying it is the first record of the subscription: a connection that already holds 64 subscriptions is refused with `subscription_limit`, and on the stdio transport the command is refused with `unsupported_transport`. Every later record of the subscription has `seq` strictly one more than the previous one, starting at `seq + 1` behind the response. A reconnect is a new subscription with a fresh snapshot; nothing is replayed. Refusals carry `errorCode: "invalid_subscription"` (or `subscription_limit` / `unsupported_transport`) and `errorData { reason, action }`.
+
+#### unsubscribe_sessions
+
+```json
+{"id": "u1", "type": "unsubscribe_sessions", "subscriptionId": "sub-1"}
+```
+
+Ends a subscription held by the same connection; a closed connection ends its subscriptions. Any other id answers `unknown_subscription` with `errorData { reason, action }`.
+
+#### set_session_context
+
+```json
+{"id": "c1", "type": "set_session_context", "sessionId": "rpc-1", "patch": {"task_status": "running", "run_epoch": 2, "stale_key": null}}
+```
+
+An attached connection patches the context a session publishes (on `list_sessions { include_workers: true }` and on `session_status` for subscribers with `include_context`). Keys match `^[a-z][a-z0-9_]{0,63}$`; values are strings of at most 256 characters, numbers, booleans, or `null` to delete; the patched context is at most 4096 bytes of JSON. The host's own keys (`host_socket`, `host_instance`, `shard_key`, `tree_key`) and the lineage keys (`parent_session_id`, `root_session_id`) are refused with `invalid_session_context` and `errorData { reason, action }`. The session's extensions keep reading the context the session was opened with, and a `childrenOf` subscription matches on that frozen open-time context, so no patch moves a session into or out of a supervisor's children view. The response carries the published `context`; subscribers with `include_context` receive a `session_status` with cause `context`.
+
+A connection without an attachment receives `errorCode: "session_not_attached"` with `errorData.reason: "this connection is not attached to that session"` and `errorData.action: "attach first with open_session { sessionPath }, then patch its context"`.
+
+#### session_status
+
+```json
+{"type": "session_status", "subscriptionId": "sub-1", "seq": 4, "sessionId": "rpc-1", "durableSessionId": "<id>", "sessionPath": "<path>",
+ "kind": "interactive", "cwd": "<cwd>", "status": "idle", "reason": "aborted", "attachments": 3,
+ "model": {"provider": "anthropic", "id": "<model>"}, "thinkingLevel": "high", "pendingQueue": {"steering": 1, "followUp": 0},
+ "lastChange": {"at": "2026-10-12T08:00:00.000Z", "cause": "abort", "by": "client"}}
+```
+
+- `status`: `opening`, `idle`, `running`, `waiting_input` (a question is pending), `compacting`, `unloaded` (the routing handle ended and the session reopens by `sessionPath`; `reason` is `idle`, `unload_session` or `handoff`), or `closed` (`reason` is the `session_closed.reason`). After an abort ends a run, `idle` carries `reason: "aborted"`.
+- `lastChange.cause`: `open`, `prompt`, `agent_end`, `agent_idle`, `abort`, `question`, `compaction`, `set_model`, `queue`, `attach`, `detach`, `replace`, `park`, `close` or `context`; `by` is `client`, `agent` or `host`.
+- `context` is present only with `include_context`. `lastEffect: { effectId, kind, state }` names the session's most recent effect receipt (an input with a `clientMessageId`, an abort, a model or thinking-level switch) and is absent on hosts without the `effect_ledger` capability or before the session's first effect.
+- On `new_session`, `switch_session` or `fork` the routing id stays; the record carries the new `durableSessionId` and `sessionPath` with cause `replace`.
+
+Ordering: a status rides the subscribing connection's own queue and is enqueued AFTER the record that caused it, so a connection that is both attached and subscribed always reads `queue_update` before the `session_status` it caused, and `agent_idle` before the matching `idle`.
+
+Three-client example (A drives, C attaches, B only subscribes):
+
+```text
+B -> subscribe_sessions {}                               <- snapshot [] seq 0
+A -> open_session {cwd}                                  B <- session_opened rpc-1; session_status open (seq 1)
+C -> open_session {sessionPath}                          B <- session_status attach, attachments 2
+A -> set_model {...}                                     B <- session_status set_model
+A -> steer {message}                                     B <- session_status queue, pendingQueue.steering 1
+A -> abort {}                                            B <- session_status abort, idle/aborted
+A -> new_session {}                                      B <- session_status replace, new durableSessionId
+A -> open_session {cwd}                                  B <- session_opened rpc-2; session_status open
+A -> close_session {rpc-1}                               B <- session_status detach, attachments 1
+```
+
+`session_opened { sessionId, durableSessionId, sessionPath, kind, cwd, context? }` is emitted for every session the host creates (not for an attach). An `interactive` session's record is broadcast to every connection, including connections without a subscription. A `worker` session's record reaches its attached connections and matching subscribers with `include_workers`. For both kinds, `context` is included only for matching subscribers with `include_context`; all other recipients receive the record without context.
+
+#### effect_status
+
+```json
+{"type": "effect_status", "subscriptionId": "sub-1", "seq": 5, "sessionId": "rpc-1",
+ "effectId": "stop-1", "kind": "abort", "state": "done", "disposition": "applied",
+ "by": {"connectionId": "A"}, "at": "2026-10-13T08:00:00.000Z"}
+```
+
+On a host with the `effect_ledger` capability, a subscription with `effects: true` receives one `effect_status` per effect transition of every matched session: every `rpc_effect` transition (`abort`, `set_model`, `set_thinking_level`) and every input admission transition (`prompt`/`steer`/`follow_up` with a `clientMessageId`, whose `effectId` IS the `clientMessageId`). `kind` is `input`, `abort`, `set_model`, `set_thinking_level`, `unload` or `dequeue`; `state` is `accepted`, `applied`, `done` or `failed`; `disposition` and `outcome` follow the `get_effect_status` shape. `by` names the connection whose command the effect belongs to (absent on `input` receipts, which carry no actor) and `at` is the transition time.
+
+An `effect_status` is enqueued on the subscribing connection AFTER the record that caused the transition and shares the subscription's gap-free `seq`: a subscriber watching an `abort { effectId }` reads the abort's `session_status` deltas and the effect's `accepted -> applied -> done` as one ordered stream, with `done` landing after the `agent_idle` status that sealed the turn. The causing record is a session event or status delta, never the command's own response: a connection that sends `abort { effectId }` and also subscribes can read the effect's `accepted` (and usually `applied`) before its `abort` response arrives. A host publishes `effect_status` only for sessions it holds; transitions of a session no host holds are not buffered.
+
 ### Client information
 
 Clients may send `set_client_info` with `{ sessionId?, width, capabilities? }`. `capabilities` registers the connection's
@@ -1970,6 +2057,7 @@ Match `errorCode` when present; legacy responses expose machine-matchable
 codes or code prefixes in `error`:
 
 - `unknown_session`
+- `session_not_attached: <reason>` (`set_session_context` from a connection without an attachment; `errorData { reason, action }` tells the caller to attach with `open_session { sessionPath }` first)
 - `eval_cells_unavailable` (the routed session has no eval-cell RPC handler)
 - `eval_cell_not_found` (unknown or foreign-session cell ID)
 - `invalid_eval_cell_request` (malformed eval-cell identifier or tail budget)
@@ -1993,6 +2081,11 @@ codes or code prefixes in `error`:
 - `invalid_path` (relative `sessionPath`/`cwd`)
 - `open_failed: <detail>`. `open_failed: model_unavailable: <reason>` means the open named a model (`provider`/`modelId`) that could not be resolved, for example an unknown provider; the session is not opened, rather than running on the default model. The in-process runtime adds `errorData { reason: "model_unavailable", requestedModel }`; a worker runtime relays the same error text, so match on the prefix
 - `invalid_session_context: <detail>` (`open_session.context` past a documented cap: more than 32 keys, a key that does not match `^[a-z][a-z0-9_]*$`, a non-string or >16 KiB value, or more than 32 KiB of JSON in total; the detail names the cap and its byte budget)
+- `invalid_subscription: <reason>` (`subscribe_sessions` with a malformed `sessions`, `mirror` or flag; `errorData { reason, action }`)
+- `unknown_subscription: <reason>` (`unsubscribe_sessions` naming a subscription this connection does not hold)
+- `subscription_limit: <reason>` (`subscribe_sessions` on a connection that already holds the documented maximum of 64 subscriptions; `errorData { reason, action }`)
+- `unsupported_transport: <reason>` (`subscribe_sessions` or `unsubscribe_sessions` on the stdio transport, which has no per-connection identity to deliver a subscription to; `errorData { reason, action }`)
+- `invalid_session_context: <reason>` from `set_session_context` (a reserved host or lineage key, a bad key or value, or a patched context over 4096 bytes; `errorData { reason, action }`)
 - `invalid_session_kind: <detail>` (`open_session.kind` other than `interactive` or `worker`)
 - `invalid_launch_profile: <detail>` (`open_session.auto_title` present but not a boolean, `open_session.promptSurface` other than `terminal`, `app` or `chat`, `open_session.browserEngine` other than `connected`, `builtin` or `none`, a malformed `open_session.retryFallback`, an empty or non-string `open_session.expectedHostInstance`, or `open_session.provider` without `modelId` or the reverse)
 - `host_memory_pressure` (sent only by hosts released before #2207, which declined to CREATE a `kind: "worker"` session above `SENPI_RPC_HOST_RSS_REFUSE_MB`; `errorData { rssMb, retry_after_ms }` says when to ask again. Current hosts never refuse an open for memory; a client talking to an older generation waits and retries, it never starts a second host or a per-child process)
@@ -3737,7 +3830,8 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 | `host_memory_pressure` | Multi-session host: the memory footprint is above `SENPI_RPC_HOST_RSS_WARN_MB`, with RSS beside it and the live session count |
 | `subscription_limits` | A subscription account reported new limit windows: `{ provider, account, windows, reportedAt }`, the same shape as one `get_subscription_limits` account; every connection hears it once per report |
 | `host_trimmed` | Multi-session host: it collected (at zero sessions, or at 2 GB+ after a session-count drop), with the footprint before and after, the sessions still open and the pause |
-| `session_opened` | Multi-session host: a session was opened on this host (content-free lifecycle record) |
+| `session_opened` | Multi-session host: a session was created on this host (`sessionId`, `durableSessionId`, `sessionPath`, `kind`, `cwd`); a worker's reaches only attached connections and `subscribe_sessions` subscribers with `include_workers` |
+| `session_status` | Multi-session host: a `subscribe_sessions` subscription's per-session status change; see [Session status stream](#session-status-stream-subscribe_sessions) |
 | `session_closed` | Multi-session host: a routing handle ended, with an optional `reason` (`handoff_parked` = a generation handoff put the session back on disk; reopen it by `sessionPath`) |
 | `session_parked` | Multi-session host: a retained session's handle was released while the session itself stays on disk (`{ sessionId, sessionPath }`); reopen it with `open_session { sessionPath }` |
 | `session_replaced` | The live session was swapped by `new_session`, `switch_session` or `fork`, carrying the new `durableSessionId` |
@@ -4282,7 +4376,7 @@ skills continue to use `skill_invocation`.
 
 ### loaded_surfaces_changed
 
-Emitted without a request id when the loaded skill, extension, or MCP inventory changes. The event carries no inventory payload; clients re-read `get_commands` for skills and `get_loaded_surfaces` for extensions/MCP.
+Emitted without a request id when the loaded skill, extension, or MCP inventory changes. A multi-session host sends one per connection per inventory change on either session runtime (in-process or worker isolate), tagged with the first session that reported that transition: sessions moving from the same digest to the same new one share a single event, while a session converging from a different start still announces its own change, because `get_commands` and `get_loaded_surfaces` are read per session. The event carries no inventory payload; clients re-read `get_commands` for skills and `get_loaded_surfaces` for extensions/MCP.
 
 ```json
 {"type": "loaded_surfaces_changed"}
