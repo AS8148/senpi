@@ -31,6 +31,12 @@ class AssistantEventStream extends EventStream<AssistantMessageEvent, AssistantM
 
 const never = <T>(): Promise<T> => new Promise<T>(() => {});
 
+class NeverStartingStream extends AssistantEventStream {
+	override async *[Symbol.asyncIterator](): AsyncIterator<AssistantMessageEvent> {
+		await never<void>();
+	}
+}
+
 async function settledTurn(
 	stream: AsyncIterable<AgentEvent> & { result(): Promise<AgentMessage[]> },
 	ceilingMs = 2_000,
@@ -203,5 +209,91 @@ describe("the start bound covers the work before the provider stream (senpi#3471
 
 		// then
 		expect(assistantOf(await turn)?.stopReason).toBe("aborted");
+	});
+
+	it("reports the configured start bound even when a step before the stream used part of it", async () => {
+		// given: the key lookup takes a while, then the provider never sends a first event
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			streamStartTimeoutMs: 60,
+			timeoutMs: 10_000,
+			getApiKey: () => new Promise<string>((resolve) => setTimeout(() => resolve("key"), 15)),
+		};
+
+		// when
+		const messages = await settledTurn(
+			agentLoop([userMessage("Hello")], context(), config, undefined, () => new NeverStartingStream()),
+		);
+
+		// then
+		expect(assistantOf(messages)?.errorMessage).toContain("Provider stream start timed out after 60ms (");
+	});
+
+	it("leaves no unhandled rejection when the request is already aborted and the transform rejects", async () => {
+		// given
+		const unhandled: unknown[] = [];
+		const onUnhandled = (reason: unknown) => unhandled.push(reason);
+		process.on("unhandledRejection", onUnhandled);
+		const controller = new AbortController();
+		controller.abort();
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			streamStartTimeoutMs: 1_000,
+			timeoutMs: 10_000,
+			transformContext: async (_messages, signal) => {
+				signal?.throwIfAborted();
+				return _messages;
+			},
+		};
+
+		try {
+			// when
+			const messages = await settledTurn(
+				agentLoop([userMessage("Hello")], context(), config, controller.signal, () => new AssistantEventStream()),
+			);
+			await new Promise((resolve) => setImmediate(resolve));
+			await new Promise((resolve) => setImmediate(resolve));
+
+			// then
+			expect(assistantOf(messages)?.stopReason).toBe("aborted");
+			expect(unhandled).toEqual([]);
+		} finally {
+			process.off("unhandledRejection", onUnhandled);
+		}
+	});
+
+	it("closes a stream that the stream function returns after the bound already ended the turn", async () => {
+		// given
+		const late = Promise.withResolvers<AssistantEventStream>();
+		const closed = Promise.withResolvers<void>();
+		class ClosableStream extends AssistantEventStream {
+			override [Symbol.asyncIterator](): AsyncIterator<AssistantMessageEvent> {
+				return {
+					next: () => never<IteratorResult<AssistantMessageEvent>>(),
+					return: async () => {
+						closed.resolve();
+						return { done: true, value: undefined };
+					},
+				};
+			}
+		}
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			streamStartTimeoutMs: 30,
+			timeoutMs: 10_000,
+		};
+
+		// when
+		const messages = await settledTurn(
+			agentLoop([userMessage("Hello")], context(), config, undefined, () => late.promise),
+		);
+		late.resolve(new ClosableStream());
+
+		// then
+		expect(assistantOf(messages)?.errorMessage).toContain("Provider stream start timed out after 30ms");
+		await closed.promise;
 	});
 });

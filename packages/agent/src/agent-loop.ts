@@ -657,6 +657,8 @@ async function streamAssistantResponse(
 						}
 					: {}),
 			}),
+			// A stream that arrives after the bound ended the turn is closed here, not left to the provider.
+			(late) => closeAssistantIterator(late[Symbol.asyncIterator]()),
 		);
 		// Record the requested level, whichever stream function answered.
 		const result = async () => Object.assign(await response.result(), { thinkingLevel: config.reasoning ?? "off" });
@@ -669,6 +671,7 @@ async function streamAssistantResponse(
 			(error) => requestAbortController.abort(error),
 			preStream.remainingStartMs(),
 			response,
+			normalizeTimeoutMs(config.streamStartTimeoutMs),
 		);
 		try {
 			while (true) {
@@ -834,7 +837,10 @@ function createPreStreamBound(
 	startTimeoutMs: number | undefined,
 	idleTimeoutMs: number | undefined,
 	request: AbortController,
-): { run<T>(work: T | Promise<T>): Promise<T>; remainingStartMs(): number | undefined } {
+): {
+	run<T>(work: T | Promise<T>, discardLate?: (value: T) => void): Promise<T>;
+	remainingStartMs(): number | undefined;
+} {
 	const startedAt = Date.now();
 	const remaining = (): number | undefined =>
 		startTimeoutMs === undefined ? idleTimeoutMs : Math.max(0, startTimeoutMs - (Date.now() - startedAt));
@@ -843,17 +849,29 @@ function createPreStreamBound(
 			? new StreamIdleTimeoutError(idleTimeoutMs ?? 0)
 			: new StreamStartTimeoutError(startTimeoutMs);
 	return {
-		run<T>(work: T | Promise<T>): Promise<T> {
+		run<T>(work: T | Promise<T>, discardLate?: (value: T) => void): Promise<T> {
 			const budget = remaining();
 			if (budget === undefined && !request.signal.aborted) return Promise.resolve(work);
 			return new Promise<T>((resolve, reject) => {
 				let timer: ReturnType<typeof setTimeout> | undefined;
+				let settled = false;
 				const finish = (complete: () => void): void => {
+					if (settled) return;
+					settled = true;
 					if (timer !== undefined) clearTimeout(timer);
 					request.signal.removeEventListener("abort", onAbort);
 					complete();
 				};
 				const onAbort = (): void => finish(() => reject(abortError(request.signal.reason)));
+				// Handle the work's outcome first, so work that settles after the turn ended neither goes unhandled
+				// nor leaks: a late value is handed to discardLate, a late rejection is dropped.
+				Promise.resolve(work).then(
+					(value) => {
+						if (settled) discardLate?.(value);
+						finish(() => resolve(value));
+					},
+					(error: unknown) => finish(() => reject(error)),
+				);
 				if (request.signal.aborted) return onAbort();
 				request.signal.addEventListener("abort", onAbort, { once: true });
 				if (budget !== undefined) {
@@ -864,10 +882,6 @@ function createPreStreamBound(
 						request.abort(error);
 					}, budget);
 				}
-				Promise.resolve(work).then(
-					(value) => finish(() => resolve(value)),
-					(error: unknown) => finish(() => reject(error)),
-				);
 			});
 		},
 		// A start bound already spent before the stream answered still ends the first read at once.
@@ -886,9 +900,13 @@ function createAssistantEventReader(
 	onIdleTimeout?: (error: Error) => void,
 	streamStartTimeoutMs?: number,
 	stream?: Pick<AssistantMessageEventStream, "hasPendingLocalWork">,
+	// The bound the error names, when the timer only gets what is left of it (the steps before the stream used
+	// the rest); the error must name the configured bound, which users raise.
+	configuredStartTimeoutMs?: number,
 ): AssistantEventReader {
 	const idleTimeoutMs = normalizeTimeoutMs(timeoutMs);
 	const startTimeoutMs = normalizeTimeoutMs(streamStartTimeoutMs);
+	const reportedStartTimeoutMs = configuredStartTimeoutMs ?? startTimeoutMs;
 	let sawFirstEvent = false;
 	let removeAbortListener: (() => void) | undefined;
 	let abortPromise: Promise<typeof ABORTED> | undefined;
@@ -916,7 +934,7 @@ function createAssistantEventReader(
 			const useStartBound = !sawFirstEvent && startTimeoutMs !== undefined;
 			const readTimeoutMs = useStartBound ? startTimeoutMs : idleTimeoutMs;
 			const makeTimeoutError = useStartBound
-				? (ms: number) => new StreamStartTimeoutError(ms)
+				? (ms: number) => new StreamStartTimeoutError(reportedStartTimeoutMs ?? ms)
 				: (ms: number) => new StreamIdleTimeoutError(ms);
 			const result = await readNextAssistantEvent(
 				iterator,

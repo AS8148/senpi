@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/agent/src/agent-loop.ts`: `streamAssistantResponse` runs the context transform, the API key lookup and the stream function under `createPreStreamBound`: the start bound (or, without one, the idle bound) now starts before them, and a step that does not finish in time ends the turn with `StreamStartTimeoutError` (or `StreamIdleTimeoutError`) and aborts the request, whose signal the transform now receives. The first stream read gets only the rest of the start budget. A caller abort still ends the turn as aborted.
+- `packages/agent/src/agent-loop.ts`: `streamAssistantResponse` runs the context transform, the API key lookup and the stream function under `createPreStreamBound`: the start bound (or, without one, the idle bound) now starts before them, and a step that does not finish in time ends the turn with `StreamStartTimeoutError` (or `StreamIdleTimeoutError`) and aborts the request, whose signal the transform now receives. The first stream read gets only the rest of the start budget, but its timeout error still names the configured bound (which `retry.ts` parses and users raise). A caller abort still ends the turn as aborted; work that settles after the turn ended is handled (no unhandled rejection), and a stream returned after the bound fired is closed.
 
 ### Why
 
