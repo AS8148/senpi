@@ -1,3 +1,21 @@
+## 2026-10-16 - The start bound covers the work before a provider stream (senpi#3471)
+
+### What changed
+
+- `packages/agent/src/agent-loop.ts`: `streamAssistantResponse` runs the context transform, the API key lookup and the stream function under `createPreStreamBound`: the start bound (or, without one, the idle bound) now starts before them, and a step that does not finish in time ends the turn with `StreamStartTimeoutError` (or `StreamIdleTimeoutError`) and aborts the request, whose signal the transform now receives. The first stream read gets only the rest of the start budget, but its timeout error still names the configured bound (which `retry.ts` parses and users raise). A caller abort still ends the turn as aborted; work that settles after the turn ended is handled (no unhandled rejection), and a stream returned after the bound fired is closed.
+
+### Why
+
+- `packages/agent/src/agent-loop.ts`: those three awaits ran before any bound existed, so a key lookup or a provider that never returned a stream left the turn waiting forever on every surface (TUI, desktop, RPC), with no failure to show (omo-desktop-app #2856).
+
+### Why an extension could not handle it
+
+- `packages/agent/src/agent-loop.ts`: the bound and the request it aborts are internal to one provider request in the agent loop; no hook sees that request before its stream starts.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/agent-loop.ts`, the top of `streamAssistantResponse`'s `try` and the start-timeout argument of `createAssistantEventReader`.
+
 ## 2026-10-15 - Remove or replace one queued message by identity (senpi#1971)
 
 ### What changed
