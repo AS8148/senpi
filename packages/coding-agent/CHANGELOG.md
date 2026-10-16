@@ -6,6 +6,8 @@
 
 ### Added
 
+- `RpcClient.abort(options)` sends a typed abort (`effectId`, `awaitIdle`, `clearQueue`, `graceMs`) and returns the host's answer (`stopped`, `idle`, `cleared`, receipt); `RpcClient.getEffectStatus(effectId, { sessionPath? })` reads an effect receipt. `abort()` without options is unchanged ([#3453](https://github.com/code-yeongyu/senpi/issues/3453)).
+
 ### Changed
 
 ### Fixed
