@@ -2842,3 +2842,21 @@ The editor theme is built by the interactive mode itself; extensions cannot inje
 ### Expected merge conflict zones
 
 - LOW: `getEditorTheme()` in `theme.ts` and the editor theme object in `GrokChrome`.
+
+## 2026-10-16 - /login says when it replaced a login of the other kind (#3448)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `loginProvider` takes the store's pending replacement after a login and shows `describeCredentialReplacement` as a warning: which login was replaced, where its backup is, and how to switch back.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: a `/login` of the other kind replaces the stored credential; the user must be told, never left with a silent deletion (#3486 review).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` owns the login dialog flow.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the end of `loginProvider` and its imports.

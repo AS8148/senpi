@@ -77,11 +77,32 @@ describe("an API key saved over an OAuth login (senpi#3448)", () => {
 		await handler.dispose();
 	});
 
-	it("repairs a mixed pool written by the old behavior on load, keeping the most recent login", () => {
+	it("an interactive /login of the other kind keeps the previous credential recoverable and says so (#3486 review)", async () => {
+		const harness = makeHarness(tempDir);
+		cleanup = harness.cleanup;
+		harness.authStorage.set("openrouter", oauth);
+
+		await harness.runtimeHost.session.modelRuntime.login("openrouter", "api_key", {
+			signal: new AbortController().signal,
+			prompt: async () => "sk-typed-in-tui",
+			notify: () => {},
+		});
+
+		// Then the new key is used, the OAuth login is in a backup, and the replacement is reported once
+		expect(await harness.authStorage.read("openrouter")).toEqual({ type: "api_key", key: "sk-typed-in-tui" });
+		const replacement = harness.authStorage.takeReplacement("openrouter");
+		expect(replacement?.replaced).toBe("oauth");
+		expect(replacement?.backupPath).toBeDefined();
+		const backup = JSON.parse(readFileSync(replacement?.backupPath ?? "", "utf-8")) as Record<string, unknown>;
+		expect(backup.openrouter).toEqual(oauth);
+		expect(harness.authStorage.takeReplacement("openrouter")).toBeUndefined();
+	});
+
+	it("never switches a mixed pool's billing credential on load; it reports the unused key instead (#3486 review)", () => {
 		const authPath = join(tempDir, "agent", "auth.json");
 		mkdirSync(dirname(authPath), { recursive: true });
 		const mixed = {
-			anthropic: {
+			openrouter: {
 				...oauth,
 				accounts: [
 					{
@@ -98,10 +119,11 @@ describe("an API key saved over an OAuth login (senpi#3448)", () => {
 		writeFileSync(authPath, JSON.stringify(mixed));
 
 		const storage = AuthStorage.create(authPath);
-		expect(storage.get("anthropic")).toEqual({ type: "api_key", key: "sk-saved-later" });
-		expect(JSON.parse(readFileSync(authPath, "utf-8")).anthropic).toEqual({ type: "api_key", key: "sk-saved-later" });
-		expect(
-			backups(authPath).some((backup) => JSON.stringify(backup.anthropic) === JSON.stringify(mixed.anthropic)),
-		).toBe(true);
+
+		// Then the OAuth login that pays today stays in use, nothing is deleted, and the user is told what to do
+		expect(storage.get("openrouter")?.type).toBe("oauth");
+		expect(JSON.parse(readFileSync(authPath, "utf-8"))).toEqual(mixed);
+		const notices = storage.drainErrors().map((error) => error.message);
+		expect(notices.some((message) => message.includes("openrouter") && message.includes("/login"))).toBe(true);
 	});
 });

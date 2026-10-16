@@ -14,7 +14,7 @@
 
 ### Fixed
 
-- Saving an API key for a provider that already holds an OAuth login now replaces that login (backed up first) instead of storing a key that is never used; `login_api_key` answers `data.replaced`, each login row reads its status from the logins actually stored, and a mixed pool written by older builds is repaired on load ([#3448](https://github.com/code-yeongyu/senpi/issues/3448))
+- Saving a login of the other kind (an API key over an OAuth login, or the reverse) now replaces the stored credential instead of storing one that is never used; the previous credential is backed up first and the replacement is reported (`login_api_key` answers `data.replaced`/`data.backupPath`; `/login` shows a warning). A mixed credential written by older releases is left in use as it is and reported with the `/login` step that switches it; loading never changes which credential bills ([#3448](https://github.com/code-yeongyu/senpi/issues/3448))
 
 - A session with the Full access preset no longer asks "Trust project folder?": it trusts its project for that session without saving the decision (a saved "do not trust" still wins). Home and the folders above it no longer count as project folders, so opening home as a project doesn't ask to trust your own global config. ([#3420](https://github.com/code-yeongyu/senpi/pull/3420))
 

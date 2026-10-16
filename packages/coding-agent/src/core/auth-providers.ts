@@ -8,7 +8,6 @@
  * oauth/api_key classification, same status source.
  */
 
-import { credentialKinds } from "@earendil-works/pi-ai/auth/pool/kinds";
 import { getProviders } from "@earendil-works/pi-ai/compat";
 import type { ModelRegistry } from "./model-registry.ts";
 import type { AuthStatus } from "./provider-composer.ts";
@@ -118,9 +117,8 @@ export function authMethodStatus(
 	const status = modelRegistry.getProviderAuthStatus(info.id);
 	if (!status.configured) return status;
 	if (status.source === "stored") {
-		// The row of each kind the stored credential actually holds (senpi#3448).
-		const stored = modelRegistry.authStorage.get(info.id);
-		return stored === undefined || credentialKinds(stored).has(info.authType) ? status : { configured: false };
+		const storedType = modelRegistry.authStorage.get(info.id)?.type;
+		return storedType === undefined || storedType === info.authType ? status : { configured: false };
 	}
 	return info.authType === "api_key" || !providerHasApiKeyRow ? status : { configured: false };
 }

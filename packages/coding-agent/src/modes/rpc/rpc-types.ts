@@ -1289,8 +1289,8 @@ export type RpcResponse =
 			type: "response";
 			command: "login_api_key";
 			success: true;
-			/** Present when the key replaced a login of the other kind (senpi#3448). */
-			data?: { replaced: "oauth" | "api_key" };
+			/** Present when the key replaced a login of the other kind; `backupPath` holds the previous file (senpi#3448). */
+			data?: { replaced: "oauth" | "api_key"; backupPath?: string };
 	  }
 	| { id?: string; type: "response"; command: "logout"; success: true }
 	| {

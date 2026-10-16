@@ -45,8 +45,8 @@ Exchange classification and credential resolution happen before provider request
 
 ### What changed
 
-- `packages/ai/src/auth/pool/slots.ts`: `appendLoginSlot` replaces a stored credential of the other kind instead of appending the login as a slot.
-- `packages/ai/src/auth/pool/kinds.ts` (new): `slotKind`, `credentialKinds`, and `repairMixedKindPool`, which reduces a mixed pool to its most recent login's kind.
+- `packages/ai/src/auth/pool/slots.ts`: `appendLoginSlot` replaces a stored credential of the other kind instead of appending the login as a slot; the store backs up what it replaces.
+- `packages/ai/src/auth/pool/kinds.ts` (new): `slotKind` (only from a slot's own material; a slot with neither tokens nor a key is unclassified) and `unusedSlotKinds`, which names the other-kind slots of a mixed pool so the store can report them.
 
 ### Why
 

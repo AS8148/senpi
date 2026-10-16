@@ -10584,23 +10584,20 @@ It serves core RPC auth commands.
 
 None (fork-only file).
 
-## 2026-10-16 - A login of the other kind replaces the credential (#3448)
+## 2026-10-16 - A login of the other kind replaces the credential, recoverably (#3448)
 
 ### What changed
 
-- `packages/coding-agent/src/core/auth-storage.ts`: `set` returns `{ replaced }` and backs up the file first when a login of the other kind replaces the provider's credential; loading repairs a mixed-kind pool written by older builds (after the Anthropic move, so its grants are recorded first), backing it up like a migration.
-- `packages/coding-agent/src/core/auth-providers.ts`: `authMethodStatus` lights a row for each kind the stored credential holds (`credentialKinds`) instead of comparing one stored type.
+- `packages/coding-agent/src/core/auth-storage.ts`: when a login of the other kind replaces a provider's credential, `set` and `modify` (the interactive `/login` path) first back up auth.json, then record `{ replaced, backupPath }`; `set` returns it and `takeReplacement(provider)` hands it to the caller once. `describeCredentialReplacement` words the notice. Loading never rewrites a mixed-kind pool written by older builds: the credential that pays stays in use, and one notice per provider names the unused login and the `/login` step that switches to it.
 
 ### Why
 
-- `packages/coding-agent/src/core/auth-storage.ts`: an API key saved over an OAuth login was appended as a slot the pool could never project, so it was never used, and `login_api_key` still answered success (omo-desktop-app#2793).
-- `packages/coding-agent/src/core/auth-providers.ts`: a row's status must come from the logins actually stored.
+- `packages/coding-agent/src/core/auth-storage.ts`: an API key saved over an OAuth login was appended as a slot the pool could never project, so it was never used and `login_api_key` still answered success (omo-desktop-app#2793). The fix must never delete a credential silently or switch which credential bills without the user's action (#3486 review).
 
 ### Why an extension could not handle it
 
-- `packages/coding-agent/src/core/auth-storage.ts` and `packages/coding-agent/src/core/auth-providers.ts` own the credential store and the per-row status every client reads.
+- `packages/coding-agent/src/core/auth-storage.ts` owns the credential store every login and load goes through.
 
 ### Expected merge conflict zones
 
-- `packages/coding-agent/src/core/auth-storage.ts`: `set`, `parseStorageContent`, the repair helpers next to `repairPoisonedPoolSlots`.
-- `packages/coding-agent/src/core/auth-providers.ts`: the stored branch of `authMethodStatus`.
+- `packages/coding-agent/src/core/auth-storage.ts`: `set`, `modify`, `takeReplacement`/`noteReplacement`, `parseStorageContent`, and the notice helpers after `repairPoisonedPoolSlots`.

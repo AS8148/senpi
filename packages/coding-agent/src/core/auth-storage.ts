@@ -17,7 +17,7 @@ import type {
 	OAuthLoginCallbacks,
 } from "@earendil-works/pi-ai";
 import { findEnvKeys, getEnvApiKey, readByProviderId } from "@earendil-works/pi-ai";
-import { type CredentialKind, repairMixedKindPool } from "@earendil-works/pi-ai/auth/pool/kinds";
+import { type CredentialKind, unusedSlotKinds } from "@earendil-works/pi-ai/auth/pool/kinds";
 import {
 	appendLoginSlot,
 	type CredentialSlot,
@@ -58,18 +58,6 @@ type AuthStorageData = Record<string, Credential>;
  * so it is dropped the moment auth.json is read and the repair is written back
  * once by the mutable store.
  */
-function repairMixedKindPools(data: AuthStorageData): { data: AuthStorageData; repaired: boolean } {
-	let next: AuthStorageData | undefined;
-	for (const [providerId, credential] of Object.entries(data)) {
-		if (typeof credential !== "object" || credential === null) continue;
-		const repair = repairMixedKindPool(credential);
-		if (!repair) continue;
-		next ??= { ...data };
-		next[providerId] = repair.credential;
-	}
-	return next ? { data: next, repaired: true } : { data, repaired: false };
-}
-
 function repairPoisonedPoolSlots(data: AuthStorageData): { data: AuthStorageData; repaired: boolean } {
 	let repaired: AuthStorageData | undefined;
 	for (const [providerId, credential] of Object.entries(data)) {
@@ -80,6 +68,35 @@ function repairPoisonedPoolSlots(data: AuthStorageData): { data: AuthStorageData
 		repaired[providerId] = healed;
 	}
 	return repaired ? { data: repaired, repaired: true } : { data, repaired: false };
+}
+
+const KIND_LABEL: Readonly<Record<CredentialKind, string>> = { oauth: "OAuth login", api_key: "API key" };
+
+/**
+ * One notice per provider whose stored credential holds slots its type cannot use (senpi#3448).
+ * Nothing is changed: which credential pays stays the user's choice, so the notice names the
+ * unused login and the action that switches to it.
+ */
+function unusedLoginNotices(data: AuthStorageData): Array<{ provider: string; message: string }> {
+	const notices: Array<{ provider: string; message: string }> = [];
+	for (const [provider, credential] of Object.entries(data)) {
+		if (typeof credential !== "object" || credential === null) continue;
+		for (const kind of unusedSlotKinds(credential)) {
+			notices.push({
+				provider,
+				message: `${provider}: an ${KIND_LABEL[kind]} saved earlier is stored next to your ${KIND_LABEL[credential.type]} but is never used; the ${KIND_LABEL[credential.type]} stays in use. To switch to the ${KIND_LABEL[kind]}, save it again with /login (the ${KIND_LABEL[credential.type]} is backed up first).`,
+			});
+		}
+	}
+	return notices;
+}
+
+export type CredentialReplacement = { readonly replaced: CredentialKind; readonly backupPath?: string };
+
+/** What a login that replaced a credential of the other kind tells the user (senpi#3448, #3486). */
+export function describeCredentialReplacement(provider: string, replacement: CredentialReplacement): string {
+	const where = replacement.backupPath ? ` It is saved in ${replacement.backupPath}` : " It was not backed up";
+	return `Your ${KIND_LABEL[replacement.replaced]} for ${provider} was replaced by this login.${where}; to switch back, log in with it again.`;
 }
 
 export type AuthCredential = Credential;
@@ -447,6 +464,8 @@ export class AuthStorage implements CredentialStore {
 	private readonly extensionOAuthProviders = new Map<string, OAuthAuth>();
 	private errors: Error[] = [];
 	private readonly reportedMigrationSkips = new Set<string>();
+	private readonly reportedUnusedLogins = new Set<string>();
+	private readonly replacements = new Map<string, CredentialReplacement>();
 	private storage: AuthStorageBackend;
 	private authPath: string | undefined;
 	private readState: AuthFileReadState;
@@ -528,13 +547,15 @@ export class AuthStorage implements CredentialStore {
 				),
 			);
 		}
-		// After the Anthropic move, so a grant it copies is recorded before the pool is reduced (senpi#3448).
-		const unmixed = repairMixedKindPools(moved.data);
+		for (const notice of unusedLoginNotices(moved.data)) {
+			if (this.reportedUnusedLogins.has(notice.provider)) continue;
+			this.reportedUnusedLogins.add(notice.provider);
+			this.recordError(new Error(notice.message));
+		}
 		return {
-			data: unmixed.data,
+			data: moved.data,
 			repaired: repaired.repaired,
-			// A mixed pool loses the other kind's slots, so it is backed up like a migration.
-			migrated: migrated.migrated || moved.migrated || unmixed.repaired,
+			migrated: migrated.migrated || moved.migrated,
 		};
 	}
 
@@ -548,14 +569,15 @@ export class AuthStorage implements CredentialStore {
 	 * re-run after a crash between backup and rewrite writes another backup;
 	 * the loop suffix keeps same-millisecond names from overwriting each other.
 	 */
-	private backupAuthFile(content: string | undefined): void {
-		if (!this.authPath || content === undefined) return;
+	private backupAuthFile(content: string | undefined): string | undefined {
+		if (!this.authPath || content === undefined) return undefined;
 		const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 		let backupPath = `${this.authPath}.backup-${stamp}`;
 		for (let attempt = 1; existsSync(backupPath); attempt++) {
 			backupPath = `${this.authPath}.backup-${stamp}-${attempt}`;
 		}
 		writeFileSync(backupPath, content, AUTH_FILE_WRITE_OPTIONS);
+		return backupPath;
 	}
 
 	private updateReadState(data: AuthStorageData, revision?: string): void {
@@ -643,19 +665,40 @@ export class AuthStorage implements CredentialStore {
 
 	/**
 	 * Stores a login. A login of the other kind replaces the provider's credential (senpi#3448); the
-	 * replaced bytes are backed up first and the kind it replaced is returned, so callers can say so.
+	 * previous bytes are backed up first, and the replacement is returned and kept for
+	 * `takeReplacement`, so no credential disappears without the user being told where it went.
 	 */
-	set(provider: string, credential: Credential): { replaced?: CredentialKind } {
+	set(provider: string, credential: Credential): CredentialReplacement | Record<string, never> {
 		return this.storage.withLock((content) => {
 			const currentData = this.parseStorageData(content);
-			const current = currentData[provider];
-			const replaced = current !== undefined && current.type !== credential.type ? current.type : undefined;
-			if (replaced) this.backupAuthFile(content);
-			const next = appendLoginSlot(current, credential);
+			const replacement = this.noteReplacement(provider, currentData[provider], credential, content);
+			const next = appendLoginSlot(currentData[provider], credential);
 			const nextData = { ...currentData, [provider]: next };
 			this.data = nextData;
-			return { result: replaced ? { replaced } : {}, next: JSON.stringify(nextData, null, 2) };
+			return { result: replacement ?? {}, next: JSON.stringify(nextData, null, 2) };
 		});
+	}
+
+	/** The last replacement a login made for this provider, once; the caller shows it to the user. */
+	takeReplacement(provider: string): CredentialReplacement | undefined {
+		const replacement = this.replacements.get(provider);
+		this.replacements.delete(provider);
+		return replacement;
+	}
+
+	private noteReplacement(
+		provider: string,
+		previous: Credential | undefined,
+		next: Credential,
+		content: string | undefined,
+	): CredentialReplacement | undefined {
+		if (previous === undefined || previous.type === next.type) return undefined;
+		const backupPath = this.backupAuthFile(content);
+		const replacement: CredentialReplacement = backupPath
+			? { replaced: previous.type, backupPath }
+			: { replaced: previous.type };
+		this.replacements.set(provider, replacement);
+		return replacement;
 	}
 
 	remove(provider: string): void {
@@ -811,6 +854,7 @@ export class AuthStorage implements CredentialStore {
 				return { result: currentData[provider] };
 			}
 
+			this.noteReplacement(provider, currentData[provider], next, content);
 			const merged: AuthStorageData = { ...currentData, [provider]: next };
 			latestData = merged;
 			return { result: next, next: JSON.stringify(merged, null, 2) };

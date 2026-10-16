@@ -80,6 +80,7 @@ import {
 import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.ts";
 import { formatNoModelsAvailableMessage } from "../../core/auth-guidance.ts";
 import { isApiKeyLoginProvider } from "../../core/auth-providers.ts";
+import { describeCredentialReplacement } from "../../core/auth-storage.ts";
 import { markModeCrashHandler } from "../../core/bootstrap-crash-listeners.ts";
 import { envValue } from "../../core/brand.ts";
 import {
@@ -9368,6 +9369,9 @@ export class InteractiveMode {
 			},
 			{ getDeviceId: () => this.settingsManager.getOrCreateDeviceId() },
 		);
+		// A login of the other kind replaced the stored one: say where it went (senpi#3448).
+		const replacement = this.session.modelRegistry.authStorage.takeReplacement(providerId);
+		if (replacement) this.showWarning(describeCredentialReplacement(providerId, replacement));
 	}
 
 	private async showLoginDialog(providerId: string, providerName: string): Promise<void> {

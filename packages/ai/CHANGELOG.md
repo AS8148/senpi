@@ -10,7 +10,7 @@
 
 ### Fixed
 
-- `appendLoginSlot` replaces a credential of the other kind instead of adding an unusable slot; new `auth/pool/kinds` helpers report and repair the kinds a credential holds ([#3448](https://github.com/code-yeongyu/senpi/issues/3448))
+- `appendLoginSlot` replaces a credential of the other kind instead of adding an unusable slot; new `auth/pool/kinds` helpers classify slots and report the unused kinds of a mixed credential ([#3448](https://github.com/code-yeongyu/senpi/issues/3448))
 
 ### Removed
 
