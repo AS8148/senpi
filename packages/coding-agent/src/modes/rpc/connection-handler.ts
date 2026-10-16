@@ -887,7 +887,17 @@ export function createRpcConnectionHandler(
 					// it for `get_state` because the getter clears once the turn settles.
 					const abortSource = session.currentAbortSource;
 					if (abortSource !== undefined) lastAbortSource = abortSource;
-					correlatedEvents.accept(abortSource === undefined ? event : { ...event, aborted: true, abortSource });
+					const abortedBy = abortSource === undefined ? undefined : ClientAdmissions.forSession(session).abortedBy;
+					correlatedEvents.accept(
+						abortSource === undefined
+							? event
+							: { ...event, aborted: true, abortSource, ...(abortedBy === undefined ? {} : { abortedBy }) },
+					);
+					return;
+				}
+				if (event.type === "session_abort") {
+					const abortedBy = ClientAdmissions.forSession(session).abortedBy;
+					correlatedEvents.accept(abortedBy === undefined ? event : { ...event, abortedBy });
 					return;
 				}
 				correlatedEvents.accept(event);
@@ -1080,12 +1090,12 @@ export function createRpcConnectionHandler(
 			}
 
 			case "abort":
-				return runAbort(effectContext(), command, () => {
-					void session.abort().catch((cause: unknown) => {
-						// Abort is acknowledged once dispatched; report quiesce failures out of band.
+				return runAbort(effectContext(), command, () =>
+					session.abort().catch((cause: unknown) => {
+						// Report quiesce failures out of band; the answer never waits on them.
 						outputEvent({ type: "rpc_error", error: String(cause) });
-					});
-				});
+					}),
+				);
 
 			case "interrupt":
 				return success(

@@ -34,6 +34,9 @@ type AdmissionHooks = {
 const sessions = new WeakMap<AgentSession, ClientAdmissions>();
 
 /** One ledger per runtime; the transcript, not an attachment or request id, owns its history. */
+/** The client (and abort effect) an `abortedBy` names. */
+export type ClientAbort = { readonly connectionId: string; readonly effectId?: string };
+
 export class ClientAdmissions {
 	private readonly records = new Map<string, ClientAdmissionRecord>();
 	private readonly pending = new Map<
@@ -45,6 +48,7 @@ export class ClientAdmissions {
 	private turnOutcome: EffectOutcome | undefined;
 	/** The client whose `abort` reached the current turn, for `outcome.abortedBy`. */
 	private turnAbortedBy: EffectActor | undefined;
+	private lastAbort: ClientAbort | undefined;
 	private readonly session: AgentSession;
 	private readonly durableSessionId: string;
 	private readonly unsubscribeAgent: () => void;
@@ -86,12 +90,16 @@ export class ClientAdmissions {
 		});
 		this.unsubscribeSession = session.subscribe((event) => {
 			if (this.restoring || this.durableSessionId !== session.sessionManager.getSessionId()) return;
-			if (event.type === "agent_end") {
+			if (event.type === "agent_start") {
+				// A new turn: an abort noted before it belongs to nothing this turn will report.
+				this.lastAbort = undefined;
+			} else if (event.type === "agent_end") {
 				if (!event.willRetry) this.turnOutcome = this.endOutcome(event.messages);
 			} else if (event.type === "agent_idle") {
 				const outcome = this.turnOutcome ?? { kind: "completed" as const };
 				this.turnOutcome = undefined;
 				this.turnAbortedBy = undefined;
+				this.lastAbort = undefined;
 				for (const record of this.records.values()) {
 					if (record.state === "running") this.save({ ...record, state: "completed", outcome });
 				}
@@ -153,8 +161,42 @@ export class ClientAdmissions {
 	}
 
 	/** Remember who aborted the running turn; the turn's receipts name them once it ends. */
-	noteAbort(by: EffectActor): void {
+	/** Record who aborted; the returned record is the token `forgetAbort` takes. */
+	noteAbort(by: EffectActor, effectId?: string): ClientAbort {
 		if (this.session.isStreaming) this.turnAbortedBy = by;
+		const abort: ClientAbort = { connectionId: by.connectionId, ...(effectId === undefined ? {} : { effectId }) };
+		this.lastAbort = abort;
+		return abort;
+	}
+
+	/** The client (and abort effect) that aborted the current turn, for `agent_end`/`session_abort.abortedBy`. */
+	get abortedBy(): { readonly connectionId: string; readonly effectId?: string } | undefined {
+		return this.lastAbort;
+	}
+
+	/**
+	 * A client abort that reached no turn has settled: it must not name a later, unrelated abort.
+	 * Only that abort is forgotten; a newer one recorded meanwhile stays.
+	 */
+	forgetAbort(abort: ClientAbort): void {
+		if (this.lastAbort === abort) this.lastAbort = undefined;
+	}
+
+	/**
+	 * `abort { clearQueue }` is about to drain the queues: give every still-queued input an honest
+	 * `cleared_by_abort` receipt first, so the drain's `queue_update` cannot read it as delivered.
+	 */
+	clearQueuedByAbort(): void {
+		if (this.durableSessionId !== this.session.sessionManager.getSessionId()) return;
+		for (const record of [...this.records.values()]) {
+			if (record.state !== "queued") continue;
+			this.save({
+				...record,
+				state: "completed",
+				prepared: undefined,
+				outcome: EFFECT_OUTCOMES.inputClearedByAbort,
+			});
+		}
 	}
 
 	/**

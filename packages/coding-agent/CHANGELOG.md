@@ -6,14 +6,18 @@
 
 ### Added
 
+- `subscribe_sessions` gains `effects` (default on for `childrenOf`): matched sessions stream `effect_status` receipts (`accepted`/`applied`/`done`/`failed`) on the subscription's gap-free `seq`, each emitted after the record that caused the transition, and `session_status.lastEffect` names a session's latest receipt ([#3157](https://github.com/code-yeongyu/senpi/issues/3157)).
+
 - Multi-session RPC hosts stream session status: `subscribe_sessions` returns a snapshot, then a `session_status` record (status, attachments, model, queue counts, cause) per change with a gap-free per-subscription `seq`, without attaching or refreshing the idle window. Filters cover all sessions, ids or `childrenOf`; `include_workers`, `include_context` and an opt-in `mirror` of content kinds are available. `session_opened` is now emitted for every new session, `set_session_context` patches a session's published context, and a connection attached to several sessions hears one `loaded_surfaces_changed` per surface change. Each subscription's snapshot answer arrives before its first `seq 1` record, subscriptions are capped at 64 per connection (`subscription_limit`), `childrenOf` matches the lineage frozen at open (`set_session_context` refuses `parent_session_id` and `root_session_id`), a rolled-back open leaves subscribers a terminal record, and stdio hosts refuse subscriptions with `unsupported_transport` ([#3157](https://github.com/code-yeongyu/senpi/issues/3157), [#3155](https://github.com/code-yeongyu/senpi/issues/3155)).
 
-- `subscribe_sessions` gains `effects` (default on for `childrenOf`): matched sessions stream `effect_status` receipts (`accepted`/`applied`/`done`/`failed`) on the subscription's gap-free `seq`, each emitted after the record that caused the transition, and `session_status.lastEffect` names a session's latest receipt ([#3157](https://github.com/code-yeongyu/senpi/issues/3157)).
+- RPC `abort` takes `awaitIdle` (answer once the turn stopped, or `stopped: false` after `graceMs`, default 10 s, max 60 s), `clearQueue` (drain queued input first; each drained input gets a `cleared_by_abort` receipt) and reports `cleared`; aborted `agent_end` and `session_abort` carry `abortedBy: { connectionId, effectId? }` ([#3156](https://github.com/code-yeongyu/senpi/issues/3156)).
 
 - `agent_end` carries `failure: { category, provider, httpStatus?, code?, reason, action }` when a turn ends with a provider error, built only from the structured provider diagnostic (never from message text); every category, `unknown` included, has a reason and an action, and the TUI shows them as one line. Absent on success and abort ([#3228](https://github.com/code-yeongyu/senpi/issues/3228)).
 ### Changed
 
 ### Fixed
+
+- `show_html_page` no longer fails a report with screenshots with only "html: must not have more than 512000 characters". The refusal now counts the base64 images that pushed the page over the limit and says to pass them as absolute file paths, which the tool inlines itself after the check. The tool description and guideline say the same up front ([#3418](https://github.com/code-yeongyu/senpi/issues/3418), reported by @devswha).
 
 ### Removed
 

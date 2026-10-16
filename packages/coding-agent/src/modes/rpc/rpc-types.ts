@@ -98,7 +98,17 @@ type RpcSessionCommand =
 	 * `effectId` (1-256 chars, capability `effect_ledger`) records the abort as a durable effect BEFORE it is
 	 * dispatched and makes a retry with the same id a replay; without it the abort behaves exactly as before.
 	 */
-	| { id?: string; type: "abort"; effectId?: string }
+	| {
+			id?: string;
+			type: "abort";
+			effectId?: string;
+			/** Answer only once the session is idle (or `graceMs` passed); the answer says which. */
+			awaitIdle?: boolean;
+			/** Drain the steering and follow-up queues atomically before the abort. */
+			clearQueue?: boolean;
+			/** How long `awaitIdle` waits, 0..60000 ms; default 10000. */
+			graceMs?: number;
+	  }
 	| { id?: string; type: "interrupt"; turnId?: string }
 	| { id?: string; type: "abort_compaction" }
 	| { id?: string; type: "reload" }
@@ -291,6 +301,8 @@ export const RPC_ERROR_SESSION_RESERVATION_LIMIT = "session_reservation_limit";
 export const RPC_ERROR_MISSING_SESSION_ID = "missing_session_id";
 export const RPC_ERROR_MULTI_SESSION_DISABLED = "multi_session_disabled";
 export const RPC_ERROR_INVALID_PATH = "invalid_path";
+/** A command field outside its documented range; `errorData` carries `reason` and `action`. */
+export const RPC_ERROR_INVALID_ARGUMENT = "invalid_argument";
 export const RPC_ERROR_OPEN_FAILED = "open_failed";
 export const RPC_ERROR_OWNER_CHANGED = "owner_changed";
 export const RPC_ERROR_SESSION_NOT_HELD = "session_not_held";
@@ -423,6 +435,17 @@ export type RpcErrorCode =
 	| typeof RPC_ERROR_RELEASE_UNSUPPORTED
 	| typeof RPC_ERROR_RELEASE_FAILED
 	| typeof RPC_ERROR_HOST_DRAINING;
+
+/** `abort` with `awaitIdle` or `clearQueue`: whether the turn stopped and what was cleared. */
+export interface RpcAbortQuiesce {
+	/** The aborted turn ended within `graceMs` (with `clearQueue` alone: no turn was running). */
+	stopped: boolean;
+	/** The session was idle when the answer was sent. Equal to `stopped` today; kept separate so a later
+	 * host can report a stopped turn whose session immediately started queued work. */
+	idle: boolean;
+	/** Queued inputs `clearQueue` removed (0 when not requested). */
+	cleared: number;
+}
 
 /** Capability: `steer`/`follow_up` accept `whenIdle: "start"`. */
 export const STEER_WHEN_IDLE_CAPABILITY = "steer_when_idle";
@@ -996,7 +1019,13 @@ export type RpcResponse =
 			success: true;
 			data?: ClientMessageIdentity & { disposition?: QueuedInputDisposition; admission?: ClientMessageAdmission };
 	  }
-	| { id?: string; type: "response"; command: "abort"; success: true; data?: RpcEffectAnswer }
+	| {
+			id?: string;
+			type: "response";
+			command: "abort";
+			success: true;
+			data?: RpcEffectAnswer | (Partial<RpcEffectAnswer> & RpcAbortQuiesce);
+	  }
 	| {
 			id?: string;
 			type: "response";
