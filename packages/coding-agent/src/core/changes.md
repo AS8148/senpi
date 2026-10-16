@@ -28,6 +28,27 @@ Project trust is decided before extensions load, and it decides whether project 
 
 `../main.ts` (`createServices`'s trust block), `trust-manager.ts` (`hasTrustRequiringProjectResources`, `projectAgentsSkillDirs`), `package-manager.ts` (`collectAncestorAgentsSkillDirs`), `agent-session.ts` (`applyProjectTrustChange`, the trust-epoch loop before `_buildRuntime`, the prompt-start and session-start flag clears), `agent-session-runtime.ts` (`setPermissionPreset`, `apply()`, `diagnostics`), `settings-manager.ts` (`SettingsManagerCreateOptions`, `setProjectTrusted`).
 
+## 2026-10-14 - Turn inactivity lease and hard max runtime end a stuck turn (senpi#3227)
+
+### What changed
+
+- `packages/coding-agent/src/core/turn-deadline.ts` (new): the turn-deadline contract — `turn_inactivity_ms` (default 3_600_000, min 60_000, `0` disables) and `turn_max_runtime_ms` (default 21_600_000, `0` disables), the 10 s terminalization grace, the durable `deadline-stop` session entry, `deadlineStopPendingSinceLastTurn` (the goal-engine hold, read from the branch so it survives reload and reopen and is released only by a user message), and `AgentDeadlineTracker`.
+- `packages/coding-agent/src/core/agent-session.ts`: `AgentDeadlineTracker` arms the lease and the hard cap at prompt accept, renews the lease only on `tool_execution_start/update/end` (never on text deltas or heartbeats), clears the hold on admitted user input, and disarms at `agent_idle`. On expiry it records the `deadline-stop` entry, then ends the turn through the normal system-abort path with `aborted`, `abortSource: "system"` and the additive `deadline` field on `agent_end`, keeping partial text; `agent_idle` comes from the normal settle path. The abort signal reaches every running tool (the bash tool kills its process tree on it); a turn still running 10 s after the abort is held by something no abort ends (an extension handler that never returns) and is logged (`turn_deadline_unsettled`), never faked idle. A provider retry renews the inactivity lease; the max-runtime cap applies through retries, and input steered into a live run never resets it. A failed stop-entry write is logged (`turn_deadline_record_failed`) and the turn is still stopped.
+- `packages/coding-agent/src/core/settings-shapes.ts`, `packages/coding-agent/src/core/settings-manager.ts`: the two `turn_inactivity_ms` / `turn_max_runtime_ms` settings with the spec defaults and `0`-disables semantics.
+
+### Why
+
+Nothing ended a turn that stopped making progress; a provider that streams nothing or a tool that hangs without output kept the turn running until someone killed it.
+
+### Why an extension could not handle it
+
+The lease owns the abort path and the settings shape itself; only the session core can end a turn through the normal system-abort path with the deadline detail, and the hold must be read from the durable branch so it survives reload and reopen.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-session.ts` around `_promptAgent` (the arm), `_handleAgentEvent` tool-execution branches (the renewals), the `agent_idle` emission (the disarm), and `dispose()`.
+- LOW: `settings-manager.ts` beside `getEngineTurnSettings()`; `settings-shapes.ts` beside `ProviderConcurrencySettings`; `turn-deadline.ts` is fork-only.
+
 ## 2026-10-15 - agent_end carries a structured provider failure with a reason and an action (senpi#3228)
 
 ### What changed
@@ -121,7 +142,24 @@ The RPC host and the TUI link renderer both need it; it is a core contract, not 
 ### Expected merge conflict zones
 
 - None: a new file.
+## 2026-10-16 - Extension providers can declare ambient api-key auth (senpi#2327)
 
+### What changed
+
+- `packages/coding-agent/src/core/provider-composer.ts`: `ProviderConfigInput` gains optional `ambientAuth` plus the `ProviderAmbientAuth` hook (`name`, `resolve({ ctx, signal })`): the extension-owned ambient credential source (Google ADC, AWS env).
+- `packages/coding-agent/src/core/provider-api-key-auth.ts`: `composeApiKeyAuth` composes `ambientAuth` into an ambient `ApiKeyAuth` (`ambientOnly`, no login) when no base provider, API key, or credential header already supplies auth. Availability is the resolution itself, so `Models.checkAuth` carries the `ambient` marker into the provider's auth status and automatic default selection.
+
+### Why
+
+- The `vertex-model-garden` builtin needed to be available while Google ADC is present without counting as an explicitly configured provider: an env-var `apiKey` registration made the provider outrank configured providers in automatic default selection (senpi#2327) and reported it available with no ADC at all.
+
+### Why an extension could not handle it
+
+- Ambient provenance is decided inside provider composition and flows through `Models.checkAuth` into the auth status the default-model resolver reads; the extension's own registration cannot reach either.
+
+### Expected merge conflict zones
+
+- LOW: the `ProviderConfigInput` field list and the `ProviderAmbientAuth` interface in `provider-composer.ts`; the ambient branch of `composeApiKeyAuth` in `provider-api-key-auth.ts`.
 ## 2026-10-15 - AgentSession.activeWakeSources (senpi#3225)
 
 ### What changed

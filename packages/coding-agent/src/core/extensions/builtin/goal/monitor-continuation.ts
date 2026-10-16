@@ -1,4 +1,5 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { deadlineStopPendingSinceLastTurn } from "../../../turn-deadline.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import type { WakeSourceStateItem } from "../monitor-state-event.ts";
 import {
@@ -201,6 +202,10 @@ export class MonitorAwareGoalContinuation {
 			return options.goal;
 		}
 		if (options.willRetry) return options.goal;
+		// A deadline stop is never auto-continued; the hold releases on admitted user input.
+		if (deadlineStopPendingSinceLastTurn(options.ctx.sessionManager.getBranch()) !== undefined) {
+			return options.goal;
+		}
 		if (this.#activeWakeSourceCount() > 0) this.#schedule(options.goal, "monitor");
 		else if (lastAssistantMessage(options.messages)?.stopReason === "error") {
 			this.#pendingSystemRecovery = options;
@@ -504,6 +509,7 @@ export class MonitorAwareGoalContinuation {
 		const ctx = this.#ctx;
 		const goal = this.#goal;
 		if (ctx === undefined || goal?.status !== "active" || !ctx.isIdle() || ctx.hasPendingMessages()) return;
+		if (deadlineStopPendingSinceLastTurn(ctx.sessionManager.getBranch()) !== undefined) return;
 		if (kind === "monitor" && this.#activeWakeSourceCount() === 0 && !drainFire) return;
 		const admission = await this.#admitAndQueue(
 			ctx,

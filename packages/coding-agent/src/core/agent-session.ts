@@ -362,6 +362,13 @@ import { composeFilesystemPolicies } from "./tools/filesystem-policy.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 import { TranscriptWriteFailures } from "./transcript-write-failures.ts";
+import {
+	AgentDeadlineTracker,
+	resolveTurnDeadlineSettings,
+	TURN_DEADLINE_ENTRY_TYPE,
+	type TurnDeadline,
+	type TurnDeadlineWarning,
+} from "./turn-deadline.ts";
 import { commandShapedName, findUnknownCommand } from "./unknown-command.ts";
 import { addUsageToTotals, combineUsage, createUsageTotals } from "./usage-totals.ts";
 import { keepsTextBlocksVerbatim, userTextContent } from "./user-text-blocks.ts";
@@ -444,6 +451,10 @@ export interface AgentAbortCause {
 
 type AgentSessionAgentEndEvent = Extract<AgentEvent, { type: "agent_end" }> & {
 	willRetry: boolean;
+	aborted?: true;
+	abortSource?: AgentAbortSource;
+	/** Set when the turn's inactivity lease or hard max runtime ended it (see turn-deadline.ts). */
+	deadline?: TurnDeadline;
 	/** Present when the turn ended with a provider error; see provider-failure.ts. */
 	failure?: ProviderFailure;
 	/** Present when the run was aborted by an abort that named its cause (for example a session replacement). */
@@ -1278,6 +1289,7 @@ export class AgentSession {
 	private _retryResolve: (() => void) | undefined = undefined;
 	private _userAbortPromise: Promise<void> | undefined = undefined;
 	private readonly _abortProvenance = new AgentAbortProvenance();
+	private _deadlineTracker!: AgentDeadlineTracker;
 	private readonly _agentSettledDelivery = new AgentSettledDelivery();
 	private _suppressQueuedContinuationAfterUserAbort = false;
 	private _userAbortGeneration = 0;
@@ -1534,6 +1546,12 @@ export class AgentSession {
 				activeToolNames: this._initialActiveToolNames,
 				includeAllExtensionTools: true,
 			});
+			this._deadlineTracker = new AgentDeadlineTracker(this, () =>
+				resolveTurnDeadlineSettings({
+					turn_inactivity_ms: this.settingsManager.getTurnInactivityMs(),
+					turn_max_runtime_ms: this.settingsManager.getTurnMaxRuntimeMs(),
+				}),
+			);
 			// Last, so a construction that throws never leaves a hold only dispose() could release.
 			this._fallbackCircuitsLease = acquireFallbackCircuits(this._agentDir);
 		} catch (error) {
@@ -2792,6 +2810,7 @@ export class AgentSession {
 			}
 		}
 		this.releaseSettledSessionMemory();
+		this._deadlineTracker.disarm();
 		this._emit({ type: "agent_idle" });
 	}
 
@@ -2803,6 +2822,8 @@ export class AgentSession {
 		deferredTurnClaim?.resolve("started");
 		if (!this._isAgentRunActive) this.externalAdmission.beginTurn();
 		this._isAgentRunActive = true;
+		// A new turn admitted: arm the inactivity lease and the hard max-runtime cap.
+		this._deadlineTracker.arm();
 		// A new prompt replaces any retry that compaction before it scheduled.
 		this._failedResponse = undefined;
 		this._recordSelection();
@@ -3327,6 +3348,9 @@ export class AgentSession {
 				? withProviderFailure({
 						...event,
 						willRetry: agentEndWillRetry,
+						...(this._deadlineTracker.current !== undefined
+							? { aborted: true, abortSource: "system" as const, deadline: this._deadlineTracker.current }
+							: {}),
 						...(abortCause === undefined ? {} : { abortCause }),
 					})
 				: event.type === "message_update"
@@ -3922,6 +3946,7 @@ export class AgentSession {
 				this._replaceMessageInPlace(event.message, normalized);
 			}
 		} else if (event.type === "tool_execution_start") {
+			this._deadlineTracker.renew();
 			const extensionEvent: ToolExecutionStartEvent = {
 				type: "tool_execution_start",
 				toolCallId: event.toolCallId,
@@ -3930,6 +3955,7 @@ export class AgentSession {
 			};
 			await this._extensionRunner.emit(extensionEvent);
 		} else if (event.type === "tool_execution_update") {
+			this._deadlineTracker.renew();
 			const extensionEvent: ToolExecutionUpdateEvent = {
 				type: "tool_execution_update",
 				toolCallId: event.toolCallId,
@@ -3939,6 +3965,7 @@ export class AgentSession {
 			};
 			await this._extensionRunner.emit(extensionEvent);
 		} else if (event.type === "tool_execution_end") {
+			this._deadlineTracker.renew();
 			const extensionEvent: ToolExecutionEndEvent = {
 				type: "tool_execution_end",
 				toolCallId: event.toolCallId,
@@ -4007,6 +4034,7 @@ export class AgentSession {
 	 */
 	dispose(): void {
 		this._disposed = true;
+		this._deadlineTracker.disarm();
 		for (const dispose of this._toolContextDisposers) dispose();
 		try {
 			this._probeBackScheduler.cancel("dispose");
@@ -4198,6 +4226,11 @@ export class AgentSession {
 		return this._isAgentRunActive;
 	}
 
+	/** True while a provider retry is in flight; the deadline lease treats it as turn progress. */
+	get isRetryInFlight(): boolean {
+		return this._retryPromise !== undefined;
+	}
+
 	/** Whether the session has no active agent run, retry, or queued continuation. */
 	get isIdle(): boolean {
 		return !this._isAgentRunActive;
@@ -4237,6 +4270,33 @@ export class AgentSession {
 	/** Abort owner for the current turn boundary, used by internal renderers. */
 	get currentAbortSource(): AgentAbortSource | undefined {
 		return this._abortProvenance.currentSource;
+	}
+
+	/** The deadline that stopped the current turn, when the lease fired (senpi#3227). */
+	get currentDeadline(): TurnDeadline | undefined {
+		return this._deadlineTracker.current;
+	}
+
+	/** Adapter for the deadline owner interface: a deadline stop that could not complete. */
+	_warnDeadline(event: TurnDeadlineWarning, detail: string): void {
+		this._sessionLogger.warn(event, { detail });
+	}
+
+	/** Adapter for the deadline owner interface: end the turn through the normal system abort. */
+	async abortTurnForDeadline(): Promise<void> {
+		await this._abortActiveAgentAndRetry("system");
+	}
+
+	/** Record a deadline stop durably so the goal engine holds off until admitted user input. */
+	_recordDeadlineStop(deadline: TurnDeadline): void {
+		this._emitEntryAppended(
+			this.sessionManager.appendCustomEntry(TURN_DEADLINE_ENTRY_TYPE, {
+				kind: deadline.kind,
+				limitMs: deadline.limitMs,
+				elapsedMs: deadline.elapsedMs,
+				at: Date.now(),
+			}),
+		);
 	}
 
 	/**
@@ -4861,7 +4921,10 @@ export class AgentSession {
 			submittedByCommand: options?.source === "extension",
 		});
 		try {
-			if (options?.source !== "extension") emitUserActivity(this, "prompt");
+			if (options?.source !== "extension") {
+				emitUserActivity(this, "prompt");
+				this._deadlineTracker.clearHold();
+			}
 			await this._prompt(text, {
 				...options,
 				promptDisposition: (disposition) => {
@@ -5564,7 +5627,10 @@ export class AgentSession {
 		behavior: "steer" | "followUp",
 		options?: QueuedInputOptions,
 	): Promise<QueuedInputDisposition> {
-		if (options?.source !== "extension") emitUserActivity(this, "prompt");
+		if (options?.source !== "extension") {
+			emitUserActivity(this, "prompt");
+			this._deadlineTracker.clearHold();
+		}
 		// Check for extension commands (cannot be queued)
 		if (text.startsWith("/")) {
 			this._throwIfExtensionCommand(text);

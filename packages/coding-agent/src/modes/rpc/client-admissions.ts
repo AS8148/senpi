@@ -121,6 +121,11 @@ export class ClientAdmissions {
 		this.ready = Promise.resolve().then(() => this.restore());
 	}
 
+	/** Mark queued input cleared on a session whose ledger exists; never builds one (that would restore queued input). */
+	static clearQueuedFor(session: AgentSession): void {
+		sessions.get(session)?.clearQueued();
+	}
+
 	/**
 	 * Whenever `runtime` replaces its session, give the outgoing session's still-queued inputs a
 	 * `dropped_by_replace` receipt. Only a ledger that already exists is touched: building one now would
@@ -183,10 +188,11 @@ export class ClientAdmissions {
 	}
 
 	/**
-	 * `abort { clearQueue }` is about to drain the queues: give every still-queued input an honest
-	 * `cleared_by_abort` receipt first, so the drain's `queue_update` cannot read it as delivered.
+	 * The queues are about to be drained (`clear_queue`, `abort` or `unload_session` with `clearQueue`, a session
+	 * release is not one: its queued deliveries stay unwritten so the sender redelivers them): give every still-queued input an honest `cleared` receipt first, so the drain's `queue_update` cannot
+	 * read it as delivered (senpi#3412).
 	 */
-	clearQueuedByAbort(): void {
+	clearQueued(): void {
 		if (this.durableSessionId !== this.session.sessionManager.getSessionId()) return;
 		for (const record of [...this.records.values()]) {
 			if (record.state !== "queued") continue;
@@ -194,7 +200,7 @@ export class ClientAdmissions {
 				...record,
 				state: "completed",
 				prepared: undefined,
-				outcome: EFFECT_OUTCOMES.inputClearedByAbort,
+				outcome: EFFECT_OUTCOMES.inputCleared,
 			});
 		}
 	}

@@ -887,12 +887,14 @@ export function createRpcConnectionHandler(
 					// it for `get_state` because the getter clears once the turn settles.
 					const abortSource = session.currentAbortSource;
 					if (abortSource !== undefined) lastAbortSource = abortSource;
+					const deadline = session.currentDeadline;
 					const abortedBy = abortSource === undefined ? undefined : ClientAdmissions.forSession(session).abortedBy;
-					correlatedEvents.accept(
-						abortSource === undefined
-							? event
-							: { ...event, aborted: true, abortSource, ...(abortedBy === undefined ? {} : { abortedBy }) },
-					);
+					correlatedEvents.accept({
+						...event,
+						...(abortSource === undefined ? {} : { aborted: true, abortSource }),
+						...(abortedBy === undefined ? {} : { abortedBy }),
+						...(deadline === undefined ? {} : { deadline }),
+					});
 					return;
 				}
 				if (event.type === "session_abort") {
@@ -1126,6 +1128,7 @@ export function createRpcConnectionHandler(
 				return runQueuedInputChange(effectContext(), command);
 
 			case "clear_queue": {
+				ClientAdmissions.clearQueuedFor(session);
 				const cleared = session.clearQueue({ abortWillFollow: command.abortWillFollow ?? false });
 				return success(id, "clear_queue", {
 					steering: cleared.steering,

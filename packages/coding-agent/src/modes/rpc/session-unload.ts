@@ -20,6 +20,7 @@
  * The last check and the close claim run in one synchronous step, as in `release_session`.
  */
 import type { AgentSession } from "../../core/agent-session.ts";
+import { ClientAdmissions } from "./client-admissions.ts";
 import { beginEffect, effectAnswer, isEffectBegin } from "./effect-commands.ts";
 import { EffectLedger } from "./effect-ledger.ts";
 import type { EffectActor } from "./effect-record.ts";
@@ -98,7 +99,10 @@ async function claimAndUnload(port: SessionUnloadPort, command: UnloadSessionCom
 	if ("reason" in ready) return answer(command, refused(ready));
 	const stillBlocked = blockers(port, command, ready.session, ready.durableSessionId);
 	if (stillBlocked.length > 0) return fail(command, ready.session, stillBlocked[0] as Refusal);
-	if (command.clearQueue === true) ready.session.clearQueue();
+	if (command.clearQueue === true) {
+		ClientAdmissions.clearQueuedFor(ready.session);
+		ready.session.clearQueue();
+	}
 	const effect =
 		command.effectId === undefined
 			? undefined
