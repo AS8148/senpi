@@ -12,6 +12,14 @@ function failedTurn(errorMessage: string, providerDiagnostic?: ProviderDiagnosti
 	return providerDiagnostic === undefined ? message : { ...message, providerDiagnostic };
 }
 
+const STRUCTURED_FIELDS = new Set(["category", "provider", "httpStatus", "code", "reason", "action"]);
+
+/** The failure is built from structured fields only: no free-form provider text, no raw diagnostic. */
+function expectStructuredOnly(failure: unknown, providerText: string): void {
+	expect(Object.keys(failure as object).filter((key) => !STRUCTURED_FIELDS.has(key))).toEqual([]);
+	expect(JSON.stringify(failure)).not.toContain(providerText);
+}
+
 describe("agent_end provider failure", () => {
 	const harnesses: Harness[] = [];
 	afterEach(async () => {
@@ -70,12 +78,14 @@ describe("agent_end provider failure", () => {
 		expect(end.failure?.category).toBe("unknown");
 		expect(end.failure?.reason).toMatch(/could not be classified \(faux, code permission_error\)/);
 		expect(end.failure?.action).toMatch(/^retry once/);
+		expectStructuredOnly(end.failure, "invalid api key");
 	});
 
 	it("falls back to unknown, not a guess from the message, when the error carries no diagnostic", async () => {
 		const end = await agentEndOf(failedTurn("429 rate limit exceeded"));
 		expect(end.failure?.category).toBe("unknown");
 		expect(end.failure?.reason).toMatch(/\(faux, no code\)/);
+		expectStructuredOnly(end.failure, "rate limit exceeded");
 	});
 
 	it("omits failure on a successful turn", async () => {
