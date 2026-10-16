@@ -80,7 +80,10 @@ describe("omo#10285: generate_image never silently strands on a gateway without 
 
 	it("skips a scanned gateway that answers 404 and names it in the result", async () => {
 		setImageGenRegistry(
-			gatewayRegistry({ "aaa-compat": `${images.baseUrl}/no-images/v1`, "bbb-compat": `${images.baseUrl}/images/v1` }),
+			gatewayRegistry({
+				"aaa-compat": `${images.baseUrl}/no-images/v1`,
+				"bbb-compat": `${images.baseUrl}/images/v1`,
+			}),
 		);
 
 		const result = await harness.session.executeTool<ImageDetails>(TOOL_NAME, {
@@ -96,7 +99,10 @@ describe("omo#10285: generate_image never silently strands on a gateway without 
 
 	it("names every provider it tried, and how to pin one, when none serves images", async () => {
 		setImageGenRegistry(
-			gatewayRegistry({ "aaa-compat": `${images.baseUrl}/no-images/v1`, "bbb-compat": `${images.baseUrl}/also-none/v1` }),
+			gatewayRegistry({
+				"aaa-compat": `${images.baseUrl}/no-images/v1`,
+				"bbb-compat": `${images.baseUrl}/also-none/v1`,
+			}),
 		);
 
 		const result = await harness.session.executeTool<ImageDetails>(TOOL_NAME, { prompt: "a red fox" });
@@ -112,7 +118,10 @@ describe("omo#10285: generate_image never silently strands on a gateway without 
 		process.env.PI_IMAGE_GEN_PROVIDER = "aaa-compat";
 		try {
 			setImageGenRegistry(
-				gatewayRegistry({ "aaa-compat": `${images.baseUrl}/no-images/v1`, "bbb-compat": `${images.baseUrl}/images/v1` }),
+				gatewayRegistry({
+					"aaa-compat": `${images.baseUrl}/no-images/v1`,
+					"bbb-compat": `${images.baseUrl}/images/v1`,
+				}),
 			);
 
 			const result = await harness.session.executeTool<ImageDetails>(TOOL_NAME, { prompt: "a red fox" });

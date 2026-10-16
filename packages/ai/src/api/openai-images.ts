@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import type { ImageEditParamsNonStreaming, ImageGenerateParamsNonStreaming } from "openai/resources/images.js";
+import { readProviderDiagnostic } from "../provider-diagnostic.ts";
 import type {
 	AssistantImages,
 	ImageApi,
@@ -10,10 +11,12 @@ import type {
 	ProviderHeaders,
 	TextContent,
 } from "../types.ts";
-import { readProviderDiagnostic } from "../provider-diagnostic.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { headersToRecord } from "../utils/headers.ts";
-import { awaitProviderTransport, openAICompatibleProviderDiagnosticFromError } from "../utils/provider-diagnostic-sources.ts";
+import {
+	awaitProviderTransport,
+	openAICompatibleProviderDiagnosticFromError,
+} from "../utils/provider-diagnostic-sources.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { resolveOpenAIClientAuth } from "./openai-client-auth.ts";
 import { buildEditParams } from "./openai-images-edit.ts";

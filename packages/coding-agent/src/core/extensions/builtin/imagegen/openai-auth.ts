@@ -1,4 +1,9 @@
-import type { ImageGenAuthModel, ImageGenAuthRegistry, ImageGenProviderAuthResult, ImageGenResolvedAuth } from "./auth.ts";
+import type {
+	ImageGenAuthModel,
+	ImageGenAuthRegistry,
+	ImageGenProviderAuthResult,
+	ImageGenResolvedAuth,
+} from "./auth.ts";
 import { credentialParts, nonEmpty, OPENAI_BASE_URL, sameBaseUrl } from "./credentials.ts";
 
 /**

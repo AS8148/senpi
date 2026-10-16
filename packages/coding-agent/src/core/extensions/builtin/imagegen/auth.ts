@@ -156,7 +156,13 @@ export async function* imageGenCandidates<TModel extends ImageGenAuthModel>(
 
 	const envApiKey = nonEmpty(env.OPENAI_API_KEY);
 	if (envApiKey && !isPlaceholderKey(envApiKey)) {
-		yield { kind: "native-openai", apiKey: envApiKey, baseUrl: OPENAI_BASE_URL, provenance: "env", fallthrough: false };
+		yield {
+			kind: "native-openai",
+			apiKey: envApiKey,
+			baseUrl: OPENAI_BASE_URL,
+			provenance: "env",
+			fallthrough: false,
+		};
 	}
 }
 

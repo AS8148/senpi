@@ -2,8 +2,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { resolveImageGenAuth } from "../../../src/core/extensions/builtin/imagegen/auth.ts";
 import { AuthStorage } from "../../../src/core/auth-storage.ts";
+import { resolveImageGenAuth } from "../../../src/core/extensions/builtin/imagegen/auth.ts";
 import { ModelRegistry } from "../../../src/core/model-registry.ts";
 
 const tempDirs: string[] = [];
@@ -15,10 +15,7 @@ const UNRELATED_GATEWAY_SORTED_BEFORE_OPENAI = {
 	models: [{ id: "aaa-chat" }],
 };
 
-async function registryWith(
-	providers: Record<string, unknown>,
-	storedOpenAiKey?: string,
-): Promise<ModelRegistry> {
+async function registryWith(providers: Record<string, unknown>, storedOpenAiKey?: string): Promise<ModelRegistry> {
 	const dir = mkdtempSync(join(tmpdir(), "senpi-omo-10285-"));
 	tempDirs.push(dir);
 	const modelsJsonPath = join(dir, "models.json");
@@ -53,7 +50,11 @@ describe("omo#10285: generate_image resolves the openai provider like model call
 
 		const auth = await resolveImageGenAuth({ modelRegistry: registry, env: {} });
 
-		expect(auth).toMatchObject({ providerId: "openai", baseUrl: "https://my-proxy.example/v1", apiKey: "sk-stored-test" });
+		expect(auth).toMatchObject({
+			providerId: "openai",
+			baseUrl: "https://my-proxy.example/v1",
+			apiKey: "sk-stored-test",
+		});
 	});
 
 	it("keeps a stored openai key without an override on api.openai.com", async () => {

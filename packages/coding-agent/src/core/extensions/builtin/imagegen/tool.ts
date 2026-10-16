@@ -168,23 +168,25 @@ export const generateImageTool = defineTool<typeof Params, GenerateImageDetails>
 			}
 		}
 
-		const outcome = await requestImagesAcrossCandidates(firstCandidate.value, candidates, (auth) => generateImages(
-			synthesizeModel(auth, modelId),
-			{ input: [{ type: "text", text: prompt }, ...references.images] },
-			{
-				...(auth.apiKey === undefined ? {} : { apiKey: auth.apiKey }),
-				...(auth.headers === undefined ? {} : { headers: auth.headers }),
-				...(signal === undefined ? {} : { signal }),
-				size,
-				quality,
-				n: requested,
-				...(params.background === undefined ? {} : { background }),
-				outputFormat,
-				...(params.output_compression === undefined ? {} : { outputCompression: params.output_compression }),
-				...(params.moderation === undefined ? {} : { moderation: params.moderation }),
-				...(mask === undefined ? {} : { mask: mask.image }),
-			},
-		));
+		const outcome = await requestImagesAcrossCandidates(firstCandidate.value, candidates, (auth) =>
+			generateImages(
+				synthesizeModel(auth, modelId),
+				{ input: [{ type: "text", text: prompt }, ...references.images] },
+				{
+					...(auth.apiKey === undefined ? {} : { apiKey: auth.apiKey }),
+					...(auth.headers === undefined ? {} : { headers: auth.headers }),
+					...(signal === undefined ? {} : { signal }),
+					size,
+					quality,
+					n: requested,
+					...(params.background === undefined ? {} : { background }),
+					outputFormat,
+					...(params.output_compression === undefined ? {} : { outputCompression: params.output_compression }),
+					...(params.moderation === undefined ? {} : { moderation: params.moderation }),
+					...(mask === undefined ? {} : { mask: mask.image }),
+				},
+			),
+		);
 		if (outcome.kind === "exhausted") {
 			return failure(exhaustedProvidersMessage(outcome.skipped), "provider_error", { ...context, source });
 		}
