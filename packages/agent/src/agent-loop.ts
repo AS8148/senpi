@@ -855,7 +855,10 @@ function createPreStreamBound(
 	return {
 		run<T>(work: T | Promise<T>, discardLate?: (value: T) => void): Promise<T> {
 			const budget = remaining();
-			if (budget === undefined && !request.signal.aborted) return Promise.resolve(work);
+			// Only the bound ends a step here. A caller abort is not raced: the step sees it through the request
+			// signal and ends the way it did before this bound existed (the turn then reads aborted), so an abort
+			// and a timeout never compete for the same step.
+			if (budget === undefined) return Promise.resolve(work);
 			return new Promise<T>((resolve, reject) => {
 				let timer: ReturnType<typeof setTimeout> | undefined;
 				let settled = false;
@@ -863,10 +866,8 @@ function createPreStreamBound(
 					if (settled) return;
 					settled = true;
 					if (timer !== undefined) clearTimeout(timer);
-					request.signal.removeEventListener("abort", onAbort);
 					complete();
 				};
-				const onAbort = (): void => finish(() => reject(abortError(request.signal.reason)));
 				// Handle the work's outcome first, so work that settles after the turn ended neither goes unhandled
 				// nor leaks: a late value is handed to discardLate, a late rejection is dropped.
 				Promise.resolve(work).then(
@@ -883,16 +884,12 @@ function createPreStreamBound(
 					},
 					(error: unknown) => finish(() => reject(error)),
 				);
-				if (request.signal.aborted) return onAbort();
-				request.signal.addEventListener("abort", onAbort, { once: true });
-				if (budget !== undefined) {
-					timer = setTimeout(() => {
-						const error = timeoutError();
-						finish(() => reject(error));
-						// Abort after rejecting so the failure reads as the timeout, and the hung step is told to stop.
-						request.abort(error);
-					}, budget);
-				}
+				timer = setTimeout(() => {
+					const error = timeoutError();
+					finish(() => reject(error));
+					// Abort after rejecting so the failure reads as the timeout, and the hung step is told to stop.
+					request.abort(error);
+				}, budget);
 			});
 		},
 		// A start bound already spent before the stream answered still ends the first read at once.
