@@ -8,6 +8,8 @@
 
 - A turn that stopped making progress no longer runs forever: a session-level inactivity lease (`turn_inactivity_ms`, default 60 min, renewed only by tool execution events and admitted user input) and a hard maximum runtime (`turn_max_runtime_ms`, default 6 h) end a stuck turn as a system abort that carries a `deadline` detail on `agent_end`. Partial text is kept, the reason names the setting and the action to resume, and a goal is never auto-continued past the stop until the user sends a message ([#3227](https://github.com/code-yeongyu/senpi/issues/3227)).
 
+- RPC `verify_api_key {provider, key}` checks an API key with one authenticated read of the provider's model list, without storing it, and answers `ok` or a reason (`rejected`, `unreachable`, `unsupported`, `unknown-provider`). `get_auth_providers` API-key rows carry `keyHint`, the last four characters of a key the app stored (none for OAuth, command or env references, or short keys). Hosts advertise `auth_key_verify` ([#3372](https://github.com/code-yeongyu/senpi/pull/3372), for the OmO desktop app).
+
 - `subscribe_sessions` gains `effects` (default on for `childrenOf`): matched sessions stream `effect_status` receipts (`accepted`/`applied`/`done`/`failed`) on the subscription's gap-free `seq`, each emitted after the record that caused the transition, and `session_status.lastEffect` names a session's latest receipt ([#3157](https://github.com/code-yeongyu/senpi/issues/3157)).
 
 - Multi-session RPC hosts stream session status: `subscribe_sessions` returns a snapshot, then a `session_status` record (status, attachments, model, queue counts, cause) per change with a gap-free per-subscription `seq`, without attaching or refreshing the idle window. Filters cover all sessions, ids or `childrenOf`; `include_workers`, `include_context` and an opt-in `mirror` of content kinds are available. `session_opened` is now emitted for every new session, `set_session_context` patches a session's published context, and a connection attached to several sessions hears one `loaded_surfaces_changed` per surface change. Each subscription's snapshot answer arrives before its first `seq 1` record, subscriptions are capped at 64 per connection (`subscription_limit`), `childrenOf` matches the lineage frozen at open (`set_session_context` refuses `parent_session_id` and `root_session_id`), a rolled-back open leaves subscribers a terminal record, and stdio hosts refuse subscriptions with `unsupported_transport` ([#3157](https://github.com/code-yeongyu/senpi/issues/3157), [#3155](https://github.com/code-yeongyu/senpi/issues/3155)).
@@ -15,6 +17,7 @@
 - RPC `abort` takes `awaitIdle` (answer once the turn stopped, or `stopped: false` after `graceMs`, default 10 s, max 60 s), `clearQueue` (drain queued input first; each drained input gets a `cleared_by_abort` receipt) and reports `cleared`; aborted `agent_end` and `session_abort` carry `abortedBy: { connectionId, effectId? }` ([#3156](https://github.com/code-yeongyu/senpi/issues/3156)).
 
 - `agent_end` carries `failure: { category, provider, httpStatus?, code?, reason, action }` when a turn ends with a provider error, built only from the structured provider diagnostic (never from message text); every category, `unknown` included, has a reason and an action, and the TUI shows them as one line. Absent on success and abort ([#3228](https://github.com/code-yeongyu/senpi/issues/3228)).
+
 ### Changed
 
 ### Fixed
@@ -43,8 +46,6 @@
 - `/account <provider> reset <id>` clears one account's cooldown or block (the credential-pool health record and any block a provider lane stored on the account), so the next request tries it again ([#3285](https://github.com/code-yeongyu/senpi/issues/3285)).
 
 - `tool.glob({ pattern, path })` finds files by glob inside eval, the same way `tool.grep` searches text there. It is never a top-level tool, and the eval prompt now names it, so a model that reached for `tool.glob` no longer gets "Unknown tool glob" ([#3330](https://github.com/code-yeongyu/senpi/issues/3330)).
-
-- RPC `verify_api_key {provider, key}` checks an API key with one authenticated read of the provider's model list, without storing it, and answers `ok` or a reason (`rejected`, `unreachable`, `unsupported`, `unknown-provider`). `get_auth_providers` API-key rows carry `keyHint`, the last four characters of a key the app stored (none for OAuth, command or env references, or short keys). Hosts advertise `auth_key_verify`.
 
 ### Changed
 
