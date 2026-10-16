@@ -282,6 +282,7 @@ import { NestedToolCallRunner } from "./nested-tool-calls.ts";
 import { PROMPT_CACHE_SAFE_WAIT_ENV, resolvePromptCacheSafeWaitSeconds } from "./prompt-cache-budget.ts";
 import { PromptCachePrefixBuilds } from "./prompt-cache-prefix-request.ts";
 import { expandPromptTemplateWithMetadata, type PromptTemplate } from "./prompt-templates.ts";
+import { type ProviderFailure, providerFailureOf } from "./provider-failure.ts";
 import { rejectedImageSources } from "./provider-rejected-images.ts";
 import { createProviderTimeoutRetryPlan, runBoundedRetryContinuation } from "./provider-timeout-retry.ts";
 import { checkSessionReloadVeto } from "./reload-veto.ts";
@@ -443,9 +444,16 @@ export interface AgentAbortCause {
 
 type AgentSessionAgentEndEvent = Extract<AgentEvent, { type: "agent_end" }> & {
 	willRetry: boolean;
+	/** Present when the turn ended with a provider error; see provider-failure.ts. */
+	failure?: ProviderFailure;
 	/** Present when the run was aborted by an abort that named its cause (for example a session replacement). */
 	abortCause?: AgentAbortCause;
 };
+
+function withProviderFailure(event: AgentSessionAgentEndEvent): AgentSessionAgentEndEvent {
+	const failure = providerFailureOf(event.messages);
+	return failure === undefined ? event : { ...event, failure };
+}
 
 /** Session-specific events that extend the core AgentEvent */
 export type AgentSessionEvent =
@@ -3316,11 +3324,11 @@ export class AgentSession {
 		// Notify all listeners
 		this._emit(
 			event.type === "agent_end"
-				? {
+				? withProviderFailure({
 						...event,
 						willRetry: agentEndWillRetry,
 						...(abortCause === undefined ? {} : { abortCause }),
-					}
+					})
 				: event.type === "message_update"
 					? withResolvedToolName(event, (name) => this.resolveToolCallName(name))
 					: event,

@@ -27,6 +27,100 @@ Project trust is decided before extensions load, and it decides whether project 
 
 `../main.ts` (`createServices`'s trust block), `trust-manager.ts` (`hasTrustRequiringProjectResources`, `projectAgentsSkillDirs`), `package-manager.ts` (`collectAncestorAgentsSkillDirs`), `agent-session.ts` (`applyProjectTrustChange`, the trust-epoch loop before `_buildRuntime`, the prompt-start and session-start flag clears), `agent-session-runtime.ts` (`setPermissionPreset`, `apply()`, `diagnostics`), `settings-manager.ts` (`SettingsManagerCreateOptions`, `setProjectTrusted`).
 
+## 2026-10-15 - agent_end carries a structured provider failure with a reason and an action (senpi#3228)
+
+### What changed
+
+- `packages/coding-agent/src/core/provider-failure.ts` (new): `describeProviderFailure` maps the failed message's sanitized `providerDiagnostic` to `{ category, provider, httpStatus?, code?, reason, action }` with one action per category (`unknown` included); `providerFailureOf` reads it from the run's last assistant message only when `stopReason` is `"error"`; `formatProviderFailure` renders one line.
+- `packages/coding-agent/src/core/agent-session.ts`: `AgentSessionAgentEndEvent` gains optional `failure`, and the listener-facing `agent_end` is passed through `withProviderFailure`.
+
+### Why
+
+Clients could not tell an expired login from a rate limit or an outage without parsing prose, so `task_output` and the desktop failure card had no next step to show.
+
+### Why an extension could not handle it
+
+`agent_end` is emitted by `AgentSession` to every listener (RPC, print JSON, TUI); an extension can observe the event but cannot add a field every surface sees.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the `AgentSessionAgentEndEvent` type and the `agent_end` branch of the listener emit.
+
+## 2026-10-16 — A session on a shared ModelRuntime reads that runtime's auth storage (senpi#3434)
+
+### What changed
+
+- `packages/coding-agent/src/core/runtime-credentials.ts`: `RuntimeCredentials.backingStore` exposes the credential store it wraps.
+- `packages/coding-agent/src/core/model-runtime.ts`: `ModelRuntime.authStorage` returns that store when the runtime was built on an `AuthStorage`.
+- `packages/coding-agent/src/core/agent-session-services.ts`: `createAgentSessionServices` uses `options.modelRuntime?.authStorage` for the session's `ModelRegistry`, and a new store only when it builds its own runtime. There is no separate `authStorage` option: a session's store always comes from its runtime (one path, per the review).
+
+### Why
+
+A session on the multi-session host shares the host's `ModelRuntime` but built its own `AuthStorage`. Extension providers register their OAuth login into the runtime's store (`ModelRuntime` calls `credentials.registerOAuthProvider`), while `get_auth_providers` reads `modelRegistry.authStorage`. The two were different objects, so `anthropic-subscription` and `cursor-cli-oauth` never appeared in a host session and the OmO desktop's Anthropic card offered only an API key (sisyphuslabs/omo-desktop-app#2644). A session that builds its own runtime was never affected, because both sides came from the one store.
+
+### Why an extension could not handle it
+
+The mismatch is in core's service construction, before any extension runs.
+
+### Expected merge conflict zones
+
+- `agent-session-services.ts` around the `authStorage` line and the options interface.
+- `model-runtime.ts` just above `static async create`.
+
+## 2026-10-16 - The xiaomi built-in defaults move to mimo-v2.6-pro (senpi v2026.10.16 release)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-resolver.ts`: `defaultModelPerProvider` for `xiaomi` and the three `xiaomi-token-plan-*` providers is `mimo-v2.6-pro` (was `mimo-v2.5-pro`).
+
+### Why
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the release prepare regenerates the catalog from models.dev, which now marks `mimo-v2.5-pro` deprecated; the generator skips deprecated models, so the default vanished and `check:provider-defaults` stopped the v2026.10.16 release.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the built-in default table is read by core model resolution before extensions load.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the xiaomi rows of `defaultModelPerProvider`.
+
+## 2026-10-16 - Message paths never reach the file system unless local (senpi#3419 review)
+
+### What changed
+
+- `packages/coding-agent/src/core/message-path-resolution.ts`: `isLocalMessagePath` (win32: a drive-letter path only; elsewhere absolute and not `//`) is checked on every candidate before any file-system call and on the realpath; `resolveMessagePath` takes `platform`; `messagePathProjectRoot` ignores a `.git` in the home folder.
+
+### Why
+
+Opus review H1: resolving a `\\host\share` path named in a message made Windows connect to that host and offer the user's credentials; L1: a dotfiles repository made `~` the project root.
+
+### Why an extension could not handle it
+
+It is the core resolver's own guard.
+
+### Expected merge conflict zones
+
+- None: the file is new in this PR.
+
+## 2026-10-16 - One rule for what a message path means (senpi#3415)
+
+### What changed
+
+- `packages/coding-agent/src/core/message-path-resolution.ts` (new): `resolveMessagePath({ path, cwd, projectRoot })` tries a relative path against the session's working directory, then the project root (`messagePathProjectRoot`: nearest `.git`, else the nearest project marker), and answers the first existing candidate's realpath with its kind and base, or every candidate tried.
+
+### Why
+
+The TUI, RPC clients and the desktop app each guessed what a relative link meant. The engine knows the working directory and the project root, so it owns the answer once (sisyphuslabs/omo-desktop-app#2748).
+
+### Why an extension could not handle it
+
+The RPC host and the TUI link renderer both need it; it is a core contract, not a tool.
+
+### Expected merge conflict zones
+
+- None: a new file.
+
 ## 2026-10-15 - AgentSession.activeWakeSources (senpi#3225)
 
 ### What changed
@@ -10386,3 +10480,61 @@ Runtime ownership publication precedes extension attachment.
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/core/agent-session.ts`: `evalHelperCall`, the eval-only suffix sentences (keep grep last), and the `createAllToolDefinitions` options in `_buildRuntime`.
+
+
+## 2026-10-15 - verify-api-key.ts (desktop #2510)
+
+### What changed
+
+New fork-only `verify-api-key.ts`. `verifyApiKey` probes the provider's model list with the key in memory and answers `ok`, `rejected` (401/403), `unreachable` (no answer, 5xx, timeout), `unsupported` (no probe for the API, or 404/405) or `unknown-provider`. Redirects are not followed, and the key never reaches a log, an error or the result. `storedKeyHint` returns the four-character hint described in the RPC tracker.
+
+### Why
+
+The engine half of the desktop's verify-before-save for API keys.
+
+### Why an extension could not handle it
+
+It serves core RPC auth commands.
+
+### Expected merge conflict zones
+
+None (new file).
+
+## 2026-10-15 - verify-api-key.ts review fixes (senpi#3372 review)
+
+### What changed
+
+- A model list that also answers a made-up control key is public (OpenRouter, keyless local servers), so its 200 is reported `unsupported`, never `ok`. `ok` requires the control key to be refused.
+- Mistral is probed at `/v1/models`.
+- Configured auth headers are dropped whatever their case.
+- A 3xx is `unsupported`.
+
+### Why
+
+A public model list made any key look valid.
+
+### Why an extension could not handle it
+
+It serves core RPC auth commands.
+
+### Expected merge conflict zones
+
+None (fork-only file).
+
+## 2026-10-15 - verify-api-key.ts: temporary failures are unreachable (senpi#3372 delta review)
+
+### What changed
+
+A 429, 5xx or no answer, on either the key's request or the control request, is `unreachable` ("try again"), never `unsupported`. The control key constant moved above its use.
+
+### Why
+
+A rate-limited provider was told its valid key "cannot be checked".
+
+### Why an extension could not handle it
+
+It serves core RPC auth commands.
+
+### Expected merge conflict zones
+
+None (fork-only file).
