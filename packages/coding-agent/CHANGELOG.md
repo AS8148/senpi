@@ -6,6 +6,18 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.16] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
 - Paths in messages mean one file everywhere: RPC `resolve_path { path }` (capability `resolve_path`) resolves a relative path against the session's working directory, then the project root, and answers the realpath or every candidate tried; the TUI turns such links into `file://` links to the same file ([#3415](https://github.com/code-yeongyu/senpi/issues/3415)).
 - RPC `unload_session` frees a loaded session and keeps it reopenable: it refuses with a reason and an action while work runs, child sessions are open or other clients are attached (unless `interrupt`, `children: "detach"` or `force`), keeps queued input for the reopen, and parks it with `session_parked { reason: "unloaded" }`; the idle sweep's park now says `reason: "idle"`. CLI: `senpi host session unload` ([#3225](https://github.com/code-yeongyu/senpi/issues/3225)).
 - A queued `steer` / `follow_up` sent without a `clientMessageId` is recorded durably under a host-minted id and restored exactly once after a host restart ([#1971](https://github.com/code-yeongyu/senpi/issues/1971)).
@@ -24,9 +36,11 @@
 
 - The terminal transcript folds a handoff block into one muted line, `▸ Handoff · Now: … · Next: …`, and keeps its `For you` answer as ordinary text. Ctrl+O, or a click on the line, opens the block as written ([#3323](https://github.com/code-yeongyu/senpi/issues/3323), proposed by @devxoul).
 - The built-in default model for `anthropic-subscription` and `anthropic` is now `claude-opus-5-5` (was `claude-opus-4-8`). It applies only when no model is saved in settings and none is passed on the command line ([#3179](https://github.com/code-yeongyu/senpi/pull/3179)).
+- The built-in default model for `xiaomi` and the three `xiaomi-token-plan-*` providers is now `mimo-v2.6-pro` (was `mimo-v2.5-pro`, which models.dev marks deprecated and a regenerated catalog no longer carries). It applies only when no model is saved in settings and none is passed on the command line.
 
 ### Fixed
 
+- Every session on a shared RPC host lists the same sign-in options as a standalone one: a session built on the host's model runtime now reads that runtime's credential store, so OAuth providers an extension registers (Anthropic Subscription, Cursor CLI) are no longer missing from `get_auth_providers` ([#3434](https://github.com/code-yeongyu/senpi/issues/3434)).
 - An RPC host shard no longer keeps itself alive through its own sessions' connections. A task tree whose children open their own children on the shard they run in left that shard running for days after its owner and every outside client were gone, holding its sessions and memory. `RpcClient` now names the host generation it runs inside (`origin_host_instance`), and a host does not count connections from its own generation toward idle exit, owner-death exit or empty-host exit. A dependent session mid-turn still keeps the host open until the turn ends ([#3272](https://github.com/code-yeongyu/senpi/issues/3272)).
 - Claude subscription sessions on 1M-window models (Opus 5.5 and others) no longer fail with "Prompt is too long" once they grow past 200k tokens. The request now asks Claude Code for the 1M window that compaction already planned against. If the account cannot use 1M ("Extra usage is required for long context"), the turn retries once at 200k on the same account and the lane plans compaction for 200k. 1M is offered again after 6 hours. That refusal no longer blocks the account as if it were a usage limit ([#3408](https://github.com/code-yeongyu/senpi/issues/3408)).
 - A turn stopped because its session was replaced (`new_session`, `fork`, `switch_session`) now says so: its `agent_end` carries `abortCause: { kind: "session_replaced", reason, targetSessionFile, targetSessionId }`, before `session_replaced` ([#3357](https://github.com/code-yeongyu/senpi/issues/3357)).
