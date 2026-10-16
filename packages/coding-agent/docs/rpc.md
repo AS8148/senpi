@@ -2454,7 +2454,7 @@ The `model` field is a full [Model](#model) object or `null`. `pendingModelSwitc
 
 `serviceTier` is the tier a request would carry right now (`"auto"`, `"flex"`, or `"priority"`), omitted when no tier applies. `fastMode` is `true` when the active model is served at the priority ("fast") tier — either because fast mode is on for this session or because the model selection itself pins `priority`. The two never disagree: whenever `fastMode` is `true`, `serviceTier` is `"priority"`.
 
-`lastProviderDiagnostic` is present after a failed turn whose provider supplied structured evidence: `{"category": "rate_limit", "httpStatus": 429, "code": "rate_limit_error", "evidence": "structured_code"}`. `category` is one of `auth`, `rate_limit`, `quota`, `context_limit`, `invalid_request`, `provider_unavailable`, `unknown`; `httpStatus` is absent for errors delivered inside a streamed response. It describes the same failure as the latest assistant `errorMessage` and is replaced or cleared with it. The failed assistant message in `message_end`, `agent_end`, `get_messages` and the session file carries the same object as `providerDiagnostic`. See [Provider failure diagnostics](sdk.md#provider-failure-diagnostics) for how it is derived.
+`lastProviderDiagnostic` is present after a failed turn whose provider supplied structured evidence: `{"category": "rate_limit", "httpStatus": 429, "code": "rate_limit_error", "evidence": "structured_code"}`. `category` is one of `auth`, `rate_limit`, `quota`, `context_limit`, `invalid_request`, `provider_unavailable`, `network`, `unknown` (`network` comes from a structured transport error code such as `ECONNRESET`, with `"evidence": "structured_transport"`); `httpStatus` is absent for errors delivered inside a streamed response. It describes the same failure as the latest assistant `errorMessage` and is replaced or cleared with it. The failed assistant message in `message_end`, `agent_end`, `get_messages` and the session file carries the same object as `providerDiagnostic`. See [Provider failure diagnostics](sdk.md#provider-failure-diagnostics) for how it is derived.
 
 #### get_subscription_limits
 
@@ -3902,6 +3902,39 @@ Emitted when one low-level agent run completes. Contains all messages generated 
 }
 ```
 
+When the run ended with a provider error (the last assistant message has `stopReason: "error"`), `agent_end` also carries `failure`; it is absent on success and on abort:
+
+```json
+{
+  "type": "agent_end",
+  "messages": [...],
+  "willRetry": false,
+  "failure": {
+    "category": "rate_limit",
+    "provider": "anthropic",
+    "httpStatus": 429,
+    "code": "rate_limit_error",
+    "reason": "the provider is rate limiting requests",
+    "action": "retry later or set a fallback model"
+  }
+}
+```
+
+`failure` is built only from the failed message's structured `providerDiagnostic`, never from `errorMessage` text. `httpStatus` and `code` are copied from it when present. Every category carries a `reason` and an `action`:
+
+| `category` | `action` |
+| --- | --- |
+| `auth` | re-authenticate the provider |
+| `rate_limit` | retry later or set a fallback model |
+| `quota` | check the plan or credits |
+| `context_limit` | compact or shorten the conversation |
+| `invalid_request` | report it with the code |
+| `provider_unavailable` | retry or switch provider |
+| `network` | check connectivity |
+| `unknown` | retry once; if it repeats, switch the model or report the code |
+
+`unknown` is used when the error carries no diagnostic or its metadata matches no row; its `reason` names the provider and the code or status, for example `the provider returned an error that could not be classified (openai, status 429)`. A bare 429 stays `unknown` because status alone cannot tell a rate limit from exhausted quota. Retry and fallback decisions do not read `failure`.
+
 ### agent_settled
 
 Emitted after the full session-level run settles. At this point senpi will not continue automatically through retry, compaction retry, or queued follow-up messages.
@@ -4314,6 +4347,23 @@ Example exchange (Anthropic, user pastes the code instead of finishing in the br
 ```
 
 If the user completes the flow in the browser instead, the same `extension_ui_request` is emitted, no response is needed, and `auth_login_end` arrives on its own.
+
+#### verify_api_key
+
+Checks an API key with its provider before a client saves it. The key is used for one authenticated read of the provider's model list and is never stored, logged, or echoed. Hosts that support it advertise `auth_key_verify`.
+
+```json
+{"type": "verify_api_key", "provider": "openai", "key": "<key>"}
+```
+
+Response `data` is `{ok: true}` or `{ok: false, reason, status?}`:
+
+- `rejected`: the provider answered 401 or 403.
+- `unreachable`: no answer, a timeout, or a 5xx.
+- `unsupported`: the key cannot be checked this way. Either the provider's API has no probe, the list is not where it was expected (another 4xx or 3xx), or the list answers any key (OpenRouter, keyless local servers). In that last case a 200 proves nothing, so the host also asks with a made-up key and reports `ok` only when that one is refused.
+- `unknown-provider`: no model is configured for the provider.
+
+`get_auth_providers` API-key rows carry `keyHint`, the last four characters of a literal key the app stored when it is at least 12 characters long. OAuth rows, `!command` and `$ENV` references, and short keys have none.
 
 ## Extension UI Protocol
 

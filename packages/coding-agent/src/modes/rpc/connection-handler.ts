@@ -60,6 +60,7 @@ import type {
 import { ExtensionRpcRequestNotFoundError } from "../../core/extensions/runner.ts";
 import { describeUsageLimitEntry, describeUsageLimitMessage } from "../../core/retry-fallback/usage-limit.ts";
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
+import { storedKeyHint, verifyApiKey } from "../../core/verify-api-key.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
 import { DURABLE_CLIENT_MESSAGE_ID_CAPABILITY } from "./client-admission-record.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
@@ -67,6 +68,7 @@ import { handleClientInput } from "./client-input-handler.ts";
 import { ClientMessageEvents } from "./client-message-events.ts";
 import { ConnectionQuestionBridge, degradeQuestion, sessionQuestionBridges } from "./connection-question-bridge.ts";
 import {
+	AUTH_KEY_VERIFY_CAPABILITY,
 	AUTO_TITLE_SESSIONS_CAPABILITY,
 	buildCustomUnsupportedRequest,
 	CONTINUE_FROM_LEAF_CAPABILITY,
@@ -1007,6 +1009,7 @@ export function createRpcConnectionHandler(
 								STEER_WHEN_IDLE_CAPABILITY,
 								CONTINUE_FROM_LEAF_CAPABILITY,
 								EVAL_CELLS_CAPABILITY,
+								AUTH_KEY_VERIFY_CAPABILITY,
 								...(options.retryFallbackCommand ? [RETRY_FALLBACK_COMMAND_CAPABILITY] : []),
 								// Client flags cannot advertise a host guard this classic binding does not run.
 								...(options.capabilities ?? []).filter((capability) => capability !== SESSION_HELD_CAPABILITY),
@@ -1732,6 +1735,7 @@ export function createRpcConnectionHandler(
 					name: info.name,
 					authType: info.authType,
 					status: authMethodStatus(modelRegistry, info, apiKeyRows.has(info.id)),
+					...storedKeyHint(modelRegistry, info),
 				}));
 				return success(id, "get_auth_providers", { providers });
 			}
@@ -1757,6 +1761,16 @@ export function createRpcConnectionHandler(
 				// response must not get the pre-login snapshot (#2384).
 				await session.modelRegistry.refresh();
 				return success(id, "login_api_key");
+			}
+
+			case "verify_api_key": {
+				const verification = await verifyApiKey({
+					models: session.modelRegistry.getAll(),
+					provider: command.provider,
+					key: command.key,
+					signal: AbortSignal.timeout(15_000),
+				});
+				return success(id, "verify_api_key", verification);
 			}
 
 			case "logout": {
