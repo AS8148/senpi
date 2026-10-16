@@ -94,18 +94,25 @@ function rememberSessionBlock(sessionKey: string | undefined, account: AccountSl
 	sessionBlocks.set(sessionKey, blocks);
 }
 
+/** Drops elapsed session blocks for every session, so sessions that ended leave nothing behind. */
+function pruneSessionBlocks(now: number): void {
+	for (const [sessionKey, blocks] of sessionBlocks) {
+		for (const [name, block] of blocks) {
+			if ((block.blockedUntil ?? 0) <= now && pruneModelBlocks(block.modelBlocks, now) === undefined)
+				blocks.delete(name);
+		}
+		if (blocks.size === 0) sessionBlocks.delete(sessionKey);
+	}
+}
+
 function withSessionBlocks(
 	accounts: readonly AccountSlot[],
 	sessionKey: string | undefined,
 	now: number,
 ): AccountSlot[] {
+	pruneSessionBlocks(now);
 	const blocks = sessionKey === undefined ? undefined : sessionBlocks.get(sessionKey);
 	if (blocks === undefined) return [...accounts];
-	for (const [name, block] of blocks) {
-		if ((block.blockedUntil ?? 0) <= now && pruneModelBlocks(block.modelBlocks, now) === undefined)
-			blocks.delete(name);
-	}
-	if (blocks.size === 0 && sessionKey !== undefined) sessionBlocks.delete(sessionKey);
 	return accounts.map((account) => {
 		const own = blocks.get(account.name);
 		if (own === undefined) return account;
@@ -418,7 +425,9 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 			}
 
 			const blocked = blockedAccount(account, classification, now(), attempt, baseBlockMs, error, options.model);
-			const shared = isSharedVerdict(classification, error);
+			// With no session to hold it, a block is shared as before: dropping it would re-send every
+			// sessionless request to the spent account until its window resets.
+			const shared = isSharedVerdict(classification, error) || options.sessionKey === undefined;
 			if (!shared) rememberSessionBlock(options.sessionKey, blocked);
 			const superseded = shared ? await persistBlock(options.store, options.providerId, blocked, now()) : undefined;
 			if (

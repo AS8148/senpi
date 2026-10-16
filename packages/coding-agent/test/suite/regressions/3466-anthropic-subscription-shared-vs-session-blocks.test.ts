@@ -69,22 +69,23 @@ async function turn(
 
 describe("senpi#3466 only a confirmed account-level limit moves other sessions", () => {
 	it.each([
-		["a 429 rate limit", "HTTP 429 too many requests"],
-		["a one-model limit", "You've hit your Fable limit \u00b7 resets 1pm (UTC)"],
-	])("%s moves only the session that hit it", async (label, failure) => {
+		["a 429 rate limit", "rate", "HTTP 429 too many requests"],
+		["a one-model limit", "fable", "You've hit your Fable limit \u00b7 resets 1pm (UTC)"],
+		["a refill breaker", "breaker", "rapid_refill_breaker"],
+	])("%s moves only the session that hit it", async (_label, tag, failure) => {
 		// given two sessions on the same account, and session A hits the failure
-		const [shared, spare] = pool(`${label.length}`);
+		const [shared, spare] = pool(tag);
 		const store = await storeWith([shared, spare]);
-		expect(await turn(store, "session-a", shared.name, failure)).toEqual([shared.name, spare.name]);
+		expect(await turn(store, `a-${tag}`, shared.name, failure)).toEqual([shared.name, spare.name]);
 
 		// then nothing is written to the shared record, so session B keeps the account
 		expect((await stored(store)).every((account) => account.blockedUntil === undefined && !account.modelBlocks)).toBe(
 			true,
 		);
-		expect(await turn(store, "session-b", shared.name, undefined, T0 + 1_000)).toEqual([shared.name]);
+		expect(await turn(store, `b-${tag}`, shared.name, undefined, T0 + 1_000)).toEqual([shared.name]);
 
 		// and session A remembers its own block on its next turn instead of retrying the account
-		expect(await turn(store, "session-a", shared.name, failure, T0 + 2_000)).toEqual([spare.name]);
+		expect(await turn(store, `a-${tag}`, shared.name, failure, T0 + 2_000)).toEqual([spare.name]);
 	});
 
 	it("a 529 overload moves no session at all", async () => {

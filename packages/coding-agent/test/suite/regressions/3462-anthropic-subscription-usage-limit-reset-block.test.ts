@@ -116,11 +116,11 @@ describe("senpi#3462 an account usage limit blocks the account until its reset",
 		expect(await blockedFor(store, primary, T0)).toBe(DEFAULT_RATE_LIMIT_BLOCK_MS);
 	});
 
-	it("keeps a plain rate limit off the shared record (senpi#3466)", async () => {
+	it("keeps a plain rate limit on the short default block", async () => {
 		usePool("plain-429");
 		const store = await storeWithPool();
 		await runTurn(store, T0, "HTTP 429 too many requests");
-		expect(await blockedFor(store, primary, T0)).toBe(0);
+		expect(await blockedFor(store, primary, T0)).toBe(DEFAULT_RATE_LIMIT_BLOCK_MS);
 	});
 
 	it("falls back to the reset the account's spent limit window reported when the message names none", async () => {

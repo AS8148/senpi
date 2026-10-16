@@ -13,8 +13,11 @@ const HOUR_MS = 60 * 60 * 1_000;
  */
 const CLAUDE_USAGE_LIMIT =
 	/^(?:You['\u2019]ve|You have) (?:hit|reached) your (?:(session|weekly|daily|monthly|\d+-hour|usage) )?limit(?=$|\s*[\u00b7\u2219.,{(]|\s+resets?\b)|^Claude AI usage limit reached\b/i;
-/** Claude Code's structured terminal reasons for a spent subscription. */
-const TERMINAL_LIMIT_REASON = /\b(?:blocking_limit|rapid_refill_breaker)\b/;
+/**
+ * Claude Code's structured terminal reason for a spent subscription. `rapid_refill_breaker` is a short burst
+ * breaker, not a spent account, so it keeps the short, session-scoped block (senpi#3466).
+ */
+const TERMINAL_LIMIT_REASON = /\bblocking_limit\b/;
 /** A status the error names; a usage limit is a 429, so any other status is not one. */
 const NAMED_STATUS = /\b(?:HTTP|status(?: code)?)\s*(\d{3})\b/i;
 
