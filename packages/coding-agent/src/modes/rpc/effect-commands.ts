@@ -103,7 +103,6 @@ export function isEffectBegin(value: EffectBegin | RpcResponse): value is Effect
 	return !isResponse(value);
 }
 
-
 function invalidGrace(command: Command<"abort">): RpcResponse | undefined {
 	const { graceMs } = command;
 	if (graceMs === undefined) return undefined;
