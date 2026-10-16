@@ -16,6 +16,8 @@
 
 ### Fixed
 
+- `generate_image` now uses your `openai` provider the way model calls do: a models.json override of its `baseUrl` or key is used (a stored key also goes to an overridden `baseUrl`), `PI_IMAGE_GEN_PROVIDER` still takes precedence over such an override, and a stored key without an override keeps going to api.openai.com. A gateway picked automatically from models.json that has no images endpoint (HTTP 404/405) is skipped and named in the result, and when no configured provider serves images the error lists every provider tried and how to pin one, instead of failing on an arbitrary gateway ([omo#10285](https://github.com/code-yeongyu/oh-my-openagent/issues/10285)).
+
 ### Removed
 
 ## [2026.10.16-2] - 2026-10-16

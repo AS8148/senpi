@@ -6,6 +6,8 @@
 
 ### Added
 
+- Image generation results (`AssistantImages`) carry `providerDiagnostic` on failure, with the HTTP status and category, like assistant messages ([omo#10285](https://github.com/code-yeongyu/oh-my-openagent/issues/10285)).
+
 - Added lazy Google Application Default Credentials access-token resolution for Vertex Model Garden open-model integrations, reusing the existing Vertex credential and project environment helpers ([#3296](https://github.com/code-yeongyu/senpi/pull/3296) by [@sleegme](https://github.com/sleegme)).
 
 ### Changed
