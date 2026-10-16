@@ -28,7 +28,6 @@ import {
 	upsertSlot,
 } from "@earendil-works/pi-ai/auth/pool/slots";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
-import { createHash } from "crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
@@ -88,12 +87,10 @@ function unusedLoginNotices(data: AuthStorageData): AuthNotice[] {
 		for (const kind of unusedSlotKinds(credential)) {
 			const slots = listSlots(credential).filter((slot) => slotKind(slot) === kind);
 			const inUse = KIND_LABEL[credential.type];
-			const fingerprint = createHash("sha256")
-				.update(JSON.stringify(slots.map((slot) => [slot.name, slot.key ?? "", slot.refresh ?? ""])))
-				.digest("hex")
-				.slice(0, 16);
+			const names = slots.map((slot) => slot.name);
 			notices.push({
-				id: `${provider}:${kind}:${fingerprint}`,
+				// Slot names, never key material: a new unused login gets a new id and is shown again.
+				id: `${provider}:${kind}:${names.join(",")}`,
 				provider,
 				message: `${provider}: an ${KIND_LABEL[kind]} saved earlier is stored next to your ${inUse} but is never used; the ${inUse} stays in use. It is still in auth.json (${slots.map((slot) => slot.name).join(", ")}); to switch to it, save it again with /login (the ${inUse} is backed up first).`,
 			});
@@ -477,6 +474,7 @@ export class AuthStorage implements CredentialStore {
 	private readonly reportedMigrationSkips = new Set<string>();
 	private notices: AuthNotice[] = [];
 	private readonly seenInMemory = new Set<string>();
+	private readonly takenNotices = new Set<string>();
 	private readonly replacements = new Map<string, CredentialReplacement>();
 	private storage: AuthStorageBackend;
 	private authPath: string | undefined;
@@ -700,7 +698,23 @@ export class AuthStorage implements CredentialStore {
 		return this.notices.filter((notice) => !seen.has(notice.id));
 	}
 
-	/** Records notices as shown, so the next launch stays quiet until the problem changes. */
+	/**
+	 * Hands out each pending notice once per process, so a run that reports auth problems at several
+	 * points shows it once (senpi#3486). With `persistSeen`, the notices are also recorded as seen, so
+	 * the next launch stays quiet until the problem changes; a run nobody reads (RPC) leaves them pending.
+	 */
+	takePendingNotices(options: { persistSeen: boolean }): ReadonlyArray<AuthNotice> {
+		const taken = this.pendingNotices().filter((notice) => !this.takenNotices.has(notice.id));
+		for (const notice of taken) this.takenNotices.add(notice.id);
+		if (options.persistSeen) this.markNoticesSeen(taken.map((notice) => notice.id));
+		return taken;
+	}
+
+	/**
+	 * Records notices as shown, so the next launch stays quiet until the problem changes. Ids of
+	 * problems that no longer exist are dropped. A failed write never aborts startup: it is reported,
+	 * and the notice may be shown once more.
+	 */
 	markNoticesSeen(ids: readonly string[]): void {
 		if (ids.length === 0) return;
 		const path = this.seenNoticesPath();
@@ -708,8 +722,18 @@ export class AuthStorage implements CredentialStore {
 			for (const id of ids) this.seenInMemory.add(id);
 			return;
 		}
-		const seen = [...new Set([...this.seenNoticeIds(), ...ids])];
-		writeFileSync(path, JSON.stringify(seen, null, 2), AUTH_FILE_WRITE_OPTIONS);
+		const current = new Set(this.notices.map((notice) => notice.id));
+		const seen = [...new Set([...this.seenNoticeIds(), ...ids])].filter((id) => current.has(id));
+		try {
+			writeFileSync(path, JSON.stringify(seen, null, 2), AUTH_FILE_WRITE_OPTIONS);
+		} catch (error) {
+			const reason = error instanceof Error ? error.message : String(error);
+			this.recordError(
+				new Error(
+					`Could not record which credential notices were shown (${path}): ${reason}. They may be shown again on the next start; check that the file is writable.`,
+				),
+			);
+		}
 	}
 
 	private seenNoticesPath(): string | undefined {
