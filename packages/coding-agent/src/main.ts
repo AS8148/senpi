@@ -1492,6 +1492,14 @@ export async function main(args: string[], options?: MainOptions) {
 		reportDiagnostics([{ type: "warning", message: formatThinkingClampWarning(startupThinkingClamp) }]);
 	}
 	if (appMode !== "interactive") {
+		reportDiagnostics(
+			[...(resourceLoader.getAgentsFiles().diagnostics ?? []), ...resourceLoader.getSkills().diagnostics]
+				.filter((diagnostic) => diagnostic.type === "warning" && diagnostic.category === "size-limit")
+				.map((diagnostic) => ({
+					type: "warning" as const,
+					message: diagnostic.path ? `${diagnostic.path}: ${diagnostic.message}` : diagnostic.message,
+				})),
+		);
 		reportDiagnostics(collectAuthDiagnostics(services.authStorage, "runtime creation"));
 	}
 	if (runtime.diagnostics.some((diagnostic) => diagnostic.type === "error")) {
