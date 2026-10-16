@@ -26,3 +26,10 @@ export function unusedSlotKinds(credential: PooledCredential | undefined): Reado
 	}
 	return [...kinds];
 }
+
+/** The slots a credential can actually use: a slot of the other kind never projects (senpi#3486). */
+export function slotsOfOwnKind(credential: PooledCredential): CredentialSlot[] {
+	return listSlots(credential).filter((slot) => slotKind(slot) !== otherKind(credential.type));
+}
+
+const otherKind = (kind: CredentialKind): CredentialKind => (kind === "oauth" ? "api_key" : "oauth");

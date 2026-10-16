@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { slotKind, unusedSlotKinds } from "../src/auth/pool/kinds.ts";
+import { slotKind, slotsOfOwnKind, unusedSlotKinds } from "../src/auth/pool/kinds.ts";
 import { appendLoginSlot, type Credential, listSlots, type PooledCredential } from "../src/auth/pool/slots.ts";
 
 const oauth: Credential = { type: "oauth", access: "old-access", refresh: "old-refresh", expires: 1 };
@@ -69,5 +69,20 @@ describe("which slots a credential cannot use (senpi#3448)", () => {
 			[],
 		);
 		expect(unusedSlotKinds(undefined)).toEqual([]);
+	});
+});
+
+describe("the slots a credential can use (senpi#3486)", () => {
+	test("a mixed pool offers only its own kind; unclassified slots stay as before", () => {
+		const mixed: PooledCredential = {
+			...oauth,
+			accounts: [
+				{ name: "default", source: "login", access: "a", refresh: "r", expires: 1 },
+				{ name: "login-2", source: "login", key: "k" },
+				{ name: "meta" },
+			],
+		};
+		expect(slotsOfOwnKind(mixed).map((slot) => slot.name)).toEqual(["default", "meta"]);
+		expect(slotsOfOwnKind(apiKey).map((slot) => slot.name)).toEqual(["default"]);
 	});
 });
