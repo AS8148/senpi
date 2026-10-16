@@ -1116,13 +1116,25 @@ export class SettingsManager {
 	}
 
 	/**
-	 * True when this session's project trust came only from its Full access preset (never asked,
-	 * never saved): moving the session off Full access must withdraw it (senpi#3414, #3420 T5).
+	 * True when this session's project trust came only from its Full access preset (never asked, never
+	 * saved): leaving Full access withdraws it, and going back restores it (senpi#3414, #3420).
 	 */
 	private trustFromFullAccess = false;
 
 	isTrustFromFullAccess(): boolean {
 		return this.trustFromFullAccess && this.projectTrusted;
+	}
+
+	/** True when a Full-access-only trust was withdrawn in this session and Full access may restore it. */
+	canRestoreFullAccessTrust(): boolean {
+		return this.trustFromFullAccess && !this.projectTrusted;
+	}
+
+	/** Counts project-trust changes; a reload compares it before installing what it loaded (#3420). */
+	private trustEpoch = 0;
+
+	getTrustEpoch(): number {
+		return this.trustEpoch;
 	}
 
 	setProjectTrusted(trusted: boolean): void {
@@ -1131,6 +1143,7 @@ export class SettingsManager {
 		}
 
 		this.projectTrusted = trusted;
+		this.trustEpoch += 1;
 		this.modifiedProjectFields.clear();
 		this.modifiedProjectNestedFields.clear();
 

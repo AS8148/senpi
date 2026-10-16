@@ -1135,7 +1135,7 @@ export class AgentSession {
 	private _continueWithQueuedInput = false;
 	/** True while a reload's `session_start` handlers run; a nested reload would retire the runner they run on. */
 	private _sessionStartDispatching = false;
-	/** Waiters for the moment no prompt start is pending and no session start is dispatching (revokeProjectTrust). */
+	/** Waiters for the moment no prompt start is pending and no session start is dispatching (applyProjectTrustChange). */
 	private _admissionIdleWaiters: Array<() => void> = [];
 	/** User-abort generation at the start of an idle trigger turn's awaited admission hooks. */
 	private _triggerTurnAdmissionAbortGeneration: number | undefined;
@@ -9967,13 +9967,14 @@ export class AgentSession {
 	}
 
 	/**
-	 * Unloads the project's code after the session lost a trust it held only through Full access
-	 * (senpi#3420): rebuilds the runtime exactly like reload(), but nothing can cancel it. No
+	 * Loads or unloads the project's code after the session's project trust changed (Full access left or
+	 * re-entered, senpi#3420): rebuilds the runtime exactly like reload(), but nothing can cancel it. No
 	 * `session_before_reload` handler runs (a project extension must not keep itself loaded); a prompt
 	 * that is being admitted, or a session start in dispatch, is waited out instead of cancelling, and
-	 * prompts admitted after that wait for the rebuilt runtime.
+	 * prompts admitted after that wait for the rebuilt runtime. A reload already in flight sees the trust
+	 * epoch move and loads again before it installs anything.
 	 */
-	async revokeProjectTrust(): Promise<void> {
+	async applyProjectTrustChange(): Promise<void> {
 		while (this._promptStartPending || this._sessionStartDispatching) {
 			await new Promise<void>((resolve) => this._admissionIdleWaiters.push(resolve));
 		}
@@ -10013,6 +10014,7 @@ export class AgentSession {
 		const previousDefaultTools = new Set(
 			this._usesDefaultTools ? (this.settingsManager.getDefaultTools() ?? DEFAULT_TOOL_NAMES) : [],
 		);
+		let trustEpoch = this.settingsManager.getTrustEpoch();
 		await this.settingsManager.reload();
 		this._delegatedCompactionKey = undefined;
 		// Activate tools newly added to defaultTools. Removed ones stay active, and tools disabled
@@ -10056,6 +10058,14 @@ export class AgentSession {
 		await this._resourceLoader.reload({
 			settingsAlreadyReloadedFor: this.settingsManager,
 		});
+		// The project trust changed while this rebuild ran (senpi#3420): what it loaded matches the old
+		// trust, so it loads again under the current one. Nothing is installed until a load matches the
+		// trust at install time; the check and the install below run in one synchronous step.
+		while (this.settingsManager.getTrustEpoch() !== trustEpoch) {
+			trustEpoch = this.settingsManager.getTrustEpoch();
+			await this.settingsManager.reload();
+			await this._resourceLoader.reload({ settingsAlreadyReloadedFor: this.settingsManager });
+		}
 		time("resources", "reload");
 		try {
 			this._buildRuntime({

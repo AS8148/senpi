@@ -1,4 +1,5 @@
 import { constants, copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { ProjectTrustStore } from "./trust-manager.ts";
 import { basename, join, parse, resolve } from "node:path";
 import { resolvePath } from "../utils/paths.ts";
 import type { AgentSession } from "./agent-session.ts";
@@ -196,7 +197,9 @@ export class AgentSessionRuntime {
 	}
 
 	get diagnostics(): readonly AgentSessionRuntimeDiagnostic[] {
-		return this._diagnostics;
+		return this._trustChangeDiagnostics.length === 0
+			? this._diagnostics
+			: [...this._diagnostics, ...this._trustChangeDiagnostics];
 	}
 
 	get modelFallbackMessage(): string | undefined {
@@ -227,28 +230,44 @@ export class AgentSessionRuntime {
 	setPermissionPreset(preset: string): void {
 		this._launchProfile = Object.freeze({ ...(this._launchProfile ?? { cwd: this.cwd }), permissionPreset: preset });
 		this._session.extensionRunner.setFlagValue("permission-preset", preset);
-		// A project trusted only because the session was Full access is no longer trusted once it isn't:
-		// drop project settings and rebuild the runtime so project extensions, skills, hooks and MCP servers
-		// unload. Nothing can cancel that rebuild (`revokeProjectTrust`); the trust was never saved, so
-		// the next session that can ask, asks (senpi#3414, #3420).
-		const settings = this._session.settingsManager;
-		if (preset !== "full-access" && settings.isTrustFromFullAccess()) {
-			settings.setProjectTrusted(false);
-			this._trustRevocation = this._session.revokeProjectTrust().catch((error: unknown) => {
-				this._diagnostics = [
-					...this._diagnostics,
-					{ type: "error", message: `Unloading project code after leaving Full access failed: ${String(error)}` },
-				];
-			});
-		}
+		this.syncFullAccessTrust(preset);
 	}
 
-	/** Settles when the reload that withdrew a Full-access-only project trust has finished. */
-	get trustRevocation(): Promise<void> {
-		return this._trustRevocation;
+	/**
+	 * Keeps a Full-access-only project trust in step with the preset (senpi#3414, #3420). Leaving Full
+	 * access withdraws it; going back restores it unless the user saved "do not trust". Either way the
+	 * runtime is rebuilt so project extensions, skills, hooks and MCP servers load or unload, and nothing
+	 * can cancel that rebuild. The trust is never saved. Returns the rebuild, or undefined when the
+	 * trust did not change.
+	 */
+	private syncFullAccessTrust(preset: string): Promise<void> | undefined {
+		const session = this._session;
+		const settings = session.settingsManager;
+		if (preset !== "full-access" && settings.isTrustFromFullAccess()) settings.setProjectTrusted(false);
+		else if (
+			preset === "full-access" &&
+			settings.canRestoreFullAccessTrust() &&
+			new ProjectTrustStore(this.services.agentDir).get(this.cwd) !== false
+		)
+			settings.setProjectTrusted(true);
+		else return undefined;
+		this._projectTrustChange = session.applyProjectTrustChange().catch((error: unknown) => {
+			this._trustChangeDiagnostics = [
+				...this._trustChangeDiagnostics,
+				{ type: "error", message: `Updating project code after a Full access change failed: ${String(error)}` },
+			];
+		});
+		return this._projectTrustChange;
 	}
 
-	private _trustRevocation: Promise<void> = Promise.resolve();
+	/** Settles when the rebuild that followed a Full-access trust change has finished. */
+	get projectTrustChange(): Promise<void> {
+		return this._projectTrustChange;
+	}
+
+	private _projectTrustChange: Promise<void> = Promise.resolve();
+	/** Failed trust rebuilds; kept across session replacement so the error stays visible. */
+	private _trustChangeDiagnostics: AgentSessionRuntimeDiagnostic[] = [];
 
 	/**
 	 * Gives this process's sessions their fallback policy (`set_retry_fallback`); later replacements
@@ -414,6 +433,9 @@ export class AgentSessionRuntime {
 		this._services = result.services;
 		this._diagnostics = result.diagnostics;
 		this._modelFallbackMessage = result.modelFallbackMessage;
+		// The replacement was built while the preset was still Full access: bring its trust (and its
+		// project code) in line before it goes live (#3420 review).
+		if (profile?.permissionPreset !== undefined) await this.syncFullAccessTrust(profile.permissionPreset);
 		await this.reportRemovedExtensions();
 	}
 
