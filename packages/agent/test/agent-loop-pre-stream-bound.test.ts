@@ -31,9 +31,11 @@ class AssistantEventStream extends EventStream<AssistantMessageEvent, AssistantM
 
 const never = <T>(): Promise<T> => new Promise<T>(() => {});
 
+/** A provider stream whose start is held on a promise the test controls and never resolves: no first event, ever. */
 class NeverStartingStream extends AssistantEventStream {
+	readonly start = Promise.withResolvers<IteratorResult<AssistantMessageEvent>>();
 	override [Symbol.asyncIterator](): AsyncIterator<AssistantMessageEvent> {
-		return { next: () => never<IteratorResult<AssistantMessageEvent>>() };
+		return { next: () => this.start.promise };
 	}
 }
 

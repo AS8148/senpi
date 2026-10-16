@@ -871,7 +871,14 @@ function createPreStreamBound(
 				// nor leaks: a late value is handed to discardLate, a late rejection is dropped.
 				Promise.resolve(work).then(
 					(value) => {
-						if (settled) discardLate?.(value);
+						if (settled) {
+							// The turn already ended; the value is only cleaned up. A cleanup that throws must not
+							// become an unhandled rejection of a request nobody waits for any more.
+							try {
+								discardLate?.(value);
+							} catch {}
+							return;
+						}
 						finish(() => resolve(value));
 					},
 					(error: unknown) => finish(() => reject(error)),
