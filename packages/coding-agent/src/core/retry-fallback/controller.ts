@@ -218,6 +218,12 @@ export class RetryFallbackController {
 	 * or quota exhaustion, or a transient failure that spent its budget or failed a
 	 * half-open probe - independent of whether a fallback candidate remains.
 	 */
+	/** A response this session got from `selector` succeeded: the entry serves it again (senpi#3467). */
+	noteServed(selector: string): void {
+		this.ownFailures.delete(selector);
+		this.probes.accept(selector);
+	}
+
 	noteHealthFailure(model: Model<Api>, thinkingLevel: ThinkingLevel | undefined, failure: CircuitFailure): void {
 		this.unusable.note(model, failure);
 		if (!this.managedChainKey({ model, thinkingLevel })) return;
@@ -228,10 +234,12 @@ export class RetryFallbackController {
 	}
 
 	/**
-	 * Turn-boundary skip: when the current entry's circuit was opened by this or a
-	 * sibling session, move to the next closed entry without spending a request on
-	 * it. With no closed entry left the current one stays and probes, so the chain
-	 * never refuses a turn; a half-open current entry is claimed for this session.
+	 * Turn-boundary skip: when the current entry's circuit is open because this session
+	 * saw it fail (and has not been served by it since), or because its account is spent
+	 * for everyone, move to the next closed entry without spending a request on it. A
+	 * sibling's bare failure or Retry-After never moves this session (senpi#3467). With no
+	 * closed entry left the current one stays and probes, so the chain never refuses a
+	 * turn; a half-open current entry is claimed for this session.
 	 */
 	async rerouteAroundOpenCircuit(): Promise<boolean> {
 		const current = this.deps.getCurrentSelector();

@@ -39,7 +39,7 @@ export interface CircuitOpenRequest {
 	retryAfterMs?: number;
 	/** The reset window a usage limit named for itself; when present it alone sets the open. */
 	resetWindowMs?: number;
-	/** The failure is a verdict for every session: the entry is spent (billing, quota, an account limit) or the provider named a wait. */
+	/** The failure is a verdict for every session: the entry is spent (billing, quota, an account limit). A provider-named wait is not. */
 	exhausted?: boolean;
 }
 
@@ -196,7 +196,7 @@ export interface FallbackCircuitAccess {
 	/** Whether the breaker holds any state for the selector, i.e. it, not a session cooldown, governs recovery. */
 	governs(selector: string): boolean;
 	isOpen(selector: string, lane?: CircuitLane): boolean;
-	/** Whether the open circuit records a verdict every session should act on (spent entry or a provider-named wait). */
+	/** Whether the open circuit records a verdict every session should act on: the entry is spent. */
 	isExhausted(selector: string): boolean;
 	admit(selector: string, lane?: CircuitLane): CircuitAdmission;
 	release(token: ProbeToken): void;

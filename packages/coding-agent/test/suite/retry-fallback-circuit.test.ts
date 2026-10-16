@@ -148,6 +148,36 @@ describe("fallback-chain circuit breaker across sessions sharing one runtime", (
 		expect(waiting.eventsOfType("retry_fallback_applied")).toEqual([]);
 	});
 
+	it("a session whose own failure recovered is not moved by another session's Retry-After (senpi#3467)", async () => {
+		const y = await first();
+		y.setResponses([
+			overloaded(),
+			answer("fallback while the head cools down"),
+			answer("back on the head"),
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "HTTP 429: rate_limit_error (retry-after-ms: 600000)",
+			}),
+			answer("x on the fallback"),
+			answer("y still on the head"),
+		]);
+
+		// given: session Y failed on the head once, then reverted and was served by it again
+		await y.session.prompt("head overloads once");
+		now += 60_001;
+		await y.session.prompt("cooldown elapsed, back to the head");
+		expect(calledModels(y)).toEqual(["faux-1", "faux-2", "faux-1"]);
+
+		// when: session X gets a Retry-After on the head
+		const x = await sibling(y);
+		await x.session.prompt("x is rate limited with a provider wait");
+
+		// then: Y's earlier, recovered failure does not let X's Retry-After move it
+		await y.session.prompt("y's next turn");
+		expect(calledModels(y).at(-1)).toBe("faux-1");
+		expect(y.session.model?.id).toBe("faux-1");
+	});
+
 	it("still sends the request when every entry of the chain is open", async () => {
 		const origin = await first();
 		origin.setResponses([overloaded(), overloaded(), answer("probe answer")]);
