@@ -1,3 +1,21 @@
+## 2026-10-16 - expectedRevision on dequeue_message / edit_queued_message (senpi#3459)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`, `packages/coding-agent/src/modes/rpc/effect-commands.ts`, `packages/coding-agent/src/modes/rpc/effect-outcome-copy.ts`, `packages/coding-agent/src/modes/rpc/effect-record.ts`, `packages/coding-agent/src/modes/rpc/custom-capability.ts`, `packages/coding-agent/src/modes/rpc/host-capabilities.ts`, `packages/coding-agent/src/modes/rpc/connection-handler.ts`: both commands accept `expectedRevision`; a mismatch answers `status: "conflict"` with `currentRevision`, `reason`, `action` and changes nothing (a `conflict` effect outcome, replayed on a same-id retry; `expectedRevision` joins the effect fingerprint, and a request without it fingerprints as before). `edited` answers carry `text` and `revision`. Validation refuses an `expectedRevision` that is not a whole number of at least 1. Hosts advertise `queued_message_revision`.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`, `packages/coding-agent/src/modes/rpc/effect-commands.ts`, `packages/coding-agent/src/modes/rpc/effect-outcome-copy.ts`, `packages/coding-agent/src/modes/rpc/effect-record.ts`, `packages/coding-agent/src/modes/rpc/custom-capability.ts`, `packages/coding-agent/src/modes/rpc/host-capabilities.ts`, `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the desktop edits a queued message while other clients and the agent can change or deliver it; without a revision check the last write silently won (desktop #2718 / #2263).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`, `packages/coding-agent/src/modes/rpc/effect-commands.ts`, `packages/coding-agent/src/modes/rpc/effect-outcome-copy.ts`, `packages/coding-agent/src/modes/rpc/effect-record.ts`, `packages/coding-agent/src/modes/rpc/custom-capability.ts`, `packages/coding-agent/src/modes/rpc/host-capabilities.ts`, `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the RPC command surface, its validation, the effect ledger and the capability list are host internals that extensions do not reach.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`, `packages/coding-agent/src/modes/rpc/effect-commands.ts`, `packages/coding-agent/src/modes/rpc/effect-outcome-copy.ts`, `packages/coding-agent/src/modes/rpc/effect-record.ts`, `packages/coding-agent/src/modes/rpc/custom-capability.ts`, `packages/coding-agent/src/modes/rpc/host-capabilities.ts`, `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the queued-input command shapes, `runQueuedInputChange`, the outcome enum and the capability lists.
+
 ## 2026-10-16 - Every queue clear closes drained input as `cleared` (senpi#3412)
 
 ### What changed

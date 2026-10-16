@@ -30,6 +30,7 @@ export const effectOutcomeSchema = z.object({
 		"cleared_by_abort",
 		"already_delivered",
 		"not_found",
+		"conflict",
 		"refused",
 	]),
 	reason: z.string().optional(),
@@ -101,8 +102,8 @@ const SEMANTIC_FIELDS: Readonly<Record<EffectCommandKind, readonly string[]>> = 
 	set_model: ["provider", "modelId", "thinkingLevel"],
 	set_thinking_level: ["level", "scope"],
 	unload: ["interrupt", "clearQueue", "children", "force"],
-	dequeue: ["queuedId"],
-	edit_queued: ["queuedId", "text"],
+	dequeue: ["queuedId", "expectedRevision"],
+	edit_queued: ["queuedId", "text", "expectedRevision"],
 };
 
 export function effectFingerprint(command: EffectCommandKind, payload: object): string {

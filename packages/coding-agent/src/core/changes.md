@@ -1,3 +1,21 @@
+## 2026-10-16 - Queued-input changes can require the revision they were based on (senpi#3459)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `QueuedInput.revision` (1 when recorded, +1 per edit); `dequeueQueuedInput` / `editQueuedInput` take `{ expectedRevision }`, and a mismatch answers `conflict` in the same synchronous step as the change, so nothing else on the session loop can land in between. An input already gone from the native queue still answers `already_delivered`.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: two clients editing one queued input silently overwrote each other; the second never learned it changed a stale copy.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: the queued-input records and the agent's native queue are session internals; only one synchronous step inside the session can check a revision and change the queue atomically.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/agent-session.ts`, the `QueuedInput` type, `_recordQueuedInput` and `_changeQueuedInput`.
+
 ## 2026-10-14 - Turn inactivity lease and hard max runtime end a stuck turn (senpi#3227)
 
 ### What changed
