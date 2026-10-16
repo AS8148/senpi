@@ -23,6 +23,7 @@ import { SessionManager } from "./session-manager.ts";
 import { reserveSessionWrite, unregisterSessionWriter } from "./session-write-reservation.ts";
 import type { SettingsManager } from "./settings-manager.ts";
 import { resetTimings, time } from "./timings.ts";
+import { ProjectTrustStore } from "./trust-manager.ts";
 
 /**
  * Result returned by runtime creation.
@@ -196,7 +197,9 @@ export class AgentSessionRuntime {
 	}
 
 	get diagnostics(): readonly AgentSessionRuntimeDiagnostic[] {
-		return this._diagnostics;
+		return this._trustChangeDiagnostics.length === 0
+			? this._diagnostics
+			: [...this._diagnostics, ...this._trustChangeDiagnostics];
 	}
 
 	get modelFallbackMessage(): string | undefined {
@@ -227,7 +230,48 @@ export class AgentSessionRuntime {
 	setPermissionPreset(preset: string): void {
 		this._launchProfile = Object.freeze({ ...(this._launchProfile ?? { cwd: this.cwd }), permissionPreset: preset });
 		this._session.extensionRunner.setFlagValue("permission-preset", preset);
+		// While a replacement is in flight (or after one failed) the live session is the disposed one:
+		// nothing may rebuild it. The preset is recorded above, and apply() syncs the next replacement to
+		// it before that one goes live. There is no flag to clear: the check is the session itself.
+		if (this._session !== this._disposedSession) this.syncFullAccessTrust(this._session, preset);
 	}
+
+	/** The session teardownCurrent disposed; it stays the live session only until apply() installs a replacement. */
+	private _disposedSession: AgentSession | undefined;
+
+	/**
+	 * Keeps a Full-access-only project trust in step with the preset (senpi#3414, #3420). Leaving Full
+	 * access withdraws it, unless the user has since saved "trust"; going back restores it, unless the
+	 * user saved "do not trust". Either way the session's runtime is rebuilt so project extensions,
+	 * skills, hooks and MCP servers load or unload, and nothing can cancel that rebuild. The trust is
+	 * never saved. Returns the rebuild, or undefined when the trust did not change.
+	 */
+	private syncFullAccessTrust(session: AgentSession, preset: string): Promise<void> | undefined {
+		const settings = session.settingsManager;
+		// The session's own project: a replacement can belong to another project than the retired one (#3420 review).
+		const saved = new ProjectTrustStore(this.services.agentDir).get(session.sessionManager.getCwd());
+		if (preset !== "full-access" && settings.isTrustFromFullAccess() && saved !== true)
+			settings.setProjectTrusted(false);
+		else if (preset === "full-access" && settings.canRestoreFullAccessTrust() && saved !== false)
+			settings.setProjectTrusted(true);
+		else return undefined;
+		this._projectTrustChange = session.applyProjectTrustChange().catch((error: unknown) => {
+			this._trustChangeDiagnostics = [
+				...this._trustChangeDiagnostics,
+				{ type: "error", message: `Updating project code after a Full access change failed: ${String(error)}` },
+			];
+		});
+		return this._projectTrustChange;
+	}
+
+	/** Settles when the rebuild that followed a Full-access trust change has finished. */
+	get projectTrustChange(): Promise<void> {
+		return this._projectTrustChange;
+	}
+
+	private _projectTrustChange: Promise<void> = Promise.resolve();
+	/** Failed trust rebuilds; kept across session replacement so the error stays visible. */
+	private _trustChangeDiagnostics: AgentSessionRuntimeDiagnostic[] = [];
 
 	/**
 	 * Gives this process's sessions their fallback policy (`set_retry_fallback`); later replacements
@@ -360,6 +404,7 @@ export class AgentSessionRuntime {
 		this.beforeSessionInvalidate?.();
 		const replaced = this.session.sessionManager;
 		this.session.dispose();
+		this._disposedSession = this.session;
 		// Nothing writes to the replaced manager once its session is disposed, so the
 		// shared host may hand its session file to another worker.
 		unregisterSessionWriter(replaced);
@@ -382,10 +427,22 @@ export class AgentSessionRuntime {
 	private async apply(result: CreateAgentSessionRuntimeResult, hold?: SessionHold): Promise<void> {
 		this._sessionHold =
 			hold ?? holdActiveSession(result.session.sessionManager, false, this._launchProfile?.holderEndpoint);
-		this._session = result.session;
 		// The replacement was built from the profile read before its runtime was created; an attach
 		// that moved a setting while it was being built reached only the retired session (senpi#2842).
+		// Its project trust follows the CURRENT preset before it goes live: a replacement built while the
+		// session was still Full access must not be reachable with that trust's project code (#3420). A
+		// preset change that lands while that rebuild runs reaches only the retired session, so sync
+		// again until the preset stops moving, then install the profile read last.
+		let syncedPreset: string | undefined;
+		while (
+			this._launchProfile?.permissionPreset !== undefined &&
+			this._launchProfile.permissionPreset !== syncedPreset
+		) {
+			syncedPreset = this._launchProfile.permissionPreset;
+			await this.syncFullAccessTrust(result.session, syncedPreset);
+		}
 		const profile = this._launchProfile;
+		this._session = result.session;
 		if (profile?.permissionPreset !== undefined)
 			this._session.extensionRunner.setFlagValue("permission-preset", profile.permissionPreset);
 		if (profile?.promptSurface !== undefined) this._session.setPromptSurface(profile.promptSurface);

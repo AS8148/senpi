@@ -7,7 +7,6 @@ import type {
 	CreateAgentSessionRuntimeResult,
 } from "../src/core/agent-session-runtime.ts";
 import { isSessionBusySnapshot } from "../src/core/session-activity.ts";
-import { SettingsManager } from "../src/core/settings-manager.ts";
 import { ProjectTrustStore } from "../src/core/trust-manager.ts";
 import type { MultiSessionHostOptions } from "../src/modes/rpc/multi-session-host.ts";
 import * as multiSessionHost from "../src/modes/rpc/multi-session-host.ts";
@@ -18,6 +17,7 @@ import {
 } from "../src/modes/rpc/session-command-router.ts";
 import { SessionEventWriter } from "../src/modes/rpc/session-event-writer.ts";
 import { type RpcSessionLaunchProfile, RpcSessionRegistry } from "../src/modes/rpc/session-registry.ts";
+import { fakeSessionBase } from "./helpers/fake-session-base.ts";
 
 /**
  * Occupancy contract for the shared multi-session RPC host:
@@ -64,9 +64,7 @@ function createRuntimeFactory(): {
 		const flagValues = new Map<string, boolean | string>();
 		return {
 			session: {
-				sessionManager: options.sessionManager,
-				agentDir: options.agentDir,
-				settingsManager: SettingsManager.inMemory(),
+				...fakeSessionBase(options),
 				isFastModeActive: () => false,
 				agent: { state: {} },
 				getContextUsage: () => undefined,

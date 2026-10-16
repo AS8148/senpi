@@ -12,6 +12,8 @@ export type AccountSlot = {
 	source: "login" | "import" | "env";
 	blockedUntil?: number;
 	blockReason?: string;
+	/** When the current block was stored, so a turn that started earlier never clears it (senpi#3462). */
+	blockedAt?: number;
 	/** Rate limits that bind one model family on this account, not the account (senpi#2555). */
 	modelBlocks?: ModelBlocks;
 	/**
@@ -23,7 +25,10 @@ export type AccountSlot = {
 	importedFrom?: string;
 };
 
-export type SlotState = Record<string, { blockedUntil?: number; blockReason?: string; modelBlocks?: ModelBlocks }>;
+export type SlotState = Record<
+	string,
+	{ blockedUntil?: number; blockReason?: string; blockedAt?: number; modelBlocks?: ModelBlocks }
+>;
 
 export type AnthropicSubscriptionCredential = OAuthCredential & {
 	accounts?: AccountSlot[];
@@ -111,6 +116,7 @@ export function upsertAccount(
 	const {
 		blockedUntil: _blockedUntil,
 		blockReason: _blockReason,
+		blockedAt: _blockedAt,
 		modelBlocks: _modelBlocks,
 		authRecoveryGrant: _authRecoveryGrant,
 		...identity
