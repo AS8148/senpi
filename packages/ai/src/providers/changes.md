@@ -1,3 +1,21 @@
+## 2026-10-16 - Xiaomi MiMo compat covers mimo-v2.6-pro (senpi v2026.10.16 release)
+
+### What changed
+
+- `packages/ai/src/providers/all.ts`: the Xiaomi MiMo compat normalization (reasoning content on assistant messages, DeepSeek thinking format, thinking cannot be disabled) applies to `mimo-v2.6-pro` as well as `mimo-v2.5-pro`.
+
+### Why
+
+- `packages/ai/src/providers/all.ts`: models.dev marked `mimo-v2.5-pro` deprecated, so a regenerated catalog drops it and `mimo-v2.6-pro` becomes the xiaomi default. Its generated entry already carries the same compat; the normalization keeps that guaranteed if a future regeneration loses it.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/providers/all.ts`: built-in model normalization runs when the bundled catalog is loaded, before any extension.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/providers/all.ts`: `normalizeBuiltinModel` and the Xiaomi provider/id sets above it.
+
 ## 2026-10-15 - Faux provider reports configurable response headers (senpi#3370)
 
 ### What changed
