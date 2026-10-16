@@ -77,54 +77,67 @@ function spawnChurner(root: string, termMarker: string, exitsOnTerm = false): Ch
 	return child;
 }
 
+// Waiters are created before their trigger and awaited later, so a test that fails in between
+// abandons them; afterEach's SIGKILL then rejects them with nobody awaiting, which vitest
+// reports as an unhandled rejection against a later test. Observing the rejection at creation
+// keeps it handled while every awaiter still receives it.
+function observed(waiter: Promise<void>): Promise<void> {
+	waiter.catch(() => {});
+	return waiter;
+}
+
 function waitForExit(child: ChildProcessWithoutNullStreams): Promise<void> {
 	if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
-	return new Promise<void>((resolve, reject) => {
-		const deadline = setTimeout(
-			() => reject(new Error(`child did not exit within ${EVENT_DEADLINE_MS}ms`)),
-			EVENT_DEADLINE_MS,
-		);
-		child.once("exit", () => {
-			clearTimeout(deadline);
-			resolve();
-		});
-	});
+	return observed(
+		new Promise<void>((resolve, reject) => {
+			const deadline = setTimeout(
+				() => reject(new Error(`child did not exit within ${EVENT_DEADLINE_MS}ms`)),
+				EVENT_DEADLINE_MS,
+			);
+			child.once("exit", () => {
+				clearTimeout(deadline);
+				resolve();
+			});
+		}),
+	);
 }
 
 function waitForOutput(child: ChildProcessWithoutNullStreams, expected: string): Promise<void> {
-	return new Promise<void>((resolve, reject) => {
-		let output = "";
-		let settled = false;
-		const deadline = setTimeout(
-			() => finish(new Error(`child did not write "${expected}" within ${EVENT_DEADLINE_MS}ms`)),
-			EVENT_DEADLINE_MS,
-		);
-		const finish = (error?: Error) => {
-			if (settled) return;
-			settled = true;
-			clearTimeout(deadline);
-			child.stdout.off("data", onData);
-			child.off("close", onClose);
-			child.off("error", onError);
-			if (error) reject(error);
-			else resolve();
-		};
-		const onData = (chunk: Buffer) => {
-			output += chunk.toString();
-			if (output.includes(expected)) finish();
-		};
-		// "close" (exit + stdio drained), not "exit": the graceful churner
-		// writes its acknowledgement and exits in the same handler turn, and
-		// the exit event can beat the final stdout chunk. Pipe semantics
-		// guarantee pre-exit writes are readable before EOF, so close is the
-		// deterministic point at which "never wrote it" is provable.
-		const onClose = () =>
-			finish(new Error(`child closed before writing "${expected}"; saw: ${JSON.stringify(output)}`));
-		const onError = (error: Error) => finish(error);
-		child.stdout.on("data", onData);
-		child.once("close", onClose);
-		child.once("error", onError);
-	});
+	return observed(
+		new Promise<void>((resolve, reject) => {
+			let output = "";
+			let settled = false;
+			const deadline = setTimeout(
+				() => finish(new Error(`child did not write "${expected}" within ${EVENT_DEADLINE_MS}ms`)),
+				EVENT_DEADLINE_MS,
+			);
+			const finish = (error?: Error) => {
+				if (settled) return;
+				settled = true;
+				clearTimeout(deadline);
+				child.stdout.off("data", onData);
+				child.off("close", onClose);
+				child.off("error", onError);
+				if (error) reject(error);
+				else resolve();
+			};
+			const onData = (chunk: Buffer) => {
+				output += chunk.toString();
+				if (output.includes(expected)) finish();
+			};
+			// "close" (exit + stdio drained), not "exit": the graceful churner
+			// writes its acknowledgement and exits in the same handler turn, and
+			// the exit event can beat the final stdout chunk. Pipe semantics
+			// guarantee pre-exit writes are readable before EOF, so close is the
+			// deterministic point at which "never wrote it" is provable.
+			const onClose = () =>
+				finish(new Error(`child closed before writing "${expected}"; saw: ${JSON.stringify(output)}`));
+			const onError = (error: Error) => finish(error);
+			child.stdout.on("data", onData);
+			child.once("close", onClose);
+			child.once("error", onError);
+		}),
+	);
 }
 
 describe("process teardown", () => {
