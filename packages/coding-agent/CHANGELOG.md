@@ -8,6 +8,10 @@
 
 ### Added
 
+- A turn that stopped making progress no longer runs forever: a session-level inactivity lease (`turn_inactivity_ms`, default 60 min, renewed only by tool execution events and admitted user input) and a hard maximum runtime (`turn_max_runtime_ms`, default 6 h) end a stuck turn as a system abort that carries a `deadline` detail on `agent_end`. Partial text is kept, the reason names the setting and the action to resume, and a goal is never auto-continued past the stop until the user sends a message ([#3227](https://github.com/code-yeongyu/senpi/issues/3227)).
+
+- Argon sessions get their own system prompt preset (`gemini-4-argon`, auto-resolved for every catalog id shape and forceable from settings). It is the default prompt with four spots tuned to the provider's published prompting guidance: the identity names the model, the terminal routing line is declared plain prose with the tool calls following in the same response, the Working the Task opening makes one `eval` cell with real control flow and `parallel(thunks)` the way a step is done when `eval` is available, the error rule retries transient failures and changes strategy on others, plus a plain workstation wording and a search-grounding paragraph when `web_search` is active. Every other model's prompt is byte-identical to before ([#3385](https://github.com/code-yeongyu/senpi/issues/3385)).
+
 ### Changed
 
 ### Fixed
