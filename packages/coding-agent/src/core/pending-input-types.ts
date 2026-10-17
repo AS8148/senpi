@@ -114,7 +114,12 @@ export type PendingInputEvent =
 	| { readonly type: "owner_lost"; readonly token: DeliveryToken }
 	/** An explicit Stop or child cancellation; `consumerFenced` proves an in-flight attempt was not consumed. */
 	| { readonly type: "cancel"; readonly cause: "stop" | "child_cancel"; readonly consumerFenced: boolean }
-	| { readonly type: "rebind"; readonly handle: PendingInputHandle };
+	/**
+	 * A reopen. `attemptsUnsent` is the journal owner's proof that an attempt still `sending` was never handed to
+	 * its consumer: the engine commits consumption before any provider sees the input, so a reservation without a
+	 * later delivered record returns to the queue under the same id. Without it the attempt stays uncertain.
+	 */
+	| { readonly type: "rebind"; readonly handle: PendingInputHandle; readonly attemptsUnsent?: boolean };
 
 export type OperationOutcome =
 	| "admitted"

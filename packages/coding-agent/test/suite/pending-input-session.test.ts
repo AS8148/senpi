@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
@@ -228,5 +231,72 @@ describe("SessionPendingInputs.change", () => {
 			}),
 		).rejects.toThrow("disk full");
 		expect(nativeChanged).toBe(false);
+	});
+});
+
+describe("pending-input recovery on reopen", () => {
+	const dirs: string[] = [];
+	afterEach(() => {
+		while (dirs.length > 0) rmSync(dirs.pop() ?? "", { recursive: true, force: true });
+	});
+
+	function sessionDir(): string {
+		const dir = mkdtempSync(join(tmpdir(), "pending-recovery-"));
+		dirs.push(dir);
+		return dir;
+	}
+
+	function inputsOver(sessionManager: SessionManager): SessionPendingInputs {
+		let queuedIds = 100;
+		return new SessionPendingInputs({ sessionManager, nextQueuedId: () => `q_${++queuedIds}` });
+	}
+
+	it("recovers a queued input and an attempt cut off before delivery, and retires a delivered one", async () => {
+		const dir = sessionDir();
+		const first = SessionManager.create(dir, dir);
+		const before = inputsOver(first);
+		await before.admit({ clientMessageId: "queued", text: "q", mode: "followUp" }, () => undefined);
+		await before.admit({ clientMessageId: "cut", text: "c", mode: "followUp" }, () => undefined);
+		await before.admit({ clientMessageId: "done", text: "d", mode: "followUp" }, () => undefined);
+		const port = before.queuedInputPort();
+		const user = (clientMessageId: string) => ({
+			role: "user" as const,
+			content: "x",
+			timestamp: 1,
+			clientMessageId,
+		});
+		const cut = user("cut");
+		const done = user("done");
+		await port.claim("followUp", () => [cut, done]);
+		await port.commitConsumption("followUp", [done]);
+
+		const after = inputsOver(SessionManager.open(first.getSessionFile() ?? "", dir));
+
+		expect(await after.restoreHandle("queued")).toEqual({ queuedId: expect.stringMatching(/^q_/) });
+		expect(await after.restoreHandle("cut")).toEqual({ queuedId: expect.stringMatching(/^q_/) });
+		expect(await after.restoreHandle("done")).toBe("retired");
+		expect(await after.restoreHandle("never-admitted")).toBeUndefined();
+	});
+
+	it("does not queue a restored input its record already delivered", async () => {
+		const { harness, release, toolStarted } = await runWithHeldTool();
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("handled"),
+		]);
+		const run = harness.session.prompt("start");
+		await toolStarted;
+		await harness.session.followUp("once", undefined, { clientMessageId: "c-1" });
+		release();
+		await run;
+
+		await harness.session.restoreQueuedInput({
+			clientMessageId: "c-1",
+			text: "once",
+			mode: "followUp",
+			enqueueOrder: 1,
+		});
+
+		expect(harness.session.getQueuedInputs()).toEqual([]);
 	});
 });

@@ -106,7 +106,7 @@ function reduceLifecycle(current: PendingInput, event: LifecycleEvent): PendingI
 		case "cancel":
 			return cancel(current, event.cause, event.consumerFenced);
 		case "rebind":
-			return rebind(current, event.handle);
+			return rebind(current, event.handle, event.attemptsUnsent === true);
 	}
 }
 
@@ -127,12 +127,13 @@ function cancel(current: PendingInput, cause: "stop" | "child_cancel", consumerF
 	};
 }
 
-function rebind(current: PendingInput, handle: PendingInput["handle"]): PendingInputDecision {
+function rebind(current: PendingInput, handle: PendingInput["handle"], attemptsUnsent: boolean): PendingInputDecision {
 	if (current.phase === "delivered" || current.phase === "removed") return unchanged(current);
 	const rebound: PendingInput = { ...current, handle, revision: 1 };
-	return current.phase === "sending"
-		? persist(fail(rebound, "uncertain", "the session reopened during handoff"))
-		: persist(rebound);
+	if (current.phase !== "sending") return persist(rebound);
+	if (!attemptsUnsent) return persist(fail(rebound, "uncertain", "the session reopened during handoff"));
+	const { attempt: _attempt, ...unsent } = rebound;
+	return persist({ ...unsent, phase: "queued" });
 }
 
 function tokenFitsInput(input: PendingInput, token: DeliveryToken): boolean {

@@ -152,6 +152,15 @@ describe("pending input: delivery and custody", () => {
 		});
 	});
 
+	it("requeues an attempt the journal proves unsent on reopen, and keeps an unproven one uncertain (T28)", () => {
+		const proven = reducePendingInput(sending(), { type: "rebind", handle: REOPENED, attemptsUnsent: true }).next;
+		const unproven = reducePendingInput(sending(), { type: "rebind", handle: REOPENED }).next;
+
+		expect(proven).toMatchObject({ phase: "queued", handle: REOPENED, revision: 1 });
+		expect(proven?.attempt).toBeUndefined();
+		expect(unproven).toMatchObject({ phase: "failed", failure: { delivery: "uncertain" } });
+	});
+
 	it("rebinds lifetime handles without losing text or edited history (T29)", () => {
 		const edited = replay(SUBMIT, edit("e1", 1, "edited"));
 

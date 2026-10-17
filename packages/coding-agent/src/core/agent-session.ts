@@ -5832,7 +5832,13 @@ export class AgentSession {
 
 	/** Restore accepted input without re-running input transforms or changing its enqueue order. */
 	async restoreQueuedInput(input: PreparedClientInput): Promise<void> {
-		this._enqueuePreparedInput(input);
+		const restored =
+			input.clientMessageId === undefined
+				? undefined
+				: await this._pendingInputs.restoreHandle(input.clientMessageId);
+		// The pending-input record is the authority: an input it already retired is not queued again.
+		if (restored === "retired") return;
+		this._enqueuePreparedInput(restored === undefined ? input : { ...input, queuedId: restored.queuedId });
 	}
 
 	private _enqueuePreparedInput(

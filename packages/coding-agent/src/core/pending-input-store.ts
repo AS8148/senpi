@@ -30,6 +30,8 @@ export interface PendingInputStoreOptions {
 	readonly nextQueuedId: () => string;
 	readonly dispatch?: (token: DeliveryToken, input: PendingInput) => void;
 	readonly restoreToDraft?: (text: string) => void;
+	/** Passed to every reopen rebind; see the `rebind` event (senpi#3549). */
+	readonly uncommittedAttemptsAreUnsent?: boolean;
 	/**
 	 * Receives a listener's throw; an owner should always supply it, since the default rethrow is uncaught. A committed transition is not undone by a failing observer, and its dispatch
 	 * still runs; by default the error is rethrown on a later microtask so it is never silently lost.
@@ -90,7 +92,11 @@ export class PendingInputStore {
 		for (const input of [...store.inputs.values()]) {
 			if (input.phase === "delivered" || input.phase === "removed") continue;
 			const handle = { lifetimeId: options.lifetimeId, queuedId: options.nextQueuedId() };
-			await store.commit(input.clientMessageId, { type: "rebind", handle });
+			await store.commit(input.clientMessageId, {
+				type: "rebind",
+				handle,
+				attemptsUnsent: options.uncommittedAttemptsAreUnsent === true,
+			});
 		}
 		return store;
 	}
@@ -146,6 +152,11 @@ export class PendingInputStore {
 				current: (clientMessageId) => this.inputs.get(clientMessageId),
 			}),
 		);
+	}
+
+	/** The full record of one input, for the session that owns this store. */
+	current(clientMessageId: string): PendingInput | undefined {
+		return this.inputs.get(clientMessageId);
 	}
 
 	read(clientMessageId: string): PendingInputRead {

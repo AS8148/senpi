@@ -3,8 +3,7 @@ import type { QueuedInputPort } from "@earendil-works/pi-agent-core";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import { SessionPendingInputJournal } from "./pending-input-journal.ts";
 import { createSessionQueuedInputPort } from "./pending-input-session-port.ts";
-import type { PendingInputJournal } from "./pending-input-store.ts";
-import { PendingInputStore } from "./pending-input-store.ts";
+import { PENDING_INPUT_TRANSITION, type PendingInputJournal, PendingInputStore } from "./pending-input-store.ts";
 import type { OperationOutcome, PendingInputMode, PendingInputOperationResult } from "./pending-input-types.ts";
 
 export interface IdentifiedInput {
@@ -56,6 +55,23 @@ export class SessionPendingInputs {
 
 	constructor(options: SessionPendingInputsOptions) {
 		this.options = options;
+		// A session file that already holds pending inputs is recovered now: the agent's first drain must see them.
+		const journaled = options.sessionManager
+			.getEntries()
+			.some((entry) => entry.type === "custom" && entry.customType === PENDING_INPUT_TRANSITION);
+		if (journaled) void this.store();
+	}
+
+	/**
+	 * How a restored input (from the RPC admission ledger after a reopen) re-enters the native queue: under the
+	 * store's rebound queue id while it is still queued; not at all once the store retired it (delivered, removed,
+	 * failed); `undefined` when the store never held it, so the caller restores it as before.
+	 */
+	async restoreHandle(clientMessageId: string): Promise<{ readonly queuedId: string } | "retired" | undefined> {
+		if (this.storeOpening === undefined) return undefined;
+		const input = (await this.storeOpening).current(clientMessageId);
+		if (input === undefined) return undefined;
+		return input.phase === "queued" ? { queuedId: input.handle.queuedId } : "retired";
 	}
 
 	/**
@@ -138,6 +154,9 @@ export class SessionPendingInputs {
 			journal: this.options.journal ?? new SessionPendingInputJournal(this.options.sessionManager),
 			lifetimeId: this.lifetimeId,
 			nextQueuedId: this.options.nextQueuedId,
+			// The agent port commits consumption before any provider sees an input, so an attempt left `sending` by a
+			// crash was never sent and returns to the queue under its id (T28).
+			uncommittedAttemptsAreUnsent: true,
 		});
 		return this.storeOpening;
 	}
