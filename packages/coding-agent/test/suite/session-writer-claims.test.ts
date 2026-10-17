@@ -131,7 +131,14 @@ describe("session writer claims", () => {
 
 	it("refuses a chain with a missing generation instead of guessing", async () => {
 		const dir = claimsDir();
-		const deadOwner = { generation: 2, nonce: "n", pid: 999, bootAtMs: 50, processStartedAtMs: 1, canonicalPath: "/s.jsonl" };
+		const deadOwner = {
+			generation: 2,
+			nonce: "n",
+			pid: 999,
+			bootAtMs: 50,
+			processStartedAtMs: 1,
+			canonicalPath: "/s.jsonl",
+		};
 		writeFileSync(join(dir, "2.json"), JSON.stringify(deadOwner));
 
 		await expect(acquireWriterClaim(dir, "/s.jsonl", probesFor(world(), 200))).rejects.toBeInstanceOf(
