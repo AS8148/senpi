@@ -1551,7 +1551,7 @@ export async function main(args: string[], options?: MainOptions) {
 	if (appMode === "rpc") {
 		const { runRpcMode } = await import("./modes/rpc/rpc-mode.ts");
 		printTimings();
-		await runRpcMode(runtime);
+		await runRpcMode(runtime, toolRuntime);
 	} else if (appMode === "interactive") {
 		// Keep the TUI graph out of headless RPC children. This is intentionally at the
 		// mode seam: interactive startup still loads the same module before first use.
