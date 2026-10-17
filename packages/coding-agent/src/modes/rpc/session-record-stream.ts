@@ -1,8 +1,10 @@
 /**
  * The one projection of a session's events into RPC records: invocation metadata and `agent_end` go through
- * client-message correlation, model and thinking changes carry the selection provenance, and an aborted
- * `agent_end` names its abort source. A host connection and a terminal control endpoint both stream a
- * session through this, so an attached client reads the same records from either.
+ * client-message correlation; `queue_update` entries lose their host-minted ids; model and thinking changes
+ * carry the selection provenance; an aborted `agent_end` names its abort source and the client that aborted
+ * (`abortedBy`), and a deadline-stopped one its `deadline`; `session_abort` names the client that aborted. A
+ * host connection and a terminal control endpoint both stream a session through this, so an attached client
+ * reads the same records from either.
  */
 import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
 import type { AgentSession } from "../../core/agent-session.ts";
