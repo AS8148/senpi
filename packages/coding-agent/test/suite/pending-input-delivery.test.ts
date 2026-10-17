@@ -23,7 +23,7 @@ describe("pending input: delivery and custody", () => {
 	});
 
 	it("settles handled commands without a fabricated user entry (T07)", () => {
-		const decision = reducePendingInput(queued(), { type: "handled" });
+		const decision = reducePendingInput(queued(), { type: "handled", lifetimeId: HANDLE.lifetimeId });
 
 		expect(decision.next).toMatchObject({ phase: "delivered", deliveredBy: "handled" });
 		expect(projectPendingInput(decision.next ?? queued()).statusCode).toBe("applied");
@@ -47,11 +47,14 @@ describe("pending input: delivery and custody", () => {
 	});
 
 	it("settles uncertainty from an identity-bearing delivery witness (T18)", () => {
-		expect(reducePendingInput(uncertain(), { type: "witnessed" }).next).toMatchObject({ phase: "delivered" });
+		expect(reducePendingInput(uncertain(), { type: "witnessed", attemptId: "a-1" }).next).toMatchObject({
+			phase: "delivered",
+		});
 	});
 
 	it("enables retry only after complete fenced non-delivery evidence (T19)", () => {
-		const proven = reducePendingInput(uncertain(), { type: "non_delivery_proven" }).next ?? uncertain();
+		const proven =
+			reducePendingInput(uncertain(), { type: "non_delivery_proven", attemptId: "a-1" }).next ?? uncertain();
 
 		expect(proven.failure?.delivery).toBe("not_delivered");
 		expect(projectPendingInput(proven).actions).toContain("retry");
@@ -127,7 +130,9 @@ describe("pending input: delivery and custody", () => {
 	});
 
 	it("does not settle an in-flight input from a handled receipt without its token", () => {
-		expect(reducePendingInput(sending(), { type: "handled" }).next).toMatchObject({ phase: "sending" });
+		expect(reducePendingInput(sending(), { type: "handled", lifetimeId: HANDLE.lifetimeId }).next).toMatchObject({
+			phase: "sending",
+		});
 	});
 
 	it("names the lifetime of each superseded revision, since revisions restart on reopen", () => {
@@ -149,6 +154,22 @@ describe("pending input: delivery and custody", () => {
 		});
 		expect(reducePendingInput(sending("a-2"), { type: "release", token: token("a-1") }).next).toMatchObject({
 			phase: "sending",
+		});
+	});
+
+	it("settles a handled receipt without a token only for the input's current lifetime (#3572)", () => {
+		expect(reducePendingInput(queued(), { type: "handled", lifetimeId: "life-0" }).next).toMatchObject({
+			phase: "queued",
+		});
+	});
+
+	it.each([
+		{ event: { type: "witnessed", attemptId: "a-other" } as const },
+		{ event: { type: "non_delivery_proven", attemptId: "a-other" } as const },
+	])("ignores $event.type evidence about another attempt than the one that failed (#3572)", ({ event }) => {
+		expect(reducePendingInput(uncertain(), event).next).toMatchObject({
+			phase: "failed",
+			failure: { delivery: "uncertain", attempt: { attemptId: "a-1" } },
 		});
 	});
 
@@ -182,7 +203,7 @@ describe("pending input: delivery and custody", () => {
 
 		for (const event of [
 			{ type: "consumed", token: token() },
-			{ type: "witnessed" },
+			{ type: "witnessed", attemptId: "a-1" },
 			{ type: "teardown" },
 		] as const) {
 			expect(reducePendingInput(delivered, event)).toEqual({ next: delivered, effects: [] });

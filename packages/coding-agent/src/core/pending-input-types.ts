@@ -43,6 +43,8 @@ export interface SupersededVersion {
 export interface PendingInputFailure {
 	readonly delivery: DeliveryCertainty;
 	readonly reason: string;
+	/** The reservation that failed, kept so later evidence must name the attempt it is about. */
+	readonly attempt?: DeliveryToken;
 }
 
 /** The recorded answer of one operation, replayed byte for byte when the same effect id repeats. */
@@ -102,13 +104,15 @@ export type PendingInputEvent =
 	/** The consumer gave the attempt back before any of it was committed or sent: queued again, same id. */
 	| { readonly type: "release"; readonly token: DeliveryToken }
 	| { readonly type: "consumed"; readonly token: DeliveryToken }
-	| { readonly type: "handled"; readonly token?: DeliveryToken }
+	/** A handled-command receipt: with the reservation's token, or naming the lifetime of a still-queued input. */
+	| { readonly type: "handled"; readonly token: DeliveryToken }
+	| { readonly type: "handled"; readonly lifetimeId: string }
 	| { readonly type: "refused"; readonly token: DeliveryToken; readonly reason: string }
 	| { readonly type: "ambiguous"; readonly token: DeliveryToken; readonly reason: string }
-	/** An identity-bearing delivery witness found after the fact (a late event or recovery). */
-	| { readonly type: "witnessed" }
-	/** Complete, fenced evidence that no consumer can still deliver the attempt. */
-	| { readonly type: "non_delivery_proven" }
+	/** An identity-bearing delivery witness found after the fact (a late event or recovery), for one failed attempt. */
+	| { readonly type: "witnessed"; readonly attemptId: string }
+	/** Complete, fenced evidence that no consumer can still deliver the named failed attempt. */
+	| { readonly type: "non_delivery_proven"; readonly attemptId: string }
 	/** Teardown that is not an explicit user action: reload, unload, crash, handoff. */
 	| { readonly type: "teardown" }
 	| { readonly type: "owner_lost"; readonly token: DeliveryToken }

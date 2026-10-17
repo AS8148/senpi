@@ -74,11 +74,12 @@ function reduceLifecycle(current: PendingInput, event: LifecycleEvent): PendingI
 		case "consumed":
 			return holdsAttempt(current, event.token) ? persist(deliver(current, "consumed")) : unchanged(current);
 		case "handled":
-			if (current.phase === "queued") return persist(deliver(current, "handled"));
-			if (event.token !== undefined && holdsAttempt(current, event.token)) {
-				return persist(deliver(current, "handled"));
-			}
-			return unchanged(current);
+			if ("token" in event)
+				return holdsAttempt(current, event.token) ? persist(deliver(current, "handled")) : unchanged(current);
+			// Without a token the receipt must name the lifetime of the still-queued input it settles.
+			return current.phase === "queued" && event.lifetimeId === current.handle.lifetimeId
+				? persist(deliver(current, "handled"))
+				: unchanged(current);
 		case "refused":
 			return holdsAttempt(current, event.token)
 				? persist(fail(current, "not_delivered", event.reason))
@@ -92,12 +93,10 @@ function reduceLifecycle(current: PendingInput, event: LifecycleEvent): PendingI
 				? persist(fail(current, "uncertain", "the delivering owner was lost"))
 				: unchanged(current);
 		case "witnessed":
-			return current.phase === "failed" && current.failure?.delivery === "uncertain"
-				? persist(deliver(current, "consumed"))
-				: unchanged(current);
+			return uncertainAbout(current, event.attemptId) ? persist(deliver(current, "consumed")) : unchanged(current);
 		case "non_delivery_proven":
-			return current.phase === "failed" && current.failure?.delivery === "uncertain"
-				? persist(fail(current, "not_delivered", current.failure.reason))
+			return uncertainAbout(current, event.attemptId)
+				? persist(fail(current, "not_delivered", current.failure?.reason ?? ""))
 				: unchanged(current);
 		case "teardown":
 			return current.phase === "sending"
@@ -157,8 +156,22 @@ function deliver(input: PendingInput, deliveredBy: PendingInput["deliveredBy"]):
 }
 
 function fail(input: PendingInput, delivery: PendingInputFailure["delivery"], reason: string): PendingInput {
-	const { attempt: _attempt, ...rest } = input;
-	return { ...rest, phase: "failed", failure: { delivery, reason } };
+	const { attempt, ...rest } = input;
+	const failedAttempt = attempt ?? input.failure?.attempt;
+	return {
+		...rest,
+		phase: "failed",
+		failure: { delivery, reason, ...(failedAttempt === undefined ? {} : { attempt: failedAttempt }) },
+	};
+}
+
+/** Late evidence only settles the uncertain failure of the exact attempt it names. */
+function uncertainAbout(input: PendingInput, attemptId: string): boolean {
+	return (
+		input.phase === "failed" &&
+		input.failure?.delivery === "uncertain" &&
+		input.failure.attempt?.attemptId === attemptId
+	);
 }
 
 function settled(input: PendingInput): PendingInput {
