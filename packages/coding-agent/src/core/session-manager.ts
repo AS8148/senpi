@@ -2149,7 +2149,8 @@ export class SessionManager {
 	 * Pass undefined or empty string to clear the label.
 	 */
 	appendLabelChange(targetId: string, label: string | undefined): string {
-		if (!this.byId.has(targetId) && this.getEntry(targetId) === undefined) {
+		// A target the mirror trimmed is checked against the memoized full history, not a fresh parse of the file.
+		if (!this.byId.has(targetId) && !this.getEntries().some((entry) => entry.id === targetId)) {
 			throw new Error(`Entry ${targetId} not found`);
 		}
 		const entry: LabelEntry = {
