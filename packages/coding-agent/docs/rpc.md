@@ -272,8 +272,8 @@ absent, and `in-process` is the default. Any other value, from either source, is
 - `in-process` - every tool runs on the host's own event loop, as it always has.
 - `child` - reserved for the per-session tool child (senpi#3566). Selecting it changes nothing yet.
 
-A multi-session host advertises its choice as exactly one `tool_runtime:in-process` or `tool_runtime:child` entry in
-`get_protocol_info.capabilities`.
+A multi-session host and a single-session `--mode rpc` process each advertise their choice as exactly one
+`tool_runtime:in-process` or `tool_runtime:child` entry in `get_protocol_info.capabilities`.
 
 ### Host identity (`get_protocol_info`)
 

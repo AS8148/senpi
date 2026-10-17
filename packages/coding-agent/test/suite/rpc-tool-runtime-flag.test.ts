@@ -4,6 +4,7 @@
  * advertises. Guards a CLI flag + protocol capability contract that later clients negotiate on.
  */
 import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -71,6 +72,44 @@ describe("tool runtime at startup", () => {
 		expect(env.stderr).toContain("tool-runtime");
 		expect(env.stderr).toContain("in-process or child");
 	}, 60_000);
+
+	it("a single-session --mode rpc process advertises tool_runtime:child", async () => {
+		const scratch = generationScratch("toolrt-classic");
+		cleanups.push(() => rm(scratch.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }));
+		writeRpcModelsJson(scratch.agentDir, "http://127.0.0.1:1");
+		const child = spawn(
+			process.execPath,
+			["--import", sourceResolverUrl, cliPath, "--mode", "rpc", ...GENERATION_HOST_ARGS, "--tool-runtime", "child"],
+			{
+				cwd: scratch.cwd,
+				env: { ...process.env, ...generationEnv(scratch), SENPI_CODING_AGENT_DIR: scratch.agentDir },
+				stdio: ["pipe", "pipe", "pipe"],
+			},
+		);
+		const exited = once(child, "exit");
+		cleanups.push(async () => {
+			if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+			await exited;
+		});
+		const answer = new Promise<Record<string, unknown>>((resolveAnswer, reject) => {
+			let buffer = "";
+			child.stdout.on("data", (chunk: Buffer) => {
+				buffer += chunk.toString("utf8");
+				for (const line of buffer.split("\n").slice(0, -1)) {
+					const record = JSON.parse(line) as Record<string, unknown>;
+					if (record.id === "info") resolveAnswer(record);
+				}
+				buffer = buffer.slice(buffer.lastIndexOf("\n") + 1);
+			});
+			void exited.then(([code]) => reject(new Error(`rpc process exited ${code} before answering`)));
+		});
+		child.stdin.write(`${JSON.stringify({ id: "info", type: "get_protocol_info" })}\n`);
+		const info = await answer;
+		const capabilities = (info.data as { capabilities?: unknown } | undefined)?.capabilities;
+		expect(
+			Array.isArray(capabilities) ? capabilities.filter((c) => String(c).startsWith("tool_runtime:")) : [],
+		).toEqual(["tool_runtime:child"]);
+	}, 120_000);
 
 	it.each([
 		{ hostArgs: [], expected: "tool_runtime:in-process" },
