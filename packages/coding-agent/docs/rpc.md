@@ -264,6 +264,17 @@ measured 0 additional threads per session. Size a daemon from those numbers: it 
 occupancy, so the ceiling is the machine's memory and its per-process thread and descriptor limits, not a session
 count the host enforces.
 
+### Tool runtime (`--tool-runtime in-process|child`)
+
+`--tool-runtime` selects where a session's heavy tool work runs. `SENPI_TOOL_RUNTIME` is the fallback when the flag is
+absent, and `in-process` is the default. Any other value, from either source, is a startup error.
+
+- `in-process` - every tool runs on the host's own event loop, as it always has.
+- `child` - reserved for the per-session tool child (senpi#3566). Selecting it changes nothing yet.
+
+A multi-session host advertises its choice as exactly one `tool_runtime:in-process` or `tool_runtime:child` entry in
+`get_protocol_info.capabilities`.
+
 ### Host identity (`get_protocol_info`)
 
 Supervised socket hosts additionally report `lifecycle: "ready" | "stopping"`.

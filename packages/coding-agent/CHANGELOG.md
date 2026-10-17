@@ -6,6 +6,7 @@
 
 ### Added
 
+- `--tool-runtime in-process|child` (env `SENPI_TOOL_RUNTIME`) selects where a session's heavy tool work runs. The default is `in-process` and nothing changes yet; a multi-session host advertises its choice as `tool_runtime:<value>` in `get_protocol_info`. An unknown value is a startup error ([#3566](https://github.com/code-yeongyu/senpi/issues/3566)).
 - `dequeue_message` and `edit_queued_message` accept `expectedRevision`: every queued input carries a `revision` (1 when queued, +1 per edit), and a change based on a stale revision answers `conflict` with `currentRevision` and changes nothing, so two clients editing one queued message can no longer overwrite each other silently. Capability `queued_message_revision` ([#3459](https://github.com/code-yeongyu/senpi/issues/3459)).
 - Terminal control endpoints serve their own session like a host: `open_session` by path attaches with the host's record stream and replay, `subscribe_sessions` runs the status stream (with `mirror`) over that session, and `steer`/`follow_up`/`prompt` are delivered through the terminal's admission (the user's draft holds them) with the host's `whenIdle` choice, as remote deliveries; fields admission cannot carry (`images`, `thinkingLevel`, ...) are refused by name. `admitExternalMessage` gains `whenIdle` (`start` default, `queue`) ([#3229](https://github.com/code-yeongyu/senpi/issues/3229)).
 
