@@ -39,6 +39,10 @@ export function matcherFlags(request: GrepEngineRequest): string[] {
 
 export function segmentFlags(segment: Candidate[], pattern: string, walk: string[], matcher: string[]): string[] {
 	const first = segment[0];
+	const limits = ["--sort", "path", "--max-filesize", String(MAX_FILE_BYTES), ...walk];
+	// rg searches named files unfiltered, so explicit file roots need no include whitelist.
+	if (first.root.file)
+		return [...matcher, ...limits, "--", pattern, ...segment.map((candidate) => candidate.root.path)];
 	// Original positive globs would otherwise OR with the include list. Reset file
 	// admission, allow traversal, then whitelist precisely the enumerated segment.
 	const includes = ["-g", "!**/*", "-g", "**/"];
@@ -47,16 +51,5 @@ export function segmentFlags(segment: Candidate[], pattern: string, walk: string
 			"-g",
 			`/${slashPath(relative(first.root.cwd, candidate.absolute)).replace(/[\\*?[\]{}!]/g, "\\$&")}`,
 		);
-	return [
-		...matcher,
-		"--sort",
-		"path",
-		"--max-filesize",
-		String(MAX_FILE_BYTES),
-		...walk,
-		...includes,
-		"--",
-		pattern,
-		first.root.path,
-	];
+	return [...matcher, ...limits, ...includes, "--", pattern, first.root.path];
 }

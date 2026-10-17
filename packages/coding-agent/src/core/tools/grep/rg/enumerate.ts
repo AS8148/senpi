@@ -9,6 +9,8 @@ export interface Root {
 	path: string;
 	alias: string;
 	cwd: string;
+	/** rg searches an explicitly named file as-is: no walk, ignore, glob, type or size filter applies. */
+	file: boolean;
 }
 export interface Candidate {
 	absolute: string;
@@ -21,13 +23,27 @@ export interface Candidate {
 	binary: boolean;
 }
 
+/** Bounds argv for batched explicit-file rg launches. */
+export const FILE_ROOT_BATCH = 200;
+
+function chunk<T>(items: T[], size: number): T[][] {
+	const batches: T[][] = [];
+	for (let index = 0; index < items.length; index += size) batches.push(items.slice(index, index + size));
+	return batches;
+}
+
 export async function resolveRoots(request: GrepEngineRequest, result: GrepEngineResult): Promise<Root[]> {
 	const roots: Root[] = [];
 	for (const path of new Set(request.paths)) {
 		try {
 			const [info, canonical] = await Promise.all([stat(path), realpath(path)]);
 			// Anchored rg globs use the OS cwd (canonical even for /var aliases on macOS).
-			roots.push({ path: canonical, alias: path, cwd: info.isDirectory() ? canonical : dirname(canonical) });
+			roots.push({
+				path: canonical,
+				alias: path,
+				cwd: info.isDirectory() ? canonical : dirname(canonical),
+				file: info.isFile(),
+			});
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 			result.missingPaths.push(path);
@@ -55,8 +71,13 @@ export async function enumerateCandidates({
 }): Promise<Candidate[]> {
 	const candidates = new Map<string, Omit<Candidate, "ordinal" | "binary">>();
 	for (const root of roots) {
-		const output = await run(["--files", "--null", "--sort", "path", ...walk, "--", root.path], root.cwd);
-		for (const path of output.toString("utf8").split("\0").filter(Boolean)) {
+		const listed = root.file
+			? [root.path]
+			: (await run(["--files", "--null", "--sort", "path", ...walk, "--", root.path], root.cwd))
+					.toString("utf8")
+					.split("\0")
+					.filter(Boolean);
+		for (const path of listed) {
 			check();
 			const absolute = resolve(root.cwd, path);
 			const [canonical, info] = await Promise.all([realpath(absolute), stat(absolute)]);
@@ -68,11 +89,17 @@ export async function enumerateCandidates({
 		}
 	}
 	const binaryPaths = new Set<string>();
+	// rg ignores --max-filesize for explicit file roots (the facade's second phase).
+	// Oversized roots must be classified solely by the bounded prefix pass.
+	const scanned = roots.filter((root) => (candidates.get(root.path)?.size ?? 0) <= MAX_FILE_BYTES);
+	const files = scanned.filter((root) => root.file);
+	// Explicit files share one scan per batch; a directory root keeps its own anchored walk.
+	const scans = [
+		...chunk(files, FILE_ROOT_BATCH).map((batch) => ({ cwd: batch[0].cwd, paths: batch.map((root) => root.path) })),
+		...scanned.filter((root) => !root.file).map((root) => ({ cwd: root.cwd, paths: [root.path] })),
+	];
 	// Scan the entire normal-size file, including NULs after rg's first search buffer.
-	for (const root of roots) {
-		// rg ignores --max-filesize for explicit file roots (the facade's second phase).
-		// Oversized roots must be classified solely by the bounded prefix pass.
-		if ((candidates.get(root.path)?.size ?? 0) > MAX_FILE_BYTES) continue;
+	for (const scan of scans) {
 		const output = await run(
 			[
 				"-a",
@@ -88,12 +115,12 @@ export async function enumerateCandidates({
 				"-e",
 				"\\x00",
 				"--",
-				root.path,
+				...scan.paths,
 			],
-			root.cwd,
+			scan.cwd,
 		);
 		for (const path of output.toString("utf8").split("\0").filter(Boolean))
-			binaryPaths.add(await realpath(resolve(root.cwd, path)));
+			binaryPaths.add(await realpath(resolve(scan.cwd, path)));
 	}
 	result.skippedBinary = [...binaryPaths].filter((path) => candidates.has(path)).length;
 	return [...candidates.values()]
