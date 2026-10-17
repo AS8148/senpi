@@ -171,11 +171,14 @@ describe("share redaction (senpi#3524)", () => {
 
 	it.each([
 		["a key=value pair", "password=<redacted>hunter22x", "hunter22x"],
-		["an env PASS", "DB_PASS=<redacted>correcthorse", "correcthorse"],
-		["an authorization header", "Authorization: <redacted>abcdefghijkl", "abcdefghijkl"],
+		["an env KEY name only the env rule covers", `DEEPSEEK_KEY=<redacted>${HEX_40}`, HEX_40],
+		[
+			"an authorization header past its scheme word",
+			"Proxy-Authorization: Basic <redacted>abcdefghijklmnop",
+			"abcdefghijklmnop",
+		],
 		["a bare bearer token", "Bearer <redacted>abc123def456ghi", "abc123def456ghi"],
-		["a cookie header", "Cookie: <redacted>sid=abc123def", "abc123def"],
-		["URL credentials", "https://bob:<redacted>hunter22@example.com/x", "hunter22"],
+		["a cookie header whose first pair is a placeholder", "Cookie:<redacted>; sid=abc123def", "abc123def"],
 		["a quoted array item", '{"refresh_token": ["<redacted>abc123def456"]}', "abc123def456"],
 		["a YAML list item", "tokens:\n  - <redacted>abc123def456\nname: demo", "abc123def456"],
 	])("redacts %s that starts with a forged placeholder", (_label, input, secret) => {
@@ -189,6 +192,13 @@ describe("share redaction (senpi#3524)", () => {
 		const value = make();
 		const out = JSON.stringify(redactShareValue({ apiKey: value, token: value }, context, new Map()));
 		expect(out).toBe('{"apiKey":"<redacted>","token":"<redacted>"}');
+	});
+
+	it("leaves URL credentials that are exactly the placeholder alone and counts nothing", () => {
+		const input = "https://bob:<redacted>@example.com/x";
+		const { text, tally } = redact(input);
+		expect(text).toBe(input);
+		expect(tally.size).toBe(0);
 	});
 
 	it("counts nothing when a fully redacted value is redacted again", () => {

@@ -139,7 +139,8 @@ const CONFIG_SUFFIX = /_(?:PATH|ID|MODE|TYPE|URL|URI|FILE|NAME|DIR|HEADER|FORMAT
 const DATA_URI = /data:[a-z]+\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+/gi;
 
 function secretLookingValue(value: string): boolean {
-	return /^[0-9a-f]{16,}$/i.test(value) || looksGenerated(value);
+	const rest = value.replace(/^(?:<redacted>)+/, "");
+	return rest.length > 0 && (/^[0-9a-f]{16,}$/i.test(rest) || looksGenerated(rest));
 }
 
 const EMAIL = /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]{1,64}(?:@|%40)[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63}){1,5}/g;
