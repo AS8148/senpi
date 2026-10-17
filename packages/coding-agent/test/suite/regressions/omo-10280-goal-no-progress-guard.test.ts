@@ -40,7 +40,7 @@ function toolTurn(
 	call: { name: string; arguments: Record<string, string> },
 	result: { text: string; isError: boolean },
 ): AgentMessage[] {
-	const final = narration(`step ${turn}: looked at the result again`);
+	const final = narration(`step ${turn} (${call.name}): looked at the result again`);
 	if (final.role !== "assistant") throw new Error("Expected an assistant message");
 	const toolCallId = `omo-10280-tool-${turn}`;
 	return [
@@ -65,11 +65,43 @@ function editTurn(turn: number): AgentMessage[] {
 	);
 }
 
+function testRunOutput(turn: number): string {
+	return [
+		"(fail) parser > rejects empty input [0.41ms]",
+		` 0 pass\n 1 fail\nRan 1 test across 1 file. [${(40 + turn * 0.37).toFixed(2)}ms]`,
+		`started 2026-10-17T18:${String(turn % 60).padStart(2, "0")}:07Z pid ${4100 + turn} run ${(0x9f3a2b10 + turn).toString(16)}`,
+	].join("\n");
+}
+
 function sameFailingTestTurn(turn: number): AgentMessage[] {
 	return toolTurn(
 		turn,
 		{ name: "bash", arguments: { command: "bun test src/parser.test.ts" } },
-		{ text: "1 fail: parser rejects empty input", isError: true },
+		{ text: testRunOutput(turn), isError: true },
+	);
+}
+
+function failingTestWithSwallowedExitTurn(turn: number): AgentMessage[] {
+	return toolTurn(
+		turn,
+		{ name: "bash", arguments: { command: "bun test src/parser.test.ts; true" } },
+		{ text: testRunOutput(turn), isError: false },
+	);
+}
+
+function tweakedFailingCommandTurn(turn: number): AgentMessage[] {
+	return toolTurn(
+		turn,
+		{ name: "bash", arguments: { command: `bun test src/parser.test.ts --bail=${turn}` } },
+		{ text: testRunOutput(turn), isError: true },
+	);
+}
+
+function rotatingReadTurn(turn: number): AgentMessage[] {
+	return toolTurn(
+		turn,
+		{ name: "read", arguments: { path: `src/file-${turn % 9}.ts` } },
+		{ text: "export const unchanged = true;", isError: false },
 	);
 }
 
@@ -153,13 +185,17 @@ describe("omo#10280: no fixed auto-continue cap, a no-progress guard instead", (
 	});
 
 	it.each([
-		["re-runs the same failing test", sameFailingTestTurn],
+		["re-runs the same failing test (fresh duration, timestamp, pid and run id each time)", sameFailingTestTurn],
+		["swallows the failing exit code with `; true`", failingTestWithSwallowedExitTurn],
+		["tweaks the failing command's arguments every turn", tweakedFailingCommandTurn],
 		["peeks the same unchanged output", sameStatusPeekTurn],
 	] as const)(
 		"stops a loop that %s with varied narration at the guard",
 		{ timeout: 60_000 },
 		async (_label, loopTurn) => {
-			const { harness, turn, ref, notices } = await startGoal(`omo-10280-tool-loop-${_label.length}`);
+			const { harness, turn, ref, notices } = await startGoal(
+				`omo-10280-tool-loop-${_label.replace(/[^a-z]+/gi, "-")}`,
+			);
 			for (let index = 1; index <= GOAL_NO_PROGRESS_CONTINUATION_LIMIT + 1; index++) await turn(loopTurn(index));
 
 			expect(harness.sent).toHaveLength(GOAL_NO_PROGRESS_CONTINUATION_LIMIT);
@@ -169,6 +205,16 @@ describe("omo#10280: no fixed auto-continue cap, a no-progress guard instead", (
 			);
 		},
 	);
+
+	it("stops a loop that rotates through nine unchanged file reads soon after the rotation repeats", {
+		timeout: 60_000,
+	}, async () => {
+		const { turn, ref } = await startGoal("omo-10280-rotation");
+		const maxTurns = GOAL_NO_PROGRESS_CONTINUATION_LIMIT + 10;
+		for (let index = 1; index <= maxTurns; index++) await turn(rotatingReadTurn(index));
+
+		expect(await readGoal(ref)).toMatchObject({ status: "blocked", blockedReason: NO_PROGRESS_BLOCKED_REASON });
+	});
 
 	it("counts an edit between failing runs as progress, so a real fix-and-retest cycle never stops", {
 		timeout: 60_000,

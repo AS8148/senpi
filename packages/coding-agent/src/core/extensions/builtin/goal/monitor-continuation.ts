@@ -649,11 +649,14 @@ export class MonitorAwareGoalContinuation {
 		this.#recentNormalizedOutputHashes = [...this.#recentNormalizedOutputHashes, hashAssistantText(text)].slice(-3);
 	}
 
-	/** A tool turn is progress only when its calls and outcomes differ from every recent tool turn. */
+	/**
+	 * A tool turn is progress only when its calls and outcomes differ from every recent tool turn. With no history
+	 * (first turn, or after a reload or input reset) there is nothing to prove change against, so it only seeds.
+	 */
 	#recordToolEffect(messages: readonly AgentMessage[]): boolean {
 		const fingerprint = toolEffectFingerprint(messages);
 		if (fingerprint === undefined) return false;
-		const repeated = this.#recentToolEffects.includes(fingerprint);
+		const repeated = this.#recentToolEffects.length === 0 || this.#recentToolEffects.includes(fingerprint);
 		this.#recentToolEffects = [...this.#recentToolEffects, fingerprint].slice(-GOAL_TOOL_EFFECT_WINDOW);
 		return !repeated;
 	}
