@@ -8,6 +8,7 @@ import { BarrierClock } from "./barrier-clock.ts";
 import type { ToolChildChannel } from "./channel.ts";
 import type { LaunchApi, LaunchContainment, LaunchLifetime, LaunchOrigin, ToolChildMessage } from "./protocol.ts";
 import { readTestControls, type TestControls } from "./test-controls.ts";
+import type { WorkerLaunchMessage } from "./worker-launch.ts";
 
 export interface LaunchRequest {
 	readonly jobId: string;
@@ -70,6 +71,22 @@ export class LaunchGate {
 		this.#channel.send({ type: "launch", launchId, ...request });
 		if (this.#controls.enabled("STOP_AFTER_SPAWN")) process.kill(process.pid, "SIGSTOP");
 		return { launchId, slot, acked };
+	}
+
+	/** Protocol loop: a launch a worker announced on a slot it claimed itself on the shared clock. */
+	adopt(launchId: string, slot: number, request: LaunchRequest): void {
+		this.#slots.set(launchId, { slot, ack: () => undefined, lifetime: request.lifetime });
+		this.#channel.send({ type: "launch", launchId, ...request });
+	}
+
+	handleWorker(message: WorkerLaunchMessage): void {
+		if (message.kind === "launch") this.adopt(message.launchId, message.slot, message.request);
+		else if (message.kind === "invoking") this.invoking(message.launchId);
+		else
+			this.done(message.launchId, {
+				...(message.exitCode === undefined ? {} : { exitCode: message.exitCode }),
+				...(message.signal === undefined ? {} : { signal: message.signal }),
+			});
 	}
 
 	/** Protocol loop: a frame the gate owns. Returns false for frames it does not handle. */
