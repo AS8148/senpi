@@ -1,0 +1,193 @@
+import { createHash, randomUUID } from "node:crypto";
+import type { QueuedInputPort } from "@earendil-works/pi-agent-core";
+import type { ImageContent } from "@earendil-works/pi-ai";
+import { SessionPendingInputJournal } from "./pending-input-journal.ts";
+import { createSessionQueuedInputPort } from "./pending-input-session-port.ts";
+import type { PendingInputJournal } from "./pending-input-store.ts";
+import { PendingInputStore } from "./pending-input-store.ts";
+import type { OperationOutcome, PendingInputMode, PendingInputOperationResult } from "./pending-input-types.ts";
+
+export interface IdentifiedInput {
+	readonly clientMessageId: string;
+	readonly text: string;
+	readonly images?: readonly ImageContent[];
+	readonly mode: PendingInputMode;
+}
+
+export interface SessionPendingInputsOptions {
+	readonly sessionManager: ConstructorParameters<typeof SessionPendingInputJournal>[0];
+	/** The session's own queue-id counter, so a store handle and the session's queued record share one id. */
+	readonly nextQueuedId: () => string;
+	/** Defaults to the session JSONL; injectable so tests can fail an append. */
+	readonly journal?: PendingInputJournal;
+}
+
+/** The legacy answers of `dequeue_message` / `edit_queued_message`. */
+export type QueuedInputChangeOutcome = "removed" | "edited" | "already_delivered" | "not_found" | "conflict";
+
+export interface QueuedInputChangeRequest {
+	readonly clientMessageId: string;
+	/** Undefined removes the input; a string replaces its text. */
+	readonly text: string | undefined;
+	readonly expectedRevision?: number;
+	readonly effectId?: string;
+}
+
+export class ClientMessageIdConflictError extends Error {
+	readonly code = "client_message_id_conflict";
+	readonly clientMessageId: string;
+	constructor(clientMessageId: string) {
+		super(`Client message id ${clientMessageId} was already used for a different message.`);
+		this.name = "ClientMessageIdConflictError";
+		this.clientMessageId = clientMessageId;
+	}
+}
+
+/**
+ * The pending inputs of one AgentSession (senpi#3549): the store, opened on the first identified input, and the
+ * agent queue port over it. Input without a client id never touches the store and keeps the legacy queue path.
+ */
+export class SessionPendingInputs {
+	readonly lifetimeId = randomUUID();
+	private readonly options: SessionPendingInputsOptions;
+	private storeOpening: Promise<PendingInputStore> | undefined;
+	private port: QueuedInputPort | undefined;
+	private attempts = 0;
+
+	constructor(options: SessionPendingInputsOptions) {
+		this.options = options;
+	}
+
+	/**
+	 * Admits an identified input and, only when it is newly admitted, puts its native copy in the agent queue
+	 * inside the same gated step, so no drain, edit or removal can run between the two. A repeated submit of the
+	 * same input is answered from the record (`replayed`) and enqueues nothing.
+	 */
+	async admit(
+		input: IdentifiedInput,
+		enqueue: (queuedId: string) => void,
+	): Promise<PendingInputOperationResult | undefined> {
+		const store = await this.store();
+		return store.transaction(async (tx) => {
+			const result = await tx.submit({
+				clientMessageId: input.clientMessageId,
+				fingerprint: admissionFingerprint(input),
+				text: input.text,
+				attachments: (input.images ?? []).map(attachmentFingerprint),
+				requestedMode: input.mode,
+			});
+			if (result?.outcome === "client_message_id_conflict")
+				throw new ClientMessageIdConflictError(input.clientMessageId);
+			const admitted = tx.current(input.clientMessageId);
+			if (result?.outcome === "admitted" && admitted !== undefined) enqueue(admitted.handle.queuedId);
+			return result;
+		});
+	}
+
+	/**
+	 * Edits or removes an identified input: the store transition is journaled first, and only when it answers
+	 * `edited`/`removed` does `applyNative` change the native queue, inside the same gated step, so no drain
+	 * can see one without the other. Returns undefined when the store never admitted this input.
+	 */
+	async change(
+		request: QueuedInputChangeRequest,
+		applyNative: () => QueuedInputChangeOutcome,
+	): Promise<QueuedInputChangeOutcome | undefined> {
+		if (this.storeOpening === undefined) return undefined;
+		const store = await this.storeOpening;
+		return store.transaction(async (tx) => {
+			const current = tx.current(request.clientMessageId);
+			if (current === undefined) return undefined;
+			const target = {
+				effectId: request.effectId ?? randomUUID(),
+				handle: current.handle,
+				expectedRevision: request.expectedRevision ?? current.revision,
+			};
+			const result =
+				request.text === undefined
+					? await tx.apply(request.clientMessageId, { type: "remove", ...target })
+					: await tx.apply(request.clientMessageId, {
+							type: "edit",
+							...target,
+							text: request.text,
+							attachments: current.attachments,
+						});
+			const outcome = legacyOutcome(result?.outcome);
+			if (outcome !== "edited" && outcome !== "removed") return outcome;
+			const native = applyNative();
+			if (native !== outcome) throw new PendingInputDivergenceError(request.clientMessageId, outcome, native);
+			return outcome;
+		});
+	}
+
+	/** The agent's queue port. Before the store opens nothing identified is queued, so it drains natively. */
+	queuedInputPort(): QueuedInputPort {
+		return {
+			claim: async (queue, drain) => (await this.openPort())?.claim(queue, drain) ?? drain(),
+			commitConsumption: async (queue, messages) => (await this.openPort())?.commitConsumption(queue, messages),
+			release: async (queue, messages, restore) => {
+				const port = await this.openPort();
+				if (port === undefined) restore();
+				else await port.release(queue, messages, restore);
+			},
+		};
+	}
+
+	private store(): Promise<PendingInputStore> {
+		this.storeOpening ??= PendingInputStore.open({
+			journal: this.options.journal ?? new SessionPendingInputJournal(this.options.sessionManager),
+			lifetimeId: this.lifetimeId,
+			nextQueuedId: this.options.nextQueuedId,
+		});
+		return this.storeOpening;
+	}
+
+	private async openPort(): Promise<QueuedInputPort | undefined> {
+		if (this.storeOpening === undefined) return undefined;
+		const store = await this.storeOpening;
+		this.port ??= createSessionQueuedInputPort({
+			store,
+			ownerId: `${process.pid}:${this.lifetimeId}`,
+			writerGeneration: 1,
+			nextAttemptId: () => `${this.lifetimeId}:${++this.attempts}`,
+		});
+		return this.port;
+	}
+}
+
+function admissionFingerprint(input: IdentifiedInput): string {
+	const images = (input.images ?? []).map(attachmentFingerprint);
+	return sha256(JSON.stringify([input.mode, input.text, images]));
+}
+
+function attachmentFingerprint(image: ImageContent): string {
+	return `${image.mimeType}:${sha256(image.data)}`;
+}
+
+function sha256(value: string): string {
+	return createHash("sha256").update(value).digest("hex");
+}
+
+/** The store changed an input that the native queue no longer held: the two views disagree and must not be hidden. */
+export class PendingInputDivergenceError extends Error {
+	readonly code = "pending_input_divergence";
+	constructor(clientMessageId: string, recorded: string, native: string) {
+		super(`Queued input ${clientMessageId} was ${recorded} in its record but ${native} in the queue.`);
+		this.name = "PendingInputDivergenceError";
+	}
+}
+
+/** `sending` keeps the legacy spelling `already_delivered` (the handoff began); the snapshot says `sending`. */
+function legacyOutcome(outcome: OperationOutcome | undefined): QueuedInputChangeOutcome {
+	switch (outcome) {
+		case "edited":
+		case "removed":
+		case "conflict":
+		case "already_delivered":
+			return outcome;
+		case "sending":
+			return "already_delivered";
+		default:
+			return "not_found";
+	}
+}

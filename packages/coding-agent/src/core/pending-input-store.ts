@@ -41,6 +41,7 @@ export type PendingInputListener = (projection: PendingInputProjection) => void;
 
 /** Transitions inside one gated step: each is committed directly, since the caller already holds the gate. */
 export interface PendingInputTransaction {
+	submit(event: Omit<SubmitEvent, "type" | "handle">): Promise<PendingInputOperationResult | undefined>;
 	apply(
 		clientMessageId: string,
 		event: Exclude<PendingInputEvent, SubmitEvent>,
@@ -95,13 +96,7 @@ export class PendingInputStore {
 	}
 
 	submit(event: Omit<SubmitEvent, "type" | "handle">): Promise<PendingInputOperationResult | undefined> {
-		return this.serialize(() => {
-			const handle = this.inputs.get(event.clientMessageId)?.handle ?? {
-				lifetimeId: this.options.lifetimeId,
-				queuedId: this.options.nextQueuedId(),
-			};
-			return this.commit(event.clientMessageId, { ...event, type: "submit", handle });
-		});
+		return this.serialize(() => this.admit(event));
 	}
 
 	apply(
@@ -146,6 +141,7 @@ export class PendingInputStore {
 	transaction<T>(work: (tx: PendingInputTransaction) => Promise<T>): Promise<T> {
 		return this.serialize(() =>
 			work({
+				submit: (event) => this.admit(event),
 				apply: (clientMessageId, event) => this.commit(clientMessageId, event),
 				current: (clientMessageId) => this.inputs.get(clientMessageId),
 			}),
@@ -177,6 +173,14 @@ export class PendingInputStore {
 		const run = this.gate.then(guarded, guarded);
 		this.gate = run.catch(() => undefined);
 		return run;
+	}
+
+	private admit(event: Omit<SubmitEvent, "type" | "handle">): Promise<PendingInputOperationResult | undefined> {
+		const handle = this.inputs.get(event.clientMessageId)?.handle ?? {
+			lifetimeId: this.options.lifetimeId,
+			queuedId: this.options.nextQueuedId(),
+		};
+		return this.commit(event.clientMessageId, { ...event, type: "submit", handle });
 	}
 
 	private async commit(

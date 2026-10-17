@@ -279,6 +279,7 @@ import { type AvailableModelsSource, getModelNarrowingPatterns, resolveModelScop
 import type { ModelRuntime } from "./model-runtime.ts";
 import { ModelSwitchAuthError } from "./model-switch-auth-error.ts";
 import { NestedToolCallRunner } from "./nested-tool-calls.ts";
+import { SessionPendingInputs } from "./pending-input-session.ts";
 import { PROMPT_CACHE_SAFE_WAIT_ENV, resolvePromptCacheSafeWaitSeconds } from "./prompt-cache-budget.ts";
 import { PromptCachePrefixBuilds } from "./prompt-cache-prefix-request.ts";
 import { expandPromptTemplateWithMetadata, type PromptTemplate } from "./prompt-templates.ts";
@@ -1187,6 +1188,8 @@ export class AgentSession {
 	private _abortCause: AgentAbortCause | undefined;
 	private _nextQueuedInputOrder = 0;
 	private _nextQueuedId = 0;
+	/** Identified queued input (with a client id) in durable custody; see pending-input-session.ts (senpi#3549). */
+	private readonly _pendingInputs: SessionPendingInputs;
 	/** The exact message object queued for each `queuedId`, so removal and edits hit the native queue by identity. */
 	private readonly _queuedMessages = new Map<string, AgentMessage>();
 	/** Recently delivered `queuedId`s (bounded), so a late dequeue answers `already_delivered`, not `not_found`. */
@@ -1420,6 +1423,11 @@ export class AgentSession {
 		this._browserEngine = config.browserEngine;
 		this.agent = config.agent;
 		this.sessionManager = config.sessionManager;
+		this._pendingInputs = new SessionPendingInputs({
+			sessionManager: this.sessionManager,
+			nextQueuedId: () => this._mintQueuedId(),
+		});
+		this.agent.queuedInputPort = this._pendingInputs.queuedInputPort();
 		this.settingsManager = config.settingsManager;
 		this._unsubscribeSettingsSource = this.settingsManager.subscribeToSourceSelection((source) => {
 			this._emit({ type: "settings_source_selected", ...source });
@@ -5793,7 +5801,7 @@ export class AgentSession {
 		images?: ImageContent[],
 		options?: QueuedInputOptions & Pick<PromptOptions, "textBlocks">,
 	): Promise<void> {
-		this._enqueuePreparedInput({ ...options, text, images, mode: "steer" });
+		await this._enqueueQueuedInput({ ...options, text, images, mode: "steer" });
 	}
 
 	/**
@@ -5804,7 +5812,22 @@ export class AgentSession {
 		images?: ImageContent[],
 		options?: QueuedInputOptions & Pick<PromptOptions, "textBlocks">,
 	): Promise<void> {
-		this._enqueuePreparedInput({ ...options, text, images, mode: "followUp" });
+		await this._enqueueQueuedInput({ ...options, text, images, mode: "followUp" });
+	}
+
+	/** Identified input is admitted into durable custody and enqueued in one gated step; other input as before. */
+	private async _enqueueQueuedInput(
+		input: QueuedInputOptions & Omit<PreparedClientInput, "enqueueOrder"> & Pick<PromptOptions, "textBlocks">,
+	): Promise<void> {
+		const clientMessageId = input.clientMessageId;
+		if (clientMessageId === undefined) {
+			this._enqueuePreparedInput(input);
+			return;
+		}
+		await this._pendingInputs.admit(
+			{ clientMessageId, text: input.text, ...(input.images ? { images: input.images } : {}), mode: input.mode },
+			(queuedId) => this._enqueuePreparedInput({ ...input, queuedId }),
+		);
 	}
 
 	/** Restore accepted input without re-running input transforms or changing its enqueue order. */
@@ -5813,7 +5836,9 @@ export class AgentSession {
 	}
 
 	private _enqueuePreparedInput(
-		input: QueuedInputOptions & Omit<PreparedClientInput, "enqueueOrder"> & Pick<PromptOptions, "textBlocks">,
+		input: QueuedInputOptions &
+			Omit<PreparedClientInput, "enqueueOrder"> &
+			Pick<PromptOptions, "textBlocks"> & { readonly queuedId?: string },
 	): void {
 		const enqueueOrder = input.enqueueOrder ?? this.reserveQueuedInputOrder();
 		const prepared = {
@@ -5826,7 +5851,7 @@ export class AgentSession {
 		input.onQueuedInput?.(prepared);
 		const queue = input.mode === "steer" ? this._steeringMessages : this._followUpMessages;
 		queue.push(input.text);
-		const queuedId = this._recordQueuedInput(input.text, input.mode, prepared);
+		const queuedId = this._recordQueuedInput(input.text, input.mode, prepared, undefined, input.queuedId);
 		this._sessionLogger.debug("queue_enqueue", {
 			mode: input.mode,
 			count: queue.length,
@@ -6254,11 +6279,11 @@ export class AgentSession {
 		mode: QueuedInput["mode"],
 		options?: QueuedInputOptions,
 		message?: AgentMessage,
+		admittedQueuedId?: string,
 	): string {
 		const order = options?.enqueueOrder ?? this.reserveQueuedInputOrder();
 		this._nextQueuedInputOrder = Math.max(this._nextQueuedInputOrder, order);
-		this._nextQueuedId += 1;
-		const queuedId = `q_${this._nextQueuedId}`;
+		const queuedId = admittedQueuedId ?? this._mintQueuedId();
 		this._queuedInputOrder.push({
 			text,
 			mode,
@@ -6269,6 +6294,11 @@ export class AgentSession {
 		});
 		if (message !== undefined) this._queuedMessages.set(queuedId, message);
 		return queuedId;
+	}
+
+	private _mintQueuedId(): string {
+		this._nextQueuedId += 1;
+		return `q_${this._nextQueuedId}`;
 	}
 
 	/** A queued input reached a turn: forget its record and remember its id as delivered. */
@@ -6300,6 +6330,32 @@ export class AgentSession {
 	/** Replaces the text of one queued input in place, keeping its order and identity, and bumps its revision. */
 	editQueuedInput(queuedId: string, text: string, options?: QueuedInputChangeOptions): QueuedInputChange {
 		return this._changeQueuedInput(queuedId, text, options?.expectedRevision);
+	}
+
+	/**
+	 * Removes (`text` undefined) or edits one queued input. An input in durable custody (admitted with a client id)
+	 * changes in its record first and in the native queue in the same gated step; any other input changes as
+	 * `dequeueQueuedInput` / `editQueuedInput` do.
+	 */
+	async changeQueuedInput(
+		queuedId: string,
+		text: string | undefined,
+		options?: QueuedInputChangeOptions & { readonly effectId?: string },
+	): Promise<QueuedInputChange> {
+		const clientMessageId = this._queuedInputOrder.find((input) => input.queuedId === queuedId)?.clientMessageId;
+		const durable =
+			clientMessageId === undefined
+				? undefined
+				: await this._pendingInputs.change(
+						{
+							clientMessageId,
+							text,
+							...(options?.expectedRevision === undefined ? {} : { expectedRevision: options.expectedRevision }),
+							...(options?.effectId === undefined ? {} : { effectId: options.effectId }),
+						},
+						() => this._changeQueuedInput(queuedId, text, undefined),
+					);
+		return durable ?? this._changeQueuedInput(queuedId, text, options?.expectedRevision);
 	}
 
 	// Synchronous from the revision check to the change: nothing else on the session loop can land in between.
