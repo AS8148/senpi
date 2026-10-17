@@ -39,6 +39,15 @@ export interface PendingInputStoreOptions {
 
 export type PendingInputListener = (projection: PendingInputProjection) => void;
 
+/** Transitions inside one gated step: each is committed directly, since the caller already holds the gate. */
+export interface PendingInputTransaction {
+	apply(
+		clientMessageId: string,
+		event: Exclude<PendingInputEvent, SubmitEvent>,
+	): Promise<PendingInputOperationResult | undefined>;
+	current(clientMessageId: string): PendingInput | undefined;
+}
+
 export type PendingInputRead =
 	| { readonly status: "admitted"; readonly projection: PendingInputProjection }
 	| { readonly status: "not_admitted"; readonly clientMessageId: string };
@@ -128,6 +137,19 @@ export class PendingInputStore {
 			}
 			return { removed, conflicts, retained, stale };
 		});
+	}
+
+	/**
+	 * Runs `work` under the gate every command shares, so a consumer can change its native buffer and the
+	 * journal in one step that no edit, removal or other consumer can interleave with.
+	 */
+	transaction<T>(work: (tx: PendingInputTransaction) => Promise<T>): Promise<T> {
+		return this.serialize(() =>
+			work({
+				apply: (clientMessageId, event) => this.commit(clientMessageId, event),
+				current: (clientMessageId) => this.inputs.get(clientMessageId),
+			}),
+		);
 	}
 
 	read(clientMessageId: string): PendingInputRead {

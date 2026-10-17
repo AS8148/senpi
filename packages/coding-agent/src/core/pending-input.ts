@@ -66,6 +66,11 @@ function reduceLifecycle(current: PendingInput, event: LifecycleEvent): PendingI
 			};
 			return { next, effects: [{ type: "persist" }, { type: "dispatch", token: event.token }] };
 		}
+		case "release": {
+			if (!holdsAttempt(current, event.token)) return unchanged(current);
+			const { attempt: _attempt, ...rest } = current;
+			return persist({ ...rest, phase: "queued" });
+		}
 		case "consumed":
 			return holdsAttempt(current, event.token) ? persist(deliver(current, "consumed")) : unchanged(current);
 		case "handled":

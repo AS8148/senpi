@@ -111,6 +111,7 @@ describe("pending input: delivery and custody", () => {
 	])("ignores a delivery event whose token differs in $field from the reservation", ({ stale }) => {
 		for (const event of [
 			{ type: "consumed", token: stale },
+			{ type: "release", token: stale },
 			{ type: "refused", token: stale, reason: "x" },
 			{ type: "ambiguous", token: stale, reason: "x" },
 		] as const) {
@@ -135,6 +136,20 @@ describe("pending input: delivery and custody", () => {
 
 		expect(rebound).toMatchObject({ revision: 1, handle: REOPENED });
 		expect(rebound?.superseded).toEqual([{ lifetimeId: HANDLE.lifetimeId, revision: 1, text: SUBMIT.text }]);
+	});
+
+	it("replays only an uncommitted native attempt with the same id (T28)", () => {
+		const released = reducePendingInput(sending(), { type: "release", token: token() }).next;
+
+		expect(released).toMatchObject({ phase: "queued", clientMessageId: SUBMIT.clientMessageId, revision: 1 });
+		expect(released?.attempt).toBeUndefined();
+		expect(reducePendingInput(released ?? queued(), { type: "reserve", token: token("a-2") }).next).toMatchObject({
+			phase: "sending",
+			attemptCount: 2,
+		});
+		expect(reducePendingInput(sending("a-2"), { type: "release", token: token("a-1") }).next).toMatchObject({
+			phase: "sending",
+		});
 	});
 
 	it("rebinds lifetime handles without losing text or edited history (T29)", () => {

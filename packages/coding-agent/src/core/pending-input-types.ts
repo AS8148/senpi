@@ -99,6 +99,8 @@ export type PendingInputEvent =
 	| ({ readonly type: "remove" } & MutationTarget)
 	| { readonly type: "retry"; readonly effectId: string; readonly handle: PendingInputHandle }
 	| { readonly type: "reserve"; readonly token: DeliveryToken }
+	/** The consumer gave the attempt back before any of it was committed or sent: queued again, same id. */
+	| { readonly type: "release"; readonly token: DeliveryToken }
 	| { readonly type: "consumed"; readonly token: DeliveryToken }
 	| { readonly type: "handled"; readonly token?: DeliveryToken }
 	| { readonly type: "refused"; readonly token: DeliveryToken; readonly reason: string }
