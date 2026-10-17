@@ -42,8 +42,8 @@ function isSchemaNode(value: unknown): boolean {
 /** Every string under a sensitive key is a credential, whatever the nesting (`{"Authorization": ["Bearer x"]}`). */
 function dropAllStrings(value: unknown, tally: ShareRedactionTally): unknown {
 	if (typeof value === "string") {
-		if (value.length === 0 || value.startsWith("<redacted")) return value;
-		count(tally, "credential");
+		if (value.length === 0) return value;
+		if (value !== "<redacted>") count(tally, "credential");
 		return "<redacted>";
 	}
 	if (Array.isArray(value)) return value.map((item) => dropAllStrings(item, tally));

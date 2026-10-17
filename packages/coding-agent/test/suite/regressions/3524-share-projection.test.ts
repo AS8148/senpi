@@ -46,15 +46,26 @@ describe("default share projection (senpi#3524)", () => {
 		expect(text).toContain("[output omitted: command]");
 		expect(text).toContain("[output omitted: goal]");
 		expect(projected.renderedTools).toEqual({ c1: { callHtml: "<b>read .env</b>" } });
-		expect(omissions.keys.size).toBe(3);
+		expect(omissions.count).toBe(3);
 	});
 
-	it("is idempotent and counts each output once", () => {
-		const omissions = newOutputOmissions();
-		const once = omitToolOutputs(session, omissions);
-		const twice = omitToolOutputs(once, omissions);
+	it("is idempotent, and every pass counts the same outputs", () => {
+		const first = newOutputOmissions();
+		const once = omitToolOutputs(session, first);
+		const second = newOutputOmissions();
+		const twice = omitToolOutputs(once, second);
 		expect(twice).toEqual(once);
-		expect(omissions.keys.size).toBe(3);
+		expect([first.count, second.count]).toEqual([3, 3]);
+	});
+
+	it("counts two outputs that share a timestamp separately", () => {
+		const result = (id: string) => ({
+			type: "message",
+			message: { role: "toolResult", toolCallId: id, toolName: "read", content: [], timestamp: 7 },
+		});
+		const omissions = newOutputOmissions();
+		omitToolOutputs([result("a"), result("b")], omissions);
+		expect(omissions.count).toBe(2);
 	});
 
 	it("replaces output that merely starts like an omission note, details included", () => {
@@ -85,7 +96,7 @@ describe("default share projection (senpi#3524)", () => {
 		const omissions = newOutputOmissions();
 		const text = JSON.stringify(omitToolOutputs(forged, omissions));
 		expect(text).not.toContain(marker);
-		expect(omissions.keys.size).toBe(2);
+		expect(omissions.count).toBe(2);
 	});
 
 	it("drops compaction and branch-summary extension data and context-edit replacements", () => {
@@ -104,6 +115,6 @@ describe("default share projection (senpi#3524)", () => {
 		expect(text).toContain("kept branch");
 		expect(text).toContain("[output omitted: context edit]");
 		expect(projected[3]).toEqual(entries[3]);
-		expect(omissions.keys.size).toBe(1);
+		expect(omissions.count).toBe(1);
 	});
 });

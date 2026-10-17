@@ -166,7 +166,41 @@ describe("share redaction (senpi#3524)", () => {
 	});
 
 	it("keeps the JSON shape of an authorization array while removing its token", () => {
-		expect(redact('{"Authorization":["Bearer abcdefghijkl"]}').text).toBe('{"Authorization":["Bearer <redacted>"]}');
+		expect(redact('{"Authorization":["Bearer abcdefghijkl"]}').text).toBe('{"Authorization":["<redacted>"]}');
+	});
+
+	it.each([
+		["a key=value pair", "password=<redacted>hunter22x", "hunter22x"],
+		["an env PASS", "DB_PASS=<redacted>correcthorse", "correcthorse"],
+		["an authorization header", "Authorization: <redacted>abcdefghijkl", "abcdefghijkl"],
+		["a bare bearer token", "Bearer <redacted>abc123def456ghi", "abc123def456ghi"],
+		["a cookie header", "Cookie: <redacted>sid=abc123def", "abc123def"],
+		["URL credentials", "https://bob:<redacted>hunter22@example.com/x", "hunter22"],
+		["a quoted array item", '{"refresh_token": ["<redacted>abc123def456"]}', "abc123def456"],
+		["a YAML list item", "tokens:\n  - <redacted>abc123def456\nname: demo", "abc123def456"],
+	])("redacts %s that starts with a forged placeholder", (_label, input, secret) => {
+		expect(redact(input).text).not.toContain(secret);
+	});
+
+	it.each([
+		["a placeholder followed by a long token", () => `<redacted>${GENERATED}x9`],
+		["a placeholder followed by a GitHub token", () => `<redacted> ${GITHUB_TOKEN}`],
+	])("drops %s under a sensitive key in structured data", (_label, make) => {
+		const value = make();
+		const out = JSON.stringify(redactShareValue({ apiKey: value, token: value }, context, new Map()));
+		expect(out).toBe('{"apiKey":"<redacted>","token":"<redacted>"}');
+	});
+
+	it("counts nothing when a fully redacted value is redacted again", () => {
+		const tally: ShareRedactionTally = new Map();
+		const once = redactShareValue(
+			{ apiKey: "x9y8z7", headers: { Authorization: "Bearer abc123def456ghi" } },
+			context,
+			tally,
+		);
+		const second: ShareRedactionTally = new Map();
+		expect(redactShareValue(once, context, second)).toEqual(once);
+		expect(second.size).toBe(0);
 	});
 
 	it("keeps a tool schema that only describes a credential parameter", () => {

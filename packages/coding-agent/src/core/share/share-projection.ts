@@ -8,16 +8,16 @@
  *
  * The projection trusts nothing it finds in the data: every output-bearing record
  * is rewritten on every pass, so text that merely looks like a note is replaced
- * too. It runs on the entries and again on the whole payload, so each output is
- * counted once by a key taken from its timestamp or id.
+ * too. Each pass counts the outputs it replaced; the caller keeps the largest
+ * count across passes, so outputs that share a timestamp are each counted.
  */
 
 export interface OutputOmissions {
-	readonly keys: Set<string>;
+	count: number;
 }
 
 export function newOutputOmissions(): OutputOmissions {
-	return { keys: new Set() };
+	return { count: 0 };
 }
 
 const OMITTED_RESULT_HTML = ["resultHtmlCollapsed", "resultHtmlExpanded"] as const;
@@ -26,16 +26,8 @@ function note(label: string): { type: "text"; text: string } {
 	return { type: "text", text: `[output omitted: ${label}]` };
 }
 
-function recordKey(kind: string, record: Record<string, unknown>): string {
-	for (const field of ["timestamp", "id", "toolCallId"] as const) {
-		const value = record[field];
-		if (typeof value === "string" || typeof value === "number") return `${kind}:${field}:${value}`;
-	}
-	return `${kind}:${JSON.stringify(Object.keys(record))}`;
-}
-
-function omit(omissions: OutputOmissions, kind: string, record: Record<string, unknown>): void {
-	omissions.keys.add(recordKey(kind, record));
+function omit(omissions: OutputOmissions): void {
+	omissions.count++;
 }
 
 function projectRecord(
@@ -43,16 +35,16 @@ function projectRecord(
 	omissions: OutputOmissions,
 ): Record<string, unknown> | undefined {
 	if (record.role === "toolResult") {
-		omit(omissions, "toolResult", record);
+		omit(omissions);
 		const toolName = typeof record.toolName === "string" ? record.toolName : "tool";
 		return { ...record, content: [note(toolName)], details: undefined };
 	}
 	if (record.role === "bashExecution") {
-		omit(omissions, "bash", record);
+		omit(omissions);
 		return { ...record, output: "[output omitted: command]", fullOutputPath: undefined };
 	}
 	if (record.role === "custom" || record.type === "custom_message") {
-		omit(omissions, "custom", record);
+		omit(omissions);
 		const customType = typeof record.customType === "string" ? record.customType : "extension";
 		return { ...record, content: [note(customType)], details: undefined };
 	}
@@ -60,7 +52,7 @@ function projectRecord(
 	if (record.type === "compaction") return { ...record, details: undefined, systemMessage: undefined };
 	if (record.type === "branch_summary") return { ...record, details: undefined };
 	if (record.type === "context_edit" && record.replacement !== null && typeof record.replacement === "object") {
-		omit(omissions, "context_edit", record);
+		omit(omissions);
 		return { ...record, replacement: { content: [note("context edit")] } };
 	}
 	return undefined;

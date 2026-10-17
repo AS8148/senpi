@@ -56,12 +56,16 @@ export function prepareShare(
 	includeOutputs = false,
 ): PreparedShare {
 	const tally: ShareRedactionTally = new Map();
-	const omissions = newOutputOmissions();
-	const html = render((value) =>
-		redactShareValue(includeOutputs ? value : omitToolOutputs(value, omissions), context, tally),
-	);
+	let omittedOutputs = 0;
+	const html = render((value) => {
+		if (includeOutputs) return redactShareValue(value, context, tally);
+		const omissions = newOutputOmissions();
+		const projected = omitToolOutputs(value, omissions);
+		omittedOutputs = Math.max(omittedOutputs, omissions.count);
+		return redactShareValue(projected, context, tally);
+	});
 	const sha256 = createHash("sha256").update(html).digest("hex");
-	return { html, sha256, tally, includesOutputs: includeOutputs, omittedOutputs: omissions.keys.size };
+	return { html, sha256, tally, includesOutputs: includeOutputs, omittedOutputs };
 }
 
 const CATEGORY_ORDER: ReadonlyArray<ShareRedactionCategory> = [
