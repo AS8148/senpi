@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- An MCP server over HTTP with no saved sign-in no longer freezes the whole process for up to 30 seconds. Each request's synchronous token lookup could spin on the legacy-credential migration lock while the background lookup in the same process held it, so the holder could never release it; tool calls then failed with "MCP metadata was not ready before the request timeout". The lookup now skips the lock when there is nothing to migrate, and the background claim never holds the lock across an await ([#3546](https://github.com/code-yeongyu/senpi/issues/3546)).
+
 ### Removed
 
 ## [2026.10.16-4] - 2026-10-16
