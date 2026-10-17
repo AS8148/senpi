@@ -74,6 +74,10 @@ export class ToolChildClient {
 		return this.#state;
 	}
 
+	get dir(): string {
+		return this.#options.dir;
+	}
+
 	get generation(): number {
 		return this.#generation;
 	}

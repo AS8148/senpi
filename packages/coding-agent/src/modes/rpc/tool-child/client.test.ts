@@ -1,5 +1,5 @@
 // senpi#3566 todo 4: the tool child lifecycle against a real child process.
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -76,6 +76,31 @@ describe("ToolChildClient", () => {
 			await expect(instance.run("exit", null)).rejects.toMatchObject({ code: "tool_child_exited" });
 			await instance.ended();
 			expect(defaultGroupProbes.groupHasMembers(pid)).toBe(false);
+		},
+		30_000,
+	);
+
+	it.skipIf(process.platform === "win32")(
+		"gates a plain child_process call in a job worker, with an ordered proof",
+		async () => {
+			const { instance } = await client();
+			await instance.start();
+			expect(await instance.run("workerSpawn", null)).toEqual({ status: 5 });
+			await instance.close();
+			const records = (await readFile(join(instance.dir, "launches.jsonl"), "utf8"))
+				.trim()
+				.split("\n")
+				.map((line) => JSON.parse(line) as Record<string, unknown>);
+			const launch = records.find((record) => record.type === "launch");
+			expect(launch).toMatchObject({
+				api: "cp.spawnSync",
+				containment: "inherited",
+				lifetime: "owned",
+				origin: "kernel",
+			});
+			const proof = records.find((record) => record.type === "launch_proof");
+			expect(Number(proof?.ackTick)).toBeLessThan(Number(proof?.invokeTick));
+			expect(records.some((record) => record.type === "violation")).toBe(false);
 		},
 		30_000,
 	);

@@ -82,7 +82,18 @@ function ownGroupSpawn(
 }
 
 /** A `node:child_process` module object whose launch APIs pass the execution barrier. Non-launch exports pass through. */
-export function createGatedChildProcess(real: ChildProcessApi, client: WorkerLaunchClient): ChildProcessApi {
+export function createGatedChildProcess(module: ChildProcessApi, client: WorkerLaunchClient): ChildProcessApi {
+	// Captured before anyone patches `module` in place: the gated functions must call the originals, never themselves.
+	const real: ChildProcessApi = {
+		...module,
+		spawn: module.spawn,
+		spawnSync: module.spawnSync,
+		exec: module.exec,
+		execSync: module.execSync,
+		execFile: module.execFile,
+		execFileSync: module.execFileSync,
+		fork: module.fork,
+	};
 	const posix = process.platform !== "win32";
 	const spawn = (
 		command: string,

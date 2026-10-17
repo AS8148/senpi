@@ -25,6 +25,11 @@ import { CONFIG_DIR_NAME, getAgentDir, isBunBinary, isBundledNode, isBunRuntime 
 // NOTE: This import works because loader.ts exports are NOT re-exported from index.ts,
 // avoiding a circular dependency. Extensions can import from @code-yeongyu/senpi.
 import * as _bundledPiCodingAgent from "../../index.ts";
+import {
+	CHILD_PROCESS_REDIRECTS,
+	childProcessVirtualModule,
+	GATED_CHILD_PROCESS_ID,
+} from "../../modes/rpc/tool-child/gated-modules.ts";
 import { resolvePath } from "../../utils/paths.ts";
 import { createEventBus, type EventBus, EXTENSION_RPC_EVENT_CHANNEL, type ExtensionRpcEvent } from "../event-bus.ts";
 import type { ExecOptions } from "../exec.ts";
@@ -825,7 +830,11 @@ const importNodeOnlyApi = (specifier: string): Promise<typeof import("jiti/stati
 async function createExtensionModuleImporter(): Promise<ExtensionModuleImporter> {
 	if (usesNativeBunImports) {
 		const { createBunExtensionImporter } = await import("./bun-extension-importer.ts");
-		return createBunExtensionImporter(VIRTUAL_MODULES);
+		// child_process resolves through a per-process module so a tool child can gate it (senpi#3566); the server gets the real one.
+		return createBunExtensionImporter(
+			{ ...VIRTUAL_MODULES, [GATED_CHILD_PROCESS_ID]: childProcessVirtualModule() },
+			CHILD_PROCESS_REDIRECTS,
+		);
 	}
 	const { createJiti } = await importNodeOnlyApi("jiti/static");
 	return createJiti(import.meta.url, {

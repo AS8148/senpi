@@ -119,6 +119,7 @@ function hasUseStrictDirective(source: string): boolean {
 /** A generation owns only source bookkeeping; Bun owns evaluation and cycles. */
 export function createBunExtensionImporter(
 	virtualModules: Readonly<Record<string, Readonly<Record<string, unknown>>>>,
+	builtinRedirects: Readonly<Record<string, string>> = {},
 ) {
 	const sources = new Map<string, ModuleSource>();
 	const fingerprints = new Map<string, string>();
@@ -141,6 +142,8 @@ export function createBunExtensionImporter(
 		/\.[cm]?[jt]sx?$/.test(resolved) ? { id: moduleId(resolved), path: resolved } : { id: resolved };
 	const resolveTarget = (specifier: string, filename: string): { readonly id: string; readonly path?: string } => {
 		assertActive();
+		const redirect = builtinRedirects[specifier];
+		if (redirect !== undefined) return { id: redirect };
 		if (Object.hasOwn(virtualModules, specifier) || isBuiltin(specifier) || specifier.startsWith("bun:"))
 			return { id: specifier };
 		if (specifier.startsWith(`${extensionNamespace}:`)) return { id: specifier };
