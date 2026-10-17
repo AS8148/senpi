@@ -8,11 +8,16 @@
 
 - Command monitors accept `human_input: true` for watches that deliver messages a person wrote (a chat or inbox bridge). Those deliveries count as new user input for a running goal ([oh-my-openagent#10280](https://github.com/code-yeongyu/oh-my-openagent/issues/10280)).
 
+- Terminal control endpoints serve their own session like a host: `open_session` by path attaches with the host's record stream and replay, `subscribe_sessions` runs the status stream (with `mirror`) over that session, and `steer`/`follow_up`/`prompt` are delivered through the terminal's admission (the user's draft holds them) with the host's `whenIdle` choice, as remote deliveries; fields admission cannot carry (`images`, `thinkingLevel`, ...) are refused by name. `admitExternalMessage` gains `whenIdle` (`start` default, `queue`) ([#3229](https://github.com/code-yeongyu/senpi/issues/3229)).
+
 ### Changed
 
 - Goals no longer stop after a fixed 150 automatic continuations. They stop only after 60 automatic continuations in a row without progress (no new tool effect, todo change, or new message from a person; re-running the same command, failing commands, and output that differs only in timings or ids are not progress), with a notice that says why and that any message resumes the goal ([oh-my-openagent#10280](https://github.com/code-yeongyu/oh-my-openagent/issues/10280)).
 
 ### Fixed
+
+- A host emptied within a minute of its previous memory trim now trims once that minute ends, instead of keeping the freed memory until sessions come and go again ([#3360](https://github.com/code-yeongyu/senpi/issues/3360)).
+- The ripgrep grep fallback starts far fewer `rg` processes on the host. Explicitly named files no longer cost three launches each; they share one binary scan and one search. A capped directory walk also grows its batches instead of searching 200 files per launch. Every launch keeps its whole command line under the OS limit (32,000 characters on Windows, quoting included), so a large batch becomes several launches and no argument is truncated; a pattern or path too long for any launch fails with a clear error instead of an opaque spawn failure. A `grep` call over this repository now starts 5 to 14 rg processes instead of 63 to 87, with identical results ([#3516](https://github.com/code-yeongyu/senpi/issues/3516)).
 
 ### Removed
 
