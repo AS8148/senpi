@@ -1,9 +1,9 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { access } from "node:fs/promises";
 import { dirname, extname, join } from "node:path";
 import { isBunBinary } from "../../../config.ts";
 import { runtimeExecArgv } from "../../../utils/runtime-exec-argv.ts";
-import { resolveCliMainPath } from "../host-cli-entry.ts";
+import { resolveCliMainPathAsync } from "../host-cli-entry.ts";
 import { TOOL_CHILD_ROLE_ENV } from "./channel.ts";
 import { TOOL_CHILD_GENERATION_ENV } from "./entry.ts";
 
@@ -16,16 +16,21 @@ export interface ToolChildCommand {
  * How this engine re-enters itself as a tool child: a compiled binary boots its embedded entry with the role in its
  * environment, an interpreted install runs its own CLI entry under the same runtime. Never a PATH lookup.
  */
-export function toolChildCommand(compiled: boolean = isBunBinary): ToolChildCommand {
+export async function toolChildCommand(compiled: boolean = isBunBinary): Promise<ToolChildCommand> {
 	if (compiled) return { command: process.execPath, args: [] };
-	return { command: process.execPath, args: [...runtimeExecArgv(), toolChildEntryPath()] };
+	return { command: process.execPath, args: [...runtimeExecArgv(), await toolChildEntryPath()] };
 }
 
 /** The dedicated role entry beside the CLI entry, so an interpreted child parses none of the CLI graph. */
-export function toolChildEntryPath(cliMainPath: string = resolveCliMainPath()): string {
-	const extension = extname(cliMainPath);
-	const dedicated = join(dirname(cliMainPath), `tool-child-main${extension}`);
-	return existsSync(dedicated) ? dedicated : cliMainPath;
+export async function toolChildEntryPath(cliMainPath?: string): Promise<string> {
+	const entry = cliMainPath ?? (await resolveCliMainPathAsync());
+	const dedicated = join(dirname(entry), `tool-child-main${extname(entry)}`);
+	return (await access(dedicated).then(
+		() => true,
+		() => false,
+	))
+		? dedicated
+		: entry;
 }
 
 export function spawnToolChild(options: {

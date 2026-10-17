@@ -4,7 +4,8 @@
  * creates in `SENPI_TOOL_CHILD_TEST_CONTROL_DIR`, observed with `fs.watch`, never polled.
  */
 import { randomUUID } from "node:crypto";
-import { existsSync, readdirSync, rmSync, watch, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, rmSync, watch } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 const PREFIX = "SENPI_TOOL_CHILD_TEST_";
@@ -61,13 +62,17 @@ function watchPrefix(dir: string, prefix: string, onFile: (name: string) => void
 	};
 	const sentinel = `.watch-${process.pid}-${randomUUID()}`;
 	let resend: ReturnType<typeof setTimeout> | undefined;
+	let live = false;
 	let markReady: () => void = () => {};
-	const ready = new Promise<void>((resolve) => {
+	let failReady: (error: unknown) => void = () => {};
+	const ready = new Promise<void>((resolve, reject) => {
 		markReady = resolve;
+		failReady = reject;
 	});
 	const watcher = watch(dir, (_event, name) => {
 		if (name === null) return;
 		if (name === sentinel) {
+			live = true;
 			clearTimeout(resend);
 			rmSync(join(dir, sentinel), { force: true });
 			// Live from here on; files created before the watch existed are picked up once.
@@ -78,13 +83,19 @@ function watchPrefix(dir: string, prefix: string, onFile: (name: string) => void
 		if (existsSync(join(dir, name))) report(name);
 	});
 	const touch = (): void => {
-		writeFileSync(join(dir, sentinel), String(Date.now()));
-		resend = setTimeout(touch, 50);
+		if (live) return;
+		writeFile(join(dir, sentinel), String(Date.now())).then(
+			() => {
+				if (!live) resend = setTimeout(touch, 50);
+			},
+			(error: unknown) => failReady(error),
+		);
 	};
 	touch();
 	return {
 		ready,
 		close: () => {
+			live = true;
 			clearTimeout(resend);
 			watcher.close();
 			rmSync(join(dir, sentinel), { force: true });
@@ -97,7 +108,7 @@ function waitForFile(dir: string, file: string): Promise<void> {
 	// macOS drops events while a watch is still starting. The one watcher proves itself live by observing its own
 	// sentinel (re-sent until seen); after that, the existence re-check covers every later creation.
 	const sentinel = join(dir, `.watch-${process.pid}-${randomUUID()}`);
-	return new Promise((resolve) => {
+	return new Promise((resolve, reject) => {
 		let done = false;
 		let resend: ReturnType<typeof setTimeout> | undefined;
 		const finish = (): void => {
@@ -117,9 +128,19 @@ function waitForFile(dir: string, file: string): Promise<void> {
 		});
 		const touch = (): void => {
 			if (done) return;
-			writeFileSync(sentinel, String(Date.now()));
-			if (existsSync(path)) finish();
-			else resend = setTimeout(touch, 50);
+			writeFile(sentinel, String(Date.now())).then(
+				() => {
+					if (done) return;
+					if (existsSync(path)) finish();
+					else resend = setTimeout(touch, 50);
+				},
+				(error: unknown) => {
+					if (done) return;
+					done = true;
+					watcher.close();
+					reject(error);
+				},
+			);
 		};
 		touch();
 	});

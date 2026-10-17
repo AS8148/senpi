@@ -64,7 +64,7 @@ export const launchApisAckGatedScenario = Object.freeze({
 		});
 		await ctx.prompt(sessionId, "run every launch API once");
 		const child = await spawned;
-		const log = launchLog(ctx.agentDir, ctx.durableSessionIdOf(sessionId));
+		const log = launchLog(ctx.agentDir, await ctx.durableSessionIdOf(sessionId));
 		const launchIds = [];
 		for (const [index, call] of CALLS.entries()) {
 			const launch = await log.waitFor((r) => r.type === "launch" && !launchIds.includes(r.launchId), { name: `launch #${index} (${call.api})`, deadlineMs: 60_000 });

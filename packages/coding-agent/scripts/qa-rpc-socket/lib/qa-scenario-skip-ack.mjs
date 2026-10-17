@@ -88,7 +88,7 @@ export function skipAckWaitScenario() {
 			for (const session of sessions) {
 				const { index, entry, sessionId } = session;
 				const child = await session.spawned;
-				const log = launchLog(ctx.agentDir, ctx.durableSessionIdOf(sessionId));
+				const log = launchLog(ctx.agentDir, await ctx.durableSessionIdOf(sessionId));
 				const launch = await log.waitFor((r) => r.type === "launch", { name: `launch ${entry.api}#${index}`, deadlineMs: 60_000 });
 				if (entry.lifetime === "detached") {
 					await ctx.awaitControlFile((name) => name === `started-${index}`, 60_000);

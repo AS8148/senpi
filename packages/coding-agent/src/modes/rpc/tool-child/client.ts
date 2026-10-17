@@ -102,7 +102,7 @@ export class ToolChildClient {
 			generation,
 			channelEnv: listener.env,
 			env: typeof this.#options.env === "function" ? this.#options.env() : (this.#options.env ?? process.env),
-			command: this.#options.command ?? toolChildCommand(),
+			command: this.#options.command ?? (await toolChildCommand()),
 			cwd: this.#options.cwd,
 		});
 		const exited = once(child, "exit").then(() => undefined);

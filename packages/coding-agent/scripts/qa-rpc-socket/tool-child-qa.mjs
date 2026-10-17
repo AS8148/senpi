@@ -83,7 +83,16 @@ function scenarioContext(host, log, controlDir, evidenceDir) {
 		evidenceDir,
 		awaitControlFile: (match, deadlineMs = 30_000) => awaitControlFile(controlDir, match, deadlineMs),
 		awaitGone: (pid) => awaitGone(pid),
-		durableSessionIdOf: (sessionId) => durableIds.get(sessionId),
+		// open_session does not return the durable id; the session's list_sessions row does.
+		async durableSessionIdOf(sessionId) {
+			const known = durableIds.get(sessionId);
+			if (known !== undefined) return known;
+			const listed = await host.rpc.request({ type: "list_sessions" });
+			const row = (listed.data?.sessions ?? []).find((candidate) => candidate.sessionId === sessionId);
+			if (typeof row?.durableSessionId !== "string") throw new QaFailure("session_unlisted", `no durable id for ${sessionId}`);
+			durableIds.set(sessionId, row.durableSessionId);
+			return row.durableSessionId;
+		},
 		protocolInfo: host.protocolInfo,
 		controlDir,
 		control: createControl(controlDir),
@@ -99,7 +108,6 @@ function scenarioContext(host, log, controlDir, evidenceDir) {
 			});
 			if (opened.success !== true) throw new QaFailure("open_session_failed", JSON.stringify(opened.error ?? opened));
 			const sessionId = opened.data.sessionId;
-			durableIds.set(sessionId, opened.data.durableSessionId);
 			subscribe((record) => {
 				if (record.type !== "extension_ui_request" || record.method !== "select") return;
 				if (Array.isArray(record.options) && record.options.includes("Allow always")) {
