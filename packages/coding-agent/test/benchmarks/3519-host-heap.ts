@@ -62,8 +62,23 @@ const host = spawn(process.execPath, [cli, "--mode", "rpc", "--listen", `unix://
 	cwd: root,
 	stdio: "ignore",
 });
-const hostExited = new Promise((exited) => host.once("exit", exited));
-for (let attempt = 0; attempt < 600 && !existsSync(socket); attempt++) await sleep(100);
+let hostExitCode: number | null | undefined;
+const hostExited = new Promise((exited) =>
+	host.once("exit", (code) => {
+		hostExitCode = code;
+		exited(code);
+	}),
+);
+for (let attempt = 0; attempt < 600 && !existsSync(socket) && hostExitCode === undefined; attempt++) await sleep(100);
+if (!existsSync(socket)) {
+	host.kill("SIGTERM");
+	rmSync(root, { recursive: true, force: true });
+	throw new Error(
+		hostExitCode === undefined
+			? "the RPC host did not listen within 60 s"
+			: `the RPC host exited with code ${hostExitCode} before listening`,
+	);
+}
 
 const connection = createConnection(socket);
 await new Promise((ready) => connection.once("connect", ready));

@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/session-manager.ts`: loading an existing session file (`_setSessionFile`: open, resume, `reloadFromDisk`) keeps only the latest compaction window on the leaf's branch in the resident mirror (`_retainLoadedTail`, planned by the new fork-only `session-loaded-tail.ts`): the header, the leaf path's non-message entries before the window, every label and session name, and every entry from the compaction's first kept entry on. The trimmed ids join `trimmedIds`, the mirror is marked trimmed, and the full-history entry count and usage totals are taken from the whole file before the trim. A file with duplicated ids, no compaction on the leaf's branch, or a kept-window entry whose parent lies before the window stays fully resident as before.
+- `packages/coding-agent/src/core/session-manager.ts`: loading an existing session file (`_setSessionFile` and `_setSessionFileAsync`: open, `openAsync`, resume, `reloadFromDisk`) keeps only the latest compaction window on the leaf's branch in the resident mirror (`_retainLoadedTail`, planned by the new fork-only `session-loaded-tail.ts`): the header, the leaf path's non-message entries before the window, every label and session name, and every entry from the compaction's first kept entry on. The trimmed ids join `trimmedIds`, the mirror is marked trimmed, and the full-history entry count and usage totals are taken from the whole file before the trim. A file with duplicated ids, no compaction on the leaf's branch, or a kept-window entry whose parent lies before the window stays fully resident as before.
 - `packages/coding-agent/src/core/session-manager.ts`: a load that trims seeds `historyView` with the entries it already parsed, so the open-time full-history readers (receipt seals, extension session starts, `wasFlushed`) do not read the file a second time; the view goes with the other views when the session settles idle (`releaseSettledSessionMemory`).
 - `packages/coding-agent/src/core/session-manager.ts`: `_buildIndex` leaves `usageTotals` alone while the mirror is trimmed, like `fullEntryCount`, so a live compaction's trim no longer drops the usage of the turns it trimmed.
 - `packages/coding-agent/src/core/session-manager.ts`: `branch` and `branchWithSummary` to an entry outside the mirror reload the whole file into it (`_loadFullMirrorFor`); before, `branch` reloaded and `branchWithSummary` refused.
@@ -22,9 +22,32 @@
 
 ### Expected merge conflict zones
 
-- MEDIUM: `packages/coding-agent/src/core/session-manager.ts`, the existing-file branch of `_setSessionFile` (one `_retainLoadedTail()` call before the externalize map) and the head of `_buildIndex`.
+- MEDIUM: `packages/coding-agent/src/core/session-manager.ts`, `_setSessionFile` and `_setSessionFileAsync` (one `_retainLoadedTail()` call between `_adoptFileEntries` and the externalize map), `_completeFileLoad` (takes the loaded history and sets the view after `_buildIndex`) and the head of `_buildIndex`.
 - LOW: `packages/coding-agent/src/core/session-manager.ts`, the first lines of `branch`, `branchWithSummary`, `appendLabelChange` and `createBranchedSession`, `getFullBranch`, the `ReadonlySessionManager` pick list, the `loadingFullMirror` field and `emptyUsageTotals`.
 - LOW: `packages/coding-agent/src/core/agent-session.ts`, `releaseFullHistoryView` beside `releaseSettledSessionMemory` and the branch read in `exportToJsonl`.
+
+## 2026-10-17 - Opening a large session no longer holds a shared host's event loop (senpi#3518)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: `SessionManager.openAsync(path, sessionDir?, cwdOverride?, options?, slicer?)` opens like `open` but reads the transcript with asynchronous I/O and parses and externalizes it in slices that yield to the event loop (`packages/coding-agent/src/core/event-loop-slicer.ts`, 8 ms budget, `setImmediate` between slices). `_setSessionFile` is split into `_beginSessionFile` (point at the file, or start a new session at a missing path), `_adoptFileEntries` (empty/invalid file handling, header id, blob release, migration) and `_completeFileLoad` (index and flags), so the synchronous and the async path run the same steps; the constructor takes a private deferred-load marker for `openAsync`. `open` shares `discoverOpenHeader`/`openLocation` with it, and terminates an unterminated final line by reading only the last byte of a regular file (`terminateFinalSessionLine`; a FIFO or device is left to the loader, as before) instead of reading the whole file. `loadEntriesFromFile` and the line parser moved to `packages/coding-agent/src/core/session-entry-file.ts` (re-exported here), next to `loadEntriesFromFileAsync`.
+- `packages/coding-agent/src/modes/rpc/session-registry.ts`: the in-process host's `openSession` uses `openAsync`. A registry built with `sessionFileLoad: "blocking"` keeps the synchronous `open`: `packages/coding-agent/src/modes/rpc/session-worker.ts` does, through `createSessionWorkerRegistry` (`session-worker-registry.ts`), because a session worker owns its isolate's loop and nothing else waits on it. `createSlicer` injects the slicer (tests pass a stepping clock).
+- `packages/coding-agent/src/core/extensions/builtin/tool-search/`: the session-start history scan (`maybeRehydrateFromHistoryInSlices`) yields between messages, and `parseActivationMarkers` skips `JSON.stringify` for every message that cannot hold a marker (`engine/marker-candidates.ts`, exact for plain JSON data).
+
+### Why
+
+- One multi-session host runs every session on one loop. On main, opening a 231 MB transcript made a concurrent `get_protocol_info` wait 899-1198 ms (3 runs; an empty open: 368-1037 ms): about 0.8 s JSONL parse, 0.25 s externalize, 0.7 s of per-message `JSON.stringify` in the tool-search marker scan, plus a full-file read just to check the last byte.
+- After: 251-677 ms on the same transcript, within the empty-open range (284-585 ms), which is #1844's fixed per-open cost.
+- Accepted residual: a line another process is still writing when the sliced reader reaches EOF is dropped as malformed, then exists on disk but not in memory. The synchronous load had the same race; slicing widens it from milliseconds to the length of the load. `reserveSessionWrite` guards writers within one process only.
+- Regressions: `test/suite/regressions/issue-3518-open-session-yields.test.ts` (open/openAsync parity incl. a torn final line; an append during a sliced load; a mid-load failure; loop turns during `openAsync` and during the host's `openSession`, which saw 0 turns on main) and `test/tool-search/marker-candidates.test.ts`.
+
+### Why an extension could not handle it
+
+- Loading the session file happens before any extension runs, inside the session manager the host constructs.
+
+### Expected merge conflict zones
+
+- MEDIUM: `_setSessionFile` and its new stage methods, the private constructor's preloaded-entries parameter, and `static open` in `session-manager.ts`. LOW: the `loadEntriesFromFile` re-export and the import block.
 
 ## 2026-10-16 - Queued-input changes can require the revision they were based on (senpi#3459)
 

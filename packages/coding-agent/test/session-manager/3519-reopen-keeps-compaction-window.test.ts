@@ -115,6 +115,28 @@ describe("reopening a compacted session keeps only the latest compaction window 
 		}
 	});
 
+	it("labels a trimmed entry from the history the session already parsed, not a second parse", () => {
+		const { early, file } = compactedSession();
+		let reads = 0;
+		const restore = setSessionEntryLoaderForTesting((path) => {
+			reads++;
+			return loadEntriesFromFile(path);
+		});
+		try {
+			const reopened = SessionManager.open(file, dir);
+			reopened.dropMaterializedCaches();
+
+			reopened.appendLabelChange(early, "again");
+			const labels = reopened.getEntries().filter((entry) => entry.type === "label").length;
+
+			expect(labels).toBe(2);
+			expect(reopened.getLabel(early)).toBe("again");
+			expect(reads).toBe(1);
+		} finally {
+			restore();
+		}
+	});
+
 	it("keeps appending to the file it reopened, and the next reopen sees the new turn", () => {
 		const { file } = compactedSession();
 		const reopened = SessionManager.open(file, dir);
