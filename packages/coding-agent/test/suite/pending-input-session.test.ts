@@ -233,6 +233,43 @@ describe("AgentSession pending inputs", () => {
 		expect(phases(harness, "c-1")).toEqual(["queued", "queued", "sending", "delivered"]);
 	});
 
+	it("keeps the legacy queue path (the TUI's until P2c) exactly as before: sync answers, no journal, no events", async () => {
+		const { harness, release, toolStarted } = await runWithHeldTool();
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("handled"),
+		]);
+		const updates: unknown[] = [];
+		harness.session.subscribe((event) => {
+			if (event.type === "pending_input_update") updates.push(event);
+		});
+		const run = harness.session.prompt("start");
+		await toolStarted;
+		await harness.session.followUp("one");
+		await harness.session.followUp("two");
+		await harness.session.steer("three");
+		const [one, two] = harness.session.getQueuedInputs();
+
+		const edited = harness.session.editQueuedInput(one?.queuedId ?? "", "one edited", { expectedRevision: 1 });
+		const removed = harness.session.dequeueQueuedInput(two?.queuedId ?? "");
+		const stale = harness.session.editQueuedInput(one?.queuedId ?? "", "late", { expectedRevision: 1 });
+		const cleared = harness.session.clearQueue();
+		await harness.session.whenQueueClearRecorded();
+		release();
+		await run;
+
+		expect([edited, removed, stale]).toEqual(["edited", "removed", "conflict"]);
+		expect(cleared).toEqual({ steering: ["three"], followUp: ["one edited"] });
+		expect(cleared.ordered.map((input) => input.text)).toEqual(["one edited", "three"]);
+		expect(getUserTexts(harness)).toEqual(["start"]);
+		expect(updates).toEqual([]);
+		expect(
+			harness.session.sessionManager
+				.getEntries()
+				.some((entry) => entry.type === "custom" && entry.customType === PENDING_INPUT_TRANSITION),
+		).toBe(false);
+	});
+
 	it("keeps input without a client id out of the journal", async () => {
 		const { harness, release, toolStarted } = await runWithHeldTool();
 		harness.setResponses([
