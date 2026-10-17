@@ -17,7 +17,13 @@ export function reduceMutation(current: PendingInput | undefined, event: Mutatio
 		return refuse(current, { ...recorded.result, replayed: true });
 	}
 	const refusal = mutationRefusal(current, event);
-	if (refusal !== undefined) return refuse(current, refusal);
+	if (refusal !== undefined) {
+		const next: PendingInput = {
+			...current,
+			operations: { ...current.operations, [event.effectId]: { fingerprint, result: refusal } },
+		};
+		return { next, result: refusal, effects: [{ type: "persist" }] };
+	}
 	const applied = applyMutation(current, event);
 	const next: PendingInput = {
 		...applied.next,
