@@ -6,12 +6,15 @@
 
 ### Added
 
+- Terminal control endpoints serve their own session like a host: `open_session` by path attaches with the host's record stream and replay, `subscribe_sessions` runs the status stream (with `mirror`) over that session, and `steer`/`follow_up`/`prompt` are delivered through the terminal's admission (the user's draft holds them) with the host's `whenIdle` choice, as remote deliveries; fields admission cannot carry (`images`, `thinkingLevel`, ...) are refused by name. `admitExternalMessage` gains `whenIdle` (`start` default, `queue`) ([#3229](https://github.com/code-yeongyu/senpi/issues/3229)).
+
 ### Changed
 
 ### Fixed
 
 - `/share` no longer uploads the raw session. It removes keys, tokens, private keys, auth headers, cookies, emails, IP addresses, your home path, account name and host name (images are left out), shows what will be uploaded and who can read it, and uploads only after you choose Upload; "Review the exact file first" writes the exact bytes to a private temporary file that is deleted afterwards, and Cancel uploads nothing. The export no longer goes through a shared temporary file, and there is no default third-party viewer: the gist link is printed unless `PI_SHARE_VIEWER_URL` is set. `PI_DISABLE_SHARE=1` or the `enableSessionShare: false` setting turns `/share` off ([#3524](https://github.com/code-yeongyu/senpi/issues/3524)).
 
+- A host emptied within a minute of its previous memory trim now trims once that minute ends, instead of keeping the freed memory until sessions come and go again ([#3360](https://github.com/code-yeongyu/senpi/issues/3360)).
 - The ripgrep grep fallback starts far fewer `rg` processes on the host. Explicitly named files no longer cost three launches each; they share one binary scan and one search. A capped directory walk also grows its batches instead of searching 200 files per launch. Every launch keeps its whole command line under the OS limit (32,000 characters on Windows, quoting included), so a large batch becomes several launches and no argument is truncated; a pattern or path too long for any launch fails with a clear error instead of an opaque spawn failure. A `grep` call over this repository now starts 5 to 14 rg processes instead of 63 to 87, with identical results ([#3516](https://github.com/code-yeongyu/senpi/issues/3516)).
 
 ### Removed
