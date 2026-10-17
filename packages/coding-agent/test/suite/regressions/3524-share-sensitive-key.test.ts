@@ -52,6 +52,19 @@ describe("sensitive keys are judged by name (senpi#3524)", () => {
 		"AUTH_MODE_PASSWORD",
 		"KEY_ID_PRIVATE",
 		"cookies[0].value",
+		"API_TOKEN_PATH",
+		"API_TOKEN_FILE",
+		"GITHUB_TOKEN_MODE",
+		"SECRET_SIZE",
+		"PASSWORD_TYPE",
+		"PASSWORD_LENGTH",
+		"tokenCount",
+		"NEXT_PUBLIC_KEY_ID",
+		"AWS_ACCESS_KEY_ID",
+		"API_KEY_ID",
+		"KEY_IDS",
+		"DB_PASSWORD_URL",
+		"SECRET_KEY_FILE",
 	])("treats %s as sensitive", (name) => {
 		expect(isSensitiveKeyName(name)).toBe(true);
 	});
@@ -62,17 +75,14 @@ describe("sensitive keys are judged by name (senpi#3524)", () => {
 		"NODE_ENV",
 		"LANG",
 		"PUBLIC_KEY_PATH",
-		"NEXT_PUBLIC_KEY_ID",
 		"AUTH_MODE",
 		"KEYBOARD_LAYOUT",
 		"MONKEY_COUNT",
 		"maxTokens",
-		"tokenCount",
+		"max_output_tokens",
 		"KEY_ID",
-		"AWS_ACCESS_KEY_ID",
 		"publicKey",
 		"public-key-path",
-		"PASSWORD_LENGTH",
 	])("treats %s as ordinary", (name) => {
 		expect(isSensitiveKeyName(name)).toBe(false);
 	});
@@ -127,6 +137,10 @@ describe("sensitive keys are judged by name (senpi#3524)", () => {
 		["a bracketed path key", `cookies[0].value=${HEX}`],
 		["a public prefix hiding a secret", `NEXT_PUBLIC_TOKEN_SECRET=${HEX}`],
 		["a public key with a secret after it", `PUBLIC_KEY_SECRET: "${HEX}"`],
+		["a token name ending in path", `API_TOKEN_PATH=${HEX}`],
+		["a token name ending in mode", `GITHUB_TOKEN_MODE=${HEX}`],
+		["a secret name ending in size", `SECRET_SIZE=${HEX}`],
+		["a password name ending in type", `PASSWORD_TYPE=${HALF}`],
 	])("redacts %s in text", (_label, line) => {
 		expect(text(line)).not.toContain(HALF);
 	});
@@ -142,7 +156,6 @@ describe("sensitive keys are judged by name (senpi#3524)", () => {
 			"NODE_ENV=production",
 			"AUTH_MODE=oauth",
 			"PUBLIC_KEY_PATH=/etc/ssl/pub.pem",
-			"NEXT_PUBLIC_KEY_ID: 12345678",
 			"KEYBOARD_LAYOUT=us",
 		].join("\n");
 		expect(text(lines)).toBe(lines);

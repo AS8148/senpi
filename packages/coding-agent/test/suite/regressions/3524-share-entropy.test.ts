@@ -170,7 +170,6 @@ describe("generated secrets with no provider shape (senpi#3524)", () => {
 		["a URL", "https://github.com/code-yeongyu/senpi/pull/3540"],
 		["a public key path", "PUBLIC_KEY_PATH=/etc/ssl/pub.pem"],
 		["an auth mode", "AUTH_MODE=oauth"],
-		["a public key id", "NEXT_PUBLIC_KEY_ID: 12345678"],
 		["a null comparison", "if (session_id == null) return;"],
 		[
 			"help text with a slash list",
