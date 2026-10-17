@@ -57,10 +57,13 @@ export function extendedLimitInformation(): Uint8Array {
 export class WindowsJob {
 	private closed = false;
 
-	private constructor(
-		private readonly kernel: Kernel32Job,
-		private readonly handle: unknown,
-	) {}
+	private readonly kernel: Kernel32Job;
+	private readonly handle: unknown;
+
+	private constructor(kernel: Kernel32Job, handle: unknown) {
+		this.kernel = kernel;
+		this.handle = handle;
+	}
 
 	static create(kernel: Kernel32Job): WindowsJob {
 		const handle = kernel.CreateJobObjectW(null, null);

@@ -39,6 +39,8 @@ export interface ToolChildChannel {
 export function wrapChannelSocket(socket: Socket): ToolChildChannel {
 	const decoder = new FrameDecoder();
 	const listeners: Array<(message: ToolChildMessage) => void> = [];
+	// Frames that arrive before anyone listens (a child's `hello` races the server's subscription) wait here.
+	const early: ToolChildMessage[] = [];
 	let settle!: (reason: ChannelCloseReason) => void;
 	const closed = new Promise<ChannelCloseReason>((resolve) => {
 		settle = resolve;
@@ -53,7 +55,10 @@ export function wrapChannelSocket(socket: Socket): ToolChildChannel {
 	socket.on("data", (chunk: Buffer) => {
 		if (reason !== undefined) return;
 		try {
-			for (const message of decoder.push(chunk)) for (const listener of listeners) listener(message);
+			for (const message of decoder.push(chunk)) {
+				if (listeners.length === 0) early.push(message);
+				else for (const listener of listeners) listener(message);
+			}
 		} catch (error) {
 			finish(
 				error instanceof ToolChildCodecError
@@ -80,6 +85,7 @@ export function wrapChannelSocket(socket: Socket): ToolChildChannel {
 		send: (message) => reason === undefined && socket.write(encodeFrame(message)),
 		onMessage: (listener) => {
 			listeners.push(listener);
+			for (const message of early.splice(0)) listener(message);
 		},
 		closed,
 		close: () => finish({ kind: "eof" }),
@@ -137,7 +143,8 @@ export async function openChannelListener(options: {
 		accepted,
 		close: async () => {
 			taken = true;
-			await new Promise<void>((resolve) => server.close(() => resolve()));
+			// Stops accepting only: `server.close(callback)` would wait for the accepted channel itself to end.
+			if (server.listening) server.close();
 			await rm(secretPath, { force: true });
 			if (process.platform !== "win32") await rm(logicalPath, { force: true });
 		},

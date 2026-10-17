@@ -92,6 +92,26 @@ describe("tool-child channel", () => {
 		await listener.close();
 	});
 
+	it("delivers frames that arrive before the server subscribes", async () => {
+		const listener = await openChannelListener({ dir: await scratch(), generation: 5 });
+		const child = await connectChannel(listener.env);
+		child.send({ type: "hello", generation: 5, pid: 1, protocol: 1 });
+		child.send({ type: "pong", seq: 9 });
+		const server = await listener.accepted;
+		await new Promise((resolve) => setImmediate(resolve));
+		const seen: ToolChildMessage[] = [];
+		const both = new Promise<void>((resolve) =>
+			server.onMessage((message) => {
+				seen.push(message);
+				if (seen.length === 2) resolve();
+			}),
+		);
+		await both;
+		expect(seen.map((message) => message.type)).toEqual(["hello", "pong"]);
+		child.close();
+		await listener.close();
+	});
+
 	it("reports whether the environment names a channel", () => {
 		expect(channelEnvPresent({})).toBe(false);
 		expect(channelEnvPresent({ [TOOL_CHILD_CHANNEL_ENV]: "/x" })).toBe(false);
