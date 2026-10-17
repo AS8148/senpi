@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { parseArgs } from "../../src/cli/args.ts";
 import { resolveToolRuntime } from "../../src/cli/tool-runtime.ts";
 import { ensureHost } from "../../src/modes/rpc/host-ensure.ts";
+import { stopHost } from "../../src/modes/rpc/host-stop.ts";
 import {
 	GENERATION_HOST_ARGS,
 	generationEnv,
@@ -18,6 +19,7 @@ import {
 	JsonlPeer,
 	reapProcessesUnder,
 	supervisorLaunch,
+	waitForPidGone,
 } from "../helpers/rpc-generation-support.ts";
 import { writeRpcModelsJson } from "../helpers/rpc-hermetic.ts";
 import { assertWorkspaceBuildPrerequisite } from "../support/workspace-build-prerequisite.ts";
@@ -40,15 +42,19 @@ describe("resolveToolRuntime", () => {
 	it("takes the flag, then the env, and the flag beats the env", () => {
 		expect(resolveToolRuntime(parseArgs(["--tool-runtime", "child"]), {})).toEqual({ ok: true, value: "child" });
 		expect(resolveToolRuntime(parseArgs([]), { SENPI_TOOL_RUNTIME: "child" })).toEqual({ ok: true, value: "child" });
-		expect(resolveToolRuntime(parseArgs(["--tool-runtime", "in-process"]), { SENPI_TOOL_RUNTIME: "child" })).toEqual(
-			{ ok: true, value: "in-process" },
-		);
+		expect(resolveToolRuntime(parseArgs(["--tool-runtime", "in-process"]), { SENPI_TOOL_RUNTIME: "child" })).toEqual({
+			ok: true,
+			value: "in-process",
+		});
 	});
 
 	it("rejects an unknown value from either source, naming both kinds", () => {
 		const parsed = parseArgs(["--tool-runtime", "bogus"]);
 		expect(parsed.toolRuntime).toBeUndefined();
-		expect(parsed.diagnostics).toContainEqual({ type: "error", message: "--tool-runtime must be in-process or child" });
+		expect(parsed.diagnostics).toContainEqual({
+			type: "error",
+			message: "--tool-runtime must be in-process or child",
+		});
 		const fromEnv = resolveToolRuntime(parseArgs([]), { SENPI_TOOL_RUNTIME: "bogus" });
 		expect(fromEnv.ok).toBe(false);
 		expect(fromEnv.ok ? "" : fromEnv.message).toMatch(/in-process or child/);
@@ -69,33 +75,43 @@ describe("tool runtime at startup", () => {
 	it.each([
 		{ hostArgs: [], expected: "tool_runtime:in-process" },
 		{ hostArgs: ["--tool-runtime", "child"], expected: "tool_runtime:child" },
-	])("ensureHost advertises tool_runtime ($expected)", async ({ hostArgs, expected }) => {
-		const qa = generationScratch("toolrt");
-		const peers: JsonlPeer[] = [];
-		cleanups.push(async () => {
-			for (const peer of peers) peer.destroy();
-			await reapProcessesUnder(qa.root);
-			await rm(qa.root, { recursive: true, force: true });
-		});
-		writeRpcModelsJson(qa.agentDir, "http://127.0.0.1:1");
-		const host = await ensureHost({
-			socket: qa.socket,
-			agentDir: qa.agentDir,
-			hostArgs: [...GENERATION_HOST_ARGS, ...hostArgs],
-			env: generationEnv(qa),
-			policy: { idleExitMs: 600_000 },
-			_test: { readinessTimeoutMs: 60_000, launch: supervisorLaunch },
-		});
-		host.release();
-		const client = await JsonlPeer.connect(qa.socket);
-		peers.push(client);
-		const info = await client.request({ id: "info", type: "get_protocol_info" });
-		const capabilities = (info.data as { capabilities?: unknown } | undefined)?.capabilities;
-		expect(capabilities).toContain(expected);
-		expect(Array.isArray(capabilities) ? capabilities.filter((c) => String(c).startsWith("tool_runtime:")) : []).toEqual(
-			[expected],
-		);
-	}, 120_000);
+	])(
+		"ensureHost advertises tool_runtime ($expected)",
+		async ({ hostArgs, expected }) => {
+			const qa = generationScratch("toolrt");
+			const peers: JsonlPeer[] = [];
+			cleanups.push(async () => {
+				for (const peer of peers) peer.destroy();
+				try {
+					const stopped = await stopHost({ socket: qa.socket, agentDir: qa.agentDir, force: true });
+					if (stopped.action === "stopped" && !(await waitForPidGone(stopped.pid, 30_000)))
+						throw new Error(`host ${stopped.pid} did not exit`);
+				} finally {
+					await reapProcessesUnder(qa.root);
+				}
+				await rm(qa.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+			});
+			writeRpcModelsJson(qa.agentDir, "http://127.0.0.1:1");
+			const host = await ensureHost({
+				socket: qa.socket,
+				agentDir: qa.agentDir,
+				hostArgs: [...GENERATION_HOST_ARGS, ...hostArgs],
+				env: generationEnv(qa),
+				policy: { idleExitMs: 600_000 },
+				_test: { readinessTimeoutMs: 60_000, launch: supervisorLaunch },
+			});
+			host.release();
+			const client = await JsonlPeer.connect(qa.socket);
+			peers.push(client);
+			const info = await client.request({ id: "info", type: "get_protocol_info" });
+			const capabilities = (info.data as { capabilities?: unknown } | undefined)?.capabilities;
+			expect(capabilities).toContain(expected);
+			expect(
+				Array.isArray(capabilities) ? capabilities.filter((c) => String(c).startsWith("tool_runtime:")) : [],
+			).toEqual([expected]);
+		},
+		120_000,
+	);
 });
 
 function runCli(args: string[], env: Record<string, string>): Promise<{ code: number | null; stderr: string }> {

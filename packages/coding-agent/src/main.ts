@@ -13,7 +13,6 @@ import { type ImageContent, modelsAreEqual } from "@earendil-works/pi-ai";
 import { setCapabilityOverrides } from "@earendil-works/pi-tui";
 import chalk from "chalk";
 import { type Args, type Mode, normalizeSessionName, parseArgs, printHelp, resolveSessionRuntime } from "./cli/args.ts";
-import { resolveToolRuntime, type ToolRuntimeKind } from "./cli/tool-runtime.ts";
 import {
 	type AuthCheckResult,
 	checkProviderAuth,
@@ -55,6 +54,7 @@ import {
 	shouldShowStartupLoadingIndicator,
 } from "./cli/startup-loading-indicator.ts";
 import { shouldRunFirstTimeSetup, showFirstTimeSetup, showStartupSelector } from "./cli/startup-ui.ts";
+import { resolveToolRuntime, type ToolRuntimeKind } from "./cli/tool-runtime.ts";
 import {
 	APP_NAME,
 	DISPLAY_VERSION,
