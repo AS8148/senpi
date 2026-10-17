@@ -90,7 +90,12 @@ const PRIVATE_KEY_BLOCK =
 /** Credential shapes, each rewritten to a placeholder that no rule matches again. */
 const CREDENTIAL_REWRITES: ReadonlyArray<readonly [RegExp, (match: string, ...groups: string[]) => string]> = [
 	[
-		/\b(Bearer|Basic|Token)(\s{1,5})(?!<redacted>)[A-Za-z0-9._~+/=-]{8,}/gi,
+		/\b((?:Proxy-)?Authorization["']?\s{0,3}[:=]\s{0,3}["']?(?:(?:Bearer|Basic|Token|Digest)\s{1,5})?)(?!<redacted>)[^\s"'\\]{4,}/gi,
+		(_m, prefix) => `${prefix}<redacted>`,
+	],
+	// A bare scheme word is prose unless the value looks like a credential (has a digit or symbol).
+	[
+		/\b(Bearer|Basic|Token)(\s{1,5})(?!<redacted>)(?=[A-Za-z]*[0-9._~+/=-])[A-Za-z0-9._~+/=-]{8,}/gi,
 		(_m, scheme, gap) => `${scheme}${gap}<redacted>`,
 	],
 	[

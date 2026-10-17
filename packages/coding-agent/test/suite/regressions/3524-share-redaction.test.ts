@@ -38,6 +38,9 @@ describe("share redaction (senpi#3524)", () => {
 		["an AWS access key", `aws ${AWS_KEY}`, AWS_KEY],
 		["a JWT", `jwt=${JWT}`, JWT],
 		["an auth header", "Authorization: Bearer abcdefghijklmnop", "abcdefghijklmnop"],
+		["a letters-only basic auth header", "Proxy-Authorization: Basic dXNlcnBhc3N3b3Jk", "dXNlcnBhc3N3b3Jk"],
+		["a JSON authorization field", '{"authorization":"Token abcdefghijkl"}', "abcdefghijkl"],
+		["a bare bearer token", "curl -H x Bearer abc123def456ghi", "abc123def456ghi"],
 		["a JSON secret field", '{"client_secret": "s3cr3t-value"}', "s3cr3t-value"],
 		["URL credentials", "https://bob:hunter22@example.com/x", "hunter22"],
 		["a cookie header", "Cookie: sid=abc123def456", "abc123def456"],
@@ -81,6 +84,15 @@ describe("share redaction (senpi#3524)", () => {
 		]) {
 			expect(redactShareText(input, windows, new Map())).toMatch(/^~/);
 		}
+	});
+
+	it.each([
+		"Extract basic information from media files",
+		"Basic setup takes a minute",
+		"the Bearer of bad news",
+		"Token counting is approximate",
+	])("keeps prose that starts with an auth scheme word: %s", (input) => {
+		expect(redact(input).text).toBe(input);
 	});
 
 	it("keeps loopback addresses, ordinary words and code", () => {
