@@ -37,19 +37,24 @@ export function matcherFlags(request: GrepEngineRequest): string[] {
 	return args;
 }
 
+/** The per-file argument a segment launch spends on this candidate: the path itself, or an anchored include glob. */
+export function candidateArgument(candidate: Candidate): string {
+	if (candidate.root.file) return candidate.root.path;
+	return `/${slashPath(relative(candidate.root.cwd, candidate.absolute)).replace(/[\\*?[\]{}!]/g, "\\$&")}`;
+}
+
+export function argumentCost(candidate: Candidate): number {
+	return candidateArgument(candidate).length + (candidate.root.file ? 1 : " -g ".length + 1);
+}
+
 export function segmentFlags(segment: Candidate[], pattern: string, walk: string[], matcher: string[]): string[] {
 	const first = segment[0];
 	const limits = ["--sort", "path", "--max-filesize", String(MAX_FILE_BYTES), ...walk];
 	// rg searches named files unfiltered, so explicit file roots need no include whitelist.
-	if (first.root.file)
-		return [...matcher, ...limits, "--", pattern, ...segment.map((candidate) => candidate.root.path)];
+	if (first.root.file) return [...matcher, ...limits, "--", pattern, ...segment.map(candidateArgument)];
 	// Original positive globs would otherwise OR with the include list. Reset file
 	// admission, allow traversal, then whitelist precisely the enumerated segment.
 	const includes = ["-g", "!**/*", "-g", "**/"];
-	for (const candidate of segment)
-		includes.push(
-			"-g",
-			`/${slashPath(relative(first.root.cwd, candidate.absolute)).replace(/[\\*?[\]{}!]/g, "\\$&")}`,
-		);
+	for (const candidate of segment) includes.push("-g", candidateArgument(candidate));
 	return [...matcher, ...limits, ...includes, "--", pattern, first.root.path];
 }

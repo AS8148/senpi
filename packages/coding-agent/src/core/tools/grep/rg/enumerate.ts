@@ -1,6 +1,7 @@
 import { realpath, stat } from "node:fs/promises";
 import { basename, dirname, relative, resolve } from "node:path";
 import { GrepEngineError, type GrepEngineRequest, type GrepEngineResult } from "../engine.ts";
+import { argvBudget, packArgv } from "./argv.ts";
 import { pathOrder, slashPath } from "./paths.ts";
 import { MAX_FILE_BYTES } from "./prefix-pass.ts";
 import type { RgRun } from "./process.ts";
@@ -21,15 +22,6 @@ export interface Candidate {
 	/** One-based position in the complete filtered candidate order, including binary files. */
 	ordinal: number;
 	binary: boolean;
-}
-
-/** Bounds argv for batched explicit-file rg launches. */
-export const FILE_ROOT_BATCH = 200;
-
-function chunk<T>(items: T[], size: number): T[][] {
-	const batches: T[][] = [];
-	for (let index = 0; index < items.length; index += size) batches.push(items.slice(index, index + size));
-	return batches;
 }
 
 export async function resolveRoots(request: GrepEngineRequest, result: GrepEngineResult): Promise<Root[]> {
@@ -95,7 +87,10 @@ export async function enumerateCandidates({
 	const files = scanned.filter((root) => root.file);
 	// Explicit files share one scan per batch; a directory root keeps its own anchored walk.
 	const scans = [
-		...chunk(files, FILE_ROOT_BATCH).map((batch) => ({ cwd: batch[0].cwd, paths: batch.map((root) => root.path) })),
+		...packArgv(files, (root) => root.path.length + 1, argvBudget()).map((batch) => ({
+			cwd: batch[0].cwd,
+			paths: batch.map((root) => root.path),
+		})),
 		...scanned.filter((root) => !root.file).map((root) => ({ cwd: root.cwd, paths: [root.path] })),
 	];
 	// Scan the entire normal-size file, including NULs after rg's first search buffer.

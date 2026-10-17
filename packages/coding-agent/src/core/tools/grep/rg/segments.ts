@@ -1,6 +1,7 @@
 import type { GrepEngineRequest, GrepEngineResult } from "../engine.ts";
-import { segmentFlags } from "./args.ts";
-import { type Candidate, FILE_ROOT_BATCH } from "./enumerate.ts";
+import { argumentCost, segmentFlags } from "./args.ts";
+import { argvBudget } from "./argv.ts";
+import type { Candidate } from "./enumerate.ts";
 import { collectSegmentRows, type FileRows } from "./json-rows.ts";
 import { pathOrder } from "./paths.ts";
 import { MAX_FILE_BYTES, readSearchablePrefix } from "./prefix-pass.ts";
@@ -19,7 +20,7 @@ function joins(previous: Candidate[], candidate: Candidate, request: GrepEngineR
 	const head = previous[0];
 	if (head.size > MAX_FILE_BYTES || candidate.size > MAX_FILE_BYTES) return false;
 	// Explicit files from any root share one rg launch; binary members stay out of its argv.
-	if (head.root.file && candidate.root.file) return previous.length < FILE_ROOT_BATCH;
+	if (head.root.file && candidate.root.file) return true;
 	return (
 		!head.binary &&
 		!candidate.binary &&
@@ -28,12 +29,20 @@ function joins(previous: Candidate[], candidate: Candidate, request: GrepEngineR
 	);
 }
 
-function planSegments(ordered: Candidate[], request: GrepEngineRequest): Candidate[][] {
+/** Orders candidates into rg launches whose per-file arguments fit the argv budget. */
+export function planSegments(ordered: Candidate[], request: GrepEngineRequest, budget = argvBudget()): Candidate[][] {
 	const segments: Candidate[][] = [];
+	let used = 0;
 	for (const candidate of ordered) {
 		const previous = segments.at(-1);
-		if (previous && joins(previous, candidate, request)) previous.push(candidate);
-		else segments.push([candidate]);
+		const cost = candidate.binary ? 0 : argumentCost(candidate);
+		if (previous && joins(previous, candidate, request) && used + cost <= budget) {
+			previous.push(candidate);
+			used += cost;
+		} else {
+			segments.push([candidate]);
+			used = cost;
+		}
 	}
 	return segments;
 }
