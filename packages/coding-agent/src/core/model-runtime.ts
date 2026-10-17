@@ -82,6 +82,7 @@ import { retryOnceOnRejectedToken } from "./credential-pool/rejected-token-retry
 import type { RotationSources } from "./credential-pool/rotation-stream.ts";
 import { ModelConfig } from "./model-config.ts";
 import { FileModelsStore, InMemoryCodingAgentModelsStore } from "./models-store.ts";
+import { isNonStoredSignInFrom } from "./non-stored-sign-in.ts";
 import {
 	type AuthStatus,
 	type CompatibilityRequestConfig,
@@ -870,11 +871,16 @@ export class ModelRuntime implements Models {
 	 * counts, even while a provisional `oauth` entry sits in the snapshot during registration (#3537).
 	 */
 	isNonStoredSignIn(providerId: string): boolean {
-		if (this.credentials.hasRuntimeApiKey(providerId) || this.snapshot.storedProviders.has(providerId)) return false;
-		if (configuredRequestAuthStatus(this.config.getProvider(providerId), this.extensionProviders.get(providerId))) {
-			return false;
-		}
-		return this.snapshot.auth.get(providerId)?.type === "oauth";
+		return isNonStoredSignInFrom({
+			runtimeKey: this.credentials.hasRuntimeApiKey(providerId),
+			stored: this.snapshot.storedProviders.has(providerId),
+			configuredKey:
+				configuredRequestAuthStatus(
+					this.config.getProvider(providerId),
+					this.extensionProviders.get(providerId),
+				) !== undefined,
+			checkType: this.snapshot.auth.get(providerId)?.type,
+		});
 	}
 
 	getProviderAuthStatus(providerId: string): AuthStatus {

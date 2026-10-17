@@ -3,7 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAgentSessionServices } from "../../../src/core/agent-session-services.ts";
-import { authMethodStatus, buildLoginProviderInfos } from "../../../src/core/auth-providers.ts";
+import { authMethodStatus, buildLoginProviderInfos, configuredLoginRow } from "../../../src/core/auth-providers.ts";
+import type { ModelRegistry } from "../../../src/core/model-registry.ts";
+import { isNonStoredSignInFrom } from "../../../src/core/non-stored-sign-in.ts";
 
 /**
  * senpi#3537: the Claude subscription's `check` reports a CLAUDE_CODE_OAUTH_TOKEN or an ambient
@@ -21,6 +23,7 @@ describe("a non-stored subscription sign-in is reported on the sign-in row (senp
 	interface Fixture {
 		readonly auth?: Record<string, unknown>;
 		readonly modelsJson?: Record<string, unknown>;
+		readonly runtimeKeys?: Readonly<Record<string, string>>;
 	}
 
 	function scratch(): string {
@@ -29,7 +32,7 @@ describe("a non-stored subscription sign-in is reported on the sign-in row (senp
 		return root;
 	}
 
-	async function rowsFor(provider: string, fixture: Fixture = {}) {
+	async function registryAndRows(provider: string, fixture: Fixture) {
 		const root = scratch();
 		const agentDir = join(root, "agent");
 		const cwd = join(root, "project");
@@ -37,7 +40,16 @@ describe("a non-stored subscription sign-in is reported on the sign-in row (senp
 		mkdirSync(cwd, { recursive: true });
 		if (fixture.auth) writeFileSync(join(agentDir, "auth.json"), JSON.stringify(fixture.auth), { mode: 0o600 });
 		if (fixture.modelsJson) writeFileSync(join(agentDir, "models.json"), JSON.stringify(fixture.modelsJson));
-		const { modelRegistry } = await createAgentSessionServices({ cwd, agentDir });
+		const { modelRegistry, modelRuntime } = await createAgentSessionServices({ cwd, agentDir });
+		for (const [id, key] of Object.entries(fixture.runtimeKeys ?? {})) await modelRuntime.setRuntimeApiKey(id, key);
+		return { modelRegistry, rows: rowsOf(modelRegistry, provider) };
+	}
+
+	async function rowsFor(provider: string, fixture: Fixture = {}) {
+		return (await registryAndRows(provider, fixture)).rows;
+	}
+
+	function rowsOf(modelRegistry: ModelRegistry, provider: string) {
 		const apiKeyRows = new Set(buildLoginProviderInfos(modelRegistry, "api_key").map((info) => info.id));
 		const infos = [
 			...buildLoginProviderInfos(modelRegistry, "oauth"),
@@ -98,6 +110,16 @@ describe("a non-stored subscription sign-in is reported on the sign-in row (senp
 		});
 	});
 
+	it("a runtime --api-key outranks an env sign-in on the RPC rows and on the TUI picker's row", async () => {
+		vi.stubEnv("CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat01-scripted-not-a-token");
+		const { modelRegistry, rows } = await registryAndRows("anthropic-subscription", {
+			runtimeKeys: { "anthropic-subscription": "sk-scripted-runtime-key" },
+		});
+		expect(rows).toEqual({ oauth: { configured: false }, api_key: { configured: true, source: "runtime" } });
+		const provider = { id: "anthropic-subscription", name: "Anthropic Subscription" };
+		expect(configuredLoginRow(modelRegistry, provider, true)?.type).toBe("api_key");
+	});
+
 	it("ANTHROPIC_API_KEY stays a key on anthropic and does not light the subscription", async () => {
 		vi.stubEnv("ANTHROPIC_API_KEY", "sk-ant-api03-scripted-not-a-key");
 		const anthropic = await rowsFor("anthropic");
@@ -135,5 +157,22 @@ describe("a non-stored subscription sign-in is reported on the sign-in row (senp
 		const rows = await rowsFor("openai");
 		expect(rows.api_key).toEqual({ configured: true, source: "environment", label: "OPENAI_API_KEY" });
 		if ("oauth" in rows) expect(rows.oauth).toEqual({ configured: false });
+	});
+});
+
+describe("non-stored sign-in precedence, independent of the packages/ai check order (senpi#3537)", () => {
+	const none = { runtimeKey: false, stored: false, configuredKey: false } as const;
+	it.each([
+		["a runtime key", { ...none, runtimeKey: true }],
+		["a stored credential", { ...none, stored: true }],
+		["a configured models.json/extension key", { ...none, configuredKey: true }],
+	])("%s beside an oauth check result is not a sign-in", (_name, sources) => {
+		expect(isNonStoredSignInFrom({ ...sources, checkType: "oauth" })).toBe(false);
+	});
+
+	it("only an oauth check result with nothing ahead of it is a sign-in", () => {
+		expect(isNonStoredSignInFrom({ ...none, checkType: "oauth" })).toBe(true);
+		expect(isNonStoredSignInFrom({ ...none, checkType: "api_key" })).toBe(false);
+		expect(isNonStoredSignInFrom({ ...none, checkType: undefined })).toBe(false);
 	});
 });

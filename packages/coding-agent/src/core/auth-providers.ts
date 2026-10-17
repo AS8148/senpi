@@ -127,3 +127,16 @@ export function authMethodStatus(
 	}
 	return info.authType === "api_key" || !providerHasApiKeyRow ? status : { configured: false };
 }
+
+/** The provider's one configured row under `authMethodStatus`, for the TUI picker's single status (#3537). */
+export function configuredLoginRow(
+	modelRegistry: ModelRegistry,
+	provider: { id: string; name: string },
+	providerHasApiKeyRow: boolean,
+): { type: "oauth" | "api_key"; status: AuthStatus } | undefined {
+	for (const authType of ["oauth", "api_key"] as const) {
+		const status = authMethodStatus(modelRegistry, { ...provider, authType }, providerHasApiKeyRow);
+		if (status.configured) return { type: authType, status };
+	}
+	return undefined;
+}

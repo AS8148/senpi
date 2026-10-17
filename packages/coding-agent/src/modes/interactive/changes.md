@@ -1,3 +1,21 @@
+## 2026-10-17 - The /login picker attributes a credential to its row through the shared rule (senpi#3537)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `getLoginProviderOptions` takes each provider's status and row type from `configuredLoginRow` (core `auth-providers.ts`, built on `authMethodStatus`). It no longer pairs `getProviderAuthStatus` with the snapshot type from `isUsingOAuth`.
+
+### Why
+
+senpi#3537 review: with `CLAUDE_CODE_OAUTH_TOKEN` set and a runtime `--api-key` for `anthropic-subscription`, the picker showed the runtime key as "configured" on the subscription's sign-in row, because the snapshot type said `oauth` while the status came from the runtime key. RPC `get_auth_providers` already attributed it correctly; both surfaces now share one rule.
+
+### Why an extension could not handle it
+
+The picker rows are built inside `InteractiveMode`.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `getLoginProviderOptions` and the `auth-providers.ts` import.
+
 ## 2026-10-16 - Context size warnings use resource notices (senpi#3460)
 
 ### What changed

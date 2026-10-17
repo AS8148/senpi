@@ -48,6 +48,7 @@ describe("OAuthSelectorComponent", () => {
 					getProviderAuthStatus: () => ({ configured: false }),
 					isUsingOAuth: () => false,
 				},
+				modelRegistry: { getProviderAuthStatus: () => ({ configured: false }) },
 			},
 		};
 
