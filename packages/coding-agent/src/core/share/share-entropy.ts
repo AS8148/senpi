@@ -29,6 +29,8 @@ export function shannonBitsPerChar(text: string): number {
 }
 
 const WORD_PIECE = /[A-Z]?[a-z]{3,}|[0-9]+/g;
+/** Case-run pieces: words average 3+ characters, random base62 splits into pieces of about two. */
+const CASE_PIECE = /[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[0-9]+/g;
 
 function pronounceable(piece: string): boolean {
 	if (/^[0-9]+$/.test(piece)) return piece.length <= 3;
@@ -48,7 +50,8 @@ export function readsAsWords(run: string, coverage = 0.6): boolean {
 		.map((match) => match[0])
 		.filter(pronounceable)
 		.reduce((sum, piece) => sum + piece.length, 0);
-	return covered >= run.length * coverage;
+	const pieces = run.match(CASE_PIECE) ?? [];
+	return covered >= run.length * coverage && pieces.length > 0 && run.length / pieces.length >= 3;
 }
 
 /** A path or a slash list (`a/b/c.ts`, `1/true/yes`, `VISUAL/EDITOR`): every segment is a word, a constant or lowercase. */
@@ -71,7 +74,7 @@ export function looksGenerated(run: string): boolean {
 	const symbols = body.replace(/[^+/]/g, "").length;
 	const classes = [upper, lower, digits, symbols].filter((n) => n > 0).length;
 	if (lower < 2 || (upper < 2 && classes < 3)) return false;
-	if (shannonBitsPerChar(body) < Math.min(4, Math.log2(body.length) - 1)) return false;
+	if (shannonBitsPerChar(body) < Math.min(3.8, Math.log2(body.length) - 1.2)) return false;
 	return !readsAsWords(body) && !readsAsPath(body);
 }
 

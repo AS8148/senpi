@@ -119,6 +119,16 @@ describe("generated secrets with no provider shape (senpi#3524)", () => {
 		expect(leaked).toEqual([]);
 	});
 
+	it("redacts 2000 of 2000 32-character base62 tokens from a second seed", () => {
+		const random = mulberry32(32);
+		const leaked: string[] = [];
+		for (let sample = 0; sample < 2000; sample++) {
+			const value = draw(random, BASE62, 32);
+			if (redact(`key ${value} ok`).includes(value)) leaked.push(value);
+		}
+		expect(leaked).toEqual([]);
+	});
+
 	it("redacts a token split across two structured text blocks", () => {
 		const random = mulberry32(99);
 		const leaked: string[] = [];

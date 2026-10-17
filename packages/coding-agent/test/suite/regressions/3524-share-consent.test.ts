@@ -130,6 +130,26 @@ describe("/share consent and redaction (senpi#3524)", () => {
 		expect(payload).not.toContain(SECRET);
 	});
 
+	it("can leave tool outputs out again after including them", async () => {
+		const harness = await sessionWithSecretToolResult();
+		const uploads: string[] = [];
+		const seen: Array<{ omittedOutputs: number; includesOutputs: boolean }> = [];
+		const decisions: ShareDecision[] = ["include-outputs", "exclude-outputs", "upload"];
+		await runShare({
+			...dependencies(harness, [], uploads),
+			ask: async (_preview, options) => {
+				seen.push(options);
+				return decisions.shift() ?? "cancel";
+			},
+		});
+		expect(seen).toEqual([
+			{ omittedOutputs: 1, includesOutputs: false },
+			{ omittedOutputs: 0, includesOutputs: true },
+			{ omittedOutputs: 1, includesOutputs: false },
+		]);
+		expect(sessionPayload(uploads[0] ?? "")).toContain("[output omitted: cat_env]");
+	});
+
 	it("uploads nothing when the user cancels", async () => {
 		const harness = await sessionWithSecretToolResult();
 		const uploads: string[] = [];

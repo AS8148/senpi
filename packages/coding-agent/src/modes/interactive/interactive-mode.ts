@@ -917,6 +917,7 @@ type AsyncQuestionState = {
 
 const SHARE_UPLOAD = "Upload";
 const SHARE_REVIEW = "Review the exact file first";
+const SHARE_EXCLUDE = "Leave tool outputs out";
 const SHARE_CANCEL = "Cancel";
 
 export class InteractiveMode {
@@ -9651,15 +9652,14 @@ export class InteractiveMode {
 			checkGh: checkGhAuth,
 			render: (sanitize) => this.session.renderToHtml({ themeName: theme.name, sanitize }),
 			context: currentShareRedactionContext(),
-			ask: async (preview, { omittedOutputs }) => {
+			ask: async (preview, { omittedOutputs, includesOutputs }) => {
 				const include = `Include tool outputs (${omittedOutputs})`;
-				const options =
-					omittedOutputs > 0
-						? [SHARE_UPLOAD, include, SHARE_REVIEW, SHARE_CANCEL]
-						: [SHARE_UPLOAD, SHARE_REVIEW, SHARE_CANCEL];
+				const toggle = includesOutputs ? [SHARE_EXCLUDE] : omittedOutputs > 0 ? [include] : [];
+				const options = [SHARE_UPLOAD, ...toggle, SHARE_REVIEW, SHARE_CANCEL];
 				const choice = await this.showExtensionSelector(preview, options);
 				if (choice === SHARE_UPLOAD) return "upload";
 				if (choice === include) return "include-outputs";
+				if (choice === SHARE_EXCLUDE) return "exclude-outputs";
 				return choice === SHARE_REVIEW ? "review" : "cancel";
 			},
 			showReviewCopy: (reviewPath) =>

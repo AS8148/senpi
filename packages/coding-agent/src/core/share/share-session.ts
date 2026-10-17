@@ -2,15 +2,17 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type OutputOmissions, omitToolOutputs } from "./share-projection.ts";
+import { newOutputOmissions, omitToolOutputs } from "./share-projection.ts";
 import type { ShareRedactionCategory, ShareRedactionContext, ShareRedactionTally } from "./share-redaction.ts";
 import { redactShareValue } from "./share-redaction-value.ts";
 
-export type ShareDecision = "upload" | "include-outputs" | "review" | "cancel";
+export type ShareDecision = "upload" | "include-outputs" | "exclude-outputs" | "review" | "cancel";
 
 export interface ShareAskOptions {
-	/** Tool outputs are left out of this preview and can be added: offer the include choice with this count. */
+	/** Tool outputs left out of this preview; above 0, offer to include them. */
 	readonly omittedOutputs: number;
+	/** Tool outputs are in this preview; offer to leave them out again. */
+	readonly includesOutputs: boolean;
 }
 
 export interface ShareUploadResult {
@@ -54,12 +56,12 @@ export function prepareShare(
 	includeOutputs = false,
 ): PreparedShare {
 	const tally: ShareRedactionTally = new Map();
-	const omissions: OutputOmissions = { count: 0 };
+	const omissions = newOutputOmissions();
 	const html = render((value) =>
 		redactShareValue(includeOutputs ? value : omitToolOutputs(value, omissions), context, tally),
 	);
 	const sha256 = createHash("sha256").update(html).digest("hex");
-	return { html, sha256, tally, includesOutputs: includeOutputs, omittedOutputs: omissions.count };
+	return { html, sha256, tally, includesOutputs: includeOutputs, omittedOutputs: omissions.keys.size };
 }
 
 const CATEGORY_ORDER: ReadonlyArray<ShareRedactionCategory> = [
@@ -92,7 +94,7 @@ export function describeShare(prepared: PreparedShare, viewerBase: string | unde
 		"",
 		prepared.includesOutputs
 			? `Uploads: the conversation, tool calls AND their outputs, system prompt and tool list, as one HTML file (${kilobytes} KB, sha256 ${prepared.sha256.slice(0, 12)}).`
-			: `Uploads: your messages and the replies, tool names and arguments, system prompt and tool list, as one HTML file (${kilobytes} KB, sha256 ${prepared.sha256.slice(0, 12)}).`,
+			: `Uploads: your messages and the replies, tool names and arguments (including any file content the agent wrote or edited), system prompt and tool list, as one HTML file (${kilobytes} KB, sha256 ${prepared.sha256.slice(0, 12)}).`,
 		prepared.includesOutputs
 			? "Tool outputs are included (file contents, command output, extension messages)."
 			: `Tool outputs are left out: ${prepared.omittedOutputs} replaced by "[output omitted]".`,
@@ -136,13 +138,15 @@ export async function runShare(deps: ShareDependencies): Promise<ShareOutcome> {
 	try {
 		for (;;) {
 			const omittedOutputs = prepared.includesOutputs ? 0 : prepared.omittedOutputs;
-			const decision = await deps.ask(describeShare(prepared, deps.viewerBase), { omittedOutputs });
+			const options = { omittedOutputs, includesOutputs: prepared.includesOutputs };
+			const decision = await deps.ask(describeShare(prepared, deps.viewerBase), options);
 			if (decision === "cancel") return { kind: "cancelled" };
 			if (decision === "upload") break;
-			if (decision === "include-outputs") {
-				if (omittedOutputs === 0) continue;
+			if (decision === "include-outputs" || decision === "exclude-outputs") {
+				const include = decision === "include-outputs";
+				if (include ? omittedOutputs === 0 : !prepared.includesOutputs) continue;
 				try {
-					prepared = prepareShare(deps.render, deps.context, true);
+					prepared = prepareShare(deps.render, deps.context, include);
 				} catch (error: unknown) {
 					return { kind: "export-failed", message: error instanceof Error ? error.message : String(error) };
 				}

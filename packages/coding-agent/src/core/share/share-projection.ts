@@ -1,13 +1,23 @@
 /**
  * What `/share` uploads by default (#3524): the conversation (user and assistant
  * text, tool names and tool-call arguments), never what tools returned. Tool
- * results, `!` command output, extension messages and extension state are
- * replaced by a one-line note unless the user explicitly includes tool outputs
- * in the preview. Redaction still runs over everything that is shared.
+ * results, `!` command output, extension messages, extension state and data,
+ * and context-edit replacements are replaced by a one-line note unless the user
+ * explicitly includes tool outputs in the preview. Redaction still runs over
+ * everything that is shared.
+ *
+ * The projection trusts nothing it finds in the data: every output-bearing record
+ * is rewritten on every pass, so text that merely looks like a note is replaced
+ * too. It runs on the entries and again on the whole payload, so each output is
+ * counted once by a key taken from its timestamp or id.
  */
 
 export interface OutputOmissions {
-	count: number;
+	readonly keys: Set<string>;
+}
+
+export function newOutputOmissions(): OutputOmissions {
+	return { keys: new Set() };
 }
 
 const OMITTED_RESULT_HTML = ["resultHtmlCollapsed", "resultHtmlExpanded"] as const;
@@ -16,26 +26,43 @@ function note(label: string): { type: "text"; text: string } {
 	return { type: "text", text: `[output omitted: ${label}]` };
 }
 
+function recordKey(kind: string, record: Record<string, unknown>): string {
+	for (const field of ["timestamp", "id", "toolCallId"] as const) {
+		const value = record[field];
+		if (typeof value === "string" || typeof value === "number") return `${kind}:${field}:${value}`;
+	}
+	return `${kind}:${JSON.stringify(Object.keys(record))}`;
+}
+
+function omit(omissions: OutputOmissions, kind: string, record: Record<string, unknown>): void {
+	omissions.keys.add(recordKey(kind, record));
+}
+
 function projectRecord(
 	record: Record<string, unknown>,
 	omissions: OutputOmissions,
 ): Record<string, unknown> | undefined {
 	if (record.role === "toolResult") {
-		omissions.count++;
+		omit(omissions, "toolResult", record);
 		const toolName = typeof record.toolName === "string" ? record.toolName : "tool";
 		return { ...record, content: [note(toolName)], details: undefined };
 	}
 	if (record.role === "bashExecution") {
-		if (String(record.output ?? "").startsWith("[output omitted: ")) return record;
-		omissions.count++;
+		omit(omissions, "bash", record);
 		return { ...record, output: "[output omitted: command]", fullOutputPath: undefined };
 	}
 	if (record.role === "custom" || record.type === "custom_message") {
-		omissions.count++;
+		omit(omissions, "custom", record);
 		const customType = typeof record.customType === "string" ? record.customType : "extension";
 		return { ...record, content: [note(customType)], details: undefined };
 	}
 	if (record.type === "custom") return { ...record, data: undefined };
+	if (record.type === "compaction") return { ...record, details: undefined, systemMessage: undefined };
+	if (record.type === "branch_summary") return { ...record, details: undefined };
+	if (record.type === "context_edit" && record.replacement !== null && typeof record.replacement === "object") {
+		omit(omissions, "context_edit", record);
+		return { ...record, replacement: { content: [note("context edit")] } };
+	}
 	return undefined;
 }
 
@@ -52,7 +79,6 @@ function projectRenderedTools(value: unknown): unknown {
 	);
 }
 
-/** Replace every tool output reachable from `value` with a note; idempotent, so it may run on entries and again on the whole payload. */
 export function omitToolOutputs<T>(value: T, omissions: OutputOmissions): T {
 	return project(value, omissions) as T;
 }
@@ -61,7 +87,6 @@ function project(value: unknown, omissions: OutputOmissions): unknown {
 	if (Array.isArray(value)) return value.map((item) => project(item, omissions));
 	if (value === null || typeof value !== "object") return value;
 	const record = value as Record<string, unknown>;
-	if (isOmissionNote(record)) return record;
 	const projected = projectRecord(record, omissions);
 	if (projected) return projected;
 	const out: Record<string, unknown> = {};
@@ -69,15 +94,4 @@ function project(value: unknown, omissions: OutputOmissions): unknown {
 		out[key] = key === "renderedTools" ? projectRenderedTools(child) : project(child, omissions);
 	}
 	return out;
-}
-
-function isOmissionNote(record: Record<string, unknown>): boolean {
-	const content = record.content;
-	return (
-		Array.isArray(content) &&
-		content.length === 1 &&
-		typeof content[0] === "object" &&
-		content[0] !== null &&
-		String(Reflect.get(content[0], "text") ?? "").startsWith("[output omitted: ")
-	);
 }
