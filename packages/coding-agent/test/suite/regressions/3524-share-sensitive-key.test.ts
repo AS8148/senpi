@@ -35,6 +35,23 @@ describe("sensitive keys are judged by name (senpi#3524)", () => {
 		"Cookie",
 		"AWS_SECRET_ACCESS_KEY",
 		"credentials",
+		"KEY",
+		"key",
+		"keys",
+		"token",
+		"secret",
+		"PUBLIC_KEY_SECRET",
+		"NEXT_PUBLIC_TOKEN_SECRET",
+		"NEXT_AUTH_SECRET",
+		"VITE_API_KEY",
+		"VITE_OPENAI_API_KEY",
+		"MAX_PASSWORD",
+		"SECRET_TOKEN_NAME",
+		"PASSWORD_PREFIX",
+		"AUTH_HEADER",
+		"AUTH_MODE_PASSWORD",
+		"KEY_ID_PRIVATE",
+		"cookies[0].value",
 	])("treats %s as sensitive", (name) => {
 		expect(isSensitiveKeyName(name)).toBe(true);
 	});
@@ -44,18 +61,18 @@ describe("sensitive keys are judged by name (senpi#3524)", () => {
 		"HOME",
 		"NODE_ENV",
 		"LANG",
-		"key",
-		"keys",
 		"PUBLIC_KEY_PATH",
 		"NEXT_PUBLIC_KEY_ID",
-		"VITE_API_KEY",
 		"AUTH_MODE",
 		"KEYBOARD_LAYOUT",
 		"MONKEY_COUNT",
 		"maxTokens",
 		"tokenCount",
 		"KEY_ID",
-		"sort_key_name",
+		"AWS_ACCESS_KEY_ID",
+		"publicKey",
+		"public-key-path",
+		"PASSWORD_LENGTH",
 	])("treats %s as ordinary", (name) => {
 		expect(isSensitiveKeyName(name)).toBe(false);
 	});
@@ -77,7 +94,14 @@ describe("sensitive keys are judged by name (senpi#3524)", () => {
 
 	it("replaces structured values under sensitive names whole and keeps ordinary ones", () => {
 		const out = redactShareValue(
-			{ DEEPSEEK_KEY: HEX, STORAGE_KEY: `${HEX}${P}`, PATH: "/usr/bin", NODE_ENV: "production", key: "row-1" },
+			{
+				DEEPSEEK_KEY: HEX,
+				STORAGE_KEY: `${HEX}${P}`,
+				PATH: "/usr/bin",
+				NODE_ENV: "production",
+				key: "row-1",
+				name: "x",
+			},
 			context,
 			new Map(),
 		);
@@ -86,7 +110,8 @@ describe("sensitive keys are judged by name (senpi#3524)", () => {
 			STORAGE_KEY: P,
 			PATH: "/usr/bin",
 			NODE_ENV: "production",
-			key: "row-1",
+			key: P,
+			name: "x",
 		});
 	});
 
@@ -96,6 +121,20 @@ describe("sensitive keys are judged by name (senpi#3524)", () => {
 			expect(text(line)).toContain("<redacted>");
 		},
 	);
+
+	it.each([
+		["a bare upper-case KEY", `KEY=${HEX}`],
+		["a bracketed path key", `cookies[0].value=${HEX}`],
+		["a public prefix hiding a secret", `NEXT_PUBLIC_TOKEN_SECRET=${HEX}`],
+		["a public key with a secret after it", `PUBLIC_KEY_SECRET: "${HEX}"`],
+	])("redacts %s in text", (_label, line) => {
+		expect(text(line)).not.toContain(HALF);
+	});
+
+	it("redacts a public-prefixed secret in structured data", () => {
+		const out = redactShareValue({ NEXT_AUTH_SECRET: HEX, PUBLIC_KEY_SECRET: HEX }, context, new Map());
+		expect(out).toEqual({ NEXT_AUTH_SECRET: P, PUBLIC_KEY_SECRET: P });
+	});
 
 	it("keeps ordinary env lines and public names unchanged", () => {
 		const lines = [

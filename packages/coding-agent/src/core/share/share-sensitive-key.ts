@@ -3,6 +3,12 @@
  * alone: a value under a sensitive key is replaced whole, whatever it contains,
  * so no value shape (placeholders, hex, several words) can slip through. Names
  * are split into words across camelCase, snake_case, kebab-case and dots.
+ *
+ * A name is ordinary only when EVERY sensitive word in it is explained by an
+ * exempt phrase ("public key", "key id", "max tokens") or the whole name ends in
+ * a word that describes a credential rather than holding it (`*_PATH`, `*_MODE`).
+ * One unexplained sensitive word anywhere makes the name sensitive, so
+ * `PUBLIC_KEY_SECRET` or `NEXT_AUTH_SECRET` cannot hide behind an allowed word.
  */
 
 const SENSITIVE_WORDS = new Set([
@@ -31,7 +37,7 @@ const SENSITIVE_WORDS = new Set([
 	"signature",
 ]);
 
-/** A trailing word that makes the name describe the credential rather than hold it (`PUBLIC_KEY_PATH`, `tokenCount`). */
+/** A last word that makes the whole name describe a credential rather than hold it. */
 const DESCRIPTIVE_LAST_WORDS = new Set([
 	"path",
 	"dir",
@@ -40,18 +46,15 @@ const DESCRIPTIVE_LAST_WORDS = new Set([
 	"uri",
 	"mode",
 	"type",
-	"name",
 	"format",
 	"length",
 	"size",
-	"prefix",
-	"header",
 	"count",
 	"limit",
 	"budget",
 	"usage",
 ]);
-const DESCRIPTIVE_FIRST_WORDS = new Set(["max", "min", "num", "total", "public", "next", "vite"]);
+const SIZE_WORDS = new Set(["max", "min", "num", "total"]);
 
 function words(name: string): string[] {
 	return name
@@ -62,14 +65,21 @@ function words(name: string): string[] {
 		.filter((word) => word.length > 0);
 }
 
+/** Whether the sensitive word at `index` is part of an exempt phrase. */
+function explained(parts: readonly string[], index: number): boolean {
+	const word = parts[index] ?? "";
+	const before = parts[index - 1];
+	const after = parts[index + 1];
+	if ((word === "key" || word === "keys") && (before === "public" || after === "id" || after === "ids")) return true;
+	if ((word === "token" || word === "tokens") && before !== undefined && SIZE_WORDS.has(before)) return true;
+	return false;
+}
+
 /** True when a value under this key name must be replaced whole. */
 export function isSensitiveKeyName(name: string): boolean {
 	const parts = words(name);
-	if (!parts.some((word) => SENSITIVE_WORDS.has(word))) return false;
-	if (parts.length === 1 && (parts[0] === "key" || parts[0] === "keys")) return false;
-	const first = parts[0] ?? "";
-	const last = parts[parts.length - 1] ?? "";
-	if (DESCRIPTIVE_FIRST_WORDS.has(first) || DESCRIPTIVE_LAST_WORDS.has(last)) return false;
-	if (last === "id" || last === "ids") return !parts.slice(0, -1).every((word) => word === "key" || word === "keys");
-	return true;
+	const sensitive = parts.flatMap((word, index) => (SENSITIVE_WORDS.has(word) ? [index] : []));
+	if (sensitive.length === 0) return false;
+	if (DESCRIPTIVE_LAST_WORDS.has(parts[parts.length - 1] ?? "")) return false;
+	return sensitive.some((index) => !explained(parts, index));
 }

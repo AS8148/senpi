@@ -117,7 +117,7 @@ const CREDENTIAL_REWRITES: ReadonlyArray<readonly [RegExp, (match: string, ...gr
  * the next `,;})`, so a value of several words is replaced whole.
  */
 const KEY_VALUE =
-	/([A-Za-z0-9_.-]{1,128})((?:\\?["'])?[ \t]{0,3}[:=][ \t]{0,3})(?:(\\?["'])((?:(?!\3)[^\n]){0,2000})\3|([^\s"'\\&,;}[{(=)][^\n"'\\&,;}()]{0,1999}))/g;
+	/([A-Za-z0-9_.[\]-]{1,128})((?:\\?["'])?[ \t]{0,3}[:=][ \t]{0,3})(?:(\\?["'])((?:(?!\3)[^\n]){0,2000})\3|([^\s"'\\&,;}[{(=)][^\n"'\\&,;}()]{0,1999}))/g;
 /** A sensitive key whose value is an inline array or object: every quoted string inside it is a credential. */
 const KEY_COLLECTION =
 	/((["']?)([A-Za-z0-9_.-]{1,128})\2[ \t]{0,3}[:=][ \t]{0,3})(\[[^\]\n]{0,2000}\]|\{[^}\n]{0,2000}\})/g;
