@@ -1,3 +1,25 @@
+## 2026-10-18 - A handoff never crosses agent directories (senpi#3560)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-handoff-agent-dir.ts` (new): `foreignAgentDirRefusal` settles which agent dir the running host belongs to, from its advertised `agentDir`. For an older host that does not advertise one, it uses the default-socket layout (`<dir>/rpc/rpc.sock` plus a layout-2 registration under `<dir>` that proves a live owner). It refuses `foreign_agent_dir` when that dir differs from the caller's; both sides are compared after `realpath`.
+- `packages/coding-agent/src/modes/rpc/host-handoff.ts`: `handoffHostLocked` asks it right after the capability check, before reading any registration. `HandoffRefusal` gains `foreign_agent_dir`.
+- `packages/coding-agent/src/modes/rpc/protocol-identity.ts` and `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `get_protocol_info` reports `agentDir` (the resolved agent dir) in `RpcProtocolIdentity`.
+- `packages/coding-agent/src/modes/rpc/host-protocol-info.ts`: `HostProtocolInfo.agentDir` is optional, parsed only as a non-empty string.
+
+### Why
+
+A client reads registrations under its own agent dir. A sandboxed dev server with its own agent dir, given the user's real `rpc.sock`, found no record there and took the #2701 path that replaces an idle host nobody can prove. For about an hour every client of the real agent dir landed on a sandbox host that read and wrote another directory.
+
+### Why an extension could not handle it
+
+The handoff decision and the protocol identity are RPC host internals; no extension hook runs inside `handoffHost` or `get_protocol_info`.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-handoff.ts`: `handoffHostLocked` and the `HandoffRefusal` union.
+- `packages/coding-agent/src/modes/rpc/protocol-identity.ts`: `protocolIdentity()`.
+
 ## 2026-10-15 - A drop to zero inside the trim spacing is answered when it ends (senpi#3360)
 
 ### What changed

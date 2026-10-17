@@ -27,11 +27,13 @@
  * ensure and `host gc`: an ensure arriving meanwhile attaches to whichever generation the handoff
  * left registered, and gc never judges the endpoint halfway through.
  */
+import { getAgentDir } from "../../config.ts";
 import { createDaemonDirectories, createHostDaemonPaths } from "./host-daemon-paths.ts";
 import { provenOwner, readHostRegistration } from "./host-daemon-registration.ts";
 import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
 import { acquireHostEnsureLock } from "./host-ensure-lock.ts";
 import { STOP_WAIT_BUDGET_MS } from "./host-ensure-stop.ts";
+import { foreignAgentDirRefusal } from "./host-handoff-agent-dir.ts";
 import { handoffUnregisteredHost, SESSION_COUNT_TIMEOUT_MS } from "./host-handoff-unregistered.ts";
 import type { HostLifecyclePolicyInput } from "./host-lifecycle.ts";
 import { probeProtocolInfo } from "./host-probe.ts";
@@ -92,6 +94,8 @@ export type HandoffRefusal =
 	| "upgrade_unsupported"
 	/** No record proves which process serves this socket, and that host holds sessions (or will not say). */
 	| "unknown_owner"
+	/** The running host belongs to another agent dir; only a client of that dir may replace it (#3560). */
+	| "foreign_agent_dir"
 	/** A host from before layout 2, proven by its flat record, holds sessions; `detail` says how to retire it. */
 	| "legacy_host"
 	/** The public socket stopped being the one this handoff was decided against. */
@@ -143,6 +147,8 @@ export async function handoffHostLocked(options: HandoffHostOptions): Promise<Ha
 	if (!host.capabilities.includes(GENERATION_HANDOFF_CAPABILITY)) {
 		return { action: "refuse", reason: "handoff_unsupported", upgradeable: false };
 	}
+	const foreign = await foreignAgentDirRefusal(options.socket, options.agentDir ?? getAgentDir(), host);
+	if (foreign) return foreign;
 	const registered = await readHostRegistration(paths);
 	const owner = await provenOwner(registered, options.socket);
 	if (!owner) return handoffUnregisteredHost(options, paths, host);

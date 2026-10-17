@@ -306,7 +306,8 @@ parsing a version string:
   "launch_profile": {
     "profile_id": "ca7a4943…",
     "core": { "extensions": [], "multi_session": true, "session_runtime": "in-process" }
-  }
+  },
+  "agentDir": "/home/me/.senpi/agent"
 }
 ```
 
@@ -326,6 +327,9 @@ parsing a version string:
   `core.extensions` (absolute roots, deduplicated and sorted). `profile_id` is the sha256 of the canonical JSON
   of `core` with its keys in that sorted order (`extensions`, `multi_session`, `session_runtime`), so any client
   can recompute it and compare two hosts without comparing paths.
+- `agentDir` - the absolute agent directory the host reads and writes. A generation handoff is refused
+  `foreign_agent_dir` when it differs from the caller's own agent dir (see "Generation handoff"). Hosts
+  released before the field omit it.
 - `memory_pressure` - multi-session hosts only: `true` while this host's memory sampler reads its memory footprint
   above `SENPI_RPC_HOST_RSS_WARN_MB`, else `false`. Not identity and never an admission signal; `senpi host status`
   reports it per endpoint. Classic hosts and hosts released before the field omit it.
@@ -476,7 +480,7 @@ client's sessions. A GENERATION HANDOFF replaces the process while its sessions 
    their connection closes and reopen with `open_session { sessionPath }` on the successor. Losing
    ownership of the public socket triggers the same sequence even if SIGUSR1 never arrives.
 
-Two guards decide whether a handoff is attempted at all, and both fail closed:
+Three guards decide whether a handoff is attempted at all, and all of them fail closed:
 
 - The running host must advertise `generation_handoff`. SIGUSR1 TERMINATES a process that installed no
   handler for it, so a host from before the drain existed is never signalled - `handoffHost` answers
@@ -485,6 +489,13 @@ Two guards decide whether a handoff is attempted at all, and both fail closed:
   must be this endpoint) before that process is signalled. Without such a registration a handoff never
   signals a stranger (I1): it refuses while that host holds a session, and replaces an idle one without
   a signal unless a flat pre-layout-2 record proves it (see "Daemon state directory (layout 2)").
+- The running host must belong to the caller's agent dir. A client reads registrations under its OWN agent
+  dir, so pointed at another agent dir's socket it would see no record there and read a live, registered host
+  as an unregistered idle one. `handoffHost` therefore compares the host's advertised `agentDir` with its own
+  (both canonicalized through `realpath`) and refuses `{ action: "refuse", reason: "foreign_agent_dir",
+  upgradeable: false }` when they differ; `detail` names both directories. A host from before the field is placed
+  by the layout: when the socket is `<dir>/rpc/rpc.sock` and a layout-2 registration under `<dir>` proves a live
+  owner, the host belongs to `<dir>`. With neither, the handoff proceeds as before. Nothing is signalled.
 
 On win32 a named pipe can be neither renamed nor drained: `handoffHost` refuses with `upgrade_unsupported`
 and `decideHostAction` never yields `handoff` there. Upgrades apply after `stopHost({ drain: true })` or an

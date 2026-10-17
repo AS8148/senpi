@@ -16,6 +16,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { parseArgs, resolveSessionRuntime } from "../../cli/args.ts";
+import { getAgentDir } from "../../config.ts";
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
 import { HOST_GENERATION_ENV, HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
 import type { RpcLaunchProfile, RpcLaunchProfileCore, RpcProtocolIdentity } from "./rpc-types.ts";
@@ -77,5 +78,6 @@ export function protocolIdentity(): RpcProtocolIdentity {
 		engineVersion: build.text,
 		engineOrdinal: build.ordinal,
 		launch_profile: cachedProfile,
+		agentDir: resolve(getAgentDir()),
 	};
 }

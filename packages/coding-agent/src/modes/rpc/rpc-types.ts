@@ -856,6 +856,8 @@ export interface RpcProtocolIdentity {
 	/** `[year, month, day, postRelease, buildEpoch]`, compared with `compareEngineOrdinal`. */
 	readonly engineOrdinal: EngineOrdinal;
 	readonly launch_profile: RpcLaunchProfile;
+	/** Absolute agent directory this host reads and writes; a handoff from another agent dir is refused. */
+	readonly agentDir: string;
 }
 
 export interface RpcProtocolInfo extends RpcProtocolIdentity {

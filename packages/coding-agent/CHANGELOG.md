@@ -12,6 +12,7 @@
 
 ### Fixed
 
+- A generation handoff from a client whose agent directory differs from the running host's is refused (`foreign_agent_dir`, naming both directories) instead of replacing that host on its socket. A sandboxed dev server pointed at the user's real `rpc.sock` can no longer take it over. `get_protocol_info` reports the host's `agentDir` ([#3560](https://github.com/code-yeongyu/senpi/issues/3560)).
 - A host emptied within a minute of its previous memory trim now trims once that minute ends, instead of keeping the freed memory until sessions come and go again ([#3360](https://github.com/code-yeongyu/senpi/issues/3360)).
 - The ripgrep grep fallback starts far fewer `rg` processes on the host. Explicitly named files no longer cost three launches each; they share one binary scan and one search. A capped directory walk also grows its batches instead of searching 200 files per launch. Every launch keeps its whole command line under the OS limit (32,000 characters on Windows, quoting included), so a large batch becomes several launches and no argument is truncated; a pattern or path too long for any launch fails with a clear error instead of an opaque spawn failure. A `grep` call over this repository now starts 5 to 14 rg processes instead of 63 to 87, with identical results ([#3516](https://github.com/code-yeongyu/senpi/issues/3516)).
 
