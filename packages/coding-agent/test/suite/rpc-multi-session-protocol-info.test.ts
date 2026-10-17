@@ -1,5 +1,6 @@
+import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
-import { VERSION } from "../../src/config.ts";
+import { getAgentDir, VERSION } from "../../src/config.ts";
 import { engineBuildIdentityFrom } from "../../src/core/engine-build-identity.ts";
 import { SessionCommandRouter } from "../../src/modes/rpc/session-command-router.ts";
 import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
@@ -62,6 +63,7 @@ describe("multi-session RPC protocol info", () => {
 				engineVersion: VERSION,
 				engineOrdinal: engineBuildIdentityFrom({ version: VERSION }).ordinal,
 				launch_profile: { profile_id: expect.stringMatching(/^[0-9a-f]{64}$/), core: expect.anything() },
+				agentDir: resolve(getAgentDir()),
 				memory_pressure: false,
 			},
 		});
