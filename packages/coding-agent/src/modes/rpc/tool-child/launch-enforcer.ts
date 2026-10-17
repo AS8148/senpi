@@ -79,12 +79,15 @@ export class LaunchEnforcer {
 	onProof(frame: ToolChildMessageOf<"launch_proof">): void {
 		void this.#options.log.record({ ...frame });
 		const inflight = this.#inflight.get(frame.launchId);
-		if (inflight === undefined) return this.#violate(frame.launchId, "proof_unknown_launch");
+		if (inflight === undefined) {
+			this.#violate(frame.launchId, "proof_unknown_launch");
+			return;
+		}
 		inflight.proven = true;
 		inflight.cancelTimer?.();
-		if (frame.ackTick === null || !inflight.acked) return this.#violate(frame.launchId, "proof_unacked");
-		if (!proofIsOrdered({ ackTick: frame.ackTick, invokeTick: frame.invokeTick }))
-			return this.#violate(frame.launchId, "proof_unordered");
+		if (frame.ackTick === null || !inflight.acked) this.#violate(frame.launchId, "proof_unacked");
+		else if (!proofIsOrdered({ ackTick: frame.ackTick, invokeTick: frame.invokeTick }))
+			this.#violate(frame.launchId, "proof_unordered");
 	}
 
 	onDone(frame: ToolChildMessageOf<"launch_done">): void {
