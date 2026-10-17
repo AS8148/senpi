@@ -1,3 +1,4 @@
+import { type ToolRuntimeKind, toolRuntimeCapability } from "../../cli/tool-runtime.ts";
 import {
 	ACCEPT_EDITS_PERMISSION_PRESET_CAPABILITY,
 	AUTO_PERMISSION_PRESET_CAPABILITY,
@@ -39,10 +40,12 @@ export const RESOLVE_PATH_CAPABILITY = "resolve_path";
 
 /**
  * The capabilities a multi-session host advertises in `get_protocol_info`, in their wire order. `warm` is added only
- * when the runtime is in-process, and `negotiated` carries the launch capabilities this connection was given.
+ * when the runtime is in-process, `tool_runtime:<kind>` names where heavy tool work runs, and `negotiated` carries
+ * the launch capabilities this connection was given.
  */
 export function multiSessionHostCapabilities(options: {
 	readonly warm: boolean;
+	readonly toolRuntime: ToolRuntimeKind;
 	readonly negotiated: readonly string[];
 }): string[] {
 	return [
@@ -92,6 +95,7 @@ export function multiSessionHostCapabilities(options: {
 			AUTO_PERMISSION_PRESET_CAPABILITY,
 			// Only an in-process runtime shares the loop a warm loads into (senpi#2314).
 			...(options.warm ? [WARM_CAPABILITY] : []),
+			toolRuntimeCapability(options.toolRuntime),
 			...options.negotiated,
 		]),
 	];
