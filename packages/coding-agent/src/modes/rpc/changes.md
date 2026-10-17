@@ -1,3 +1,21 @@
+## 2026-10-18 - list_sessions rows report the session's tool child (senpi#3566)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: each `list_sessions` row in the response type gains an optional `tool_child: { state: "none" | "live" | "exited"; generation?: number; pid?: number }`. The host fills it from the session's `AgentSession.toolChildRow()`; it is `none` under `--tool-runtime in-process` and for sessions on the worker runtime.
+
+### Why
+
+A client has to see whether a session's tool child exists and which generation and process it is (plan todo 4's minimal status; todo 14 adds the full rows).
+
+### Why an extension could not handle it
+
+`list_sessions` is built by the host's session router from the registry, outside every extension.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `list_sessions` response row type, next to `idleMs`.
+
 ## 2026-10-18 - Tool-child protocol, one host-call capacity, codec and acknowledged payload refs (senpi#3566)
 
 ### What changed
