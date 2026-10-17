@@ -1,3 +1,23 @@
+## 2026-10-18 - Extension child_process resolves to a per-process module (senpi#3566)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/bun-extension-importer.ts`: `createBunExtensionImporter(virtualModules, builtinRedirects = {})` resolves a specifier listed in `builtinRedirects` to the mapped id before the builtin check, in every module the extension graph transpiles (transitive dependencies included) and for `require`.
+- `packages/coding-agent/src/core/extensions/loader.ts`: the Bun path passes `CHILD_PROCESS_REDIRECTS` (`node:child_process`, `child_process`) and registers the per-process virtual module from `modes/rpc/tool-child/gated-modules.ts`. It serves the real `node:child_process` unless a tool child installed its gated module, so the server's behavior is unchanged.
+
+### Why
+
+The per-session tool child must not start any process before the server has recorded its containment. Bun ignores `syncBuiltinESMExports`, refuses `Bun.plugin` overrides of builtins and never calls `onResolve` for them, so a named `import { spawnSync } from "node:child_process"` in extension code could not be gated any other way.
+
+### Why an extension could not handle it
+
+The rewrite has to happen where the loader resolves every extension module's specifiers, before any extension code runs.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/bun-extension-importer.ts`: the `createBunExtensionImporter` signature and the start of `resolveTarget`.
+- `packages/coding-agent/src/core/extensions/loader.ts`: the `createExtensionModuleImporter` Bun branch and the import block.
+
 ## 2026-10-18 - ToolDefinition placement metadata and dispatcher-routed extension tools (senpi#3566)
 
 ### What changed
