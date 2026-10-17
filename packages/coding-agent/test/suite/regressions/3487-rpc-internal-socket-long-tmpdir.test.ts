@@ -1,9 +1,10 @@
-import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { reapOrphanedInternalHostDirs } from "../../../src/modes/rpc/host-internal-dir-reaper.ts";
 import { createInternalSocketPath } from "../../../src/modes/rpc/host-lifecycle.ts";
+import { internalHostDirRoots } from "../../../src/modes/rpc/host-lifecycle-scratch.ts";
 import { MAX_SOCKET_PATH_BYTES } from "../../../src/modes/rpc/socket-ownership.ts";
 
 // Regression coverage for https://github.com/code-yeongyu/senpi/issues/3487: a long TMPDIR (a macOS
@@ -13,6 +14,7 @@ describe.skipIf(process.platform === "win32")("createInternalSocketPath with a l
 	const created: string[] = [];
 
 	afterEach(() => {
+		vi.restoreAllMocks();
 		vi.unstubAllEnvs();
 		for (const dir of created.splice(0)) rmSync(dir, { recursive: true, force: true });
 	});
@@ -65,5 +67,37 @@ describe.skipIf(process.platform === "win32")("createInternalSocketPath with a l
 		await reapOrphanedInternalHostDirs();
 
 		expect(existsSync(leftover)).toBe(false);
+	});
+
+	it("never reaps a leftover hop owned by another user in the shared /tmp", async () => {
+		const longTmp = mkdtempSync(join("/tmp", `senpi-3487-${"u".repeat(100)}-`));
+		created.push(longTmp);
+		vi.stubEnv("TMPDIR", longTmp);
+		const leftover = mkdtempSync(join("/tmp", "senpi-rpc-host-internal-3487u"));
+		created.push(leftover);
+		writeFileSync(
+			join(leftover, ".owner"),
+			JSON.stringify({
+				pid: 2_147_483_000,
+				processStartTime: "2000-01-01T00:00:00Z",
+				createdAt: Date.now() - 120_000,
+			}),
+		);
+		// This process stands in for a different local user: the directory is not its own.
+		const uid = process.getuid?.() ?? 0;
+		vi.spyOn(process, "getuid").mockReturnValue(uid + 1);
+
+		await reapOrphanedInternalHostDirs();
+
+		expect(existsSync(leftover)).toBe(true);
+	});
+
+	it("scans one root once when TMPDIR resolves to /tmp", () => {
+		const link = join(mkdtempSync(join("/tmp", "s3487l-")), "tmp-link");
+		created.push(join(link, ".."));
+		symlinkSync("/tmp", link);
+		vi.stubEnv("TMPDIR", link);
+
+		expect(internalHostDirRoots()).toHaveLength(1);
 	});
 });
