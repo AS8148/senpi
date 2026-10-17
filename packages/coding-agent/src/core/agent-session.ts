@@ -89,7 +89,7 @@ import { isOAuthRefreshUnavailableError } from "@earendil-works/pi-ai/utils/oaut
 import { retryTransientCall } from "@earendil-works/pi-ai/utils/retry";
 import { extract429RetryAfterMs, parseRetryAfterMsMarker } from "@earendil-works/pi-ai/utils/retry-hint";
 import { retryBackoffDelayMs } from "@earendil-works/pi-ai/utils/retry-profile/backoff";
-import type { ToolRuntimeKind } from "../cli/tool-runtime.ts";
+import { type ToolRuntimeKind, ToolRuntimeUnsupportedHostError, toolRuntimeHostRefusal } from "../cli/tool-runtime.ts";
 import { getAgentDir } from "../config.ts";
 import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
 import {
@@ -1467,6 +1467,8 @@ export class AgentSession {
 			}),
 		});
 		const toolRuntime = config.toolRuntime ?? "in-process";
+		const hostRefusal = toolRuntimeHostRefusal(toolRuntime);
+		if (hostRefusal !== undefined) throw new ToolRuntimeUnsupportedHostError(hostRefusal);
 		this._toolChild =
 			toolRuntime === "child"
 				? new SessionToolChild({

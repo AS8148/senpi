@@ -7,6 +7,7 @@
  * so "detected" can never mean "detected before anything ran". Run with
  * `--inject HOLD_LAUNCH_ACK,SKIP_ACK_WAIT,HOLD_LAUNCH_PROOF:detached --expect-failure tool_child_barrier_violation`.
  */
+import { copyFileSync } from "node:fs";
 import { join } from "node:path";
 import { kill } from "node:process";
 import { launchLog } from "./qa-launch-tail.mjs";
@@ -114,6 +115,7 @@ export function skipAckWaitScenario() {
 				}
 				ctx.log.write({ type: "assert", api: entry.api, index, launchId: launch.launchId, ackTick: proof.ackTick, violation: violation.reason, cleanup });
 				await ctx.control.releaseAck(launch.launchId);
+				copyFileSync(log.path, join(ctx.evidenceDir, `launches-${index}.jsonl`));
 				detected.push(launch.launchId);
 			}
 			ctx.log.write({ type: "detected_all", count: detected.length });

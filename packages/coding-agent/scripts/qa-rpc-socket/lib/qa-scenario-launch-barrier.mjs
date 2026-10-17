@@ -7,6 +7,7 @@
  * containment and lifetime its API promises, and nothing was reported as a violation.
  */
 import { spawnSync } from "node:child_process";
+import { copyFileSync } from "node:fs";
 import { kill } from "node:process";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -88,6 +89,7 @@ export const launchApisAckGatedScenario = Object.freeze({
 		unsubscribe();
 		assert(ends.length === CALLS.length, `expected ${CALLS.length} qa_spawn results, saw ${ends.length}`);
 		const records = log.read();
+		copyFileSync(log.path, join(ctx.evidenceDir, "launches.jsonl"));
 		assert(!records.some((r) => r.type === "violation"), "a barrier violation was recorded");
 		const audit = checkLaunchLog(records);
 		ctx.log.write({ type: "assert", step: "launch_log_audit", ok: audit.ok, failures: audit.failures });

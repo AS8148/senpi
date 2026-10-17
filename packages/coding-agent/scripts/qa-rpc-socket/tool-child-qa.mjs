@@ -74,12 +74,13 @@ async function awaitGone(pid, windowMs = 3_000) {
 	}
 }
 
-function scenarioContext(host, log, controlDir) {
+function scenarioContext(host, log, controlDir, evidenceDir) {
 	const subscribe = (subscriber) => host.rpc.subscribe(subscriber);
 	const durableIds = new Map();
 	return {
 		log,
 		agentDir: host.agentDir,
+		evidenceDir,
 		awaitControlFile: (match, deadlineMs = 30_000) => awaitControlFile(controlDir, match, deadlineMs),
 		awaitGone: (pid) => awaitGone(pid),
 		durableSessionIdOf: (sessionId) => durableIds.get(sessionId),
@@ -115,14 +116,14 @@ function scenarioContext(host, log, controlDir) {
 	};
 }
 
-async function runScenario(scenario, host, log, controlDir) {
+async function runScenario(scenario, host, log, controlDir, evidenceDir) {
 	const unmet = unmetRequirements(scenario.requires, host.protocolInfo);
 	if (unmet.length > 0 || typeof scenario.run !== "function") {
 		log.write({ failure: "prerequisite_missing", unmet, implemented: typeof scenario.run === "function" });
 		return { kind: "prerequisite" };
 	}
 	try {
-		await scenario.run(scenarioContext(host, log, controlDir));
+		await scenario.run(scenarioContext(host, log, controlDir, evidenceDir));
 		return { kind: "passed" };
 	} catch (error) {
 		const code = error instanceof QaFailure ? error.code : "unexpected_error";
@@ -172,7 +173,7 @@ export async function runDriver(argv, deps = {}) {
 		}
 		try {
 			log.write({ type: "host", capabilities: host.protocolInfo.capabilities ?? [] });
-			code = exitFor(await runScenario(scenario, host, log, controlDir), options.expectFailure, log);
+			code = exitFor(await runScenario(scenario, host, log, controlDir, options.out), options.expectFailure, log);
 		} finally {
 			await host.stop();
 		}
