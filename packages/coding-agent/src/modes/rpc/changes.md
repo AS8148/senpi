@@ -16,6 +16,24 @@
 
 - LOW: `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`, `packages/coding-agent/src/modes/rpc/effect-commands.ts`, `packages/coding-agent/src/modes/rpc/effect-outcome-copy.ts`, `packages/coding-agent/src/modes/rpc/effect-record.ts`, `packages/coding-agent/src/modes/rpc/custom-capability.ts`, `packages/coding-agent/src/modes/rpc/host-capabilities.ts`, `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/effect-ledger.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the queued-input command shapes, `runQueuedInputChange`, the outcome enum and the capability lists.
 
+## 2026-10-15 - A drop to zero inside the trim spacing is answered when it ends (senpi#3360)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-zero-session-trim.ts`: a drop to zero sessions that lands inside the 60 s spacing is kept (`zeroPending`) and trimmed on the first tick after the spacing while the host is still empty; sessions coming back drop it.
+
+### Why
+
+The edge was reset without trimming, so a host emptied shortly after a trim kept its freed pages until sessions came and went again (measured with `unload_session`, #3359).
+
+### Why an extension could not handle it
+
+Host self-trimming is host internals.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-zero-session-trim.ts`: `check()`.
+
 ## 2026-10-17 - A session reopened right after its park is never refused (senpi#3485)
 
 ### What changed
