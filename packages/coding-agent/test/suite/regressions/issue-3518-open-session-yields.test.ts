@@ -1,6 +1,7 @@
 import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Worker } from "node:worker_threads";
 import { afterEach, describe, expect, test } from "vitest";
 import type {
 	CreateAgentSessionRuntimeFactory,
@@ -167,6 +168,9 @@ describe("issue #3518: opening a large session yields to the event loop", () => 
 		);
 
 		expect(actual).toEqual(expected);
+		expect(actual.entries).toHaveLength(ENTRY_COUNT);
+		expect(actual.entries.some((entry) => entry.id === "torn")).toBe(false);
+		expect(readFileSync(asyncPath, "utf8").endsWith("\n")).toBe(true);
 		expect(readFileSync(asyncPath, "utf8")).toBe(readFileSync(syncPath, "utf8"));
 	});
 
@@ -188,7 +192,8 @@ describe("issue #3518: opening a large session yields to the event loop", () => 
 
 		const ids = manager.getEntries().map((entry) => entry.id);
 		expect(ids.slice(0, ENTRY_COUNT)).toEqual(Array.from({ length: ENTRY_COUNT }, (_, index) => `entry-${index}`));
-		expect(ids.length === ENTRY_COUNT || ids.at(-1) === "late").toBe(true);
+		expect(ids).toHaveLength(ENTRY_COUNT + 1);
+		expect(ids.at(-1)).toBe("late");
 		expect(loadEntriesFromFile(path)).toHaveLength(ENTRY_COUNT + 2);
 	});
 
@@ -206,6 +211,26 @@ describe("issue #3518: opening a large session yields to the event loop", () => 
 
 		const reopened = await SessionManager.openAsync(path, undefined, undefined, undefined, steppingSlicer());
 		expect(reopened.getEntries()).toHaveLength(ENTRY_COUNT);
+	});
+
+	test("a session worker isolate loads its session file in one blocking pass", async () => {
+		const dir = tempDir();
+		const sessionPath = join(dir, "worker.jsonl");
+		writeTranscript(sessionPath, dir);
+		const worker = new Worker(new URL("./issue-3518-worker-load-fixture.ts", import.meta.url), {
+			workerData: { agentDir: dir, cwd: dir, sessionPath },
+		});
+		try {
+			const result = await new Promise<{ loads: string[]; durableSessionId: string }>((resolve, reject) => {
+				worker.once("message", resolve);
+				worker.once("error", reject);
+				worker.once("exit", (code) => reject(new Error(`worker exited with ${code} before reporting`)));
+			});
+
+			expect(result).toEqual({ loads: ["blocking"], durableSessionId: "issue-3518" });
+		} finally {
+			await worker.terminate();
+		}
 	});
 
 	test("the RPC host's open_session loads a transcript in slices instead of holding the loop", async () => {
