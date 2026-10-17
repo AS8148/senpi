@@ -162,7 +162,15 @@ describe("tool-child codec", () => {
 			JSON.stringify({ type: "launch_proof", launchId: "l", ackTick: 1 }),
 			JSON.stringify({ type: "trace", atMs: 1, event: "e", value: { result: 1 } }),
 			JSON.stringify({ type: "trace", atMs: 1, event: "e", detail: { ackTick: 4 } }),
-			JSON.stringify({ type: "launch", launchId: "l", jobId: "j", origin: "tool", api: "bun.spawn", containment: "pid", lifetime: "owned" }),
+			JSON.stringify({
+				type: "launch",
+				launchId: "l",
+				jobId: "j",
+				origin: "tool",
+				api: "bun.spawn",
+				containment: "pid",
+				lifetime: "owned",
+			}),
 		];
 		for (const body of cases) {
 			expect(codecError(() => new FrameDecoder().push(frameWithBody(body)))).toBe("tool_child_malformed");

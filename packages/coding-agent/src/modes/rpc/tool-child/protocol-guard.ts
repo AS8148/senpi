@@ -4,9 +4,9 @@ import {
 	LAUNCH_LIFETIMES,
 	LAUNCH_ORIGINS,
 	REF_NACK_REASONS,
-	TRACE_RESERVED_KEYS,
 	type ToolChildMessage,
 	type ToolChildMessageType,
+	TRACE_RESERVED_KEYS,
 } from "./protocol.ts";
 
 type FieldKind =

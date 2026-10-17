@@ -88,7 +88,8 @@ async function delayedConsumption(onSenderSettled: (ref: PayloadRef) => Promise<
 	return {
 		existsAfterSettlement,
 		...consumed,
-		sha256Verified: consumed.bytes !== undefined && createHash("sha256").update(consumed.bytes).digest("hex") === ref.sha256,
+		sha256Verified:
+			consumed.bytes !== undefined && createHash("sha256").update(consumed.bytes).digest("hex") === ref.sha256,
 		sent,
 		writerPending: writer.pendingIds(),
 		existsAfterConsume: await exists(refFilePath(root, ref)),
@@ -231,7 +232,9 @@ describe("payloads above the reference threshold, in both directions", () => {
 		expect(inlineAttempt).toThrow(ToolChildCodecError);
 		const packed = await packPayload(args, childWriter);
 		if (packed.inline) throw new Error("17 MiB args must move by reference");
-		const frame = received(encodeFrame({ type: "host_call", callId: "c1", jobId: "j1", tool: "write", argsRef: packed.ref }));
+		const frame = received(
+			encodeFrame({ type: "host_call", callId: "c1", jobId: "j1", tool: "write", argsRef: packed.ref }),
+		);
 		if (frame.type !== "host_call" || frame.argsRef === undefined) throw new Error("expected host_call with argsRef");
 		expect(await unpackPayload(frame.argsRef, serverReader)).toEqual(args);
 		await delivered();
@@ -247,7 +250,8 @@ describe("payloads above the reference threshold, in both directions", () => {
 		const packed = await packPayload(value, serverWriter);
 		if (packed.inline) throw new Error("20 MiB value must move by reference");
 		const frame = received(encodeFrame({ type: "host_reply", callId: "c1", valueRef: packed.ref }));
-		if (frame.type !== "host_reply" || frame.valueRef === undefined) throw new Error("expected host_reply with valueRef");
+		if (frame.type !== "host_reply" || frame.valueRef === undefined)
+			throw new Error("expected host_reply with valueRef");
 		expect(await unpackPayload(frame.valueRef, childReader)).toEqual(value);
 		await delivered();
 		expect(sent).toEqual([{ type: "ref_ack", refId: packed.ref.refId }]);
@@ -266,6 +270,9 @@ describe("payloads above the reference threshold, in both directions", () => {
 		const packed = await packPayload("x".repeat(TOOL_CHILD_LIMITS.REF_THRESHOLD + 1), writer);
 		if (packed.inline) throw new Error("expected a ref");
 		await rm(refFilePath(root, packed.ref));
-		await expect(unpackPayload(packed.ref, reader)).rejects.toMatchObject({ code: "ref_rejected", reason: "missing" });
+		await expect(unpackPayload(packed.ref, reader)).rejects.toMatchObject({
+			code: "ref_rejected",
+			reason: "missing",
+		});
 	});
 });

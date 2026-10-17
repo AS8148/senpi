@@ -1,9 +1,26 @@
-import type { PayloadRefReader, PayloadRefWriter } from "./payload-ref.ts";
-import type { PayloadRef } from "./protocol.ts";
+import { PayloadRefError, type PayloadRefReader, type PayloadRefWriter } from "./payload-ref.ts";
+import { type PayloadRef, TOOL_CHILD_LIMITS } from "./protocol.ts";
+
 export type PackedPayload = { inline: true; value: unknown } | { inline: false; ref: PayloadRef };
-export async function packPayload(_value: unknown, _writer: PayloadRefWriter): Promise<PackedPayload> {
-	throw new Error("not implemented");
+
+/** Inline at or below `REF_THRESHOLD` JSON bytes; above it, by acknowledged reference. Same rule in both directions. */
+export async function packPayload(value: unknown, writer: PayloadRefWriter): Promise<PackedPayload> {
+	const json = JSON.stringify(value);
+	if (json === undefined || Buffer.byteLength(json, "utf8") <= TOOL_CHILD_LIMITS.REF_THRESHOLD) {
+		return { inline: true, value };
+	}
+	return { inline: false, ref: await writer.create(Buffer.from(json, "utf8")) };
 }
-export async function unpackPayload(_ref: PayloadRef, _reader: PayloadRefReader): Promise<unknown> {
-	throw new Error("not implemented");
+
+export async function unpackPayload(ref: PayloadRef, reader: PayloadRefReader, signal?: AbortSignal): Promise<unknown> {
+	const acceptance = await reader.accept(ref, signal);
+	if (!acceptance.ok) {
+		throw new PayloadRefError(
+			"ref_rejected",
+			`ref ${ref.refId} was refused (${acceptance.reason})`,
+			acceptance.reason,
+		);
+	}
+	const bytes = await reader.consume(ref.refId);
+	return JSON.parse(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("utf8"));
 }
