@@ -253,6 +253,64 @@ describe("the start bound covers the work before the provider stream (senpi#3471
 		expect(assistant?.errorMessage).not.toContain("timed out");
 	});
 
+	it("carries a caller's non-Error abort reason as the message (#3510)", async () => {
+		// given
+		const controller = new AbortController();
+		const asked = Promise.withResolvers<void>();
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			streamStartTimeoutMs: 40,
+			timeoutMs: 10_000,
+			getApiKey: () => {
+				asked.resolve();
+				return never<string>();
+			},
+		};
+		const turn = settledTurn(
+			agentLoop([userMessage("Hello")], context(), config, controller.signal, () => new AssistantEventStream()),
+		);
+
+		// when
+		await asked.promise;
+		controller.abort("user stop");
+
+		// then
+		const assistant = assistantOf(await turn);
+		expect(assistant?.stopReason).toBe("aborted");
+		expect(assistant?.errorMessage).toBe("user stop");
+	});
+
+	it("keeps the step's own error on a caller-aborted turn that fails for another reason (#3510)", async () => {
+		// given: the key lookup is running when the caller aborts, then fails on its own
+		const controller = new AbortController();
+		const asked = Promise.withResolvers<void>();
+		const key = Promise.withResolvers<string>();
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			streamStartTimeoutMs: 10_000,
+			timeoutMs: 10_000,
+			getApiKey: () => {
+				asked.resolve();
+				return key.promise;
+			},
+		};
+		const turn = settledTurn(
+			agentLoop([userMessage("Hello")], context(), config, controller.signal, () => new AssistantEventStream()),
+		);
+
+		// when
+		await asked.promise;
+		controller.abort(new Error("Stopped by the user"));
+		key.reject(new Error("key service answered 500"));
+
+		// then: only the bound's own timeout is replaced by the abort; any other error is kept
+		const assistant = assistantOf(await turn);
+		expect(assistant?.stopReason).toBe("aborted");
+		expect(assistant?.errorMessage).toBe("key service answered 500");
+	});
+
 	it("ends a caller-aborted turn whose step never finishes at the bound, still as aborted", async () => {
 		// given
 		const controller = new AbortController();

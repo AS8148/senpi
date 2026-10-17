@@ -829,7 +829,10 @@ type AssistantEventReader = {
 };
 
 function abortError(reason: unknown): Error {
-	return reason instanceof Error ? reason : new Error("Request was aborted");
+	if (reason instanceof Error) return reason;
+	// A caller that aborts with a plain reason (`controller.abort("user stop")`) gets that text back (#3510).
+	if (typeof reason === "string" && reason.trim() !== "") return new Error(reason);
+	return new Error("Request was aborted");
 }
 
 function closeAssistantIterator(iterator: AsyncIterator<AssistantMessageEvent>): void {
