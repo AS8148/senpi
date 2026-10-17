@@ -185,6 +185,30 @@ function todoStateOfSignature(signature: string): string {
 	return signature.slice(0, signature.lastIndexOf(":"));
 }
 
+/** How many recent tool-effect fingerprints a new one must differ from to count as progress. */
+export const GOAL_TOOL_EFFECT_WINDOW = 8;
+
+/**
+ * Fingerprint of what a turn's tools did: every call's name, arguments and result text plus its error flag.
+ * Re-running the same call with the same outcome yields the same fingerprint, so a tool loop is not progress.
+ */
+export function toolEffectFingerprint(messages: readonly AgentMessage[]): string | undefined {
+	const parts: string[] = [];
+	for (const message of messages) {
+		if (message?.role === "assistant") {
+			for (const content of message.content) {
+				if (content.type === "toolCall") parts.push(`call:${content.name}:${JSON.stringify(content.arguments)}`);
+			}
+		} else if (message?.role === "toolResult") {
+			const text = message.content
+				.map((content) => (content.type === "text" ? content.text : content.type))
+				.join("\n");
+			parts.push(`result:${message.toolName}:${message.isError ? "error" : "ok"}:${text}`);
+		}
+	}
+	return parts.length === 0 ? undefined : hashAssistantText(parts.join("\u0000"));
+}
+
 export function continuationTurnUsedTools(messages: readonly AgentMessage[]): boolean {
 	return messages.some((message) => {
 		if (message?.role === "toolResult") return true;

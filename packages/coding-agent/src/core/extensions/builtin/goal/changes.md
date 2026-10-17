@@ -4,7 +4,7 @@
 
 - `continuation.ts`: `GOAL_UNATTENDED_CONTINUATION_LIMIT` (150) and the `unattended` deny reason are gone. `GOAL_NO_PROGRESS_CONTINUATION_LIMIT` (60) and the `no-progress` deny reason replace them, read from the new persisted `Goal.noProgressContinuations`. `hasGoalTodoProgress` compares only the todo part of the continuation signature.
 - `store.ts`: every counted delivery increments `noProgressContinuations` (monitor-delayed deliveries stay exempt); `resetContinuationStreak(ref, { progress })` clears it, `{ unattended }` (human input) clears both counters, and status transitions zero it.
-- `monitor-continuation.ts`: a turn is progress when it used a tool, changed the todo state, or carried a human-input monitor notification (`isHumanInputMonitorNotification`). Varied narration still resets the consecutive streak (#539/#567) but no longer the no-progress count. A human-input monitor delivery also resets the unattended count and clears the repetition and toolless windows, like typed input.
+- `monitor-continuation.ts`: a turn is progress when its tool effect is new, the todo state changed, or it carried a human-input monitor notification (`isHumanInputMonitorNotification`). A tool effect is `toolEffectFingerprint` (every call's name and arguments, every result's text and error flag); one that matches any of the last `GOAL_TOOL_EFFECT_WINDOW` (8) tool turns is a repeat, so re-running the same failing test or peeking the same unchanged output is not progress. Varied narration still resets the consecutive streak (#539/#567) but no longer the no-progress count. A human-input monitor delivery also resets the unattended count and clears the repetition and toolless windows, like typed input.
 - `continuation-recovery.ts` / `lifecycle-helpers.ts`: new mechanical block reason `NO_PROGRESS_BLOCKED_REASON`, so the notice ends with "Send any message to resume." `UNATTENDED_CONTINUATION_BLOCKED_REASON` stays mechanical so goals persisted with it still resume. `goal_continuation_guard_tripped` and `goal-continuation-stopped` add `noProgressContinuations`; `unattendedContinuations` stays as an informational count.
 
 ### Why
@@ -709,7 +709,7 @@ Terminal-provider-error classification is goal-extension core logic; nothing for
   result is unchanged.
 - Tests: `test/goal-renderers.test.ts`.
 
-## 2026-08-27 - unattended continuation backstop (#1139)
+## 2026-08-27 - unattended continuation backstop (#1139) - superseded by the no-progress guard (oh-my-openagent#10280)
 
 ### What changed
 

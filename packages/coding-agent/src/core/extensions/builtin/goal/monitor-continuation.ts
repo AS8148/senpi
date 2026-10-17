@@ -25,6 +25,7 @@ export {
 import {
 	continuationTurnUsedTools,
 	evaluateGoalContinuation,
+	GOAL_TOOL_EFFECT_WINDOW,
 	GOAL_USER_GRACE_DELAY_MS,
 	type GoalContinuationInput,
 	type GoalContinuationPath,
@@ -33,6 +34,7 @@ import {
 	hashAssistantText,
 	isMalformedToolUseTurn,
 	normalizeAssistantText,
+	toolEffectFingerprint,
 } from "./continuation.ts";
 import { lastAssistantMessage } from "./last-assistant-message.ts";
 import {
@@ -87,6 +89,7 @@ export class MonitorAwareGoalContinuation {
 	#consecutiveLengthRecoveries = new Map<string, number>();
 	#recentNormalizedOutputHashes: string[] = [];
 	#toollessContinuationStreak = 0;
+	#recentToolEffects: string[] = [];
 	#toollessStreakGoalId: string | null = null;
 	#endedTurnWasUserInitiated = false;
 	#lastTurnUsage: TokenUsageSnapshot | undefined;
@@ -149,7 +152,8 @@ export class MonitorAwareGoalContinuation {
 		}
 		this.#recordToollessContinuationTurn(options.goal, turnUsedTools || humanInput);
 		const immediateInput = this.#buildVerdictInput(options.ctx, options.goal, "immediate", options.messages);
-		const madeProgress = turnUsedTools || humanInput || hasGoalTodoProgress(immediateInput);
+		const madeProgress =
+			this.#recordToolEffect(options.messages) || humanInput || hasGoalTodoProgress(immediateInput);
 		const goal =
 			!this.#endedTurnWasUserInitiated && (madeProgress || hasGoalContinuationProgress(immediateInput))
 				? ((await resetContinuationStreak(goalStoreRef(options.ctx.sessionManager, options.ctx.cwd), {
@@ -645,6 +649,15 @@ export class MonitorAwareGoalContinuation {
 		this.#recentNormalizedOutputHashes = [...this.#recentNormalizedOutputHashes, hashAssistantText(text)].slice(-3);
 	}
 
+	/** A tool turn is progress only when its calls and outcomes differ from every recent tool turn. */
+	#recordToolEffect(messages: readonly AgentMessage[]): boolean {
+		const fingerprint = toolEffectFingerprint(messages);
+		if (fingerprint === undefined) return false;
+		const repeated = this.#recentToolEffects.includes(fingerprint);
+		this.#recentToolEffects = [...this.#recentToolEffects, fingerprint].slice(-GOAL_TOOL_EFFECT_WINDOW);
+		return !repeated;
+	}
+
 	#recordToollessContinuationTurn(goal: Goal, turnUsedTools: boolean): void {
 		if (goal.id !== this.#toollessStreakGoalId) {
 			this.#toollessStreakGoalId = goal.id;
@@ -791,6 +804,7 @@ export class MonitorAwareGoalContinuation {
 		this.#providerRetryAttempts = 0;
 		this.#consecutiveLengthRecoveries.clear();
 		this.#recentNormalizedOutputHashes = [];
+		this.#recentToolEffects = [];
 		this.#resetToollessContinuationStreak();
 		this.#resetCacheWarmIteration();
 	}

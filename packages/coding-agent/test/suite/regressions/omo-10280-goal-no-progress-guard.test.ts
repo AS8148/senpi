@@ -35,26 +35,50 @@ function narration(text: string): AgentMessage {
 	return { ...message, content: [{ type: "text", text }] };
 }
 
-function toolUsingTurn(turn: number): AgentMessage[] {
-	const final = narration(`step ${turn} done`);
+function toolTurn(
+	turn: number,
+	call: { name: string; arguments: Record<string, string> },
+	result: { text: string; isError: boolean },
+): AgentMessage[] {
+	const final = narration(`step ${turn}: looked at the result again`);
 	if (final.role !== "assistant") throw new Error("Expected an assistant message");
 	const toolCallId = `omo-10280-tool-${turn}`;
 	return [
-		{
-			...final,
-			content: [{ type: "toolCall", id: toolCallId, name: "bash", arguments: { command: "true" } }],
-			stopReason: "toolUse",
-		},
+		{ ...final, content: [{ type: "toolCall", id: toolCallId, ...call }], stopReason: "toolUse" },
 		{
 			role: "toolResult",
 			toolCallId,
-			toolName: "bash",
-			content: [{ type: "text", text: "ok" }],
-			isError: false,
+			toolName: call.name,
+			content: [{ type: "text", text: result.text }],
+			isError: result.isError,
 			timestamp: final.timestamp,
 		},
 		final,
 	];
+}
+
+function editTurn(turn: number): AgentMessage[] {
+	return toolTurn(
+		turn,
+		{ name: "edit", arguments: { path: `src/step-${turn}.ts`, newText: `export const step = ${turn};` } },
+		{ text: `Edited src/step-${turn}.ts`, isError: false },
+	);
+}
+
+function sameFailingTestTurn(turn: number): AgentMessage[] {
+	return toolTurn(
+		turn,
+		{ name: "bash", arguments: { command: "bun test src/parser.test.ts" } },
+		{ text: "1 fail: parser rejects empty input", isError: true },
+	);
+}
+
+function sameStatusPeekTurn(turn: number): AgentMessage[] {
+	return toolTurn(
+		turn,
+		{ name: "bash_output", arguments: { bash_id: "bash_3" } },
+		{ text: "(no new output)", isError: false },
+	);
 }
 
 function monitorNotification(humanInput: boolean): AgentMessage {
@@ -94,11 +118,11 @@ async function startGoal(threadId: string) {
 }
 
 describe("omo#10280: no fixed auto-continue cap, a no-progress guard instead", () => {
-	it("never stops a long session that keeps making tool progress, well past the old 150 cap", {
+	it("never stops a long session that keeps making real edits, well past the old 150 cap", {
 		timeout: 120_000,
 	}, async () => {
 		const { harness, turn, ref } = await startGoal("omo-10280-steady");
-		for (let index = 1; index <= 200; index++) await turn(toolUsingTurn(index));
+		for (let index = 1; index <= 200; index++) await turn(editTurn(index));
 
 		expect(harness.sent).toHaveLength(200);
 		expect(await readGoal(ref)).toMatchObject({ status: "active", noProgressContinuations: 1 });
@@ -128,7 +152,41 @@ describe("omo#10280: no fixed auto-continue cap, a no-progress guard instead", (
 		);
 	});
 
-	it("resets the guard when a monitor delivers a person's message", { timeout: 60_000 }, async () => {
+	it.each([
+		["re-runs the same failing test", sameFailingTestTurn],
+		["peeks the same unchanged output", sameStatusPeekTurn],
+	] as const)(
+		"stops a loop that %s with varied narration at the guard",
+		{ timeout: 60_000 },
+		async (_label, loopTurn) => {
+			const { harness, turn, ref, notices } = await startGoal(`omo-10280-tool-loop-${_label.length}`);
+			for (let index = 1; index <= GOAL_NO_PROGRESS_CONTINUATION_LIMIT + 1; index++) await turn(loopTurn(index));
+
+			expect(harness.sent).toHaveLength(GOAL_NO_PROGRESS_CONTINUATION_LIMIT);
+			expect(await readGoal(ref)).toMatchObject({ status: "blocked", blockedReason: NO_PROGRESS_BLOCKED_REASON });
+			expect(notices).toContainEqual(
+				`Goal continuation blocked: ${NO_PROGRESS_BLOCKED_REASON}. Send any message to resume.`,
+			);
+		},
+	);
+
+	it("counts an edit between failing runs as progress, so a real fix-and-retest cycle never stops", {
+		timeout: 60_000,
+	}, async () => {
+		const { harness, turn, ref } = await startGoal("omo-10280-fix-retest");
+		const cycles = GOAL_NO_PROGRESS_CONTINUATION_LIMIT;
+		for (let index = 1; index <= cycles; index++) {
+			await turn(sameFailingTestTurn(index));
+			await turn(editTurn(index));
+		}
+
+		expect(harness.sent).toHaveLength(2 * cycles);
+		expect(await readGoal(ref)).toMatchObject({ status: "active" });
+	});
+
+	it("resets the guard when a monitor delivery of a person's message wakes the idle goal session", {
+		timeout: 60_000,
+	}, async () => {
 		const { harness, turn, ref } = await startGoal("omo-10280-human-monitor");
 		for (let index = 1; index < GOAL_NO_PROGRESS_CONTINUATION_LIMIT; index++)
 			await turn([narration(`waiting ${index}`)]);

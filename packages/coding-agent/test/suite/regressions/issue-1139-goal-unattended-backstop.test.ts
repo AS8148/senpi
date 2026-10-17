@@ -19,7 +19,7 @@ const GOAL_CONTINUATION_MESSAGE_TYPE = "goal-continuation";
 // (varied toolless narration) must still stop, now after 60 continuations without progress.
 const NO_PROGRESS_LIMIT = 60;
 const NO_PROGRESS_BLOCKED_REASON =
-	"no progress across repeated automatic continuations (no tool use, todo change, or new message)";
+	"no progress across repeated automatic continuations (no new tool result, todo change, or new message)";
 const UNATTENDED_BLOCKED_REASON = "unattended continuation limit reached";
 
 afterEach(async () => {
