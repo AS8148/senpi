@@ -1,3 +1,24 @@
+## 2026-10-17 - A stale socket entry is unlinked only while it is still the dead one (senpi#3541 review)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-proxy.ts`: `prepareSocketPath` records the entry's identity before probing it, probes with `entryHasListener` (only ECONNREFUSED or ENOENT read as nobody; EAGAIN, a full backlog or any other error is a live owner), and right before `unlink` re-reads the identity and probes again: a different entry, or one that now accepts, throws "address already in use by a live server" instead of being removed. It skips abstract sockets, and takes test-only `PrepareSocketPathHooks.afterStaleProbe`.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: its private `prepareSocketPath`/`probeSocket` (which read a 1 s connect timeout as dead and unlinked) are gone; it uses the shared one.
+- `packages/coding-agent/src/modes/rpc/socket-ownership.ts`: `sameSocketIdentity` is exported.
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts` and `host-ensure-types.ts`: `_test.existingHostProbeTimeoutMs` bounds the existing-host probe in tests; the `endpoint_occupied` refusal carries a `detail`.
+
+### Why
+
+- Review of #3542: a listener that binds the path between the stale probe and the unlink lost its entry (I1), and the `--listen` path removed a live but slow-to-accept listener after 1 s. Tests: `test/rpc-prepare-socket-path.test.ts` (stale entry removed, live entry kept, a listener appearing after the probe kept) and two `rpc-host-ensure.test.ts` cases driven by a gated fixture listener (answers inside the probe bound: reused; only after it: refused `endpoint_occupied`, kept).
+
+### Why an extension could not handle it
+
+- Socket preparation and the ensure probe are RPC host internals with no extension hook.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/host-lifecycle-proxy.ts` `prepareSocketPath`; `packages/coding-agent/src/modes/rpc/multi-session-host.ts` around its former `prepareSocketPath`.
+
 ## 2026-10-17 - An unregistered listener on the public socket is refused, not crashed into
 
 ### What changed
