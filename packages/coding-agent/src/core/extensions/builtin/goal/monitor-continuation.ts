@@ -1,7 +1,7 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { deadlineStopPendingSinceLastTurn } from "../../../turn-deadline.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
-import type { WakeSourceStateItem } from "../monitor-state-event.ts";
+import { isHumanInputMonitorNotification, type WakeSourceStateItem } from "../monitor-state-event.ts";
 import {
 	createGoalCacheWarmScheduleData,
 	estimateCacheWarmMetrics,
@@ -29,6 +29,7 @@ import {
 	type GoalContinuationInput,
 	type GoalContinuationPath,
 	hasGoalContinuationProgress,
+	hasGoalTodoProgress,
 	hashAssistantText,
 	isMalformedToolUseTurn,
 	normalizeAssistantText,
@@ -138,18 +139,23 @@ export class MonitorAwareGoalContinuation {
 		this.#lastTurnUsage = collectAssistantUsage([...options.messages]);
 		this.#resetLengthRecoveryAfterCleanStop(options.goal, options.messages);
 		const turnUsedTools = continuationTurnUsedTools(options.messages);
-		this.#recordAssistantOutput(options.messages, turnUsedTools);
+		// A person's words delivered by a human-input monitor are new input, exactly like a typed message.
+		const humanInput = options.messages.some(isHumanInputMonitorNotification);
+		this.#recordAssistantOutput(options.messages, turnUsedTools || humanInput);
 		if (options.goal?.status !== "active") {
 			this.#cancelTimer();
 			this.#resetContinuationState();
 			return options.goal;
 		}
-		this.#recordToollessContinuationTurn(options.goal, turnUsedTools);
+		this.#recordToollessContinuationTurn(options.goal, turnUsedTools || humanInput);
 		const immediateInput = this.#buildVerdictInput(options.ctx, options.goal, "immediate", options.messages);
+		const madeProgress = turnUsedTools || humanInput || hasGoalTodoProgress(immediateInput);
 		const goal =
-			!this.#endedTurnWasUserInitiated && (turnUsedTools || hasGoalContinuationProgress(immediateInput))
-				? ((await resetContinuationStreak(goalStoreRef(options.ctx.sessionManager, options.ctx.cwd))) ??
-					options.goal)
+			!this.#endedTurnWasUserInitiated && (madeProgress || hasGoalContinuationProgress(immediateInput))
+				? ((await resetContinuationStreak(goalStoreRef(options.ctx.sessionManager, options.ctx.cwd), {
+						progress: madeProgress,
+						unattended: humanInput,
+					})) ?? options.goal)
 				: options.goal;
 		this.#goal = goal;
 		const immediateVerdict = evaluateGoalContinuation({
@@ -172,7 +178,7 @@ export class MonitorAwareGoalContinuation {
 				case "cap":
 				case "repetition":
 				case "length-exhausted":
-				case "unattended": {
+				case "no-progress": {
 					const admission = await this.#admitAndQueue(options.ctx, goal, "immediate", options.messages);
 					return admission.goal;
 				}
