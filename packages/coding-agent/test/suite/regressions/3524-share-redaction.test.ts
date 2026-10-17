@@ -64,6 +64,12 @@ describe("share redaction (senpi#3524)", () => {
 		["a generated high-entropy run in prose", `the value is ${GENERATED} ok`, GENERATED],
 		["a JSON authorization array", '{"Authorization":["Bearer abcdefghijkl"]}', "abcdefghijkl"],
 		["a URL-encoded email", "to=jane.doe%40example.org", "jane.doe"],
+		["a refresh token array", '{"refresh_token": ["abc123def456"]}', "abc123def456"],
+		["a password array", '{"password":["hunter22x"]}', "hunter22x"],
+		["a cookie array", '{"Cookie":["sid=abc123def"]}', "abc123def"],
+		["a nested client secret object", '{"client_secret": {"value": "s3cr3tvalue"}}', "s3cr3tvalue"],
+		["a YAML token list", "tokens:\n  - abc123def456\n  - zz99yy88xx\nname: demo", "abc123def456"],
+		["a nodemailer pass field", '{"user":"mailer","pass":"hunter22x"}', "hunter22x"],
 		["an inline data URI", `<img src="data:image/png;base64,${"iVBORw0KGgo".repeat(4)}">`, "iVBORw0KGgo"],
 	])("removes %s", (_label, input, secret) => {
 		const { text } = redact(input);
@@ -118,16 +124,16 @@ describe("share redaction (senpi#3524)", () => {
 		["a commit id", `fixed in ${HEX_40}`],
 		["a sha256 digest", `sha256 ${"ab12".repeat(16)}`],
 		["a UUID", "session 01a14a28-fad7-7ebc-91a2-e85da2aa8faa"],
-		["a long camelCase identifier", "call handleShareCommandWithLoaderAndPreview2 now"],
+		["a long camelCase identifier with digits", "call handleShare2CommandWithLoaderAndPreview3 now"],
 		["a long kebab branch name", "fix/3524-share-redaction-preview-and-confirm"],
 		["an env name that only contains KEY", "KEYBOARD_LAYOUT=us MONKEY_COUNT=3"],
 	])("keeps %s", (_label, input) => {
 		expect(redact(input).text).toBe(input);
 	});
 
-	it("keeps loopback addresses, ordinary words and code", () => {
+	it("keeps loopback addresses and ordinary words, and redacts a token assignment in code", () => {
 		const input = "listen on 127.0.0.1:8080; const token = getToken(); user home admin";
-		expect(redact(input).text).toBe(input.replace("getToken()", "<redacted>"));
+		expect(redact(input).text).toBe(input.replace("getToken()", "<redacted>()"));
 	});
 
 	it("is idempotent: a second pass changes and counts nothing", () => {
@@ -161,6 +167,17 @@ describe("share redaction (senpi#3524)", () => {
 
 	it("keeps the JSON shape of an authorization array while removing its token", () => {
 		expect(redact('{"Authorization":["Bearer abcdefghijkl"]}').text).toBe('{"Authorization":["Bearer <redacted>"]}');
+	});
+
+	it("keeps a tool schema that only describes a credential parameter", () => {
+		const schema = { parameters: { properties: { apiKey: { type: "string", description: "Your API key" } } } };
+		expect(redactShareValue(schema, context, new Map())).toEqual(schema);
+	});
+
+	it("drops a nodemailer pass field in structured data", () => {
+		expect(redactShareValue({ auth: { user: "mailer", pass: "hunter22x" } }, context, new Map())).toEqual({
+			auth: { user: "mailer", pass: "<redacted>" },
+		});
 	});
 
 	it("drops every string under a sensitive key, whatever the nesting", () => {

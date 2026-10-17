@@ -1,4 +1,5 @@
 import { homedir, hostname, userInfo } from "node:os";
+import { looksGenerated, redactGeneratedValues } from "./share-entropy.ts";
 
 /**
  * Redaction for content that leaves the machine (`/share`, #3524).
@@ -85,7 +86,7 @@ function literalPattern(value: string): RegExp | undefined {
 }
 
 const PRIVATE_KEY_BLOCK =
-	/-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY-----(?:[\s\S]*?-----END [A-Z0-9 ]{0,40}PRIVATE KEY-----|[\s\S]*$)/g;
+	/-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----(?:[\s\S]*?-----END [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----|[\s\S]*$)/g;
 
 /** Credential shapes, each rewritten to a placeholder that no rule matches again. */
 const CREDENTIAL_REWRITES: ReadonlyArray<readonly [RegExp, (match: string, ...groups: string[]) => string]> = [
@@ -121,30 +122,29 @@ const CREDENTIAL_REWRITES: ReadonlyArray<readonly [RegExp, (match: string, ...gr
 
 /** A key is sensitive when a sensitive word appears anywhere in it (`OPENAI_API_KEY`, `accessToken`). */
 export const SENSITIVE_KEY =
-	/token|secret|passw(?:or)?d|passwd|pwd|api[_-]?key|apikey|authorization|credential|private[_-]?key|session[_-]?id|cookie|signature/i;
+	/token|secret|passw(?:or)?d|passwd|passphrase|(?:^|[^a-z])pass(?:$|[^a-z])|pwd|api[_-]?key|apikey|authorization|credential|private[_-]?key|session[_-]?id|cookie|signature/i;
 const KEY_VALUE =
-	/([A-Za-z0-9_.-]{1,128})((?:\\?["'])?\s{0,3}[:=]\s{0,3}(?:\\?["'])?)([^\s"'\\&,;}[{(][^\s"'\\&,;}]{0,1999})/g;
+	/([A-Za-z0-9_.-]{1,128})((?:\\?["'])?[ \t]{0,3}[:=][ \t]{0,3}(?:\\?["'])?)([^\s"'\\&,;}[{(=)][^\s"'\\&,;}()]{0,1999})/g;
+/** A sensitive key whose value is an inline array or object: every quoted string inside it is a credential. */
+const KEY_COLLECTION =
+	/((["']?)([A-Za-z0-9_.-]{1,128})\2[ \t]{0,3}[:=][ \t]{0,3})(\[[^\]\n]{0,2000}\]|\{[^}\n]{0,2000}\})/g;
+/** A YAML key followed by a block list (`tokens:` then `  - value` lines). */
+const KEY_YAML_LIST = /^([ \t]*)([A-Za-z0-9_.-]{1,128}):[ \t]*\r?\n((?:\1[ \t]*-[ \t]+[^\n]*(?:\r?\n|$))+)/gm;
+const QUOTED = /"(?:[^"\\\n]|\\.)*"|'[^'\n]*'/g;
 const SCHEME_WORD = /^(?:Bearer|Basic|Token)$/i;
-/** An UPPER_SNAKE name with a credential segment (`DEEPSEEK_KEY`, `ANTHROPIC_AUTH`, `DB_PASS`), as in an env dump. */
+/**
+ * An UPPER_SNAKE name with a credential segment, as in an env dump. TOKEN, SECRET and PASS names are always secret; a
+ * name whose only credential segment is KEY or AUTH (`STORAGE_KEY`, `AUTH_MODE`) needs a secret-looking value, and a
+ * name ending in a config suffix (`PUBLIC_KEY_PATH`, `NEXT_PUBLIC_KEY_ID`) never counts.
+ */
 const ENV_CREDENTIAL =
-	/\b((?:[A-Z0-9]+_)*(?:KEY|KEYS|AUTH|TOKEN|SECRET|PASSWORD|PASSWD|PASS|PWD|CREDENTIALS?)(?:_[A-Z0-9]+)*)(\s{0,3}[=:]\s{0,3}["']?)(?!<redacted)([^\s"']{4,2000})/g;
-/** A long base62 run with mixed case and digits is a generated secret; lowercase hex (commit ids, hashes) is not matched. */
-const HIGH_ENTROPY_RUN = /(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{32,}(?![A-Za-z0-9_-])/g;
+	/\b((?:[A-Z0-9]+_)*(?:KEY|KEYS|AUTH|TOKEN|SECRET|PASSWORD|PASSWD|PASS|PWD|CREDENTIALS?)(?:_[A-Z0-9]+)*)([ \t]{0,3}[=:][ \t]{0,3}["']?)(?!<redacted)([^\s"']{4,2000})/g;
+const ALWAYS_SECRET_SEGMENT = /(?:^|_)(?:TOKEN|SECRET|PASSWORD|PASSWD|PASS|PWD|CREDENTIALS?)(?:_|$)/;
+const CONFIG_SUFFIX = /_(?:PATH|ID|MODE|TYPE|URL|URI|FILE|NAME|DIR|HEADER|FORMAT|LENGTH|SIZE|PREFIX)$/;
 const DATA_URI = /data:[a-z]+\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+/gi;
 
-function shannonBitsPerChar(text: string): number {
-	const counts = new Map<string, number>();
-	for (const char of text) counts.set(char, (counts.get(char) ?? 0) + 1);
-	let bits = 0;
-	for (const n of counts.values()) bits -= (n / text.length) * Math.log2(n / text.length);
-	return bits;
-}
-
-function looksGenerated(run: string): boolean {
-	const digits = run.replace(/[^0-9]/g, "").length;
-	const upper = run.replace(/[^A-Z]/g, "").length;
-	const lower = run.replace(/[^a-z]/g, "").length;
-	return digits >= 2 && upper >= 2 && lower >= 2 && shannonBitsPerChar(run) >= 4;
+function secretLookingValue(value: string): boolean {
+	return /^[0-9a-f]{16,}$/i.test(value) || looksGenerated(value);
 }
 
 const EMAIL = /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]{1,64}(?:@|%40)[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63}){1,5}/g;
@@ -156,6 +156,13 @@ function keepsAddress(address: string): boolean {
 
 export function count(tally: ShareRedactionTally, category: ShareRedactionCategory): void {
 	tally.set(category, (tally.get(category) ?? 0) + 1);
+}
+
+function redactQuoted(quoted: string, tally: ShareRedactionTally): string {
+	const quote = quoted[0] ?? '"';
+	if (quoted.length <= 2 || quoted.includes("<redacted")) return quoted;
+	count(tally, "credential");
+	return `${quote}<redacted>${quote}`;
 }
 
 export function redactShareText(text: string, context: ShareRedactionContext, tally: ShareRedactionTally): string {
@@ -194,15 +201,25 @@ export function redactShareText(text: string, context: ShareRedactionContext, ta
 		count(tally, "credential");
 		return `${key}${separator}<redacted>`;
 	});
-	result = result.replace(ENV_CREDENTIAL, (_match, name: string, separator: string) => {
+	result = result.replace(KEY_COLLECTION, (match, prefix: string, _quote: string, key: string, collection: string) => {
+		if (!SENSITIVE_KEY.test(key)) return match;
+		return prefix + collection.replace(QUOTED, (quoted) => redactQuoted(quoted, tally));
+	});
+	result = result.replace(KEY_YAML_LIST, (match, indent: string, key: string, items: string) => {
+		if (!SENSITIVE_KEY.test(key)) return match;
+		const redacted = items.replace(/^([ \t]*-[ \t]+)(?!<redacted>)\S[^\n]*/gm, (_item, bullet: string) => {
+			count(tally, "credential");
+			return `${bullet}<redacted>`;
+		});
+		return `${indent}${key}:\n${redacted}`;
+	});
+	result = result.replace(ENV_CREDENTIAL, (match, name: string, separator: string, value: string) => {
+		if (CONFIG_SUFFIX.test(name)) return match;
+		if (!ALWAYS_SECRET_SEGMENT.test(name) && !secretLookingValue(value)) return match;
 		count(tally, "credential");
 		return `${name}${separator}<redacted>`;
 	});
-	result = result.replace(HIGH_ENTROPY_RUN, (run) => {
-		if (!looksGenerated(run)) return run;
-		count(tally, "credential");
-		return "<redacted>";
-	});
+	result = redactGeneratedValues(result, () => count(tally, "credential"));
 
 	result = result.replace(EMAIL, () => {
 		count(tally, "email");

@@ -13,6 +13,31 @@ function isImageBlock(value: Record<string, unknown>): boolean {
 	return typeof source === "object" && source !== null && Reflect.get(source, "type") === "base64";
 }
 
+const SCHEMA_TYPES = new Set(["string", "number", "integer", "boolean", "object", "array", "null"]);
+const SCHEMA_KEYWORDS = new Set([
+	"type",
+	"description",
+	"title",
+	"format",
+	"enum",
+	"items",
+	"properties",
+	"required",
+	"minLength",
+	"maxLength",
+	"pattern",
+	"additionalProperties",
+	"nullable",
+]);
+
+/** A JSON-schema node (a tool parameter named `apiKey`) describes a credential; it does not hold one. */
+function isSchemaNode(value: unknown): boolean {
+	if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+	const type = Reflect.get(value, "type");
+	if (typeof type !== "string" || !SCHEMA_TYPES.has(type)) return false;
+	return Object.keys(value).every((key) => SCHEMA_KEYWORDS.has(key));
+}
+
 /** Every string under a sensitive key is a credential, whatever the nesting (`{"Authorization": ["Bearer x"]}`). */
 function dropAllStrings(value: unknown, tally: ShareRedactionTally): unknown {
 	if (typeof value === "string") {
@@ -45,7 +70,10 @@ function redactNode(value: unknown, context: ShareRedactionContext, tally: Share
 	}
 	const out: Record<string, unknown> = {};
 	for (const [key, child] of Object.entries(record)) {
-		out[key] = SENSITIVE_KEY.test(key) ? dropAllStrings(child, tally) : redactNode(child, context, tally);
+		out[key] =
+			SENSITIVE_KEY.test(key) && !isSchemaNode(child)
+				? dropAllStrings(child, tally)
+				: redactNode(child, context, tally);
 	}
 	return out;
 }
