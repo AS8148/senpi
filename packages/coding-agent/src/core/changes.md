@@ -10,17 +10,34 @@
 
 - One multi-session host runs every session on one loop. On main, opening a 231 MB transcript made a concurrent `get_protocol_info` wait 899-1198 ms (3 runs; an empty open: 368-1037 ms): about 0.8 s JSONL parse, 0.25 s externalize, 0.7 s of per-message `JSON.stringify` in the tool-search marker scan, plus a full-file read just to check the last byte.
 - After: 251-677 ms on the same transcript, within the empty-open range (284-585 ms), which is #1844's fixed per-open cost.
+- Accepted residual: a line another process is still writing when the sliced reader reaches EOF is dropped as malformed, then exists on disk but not in memory. The synchronous load had the same race; slicing widens it from milliseconds to the length of the load. `reserveSessionWrite` guards writers within one process only.
 - Regressions: `test/suite/regressions/issue-3518-open-session-yields.test.ts` (open/openAsync parity incl. a torn final line; an append during a sliced load; a mid-load failure; loop turns during `openAsync` and during the host's `openSession`, which saw 0 turns on main) and `test/tool-search/marker-candidates.test.ts`.
 
 ### Why an extension could not handle it
 
 - Loading the session file happens before any extension runs, inside the session manager the host constructs.
 
-- Accepted residual: a line another process is still writing when the sliced reader reaches EOF is dropped as malformed, then exists on disk but not in memory. The synchronous load had the same race; slicing widens it from milliseconds to the length of the load. `reserveSessionWrite` guards writers within one process only.
-
 ### Expected merge conflict zones
 
 - MEDIUM: `_setSessionFile` and its new stage methods, the private constructor's preloaded-entries parameter, and `static open` in `session-manager.ts`. LOW: the `loadEntriesFromFile` re-export and the import block.
+
+## 2026-10-16 - Queued-input changes can require the revision they were based on (senpi#3459)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `QueuedInput.revision` (1 when recorded, +1 per edit); `dequeueQueuedInput` / `editQueuedInput` take `{ expectedRevision }`, and a mismatch answers `conflict` in the same synchronous step as the change, so nothing else on the session loop can land in between. An input already gone from the native queue still answers `already_delivered`.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: two clients editing one queued input silently overwrote each other; the second never learned it changed a stale copy.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: the queued-input records and the agent's native queue are session internals; only one synchronous step inside the session can check a revision and change the queue atomically.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/agent-session.ts`, the `QueuedInput` type, `_recordQueuedInput` and `_changeQueuedInput`.
 
 ## 2026-10-16 - The fallback circuit takes one step per open episode and only reroutes sessions it concerns (senpi#3467)
 

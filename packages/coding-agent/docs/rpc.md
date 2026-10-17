@@ -1629,9 +1629,10 @@ registrant opens no socket and writes no registry directory.
   `endpoint_kind: "tui"`, `owner` and `alive`, probing it for at most 1.5 s. `senpi host gc` reaps a dead one on
   the same evidence as a host. `ensure`, `handoff` and `stop` refuse it with `unsupported_endpoint_kind` (exit 3)
   before connecting, because a terminal endpoint is owned by its terminal process.
-- **Commands.** Anything not listed below is answered `unsupported` as data. No command can prompt, steer, queue a
-  follow-up, open a session or run a command.
-  - `get_protocol_info`: `mode: "tui"`, `capabilities: ["tui_control"]`, `generation: 0`, the endpoint's
+- **Commands.** Anything not listed below is answered `unsupported` as data. No command opens another session or
+  runs a command; input goes through the terminal's admission (`steer`/`follow_up`/`prompt` below), so the
+  user's draft still holds it.
+  - `get_protocol_info`: `mode: "tui"`, `endpoint_kind: "tui"`, `capabilities: ["tui_control", "session_status"]`, `generation: 0`, the endpoint's
     `instanceId`, and `commands`: every command this endpoint accepts. A terminal from before the session
     controls below lists no `commands`.
   - `list_sessions`: exactly one row, `kind: "interactive"`, `surface: "tui"`, `attachments: 1`.
@@ -1643,6 +1644,26 @@ registrant opens no socket and writes no registry directory.
     `state`, `report` (an assistant message's text), `question` (pending question ids) or `completion` (the
     session went idle, with `turn_epoch`). Resubscribing with the last `seq` replays what the 256-record ring
     still holds after it.
+  - `open_session { sessionPath }` (or `{ sessionId }`) naming this terminal's session attaches the connection, as
+    on a host: the answer is `{ sessionId, state, attached: true }`, preceded by the replay of the in-flight
+    message and pending questions, then the session's records (`message_update`, `agent_end`, ...) in the
+    host's projection. A path or id of any other session is refused `terminal_single_session`; a terminal hosts
+    one session. Detaching is closing the connection; neither changes the terminal.
+  - `subscribe_sessions` / `unsubscribe_sessions`: the host's status stream over this one session
+    (`session_status`, `effect_status`, the same `mirror` opt-in for content to a client that never attached).
+    `attachments` counts the terminal plus each attached client; a subscriber, mirrored or not, is not one.
+  - `steer`/`follow_up { message, whenIdle?, clientMessageId?, expected_turn_id? }` and
+    `prompt { message, streamingBehavior? }`: delivered through the terminal's admission
+    (`admitExternalMessage`), so the user's draft holds them, with the host's `whenIdle` choice (`queue`, the
+    default, holds input on an idle session for its next turn; `start` starts one; `prompt` always starts). A
+    steer that names no `expected_turn_id` steers the current turn. The answer's `disposition` is `started` or
+    `queued`; `held_draft` (the user is composing) and `turn_conflict` are refusals with a reason and an action.
+    Unlike a host's input, the message lands as a remote delivery (a `session_control_delivery` entry the
+    terminal renders as "remote message"), not a user message: there are no prompt templates, slash commands or
+    skills, no admission receipt, and a repeated `clientMessageId` answers `duplicate: true`. Frames carrying
+    `images`, `thinkingLevel`, `expandPromptTemplates`, `unknownCommandAsText`, `sessionTitlePrompt` or
+    `enqueueOrder` are refused `unsupported_field`, naming them.
+  - `get_effect_status { effectId, sessionPath? }`: the same effect ledger as a host.
   - `wake { delivery_ids? }`: one drain pass, answered `{ admitted: [{ delivery_id, kind }] }`.
   - `extension_ui_response`: answers only a question this session asked and still waits on
     (`unknown_request` / `question_incomplete` / `invalid_response` otherwise). `uiRequestId` names the
@@ -2468,6 +2489,13 @@ Every queued input carries a session-unique `queuedId` (`q_<n>`) in `get_state.o
 A `steer` or `follow_up` sent **without** a `clientMessageId` is still recorded durably under a host-minted id (`host:<durableSessionId>:<uuid>`), so it survives a host restart and a reopen restores it exactly once. No client-facing record carries that id: the send response, `get_state.ordered`, `queue_update.ordered`, `get_steering_messages` / `get_follow_up_messages` and event correlation (`clientMessageId` / `clientMessages` on events) all leave it out, and it never switches on event correlation for a client that sends no ids, before or after a restart. It stays on the stored user message in the transcript, and `get_effect_status` / `effect_status` report it as the input's `effectId`. An edit of such an input survives a restart too. A queued `prompt` sent without an id (`streamingBehavior` while busy) is not durable.
 
 For both commands, `status` is `removed` / `edited`, or `already_delivered` (the input was already handed to the agent) or `not_found` (no such id in this session); those two also carry `reason` and `action`, and an `effectId` receipt ends `failed` with that outcome. A missing or over-long `queuedId` is refused, and so is an edit whose `text` is empty or longer than `MAX_RPC_MESSAGE_CHARACTERS` (use `dequeue_message` to remove an input). An edited input that has a `clientMessageId` (its own or, for input sent without one, the host's) keeps the edit across a reopen, and a retry of its original send still replays.
+
+**Expected revision** (capability `queued_message_revision`): every entry in `get_state.ordered` and `queue_update.ordered` also carries `revision`, 1 when queued and +1 on every successful edit. Both commands accept an optional `expectedRevision` (a whole number of at least 1). When it is present and the input's current revision is different, the answer is `status: "conflict"` with `currentRevision`, `reason` and `action`, and nothing is changed; the check and the change happen in one step, so no other client's edit or a delivery can land between them. With `effectId` the receipt ends `failed` with outcome `conflict`, and a same-id retry replays that conflict. An input that is gone answers `already_delivered` or `not_found` as above, never `conflict`. An `edited` answer carries the resulting `text` and `revision`. A same-id retry answers with exactly the fields the live call returned (the receipt stores them). Revisions, like `queuedId`, hold only for the session's current lifetime: a reopen restores queued inputs at revision 1 under new ids, so re-read `get_state` after a reopen.
+
+```json
+{"type": "edit_queued_message", "queuedId": "q_4", "text": "use the staging database", "expectedRevision": 1}
+{"type": "response", "command": "edit_queued_message", "success": true, "data": {"queuedId": "q_4", "status": "conflict", "currentRevision": 2, "reason": "conflict", "action": "read the input's current text and revision from get_state or queue_update, then retry with that expectedRevision if the change still applies"}}
+```
 
 #### clear_queue
 
