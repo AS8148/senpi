@@ -10,6 +10,7 @@
  * runtime lands (senpi#3566 todo 4). An explicit `operations` override stays with
  * its caller, so caller-injected work is never re-routed.
  */
+import { dirname, isAbsolute, resolve } from "node:path";
 import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import type { ToolRuntimeKind } from "../../cli/tool-runtime.ts";
 import type { ExtensionToolContext, ToolDefinition, ToolPlacement } from "../extensions/types.ts";
@@ -37,11 +38,30 @@ export interface ToolDispatchCall<TDetails = unknown> {
 	readonly signal?: AbortSignal;
 	readonly onUpdate?: AgentToolUpdateCallback<TDetails>;
 	readonly ctx: ExtensionToolContext;
+	/** The extension file that registered the tool; a relative `childModule.path` resolves against its directory. */
+	readonly sourcePath?: string;
 }
+
+/** The tool child's `module` job (senpi#3566; the same shape todo 8's `ctx.offload` uses). */
+export interface ToolChildModuleJob {
+	readonly modulePath: string;
+	readonly export: string;
+	readonly args: unknown;
+}
+
+export interface ToolChildRunResult {
+	readonly value: unknown;
+	readonly pid: number;
+	readonly generation: number;
+}
+
+/** Runs a `module` job on the session's tool child, starting the child on first use. */
+export type ToolChildRunner = (job: ToolChildModuleJob, signal: AbortSignal | undefined) => Promise<ToolChildRunResult>;
 
 export interface ToolDispatcherOptions {
 	runtime: ToolRuntimeKind;
 	notify?: ToolDispatchNotify;
+	childRunner?: ToolChildRunner;
 }
 
 export interface ToolDispatcher {
@@ -104,7 +124,7 @@ abstract class BaseToolDispatcher implements ToolDispatcher {
 		return call.definition.execute(call.toolCallId, call.params, call.signal, call.onUpdate, call.ctx);
 	}
 
-	private emitDispatched(info: ToolDispatchedInfo): void {
+	protected emitDispatched(info: ToolDispatchedInfo): void {
 		for (const observer of [...this.observers]) observer(info);
 	}
 }
@@ -128,12 +148,33 @@ export class InProcessToolDispatcher extends BaseToolDispatcher {
  */
 export class ChildToolDispatcher extends BaseToolDispatcher {
 	readonly kind: ToolRuntimeKind = "child";
+	readonly #childRunner: ToolChildRunner | undefined;
+
+	constructor(notify?: ToolDispatchNotify, childRunner?: ToolChildRunner) {
+		super(notify);
+		this.#childRunner = childRunner;
+	}
 
 	run<TDetails>(call: ToolDispatchCall<TDetails>): Promise<AgentToolResult<TDetails>> {
 		if (this.placementFor(call.definition) === "server") {
 			return this.runOnServer(call);
 		}
-		return Promise.resolve(unavailableToolResult(call.definition.name));
+		const job = childModuleJob(call);
+		if (job === undefined || this.#childRunner === undefined)
+			return Promise.resolve(unavailableToolResult(call.definition.name));
+		return this.#runOnChild(this.#childRunner, job, call);
+	}
+
+	async #runOnChild<TDetails>(
+		runner: ToolChildRunner,
+		job: ToolChildModuleJob,
+		call: ToolDispatchCall<TDetails>,
+	): Promise<AgentToolResult<TDetails>> {
+		const { value, pid, generation } = await runner(job, call.signal);
+		this.emitDispatched({ toolCallId: call.toolCallId, placement: "child", pid, generation });
+		if (!isToolResult<TDetails>(value))
+			throw new Error(`tool_child_invalid_result: ${job.modulePath}#${job.export} must return { content: [...] }`);
+		return value;
 	}
 
 	bashOperations(): BashOperations {
@@ -142,7 +183,27 @@ export class ChildToolDispatcher extends BaseToolDispatcher {
 }
 
 export function createToolDispatcher(options: ToolDispatcherOptions): ToolDispatcher {
-	return options.runtime === "child" ? new ChildToolDispatcher(options.notify) : new InProcessToolDispatcher();
+	return options.runtime === "child"
+		? new ChildToolDispatcher(options.notify, options.childRunner)
+		: new InProcessToolDispatcher();
+}
+
+function childModuleJob(call: {
+	readonly definition: Pick<ToolDefinition, "childModule">;
+	readonly params: unknown;
+	readonly toolCallId: string;
+	readonly sourcePath?: string;
+}): ToolChildModuleJob | undefined {
+	const childModule = call.definition.childModule;
+	if (childModule === undefined) return undefined;
+	const base = call.sourcePath === undefined ? undefined : dirname(call.sourcePath);
+	if (!isAbsolute(childModule.path) && base === undefined) return undefined;
+	const modulePath = isAbsolute(childModule.path) ? childModule.path : resolve(base ?? "", childModule.path);
+	return { modulePath, export: childModule.export, args: { params: call.params, toolCallId: call.toolCallId } };
+}
+
+function isToolResult<TDetails>(value: unknown): value is AgentToolResult<TDetails> {
+	return typeof value === "object" && value !== null && Array.isArray(Reflect.get(value, "content"));
 }
 
 export function unavailableToolResult(toolName: string): AgentToolResult<any> {

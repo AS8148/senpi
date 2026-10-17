@@ -13,14 +13,16 @@ import {
 
 const role = process.argv[2];
 const calls: string[] = [];
-if (role === "child")
-	installChildProcessModule({
-		...realCp,
-		spawnSync: (...args: Parameters<typeof realCp.spawnSync>) => {
+if (role === "child") {
+	const gated = { ...realCp };
+	Object.defineProperty(gated, "spawnSync", {
+		value: (...args: unknown[]) => {
 			calls.push("gated");
-			return realCp.spawnSync(...args);
+			return Reflect.apply(realCp.spawnSync, realCp, args);
 		},
 	});
+	installChildProcessModule(gated);
+}
 const dir = join(tmpdir(), `gip-${process.pid}`);
 mkdirSync(join(dir, "node_modules", "dep"), { recursive: true });
 writeFileSync(

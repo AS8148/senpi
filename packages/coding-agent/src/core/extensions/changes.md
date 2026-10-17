@@ -1,3 +1,23 @@
+## 2026-10-18 - ToolDefinition.childModule: a child-placed tool's file-backed body (senpi#3566)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ToolDefinition` gains `childModule?: ToolChildModule` (`{ path, export }`, new exported interface). `path` is absolute or relative to the registering extension file and must stay inside that extension's directory; `export` names a function that receives `{ params, toolCallId }` and returns a structured-cloneable tool result. Under `--tool-runtime child` a `"child"`-placed tool with a `childModule` runs that body as the tool child's `module` job; without one it still reports `tool_runtime_unavailable`. `execute` is unchanged and still runs in-process under the default runtime.
+- `packages/coding-agent/src/core/extensions/wrapper.ts`: `wrapRegisteredTool` passes `sourcePath: registeredTool.sourceInfo.path` to `dispatcher.run`, so a relative `childModule.path` resolves against the extension's directory.
+
+### Why
+
+The tool child cannot load the extension loader (it statically reaches every session writer), so a child-placed tool needs a file reference the child can import on its own. The same `{ modulePath, export, args }` job shape is what `ctx.offload` builds on.
+
+### Why an extension could not handle it
+
+Where a tool runs is decided by the session's dispatcher, and the extension's source path is known only to the loader and the wrapper.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: the `ToolDefinition` property list beside `placement`/`serverPinned`, and the new `ToolChildModule` interface just above `ToolDefinition`.
+- `packages/coding-agent/src/core/extensions/wrapper.ts`: the `dispatcher.run` call in `wrapRegisteredTool`.
+
 ## 2026-10-18 - Extension child_process resolves to a per-process module (senpi#3566)
 
 ### What changed

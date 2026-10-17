@@ -919,6 +919,12 @@ export type ToolPlacement = "server" | "child";
 /**
  * Tool definition for registerTool().
  */
+/** A tool body loaded from a file on the session's tool child (senpi#3566). */
+export interface ToolChildModule {
+	readonly path: string;
+	readonly export: string;
+}
+
 export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = unknown, TState = any> {
 	/** Tool name (used in LLM tool calls) */ name: string;
 	/** Human-readable label for UI */
@@ -1017,6 +1023,13 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 
 	/** Where this tool's work runs once the per-session tool child exists (senpi#3566). */
 	placement?: ToolPlacement;
+	/**
+	 * The file-backed body a `"child"`-placed tool runs on the session's tool child (senpi#3566). `path` is absolute or
+	 * relative to the registering extension file and must stay inside that extension's directory; `export` names a
+	 * function that receives `{ params, toolCallId }` and returns a structured-cloneable tool result. Without it a
+	 * child-placed tool reports `tool_runtime_unavailable` under `--tool-runtime child`; `execute` still runs in-process.
+	 */
+	childModule?: ToolChildModule;
 	/** Set by built-in tool factories that capture injected operations or a policy override; such a definition always executes on the session's server process, even when {@link ToolDefinition.placement} is `"child"`, and the dispatcher logs one notice per tool when it pins one. */
 	serverPinned?: boolean;
 
