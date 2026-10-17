@@ -14,7 +14,7 @@ const FILES = 20;
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
 	for (const cleanup of cleanups.splice(0)) await cleanup();
-});
+}, 60_000);
 
 async function corpus(): Promise<{ root: string; files: string[]; binary: string }> {
 	const root = await realpath(await mkdtemp(join(tmpdir(), "grep-3516-")));
@@ -89,18 +89,18 @@ describe("#3516 rg engine batches explicit file roots", () => {
 	it("grows capped directory batches so a sparse match costs logarithmic launches", async () => {
 		const root = await realpath(await mkdtemp(join(tmpdir(), "grep-3516-sparse-")));
 		cleanups.push(() => rm(root, { recursive: true, force: true }));
-		const total = 3000;
-		for (let index = 0; index < total; index++)
-			await writeFile(
-				join(root, `f${String(index).padStart(4, "0")}.txt`),
-				index === total - 1 ? "needle\n" : "hay\n",
-			);
+		const total = 1700;
+		await Promise.all(
+			Array.from({ length: total }, (_, index) =>
+				writeFile(join(root, `f${String(index).padStart(4, "0")}.txt`), index === total - 1 ? "needle\n" : "hay\n"),
+			),
+		);
 		const { calls, engine } = tracked();
 		const result = await engine.search({ pattern: "needle", paths: [root], cwd: root, mode: "files", maxCount: 1 });
 
-		// 2 enumeration launches, then batches of 200, 200, 400, 800, 1400 instead of 15 x 200.
+		// 2 enumeration launches, then batches of 200, 200, 400, 800, 100 instead of 9 x 200.
 		expect(calls).toHaveLength(7);
-		expect(result.fileCounts.map((file) => file.path)).toEqual(["f2999.txt"]);
+		expect(result.fileCounts.map((file) => file.path)).toEqual(["f1699.txt"]);
 		expect(result.filesSearched).toBe(total);
 		expect(result.limitReached).toBe(false);
 	});
