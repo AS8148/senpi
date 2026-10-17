@@ -444,6 +444,7 @@ export type ReadonlySessionManager = Pick<
 	| "getEntry"
 	| "getLabel"
 	| "getBranch"
+	| "getFullBranch"
 	| "buildContextEntries"
 	| "buildSessionContext"
 	| "buildSessionProjection"
@@ -2148,7 +2149,7 @@ export class SessionManager {
 	 * Pass undefined or empty string to clear the label.
 	 */
 	appendLabelChange(targetId: string, label: string | undefined): string {
-		if (!this.byId.has(targetId)) {
+		if (!this.byId.has(targetId) && this.getEntry(targetId) === undefined) {
 			throw new Error(`Entry ${targetId} not found`);
 		}
 		const entry: LabelEntry = {
@@ -2219,6 +2220,26 @@ export class SessionManager {
 			};
 		}
 		return materializedPath;
+	}
+
+	/**
+	 * The path from `fromId` (default: the leaf) to the root over the whole persisted history. `getBranch()`
+	 * answers a trimmed mirror from the latest compaction window (senpi#3519); readers that need every entry
+	 * of the path, such as a fork's new file or the files a session touched, read it here from the file.
+	 */
+	getFullBranch(fromId?: string): SessionEntry[] {
+		if (!this.mirrorTrimmed || !this.sessionFile) return this.getBranch(fromId);
+		const byId = new Map<string, SessionEntry>();
+		for (const entry of this.getEntries()) byId.set(entry.id, entry);
+		const path: SessionEntry[] = [];
+		const visited = new Set<string>();
+		let current = byId.get(fromId ?? this.leafId ?? "");
+		while (current && !visited.has(current.id)) {
+			visited.add(current.id);
+			path.push(current);
+			current = current.parentId ? byId.get(current.parentId) : undefined;
+		}
+		return path.reverse();
 	}
 
 	/**
@@ -2636,7 +2657,7 @@ export class SessionManager {
 	 */
 	createBranchedSession(leafId: string): string | undefined {
 		const previousSessionFile = this.sessionFile;
-		const path = this.getBranch(leafId);
+		const path = this.getFullBranch(leafId);
 		if (path.length === 0) {
 			throw new Error(`Entry ${leafId} not found`);
 		}
