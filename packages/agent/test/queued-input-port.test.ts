@@ -5,7 +5,7 @@ import {
 	type UserMessage,
 } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
-import { Agent, type AgentMessage, type StreamFn } from "../src/index.ts";
+import { Agent, type AgentMessage, type QueuedInputPort, type StreamFn } from "../src/index.ts";
 
 class MockAssistantStream extends EventStream<AssistantMessageEvent, AssistantMessage> {
 	constructor() {
@@ -62,22 +62,36 @@ function recordingStream(log: string[], onRequest?: () => void): StreamFn {
 	};
 }
 
+function loggingPort(log: string[], commit?: () => Promise<void>): QueuedInputPort {
+	return {
+		claim: async (queue, drain) => {
+			const messages = drain();
+			if (messages.length > 0) log.push(`claim:${queue}:${texts(messages).join("|")}`);
+			return messages;
+		},
+		release: async (queue, messages, restore) => {
+			log.push(`release:${queue}:${texts(messages).join("|")}`);
+			restore();
+		},
+		commitConsumption: async (queue, messages) => {
+			log.push(`commit:${queue}:${texts(messages).join("|")}`);
+			await commit?.();
+		},
+	};
+}
+
 describe("Agent queuedInputPort (senpi#3549)", () => {
 	it("commits a follow-up's consumption before the provider request that carries it", async () => {
 		const log: string[] = [];
 		const agent = new Agent({
 			streamFn: recordingStream(log),
-			queuedInputPort: {
-				commitConsumption: async (queue, messages) => {
-					log.push(`commit:${queue}:${texts(messages).join("|")}`);
-				},
-			},
+			queuedInputPort: loggingPort(log),
 		});
 		agent.followUp(user("later"));
 
 		await agent.prompt("first");
 
-		expect(log).toEqual(["request:first", "commit:followUp:later", "request:first|later"]);
+		expect(log).toEqual(["request:first", "claim:followUp:later", "commit:followUp:later", "request:first|later"]);
 	});
 
 	it("reports a steering drain as the steering queue", async () => {
@@ -87,35 +101,86 @@ describe("Agent queuedInputPort (senpi#3549)", () => {
 			streamFn: recordingStream(log, () => {
 				if (log.length === 1) agent?.steer(user("steer"));
 			}),
-			queuedInputPort: {
-				commitConsumption: async (queue, messages) => {
-					log.push(`commit:${queue}:${texts(messages).join("|")}`);
-				},
-			},
+			queuedInputPort: loggingPort(log),
 		});
 
 		await agent.prompt("first");
 
-		expect(log).toEqual(["request:first", "commit:steering:steer", "request:first|steer"]);
+		expect(log).toEqual(["request:first", "claim:steering:steer", "commit:steering:steer", "request:first|steer"]);
 	});
 
 	it("keeps a message out of every request and back in its queue when the commit rejects", async () => {
 		const log: string[] = [];
 		const agent = new Agent({
 			streamFn: recordingStream(log),
-			queuedInputPort: {
-				commitConsumption: async () => {
-					throw new Error("journal unavailable");
-				},
-			},
+			queuedInputPort: loggingPort(log, async () => {
+				throw new Error("journal unavailable");
+			}),
 		});
 		agent.followUp(user("later"));
 
 		await agent.prompt("first").catch(() => undefined);
 
-		expect(log).toEqual(["request:first"]);
+		expect(log).toEqual(["request:first", "claim:followUp:later", "commit:followUp:later", "release:followUp:later"]);
 		expect(texts(agent.state.messages)).toEqual(["first"]);
 		expect(texts(agent.peekQueuedMessages())).toEqual(["later"]);
+	});
+
+	it.each([
+		{ queue: "steering" as const, enqueue: (agent: Agent) => agent.steer(user("queued")) },
+		{ queue: "followUp" as const, enqueue: (agent: Agent) => agent.followUp(user("queued")) },
+	])("claims and commits a $queue run started from the queue before its request", async ({ queue, enqueue }) => {
+		const log: string[] = [];
+		const agent = new Agent({
+			initialState: { messages: [user("first"), assistant("done")] },
+			streamFn: recordingStream(log),
+			queuedInputPort: loggingPort(log),
+		});
+		enqueue(agent);
+
+		await agent.continue();
+
+		expect(log).toEqual([`claim:${queue}:queued`, `commit:${queue}:queued`, "request:first|queued"]);
+	});
+
+	it("starts no request and keeps the input queued when a queue-started run cannot commit", async () => {
+		const log: string[] = [];
+		const agent = new Agent({
+			initialState: { messages: [user("first"), assistant("done")] },
+			streamFn: recordingStream(log),
+			queuedInputPort: loggingPort(log, async () => {
+				throw new Error("journal unavailable");
+			}),
+		});
+		agent.followUp(user("queued"));
+
+		await agent.continue();
+
+		expect(agent.state.errorMessage).toContain("journal unavailable");
+		expect(log).toEqual(["claim:followUp:queued", "commit:followUp:queued", "release:followUp:queued"]);
+		expect(texts(agent.peekQueuedMessages())).toEqual(["queued"]);
+	});
+
+	it("claims and commits the queue a finished run drains after agent_end", async () => {
+		const log: string[] = [];
+		const agent = new Agent({ streamFn: recordingStream(log), queuedInputPort: loggingPort(log) });
+		let queuedAtEnd = false;
+		agent.subscribe((event) => {
+			if (event.type !== "agent_end" || queuedAtEnd) return;
+			queuedAtEnd = true;
+			log.push("agent_end");
+			agent.followUp(user("after"));
+		});
+
+		await agent.prompt("first");
+
+		expect(log).toEqual([
+			"request:first",
+			"agent_end",
+			"claim:followUp:after",
+			"commit:followUp:after",
+			"request:first|after",
+		]);
 	});
 
 	it("leaves the standalone queue behavior unchanged without a port", async () => {

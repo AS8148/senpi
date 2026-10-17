@@ -6,7 +6,7 @@
 
 ### Added
 
-- `AgentOptions.queuedInputPort`: the owner of queued input commits its consumption before the loop puts it into a provider request; a rejected commit keeps it queued ([#3549](https://github.com/code-yeongyu/senpi/issues/3549)).
+- `AgentOptions.queuedInputPort`: the owner of queued input claims every drain, releases every restore, and commits consumption before any queued message reaches a provider request; a rejected commit keeps it queued ([#3549](https://github.com/code-yeongyu/senpi/issues/3549)).
 
 ### Changed
 

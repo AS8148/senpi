@@ -4,7 +4,7 @@
 
 - `packages/agent/src/types.ts`: `AgentLoopConfig.commitQueuedConsumption(queue, messages)`, awaited with the drained queued messages before any of them enters the context.
 - `packages/agent/src/agent-loop.ts`: `runLoop` remembers which queue the pending messages were drained from and awaits `commitQueuedConsumption` before inserting them; a rejection restores them to that queue and fails the attempt, so no provider request carries them.
-- `packages/agent/src/agent.ts`: an optional `AgentOptions.queuedInputPort` (`commitConsumption`) is passed to the loop. Without it the standalone queues behave as before.
+- `packages/agent/src/agent.ts`: an optional `AgentOptions.queuedInputPort` with `claim` (the native drain runs under the owner's gate), `release` (the native restore, likewise) and `commitConsumption`. The loop's queue polls and restores go through it, and so do the runs started from a queue (`continue()` after an assistant message, `continueWithQueuedMessages()`, the drain after `agent_end`): `takeQueuedMessages` claims, commits, and releases on a failed commit. Without a port every queue path behaves as before.
 
 ### Why
 
@@ -17,7 +17,8 @@
 ### Expected merge conflict zones
 
 - MEDIUM: `packages/agent/src/agent-loop.ts`, the queue drains in `runLoop` (each now goes through `drainSteering` / `drainFollowUp`) and the insertion before the next request.
-- LOW: `packages/agent/src/agent.ts` `AgentOptions` and `createLoopConfig`; `packages/agent/src/types.ts` `AgentLoopConfig`.
+- MEDIUM: `packages/agent/src/agent.ts` `continue`, `continueWithQueuedMessages`, `runQueuedMessagesAfterAgentEnd` (their drains now go through `runQueuedMessages` / `takeQueuedMessages`) and `createLoopConfig`.
+- LOW: `packages/agent/src/agent.ts` `AgentOptions`; `packages/agent/src/types.ts` `AgentLoopConfig`.
 
 ## 2026-10-17 - A caller's plain abort reason is carried as the turn's message (senpi#3510)
 
