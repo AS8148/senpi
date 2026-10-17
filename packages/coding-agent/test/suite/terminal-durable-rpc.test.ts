@@ -85,7 +85,10 @@ describe("checkpointed-rpc durability (senpi#3226)", () => {
 
 	it("loses an entry that is not an rpc watch instead of arming it", async () => {
 		const handler = createCheckpointedRpcRestoreHandler({
-			registry: { pause: (ids: readonly string[]) => [...ids], registerRpc: async () => ({ id: "x", monitorId: "x", rows: [] }) },
+			registry: {
+				pause: (ids: readonly string[]) => [...ids],
+				registerRpc: async () => ({ id: "x", monitorId: "x", rows: [] }),
+			},
 			sessionId: () => undefined,
 		});
 

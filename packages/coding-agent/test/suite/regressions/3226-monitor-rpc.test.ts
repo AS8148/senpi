@@ -14,9 +14,10 @@ import { effectHostWorld, openSession, type RawClient } from "../rpc-effect-host
 const MODEL = { provider: "fauxeffect", modelId: "faux-1" };
 const PARENT = "parent-durable-3226";
 const cleanups: Array<() => unknown> = [];
+// Stopping real hosts is bounded like the tests themselves, not by the 10 s hook default.
 afterEach(async () => {
 	for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
-});
+}, 120_000);
 
 /** A registry whose emitted lines a test can await (bounded). */
 function lineSink() {

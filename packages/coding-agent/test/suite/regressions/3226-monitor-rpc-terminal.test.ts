@@ -17,9 +17,10 @@ import { createHarness } from "../harness.ts";
 
 const cleanups: Array<() => unknown> = [];
 beforeAll(() => initTheme("dark"));
+// Stopping real hosts is bounded like the tests themselves, not by the 10 s hook default.
 afterEach(async () => {
 	for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
-});
+}, 120_000);
 
 async function terminal() {
 	let socket: string | undefined;
