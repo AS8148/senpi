@@ -6,6 +6,7 @@
  */
 import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
 import type { AgentSession } from "../../core/agent-session.ts";
+import { clientFacingIdentity } from "./client-admission-record.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
 import { ClientMessageEvents } from "./client-message-events.ts";
 import type { RpcCommandInvocationEvent, RpcSkillInvocationEvent } from "./rpc-types.ts";
@@ -26,6 +27,11 @@ export function subscribeSessionRecords(
 			correlatedEvents.accept(event satisfies RpcCommandInvocationEvent);
 			return;
 		}
+		if (event.type === "queue_update") {
+			// Same route as every other event; only the minted ids are taken out of the projection.
+			correlatedEvents.accept({ ...event, ordered: event.ordered.map(clientFacingIdentity) });
+			return;
+		}
 		if (event.type === "thinking_level_changed" || event.type === "model_changed") {
 			// Core emits the effective level only; the selection provenance lives beside it
 			// on the session and is what distinguishes an explicit choice from a default.
@@ -40,7 +46,19 @@ export function subscribeSessionRecords(
 			// it for `get_state` because the getter clears once the turn settles.
 			const abortSource = session.currentAbortSource;
 			if (abortSource !== undefined) onAbortSource(abortSource);
-			correlatedEvents.accept(abortSource === undefined ? event : { ...event, aborted: true, abortSource });
+			const deadline = session.currentDeadline;
+			const abortedBy = abortSource === undefined ? undefined : ClientAdmissions.forSession(session).abortedBy;
+			correlatedEvents.accept({
+				...event,
+				...(abortSource === undefined ? {} : { aborted: true, abortSource }),
+				...(abortedBy === undefined ? {} : { abortedBy }),
+				...(deadline === undefined ? {} : { deadline }),
+			});
+			return;
+		}
+		if (event.type === "session_abort") {
+			const abortedBy = ClientAdmissions.forSession(session).abortedBy;
+			correlatedEvents.accept(abortedBy === undefined ? event : { ...event, abortedBy });
 			return;
 		}
 		correlatedEvents.accept(event);

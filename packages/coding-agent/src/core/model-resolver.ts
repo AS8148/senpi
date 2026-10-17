@@ -43,8 +43,8 @@ export const defaultModelPerProvider: Record<string, string> = {
 	"alibaba-token-plan": "qwen3.7-max",
 	"amazon-bedrock": "us.anthropic.claude-opus-4-6-v1",
 	"ant-ling": "Ring-2.6-1T",
-	"anthropic-subscription": "claude-opus-4-8",
-	anthropic: "claude-opus-4-8",
+	"anthropic-subscription": "claude-opus-5-5",
+	anthropic: "claude-opus-5-5",
 	bai: "gpt-5.6-sol",
 	openai: "gpt-6.1-sol",
 	"azure-openai-responses": "gpt-5.4",
@@ -87,10 +87,10 @@ export const defaultModelPerProvider: Record<string, string> = {
 	"qwen-token-plan": "qwen3.7-max",
 	"qwen-token-plan-cn": "qwen3.7-max",
 	"qwen-token-plan-individual": "qwen3.8-max",
-	xiaomi: "mimo-v2.5-pro",
-	"xiaomi-token-plan-cn": "mimo-v2.5-pro",
-	"xiaomi-token-plan-ams": "mimo-v2.5-pro",
-	"xiaomi-token-plan-sgp": "mimo-v2.5-pro",
+	xiaomi: "mimo-v2.6-pro",
+	"xiaomi-token-plan-cn": "mimo-v2.6-pro",
+	"xiaomi-token-plan-ams": "mimo-v2.6-pro",
+	"xiaomi-token-plan-sgp": "mimo-v2.6-pro",
 };
 
 export interface ScopedModel {
