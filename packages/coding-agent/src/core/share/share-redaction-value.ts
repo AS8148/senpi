@@ -1,3 +1,4 @@
+import { redactAcrossBoundary } from "./share-entropy.ts";
 import {
 	count,
 	redactShareText,
@@ -61,7 +62,11 @@ export function redactShareValue<T>(value: T, context: ShareRedactionContext, ta
 
 function redactNode(value: unknown, context: ShareRedactionContext, tally: ShareRedactionTally): unknown {
 	if (typeof value === "string") return redactShareText(value, context, tally);
-	if (Array.isArray(value)) return value.map((item) => redactNode(item, context, tally));
+	if (Array.isArray(value))
+		return joinAdjacentText(
+			value.map((item) => redactNode(item, context, tally)),
+			tally,
+		);
 	if (value === null || typeof value !== "object") return value;
 	const record = value as Record<string, unknown>;
 	if (isImageBlock(record)) {
@@ -76,4 +81,30 @@ function redactNode(value: unknown, context: ShareRedactionContext, tally: Share
 				: redactNode(child, context, tally);
 	}
 	return out;
+}
+
+function textOf(item: unknown): string | undefined {
+	if (typeof item === "string") return item;
+	if (item === null || typeof item !== "object" || Reflect.get(item, "type") !== "text") return undefined;
+	const text = Reflect.get(item, "text");
+	return typeof text === "string" ? text : undefined;
+}
+
+function withText(item: unknown, text: string): unknown {
+	return typeof item === "string" ? text : { ...(item as Record<string, unknown>), text };
+}
+
+/** A token split across two adjacent text blocks or strings is one value; both halves go. */
+function joinAdjacentText(items: unknown[], tally: ShareRedactionTally): unknown[] {
+	for (let index = 0; index + 1 < items.length; index++) {
+		const left = textOf(items[index]);
+		const right = textOf(items[index + 1]);
+		if (left === undefined || right === undefined) continue;
+		const [nextLeft, nextRight] = redactAcrossBoundary(left, right, () => count(tally, "credential"));
+		if (nextLeft !== left) {
+			items[index] = withText(items[index], nextLeft);
+			items[index + 1] = withText(items[index + 1], nextRight);
+		}
+	}
+	return items;
 }

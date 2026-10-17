@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { redactShareText, type ShareRedactionContext } from "../../../src/core/share/share-redaction.ts";
+import { redactShareValue } from "../../../src/core/share/share-redaction-value.ts";
 
 // senpi#3524 review round 2: generated secrets that match no provider shape (standard base64 from
 // `openssl rand -base64`, AWS secret keys, Azure account keys, and tokens wrapped across a line break)
@@ -71,6 +72,39 @@ const SHAPES: ReadonlyArray<readonly [string, (random: () => number) => { text: 
 			return { text: `${head}\n${tail}\nnext line`, secrets: [head, tail] };
 		},
 	],
+	[
+		"a 32-character base62 token",
+		(random) => {
+			const value = draw(random, BASE62, 32);
+			return { text: `key ${value} ok`, secrets: [value] };
+		},
+	],
+	[
+		"a 16-byte base64 value",
+		(random) => {
+			const value = randomBase64(random, 16);
+			return { text: `secret ${value} ok`, secrets: [value] };
+		},
+	],
+	...(
+		[
+			["an escaped \\n inside JSON text", "\\n"],
+			["an escaped \\r\\n inside JSON text", "\\r\\n"],
+			["a backslash line continuation", "\\\n"],
+			["a string-concat seam", '" +\n  "'],
+			["an array seam", '",\n "'],
+		] as const
+	).map(
+		([label, gap]) =>
+			[
+				`a base62 token split by ${label}`,
+				(random: () => number) => {
+					const head = draw(random, BASE62, 24);
+					const tail = draw(random, BASE62, 24);
+					return { text: `{"output":"token is ${head}${gap}${tail} done"}`, secrets: [head, tail] };
+				},
+			] as const,
+	),
 ];
 
 describe("generated secrets with no provider shape (senpi#3524)", () => {
@@ -81,6 +115,22 @@ describe("generated secrets with no provider shape (senpi#3524)", () => {
 			const { text, secrets } = make(random);
 			const out = redact(text);
 			for (const secret of secrets) if (out.includes(secret)) leaked.push(secret);
+		}
+		expect(leaked).toEqual([]);
+	});
+
+	it("redacts a token split across two structured text blocks", () => {
+		const random = mulberry32(99);
+		const leaked: string[] = [];
+		for (let sample = 0; sample < SAMPLES; sample++) {
+			const head = draw(random, BASE62, 24);
+			const tail = draw(random, BASE62, 24);
+			const blocks = [
+				{ type: "text", text: `token is ${head}` },
+				{ type: "text", text: `${tail} done` },
+			];
+			const out = JSON.stringify(redactShareValue(blocks, context, new Map()));
+			for (const secret of [head, tail]) if (out.includes(secret)) leaked.push(secret);
 		}
 		expect(leaked).toEqual([]);
 	});
@@ -115,6 +165,14 @@ describe("generated secrets with no provider shape (senpi#3524)", () => {
 		["an auth mode", "AUTH_MODE=oauth"],
 		["a public key id", "NEXT_PUBLIC_KEY_ID: 12345678"],
 		["a null comparison", "if (session_id == null) return;"],
+		[
+			"help text with a slash list",
+			"  PI_TELEMETRY  - set to 1/true/yes\nPI_RULES_DISABLED  - Disable built-in rules",
+		],
+		["a slash list before an identifier", "use VISUAL/EDITOR\nshellPath?: string"],
+		["a format list before a word", "stored as JSONL/SQLite\nbindings are kept"],
+		["a camelCase identifier with short pieces", "const handleUtf8ToBase64ConversionForV2Api = 1;"],
+		["two words split across an escaped newline", '{"output":"configuration\\ninitialization"}'],
 	])("keeps %s", (_label, input) => {
 		expect(redact(input)).toBe(input);
 	});

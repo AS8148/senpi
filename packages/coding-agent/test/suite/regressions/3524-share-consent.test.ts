@@ -87,7 +87,7 @@ describe("/share consent and redaction (senpi#3524)", () => {
 		};
 	}
 
-	it("uploads only redacted bytes after the user chooses Upload", async () => {
+	it("leaves tool outputs out by default and uploads only after the user chooses Upload", async () => {
 		const harness = await sessionWithSecretToolResult();
 		const uploads: string[] = [];
 		const outcome = await runShare(dependencies(harness, ["upload"], uploads));
@@ -100,11 +100,34 @@ describe("/share consent and redaction (senpi#3524)", () => {
 		expect(uploads).toHaveLength(1);
 		const uploaded = uploads[0] ?? "";
 		const payload = sessionPayload(uploaded);
-		expect(payload).toContain("OPENAI_API_KEY=<redacted>");
+		expect(payload).toContain("[output omitted: cat_env]");
+		expect(payload).not.toContain("OPENAI_API_KEY");
+		expect(payload).toContain('"name":"cat_env"');
 		for (const leaked of [SECRET, HOME, "jane doe", "janedoe@example.org"]) {
 			expect(payload).not.toContain(leaked);
 			expect(uploaded).not.toContain(leaked);
 		}
+	});
+
+	it("includes redacted tool outputs only after the user asks for them, re-showing the preview", async () => {
+		const harness = await sessionWithSecretToolResult();
+		const uploads: string[] = [];
+		const previews: Array<{ preview: string; omittedOutputs: number }> = [];
+		const decisions: ShareDecision[] = ["include-outputs", "upload"];
+		await runShare({
+			...dependencies(harness, [], uploads),
+			ask: async (preview, { omittedOutputs }) => {
+				previews.push({ preview, omittedOutputs });
+				return decisions.shift() ?? "cancel";
+			},
+		});
+
+		expect(previews.map((entry) => entry.omittedOutputs)).toEqual([1, 0]);
+		expect(previews[0]?.preview).toContain("Tool outputs are left out: 1");
+		expect(previews[1]?.preview).toContain("Tool outputs are included");
+		const payload = sessionPayload(uploads[0] ?? "");
+		expect(payload).toContain("OPENAI_API_KEY=<redacted>");
+		expect(payload).not.toContain(SECRET);
 	});
 
 	it("uploads nothing when the user cancels", async () => {

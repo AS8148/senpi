@@ -9651,9 +9651,16 @@ export class InteractiveMode {
 			checkGh: checkGhAuth,
 			render: (sanitize) => this.session.renderToHtml({ themeName: theme.name, sanitize }),
 			context: currentShareRedactionContext(),
-			ask: async (preview) => {
-				const choice = await this.showExtensionSelector(preview, [SHARE_UPLOAD, SHARE_REVIEW, SHARE_CANCEL]);
-				return choice === SHARE_UPLOAD ? "upload" : choice === SHARE_REVIEW ? "review" : "cancel";
+			ask: async (preview, { omittedOutputs }) => {
+				const include = `Include tool outputs (${omittedOutputs})`;
+				const options =
+					omittedOutputs > 0
+						? [SHARE_UPLOAD, include, SHARE_REVIEW, SHARE_CANCEL]
+						: [SHARE_UPLOAD, SHARE_REVIEW, SHARE_CANCEL];
+				const choice = await this.showExtensionSelector(preview, options);
+				if (choice === SHARE_UPLOAD) return "upload";
+				if (choice === include) return "include-outputs";
+				return choice === SHARE_REVIEW ? "review" : "cancel";
 			},
 			showReviewCopy: (reviewPath) =>
 				this.showStatus(`Exact file to be uploaded: ${reviewPath}\nIt is deleted when this share finishes.`),

@@ -2,10 +2,16 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { type OutputOmissions, omitToolOutputs } from "./share-projection.ts";
 import type { ShareRedactionCategory, ShareRedactionContext, ShareRedactionTally } from "./share-redaction.ts";
 import { redactShareValue } from "./share-redaction-value.ts";
 
-export type ShareDecision = "upload" | "review" | "cancel";
+export type ShareDecision = "upload" | "include-outputs" | "review" | "cancel";
+
+export interface ShareAskOptions {
+	/** Tool outputs are left out of this preview and can be added: offer the include choice with this count. */
+	readonly omittedOutputs: number;
+}
 
 export interface ShareUploadResult {
 	readonly code: number | null;
@@ -19,7 +25,7 @@ export interface ShareDependencies {
 	readonly checkGh: () => "ok" | "missing" | "logged-out";
 	readonly render: (sanitize: <T>(value: T) => T) => string;
 	readonly context: ShareRedactionContext;
-	readonly ask: (preview: string) => Promise<ShareDecision>;
+	readonly ask: (preview: string, options: ShareAskOptions) => Promise<ShareDecision>;
 	readonly showReviewCopy: (path: string) => void;
 	readonly upload: (html: string) => Promise<ShareUploadResult>;
 	readonly viewerBase: string | undefined;
@@ -38,12 +44,22 @@ export interface PreparedShare {
 	readonly html: string;
 	readonly sha256: string;
 	readonly tally: ShareRedactionTally;
+	readonly includesOutputs: boolean;
+	readonly omittedOutputs: number;
 }
 
-export function prepareShare(render: ShareDependencies["render"], context: ShareRedactionContext): PreparedShare {
+export function prepareShare(
+	render: ShareDependencies["render"],
+	context: ShareRedactionContext,
+	includeOutputs = false,
+): PreparedShare {
 	const tally: ShareRedactionTally = new Map();
-	const html = render((value) => redactShareValue(value, context, tally));
-	return { html, sha256: createHash("sha256").update(html).digest("hex"), tally };
+	const omissions: OutputOmissions = { count: 0 };
+	const html = render((value) =>
+		redactShareValue(includeOutputs ? value : omitToolOutputs(value, omissions), context, tally),
+	);
+	const sha256 = createHash("sha256").update(html).digest("hex");
+	return { html, sha256, tally, includesOutputs: includeOutputs, omittedOutputs: omissions.count };
 }
 
 const CATEGORY_ORDER: ReadonlyArray<ShareRedactionCategory> = [
@@ -74,7 +90,12 @@ export function describeShare(prepared: PreparedShare, viewerBase: string | unde
 	return [
 		"Share this session as a secret GitHub gist?",
 		"",
-		`Uploads: the whole conversation, tool calls and results, system prompt and tool list, as one HTML file (${kilobytes} KB, sha256 ${prepared.sha256.slice(0, 12)}).`,
+		prepared.includesOutputs
+			? `Uploads: the conversation, tool calls AND their outputs, system prompt and tool list, as one HTML file (${kilobytes} KB, sha256 ${prepared.sha256.slice(0, 12)}).`
+			: `Uploads: your messages and the replies, tool names and arguments, system prompt and tool list, as one HTML file (${kilobytes} KB, sha256 ${prepared.sha256.slice(0, 12)}).`,
+		prepared.includesOutputs
+			? "Tool outputs are included (file contents, command output, extension messages)."
+			: `Tool outputs are left out: ${prepared.omittedOutputs} replaced by "[output omitted]".`,
 		`Removed first: ${describeTally(prepared.tally)}. Images are always left out.`,
 		"Who can read it: anyone with the link. A secret gist is unlisted, not private, and stays until you delete it on GitHub.",
 		viewer,
@@ -92,7 +113,8 @@ function parseGistUrl(stdout: string): string | undefined {
 
 /**
  * `/share` end to end (#3524): nothing is uploaded until the user has seen a
- * description of the exact redacted bytes and chosen Upload. A review copy is
+ * description of the exact redacted bytes and chosen Upload. Tool outputs stay
+ * out unless the user includes them, which re-renders and re-asks. A review copy is
  * written only on request, into a private temporary directory that is removed
  * on every exit path.
  */
@@ -112,12 +134,20 @@ export async function runShare(deps: ShareDependencies): Promise<ShareOutcome> {
 
 	let reviewDir: string | undefined;
 	try {
-		const preview = describeShare(prepared, deps.viewerBase);
 		for (;;) {
-			const decision = await deps.ask(preview);
+			const omittedOutputs = prepared.includesOutputs ? 0 : prepared.omittedOutputs;
+			const decision = await deps.ask(describeShare(prepared, deps.viewerBase), { omittedOutputs });
 			if (decision === "cancel") return { kind: "cancelled" };
-
 			if (decision === "upload") break;
+			if (decision === "include-outputs") {
+				if (omittedOutputs === 0) continue;
+				try {
+					prepared = prepareShare(deps.render, deps.context, true);
+				} catch (error: unknown) {
+					return { kind: "export-failed", message: error instanceof Error ? error.message : String(error) };
+				}
+				continue;
+			}
 			reviewDir ??= mkdtempSync(join(tmpdir(), "senpi-share-"));
 			const reviewPath = join(reviewDir, "session.html");
 			writeFileSync(reviewPath, prepared.html, { encoding: "utf8", mode: 0o600, flag: "w" });
