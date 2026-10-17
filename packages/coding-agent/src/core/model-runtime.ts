@@ -864,6 +864,19 @@ export class ModelRuntime implements Models {
 		return this.credentials.list(options);
 	}
 
+	/**
+	 * Whether `getProviderAuthStatus` resolves from the provider's own sign-in check (`type: "oauth"`):
+	 * the same branch, so a runtime key, a stored credential or a models.json/extension key never
+	 * counts, even while a provisional `oauth` entry sits in the snapshot during registration (#3537).
+	 */
+	isNonStoredSignIn(providerId: string): boolean {
+		if (this.credentials.hasRuntimeApiKey(providerId) || this.snapshot.storedProviders.has(providerId)) return false;
+		if (configuredRequestAuthStatus(this.config.getProvider(providerId), this.extensionProviders.get(providerId))) {
+			return false;
+		}
+		return this.snapshot.auth.get(providerId)?.type === "oauth";
+	}
+
 	getProviderAuthStatus(providerId: string): AuthStatus {
 		if (this.credentials.hasRuntimeApiKey(providerId)) return { configured: true, source: "runtime" };
 		if (this.snapshot.storedProviders.has(providerId)) return { configured: true, source: "stored" };

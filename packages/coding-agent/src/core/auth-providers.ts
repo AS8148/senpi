@@ -122,7 +122,7 @@ export function authMethodStatus(
 		const storedType = modelRegistry.authStorage.get(info.id)?.type;
 		return storedType === undefined || storedType === info.authType ? status : { configured: false };
 	}
-	if (status.source === "environment" && modelRegistry.isProviderAuthOAuth(info.id)) {
+	if (status.source === "environment" && modelRegistry.isNonStoredSignIn(info.id)) {
 		return info.authType === "oauth" ? status : { configured: false };
 	}
 	return info.authType === "api_key" || !providerHasApiKeyRow ? status : { configured: false };

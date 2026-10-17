@@ -3,7 +3,8 @@
 ### What changed
 
 - `packages/coding-agent/src/core/auth-providers.ts`: `authMethodStatus` reports an `environment` credential on the provider's `oauth` row, and `{configured: false}` on its `api_key` row, when the provider's own auth check resolved it as a sign-in (`AuthCheck.type === "oauth"`). Every other non-stored source stays on the `api_key` row as before: an env `*_API_KEY`, models.json, a runtime `--api-key` or the fallback.
-- `packages/coding-agent/src/core/model-registry.ts`: `isProviderAuthOAuth(provider)`, a facade over `ModelRuntime.isUsingOAuth`.
+- `packages/coding-agent/src/core/model-runtime.ts`: `isNonStoredSignIn(providerId)` follows the same branch as `getProviderAuthStatus`. A runtime key, a stored credential or a configured models.json/extension key never counts, so a configured key cannot be paired with a provisional `oauth` snapshot entry during registration.
+- `packages/coding-agent/src/core/model-registry.ts`: `isNonStoredSignIn(provider)`, a facade over the runtime method. Unlike `isUsingOAuth`, it deliberately excludes stored credentials.
 
 ### Why
 
@@ -16,6 +17,7 @@ Row status is computed by core `get_auth_providers`; an extension supplies only 
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/core/auth-providers.ts`: `authMethodStatus` and its doc comment.
+- `packages/coding-agent/src/core/model-runtime.ts`: the method above `getProviderAuthStatus`.
 - `packages/coding-agent/src/core/model-registry.ts`: the method above `isUsingOAuth`.
 
 ## 2026-10-16 - The fallback circuit takes one step per open episode and only reroutes sessions it concerns (senpi#3467)
