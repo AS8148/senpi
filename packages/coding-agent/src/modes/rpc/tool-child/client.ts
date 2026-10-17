@@ -33,7 +33,8 @@ export class ToolChildError extends Error {
 export interface ToolChildClientOptions {
 	readonly dir: string;
 	readonly cwd: string;
-	readonly env?: NodeJS.ProcessEnv;
+	/** A function is read at every spawn, so each generation sees the current value. */
+	readonly env?: NodeJS.ProcessEnv | (() => NodeJS.ProcessEnv);
 	readonly command?: ToolChildCommand;
 	readonly readyMs?: number;
 	readonly shutdownMs?: number;
@@ -100,7 +101,7 @@ export class ToolChildClient {
 		const child = spawnToolChild({
 			generation,
 			channelEnv: listener.env,
-			env: this.#options.env ?? process.env,
+			env: typeof this.#options.env === "function" ? this.#options.env() : (this.#options.env ?? process.env),
 			command: this.#options.command ?? toolChildCommand(),
 			cwd: this.#options.cwd,
 		});
