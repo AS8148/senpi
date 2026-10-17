@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -18,8 +18,8 @@ describe.skipIf(process.platform === "win32")("createInternalSocketPath with a l
 	});
 
 	it("keeps the internal socket within the Unix socket path limit and binds it", async () => {
-		const longTmp = join("/tmp", `senpi-3487-${"x".repeat(100)}`);
-		mkdirSync(longTmp, { recursive: true });
+		// Unique per run: never a directory another suite (or this job's own TMPDIR) owns.
+		const longTmp = mkdtempSync(join("/tmp", `senpi-3487-${"x".repeat(100)}-`));
 		created.push(longTmp);
 		vi.stubEnv("TMPDIR", longTmp);
 
@@ -37,8 +37,7 @@ describe.skipIf(process.platform === "win32")("createInternalSocketPath with a l
 	});
 
 	it("still uses TMPDIR when it is short enough", async () => {
-		const shortTmp = join("/tmp", "s3487");
-		mkdirSync(shortTmp, { recursive: true });
+		const shortTmp = mkdtempSync(join("/tmp", "s3487-"));
 		created.push(shortTmp);
 		vi.stubEnv("TMPDIR", shortTmp);
 
@@ -49,12 +48,10 @@ describe.skipIf(process.platform === "win32")("createInternalSocketPath with a l
 	});
 
 	it("reaps a dead owner's leftover hop from the /tmp fallback root", async () => {
-		const longTmp = join("/tmp", `senpi-3487-${"y".repeat(100)}`);
-		mkdirSync(longTmp, { recursive: true });
+		const longTmp = mkdtempSync(join("/tmp", `senpi-3487-${"y".repeat(100)}-`));
 		created.push(longTmp);
 		vi.stubEnv("TMPDIR", longTmp);
-		const leftover = join("/tmp", "senpi-rpc-host-internal-3487dead");
-		mkdirSync(leftover, { recursive: true, mode: 0o700 });
+		const leftover = mkdtempSync(join("/tmp", "senpi-rpc-host-internal-3487"));
 		created.push(leftover);
 		writeFileSync(
 			join(leftover, ".owner"),
