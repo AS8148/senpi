@@ -3,7 +3,7 @@
 ### What changed
 
 - `packages/coding-agent/src/modes/rpc/connection-handler.ts`: binding a connection to a session releases the settled session memory once the bind's own readers (effect ledger seal, admissions, deferred refresh) are done, so a session opened over RPC idles without the full-history view its open read.
-- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `get_entries` and `get_tree` call `session.releaseSettledSessionMemory()` after building their answer, so an idle session drops the full-history view the read materialized; the response keeps its own reference until it is written.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `get_entries` and `get_tree` drop the full-history view their read built on a non-streaming session with a trimmed mirror (`releaseFullHistoryView`); only the view goes, so the answer keeps its entries and nothing in it is tokenized before it is written.
 
 ### Why
 

@@ -297,6 +297,16 @@ function findToolResultMedia(
 }
 
 /**
+ * Drops the full-history view a history read built on an idle session whose mirror is trimmed, which
+ * would otherwise stay held until the session's next turn settles (senpi#3519). Only the view goes:
+ * the answer being built keeps its own reference, and nothing it holds is tokenized in place.
+ */
+function releaseFullHistoryView(session: AgentSession): void {
+	if (session.isStreaming || !session.sessionManager.holdsMaterializedHistory()) return;
+	session.sessionManager.dropMaterializedCaches();
+}
+
+/**
  * Create a per-connection RPC handler bound to one runtime host and one sink.
  *
  * This performs the initial `rebindSession()` and returns synchronously with a
@@ -1620,9 +1630,7 @@ export function createRpcConnectionHandler(
 					entries = entries.slice(sinceIndex + 1);
 				}
 				const described = entries.map(describeUsageLimitEntry);
-				// An idle session would otherwise keep the full history this read materialized until its next
-				// turn settles (senpi#3519); the response holds its own reference until it is written.
-				session.releaseSettledSessionMemory();
+				releaseFullHistoryView(session);
 				return success(id, "get_entries", { entries: described, leafId: sessionManager.getLeafId() });
 			}
 
@@ -1635,7 +1643,7 @@ export function createRpcConnectionHandler(
 					node.entry = describeUsageLimitEntry(node.entry);
 					for (const child of node.children) nodes.push(child);
 				}
-				session.releaseSettledSessionMemory();
+				releaseFullHistoryView(session);
 				return success(id, "get_tree", { tree, leafId: sessionManager.getLeafId() });
 			}
 
