@@ -1,5 +1,6 @@
-import { open, readFile } from "node:fs/promises";
+import { open } from "node:fs/promises";
 import { dirname } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import {
 	PENDING_INPUT_TRANSITION,
 	type PendingInputJournal,
@@ -102,19 +103,39 @@ export class SessionPendingInputJournal implements PendingInputJournal {
  * its prefix, and `appendCustomEntry` writes `type` and `customType` first, so the marker survives a tear.
  */
 async function corruptTransitionLine(file: string): Promise<number | undefined> {
-	const segments = (await readFile(file, "utf8")).split("\n");
-	// After the last newline: "" for a complete file, or the torn tail of a crash.
-	segments.pop();
-	for (let index = 0; index < segments.length; index++) {
-		const line = segments[index] ?? "";
-		if (!line.includes(PENDING_INPUT_TRANSITION)) continue;
-		try {
-			JSON.parse(line);
-		} catch {
-			return index + 1;
+	const handle = await open(file, "r");
+	try {
+		const decoder = new StringDecoder("utf8");
+		const buffer = Buffer.allocUnsafe(1024 * 1024);
+		let pending = "";
+		let lineNumber = 0;
+		while (true) {
+			const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+			if (bytesRead === 0) break;
+			pending += decoder.write(buffer.subarray(0, bytesRead));
+			let newline = pending.indexOf("\n");
+			while (newline !== -1) {
+				lineNumber += 1;
+				if (isCorruptTransition(pending.slice(0, newline))) return lineNumber;
+				pending = pending.slice(newline + 1);
+				newline = pending.indexOf("\n");
+			}
 		}
+		// What remains after the last newline is the torn tail of a crash, or nothing: never a committed line.
+		return undefined;
+	} finally {
+		await handle.close();
 	}
-	return undefined;
+}
+
+function isCorruptTransition(line: string): boolean {
+	if (!line.includes(PENDING_INPUT_TRANSITION)) return false;
+	try {
+		JSON.parse(line);
+		return false;
+	} catch {
+		return true;
+	}
 }
 
 export class PendingInputJournalCorruptError extends Error {
