@@ -5,6 +5,7 @@
  * server is the single writer of every session file.
  */
 import { connectChannel, type ToolChildChannel } from "./channel.ts";
+import { LaunchGate } from "./launch-gate.ts";
 import type { ToolChildMessageOf } from "./protocol.ts";
 
 export const TOOL_CHILD_GENERATION_ENV = "SENPI_TOOL_CHILD_GENERATION";
@@ -14,6 +15,7 @@ export interface ToolChildJobContext {
 	readonly jobId: string;
 	readonly signal: AbortSignal;
 	readonly channel: ToolChildChannel;
+	readonly gate: LaunchGate;
 }
 
 export type ToolChildJobHandler = (args: unknown, context: ToolChildJobContext) => Promise<unknown>;
@@ -43,13 +45,15 @@ export async function runToolChild(options: ToolChildEntryOptions): Promise<void
 	}
 	const channel = await connectChannel(env);
 	const running = new Map<string, AbortController>();
+	const gate = new LaunchGate(channel);
 	channel.onMessage((message) => {
+		if (gate.handle(message)) return;
 		switch (message.type) {
 			case "ping":
 				channel.send({ type: "pong", seq: message.seq });
 				return;
 			case "job":
-				void runJob(channel, options.handlers, running, message);
+				void runJob(channel, gate, options.handlers, running, message);
 				return;
 			case "cancel":
 				running.get(message.jobId)?.abort();
@@ -69,6 +73,7 @@ export async function runToolChild(options: ToolChildEntryOptions): Promise<void
 
 async function runJob(
 	channel: ToolChildChannel,
+	gate: LaunchGate,
 	handlers: Readonly<Record<string, ToolChildJobHandler>>,
 	running: Map<string, AbortController>,
 	job: ToolChildMessageOf<"job">,
@@ -90,7 +95,7 @@ async function runJob(
 	const controller = new AbortController();
 	running.set(job.jobId, controller);
 	try {
-		const value = await handler(job.args, { jobId: job.jobId, signal: controller.signal, channel });
+		const value = await handler(job.args, { jobId: job.jobId, signal: controller.signal, channel, gate });
 		channel.send({ type: "result", jobId: job.jobId, value: value ?? null });
 	} catch (error) {
 		const code =

@@ -8,6 +8,7 @@
 import type { ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { openChannelListener, type ToolChildChannel } from "./channel.ts";
+import { createGenerationBarrier, type GenerationBarrier } from "./client-barrier.ts";
 import { TOOL_CHILD_PROTOCOL_VERSION } from "./entry.ts";
 import { spawnToolChild, type ToolChildCommand, toolChildCommand } from "./launch.ts";
 import type { ToolChildMessage } from "./protocol.ts";
@@ -51,6 +52,8 @@ interface Live {
 	readonly exited: Promise<void>;
 	readonly pending: Map<string, Pending>;
 	readonly pongs: Map<number, () => void>;
+	readonly barrier: GenerationBarrier;
+	ended?: Promise<void>;
 }
 
 export class ToolChildClient {
@@ -59,6 +62,7 @@ export class ToolChildClient {
 	#nextJob = 0;
 	#nextPing = 0;
 	#live: Live | undefined;
+	#lastEnded: Promise<void> = Promise.resolve();
 
 	readonly #options: ToolChildClientOptions;
 
@@ -72,6 +76,11 @@ export class ToolChildClient {
 
 	get generation(): number {
 		return this.#generation;
+	}
+
+	/** Resolves once the current or last generation's teardown (group sweep, ledger removal) finished. */
+	ended(): Promise<void> {
+		return this.#lastEnded;
 	}
 
 	get pid(): number | undefined {
@@ -120,7 +129,21 @@ export class ToolChildClient {
 			this.#state = "dead";
 			throw new ToolChildError("tool_child_bootstrap_failed", "version_mismatch");
 		}
-		const live: Live = { generation, child, channel, exited, pending: new Map(), pongs: new Map() };
+		const pending = new Map<string, Pending>();
+		const barrier = createGenerationBarrier({
+			dir: this.#options.dir,
+			generation,
+			channel,
+			onViolation: (violation) => {
+				const failure = new ToolChildError(
+					"tool_child_barrier_violation",
+					`${violation.launchId}: ${violation.reason}`,
+				);
+				if (violation.jobId !== undefined) settle({ pending }, violation.jobId, (p) => p.reject(failure));
+				this.#kill(child);
+			},
+		});
+		const live: Live = { generation, child, channel, exited, pending, pongs: new Map(), barrier };
 		this.#live = live;
 		this.#state = "live";
 		channel.onMessage((frame) => this.#onFrame(live, frame));
@@ -161,10 +184,12 @@ export class ToolChildClient {
 		]);
 		if (!graceful) this.#kill(live.child);
 		await live.exited;
+		await live.ended;
 	}
 
 	#onFrame(live: Live, frame: ToolChildMessage): void {
 		if (this.#live !== live) return;
+		if (live.barrier.handle(frame)) return;
 		switch (frame.type) {
 			case "result":
 				settle(live, frame.jobId, (p) => p.resolve(frame.value));
@@ -199,6 +224,8 @@ export class ToolChildClient {
 			this.#state = "dead";
 		}
 		this.#options.onStatus?.({ state: "exited", generation: live.generation, pid: live.child.pid ?? -1 });
+		live.ended = live.barrier.teardown(undefined).then(() => undefined);
+		this.#lastEnded = live.ended;
 	}
 
 	#kill(child: ChildProcess): void {
@@ -213,7 +240,7 @@ export class ToolChildClient {
 	}
 }
 
-function settle(live: Live, jobId: string, apply: (pending: Pending) => void): void {
+function settle(live: Pick<Live, "pending">, jobId: string, apply: (pending: Pending) => void): void {
 	const pending = live.pending.get(jobId);
 	if (pending === undefined) return;
 	live.pending.delete(jobId);

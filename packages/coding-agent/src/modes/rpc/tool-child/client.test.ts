@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { ToolChildClient, ToolChildError, type ToolChildStatus } from "./client.ts";
+import { defaultGroupProbes } from "./group-ownership.ts";
 
 const fixture = resolve(import.meta.dirname, "../../../../test/fixtures/tool-child-fixture.ts");
 const resolver = pathToFileURL(resolve(import.meta.dirname, "../../../experimental/source-resolver.ts")).href;
@@ -64,6 +65,20 @@ describe("ToolChildClient", () => {
 		expect(instance.generation).toBe(2);
 		expect(await instance.run("echo", 2)).toBe(2);
 	}, 30_000);
+
+	it.skipIf(process.platform === "win32")(
+		"sweeps a launched group when the child dies before it finished",
+		async () => {
+			const { instance } = await client();
+			await instance.start();
+			const { pid } = (await instance.run("spawnSleep", null)) as { pid: number };
+			expect(defaultGroupProbes.groupHasMembers(pid)).toBe(true);
+			await expect(instance.run("exit", null)).rejects.toMatchObject({ code: "tool_child_exited" });
+			await instance.ended();
+			expect(defaultGroupProbes.groupHasMembers(pid)).toBe(false);
+		},
+		30_000,
+	);
 
 	it("cancels a running job without killing the child", async () => {
 		const { instance } = await client();
