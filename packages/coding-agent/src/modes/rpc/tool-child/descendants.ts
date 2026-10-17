@@ -1,0 +1,103 @@
+/**
+ * The server-owned record of every process a tool child is about to start (senpi#3566, plan todo 4).
+ *
+ * An entry is appended and fsynced before the server sends `launch_ack`, so a containment handle is on disk before the
+ * command can run. That is what lets the server clean up descendants even when the child that started them is gone.
+ */
+import { appendFile, mkdir, open, readFile, rm } from "node:fs/promises";
+import { dirname } from "node:path";
+import type { LaunchApi, LaunchContainment, LaunchLifetime, LaunchOrigin } from "./protocol.ts";
+
+export interface DescendantEntry {
+	readonly launchId: string;
+	readonly generation: number;
+	readonly origin: LaunchOrigin;
+	readonly api: LaunchApi;
+	readonly containment: LaunchContainment;
+	readonly lifetime: LaunchLifetime;
+	readonly pid?: number;
+	readonly pgid?: number;
+	readonly leaderStart?: string;
+	readonly atMs: number;
+}
+
+export class DescendantsLedger {
+	readonly #path: string;
+	readonly #entries = new Map<string, DescendantEntry>();
+
+	constructor(path: string) {
+		this.#path = path;
+	}
+
+	get path(): string {
+		return this.#path;
+	}
+
+	entries(): DescendantEntry[] {
+		return [...this.#entries.values()];
+	}
+
+	async append(entry: DescendantEntry): Promise<void> {
+		await mkdir(dirname(this.#path), { recursive: true, mode: 0o700 });
+		const handle = await open(this.#path, "a", 0o600);
+		try {
+			await handle.write(`${JSON.stringify(entry)}\n`);
+			await handle.datasync();
+		} finally {
+			await handle.close();
+		}
+		this.#entries.set(entry.launchId, entry);
+	}
+
+	/** Entries a previous server instance left behind (crash recovery). A torn final line is ignored. */
+	static async readPersisted(path: string): Promise<DescendantEntry[]> {
+		let text: string;
+		try {
+			text = await readFile(path, "utf8");
+		} catch {
+			return [];
+		}
+		const entries: DescendantEntry[] = [];
+		for (const line of text.split("\n")) {
+			if (line.trim() === "") continue;
+			try {
+				entries.push(JSON.parse(line) as DescendantEntry);
+			} catch {
+				// A torn last line from a crash mid-append; earlier lines were fsynced whole.
+			}
+		}
+		return entries;
+	}
+
+	async remove(): Promise<void> {
+		this.#entries.clear();
+		await rm(this.#path, { force: true });
+	}
+}
+
+/** Append-only record of every barrier frame, for diagnostics and the QA driver. Not fsynced. */
+export class LaunchLog {
+	readonly #path: string;
+	#chain: Promise<void> = Promise.resolve();
+
+	constructor(path: string) {
+		this.#path = path;
+	}
+
+	get path(): string {
+		return this.#path;
+	}
+
+	settled(): Promise<void> {
+		return this.#chain;
+	}
+
+	record(record: Readonly<Record<string, unknown>>): Promise<void> {
+		const line = `${JSON.stringify({ atMs: Date.now(), ...record })}\n`;
+		this.#chain = this.#chain.then(async () => {
+			await mkdir(dirname(this.#path), { recursive: true, mode: 0o700 });
+			await appendFile(this.#path, line, { mode: 0o600 });
+		});
+		return this.#chain;
+	}
+}
