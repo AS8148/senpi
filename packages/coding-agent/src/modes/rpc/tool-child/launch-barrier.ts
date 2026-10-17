@@ -68,7 +68,7 @@ export async function launchOwnGroup(launch: OwnGroupLaunch): Promise<GatedChild
 			...(signal === null ? {} : { signal }),
 		}),
 	);
-	await Promise.race([gated.acked, exited]);
+	if (!launch.gate.skipsAckWait) await Promise.race([gated.acked, exited]);
 	if (shim.exitCode === null && shim.signalCode === null) {
 		launch.gate.invokeNow(gated.launchId);
 		// After the go-line, an 'ignore' launch sees EOF; a 'pipe' launch keeps the stream for the caller.
@@ -85,7 +85,7 @@ export async function gateInherited<T>(
 	call: () => T,
 ): Promise<{ readonly launchId: string; readonly value: T }> {
 	const gated = gate.request({ ...request, containment: "inherited", lifetime: "owned" });
-	await gated.acked;
+	if (!gate.skipsAckWait) await gated.acked;
 	gate.invokeNow(gated.launchId);
 	return { launchId: gated.launchId, value: call() };
 }

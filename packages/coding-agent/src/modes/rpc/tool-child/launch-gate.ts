@@ -7,6 +7,7 @@
 import { BarrierClock } from "./barrier-clock.ts";
 import type { ToolChildChannel } from "./channel.ts";
 import type { LaunchApi, LaunchContainment, LaunchLifetime, LaunchOrigin, ToolChildMessage } from "./protocol.ts";
+import { readTestControls, type TestControls } from "./test-controls.ts";
 
 export interface LaunchRequest {
 	readonly jobId: string;
@@ -37,12 +38,23 @@ export class LaunchGateError extends Error {
 export class LaunchGate {
 	readonly clock: BarrierClock;
 	readonly #channel: ToolChildChannel;
-	readonly #slots = new Map<string, { slot: number; ack: () => void }>();
+	readonly #slots = new Map<string, { slot: number; ack: () => void; lifetime: LaunchLifetime }>();
+	readonly #controls: TestControls;
 	#next = 0;
 
-	constructor(channel: ToolChildChannel, clock: BarrierClock = BarrierClock.create()) {
+	constructor(
+		channel: ToolChildChannel,
+		clock: BarrierClock = BarrierClock.create(),
+		env: NodeJS.ProcessEnv = process.env,
+	) {
 		this.#channel = channel;
 		this.clock = clock;
+		this.#controls = readTestControls(env);
+	}
+
+	/** Test-only `SKIP_ACK_WAIT` mutation: launch paths invoke without awaiting the ack. */
+	get skipsAckWait(): boolean {
+		return this.#controls.enabled("SKIP_ACK_WAIT");
 	}
 
 	request(request: LaunchRequest): GatedLaunch {
@@ -54,8 +66,9 @@ export class LaunchGate {
 		const acked = new Promise<void>((resolve) => {
 			ack = resolve;
 		});
-		this.#slots.set(launchId, { slot, ack });
+		this.#slots.set(launchId, { slot, ack, lifetime: request.lifetime });
 		this.#channel.send({ type: "launch", launchId, ...request });
+		if (this.#controls.enabled("STOP_AFTER_SPAWN")) process.kill(process.pid, "SIGSTOP");
 		return { launchId, slot, acked };
 	}
 
@@ -92,8 +105,15 @@ export class LaunchGate {
 		const entry = this.#slots.get(launchId);
 		if (entry === undefined) return;
 		const state = this.clock.read(entry.slot);
-		if (state.invokeTick === null) return;
-		this.#channel.send({ type: "launch_proof", launchId, ackTick: state.ackTick, invokeTick: state.invokeTick });
+		const invokeTick = state.invokeTick;
+		if (invokeTick === null) return;
+		const send = () => this.#channel.send({ type: "launch_proof", launchId, ackTick: state.ackTick, invokeTick });
+		const hold = this.#controls.value("HOLD_LAUNCH_PROOF");
+		if (hold !== undefined && (hold !== "detached" || entry.lifetime === "detached")) {
+			void this.#controls.released(`release-proof-${launchId}`).then(send);
+			return;
+		}
+		send();
 	}
 
 	done(launchId: string, outcome: { readonly exitCode?: number; readonly signal?: string }): void {

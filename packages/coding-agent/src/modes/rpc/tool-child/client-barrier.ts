@@ -4,6 +4,7 @@ import { DescendantsLedger, LaunchLog } from "./descendants.ts";
 import { defaultGroupProbes, type LedgeredGroup, type SweepOutcome, sweepGroups } from "./group-ownership.ts";
 import { type BarrierViolation, LaunchEnforcer } from "./launch-enforcer.ts";
 import type { ToolChildMessage } from "./protocol.ts";
+import { readTestControls } from "./test-controls.ts";
 
 export interface GenerationBarrier {
 	readonly ledger: DescendantsLedger;
@@ -19,6 +20,12 @@ export function createGenerationBarrier(options: {
 	readonly onViolation: (violation: BarrierViolation) => void;
 	readonly holdAck?: (launchId: string) => Promise<void>;
 }): GenerationBarrier {
+	const controls = readTestControls(process.env);
+	const holdAck =
+		options.holdAck ??
+		(controls.enabled("HOLD_LAUNCH_ACK")
+			? (launchId: string) => controls.released(`release-${launchId}`)
+			: undefined);
 	const ledger = new DescendantsLedger(join(options.dir, `g${options.generation}`, "descendants.ledger"));
 	const log = new LaunchLog(join(options.dir, "launches.jsonl"));
 	const enforcer = new LaunchEnforcer({
@@ -28,7 +35,7 @@ export function createGenerationBarrier(options: {
 		sendAck: (launchId) => options.channel.send({ type: "launch_ack", launchId }),
 		onViolation: options.onViolation,
 		leaderStart: (pid) => defaultGroupProbes.startOf(pid),
-		...(options.holdAck === undefined ? {} : { holdAck: options.holdAck }),
+		...(holdAck === undefined ? {} : { holdAck }),
 	});
 	return {
 		ledger,
@@ -36,6 +43,10 @@ export function createGenerationBarrier(options: {
 		handle(frame) {
 			switch (frame.type) {
 				case "launch":
+					if (controls.enabled("DROP_CONTROL_BEFORE_ACK")) {
+						options.channel.close();
+						return true;
+					}
 					void enforcer.onLaunch(frame);
 					return true;
 				case "launch_proof":

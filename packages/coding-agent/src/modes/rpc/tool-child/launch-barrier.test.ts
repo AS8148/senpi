@@ -1,7 +1,7 @@
 // senpi#3566 todo 4: no command a tool child launches runs before the server recorded its containment (security
 // contract). The child gate and the server enforcer talk over a real channel; commands are real processes.
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -19,7 +19,7 @@ afterEach(async () => {
 	for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 });
 
-async function rig() {
+async function rig(gateEnv: NodeJS.ProcessEnv = {}) {
 	const root = await mkdtemp(join(tmpdir(), "tlb-"));
 	roots.push(root);
 	const listener = await openChannelListener({ dir: join(root, "ch"), generation: 1 });
@@ -32,6 +32,10 @@ async function rig() {
 	const doneSeen = new Map<string, () => void>();
 	const waitDone = (launchId: string) => new Promise<void>((resolve) => doneSeen.set(launchId, resolve));
 	const violations: BarrierViolation[] = [];
+	let violationSeen: ((violation: BarrierViolation) => void) | undefined;
+	const firstViolation = new Promise<BarrierViolation>((resolve) => {
+		violationSeen = resolve;
+	});
 	const ledger = new DescendantsLedger(join(root, "descendants.ledger"));
 	const log = new LaunchLog(join(root, "launches.jsonl"));
 	const enforcer = new LaunchEnforcer({
@@ -39,7 +43,10 @@ async function rig() {
 		ledger,
 		log,
 		sendAck: (launchId) => serverSide.send({ type: "launch_ack", launchId }),
-		onViolation: (violation) => violations.push(violation),
+		onViolation: (violation) => {
+			violations.push(violation);
+			violationSeen?.(violation);
+		},
 		leaderStart: (pid) => defaultGroupProbes.startOf(pid),
 		holdAck: (launchId) =>
 			new Promise<void>((resolve) => {
@@ -58,7 +65,7 @@ async function rig() {
 			doneSeen.get(message.launchId)?.();
 		}
 	});
-	const gate = new LaunchGate(childSide);
+	const gate = new LaunchGate(childSide, undefined, gateEnv);
 	childSide.onMessage((message) => {
 		gate.handle(message);
 	});
@@ -74,7 +81,15 @@ async function rig() {
 			else heldWaiters.push({ count, resolve });
 		});
 	const release = (launchId: string) => holds.get(launchId)?.();
-	return { root, gate, ledger, log, violations, waitHeld, waitDone, release, held };
+	const proofs: string[] = [];
+	const proofWaiters = new Map<string, () => void>();
+	const proofSeen = (launchId: string) => new Promise<void>((resolve) => proofWaiters.set(launchId, resolve));
+	serverSide.onMessage((message) => {
+		if (message.type !== "launch_proof") return;
+		proofs.push(message.launchId);
+		proofWaiters.get(message.launchId)?.();
+	});
+	return { root, gate, ledger, log, violations, firstViolation, waitHeld, waitDone, release, held, proofs, proofSeen };
 }
 
 describe.skipIf(process.platform === "win32")("POSIX launch barrier", () => {
@@ -142,6 +157,42 @@ describe.skipIf(process.platform === "win32")("POSIX launch barrier", () => {
 			{ graceMs: 3_000, killWaitMs: 3_000 },
 		);
 		expect(outcome).toMatchObject({ verdict: "sweep", survived: false });
+	}, 30_000);
+
+	it("detects SKIP_ACK_WAIT: the call runs while the ack is held and its proof carries no ackTick", async () => {
+		const { gate, waitHeld, held, firstViolation } = await rig({ SENPI_TOOL_CHILD_TEST_SKIP_ACK_WAIT: "1" });
+		let calls = 0;
+		const gated = await gateInherited(gate, { jobId: "j1", origin: "tool", api: "cp.execFileSync" }, () => ++calls);
+		await waitHeld(1);
+		expect(gated.value).toBe(1);
+		const violation = await firstViolation;
+		expect(violation).toMatchObject({ launchId: [...held][0], reason: "proof_unacked" });
+	}, 30_000);
+
+	it("holds a detached launch's proof until its control file, and never an owned one's", async () => {
+		const root = await mkdtemp(join(tmpdir(), "tlb-ctl-"));
+		roots.push(root);
+		const env = { SENPI_TOOL_CHILD_TEST_HOLD_LAUNCH_PROOF: "detached", SENPI_TOOL_CHILD_TEST_CONTROL_DIR: root };
+		const { gate, waitHeld, release, held, proofs, proofSeen, waitDone } = await rig(env);
+		const launching = launchOwnGroup({
+			gate,
+			jobId: "j1",
+			origin: "tool",
+			api: "cp.spawn",
+			program: "/bin/sh",
+			args: ["-c", "exit 0"],
+			lifetime: "detached",
+		});
+		await waitHeld(1);
+		const launchId = [...held][0] ?? "";
+		const done = waitDone(launchId);
+		release(launchId);
+		await (await launching).exited;
+		await done;
+		expect(proofs).toEqual([]);
+		const proven = proofSeen(launchId);
+		await writeFile(join(root, `release-proof-${launchId}`), "");
+		await proven;
 	}, 30_000);
 
 	it("gates an inherited call: no invocation while held, exactly one after", async () => {
