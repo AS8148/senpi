@@ -181,6 +181,33 @@ describe("AgentSession pending inputs", () => {
 		expect(getUserTexts(harness)).toEqual(["start", "v2"]);
 	});
 
+	it("records a cleared identified input as removed, so it is neither delivered nor restored", async () => {
+		const { harness, release, toolStarted } = await runWithHeldTool();
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("handled"),
+		]);
+		const run = harness.session.prompt("start");
+		await toolStarted;
+		await harness.session.followUp("drop on stop", undefined, { clientMessageId: "c-1" });
+
+		const cleared = harness.session.clearQueue();
+		await harness.session.whenQueueClearRecorded();
+		release();
+		await run;
+		await harness.session.restoreQueuedInput({
+			clientMessageId: "c-1",
+			text: "drop on stop",
+			mode: "followUp",
+			enqueueOrder: 1,
+		});
+
+		expect(cleared.ordered.map((input) => input.text)).toEqual(["drop on stop"]);
+		expect(phases(harness, "c-1")).toEqual(["queued", "removed"]);
+		expect(getUserTexts(harness)).toEqual(["start"]);
+		expect(harness.session.getQueuedInputs()).toEqual([]);
+	});
+
 	it("keeps input without a client id out of the journal", async () => {
 		const { harness, release, toolStarted } = await runWithHeldTool();
 		harness.setResponses([

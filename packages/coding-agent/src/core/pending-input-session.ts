@@ -157,6 +157,21 @@ export class SessionPendingInputs {
 	}
 
 	/**
+	 * Records an explicit clear (Stop, `clear_queue`, unload with clearQueue) of identified inputs that just left the
+	 * native queue: each still-queued one is removed by `stop`, so a reopen never queues it again.
+	 */
+	async recordCleared(clientMessageIds: readonly string[]): Promise<void> {
+		if (this.storeOpening === undefined || clientMessageIds.length === 0) return;
+		const store = await this.storeOpening;
+		await store.transaction(async (tx) => {
+			for (const clientMessageId of clientMessageIds) {
+				if (tx.current(clientMessageId)?.phase !== "queued") continue;
+				await tx.apply(clientMessageId, { type: "cancel", cause: "stop", consumerFenced: true });
+			}
+		});
+	}
+
+	/**
 	 * Pending inputs (queued, sending, failed) and the outcome of each known id, consistent through
 	 * `throughCursor`: apply it, then only updates with a later cursor. Absence from `inputs` is never an outcome.
 	 */

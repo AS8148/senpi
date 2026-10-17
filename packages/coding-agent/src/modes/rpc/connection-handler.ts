@@ -1088,6 +1088,7 @@ export function createRpcConnectionHandler(
 			case "clear_queue": {
 				ClientAdmissions.clearQueuedFor(session);
 				const cleared = session.clearQueue({ abortWillFollow: command.abortWillFollow ?? false });
+				await session.whenQueueClearRecorded();
 				return success(id, "clear_queue", {
 					steering: cleared.steering,
 					followUp: cleared.followUp,

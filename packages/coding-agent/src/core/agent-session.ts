@@ -1192,6 +1192,7 @@ export class AgentSession {
 	private _nextQueuedId = 0;
 	/** Identified queued input (with a client id) in durable custody; see pending-input-session.ts (senpi#3549). */
 	private readonly _pendingInputs: SessionPendingInputs;
+	private _queueClearRecorded: Promise<void> = Promise.resolve();
 	/** The exact message object queued for each `queuedId`, so removal and edits hit the native queue by identity. */
 	private readonly _queuedMessages = new Map<string, AgentMessage>();
 	/** Recently delivered `queuedId`s (bounded), so a late dequeue answers `already_delivered`, not `not_found`. */
@@ -6452,6 +6453,16 @@ export class AgentSession {
 		this._followUpMessages = [];
 		this._queuedInputOrder = [];
 		this._queuedMessages.clear();
+		const recorded = this._pendingInputs.recordCleared(
+			ordered.flatMap((input) => (input.clientMessageId === undefined ? [] : [input.clientMessageId])),
+		);
+		// A caller that acknowledges the clear awaits `recorded` and sees a failure; this logs it when nobody does.
+		recorded.catch((error: unknown) => {
+			this._sessionLogger.warn("pending_input_clear_unrecorded", {
+				error: error instanceof Error ? error.message : String(error),
+			});
+		});
+		this._queueClearRecorded = recorded;
 		this._postCompactionDeferredSteeringMessages = [];
 		this._postCompactionDeferredFollowUpMessages = [];
 		this.agent.clearAllQueues();
@@ -6463,6 +6474,14 @@ export class AgentSession {
 			enumerable: false,
 		});
 		return cleared;
+	}
+
+	/**
+	 * Settles once the last `clearQueue` is recorded in the pending-input journal. `clearQueue` stays synchronous;
+	 * a caller that acknowledges the clear (RPC `clear_queue`) awaits this first so its answer is durable.
+	 */
+	whenQueueClearRecorded(): Promise<void> {
+		return this._queueClearRecorded;
 	}
 
 	/** Number of pending messages (includes both steering and follow-up) */
