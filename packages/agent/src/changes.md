@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/agent/src/agent-loop.ts`: `abortError` keeps a non-empty string reason (`controller.abort("user stop")`) as the error message instead of replacing it with "Request was aborted". An `Error` reason is kept as before; anything else still gets the generic text.
+- `packages/agent/src/agent-loop.ts`: `abortError` keeps the caller's own words as the error message: a non-empty string reason (`controller.abort("user stop")`) or an object's non-empty `message`, capped at 500 characters with an ellipsis. An `Error` reason is kept as before (uncapped); a blank, empty, or any other reason still gets "Request was aborted".
 
 ### Why
 

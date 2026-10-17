@@ -281,6 +281,76 @@ describe("the start bound covers the work before the provider stream (senpi#3471
 		expect(assistant?.errorMessage).toBe("user stop");
 	});
 
+	it.each([
+		["a plain string", "user stop", "user stop"],
+		["an Error", new Error("Stopped by the user"), "Stopped by the user"],
+		["an Error with a long message, kept whole as before", new Error("e".repeat(600)), "e".repeat(600)],
+		["an object with a message", { message: "stopped from the client" }, "stopped from the client"],
+		["undefined (a bare abort)", undefined, "This operation was aborted"],
+		["a number", 42, "Request was aborted"],
+		["an object without a message", { code: 1 }, "Request was aborted"],
+		["an empty string", "", "Request was aborted"],
+		["a whitespace-only string", "   ", "Request was aborted"],
+	] as const)(
+		"keeps the caller's reason for %s on a caller-aborted turn (#3510)",
+		async (_shape, reason, expected) => {
+			// given
+			const controller = new AbortController();
+			const asked = Promise.withResolvers<void>();
+			const config: AgentLoopConfig = {
+				model: createModel(),
+				convertToLlm: identityConverter,
+				streamStartTimeoutMs: 40,
+				timeoutMs: 10_000,
+				getApiKey: () => {
+					asked.resolve();
+					return never<string>();
+				},
+			};
+			const turn = settledTurn(
+				agentLoop([userMessage("Hello")], context(), config, controller.signal, () => new AssistantEventStream()),
+			);
+
+			// when
+			await asked.promise;
+			if (reason === undefined) controller.abort();
+			else controller.abort(reason);
+
+			// then
+			const assistant = assistantOf(await turn);
+			expect(assistant?.stopReason).toBe("aborted");
+			expect(assistant?.errorMessage).toBe(expected);
+		},
+	);
+
+	it("bounds a long string abort reason in the message (#3510)", async () => {
+		// given
+		const controller = new AbortController();
+		const asked = Promise.withResolvers<void>();
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			streamStartTimeoutMs: 40,
+			timeoutMs: 10_000,
+			getApiKey: () => {
+				asked.resolve();
+				return never<string>();
+			},
+		};
+		const turn = settledTurn(
+			agentLoop([userMessage("Hello")], context(), config, controller.signal, () => new AssistantEventStream()),
+		);
+
+		// when
+		await asked.promise;
+		controller.abort("x".repeat(5000));
+
+		// then
+		const message = assistantOf(await turn)?.errorMessage ?? "";
+		expect(message.length).toBe(501);
+		expect(message.endsWith("\u2026")).toBe(true);
+	});
+
 	it("keeps the step's own error on a caller-aborted turn that fails for another reason (#3510)", async () => {
 		// given: the key lookup is running when the caller aborts, then fails on its own
 		const controller = new AbortController();

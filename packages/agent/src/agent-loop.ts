@@ -828,11 +828,24 @@ type AssistantEventReader = {
 	dispose(): void;
 };
 
+const MAX_ABORT_REASON_CHARS = 500;
+
 function abortError(reason: unknown): Error {
 	if (reason instanceof Error) return reason;
-	// A caller that aborts with a plain reason (`controller.abort("user stop")`) gets that text back (#3510).
-	if (typeof reason === "string" && reason.trim() !== "") return new Error(reason);
-	return new Error("Request was aborted");
+	// A caller's own words are its abort reason: a plain string, or an object carrying a `message` (#3510).
+	const text = abortReasonText(reason);
+	if (text === undefined) return new Error("Request was aborted");
+	return new Error(text.length > MAX_ABORT_REASON_CHARS ? `${text.slice(0, MAX_ABORT_REASON_CHARS)}…` : text);
+}
+
+function abortReasonText(reason: unknown): string | undefined {
+	const text =
+		typeof reason === "string"
+			? reason
+			: typeof reason === "object" && reason !== null && "message" in reason && typeof reason.message === "string"
+				? reason.message
+				: undefined;
+	return text !== undefined && text.trim() !== "" ? text : undefined;
 }
 
 function closeAssistantIterator(iterator: AsyncIterator<AssistantMessageEvent>): void {
