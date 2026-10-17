@@ -1,3 +1,21 @@
+## 2026-10-18 - The runtime factory threads --tool-runtime into every session it creates (senpi#3566)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `createCliRuntimeFactory` destructures `toolRuntime` from its `CliRuntimeConfiguration` and forwards it to `createAgentSessionFromServices`, so the single-session, interactive, and multi-session paths (which all build sessions through this factory, worker isolates included via their replayed configuration) hand each `AgentSession` its tool runtime instead of re-reading the env.
+
+### Why
+
+The tool dispatcher is per-session state constructed from the once-per-process resolution todo 1 added; a session or worker must never re-derive it.
+
+### Why an extension could not handle it
+
+The runtime factory and the session constructor run before extensions load.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: the `createCliRuntimeFactory` destructure and the `createAgentSessionFromServices` call.
+
 ## 2026-10-18 - The host resolves and advertises its tool runtime (senpi#3566)
 
 ### What changed

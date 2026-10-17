@@ -1,3 +1,23 @@
+## 2026-10-18 - ToolDefinition placement metadata and dispatcher-routed extension tools (senpi#3566)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ToolDefinition` gains `placement?: ToolPlacement` (`"server" | "child"`, default server; a child-placed tool under `--tool-runtime child` fails with `tool_runtime_unavailable` until the tool child lands, never silently running in-process) and `serverPinned?: boolean` (set by built-in tool factories whose definition captures injected `operations` or a filesystem-policy override; the dispatcher pins such tools to the server even when `placement` is `"child"` and logs one notice per tool).
+- `packages/coding-agent/src/core/extensions/wrapper.ts`: `wrapRegisteredTool`/`wrapRegisteredTools` take an optional `ToolDispatcher` and route execution through `dispatcher.run({ definition, toolCallId, params, signal, onUpdate, ctx })` with the runner-built context; without a dispatcher the call is unchanged. The active-tool diff (`addedToolNames`) still merges after execution in the wrapper.
+
+### Why
+
+The per-session tool dispatcher (senpi#3566) needs every registered tool call - builtin, extension, and SDK - to cross one seam, and extension tools need an opt-in to run in the session's tool child once it exists.
+
+### Why an extension could not handle it
+
+The wrapper adapts extension tools into core `AgentTool`s and the dispatcher is session-owned runtime state.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: the `ToolDefinition` property list around `namespace`/`annotations` and the `execute` signature.
+- `packages/coding-agent/src/core/extensions/wrapper.ts`: `wrapRegisteredTool`'s execute override.
+
 ## 2026-10-16 - ProviderConfig declares ambient api-key auth (senpi#2327)
 
 ### What changed

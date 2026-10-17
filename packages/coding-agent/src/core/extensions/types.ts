@@ -914,12 +914,13 @@ export interface ToolLoadoutChanges {
 	hiddenDeclarations?: readonly string[];
 }
 
+export type ToolPlacement = "server" | "child";
+
 /**
  * Tool definition for registerTool().
  */
 export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = unknown, TState = any> {
-	/** Tool name (used in LLM tool calls) */
-	name: string;
+	/** Tool name (used in LLM tool calls) */ name: string;
 	/** Human-readable label for UI */
 	label: string;
 	/** Description for LLM */
@@ -1013,6 +1014,11 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	 * If omitted, the default execution mode applies.
 	 */
 	executionMode?: ToolExecutionMode;
+
+	/** Where this tool's work runs once the per-session tool child exists (senpi#3566). */
+	placement?: ToolPlacement;
+	/** Set by built-in tool factories that capture injected operations or a policy override; such a definition always executes on the session's server process, even when {@link ToolDefinition.placement} is `"child"`, and the dispatcher logs one notice per tool when it pins one. */
+	serverPinned?: boolean;
 
 	/** Execute the tool. */
 	execute(

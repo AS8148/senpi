@@ -13,7 +13,6 @@ import { type ImageContent, modelsAreEqual } from "@earendil-works/pi-ai";
 import { setCapabilityOverrides } from "@earendil-works/pi-tui";
 import chalk from "chalk";
 import { type Args, type Mode, normalizeSessionName, parseArgs, printHelp, resolveSessionRuntime } from "./cli/args.ts";
-import { resolveToolRuntime, type ToolRuntimeKind } from "./cli/tool-runtime.ts";
 import {
 	type AuthCheckResult,
 	checkProviderAuth,
@@ -55,6 +54,7 @@ import {
 	shouldShowStartupLoadingIndicator,
 } from "./cli/startup-loading-indicator.ts";
 import { shouldRunFirstTimeSetup, showFirstTimeSetup, showStartupSelector } from "./cli/startup-ui.ts";
+import { resolveToolRuntime, type ToolRuntimeKind } from "./cli/tool-runtime.ts";
 import {
 	APP_NAME,
 	DISPLAY_VERSION,
@@ -848,7 +848,7 @@ export function createCliRuntimeFactory(
 		modelRuntime?: ModelRuntime;
 	} = {},
 ): PreparableRuntimeFactory {
-	const { parsed, cwd, agentDir, appMode } = configuration;
+	const { parsed, cwd, agentDir, appMode, toolRuntime } = configuration;
 	const extensionFactories = local.extensionFactories ?? builtInExtensions;
 	const startupSettingsManager = local.startupSettingsManager ?? SettingsManager.create(cwd, agentDir);
 	const startupLoadingIndicator =
@@ -1077,6 +1077,7 @@ export function createCliRuntimeFactory(
 			),
 			promptSurface: launchProfile?.promptSurface,
 			browserEngine: launchProfile?.browserEngine,
+			...(toolRuntime !== undefined ? { toolRuntime } : {}),
 		});
 		markSwitch("createSession");
 		const cliThinkingOverride = runtimeParsed.thinking !== undefined || cliThinkingFromModel;

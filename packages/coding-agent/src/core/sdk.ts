@@ -62,6 +62,8 @@ import { getBranchSelection, isVirtualModel } from "./virtual-models.ts";
 // provider-agnostic and does not import pi-ai/compat itself.
 setDefaultStreamFn(streamSimple);
 
+import type { ToolRuntimeKind } from "../cli/tool-runtime.ts";
+
 export interface CreateAgentSessionOptions {
 	/** Working directory for project-local discovery. Default: process.cwd() */
 	cwd?: string;
@@ -142,6 +144,8 @@ export interface CreateAgentSessionOptions {
 	promptSurface?: PromptSurface;
 	/** Browser engine this session's skills drive (`open_session.browserEngine`); omitted means none was chosen. */
 	browserEngine?: BrowserEngine;
+	/** Tool runtime for this session (senpi#3566); absent means `in-process`. */
+	toolRuntime?: ToolRuntimeKind;
 }
 
 /** Result from createAgentSession */
@@ -595,6 +599,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		autoTitleSessions: options.autoTitleSessions,
 		promptSurface: options.promptSurface,
 		browserEngine: options.browserEngine,
+		...(options.toolRuntime !== undefined ? { toolRuntime: options.toolRuntime } : {}),
 	});
 	const liveContextTokens = hasExistingSession
 		? existingSession.messages.reduce((total, message) => total + estimateTokens(message), 0)

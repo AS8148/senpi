@@ -79,6 +79,7 @@ export function createFindToolDefinition(
 	const customOps = options?.operations;
 	const filesystemPolicy = options?.filesystemPolicy;
 	return {
+		...(options?.operations !== undefined || filesystemPolicy !== undefined ? { serverPinned: true } : {}),
 		name: "find",
 		label: "find",
 		description: `Search for files by glob pattern. Returns matching file paths relative to the search directory. Respects .gitignore. Output is truncated to ${DEFAULT_LIMIT} results or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first).`,

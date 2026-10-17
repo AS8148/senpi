@@ -4,84 +4,30 @@ import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
-import type { ExtensionFactory, ToolDefinition } from "../../src/core/sdk.ts";
-import type { ToolDispatchedInfo } from "../../src/core/tool-dispatch/tool-dispatcher.ts";
-import {
-	createToolDispatcher,
-	InProcessToolDispatcher,
-} from "../../src/core/tool-dispatch/tool-dispatcher.ts";
-import { createBashToolDefinition, type BashOperations } from "../../src/core/tools/bash.ts";
-import { createReadToolDefinition } from "../../src/core/tools/read.ts";
 import { DefaultResourceLoader } from "../../src/core/resource-loader.ts";
+import type { ExtensionFactory, ToolDefinition } from "../../src/core/sdk.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
-import { createHarness, getToolResult, type Harness } from "./harness.ts";
-
-function textOf(result: { content: ReadonlyArray<{ type: string; text?: string }> }): string {
-	return result.content
-		.filter((part): part is { type: "text"; text: string } => part.type === "text")
-		.map((part) => part.text)
-		.join("\n");
-}
-
-function stripVolatile(value: unknown): unknown {
-	return JSON.parse(JSON.stringify(value, (key, entry) => (key === "wall_time_seconds" ? 0 : entry)));
-}
-
-function fakeBashOperations(output: string): BashOperations & { commands: string[] } {
-	const commands: string[] = [];
-	return {
-		commands,
-		exec: async (command, _cwd, { onData }) => {
-			commands.push(command);
-			onData(Buffer.from(output));
-			return { exitCode: 0 };
-		},
-	};
-}
-
-const probeParameters = Type.Object({ value: Type.String() });
-const probeDefinition: ToolDefinition<typeof probeParameters> = {
-	name: "seam_probe",
-	label: "Seam probe",
-	description: "Deterministic probe tool",
-	parameters: probeParameters,
-	async execute(toolCallId, params, _signal, onUpdate) {
-		onUpdate?.({ content: [{ type: "text", text: "partial" }], details: undefined });
-		return { content: [{ type: "text", text: `${toolCallId}:${params.value}` }], details: { value: params.value } };
-	},
-};
-
-function hookCounters(): {
-	factory: ExtensionFactory;
-	toolCallHooks: string[];
-	toolResultHooks: string[];
-} {
-	const toolCallHooks: string[] = [];
-	const toolResultHooks: string[] = [];
-	const factory: ExtensionFactory = (pi) => {
-			pi.on("tool_call", (event) => {
-				toolCallHooks.push(event.toolName);
-				return undefined;
-			});
-			pi.on("tool_result", (event) => {
-				toolResultHooks.push(event.toolName);
-				return undefined;
-			});
-		};
-	return { toolCallHooks, toolResultHooks, factory };
-}
-
-function dispatchedCollector(harness: Harness): ToolDispatchedInfo[] {
-	const dispatched: ToolDispatchedInfo[] = [];
-	harness.session.toolDispatcher.onDispatched((info) => dispatched.push(info));
-	return dispatched;
-}
+import type { ToolDispatchedInfo } from "../../src/core/tool-dispatch/tool-dispatcher.ts";
+import { createToolDispatcher, InProcessToolDispatcher } from "../../src/core/tool-dispatch/tool-dispatcher.ts";
+import { createBashToolDefinition } from "../../src/core/tools/bash.ts";
+import { createReadToolDefinition } from "../../src/core/tools/read.ts";
+import { createHarness, getToolResult } from "./harness.ts";
+import {
+	dispatchedCollector,
+	fakeBashOperations,
+	hookCounters,
+	probeDefinition,
+	stripVolatile,
+	textOf,
+} from "./tool-dispatcher-seam-support.ts";
 
 describe("ToolDispatcher seam (senpi#3566 todo 2)", () => {
 	it("(a) in-process dispatch deep-equals direct execute for read, fallback bash and a custom tool", async () => {
-		const dir = mkdtempSync(join(tmpdir(), "seam-dispatch-parity-"));
+		const harness = await createHarness({ toolRuntime: "in-process" });
 		try {
+			const dir = harness.tempDir;
 			writeFileSync(join(dir, "probe.txt"), "seam-read-content\n");
+			const ctx = harness.getExtensionRunner().createToolContext("seam-call", undefined);
 			const dispatcher = new InProcessToolDispatcher();
 			const cases: Array<{ definition: ToolDefinition<any, any>; params: unknown }> = [
 				{ definition: createReadToolDefinition(dir), params: { path: join(dir, "probe.txt") } },
@@ -99,19 +45,20 @@ describe("ToolDispatcher seam (senpi#3566 todo 2)", () => {
 					params,
 					undefined,
 					(update) => directUpdates.push(update),
-					undefined,
+					ctx,
 				);
 				const dispatched = await dispatcher.run({
 					definition,
 					toolCallId: "seam-call",
 					params,
 					onUpdate: (update) => dispatchUpdates.push(update),
+					ctx,
 				});
 				expect(stripVolatile(dispatched), definition.name).toEqual(stripVolatile(direct));
 				expect(stripVolatile(dispatchUpdates), definition.name).toEqual(stripVolatile(directUpdates));
 			}
 		} finally {
-			rmSync(dir, { recursive: true, force: true });
+			harness.cleanup();
 		}
 	});
 
@@ -175,7 +122,7 @@ describe("ToolDispatcher seam (senpi#3566 todo 2)", () => {
 			]);
 			await kernelHarness.session.prompt("run eval");
 			expect(kernelHooks.toolCallHooks).toEqual(["eval", "read"]);
-			expect(kernelHooks.toolResultHooks).toEqual(["eval", "read"]);
+			expect(kernelHooks.toolResultHooks).toEqual(["read", "eval"]);
 			expect(dispatched.map((info) => info.placement)).toEqual(["server", "server"]);
 			expect(textOf(getToolResult(kernelHarness, "eval"))).toContain("kernel-read-content");
 		} finally {
@@ -215,25 +162,41 @@ describe("ToolDispatcher seam (senpi#3566 todo 2)", () => {
 	});
 
 	it("(d) pinned: injected operations keep a child-placed definition on the server with one notice", async () => {
-		const operations = fakeBashOperations("pinned-ran\n");
-		const definition = createBashToolDefinition(tmpdir(), { operations });
-		const notices: Array<{ event: string; kind?: unknown }> = [];
-		const dispatcher = createToolDispatcher({
-			runtime: "child",
-			notify: (event, data) => notices.push({ event, kind: data?.kind }),
-		});
-		const dispatched: ToolDispatchedInfo[] = [];
-		dispatcher.onDispatched((info) => dispatched.push(info));
-		const pinned = { ...definition, placement: "child" as const };
-		const first = await dispatcher.run({ definition: pinned, toolCallId: "pinned-1", params: { command: "echo pinned" } });
-		const second = await dispatcher.run({ definition: pinned, toolCallId: "pinned-2", params: { command: "echo pinned" } });
-		expect(textOf(first)).toContain("pinned-ran");
-		expect(textOf(second)).toContain("pinned-ran");
-		expect(operations.commands).toEqual(["echo pinned", "echo pinned"]);
-		expect(dispatched.map((info) => info.placement)).toEqual(["server", "server"]);
-		expect(notices.filter((notice) => notice.event === "tool_placement_pinned")).toEqual([
-			{ event: "tool_placement_pinned", kind: "bash" },
-		]);
+		const harness = await createHarness({ toolRuntime: "in-process" });
+		try {
+			const operations = fakeBashOperations("pinned-ran\n");
+			const pinned: ToolDefinition<any, any> = createBashToolDefinition(harness.tempDir, { operations });
+			pinned.placement = "child";
+			const notices: Array<{ event: string; kind?: unknown }> = [];
+			const dispatcher = createToolDispatcher({
+				runtime: "child",
+				notify: (event, data) => notices.push({ event, kind: data?.kind }),
+			});
+			const dispatched: ToolDispatchedInfo[] = [];
+			dispatcher.onDispatched((info) => dispatched.push(info));
+			const ctx = harness.getExtensionRunner().createToolContext("pinned", undefined);
+			const first = await dispatcher.run({
+				definition: pinned,
+				toolCallId: "pinned-1",
+				params: { command: "echo pinned" },
+				ctx,
+			});
+			const second = await dispatcher.run({
+				definition: pinned,
+				toolCallId: "pinned-2",
+				params: { command: "echo pinned" },
+				ctx,
+			});
+			expect(textOf(first)).toContain("pinned-ran");
+			expect(textOf(second)).toContain("pinned-ran");
+			expect(operations.commands).toEqual(["echo pinned", "echo pinned"]);
+			expect(dispatched.map((info) => info.placement)).toEqual(["server", "server"]);
+			expect(notices.filter((notice) => notice.event === "tool_placement_pinned")).toEqual([
+				{ event: "tool_placement_pinned", kind: "bash" },
+			]);
+		} finally {
+			harness.cleanup();
+		}
 	});
 
 	it("(d) pinned: a serverPinned child-placed extension tool reports placement server under child", async () => {
