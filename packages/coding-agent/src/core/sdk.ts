@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { Agent, type AgentMessage, setDefaultStreamFn, type ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { SimpleStreamOptions, ThinkingSelection } from "@earendil-works/pi-ai";
 import { type Api, type Message, type Model, modelsAreEqual, streamSimple } from "@earendil-works/pi-ai/compat";
+import type { ToolRuntimeKind } from "../cli/tool-runtime.ts";
 import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { AgentSession } from "./agent-session.ts";
@@ -61,8 +62,6 @@ import { getBranchSelection, isVirtualModel } from "./virtual-models.ts";
 // or invoke low-level agent loops without supplying streamFn. Agent core remains
 // provider-agnostic and does not import pi-ai/compat itself.
 setDefaultStreamFn(streamSimple);
-
-import type { ToolRuntimeKind } from "../cli/tool-runtime.ts";
 
 export interface CreateAgentSessionOptions {
 	/** Working directory for project-local discovery. Default: process.cwd() */

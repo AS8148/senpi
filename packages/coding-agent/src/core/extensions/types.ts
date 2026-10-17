@@ -920,7 +920,8 @@ export type ToolPlacement = "server" | "child";
  * Tool definition for registerTool().
  */
 export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = unknown, TState = any> {
-	/** Tool name (used in LLM tool calls) */ name: string;
+	/** Tool name (used in LLM tool calls) */
+	name: string;
 	/** Human-readable label for UI */
 	label: string;
 	/** Description for LLM */

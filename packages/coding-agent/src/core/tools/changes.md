@@ -5,7 +5,7 @@
 ### What changed
 
 - `packages/coding-agent/src/core/tools/tool-definition-wrapper.ts`: `wrapToolDefinition`/`wrapToolDefinitions` take an optional `ToolDispatcher`; with one and a resolved context, execute goes through `dispatcher.run({ definition, toolCallId, params, signal, onUpdate, ctx })`; otherwise the call is unchanged, keeping upstream's `as ExtensionToolContext` idiom for the factory-less no-context case, so standalone `createBashTool` consumers keep today's behavior.
-- `packages/coding-agent/src/core/tools/read.ts`, `edit.ts`, `write.ts`, `find.ts`, `ls.ts`, `bash.ts`, `grep/index.ts`: each factory sets `serverPinned: true` on its returned definition when the caller injected `operations` or a filesystem-policy override (bash marks injected `operations`; powershell inherits through `createShellToolDefinition`, which always passes explicit operations). Such definitions execute on the session's server process even under `--tool-runtime child` with `placement: "child"`.
+- `packages/coding-agent/src/core/tools/read.ts`, `edit.ts`, `write.ts`, `find.ts`, `ls.ts`, `bash.ts`, `grep/index.ts`: each factory sets `serverPinned: true` on its returned definition when the caller injected `operations` or a filesystem-policy override (bash marks injected `operations` or a `spawnHook`; `powershell.ts` drops the pin its own default local operations would set and pins only for caller-injected `operations` or `spawnHook`). Such definitions execute on the session's server process even under `--tool-runtime child` with `placement: "child"`.
 
 ### Why
 
