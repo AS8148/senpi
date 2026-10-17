@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- `/share` no longer uploads the raw session. It removes keys, tokens, private keys, auth headers, cookies, emails, IP addresses, your home path, account name and host name (images are left out), shows what will be uploaded and who can read it, and uploads only after you choose Upload; "Review the exact file first" writes the exact bytes to a private temporary file that is deleted afterwards, and Cancel uploads nothing. The export no longer goes through a shared temporary file, and there is no default third-party viewer: the gist link is printed unless `PI_SHARE_VIEWER_URL` is set. `PI_DISABLE_SHARE=1` or the `enableSessionShare: false` setting turns `/share` off ([#3524](https://github.com/code-yeongyu/senpi/issues/3524)).
+
 ### Removed
 
 ## [2026.10.16-4] - 2026-10-16
