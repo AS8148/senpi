@@ -206,6 +206,18 @@ describe("pending input store", () => {
 		expect(current.removed).toEqual(["c-1"]);
 	});
 
+	it("does not Stop an input through a handle naming another queue slot of the same lifetime", async () => {
+		const { store } = await openStore(new MemoryJournal());
+		await store.submit(SUBMIT);
+
+		const receipt = await store.stop(
+			[{ clientMessageId: "c-1", handle: { lifetimeId: "life-1", queuedId: "q_9" }, expectedRevision: 1 }],
+			false,
+		);
+
+		expect(receipt).toEqual({ removed: [], conflicts: [], retained: [], stale: ["c-1"] });
+	});
+
 	it("still dispatches and answers when a listener throws, and reports the throw", async () => {
 		const journal = new MemoryJournal();
 		const dispatched: string[] = [];

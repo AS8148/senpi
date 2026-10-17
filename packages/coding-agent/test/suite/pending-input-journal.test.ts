@@ -1,15 +1,22 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+	fsJournalDurability,
 	type JournalDurability,
+	PendingInputAppendUncertainError,
+	PendingInputJournalCorruptError,
 	PendingInputJournalError,
 	PendingInputJournalGapError,
 	PendingInputNotDurableError,
 	SessionPendingInputJournal,
 } from "../../src/core/pending-input-journal.ts";
-import { PENDING_INPUT_TRANSITION, PendingInputStore } from "../../src/core/pending-input-store.ts";
+import {
+	PENDING_INPUT_TRANSITION,
+	PendingInputStore,
+	PendingInputStoreUnavailableError,
+} from "../../src/core/pending-input-store.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 
 // senpi#3549: the session JSONL is the pending-input journal; admission is on disk before the first message.
@@ -169,6 +176,63 @@ describe("session pending-input journal", () => {
 		});
 
 		await expect(new SessionPendingInputJournal(manager).read()).rejects.toBeInstanceOf(PendingInputJournalGapError);
+	});
+
+	it("refuses a corrupt newest transition that later lines follow, and tolerates a torn last line", async () => {
+		const dir = sessionDir();
+		const manager = SessionManager.create(dir, dir);
+		const store = await storeOver(manager, "life-1");
+		await store.submit(SUBMIT);
+		const file = manager.getSessionFile() ?? "";
+		const torn = `{"type":"custom","customType":"${PENDING_INPUT_TRANSITION}","data":{"type":"${PENDING_INPUT_TRANSITION}","cursor":2,"inp`;
+
+		appendFileSync(file, torn);
+		await expect(new SessionPendingInputJournal(SessionManager.open(file, dir)).read()).resolves.toHaveLength(1);
+		appendFileSync(
+			file,
+			`\n${JSON.stringify({ type: "custom", customType: "other", id: "x1", parentId: null, timestamp: "t" })}\n`,
+		);
+		await expect(new SessionPendingInputJournal(SessionManager.open(file, dir)).read()).rejects.toBeInstanceOf(
+			PendingInputJournalCorruptError,
+		);
+	});
+
+	it("fails a write whose sync failed, refuses further writes, and stays reopenable", async () => {
+		const dir = sessionDir();
+		const manager = SessionManager.create(dir, dir);
+		let syncs = 0;
+		const failingSecondSync: JournalDurability = {
+			syncFile: async () => {
+				syncs += 1;
+				if (syncs === 2) throw new Error("EIO");
+			},
+			syncDirectory: async () => undefined,
+		};
+		let next = 0;
+		const store = await PendingInputStore.open({
+			journal: new SessionPendingInputJournal(manager, failingSecondSync),
+			lifetimeId: "life-1",
+			nextQueuedId: () => `q_${++next}`,
+		});
+		await store.submit(SUBMIT);
+
+		await expect(store.submit({ ...SUBMIT, clientMessageId: "c-2", fingerprint: "fp2" })).rejects.toBeInstanceOf(
+			PendingInputAppendUncertainError,
+		);
+		await expect(store.submit({ ...SUBMIT, clientMessageId: "c-3", fingerprint: "fp3" })).rejects.toBeInstanceOf(
+			PendingInputStoreUnavailableError,
+		);
+		const reopened = await storeOver(SessionManager.open(manager.getSessionFile() ?? "", dir), "life-2");
+		expect(reopened.read("c-1").status).toBe("admitted");
+		expect(reopened.read("c-2").status).toBe("admitted");
+		expect(reopened.read("c-3").status).toBe("not_admitted");
+	});
+
+	it("skips the directory sync on Windows, where a directory handle cannot be flushed", async () => {
+		const missing = join(sessionDir(), "no-such-dir");
+
+		await expect(fsJournalDurability("win32").syncDirectory(missing)).resolves.toBeUndefined();
+		await expect(fsJournalDurability("darwin").syncDirectory(missing)).rejects.toThrow();
 	});
 
 	it("refuses a malformed journal entry instead of treating it as absence", async () => {

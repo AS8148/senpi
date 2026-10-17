@@ -1,4 +1,4 @@
-import { open } from "node:fs/promises";
+import { open, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
 	PENDING_INPUT_TRANSITION,
@@ -19,10 +19,13 @@ export interface JournalDurability {
 	syncDirectory(path: string): Promise<void>;
 }
 
-export const fsJournalDurability: JournalDurability = {
-	syncFile: (path) => syncPath(path),
-	syncDirectory: (path) => syncPath(path),
-};
+/** On Windows a directory handle cannot be flushed (EPERM); the file sync is all the platform offers there. */
+export function fsJournalDurability(platform: NodeJS.Platform = process.platform): JournalDurability {
+	return {
+		syncFile: (path) => syncPath(path),
+		syncDirectory: (path) => (platform === "win32" ? Promise.resolve() : syncPath(path)),
+	};
+}
 
 /**
  * The session JSONL as the pending-input journal (senpi#3549): each transition is one `custom` entry,
@@ -33,7 +36,7 @@ export class SessionPendingInputJournal implements PendingInputJournal {
 	private readonly durability: JournalDurability;
 	private directorySynced = false;
 
-	constructor(session: JournalSession, durability: JournalDurability = fsJournalDurability) {
+	constructor(session: JournalSession, durability: JournalDurability = fsJournalDurability()) {
 		this.session = session;
 		this.durability = durability;
 	}
@@ -53,14 +56,30 @@ export class SessionPendingInputJournal implements PendingInputJournal {
 		const file = this.session.getSessionFile();
 		if (file === undefined || !this.session.isTranscriptFlushed()) throw new PendingInputNotDurableError();
 		this.session.appendCustomEntry(PENDING_INPUT_TRANSITION, record);
-		await this.durability.syncFile(file);
-		if (!this.directorySynced) {
-			await this.durability.syncDirectory(dirname(file));
-			this.directorySynced = true;
+		// From here the entry is in the file: a failure can no longer be undone, only reported as uncertain.
+		try {
+			await this.durability.syncFile(file);
+			if (!this.directorySynced) {
+				await this.durability.syncDirectory(dirname(file));
+				this.directorySynced = true;
+			}
+		} catch (error) {
+			throw new PendingInputAppendUncertainError(record.cursor, error);
 		}
 	}
 
+	private async refuseCorruptTransitionLines(): Promise<void> {
+		const file = this.session.isPersisted() ? this.session.getSessionFile() : undefined;
+		if (file === undefined) return;
+		const corrupt = await corruptTransitionLine(file).catch((error: unknown) => {
+			if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+			throw error;
+		});
+		if (corrupt !== undefined) throw new PendingInputJournalCorruptError(corrupt);
+	}
+
 	async read(): Promise<readonly PendingInputJournalRecord[]> {
+		await this.refuseCorruptTransitionLines();
 		const records: PendingInputJournalRecord[] = [];
 		for (const entry of this.session.getEntries()) {
 			if (entry.type !== "custom" || entry.customType !== PENDING_INPUT_TRANSITION) continue;
@@ -72,6 +91,45 @@ export class SessionPendingInputJournal implements PendingInputJournal {
 			if (record.cursor !== index + 1) throw new PendingInputJournalGapError(index + 1);
 		});
 		return records;
+	}
+}
+
+/**
+ * The session loader skips a line that does not parse, so a torn transition followed by later lines would vanish
+ * without a cursor gap. A torn line keeps its prefix, which names the entry type early, so any unparsable line
+ * before the last that names a transition is refused. The last line may be torn by a crash, as the loader allows.
+ */
+async function corruptTransitionLine(file: string): Promise<number | undefined> {
+	const lines = (await readFile(file, "utf8")).split("\n");
+	while (lines.length > 0 && lines.at(-1)?.trim() === "") lines.pop();
+	for (let index = 0; index < lines.length - 1; index++) {
+		const line = lines[index] ?? "";
+		if (!line.includes(PENDING_INPUT_TRANSITION)) continue;
+		try {
+			JSON.parse(line);
+		} catch {
+			return index + 1;
+		}
+	}
+	return undefined;
+}
+
+export class PendingInputJournalCorruptError extends Error {
+	readonly code = "pending_input_journal_corrupt";
+	constructor(lineNumber: number) {
+		super(`Pending input journal line ${lineNumber} is corrupt; the session cannot recover its queued input safely.`);
+		this.name = "PendingInputJournalCorruptError";
+	}
+}
+
+/** The entry reached the file but could not be synced: it may or may not survive a crash. */
+export class PendingInputAppendUncertainError extends Error {
+	readonly code = "pending_input_append_uncertain";
+	constructor(cursor: number, cause: unknown) {
+		super(`Pending input transition ${cursor} was written but could not be synced; reopen the session to recover.`, {
+			cause,
+		});
+		this.name = "PendingInputAppendUncertainError";
 	}
 }
 

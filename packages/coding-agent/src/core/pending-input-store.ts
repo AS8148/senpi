@@ -31,7 +31,7 @@ export interface PendingInputStoreOptions {
 	readonly dispatch?: (token: DeliveryToken, input: PendingInput) => void;
 	readonly restoreToDraft?: (text: string) => void;
 	/**
-	 * Receives a listener's throw. A committed transition is not undone by a failing observer, and its dispatch
+	 * Receives a listener's throw; an owner should always supply it, since the default rethrow is uncaught. A committed transition is not undone by a failing observer, and its dispatch
 	 * still runs; by default the error is rethrown on a later microtask so it is never silently lost.
 	 */
 	readonly onListenerError?: (error: unknown) => void;
@@ -63,6 +63,7 @@ export class PendingInputStore {
 	private readonly listeners = new Set<PendingInputListener>();
 	private gate: Promise<unknown> = Promise.resolve();
 	private cursor = 0;
+	private unavailable: Error | undefined;
 	private readonly options: PendingInputStoreOptions;
 
 	private constructor(options: PendingInputStoreOptions) {
@@ -146,7 +147,12 @@ export class PendingInputStore {
 	}
 
 	private serialize<T>(operation: () => Promise<T>): Promise<T> {
-		const run = this.gate.then(operation, operation);
+		const guarded = () => {
+			if (this.unavailable !== undefined)
+				return Promise.reject(new PendingInputStoreUnavailableError(this.unavailable));
+			return operation();
+		};
+		const run = this.gate.then(guarded, guarded);
 		this.gate = run.catch(() => undefined);
 		return run;
 	}
@@ -167,7 +173,14 @@ export class PendingInputStore {
 			input: next,
 			...(result === undefined ? {} : { result }),
 		};
-		await this.options.journal.append(record);
+		try {
+			await this.options.journal.append(record);
+		} catch (error) {
+			// A write that may have landed cannot be retried at the same cursor, or the next reopen would see a gap:
+			// stop accepting commands until a reopen rebuilds the store from what the file actually holds.
+			if (isUncertainAppend(error)) this.unavailable = error;
+			throw error;
+		}
 		this.cursor = record.cursor;
 		this.inputs.set(clientMessageId, next);
 		const projection = projectPendingInput(next);
@@ -192,6 +205,19 @@ export class PendingInputStore {
 			queueMicrotask(() => {
 				throw error;
 			});
+	}
+}
+
+function isUncertainAppend(error: unknown): error is Error {
+	return error instanceof Error && "code" in error && error.code === "pending_input_append_uncertain";
+}
+
+/** A previous write may have landed without being synced; only a reopen can say what the journal holds. */
+export class PendingInputStoreUnavailableError extends Error {
+	readonly code = "pending_input_store_unavailable";
+	constructor(cause: Error) {
+		super("Pending inputs are unavailable after a failed save; reopen the session to recover them.", { cause });
+		this.name = "PendingInputStoreUnavailableError";
 	}
 }
 
