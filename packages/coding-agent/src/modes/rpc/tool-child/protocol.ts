@@ -95,11 +95,13 @@ export type ServerToChild =
 	| { type: "launch_ack"; launchId: string }
 	| { type: "wake_ack"; wakeId: string }
 	| { type: "slot_query"; launchId: string }
+	| { type: "ping"; seq: number }
 	| { type: "shutdown" };
 
 export type ChildToServer =
 	| { type: "hello"; generation: number; pid: number; protocol: number }
 	| { type: "heartbeat"; seq: number }
+	| { type: "pong"; seq: number }
 	| { type: "result"; jobId: string; value: unknown }
 	| { type: "result_ref"; jobId: string; ref: PayloadRef }
 	| { type: "job_error"; jobId: string; code: string; message: string }
@@ -116,7 +118,7 @@ export type ChildToServer =
 			pid?: number;
 			pgid?: number;
 	  }
-	| { type: "launch_proof"; launchId: string; ackTick: number; invokeTick: number }
+	| { type: "launch_proof"; launchId: string; ackTick: number | null; invokeTick: number }
 	| { type: "launch_done"; launchId: string; exitCode?: number; signal?: string }
 	| {
 			type: "command_started";
