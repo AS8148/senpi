@@ -1,3 +1,23 @@
+## 2026-10-17 - A refused connect is proof of absence only where a full backlog cannot refuse (senpi#3541 second review)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/socket-ownership.ts`: `classifyConnectError` maps a failed connect to `gone` (ENOENT), `dead` (ECONNREFUSED on Linux, where a full backlog answers EAGAIN), `confirm-holder` (ECONNREFUSED elsewhere: macOS refuses a live listener whose backlog is full) or `live` (every other error, a timeout, no code). `socketEntryListenerState` connects once (2 s bound), and for `confirm-holder` asks `lsofSocketHolders` (`lsof -t -- <path>`): a holder pid is live, no holder is dead, an lsof that cannot answer is live. Each verdict carries its evidence.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-proxy.ts`: `prepareSocketPath` stamps the entry (bigint dev, ino and ctime: a rebind at a reused inode still moves ctime), never removes an entry that is not a socket, refuses with the evidence ("address already in use by a live server (connect EACCES)", "... (held open by pid N)", "... (the entry changed after it was probed)"), re-stamps after the probe and unlinks only the same entry, and treats an unlink that finds nothing as done. The listener probe is injectable (`PrepareSocketPathHooks.listenerState`). Bare `--listen` hosts now get the 103-byte socket path limit through it.
+- `packages/coding-agent/src/modes/rpc/host-ensure-liveness.ts`: `publicEndpointAccepts` uses the same verdict, so the ensure gate reads EACCES, EAGAIN and a held full backlog as occupied.
+
+### Why
+
+- Second review of #3542: no test pinned the errno classification (reverting to "any error is dead" stayed green); on macOS a live listener with a full backlog answered ECONNREFUSED and its entry was deleted (reproduced with a backlog-1 listener whose loop is blocked); dev+ino misses a same-inode replacement on file systems that reuse inodes; a regular file at the path was removed on Linux, which refuses that connect too. Tests: `test/rpc-prepare-socket-path.test.ts` (verdict table, holder answers, each prepare verdict, a stuck full-backlog listener, EACCES, a regular file, a live and a dead replacement after the probe).
+
+### Why an extension could not handle it
+
+- Socket preparation and the ensure gate are RPC host internals with no extension hook.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/host-lifecycle-proxy.ts` `prepareSocketPath`; `packages/coding-agent/src/modes/rpc/socket-ownership.ts` above `statSocketIdentity`; `packages/coding-agent/src/modes/rpc/host-ensure-liveness.ts` `publicEndpointAccepts`.
+
 ## 2026-10-17 - A stale socket entry is unlinked only while it is still the dead one (senpi#3541 review)
 
 ### What changed

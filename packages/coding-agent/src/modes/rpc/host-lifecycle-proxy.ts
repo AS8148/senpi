@@ -3,16 +3,17 @@
  * adoption of the public name, and the readiness probes of the private hop. Split out of
  * `host-lifecycle.ts`, which keeps the supervisor's orchestration (senpi#2566).
  */
-import { access, chmod, mkdir, rename, unlink } from "node:fs/promises";
+import { chmod, mkdir, rename, stat, unlink } from "node:fs/promises";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 import type { HostAdmission } from "./host-admission.ts";
 import { proxyWithAdmission } from "./host-admission-proxy.ts";
 import type { ClientOccupancy } from "./host-client-occupancy.ts";
 import {
+	type ListenerState,
 	MAX_SOCKET_PATH_BYTES,
 	type SocketFileIdentity,
-	sameSocketIdentity,
+	socketEntryListenerState,
 	statSocketIdentity,
 } from "./socket-ownership.ts";
 import {
@@ -131,26 +132,30 @@ function canConnect(socketPath: string, secret?: Uint8Array): Promise<boolean> {
 export interface PrepareSocketPathHooks {
 	/** Runs after the entry was probed dead and before it is unlinked. */
 	readonly afterStaleProbe?: () => Promise<void>;
+	/** Replaces the listener probe, so a test can pin each verdict. */
+	readonly listenerState?: (socketPath: string) => Promise<ListenerState>;
 }
 
-/**
- * Whether something listens behind the entry. Only a refused connection or a missing entry
- * reads as nothing: a full backlog (EAGAIN) or any other error is a live owner whose entry
- * must not be removed (I1).
- */
-function entryHasListener(socketPath: string): Promise<boolean> {
-	return new Promise((resolve) => {
-		const socket: Socket = createConnection(resolveSocketTransportAddress(socketPath, process.platform));
-		const settle = (value: boolean): void => {
-			socket.destroy();
-			resolve(value);
-		};
-		socket.once("connect", () => settle(true));
-		socket.once("error", (cause: NodeJS.ErrnoException) =>
-			settle(cause.code !== "ECONNREFUSED" && cause.code !== "ENOENT"),
-		);
-	});
+/** One entry's identity including its change time: a rebind at the same inode still moves ctime. */
+type EntryStamp = {
+	readonly dev: bigint;
+	readonly ino: bigint;
+	readonly ctimeNs: bigint;
+	readonly socket: boolean;
+};
+
+async function stampOf(socketPath: string): Promise<EntryStamp | undefined> {
+	try {
+		const entry = await stat(socketPath, { bigint: true });
+		return { dev: entry.dev, ino: entry.ino, ctimeNs: entry.ctimeNs, socket: entry.isSocket() };
+	} catch (cause) {
+		if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") return undefined;
+		throw cause;
+	}
 }
+
+const sameStamp = (a: EntryStamp, b: EntryStamp): boolean =>
+	a.dev === b.dev && a.ino === b.ino && a.ctimeNs === b.ctimeNs;
 
 export async function prepareSocketPath(socketPath: string, hooks: PrepareSocketPathHooks = {}): Promise<void> {
 	if (process.platform === "win32" || socketPath.startsWith("\0")) return;
@@ -162,23 +167,26 @@ export async function prepareSocketPath(socketPath: string, hooks: PrepareSocket
 		);
 	}
 	await mkdir(dirname(socketPath), { recursive: true, mode: 0o700 });
+	const probed = await stampOf(socketPath);
+	if (probed === undefined) return;
+	const inUse = (evidence: string) =>
+		new Error(`${socketPath}: address already in use by a live server (${evidence}).`);
+	// Linux refuses a connect to a regular file too; never remove what is not a socket.
+	if (!probed.socket) throw inUse("the entry is not a socket");
+	const state = await (hooks.listenerState ?? socketEntryListenerState)(socketPath);
+	if (state.verdict === "gone") return;
+	if (state.verdict === "live") throw inUse(state.evidence);
+	await hooks.afterStaleProbe?.();
+	// Something may have replaced the entry since the probe; unlink only the entry probed dead.
+	const current = await stampOf(socketPath);
+	if (current === undefined) return;
+	if (!sameStamp(probed, current)) throw inUse("the entry changed after it was probed");
 	try {
-		await access(socketPath);
+		await unlink(socketPath);
 	} catch (cause) {
 		if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") return;
 		throw cause;
 	}
-	const probed = await statSocketIdentity(socketPath);
-	const inUse = new Error(`${socketPath}: address already in use by a live server.`);
-	if (await entryHasListener(socketPath)) throw inUse;
-	await hooks.afterStaleProbe?.();
-	// Something may have bound the path since the probe. Unlink only the entry that was probed
-	// dead, and only while it still has nobody behind it.
-	const current = await statSocketIdentity(socketPath);
-	if (current === undefined) return;
-	if (probed === undefined || !sameSocketIdentity(probed, current) || (await entryHasListener(socketPath)))
-		throw inUse;
-	await unlink(socketPath);
 }
 
 export function listen(server: Server, socketPath: string, secret?: Uint8Array): Promise<void> {
