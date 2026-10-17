@@ -38,7 +38,6 @@
 
 - LOW: `packages/agent/src/agent-loop.ts`, `abortError`.
 
-||||||| parent of 354ec58d0 (feat(agent): queuedInputPort commits queued input's consumption before a provider sees it (#3549))
 ## 2026-10-17 - A caller-aborted turn past the pre-stream bound carries the abort's message (senpi#3481)
 
 ### What changed
