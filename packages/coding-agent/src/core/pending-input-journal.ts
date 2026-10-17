@@ -95,15 +95,18 @@ export class SessionPendingInputJournal implements PendingInputJournal {
 }
 
 /**
- * The session loader skips a line that does not parse, so a torn transition followed by later lines would vanish
- * without a cursor gap. A torn line keeps its prefix, which names the entry type early, so any unparsable line
- * before the last that names a transition is refused. The last line may be torn by a crash, as the loader allows.
+ * The session loader skips a line that does not parse, so a corrupt transition would vanish with no cursor gap.
+ * A line that ends in a newline was written completely: if it names a transition and does not parse, it is
+ * corrupt and refused, the last line included. A final segment with no newline is a tail torn by a crash: it was
+ * never committed, the loader drops it, and the next append cuts it back, so it is tolerated. A torn line keeps
+ * its prefix, and `appendCustomEntry` writes `type` and `customType` first, so the marker survives a tear.
  */
 async function corruptTransitionLine(file: string): Promise<number | undefined> {
-	const lines = (await readFile(file, "utf8")).split("\n");
-	while (lines.length > 0 && lines.at(-1)?.trim() === "") lines.pop();
-	for (let index = 0; index < lines.length - 1; index++) {
-		const line = lines[index] ?? "";
+	const segments = (await readFile(file, "utf8")).split("\n");
+	// After the last newline: "" for a complete file, or the torn tail of a crash.
+	segments.pop();
+	for (let index = 0; index < segments.length; index++) {
+		const line = segments[index] ?? "";
 		if (!line.includes(PENDING_INPUT_TRANSITION)) continue;
 		try {
 			JSON.parse(line);

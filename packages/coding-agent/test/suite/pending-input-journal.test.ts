@@ -1,4 +1,4 @@
-import { appendFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -178,23 +178,68 @@ describe("session pending-input journal", () => {
 		await expect(new SessionPendingInputJournal(manager).read()).rejects.toBeInstanceOf(PendingInputJournalGapError);
 	});
 
-	it("refuses a corrupt newest transition that later lines follow, and tolerates a torn last line", async () => {
+	it("drops a tail a crash tore from the file on open, and keeps every committed transition", async () => {
+		const dir = sessionDir();
+		const manager = SessionManager.create(dir, dir);
+		await (await storeOver(manager, "life-1")).submit(SUBMIT);
+		const file = manager.getSessionFile() ?? "";
+		const committed = readFileSync(file, "utf8");
+		appendFileSync(file, `{"type":"custom","customType":"${PENDING_INPUT_TRANSITION}","data":{"cursor":2,"inp`);
+
+		const records = await new SessionPendingInputJournal(SessionManager.open(file, dir)).read();
+
+		expect(records).toHaveLength(1);
+		expect(readFileSync(file, "utf8")).toBe(committed);
+	});
+
+	it("refuses a corrupt transition in the middle of the file", async () => {
+		const dir = sessionDir();
+		const manager = SessionManager.create(dir, dir);
+		await (await storeOver(manager, "life-1")).submit(SUBMIT);
+		const file = manager.getSessionFile() ?? "";
+		const later = JSON.stringify({ type: "custom", customType: "other", id: "x1", parentId: null, timestamp: "t" });
+
+		appendFileSync(
+			file,
+			`{"type":"custom","customType":"${PENDING_INPUT_TRANSITION}","data":{"cursor":2,"inp\n${later}\n`,
+		);
+
+		await expect(new SessionPendingInputJournal(SessionManager.open(file, dir)).read()).rejects.toBeInstanceOf(
+			PendingInputJournalCorruptError,
+		);
+	});
+
+	it("refuses a corrupt last transition that was written completely (it ends in a newline)", async () => {
 		const dir = sessionDir();
 		const manager = SessionManager.create(dir, dir);
 		const store = await storeOver(manager, "life-1");
 		await store.submit(SUBMIT);
+		await store.submit({ ...SUBMIT, clientMessageId: "c-2", fingerprint: "fp2" });
 		const file = manager.getSessionFile() ?? "";
-		const torn = `{"type":"custom","customType":"${PENDING_INPUT_TRANSITION}","data":{"type":"${PENDING_INPUT_TRANSITION}","cursor":2,"inp`;
+		const lines = readFileSync(file, "utf8").split("\n").filter(Boolean);
+		lines[lines.length - 1] =
+			`{"type":"custom","customType":"${PENDING_INPUT_TRANSITION}","data":{"cursor":2,"inp#corrupt`;
 
-		appendFileSync(file, torn);
-		await expect(new SessionPendingInputJournal(SessionManager.open(file, dir)).read()).resolves.toHaveLength(1);
-		appendFileSync(
-			file,
-			`\n${JSON.stringify({ type: "custom", customType: "other", id: "x1", parentId: null, timestamp: "t" })}\n`,
-		);
+		writeFileSync(file, `${lines.join("\n")}\n`);
+
 		await expect(new SessionPendingInputJournal(SessionManager.open(file, dir)).read()).rejects.toBeInstanceOf(
 			PendingInputJournalCorruptError,
 		);
+	});
+
+	it("reopens after a crash tore the last line, writes, and reopens again with every input", async () => {
+		const dir = sessionDir();
+		const manager = SessionManager.create(dir, dir);
+		await (await storeOver(manager, "life-1")).submit(SUBMIT);
+		const file = manager.getSessionFile() ?? "";
+		appendFileSync(file, `{"type":"custom","customType":"${PENDING_INPUT_TRANSITION}","data":{"cursor":9,"inp`);
+
+		const afterCrash = await storeOver(SessionManager.open(file, dir), "life-2");
+		await afterCrash.submit({ ...SUBMIT, clientMessageId: "c-2", fingerprint: "fp2" });
+		const again = await storeOver(SessionManager.open(file, dir), "life-3");
+
+		expect(again.read("c-1").status).toBe("admitted");
+		expect(again.read("c-2").status).toBe("admitted");
 	});
 
 	it("fails a write whose sync failed, refuses further writes, and stays reopenable", async () => {
