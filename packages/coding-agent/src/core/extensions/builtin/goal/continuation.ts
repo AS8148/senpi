@@ -191,13 +191,25 @@ function todoStateOfSignature(signature: string): string {
  */
 export const GOAL_TOOL_EFFECT_WINDOW = 256;
 
-// Durations, timestamps, pids, counters and run ids change on every run of the same command.
-const VOLATILE_RESULT_TOKEN = /\b[0-9a-f]{8,}\b|\d+(?:[.:,]\d+)*/gi;
+// Run-to-run noise in a result: ISO timestamps, clock times, durations, pids, long numbers and long hex ids.
+// Small counters ("12/200 modules", "3 failed") stay visible, so a poll whose state really advances is progress.
+const VOLATILE_RESULT_TOKEN =
+	/\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?Z?|\b\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?\b|\b\d+(?:\.\d+)?\s?(?:ns|µs|us|ms|s|m|h)\b|\bpid[ =:]?\d+|\b\d{6,}\b|\b[0-9a-f]{8,}\b/gi;
+// Any number or long hex id in a non-mutating call's arguments: a counter or timestamp argument is not a new action.
+const VOLATILE_ARGUMENT_TOKEN = /\b[0-9a-f]{8,}\b|\d+/gi;
+// Tools whose arguments are the change itself; masking their numbers would merge distinct edits.
+const MUTATING_TOOL_NAMES: ReadonlySet<string> = new Set(["edit", "write", "apply_patch", "todo"]);
+
+function callArguments(name: string, args: unknown): string {
+	const json = JSON.stringify(args);
+	return MUTATING_TOOL_NAMES.has(name) ? json : json.replace(VOLATILE_ARGUMENT_TOKEN, "#");
+}
 
 /**
- * Fingerprint of what a turn's tools did: every call's name and arguments, and every result's error flag and
- * text with volatile numbers masked. Re-running the same call with the same outcome yields the same fingerprint,
- * so a tool loop is not progress. A turn whose tool results all failed has no fingerprint: failing is never progress.
+ * Fingerprint of what a turn's tools did: every call's name and arguments (numbers masked unless the tool mutates
+ * files), and every result's error flag and text with run-to-run noise masked. Re-running the same call with the
+ * same outcome yields the same fingerprint, so a tool loop is not progress. A turn whose tool results all failed
+ * has no fingerprint: failing is never progress.
  */
 export function toolEffectFingerprint(messages: readonly AgentMessage[]): string | undefined {
 	const parts: string[] = [];
@@ -205,7 +217,8 @@ export function toolEffectFingerprint(messages: readonly AgentMessage[]): string
 	for (const message of messages) {
 		if (message?.role === "assistant") {
 			for (const content of message.content) {
-				if (content.type === "toolCall") parts.push(`call:${content.name}:${JSON.stringify(content.arguments)}`);
+				if (content.type === "toolCall")
+					parts.push(`call:${content.name}:${callArguments(content.name, content.arguments)}`);
 			}
 		} else if (message?.role === "toolResult") {
 			const text = message.content

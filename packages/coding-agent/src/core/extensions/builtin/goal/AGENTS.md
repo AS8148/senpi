@@ -36,7 +36,7 @@ suppresses continuations.
 
 Admission guards: consecutive-continuation cap of 8 (persisted), stale-signature check on
 immediate re-entry, single-flight latch, and the no-progress guard (60 counted continuations
-without a new successful tool effect (a call/result fingerprint, volatile numbers masked, unlike the last 256), a todo change, or human input — typed or from a `human_input`
+without a new successful tool effect (a call/result fingerprint unlike the last 256; results mask timestamps/durations/ids, non-mutating calls mask argument numbers), a todo change, or human input — typed or from a `human_input`
 monitor; persisted, monitor-delayed exempt). There is no fixed total cap (omo#10280). From the 3rd consecutive toolless turn the prompt
 gains a `<goal_stall_check>` prefix — monitor-flavored bullets while monitors are active,
 generic recovery bullets otherwise. Accepted direct input disarms a pending continuation; a

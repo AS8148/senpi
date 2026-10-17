@@ -97,6 +97,45 @@ function tweakedFailingCommandTurn(turn: number): AgentMessage[] {
 	);
 }
 
+function swallowedExitWithCounterArgTurn(turn: number): AgentMessage[] {
+	return toolTurn(
+		turn,
+		{ name: "bash", arguments: { command: `bun test src/parser.test.ts --bail=${turn}; true` } },
+		{ text: testRunOutput(turn), isError: false },
+	);
+}
+
+function growingSleepTurn(turn: number): AgentMessage[] {
+	return toolTurn(turn, { name: "bash", arguments: { command: `sleep ${turn}` } }, { text: "", isError: false });
+}
+
+function timestampedPollTurn(turn: number): AgentMessage[] {
+	return toolTurn(
+		turn,
+		{ name: "bash", arguments: { command: `gh run view --json status --jq .status # checked ${turn}` } },
+		{ text: `in_progress (checked at 2026-10-17T18:${String(turn % 60).padStart(2, "0")}:41Z)`, isError: false },
+	);
+}
+
+function advancingPollTurn(turn: number): AgentMessage[] {
+	return toolTurn(
+		turn,
+		{ name: "bash_output", arguments: { bash_id: "bash_3" } },
+		{ text: `building ${turn}/200 modules [${(turn * 1.7).toFixed(1)}s]`, isError: false },
+	);
+}
+
+function sameFileEditTurn(turn: number): AgentMessage[] {
+	return toolTurn(
+		turn,
+		{
+			name: "edit",
+			arguments: { path: "src/parser.ts", oldText: `limit = ${turn}`, newText: `limit = ${turn + 1}` },
+		},
+		{ text: "Edited src/parser.ts", isError: false },
+	);
+}
+
 function rotatingReadTurn(turn: number): AgentMessage[] {
 	return toolTurn(
 		turn,
@@ -188,6 +227,9 @@ describe("omo#10280: no fixed auto-continue cap, a no-progress guard instead", (
 		["re-runs the same failing test (fresh duration, timestamp, pid and run id each time)", sameFailingTestTurn],
 		["swallows the failing exit code with `; true`", failingTestWithSwallowedExitTurn],
 		["tweaks the failing command's arguments every turn", tweakedFailingCommandTurn],
+		["changes a counter argument and swallows the exit code", swallowedExitWithCounterArgTurn],
+		["sleeps a growing number of seconds", growingSleepTurn],
+		["polls a status that only gains a new timestamp", timestampedPollTurn],
 		["peeks the same unchanged output", sameStatusPeekTurn],
 	] as const)(
 		"stops a loop that %s with varied narration at the guard",
@@ -214,6 +256,18 @@ describe("omo#10280: no fixed auto-continue cap, a no-progress guard instead", (
 		for (let index = 1; index <= maxTurns; index++) await turn(rotatingReadTurn(index));
 
 		expect(await readGoal(ref)).toMatchObject({ status: "blocked", blockedReason: NO_PROGRESS_BLOCKED_REASON });
+	});
+
+	it.each([
+		["a poll whose build counter really advances", advancingPollTurn],
+		["repeated edits of the same file with different content", sameFileEditTurn],
+	] as const)("keeps counting %s as progress", { timeout: 60_000 }, async (_label, progressTurn) => {
+		const { harness, turn, ref } = await startGoal(`omo-10280-real-change-${_label.replace(/[^a-z]+/gi, "-")}`);
+		const turns = GOAL_NO_PROGRESS_CONTINUATION_LIMIT + 20;
+		for (let index = 1; index <= turns; index++) await turn(progressTurn(index));
+
+		expect(harness.sent).toHaveLength(turns);
+		expect(await readGoal(ref)).toMatchObject({ status: "active" });
 	});
 
 	it("counts an edit between failing runs as progress, so a real fix-and-retest cycle never stops", {
