@@ -1,8 +1,10 @@
 import { VERSION } from "../../config.ts";
+import type { AgentSession } from "../../core/agent-session.ts";
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { detachConnection } from "./connection-detach.ts";
 import { buildRpcSessionState } from "./connection-handler.ts";
 import { answerEffectFromTranscript } from "./effect-commands.ts";
+import { latestSessionEffect } from "./effect-ledger.ts";
 import { multiSessionHostCapabilities } from "./host-capabilities.ts";
 import {
 	clearHandoverParkedSession,
@@ -34,11 +36,19 @@ import {
 import { runWithSessionAttribution } from "./session-attribution.ts";
 import { createRpcSessionBinding, type RpcSessionBinding } from "./session-binding.ts";
 import { readDrainVerdicts } from "./session-drain.ts";
+import { drainSessionEffects, installSessionEffectSink } from "./session-effect-status.ts";
 import type { SessionEventWriter } from "./session-event-writer.ts";
 import { dispatchSessionBinding, sessionHeldCheck } from "./session-held.ts";
 import type { OpenRpcSession, RpcSessionLaunchProfile, RpcSessionRegistry } from "./session-registry.ts";
 import { RpcSessionRegistryError } from "./session-registry.ts";
 import { releaseSession } from "./session-release.ts";
+import {
+	answerSetSessionContext,
+	answerSubscribeSessions,
+	answerUnsubscribeSessions,
+	notAttachedRefusal,
+} from "./session-status-commands.ts";
+import { registryStatusSource } from "./session-status-source.ts";
 import { selectSweepEvictions } from "./session-sweep.ts";
 import { unloadSession } from "./session-unload.ts";
 import { liveToolMediaScope, toolMediaPersister } from "./tool-media-store.ts";
@@ -141,6 +151,7 @@ export class SessionCommandRouter {
 	private readonly onEmptyExit?: () => void;
 	private readonly canExitWhenEmpty?: () => boolean;
 	private sweepTimer: ReturnType<typeof setInterval> | undefined;
+	private uninstallEffectSink: (() => void) | undefined;
 	private drainTimer: ReturnType<typeof setInterval> | undefined;
 	private draining = false;
 	private handoffParks = 0;
@@ -187,6 +198,28 @@ export class SessionCommandRouter {
 		this.onHandoffParked = idle?.onHandoffParked;
 		this.handoverParkedDir = idle?.handoverParkedDir;
 		this.canExitWhenEmpty = idle?.canExitWhenEmpty;
+		writer.status.setSource(registryStatusSource(registry));
+		writer.status.setLastEffectProvider((sessionId) => {
+			const session = this.registry.peek(sessionId)?.runtime?.session;
+			if (session === undefined) return undefined;
+			const latest = latestSessionEffect(session);
+			return latest === undefined
+				? undefined
+				: { effectId: latest.effectId, kind: latest.kind, state: latest.state };
+		});
+		writer.afterRecord = (sessionId) => {
+			const session = this.registry.peek(sessionId)?.runtime?.session;
+			if (session === undefined) return;
+			for (const status of drainSessionEffects(session)) this.writer.status.publishEffect(sessionId, status);
+		};
+		this.uninstallEffectSink = installSessionEffectSink({
+			owns: (session) => this.routingIdOf(session) !== undefined,
+			flush: (session, statuses) => {
+				const sessionId = this.routingIdOf(session);
+				if (sessionId === undefined) return;
+				for (const status of statuses) this.writer.status.publishEffect(sessionId, status);
+			},
+		});
 		if (Number.isFinite(this.idleEvictionMs) || Number.isFinite(this.emptyExitMs)) {
 			// Unref'd: occupancy hygiene must never be the reason the event loop stays open.
 			const tickMs = Math.max(20, Math.min(5_000, Math.min(this.idleEvictionMs, this.emptyExitMs) / 4));
@@ -425,11 +458,43 @@ export class SessionCommandRouter {
 			}
 			return { id: command.id, type: "response", command: "set_client_info", success: true } as RpcResponse;
 		}
+		if (command.type === "subscribe_sessions") {
+			const connection = this.writer.currentConnection();
+			const { answer, activate } = answerSubscribeSessions(command, connection, this.writer.status);
+			// On a socket host the response is enqueued HERE, ahead of activation: a delta published
+			// while this dispatch awaited the route queues behind the snapshot it belongs after.
+			if (activate !== undefined && connection !== undefined) {
+				const enqueue = async () => {
+					// Two hops: the response must be enqueued onto the actor's FIFO before the
+					// subscription goes live, so a delta published between registration and here
+					// always lands behind the snapshot answer it follows.
+					await this.writer.enqueueControl(answer, connection);
+					await new Promise<void>((resolve) => queueMicrotask(resolve));
+					try {
+						// A connection that closed while this subscribe awaited dispatch already ran dropConnection,
+						// before this pending entry existed; drop it here or it holds deltas for the life of the host.
+						if (this.writer.hasConnection(connection)) this.writer.status.activate(activate);
+						else this.writer.status.unsubscribe(connection, activate);
+					} catch (cause) {
+						process.stderr.write(`senpi rpc subscription activation failed: ${String(cause)}\n`);
+					}
+				};
+				void enqueue().catch((cause: unknown) => {
+					this.writer.status.unsubscribe(connection, activate);
+					process.stderr.write(`senpi rpc subscribe answer could not be delivered: ${String(cause)}\n`);
+				});
+				return undefined;
+			}
+			return answer;
+		}
+		if (command.type === "unsubscribe_sessions")
+			return answerUnsubscribeSessions(command, this.writer.currentConnection(), this.writer.status);
 		// A receipt of a session this host has not loaded is read from its transcript, never by loading it.
 		if (command.type === "get_effect_status" && !command.sessionId && command.sessionPath !== undefined)
 			return answerEffectFromTranscript(command.id, command.sessionPath, command.effectId);
 		if (!command.sessionId) return error(command.id, command.type, RPC_ERROR_MISSING_SESSION_ID);
 		const sessionId = command.sessionId;
+		if (command.type === "set_session_context") return this.setSessionContext(command);
 		try {
 			const entry = this.registry.getForCommand(sessionId, command.type);
 			await dispatchSessionBinding(
@@ -440,6 +505,19 @@ export class SessionCommandRouter {
 				(observedStarts) => this.registry.holderPids?.(observedStarts) ?? Promise.resolve([]),
 			);
 			return undefined;
+		} catch (cause) {
+			return error(command.id, command.type, this.code(cause), this.detail(cause));
+		}
+	}
+
+	/** Any attached connection may patch; a host with no per-connection identity (stdio) owns every session. */
+	private setSessionContext(command: Extract<RpcCommand, { type: "set_session_context" }>): RpcResponse {
+		const owner = this.writer.currentConnection();
+		if (owner !== undefined && this.sessionsByConnection.get(owner)?.has(command.sessionId) !== true)
+			return notAttachedRefusal(command);
+		try {
+			const entry = this.registry.getForCommand(command.sessionId, command.type);
+			return answerSetSessionContext(command, entry, this.writer.status);
 		} catch (cause) {
 			return error(command.id, command.type, this.code(cause), this.detail(cause));
 		}
@@ -467,6 +545,8 @@ export class SessionCommandRouter {
 			}),
 		);
 		this.bindings.clear();
+		this.uninstallEffectSink?.();
+		this.uninstallEffectSink = undefined;
 	}
 
 	/**
@@ -541,9 +621,8 @@ export class SessionCommandRouter {
 			retained?.retainOnDisconnect === true &&
 			retained.sessionPath !== undefined
 		) {
-			await recordHandoverParkedSession(
-				this.handoverParkedDir,
-				parkedEntryFromProfile(
+			await recordHandoverParkedSession(this.handoverParkedDir, {
+				...parkedEntryFromProfile(
 					{
 						sessionPath: retained.sessionPath,
 						...(retained.durableSessionId !== undefined ? { durableSessionId: retained.durableSessionId } : {}),
@@ -551,7 +630,8 @@ export class SessionCommandRouter {
 					retained.profile,
 					Object.keys(this.defaults.hostContext ?? {}),
 				),
-			).catch((cause: unknown) => {
+				parkedBy: this.defaults.hostContext?.host_instance ?? hostInstanceId(),
+			}).catch((cause: unknown) => {
 				process.stderr.write(`senpi rpc handover park record ${sessionId} failed: ${String(cause)}\n`);
 			});
 		}
@@ -639,6 +719,14 @@ export class SessionCommandRouter {
 			owned.delete(sessionId);
 			if (owned.size === 0) this.sessionsByConnection.delete(connection);
 		}
+	}
+
+	/** The routing id this host answers `session` on, if it holds it. */
+	private routingIdOf(session: AgentSession): string | undefined {
+		for (const row of this.registry.list()) {
+			if (this.registry.peek(row.sessionId)?.runtime?.session === session) return row.sessionId;
+		}
+		return undefined;
 	}
 
 	private stopSweep(): void {
@@ -887,6 +975,19 @@ export class SessionCommandRouter {
 						this.writer.forgetSession(openedSession.sessionId);
 					});
 			}
+			if (opened.attached) this.writer.status.publish(openedSession.sessionId, "attach", "client");
+			else {
+				this.writer.publishSessionOpened({
+					type: "session_opened",
+					sessionId: openedSession.sessionId,
+					durableSessionId: openedSession.durableSessionId,
+					...(openedSession.sessionPath !== undefined ? { sessionPath: openedSession.sessionPath } : {}),
+					kind: entry.kind,
+					cwd: entry.cwd,
+					context: entry.context,
+				});
+				this.writer.status.publish(openedSession.sessionId, "open", "client");
+			}
 			if (!this.draining && owner !== undefined && this.releasedConnections.has(owner)) {
 				this.releaseOwnerAttachment(owner, openedSession.sessionId);
 				await this.releaseOwnedSession(openedSession.sessionId);
@@ -909,12 +1010,22 @@ export class SessionCommandRouter {
 			return undefined;
 		} catch (cause) {
 			if (opened) {
+				// Only a non-attached open published session_opened and an open status before this
+				// rollback, and only while the registry still holds the live entry, so only that
+				// rollback owes its subscribers the terminal record; an attach rollback, or one whose
+				// entry is already gone, never announced the session in the first place (#3198 review, L1).
+				if (!opened.attached) {
+					const entry = this.registry.peek(opened.sessionId);
+					if (entry?.runtime !== undefined || entry?.worker !== undefined)
+						this.writer.sealRolledBackOpen(opened.sessionId, entry.sessionPath);
+				}
 				try {
 					if (opened.attached) await this.releaseOwnedSession(opened.sessionId);
 					else await this.registry.close(opened.sessionId);
 				} catch {
 					/* The open rollback has already removed the entry. */
 				}
+				this.writer.forgetSession(opened.sessionId);
 			}
 			return error(command.id, "open_session", this.code(cause), this.detail(cause));
 		}
@@ -1025,6 +1136,7 @@ export class SessionCommandRouter {
 		const claim = this.tryClaimClose(sessionId, { drainAttachments: false, detach: true });
 		if (!claim) return;
 		if (!claim.finalizer) {
+			this.writer.status.publish(sessionId, "detach", "client");
 			if (parks && live.runtime) {
 				live.lifecycleMutex = live.lifecycleMutex.then(() => live.runtime?.emitAttachmentEvent("session_parked"));
 				await live.lifecycleMutex;
@@ -1109,6 +1221,7 @@ export class SessionCommandRouter {
 					reply.complete(true, "client_close"),
 				);
 			} else {
+				this.writer.status.publish(command.sessionId, "detach", "client");
 				await this.finalizations.get(command.sessionId)?.promise;
 				reply.complete(false);
 			}

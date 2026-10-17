@@ -1,3 +1,193 @@
+## 2026-10-16 - The fallback circuit takes one step per open episode and only reroutes sessions it concerns (senpi#3467)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/circuit.ts`: `FallbackCircuitBreaker.open` counts a failure that arrives while the circuit is still open as the same open episode: no doubling and no extension beyond a provider hint. Only a failure once the open has elapsed (a failed half-open probe) advances the backoff, up to the ceiling. Each circuit records `exhausted` only when the failure is a verdict for every session: billing, quota or an account usage limit. A Retry-After, a reset window, an overload or a slow request stays with the session that got it: it sets that circuit's open time, never another session's model. `FallbackCircuitAccess.isExhausted` exposes it.
+- `packages/coding-agent/src/core/retry-fallback/circuit-probes.ts`: `CircuitProbes.isExhausted`.
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: `rerouteAroundOpenCircuit` still claims a half-open probe, but moves the session off its model only when this session itself saw the entry fail out of a chain (`ownFailures`) or the circuit is `exhausted`. Another session's bare slowness or failure no longer reroutes it. `noteServed` (called from `packages/coding-agent/src/core/agent-session.ts` on a successful response, replacing `probes.accept`) clears the session's own failure once the entry serves it again, so a recovered failure cannot later let a sibling's Retry-After move it.
+- Accepted residual: `exhausted` belongs to one open episode, so a circuit opened for an account limit loses it when the next episode starts on a non-verdict failure.
+
+### Why
+
+- Six sessions failing one second apart on a slow GPT opened its shared circuit for 60, 120, 240, 480, 960 and 1800 s. For up to 30 minutes every session in the process, including parents that never failed, moved to the fallback model and wrote a cold full-context cache there. That matches the reports of switching to Claude while the GPT quota was left.
+- Regressions: `retry-fallback-circuit-breaker.test.ts` (one step per episode), `retry-fallback-circuit.test.ts` and `retry-fallback-circuit-probes.test.ts` (untouched siblings keep their model).
+
+### Why an extension could not handle it
+
+- The breaker, the turn-boundary reroute and the chain scan are core retry-fallback modules that `agent-session.ts` wires directly.
+
+### Expected merge conflict zones
+
+- MEDIUM: `FallbackCircuitBreaker.open` in `circuit.ts`; `rerouteAroundOpenCircuit` in `controller.ts`. LOW: the success branch of `message_end` handling in `agent-session.ts`.
+
+## 2026-10-16 - Full access never asks "Trust project folder?"; the trust walk stops below home (senpi#3414, [#3420](https://github.com/code-yeongyu/senpi/pull/3420))
+
+### What changed
+
+- `packages/coding-agent/src/core/project-trust.ts`: `presetTrustsProject(presetFlag, globalPreset)`. An explicit `full-access` preset (the session's `permission-preset` flag from the CLI or `open_session.permissionPreset`, else the user's global setting) trusts the project. Project settings and the implicit default never count.
+- `packages/coding-agent/src/main.ts` `createServices` (inside `createCliRuntimeFactory`, which builds every interactive and RPC host session): a full-access session skips the trust prompt and is trusted for that session only, with no cache and no trust-store write. A saved "do not trust", `--no-trust` and an answer already given in this host still win.
+- `packages/coding-agent/src/core/trust-manager.ts` `hasTrustRequiringProjectResources`: home and every folder above it are never project resources, so their config dirs and `.agents/skills` (the user's own global resources) never require trust. This replaces the exact `~/.agents/skills` special case.
+- `packages/coding-agent/src/core/trust-manager.ts` `projectAgentsSkillDirs(cwd)`: the ONE walk for project `.agents/skills`, used by both the trust check and the loader (`packages/coding-agent/src/core/package-manager.ts` `collectAncestorAgentsSkillDirs`, whose own git-root lookup moved here). Both pass the cwd as spelled and the walk finds the git root itself, so they walk the same folders. Paths stay as spelled (resources are compared as strings); each folder's real path decides whether it is home or above, so a symlink can't carry the walk past home either way. A skill in a folder above home is never loaded as a project skill (#3420 review: the check skipped those folders while the loader still loaded them, with no prompt; then the check walked the real path while the loader walked the spelled one).
+- Full access and the project trust move together, and nothing can cancel the reload that follows.
+  - `packages/coding-agent/src/core/settings-manager.ts`: `SettingsManager.create({ trustFromFullAccess })` records trust that came only from the preset. `packages/coding-agent/src/core/agent-session-runtime.ts` `AgentSessionRuntime.syncFullAccessTrust` runs on every preset change (`setPermissionPreset`) and when a session replacement (new, switch, fork) goes live (`apply()`), because a replacement was built from the old preset.
+  - Leaving Full access sets the project untrusted. Going back restores the trust unless the user saved "do not trust" (read from the store, not memory). Nothing is ever saved.
+  - Either change calls `packages/coding-agent/src/core/agent-session.ts` `AgentSession.applyProjectTrustChange()`. It rebuilds the runtime like `reload()`, but no `session_before_reload` handler runs, so a project extension cannot veto its own unload. A prompt being admitted or a session start in dispatch is waited out (by notification) instead of cancelling.
+  - `SettingsManager.getTrustEpoch()` counts trust changes. Every rebuild captures it at start and loads again while it moved, so a reload already in flight never installs project code loaded under the old trust. The check and the install run in one synchronous step.
+  - Project settings, extensions, skills, hooks and MCP servers load or unload. A failure is an error diagnostic that survives session replacement.
+  - Code that already ran cannot be undone, including a factory run by a reload that started before the downgrade; it is never installed.
+  - A replacement's trust is synced before it becomes the live session, against the saved decision of ITS OWN project (`session.sessionManager.getCwd()`, through the store's normalized nearest-entry lookup), never the retired session's: a switch into another project must not inherit project A's saved trust. While a replacement is in flight the retired session is already disposed, so `setPermissionPreset` only records the preset while the live session is the one `teardownCurrent` disposed (`_disposedSession`, compared by identity, so a replacement that throws after teardown leaves nothing to clear) and `apply()` re-syncs the replacement until the preset stops moving.
+  - (#3420 review: T5, a cancelled reload, a reload in flight and a replacement in flight each left project code live; a cross-project switch read the old project's saved trust.)
+
+### Why
+
+Full access means no prompt anywhere (sisyphuslabs/omo-desktop-app#2465). The trust prompt never read the preset, and the desktop relays it as a dialog. Opening home as a project read the user's global config dir as project config, and `.agents/skills` above home counted.
+
+### Why an extension could not handle it
+
+Project trust is decided before extensions load, and it decides whether project extensions load at all.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: `createServices`'s trust block.
+- `packages/coding-agent/src/core/trust-manager.ts`: `hasTrustRequiringProjectResources`, `projectAgentsSkillDirs`.
+- `packages/coding-agent/src/core/package-manager.ts`: `collectAncestorAgentsSkillDirs`.
+- `packages/coding-agent/src/core/agent-session.ts`: `applyProjectTrustChange`, the trust-epoch loop before `_buildRuntime`, the prompt-start and session-start flag clears.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `setPermissionPreset`, `syncFullAccessTrust`, `teardownCurrent`, `apply()`, `diagnostics`.
+- `packages/coding-agent/src/core/settings-manager.ts`: `SettingsManagerCreateOptions`, `setProjectTrusted`, the trust epoch.
+- `packages/coding-agent/src/core/project-trust.ts`: `presetTrustsProject`.
+
+## 2026-10-14 - Turn inactivity lease and hard max runtime end a stuck turn (senpi#3227)
+
+### What changed
+
+- `packages/coding-agent/src/core/turn-deadline.ts` (new): the turn-deadline contract — `turn_inactivity_ms` (default 3_600_000, min 60_000, `0` disables) and `turn_max_runtime_ms` (default 21_600_000, `0` disables), the 10 s terminalization grace, the durable `deadline-stop` session entry, `deadlineStopPendingSinceLastTurn` (the goal-engine hold, read from the branch so it survives reload and reopen and is released only by a user message), and `AgentDeadlineTracker`.
+- `packages/coding-agent/src/core/agent-session.ts`: `AgentDeadlineTracker` arms the lease and the hard cap at prompt accept, renews the lease only on `tool_execution_start/update/end` (never on text deltas or heartbeats), clears the hold on admitted user input, and disarms at `agent_idle`. On expiry it records the `deadline-stop` entry, then ends the turn through the normal system-abort path with `aborted`, `abortSource: "system"` and the additive `deadline` field on `agent_end`, keeping partial text; `agent_idle` comes from the normal settle path. The abort signal reaches every running tool (the bash tool kills its process tree on it); a turn still running 10 s after the abort is held by something no abort ends (an extension handler that never returns) and is logged (`turn_deadline_unsettled`), never faked idle. A provider retry renews the inactivity lease; the max-runtime cap applies through retries, and input steered into a live run never resets it. A failed stop-entry write is logged (`turn_deadline_record_failed`) and the turn is still stopped.
+- `packages/coding-agent/src/core/settings-shapes.ts`, `packages/coding-agent/src/core/settings-manager.ts`: the two `turn_inactivity_ms` / `turn_max_runtime_ms` settings with the spec defaults and `0`-disables semantics.
+
+### Why
+
+Nothing ended a turn that stopped making progress; a provider that streams nothing or a tool that hangs without output kept the turn running until someone killed it.
+
+### Why an extension could not handle it
+
+The lease owns the abort path and the settings shape itself; only the session core can end a turn through the normal system-abort path with the deadline detail, and the hold must be read from the durable branch so it survives reload and reopen.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-session.ts` around `_promptAgent` (the arm), `_handleAgentEvent` tool-execution branches (the renewals), the `agent_idle` emission (the disarm), and `dispose()`.
+- LOW: `settings-manager.ts` beside `getEngineTurnSettings()`; `settings-shapes.ts` beside `ProviderConcurrencySettings`; `turn-deadline.ts` is fork-only.
+
+## 2026-10-15 - agent_end carries a structured provider failure with a reason and an action (senpi#3228)
+
+### What changed
+
+- `packages/coding-agent/src/core/provider-failure.ts` (new): `describeProviderFailure` maps the failed message's sanitized `providerDiagnostic` to `{ category, provider, httpStatus?, code?, reason, action }` with one action per category (`unknown` included); `providerFailureOf` reads it from the run's last assistant message only when `stopReason` is `"error"`; `formatProviderFailure` renders one line.
+- `packages/coding-agent/src/core/agent-session.ts`: `AgentSessionAgentEndEvent` gains optional `failure`, and the listener-facing `agent_end` is passed through `withProviderFailure`.
+
+### Why
+
+Clients could not tell an expired login from a rate limit or an outage without parsing prose, so `task_output` and the desktop failure card had no next step to show.
+
+### Why an extension could not handle it
+
+`agent_end` is emitted by `AgentSession` to every listener (RPC, print JSON, TUI); an extension can observe the event but cannot add a field every surface sees.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the `AgentSessionAgentEndEvent` type and the `agent_end` branch of the listener emit.
+
+## 2026-10-16 — A session on a shared ModelRuntime reads that runtime's auth storage (senpi#3434)
+
+### What changed
+
+- `packages/coding-agent/src/core/runtime-credentials.ts`: `RuntimeCredentials.backingStore` exposes the credential store it wraps.
+- `packages/coding-agent/src/core/model-runtime.ts`: `ModelRuntime.authStorage` returns that store when the runtime was built on an `AuthStorage`.
+- `packages/coding-agent/src/core/agent-session-services.ts`: `createAgentSessionServices` uses `options.modelRuntime?.authStorage` for the session's `ModelRegistry`, and a new store only when it builds its own runtime. There is no separate `authStorage` option: a session's store always comes from its runtime (one path, per the review).
+
+### Why
+
+A session on the multi-session host shares the host's `ModelRuntime` but built its own `AuthStorage`. Extension providers register their OAuth login into the runtime's store (`ModelRuntime` calls `credentials.registerOAuthProvider`), while `get_auth_providers` reads `modelRegistry.authStorage`. The two were different objects, so `anthropic-subscription` and `cursor-cli-oauth` never appeared in a host session and the OmO desktop's Anthropic card offered only an API key (sisyphuslabs/omo-desktop-app#2644). A session that builds its own runtime was never affected, because both sides came from the one store.
+
+### Why an extension could not handle it
+
+The mismatch is in core's service construction, before any extension runs.
+
+### Expected merge conflict zones
+
+- `agent-session-services.ts` around the `authStorage` line and the options interface.
+- `model-runtime.ts` just above `static async create`.
+
+## 2026-10-16 - The xiaomi built-in defaults move to mimo-v2.6-pro (senpi v2026.10.16 release)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-resolver.ts`: `defaultModelPerProvider` for `xiaomi` and the three `xiaomi-token-plan-*` providers is `mimo-v2.6-pro` (was `mimo-v2.5-pro`).
+
+### Why
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the release prepare regenerates the catalog from models.dev, which now marks `mimo-v2.5-pro` deprecated; the generator skips deprecated models, so the default vanished and `check:provider-defaults` stopped the v2026.10.16 release.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the built-in default table is read by core model resolution before extensions load.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the xiaomi rows of `defaultModelPerProvider`.
+
+## 2026-10-16 - Message paths never reach the file system unless local (senpi#3419 review)
+
+### What changed
+
+- `packages/coding-agent/src/core/message-path-resolution.ts`: `isLocalMessagePath` (win32: a drive-letter path only; elsewhere absolute and not `//`) is checked on every candidate before any file-system call and on the realpath; `resolveMessagePath` takes `platform`; `messagePathProjectRoot` ignores a `.git` in the home folder.
+
+### Why
+
+Opus review H1: resolving a `\\host\share` path named in a message made Windows connect to that host and offer the user's credentials; L1: a dotfiles repository made `~` the project root.
+
+### Why an extension could not handle it
+
+It is the core resolver's own guard.
+
+### Expected merge conflict zones
+
+- None: the file is new in this PR.
+
+## 2026-10-16 - One rule for what a message path means (senpi#3415)
+
+### What changed
+
+- `packages/coding-agent/src/core/message-path-resolution.ts` (new): `resolveMessagePath({ path, cwd, projectRoot })` tries a relative path against the session's working directory, then the project root (`messagePathProjectRoot`: nearest `.git`, else the nearest project marker), and answers the first existing candidate's realpath with its kind and base, or every candidate tried.
+
+### Why
+
+The TUI, RPC clients and the desktop app each guessed what a relative link meant. The engine knows the working directory and the project root, so it owns the answer once (sisyphuslabs/omo-desktop-app#2748).
+
+### Why an extension could not handle it
+
+The RPC host and the TUI link renderer both need it; it is a core contract, not a tool.
+
+### Expected merge conflict zones
+
+- None: a new file.
+## 2026-10-16 - Extension providers can declare ambient api-key auth (senpi#2327)
+
+### What changed
+
+- `packages/coding-agent/src/core/provider-composer.ts`: `ProviderConfigInput` gains optional `ambientAuth` plus the `ProviderAmbientAuth` hook (`name`, `resolve({ ctx, signal })`): the extension-owned ambient credential source (Google ADC, AWS env).
+- `packages/coding-agent/src/core/provider-api-key-auth.ts`: `composeApiKeyAuth` composes `ambientAuth` into an ambient `ApiKeyAuth` (`ambientOnly`, no login) when no base provider, API key, or credential header already supplies auth. Availability is the resolution itself, so `Models.checkAuth` carries the `ambient` marker into the provider's auth status and automatic default selection.
+
+### Why
+
+- The `vertex-model-garden` builtin needed to be available while Google ADC is present without counting as an explicitly configured provider: an env-var `apiKey` registration made the provider outrank configured providers in automatic default selection (senpi#2327) and reported it available with no ADC at all.
+
+### Why an extension could not handle it
+
+- Ambient provenance is decided inside provider composition and flows through `Models.checkAuth` into the auth status the default-model resolver reads; the extension's own registration cannot reach either.
+
+### Expected merge conflict zones
+
+- LOW: the `ProviderConfigInput` field list and the `ProviderAmbientAuth` interface in `provider-composer.ts`; the ambient branch of `composeApiKeyAuth` in `provider-api-key-auth.ts`.
 ## 2026-10-15 - AgentSession.activeWakeSources (senpi#3225)
 
 ### What changed
@@ -10357,3 +10547,89 @@ Runtime ownership publication precedes extension attachment.
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/core/agent-session.ts`: `evalHelperCall`, the eval-only suffix sentences (keep grep last), and the `createAllToolDefinitions` options in `_buildRuntime`.
+
+
+## 2026-10-15 - verify-api-key.ts (desktop #2510)
+
+### What changed
+
+New fork-only `verify-api-key.ts`. `verifyApiKey` probes the provider's model list with the key in memory and answers `ok`, `rejected` (401/403), `unreachable` (no answer, 5xx, timeout), `unsupported` (no probe for the API, or 404/405) or `unknown-provider`. Redirects are not followed, and the key never reaches a log, an error or the result. `storedKeyHint` returns the four-character hint described in the RPC tracker.
+
+### Why
+
+The engine half of the desktop's verify-before-save for API keys.
+
+### Why an extension could not handle it
+
+It serves core RPC auth commands.
+
+### Expected merge conflict zones
+
+None (new file).
+
+## 2026-10-15 - verify-api-key.ts review fixes (senpi#3372 review)
+
+### What changed
+
+- A model list that also answers a made-up control key is public (OpenRouter, keyless local servers), so its 200 is reported `unsupported`, never `ok`. `ok` requires the control key to be refused.
+- Mistral is probed at `/v1/models`.
+- Configured auth headers are dropped whatever their case.
+- A 3xx is `unsupported`.
+
+### Why
+
+A public model list made any key look valid.
+
+### Why an extension could not handle it
+
+It serves core RPC auth commands.
+
+### Expected merge conflict zones
+
+None (fork-only file).
+
+## 2026-10-15 - verify-api-key.ts: temporary failures are unreachable (senpi#3372 delta review)
+
+### What changed
+
+A 429, 5xx or no answer, on either the key's request or the control request, is `unreachable` ("try again"), never `unsupported`. The control key constant moved above its use.
+
+### Why
+
+A rate-limited provider was told its valid key "cannot be checked".
+
+### Why an extension could not handle it
+
+It serves core RPC auth commands.
+
+### Expected merge conflict zones
+
+None (fork-only file).
+
+## 2026-10-16 - Context files and a large skills catalog are size-bounded (senpi#3460)
+
+### What changed
+
+- `packages/coding-agent/src/core/context-files.ts` (new): context-file discovery moved here from `resource-loader.ts`, plus `applyContextFileLimits`. Files are budgeted nearest-first (the cwd's file, then its ancestors, then the global file): each file is cut at 64 KiB and all files together at 128 KiB, including the truncation note and any closing backtick or tilde fence. The closing marker matches the opener's character and length, and its bytes are reserved even for longer markers. Cuts prefer a newline in the last quarter of the content budget, otherwise a UTF-8 boundary. Every cut or skipped file returns a size-limit warning with its path, size and limits on the returned array's `diagnostics` property. A per-file cap below 1024 bytes is identified as too small, not blamed on nearer files. `contextFiles.maxBytesPerFile` / `contextFiles.maxTotalBytes` in settings override both.
+- `packages/coding-agent/src/core/resource-loader.ts`: imports and re-exports `loadProjectContextFiles`, passes the settings limits, exposes context warnings via `getAgentsFiles().diagnostics`, and includes the returned skill-size warnings in `getSkills().diagnostics`. Neither size check prints directly.
+- `packages/coding-agent/src/core/skills-prompt.ts` (new): `formatSkillsForPrompt` moved here from `skills.ts`; above 100 visible skills or 64 KiB of descriptions, each description becomes its first line, capped at 160 characters. The entire rendered section (roots and markup included) is capped at 48 KiB: compact descriptions first, names and locations only next, then the first skills that fit plus an `omitted_skills` count inside the section. Small catalogs below these limits render unchanged. The cap is fixed, not configurable.
+- `packages/coding-agent/src/core/diagnostics.ts`: optional `category: "size-limit"` identifies budget warnings without matching their prose; legacy resource validation warnings remain untagged.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: context and skill size warnings share the "Context size limits" notice and a size-specific explanation. Ordinary skill diagnostics keep the skill conflicts notice.
+- `packages/coding-agent/src/main.ts`: non-interactive startup reports only size-limit warnings once on stderr, prefixing the path when present. Existing skill validation warnings do not acquire new stderr output.
+- `packages/coding-agent/docs/settings.md`: documents both context limits and the fixed skills-section cap beside Compaction.
+- `packages/coding-agent/src/core/skills.ts`: re-exports `formatSkillsForPrompt` from `skills-prompt.ts`.
+- `packages/coding-agent/src/core/settings-manager.ts`: `Settings.contextFiles`.
+
+### Why
+
+Context files and the skills catalog are sent on every request with no bound. On a synthetic run, one 360 KiB AGENTS.md put about 91K tokens into each call and 400 skills about 43K, so a pay-per-token run paid that on every tool turn (senpi#3460, oh-my-openagent#10305).
+
+### Why an extension could not handle it
+
+Context files and the skills section are assembled by core before extensions see the prompt; an extension can only rewrite the finished prompt, after the size and the warnings are already decided.
+
+### Expected merge conflict zones
+
+- `resource-loader.ts`: the import block and the `loadProjectContextFiles` call in `reload`.
+- `skills.ts`: the area where `formatSkillsForPrompt` used to live.
+- `settings-manager.ts`: the `Settings` interface beside `compaction`.

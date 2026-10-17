@@ -1,3 +1,39 @@
+## 2026-10-16 - A forced release tests its code before stamping the version and changelogs (senpi#3446)
+
+### What changed
+
+- `scripts/release.mjs`: with `--force-tests`, the suite (clean, build, then `CI=1 npm test`) runs right after the test-evidence step (catalog regeneration and its commit), before any version bump or CHANGELOG stamping. The release still cleans and builds again after stamping. Without `--force-tests` the order of commands is unchanged.
+
+### Why
+
+- `scripts/release.mjs`: the suite used to run after `stampChangelogs`, so any test that reads a real CHANGELOG.md saw no `[Unreleased]` section; the v2026.10.16 forced release (run 38824836070) failed on `scripts/model-catalog-refresh.test.mjs`. CI always tests the unstamped commit, so the forced path never matched it.
+
+### Why an extension could not handle it
+
+- `scripts/release.mjs`: release orchestration is repository build tooling.
+
+### Expected merge conflict zones
+
+- `scripts/release.mjs`: `main()`'s step list and `runForcedTests`.
+
+## 2026-10-15 - The forced release test suite is bounded and dispatchable (senpi#3426, Refs senpi#2291)
+
+### What changed
+
+- `scripts/release.mjs`: `runForcedTests` (the `--force-tests` path) runs the suite through `runForcedTestSuite` from `release-test-gate.mjs` instead of `runCommand("npm", ["test"], { CI: "1" })`. The suite runs under a 110-minute budget as the leader of its own process group (`release-forced-test-supervisor.mjs`), and a timeout kills the whole group and fails with a named error. The default path, which waits for the release commit's green "Check and test" run, is unchanged.
+
+### Why
+
+- `scripts/release.mjs`: when GitHub-hosted macOS runners are backlogged, the release commit's "Check and test" never reports and the release fails after 40 minutes without publishing (two v2026.10.16 attempts on 2026-10-15). `--force-tests` is the existing fallback, but the workflow could not pass it, and the in-job suite once hung silently in packages/ai vitest until the job timeout killed it (senpi#2291). The budget is about twice the serial cost estimated from green main CI (the ubuntu Test jobs sum to 56.8-62.7 min).
+
+### Why an extension could not handle it
+
+- `scripts/release.mjs`: the release orchestration and its workflow are repository build tooling.
+
+### Expected merge conflict zones
+
+- `scripts/release.mjs`: `runForcedTests` and the `release-test-gate.mjs` import; the `release` job's `timeout-minutes` and inputs in `publish-npm.yml`.
+
 ## 2026-10-15 - The ./models entry graph reaches the cost-card leaf (senpi#3378)
 
 ### What changed

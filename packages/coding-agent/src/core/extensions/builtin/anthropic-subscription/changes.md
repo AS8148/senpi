@@ -1,3 +1,46 @@
+## 2026-10-16 - A transient failure never rotates or blocks an account (senpi#3466)
+
+### What changed
+
+- `failover.ts`: a transient classification (`overloaded`, retryable `other`) is retried on the same account up to `TRANSIENT_RETRIES_PER_TURN` times, then the classified error is thrown. It no longer falls through to `blockedAccount`/`persistBlock`, so no account is blocked and no other account is attempted. A post-delta transient also throws without a block.
+- `failover.ts` + `usage-limit-block.ts` (`isConfirmedAccountUsageLimit`) + `auth-lane.ts`: only a verdict that the account cannot serve anyone is written to the shared credential record: a confirmed account-level usage limit (Claude Code's anchored prose or `blocking_limit`, under no status other than 429), a billing or organization refusal, or a rejected token. Every other session then leaves the spent account, which is right. A plain rate limit and a one-model limit still rotate this turn, but the block is kept in memory for the session that hit it only (`sessionKey`, passed from `auth-lane.ts`; a request with no session id keeps the shared block as before); another session on the account keeps using it and finds out on its own request. A success clears the session's own block. Elapsed session blocks of every session are pruned on each turn.
+- `account-management.ts`: `unblockProviderAccount` also calls `forgetSessionBlocksFor`, so `/claude-account unblock` lifts session-scoped blocks in every session.
+- `usage-limit-block.ts`: `rapid_refill_breaker` is no longer a confirmed account verdict; it keeps the short, session-scoped block.
+- Accepted trade-off: an account that keeps failing transiently never fails over to another account in the pool. The turn fails after the bounded retries and the session's own retry, then model fallback, take over. A session prefers the account its transcript lives under and model fallback stays on that account, so if one account alone keeps failing transiently, the session stays broken until the outage ends or the user switches accounts with `/claude-account`. 529s and network failures are almost always provider-wide or local rather than per account, so this is accepted for the hotfix; rotating after N failed turns on one account is a follow-up.
+
+### Why
+
+- Each rotation made the next request on the new account write the whole conversation to a cold cache (about $4 at 850K on Opus 5.5), and the persisted block moved every other session off a healthy account at its next turn. Offline, four accounts with two overloading gave one turn of max20 x3, max5 x1, proA. Regression: the rewritten cases in `test/suite/regressions/2891-anthropic-subscription-account-stickiness.test.ts` (three fail on `main`).
+
+### Why an extension could not handle it
+
+- This is the extension; account rotation lives in its failover module.
+
+### Expected merge conflict zones
+
+- LOW: the transient branch inside `runFailover`.
+
+## 2026-10-16 - An account usage limit blocks the account until its reset (senpi#3462)
+
+### What changed
+
+- `usage-limit-block.ts` (new) + `failover.ts`: `blockedAccount` blocks a spent account until its limit resets, read from an explicit Retry-After, then the reset the message names, then the latest reset among the account's fully used windows in `subscriptionLimits` (from the SDK's `rate_limit_event`). A long block is taken only for Claude Code's own usage-limit error: the message starts with "You've hit/reached your [session|5-hour|daily|weekly|monthly|usage] limit" or "Claude AI usage limit reached", or carries `blocking_limit`/`rapid_refill_breaker`, and names no status other than 429. It never lasts past the limit's own window (5-hour/session 5 h, daily 24 h, weekly 7 d, monthly 31 d, unnamed 5 h; then the 48 h ceiling). Everything else keeps the `60 s x 2^attempt` block.
+- `failover.ts`: an account that serves a turn has any stored usage or rate-limit block cleared (an auth block keeps its re-probe). The clear is best-effort: a store failure is logged and never fails or replays the finished turn. A block records when it was stored (`blockedAt` on the slot and in `slotState`), and a success clears only a block stored before its attempt started, so a long turn never lifts a newer block another session wrote meanwhile.
+- A `blocking_limit` / `rapid_refill_breaker` reason anywhere in the text takes the long block whatever the prose says: it is Claude Code's structured verdict on a spent subscription, appended by `sdkResultFailure`.
+- `account-management.ts` / `account-command.ts`: `/claude-account unblock <id>` lifts a usage or rate-limit block by hand; auth blocks still need a login or the re-probe.
+
+### Why
+
+- Claude Code's usage-limit prose carries no Retry-After, so every spent account was blocked for 60 s. A pinned account outranks the account the session moved to (`affinity.ts`), so after each 60 s block the session retried the spent account, failed, and fork-resumed its healthy account again. omo#10304 measured that fork at 0.8-0.9M cache-write tokens. Regression: `test/suite/regressions/3462-anthropic-subscription-usage-limit-reset-block.test.ts` (10 of 20 turns retried the spent account on `main`, 0 now).
+
+### Why an extension could not handle it
+
+- This is the extension; the block duration lives in its failover module.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `blockedAccount` and the success return in `runFailover` (`failover.ts`); the `/claude-account` action list.
+
 ## 2026-10-15 - Transport image elision is hash-neutral in the sent stream (senpi#2768)
 
 ### What changed
@@ -1923,3 +1966,44 @@ The prompt adapter is the fork's OAuth interaction shim for the subscription pro
 ### Expected merge conflict zones
 
 Upstream edits to the Anthropic subscription login adapter at the next sync.
+
+## 2026-10-15 - The window compaction plans against is the window the request gets (senpi#3408)
+
+### What changed
+- `options.ts`: `sdkModelId(model)` gives Claude Code `<id>[1m]` while the model's window is over 200k and the account has not refused 1M. That suffix is Claude Code's own subscription path to the 1M window: the installed CLI sends `context-1m-2025-08-07` on the wire for it, while `options.betas` is ignored for OAuth ("Custom betas are only available for API key users"). `queryOptions.model` uses it.
+- `session-entry-annotations.ts`, `session-registry.ts`, `session-registry-wiring.ts`: a resident model switch passes the same SDK model id to `setModel`, while the entry keeps senpi's model id for continuity.
+- `session-sync.ts`: the config fingerprint hashes only whether a 1M refusal is active, so a refusal or its expiry restarts the resident process at the matching window, while a live model switch stays in place (it reaches the process through `setModel`).
+- `long-context.ts` (new): records a refused 1M window for 6 hours, with an atomic persisted write under the agent directory. It tells listeners when the state flips, isolating a failing (stale) listener. Expiry is signalled by an unref'd timer, never by reading the state.
+- `errors.ts`: "Extra usage / Usage credits are required for long context" classifies as `long_context_unavailable` (retryable), ahead of the rate-limit codes.
+- `failover.ts`: that refusal retries once on the same account through `onLongContextRefused`, without blocking or rotating it.
+- `auth-lane.ts`: the ambient lane passes SDK messages through unchanged. On a pre-visible refusal it closes the first query, records the refusal and retries once.
+- `index.ts`: each registration is the whole provider config (`providerConfig(longContext)`), with windows capped at 200k while refused. The lane re-registers on every flip and stops following on `session_shutdown`.
+
+### Why
+1M models on this lane advertised 1M, so compaction planned for 1M, but Claude Code ran them in its 200k default. Sessions failed with "Prompt is too long" before compaction. The refusal for an account without 1M uses the `rate_limit` code, so it would also have blocked the account.
+
+### Why an extension could not handle it
+This is the anthropic-subscription builtin's own model ids, error classification, failover and registration.
+
+### Expected merge conflict zones
+- `options.ts`: the query-options model line and the helper above the thinking markers;
+- `errors.ts`: the top of `classifyErrorKind`;
+- `failover.ts`: the catch block after the retryable check;
+- `auth-lane.ts`: the ambient branch;
+- `index.ts`: the registration;
+- `session-sync.ts`: the fingerprint toolset hash;
+- `session-entry-annotations.ts` and `session-registry.ts`: `switchEntryModel` / `switchSessionModel`.
+
+## 2026-10-16 - The host tool handoff never reads as an error (senpi#3417)
+
+### What changed
+- `tools.ts`: `TOOL_EXECUTION_DENIED_MESSAGE` now opens "Not an error: this is the normal host handoff, so ignore the 'hook error' label". It tells the model not to mention the message to the user. `HOST_TOOL_POLICY_FINGERPRINT` moves to `host-tool-denial-v4`, so resident sessions reattach with the new reason.
+
+### Why
+Claude Code turns every PreToolUse deny into the tool_result `PreToolUse:<Tool> hook error: <reason>` with `is_error: true`. Wire captures with the installed CLI confirmed this for the hookSpecificOutput deny, the legacy `decision: "block"`, and with `suppressOutput` or `systemMessage`. The label can't be changed, and a hook that doesn't deny (or a `canUseTool` deny) lets Claude Code execute the tool itself. senpi never shows that SDK tool_result, but the model read it as a failure on every host-run tool and told the user. Only the reason text can carry the correction.
+
+### Why an extension could not handle it
+This is the builtin's own denial reason, which the deny hook hands to Claude Code.
+
+### Expected merge conflict zones
+- `tools.ts`: the denial constant and the fingerprint version.

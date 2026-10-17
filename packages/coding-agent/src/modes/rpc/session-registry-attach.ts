@@ -101,7 +101,12 @@ export async function attachToOpenSession(
 			}
 			return attachToOpenSession(entries, sessionPath, profile, options, pathReservations, now);
 		}
-		throw new RpcSessionRegistryError("session_path_in_use");
+		// The path is still reserved by a session that is not serving (a teardown past its grace
+		// window): never a bare refusal, so the caller knows to retry (senpi#3485).
+		throw new RpcSessionRegistryError("session_path_in_use", "the session is still being released", {
+			reason: "path_still_held",
+			retry_after_ms: OPEN_IN_PROGRESS_WAIT_RETRY_MS,
+		});
 	}
 	const [handle, entry] = existing;
 	const wasParked = entry.retainOnDisconnect === true && entry.attachments === 0;

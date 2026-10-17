@@ -34,6 +34,9 @@ export class RetryFallbackController {
 	private heldForNetworkBlip = false;
 	// The model a network blip just failed on: none of its rungs is tried in that walk (senpi#3344).
 	private blipModel: string | undefined;
+	// Entries this session itself saw fail out of a chain: only these (or an entry spent for everyone)
+	// may move the session off its model at a turn boundary (senpi#3467).
+	private readonly ownFailures = new Set<string>();
 	private readonly unusable: UnusableEntries;
 	readonly probes: CircuitProbes;
 	// Content-keyed memo of canonicalizeFallbackChains. Provider-error handling calls
@@ -203,10 +206,17 @@ export class RetryFallbackController {
 		}
 		this.state = undefined;
 		this.heldForNetworkBlip = false;
+		this.ownFailures.delete(formatSelector(model));
 		this.deps.cooldowns.clearModel(formatSelector(model));
 		this.unusable.clear(model);
 		this.probes.release();
 		this.deps.circuits?.close(formatSelector(model));
+	}
+
+	/** A response this session got from `selector` succeeded: the entry serves it again (senpi#3467). */
+	noteServed(selector: string): void {
+		this.ownFailures.delete(selector);
+		this.probes.accept(selector);
 	}
 
 	/**
@@ -219,20 +229,27 @@ export class RetryFallbackController {
 		if (!this.managedChainKey({ model, thinkingLevel })) return;
 		// A pure network fault is the transport's, not the model's: it never opens the shared circuit (senpi#3306).
 		if (isPureNetworkTransient(failure.errorMessage)) return;
+		this.ownFailures.add(formatSelector(model));
 		this.probes.noteFailure(formatSelector(model), failure);
 	}
 
 	/**
-	 * Turn-boundary skip: when the current entry's circuit was opened by this or a
-	 * sibling session, move to the next closed entry without spending a request on
-	 * it. With no closed entry left the current one stays and probes, so the chain
-	 * never refuses a turn; a half-open current entry is claimed for this session.
+	 * Turn-boundary skip: when the current entry's circuit is open because this session
+	 * saw it fail (and has not been served by it since), or because its account is spent
+	 * for everyone, move to the next closed entry without spending a request on it. A
+	 * sibling's bare failure or Retry-After never moves this session (senpi#3467). With no
+	 * closed entry left the current one stays and probes, so the chain never refuses a
+	 * turn; a half-open current entry is claimed for this session.
 	 */
 	async rerouteAroundOpenCircuit(): Promise<boolean> {
 		const current = this.deps.getCurrentSelector();
 		if (!this.deps.circuits || !current) return false;
 		const currentBase = formatSelector(current.model);
+		// A half-open entry is still claimed as this session's single probe whoever opened it.
 		if (this.probes.admit(currentBase) !== "open") return false;
+		// Another session's bare failure says this entry was slow for that session, not that it is
+		// down for this one: a session that never failed on it keeps its model and finds out itself.
+		if (!this.ownFailures.has(currentBase) && !this.probes.isExhausted(currentBase)) return false;
 		const candidate = this.nextCandidate(false, true);
 		if (!candidate || candidate.circuitOpen) return false;
 		this.deps.logger.info("circuit_open_skip", { selector: currentBase });

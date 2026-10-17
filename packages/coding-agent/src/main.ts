@@ -92,7 +92,7 @@ import { ModelRuntime } from "./core/model-runtime.ts";
 import { markMovedSessions, movedHereSessionToContinue, withMovedSessions } from "./core/moved-sessions.ts";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.ts";
 import { recordProcessLifetime } from "./core/process-crash-record.ts";
-import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
+import { type AppMode, presetTrustsProject, resolveProjectTrusted } from "./core/project-trust.ts";
 import { resolveResumeTarget } from "./core/resume-target.ts";
 import type { CreateAgentSessionOptions } from "./core/sdk.ts";
 import {
@@ -878,14 +878,32 @@ export function createCliRuntimeFactory(
 		const projectTrustDiagnostics: AgentSessionRuntimeDiagnostic[] = [];
 		const cachedProjectTrust = projectTrustByCwd.get(cwd);
 		const hasTrustRequiringResources = hasTrustRequiringProjectResources(cwd);
+		// A full-access session trusts its project without asking, for that session only: nothing is
+		// cached here or saved to the trust store, and a saved "do not trust" still wins (#2465).
+		const fullAccessTrust =
+			presetTrustsProject(
+				sessionExtensionFlagValues(parsed.unknownFlags, launchProfile).get("permission-preset"),
+				(startupSettingsManager.getGlobalSettings() as { readonly permissionPreset?: unknown }).permissionPreset,
+			) && trustStore.get(cwd) !== false;
 		const shouldResolveProjectTrust =
-			parsed.projectTrustOverride === undefined && cachedProjectTrust === undefined && hasTrustRequiringResources;
+			parsed.projectTrustOverride === undefined &&
+			cachedProjectTrust === undefined &&
+			!fullAccessTrust &&
+			hasTrustRequiringResources;
 		const projectTrusted = shouldResolveProjectTrust
 			? false
 			: (cachedProjectTrust ??
 				parsed.projectTrustOverride ??
-				(!hasTrustRequiringResources || trustStore.get(cwd) === true));
-		const runtimeSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted });
+				(fullAccessTrust || !hasTrustRequiringResources || trustStore.get(cwd) === true));
+		// Trusted only because of Full access (resources need trust and nothing else granted it): leaving
+		// Full access withdraws it (#3420 review T5).
+		const trustFromFullAccess =
+			fullAccessTrust &&
+			hasTrustRequiringResources &&
+			cachedProjectTrust === undefined &&
+			parsed.projectTrustOverride === undefined &&
+			trustStore.get(cwd) !== true;
+		const runtimeSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted, trustFromFullAccess });
 		// The opener's per-session fallback policy is an in-memory override: never saved, never shared.
 		if (launchProfile?.retryFallback) applyRetryFallbackProfile(runtimeSettingsManager, launchProfile.retryFallback);
 		const services = await createAgentSessionServices({
@@ -1474,6 +1492,14 @@ export async function main(args: string[], options?: MainOptions) {
 		reportDiagnostics([{ type: "warning", message: formatThinkingClampWarning(startupThinkingClamp) }]);
 	}
 	if (appMode !== "interactive") {
+		reportDiagnostics(
+			[...(resourceLoader.getAgentsFiles().diagnostics ?? []), ...resourceLoader.getSkills().diagnostics]
+				.filter((diagnostic) => diagnostic.type === "warning" && diagnostic.category === "size-limit")
+				.map((diagnostic) => ({
+					type: "warning" as const,
+					message: diagnostic.path ? `${diagnostic.path}: ${diagnostic.message}` : diagnostic.message,
+				})),
+		);
 		reportDiagnostics(collectAuthDiagnostics(services.authStorage, "runtime creation"));
 	}
 	if (runtime.diagnostics.some((diagnostic) => diagnostic.type === "error")) {
