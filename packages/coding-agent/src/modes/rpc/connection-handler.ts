@@ -1696,12 +1696,11 @@ export function createRpcConnectionHandler(
 				const modelRegistry = session.modelRegistry;
 				const oauthInfos = buildLoginProviderInfos(modelRegistry, "oauth");
 				const apiKeyInfos = buildLoginProviderInfos(modelRegistry, "api_key");
-				const apiKeyRows = new Set(apiKeyInfos.map((info) => info.id));
 				const providers: RpcAuthProvider[] = [...oauthInfos, ...apiKeyInfos].map((info) => ({
 					id: info.id,
 					name: info.name,
 					authType: info.authType,
-					status: authMethodStatus(modelRegistry, info, apiKeyRows.has(info.id)),
+					status: authMethodStatus(modelRegistry, info),
 					...storedKeyHint(modelRegistry, info),
 				}));
 				return success(id, "get_auth_providers", { providers });
