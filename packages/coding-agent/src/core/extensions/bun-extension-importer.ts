@@ -291,6 +291,12 @@ export function createBunExtensionImporter(
 				return factory.apply(this, args);
 			};
 		},
+		/** The whole module namespace (a tool child's `module` job calls a named export, senpi#3566). */
+		async importNamespace(path: string): Promise<Record<string, unknown>> {
+			assertActive();
+			const { id } = fileTarget(realpathSync(resolve(path)));
+			return import(id);
+		},
 		// Capture identity from the transpiler input, never from a later disk snapshot.
 		compiledSources(): ReadonlyMap<string, string> {
 			return fingerprints;

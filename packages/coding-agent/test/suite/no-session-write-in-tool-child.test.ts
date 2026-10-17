@@ -1,5 +1,5 @@
 // senpi#3566 todo 4: the server is the single writer of every session file; the tool child's import graph reaches no
-// session-writing module (architecture contract). The walk follows static and dynamic relative imports.
+// session-writing module (architecture contract). The walk follows static and dynamic relative imports and worker entries.
 import { readFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -13,9 +13,14 @@ const FORBIDDEN = [
 	"src/core/session-write-recovery.ts",
 	"src/core/sdk.ts",
 	"src/main.ts",
+	// The extension loader statically imports the package barrel, which reaches every session writer; the child loads
+	// modules through the Bun extension importer directly (module job), never through these.
+	"src/core/extensions/loader.ts",
+	"src/index.ts",
 ];
+// Worker entries are started with `new URL("./x.ts", import.meta.url)`, so they are part of the child's graph too.
 const SPECIFIER =
-	/(?:import|export)\s[^'"]*?from\s*["'](\.{1,2}\/[^"']+)["']|import\s*\(\s*["'](\.{1,2}\/[^"']+)["']\s*\)|import\s+["'](\.{1,2}\/[^"']+)["']/g;
+	/new\s+URL\(\s*["'](\.{1,2}\/[^"']+)["']\s*,\s*import\.meta\.url|(?:import|export)\s[^'"]*?from\s*["'](\.{1,2}\/[^"']+)["']|import\s*\(\s*["'](\.{1,2}\/[^"']+)["']\s*\)|import\s+["'](\.{1,2}\/[^"']+)["']/g;
 
 function reachable(roots: readonly string[]): Set<string> {
 	const seen = new Set<string>();
@@ -26,7 +31,7 @@ function reachable(roots: readonly string[]): Set<string> {
 		seen.add(file);
 		const source = readFileSync(file, "utf8");
 		for (const match of source.matchAll(SPECIFIER)) {
-			const specifier = match[1] ?? match[2] ?? match[3];
+			const specifier = match[1] ?? match[2] ?? match[3] ?? match[4];
 			if (specifier?.endsWith(".ts")) queue.push(resolve(dirname(file), specifier));
 		}
 	}
@@ -40,6 +45,8 @@ describe("the tool child never writes a session", () => {
 		expect(graph.has("src/internal-role.ts")).toBe(true);
 		expect(graph.has("src/modes/rpc/tool-child/entry.ts")).toBe(true);
 		expect(graph.has("src/modes/rpc/tool-child/channel.ts")).toBe(true);
+		expect(graph.has("src/modes/rpc/tool-child/module-job-worker.ts")).toBe(true);
+		expect(graph.has("src/core/extensions/bun-extension-importer.ts")).toBe(true);
 	});
 
 	it("reaches no session-writing module", () => {
