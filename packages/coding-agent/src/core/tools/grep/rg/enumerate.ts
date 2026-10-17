@@ -53,6 +53,7 @@ export async function enumerateCandidates({
 	run,
 	check,
 	result,
+	budget = argvBudget(),
 }: {
 	roots: Root[];
 	cwd: string;
@@ -60,6 +61,7 @@ export async function enumerateCandidates({
 	run: RgRun;
 	check: () => void;
 	result: GrepEngineResult;
+	budget?: number | undefined;
 }): Promise<Candidate[]> {
 	const candidates = new Map<string, Omit<Candidate, "ordinal" | "binary">>();
 	for (const root of roots) {
@@ -106,7 +108,7 @@ export async function enumerateCandidates({
 		"\\x00",
 		"--",
 	];
-	const room = roomAfter(nulScan, argvBudget());
+	const room = roomAfter(nulScan, budget);
 	const scans = [
 		...packArgv(files, (root) => argvCost(root.path), room).map((batch) => ({
 			cwd: batch[0].cwd,

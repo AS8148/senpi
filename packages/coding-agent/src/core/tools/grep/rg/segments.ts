@@ -33,7 +33,7 @@ function joins(previous: Candidate[], candidate: Candidate, request: GrepEngineR
 export interface SegmentPlan {
 	walk: string[];
 	matcher: string[];
-	budget?: number;
+	budget?: number | undefined;
 	platform?: NodeJS.Platform;
 }
 
@@ -119,6 +119,7 @@ export async function searchSegments({
 	run,
 	check,
 	result,
+	budget,
 }: {
 	candidates: Candidate[];
 	request: GrepEngineRequest;
@@ -127,8 +128,9 @@ export async function searchSegments({
 	run: RgRun;
 	check: () => void;
 	result: GrepEngineResult;
+	budget?: number | undefined;
 }): Promise<void> {
-	const segments = planSegments(candidates, request, { walk, matcher });
+	const segments = planSegments(candidates, request, { walk, matcher, budget });
 	let matcherRan = false;
 	for (const [segmentIndex, segment] of segments.entries()) {
 		check();

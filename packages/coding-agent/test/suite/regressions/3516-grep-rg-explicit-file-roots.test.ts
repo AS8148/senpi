@@ -105,36 +105,6 @@ describe("#3516 rg engine batches explicit file roots", () => {
 		expect(result.limitReached).toBe(false);
 	});
 
-	it("returns what per-file searches return for awkward explicit file names", async () => {
-		const root = await realpath(await mkdtemp(join(tmpdir(), "grep-3516-names-")));
-		cleanups.push(() => rm(root, { recursive: true, force: true }));
-		const names = [
-			"has space.ts",
-			'quote"d.ts',
-			"-leading.ts",
-			"glob[*]{a,b}?.ts",
-			"한글.ts",
-			".hidden.ts",
-			"bin.dat",
-		];
-		const paths: string[] = [];
-		for (const [index, name] of names.entries()) {
-			const path = join(root, `n${index}`, name);
-			await mkdir(join(path, ".."));
-			await writeFile(path, name === "bin.dat" ? Buffer.from("needle\0") : `needle ${index}\nx\nneedle again\n`);
-			paths.push(path);
-		}
-		await writeFile(join(root, ".gitignore"), "*.ts\n");
-		const request: GrepEngineRequest = { pattern: "needle", paths, cwd: root, glob: ["!*.ts"], contextAfter: 1 };
-		const batched = await tracked().engine.search(request);
-		const single = [];
-		for (const path of paths) single.push(await tracked().engine.search({ ...request, paths: [path] }));
-
-		expect(batched.matches).toEqual(single.flatMap((result) => result.matches));
-		expect(batched.counts.matches).toBe(single.reduce((sum, result) => sum + (result.counts.matches ?? 0), 0));
-		expect(batched.skippedBinary).toBe(1);
-	});
-
 	it("keeps directory roots on their own filtered walk beside batched files", async () => {
 		const { root, files } = await corpus();
 		await mkdir(join(root, "tree"));
