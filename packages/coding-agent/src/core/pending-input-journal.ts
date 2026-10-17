@@ -1,4 +1,5 @@
 import { open } from "node:fs/promises";
+import { dirname } from "node:path";
 import {
 	PENDING_INPUT_TRANSITION,
 	type PendingInputJournal,
@@ -7,7 +8,21 @@ import {
 import type { PendingInput, PendingInputOperationResult } from "./pending-input-types.ts";
 import type { SessionManager } from "./session-manager.ts";
 
-type JournalSession = Pick<SessionManager, "appendCustomEntry" | "persistHeaderNow" | "getEntries" | "getSessionFile">;
+type JournalSession = Pick<
+	SessionManager,
+	"appendCustomEntry" | "persistHeaderNow" | "getEntries" | "getSessionFile" | "isPersisted" | "isTranscriptFlushed"
+>;
+
+/** How the journal makes an append durable: the file's data, and once the directory entry that names it. */
+export interface JournalDurability {
+	syncFile(path: string): Promise<void>;
+	syncDirectory(path: string): Promise<void>;
+}
+
+export const fsJournalDurability: JournalDurability = {
+	syncFile: (path) => syncPath(path),
+	syncDirectory: (path) => syncPath(path),
+};
 
 /**
  * The session JSONL as the pending-input journal (senpi#3549): each transition is one `custom` entry,
@@ -15,21 +30,33 @@ type JournalSession = Pick<SessionManager, "appendCustomEntry" | "persistHeaderN
  */
 export class SessionPendingInputJournal implements PendingInputJournal {
 	private readonly session: JournalSession;
+	private readonly durability: JournalDurability;
+	private directorySynced = false;
 
-	constructor(session: JournalSession) {
+	constructor(session: JournalSession, durability: JournalDurability = fsJournalDurability) {
 		this.session = session;
+		this.durability = durability;
 	}
 
+	/**
+	 * A session opened without persistence (--no-session) keeps the journal in memory only, like the rest of
+	 * that session. A persisted session must have its file on disk before the entry counts: the header is
+	 * forced, the entry must reach the file itself (not the pre-conversation buffer), and the file and, once,
+	 * its directory are synced before this returns.
+	 */
 	async append(record: PendingInputJournalRecord): Promise<void> {
+		if (!this.session.isPersisted()) {
+			this.session.appendCustomEntry(PENDING_INPUT_TRANSITION, record);
+			return;
+		}
 		await this.session.persistHeaderNow();
-		this.session.appendCustomEntry(PENDING_INPUT_TRANSITION, record);
 		const file = this.session.getSessionFile();
-		if (file === undefined) return;
-		const handle = await open(file, "r");
-		try {
-			await handle.sync();
-		} finally {
-			await handle.close();
+		if (file === undefined || !this.session.isTranscriptFlushed()) throw new PendingInputNotDurableError();
+		this.session.appendCustomEntry(PENDING_INPUT_TRANSITION, record);
+		await this.durability.syncFile(file);
+		if (!this.directorySynced) {
+			await this.durability.syncDirectory(dirname(file));
+			this.directorySynced = true;
 		}
 	}
 
@@ -39,7 +66,39 @@ export class SessionPendingInputJournal implements PendingInputJournal {
 			if (entry.type !== "custom" || entry.customType !== PENDING_INPUT_TRANSITION) continue;
 			records.push(parseRecord(entry.data, entry.id));
 		}
-		return records.sort((a, b) => a.cursor - b.cursor);
+		records.sort((a, b) => a.cursor - b.cursor);
+		// The session loader skips a line that does not parse, so a lost transition shows only as a cursor gap.
+		records.forEach((record, index) => {
+			if (record.cursor !== index + 1) throw new PendingInputJournalGapError(index + 1);
+		});
+		return records;
+	}
+}
+
+export class PendingInputNotDurableError extends Error {
+	readonly code = "pending_input_journal_not_durable";
+	constructor() {
+		super("The session file is not on disk yet, so a pending input cannot be saved; try again.");
+		this.name = "PendingInputNotDurableError";
+	}
+}
+
+export class PendingInputJournalGapError extends Error {
+	readonly code = "pending_input_journal_gap";
+	constructor(missingCursor: number) {
+		super(
+			`Pending input journal is missing transition ${missingCursor}; the session cannot recover its queued input safely.`,
+		);
+		this.name = "PendingInputJournalGapError";
+	}
+}
+
+async function syncPath(path: string): Promise<void> {
+	const handle = await open(path, "r");
+	try {
+		await handle.sync();
+	} finally {
+		await handle.close();
 	}
 }
 

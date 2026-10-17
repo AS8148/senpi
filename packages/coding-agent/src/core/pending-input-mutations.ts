@@ -65,7 +65,10 @@ function applyMutation(
 				hasEdits: true,
 				text: event.text,
 				attachments: event.attachments,
-				superseded: [...current.superseded, { revision: current.revision, text: current.text }],
+				superseded: [
+					...current.superseded,
+					{ lifetimeId: current.handle.lifetimeId, revision: current.revision, text: current.text },
+				],
 			};
 			return { next, result: { ...answer(next, "edited"), revision, text: event.text } };
 		}

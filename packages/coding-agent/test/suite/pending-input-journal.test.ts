@@ -2,7 +2,13 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { PendingInputJournalError, SessionPendingInputJournal } from "../../src/core/pending-input-journal.ts";
+import {
+	type JournalDurability,
+	PendingInputJournalError,
+	PendingInputJournalGapError,
+	PendingInputNotDurableError,
+	SessionPendingInputJournal,
+} from "../../src/core/pending-input-journal.ts";
 import { PENDING_INPUT_TRANSITION, PendingInputStore } from "../../src/core/pending-input-store.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 
@@ -25,6 +31,21 @@ const SUBMIT = {
 	text: "check the logs",
 	attachments: [],
 	requestedMode: "followUp",
+} as const;
+
+const SAMPLE_INPUT = {
+	clientMessageId: "c-1",
+	fingerprint: "fp",
+	handle: { lifetimeId: "life-1", queuedId: "q_1" },
+	revision: 1,
+	hasEdits: false,
+	text: "check the logs",
+	attachments: [],
+	requestedMode: "followUp",
+	phase: "queued",
+	attemptCount: 0,
+	superseded: [],
+	operations: {},
 } as const;
 
 async function storeOver(manager: SessionManager, lifetimeId: string): Promise<PendingInputStore> {
@@ -76,6 +97,78 @@ describe("session pending-input journal", () => {
 			status: "admitted",
 			projection: { state: "edited", text: "edited", revision: 1 },
 		});
+	});
+
+	it("syncs the file on every append and its directory once, before the append returns", async () => {
+		const dir = sessionDir();
+		const manager = SessionManager.create(dir, dir);
+		const synced: string[] = [];
+		const durability: JournalDurability = {
+			syncFile: async (path) => {
+				synced.push(`file:${path === manager.getSessionFile()}`);
+			},
+			syncDirectory: async (path) => {
+				synced.push(`dir:${path === dir}`);
+			},
+		};
+		let next = 0;
+		const store = await PendingInputStore.open({
+			journal: new SessionPendingInputJournal(manager, durability),
+			lifetimeId: "life-1",
+			nextQueuedId: () => `q_${++next}`,
+		});
+
+		await store.submit(SUBMIT);
+		expect(synced).toEqual(["file:true", "dir:true"]);
+		await store.submit({ ...SUBMIT, clientMessageId: "c-2", fingerprint: "fp2" });
+		expect(synced).toEqual(["file:true", "dir:true", "file:true"]);
+	});
+
+	it("refuses to count an entry that did not reach the session file", async () => {
+		const unflushed = {
+			isPersisted: () => true,
+			persistHeaderNow: async () => undefined,
+			isTranscriptFlushed: () => false,
+			getSessionFile: () => "/tmp/never-written.jsonl",
+			appendCustomEntry: () => "id",
+			getEntries: () => [],
+		};
+		const journal = new SessionPendingInputJournal(unflushed, {
+			syncFile: async () => undefined,
+			syncDirectory: async () => undefined,
+		});
+
+		await expect(
+			journal.append({ type: PENDING_INPUT_TRANSITION, cursor: 1, input: SAMPLE_INPUT }),
+		).rejects.toBeInstanceOf(PendingInputNotDurableError);
+	});
+
+	it("keeps a session opened without persistence in memory, like the rest of that session", async () => {
+		const manager = SessionManager.inMemory();
+		const store = await storeOver(manager, "life-1");
+
+		await store.submit(SUBMIT);
+
+		expect(manager.getSessionFile()).toBeUndefined();
+		expect(store.read("c-1")).toMatchObject({ status: "admitted" });
+	});
+
+	it("refuses a journal with a missing transition, which a skipped corrupt line leaves behind", async () => {
+		const dir = sessionDir();
+		const manager = SessionManager.create(dir, dir);
+		await manager.persistHeaderNow();
+		manager.appendCustomEntry(PENDING_INPUT_TRANSITION, {
+			type: PENDING_INPUT_TRANSITION,
+			cursor: 1,
+			input: SAMPLE_INPUT,
+		});
+		manager.appendCustomEntry(PENDING_INPUT_TRANSITION, {
+			type: PENDING_INPUT_TRANSITION,
+			cursor: 3,
+			input: SAMPLE_INPUT,
+		});
+
+		await expect(new SessionPendingInputJournal(manager).read()).rejects.toBeInstanceOf(PendingInputJournalGapError);
 	});
 
 	it("refuses a malformed journal entry instead of treating it as absence", async () => {

@@ -30,8 +30,9 @@ interface World {
 	boot: number;
 }
 
-function probesFor(world: World, pid: number): WriterProbes {
+function probesFor(world: World, pid: number, host = "host-a"): WriterProbes {
 	return {
+		host: () => host,
 		pidAlive: (candidate) => world.alive.has(candidate),
 		readProcessStartMs: async (candidate) => world.starts.get(candidate),
 		bootAtMs: () => world.boot,
@@ -129,11 +130,24 @@ describe("session writer claims", () => {
 		expect(refused?.status === "rejected" && refused.reason).toBeInstanceOf(SessionWriterBusyError);
 	});
 
+	it("never takes over a writer on another host, whose pid and boot cannot be probed here", async () => {
+		const dir = claimsDir();
+		const w = world();
+		await acquireWriterClaim(dir, "/s.jsonl", probesFor(w, 100, "host-b"));
+		w.alive.delete(100);
+		w.boot = 9_999_999;
+
+		await expect(acquireWriterClaim(dir, "/s.jsonl", probesFor(w, 200, "host-a"))).rejects.toBeInstanceOf(
+			SessionWriterBusyError,
+		);
+	});
+
 	it("refuses a chain with a missing generation instead of guessing", async () => {
 		const dir = claimsDir();
 		const deadOwner = {
 			generation: 2,
 			nonce: "n",
+			host: "host-a",
 			pid: 999,
 			bootAtMs: 50,
 			processStartedAtMs: 1,

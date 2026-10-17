@@ -30,6 +30,11 @@ export interface PendingInputStoreOptions {
 	readonly nextQueuedId: () => string;
 	readonly dispatch?: (token: DeliveryToken, input: PendingInput) => void;
 	readonly restoreToDraft?: (text: string) => void;
+	/**
+	 * Receives a listener's throw. A committed transition is not undone by a failing observer, and its dispatch
+	 * still runs; by default the error is rethrown on a later microtask so it is never silently lost.
+	 */
+	readonly onListenerError?: (error: unknown) => void;
 }
 
 export type PendingInputListener = (projection: PendingInputProjection) => void;
@@ -48,6 +53,8 @@ export interface StopReceipt {
 	readonly removed: readonly string[];
 	readonly conflicts: readonly { readonly clientMessageId: string; readonly currentRevision: number }[];
 	readonly retained: readonly string[];
+	/** Named with a handle of another lifetime or queue slot: the caller saw another version and must refresh. */
+	readonly stale: readonly string[];
 }
 
 /** The one owner of every pending input in a session: reduce, commit, then publish and dispatch (senpi#3549). */
@@ -100,9 +107,15 @@ export class PendingInputStore {
 			const removed: string[] = [];
 			const retained: string[] = [];
 			const conflicts: { clientMessageId: string; currentRevision: number }[] = [];
+			const stale: string[] = [];
 			for (const item of items) {
 				const current = this.inputs.get(item.clientMessageId);
 				if (current === undefined) continue;
+				// Revisions restart at 1 on every reopen, so the handle decides which version the caller saw.
+				if (!sameHandle(current.handle, item.handle)) {
+					stale.push(item.clientMessageId);
+					continue;
+				}
 				if (current.phase === "queued" && current.revision !== item.expectedRevision) {
 					conflicts.push({ clientMessageId: item.clientMessageId, currentRevision: current.revision });
 					continue;
@@ -112,7 +125,7 @@ export class PendingInputStore {
 				if (after?.phase === "removed" && current.phase !== "removed") removed.push(item.clientMessageId);
 				else retained.push(item.clientMessageId);
 			}
-			return { removed, conflicts, retained };
+			return { removed, conflicts, retained, stale };
 		});
 	}
 
@@ -145,22 +158,43 @@ export class PendingInputStore {
 		const current = this.inputs.get(clientMessageId);
 		const decision = reducePendingInput(current, event);
 		const next = decision.next;
-		if (next === undefined || decision.effects.length === 0) return decision.result;
+		const result =
+			decision.result?.clientMessageId === "" ? { ...decision.result, clientMessageId } : decision.result;
+		if (next === undefined || decision.effects.length === 0) return result;
 		const record: PendingInputJournalRecord = {
 			type: PENDING_INPUT_TRANSITION,
 			cursor: this.cursor + 1,
 			input: next,
-			...(decision.result === undefined ? {} : { result: decision.result }),
+			...(result === undefined ? {} : { result }),
 		};
 		await this.options.journal.append(record);
 		this.cursor = record.cursor;
 		this.inputs.set(clientMessageId, next);
 		const projection = projectPendingInput(next);
-		for (const listener of this.listeners) listener(projection);
+		for (const listener of this.listeners) {
+			try {
+				listener(projection);
+			} catch (error) {
+				this.reportListenerError(error);
+			}
+		}
 		for (const effect of decision.effects) {
 			if (effect.type === "dispatch") this.options.dispatch?.(effect.token, next);
 			if (effect.type === "restore_to_draft") this.options.restoreToDraft?.(effect.text);
 		}
-		return decision.result;
+		return result;
 	}
+
+	private reportListenerError(error: unknown): void {
+		const report = this.options.onListenerError;
+		if (report !== undefined) report(error);
+		else
+			queueMicrotask(() => {
+				throw error;
+			});
+	}
+}
+
+function sameHandle(left: PendingInputHandle, right: PendingInputHandle): boolean {
+	return left.lifetimeId === right.lifetimeId && left.queuedId === right.queuedId;
 }

@@ -72,7 +72,7 @@ describe("pending input: admission and changes", () => {
 			hasEdits: true,
 			text: "check the error logs",
 		});
-		expect(decision.next?.superseded).toEqual([{ revision: 1, text: SUBMIT.text }]);
+		expect(decision.next?.superseded).toEqual([{ lifetimeId: "life-1", revision: 1, text: SUBMIT.text }]);
 		expect(decision.result).toMatchObject({ outcome: "edited", revision: 2, text: "check the error logs" });
 	});
 

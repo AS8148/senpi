@@ -172,9 +172,80 @@ describe("pending input store", () => {
 			removed: ["c-1"],
 			conflicts: [{ clientMessageId: "c-2", currentRevision: 2 }],
 			retained: [],
+			stale: [],
 		});
 		expect(drafts).toEqual([SUBMIT.text]);
 		expect(store.read("c-2")).toMatchObject({ projection: { state: "edited", text: "second, edited" } });
+	});
+
+	it("does not Stop an input through a handle of an earlier lifetime, whose revision numbers restarted", async () => {
+		const journal = new MemoryJournal();
+		const first = await openStore(journal, "life-1");
+		await first.store.submit(SUBMIT);
+		await first.store.apply("c-1", {
+			type: "edit",
+			effectId: "e",
+			handle: { lifetimeId: "life-1", queuedId: "q_1" },
+			expectedRevision: 1,
+			text: "edited",
+			attachments: [],
+		});
+		const { store } = await openStore(journal, "life-2");
+
+		const stale = await store.stop(
+			[{ clientMessageId: "c-1", handle: { lifetimeId: "life-1", queuedId: "q_1" }, expectedRevision: 1 }],
+			false,
+		);
+
+		expect(stale).toEqual({ removed: [], conflicts: [], retained: [], stale: ["c-1"] });
+		expect(store.read("c-1")).toMatchObject({ projection: { state: "edited", text: "edited" } });
+		const current = await store.stop(
+			[{ clientMessageId: "c-1", handle: { lifetimeId: "life-2", queuedId: "q_1" }, expectedRevision: 1 }],
+			false,
+		);
+		expect(current.removed).toEqual(["c-1"]);
+	});
+
+	it("still dispatches and answers when a listener throws, and reports the throw", async () => {
+		const journal = new MemoryJournal();
+		const dispatched: string[] = [];
+		const errors: unknown[] = [];
+		const store = await PendingInputStore.open({
+			journal,
+			lifetimeId: "life-1",
+			nextQueuedId: () => "q_1",
+			dispatch: (token) => dispatched.push(token.attemptId),
+			onListenerError: (error) => errors.push(error),
+		});
+		await store.submit(SUBMIT);
+		store.subscribe(() => {
+			throw new Error("renderer crashed");
+		});
+		const token = {
+			ownerId: "o",
+			writerGeneration: 1,
+			lifetimeId: "life-1",
+			attemptId: "a-1",
+			clientMessageId: "c-1",
+		};
+
+		await store.apply("c-1", { type: "reserve", token });
+
+		expect(dispatched).toEqual(["a-1"]);
+		expect(errors).toEqual([new Error("renderer crashed")]);
+	});
+
+	it("answers a change to an unknown input with that input's id", async () => {
+		const { store } = await openStore(new MemoryJournal());
+
+		const answer = await store.apply("c-9", {
+			type: "remove",
+			effectId: "e",
+			handle: { lifetimeId: "life-1", queuedId: "q_9" },
+			expectedRevision: 1,
+		});
+
+		expect(answer).toMatchObject({ outcome: "not_found", clientMessageId: "c-9" });
 	});
 
 	it("dispatches only after the reservation is journaled", async () => {

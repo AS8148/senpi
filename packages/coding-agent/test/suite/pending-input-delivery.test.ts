@@ -103,6 +103,40 @@ describe("pending input: delivery and custody", () => {
 		expect(decision.effects).not.toContainEqual(expect.objectContaining({ type: "restore_to_draft" }));
 	});
 
+	it.each([
+		{ field: "writerGeneration", stale: token("a-1", { writerGeneration: 2 }) },
+		{ field: "lifetimeId", stale: token("a-1", { lifetimeId: "life-2" }) },
+		{ field: "ownerId", stale: token("a-1", { ownerId: "owner-2" }) },
+		{ field: "attemptId", stale: token("a-2") },
+	])("ignores a delivery event whose token differs in $field from the reservation", ({ stale }) => {
+		for (const event of [
+			{ type: "consumed", token: stale },
+			{ type: "refused", token: stale, reason: "x" },
+			{ type: "ambiguous", token: stale, reason: "x" },
+		] as const) {
+			expect(reducePendingInput(sending(), event).next).toMatchObject({ phase: "sending", attempt: token() });
+		}
+	});
+
+	it("reserves only with a token of the input's current lifetime", () => {
+		const decision = reducePendingInput(queued(), { type: "reserve", token: token("a-1", { lifetimeId: "life-0" }) });
+
+		expect(decision.next).toMatchObject({ phase: "queued" });
+		expect(decision.effects).toEqual([]);
+	});
+
+	it("does not settle an in-flight input from a handled receipt without its token", () => {
+		expect(reducePendingInput(sending(), { type: "handled" }).next).toMatchObject({ phase: "sending" });
+	});
+
+	it("names the lifetime of each superseded revision, since revisions restart on reopen", () => {
+		const edited = replay(SUBMIT, edit("e1", 1, "edited"));
+		const rebound = reducePendingInput(edited, { type: "rebind", handle: REOPENED }).next;
+
+		expect(rebound).toMatchObject({ revision: 1, handle: REOPENED });
+		expect(rebound?.superseded).toEqual([{ lifetimeId: HANDLE.lifetimeId, revision: 1, text: SUBMIT.text }]);
+	});
+
 	it("rebinds lifetime handles without losing text or edited history (T29)", () => {
 		const edited = replay(SUBMIT, edit("e1", 1, "edited"));
 

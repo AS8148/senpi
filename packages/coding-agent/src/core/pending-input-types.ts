@@ -34,6 +34,8 @@ export interface DeliveryToken {
 
 /** A retired content version: an acknowledged edit replaced it, and it is never runnable again. */
 export interface SupersededVersion {
+	/** The lifetime that revision belongs to; revisions restart at 1 on reopen. */
+	readonly lifetimeId: string;
 	readonly revision: number;
 	readonly text: string;
 }

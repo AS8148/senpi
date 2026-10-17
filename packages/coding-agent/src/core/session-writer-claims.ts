@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { link, mkdir, open, readdir, readFile, unlink } from "node:fs/promises";
+import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 import { resolveMovedPath } from "./extensions/builtin/moved-path-guard/resolve.ts";
 import { errorCode } from "./extensions/builtin/terminal/lease-file.ts";
@@ -18,6 +19,8 @@ const CLAIM = /^(\d+)\.json$/;
 export interface WriterClaim {
 	readonly generation: number;
 	readonly nonce: string;
+	/** The machine the writer ran on: its pid, boot and start time mean nothing on another host. */
+	readonly host: string;
 	readonly pid: number;
 	readonly bootAtMs: number;
 	readonly processStartedAtMs: number;
@@ -28,6 +31,7 @@ export interface WriterProbes {
 	readonly pidAlive: (pid: number) => boolean;
 	readonly readProcessStartMs: (pid: number) => Promise<number | undefined>;
 	readonly bootAtMs: () => number;
+	readonly host: () => string;
 	readonly self: () => { readonly pid: number; readonly processStartedAtMs: number };
 }
 
@@ -60,6 +64,7 @@ export const realWriterProbes: WriterProbes = {
 	},
 	readProcessStartMs,
 	bootAtMs: () => processBootAtMs(),
+	host: () => hostname(),
 	self: () => ({ pid: process.pid, processStartedAtMs: ownProcessStartedAtMs() }),
 };
 
@@ -80,6 +85,7 @@ export async function acquireWriterClaim(
 	const claim: WriterClaim = {
 		generation: (current?.generation ?? 0) + 1,
 		nonce: randomUUID(),
+		host: probes.host(),
 		pid: self.pid,
 		bootAtMs: probes.bootAtMs(),
 		processStartedAtMs: self.processStartedAtMs,
@@ -128,6 +134,8 @@ async function latestClaim(dir: string): Promise<WriterClaim | undefined> {
 
 async function ownerGone(dir: string, claim: WriterClaim, probes: WriterProbes): Promise<boolean> {
 	if (await releasedWith(dir, claim)) return true;
+	// A writer on another host (a shared or network directory) cannot be probed from here: never displace it.
+	if (claim.host !== probes.host()) return false;
 	if (!sameBoot(probes.bootAtMs(), claim.bootAtMs)) return true;
 	if (!probes.pidAlive(claim.pid)) return true;
 	const startedAtMs = await probes.readProcessStartMs(claim.pid);
@@ -173,6 +181,7 @@ function parseClaim(raw: string, dir: string): WriterClaim {
 		parsed === null ||
 		!("generation" in parsed && typeof parsed.generation === "number") ||
 		!("nonce" in parsed && typeof parsed.nonce === "string") ||
+		!("host" in parsed && typeof parsed.host === "string") ||
 		!("pid" in parsed && typeof parsed.pid === "number") ||
 		!("bootAtMs" in parsed && typeof parsed.bootAtMs === "number") ||
 		!("processStartedAtMs" in parsed && typeof parsed.processStartedAtMs === "number") ||
@@ -183,6 +192,7 @@ function parseClaim(raw: string, dir: string): WriterClaim {
 	return {
 		generation: parsed.generation,
 		nonce: parsed.nonce,
+		host: parsed.host,
 		pid: parsed.pid,
 		bootAtMs: parsed.bootAtMs,
 		processStartedAtMs: parsed.processStartedAtMs,
