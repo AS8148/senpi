@@ -29,6 +29,10 @@
 			"types": "./dist/client/index.d.ts",
 			"import": "./dist/client/index.js"
 		},
+		"./pending-input": {
+			"types": "./dist/core/pending-input-public.d.ts",
+			"import": "./dist/core/pending-input-public.js"
+		},
 		"./prompt-presets": {
 			"types": "./dist/core/extensions/builtin/prompt-preset/public.d.ts",
 			"import": "./dist/core/extensions/builtin/prompt-preset/public.js"
