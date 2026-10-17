@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -17,21 +17,16 @@ afterEach(() => {
 	for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-/**
- * A module URL outside the monorepo. Its parent folder carries a built-looking copy of every
- * workspace package, the way `~/node_modules` can on a developer machine: Node's resolver climbs
- * into it, so only the checkout boundary keeps these specifiers unresolved (senpi#3482).
- */
-function outsideWorkspaceModuleUrl(): string {
-	const dir = mkdtempSync(join(tmpdir(), "pi-workspace-prereq-"));
-	tempDirs.push(dir);
-	const decoyPackages: Record<string, readonly string[]> = {
-		"@earendil-works/pi-ai": [".", "./compat", "./providers/cursor"],
-		"@earendil-works/pi-tui": ["."],
-		"@earendil-works/pi-agent-core": [".", "./node"],
-	};
-	for (const [name, subpaths] of Object.entries(decoyPackages)) {
-		const root = join(dir, "node_modules", name);
+const FAKE_PACKAGES: Record<string, readonly string[]> = {
+	"@earendil-works/pi-ai": [".", "./compat", "./providers/cursor"],
+	"@earendil-works/pi-tui": ["."],
+	"@earendil-works/pi-agent-core": [".", "./node"],
+};
+
+/** Writes a built-looking copy of every child-process workspace package under `packagesDir/<name>`. */
+function writeBuiltPackages(packagesDir: string): void {
+	for (const [name, subpaths] of Object.entries(FAKE_PACKAGES)) {
+		const root = join(packagesDir, name);
 		const exports: Record<string, { import: string }> = {};
 		for (const subpath of subpaths) {
 			const file = `./dist/${subpath === "." ? "index" : subpath.slice(2).replaceAll("/", "-")}.js`;
@@ -41,6 +36,17 @@ function outsideWorkspaceModuleUrl(): string {
 		}
 		writeFileSync(join(root, "package.json"), JSON.stringify({ name, type: "module", exports }));
 	}
+}
+
+/**
+ * A module URL outside the monorepo. Its parent folder carries a built-looking copy of every
+ * workspace package, the way `~/node_modules` can on a developer machine: Node's resolver climbs
+ * into it, so only the checkout boundary keeps these specifiers unresolved (senpi#3482).
+ */
+function outsideWorkspaceModuleUrl(): string {
+	const dir = mkdtempSync(join(tmpdir(), "pi-workspace-prereq-"));
+	tempDirs.push(dir);
+	writeBuiltPackages(join(dir, "node_modules"));
 	const probeDir = join(dir, "outside");
 	mkdirSync(probeDir);
 	return pathToFileURL(join(probeDir, "probe.mjs")).href;
@@ -65,6 +71,25 @@ describe("workspace build prerequisite", () => {
 
 		expect(() => assertWorkspaceBuildPrerequisite(probe)).toThrowError(/@earendil-works\/pi-agent-core\/node/);
 		expect(() => assertWorkspaceBuildPrerequisite(probe)).toThrowError(/npm run build/);
+	});
+
+	it("accepts a linked worktree whose node_modules links each package to another checkout's built copy", () => {
+		// A git worktree that links the main checkout's packages resolves outside its own tree;
+		// those links still count as built (senpi#3482).
+		const dir = mkdtempSync(join(tmpdir(), "pi-workspace-linked-"));
+		tempDirs.push(dir);
+		const mainPackages = join(dir, "main-checkout", "node_modules");
+		writeBuiltPackages(mainPackages);
+		const worktree = join(dir, "worktree");
+		const probeDir = join(worktree, "packages", "coding-agent", "test");
+		mkdirSync(probeDir, { recursive: true });
+		mkdirSync(join(worktree, "node_modules", "@earendil-works"), { recursive: true });
+		writeFileSync(join(worktree, "pnpm-workspace.yaml"), "packages:\n  - packages/*\n");
+		for (const name of Object.keys(FAKE_PACKAGES)) {
+			symlinkSync(join(mainPackages, name), join(worktree, "node_modules", name), "junction");
+		}
+
+		expect(findUnbuiltWorkspaceSpecifiers(pathToFileURL(join(probeDir, "probe.mjs")).href)).toEqual([]);
 	});
 
 	it("passes for this suite, whose child processes require the built entrypoints", () => {
