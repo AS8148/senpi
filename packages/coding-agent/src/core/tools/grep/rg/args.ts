@@ -1,5 +1,6 @@
 import { relative } from "node:path";
 import type { GrepEngineRequest } from "../engine.ts";
+import { argvCost } from "./argv.ts";
 import type { Candidate } from "./enumerate.ts";
 import { slashPath } from "./paths.ts";
 import { MAX_FILE_BYTES } from "./prefix-pass.ts";
@@ -43,8 +44,9 @@ export function candidateArgument(candidate: Candidate): string {
 	return `/${slashPath(relative(candidate.root.cwd, candidate.absolute)).replace(/[\\*?[\]{}!]/g, "\\$&")}`;
 }
 
-export function argumentCost(candidate: Candidate): number {
-	return candidateArgument(candidate).length + (candidate.root.file ? 1 : " -g ".length + 1);
+export function argumentCost(candidate: Candidate, platform: NodeJS.Platform = process.platform): number {
+	const argument = argvCost(candidateArgument(candidate), platform);
+	return candidate.root.file ? argument : argument + argvCost("-g", platform);
 }
 
 export function segmentFlags(segment: Candidate[], pattern: string, walk: string[], matcher: string[]): string[] {

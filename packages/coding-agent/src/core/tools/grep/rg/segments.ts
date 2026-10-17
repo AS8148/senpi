@@ -1,6 +1,6 @@
 import type { GrepEngineRequest, GrepEngineResult } from "../engine.ts";
 import { argumentCost, segmentFlags } from "./args.ts";
-import { argvBudget } from "./argv.ts";
+import { argvBudget, roomAfter } from "./argv.ts";
 import type { Candidate } from "./enumerate.ts";
 import { collectSegmentRows, type FileRows } from "./json-rows.ts";
 import { pathOrder } from "./paths.ts";
@@ -20,7 +20,8 @@ function joins(previous: Candidate[], candidate: Candidate, request: GrepEngineR
 	const head = previous[0];
 	if (head.size > MAX_FILE_BYTES || candidate.size > MAX_FILE_BYTES) return false;
 	// Explicit files from any root share one rg launch; binary members stay out of its argv.
-	if (head.root.file && candidate.root.file) return true;
+	if (head.root.file && candidate.root.file)
+		return request.maxCount === undefined || previous.length < cappedLimit(head);
 	return (
 		!head.binary &&
 		!candidate.binary &&
@@ -29,19 +30,28 @@ function joins(previous: Candidate[], candidate: Candidate, request: GrepEngineR
 	);
 }
 
-/** Orders candidates into rg launches whose per-file arguments fit the argv budget. */
-export function planSegments(ordered: Candidate[], request: GrepEngineRequest, budget = argvBudget()): Candidate[][] {
+export interface SegmentPlan {
+	walk: string[];
+	matcher: string[];
+	budget?: number;
+	platform?: NodeJS.Platform;
+}
+
+/** Orders candidates into rg launches whose whole command line, fixed arguments included, fits the argv budget. */
+export function planSegments(ordered: Candidate[], request: GrepEngineRequest, plan: SegmentPlan): Candidate[][] {
+	const platform = plan.platform ?? process.platform;
+	const budget = plan.budget ?? argvBudget(platform);
 	const segments: Candidate[][] = [];
-	let used = 0;
+	let room = 0;
 	for (const candidate of ordered) {
 		const previous = segments.at(-1);
-		const cost = candidate.binary ? 0 : argumentCost(candidate);
-		if (previous && joins(previous, candidate, request) && used + cost <= budget) {
+		const cost = candidate.binary ? 0 : argumentCost(candidate, platform);
+		if (previous && joins(previous, candidate, request) && cost <= room) {
 			previous.push(candidate);
-			used += cost;
+			room -= cost;
 		} else {
 			segments.push([candidate]);
-			used = cost;
+			room = roomAfter(segmentFlags([candidate], request.pattern, plan.walk, plan.matcher), budget, platform);
 		}
 	}
 	return segments;
@@ -118,7 +128,7 @@ export async function searchSegments({
 	check: () => void;
 	result: GrepEngineResult;
 }): Promise<void> {
-	const segments = planSegments(candidates, request);
+	const segments = planSegments(candidates, request, { walk, matcher });
 	let matcherRan = false;
 	for (const [segmentIndex, segment] of segments.entries()) {
 		check();

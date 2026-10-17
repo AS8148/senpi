@@ -1,7 +1,7 @@
 import { realpath, stat } from "node:fs/promises";
 import { basename, dirname, relative, resolve } from "node:path";
 import { GrepEngineError, type GrepEngineRequest, type GrepEngineResult } from "../engine.ts";
-import { argvBudget, packArgv } from "./argv.ts";
+import { argvBudget, argvCost, packArgv, roomAfter } from "./argv.ts";
 import { pathOrder, slashPath } from "./paths.ts";
 import { MAX_FILE_BYTES } from "./prefix-pass.ts";
 import type { RgRun } from "./process.ts";
@@ -72,7 +72,12 @@ export async function enumerateCandidates({
 		for (const path of listed) {
 			check();
 			const absolute = resolve(root.cwd, path);
-			const [canonical, info] = await Promise.all([realpath(absolute), stat(absolute)]);
+			const [canonical, info] = await Promise.all([realpath(absolute), stat(absolute)]).catch((error) => {
+				// A named file that vanished after root resolution fails like rg's own listing did.
+				if (root.file && (error as NodeJS.ErrnoException).code === "ENOENT")
+					throw new GrepEngineError("ENGINE_UNAVAILABLE", `${root.path}: No such file or directory`);
+				throw error;
+			});
 			const alias = resolve(root.alias, relative(root.path, absolute));
 			const display = slashPath(relative(cwd, alias)) || basename(alias);
 			const existing = candidates.get(canonical);
@@ -86,8 +91,24 @@ export async function enumerateCandidates({
 	const scanned = roots.filter((root) => (candidates.get(root.path)?.size ?? 0) <= MAX_FILE_BYTES);
 	const files = scanned.filter((root) => root.file);
 	// Explicit files share one scan per batch; a directory root keeps its own anchored walk.
+	const nulScan = [
+		"-a",
+		"-l",
+		"--null",
+		"--sort",
+		"path",
+		"--encoding",
+		"none",
+		"--max-filesize",
+		String(MAX_FILE_BYTES),
+		...walk,
+		"-e",
+		"\\x00",
+		"--",
+	];
+	const room = roomAfter(nulScan, argvBudget());
 	const scans = [
-		...packArgv(files, (root) => root.path.length + 1, argvBudget()).map((batch) => ({
+		...packArgv(files, (root) => argvCost(root.path), room).map((batch) => ({
 			cwd: batch[0].cwd,
 			paths: batch.map((root) => root.path),
 		})),
@@ -95,25 +116,7 @@ export async function enumerateCandidates({
 	];
 	// Scan the entire normal-size file, including NULs after rg's first search buffer.
 	for (const scan of scans) {
-		const output = await run(
-			[
-				"-a",
-				"-l",
-				"--null",
-				"--sort",
-				"path",
-				"--encoding",
-				"none",
-				"--max-filesize",
-				String(MAX_FILE_BYTES),
-				...walk,
-				"-e",
-				"\\x00",
-				"--",
-				...scan.paths,
-			],
-			scan.cwd,
-		);
+		const output = await run([...nulScan, ...scan.paths], scan.cwd);
 		for (const path of output.toString("utf8").split("\0").filter(Boolean))
 			binaryPaths.add(await realpath(resolve(scan.cwd, path)));
 	}
