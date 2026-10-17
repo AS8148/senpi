@@ -1,3 +1,24 @@
+## 2026-10-17 - Queued input's consumption is committed before a provider sees it (senpi#3549)
+
+### What changed
+
+- `packages/agent/src/types.ts`: `AgentLoopConfig.commitQueuedConsumption(queue, messages)`, awaited with the drained queued messages before any of them enters the context.
+- `packages/agent/src/agent-loop.ts`: `runLoop` remembers which queue the pending messages were drained from and awaits `commitQueuedConsumption` before inserting them; a rejection restores them to that queue and fails the attempt, so no provider request carries them.
+- `packages/agent/src/agent.ts`: an optional `AgentOptions.queuedInputPort` (`commitConsumption`) is passed to the loop. Without it the standalone queues behave as before.
+
+### Why
+
+- `packages/agent/src/agent-loop.ts`: the coding-agent session journals a pending input's delivery; a message must not reach a provider before that record is durable, or a crash would leave it sent but still pending (desktop #2838).
+
+### Why an extension could not handle it
+
+- `packages/agent/src/agent-loop.ts`: the drain-to-context step happens inside the loop, with no hook between them.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/agent/src/agent-loop.ts`, the queue drains in `runLoop` (each now goes through `drainSteering` / `drainFollowUp`) and the insertion before the next request.
+- LOW: `packages/agent/src/agent.ts` `AgentOptions` and `createLoopConfig`; `packages/agent/src/types.ts` `AgentLoopConfig`.
+
 ## 2026-10-17 - A caller's plain abort reason is carried as the turn's message (senpi#3510)
 
 ### What changed
@@ -16,6 +37,7 @@
 
 - LOW: `packages/agent/src/agent-loop.ts`, `abortError`.
 
+||||||| parent of 354ec58d0 (feat(agent): queuedInputPort commits queued input's consumption before a provider sees it (#3549))
 ## 2026-10-17 - A caller-aborted turn past the pre-stream bound carries the abort's message (senpi#3481)
 
 ### What changed

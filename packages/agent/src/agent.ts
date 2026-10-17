@@ -146,6 +146,8 @@ export interface AgentOptions {
 	) => Promise<AgentLoopTurnUpdate | undefined> | AgentLoopTurnUpdate | undefined;
 	steeringMode?: QueueMode;
 	followUpMode?: QueueMode;
+	/** Lets the owner of queued input commit its consumption before the loop sends it (senpi#3549). */
+	queuedInputPort?: QueuedInputPort;
 	sessionId?: string;
 	thinkingBudgets?: ThinkingBudgets;
 	transport?: Transport;
@@ -158,6 +160,15 @@ export interface AgentOptions {
 	abortServerSideFallback?: boolean;
 	/** Cursor exec-channel tool handlers; see {@link AgentLoopConfig.cursorExecHandlers}. */
 	cursorExecHandlers?: AgentLoopConfig["cursorExecHandlers"];
+}
+
+/** The owner side of the steering and follow-up queues. */
+export interface QueuedInputPort {
+	/**
+	 * Called with drained queued messages before any of them enters the context or a provider request.
+	 * Resolve once their consumption is durable; a rejection restores them and fails this attempt.
+	 */
+	commitConsumption(queue: "steering" | "followUp", messages: AgentMessage[]): Promise<void>;
 }
 
 export interface AgentContinuationOptions {
@@ -279,6 +290,7 @@ export class Agent {
 		signal?: AbortSignal,
 	) => Promise<AfterToolCallResult | undefined>;
 	public finishTurn?: FinishTurn;
+	public queuedInputPort?: QueuedInputPort;
 	public prepareRequest?: PrepareRequest;
 	public prepareNextTurn?: (
 		signal?: AbortSignal,
@@ -332,6 +344,7 @@ export class Agent {
 		this.beforeToolCall = runtimeOptions.beforeToolCall;
 		this.afterToolCall = runtimeOptions.afterToolCall;
 		this.finishTurn = runtimeOptions.finishTurn;
+		this.queuedInputPort = runtimeOptions.queuedInputPort;
 		this.prepareRequest = runtimeOptions.prepareRequest;
 		this.prepareNextTurn = runtimeOptions.prepareNextTurn;
 		this.prepareNextTurnWithContext = runtimeOptions.prepareNextTurnWithContext;
@@ -655,6 +668,7 @@ export class Agent {
 		let steeringQueueGeneration = this.steeringQueue.getClearGeneration();
 		let followUpQueueGeneration = this.followUpQueue.getClearGeneration();
 		const finishTurn = this.finishTurn;
+		const queuedInputPort = this.queuedInputPort;
 		const reasoning = (this._state.reasoningBaseline as ThinkingLevel | undefined) ?? this._state.thinkingLevel;
 		return {
 			model: this._state.model,
@@ -712,6 +726,9 @@ export class Agent {
 				followUpQueueGeneration = this.followUpQueue.getClearGeneration();
 				return this.followUpQueue.drain();
 			},
+			commitQueuedConsumption: queuedInputPort
+				? (queue, messages) => queuedInputPort.commitConsumption(queue, messages)
+				: undefined,
 			restorePendingMessages: (queue, messages) => {
 				if (queue === "steering") {
 					if (this.steeringQueue.getClearGeneration() !== steeringQueueGeneration) return;
