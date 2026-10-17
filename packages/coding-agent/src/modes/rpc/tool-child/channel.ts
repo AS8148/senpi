@@ -20,7 +20,7 @@ import {
 import { encodeFrame, FrameDecoder, ToolChildCodecError } from "./codec.ts";
 import type { ToolChildMessage } from "./protocol.ts";
 
-export const TOOL_CHILD_ROLE_ENV = "SENPI_TOOL_CHILD_ROLE";
+export const TOOL_CHILD_ROLE_ENV = "SENPI_INTERNAL_ROLE";
 export const TOOL_CHILD_CHANNEL_ENV = "SENPI_TOOL_CHILD_CHANNEL";
 export const TOOL_CHILD_SECRET_ENV = "SENPI_TOOL_CHILD_CHANNEL_SECRET";
 

@@ -41,7 +41,7 @@ function run(entry: string, env: Record<string, string>, args: string[]) {
 
 describe.each(ENTRIES)("%s with the tool-child role", (entry) => {
 	it("exits 70 before parsing arguments when the channel is missing", async () => {
-		const { exited } = run(entry, { SENPI_TOOL_CHILD_ROLE: "tool-child" }, ["--version"]);
+		const { exited } = run(entry, { SENPI_INTERNAL_ROLE: "tool-child" }, ["--version"]);
 		const result = await exited;
 		expect(result.code).toBe(70);
 		expect(result.stderr).toContain("tool-child: channel unavailable");
@@ -54,7 +54,7 @@ describe.each(ENTRIES)("%s with the tool-child role", (entry) => {
 		const listener = await openChannelListener({ dir: join(root, "ch"), generation: 7 });
 		const { child, exited } = run(
 			entry,
-			{ SENPI_TOOL_CHILD_ROLE: "tool-child", SENPI_TOOL_CHILD_GENERATION: "7", ...listener.env },
+			{ SENPI_INTERNAL_ROLE: "tool-child", SENPI_TOOL_CHILD_GENERATION: "7", ...listener.env },
 			["--version"],
 		);
 		const channel = await listener.accepted;
