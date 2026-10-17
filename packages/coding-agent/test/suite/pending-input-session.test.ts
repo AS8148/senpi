@@ -270,6 +270,59 @@ describe("AgentSession pending inputs", () => {
 		).toBe(false);
 	});
 
+	it("answers a delivered input explicitly instead of treating its absence from the queue as an outcome (T33)", async () => {
+		const { harness, release, toolStarted } = await runWithHeldTool();
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("handled"),
+		]);
+		const run = harness.session.prompt("start");
+		await toolStarted;
+		await harness.session.followUp("sent", undefined, { clientMessageId: "c-1" });
+		release();
+		await run;
+
+		const snapshot = await harness.session.getPendingInputs(["c-1", "unknown"]);
+
+		expect(snapshot.inputs).toEqual([]);
+		expect(snapshot.outcomes).toEqual([
+			expect.objectContaining({
+				clientMessageId: "c-1",
+				status: "admitted",
+				projection: expect.objectContaining({ state: "delivered" }),
+			}),
+			{ clientMessageId: "unknown", status: "not_admitted" },
+		]);
+	});
+
+	it("queues an identified input sent after a Stop for the next turn (T34), and never restores a delivered one (T30)", async () => {
+		const { harness, release, toolStarted } = await runWithHeldTool();
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("after stop"),
+			fauxAssistantMessage("next turn"),
+		]);
+		const run = harness.session.prompt("start");
+		await toolStarted;
+		await harness.session.followUp("stopped", undefined, { clientMessageId: "c-1" });
+		harness.session.clearQueue();
+		await harness.session.whenQueueClearRecorded();
+		await harness.session.followUp("after cutoff", undefined, { clientMessageId: "c-2" });
+		release();
+		await run;
+		await harness.session.restoreQueuedInput({
+			clientMessageId: "c-2",
+			text: "after cutoff",
+			mode: "followUp",
+			enqueueOrder: 9,
+		});
+
+		expect(getUserTexts(harness)).toEqual(["start", "after cutoff"]);
+		expect(phases(harness, "c-1")).toEqual(["queued", "removed"]);
+		expect(phases(harness, "c-2")).toEqual(["queued", "sending", "delivered"]);
+		expect(harness.session.getQueuedInputs()).toEqual([]);
+	});
+
 	it("keeps input without a client id out of the journal", async () => {
 		const { harness, release, toolStarted } = await runWithHeldTool();
 		harness.setResponses([
