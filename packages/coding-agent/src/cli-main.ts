@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import "./valid-cwd.ts";
+import "./internal-role.ts";
 import { enableStartupCompileCache } from "./compile-cache.ts";
 import { APP_NAME } from "./config.ts";
 import { scrubBrandFromEnvironment } from "./core/brand.ts";

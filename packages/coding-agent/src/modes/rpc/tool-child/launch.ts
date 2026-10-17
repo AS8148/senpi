@@ -1,4 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { dirname, extname, join } from "node:path";
 import { isBunBinary } from "../../../config.ts";
 import { runtimeExecArgv } from "../../../utils/runtime-exec-argv.ts";
 import { resolveCliMainPath } from "../host-cli-entry.ts";
@@ -16,7 +18,14 @@ export interface ToolChildCommand {
  */
 export function toolChildCommand(compiled: boolean = isBunBinary): ToolChildCommand {
 	if (compiled) return { command: process.execPath, args: [] };
-	return { command: process.execPath, args: [...runtimeExecArgv(), resolveCliMainPath()] };
+	return { command: process.execPath, args: [...runtimeExecArgv(), toolChildEntryPath()] };
+}
+
+/** The dedicated role entry beside the CLI entry, so an interpreted child parses none of the CLI graph. */
+export function toolChildEntryPath(cliMainPath: string = resolveCliMainPath()): string {
+	const extension = extname(cliMainPath);
+	const dedicated = join(dirname(cliMainPath), `tool-child-main${extension}`);
+	return existsSync(dedicated) ? dedicated : cliMainPath;
 }
 
 export function spawnToolChild(options: {
