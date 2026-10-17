@@ -1,0 +1,163 @@
+/**
+ * The private channel between the server and one tool child generation (senpi#3566, plan todo 4).
+ *
+ * The server listens on a per-generation socket inside a 0700 directory, guarded by a 0600 secret the child must send
+ * first (`socket-transport.ts`), and accepts exactly one connection; the listener closes after it. The child learns the
+ * address and the secret file from its environment, never from argv. Frames are `codec.ts` length-prefixed frames, never
+ * stdout, so nothing a tool prints can corrupt the protocol. Any codec error is terminal for the channel.
+ */
+import { chmod, mkdir, rm } from "node:fs/promises";
+import { createConnection, createServer, type Socket } from "node:net";
+import { join } from "node:path";
+import {
+	authenticateSocket,
+	createSocketSecret,
+	readSocketSecret,
+	resolveSocketTransportAddress,
+	sendSocketHandshake,
+	socketSecretPath,
+} from "../socket-transport.ts";
+import { encodeFrame, FrameDecoder, ToolChildCodecError } from "./codec.ts";
+import type { ToolChildMessage } from "./protocol.ts";
+
+export const TOOL_CHILD_ROLE_ENV = "SENPI_TOOL_CHILD_ROLE";
+export const TOOL_CHILD_CHANNEL_ENV = "SENPI_TOOL_CHILD_CHANNEL";
+export const TOOL_CHILD_SECRET_ENV = "SENPI_TOOL_CHILD_CHANNEL_SECRET";
+
+export type ChannelCloseReason =
+	| { readonly kind: "eof" }
+	| { readonly kind: "codec"; readonly code: ToolChildCodecError["code"] }
+	| { readonly kind: "error"; readonly message: string };
+
+export interface ToolChildChannel {
+	send(message: ToolChildMessage): boolean;
+	onMessage(listener: (message: ToolChildMessage) => void): void;
+	readonly closed: Promise<ChannelCloseReason>;
+	close(): void;
+}
+
+export function wrapChannelSocket(socket: Socket): ToolChildChannel {
+	const decoder = new FrameDecoder();
+	const listeners: Array<(message: ToolChildMessage) => void> = [];
+	let settle!: (reason: ChannelCloseReason) => void;
+	const closed = new Promise<ChannelCloseReason>((resolve) => {
+		settle = resolve;
+	});
+	let reason: ChannelCloseReason | undefined;
+	const finish = (next: ChannelCloseReason): void => {
+		if (reason !== undefined) return;
+		reason = next;
+		socket.destroy();
+		settle(next);
+	};
+	socket.on("data", (chunk: Buffer) => {
+		if (reason !== undefined) return;
+		try {
+			for (const message of decoder.push(chunk)) for (const listener of listeners) listener(message);
+		} catch (error) {
+			finish(
+				error instanceof ToolChildCodecError
+					? { kind: "codec", code: error.code }
+					: { kind: "error", message: String(error) },
+			);
+		}
+	});
+	socket.on("end", () => {
+		try {
+			decoder.end();
+			finish({ kind: "eof" });
+		} catch (error) {
+			finish(
+				error instanceof ToolChildCodecError
+					? { kind: "codec", code: error.code }
+					: { kind: "error", message: String(error) },
+			);
+		}
+	});
+	socket.on("error", (error) => finish({ kind: "error", message: error.message }));
+	socket.on("close", () => finish({ kind: "eof" }));
+	return {
+		send: (message) => reason === undefined && socket.write(encodeFrame(message)),
+		onMessage: (listener) => {
+			listeners.push(listener);
+		},
+		closed,
+		close: () => finish({ kind: "eof" }),
+	};
+}
+
+export interface ChannelListener {
+	readonly env: Readonly<Record<typeof TOOL_CHILD_CHANNEL_ENV | typeof TOOL_CHILD_SECRET_ENV, string>>;
+	/** The first authenticated connection; the listener stops accepting once it arrives. */
+	readonly accepted: Promise<ToolChildChannel>;
+	close(): Promise<void>;
+}
+
+export async function openChannelListener(options: {
+	readonly dir: string;
+	readonly generation: number;
+}): Promise<ChannelListener> {
+	await mkdir(options.dir, { recursive: true, mode: 0o700 });
+	await chmod(options.dir, 0o700);
+	const logicalPath = join(options.dir, `c-${options.generation}.sock`);
+	const secretPath = socketSecretPath(logicalPath);
+	await rm(logicalPath, { force: true });
+	const secret = await createSocketSecret(secretPath);
+	let resolveAccepted!: (channel: ToolChildChannel) => void;
+	const accepted = new Promise<ToolChildChannel>((resolve) => {
+		resolveAccepted = resolve;
+	});
+	let taken = false;
+	const server = createServer((socket) => {
+		if (taken) {
+			socket.destroy();
+			return;
+		}
+		authenticateSocket(socket, secret, () => {
+			if (taken) {
+				socket.destroy();
+				return;
+			}
+			taken = true;
+			server.close();
+			resolveAccepted(wrapChannelSocket(socket));
+		});
+	});
+	const address = resolveSocketTransportAddress(logicalPath, process.platform, secret);
+	await new Promise<void>((resolve, reject) => {
+		server.once("error", reject);
+		server.listen(address, () => {
+			server.off("error", reject);
+			resolve();
+		});
+	});
+	if (process.platform !== "win32") await chmod(logicalPath, 0o600);
+	return {
+		env: { [TOOL_CHILD_CHANNEL_ENV]: logicalPath, [TOOL_CHILD_SECRET_ENV]: secretPath },
+		accepted,
+		close: async () => {
+			taken = true;
+			await new Promise<void>((resolve) => server.close(() => resolve()));
+			await rm(secretPath, { force: true });
+			if (process.platform !== "win32") await rm(logicalPath, { force: true });
+		},
+	};
+}
+
+export function channelEnvPresent(env: NodeJS.ProcessEnv): boolean {
+	return Boolean(env[TOOL_CHILD_CHANNEL_ENV]) && Boolean(env[TOOL_CHILD_SECRET_ENV]);
+}
+
+export async function connectChannel(env: NodeJS.ProcessEnv): Promise<ToolChildChannel> {
+	const logicalPath = env[TOOL_CHILD_CHANNEL_ENV];
+	const secretPath = env[TOOL_CHILD_SECRET_ENV];
+	if (!logicalPath || !secretPath) throw new Error("tool-child: channel unavailable");
+	const secret = await readSocketSecret(secretPath);
+	const socket = createConnection(resolveSocketTransportAddress(logicalPath, process.platform, secret));
+	await new Promise<void>((resolve, reject) => {
+		socket.once("connect", resolve);
+		socket.once("error", reject);
+	});
+	sendSocketHandshake(socket, secret);
+	return wrapChannelSocket(socket);
+}
