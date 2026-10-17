@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { QueuedInputPort } from "@earendil-works/pi-agent-core";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import { SessionPendingInputJournal } from "./pending-input-journal.ts";
+import type { PendingInputProjection } from "./pending-input-projection.ts";
 import { createSessionQueuedInputPort } from "./pending-input-session-port.ts";
 import { PENDING_INPUT_TRANSITION, type PendingInputJournal, PendingInputStore } from "./pending-input-store.ts";
 import type { OperationOutcome, PendingInputMode, PendingInputOperationResult } from "./pending-input-types.ts";
@@ -17,8 +18,27 @@ export interface SessionPendingInputsOptions {
 	readonly sessionManager: ConstructorParameters<typeof SessionPendingInputJournal>[0];
 	/** The session's own queue-id counter, so a store handle and the session's queued record share one id. */
 	readonly nextQueuedId: () => string;
+	/** Receives every committed change, in cursor order. */
+	readonly onChange?: (update: PendingInputUpdate) => void;
 	/** Defaults to the session JSONL; injectable so tests can fail an append. */
 	readonly journal?: PendingInputJournal;
+}
+
+export interface PendingInputUpdate {
+	readonly lifetimeId: string;
+	readonly cursor: number;
+	readonly changes: readonly PendingInputProjection[];
+}
+
+/** Every input that still needs an outcome, plus an explicit answer for each id the caller already knows. */
+export interface PendingInputSnapshot {
+	readonly lifetimeId: string;
+	readonly throughCursor: number;
+	readonly inputs: readonly PendingInputProjection[];
+	readonly outcomes: readonly (
+		| { readonly clientMessageId: string; readonly status: "admitted"; readonly projection: PendingInputProjection }
+		| { readonly clientMessageId: string; readonly status: "not_admitted" }
+	)[];
 }
 
 /** The legacy answers of `dequeue_message` / `edit_queued_message`. */
@@ -136,6 +156,24 @@ export class SessionPendingInputs {
 		});
 	}
 
+	/**
+	 * Pending inputs (queued, sending, failed) and the outcome of each known id, consistent through
+	 * `throughCursor`: apply it, then only updates with a later cursor. Absence from `inputs` is never an outcome.
+	 */
+	async snapshot(knownClientMessageIds: readonly string[] = []): Promise<PendingInputSnapshot> {
+		const store = this.storeOpening === undefined ? undefined : await this.storeOpening;
+		const inputs = (store?.snapshot() ?? []).filter(
+			(input) => input.state !== "delivered" && input.state !== "removed",
+		);
+		const outcomes = knownClientMessageIds.map((clientMessageId) => {
+			const read = store?.read(clientMessageId);
+			return read?.status === "admitted"
+				? { clientMessageId, status: "admitted" as const, projection: read.projection }
+				: { clientMessageId, status: "not_admitted" as const };
+		});
+		return { lifetimeId: this.lifetimeId, throughCursor: store?.throughCursor ?? 0, inputs, outcomes };
+	}
+
 	/** The agent's queue port. Before the store opens nothing identified is queued, so it drains natively. */
 	queuedInputPort(): QueuedInputPort {
 		return {
@@ -157,6 +195,13 @@ export class SessionPendingInputs {
 			// The agent port commits consumption before any provider sees an input, so an attempt left `sending` by a
 			// crash was never sent and returns to the queue under its id (T28).
 			uncommittedAttemptsAreUnsent: true,
+		}).then((store) => {
+			const onChange = this.options.onChange;
+			if (onChange !== undefined)
+				store.subscribe((projection, cursor) =>
+					onChange({ lifetimeId: this.lifetimeId, cursor, changes: [projection] }),
+				);
+			return store;
 		});
 		return this.storeOpening;
 	}

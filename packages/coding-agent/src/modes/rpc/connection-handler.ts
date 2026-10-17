@@ -1150,6 +1150,9 @@ export function createRpcConnectionHandler(
 			case "get_effect_status":
 				return runGetEffectStatus(effectContext(), command);
 
+			case "get_pending_inputs":
+				return success(id, "get_pending_inputs", await session.getPendingInputs(command.knownClientMessageIds));
+
 			// =================================================================
 			// Model
 			// =================================================================

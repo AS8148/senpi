@@ -39,7 +39,8 @@ export interface PendingInputStoreOptions {
 	readonly onListenerError?: (error: unknown) => void;
 }
 
-export type PendingInputListener = (projection: PendingInputProjection) => void;
+/** Called after each committed transition with its projection and the journal cursor it was written at. */
+export type PendingInputListener = (projection: PendingInputProjection, cursor: number) => void;
 
 /** Transitions inside one gated step: each is committed directly, since the caller already holds the gate. */
 export interface PendingInputTransaction {
@@ -166,6 +167,11 @@ export class PendingInputStore {
 			: { status: "admitted", projection: projectPendingInput(input) };
 	}
 
+	/** The cursor of the newest committed transition; a snapshot taken now covers everything through it. */
+	get throughCursor(): number {
+		return this.cursor;
+	}
+
 	snapshot(): readonly PendingInputProjection[] {
 		return [...this.inputs.values()].map(projectPendingInput);
 	}
@@ -223,7 +229,7 @@ export class PendingInputStore {
 		const projection = projectPendingInput(next);
 		for (const listener of this.listeners) {
 			try {
-				listener(projection);
+				listener(projection, record.cursor);
 			} catch (error) {
 				this.reportListenerError(error);
 			}

@@ -279,7 +279,7 @@ import { type AvailableModelsSource, getModelNarrowingPatterns, resolveModelScop
 import type { ModelRuntime } from "./model-runtime.ts";
 import { ModelSwitchAuthError } from "./model-switch-auth-error.ts";
 import { NestedToolCallRunner } from "./nested-tool-calls.ts";
-import { SessionPendingInputs } from "./pending-input-session.ts";
+import { type PendingInputSnapshot, type PendingInputUpdate, SessionPendingInputs } from "./pending-input-session.ts";
 import { PROMPT_CACHE_SAFE_WAIT_ENV, resolvePromptCacheSafeWaitSeconds } from "./prompt-cache-budget.ts";
 import { PromptCachePrefixBuilds } from "./prompt-cache-prefix-request.ts";
 import { expandPromptTemplateWithMetadata, type PromptTemplate } from "./prompt-templates.ts";
@@ -508,6 +508,8 @@ export type AgentSessionEvent =
 			type: "command_invocation";
 			command: CommandInvocation;
 	  }
+	/** A pending input changed in durable custody (senpi#3549); `changes` are complete projections. */
+	| ({ type: "pending_input_update" } & PendingInputUpdate)
 	| {
 			type: "queue_update";
 			steering: readonly string[];
@@ -1426,6 +1428,7 @@ export class AgentSession {
 		this._pendingInputs = new SessionPendingInputs({
 			sessionManager: this.sessionManager,
 			nextQueuedId: () => this._mintQueuedId(),
+			onChange: (update) => this._emit({ type: "pending_input_update", ...update }),
 		});
 		this.agent.queuedInputPort = this._pendingInputs.queuedInputPort();
 		this.settingsManager = config.settingsManager;
@@ -6475,6 +6478,11 @@ export class AgentSession {
 	/** Get pending follow-up messages (read-only) */
 	getFollowUpMessages(): readonly string[] {
 		return this._followUpMessages;
+	}
+
+	/** The pending inputs in durable custody, and an explicit outcome for each id the caller already knows. */
+	getPendingInputs(knownClientMessageIds?: readonly string[]): Promise<PendingInputSnapshot> {
+		return this._pendingInputs.snapshot(knownClientMessageIds);
 	}
 
 	getQueuedInputs(): readonly QueuedInput[] {
