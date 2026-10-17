@@ -7,6 +7,7 @@
 ### Added
 
 - The pending-input lifecycle module, its store and session journal, and cross-process writer claims; not wired in yet ([#3549](https://github.com/code-yeongyu/senpi/issues/3549)).
+- RPC `get_pending_inputs` reads the inputs in durable custody with an explicit outcome per known id, and `pending_input_update` publishes each change with its journal cursor; the module is also exported as `@code-yeongyu/senpi/pending-input` ([#3549](https://github.com/code-yeongyu/senpi/issues/3549)).
 - Queued input with a client id is kept in durable custody: it is journaled in the session file before it is queued, delivered only after its consumption is recorded, and edited or removed in its record and the queue together; a repeated identical submit queues it once and a reused id with another payload is refused ([#3549](https://github.com/code-yeongyu/senpi/issues/3549)).
 
 - The `monitor` tool watches other sessions: `monitor({ type: "rpc", target: "children" | "all" | <session id, path or st_ task id>, events?, exclude?, filter?, persistent? })` lists the matched sessions on arm, then injects each status change and effect receipt as a line, and with `events: "all"` their content too (streaming collapsed to one line per session per 2 s). It reads every RPC host and terminal endpoint through the status stream's `mirror` opt-in, so it never attaches; children spawned after arming are matched by the host; a persistent watch survives a restart and reports what changed while detached ([#3226](https://github.com/code-yeongyu/senpi/issues/3226)).
