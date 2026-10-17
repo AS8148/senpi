@@ -19,7 +19,7 @@ interface BunShellPromise extends PromiseLike<{ readonly exitCode: number }> {
 declare const Bun: {
 	spawn(
 		command: string[],
-		options: { stdio: BunStdio; detached: boolean },
+		options: { stdio: BunStdio; detached?: boolean },
 	): { readonly exited: Promise<number>; unref(): void };
 	spawnSync(command: string[], options: { stdio: BunStdio }): { readonly exitCode: number };
 	$(strings: TemplateStringsArray, ...values: unknown[]): BunShellPromise;
@@ -76,11 +76,19 @@ function execFileStatus(argv: readonly string[]): number {
 	}
 }
 
-async function launch(api: SpawnApi, argv: readonly string[], detached: boolean): Promise<number | undefined> {
+// `requested` is the caller's own `detached` (absent when the tool call did not set it), so the launch API sees exactly
+// what an ordinary caller would pass.
+async function launch(
+	api: SpawnApi,
+	argv: readonly string[],
+	requested: boolean | undefined,
+): Promise<number | undefined> {
+	const detached = requested === true;
+	const detachOption = requested === undefined ? {} : { detached: requested };
 	const [command = "sh", ...args] = argv;
 	switch (api) {
 		case "cp.spawn": {
-			const child = spawn(command, args, { stdio: "ignore", detached });
+			const child = spawn(command, args, { stdio: "ignore", ...detachOption });
 			if (!detached) return exitedWith(child);
 			child.unref();
 			return undefined;
@@ -90,7 +98,7 @@ async function launch(api: SpawnApi, argv: readonly string[], detached: boolean)
 		case "cp.execFileSync":
 			return execFileStatus(argv);
 		case "bun.spawn": {
-			const child = Bun.spawn([command, ...args], { stdio: ["ignore", "ignore", "ignore"], detached });
+			const child = Bun.spawn([command, ...args], { stdio: ["ignore", "ignore", "ignore"], ...detachOption });
 			if (!detached) return child.exited;
 			child.unref();
 			return undefined;
@@ -117,7 +125,7 @@ export async function spawnFixture(
 	const inner = params.viaShell === true ? ["sh", "-c", params.argv.join(" ")] : params.argv;
 	const wrapped = ["sh", "-c", WRAPPER, "qa-spawn", markerPath, gatePath, ...inner];
 	const marker = detached ? fileCreated(options.controlDir, markerName) : undefined;
-	const exitCode = await launch(params.api, wrapped, detached);
+	const exitCode = await launch(params.api, wrapped, params.detached);
 	await marker;
 	const identity = readMarker(markerPath);
 	return {

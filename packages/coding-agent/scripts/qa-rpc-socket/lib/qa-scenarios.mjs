@@ -7,6 +7,8 @@
  * its todo. Bodies of the later scenarios land with the todo that advertises their capability.
  */
 import { fixtureToolsScenario } from "./qa-scenario-fixture-tools.mjs";
+import { launchApisAckGatedScenario } from "./qa-scenario-launch-barrier.mjs";
+import { skipAckWaitScenario } from "./qa-scenario-skip-ack.mjs";
 
 export const REQUIREMENT_CAPABILITIES = Object.freeze({
 	4: ["tool_runtime:child", "placement:launch-barrier"],
@@ -30,8 +32,6 @@ export const REQUIREMENT_CAPABILITIES = Object.freeze({
 });
 
 const LATER = [
-	["4-launch-apis-ack-gated", [4]],
-	["4-skip-ack-wait-detected", [4]],
 	["6-fixture-deadline", [4, 6]],
 	["7-hostcall-large-args-and-reply", [4, 7]],
 	["7-lock-drain", [4, 7]],
@@ -67,6 +67,8 @@ const LATER = [
 
 export const SCENARIOS = Object.freeze([
 	fixtureToolsScenario,
+	launchApisAckGatedScenario,
+	skipAckWaitScenario(),
 	...LATER.map(([id, requires]) => ({ id, requires, run: undefined })),
 ]);
 

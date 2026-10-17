@@ -17,6 +17,23 @@ export function isToolRuntimeKind(value: string): value is ToolRuntimeKind {
 
 const TOOL_RUNTIME_ENV_SUFFIX = "TOOL_RUNTIME";
 
+/**
+ * What the tool child already serves, advertised as `placement:<name>` beside `tool_runtime:child` (senpi#3566): each
+ * later todo appends the placement it lands, so a client (and the QA driver) can tell which work moved.
+ */
+export const TOOL_CHILD_PLACEMENTS = ["launch-barrier"] as const;
+
+export function toolRuntimeCapabilities(runtime: ToolRuntimeKind): string[] {
+	return [
+		toolRuntimeCapability(runtime),
+		...(runtime === "child" ? TOOL_CHILD_PLACEMENTS.map((name) => `placement:${name}`) : []),
+	];
+}
+
+export function isHostOwnedToolRuntimeCapability(capability: string): boolean {
+	return capability.startsWith("tool_runtime:") || capability.startsWith("placement:");
+}
+
 export function toolRuntimeCapability(runtime: ToolRuntimeKind): `tool_runtime:${ToolRuntimeKind}` {
 	return `tool_runtime:${runtime}`;
 }

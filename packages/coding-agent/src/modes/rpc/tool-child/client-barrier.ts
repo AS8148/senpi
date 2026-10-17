@@ -4,7 +4,9 @@ import { DescendantsLedger, LaunchLog } from "./descendants.ts";
 import { defaultGroupProbes, type LedgeredGroup, type SweepOutcome, sweepGroups } from "./group-ownership.ts";
 import { type BarrierViolation, LaunchEnforcer } from "./launch-enforcer.ts";
 import type { ToolChildMessage } from "./protocol.ts";
-import { readTestControls } from "./test-controls.ts";
+import { readTestControls, TEST_CONTROL_DIR_ENV } from "./test-controls.ts";
+
+const SLOT_QUERY_PREFIX = "query-slot-";
 
 export interface GenerationBarrier {
 	readonly ledger: DescendantsLedger;
@@ -37,6 +39,15 @@ export function createGenerationBarrier(options: {
 		leaderStart: (pid) => defaultGroupProbes.startOf(pid),
 		...(holdAck === undefined ? {} : { holdAck }),
 	});
+	// Test-only: with SENPI_TOOL_CHILD_TRACE=1 a control file `query-slot-<launchId>.<n>` asks the child for that launch's
+	// slot counts; the reply (`slot_state`) lands in launches.jsonl beside the launch it describes.
+	const slotQueries =
+		process.env.SENPI_TOOL_CHILD_TRACE === "1" && process.env[TEST_CONTROL_DIR_ENV] !== undefined
+			? controls.watchPrefix(SLOT_QUERY_PREFIX, (name) => {
+					const launchId = name.slice(SLOT_QUERY_PREFIX.length).replace(/\.[^.]*$/, "");
+					options.channel.send({ type: "slot_query", launchId });
+				})
+			: undefined;
 	return {
 		ledger,
 		log,
@@ -64,6 +75,7 @@ export function createGenerationBarrier(options: {
 			}
 		},
 		async teardown(child) {
+			slotQueries?.close();
 			enforcer.dispose();
 			const owned: LedgeredGroup[] = ledger.entries().flatMap((entry) =>
 				entry.pgid === undefined

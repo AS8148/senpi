@@ -42,6 +42,15 @@ export interface SegvDeps {
 }
 
 const WINDOWS_ACCESS_VIOLATION = 0xc0000005;
+/** Tools with a body in `qa-tools/child-bodies.ts`; `qa_hostcall` needs the reverse bridge (todo 7) first. */
+const CHILD_BODIES: ReadonlySet<QaToolName> = new Set([
+	"qa_sleep",
+	"qa_blob",
+	"qa_sink",
+	"qa_spawn",
+	"qa_mutate",
+	"qa_segv",
+]);
 const controlDirOf = (): string => process.env.SENPI_TOOL_CHILD_TEST_CONTROL_DIR ?? tmpdir();
 
 export function blobText(bytes: number): string {
@@ -99,6 +108,8 @@ function tool<P extends TSchema>(
 		name,
 		label: name,
 		description: `QA fixture tool ${name} (placement: ${QA_TOOL_PLACEMENTS[name]})`,
+		placement: QA_TOOL_PLACEMENTS[name],
+		...(CHILD_BODIES.has(name) ? { childModule: { path: "./qa-tools/child-bodies.ts", export: name } } : {}),
 		parameters,
 		async execute(toolCallId, params, signal, _onUpdate, ctx) {
 			const { text, details } = await run(params, ctx, toolCallId, signal);

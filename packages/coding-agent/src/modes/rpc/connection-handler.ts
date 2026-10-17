@@ -1,4 +1,8 @@
-import { type ToolRuntimeKind, toolRuntimeCapability } from "../../cli/tool-runtime.ts";
+import {
+	isHostOwnedToolRuntimeCapability,
+	type ToolRuntimeKind,
+	toolRuntimeCapabilities,
+} from "../../cli/tool-runtime.ts";
 import { messagePathProjectRoot, resolveMessagePath } from "../../core/message-path-resolution.ts";
 import { clientFacingIdentity } from "./client-admission-record.ts";
 /**
@@ -976,9 +980,12 @@ export function createRpcConnectionHandler(
 								AUTH_KEY_VERIFY_CAPABILITY,
 								QUEUED_MESSAGE_REVISION_CAPABILITY,
 								...(options.retryFallbackCommand ? [RETRY_FALLBACK_COMMAND_CAPABILITY] : []),
-								...(options.toolRuntime ? [toolRuntimeCapability(options.toolRuntime)] : []),
-								// Client flags cannot advertise a host guard this classic binding does not run.
-								...(options.capabilities ?? []).filter((capability) => capability !== SESSION_HELD_CAPABILITY),
+								...(options.toolRuntime ? toolRuntimeCapabilities(options.toolRuntime) : []),
+								// Client flags cannot advertise a host guard this classic binding does not run, nor a tool runtime.
+								...(options.capabilities ?? []).filter(
+									(capability) =>
+										capability !== SESSION_HELD_CAPABILITY && !isHostOwnedToolRuntimeCapability(capability),
+								),
 							]),
 						],
 						mode: "classic",

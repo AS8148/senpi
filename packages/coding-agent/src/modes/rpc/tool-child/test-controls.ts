@@ -4,7 +4,7 @@
  * creates in `SENPI_TOOL_CHILD_TEST_CONTROL_DIR`, observed with `fs.watch`, never polled.
  */
 import { randomUUID } from "node:crypto";
-import { existsSync, rmSync, watch, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, rmSync, watch, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const PREFIX = "SENPI_TOOL_CHILD_TEST_";
@@ -22,6 +22,13 @@ export interface TestControls {
 	readonly enabled: (name: TestSwitch) => boolean;
 	readonly value: (name: TestSwitch) => string | undefined;
 	readonly released: (file: string) => Promise<void>;
+	/** Calls `onFile` once per control file whose name starts with `prefix`, until `close()`. */
+	readonly watchPrefix: (prefix: string, onFile: (name: string) => void) => PrefixWatch;
+}
+
+export interface PrefixWatch {
+	readonly ready: Promise<void>;
+	close(): void;
 }
 
 export function readTestControls(env: NodeJS.ProcessEnv): TestControls {
@@ -36,6 +43,51 @@ export function readTestControls(env: NodeJS.ProcessEnv): TestControls {
 		released: (file) => {
 			if (dir === undefined) return Promise.reject(new Error(`${TEST_CONTROL_DIR_ENV} is not set`));
 			return waitForFile(dir, file);
+		},
+		watchPrefix: (prefix, onFile) => {
+			if (dir === undefined)
+				return { ready: Promise.reject(new Error(`${TEST_CONTROL_DIR_ENV} is not set`)), close: () => {} };
+			return watchPrefix(dir, prefix, onFile);
+		},
+	};
+}
+
+function watchPrefix(dir: string, prefix: string, onFile: (name: string) => void): PrefixWatch {
+	const seen = new Set<string>();
+	const report = (name: string): void => {
+		if (!name.startsWith(prefix) || seen.has(name)) return;
+		seen.add(name);
+		onFile(name);
+	};
+	const sentinel = `.watch-${process.pid}-${randomUUID()}`;
+	let resend: ReturnType<typeof setTimeout> | undefined;
+	let markReady: () => void = () => {};
+	const ready = new Promise<void>((resolve) => {
+		markReady = resolve;
+	});
+	const watcher = watch(dir, (_event, name) => {
+		if (name === null) return;
+		if (name === sentinel) {
+			clearTimeout(resend);
+			rmSync(join(dir, sentinel), { force: true });
+			// Live from here on; files created before the watch existed are picked up once.
+			for (const existing of readdirSync(dir)) report(existing);
+			markReady();
+			return;
+		}
+		if (existsSync(join(dir, name))) report(name);
+	});
+	const touch = (): void => {
+		writeFileSync(join(dir, sentinel), String(Date.now()));
+		resend = setTimeout(touch, 50);
+	};
+	touch();
+	return {
+		ready,
+		close: () => {
+			clearTimeout(resend);
+			watcher.close();
+			rmSync(join(dir, sentinel), { force: true });
 		},
 	};
 }

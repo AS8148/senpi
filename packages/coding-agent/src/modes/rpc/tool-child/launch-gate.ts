@@ -4,7 +4,10 @@
  * invoke tick immediately before the real call and calls `invoking`, and the gate publishes `launch_proof` from the
  * shared clock without waiting for the call to return. `done` reports completion separately, with no deadline.
  */
-import { BarrierClock } from "./barrier-clock.ts";
+import { BarrierClock, type SlotState } from "./barrier-clock.ts";
+
+const FINISHED_SLOT_STATES = 256;
+
 import type { ToolChildChannel } from "./channel.ts";
 import type { LaunchApi, LaunchContainment, LaunchLifetime, LaunchOrigin, ToolChildMessage } from "./protocol.ts";
 import { readTestControls, type TestControls } from "./test-controls.ts";
@@ -40,6 +43,8 @@ export class LaunchGate {
 	readonly clock: BarrierClock;
 	readonly #channel: ToolChildChannel;
 	readonly #slots = new Map<string, { slot: number; ack: () => void; lifetime: LaunchLifetime }>();
+	/** Final slot state of recent finished launches, so a test query after `launch_done` still reads the counts. */
+	readonly #finished = new Map<string, SlotState>();
 	readonly #controls: TestControls;
 	#next = 0;
 
@@ -102,7 +107,9 @@ export class LaunchGate {
 		if (message.type === "slot_query") {
 			const entry = this.#slots.get(message.launchId);
 			const state =
-				entry === undefined ? { ackTick: null, invokeTick: null, invocations: 0 } : this.clock.read(entry.slot);
+				entry === undefined
+					? (this.#finished.get(message.launchId) ?? { ackTick: null, invokeTick: null, invocations: 0 })
+					: this.clock.read(entry.slot);
 			this.#channel.send({ type: "slot_state", launchId: message.launchId, ...state });
 			return true;
 		}
@@ -137,6 +144,8 @@ export class LaunchGate {
 		const entry = this.#slots.get(launchId);
 		if (entry === undefined) return;
 		this.#slots.delete(launchId);
+		this.#finished.set(launchId, this.clock.read(entry.slot));
+		if (this.#finished.size > FINISHED_SLOT_STATES) this.#finished.delete(this.#finished.keys().next().value ?? "");
 		this.clock.releaseSlot(entry.slot);
 		this.#channel.send({
 			type: "launch_done",

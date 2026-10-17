@@ -11,7 +11,8 @@
  * (the host does not advertise a capability the scenario's `requires` names). Evidence goes to
  * `<out>/<scenario>.jsonl` and `<out>/<scenario>.json`.
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, watch, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { startMockModel } from "./lib/mock-model.mjs";
@@ -37,10 +38,51 @@ async function defaultStartHost({ runtime, env, extension, scratch, scenario }) 
 	}
 }
 
+function awaitControlFile(dir, match, deadlineMs) {
+	const existing = () => readdirSync(dir).find(match);
+	const now = existing();
+	if (now !== undefined) return Promise.resolve(now);
+	return new Promise((resolvePromise, reject) => {
+		const watcher = watch(dir, () => {
+			const name = existing();
+			if (name === undefined) return;
+			clearTimeout(timer);
+			watcher.close();
+			resolvePromise(name);
+		});
+		const timer = setTimeout(() => {
+			watcher.close();
+			reject(new QaFailure("record_timeout", `no control file in ${dir} within ${deadlineMs} ms`));
+		}, deadlineMs);
+		const raced = existing();
+		if (raced !== undefined) {
+			clearTimeout(timer);
+			watcher.close();
+			resolvePromise(raced);
+		}
+	});
+}
+
+/** The plan's cleanup rule: a killed process must be gone (not even a zombie) within 3 s. */
+async function awaitGone(pid, windowMs = 3_000) {
+	const deadline = Date.now() + windowMs;
+	for (;;) {
+		const state = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).stdout.trim();
+		if (state === "") return true;
+		if (Date.now() >= deadline) return false;
+		await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+	}
+}
+
 function scenarioContext(host, log, controlDir) {
 	const subscribe = (subscriber) => host.rpc.subscribe(subscriber);
+	const durableIds = new Map();
 	return {
 		log,
+		agentDir: host.agentDir,
+		awaitControlFile: (match, deadlineMs = 30_000) => awaitControlFile(controlDir, match, deadlineMs),
+		awaitGone: (pid) => awaitGone(pid),
+		durableSessionIdOf: (sessionId) => durableIds.get(sessionId),
 		protocolInfo: host.protocolInfo,
 		controlDir,
 		control: createControl(controlDir),
@@ -56,6 +98,7 @@ function scenarioContext(host, log, controlDir) {
 			});
 			if (opened.success !== true) throw new QaFailure("open_session_failed", JSON.stringify(opened.error ?? opened));
 			const sessionId = opened.data.sessionId;
+			durableIds.set(sessionId, opened.data.durableSessionId);
 			subscribe((record) => {
 				if (record.type !== "extension_ui_request" || record.method !== "select") return;
 				if (Array.isArray(record.options) && record.options.includes("Allow always")) {
@@ -113,7 +156,9 @@ export async function runDriver(argv, deps = {}) {
 	const scratch = mkdtempSync(process.platform === "win32" ? join(tmpdir(), "tcq-") : "/tmp/tcq-");
 	const controlDir = join(scratch, "control");
 	mkdirSync(controlDir, { recursive: true });
-	const env = { ...injectEnv(options.inject), ...options.env, SENPI_TOOL_CHILD_TEST_CONTROL_DIR: controlDir };
+	// The sandbox host drops every SENPI_* variable of the driver's own environment, so the trace switch is forwarded.
+	const trace = process.env.SENPI_TOOL_CHILD_TRACE === undefined ? {} : { SENPI_TOOL_CHILD_TRACE: process.env.SENPI_TOOL_CHILD_TRACE };
+	const env = { ...trace, ...injectEnv(options.inject), ...options.env, SENPI_TOOL_CHILD_TEST_CONTROL_DIR: controlDir };
 	log.write({ type: "start", scenario: scenario.id, runtime: options.runtime ?? "default", inject: options.inject, env: Object.keys(env) });
 	let code = EXIT.failed;
 	try {
