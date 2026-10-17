@@ -55,7 +55,7 @@ describe("eval-only prose call forms", () => {
 			for (const evalOnly of [true, false]) {
 				const section = buildTerminalPromptSection({ evalOnly });
 
-				expect(section, `evalOnly=${evalOnly}`).toContain("XOR");
+				expect(section, `evalOnly=${evalOnly}`).toMatch(/exactly one source/);
 				expect(section, `evalOnly=${evalOnly}`).toContain("event");
 				expect(section, `evalOnly=${evalOnly}`).toMatch(/fires only/);
 			}
