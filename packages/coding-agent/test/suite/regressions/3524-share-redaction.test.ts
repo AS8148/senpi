@@ -218,9 +218,9 @@ describe("share redaction (senpi#3524)", () => {
 		expect(redactShareValue(schema, context, new Map())).toEqual(schema);
 	});
 
-	it("drops a nodemailer pass field in structured data", () => {
+	it("drops everything under a sensitive group key, including a nodemailer pass", () => {
 		expect(redactShareValue({ auth: { user: "mailer", pass: "hunter22x" } }, context, new Map())).toEqual({
-			auth: { user: "mailer", pass: "<redacted>" },
+			auth: { user: "<redacted>", pass: "<redacted>" },
 		});
 	});
 

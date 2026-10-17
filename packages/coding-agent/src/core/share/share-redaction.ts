@@ -1,5 +1,6 @@
 import { homedir, hostname, userInfo } from "node:os";
-import { looksGenerated, redactGeneratedValues } from "./share-entropy.ts";
+import { redactGeneratedValues } from "./share-entropy.ts";
+import { isSensitiveKeyName } from "./share-sensitive-key.ts";
 
 /**
  * Redaction for content that leaves the machine (`/share`, #3524).
@@ -90,10 +91,6 @@ const PRIVATE_KEY_BLOCK =
 
 /** Credential shapes, each rewritten to a placeholder that no rule matches again. */
 const CREDENTIAL_REWRITES: ReadonlyArray<readonly [RegExp, (match: string, ...groups: string[]) => string]> = [
-	[
-		/\b((?:Proxy-)?Authorization["']?\s{0,3}[:=]\s{0,3}(?:\[\s{0,3})?["']?(?:(?:Bearer|Basic|Token|Digest)\s{1,5})?)[^\s"'\\]{4,}/gi,
-		(_m, prefix) => `${prefix}<redacted>`,
-	],
 	// A bare scheme word is prose unless the value looks like a credential (has a digit or symbol). A value that starts
 	// with an earlier placeholder is still a value: the placeholder is replaced along with it.
 	[
@@ -115,33 +112,21 @@ const CREDENTIAL_REWRITES: ReadonlyArray<readonly [RegExp, (match: string, ...gr
 	[/(?<![A-Za-z0-9-])((?:Set-)?Cookie)(\s{0,3}:\s{0,3})[^\n"]+/gi, (_m, name, sep) => `${name}${sep}<redacted>`],
 ];
 
-/** A key is sensitive when a sensitive word appears anywhere in it (`OPENAI_API_KEY`, `accessToken`). */
-export const SENSITIVE_KEY =
-	/token|secret|passw(?:or)?d|passwd|passphrase|(?:^|[^a-z])pass(?:$|[^a-z])|pwd|api[_-]?key|apikey|authorization|credential|private[_-]?key|session[_-]?id|cookie|signature/i;
+/**
+ * `key: value` / `key=value` in text. A quoted value runs to its closing quote; an unquoted one to the end of the line or
+ * the next `,;})`, so a value of several words is replaced whole.
+ */
 const KEY_VALUE =
-	/([A-Za-z0-9_.-]{1,128})((?:\\?["'])?[ \t]{0,3}[:=][ \t]{0,3}(?:\\?["'])?)([^\s"'\\&,;}[{(=)][^\s"'\\&,;}()]{0,1999})/g;
+	/([A-Za-z0-9_.-]{1,128})((?:\\?["'])?[ \t]{0,3}[:=][ \t]{0,3})(?:(\\?["'])((?:(?!\3)[^\n]){0,2000})\3|([^\s"'\\&,;}[{(=)][^\n"'\\&,;}()]{0,1999}))/g;
 /** A sensitive key whose value is an inline array or object: every quoted string inside it is a credential. */
 const KEY_COLLECTION =
 	/((["']?)([A-Za-z0-9_.-]{1,128})\2[ \t]{0,3}[:=][ \t]{0,3})(\[[^\]\n]{0,2000}\]|\{[^}\n]{0,2000}\})/g;
 /** A YAML key followed by a block list (`tokens:` then `  - value` lines). */
 const KEY_YAML_LIST = /^([ \t]*)([A-Za-z0-9_.-]{1,128}):[ \t]*\r?\n((?:\1[ \t]*-[ \t]+[^\n]*(?:\r?\n|$))+)/gm;
+/** Counting only: a value that is nothing but a scheme word and placeholders was already counted by the rule that redacted it. */
+const ALREADY_REDACTED = /^(?:(?:Bearer|Basic|Token|Digest)\s+)?(?:<redacted>\s*)+$/i;
 const QUOTED = /"(?:[^"\\\n]|\\.)*"|'[^'\n]*'/g;
-const SCHEME_WORD = /^(?:Bearer|Basic|Token)$/i;
-/**
- * An UPPER_SNAKE name with a credential segment, as in an env dump. TOKEN, SECRET and PASS names are always secret; a
- * name whose only credential segment is KEY or AUTH (`STORAGE_KEY`, `AUTH_MODE`) needs a secret-looking value, and a
- * name ending in a config suffix (`PUBLIC_KEY_PATH`, `NEXT_PUBLIC_KEY_ID`) never counts.
- */
-const ENV_CREDENTIAL =
-	/\b((?:[A-Z0-9]+_)*(?:KEY|KEYS|AUTH|TOKEN|SECRET|PASSWORD|PASSWD|PASS|PWD|CREDENTIALS?)(?:_[A-Z0-9]+)*)([ \t]{0,3}[=:][ \t]{0,3}["']?)([^\s"']{4,2000})/g;
-const ALWAYS_SECRET_SEGMENT = /(?:^|_)(?:TOKEN|SECRET|PASSWORD|PASSWD|PASS|PWD|CREDENTIALS?)(?:_|$)/;
-const CONFIG_SUFFIX = /_(?:PATH|ID|MODE|TYPE|URL|URI|FILE|NAME|DIR|HEADER|FORMAT|LENGTH|SIZE|PREFIX)$/;
 const DATA_URI = /data:[a-z]+\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+/gi;
-
-function secretLookingValue(value: string): boolean {
-	const rest = value.replace(/^(?:<redacted>)+/, "");
-	return rest.length > 0 && (/^[0-9a-f]{16,}$/i.test(rest) || looksGenerated(rest));
-}
 
 const EMAIL = /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]{1,64}(?:@|%40)[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63}){1,5}/g;
 const IPV4 = /(?<!\d|\d\.)(?:\d{1,3}\.){3}\d{1,3}(?!\d|\.\d)/g;
@@ -187,11 +172,11 @@ export function redactShareText(text: string, context: ShareRedactionContext, ta
 		return "<redacted private key>";
 	});
 	result = result.replace(KEY_COLLECTION, (match, prefix: string, _quote: string, key: string, collection: string) => {
-		if (!SENSITIVE_KEY.test(key)) return match;
+		if (!isSensitiveKeyName(key)) return match;
 		return prefix + collection.replace(QUOTED, (quoted) => redactQuoted(quoted, tally));
 	});
 	result = result.replace(KEY_YAML_LIST, (match, indent: string, key: string, items: string) => {
-		if (!SENSITIVE_KEY.test(key)) return match;
+		if (!isSensitiveKeyName(key)) return match;
 		const redacted = items.replace(/^([ \t]*-[ \t]+)(\S[^\n]*)/gm, (_item, bullet: string, item: string) => {
 			if (item !== "<redacted>") count(tally, "credential");
 			return `${bullet}<redacted>`;
@@ -207,17 +192,19 @@ export function redactShareText(text: string, context: ShareRedactionContext, ta
 			return replaced;
 		});
 	}
-	result = result.replace(KEY_VALUE, (match, key: string, separator: string, value: string) => {
-		if (!SENSITIVE_KEY.test(key) || SCHEME_WORD.test(value)) return match;
-		if (value !== "<redacted>") count(tally, "credential");
-		return `${key}${separator}<redacted>`;
-	});
-	result = result.replace(ENV_CREDENTIAL, (match, name: string, separator: string, value: string) => {
-		if (CONFIG_SUFFIX.test(name)) return match;
-		if (!ALWAYS_SECRET_SEGMENT.test(name) && !secretLookingValue(value)) return match;
-		if (value !== "<redacted>") count(tally, "credential");
-		return `${name}${separator}<redacted>`;
-	});
+	result = result.replace(
+		KEY_VALUE,
+		(match, key: string, separator: string, quote: string | undefined, quoted: string, bare: string | undefined) => {
+			if (!isSensitiveKeyName(key) || (quote === undefined && bare === "<redacted>")) return match;
+			const replaced =
+				quote === undefined
+					? `${key}${separator}<redacted>${(bare ?? "").match(/\s*$/)?.[0] ?? ""}`
+					: `${key}${separator}${quote}<redacted>${quote}`;
+			const value = quote === undefined ? (bare ?? "") : quoted;
+			if (replaced !== match && !ALREADY_REDACTED.test(value.trim())) count(tally, "credential");
+			return replaced;
+		},
+	);
 	result = redactGeneratedValues(result, () => count(tally, "credential"));
 
 	result = result.replace(EMAIL, () => {

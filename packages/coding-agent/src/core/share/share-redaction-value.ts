@@ -1,11 +1,6 @@
 import { redactAcrossBoundary } from "./share-entropy.ts";
-import {
-	count,
-	redactShareText,
-	SENSITIVE_KEY,
-	type ShareRedactionContext,
-	type ShareRedactionTally,
-} from "./share-redaction.ts";
+import { count, redactShareText, type ShareRedactionContext, type ShareRedactionTally } from "./share-redaction.ts";
+import { isSensitiveKeyName } from "./share-sensitive-key.ts";
 
 /** Any provider's image block: pi `{type:"image"}`, Anthropic `{type:"image", source}`, OpenAI `image_url`/`input_image`. */
 function isImageBlock(value: Record<string, unknown>): boolean {
@@ -76,7 +71,7 @@ function redactNode(value: unknown, context: ShareRedactionContext, tally: Share
 	const out: Record<string, unknown> = {};
 	for (const [key, child] of Object.entries(record)) {
 		out[key] =
-			SENSITIVE_KEY.test(key) && !isSchemaNode(child)
+			isSensitiveKeyName(key) && !isSchemaNode(child)
 				? dropAllStrings(child, tally)
 				: redactNode(child, context, tally);
 	}
