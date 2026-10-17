@@ -16,6 +16,33 @@
 
 - LOW: `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`, `packages/coding-agent/src/modes/rpc/effect-commands.ts`, `packages/coding-agent/src/modes/rpc/effect-outcome-copy.ts`, `packages/coding-agent/src/modes/rpc/effect-record.ts`, `packages/coding-agent/src/modes/rpc/custom-capability.ts`, `packages/coding-agent/src/modes/rpc/host-capabilities.ts`, `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/effect-ledger.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the queued-input command shapes, `runQueuedInputChange`, the outcome enum and the capability lists.
 
+## 2026-10-17 - A session reopened right after its park is never refused (senpi#3485)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-handover-parked.ts`: a handover-parked entry carries `parkedBy`, the host instance that wrote it; `isEntry` accepts it as an optional string, and an entry without it (written by an older generation) reads as before.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: `evictIdleSession` stamps `parkedBy` with this host's instance when it records a retained session's park.
+- `packages/coding-agent/src/modes/rpc/host-handover-reopen.ts`: the startup watch reopens only parks a PREVIOUS generation wrote (`inheritedParks`); a park this host wrote is left for its successor and does not count toward the watch's quiet streak.
+- `packages/coding-agent/src/modes/rpc/session-registry-claims.ts` and `packages/coding-agent/src/modes/rpc/session-registry.ts`: an open records its path as mid-claim (`beginPendingClaim`) from its in-process reservation until its entry is recorded or the reservation is given back; a concurrent open of that path waits for it (`settlePendingClaim`, bounded by `closeGraceMs`) and then attaches through the existing in-flight-open wait. The wait is re-checked in a loop immediately before the reservation decision, with no await in between, so when the claim it waited on is REFUSED, the next waiter takes the claim itself and the ones behind it wait on that one. A claim that does not settle in that window refuses with `session_path_in_use { reason: "claim_in_progress", retry_after_ms }`. A `claim()` that throws now gives the reservation back instead of holding the path for the host's life.
+- `packages/coding-agent/src/modes/rpc/session-registry-opening.ts` (new): `buildOpeningEntry` builds the "opening" entry in one synchronous step, moved out of `openSession`; if it throws, `openSession` gives the reservation and claim back and then wakes waiters in a `finally`, so a claim release that also fails is reported on stderr but never strands the waiters or replaces the build error.
+- `packages/coding-agent/src/modes/rpc/session-registry-attach.ts`: a path still reserved by a session that is neither open nor opening (a teardown past its grace window) refuses with `session_path_in_use { reason: "path_still_held", retry_after_ms }` instead of a bare code.
+
+### Why
+
+- The idle sweep records a retained session's park for the next generation, but the SAME host's startup watch (120 s after every start, polling every 250 ms, gated only on draining) read that record back and reopened the session itself. That open sits between its reservation and its entry while it awaits the cross-generation claim, and a client reopening the session by path or by durable id in that window found a reserved path with no entry and was refused with a bare `session_path_in_use` (the 2026.10.16-4 publish failure in `test/suite/host-session-park.test.ts`, 1 run in 5 alone).
+- Waiting on the in-flight claim closes the same window for any two opens of one path (two surfaces resuming the same session), not only the watch's.
+
+### Why an extension could not handle it
+
+- The park record, the reopen watch and the registry's path reservations are RPC host internals; no extension hook runs inside `openSession` or the handover watch.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/modes/rpc/session-registry.ts`, `openSession` from the closing-reservation wait to `this.entries.set(handle, entry)`; the entry construction moved to `session-registry-opening.ts`.
+- LOW: `packages/coding-agent/src/modes/rpc/session-registry-attach.ts`, the last refusal of `attachToOpenSession`.
+- LOW: `packages/coding-agent/src/modes/rpc/session-command-router.ts`, the `recordHandoverParkedSession` call in `evictIdleSession`.
+- LOW: `packages/coding-agent/src/modes/rpc/host-handover-reopen.ts`, the two record reads in `reopenHandoverParkedSessions`; `packages/coding-agent/src/modes/rpc/host-handover-parked.ts`, the entry type and `isEntry`; `packages/coding-agent/src/modes/rpc/session-registry-claims.ts`, the new helpers at the top.
+
 ## 2026-10-16 - RpcClient sends a typed abort and reads effect receipts (senpi#3453)
 
 ### What changed

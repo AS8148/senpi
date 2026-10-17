@@ -8,6 +8,18 @@
 
 - `dequeue_message` and `edit_queued_message` accept `expectedRevision`: every queued input carries a `revision` (1 when queued, +1 per edit), and a change based on a stale revision answers `conflict` with `currentRevision` and changes nothing, so two clients editing one queued message can no longer overwrite each other silently. Capability `queued_message_revision` ([#3459](https://github.com/code-yeongyu/senpi/issues/3459)).
 
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.16-4] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
 - A permission prompt for a tool without its own parser offers a wider "Allow always": for a URL, that domain in this project ("Allow <tool> on <host> always in this project"); for other tools, the tool in this project. Commands, paths and built-in tools never get it.
 
 - `RpcClient.abort(options)` sends a typed abort (`effectId`, `awaitIdle`, `clearQueue`, `graceMs`) and returns the host's answer (`stopped`, `idle`, `cleared`, receipt); `RpcClient.getEffectStatus(effectId, { sessionPath? })` reads an effect receipt. `abort()` without options is unchanged ([#3453](https://github.com/code-yeongyu/senpi/issues/3453)).
@@ -15,6 +27,14 @@
 ### Changed
 
 ### Fixed
+
+- Reopening a session right after parking it no longer fails with `session_path_in_use`. A host no longer reopens the sessions it parked itself (those are for its next generation), and an open that arrives while another open of the same path is still claiming it waits and attaches instead of being refused; if that claim stalls past the close grace window, the refusal says `claim_in_progress` with a retry delay, and no racing open gets a refusal without a reason ([#3485](https://github.com/code-yeongyu/senpi/issues/3485), [#3490](https://github.com/code-yeongyu/senpi/pull/3490)).
+
+- A slow model no longer sends every session to its fallback for up to 30 minutes. Failures that arrive while the fallback circuit is already open no longer double its cooldown: the circuit takes one backoff step per open episode. A session that never failed on the model keeps it; only a billing, quota or account-limit failure moves other sessions off it, while a Retry-After stays with the session that received it ([#3467](https://github.com/code-yeongyu/senpi/issues/3467)).
+
+- Bounded what context files and the skills catalog add to every request: AGENTS.md/CLAUDE.md files are cut at 64 KiB each and 128 KiB in total, nearest file first, including truncation notes and closing code fences in the budgets, with newline-safe cuts (`contextFiles.maxBytesPerFile` / `contextFiles.maxTotalBytes` raise the limits). The skills section is capped at 48 KiB: above 100 visible skills or 64 KiB of descriptions it uses one-line descriptions, then drops descriptions and lists only the first skills that fit if needed, naming the omitted count. Size warnings appear in TUI resource notices and once on stderr at startup in non-interactive modes ([#3460](https://github.com/code-yeongyu/senpi/issues/3460), [#3463](https://github.com/code-yeongyu/senpi/pull/3463)).
+
+- `anthropic-subscription`: a transient failure (overload, server error, network) no longer rotates the account or blocks it in the shared credential store. The account is still retried twice in place; after that the turn fails on the same account, and the session's own retry and model fallback take over. Moving accounts wrote the whole conversation to a cold prompt cache, and the persisted block moved every other session off a healthy account. A plain rate limit (429), a one-model limit or a refill breaker still rotates the turn that hit it, but no longer moves other sessions off the account; only a confirmed account usage limit, billing or an auth failure does ([#3466](https://github.com/code-yeongyu/senpi/issues/3466)).
 
 - A session with the Full access preset no longer asks "Trust project folder?": it trusts its project for that session without saving the decision (a saved "do not trust" still wins). Home and the folders above it no longer count as project folders, so opening home as a project doesn't ask to trust your own global config. ([#3420](https://github.com/code-yeongyu/senpi/pull/3420))
 
