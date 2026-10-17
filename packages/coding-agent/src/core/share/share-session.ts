@@ -2,12 +2,8 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-	redactShareValue,
-	type ShareRedactionCategory,
-	type ShareRedactionContext,
-	type ShareRedactionTally,
-} from "./share-redaction.ts";
+import type { ShareRedactionCategory, ShareRedactionContext, ShareRedactionTally } from "./share-redaction.ts";
+import { redactShareValue } from "./share-redaction-value.ts";
 
 export type ShareDecision = "upload" | "review" | "cancel";
 

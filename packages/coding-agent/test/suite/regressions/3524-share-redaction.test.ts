@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
 	redactShareText,
-	redactShareValue,
 	type ShareRedactionContext,
 	type ShareRedactionTally,
 } from "../../../src/core/share/share-redaction.ts";
+import { redactShareValue } from "../../../src/core/share/share-redaction-value.ts";
 
 // senpi#3524: /share uploaded the session unredacted. Secrets are assembled at runtime so no
 // credential-shaped literal sits in the repository.
@@ -14,6 +14,13 @@ const GITHUB_PAT = `${"github"}_pat_${"b".repeat(40)}`;
 const SLACK_TOKEN = `${"xox"}b-${"1".repeat(12)}-abcdef`;
 const AWS_KEY = `${"AKIA"}${"Q".repeat(16)}`;
 const JWT = `${"eyJ"}${"h".repeat(12)}.${"p".repeat(12)}.${"s".repeat(12)}`;
+const STRIPE_LIVE = ["sk", "live", "9".repeat(24)].join("_");
+const STRIPE_TEST = ["rk", "test", "Ab1".repeat(8)].join("_");
+const HUGGING_FACE = `${"hf"}_${"Qx7".repeat(12)}`;
+const NPM_TOKEN = `${"npm"}_${"N4z".repeat(12)}`;
+const GITLAB_TOKEN = `${"glpat"}-${"g5H".repeat(8)}`;
+const HEX_40 = "0123456789abcdef".repeat(3).slice(0, 40);
+const GENERATED = ["aB3dE5fG7h", "J9kL2mN4pQ", "6rS8tU0vW1", "xY"].join("");
 const PEM_BEGIN = ["-----BEGIN", "RSA PRIVATE KEY-----"].join(" ");
 const PEM_END = ["-----END", "RSA PRIVATE KEY-----"].join(" ");
 
@@ -46,6 +53,18 @@ describe("share redaction (senpi#3524)", () => {
 		["a cookie header", "Cookie: sid=abc123def456", "abc123def456"],
 		["an email", "mail jane.doe@example.org now", "jane.doe@example.org"],
 		["a remote IPv4", "connect 10.1.2.3:22", "10.1.2.3"],
+		["a Stripe live key", `stripe ${STRIPE_LIVE}`, STRIPE_LIVE],
+		["a Stripe restricted test key", STRIPE_TEST, STRIPE_TEST],
+		["a Hugging Face token", `HF ${HUGGING_FACE}`, HUGGING_FACE],
+		["an npm token", `publish with ${NPM_TOKEN}`, NPM_TOKEN],
+		["a GitLab token", `glab ${GITLAB_TOKEN}`, GITLAB_TOKEN],
+		["an env KEY with a hex value", `DEEPSEEK_KEY=${HEX_40}`, HEX_40],
+		["an env AUTH with a hex value", `export ANTHROPIC_AUTH="${HEX_40}"`, HEX_40],
+		["an env PASS", "DB_PASS=correcthorse", "correcthorse"],
+		["a generated high-entropy run in prose", `the value is ${GENERATED} ok`, GENERATED],
+		["a JSON authorization array", '{"Authorization":["Bearer abcdefghijkl"]}', "abcdefghijkl"],
+		["a URL-encoded email", "to=jane.doe%40example.org", "jane.doe"],
+		["an inline data URI", `<img src="data:image/png;base64,${"iVBORw0KGgo".repeat(4)}">`, "iVBORw0KGgo"],
 	])("removes %s", (_label, input, secret) => {
 		const { text } = redact(input);
 		expect(text).not.toContain(secret);
@@ -95,6 +114,17 @@ describe("share redaction (senpi#3524)", () => {
 		expect(redact(input).text).toBe(input);
 	});
 
+	it.each([
+		["a commit id", `fixed in ${HEX_40}`],
+		["a sha256 digest", `sha256 ${"ab12".repeat(16)}`],
+		["a UUID", "session 01a14a28-fad7-7ebc-91a2-e85da2aa8faa"],
+		["a long camelCase identifier", "call handleShareCommandWithLoaderAndPreview2 now"],
+		["a long kebab branch name", "fix/3524-share-redaction-preview-and-confirm"],
+		["an env name that only contains KEY", "KEYBOARD_LAYOUT=us MONKEY_COUNT=3"],
+	])("keeps %s", (_label, input) => {
+		expect(redact(input).text).toBe(input);
+	});
+
 	it("keeps loopback addresses, ordinary words and code", () => {
 		const input = "listen on 127.0.0.1:8080; const token = getToken(); user home admin";
 		expect(redact(input).text).toBe(input.replace("getToken()", "<redacted>"));
@@ -125,6 +155,31 @@ describe("share redaction (senpi#3524)", () => {
 		expect(value).toEqual({
 			arguments: { apiKey: "<redacted>", path: "~/a" },
 			content: [{ type: "text", text: "[image omitted from share]" }],
+		});
+		expect(tally.get("image")).toBe(1);
+	});
+
+	it("keeps the JSON shape of an authorization array while removing its token", () => {
+		expect(redact('{"Authorization":["Bearer abcdefghijkl"]}').text).toBe('{"Authorization":["Bearer <redacted>"]}');
+	});
+
+	it("drops every string under a sensitive key, whatever the nesting", () => {
+		const value = redactShareValue(
+			{ headers: { Authorization: ["Bearer abcdefghijkl"], cookie: { sid: "abc" } } },
+			context,
+			new Map(),
+		);
+		expect(value).toEqual({ headers: { Authorization: ["<redacted>"], cookie: { sid: "<redacted>" } } });
+	});
+
+	it.each([
+		["Anthropic", { type: "image", source: { type: "base64", media_type: "image/png", data: "aGVsbG8=" } }],
+		["OpenAI chat", { type: "image_url", image_url: { url: "data:image/png;base64,aGVsbG8=" } }],
+		["OpenAI responses", { type: "input_image", image_url: "data:image/png;base64,aGVsbG8=" }],
+	])("drops a %s image block", (_label, block) => {
+		const tally: ShareRedactionTally = new Map();
+		expect(redactShareValue({ details: [block] }, context, tally)).toEqual({
+			details: [{ type: "text", text: "[image omitted from share]" }],
 		});
 		expect(tally.get("image")).toBe(1);
 	});
