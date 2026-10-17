@@ -19,8 +19,10 @@ import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import type { EngineOrdinal } from "../../core/engine-build-identity.ts";
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
 import type { ContextUsage, SessionControlAdmission, SessionKind } from "../../core/extensions/types.ts";
+import type { ResolvedMessagePath } from "../../core/message-path-resolution.ts";
 import type { SessionEntry, SessionMessageEntry, SessionTreeNode, UsageTotals } from "../../core/session-manager.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
+import type { ApiKeyVerification } from "../../core/verify-api-key.ts";
 import type { ClientMessageAdmission } from "./client-admission-record.ts";
 import type { EffectState, EffectStatus } from "./effect-record.ts";
 import type { RpcSlashCommand } from "./rpc-command-surface.ts";
@@ -29,6 +31,9 @@ import type { SessionStatusRecord } from "./session-status.ts";
 export type { SessionContext, SessionKind } from "../../core/extensions/types.ts";
 export type { RpcCommandInvocationEvent } from "./rpc-command-invocation.ts";
 export type { RpcCommandsChangedEvent, RpcSlashCommand } from "./rpc-command-surface.ts";
+
+import type { RpcSubscriptionLimitsEvent } from "./rpc-host-lifecycle-types.ts";
+
 export type {
 	RpcHostKernelMemory,
 	RpcHostLifecycleEvent,
@@ -36,6 +41,7 @@ export type {
 	RpcHostStalledEvent,
 	RpcHostSupersededEvent,
 	RpcHostTrimmedEvent,
+	RpcSubscriptionLimitsEvent,
 } from "./rpc-host-lifecycle-types.ts";
 
 // ============================================================================
@@ -76,6 +82,8 @@ type RpcSessionCommand =
 			message: string;
 			images?: ImageContent[];
 			enqueueOrder?: number;
+			/** `"start"` starts a turn with this message when the session is idle (capability `steer_when_idle`). */
+			whenIdle?: RpcWhenIdle;
 	  } & ClientMessageIdentity)
 	| ({
 			id?: string;
@@ -83,17 +91,40 @@ type RpcSessionCommand =
 			message: string;
 			images?: ImageContent[];
 			enqueueOrder?: number;
+			/** `"start"` starts a turn with this message when the session is idle (capability `steer_when_idle`). */
+			whenIdle?: RpcWhenIdle;
 	  } & ClientMessageIdentity)
 	/**
 	 * `effectId` (1-256 chars, capability `effect_ledger`) records the abort as a durable effect BEFORE it is
 	 * dispatched and makes a retry with the same id a replay; without it the abort behaves exactly as before.
 	 */
-	| { id?: string; type: "abort"; effectId?: string }
+	| {
+			id?: string;
+			type: "abort";
+			effectId?: string;
+			/** Answer only once the session is idle (or `graceMs` passed); the answer says which. */
+			awaitIdle?: boolean;
+			/** Drain the steering and follow-up queues atomically before the abort. */
+			clearQueue?: boolean;
+			/** How long `awaitIdle` waits, 0..60000 ms; default 10000. */
+			graceMs?: number;
+	  }
 	| { id?: string; type: "interrupt"; turnId?: string }
 	| { id?: string; type: "abort_compaction" }
 	| { id?: string; type: "reload" }
 	| { id?: string; type: "check_reload_veto" }
 	| { id?: string; type: "clear_queue"; abortWillFollow?: boolean }
+	/** Remove one queued input by its `queuedId` (from `get_state` / `queue_update`) before it reaches a turn. */
+	| { id?: string; type: "dequeue_message"; queuedId: string; expectedRevision?: number; effectId?: string }
+	/** Replace the text of one queued input in place, keeping its order and identity. */
+	| {
+			id?: string;
+			type: "edit_queued_message";
+			queuedId: string;
+			text: string;
+			expectedRevision?: number;
+			effectId?: string;
+	  }
 	| { id?: string; type: "get_steering_messages" }
 	| { id?: string; type: "get_follow_up_messages" }
 	| { id?: string; type: "abort_branch_summary" }
@@ -195,6 +226,7 @@ type RpcSessionCommand =
 
 	// Session
 	| { id?: string; type: "get_session_stats" }
+	| { id?: string; type: "resolve_path"; path: string }
 	| { id?: string; type: "memory_report" }
 	| { id?: string; type: "export_html"; outputPath?: string; themeName?: string }
 	| { id?: string; type: "export_jsonl"; outputPath?: string }
@@ -254,6 +286,8 @@ type RpcSessionCommand =
 	| { id?: string; type: "login_cancel"; provider: string }
 	| { id?: string; type: "login_api_key"; provider: string; key: string }
 	| { id?: string; type: "logout"; provider: string }
+	// Checks a key with the provider's model list without storing it (desktop #2510).
+	| { id?: string; type: "verify_api_key"; provider: string; key: string }
 
 	// Provider accounts (task 13) are additive. The desktop consumer contract
 	// lives in ../omo-desktop-app/packages/contracts/src/rpc.ts and is updated separately.
@@ -274,6 +308,8 @@ export const RPC_ERROR_SESSION_RESERVATION_LIMIT = "session_reservation_limit";
 export const RPC_ERROR_MISSING_SESSION_ID = "missing_session_id";
 export const RPC_ERROR_MULTI_SESSION_DISABLED = "multi_session_disabled";
 export const RPC_ERROR_INVALID_PATH = "invalid_path";
+/** A command field outside its documented range; `errorData` carries `reason` and `action`. */
+export const RPC_ERROR_INVALID_ARGUMENT = "invalid_argument";
 export const RPC_ERROR_OPEN_FAILED = "open_failed";
 export const RPC_ERROR_OWNER_CHANGED = "owner_changed";
 export const RPC_ERROR_SESSION_NOT_HELD = "session_not_held";
@@ -407,6 +443,36 @@ export type RpcErrorCode =
 	| typeof RPC_ERROR_RELEASE_FAILED
 	| typeof RPC_ERROR_HOST_DRAINING;
 
+/** `abort` with `awaitIdle` or `clearQueue`: whether the turn stopped and what was cleared. */
+export interface RpcAbortQuiesce {
+	/** The aborted turn ended within `graceMs` (with `clearQueue` alone: no turn was running). */
+	stopped: boolean;
+	/** The session was idle when the answer was sent. Equal to `stopped` today; kept separate so a later
+	 * host can report a stopped turn whose session immediately started queued work. */
+	idle: boolean;
+	/** Queued inputs `clearQueue` removed (0 when not requested). */
+	cleared: number;
+}
+
+/** Capability: `steer`/`follow_up` accept `whenIdle: "start"`. */
+export const STEER_WHEN_IDLE_CAPABILITY = "steer_when_idle";
+
+/** What `steer`/`follow_up` do on an idle session: queue (default) or start a turn. */
+export type RpcWhenIdle = "queue" | "start";
+
+/** What `dequeue_message` / `edit_queued_message` did; anything but removed/edited carries reason + action. */
+export interface RpcQueuedInputChange {
+	queuedId: string;
+	status: "removed" | "edited" | "already_delivered" | "not_found" | "conflict";
+	/** `edited`: the text and revision the input now has. */
+	text?: string;
+	revision?: number;
+	/** `conflict`: the input's revision, which `expectedRevision` did not match; nothing was changed. */
+	currentRevision?: number;
+	reason?: string;
+	action?: string;
+}
+
 /** What an effect command (`abort`/`set_model`/`set_thinking_level` with `effectId`) answers about its receipt. */
 export interface RpcEffectAnswer {
 	effectId: string;
@@ -531,10 +597,33 @@ export type RpcCommand =
 	| {
 			id?: string;
 			/**
+			 * Free a session this host keeps loaded: the transcript stays, queued input is kept for the reopen,
+			 * and `session_parked { reason: "unloaded" }` reaches every attached client. Refused with a reason
+			 * and an action while work runs (unless `interrupt`), while other clients are attached (unless
+			 * `force`) or while child sessions it started are open here (unless `children: "detach"`).
+			 */
+			type: "unload_session";
+			sessionId: string;
+			effectId?: string;
+			interrupt?: boolean;
+			clearQueue?: boolean;
+			children?: "refuse" | "detach";
+			force?: boolean;
+	  }
+	| {
+			id?: string;
+			/**
 			 * Meant as the connection's last request: release every session attachment it holds, then answer.
 			 * Advertised as `detach_connection`. Closing the socket afterwards releases nothing more.
 			 */
 			type: "detach_connection";
+	  }
+	| {
+			id?: string;
+			/** Every subscription account's latest limit windows (senpi#3370); capability `subscription_limits`. */
+			type: "get_subscription_limits";
+			/** An observing read, as on `get_protocol_info`. */
+			observe?: boolean;
 	  }
 	| {
 			id?: string;
@@ -612,6 +701,8 @@ export interface RpcAuthProvider {
 	authType: "oauth" | "api_key";
 	/** Auth status without exposing or refreshing any credential. */
 	status: RpcAuthStatus;
+	/** Last four characters of an API key stored by the app; absent for OAuth, env, models.json and short keys. */
+	keyHint?: string;
 }
 
 /** Auth status mirror (no credential values), from getProviderAuthStatus. */
@@ -814,6 +905,14 @@ export type RpcResponse =
 	| {
 			id?: string;
 			type: "response";
+			command: "unload_session";
+			success: true;
+			/** A refusal changes nothing and names why (`reason`, `detail`) and what to do (`action`). */
+			data: RpcUnloadAnswer;
+	  }
+	| {
+			id?: string;
+			type: "response";
 			command: "release_session";
 			success: true;
 			/**
@@ -853,6 +952,14 @@ export type RpcResponse =
 			 * releases when the turn settles), or the host is draining. Empty when every attachment is gone.
 			 */
 			data: { deferred: string[] };
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "get_subscription_limits";
+			success: true;
+			/** An account nothing has reported for is absent: unknown, never 0%. */
+			data: { accounts: ReadonlyArray<Omit<RpcSubscriptionLimitsEvent, "type">> };
 	  }
 	| {
 			id?: string;
@@ -924,7 +1031,20 @@ export type RpcResponse =
 			success: true;
 			data?: ClientMessageIdentity & { disposition?: QueuedInputDisposition; admission?: ClientMessageAdmission };
 	  }
-	| { id?: string; type: "response"; command: "abort"; success: true; data?: RpcEffectAnswer }
+	| {
+			id?: string;
+			type: "response";
+			command: "abort";
+			success: true;
+			data?: RpcEffectAnswer | (Partial<RpcEffectAnswer> & RpcAbortQuiesce);
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "dequeue_message" | "edit_queued_message";
+			success: true;
+			data: RpcQueuedInputChange & Partial<RpcEffectAnswer>;
+	  }
 	| {
 			id?: string;
 			type: "response";
@@ -1065,6 +1185,7 @@ export type RpcResponse =
 
 	// Session
 	| { id?: string; type: "response"; command: "get_session_stats"; success: true; data: SessionStats }
+	| { id?: string; type: "response"; command: "resolve_path"; success: true; data: ResolvedMessagePath }
 	| {
 			id?: string;
 			type: "response";
@@ -1177,6 +1298,13 @@ export type RpcResponse =
 	| { id?: string; type: "response"; command: "login_cancel"; success: true }
 	| { id?: string; type: "response"; command: "login_api_key"; success: true }
 	| { id?: string; type: "response"; command: "logout"; success: true }
+	| {
+			id?: string;
+			type: "response";
+			command: "verify_api_key";
+			success: true;
+			data: ApiKeyVerification;
+	  }
 	| {
 			id?: string;
 			type: "response";
@@ -1479,6 +1607,28 @@ export interface RpcSessionReplacedEvent {
 	sessionName?: string;
 }
 
+/** What `unload_session` answers. `effect` is the ledger receipt when the command carried an `effectId`. */
+export interface RpcUnloadAnswer {
+	outcome: "unloaded" | "refused";
+	sessionPath?: string;
+	reason?: UnloadRefusalReason;
+	detail?: string;
+	action?: string;
+	effectId?: string;
+	effect?: EffectStatus;
+	replayed?: boolean;
+}
+
+export type UnloadRefusalReason =
+	| "turn_active"
+	| "work_pending"
+	| "extension_work"
+	| "children_live"
+	| "attached"
+	| "host_draining"
+	| "unsupported"
+	| "session_closing";
+
 /**
  * Emitted when a shared host PARKS a session instead of closing it: the idle window
  * elapsed for a session opened with `retain_on_disconnect`, so the host released the
@@ -1495,6 +1645,8 @@ export type RpcSessionParkedEvent = {
 	sessionId: string;
 	/** Session file to reopen this session by. */
 	sessionPath: string;
+	/** `idle`: the idle sweep parked it; `unloaded`: `unload_session` did. Absent from older hosts. */
+	reason?: "idle" | "unloaded";
 };
 
 /**

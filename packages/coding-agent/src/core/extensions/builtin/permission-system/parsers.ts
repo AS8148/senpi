@@ -11,10 +11,11 @@ import {
 } from "../permission-system/external-dir.ts";
 import type { Request } from "../permission-system/types.ts";
 import { setApprovedMonitorParent } from "../terminal/monitor-permission.ts";
+import { urlOriginAlias, widerAlwaysScope } from "./always-scope.ts";
 import { parseReadPermission } from "./read-permission.ts";
 
 /** Simplified permission request without ID/session metadata */
-export type PermissionRequest = Pick<Request, "permission" | "patterns" | "always"> & {
+export type PermissionRequest = Pick<Request, "permission" | "patterns" | "always" | "widerAlways"> & {
 	readonly autoApproveAsk?: true;
 	readonly ruleAliases?: readonly string[];
 };
@@ -32,6 +33,40 @@ function fallbackPermissionRequest(permission: string): PermissionRequest {
 		patterns: ["*"],
 		always: ["*"],
 	};
+}
+
+/**
+ * An unregistered tool has no declared parser. Falling back to a bare `*` target would let a
+ * pattern-specific configured deny miss the call entirely (an unregistered tool's decision widens
+ * to the preset, not to its actual arg), so the fallback derives the target from the tool's
+ * meaningful arg — path, command, url, or input — and keeps `*` only for a truly arg-less call.
+ */
+function fallbackPermissionRequestFor(toolName: string, input: Record<string, unknown>): PermissionRequest {
+	const found = getStringEntry(input, "path", "file_path", "command", "url", "input", "pattern", "filePath");
+	if (found === undefined) return fallbackPermissionRequest(toolName);
+	const [argKey, arg] = found;
+	// A bare `*` alongside the concrete arg would still match an ask/all rule and widen past a
+	// pattern-specific deny, so the concrete arg is the only target; `*` is the arg-less fallback.
+	// "Allow always" keeps the exact arg; a wider scope is a separate, labelled choice (senpi#3403).
+	const widerAlways = widerAlwaysScope(toolName, argKey, arg);
+	// A URL is also matched as its canonical origin, so a domain grant (a literal origin) applies to
+	// every spelling of that origin; rules on the raw URL, a deny included, still match the raw URL.
+	const originAlias = argKey === "url" ? urlOriginAlias(arg) : undefined;
+	return {
+		permission: toolName,
+		patterns: [arg],
+		always: [arg],
+		...(originAlias === undefined ? {} : { ruleAliases: [arg, originAlias] }),
+		...(widerAlways ? { widerAlways } : {}),
+	};
+}
+
+function getStringEntry(input: Record<string, unknown>, ...keys: string[]): [string, string] | undefined {
+	for (const key of keys) {
+		const value = input[key];
+		if (typeof value === "string") return [key, value];
+	}
+	return undefined;
 }
 
 function getString(input: Record<string, unknown>, ...keys: string[]): string | undefined {
@@ -129,7 +164,7 @@ export class ParserRegistry {
 	parse(toolName: string, input: Record<string, unknown>, cwd: string): PermissionRequest[] {
 		const parser = this.parsers.get(toolName);
 		if (!parser) {
-			return [fallbackPermissionRequest(toolName)];
+			return [fallbackPermissionRequestFor(toolName, input)];
 		}
 		return parser(toolName, input, cwd);
 	}
@@ -275,6 +310,7 @@ export function createBuiltinParserRegistry(): ParserRegistry {
 	};
 
 	registry.register("find", listParser);
+	registry.register("glob", listParser);
 	registry.register("ls", listParser);
 
 	return registry;

@@ -13,6 +13,7 @@ import {
 	type EffectStatus,
 	effectFingerprint,
 	isTerminalEffectState,
+	type QueuedChangeAnswer,
 	RPC_EFFECT_ENTRY,
 	type RpcEffectRecord,
 	rpcEffectRecordSchema,
@@ -171,6 +172,13 @@ export class EffectLedger {
 				case "dequeue":
 					this.transition(record.effectId, "failed", { outcome: EFFECT_OUTCOMES.dequeueInterruptedByReopen });
 					break;
+				case "edit_queued":
+					this.transition(record.effectId, "failed", { outcome: EFFECT_OUTCOMES.editQueuedInterruptedByReopen });
+					break;
+				default: {
+					const unsealed: never = record.kind;
+					throw new Error(`no reopen seal for effect kind ${unsealed}`);
+				}
 			}
 		}
 	}
@@ -206,7 +214,11 @@ export class EffectLedger {
 	transition(
 		effectId: string,
 		state: EffectState,
-		patch: { readonly disposition?: string; readonly outcome?: EffectOutcome } = {},
+		patch: {
+			readonly disposition?: string;
+			readonly outcome?: EffectOutcome;
+			readonly answer?: QueuedChangeAnswer;
+		} = {},
 	): EffectStatus {
 		const current = this.records.get(effectId);
 		if (!current) throw new Error(`No effect ${effectId} in session ${this.durableSessionId}`);

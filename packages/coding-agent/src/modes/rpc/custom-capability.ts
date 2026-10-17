@@ -173,3 +173,9 @@ export function buildCustomUnsupportedRequest(
 		extensionName: name,
 	};
 }
+
+/** `verify_api_key` and `keyHint` on `get_auth_providers` rows (desktop #2510). */
+export const AUTH_KEY_VERIFY_CAPABILITY = "auth_key_verify";
+
+/** Queued inputs carry a `revision`, and `dequeue_message` / `edit_queued_message` accept `expectedRevision` (senpi#3459). */
+export const QUEUED_MESSAGE_REVISION_CAPABILITY = "queued_message_revision";
