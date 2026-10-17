@@ -79,7 +79,7 @@ import {
 } from "../../core/agent-session.ts";
 import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.ts";
 import { formatNoModelsAvailableMessage } from "../../core/auth-guidance.ts";
-import { configuredLoginRow, isApiKeyLoginProvider } from "../../core/auth-providers.ts";
+import { isApiKeyLoginProvider, loginRowStatus } from "../../core/auth-providers.ts";
 import { markModeCrashHandler } from "../../core/bootstrap-crash-listeners.ts";
 import { envValue } from "../../core/brand.ts";
 import {
@@ -8860,15 +8860,13 @@ export class InteractiveMode {
 	private getLoginProviderOptions(authType?: "oauth" | "api_key"): AuthSelectorProvider[] {
 		const options: AuthSelectorProvider[] = [];
 		for (const provider of this.session.modelRuntime.getProviders()) {
-			const row = configuredLoginRow(this.session.modelRegistry, provider, provider.auth.apiKey !== undefined);
-			const status = row ? { type: row.type, source: row.status.label ?? row.status.source } : undefined;
 			if ((!authType || authType === "oauth") && provider.auth.oauth) {
 				options.push({
 					id: provider.id,
 					name: provider.name,
 					authType: "oauth",
 					method: provider.auth.oauth,
-					status,
+					status: loginRowStatus(this.session.modelRegistry, provider, "oauth"),
 				});
 			}
 			if ((!authType || authType === "api_key") && provider.auth.apiKey) {
@@ -8877,7 +8875,7 @@ export class InteractiveMode {
 					name: provider.name,
 					authType: "api_key",
 					method: provider.auth.apiKey,
-					status,
+					status: loginRowStatus(this.session.modelRegistry, provider, "api_key"),
 				});
 			}
 		}

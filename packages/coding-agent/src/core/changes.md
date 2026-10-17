@@ -2,10 +2,13 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/auth-providers.ts`: `authMethodStatus` reports an `environment` credential on the provider's `oauth` row, and `{configured: false}` on its `api_key` row, when the provider's own auth check resolved it as a sign-in (`AuthCheck.type === "oauth"`). Every other non-stored source stays on the `api_key` row as before: an env `*_API_KEY`, models.json, a runtime `--api-key` or the fallback.
-- `packages/coding-agent/src/core/model-runtime.ts`: `isNonStoredSignIn(providerId)` follows the same branch as `getProviderAuthStatus`, through the pure `isNonStoredSignInFrom` (`core/non-stored-sign-in.ts`). A runtime key, a stored credential or a configured models.json/extension key never counts, whatever order `packages/ai` checks in.
-- `packages/coding-agent/src/core/auth-providers.ts`: `configuredLoginRow` returns the provider's one configured row under `authMethodStatus`. The TUI `/login` picker uses it, so RPC and the TUI attribute rows by one rule.
-- `packages/coding-agent/src/core/model-registry.ts`: `isNonStoredSignIn(provider)`, a facade over the runtime method. Unlike `isUsingOAuth`, it deliberately excludes stored credentials.
+- `packages/coding-agent/src/core/model-runtime.ts`: `resolveProviderAuth(providerId)` returns `{ status, signIn }` and `getProviderAuthStatus` is its `status`. `signIn` is set only by the last branch, when the provider's own check resolves `type: "oauth"`. A runtime key, a stored credential or a configured models.json/extension key wins first, from the same branch order as the status.
+- `packages/coding-agent/src/core/model-registry.ts`: `resolveProviderAuth(provider)`, the facade with the #2249 live-store fallback; `getProviderAuthStatus` returns its `status`.
+- `packages/coding-agent/src/core/auth-providers.ts`: `authMethodStatus(modelRegistry, info)` takes no row-capability input, so every surface attributes a row the same way:
+  - a stored credential lights the row of its own type, even beside a runtime key;
+  - a non-stored sign-in lights the `oauth` row;
+  - every other credential is a key and lights only the `api_key` row, never a provider's only sign-in row.
+- `packages/coding-agent/src/core/auth-providers.ts`: `loginRowStatus` gives the TUI picker each row's own status, or the other method's for the "API key configured" hint.
 
 ### Why
 
@@ -18,8 +21,8 @@ Row status is computed by core `get_auth_providers`; an extension supplies only 
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/core/auth-providers.ts`: `authMethodStatus` and its doc comment.
-- `packages/coding-agent/src/core/model-runtime.ts`: the method above `getProviderAuthStatus`.
-- `packages/coding-agent/src/core/model-registry.ts`: the method above `isUsingOAuth`.
+- `packages/coding-agent/src/core/model-runtime.ts`: `getProviderAuthStatus` and the new `resolveProviderAuth` below it.
+- `packages/coding-agent/src/core/model-registry.ts`: `getProviderAuthStatus` and `resolveProviderAuth`.
 
 ## 2026-10-16 - The fallback circuit takes one step per open episode and only reroutes sessions it concerns (senpi#3467)
 

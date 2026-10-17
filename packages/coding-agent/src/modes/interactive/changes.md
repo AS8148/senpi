@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `getLoginProviderOptions` takes each provider's status and row type from `configuredLoginRow` (core `auth-providers.ts`, built on `authMethodStatus`). It no longer pairs `getProviderAuthStatus` with the snapshot type from `isUsingOAuth`.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `getLoginProviderOptions` gives each row its status from `loginRowStatus` (core `auth-providers.ts`, built on `authMethodStatus`): the row's own status, or the other method's for the "configured" hint. It no longer pairs `getProviderAuthStatus` with the snapshot type from `isUsingOAuth`, so a runtime `--api-key` never shows as a configured sign-in, including on providers whose only row is the sign-in row.
 
 ### Why
 
