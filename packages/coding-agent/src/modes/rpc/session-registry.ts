@@ -312,6 +312,7 @@ export class RpcSessionRegistry {
 			attachments: Math.max(0, entry.attachments),
 			status: entry.state === "quarantined" ? "closing" : entry.state,
 			idleMs: Math.max(0, now - entry.lastCommandAt),
+			tool_child: entry.runtime?.session.toolChildRow() ?? { state: "none" },
 		}));
 	}
 

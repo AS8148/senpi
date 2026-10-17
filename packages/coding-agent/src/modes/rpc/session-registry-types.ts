@@ -141,6 +141,8 @@ export interface RpcSessionRow {
 	context: PublishedSessionContext;
 	/** Milliseconds since the last routed command or session-owned activity refreshed the idle window. */
 	idleMs: number;
+	/** The session's tool child (senpi#3566): `none` until its first job, then `live` or `exited`. */
+	tool_child: { state: "none" | "live" | "exited"; generation?: number; pid?: number };
 }
 
 export interface OpenRpcSession {

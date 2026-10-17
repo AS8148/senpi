@@ -4,6 +4,8 @@
  * `session_tool_child{state: "spawned" | "exited" | "respawned", generation, pid}` records and the `list_sessions`
  * row `tool_child: {state: "none" | "live" | "exited", generation?, pid?}`.
  */
+import { dirname } from "node:path";
+import type { RegisteredTool } from "../../../core/extensions/types.ts";
 import type {
 	ToolChildModuleJob,
 	ToolChildRunner,
@@ -33,6 +35,17 @@ export interface SessionToolChildOptions {
 	readonly onRecord: (record: SessionToolChildRecord) => void;
 	readonly env?: NodeJS.ProcessEnv;
 	readonly command?: ToolChildCommand;
+}
+
+/** The directories of the extensions whose tools declare a `childModule`: the only places a `module` job may load from. */
+export function toolChildModuleRoots(tools: readonly RegisteredTool[]): readonly string[] {
+	return [
+		...new Set(
+			tools
+				.filter((tool) => tool.definition.childModule !== undefined && !tool.sourceInfo.path.startsWith("<"))
+				.map((tool) => dirname(tool.sourceInfo.path)),
+		),
+	];
 }
 
 export class SessionToolChild {

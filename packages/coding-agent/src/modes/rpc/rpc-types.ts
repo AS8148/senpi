@@ -978,6 +978,8 @@ export type RpcResponse =
 					attachments: number;
 					/** Milliseconds since the session's idle window was last refreshed. */
 					idleMs?: number;
+					/** The session's tool child (senpi#3566): `none` until its first job, then `live` or `exited`. */
+					tool_child?: { state: "none" | "live" | "exited"; generation?: number; pid?: number };
 				}>;
 			};
 	  }

@@ -16,7 +16,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import type {
 	Agent,
@@ -92,6 +92,11 @@ import { retryBackoffDelayMs } from "@earendil-works/pi-ai/utils/retry-profile/b
 import type { ToolRuntimeKind } from "../cli/tool-runtime.ts";
 import { getAgentDir } from "../config.ts";
 import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
+import {
+	SessionToolChild,
+	type SessionToolChildRow,
+	toolChildModuleRoots,
+} from "../modes/rpc/tool-child/session-child.ts";
 import { stripFrontmatter } from "../utils/frontmatter.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { sleep } from "../utils/sleep.ts";
@@ -475,6 +480,8 @@ export type AgentSessionEvent =
 	| SessionMessageUpdateEvent
 	| { type: "agent_settled" }
 	| { type: "agent_idle" }
+	/** The session's tool child changed state (senpi#3566; the minimal record todo 14 extends). */
+	| { type: "session_tool_child"; state: "spawned" | "exited" | "respawned"; generation: number; pid: number }
 	| { type: "session_abort" }
 	| {
 			type: "resume_compaction_required";
@@ -1335,6 +1342,7 @@ export class AgentSession {
 	private _baseToolDefinitions: Map<string, ToolDefinition> = new Map();
 	private _cwd: string;
 	private _agentDir: string;
+	private readonly _toolChild: SessionToolChild | undefined;
 	private _extensionRunnerRef?: { current?: ExtensionRunner };
 	private _initialActiveToolNames?: string[];
 	private _defaultToolNames?: Set<string>;
@@ -1458,9 +1466,20 @@ export class AgentSession {
 				model: this.model?.id,
 			}),
 		});
+		const toolRuntime = config.toolRuntime ?? "in-process";
+		this._toolChild =
+			toolRuntime === "child"
+				? new SessionToolChild({
+						dir: join(this._agentDir, "tool-children", this.sessionManager.getSessionId()),
+						cwd: this._cwd,
+						moduleRoots: () => toolChildModuleRoots(this._extensionRunner.getAllRegisteredTools()),
+						onRecord: (record) => this._emit({ type: "session_tool_child", ...record }),
+					})
+				: undefined;
 		this._toolDispatcher = createToolDispatcher({
-			runtime: config.toolRuntime ?? "in-process",
+			runtime: toolRuntime,
 			notify: (event, data) => this._sessionLogger.info(event, data),
+			...(this._toolChild === undefined ? {} : { childRunner: this._toolChild.runner }),
 		});
 		this._fallbackValidationWarnings = validateFallbackChains(
 			this.settingsManager.getRawFallbackChains(),
@@ -2666,6 +2685,11 @@ export class AgentSession {
 	 * Working directory this session resolves settings against — the same value extensions
 	 * receive as `ctx.cwd`, so a host surface (RPC) reads project settings identically.
 	 */
+	/** The `list_sessions` row of this session's tool child (senpi#3566); `none` under the in-process runtime. */
+	toolChildRow(): SessionToolChildRow {
+		return this._toolChild?.row() ?? { state: "none" };
+	}
+
 	get cwd(): string {
 		return this._cwd;
 	}
@@ -4074,6 +4098,9 @@ export class AgentSession {
 			"This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). For newSession, fork, and switchSession, move post-replacement work into withSession and use the ctx passed to withSession. For reload, do not use the old ctx after await ctx.reload().",
 		);
 		this._releaseToolSearchService("session disposed");
+		void this._toolChild
+			?.close()
+			.catch((error: unknown) => this._sessionLogger.warn("tool_child_close_failed", { error: String(error) }));
 		this._disconnectFromAgent();
 		this._unsubscribeSettingsSource?.();
 		this._unsubscribeSettingsSource = undefined;
