@@ -205,9 +205,16 @@ export class RpcSessionRegistry {
 		this.options.onSizeChange?.(this.entries.size);
 		try {
 			const newSessionOptions = requestedDurableId !== undefined ? { id: requestedDurableId } : undefined;
-			// Every session of this host shares its event loop: a large transcript loads in slices (senpi#3518).
 			const manager = sessionPath
-				? await SessionManager.openAsync(sessionPath, undefined, storedProfile.cwd, newSessionOptions)
+				? this.options.sessionFileLoad === "blocking"
+					? SessionManager.open(sessionPath, undefined, storedProfile.cwd, newSessionOptions)
+					: await SessionManager.openAsync(
+							sessionPath,
+							undefined,
+							storedProfile.cwd,
+							newSessionOptions,
+							this.options.createSlicer?.(),
+						)
 				: SessionManager.create(storedProfile.cwd, undefined, newSessionOptions);
 			entry.runtime = await runWithProviderScope(entry.scope, () =>
 				createAgentSessionRuntime(this.options.createRuntime, {

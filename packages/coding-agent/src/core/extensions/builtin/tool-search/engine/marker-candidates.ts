@@ -17,7 +17,7 @@ export function mayHoldActivationMarker(message: unknown): boolean {
 }
 
 function holds(value: unknown, seen: Set<object>): boolean {
-	if (typeof value === "string") return value.includes(ACTIVATION_MARKER_PREFIX);
+	if (typeof value === "string" || value instanceof String) return value.includes(ACTIVATION_MARKER_PREFIX);
 	if (typeof value !== "object" || value === null || seen.has(value)) return false;
 	seen.add(value);
 	if (typeof (value as { toJSON?: unknown }).toJSON === "function") return true;

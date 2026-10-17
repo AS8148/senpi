@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -6,8 +6,8 @@ import type {
 	CreateAgentSessionRuntimeFactory,
 	CreateAgentSessionRuntimeResult,
 } from "../../../src/core/agent-session-runtime.ts";
-import { setSliceClockForTesting } from "../../../src/core/event-loop-slicer.ts";
-import { SessionManager } from "../../../src/core/session-manager.ts";
+import { EventLoopSlicer } from "../../../src/core/event-loop-slicer.ts";
+import { loadEntriesFromFile, SessionManager } from "../../../src/core/session-manager.ts";
 import { ProjectTrustStore } from "../../../src/core/trust-manager.ts";
 import { RpcSessionRegistry } from "../../../src/modes/rpc/session-registry.ts";
 import { fakeSessionBase } from "../../helpers/fake-session-base.ts";
@@ -20,11 +20,8 @@ import { fakeSessionBase } from "../../helpers/fake-session-base.ts";
 
 const ENTRY_COUNT = 2_000;
 const dirs: string[] = [];
-let restoreClock: (() => void) | undefined;
 
 afterEach(() => {
-	restoreClock?.();
-	restoreClock = undefined;
 	for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -34,9 +31,27 @@ function tempDir(): string {
 	return dir;
 }
 
-function useSteppingClock(): void {
+function steppingSlicer(): EventLoopSlicer {
 	let now = 0;
-	restoreClock = setSliceClockForTesting(() => now++);
+	return new EventLoopSlicer({ clock: () => now++ });
+}
+
+/** Runs `onYield` at the first slice boundary, then yields like any slicer. */
+class HookedSlicer extends EventLoopSlicer {
+	private fired = false;
+	private readonly onYield: () => void;
+	constructor(onYield: () => void) {
+		let now = 0;
+		super({ clock: () => now++ });
+		this.onYield = onYield;
+	}
+	override async yield(): Promise<void> {
+		if (!this.fired) {
+			this.fired = true;
+			this.onYield();
+		}
+		await super.yield();
+	}
 }
 
 function writeTranscript(path: string, cwd: string): void {
@@ -111,8 +126,9 @@ describe("issue #3518: opening a large session yields to the event loop", () => 
 		writeTranscript(asyncPath, dir);
 		const expected = snapshot(SessionManager.open(syncPath));
 
-		useSteppingClock();
-		const { value: manager, turns } = await countLoopTurnsDuring(() => SessionManager.openAsync(asyncPath));
+		const { value: manager, turns } = await countLoopTurnsDuring(() =>
+			SessionManager.openAsync(asyncPath, undefined, undefined, undefined, steppingSlicer()),
+		);
 
 		expect(turns).toBeGreaterThanOrEqual(ENTRY_COUNT / 10);
 		const actual = snapshot(manager);
@@ -137,6 +153,61 @@ describe("issue #3518: opening a large session yields to the event loop", () => 
 		expect(() => SessionManager.open(join(dir, "other.jsonl"))).toThrow(/not a valid .* session/);
 	});
 
+	test("openAsync matches open when the file ends in a truncated half line", async () => {
+		const dir = tempDir();
+		const syncPath = join(dir, "sync.jsonl");
+		const asyncPath = join(dir, "async.jsonl");
+		for (const path of [syncPath, asyncPath]) {
+			writeTranscript(path, dir);
+			appendFileSync(path, '\n{"type":"message","id":"torn","parentId":"entry-1999","mess');
+		}
+		const expected = snapshot(SessionManager.open(syncPath));
+		const actual = snapshot(
+			await SessionManager.openAsync(asyncPath, undefined, undefined, undefined, steppingSlicer()),
+		);
+
+		expect(actual).toEqual(expected);
+		expect(readFileSync(asyncPath, "utf8")).toBe(readFileSync(syncPath, "utf8"));
+	});
+
+	test("a line appended while the load is slicing is either fully loaded or not at all", async () => {
+		const dir = tempDir();
+		const path = join(dir, "appending.jsonl");
+		writeTranscript(path, dir);
+		appendFileSync(path, "\n");
+		const appended = {
+			type: "message",
+			id: "late",
+			parentId: "entry-1999",
+			timestamp: "2026-10-17T00:00:00.000Z",
+			message: { role: "user", content: [{ type: "text", text: "late" }], timestamp: 1 },
+		};
+		const slicer = new HookedSlicer(() => appendFileSync(path, `${JSON.stringify(appended)}\n`));
+
+		const manager = await SessionManager.openAsync(path, undefined, undefined, undefined, slicer);
+
+		const ids = manager.getEntries().map((entry) => entry.id);
+		expect(ids.slice(0, ENTRY_COUNT)).toEqual(Array.from({ length: ENTRY_COUNT }, (_, index) => `entry-${index}`));
+		expect(ids.length === ENTRY_COUNT || ids.at(-1) === "late").toBe(true);
+		expect(loadEntriesFromFile(path)).toHaveLength(ENTRY_COUNT + 2);
+	});
+
+	test("a failure in the middle of the load rejects the open and leaves the session openable", async () => {
+		const dir = tempDir();
+		const path = join(dir, "failing.jsonl");
+		writeTranscript(path, dir);
+		const failing = new HookedSlicer(() => {
+			throw new Error("load interrupted");
+		});
+
+		await expect(SessionManager.openAsync(path, undefined, undefined, undefined, failing)).rejects.toThrow(
+			"load interrupted",
+		);
+
+		const reopened = await SessionManager.openAsync(path, undefined, undefined, undefined, steppingSlicer());
+		expect(reopened.getEntries()).toHaveLength(ENTRY_COUNT);
+	});
+
 	test("the RPC host's open_session loads a transcript in slices instead of holding the loop", async () => {
 		const dir = tempDir();
 		const sessionPath = join(dir, "host.jsonl");
@@ -156,9 +227,8 @@ describe("issue #3518: opening a large session yields to the event loop", () => 
 				diagnostics: [],
 			} as unknown as CreateAgentSessionRuntimeResult;
 		};
-		const registry = new RpcSessionRegistry({ agentDir: dir, createRuntime });
+		const registry = new RpcSessionRegistry({ agentDir: dir, createRuntime, createSlicer: steppingSlicer });
 
-		useSteppingClock();
 		const { value: opened, turns } = await countLoopTurnsDuring(() =>
 			registry.openSession({ cwd: dir, sessionPath, permissionPreset: "default" }),
 		);

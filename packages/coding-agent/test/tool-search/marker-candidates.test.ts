@@ -1,6 +1,6 @@
 import { Type } from "typebox";
-import { afterEach, describe, expect, it } from "vitest";
-import { EventLoopSlicer, setSliceClockForTesting } from "../../src/core/event-loop-slicer.ts";
+import { describe, expect, it } from "vitest";
+import { EventLoopSlicer } from "../../src/core/event-loop-slicer.ts";
 import {
 	emitActivationMarker,
 	LEGACY_TOOL_SEARCH_ACTIVATION_MARKER,
@@ -18,12 +18,6 @@ class WithToJson {
 		return v2Marker;
 	}
 }
-
-let restoreClock: (() => void) | undefined;
-afterEach(() => {
-	restoreClock?.();
-	restoreClock = undefined;
-});
 
 function weatherService(): { service: ToolSearchService; active: string[] } {
 	const tool: ToolInfo = {
@@ -60,6 +54,7 @@ describe("activation marker candidates (senpi#3518)", () => {
 			{ deep: { list: [1, null, { text: `quoted "${v2Marker}"` }] } },
 			{ [LEGACY_TOOL_SEARCH_ACTIVATION_MARKER]: true },
 			{ wrapped: new WithToJson() },
+			{ boxed: new String(v2Marker) },
 		];
 		const withoutMarker = [
 			{ role: "user", content: [{ type: "text", text: "[tool_search] activated" }] },
@@ -83,7 +78,7 @@ describe("activation marker candidates (senpi#3518)", () => {
 		expect(expected.service.maybeRehydrateFromHistory(history)).toEqual(["weather_forecast"]);
 
 		let now = 0;
-		restoreClock = setSliceClockForTesting(() => now++);
+		const slicer = new EventLoopSlicer({ clock: () => now++ });
 		let turns = 0;
 		let running = true;
 		const tick = (): void => {
@@ -93,7 +88,7 @@ describe("activation marker candidates (senpi#3518)", () => {
 		};
 		setImmediate(tick);
 		const sliced = weatherService();
-		const restored = await sliced.service.maybeRehydrateFromHistoryInSlices(history, new EventLoopSlicer());
+		const restored = await sliced.service.maybeRehydrateFromHistoryInSlices(history, slicer);
 		running = false;
 
 		expect(restored).toEqual(["weather_forecast"]);

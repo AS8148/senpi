@@ -162,7 +162,11 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			);
 			const factory = createCliRuntimeFactory(prepared.configuration, { startupSettingsManager });
 			initTheme(startupSettingsManager.getTheme(), false);
-			registry = new RpcSessionRegistry({ agentDir: prepared.configuration.agentDir, createRuntime: factory });
+			registry = new RpcSessionRegistry({
+				agentDir: prepared.configuration.agentDir,
+				createRuntime: factory,
+				sessionFileLoad: "blocking",
+			});
 			const opened = await registry.openSession(prepared.profile);
 			entry = registry.getForCommand(opened.sessionId, "open_session");
 			send({ type: "ready", request: message.request, snapshot: snapshot() });

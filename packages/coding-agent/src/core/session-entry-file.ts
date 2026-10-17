@@ -2,11 +2,11 @@
  * Reading a session JSONL file into entries, shared by the synchronous loader and the
  * time-sliced one a multi-session host uses, so both parse byte-for-byte the same way.
  *
- * A host runs every session on one event loop: parsing a 290 MB transcript in one go held
+ * A host runs every session on one event loop: parsing a 231 MB transcript in one go held
  * every other session's requests for seconds (senpi#3518). `loadEntriesFromFileAsync` reads
  * with asynchronous I/O and hands the loop back whenever its slice budget is spent.
  */
-import { appendFileSync, closeSync, existsSync, fstatSync, openSync, readSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, fstatSync, openSync, readSync, statSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { StringDecoder } from "node:string_decoder";
 import { normalizePath } from "../utils/paths.ts";
@@ -117,10 +117,11 @@ export async function loadEntriesFromFileAsync(
 /**
  * Terminate a final unterminated JSONL entry so this process's appends start on a new line.
  * Reads only the last byte: reading the whole file to look at its end cost a full copy of
- * every transcript on every open.
+ * every transcript on every open. Only a regular file has a last byte to read; anything else
+ * (a FIFO, a device) is left to the loader, as before.
  */
 export function terminateFinalSessionLine(filePath: string): void {
-	if (!existsSync(filePath)) return;
+	if (!existsSync(filePath) || !statSync(filePath).isFile()) return;
 	const fd = openSync(filePath, "r");
 	let lastByte: number | undefined;
 	try {

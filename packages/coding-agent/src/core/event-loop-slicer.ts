@@ -5,33 +5,31 @@
  */
 export const DEFAULT_SLICE_BUDGET_MS = 8;
 
-let sliceClock: () => number = () => performance.now();
-
-/** Test seam: a clock that advances per call makes slicing deterministic. */
-export function setSliceClockForTesting(clock: () => number): () => void {
-	const previous = sliceClock;
-	sliceClock = clock;
-	return () => {
-		sliceClock = previous;
-	};
+export interface EventLoopSlicerOptions {
+	budgetMs?: number;
+	/** Milliseconds; a clock that advances per call makes slicing deterministic in tests. */
+	clock?: () => number;
 }
 
 export class EventLoopSlicer {
 	private readonly budgetMs: number;
-	private sliceStart = sliceClock();
+	private readonly clock: () => number;
+	private sliceStart: number;
 
-	constructor(budgetMs: number = DEFAULT_SLICE_BUDGET_MS) {
-		this.budgetMs = budgetMs;
+	constructor(options: EventLoopSlicerOptions = {}) {
+		this.budgetMs = options.budgetMs ?? DEFAULT_SLICE_BUDGET_MS;
+		this.clock = options.clock ?? (() => performance.now());
+		this.sliceStart = this.clock();
 	}
 
 	get due(): boolean {
-		return sliceClock() - this.sliceStart >= this.budgetMs;
+		return this.clock() - this.sliceStart >= this.budgetMs;
 	}
 
 	/** `setImmediate` rather than a microtask: only a macrotask lets pending I/O callbacks run. */
 	async yield(): Promise<void> {
 		await new Promise<void>((resolve) => setImmediate(resolve));
-		this.sliceStart = sliceClock();
+		this.sliceStart = this.clock();
 	}
 }
 
