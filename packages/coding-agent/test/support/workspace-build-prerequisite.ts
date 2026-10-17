@@ -240,6 +240,16 @@ export function findUnbuiltWorkspaceSpecifiers(parentUrl: string): string[] {
 /** Throws an actionable error when the workspace build prerequisite is unmet. */
 export function assertWorkspaceBuildPrerequisite(parentUrl: string): void {
 	const missing = findUnbuiltWorkspaceSpecifiers(parentUrl);
+	const workspaceRoot = findWorkspaceRoot(dirname(fileURLToPath(parentUrl)));
+	if (missing.length > 0 && workspaceRoot !== undefined && !existsSync(join(workspaceRoot, "node_modules"))) {
+		// A checkout without node_modules (e.g. a worktree nested in the main checkout) can only reach
+		// packages installed above it, which do not count; building would not help.
+		throw new Error(
+			`Unmet test prerequisite: the checkout at ${workspaceRoot} has no node_modules of its own, so ` +
+				`${missing.join(", ")} resolve only from folders above it, which do not count. ` +
+				`Run \`bun install --ignore-scripts\` in that checkout, then build and re-run this suite.`,
+		);
+	}
 	if (missing.length > 0) {
 		throw new Error(
 			`Unmet test prerequisite: the workspace packages are not built, so child-process tests ` +

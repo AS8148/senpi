@@ -92,6 +92,25 @@ describe("workspace build prerequisite", () => {
 		expect(findUnbuiltWorkspaceSpecifiers(pathToFileURL(join(probeDir, "probe.mjs")).href)).toEqual([]);
 	});
 
+	it("tells a nested worktree without node_modules to install, not to build", () => {
+		// A worktree nested in the main checkout (main/.worktrees/x) with no node_modules of its own
+		// resolves the main checkout's packages from outside itself: unmet, and the remedy is an install
+		// in that worktree, which a build would not fix (senpi#3482).
+		const dir = mkdtempSync(join(tmpdir(), "pi-workspace-nested-"));
+		tempDirs.push(dir);
+		writeBuiltPackages(join(dir, "node_modules"));
+		writeFileSync(join(dir, "pnpm-workspace.yaml"), "packages:\n  - packages/*\n");
+		const nested = join(dir, ".worktrees", "feature");
+		const probeDir = join(nested, "packages", "coding-agent", "test");
+		mkdirSync(probeDir, { recursive: true });
+		writeFileSync(join(nested, "pnpm-workspace.yaml"), "packages:\n  - packages/*\n");
+		const probe = pathToFileURL(join(probeDir, "probe.mjs")).href;
+
+		expect(() => assertWorkspaceBuildPrerequisite(probe)).toThrowError(/has no node_modules of its own/);
+		expect(() => assertWorkspaceBuildPrerequisite(probe)).toThrowError(/bun install/);
+		expect(() => assertWorkspaceBuildPrerequisite(probe)).not.toThrowError(/npm run build/);
+	});
+
 	it("passes for this suite, whose child processes require the built entrypoints", () => {
 		// This is the live prerequisite: it holds exactly when the workspace is built,
 		// which is what the spawned-CLI and worker tests in this suite depend on.
