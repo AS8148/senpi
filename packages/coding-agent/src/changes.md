@@ -1,3 +1,23 @@
+## 2026-10-18 - Every CLI entry becomes the tool-child role first (senpi#3566)
+
+### What changed
+
+- `packages/coding-agent/src/cli.ts` and `packages/coding-agent/src/cli-main.ts`: `import "./internal-role.ts"` directly after the existing `./valid-cwd.ts` guard (which stays the first import).
+- `packages/coding-agent/src/rpc-entry.ts`: the same import as its first statement.
+- `internal-role.ts` (fork-only) does nothing unless `SENPI_INTERNAL_ROLE` is set. With `tool-child` it runs the tool child and never returns; without its channel environment it exits 70 with `tool-child: channel unavailable` before argument parsing.
+
+### Why
+
+A tool child is started by re-entering the engine binary with a role in its environment (DESIGN PART 1). The role has to be decided before version dispatch, argument parsing or the CLI graph, on every published entry.
+
+### Why an extension could not handle it
+
+Extensions load long after argument parsing; the role must win before any of it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/cli.ts`, `packages/coding-agent/src/cli-main.ts`, `packages/coding-agent/src/rpc-entry.ts`: the first import lines.
+
 ## 2026-10-18 - The runtime factory threads --tool-runtime into every session it creates (senpi#3566)
 
 ### What changed
