@@ -59,6 +59,42 @@
 
 - LOW: `packages/coding-agent/src/modes/rpc/host-ensure.ts`, the tail of `ensureHostLocked` before `startHost`; `packages/coding-agent/src/modes/rpc/host-decision.ts`, `HostRefusalReason` and `refusalDetail`.
 
+## 2026-10-18 - A single-session RPC process advertises its tool runtime (senpi#3566)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-mode.ts`: `runRpcMode(runtimeHost, toolRuntime?)` passes the resolved `--tool-runtime` to `createRpcConnectionHandler`, whose classic `get_protocol_info` then lists `tool_runtime:<value>` (fork-only `connection-handler.ts`: `RpcConnectionOptions.toolRuntime`; absent keeps the classic answer byte-identical). The multi-session router advertises the same capability through `host-capabilities.ts`.
+
+### Why
+
+A client must see the tool runtime of every RPC process it talks to, single-session or shared, and both `get_protocol_info` call sites answer the same capability question.
+
+### Why an extension could not handle it
+
+The protocol answer is built by the RPC transport before any extension can contribute to it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-mode.ts`: the `runRpcMode` signature and the `createRpcConnectionHandler` options.
+
+## 2026-10-16 - expectedRevision on dequeue_message / edit_queued_message (senpi#3459)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`, `packages/coding-agent/src/modes/rpc/effect-commands.ts`, `packages/coding-agent/src/modes/rpc/effect-outcome-copy.ts`, `packages/coding-agent/src/modes/rpc/effect-record.ts`, `packages/coding-agent/src/modes/rpc/custom-capability.ts`, `packages/coding-agent/src/modes/rpc/host-capabilities.ts`, `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/effect-ledger.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`: both commands accept `expectedRevision`; a mismatch answers `status: "conflict"` with `currentRevision`, `reason`, `action` and changes nothing (a `conflict` effect outcome, replayed on a same-id retry; `expectedRevision` joins the effect fingerprint, and a request without it fingerprints as before). `edited` answers carry `text` and `revision`; the receipt stores those answer fields so a same-id retry answers exactly as the live call did, and the typed client's `ordered` entries carry `revision`. Validation refuses an `expectedRevision` that is not a whole number of at least 1. Hosts advertise `queued_message_revision`.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`, `packages/coding-agent/src/modes/rpc/effect-commands.ts`, `packages/coding-agent/src/modes/rpc/effect-outcome-copy.ts`, `packages/coding-agent/src/modes/rpc/effect-record.ts`, `packages/coding-agent/src/modes/rpc/custom-capability.ts`, `packages/coding-agent/src/modes/rpc/host-capabilities.ts`, `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/effect-ledger.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the desktop edits a queued message while other clients and the agent can change or deliver it; without a revision check the last write silently won (desktop #2718 / #2263).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`, `packages/coding-agent/src/modes/rpc/effect-commands.ts`, `packages/coding-agent/src/modes/rpc/effect-outcome-copy.ts`, `packages/coding-agent/src/modes/rpc/effect-record.ts`, `packages/coding-agent/src/modes/rpc/custom-capability.ts`, `packages/coding-agent/src/modes/rpc/host-capabilities.ts`, `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/effect-ledger.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the RPC command surface, its validation, the effect ledger and the capability list are host internals that extensions do not reach.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`, `packages/coding-agent/src/modes/rpc/effect-commands.ts`, `packages/coding-agent/src/modes/rpc/effect-outcome-copy.ts`, `packages/coding-agent/src/modes/rpc/effect-record.ts`, `packages/coding-agent/src/modes/rpc/custom-capability.ts`, `packages/coding-agent/src/modes/rpc/host-capabilities.ts`, `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/effect-ledger.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the queued-input command shapes, `runQueuedInputChange`, the outcome enum and the capability lists.
+
 ## 2026-10-15 - A drop to zero inside the trim spacing is answered when it ends (senpi#3360)
 
 ### What changed

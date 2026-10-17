@@ -264,6 +264,17 @@ measured 0 additional threads per session. Size a daemon from those numbers: it 
 occupancy, so the ceiling is the machine's memory and its per-process thread and descriptor limits, not a session
 count the host enforces.
 
+### Tool runtime (`--tool-runtime in-process|child`)
+
+`--tool-runtime` selects where a session's heavy tool work runs. `SENPI_TOOL_RUNTIME` is the fallback when the flag is
+absent, and `in-process` is the default. Any other value, from either source, is a startup error.
+
+- `in-process` - every tool runs on the host's own event loop, as it always has.
+- `child` - reserved for the per-session tool child (senpi#3566). Selecting it changes nothing yet.
+
+A multi-session host and a single-session `--mode rpc` process each advertise their choice as exactly one
+`tool_runtime:in-process` or `tool_runtime:child` entry in `get_protocol_info.capabilities`.
+
 ### Host identity (`get_protocol_info`)
 
 Supervised socket hosts additionally report `lifecycle: "ready" | "stopping"`.
@@ -2493,6 +2504,13 @@ Every queued input carries a session-unique `queuedId` (`q_<n>`) in `get_state.o
 A `steer` or `follow_up` sent **without** a `clientMessageId` is still recorded durably under a host-minted id (`host:<durableSessionId>:<uuid>`), so it survives a host restart and a reopen restores it exactly once. No client-facing record carries that id: the send response, `get_state.ordered`, `queue_update.ordered`, `get_steering_messages` / `get_follow_up_messages` and event correlation (`clientMessageId` / `clientMessages` on events) all leave it out, and it never switches on event correlation for a client that sends no ids, before or after a restart. It stays on the stored user message in the transcript, and `get_effect_status` / `effect_status` report it as the input's `effectId`. An edit of such an input survives a restart too. A queued `prompt` sent without an id (`streamingBehavior` while busy) is not durable.
 
 For both commands, `status` is `removed` / `edited`, or `already_delivered` (the input was already handed to the agent) or `not_found` (no such id in this session); those two also carry `reason` and `action`, and an `effectId` receipt ends `failed` with that outcome. A missing or over-long `queuedId` is refused, and so is an edit whose `text` is empty or longer than `MAX_RPC_MESSAGE_CHARACTERS` (use `dequeue_message` to remove an input). An edited input that has a `clientMessageId` (its own or, for input sent without one, the host's) keeps the edit across a reopen, and a retry of its original send still replays.
+
+**Expected revision** (capability `queued_message_revision`): every entry in `get_state.ordered` and `queue_update.ordered` also carries `revision`, 1 when queued and +1 on every successful edit. Both commands accept an optional `expectedRevision` (a whole number of at least 1). When it is present and the input's current revision is different, the answer is `status: "conflict"` with `currentRevision`, `reason` and `action`, and nothing is changed; the check and the change happen in one step, so no other client's edit or a delivery can land between them. With `effectId` the receipt ends `failed` with outcome `conflict`, and a same-id retry replays that conflict. An input that is gone answers `already_delivered` or `not_found` as above, never `conflict`. An `edited` answer carries the resulting `text` and `revision`. A same-id retry answers with exactly the fields the live call returned (the receipt stores them). Revisions, like `queuedId`, hold only for the session's current lifetime: a reopen restores queued inputs at revision 1 under new ids, so re-read `get_state` after a reopen.
+
+```json
+{"type": "edit_queued_message", "queuedId": "q_4", "text": "use the staging database", "expectedRevision": 1}
+{"type": "response", "command": "edit_queued_message", "success": true, "data": {"queuedId": "q_4", "status": "conflict", "currentRevision": 2, "reason": "conflict", "action": "read the input's current text and revision from get_state or queue_update, then retry with that expectedRevision if the change still applies"}}
+```
 
 #### clear_queue
 
