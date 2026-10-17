@@ -77,7 +77,9 @@ describe("offload gate", () => {
 		},
 		{
 			row: "serialization",
-			fail: (report) => report.cpu.server.top.push({ function: "JSON.stringify", samples: 30, share: 3 }),
+			fail: (report) => {
+				report.cpu.server.top = topRows([], { "JSON.stringify": 7, transformJsonValue: 1 });
+			},
 		},
 	];
 

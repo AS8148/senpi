@@ -49,7 +49,9 @@ describe("job-kind stall attribution", () => {
 	});
 
 	test("the stall description names the job kind", () => {
-		expect(describeAttribution({ sessionId: "s1", tool: "grep", job: "fanout" })).toBe("sessionId=s1 tool=grep job=fanout");
+		expect(describeAttribution({ sessionId: "s1", tool: "grep", job: "fanout" })).toBe(
+			"sessionId=s1 tool=grep job=fanout",
+		);
 		expect(describeAttribution({ job: "session.parse" })).toBe("sessionId=unknown job=session.parse");
 		expect(describeAttribution({ sessionId: "s1", tool: "grep" })).toBe("sessionId=s1 tool=grep");
 		expect(describeAttribution(undefined)).toBe("no attributed session");

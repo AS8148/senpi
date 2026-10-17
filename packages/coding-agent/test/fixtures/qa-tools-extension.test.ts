@@ -4,12 +4,13 @@
  */
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { watch } from "node:fs";
 import { mkdtemp, open, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
+import { fileCreated } from "./qa-tools/file-created.ts";
+import { type SpawnApi, type SpawnFixtureResult, spawnFixture } from "./qa-tools/spawn-fixture.ts";
 import {
 	blobText,
 	createQaTools,
@@ -19,7 +20,6 @@ import {
 	runHostcalls,
 	sinkDigest,
 } from "./qa-tools-extension.ts";
-import { type SpawnApi, type SpawnFixtureResult, spawnFixture } from "./qa-tools/spawn-fixture.ts";
 
 const dirs: string[] = [];
 async function controlDir(): Promise<string> {
@@ -31,15 +31,7 @@ afterEach(async () => {
 	for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true });
 });
 
-function fileAppears(dir: string, name: string): Promise<void> {
-	return new Promise((resolve) => {
-		const watcher = watch(dir, (_event, file) => {
-			if (file !== name) return;
-			watcher.close();
-			resolve();
-		});
-	});
-}
+const fileAppears = fileCreated;
 
 const spawnModule = fileURLToPath(new URL("./qa-tools/spawn-fixture.ts", import.meta.url));
 function spawnUnderBun(api: SpawnApi, argv: string[], detached: boolean, dir: string): SpawnFixtureResult {
@@ -151,12 +143,13 @@ describe.skipIf(process.platform === "win32")("qa_spawn launch APIs (POSIX)", ()
 		const dir = await controlDir();
 		const marker = fileAppears(dir, "marker-gated");
 		let settled = false;
-		const run = spawnFixture({ api: "cp.spawn", argv: ["true"], gate: true }, { controlDir: dir, launchId: "gated" }).then(
-			(result) => {
-				settled = true;
-				return result;
-			},
-		);
+		const run = spawnFixture(
+			{ api: "cp.spawn", argv: ["true"], gate: true },
+			{ controlDir: dir, launchId: "gated" },
+		).then((result) => {
+			settled = true;
+			return result;
+		});
 		await marker;
 		expect(settled).toBe(false);
 		const gate = await open(join(dir, "gate-gated"), "w");
