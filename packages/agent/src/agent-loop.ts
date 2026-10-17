@@ -798,8 +798,11 @@ async function streamAssistantResponse(
 		}
 		// A caller abort is the reason a turn ended even when the bound fired first on a step that never finished:
 		// the user gets the abort's own message, not a timeout and advice to raise it (#3481).
+		// A step that rethrows the caller's own reason (`throwIfAborted()`, a fetch rejected with it) shows that reason
+		// through the same shaping and cap (#3510).
 		const callerAbortedPastBound =
-			signal?.aborted === true && (error instanceof StreamStartTimeoutError || isStreamIdleTimeoutError(error));
+			signal?.aborted === true &&
+			(error instanceof StreamStartTimeoutError || isStreamIdleTimeoutError(error) || error === signal.reason);
 		const finalMessage = createTerminalFailureAssistantMessage(
 			config.model,
 			signal?.aborted ? "aborted" : "error",
@@ -835,7 +838,10 @@ function abortError(reason: unknown): Error {
 	// A caller's own words are its abort reason: a plain string, or an object carrying a `message` (#3510).
 	const text = abortReasonText(reason);
 	if (text === undefined) return new Error("Request was aborted");
-	return new Error(text.length > MAX_ABORT_REASON_CHARS ? `${text.slice(0, MAX_ABORT_REASON_CHARS)}…` : text);
+	const characters = Array.from(text);
+	return new Error(
+		characters.length > MAX_ABORT_REASON_CHARS ? `${characters.slice(0, MAX_ABORT_REASON_CHARS).join("")}…` : text,
+	);
 }
 
 function abortReasonText(reason: unknown): string | undefined {
