@@ -848,7 +848,7 @@ export function createCliRuntimeFactory(
 		modelRuntime?: ModelRuntime;
 	} = {},
 ): PreparableRuntimeFactory {
-	const { parsed, cwd, agentDir, appMode } = configuration;
+	const { parsed, cwd, agentDir, appMode, toolRuntime } = configuration;
 	const extensionFactories = local.extensionFactories ?? builtInExtensions;
 	const startupSettingsManager = local.startupSettingsManager ?? SettingsManager.create(cwd, agentDir);
 	const startupLoadingIndicator =
@@ -1077,6 +1077,7 @@ export function createCliRuntimeFactory(
 			),
 			promptSurface: launchProfile?.promptSurface,
 			browserEngine: launchProfile?.browserEngine,
+			...(toolRuntime !== undefined ? { toolRuntime } : {}),
 		});
 		markSwitch("createSession");
 		const cliThinkingOverride = runtimeParsed.thinking !== undefined || cliThinkingFromModel;

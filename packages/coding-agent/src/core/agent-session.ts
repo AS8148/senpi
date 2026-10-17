@@ -89,6 +89,7 @@ import { isOAuthRefreshUnavailableError } from "@earendil-works/pi-ai/utils/oaut
 import { retryTransientCall } from "@earendil-works/pi-ai/utils/retry";
 import { extract429RetryAfterMs, parseRetryAfterMsMarker } from "@earendil-works/pi-ai/utils/retry-hint";
 import { retryBackoffDelayMs } from "@earendil-works/pi-ai/utils/retry-profile/backoff";
+import type { ToolRuntimeKind } from "../cli/tool-runtime.ts";
 import { getAgentDir } from "../config.ts";
 import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
 import { stripFrontmatter } from "../utils/frontmatter.ts";
@@ -357,7 +358,8 @@ import {
 } from "./thinking-levels.ts";
 import { resetTimings, time } from "./timings.ts";
 import { type SessionMessageUpdateEvent, withResolvedToolName } from "./tool-call-display-name.ts";
-import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
+import { createToolDispatcher, type ToolDispatcher } from "./tool-dispatch/tool-dispatcher.ts";
+import type { BashOperations } from "./tools/bash.ts";
 import { composeFilesystemPolicies } from "./tools/filesystem-policy.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
@@ -766,6 +768,8 @@ export interface AgentSessionConfig {
 	promptSurface?: PromptSurface;
 	/** Browser engine this session's skills drive; omitted means none was chosen. */
 	browserEngine?: BrowserEngine;
+	/** Tool runtime for this session (senpi#3566); absent means `in-process`. */
+	toolRuntime?: ToolRuntimeKind;
 }
 
 type SessionModelEntry = {
@@ -1309,6 +1313,7 @@ export class AgentSession {
 
 	// Bash execution state
 	private readonly _bashAbortControllers = new Set<AbortController>();
+	private readonly _toolDispatcher: ToolDispatcher;
 	private _pendingBashMessages: BashExecutionMessage[] = [];
 
 	// Extension system
@@ -1452,6 +1457,10 @@ export class AgentSession {
 				provider: this.model?.provider,
 				model: this.model?.id,
 			}),
+		});
+		this._toolDispatcher = createToolDispatcher({
+			runtime: config.toolRuntime ?? "in-process",
+			notify: (event, data) => this._sessionLogger.info(event, data),
 		});
 		this._fallbackValidationWarnings = validateFallbackChains(
 			this.settingsManager.getRawFallbackChains(),
@@ -9808,6 +9817,11 @@ export class AgentSession {
 		return this._fallbackValidationWarnings;
 	}
 
+	/** The dispatcher every wrapped tool call and user-bash operation goes through (senpi#3566). */
+	get toolDispatcher(): ToolDispatcher {
+		return this._toolDispatcher;
+	}
+
 	private _isBuiltinExtensionPath(path: string): boolean {
 		return (
 			path.startsWith("<builtin:") || path.startsWith(BUILTIN_PATH_PREFIX) || /[\\/]senpi-codemode[\\/]/u.test(path)
@@ -9897,7 +9911,12 @@ export class AgentSession {
 		);
 		const runner = this._extensionRunner;
 		const createToolContext = (signal: AbortSignal | undefined) => this._createToolContext(signal);
-		const wrappedExtensionTools = wrapRegisteredTools(allCustomTools, runner, createToolContext);
+		const wrappedExtensionTools = wrapRegisteredTools(
+			allCustomTools,
+			runner,
+			createToolContext,
+			this._toolDispatcher,
+		);
 		const wrappedBuiltInTools = wrapRegisteredTools(
 			Array.from(this._baseToolDefinitions.values())
 				.filter((definition) => isAllowedTool(definition.name))
@@ -9909,6 +9928,7 @@ export class AgentSession {
 				})),
 			runner,
 			createToolContext,
+			this._toolDispatcher,
 		);
 
 		const toolRegistry = new Map(wrappedBuiltInTools.map((tool) => [tool.name, tool]));
@@ -11098,7 +11118,7 @@ export class AgentSession {
 			const result = await executeBashWithOperations(
 				resolvedCommand,
 				this.sessionManager.getCwd(),
-				options?.operations ?? createLocalBashOperations({ shellPath }),
+				options?.operations ?? this._toolDispatcher.bashOperations({ shellPath }),
 				{
 					onChunk: (delta) => {
 						const callbackResult = onChunk?.(delta);

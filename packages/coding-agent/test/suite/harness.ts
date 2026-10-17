@@ -17,6 +17,7 @@ import type {
 } from "@earendil-works/pi-ai/compat";
 import { registerFauxProvider, streamSimple } from "@earendil-works/pi-ai/compat";
 import { makeTempDir, onTempCleanup } from "../../../../scripts/vitest-temp.ts";
+import type { ToolRuntimeKind } from "../../src/cli/tool-runtime.ts";
 import { AgentSession, type AgentSessionEvent } from "../../src/core/agent-session.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import type { ExtensionRunner, ExtensionUIContext } from "../../src/core/extensions/index.ts";
@@ -153,6 +154,8 @@ export interface HarnessOptions {
 	sessionManager?: SessionManager;
 	/** Working directory tools and extensions see as `ctx.cwd`. Default: the harness temp dir. */
 	cwd?: string;
+	/** Tool runtime for the session (senpi#3566); absent means `in-process`. */
+	toolRuntime?: ToolRuntimeKind;
 }
 
 export interface Harness {
@@ -322,6 +325,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		fallbackWallNow: options.fallbackWallNow,
 		retryRandom: options.retryRandom ?? (() => 0.5),
 		environmentContext: options.environmentContext ?? false,
+		...(options.toolRuntime !== undefined ? { toolRuntime: options.toolRuntime } : {}),
 	});
 
 	const events: AgentSessionEvent[] = [];

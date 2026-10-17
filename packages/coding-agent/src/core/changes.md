@@ -1,3 +1,25 @@
+## 2026-10-18 - Tool calls and user bash run through a per-session ToolDispatcher (senpi#3566)
+
+### What changed
+
+- `packages/coding-agent/src/core/tool-dispatch/tool-dispatcher.ts` (new): `ToolDispatcher` with `run()` (executes one wrapped tool call), `bashOperations({ shellPath })` (resolves the operations `executeBash` runs) and `onDispatched({ toolCallId, placement, pid, generation })`. `InProcessToolDispatcher` calls `definition.execute` exactly as the wrappers did; `ChildToolDispatcher` (stub until the tool child runtime lands) keeps server-placed work in-process, refuses child-placed calls with an `isError` result naming `tool_runtime_unavailable`, and backs `bashOperations()` with operations whose `exec` fails closed with the same code - no in-server fallback under `child`. `resolveToolPlacement` dispatches to the child only when `placement === "child"` under the child runtime and the definition is not server-pinned; a pinned child-placed tool logs one `tool_placement_pinned` notice per tool name.
+- `packages/coding-agent/src/core/agent-session.ts`: `AgentSessionConfig.toolRuntime` (absent = in-process) constructs the dispatcher in the constructor (`notify` wired to the session log); `toolDispatcher` getter; `_refreshToolRegistry` passes the dispatcher to both `wrapRegisteredTools` calls; `executeBash` resolves `options?.operations ?? this._toolDispatcher.bashOperations({ shellPath })`, so a caller-supplied override stays with its caller. `prepareToolCall`/after-hook wiring is untouched: hooks still fire exactly once per call around the dispatcher.
+- `packages/coding-agent/src/core/sdk.ts`: `CreateAgentSessionOptions.toolRuntime` forwarded into the `AgentSession` config.
+- `packages/coding-agent/src/core/agent-session-services.ts`: `CreateAgentSessionFromServicesOptions.toolRuntime` forwarded to `createAgentSession`.
+
+### Why
+
+Three execution paths (model-issued, nested `executeTool`, eval kernel) and the user-bash path executed inline with no seam to move heavy tool work onto a per-session child (senpi#3566); the dispatcher is that seam, behavior-identical while the runtime is in-process.
+
+### Why an extension could not handle it
+
+The tool wrappers, the session's tool registry, and `executeBash` are session internals assembled in core before extensions bind.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: `AgentSessionConfig`, the constructor's logger/dispatcher block, `_refreshToolRegistry`'s two `wrapRegisteredTools` calls, and `executeBash`'s operations argument.
+- `packages/coding-agent/src/core/tool-dispatch/tool-dispatcher.ts` is fork-only.
+
 ## 2026-10-16 - Queued-input changes can require the revision they were based on (senpi#3459)
 
 ### What changed
