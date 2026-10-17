@@ -5,6 +5,7 @@
  */
 import { generationPaths, type HostDaemonPaths } from "./host-daemon-paths.ts";
 import { HostEnsureRefusedError, type HostProtocolInfo } from "./host-decision.ts";
+import { probeSocketReachable } from "./host-probe.ts";
 import { hostChildAlive, hostLoopStalled, stallRefusalWindowMs } from "./host-stalled-evidence.ts";
 import { loopLagErrorMs } from "./loop-lag-threshold.ts";
 import { socketEntryListenerState, statSocketIdentity } from "./socket-ownership.ts";
@@ -31,16 +32,39 @@ export async function refuseIfStalled(
 }
 
 /**
- * Whether SOMETHING still stands behind the public path - the one fact that says a registered
- * process may still own the endpoint. A missing entry and an entry nobody listens behind both
- * answer no; an accepted connection, however silent, answers yes, and so does any failure that
- * cannot prove absence (`socketEntryListenerState`: EACCES, EAGAIN, a refusal on a platform whose
- * full backlog also refuses while a process still holds the entry). A named pipe has no entry to
- * lose and an abstract socket has no path, so both read as owned; so does an entry this process
- * cannot stat, because an owner that cannot be ruled out is one this ensure must not bind over.
+ * Only the connect matters here, never an answer: the kernel completes it from the listen backlog
+ * without the host's event loop, so a live owner under load still accepts within this budget.
+ */
+const FOREIGN_ENDPOINT_PROBE_TIMEOUT_MS = 2_000;
+
+/**
+ * Whether SOMETHING still accepts connections at the public path - the one fact that says a
+ * registered process may still own the endpoint. A missing entry and an entry nobody listens
+ * behind (connection refused) both answer no; an accepted connection, however silent, answers yes.
+ * A named pipe has no entry to lose and an abstract socket has no path, so both read as owned;
+ * so does an entry this process cannot stat, because an owner that cannot be ruled out is one
+ * this ensure must not bind over.
  */
 export async function publicEndpointAccepts(socket: string): Promise<boolean> {
 	if (process.platform === "win32" || socket.startsWith("\0")) return true;
+	const entry = await statSocketIdentity(socket).then(
+		(identity) => (identity === undefined ? "absent" : "present"),
+		() => "unknown",
+	);
+	if (entry === "absent") return false;
+	if (entry === "unknown") return true;
+	return probeSocketReachable(socket, FOREIGN_ENDPOINT_PROBE_TIMEOUT_MS);
+}
+
+/**
+ * Whether something stands behind a public path that no registration names: the gate before an
+ * ensure would start a host there. Unlike `publicEndpointAccepts` it also counts a listener that
+ * refuses only because its backlog is full (`socketEntryListenerState`), because a start there
+ * could only lose the bind; the registered paths keep `publicEndpointAccepts`, whose "not
+ * accepting" leads to the stall check (IS-5).
+ */
+export async function unregisteredEndpointHeld(socket: string): Promise<boolean> {
+	if (process.platform === "win32" || socket.startsWith("\0")) return false;
 	const entry = await statSocketIdentity(socket).then(
 		(identity) => (identity === undefined ? "absent" : "present"),
 		() => "unknown",

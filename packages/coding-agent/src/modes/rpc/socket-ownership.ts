@@ -84,8 +84,8 @@ export const lsofSocketHolders: SocketHolders = (socketPath) =>
 				.map(Number);
 			if (pids.length > 0) return resolve(pids);
 			// lsof exits 1 with no output when nothing holds the file; anything else proves nothing.
-			const code = (error as (NodeJS.ErrnoException & { code?: unknown }) | null)?.code;
-			resolve(error === null || code === 1 ? [] : undefined);
+			const exitCode: unknown = error === null ? undefined : Reflect.get(error, "code");
+			resolve(error === null || exitCode === 1 ? [] : undefined);
 		});
 	});
 

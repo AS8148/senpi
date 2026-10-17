@@ -19,7 +19,7 @@ import {
 import { claimHostOwner } from "./host-daemon-state.ts";
 import { decideHostAction, type HostDecision, HostEnsureRefusedError, type HostProtocolInfo } from "./host-decision.ts";
 import { ensureClient } from "./host-ensure-client.ts";
-import { publicEndpointAccepts, refuseIfStalled } from "./host-ensure-liveness.ts";
+import { publicEndpointAccepts, refuseIfStalled, unregisteredEndpointHeld } from "./host-ensure-liveness.ts";
 import { hostEnsureLockOptions, hostEnsureLockTarget } from "./host-ensure-lock.ts";
 import { appendStderr, DEFAULT_READINESS_TIMEOUT_MS, DEFAULT_STOP_TIMEOUT_MS, startHost } from "./host-ensure-start.ts";
 import {
@@ -232,7 +232,7 @@ async function ensureHostLocked(
 	// A start can only lose the bind ("address already in use") and exit without a reason, and the
 	// holder is not ours to remove (I1): refuse with the reason instead. A stale entry nobody listens
 	// behind reads as free here, so the start below still replaces it.
-	if (process.platform !== "win32" && !socket.startsWith("\0") && (await publicEndpointAccepts(socket)))
+	if (await unregisteredEndpointHeld(socket))
 		throw new HostEnsureRefusedError(
 			socket,
 			"endpoint_occupied",
