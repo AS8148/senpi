@@ -250,6 +250,26 @@ describe("ensureHost", () => {
 		20_000,
 	);
 
+	it.skipIf(process.platform === "win32")(
+		"refuses an unregistered listener that accepts but never answers, and leaves it alone",
+		async () => {
+			// A process nobody registered holds the public path and never answers get_protocol_info.
+			// Starting a host there can only fail its bind ("address already in use") and exit 1 with
+			// no reason a caller can act on; the ensure refuses with a typed reason instead.
+			const qa = await scratch("unregistered-listener");
+			const listener = await startUnregisteredListener(qa.socket);
+
+			const failure = await ensureFixtureHost(qa).catch((error: unknown) => error);
+
+			expect(failure).toBeInstanceOf(HostEnsureRefusedError);
+			expect((failure as HostEnsureRefusedError).reason).toBe("endpoint_occupied");
+			expect(processIsLive(listener.pid ?? 0)).toBe(true);
+			await expect(access(qa.socket)).resolves.toBeUndefined();
+			expect(await readHostRegistration(daemonPaths(qa))).toBeUndefined();
+		},
+		20_000,
+	);
+
 	it("cleans a stale dead pidfile and starts fresh", async () => {
 		const qa = await scratch("stale-pidfile");
 		const paths = daemonPaths(qa);
@@ -849,6 +869,25 @@ async function startManagedProcess(
  * A socket entry with nobody behind it: a listener bound the path and was SIGKILLed, which leaves
  * the filesystem entry in place (only a clean close unlinks it). Connecting to it is refused.
  */
+/** A live process listening on the public path that is not a registered host and never answers. */
+async function startUnregisteredListener(socketPath: string): Promise<ChildProcess> {
+	const script = [
+		'const net = require("node:net");',
+		'net.createServer(() => {}).listen(process.env.HELD_SOCKET, () => process.stdout.write("listening\\n"));',
+		"setInterval(() => {}, 1000);",
+	].join(" ");
+	const child = spawn(process.execPath, ["-e", script], {
+		stdio: ["ignore", "pipe", "ignore"],
+		env: { ...process.env, HELD_SOCKET: socketPath },
+	});
+	children.push(child);
+	await new Promise<void>((resolve, reject) => {
+		child.stdout?.once("data", () => resolve());
+		child.once("exit", (code) => reject(new Error(`listener exited before listening (code ${code})`)));
+	});
+	return child;
+}
+
 async function leaveStaleEntry(socketPath: string): Promise<void> {
 	const script = [
 		'const net = require("node:net"), fs = require("node:fs");',

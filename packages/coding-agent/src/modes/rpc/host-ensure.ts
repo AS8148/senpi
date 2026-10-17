@@ -225,6 +225,12 @@ async function ensureHostLocked(
 	const legacyRefusal = await retireIdleLegacyHost(paths, probe, testOptions?.stopTimeoutMs);
 	if (legacyRefusal !== undefined) throw new HostEnsureRefusedError(socket, "legacy_host", protocol, legacyRefusal);
 	if (stranded !== undefined) return startHost(paths, socket, options, stranded.generation + 1);
+	// Something no registration names still ACCEPTS at the public path and did not answer the probe.
+	// A start can only lose the bind ("address already in use") and exit without a reason, and the
+	// holder is not ours to remove (I1): refuse with the reason instead. A stale entry nobody listens
+	// behind reads as free here, so the start below still replaces it.
+	if (process.platform !== "win32" && !socket.startsWith("\0") && (await publicEndpointAccepts(socket)))
+		throw new HostEnsureRefusedError(socket, "endpoint_occupied", protocol);
 	if (registeredHere) await clearHostRegistration(paths);
 	return startHost(paths, socket, options);
 }
