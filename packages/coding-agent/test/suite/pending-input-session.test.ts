@@ -208,6 +208,31 @@ describe("AgentSession pending inputs", () => {
 		expect(harness.session.getQueuedInputs()).toEqual([]);
 	});
 
+	it("edits an identified input held back after a compaction and delivers the edit once released (T26, T27)", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("first"), fauxAssistantMessage("after follow-up")]);
+		const internals = harness.session as unknown as {
+			_promptStartPending: boolean;
+			_skipNextPostCompactionAssistantCheck: boolean;
+			_flushPostCompactionDeferredMessages(): void;
+		};
+		internals._promptStartPending = true;
+		internals._skipNextPostCompactionAssistantCheck = true;
+		await harness.session.followUp("held draft", undefined, { clientMessageId: "c-1" });
+		const queuedId = harness.session.getQueuedInputs()[0]?.queuedId ?? "";
+
+		const answer = await harness.session.changeQueuedInput(queuedId, "held final", { expectedRevision: 1 });
+		internals._promptStartPending = false;
+		internals._skipNextPostCompactionAssistantCheck = false;
+		internals._flushPostCompactionDeferredMessages();
+		await harness.session.prompt("go");
+
+		expect(answer).toBe("edited");
+		expect(getUserTexts(harness)).toEqual(["go", "held final"]);
+		expect(phases(harness, "c-1")).toEqual(["queued", "queued", "sending", "delivered"]);
+	});
+
 	it("keeps input without a client id out of the journal", async () => {
 		const { harness, release, toolStarted } = await runWithHeldTool();
 		harness.setResponses([
