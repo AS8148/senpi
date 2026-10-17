@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Opening a large session on a shared RPC host no longer stalls every other session: the transcript is read, parsed and indexed in short slices, and the tool-search history scan no longer serializes every message. On a 231 MB transcript the longest wait seen by another connection dropped from about 1 s to the level of opening an empty session ([#3518](https://github.com/code-yeongyu/senpi/issues/3518)).
+
 ### Removed
 
 ## [2026.10.16-4] - 2026-10-16
