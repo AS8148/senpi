@@ -15,7 +15,7 @@ The toolchain version CI installs is repository workflow configuration.
 
 ### Expected merge conflict zones
 
-- LOW: the `bun-version` lines in both workflows, if upstream changes its Bun pin.
+- LOW: the `bun-version` lines in the six workflows above, if upstream changes its Bun pin.
 
 
 ## 2026-10-13 - Catalog refresh branches regenerate on main data changes and refuse hand commits (#3243)
