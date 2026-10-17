@@ -17,11 +17,33 @@ afterEach(() => {
 	for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-/** A module URL outside the monorepo, so no workspace specifier resolves from it. */
+/**
+ * A module URL outside the monorepo. Its parent folder carries a built-looking copy of every
+ * workspace package, the way `~/node_modules` can on a developer machine: Node's resolver climbs
+ * into it, so only the checkout boundary keeps these specifiers unresolved (senpi#3482).
+ */
 function outsideWorkspaceModuleUrl(): string {
 	const dir = mkdtempSync(join(tmpdir(), "pi-workspace-prereq-"));
 	tempDirs.push(dir);
-	return pathToFileURL(join(dir, "probe.mjs")).href;
+	const decoyPackages: Record<string, readonly string[]> = {
+		"@earendil-works/pi-ai": [".", "./compat", "./providers/cursor"],
+		"@earendil-works/pi-tui": ["."],
+		"@earendil-works/pi-agent-core": [".", "./node"],
+	};
+	for (const [name, subpaths] of Object.entries(decoyPackages)) {
+		const root = join(dir, "node_modules", name);
+		const exports: Record<string, { import: string }> = {};
+		for (const subpath of subpaths) {
+			const file = `./dist/${subpath === "." ? "index" : subpath.slice(2).replaceAll("/", "-")}.js`;
+			exports[subpath] = { import: file };
+			mkdirSync(join(root, "dist"), { recursive: true });
+			writeFileSync(join(root, file), "export {};\n");
+		}
+		writeFileSync(join(root, "package.json"), JSON.stringify({ name, type: "module", exports }));
+	}
+	const probeDir = join(dir, "outside");
+	mkdirSync(probeDir);
+	return pathToFileURL(join(probeDir, "probe.mjs")).href;
 }
 
 describe("workspace build prerequisite", () => {
