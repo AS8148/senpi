@@ -1,3 +1,21 @@
+## 2026-10-18 - The footer names the account the user order serves (senpi#3591)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/footer.ts`: `accountFooterSuffix` ranks the slots with `applyAccountOrder(credential.order, hrw)`, so with no pin the footer names the first account of the user order instead of the session's HRW winner.
+
+### Why
+
+senpi#3591 review M2: the rotation engine serves the first ordered account, so the footer's "the slot that will serve" claim was false once an order was set.
+
+### Why an extension could not handle it
+
+The footer's account segment is built in core interactive mode; extensions cannot replace it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/components/footer.ts`: the pool imports and `accountFooterSuffix`.
+
 ## 2026-10-17 - The /login picker attributes a credential to its row through the shared rule (senpi#3537)
 
 ### What changed
