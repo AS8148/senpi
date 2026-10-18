@@ -62,12 +62,23 @@ export const launchApisAckGatedScenario = Object.freeze({
 		const unsubscribe = ctx.rpc.subscribe((r) => {
 			if (r.sessionId === sessionId && r.type === "tool_execution_end" && r.toolName === "qa_spawn") ends.push(r);
 		});
+		// A failed tool call is reported with its own text, never as a launch timeout.
+		const toolFailed = new Promise((_resolve, reject) => {
+			ctx.rpc.subscribe((r) => {
+				if (r.sessionId === sessionId && r.type === "tool_execution_end" && r.isError === true)
+					reject(new QaFailure("tool_failed", JSON.stringify(r.result?.content ?? r.result ?? r).slice(0, 600)));
+			});
+		});
+		toolFailed.catch(() => {});
 		await ctx.prompt(sessionId, "run every launch API once");
 		const child = await spawned;
 		const log = launchLog(ctx.agentDir, await ctx.durableSessionIdOf(sessionId));
 		const launchIds = [];
 		for (const [index, call] of CALLS.entries()) {
-			const launch = await log.waitFor((r) => r.type === "launch" && !launchIds.includes(r.launchId), { name: `launch #${index} (${call.api})`, deadlineMs: 60_000 });
+			const launch = await Promise.race([
+				log.waitFor((r) => r.type === "launch" && !launchIds.includes(r.launchId), { name: `launch #${index} (${call.api})`, deadlineMs: 60_000 }),
+				toolFailed,
+			]);
 			launchIds.push(launch.launchId);
 			const held = await slotState(ctx, log, launch.launchId, 1);
 			ctx.log.write({ type: "assert", step: "held", api: call.api, launchId: launch.launchId, invocations: held.invocations });
