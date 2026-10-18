@@ -9,7 +9,9 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
-import { createHarness, type Harness } from "../harness.ts";
+import askUserExtension from "../../../src/core/extensions/builtin/ask-user/index.ts";
+import type { QuestionRequest, QuestionResponse } from "../../../src/core/extensions/types.ts";
+import { createHarness, createTestUiContext, type Harness } from "../harness.ts";
 
 const FRAME = "[Answer to question q-1]\nThe user responded: (see [The user's comment for question q-1] below)";
 const LABEL = "[The user's comment for question q-1]";
@@ -89,6 +91,94 @@ describe("senpi#3588 multi-block queued input leaves the queue when it starts", 
 		expect(delivered[0]).toEqual(BLOCKS("ship it").map((text) => ({ type: "text", text })));
 		expect(atDelivery.get("ship it")).toEqual(EMPTY);
 		expect(view()).toEqual(EMPTY);
+	});
+
+	it("the real ask_user_question tool answered during a busy run steers its answer in once and dequeues it", async () => {
+		const asked = Promise.withResolvers<QuestionRequest>();
+		const answer = Promise.withResolvers<QuestionResponse>();
+		const release = Promise.withResolvers<void>();
+		const waitStarted = Promise.withResolvers<void>();
+		const waitTool: AgentTool = {
+			name: "wait",
+			label: "Wait",
+			description: "Wait for release",
+			parameters: Type.Object({}),
+			execute: async () => {
+				waitStarted.resolve();
+				await release.promise;
+				return { content: [{ type: "text", text: "released" }], details: {} };
+			},
+		};
+		const harness = await createHarness({
+			tools: [waitTool],
+			extensionFactories: [askUserExtension],
+			settings: { askUser: { enabled: true, timeoutMinutes: 30 } },
+		});
+		harnesses.push(harness);
+		await harness.session.bindExtensions({
+			uiContext: createTestUiContext({
+				question: (request) => {
+					asked.resolve(request);
+					return answer.promise;
+				},
+			}),
+			mode: "tui",
+		});
+		harness.setResponses([
+			fauxAssistantMessage(
+				fauxToolCall("ask_user_question", {
+					questions: [
+						{
+							header: "Name",
+							question: "Which name?",
+							options: [{ label: "alpha" }, { label: "beta" }],
+							multiSelect: false,
+						},
+					],
+					waitForAnswer: false,
+				}),
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("after the answer"),
+			fauxAssistantMessage("spare"),
+		]);
+		const answerSteered = Promise.withResolvers<void>();
+		const answersDelivered: unknown[] = [];
+		const steeringAtDelivery: string[][] = [];
+		harness.session.subscribe((event) => {
+			if (event.type === "queue_update" && event.steering.length > 0) answerSteered.resolve();
+			if (event.type !== "message_end" || event.message.role !== "user") return;
+			const content = event.message.content;
+			const first = Array.isArray(content) ? content[0] : undefined;
+			if (first?.type === "text" && first.text.startsWith("[Answer to question ")) {
+				answersDelivered.push(content);
+				steeringAtDelivery.push([...harness.session.getSteeringMessages()]);
+			}
+		});
+
+		const run = harness.session.prompt("start");
+		const request = await asked.promise;
+		await waitStarted.promise;
+		answer.resolve({
+			status: "comment-submitted",
+			answers: {},
+			unanswered: request.questions.map((question) => question.id),
+			comment: "call it gamma",
+		});
+		await answerSteered.promise;
+		expect(harness.session.getSteeringMessages()).toHaveLength(1);
+		expect(harness.session.getSteeringMessages()[0]).toContain(`[Answer to question ${request.requestId}]`);
+		release.resolve();
+		await run;
+		await harness.session.waitForSettledSessionWork();
+
+		expect(answersDelivered).toHaveLength(1);
+		expect(JSON.stringify(answersDelivered[0])).toContain("call it gamma");
+		expect(steeringAtDelivery).toEqual([[]]);
+		expect(harness.session.getSteeringMessages()).toEqual([]);
+		expect(harness.session.pendingMessageCount).toBe(0);
+		expect(harness.session.getQueuedInputs()).toEqual([]);
 	});
 
 	it("an extension follow-up with several blocks is dequeued when it starts", async () => {
