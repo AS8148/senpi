@@ -3,12 +3,12 @@
 import { spawn } from "node:child_process";
 
 export function startGated(input: { readonly params: { readonly marker: string; readonly gate: string } }) {
+	// cmd.exe parses its own command line, not the C runtime's quoting Node applies to an argument array: the line goes
+	// verbatim, wrapped for /s.
 	const command = spawn(
 		"cmd.exe",
-		["/d", "/c", `echo.> "${input.params.marker}" && waitfor ${input.params.gate} /t 300`],
-		{
-			stdio: "ignore",
-		},
+		["/d", "/s", "/c", `"echo.> "${input.params.marker}" && waitfor ${input.params.gate} /t 300"`],
+		{ stdio: "ignore", windowsVerbatimArguments: true },
 	);
 	return { content: [{ type: "text", text: String(command.pid) }], details: { pid: command.pid } };
 }
