@@ -44,7 +44,7 @@ Where a tool runs is decided by the session's dispatcher, and the extension's so
 
 ### What changed
 
-- `packages/coding-agent/src/core/extensions/bun-extension-importer.ts`: `createBunExtensionImporter(virtualModules, builtinRedirects = {})` resolves a specifier listed in `builtinRedirects` to the mapped id before the builtin check, in every module the extension graph transpiles (transitive dependencies included) and for `require`.
+- `packages/coding-agent/src/core/extensions/bun-extension-importer.ts`: `createBunExtensionImporter(virtualModules, builtinRedirects = {})` resolves a specifier that is an own key of `builtinRedirects` to the mapped id before the builtin check (own keys only: a package named after an `Object.prototype` key such as `constructor` resolves as before, so the default path's empty map changes nothing), in every module the extension graph transpiles (transitive dependencies included) and for `require`.
 - The session's own extension loader does not use the redirect: on the default in-process path every extension gets the real `node:child_process`, unchanged. Only the tool child's module-job worker builds an importer with `CHILD_PROCESS_REDIRECTS` and the gated module.
 
 ### Why

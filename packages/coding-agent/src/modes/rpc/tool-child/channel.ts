@@ -7,7 +7,8 @@
  * stdout, so nothing a tool prints can corrupt the protocol. Any codec error is terminal for the channel.
  */
 import { createHash } from "node:crypto";
-import { chmod, lstat, mkdir, rm } from "node:fs/promises";
+import { constants } from "node:fs";
+import { chmod, mkdir, open, rm } from "node:fs/promises";
 import { createConnection, createServer, type Socket } from "node:net";
 import { join } from "node:path";
 import { MAX_SOCKET_PATH_BYTES } from "../socket-ownership.ts";
@@ -118,16 +119,36 @@ export async function channelSocketPath(dir: string, generation: number): Promis
 		await makePrivateDirectory(dir);
 		return primary;
 	}
-	const root = join("/tmp", `senpi-tc-${createHash("sha256").update(dir).digest("hex").slice(0, 12)}`);
-	await makePrivateDirectory(root);
-	const stat = await lstat(root);
-	if (
-		!stat.isDirectory() ||
-		(process.getuid !== undefined && stat.uid !== process.getuid()) ||
-		(stat.mode & 0o077) !== 0
-	)
-		throw new Error(`socket_dir_unsafe: ${root} is not a private directory of this user`);
+	const root = fallbackSocketRoot(dir);
+	await claimPrivateDirectory(root);
 	return join(root, name);
+}
+
+/** The short private directory a socket falls back to when `<dir>/c-<generation>.sock` does not fit `sun_path`. */
+export function fallbackSocketRoot(dir: string): string {
+	return join("/tmp", `senpi-tc-${createHash("sha256").update(dir).digest("hex").slice(0, 12)}`);
+}
+
+/**
+ * A predictable directory under the shared `/tmp` is used only if it is a real directory of this user. It is opened
+ * without following a symlink and checked through that handle before its mode is tightened, so nothing planted at the
+ * path - a symlink or another user's directory - is ever changed or used.
+ */
+async function claimPrivateDirectory(root: string): Promise<void> {
+	await mkdir(root, { mode: 0o700 }).catch((error: unknown) => {
+		if (Reflect.get(Object(error), "code") !== "EEXIST") throw error;
+	});
+	const unsafe = () => new Error(`socket_dir_unsafe: ${root} is not a private directory of this user`);
+	const handle = await open(root, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW).catch(() => {
+		throw unsafe();
+	});
+	try {
+		const stat = await handle.stat();
+		if (!stat.isDirectory() || (process.getuid !== undefined && stat.uid !== process.getuid())) throw unsafe();
+		if ((stat.mode & 0o077) !== 0) await handle.chmod(0o700);
+	} finally {
+		await handle.close();
+	}
 }
 
 async function makePrivateDirectory(directory: string): Promise<void> {

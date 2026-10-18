@@ -16,7 +16,7 @@ import { type HostCallHandler, type HostCallRefs, ServerHostCalls } from "./host
 import { policyFor } from "./job-policy.ts";
 import { JobSupervisor, type SupervisorTimers } from "./job-supervisor.ts";
 import { spawnToolChild, type ToolChildCommand, toolChildCommand } from "./launch.ts";
-import { sweepStaleGenerations } from "./orphan-sweep.ts";
+import { recordGenerationChild, sweepStaleGenerations } from "./orphan-sweep.ts";
 import { PayloadRefReader, PayloadRefWriter } from "./payload-ref.ts";
 import { TOOL_CHILD_LIMITS, type ToolChildMessage } from "./protocol.ts";
 
@@ -180,6 +180,8 @@ export class ToolChildClient {
 			() => undefined,
 			() => undefined,
 		);
+		// Marks this generation live while its child runs: another start on the same session never sweeps it.
+		if (child.pid !== undefined) await recordGenerationChild(this.#options.dir, generation, child.pid);
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		const timedOut = new Promise<"timeout">((resolve) => {
 			timer = setTimeout(() => resolve("timeout"), this.#options.readyMs ?? 10_000);

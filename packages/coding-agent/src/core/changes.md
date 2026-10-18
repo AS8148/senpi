@@ -34,11 +34,11 @@ The tool pipeline, the composed filesystem policy and the tool child's construct
 
 - `packages/coding-agent/src/core/agent-session.ts`: the tool-child construction in the runtime setup (its `onHostCall` deps), the `_filesystemPolicy` assignment beside `composeFilesystemPolicies`, and the fields beside `_toolChildHostTargets`.
 
-## 2026-10-18 - Disposing a session waits for its tool child to stop (senpi#3566)
+## 2026-10-18 - Disposing or replacing a session waits for its tool child to stop (senpi#3566)
 
 ### What changed
 
-- `packages/coding-agent/src/core/agent-session-runtime.ts`: `dispose()` awaits `session.whenToolChildClosed()` after `session.dispose()` and before releasing the session hold, so a session closed under `--tool-runtime child` has stopped its tool child and swept every command it launched by the time disposal settles. On the default in-process path the promise is already resolved.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `dispose()` and `teardownCurrent()` (new, switch, fork, resume) await `session.whenToolChildClosed()` after `session.dispose()` - `dispose()` before releasing the session hold, `teardownCurrent()` before the replacement is built - so a session closed under `--tool-runtime child` has stopped its tool child and swept every command it launched by the time disposal settles. On the default in-process path the promise is already resolved.
 - `packages/coding-agent/src/core/agent-session.ts`: `dispose()` keeps the tool child's close promise instead of discarding it, and `whenToolChildClosed()` returns it.
 
 ### Why
@@ -51,7 +51,7 @@ Disposal order lives in the session runtime; extensions see only `session_shutdo
 
 ### Expected merge conflict zones
 
-- `packages/coding-agent/src/core/agent-session-runtime.ts`: the body of `dispose()`.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: the body of `dispose()` and the dispose step of `teardownCurrent()`.
 - `packages/coding-agent/src/core/agent-session.ts`: the tool-child close in `dispose()` and the accessor beside `toolChildRow()`.
 
 ## 2026-10-18 - Tool calls and user bash run through a per-session ToolDispatcher (senpi#3566)
