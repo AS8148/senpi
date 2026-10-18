@@ -1,3 +1,21 @@
+## 2026-10-18 - The workspace build never emits test files (senpi#3576)
+
+### What changed
+
+`tsconfig.build.json` excludes `**/*.test.ts`. The tool-child runtime is the first code with tests inside `src/`, and the emitted `dist/**/*.test.js` made every CI shard sweep and fail the compiled copies (their spawned children cannot bootstrap from dist), so CI failed all three test shards.
+
+### Why
+
+CI builds the workspace before the test shards, and vitest's default exclude does not skip `dist/`; any test compiled into `dist` is executed as a duplicate and fails. Main never hit this because no tests lived under `src/` before the tool-child runtime added them.
+
+### Why an extension could not handle it
+
+Build configuration of the package itself; extensions cannot change what tsc emits.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/tsconfig.build.json` (the exclude list) only.
+
 ## 2026-10-15 - A removed custom provider stops being served after logout (senpi#3339)
 
 ### What changed
