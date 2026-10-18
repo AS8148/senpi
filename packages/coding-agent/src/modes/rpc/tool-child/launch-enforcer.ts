@@ -13,7 +13,12 @@ export const LAUNCH_PROOF_MS = 5_000;
 export interface BarrierViolation {
 	readonly launchId: string;
 	readonly jobId: string | undefined;
-	readonly reason: "proof_missing" | "proof_unacked" | "proof_unordered" | "proof_unknown_launch";
+	readonly reason:
+		| "proof_missing"
+		| "proof_unacked"
+		| "proof_unordered"
+		| "proof_unknown_launch"
+		| "ledger_unwritable";
 }
 
 export interface LaunchEnforcerOptions {
@@ -53,6 +58,11 @@ export class LaunchEnforcer {
 		this.#recordings.add(recording);
 		try {
 			await recording;
+		} catch {
+			// No ledger entry means no containment record: the launch is never acked, and the child cannot be trusted
+			// to stay inside the barrier, so it ends like any other violation (never an unhandled rejection).
+			this.#violate(frame.launchId, "ledger_unwritable");
+			return;
 		} finally {
 			this.#recordings.delete(recording);
 		}
@@ -95,7 +105,8 @@ export class LaunchEnforcer {
 			...(leaderStart === undefined ? {} : { leaderStart }),
 			atMs: Date.now(),
 		};
-		await this.#options.log.record({ ...frame });
+		// The ledger is the containment record and gates the ack; the diagnostic log is written beside it, off that path.
+		void this.#options.log.record({ ...frame });
 		await this.#options.ledger.append(entry);
 	}
 

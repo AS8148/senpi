@@ -84,6 +84,7 @@ export class DescendantsLedger {
 export class LaunchLog {
 	readonly #path: string;
 	#chain: Promise<void> = Promise.resolve();
+	#failedWrites = 0;
 
 	constructor(path: string) {
 		this.#path = path;
@@ -93,15 +94,25 @@ export class LaunchLog {
 		return this.#path;
 	}
 
+	/** Records the log could not write; the log is diagnostic, so a failed write is counted, never thrown. */
+	get failedWrites(): number {
+		return this.#failedWrites;
+	}
+
 	settled(): Promise<void> {
 		return this.#chain;
 	}
 
+	/** Appends in order. Never rejects: one failed write neither poisons later records nor what awaits settled(). */
 	record(record: Readonly<Record<string, unknown>>): Promise<void> {
 		const line = `${JSON.stringify({ atMs: Date.now(), ...record })}\n`;
 		this.#chain = this.#chain.then(async () => {
-			await mkdir(dirname(this.#path), { recursive: true, mode: 0o700 });
-			await appendFile(this.#path, line, { mode: 0o600 });
+			try {
+				await mkdir(dirname(this.#path), { recursive: true, mode: 0o700 });
+				await appendFile(this.#path, line, { mode: 0o600 });
+			} catch {
+				this.#failedWrites += 1;
+			}
 		});
 		return this.#chain;
 	}

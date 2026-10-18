@@ -1,5 +1,5 @@
 // senpi#3566 todo 4: the server enforces the execution barrier from the child's proof ticks (security contract).
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -27,13 +27,20 @@ const launch = (launchId: string): ToolChildMessageOf<"launch"> => ({
 	pgid: 4242,
 });
 
-async function rig(extra: { hold?: (id: string) => Promise<void>; onAck?: (id: string) => void } = {}) {
+async function rig(
+	extra: {
+		hold?: (id: string) => Promise<void>;
+		onAck?: (id: string) => void;
+		ledgerPath?: (root: string) => string;
+		logPath?: (root: string) => string;
+	} = {},
+) {
 	const root = await mkdtemp(join(tmpdir(), "tle-"));
 	const acks: string[] = [];
 	const violations: BarrierViolation[] = [];
 	const timers: Array<{ fn: () => void; ms: number; cancelled: boolean }> = [];
-	const ledger = new DescendantsLedger(join(root, "descendants.ledger"));
-	const log = new LaunchLog(join(root, "launches.jsonl"));
+	const ledger = new DescendantsLedger(extra.ledgerPath?.(root) ?? join(root, "descendants.ledger"));
+	const log = new LaunchLog(extra.logPath?.(root) ?? join(root, "launches.jsonl"));
 	rigs.push({ root, log });
 	const enforcer = new LaunchEnforcer({
 		generation: 1,
@@ -58,6 +65,30 @@ async function rig(extra: { hold?: (id: string) => Promise<void>; onAck?: (id: s
 }
 
 describe("LaunchEnforcer", () => {
+	it("never acks a launch whose ledger entry cannot be written, reports it as a violation, and never rejects", async () => {
+		const blocked = await mkdtemp(join(tmpdir(), "tle-blocked-"));
+		const notADir = join(blocked, "file");
+		await writeFile(notADir, "");
+		const { enforcer, acks, violations } = await rig({ ledgerPath: () => join(notADir, "descendants.ledger") });
+		await expect(enforcer.onLaunch(launch("L1"))).resolves.toBeUndefined();
+		expect(acks).toEqual([]);
+		expect(violations).toEqual([{ launchId: "L1", jobId: "j1", reason: "ledger_unwritable" }]);
+		await rm(blocked, { recursive: true, force: true });
+	});
+
+	it("acks a recorded launch even when the diagnostic log cannot be written, and the log never rejects", async () => {
+		const blocked = await mkdtemp(join(tmpdir(), "tle-blocked-"));
+		const notADir = join(blocked, "file");
+		await writeFile(notADir, "");
+		const { enforcer, acks, violations, log } = await rig({ logPath: () => join(notADir, "launches.jsonl") });
+		await enforcer.onLaunch(launch("L1"));
+		expect(acks).toEqual(["L1"]);
+		expect(violations).toEqual([]);
+		await expect(log.settled()).resolves.toBeUndefined();
+		expect(log.failedWrites).toBeGreaterThan(0);
+		await rm(blocked, { recursive: true, force: true });
+	});
+
 	it("never reports proof_missing for a proof that arrived while the ack was being logged", async () => {
 		let enforcerRef: LaunchEnforcer | undefined;
 		const rigged = await rig({
