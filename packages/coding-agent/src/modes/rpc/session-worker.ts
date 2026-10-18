@@ -16,7 +16,8 @@ import { isHandoffBusy } from "./handoff-activity.ts";
 import { createRpcSessionBinding, type RpcSessionBinding } from "./session-binding.ts";
 import { SessionEventWriter } from "./session-event-writer.ts";
 import { canonicalSessionPath } from "./session-path-key.ts";
-import { type RpcSessionEntry, RpcSessionRegistry } from "./session-registry.ts";
+import type { RpcSessionEntry, RpcSessionRegistry } from "./session-registry.ts";
+import { resolveMovedProfile } from "./session-registry-moved-path.ts";
 import { createWorkerCredit } from "./session-worker-credit.ts";
 import {
 	type HostToSessionWorker,
@@ -24,6 +25,7 @@ import {
 	type SessionWorkerToHost,
 	type WorkerSnapshot,
 } from "./session-worker-protocol.ts";
+import { createSessionWorkerRegistry } from "./session-worker-registry.ts";
 
 if (isBunBinary) {
 	const { registerBunRuntimeModules } = await import("../../bun/runtime-modules.ts");
@@ -48,6 +50,17 @@ installWriteReservation(canonicalSessionPath);
 class WorkerEventWriter extends SessionEventWriter {
 	constructor() {
 		super(() => {});
+	}
+	override publishLoadedSurfacesChanged(_sessionId: string, previous: string | undefined, digest: string): void {
+		// The isolate never emits the event itself: the host owns the per-(connection, session)
+		// dedupe across every attachment, so a connection attached to several worker sessions
+		// hears one notice per inventory change on either runtime (#3198 review, L5).
+		exchange((signal) => ({
+			type: "loaded_surfaces",
+			...(previous === undefined ? {} : { previous }),
+			digest,
+			signal,
+		}));
 	}
 	override enqueue(_sessionId: string, record: object): boolean {
 		if (Buffer.byteLength(JSON.stringify(record)) > SESSION_WORKER_LIMITS.outputBytes)
@@ -130,13 +143,15 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 	switch (message.type) {
 		case "prepare": {
 			if (prepared) throw new Error("Session worker already prepared");
+			// Resolved here, not on the host loop, which never inspects caller paths (senpi#2898).
+			const profile = resolveMovedProfile(message.profile);
 			const path =
-				message.profile.sessionPath ??
+				profile.sessionPath ??
 				join(
-					getDefaultSessionDir(message.profile.cwd, message.configuration.agentDir),
+					getDefaultSessionDir(profile.cwd, message.configuration.agentDir),
 					`${new Date().toISOString().replace(/[:.]/g, "-")}_${randomUUID()}.jsonl`,
 				);
-			prepared = { ...message, profile: { ...message.profile, sessionPath: canonicalSessionPath(path) } };
+			prepared = { ...message, profile: { ...profile, sessionPath: canonicalSessionPath(path) } };
 			send({ type: "prepared", request: message.request, sessionPath: canonicalSessionPath(path) });
 			return;
 		}
@@ -148,7 +163,7 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			);
 			const factory = createCliRuntimeFactory(prepared.configuration, { startupSettingsManager });
 			initTheme(startupSettingsManager.getTheme(), false);
-			registry = new RpcSessionRegistry({ agentDir: prepared.configuration.agentDir, createRuntime: factory });
+			registry = createSessionWorkerRegistry(prepared.configuration.agentDir, factory);
 			const opened = await registry.openSession(prepared.profile);
 			entry = registry.getForCommand(opened.sessionId, "open_session");
 			send({ type: "ready", request: message.request, snapshot: snapshot() });
@@ -206,6 +221,11 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 		case "browser_engine":
 			if (!entry?.runtime) throw new Error("session_closing");
 			entry.runtime.setBrowserEngine(message.engine);
+			send({ type: "result", request: message.request });
+			return;
+		case "permission_preset":
+			if (!entry?.runtime) throw new Error("session_closing");
+			entry.runtime.setPermissionPreset(message.preset);
 			send({ type: "result", request: message.request });
 			return;
 		case "cancel_ui":

@@ -75,7 +75,9 @@ A config file replaces the free default completely: senpi uses only the provider
 | `nativeModel` | The model native search runs on; see [Choosing the model native search runs on](#choosing-the-model-native-search-runs-on). |
 | `providers[]` | The providers to use. Each entry takes `provider`, and optionally `id`, `apiKey`, `baseUrl`, `maxResults`, `timeoutMs`, `priority`, `weight`, `allowedDomains` or `blockedDomains`. |
 
-Free engines you can list without a key: `duckduckgo-html`, `exa-mcp`, `startpage`, `mojeek`, `ecosia`, `google-html`, and `searxng`. Providers that need `apiKey`: `exa`, `tavily`, `brave`, `serper`, `serpdive`, `kagi`, `perplexity`, `z-ai`, `xai`, `kimi`, `deepseek`, `anthropic`, `openai` (plus `searchEngineId` for `google-cse`). `chatgpt-subscription` and `google` use your senpi login when `apiKey` is omitted; see [Listing login-based routes](#listing-login-based-routes).
+Free engines you can list without a key: `duckduckgo-html`, `exa-mcp`, `startpage`, `mojeek`, `ecosia`, `google-html`, `searxng`, and `keenable`. Providers that need `apiKey`: `exa`, `tavily`, `brave`, `serper`, `serpdive`, `kagi`, `perplexity`, `z-ai`, `xai`, `kimi`, `deepseek`, `anthropic`, `openai` (plus `searchEngineId` for `google-cse`). `chatgpt-subscription` and `google` use your senpi login when `apiKey` is omitted; see [Listing login-based routes](#listing-login-based-routes).
+
+`keenable` ([Keenable](https://keenable.ai)) takes an `apiKey` but also works without one: a keyed entry posts to `https://api.keenable.ai/v1/search` with `X-API-Key`, while a keyless entry uses the shared public tier at `/v1/search/public` and identifies itself with an `X-Keenable-Title` app header instead of a credential. Because the public tier is a per-IP pool, `keenable` is never in the no-config default chain — list it explicitly in `websearch.json`. A single `allowedDomains` entry maps to Keenable's native `site` filter; multiple or blocked domains stay `site:`/`-site:` terms in the query.
 
 ## Limit or turn off the free engines
 
@@ -137,7 +139,9 @@ With `auto` on (the default), the model you are chatting with still searches thr
 
 ## Native (hosted) search
 
-When `auto` is `true` (the default), senpi puts a native entry in front of your configured providers, or in front of the free chain when there is no config file. That entry calls the hosted web search of the session's own provider (Anthropic Messages or OpenAI Responses compatible endpoints, the ChatGPT subscription, xAI, DeepSeek, Perplexity, Z.AI, Kimi Code) with the session's own credential. Google Search grounding is never added this way; it is opt-in (see below). Sessions on the first-party Anthropic and OpenAI APIs instead get the provider's server-side search tool in the main request, and `web_search` stays out of the way there.
+When `auto` is `true` (the default), senpi puts a native entry in front of your configured providers, or in front of the free chain when there is no config file. That entry calls the hosted web search of the session's own provider with the session's own credential. Main-request server search takes precedence on enabled routes: direct Anthropic/Claude OAuth and OpenAI/Azure remain default-on, unchanged from main; the live-verified ChatGPT subscription is default-on (except Spark). Compatible gateways including ccapi and z.ai's GLM coding-plan Anthropic endpoint, plus xAI, Gemini 2/3, OpenRouter, Moonshot PAYG and Z.AI PAYG require explicit route compatibility opt-in. See [In-Turn Web Search](providers.md#in-turn-web-search) for exact flags and verification status. Standalone summaries, titles and default projections exclude only server tools. Cache-friendly compaction preserves the original main-turn hook and tools/include prefix.
+
+A search-specific failure is remembered for the session/model, so later prompts do not repeat a rejected native request. A new session clears that failure. On an enabled server-search route, a different `nativeModel` setting is ignored: both main-request search and its standalone fallback retain the session model. The cheaper auxiliary-model setting below applies only to routes without an enabled server tool.
 
 ### Choosing the model native search runs on
 

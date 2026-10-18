@@ -709,7 +709,7 @@ The `systemPromptOptions` field gives extensions access to the same structured d
 
 Inside `before_agent_start`, `event.systemPrompt` and `ctx.getSystemPrompt()` both reflect the chained system prompt as of the current handler. Later `before_agent_start` handlers can still modify it again.
 
-`event.preview` is `true` when senpi composes the next turn's system prompt before any user prompt exists: the session-start prompt-cache prewarm sends the first turn's prefix ahead of time, and `ctx.getPromptCachePrefixRequest()` returns that prefix to extensions. In a preview `event.prompt` is empty and no turn follows.
+`event.preview` is `true` when senpi composes the next turn's system prompt before any user prompt exists. Prompt-cache prewarm sends that prefix only after the first real composer activity and only when `promptCache.keepAlive.enabled` is `true` (default `false`, so prewarm is off by default). Session start, resume, fork, reload, and extension-injected text never trigger prewarm. `ctx.getPromptCachePrefixRequest()` also returns this prefix to extensions. In a preview `event.prompt` is empty and no turn follows.
 
 A preview only reaches handlers that opt in with `{ previewSafe: true }`:
 
@@ -780,7 +780,7 @@ These additive events use `pi.events.on(...)`, not `pi.on(...)`:
 
 Track blocked IDs as a set, not a boolean: requests can overlap. Each question registration emits one active/inactive pair, including cancellation, timeout, abort and orphaned restart recovery. A dangling disk call recovered after restart gets one new runtime registration; its persisted recovery marker prevents registering it again. Reconnect replay and UI hydration reuse an existing registration and do not repeat arrival events or the terminal bell. The builtin owns question events, so UI integrations must not emit a second pair when resolving the question.
 
-Question registration also retains an `ask-user:question` custom session entry containing `{ requestId, headers }`. This is display-only metadata, excluded from model context, for labeling compact answer chips during replay; it is not another bus event. The model-facing `[Answer to question ...]` message stays unchanged.
+Question registration also retains an `ask-user:question` custom session entry containing `{ requestId, headers }`. This is display-only metadata, excluded from model context, for labeling compact answer chips during replay; it is not another bus event. The model-facing `[Answer to question ...]` message keeps the frame and the answer's structure in its first text block; each of the user's own words (a comment, a typed answer) follows after its own label block (`[The user's comment for question <id>]`). A blocking answer keeps its words in the tool result's `details.userWords` (`{ label, text }[]`), and the session's message conversion sends them as a user message after that batch's tool results instead of inside the result. A tool of your own can do the same by setting `details.userWords`.
 
 `resolvedBy` is `local_ui` for a terminal answer, `rpc_connection` for an RPC client answer, and
 `control_endpoint` for an answer through the terminal control endpoint. It is absent for a question
@@ -868,6 +868,10 @@ pi.on("tool_execution_end", async (event, ctx) => {
 
 Fired before each LLM call. Modify messages non-destructively. See [Session Format](session-format.md) for message types.
 
+`event.source` is `"agent"` for the live agent request and `"projection"` for `prepareProviderRequest` calls, including summarizer inputs. Projections must not advance state belonging to the live request, even when their messages match the branch. The session journal can lag a live request, so transcript equality is not a reliable substitute for this marker.
+
+`ctx.prepareProviderRequest(messages, excludeExtensionPath?, options?)` returns the projected context and its payload transform. In this release the transform excludes server-search tools by default, while retaining client function tools such as `web_search`. Call `ctx.prepareProviderRequest(messages, undefined, { allowServerSearch: true })` when a request must mirror the main turn's native tools and include fields, as keepalive does. Cache-friendly compaction retains the original main-turn payload hook separately; standalone summaries and session titles exclude server search.
+
 ```typescript
 pi.on("context", async (event, ctx) => {
   // event.messages - deep copy, safe to modify
@@ -877,6 +881,17 @@ pi.on("context", async (event, ctx) => {
 ```
 
 `context` handlers see conversation messages without the prompt and tool system messages; senpi restores that state after they run, so filtering or slicing messages no longer drops the system prompt or tool declarations.
+
+By default `event.messages` is a deep copy of the live transcript, so in-place edits never reach the session. A handler that never mutates message objects in place can declare it and skip that copy:
+
+```typescript
+pi.on("context", (event, ctx) => {
+  // Reads only; returns new lists/objects instead of editing in place
+  return { messages: event.messages.filter(m => keep(m)) };
+}, { mutatesMessages: false });
+```
+
+`mutatesMessages: false` is an opt-in performance declaration: the handler may return a new list and new message objects, but must never assign to a property of a message it received, or of anything nested in one. When every `context` and `context_with_system` handler about to run declares it, senpi shares the live transcript instead of cloning the whole context each turn; while any handler has not declared it, the deep copy stays for everyone.
 
 #### context_with_system
 
@@ -888,6 +903,8 @@ pi.on("context_with_system", async (event, ctx) => {
   return { messages: event.messages };
 });
 ```
+
+The same `{ mutatesMessages: false }` registration option is honored here; one undeclared handler of either hook keeps the per-turn deep copy for the whole pipeline.
 
 #### provider_stream_event
 
@@ -1233,7 +1250,8 @@ For `tool_call`, this state is synchronized through the current assistant messag
 
 ```typescript
 ctx.sessionManager.getEntries()             // All entries
-ctx.sessionManager.getBranch()              // Current branch
+ctx.sessionManager.getBranch()              // Current branch (from the latest compaction window once the session compacted)
+ctx.sessionManager.getFullBranch()          // Current branch over the whole history, read from the session file
 ctx.sessionManager.buildContextEntries()    // Active branch entries with compaction applied
 ctx.sessionManager.getLeafId()              // Current leaf entry ID
 ```
@@ -1243,6 +1261,12 @@ ctx.sessionManager.getLeafId()              // Current leaf entry ID
 Optional read-only getter for the absolute path to the current session's authoritative goal-store file. The host resolves it from the session manager and `ctx.cwd`; reading it performs no file creation. Persisted sessions honor session-directory overrides, while in-memory sessions use a cwd-hashed `extensions/goal/no-session/<hash>` bucket under the agent state directory. Do not derive it from `getSessionFile()`.
 
 Shell tools and eval kernels expose this value as `PI_GOAL_STORE_FILE` and `ctx.cwd` as `PI_SESSION_CWD`. Hand-built contexts and older hosts may omit the getter, in which case `PI_GOAL_STORE_FILE` is unset.
+
+### ctx.onUserActivity()
+
+Optional subscription-only hook for host-authenticated activity. `ctx.onUserActivity(listener)` calls a synchronous listener with `"draft"` for actual terminal composer edits or `"prompt"` for user-originated prompt, steer, or follow-up admission, including RPC. It returns an unsubscribe function and is also removed when the extension generation retires. The host owns the emitter; `pi.events.emit("user_activity", ...)` cannot invoke this hook. Extension `pasteToEditor`, programmatic draft restoration, and lifecycle events do not publish activity.
+
+Cache prewarm consumes the first activity per session generation. It is opt-in via `promptCache.keepAlive.enabled` (default `false`): a first draft edit may prewarm, while prompt admission uses the real request instead of issuing an extra warm call. This one-shot policy does not gate the existing idle keep-alive loop after completed turns.
 
 ### ctx.modelRegistry / ctx.model / ctx.thinkingLevel / ctx.scopedModels
 
@@ -1313,6 +1337,10 @@ if (usage && usage.tokens > 100_000) {
   // ...
 }
 ```
+
+### ctx.getCompactionModel()
+
+Optional on hosts that expose session-owned summarization routing. Returns the current session model while its account is usable, preserving builtin compaction behavior even when core compaction has a model override. For a spent account, it tries the held switch target, the configured summary override, then an authenticated alternate with enough context capacity for the active transcript and reserved output. It does not change the active session selection and throws an account-limit error when no usable summary model is available.
 
 ### ctx.compact()
 
@@ -1684,7 +1712,7 @@ runtime's steering or follow-up queue like the user's queued input. The protocol
 |---|---|---|
 | `registerControlEndpoint({ inboxDir, drain, isSessionReferenced? })` | `Promise<SessionControlRegistration>` | POSIX interactive session: binds the `tui` control endpoint and answers `{ status: "registered", socket, dispose }`. On a multi-session host with a public socket it binds nothing and `socket` is the host's. Otherwise `{ status: "unsupported", reason: "unsupported_platform" \| "unsupported_mode" }`, or `{ status: "failed", reason }` when a registration step failed. `drain(event)` runs on every [`session_control_wake`](#session_control_wake) edge and answers `{ admitted: [{ delivery_id, kind }] }`. `inboxDir` is created 0700 and its entry creations and deletions wake the drain. At clean exit a header-only session file is removed unless `isSessionReferenced()` answers `true`. |
 | `admissionGate()` | `{ can_admit, hold_reason?, editor_revision, turn_epoch }` | Read-only pre-check; `hold_reason` is `draft` while the user composes or their submission is still on its way into the runtime. |
-| `admitExternalMessage({ delivery_id, text, deliverAs, expected_turn_id? })` | `{ kind, turn_epoch }` | Decides and acts in one synchronous call. `kind` is `started`, `queued`, `steered`, `turn_conflict` (stale epoch, or a steer without one), `held_draft` (nothing enqueued; retry on the next wake) or `already_admitted` (also for a delivery whose entry the file refused, until the run that refused it has settled and the file's last write succeeded). The delivery becomes a `custom` entry `session_control_delivery` whose `details.delivery_id` proves it was applied. Throws once a host started handing the session over (`release_session`). |
+| `admitExternalMessage({ delivery_id, text, deliverAs, expected_turn_id?, sender?, display_text?, whenIdle? })` | `{ kind, turn_epoch }` | Decides and acts in one synchronous call. `whenIdle` (`start`, the default, or `queue`) is what an idle session does with it: start a turn, or hold it (`queued`) in the `deliverAs` queue for the next turn. `kind` is `started`, `queued`, `steered`, `turn_conflict` (stale epoch, or a steer without one), `held_draft` (nothing enqueued; retry on the next wake) or `already_admitted` (also for a delivery whose entry the file refused, until the run that refused it has settled and the file's last write succeeded). The delivery becomes a `custom` entry `session_control_delivery` whose `details.delivery_id` proves it was applied. Throws once a host started handing the session over (`release_session`). `sender` (`{ kind: "agent", session_id, name? }`, `{ kind: "command_line", user? }` or `{ kind: "external", platform, author? }`) and `display_text` (the message as written) go to the entry's `details`: the terminal labels the message by its sender over `display_text`, while the model reads `text`. |
 | `listAdmittedDeliveries()` | `{ pending, emitted, failed? }` | The process-lifetime ledger: `pending` is held by the runtime, `emitted` has its transcript entry written, `failed` (present only when non-empty, `[{ delivery_id, error }]`) had its entry refused by the session file: no longer held, still with its sender, admissible again once the run that refused it has settled and the file's last write succeeded. |
 | `persistHeaderNow()` | `Promise<void>` | Writes the session header now, so the session id is durable before anything exposes it. |
 
@@ -1995,15 +2023,25 @@ pi.sendUserMessage("/review src/index.ts", { expandPromptTemplates: true });
   - `"followUp"` - Waits for agent to finish all tools
 - `expandPromptTemplates` - Dispatch extension commands and expand skill commands and prompt templates. Defaults to `false`.
 
+A content array with several text parts becomes one user message whose text parts stay separate text blocks; `input` handlers see them joined by a newline, and a handler that rewrites the text turns them into one block. A built-in later ask-user answer (`[Answer to question <id>]` frame plus labelled word blocks) is never rewritten, so its frame and the user's words stay in separate blocks.
+
 When not streaming, the message is sent immediately and triggers a new turn; from a `session_start` handler, that turn starts once every extension's `session_start` handler has returned. When streaming without `deliverAs`, throws an error.
 
 From a command handler, send the text before the handler returns: messages another session delivers are held behind the user's own input only until the command's handler settles, so text sent after that (a detached timer, a background task) can land behind a delivered message.
 
 See [send-user-message.ts](../examples/extensions/send-user-message.ts) for a complete example.
 
-### pi.appendEntry(customType, data?)
+### pi.appendEntry(customType, data?, options?)
 
 Persist extension data. Custom entries do NOT participate in LLM context. In interactive mode, they can also render inside the chat transcript when paired with `pi.registerEntryRenderer()`.
+
+Pass `{ startupBookkeeping: true }` for an entry your extension writes at session start without any user action (a scan record, an environment fingerprint). A session that closes without a conversation then leaves no file behind if it holds only setup entries and such bookkeeping. Leave the option unset for anything a user created or anything billed: an unmarked entry keeps the session file.
+
+```typescript
+pi.on("session_start", () => {
+  pi.appendEntry("my-ext.scan", { at: Date.now() }, { startupBookkeeping: true });
+});
+```
 
 ```typescript
 pi.appendEntry("my-state", { count: 42 });
@@ -2219,6 +2257,18 @@ pi.registerFlag("plan", {
 if (pi.getFlag("plan")) {
   // Plan mode enabled
 }
+```
+
+### pi.getPermissionPreset()
+
+The permission preset the built-in permission system enforces for this session right now (`"full-access"`, `"workspace"`, `"accept-edits"`, `"auto"`, `"read-only"` or `"ask"`). It resolves like the permission system does: the `--permission-preset` flag, then project and global settings (with the same untrusted-project handling), then the `full-access` default. A preset flag changed on a live session is applied before the read. It returns `undefined` when the permission system is not running for the session, its setup failed, or the session is not bound yet (during extension loading).
+
+```typescript
+pi.on("tool_call", () => {
+  if (pi.getPermissionPreset() === "full-access") {
+    // Nothing will prompt for permission in this session.
+  }
+});
 ```
 
 ### pi.exec(command, args, options?)

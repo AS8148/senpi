@@ -1,11 +1,12 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { getAgentDir } from "../../config.ts";
-import { readProcessStartTime } from "../app-server/daemon/process.ts";
+import { processIsLive, readProcessStartTime } from "../../utils/process-identity.ts";
 import {
 	createDaemonDirectories,
 	createHostDaemonPaths,
 	ensureEndpointIdentity,
+	generationPaths,
 	type HostDaemonPaths,
 	sameEndpoint,
 } from "./host-daemon-paths.ts";
@@ -15,11 +16,20 @@ import {
 	readHostRegistration,
 	writtenByThisProcess,
 } from "./host-daemon-registration.ts";
+import { claimHostOwner } from "./host-daemon-state.ts";
 import { decideHostAction, type HostDecision, HostEnsureRefusedError, type HostProtocolInfo } from "./host-decision.ts";
 import { ensureClient } from "./host-ensure-client.ts";
+import { publicEndpointAccepts, refuseIfStalled, unregisteredEndpointHeld } from "./host-ensure-liveness.ts";
 import { hostEnsureLockOptions, hostEnsureLockTarget } from "./host-ensure-lock.ts";
 import { appendStderr, DEFAULT_READINESS_TIMEOUT_MS, DEFAULT_STOP_TIMEOUT_MS, startHost } from "./host-ensure-start.ts";
-import { matchesPidFileOrUnknown, SIGKILL_GRACE_MS, stopManagedHost } from "./host-ensure-stop.ts";
+import {
+	delay,
+	ensureSender,
+	matchesPidFileOrUnknown,
+	resolvePidFileOwnership,
+	STOP_WAIT_BUDGET_MS,
+	stopManagedHost,
+} from "./host-ensure-stop.ts";
 import type { EnsuredHost, EnsureHostOptions } from "./host-ensure-types.ts";
 import { scheduleOpportunisticHostGc } from "./host-gc-pass.ts";
 import { HANDOFF_LOCK_HOLD_MS, handoffHostLocked } from "./host-handoff.ts";
@@ -28,8 +38,8 @@ import { retireIdleLegacyHost } from "./host-legacy.ts";
 import type { HostColdStart, HostLifecyclePolicyInput } from "./host-lifecycle.ts";
 import { holdProtocolInfo, probeSocketReachable } from "./host-probe.ts";
 import { isHostGenerationProcess } from "./host-process-role.ts";
+import { hostChildAlive } from "./host-stalled-evidence.ts";
 import { acquireOwnershipSafeLock } from "./ownership-safe-lock.ts";
-import { statSocketIdentity } from "./socket-ownership.ts";
 
 export {
 	createHostDaemonPaths,
@@ -48,7 +58,7 @@ const EXISTING_HOST_PROBE_TIMEOUT_MS = 10_000;
 /**
  * A lock waiter must outlast the longest critical section a holder can run:
  * probing an existing host, then either stopping an incompatible one (SIGTERM wait
- * plus the SIGKILL grace) and spawning the replacement and waiting for it to answer,
+ * plus the SIGKILL grace, or a supervisor's reported stall wait) and spawning the replacement and waiting for it to answer,
  * or handing it off (an upgrade) - which is also as long as a forced handoff holds it.
  * Each SQLite busy wait stays short because it blocks the event loop; this
  * cumulative budget is what covers the whole section, with headroom for a slow
@@ -57,7 +67,7 @@ const EXISTING_HOST_PROBE_TIMEOUT_MS = 10_000;
  */
 const ENSURE_LOCK_WAIT_MS =
 	EXISTING_HOST_PROBE_TIMEOUT_MS +
-	Math.max(DEFAULT_STOP_TIMEOUT_MS + SIGKILL_GRACE_MS + DEFAULT_READINESS_TIMEOUT_MS, HANDOFF_LOCK_HOLD_MS) +
+	Math.max(STOP_WAIT_BUDGET_MS + DEFAULT_READINESS_TIMEOUT_MS, HANDOFF_LOCK_HOLD_MS) +
 	10_000;
 const lockOptions = hostEnsureLockOptions(ENSURE_LOCK_WAIT_MS);
 export async function ensureHost(options: EnsureHostOptions): Promise<EnsuredHost> {
@@ -93,6 +103,7 @@ async function ensureHostLocked(
 	paths: HostDaemonPaths,
 	socket: string,
 	options: EnsureHostOptions,
+	stopDeadline = Date.now() + Math.min(options.stoppingTimeoutMs ?? STOP_WAIT_BUDGET_MS, STOP_WAIT_BUDGET_MS),
 ): Promise<EnsuredHost> {
 	// Under the lock, so a torn or foreign `endpoint.json` is repaired rather than left unaddressable.
 	await ensureEndpointIdentity(paths, socket, { repair: true });
@@ -102,13 +113,52 @@ async function ensureHostLocked(
 	// makes that structural, and the field stays as the second guard for a directory that was
 	// somehow reused: a second socket must never read the first socket's daemon as its own.
 	const registeredHere = registersSocket(registered, socket);
+	if (
+		registeredHere &&
+		registered &&
+		!processIsLive(registered.record.pid) &&
+		(await hostChildAlive(generationPaths(paths, registered.instanceId)))
+	)
+		throw new HostEnsureRefusedError(socket, "host_stalled", undefined);
 	// A reusable host is held from the connection that proved it compatible, never re-probed later.
-	const held = await holdProtocolInfo(socket, EXISTING_HOST_PROBE_TIMEOUT_MS);
+	const held = await holdProtocolInfo(
+		socket,
+		testOptions?.existingHostProbeTimeoutMs ?? EXISTING_HOST_PROBE_TIMEOUT_MS,
+	);
 	const protocol = held?.info;
+	if (protocol?.lifecycle === "stopping") {
+		held?.hold.release();
+		// A typed stop is not permission to signal or overwrite a foreign generation.
+		// Wait for BOTH identities to be gone, then re-run discovery under this lock.
+		if (!registeredHere || !registered || registered.instanceId !== protocol.instanceId)
+			throw new HostEnsureRefusedError(socket, "host_stopping", protocol, "no matching registered generation");
+		const generation = generationPaths(paths, registered.instanceId);
+		for (;;) {
+			if (
+				(await resolvePidFileOwnership(registered.record, testOptions?.readProcessStartTime)) === "gone" &&
+				!(await hostChildAlive(generation))
+			)
+				return ensureHostLocked(paths, socket, options, stopDeadline);
+			const remaining = stopDeadline - Date.now();
+			if (remaining <= 0)
+				throw new HostEnsureRefusedError(socket, "host_stopping", protocol, "generation exit exceeded stop budget");
+			await delay(Math.min(50, remaining));
+		}
+	}
 	const startedByUs =
 		registeredHere && (await writtenByThisProcess(registered?.writer, testOptions?.readProcessStartTime));
 	const attachedPid = registeredHere ? (registered?.record.pid ?? 0) : 0;
 	const decision = decide(options, startedByUs, protocol);
+	if (options.owner && held && (decision.action === "reuse" || decision.action === "handoff")) {
+		try {
+			if (!registeredHere || !registered || registered.instanceId !== held.info.instanceId)
+				throw new Error("RPC host has no matching registered owner-lifetime generation");
+			await claimHostOwner(generationPaths(paths, registered.instanceId).dir);
+		} catch (cause) {
+			held.hold.release();
+			throw cause;
+		}
+	}
 	if (decision.action === "reuse" && held) {
 		// A compatible socket is attachable even when another client surface
 		// started it. Only hosts we spawned are eligible for lifecycle management.
@@ -121,7 +171,13 @@ async function ensureHostLocked(
 		case "refuse":
 			throw new HostEnsureRefusedError(socket, decision.reason, protocol);
 		case "handoff":
-			return upgradeGeneration(paths, socket, options, attachedPid);
+			try {
+				return await upgradeGeneration(paths, socket, options, attachedPid);
+			} catch (cause) {
+				if (cause instanceof HostEnsureRefusedError && cause.reason === "host_stopping")
+					return ensureHostLocked(paths, socket, options, stopDeadline);
+				throw cause;
+			}
 		case "start":
 			break;
 		default:
@@ -136,6 +192,7 @@ async function ensureHostLocked(
 			// I1: the socket is silent, but the process behind it is alive. Only the process that WROTE
 			// this record may end it - anyone else refuses rather than signalling somebody else's host.
 			if (await publicEndpointAccepts(socket)) throw new HostEnsureRefusedError(socket, "foreign_writer", protocol);
+			await refuseIfStalled(paths, registered.instanceId, socket, protocol);
 			// A foreign record whose public endpoint accepts NOTHING names a generation nobody can reach:
 			// its entry was replaced (so it is already draining, #1893) or removed, or a dead listener
 			// left the entry behind. Refusing here locked every client out until that process happened
@@ -150,46 +207,40 @@ async function ensureHostLocked(
 			if (await probeSocketReachable(socket, EXISTING_HOST_PROBE_TIMEOUT_MS)) {
 				throw new HostEnsureRefusedError(socket, "host_busy", protocol);
 			}
-			await stopManagedHost(registered.record, testOptions?.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS, probe);
+			await refuseIfStalled(paths, registered.instanceId, socket, protocol);
+			await stopManagedHost(
+				registered.record,
+				testOptions?.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS,
+				{
+					daemonDir: paths.dir,
+					generation: generationPaths(paths, registered.instanceId),
+					instanceId: registered.instanceId,
+					sender: ensureSender(),
+					reason: "replace_unreachable",
+				},
+				probe,
+			);
 		}
 	}
 	// A host from before this layout registered itself in the FLAT directory. Its files are another
 	// process's state: never read as ours, never removed. While it is alive this ensure never starts
 	// beside it: an idle one is drained and waited out (#2423), a busy or unprovable one is refused.
-	const legacyRefusal = await retireIdleLegacyHost(
-		paths,
-		probe,
-		testOptions?.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS,
-	);
+	const legacyRefusal = await retireIdleLegacyHost(paths, probe, testOptions?.stopTimeoutMs);
 	if (legacyRefusal !== undefined) throw new HostEnsureRefusedError(socket, "legacy_host", protocol, legacyRefusal);
 	if (stranded !== undefined) return startHost(paths, socket, options, stranded.generation + 1);
+	// Something no registration names still ACCEPTS at the public path and did not answer the probe.
+	// A start can only lose the bind ("address already in use") and exit without a reason, and the
+	// holder is not ours to remove (I1): refuse with the reason instead. A stale entry nobody listens
+	// behind reads as free here, so the start below still replaces it.
+	if (await unregisteredEndpointHeld(socket))
+		throw new HostEnsureRefusedError(
+			socket,
+			"endpoint_occupied",
+			protocol,
+			"no host registration names this socket and its listener did not answer get_protocol_info",
+		);
 	if (registeredHere) await clearHostRegistration(paths);
 	return startHost(paths, socket, options);
-}
-
-/**
- * Only the connect matters here, never an answer: the kernel completes it from the listen backlog
- * without the host's event loop, so a live owner under load still accepts within this budget.
- */
-const FOREIGN_ENDPOINT_PROBE_TIMEOUT_MS = 2_000;
-
-/**
- * Whether SOMETHING still accepts connections at the public path - the one fact that says a
- * registered process may still own the endpoint. A missing entry and an entry nobody listens
- * behind (connection refused) both answer no; an accepted connection, however silent, answers yes.
- * A named pipe has no entry to lose and an abstract socket has no path, so both read as owned;
- * so does an entry this process cannot stat, because an owner that cannot be ruled out is one
- * this ensure must not bind over.
- */
-async function publicEndpointAccepts(socket: string): Promise<boolean> {
-	if (process.platform === "win32" || socket.startsWith("\0")) return true;
-	const entry = await statSocketIdentity(socket).then(
-		(identity) => (identity === undefined ? "absent" : "present"),
-		() => "unknown",
-	);
-	if (entry === "absent") return false;
-	if (entry === "unknown") return true;
-	return probeSocketReachable(socket, FOREIGN_ENDPOINT_PROBE_TIMEOUT_MS);
 }
 
 /** `fallback` belongs to clients that can live without a host; an ensure must produce one or fail. */
@@ -239,6 +290,10 @@ async function upgradeGeneration(
 async function holdEnsured(socket: string): Promise<() => void> {
 	const held = await holdProtocolInfo(socket, EXISTING_HOST_PROBE_TIMEOUT_MS);
 	if (!held) throw new Error(`RPC socket host at ${socket} stopped answering before this ensure could hold it`);
+	if (held.info.lifecycle === "stopping") {
+		held.hold.release();
+		throw new HostEnsureRefusedError(socket, "host_stopping", held.info);
+	}
 	return held.hold.release;
 }
 

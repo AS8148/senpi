@@ -3,6 +3,7 @@ import { Worker } from "node:worker_threads";
 import { isBunBinary } from "../../config.ts";
 import type { BrowserEngine } from "../../core/browser-engine.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
+import { ownProcessStartedAtMs } from "../../core/extensions/builtin/terminal/process-identity.ts";
 import { createWebViewBroker } from "../../core/webview/webview-broker.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import type { RpcConnectionOptions } from "./connection-handler.ts";
@@ -21,10 +22,10 @@ import { acknowledge, acknowledgeGrant } from "./session-worker-signals.ts";
 
 /** Lifecycle hooks the owning registry installs on every worker it allocates. */
 export interface SessionWorkerCallbacks {
-	reserve: (path: string) => SessionWriteGrant;
+	reserve: (path: string) => SessionWriteGrant | Promise<SessionWriteGrant>;
 	/** Every snapshot republishes which paths this worker still writes. */
-	reconcile: (livePaths: readonly string[]) => void;
-	exit: () => void;
+	reconcile: (livePaths: readonly string[]) => void | Promise<void>;
+	exit: () => void | Promise<void>;
 	failure: (error: string) => void;
 }
 
@@ -42,9 +43,13 @@ export class SessionWorkerClient {
 		isBunBinary
 			? fileURLToPath(new URL(compiledWorkerEntry, import.meta.url)).replaceAll("\\", "/")
 			: new URL(import.meta.url.endsWith(".ts") ? "./session-worker.ts" : "./session-worker.js", import.meta.url),
-		this.webviewBroker
-			? { workerData: { webviewBroker: this.webviewBroker.port }, transferList: [this.webviewBroker.port] }
-			: {},
+		{
+			workerData: {
+				hostProcessStartedAtMs: ownProcessStartedAtMs(),
+				...(this.webviewBroker ? { webviewBroker: this.webviewBroker.port } : {}),
+			},
+			...(this.webviewBroker ? { transferList: [this.webviewBroker.port] } : {}),
+		},
 	);
 	readonly exited: Promise<void>;
 	snapshot?: WorkerSnapshot;
@@ -68,7 +73,7 @@ export class SessionWorkerClient {
 
 	constructor(callbacks: SessionWorkerCallbacks) {
 		this.callbacks = callbacks;
-		this.exited = new Promise((resolve) => {
+		this.exited = new Promise((resolve, reject) => {
 			this.worker.once("exit", () => {
 				if (!this.stopped && !this.closeTimer) this.fail("session_worker_exited");
 				this.stopped = true;
@@ -76,9 +81,16 @@ export class SessionWorkerClient {
 				this.requests.close(new Error("session_worker_exited"));
 				void this.webviewBroker?.dispose();
 				this.listeners.clear();
-				callbacks.exit();
-				this.publishTerminalFailure();
-				resolve();
+				const released = callbacks.exit();
+				if (released)
+					void released.then(() => {
+						this.publishTerminalFailure();
+						resolve();
+					}, reject);
+				else {
+					this.publishTerminalFailure();
+					resolve();
+				}
 			});
 		});
 		this.worker.on("message", (message: SessionWorkerToHost) => this.receive(message));
@@ -101,6 +113,12 @@ export class SessionWorkerClient {
 	async setBrowserEngine(engine: BrowserEngine): Promise<void> {
 		const result = await this.request({ type: "browser_engine", engine });
 		if (result.type !== "result") throw new Error("Invalid worker browser_engine response");
+	}
+
+	/** Moves the worker's live session to another permission preset (a later `open_session.permissionPreset`). */
+	async setPermissionPreset(preset: string): Promise<void> {
+		const result = await this.request({ type: "permission_preset", preset });
+		if (result.type !== "result") throw new Error("Invalid worker permission_preset response");
 	}
 
 	async commit(): Promise<WorkerSnapshot> {
@@ -187,16 +205,30 @@ export class SessionWorkerClient {
 			case "ready":
 			case "result": {
 				this.requests.receive(message);
+				if (this.snapshot)
+					void Promise.resolve(this.callbacks.reconcile(this.snapshot.liveSessionPaths)).catch(() =>
+						this.fail("session_claim_reconcile_failed"),
+					);
 				return;
 			}
 			case "reserve":
-				acknowledgeGrant(message.signal, this.callbacks.reserve(message.path));
+				void Promise.resolve(this.callbacks.reserve(message.path)).then(
+					(grant) => acknowledgeGrant(message.signal, this.stopped ? "conflict" : grant),
+					() => acknowledgeGrant(message.signal, "conflict"),
+				);
 				return;
 			case "snapshot":
 				this.snapshot = message.snapshot;
-				this.callbacks.reconcile(message.snapshot.liveSessionPaths);
-				acknowledge(message.signal, true);
-				if (message.settled) for (const listener of [...this.listeners]) listener();
+				void Promise.resolve(this.callbacks.reconcile(message.snapshot.liveSessionPaths)).then(
+					() => {
+						acknowledge(message.signal, !this.stopped);
+						if (message.settled) for (const listener of [...this.listeners]) listener();
+					},
+					() => {
+						acknowledge(message.signal, false);
+						this.fail("session_claim_reconcile_failed");
+					},
+				);
 				return;
 			case "control_done":
 				this.cancelUiPending = false;
@@ -211,7 +243,6 @@ export class SessionWorkerClient {
 				// Identity and activity commit before publication; clients may attach or disconnect on that event.
 				if (message.snapshot) {
 					this.snapshot = message.snapshot;
-					this.callbacks.reconcile(message.snapshot.liveSessionPaths);
 				} else if (this.snapshot)
 					this.snapshot = {
 						...this.snapshot,
@@ -226,8 +257,11 @@ export class SessionWorkerClient {
 					}
 					return writer.waitForSessionBackpressure(sessionId);
 				};
-				const consumed =
-					message.connection === undefined ? enqueue() : writer.withConnection(message.connection, enqueue);
+				const consumed = Promise.resolve(
+					message.snapshot ? this.callbacks.reconcile(message.snapshot.liveSessionPaths) : undefined,
+				).then(() =>
+					message.connection === undefined ? enqueue() : writer.withConnection(message.connection, enqueue),
+				);
 				void consumed.then(
 					() => acknowledge(message.signal, true),
 					(cause: unknown) => {
@@ -241,6 +275,18 @@ export class SessionWorkerClient {
 				this.options.clientInfo?.setCapabilities(message.connection, message.capabilities);
 				acknowledge(message.signal, true);
 				return;
+			case "loaded_surfaces": {
+				// The host owns the per-(connection, session) dedupe on both runtimes (#3198 review, L5).
+				const writer = this.writer;
+				const sessionId = this.sessionId;
+				if (!writer || !sessionId || this.stopped) {
+					acknowledge(message.signal, false);
+					return;
+				}
+				writer.publishLoadedSurfacesChanged(sessionId, message.previous, message.digest);
+				acknowledge(message.signal, true);
+				return;
+			}
 			case "request_close":
 				this.requestClose?.();
 				return;

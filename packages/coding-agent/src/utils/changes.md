@@ -1,5 +1,67 @@
 # changes
 
+## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
+
+### What changed
+
+Move the shared PID identity, start-time parsing, liveness and validated signaling implementation unchanged out of the removed app-server directory. Native RPC and terminals remain its owners.
+
+- `packages/coding-agent/src/utils/process-identity.ts`
+
+### Why
+
+The executable Codex compatibility layer is being removed. Shared Native runtime behavior and historical records must remain independent of that layer.
+
+### Why an extension could not handle it
+
+These host contracts, import paths and build or verification targets belong to the repository; an extension cannot retire them.
+
+### Expected merge conflict zones
+
+The listed paths, especially command dispatch, mode unions and process identity imports. Keep the supported runtime branches and the shared utility behavior.
+
+## 2026-10-09 - Windows tree kills no longer use taskkill /T (senpi#2999 follow-up)
+
+### What changed
+
+- `packages/coding-agent/src/utils/shell.ts`: `killWindowsProcessTree()` builds its `taskkill` arguments with `windowsTreeKillArgs()` from `@earendil-works/pi-agent-core/node`.
+  - It reads one bounded synchronous process listing (`listWindowsProcessRowsSync`) and kills the root plus its genuine descendants, pid by pid, with no `/T`.
+  - A process counts as a descendant only when it was created at or after the parent it names.
+  - A protected OS image or an ancestor of this process in the tree shrinks the kill to the root alone, or to nothing when the root is one of them.
+  - Without a listing it falls back to `/T` on the root.
+  - It stays synchronous, and keeps the absolute-path launcher candidates and the direct-pid fallback.
+
+### Why
+
+- `taskkill /T` adopts every process whose recorded `ParentProcessId` equals the root's pid. Windows never rewrites that field when a parent exits, and it reuses pids, so after a wraparound an older, unrelated process that names a long-dead parent can be killed with the tree.
+- #2353 showed the same pid-reuse adoption take down a CI runner through the WebView cleanup's own walk; #2991 fixed that walk. This applies the same rule to the remaining tree kills.
+
+### Why an extension could not handle it
+
+- The kill path is the core bash tool's and the shutdown registry's synchronous teardown, which runs before any extension can intervene.
+
+### Expected merge conflict zones
+
+- LOW: the body of `killWindowsProcessTree()` and `taskkillHandledTree()` in `shell.ts` (its argument list changed), plus the new import. Upstream still spawns `taskkill /F /T /PID <pid>`; keep the computed argument list.
+
+## 2026-10-08 - Script children inherit runtime options, not caller entry modes (senpi#2599)
+
+### What changed
+
+- `packages/coding-agent/src/utils/runtime-exec-argv.ts`: shares the existing Node/Bun entry-mode filter outside RPC without changing its filtering contract.
+
+### Why
+
+An eval or print flag belongs to the embedding caller. Passing it before a child script entry replays the caller instead of starting that child; loader and runtime flags still have to reach the child.
+
+### Why an extension could not handle it
+
+Native process launchers construct their command before a child can load an extension.
+
+### Expected merge conflict zones
+
+- LOW: the shared runtime argument filter and its direct launch-site imports.
+
 ## 2026-10-01 - Agent shells get a real `bun` inside a compiled executable (omo#9362)
 
 ### What changed

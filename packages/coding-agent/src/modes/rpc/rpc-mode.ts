@@ -55,7 +55,9 @@
  * decides. An attach naming another surface rebuilds the live session's prompt.
  *
  * Stable error codes (in the response `error` field, machine-matchable):
- * `unknown_session`, `session_closing`, `session_path_in_use`, `missing_session_id`
+ * `unknown_session`, `session_closing`, `session_path_in_use`, `session_held`
+ * (a live holder outside this daemon family; `errorData: { holders: [{ pid, cwd? }] }`),
+ * `missing_session_id`
  * (session-scoped command without `sessionId` in multi mode), `multi_session_disabled`
  * (`open_session` in classic mode), `invalid_path` (relative `sessionPath`/`cwd`),
  * `open_failed: <detail>`, `invalid_session_context: <detail>` (a `context` past a
@@ -96,6 +98,7 @@
  * Full prose docs: `packages/coding-agent/docs/rpc.md` (Multi-session mode).
  */
 
+import type { ToolRuntimeKind } from "../../cli/tool-runtime.ts";
 import type { AgentSessionEvent } from "../../core/agent-session.ts";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
 import { envValue } from "../../core/brand.ts";
@@ -107,8 +110,10 @@ import {
 } from "../../core/output-guard.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { toJsonEvent } from "../json-event.ts";
+import { ClientAdmissions } from "./client-admissions.ts";
 import { createRpcConnectionHandler, type RpcConnectionSink } from "./connection-handler.ts";
 import { parseClientCapabilities } from "./custom-capability.ts";
+import { EffectLedger } from "./effect-ledger.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS, serializeJsonLine } from "./jsonl.ts";
 import { createRpcShutdown } from "./shutdown.ts";
 
@@ -125,7 +130,7 @@ export type {
  * Run in RPC mode.
  * Listens for JSON commands on stdin, outputs events and responses on stdout.
  */
-export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<never> {
+export async function runRpcMode(runtimeHost: AgentSessionRuntime, toolRuntime?: ToolRuntimeKind): Promise<never> {
 	takeOverStdout();
 
 	const sink: RpcConnectionSink = {
@@ -148,7 +153,13 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 	// it from a client handshake; a plain stdio client that sets nothing gets
 	// byte-identical default behavior.
 	const capabilities = parseClientCapabilities(envValue("RPC_CLIENT_CAPABILITIES"));
-	const handler = createRpcConnectionHandler(runtimeHost, sink, { capabilities, retryFallbackCommand: true });
+	const handler = createRpcConnectionHandler(runtimeHost, sink, {
+		capabilities,
+		retryFallbackCommand: true,
+		...(toolRuntime === undefined ? {} : { toolRuntime }),
+	});
+	ClientAdmissions.sealQueuedOnReplace(runtimeHost);
+	EffectLedger.sealOnReplace(runtimeHost);
 
 	const signalCleanupHandlers: Array<() => void> = [];
 

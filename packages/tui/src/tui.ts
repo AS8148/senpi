@@ -1022,6 +1022,8 @@ export abstract class TuiBase extends Container {
 	private normalizedImageHint: ImageLineScan | undefined;
 	private normalizeMemo = new Map<string, string>();
 	protected previousKittyImageIds = new Set<number>();
+	/** A multiplexer pane regained focus: the next frame repaints its viewport once (senpi#1704). */
+	#muxViewportRepaintPending = false;
 	protected previousWidth = 0;
 	protected previousHeight = 0;
 	private focusedComponent: Component | null = null;
@@ -1053,6 +1055,10 @@ export abstract class TuiBase extends Container {
 	private terminalColorSchemeListeners = new Set<(scheme: TerminalColorScheme) => void>();
 	private terminalColorSchemeNotificationsEnabled = false;
 	#lastCursorVisibility: boolean | undefined;
+	#holdScrollbackReplay = false;
+	#releaseHoldOnInput = false;
+	#scrollbackStale = false;
+	#scrollbackCatchUpPending = false;
 	/** Directory for debug/crash logs. The fork keeps a concrete default (`~/.senpi/agent`) so PI_DEBUG_REDRAW and crash dumps stay in the agent directory. */
 	protected readonly logDirectory: string;
 
@@ -1124,6 +1130,14 @@ export abstract class TuiBase extends Container {
 
 	protected get mouseCaptureEnabled(): boolean {
 		return this.mouseLeases.size > 0 && this.mouseBlockers.size === 0;
+	}
+
+	/**
+	 * Whether mouse reports reach the app right now: `"off"` without an enabled lease, `"armed"` while
+	 * they do, `"yielded"` while a renderer has handed the mouse back to the terminal (main-screen wheel).
+	 */
+	mouseCaptureState(): "off" | "armed" | "yielded" {
+		return this.mouseCaptureEnabled ? "armed" : "off";
 	}
 
 	protected applyMouseTracking(_enabled: boolean): void {}
@@ -1716,6 +1730,11 @@ export abstract class TuiBase extends Container {
 
 	stop(options: TuiStopOptions = {}): void {
 		this.stopped = true;
+		// The hold itself belongs to the turn (interactive mode sets and releases it); a stop()/start() handover
+		// for an external editor or a suspend in the middle of a turn must not drop it.
+		this.#scrollbackStale = false;
+		this.#scrollbackCatchUpPending = false;
+		this.#muxViewportRepaintPending = false;
 		this.renderRequested = false;
 		this.inputRenderPending = false;
 		this.cancelRenderTimer();
@@ -1757,6 +1776,26 @@ export abstract class TuiBase extends Container {
 		this.hardwareCursorRow = 0;
 		this.maxLinesRendered = 0;
 		this.previousViewportTop = 0;
+	}
+
+	/**
+	 * While a reply streams, a frame that changes rows above the viewport would replay the whole scrollback
+	 * (ESC[3J and a full rewrite), which throws a user who scrolled up back to the top (#2836). With the hold
+	 * on, such a frame repaints only the viewport and leaves the off-screen rows stale. The terminal cannot
+	 * report its scroll position in main-screen mode, so the catch-up replay waits for a moment the user is
+	 * surely at the bottom: their next keypress, or `catchUpScrollback()` (the next turn start).
+	 */
+	setScrollbackReplayHold(hold: boolean | "until-input"): void {
+		this.#holdScrollbackReplay = hold !== false;
+		this.#releaseHoldOnInput = hold === "until-input";
+	}
+
+	/** Replays the scrollback once if a held frame left rows above the viewport stale. */
+	catchUpScrollback(): void {
+		if (!this.#scrollbackStale) return;
+		this.#scrollbackStale = false;
+		this.#scrollbackCatchUpPending = true;
+		this.requestRender();
 	}
 
 	renderNow(force = false): void {
@@ -1821,6 +1860,7 @@ export abstract class TuiBase extends Container {
 
 	/** Drop every cached frame so the next render repaints from a clean slate. */
 	private resetForcedRenderState(): void {
+		this.#scrollbackCatchUpPending = false;
 		this.resetRenderState();
 		this.dropPreviousLines();
 		this.previousWidth = -1; // -1 triggers widthChanged, forcing a full clear
@@ -1879,9 +1919,21 @@ export abstract class TuiBase extends Container {
 		if (this.mode !== "fullscreen") {
 			const focus = consumeTmuxFocusEvent(data);
 			if (focus.event !== null) {
-				resetCapabilitiesCache();
-				this.invalidate();
-				this.requestRender(true);
+				if (this.shouldPreserveMuxScrollback()) {
+					// senpi#1704: a forced render re-emitted the whole transcript into the pane's history on every
+					// focus event. A pane losing focus is not visible, so it repaints nothing; a pane gaining focus
+					// refreshes the terminal capabilities and repaints its viewport only.
+					if (focus.event === "in") {
+						resetCapabilitiesCache();
+						this.invalidate();
+						this.#muxViewportRepaintPending = true;
+						this.requestRender();
+					}
+				} else {
+					resetCapabilitiesCache();
+					this.invalidate();
+					this.requestRender(true);
+				}
 				if (focus.data.length === 0) return;
 				data = focus.data;
 			}
@@ -1891,6 +1943,15 @@ export abstract class TuiBase extends Container {
 		}
 		if (this.consumeTerminalColorSchemeReport(data)) {
 			return;
+		}
+		// A key press means the user is at the bottom again. Terminal reports (mouse/wheel, OSC/DCS replies,
+		// DEC private reports, window and cell-size reports) are not the user and must not trigger it.
+		if (!isTerminalReport(data)) {
+			if (this.#releaseHoldOnInput) {
+				this.#releaseHoldOnInput = false;
+				this.#holdScrollbackReplay = false;
+			}
+			this.catchUpScrollback();
 		}
 
 		if (this.inputListeners.size > 0) {
@@ -2668,6 +2729,7 @@ export abstract class TuiBase extends Container {
 		prevViewportTop: number,
 		hardwareCursorRow: number,
 	): void {
+		this.#scrollbackStale = false;
 		let buffer = TUI.FRAME_BEGIN;
 		buffer += this.deleteKittyImages(this.previousKittyImageIds);
 		if (!this.shouldPreserveMuxScrollback()) {
@@ -2699,6 +2761,52 @@ export abstract class TuiBase extends Container {
 		this.placementEpoch++;
 	}
 
+	/**
+	 * The held frame of `setScrollbackReplayHold` (#2836): rows above the old viewport stay as the terminal
+	 * shows them (possibly stale), and the frame is rewritten from the old viewport top down. Rows the
+	 * document grew by scroll naturally into scrollback in their current form, so nothing is lost there and
+	 * nothing is cleared, and a reader who scrolled up keeps their place. Returns false when an image row is
+	 * involved, so the caller replays as before.
+	 */
+	private renderHeldRepaint(
+		newLines: string[],
+		rawLines: string[],
+		cursorPos: { row: number; col: number } | null,
+		width: number,
+		height: number,
+		prevViewportTop: number,
+		hardwareCursorRow: number,
+	): boolean {
+		const start = Math.min(prevViewportTop, Math.max(0, newLines.length - height));
+		const rowCount = Math.max(height, newLines.length - start);
+		const rows = Array.from({ length: rowCount }, (_, index) => newLines[start + index] ?? "");
+		const previousVisible = this.getViewportRows(this.previousLines, prevViewportTop, height);
+		if (rows.some(isImageLine) || previousVisible.some(isImageLine)) return false;
+
+		let buffer = TUI.FRAME_BEGIN;
+		const currentScreenRow = Math.max(0, Math.min(height - 1, hardwareCursorRow - prevViewportTop));
+		if (currentScreenRow > 0) buffer += `\x1b[${currentScreenRow}A`;
+		for (let row = 0; row < rows.length; row++) {
+			if (row > 0) buffer += "\r\n";
+			buffer += `\r\x1b[2K${TUI.SEGMENT_RESET}`;
+			buffer += rows[row];
+		}
+		const lastRow = start + rows.length - 1;
+		buffer = this.finishFrame(buffer, cursorPos, newLines.length, lastRow);
+		writeBounded(this.terminal, buffer);
+
+		this.#scrollbackStale = true;
+		this.cursorRow = Math.max(0, newLines.length - 1);
+		this.maxLinesRendered = newLines.length;
+		this.previousViewportTop = Math.max(0, lastRow + 1 - height);
+		this.setPreviousLines(newLines, rawLines);
+		this.previousKittyImageIds = this.collectKittyImageIds(newLines);
+		this.previousWidth = width;
+		this.previousHeight = height;
+		this.placementEpoch++;
+		return true;
+	}
+
 	private renderMuxViewportRepaint(
 		newLines: string[],
 		rawLines: string[],
@@ -2706,6 +2814,7 @@ export abstract class TuiBase extends Container {
 		width: number,
 		height: number,
 		viewportTop = Math.max(0, newLines.length - height),
+		home: "relative" | "absolute" = "relative",
 	): boolean {
 		const previousVisible = this.getViewportRows(this.previousLines, this.previousViewportTop, height);
 		const nextVisible = this.getViewportRows(newLines, viewportTop, height);
@@ -2714,9 +2823,13 @@ export abstract class TuiBase extends Container {
 		}
 
 		let buffer = TUI.FRAME_BEGIN;
-		const currentScreenRow = Math.max(0, Math.min(height - 1, this.hardwareCursorRow - this.previousViewportTop));
-		if (currentScreenRow > 0) {
-			buffer += `\x1b[${currentScreenRow}A`;
+		if (home === "absolute") {
+			buffer += "\x1b[H";
+		} else {
+			const currentScreenRow = Math.max(0, Math.min(height - 1, this.hardwareCursorRow - this.previousViewportTop));
+			if (currentScreenRow > 0) {
+				buffer += `\x1b[${currentScreenRow}A`;
+			}
 		}
 
 		for (let row = 0; row < height; row++) {
@@ -2888,11 +3001,31 @@ export abstract class TuiBase extends Container {
 		newLines = normalizedLines.lines;
 		const preserveMuxScrollback = this.shouldPreserveMuxScrollback();
 
+		if (this.#scrollbackCatchUpPending) {
+			this.#scrollbackCatchUpPending = false;
+			if (!preserveMuxScrollback && !widthChanged && !heightChanged) {
+				this.renderScrollbackReplay(
+					newLines,
+					rawLines,
+					cursorPos,
+					width,
+					height,
+					prevViewportTop,
+					hardwareCursorRow,
+				);
+				return;
+			}
+			// A resize frame takes its own path below; if that path does not rewrite the scrollback, the
+			// rows are still stale and the next key press catches up.
+			if (!preserveMuxScrollback) this.#scrollbackStale = true;
+		}
+
 		// Helper to clear scrollback and viewport and render all new lines
 		const fullRender = (clear: boolean, clearScrollback = clear): void => {
 			this.fullRedrawCount += 1;
 			let buffer = TUI.FRAME_BEGIN;
 			if (clear) {
+				if (clearScrollback) this.#scrollbackStale = false;
 				buffer += this.deleteKittyImages(this.previousKittyImageIds);
 				buffer += "\x1b[2J\x1b[H";
 				if (clearScrollback && !preserveMuxScrollback && process.platform !== "win32") {
@@ -2956,10 +3089,38 @@ export abstract class TuiBase extends Container {
 
 		// Width changes always need a full re-render because wrapping changes.
 		if (widthChanged) {
+			// A width change (or a forced render) repaints everything below; a focus repaint queued in the
+			// same tick is satisfied by it.
+			this.#muxViewportRepaintPending = false;
 			logRedraw(`terminal width changed (${this.previousWidth} -> ${width})`);
-			// In multiplexers, re-emit the viewport without 3J so pane history survives; an older copy may remain above.
+			// In a multiplexer only the re-wrapped viewport is repainted: re-emitting every line of the buffer scrolled a
+			// copy of the whole transcript into the pane's history on each width change (senpi#1704). Rows already in
+			// that history keep their old wrapping. The pane re-wrapped the screen itself, so the repaint homes there.
+			if (preserveMuxScrollback && this.previousWidth > 0) {
+				if (this.renderMuxViewportRepaint(newLines, rawLines, cursorPos, width, height, undefined, "absolute"))
+					return;
+			}
 			fullRender(true, !preserveMuxScrollback);
 			return;
+		}
+
+		if (this.#muxViewportRepaintPending) {
+			this.#muxViewportRepaintPending = false;
+			if (preserveMuxScrollback && !heightChanged) {
+				logRedraw("multiplexer pane focus regained");
+				// A frame queued before the focus event may have grown the content: follow it exactly as an
+				// ordinary frame does, so rows added below (the editor, the status line) stay on screen.
+				// After a shrink the viewport keeps its top (as the deleted-lines path does), so the repaint does
+				// not scroll rows already in the pane's history into view a second time.
+				const focusViewportTop =
+					newLines.length > prevViewportTop
+						? Math.max(prevViewportTop, newLines.length - height)
+						: Math.max(0, newLines.length - height);
+				if (!this.renderMuxViewportRepaint(newLines, rawLines, cursorPos, width, height, focusViewportTop)) {
+					fullRender(true, false);
+				}
+				return;
+			}
 		}
 
 		// Height changes normally need a full re-render to keep the visible viewport aligned,
@@ -3115,6 +3276,19 @@ export abstract class TuiBase extends Container {
 						if (!this.renderMuxViewportRepaint(newLines, rawLines, cursorPos, width, height, viewportTop)) {
 							fullRender(true, false);
 						}
+					} else if (
+						this.#holdScrollbackReplay &&
+						this.renderHeldRepaint(
+							newLines,
+							rawLines,
+							cursorPos,
+							width,
+							height,
+							prevViewportTop,
+							hardwareCursorRow,
+						)
+					) {
+						// Held: rows above the old viewport stay stale until the catch-up replay.
 					} else {
 						this.renderScrollbackReplay(
 							newLines,
@@ -3149,6 +3323,19 @@ export abstract class TuiBase extends Container {
 						if (!this.renderMuxViewportRepaint(newLines, rawLines, cursorPos, width, height, viewportTop)) {
 							fullRender(true, false);
 						}
+					} else if (
+						this.#holdScrollbackReplay &&
+						this.renderHeldRepaint(
+							newLines,
+							rawLines,
+							cursorPos,
+							width,
+							height,
+							prevViewportTop,
+							hardwareCursorRow,
+						)
+					) {
+						// Held: rows above the old viewport stay stale until the catch-up replay.
 					} else {
 						this.renderScrollbackReplay(
 							newLines,
@@ -3313,7 +3500,7 @@ export abstract class TuiBase extends Container {
 		buffer = this.finishFrame(buffer, cursorPos, newLines.length, finalCursorRow);
 
 		if (process.env.PI_TUI_DEBUG === "1") {
-			const debugDir = "/tmp/tui";
+			const debugDir = path.join(os.tmpdir(), "tui");
 			fs.mkdirSync(debugDir, { recursive: true });
 			const debugPath = path.join(debugDir, `render-${Date.now()}-${Math.random().toString(36).slice(2)}.log`);
 			const debugData = [
@@ -3444,6 +3631,21 @@ export abstract class TuiBase extends Container {
 			this.terminal.write(TERMINAL_COLOR_QUERY);
 		});
 	}
+}
+
+/**
+ * Input that the terminal sends on its own rather than the user typing: mouse reports, OSC/DCS/APC
+ * replies, DEC private reports (`ESC[?...`) and window/cell-size reports (`ESC[...t`). OSC/DCS/APC need
+ * a body after the introducer, so a legacy Alt+] / Alt+Shift+P / Alt+_ key press is still a key.
+ */
+export function isTerminalReport(data: string): boolean {
+	return (
+		data.startsWith("\x1b[<") ||
+		data.startsWith("\x1b[M") ||
+		(data.length > 2 && (data.startsWith("\x1b]") || data.startsWith("\x1bP") || data.startsWith("\x1b_"))) ||
+		data.startsWith("\x1b[?") ||
+		/^\x1b\[\d+(;\d+)*t$/.test(data)
+	);
 }
 
 /** Legacy main-screen renderer export. */

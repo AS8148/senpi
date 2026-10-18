@@ -19,11 +19,12 @@
  * error to a caller that asked for exactly that outcome.
  */
 
-import { createHostDaemonPaths } from "./host-daemon-paths.ts";
+import { createHostDaemonPaths, generationPaths } from "./host-daemon-paths.ts";
 import { provenOwner, readHostRegistration, releaseGeneration } from "./host-daemon-registration.ts";
 import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
 import { provenLegacyOwner } from "./host-legacy.ts";
 import { probeProtocolInfo, probeSessionCount } from "./host-probe.ts";
+import { writeStopIntent } from "./host-stop-intent.ts";
 
 export interface StopHostOptions {
 	readonly socket: string;
@@ -33,6 +34,8 @@ export interface StopHostOptions {
 	/** Terminate even when the host still reports open sessions. */
 	readonly force?: boolean;
 	readonly timeoutMs?: number;
+	/** Refuse unless the host answers both reads: a caller that judged it idle must not stop it unseen. */
+	readonly requireAnswer?: boolean;
 }
 
 export type StopHostResult =
@@ -72,11 +75,20 @@ export async function stopHost(options: StopHostOptions): Promise<StopHostResult
 	if (options.force !== true && host !== undefined && sessions !== undefined && sessions > 0) {
 		return { action: "refuse", reason: "sessions_live" };
 	}
-	signalGeneration(owner.pid, "SIGTERM");
-	// The signal ended this generation, so its registration goes with it: a pointer left behind names
-	// a process nobody serves with, and the next ensure would read it as a host to probe. A DRAINING
-	// host keeps its registration - it is still serving - and drops it on the way out itself.
-	await releaseGeneration(paths, { instanceId: owner.instanceId, pid: owner.pid });
+	if (options.requireAnswer === true && (host === undefined || sessions === undefined)) {
+		return { action: "refuse", reason: "sessions_live" };
+	}
+	await writeStopIntent(generationPaths(paths, owner.instanceId), {
+		sender: { pid: process.pid, kind: "stop" },
+		targetPid: owner.pid,
+		reason: "operator_stop",
+		signal: "SIGTERM",
+		at: new Date().toISOString(),
+	});
+	const delivered = signalGeneration(owner.pid, "SIGTERM");
+	// A signal is not an exit: only the supervisor may release ownership after reaping its host.
+	// Its circuit breaker deliberately leaves these records intact while the child might be alive.
+	if (!delivered) await releaseGeneration(paths, { instanceId: owner.instanceId, pid: owner.pid });
 	return { action: "stopped", pid: owner.pid };
 }
 

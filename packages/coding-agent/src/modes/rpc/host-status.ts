@@ -10,7 +10,7 @@
  * A socket nobody serves is not an error here: `reachable: false` with the same field set is the
  * answer, so a caller parses one shape either way and branches on one boolean.
  */
-import { readHostCrashRecords } from "./host-crash-record.ts";
+import { isHostCrash, readHostCrashRecords } from "./host-crash-record.ts";
 import { readDaemonEnvKeys } from "./host-daemon-env.ts";
 import { createHostDaemonPaths, parseShardSocket, type ShardKind } from "./host-daemon-paths.ts";
 import type { HostProtocolInfo } from "./host-decision.ts";
@@ -43,6 +43,7 @@ export type { HostPathClaimRow, HostSessionRow } from "./host-status-rows.ts";
 
 export interface HostStatusReport {
 	readonly reachable: boolean;
+	readonly lifecycle: "ready" | "stopping" | null;
 	readonly socket: string;
 	readonly pid: number | null;
 	readonly instanceId: string | null;
@@ -136,10 +137,13 @@ export async function probeHostStatus(
 	// A socket that did not answer who it is will not answer what it holds: asking again would only
 	// spend a second budget on a hung endpoint.
 	const listing: readonly HostSessionRow[] =
-		host === undefined ? [] : await readSessionListing(options.socket, includeWorkers, timeoutMs);
+		host === undefined || host.lifecycle === "stopping"
+			? []
+			: await readSessionListing(options.socket, includeWorkers, timeoutMs);
 	const claims = await readClaimRows(paths, generations);
 	const report: HostStatusReport = {
 		reachable: host !== undefined,
+		lifecycle: host?.lifecycle ?? null,
 		socket: options.socket,
 		pid: current?.pid ?? null,
 		instanceId: host?.instanceId ?? current?.instanceId ?? null,
@@ -157,7 +161,7 @@ export async function probeHostStatus(
 		memory_pressure: host?.memory_pressure ?? null,
 		env_keys: await readDaemonEnvKeys(paths),
 		generations,
-		crashes: readHostCrashRecords(paths.dir).length,
+		crashes: readHostCrashRecords(paths.dir).filter(isHostCrash).length,
 		shard: parseShardSocket(options.socket),
 		session_rows: includeWorkers ? listing : [],
 		claims_live: claims.filter((claim) => claim.live).length,
@@ -206,6 +210,7 @@ export function hostSummary(host: HostProtocolInfo | undefined): Record<string, 
 	return {
 		protocolVersion: host.protocolVersion,
 		serverVersion: host.serverVersion,
+		lifecycle: host.lifecycle ?? null,
 		capabilities: host.capabilities,
 		instanceId: host.instanceId ?? null,
 		generation: host.generation ?? null,

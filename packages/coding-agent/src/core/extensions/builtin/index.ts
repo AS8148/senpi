@@ -20,6 +20,7 @@ import helpExtension from "./help/index.ts";
 import herdrExtension from "./herdr/index.ts";
 import historySearchExtension from "./history-search/index.ts";
 import hooksExtension from "./hooks/index.ts";
+import htmlRenderExtension from "./html-render/index.ts";
 import imageGenExtension from "./imagegen/index.ts";
 import importReproExtension from "./import-repro.ts";
 import lookAtExtension from "./look-at/index.ts";
@@ -27,6 +28,7 @@ import loopExtension from "./loop/index.ts";
 import loopGuardExtension from "./loop-guard/index.ts";
 import mcpExtension from "./mcp/index.ts";
 import modelFallbackExtension from "./model-fallback/index.ts";
+import movedPathGuardExtension from "./moved-path-guard/index.ts";
 import nestedAgentsMdExtension from "./nested-agents-md/index.ts";
 import openaiImageGenExtension from "./openai-image-gen/index.ts";
 import openaiWebSearchExtension from "./openai-web-search/index.ts";
@@ -46,6 +48,7 @@ import toolPairGuardExtension from "./tool-pair-guard/index.ts";
 import toolSearchExtension from "./tool-search/index.ts";
 import tpsExtension from "./tps.ts";
 import ttsrExtension from "./ttsr/index.ts";
+import vertexModelGardenExtension from "./vertex-model-garden/index.ts";
 import videoInExtension from "./video-in/index.ts";
 import webfetchExtension from "./webfetch/index.ts";
 import websearchExtension from "./websearch/index.ts";
@@ -67,6 +70,8 @@ export const globalDefaultExtensionFactories = {
 export const builtinExtensions: BuiltinExtensionFactory[] = [
 	// Loop guard owns the first veto opportunity so repeated calls never re-run hooks or permission prompts.
 	{ id: "loop-guard", factory: loopGuardExtension },
+	// Ahead of hooks and permission-system: a path the desktop moved is refused before any hook runs or prompt asks.
+	{ id: "moved-path-guard", factory: movedPathGuardExtension },
 	{ id: "hooks", factory: hooksExtension },
 	{ id: "permission-system", factory: permissionSystemExtension },
 	{ id: "gpt-apply-patch", factory: gptApplyPatchExtension },
@@ -112,6 +117,9 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "cache-keepalive", factory: cacheKeepAliveExtension },
 	{ id: "ttsr", factory: ttsrExtension },
 	{ id: "btw", factory: btwExtension },
+	// HTML page rendering for standalone senpi (TUI/local); the desktop thread reaches the
+	// same capability through the desktop's MCP server instead.
+	{ id: "html-render", factory: htmlRenderExtension },
 	// Provider-neutral account listing; sits before the provider lanes so their
 	// dedicated commands (claude-account, cursor accounts) keep their own names.
 	{ id: "account", factory: accountExtension },
@@ -119,6 +127,8 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "claude-sdk-oauth", factory: anthropicSubscriptionExtension },
 	// Registers unconditionally and reports executable/auth state through its oauth check, so it stays beside the other provider lane.
 	{ id: "cursor-cli-oauth", factory: cursorCliOauthExtension },
+	// Provider-only lane beside the other provider registrations; no hooks, so order is not load-bearing.
+	{ id: "vertex-model-garden", factory: vertexModelGardenExtension },
 	// Config reload follows settings-dependent builtins so reloads rebuild their resolved settings before catalog feeders observe them.
 	{ id: "config-reload", factory: configReloadExtension },
 	// Shared catalog wiring loads before MCP, which feeds its tools into the shared catalog as the final builtin.

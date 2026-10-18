@@ -236,8 +236,10 @@ A message in the conversation. The `message` field contains an `AgentMessage`.
 Emitted when the user switches models mid-session. The latest entry is the selected model, which may be a [virtual model](virtual-models.md); assistant messages then name the physical model that answered.
 
 ```json
-{"type":"model_change","id":"d4e5f6g7","parentId":"c3d4e5f6","timestamp":"2024-12-03T14:05:00.000Z","provider":"openai","modelId":"gpt-4o"}
+{"type":"model_change","id":"d4e5f6g7","parentId":"c3d4e5f6","timestamp":"2024-12-03T14:05:00.000Z","provider":"openai","modelId":"gpt-4o","originalProvider":"anthropic","originalModelId":"claude-sonnet-4-5","source":"picker","actor":"model-selector"}
 ```
+
+`source` says what made the switch: `command` (a typed `/model`), `picker` (the model or favorites picker), `cycle` (the favorites cycle key), `control` (a terminal's control endpoint), `rpc` (RPC `set_model`, `cycle_model` and `set_fast_mode`; `actor` names the latter two), `app-server` (retained for historical entries from the retired compatibility mode), `extension` (`actor` is the extension path), `provider-login`, `fallback`, `fallback-revert`, `held-switch` (a switch held until compaction made room; `actor` names what first asked for it), `restore`, or `sdk` (an SDK caller that named none). `actor` says who issued it where that is known. `duringTurn: true` marks a switch that landed while a turn was streaming; the terminal shows those as a transcript row. Entries written before these fields existed omit them. A `thinking_level_change` written because a switch re-applied the model's level carries the same `triggerSource` and `triggerActor`.
 
 ### ThinkingLevelChangeEntry
 
@@ -295,9 +297,30 @@ Extension state persistence. Does NOT participate in LLM context.
 {"type":"custom","id":"h8i9j0k1","parentId":"g7h8i9j0","timestamp":"2024-12-03T14:20:00.000Z","customType":"my-extension","data":{"count":42}}
 ```
 
+Optional field: `startupBookkeeping: true` marks an entry its extension wrote at session start without any user action (`pi.appendEntry(customType, data, { startupBookkeeping: true })`). A session file this process created that holds only setup entries and such marked entries is removed when the session closes without a conversation; an unmarked custom entry keeps the file.
+
 Use `customType` to identify your extension's entries on reload. Interactive mode can render custom entries via `pi.registerEntryRenderer(customType, renderer)`, but they still do not participate in LLM context.
 
 [Virtual model](virtual-models.md) router state is stored as custom entries with `customType` `pi.virtual-model-state` and `data` `{ provider, modelId, state }`.
+
+#### Goal and engine self-stop entries
+
+These custom entries are persisted in the session and delivered to RPC clients as `entry_appended`. They do not enter model context. Existing `engine-turn-limit`, `ttsr-loop-stopped`, and notices remain unchanged.
+
+- `goal-continuation-stopped`: `data` is `{ goalId: string, reason: "stale" | "repetition" | "cap" | "no-progress" | "length-exhausted" | "context-overflow", consecutiveContinuations: number, unattendedContinuations: number, noProgressContinuations: number, at: number }`. `no-progress` (omo#10280) replaced `unattended`, which older sessions may still contain; `unattendedContinuations` counts deliveries since the last human input and no longer stops anything. Every active-goal denial except `not-eligible` and `single-flight` records one decision, not one entry per evaluation probe. Blocking guards still block; stale leaves the goal active but commits the remaining measured time and closes its measurement window. An accepted user message or `/goal resume` resets the stop and continuation streak and opens accounting again. The stop entry remains historical; a subsequent continuation can stop again.
+- `engine-paused`: `data` is `{ reason: "repetition" | "goal-repeat" | "cap-per-message" | "cap-per-minute" | "goal-stale", rule?: string, customType?: string, count?: number, at: number }`. The engine limit maps `per-user-input` to `cap-per-message` (`count` is `sinceUserInput`) and `tool-free-rate` to `cap-per-minute` (`count` is `toolFreeInWindow`). TTSR uses `repetition` and names the rule when it refuses another correction or its one-shot repetitive-turns correction reaches final idle without another turn starting. Goal output repetition uses `goal-repeat`; stale uses `goal-stale`, with the consecutive-continuation count and `customType: "goal-continuation"`.
+
+`at` is Unix epoch milliseconds. Consumers can use these entries instead of parsing notice wording, and replay them from session history after reopen.
+
+Stale-stopped goals stay stopped when reopened. A notice at the stale stop and on each session open tells the user to send a message or run `/goal resume` to continue; rendering and extension reloads do not repeat the notice.
+
+Goal usage measures work while the goal's accounting window is open. Non-user-input turns, including extension `sendUserMessage` and `sendMessage({ triggerTurn: true })` deliveries, add neither tokens nor time to a stale-stopped goal, just as later turns do not accrue usage for a user-paused or completed goal. The same turns count assistant input/output tokens and elapsed time while the goal is active with an open window. Usage is display-only; it does not impose a budget limit.
+
+The footer shows `Goal stopped: no progress (send a message or /goal resume)` without a pursuit timer, and `/goal` identifies the stop while retaining committed usage totals. The persisted goal keeps `status: "active"` plus `continuationStoppedAt` so accepted input and `/goal resume` retain their existing behavior. Goal-tool snapshots instead report `status: "paused"` and include `continuationStoppedAt` for the stopped label; their cards use the paused glyph and styling. Active, user-paused, blocked, and completed goals otherwise retain their displays.
+
+In the persisted goal state, `lastStartedAt` is the last usage checkpoint, in Unix epoch seconds, not the start of the entire run. Clients displaying live elapsed time use committed `timeUsedSeconds` plus the nonnegative time since `lastStartedAt`. When `lastStartedAt` is absent, including after a stale stop, display only committed `timeUsedSeconds`.
+
+Model-facing goal tool JSON additionally includes `continuation: { status: "stale_stopped", message: string }` for a stale-stopped goal. The message explains that progress was stale and the goal resumes when the user sends a message or runs `/goal resume`. This object is absent for ordinary active, user-paused, and completed goals; it is not part of the stored goal or UI snapshot.
 
 ### CustomMessageEntry
 
@@ -435,12 +458,13 @@ Key methods for working with sessions programmatically.
 - `createBranchedSession(leafId)` - Extract branch to new session file
 
 ### Instance Methods - Appending (all return entry ID)
-- `appendMessage(message)` - Add message
+- `appendMessage(message)` - Add message (the session history keeps its own JSON copy)
+- `appendOwnedMessage(message)` - Add a message the session's own agent produced: the history keeps a shallow copy sharing the message's content (falls back to the JSON copy for a message with a resident string or a non-JSON value)
 - `appendThinkingLevelChange(level)` - Record thinking change
 - `appendModelChange(provider, modelId)` - Record model change
 - `appendCompaction(summary, firstKeptEntryId, tokensBefore, details?, fromHook?, usage?)` - Add compaction; pass `null` as `firstKeptEntryId` to retain no earlier entries
 - `appendContextEdit(targetId, replacement)` - Omit (`null`) or replace one entry's message in future model context without changing raw history
-- `appendCustomEntry(customType, data?)` - Extension state (not in context)
+- `appendCustomEntry(customType, data?, options?)` - Extension state (not in context); `options.startupBookkeeping` marks startup bookkeeping
 - `appendSessionInfo(name)` - Set session display name
 - `appendCustomMessageEntry(customType, content, display, details?)` - Extension message (in context)
 - `appendLabelChange(targetId, label)` - Set/clear label

@@ -79,7 +79,8 @@ import {
 } from "../../core/agent-session.ts";
 import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.ts";
 import { formatNoModelsAvailableMessage } from "../../core/auth-guidance.ts";
-import { isApiKeyLoginProvider } from "../../core/auth-providers.ts";
+import { isApiKeyLoginProvider, loginRowStatus } from "../../core/auth-providers.ts";
+import { markModeCrashHandler } from "../../core/bootstrap-crash-listeners.ts";
 import { envValue } from "../../core/brand.ts";
 import {
 	CACHE_TTL_MS,
@@ -92,7 +93,7 @@ import { resolveChangelogSource } from "../../core/changelog-source.ts";
 import { collectEntriesForBranchSummary } from "../../core/compaction/branch-summarization.ts";
 import { findExtensionStackMatches } from "../../core/crash-log.ts";
 import { AssistantEditError, assistantTextEquals } from "../../core/edited-assistant-message.ts";
-import { formatUserMessage } from "../../core/extensions/builtin/ask-user/format.ts";
+import { askUserAnswerDisplayText, formatUserMessage } from "../../core/extensions/builtin/ask-user/format.ts";
 import { askUserRenderers } from "../../core/extensions/builtin/ask-user/render.ts";
 import type {
 	AutocompleteProviderFactory,
@@ -109,14 +110,17 @@ import type {
 	WorkingIndicatorOptions,
 } from "../../core/extensions/index.ts";
 import { buildNoticeBox, type NoticeLine, type NoticeSpec } from "../../core/extensions/notice/index.ts";
-import type { QuestionRequest, QuestionResponse } from "../../core/extensions/types.ts";
+import type { QuestionRequest, QuestionResponse, SystemPromptChangeEvent } from "../../core/extensions/types.ts";
+import { emitUserActivity } from "../../core/extensions/user-activity.ts";
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.ts";
+import { sessionHolderWarning } from "../../core/foreign-session-holders.ts";
 import { appendUncaughtCrashLog, appendUnhandledRejectionLog } from "../../core/hidden-stdout-log.ts";
 import { buildHighReasoningWarning } from "../../core/high-reasoning-warning.ts";
 import { configureHttpDispatcher, formatHttpIdleTimeoutMs } from "../../core/http-dispatcher.ts";
 import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.ts";
 import { isManualContinueSubmission } from "../../core/manual-continue.ts";
 import { createCompactionSummaryMessage, createCustomMessage } from "../../core/messages.ts";
+import type { ModelChangeOrigin } from "../../core/model-change-origin.ts";
 import {
 	defaultModelPerProvider,
 	findExactModelReferenceMatch,
@@ -127,6 +131,7 @@ import {
 	type ScopedModel,
 } from "../../core/model-resolver.ts";
 import { CredentialSynchronizationError } from "../../core/model-runtime.ts";
+import { formatProviderFailure } from "../../core/provider-failure.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { usageLimitCause } from "../../core/retry-fallback/usage-limit.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
@@ -135,6 +140,7 @@ import { type SessionEntry, SessionManager, sessionEntryToContextMessages } from
 import type { FullscreenExitOutput, QuietStartup, TuiMode } from "../../core/settings-manager.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
+import { containStaleExtensionError } from "../../core/stale-extension-containment.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
 import { formatThinkingClampWarning } from "../../core/thinking-levels.ts";
 import { formatTimings, resetTimings, time } from "../../core/timings.ts";
@@ -200,6 +206,7 @@ import { formatKeyText, keyDisplayText, keyHint, keyText, rawKeyHint } from "./c
 import { LoadedResourceSection } from "./components/loaded-resource-section.ts";
 import { LoginDialogComponent } from "./components/login-dialog.ts";
 import { createMermaidMarkdownTransformer } from "./components/mermaid.ts";
+import { createMessagePathLinkTransformer } from "./components/message-path-links.ts";
 import {
 	type FavoriteModelIds,
 	getModelFullId,
@@ -237,6 +244,7 @@ import { TreeSelectorComponent } from "./components/tree-selector.ts";
 import { TrustSelectorComponent } from "./components/trust-selector.ts";
 import { UserMessageComponent } from "./components/user-message.ts";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.ts";
+import { insertProgrammaticComposerInput, observeComposerActivity } from "./composer-user-activity.ts";
 import { expandEditorSubmission, expandSubmittedText, transferEditorContent } from "./editor-paste-transfer.ts";
 import { formatExtensionErrorHeadline, sanitizeTuiErrorMessage } from "./extension-error-format.ts";
 import { editFileInExternalEditor, editInExternalEditor } from "./external-editor.ts";
@@ -261,6 +269,12 @@ import {
 } from "./loaded-resource-scopes.ts";
 import { describeLoginFailure, type LoginFailureNotice } from "./login-outcome.ts";
 import { refreshModelCatalogs } from "./model-catalog-refresh.ts";
+import {
+	liveModelChangeNotice,
+	type ModelChangeNotice,
+	parseModelCommandArgument,
+	replayedModelChangeNotice,
+} from "./model-change-notice.ts";
 import { getModelSearchText } from "./model-search.ts";
 import {
 	isNetworkProviderError,
@@ -296,7 +310,7 @@ import { buildFavoriteCycleStatusMessage } from "./tips/favorite-messages.ts";
 import { recordTipShown } from "./tips/history-writer.ts";
 import { TIP_DEFINITIONS } from "./tips/registry.ts";
 import { appendStartupHeader } from "./tips/startup-header.ts";
-import { resolveStartupTipLine } from "./tips/startup-tip.ts";
+import { resolveStartupTips } from "./tips/startup-tips.ts";
 import { appendTipLine } from "./tips/tip-line.ts";
 import { resolveWorkingTipLine, WorkingTipCache, type WorkingTipLine } from "./tips/working-tip.ts";
 import { buildTmuxSetupWarning } from "./tmux-setup.ts";
@@ -423,7 +437,15 @@ type CompactionCostNotice = {
 	usage: Usage;
 };
 
-type RenderSessionItem = AgentMessage | Extract<SessionEntry, { type: "custom" }> | CompactionCostNotice;
+type RenderSessionItem =
+	| AgentMessage
+	| Extract<SessionEntry, { type: "custom" }>
+	| CompactionCostNotice
+	| ModelChangeNotice;
+
+function isModelChangeNotice(item: RenderSessionItem): item is ModelChangeNotice {
+	return "type" in item && item.type === "model_change_notice";
+}
 
 function isCustomSessionEntry(item: RenderSessionItem): item is Extract<SessionEntry, { type: "custom" }> {
 	return "type" in item && item.type === "custom";
@@ -774,7 +796,7 @@ interface ClipboardImageDeps {
 
 /**
  * Attach a clipboard bitmap as an in-memory image behind an atomic
- * `[Image #N]` marker. Returns false when nothing was attached, so the caller
+ * `[Image #N]` marker. Returns false when the paste was unhandled, so the caller
  * falls through to the plain-text clipboard path.
  *
  * The bytes deliberately never touch the filesystem: writing a temp file and
@@ -785,7 +807,7 @@ interface ClipboardImageDeps {
 async function attachClipboardImage(
 	deps: ClipboardImageDeps,
 	image: { bytes: Uint8Array; mimeType: string },
-): Promise<boolean> {
+): Promise<"attached" | "dropped" | false> {
 	if (deps.settings.getBlockImages()) {
 		// Pinned behavior: nothing is attached and nothing is inserted, but the
 		// paste is never a silent no-op - the user must learn why their screenshot
@@ -803,12 +825,12 @@ async function attachClipboardImage(
 	if (deps.isCompacting()) {
 		// The compaction queue carries text only; an attachment queued behind
 		// compaction would be silently lost at delivery, so drop it here with a
-		// visible status. Consume the paste (true) - the clipboard holds a
+		// visible status. Consume the paste as dropped - the clipboard holds a
 		// bitmap, so the plain-text fallback has nothing useful to insert.
 		deps.showStatus(
 			"Image paste dropped: messages sent during compaction cannot carry images - paste again after compaction finishes",
 		);
-		return true;
+		return "dropped";
 	}
 
 	const processed = await processImage(image.bytes, image.mimeType, {
@@ -832,7 +854,7 @@ async function attachClipboardImage(
 		mimeType: processed.mimeType,
 	});
 	deps.requestRender();
-	return true;
+	return "attached";
 }
 
 /**
@@ -1033,6 +1055,7 @@ export class InteractiveMode {
 		getMode: () => this.settingsManager.getMermaidRenderingMode(),
 		theme,
 	});
+	private readonly messagePathLinkTransformer = createMessagePathLinkTransformer(() => this.sessionManager.getCwd());
 
 	// Skill commands: command name -> skill file path
 	private skillCommands = new Map<string, string>();
@@ -1219,6 +1242,7 @@ export class InteractiveMode {
 			});
 		}
 		this.editor = this.defaultEditor;
+		observeComposerActivity(this.defaultEditor, () => emitUserActivity(this.session, "draft"));
 		this.editorContainer = new Container();
 		this.editorContainer.addChild(this.editor as Component);
 		this.footerDataProvider = new FooterDataProvider(this.sessionManager.getCwd());
@@ -1703,20 +1727,16 @@ export class InteractiveMode {
 					"dim",
 					`Press ${keyText("app.tools.expand")} to show full startup help${showDetails ? " and loaded resources" : ""}.`,
 				);
-			const startupTip = resolveStartupTipLine({
-				tipsEnabled: this.settingsManager.getTipsEnabled(),
-				// Header-only quiet startup keeps the header but not the startup details, tips included.
-				quietStartup: this.settingsManager.getQuietStartup() !== false,
-				history: this.settingsManager.getTipsHistory(),
+			const startupTips = resolveStartupTips({
+				settings: this.settingsManager,
 				now: Date.now(),
-				definitions: TIP_DEFINITIONS,
-				keys: keyText,
+				modelReasoning: () => this.session.state.model?.reasoning === true,
 				hasCommand: (command) => this.hasRegisteredCommand(command),
+				keys: keyText,
+				displayKeys: keyDisplayText,
 			});
-			if (startupTip) {
-				this.recordShownTip(startupTip.tipId);
-			}
-			const tipLine = startupTip ? theme.fg("dim", startupTip.line) : undefined;
+			for (const tipId of startupTips?.tipIds ?? []) this.sessionShownTipIds.add(tipId);
+			const tipLine = startupTips ? theme.fg("dim", startupTips.text) : undefined;
 			const onboarding = () =>
 				theme.fg("dim", `Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.`);
 			this.builtInHeader = new ExpandableText(
@@ -2146,10 +2166,12 @@ export class InteractiveMode {
 		}
 
 		const seeded = seedKeybindingsFile(configPath, this.keybindings);
-		const edit = await editFileInExternalEditor({
-			command: editorCommand,
-			path: configPath,
-		});
+		const edit = await this.withTerminalHandedOver(() =>
+			editFileInExternalEditor({
+				command: editorCommand,
+				path: configPath,
+			}),
+		);
 		if (edit.status === "launch-failed") {
 			// The editor never ran, so a file we just seeded carries no user content.
 			if (seeded) fs.rmSync(configPath, { force: true });
@@ -2614,13 +2636,17 @@ export class InteractiveMode {
 		}
 
 		if (showDiagnostics) {
-			const addDiagnosticNotice = (title: string, diagnostics: readonly ResourceDiagnostic[]): void => {
+			const addDiagnosticNotice = (
+				title: string,
+				diagnostics: readonly ResourceDiagnostic[],
+				why = "Conflicting or invalid loaded resources were found.",
+			): void => {
 				this.loadedResourcesContainer.addChild(
 					buildNoticeBox(
 						{
 							title,
 							tone: "warning",
-							why: "Conflicting or invalid loaded resources were found.",
+							why,
 							extra: this.formatDiagnostics(diagnostics, sourceInfos),
 						},
 						{ expanded: this.toolOutputExpanded },
@@ -2630,7 +2656,19 @@ export class InteractiveMode {
 				this.loadedResourcesContainer.addChild(new Spacer(1));
 			};
 
-			const skillDiagnostics = skillsResult.diagnostics;
+			const contextDiagnostics = [
+				...(this.session.resourceLoader.getAgentsFiles().diagnostics ?? []),
+				...skillsResult.diagnostics.filter((diagnostic) => diagnostic.category === "size-limit"),
+			];
+			if (contextDiagnostics.length > 0) {
+				addDiagnosticNotice(
+					"Context size limits",
+					contextDiagnostics,
+					"Context files or skill catalogs were limited to keep requests bounded.",
+				);
+			}
+
+			const skillDiagnostics = skillsResult.diagnostics.filter((diagnostic) => diagnostic.category !== "size-limit");
 			if (skillDiagnostics.length > 0) {
 				addDiagnosticNotice("Skill conflicts", skillDiagnostics);
 			}
@@ -2902,7 +2940,11 @@ export class InteractiveMode {
 	}
 
 	private getMarkdownTransformers(): MarkdownTransformer[] {
-		return [this.mermaidMarkdownTransformer, ...this.session.extensionRunner.getMarkdownTransformers()];
+		return [
+			this.mermaidMarkdownTransformer,
+			this.messagePathLinkTransformer,
+			...this.session.extensionRunner.getMarkdownTransformers(),
+		];
 	}
 
 	/**
@@ -3651,7 +3693,7 @@ export class InteractiveMode {
 				this.applyTerminalTitle();
 			},
 			custom: (factory, options) => this.showExtensionCustom(factory, options),
-			pasteToEditor: (text) => this.editor.handleInput(`\x1b[200~${text}\x1b[201~`),
+			pasteToEditor: (text) => insertProgrammaticComposerInput(this.editor, `\x1b[200~${text}\x1b[201~`),
 			setEditorText: (text) => this.editor.setText(text),
 			getEditorText: () => this.getExpandedEditorText(),
 			editor: (title, prefill) =>
@@ -3999,6 +4041,11 @@ export class InteractiveMode {
 					return state !== undefined;
 				},
 				notice: (line) => this.showWarning(line),
+				selectModel: (model) => InteractiveMode.applyModelSelection(this, model, { source: "control" }),
+				selectThinkingLevel: (level, remember) => InteractiveMode.applyThinkingLevel(this, level, remember),
+				interruptTurn: async () => {
+					await this.abortAndFireQueuedMessages();
+				},
 			},
 		};
 	}
@@ -4133,7 +4180,12 @@ export class InteractiveMode {
 			// Ordinary cancellation/abort stays silent in the builtin. Only this
 			// explicit command acknowledges dismissal, including on host bridges.
 			await this.session.sendUserMessage(
-				formatUserMessage(response, state.request.requestId, state.request.questions),
+				formatUserMessage(
+					response,
+					state.request.requestId,
+					state.request.questions,
+					state.request.required === true,
+				),
 				{
 					deliverAs: this.session.isStreaming ? "steer" : "followUp",
 				},
@@ -4283,6 +4335,7 @@ export class InteractiveMode {
 				this.defaultEditor.onSubmit?.(expandSubmittedText(newEditor, text));
 			};
 			newEditor.onChange = this.defaultEditor.onChange;
+			observeComposerActivity(newEditor, () => emitUserActivity(this.session, "draft"));
 
 			// Copy text (and any collapsed paste/image markers) from previous editor.
 			// Image payloads live on this instance, so they must be dropped when the
@@ -4626,6 +4679,7 @@ export class InteractiveMode {
 				const leadingSpace = characterBeforeCursor && !/\s/.test(characterBeforeCursor) ? " " : "";
 				const trailingSpace = characterAfterCursor && !/\s/.test(characterAfterCursor) ? " " : "";
 				this.editor.insertTextAtCursor?.(`${leadingSpace}${paths}${trailingSpace}`);
+				emitUserActivity(this.session, "draft");
 				this.ui.requestRender();
 				return;
 			}
@@ -4644,11 +4698,15 @@ export class InteractiveMode {
 					},
 					image,
 				));
-			if (attached) return;
+			if (attached) {
+				if (attached === "attached") emitUserActivity(this.session, "draft");
+				return;
+			}
 
 			const text = await readClipboardText();
 			if (text) {
 				this.editor.insertTextAtCursor?.(text);
+				emitUserActivity(this.session, "draft");
 				this.ui.requestRender();
 			}
 		} catch (error) {
@@ -5093,6 +5151,11 @@ export class InteractiveMode {
 		switch (event.type) {
 			case "agent_start":
 				this.agentIdle = false;
+				// Keep a scrolled-up reader in place for this turn: rows re-laid out above the viewport are not
+				// replayed until the next key press (#2836). No catch-up here: a turn nobody typed (auto-retry,
+				// an extension's triggerTurn) can start while the reader is still scrolled up, and a turn the user
+				// started already caught up on their Enter key.
+				this.ui.setScrollbackReplayHold(true);
 				this.transcriptWriteNoticeShown = false;
 				this.clearPendingTools();
 				this.clearActiveToolExecutionStatus();
@@ -5418,6 +5481,8 @@ export class InteractiveMode {
 				if (this.settingsManager.getShowTerminalProgress() && this.ui.terminal) {
 					this.ui.terminal.setProgress(false);
 				}
+				// Keep holding until the next key press: a replay at turn end would snap a reader who is scrolled up.
+				this.ui.setScrollbackReplayHold("until-input");
 				this.clearActiveToolExecutionStatus();
 				this.clearToolHookStatuses();
 				this.streamingReveal.stop();
@@ -5429,6 +5494,7 @@ export class InteractiveMode {
 				}
 				this.detachAssistantTextSegments();
 				this.clearPendingTools();
+				if (event.failure !== undefined && !event.willRetry) this.showError(formatProviderFailure(event.failure));
 
 				this.ui.requestRender();
 				break;
@@ -5668,13 +5734,16 @@ export class InteractiveMode {
 				break;
 			}
 
-			case "model_changed":
+			case "model_changed": {
 				// The new model must not inherit the previous model's
 				// SDK-delegation episode (post-#1188 core emits no repeat rejection to
 				// self-heal a stale marker).
 				this.externalOwnerCompactionNoticeShown = false;
 				this.footer?.setCompactionDelegated?.(false);
+				const notice = liveModelChangeNotice(event);
+				if (notice !== undefined) this.addModelChangeNotice(notice);
 				break;
+			}
 
 			case "retry_fallback_applied": {
 				if (this.pendingZeroDelayRetryIndicator) {
@@ -5908,8 +5977,13 @@ export class InteractiveMode {
 	 */
 	private showStatus(message: string): void {
 		const children = this.chatContainer.children;
-		const last = children.length > 0 ? children[children.length - 1] : undefined;
-		const secondLast = children.length > 1 ? children[children.length - 2] : undefined;
+		// While a turn streams, a notice goes above the live message, like a custom entry does. Appended
+		// after it, a notice taller than the screen pushed the live output above the viewport, and every
+		// streamed delta then replayed the whole scrollback: the view kept jumping to the top (#2836).
+		const streamingIndex = this.streamingComponent ? children.indexOf(this.streamingComponent) : -1;
+		const end = streamingIndex >= 0 ? streamingIndex : children.length;
+		const last = end > 0 ? children[end - 1] : undefined;
+		const secondLast = end > 1 ? children[end - 2] : undefined;
 
 		if (last && secondLast && last === this.lastStatusText && secondLast === this.lastStatusSpacer) {
 			this.lastStatusMessage = message;
@@ -5921,8 +5995,12 @@ export class InteractiveMode {
 		const spacer = new Spacer(1);
 		this.lastStatusMessage = message;
 		const text = new ThemedText(() => theme.fg("dim", this.lastStatusMessage), 1, 0);
-		this.chatContainer.addChild(spacer);
-		this.chatContainer.addChild(text);
+		if (streamingIndex >= 0) {
+			children.splice(streamingIndex, 0, spacer, text);
+		} else {
+			this.chatContainer.addChild(spacer);
+			this.chatContainer.addChild(text);
+		}
 		this.lastStatusSpacer = spacer;
 		this.lastStatusText = text;
 		this.ui.requestRender();
@@ -6052,7 +6130,7 @@ export class InteractiveMode {
 			case "system":
 				break;
 			case "user": {
-				const textContent = this.getUserMessageText(message);
+				const textContent = askUserAnswerDisplayText(message.content) ?? this.getUserMessageText(message);
 				if (textContent) {
 					if (this.chatContainer.children.length > 0) {
 						this.chatContainer.addChild(new Spacer(1));
@@ -6270,6 +6348,10 @@ export class InteractiveMode {
 				this.addCompactionCostNotice(item);
 				continue;
 			}
+			if (isModelChangeNotice(item)) {
+				this.addModelChangeNotice(item);
+				continue;
+			}
 
 			const message = item;
 			// Assistant messages need special handling for tool calls
@@ -6323,6 +6405,10 @@ export class InteractiveMode {
 			if (entry.type === "custom") {
 				return [entry];
 			}
+			if (entry.type === "model_change") {
+				const notice = replayedModelChangeNotice(entry);
+				return notice === undefined ? [] : [notice];
+			}
 			const messages = sessionEntryToContextMessages(entry);
 			if ((entry.type === "compaction" || entry.type === "branch_summary") && entry.usage && messages.length > 0) {
 				return [...messages, { type: "compaction_cost", kind: entry.type, usage: entry.usage }];
@@ -6336,6 +6422,11 @@ export class InteractiveMode {
 	 * Render billing usage for a compaction or branch summary. The notice is derived
 	 * from persisted summary usage and is not stored as a separate session entry.
 	 */
+	private addModelChangeNotice(notice: ModelChangeNotice): void {
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new ThemedText(() => theme.fg("warning", notice.text), 1, 0));
+	}
+
 	private addCompactionCostNotice(notice: CompactionCostNotice): void {
 		if (!this.settingsManager.getShowCacheMissNotices()) return;
 
@@ -6661,6 +6752,7 @@ export class InteractiveMode {
 			this.showWarning(INSPECTOR_VM_IMPORT_WARNING);
 			return;
 		}
+		if (containStaleExtensionError(error, origin)) return;
 		this.isShuttingDown = true;
 		try {
 			this.unregisterSignalHandlers();
@@ -6774,9 +6866,11 @@ export class InteractiveMode {
 		// in pi) leaves the terminal in raw mode with no cursor.
 		const uncaughtExceptionHandler = (error: Error, origin: "uncaughtException" | "unhandledRejection") =>
 			this.uncaughtCrash(error, origin);
+		markModeCrashHandler(uncaughtExceptionHandler);
 		process.prependListener("uncaughtException", uncaughtExceptionHandler);
 		this.signalCleanupHandlers.push(() => process.off("uncaughtException", uncaughtExceptionHandler));
 		const unhandledRejectionHandler = (reason: unknown) => this.unhandledRejection(reason);
+		markModeCrashHandler(unhandledRejectionHandler);
 		process.prependListener("unhandledRejection", unhandledRejectionHandler);
 		this.signalCleanupHandlers.push(() => process.off("unhandledRejection", unhandledRejectionHandler));
 
@@ -6954,7 +7048,7 @@ export class InteractiveMode {
 
 	private async cycleModel(direction: "forward" | "backward"): Promise<void> {
 		try {
-			const result = await this.session.cycleModel(direction);
+			const result = await this.session.cycleModel(direction, { persistDefault: false });
 			if (result === undefined) {
 				const msg =
 					this.session.favoriteModels.length > 0
@@ -7033,17 +7127,28 @@ export class InteractiveMode {
 	private async handleOpenExternalEditor(): Promise<void> {
 		const editorCmd = this.settingsManager.getExternalEditorCommand();
 		const content = this.getExpandedEditorText();
+		const result = await this.withTerminalHandedOver(() =>
+			editInExternalEditor({
+				command: editorCmd,
+				content,
+			}),
+		);
+		if (result.status === "complete") {
+			this.editor.setText(result.content);
+		}
+	}
+
+	/**
+	 * Runs `work` (an external program that draws on the terminal itself) with the terminal handed
+	 * back: the TUI stops, fd 1 and fd 2 point at the terminal again, and both are taken over again
+	 * afterwards. An editor launched without this would draw into the debug log (#2815).
+	 */
+	private async withTerminalHandedOver<T>(work: () => Promise<T>): Promise<T> {
 		this.pauseQuestionMouseCapture();
 		this.ui.stop();
 		restoreInteractiveStderr();
 		try {
-			const result = await editInExternalEditor({
-				command: editorCmd,
-				content,
-			});
-			if (result.status === "complete") {
-				this.editor.setText(result.content);
-			}
+			return await work();
 		} finally {
 			takeOverInteractiveStderr();
 			this.ui.start();
@@ -7673,6 +7778,9 @@ export class InteractiveMode {
 					},
 					onThinkingLevelChange: (level) => {
 						this.session.setThinkingLevel(level);
+						if (this.session.thinkingLevel !== "off" || this.session.supportsThinking()) {
+							this.settingsManager.setDefaultThinkingLevel(this.session.thinkingLevel);
+						}
 						this.footer.invalidate();
 						this.updateEditorBorderColor();
 					},
@@ -7866,14 +7974,27 @@ export class InteractiveMode {
 	 */
 	private selectThinkingLevel(level: ThinkingLevel, persist: boolean): void {
 		try {
-			if (persist) this.session.setThinkingLevel(level);
-			else this.session.setSessionThinkingLevel(level);
-			this.footer.invalidate();
-			this.updateEditorBorderColor();
-			this.showStatus(persist ? `Default thinking level: ${level}` : `Thinking level: ${level}`);
+			InteractiveMode.applyThinkingLevel(this, level, persist);
 		} catch (error) {
 			this.showError(error instanceof Error ? error.message : String(error));
 		}
+	}
+
+	/**
+	 * The level switch itself; the control endpoint's `set_thinking_level` runs it too.
+	 * Static and called through the class, so a handler invoked on a partial `this`
+	 * reaches exactly the members the switch uses.
+	 */
+	private static applyThinkingLevel(mode: InteractiveMode, level: ThinkingLevel, persist: boolean): void {
+		if (persist) {
+			mode.session.setThinkingLevel(level);
+			if (mode.session.thinkingLevel !== "off" || mode.session.supportsThinking()) {
+				mode.settingsManager.setDefaultThinkingLevel(mode.session.thinkingLevel);
+			}
+		} else mode.session.setSessionThinkingLevel(level);
+		mode.footer.invalidate();
+		mode.updateEditorBorderColor();
+		mode.showStatus(persist ? `Default thinking level: ${level}` : `Thinking level: ${level}`);
 	}
 
 	private async showThinkingSelector(): Promise<void> {
@@ -7898,7 +8019,14 @@ export class InteractiveMode {
 		});
 	}
 
-	private async handleModelCommand(searchTerm?: string): Promise<void> {
+	private async handleModelCommand(argument?: string): Promise<void> {
+		const { searchTerm, asDefault } = parseModelCommandArgument(argument);
+		// --default needs the model it names; in the picker, the save chord does the same (senpi#2870).
+		if (asDefault && !searchTerm) {
+			this.showWarning("/model --default needs a model: /model <provider/id> --default, or Ctrl+S in the picker.");
+			this.showModelSelector();
+			return;
+		}
 		if (!searchTerm) {
 			this.showModelSelector();
 			return;
@@ -7906,10 +8034,14 @@ export class InteractiveMode {
 
 		const model = await this.findExactModelMatch(searchTerm);
 		if (model) {
-			await this.selectModelFromUi(model);
+			await this.selectModelFromUi(model, undefined, { origin: { source: "command" }, persistDefault: asDefault });
 			return;
 		}
 
+		if (asDefault)
+			this.showWarning(
+				`No exact model match for "${searchTerm}"; pick one and press Ctrl+S to also make it the default.`,
+			);
 		this.showModelSelector(searchTerm);
 	}
 
@@ -7947,29 +8079,54 @@ export class InteractiveMode {
 		return findExactModelReferenceMatch(searchTerm, [...this.session.modelRuntime.getAvailableSnapshot()]);
 	}
 
-	private async selectModelFromUi(model: Model<any>, done?: () => void): Promise<void> {
+	private async selectModelFromUi(
+		model: Model<any>,
+		done: (() => void) | undefined,
+		selection: { readonly origin: ModelChangeOrigin; readonly persistDefault: boolean },
+	): Promise<void> {
 		// The selector overlay is already disposed on Enter, so releasing it only
 		// after setModel resolves leaves a stale frozen frame for the whole provider
 		// auth round trip. Release and repaint first, then apply the switch.
 		done?.();
 		this.ui?.requestRender();
 		try {
-			const systemPromptChange = await this.session.setModel(model);
-			this.footer.invalidate();
-			// A model switch ends any external-owner delegation episode.
-			this.externalOwnerCompactionNoticeShown = false;
-			this.footer?.setCompactionDelegated?.(false);
-			this.updateEditorBorderColor();
-			const systemPromptStr = systemPromptChange?.systemPromptName
-				? ` (optimized system prompt applied: ${systemPromptChange.systemPromptName})`
-				: "";
-			this.showStatus(`Model: ${model.id}${systemPromptStr}`);
-			this.showRiskyMainModelWarning(model);
-			void this.maybeWarnAboutAnthropicSubscriptionAuth(model);
-			this.checkDaxnutsEasterEgg(model);
+			await InteractiveMode.applyModelSelection(this, model, selection.origin, selection.persistDefault);
 		} catch (error) {
 			this.showError(error instanceof Error ? error.message : String(error));
 		}
+	}
+
+	/**
+	 * The `/model` switch itself; the control endpoint's `set_model` runs it too, and reports a throw.
+	 * Static and called through the class for the same reason as `applyThinkingLevel`.
+	 */
+	private static async applyModelSelection(
+		mode: InteractiveMode,
+		model: Model<any>,
+		origin: ModelChangeOrigin,
+		persistDefault = false,
+	): Promise<SystemPromptChangeEvent | undefined> {
+		// A selection applies to this session; only an explicit request changes the default for new sessions (senpi#2870).
+		const systemPromptChange = persistDefault
+			? await mode.session.setModel(model, origin)
+			: await mode.session.setSessionModel(model, origin);
+		mode.footer.invalidate();
+		// A model switch ends any external-owner delegation episode.
+		mode.externalOwnerCompactionNoticeShown = false;
+		mode.footer?.setCompactionDelegated?.(false);
+		mode.updateEditorBorderColor();
+		const systemPromptStr = systemPromptChange?.systemPromptName
+			? ` (optimized system prompt applied: ${systemPromptChange.systemPromptName})`
+			: "";
+		mode.showStatus(
+			persistDefault
+				? `Model: ${model.id}${systemPromptStr} · now the default model for new sessions`
+				: `Model: ${model.id}${systemPromptStr}`,
+		);
+		mode.showRiskyMainModelWarning(model);
+		void mode.maybeWarnAboutAnthropicSubscriptionAuth(model);
+		mode.checkDaxnutsEasterEgg(model);
+		return systemPromptChange;
 	}
 
 	private async resolveFavoriteModelsForUi(
@@ -8142,8 +8299,11 @@ export class InteractiveMode {
 				this.settingsManager,
 				this.session.modelRuntime,
 				this.session.scopedModels,
-				(model) => {
-					void this.selectModelFromUi(model, done);
+				(model, selection) => {
+					void this.selectModelFromUi(model, done, {
+						origin: { source: "picker", actor: "model-selector" },
+						persistDefault: selection.asDefault,
+					});
 				},
 				() => {
 					done();
@@ -8192,7 +8352,10 @@ export class InteractiveMode {
 						});
 					},
 					onSelect: (model) => {
-						void this.selectModelFromUi(model, done);
+						void this.selectModelFromUi(model, done, {
+							origin: { source: "picker", actor: "favorites" },
+							persistDefault: false,
+						});
 					},
 					onCancel: () => {
 						done();
@@ -8657,6 +8820,11 @@ export class InteractiveMode {
 			if (result.cancelled) {
 				return result;
 			}
+			const warning = await sessionHolderWarning(
+				this.sessionManager.getSessionFile(),
+				this.sessionManager.getSessionId(),
+			);
+			if (warning !== undefined) this.showWarning(warning);
 			const switchTimings = formatTimings("switch");
 			this.showStatus(
 				switchTimings === undefined ? "Resumed session" : `Resumed session | switch timings: ${switchTimings}`,
@@ -8677,6 +8845,11 @@ export class InteractiveMode {
 				if (result.cancelled) {
 					return result;
 				}
+				const warning = await sessionHolderWarning(
+					this.sessionManager.getSessionFile(),
+					this.sessionManager.getSessionId(),
+				);
+				if (warning !== undefined) this.showWarning(warning);
 				this.showStatus("Resumed session in current cwd");
 				return result;
 			}
@@ -8687,20 +8860,13 @@ export class InteractiveMode {
 	private getLoginProviderOptions(authType?: "oauth" | "api_key"): AuthSelectorProvider[] {
 		const options: AuthSelectorProvider[] = [];
 		for (const provider of this.session.modelRuntime.getProviders()) {
-			const authStatus = this.session.modelRuntime.getProviderAuthStatus(provider.id);
-			const status = authStatus.configured
-				? {
-						type: this.session.modelRuntime.isUsingOAuth(provider.id) ? ("oauth" as const) : ("api_key" as const),
-						source: authStatus.label ?? authStatus.source,
-					}
-				: undefined;
 			if ((!authType || authType === "oauth") && provider.auth.oauth) {
 				options.push({
 					id: provider.id,
 					name: provider.name,
 					authType: "oauth",
 					method: provider.auth.oauth,
-					status,
+					status: loginRowStatus(this.session.modelRegistry, provider, "oauth"),
 				});
 			}
 			if ((!authType || authType === "api_key") && provider.auth.apiKey) {
@@ -8709,7 +8875,7 @@ export class InteractiveMode {
 					name: provider.name,
 					authType: "api_key",
 					method: provider.auth.apiKey,
-					status,
+					status: loginRowStatus(this.session.modelRegistry, provider, "api_key"),
 				});
 			}
 		}
@@ -8989,7 +9155,8 @@ export class InteractiveMode {
 						selectionError = `${actionLabel}, but its default model "${defaultModelId}" is not available. Use /model to select a model.`;
 					} else {
 						try {
-							systemPromptName = (await this.session.setModel(selectedModel))?.systemPromptName;
+							systemPromptName = (await this.session.setModel(selectedModel, { source: "provider-login" }))
+								?.systemPromptName;
 						} catch (error: unknown) {
 							selectedModel = undefined;
 							const errorMessage = error instanceof Error ? error.message : String(error);

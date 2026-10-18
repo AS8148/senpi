@@ -6,6 +6,7 @@ import {
 	type Color,
 	colorToHex,
 	colorToOklch,
+	type EditorKeywordHighlight,
 	type EditorTheme,
 	foregroundAnsi,
 	getTerminalColorMode,
@@ -27,6 +28,7 @@ import { getCustomThemesDir, getThemesDir } from "../../../config.ts";
 import type { SourceInfo } from "../../../core/source-info.ts";
 import { closeWatcher, watchWithErrorHandler } from "../../../utils/fs-watch.ts";
 import { highlight, supportsLanguage } from "../../../utils/syntax-highlight.ts";
+import { createReservedKeywordHighlight } from "./reserved-keyword-rainbow.ts";
 import { generateSystemThemeColors, SYSTEM_THEME_NAME, terminalAppearance } from "./system-theme.ts";
 
 /** Name of the built-in theme generated from the terminal's colors (`"system"`), used when no theme is set. */
@@ -1144,8 +1146,17 @@ export function getEditorTheme(): EditorTheme {
 	return {
 		borderColor: (text: string) => theme.fg("borderMuted", text),
 		mention: (text: string) => theme.fg("skillMention", `\x1b[1m${text}\x1b[22m`),
+		keywordHighlight: getReservedKeywordHighlight(),
 		selectList: getSelectListTheme(),
 	};
+}
+
+/** Rainbow for OmO's reserved prompt keywords; it follows the active theme's appearance and colour mode. */
+export function getReservedKeywordHighlight(): EditorKeywordHighlight | undefined {
+	return createReservedKeywordHighlight({
+		appearance: () => theme.appearance,
+		colorMode: () => theme.getColorMode(),
+	});
 }
 
 export function getSettingsListTheme(): SettingsListTheme {

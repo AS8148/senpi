@@ -124,6 +124,15 @@ export interface ProviderConfigInput {
 	extraBody?: Record<string, unknown>;
 	authHeader?: boolean;
 	oauth?: ExtensionOAuthConfig;
+	/**
+	 * Ambient api-key auth resolved from a shared cloud credential chain (Google
+	 * ADC, AWS env) rather than a credential configured for this provider. The
+	 * provider counts as configured only while `resolve` yields a result, and the
+	 * ambient marker keeps it from outranking a provider the user configured when
+	 * the automatic default model is chosen (senpi#2327). Ignored when `apiKey`,
+	 * credential headers, or a base provider already supply auth.
+	 */
+	ambientAuth?: ProviderAmbientAuth;
 	retryPolicy?: RetryPolicyProfile;
 	models?: ProviderModelConfig[];
 	refreshModels?(context: RefreshModelsContext): Promise<ProviderModelConfig[]>;
@@ -135,6 +144,18 @@ export interface ProviderConfigInput {
 	 * every expansion, so a settings change takes effect without re-registration.
 	 */
 	fallbackEligible?(): boolean;
+}
+
+/** Ambient api-key auth hook for extension providers (see `ProviderConfigInput.ambientAuth`). */
+export interface ProviderAmbientAuth {
+	/** Display name, e.g. "Google Cloud credentials". */
+	name?: string;
+	/**
+	 * Resolve from the ambient chain. `undefined` means the chain currently
+	 * supplies no credential, so the provider stays unavailable. A returned
+	 * result should carry `ambient: true`.
+	 */
+	resolve(input: { ctx: AuthContext; signal: AbortSignal }): Promise<AuthResult | undefined>;
 }
 
 export type AuthStatus = {
@@ -237,6 +258,7 @@ function applyModelOverride(model: Model<Api>, override: ModelsJsonModelOverride
 					cacheRead: override.cost.cacheRead ?? model.cost.cacheRead,
 					cacheWrite: override.cost.cacheWrite ?? model.cost.cacheWrite,
 					tiers: override.cost.tiers ?? model.cost.tiers,
+					// A user-set price is the price: the catalog's scheduled cards would replace it on their date.
 				}
 			: model.cost,
 		promptCache: override.promptCache ? { ...model.promptCache, ...override.promptCache } : model.promptCache,
@@ -362,6 +384,7 @@ function applyModelsJson(
 		!hasOverrides &&
 		!config.whitelist &&
 		!config.blacklist &&
+		config.hideFreeModels === undefined &&
 		!config.apiKey &&
 		config.authHeader === undefined
 	) {
@@ -397,9 +420,12 @@ function applyModelsJson(
 	}
 	const whitelist = config.whitelist ? new Set(config.whitelist) : undefined;
 	const blacklist = config.blacklist ? new Set(config.blacklist) : undefined;
+	const hideFree = config.hideFreeModels === true;
 	return models.filter(
 		(model) =>
-			(whitelist === undefined || whitelist.has(model.id)) && (blacklist === undefined || !blacklist.has(model.id)),
+			(whitelist === undefined || whitelist.has(model.id)) &&
+			(blacklist === undefined || !blacklist.has(model.id)) &&
+			!(hideFree && model.cost.input === 0 && model.cost.output === 0),
 	);
 }
 

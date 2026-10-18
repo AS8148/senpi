@@ -51,6 +51,7 @@ import { appendRetryAfterMsMarker, extract429RetryAfterMs } from "../utils/retry
 import { getSystemMessageText } from "../utils/text.ts";
 import { getDeclaredTools, getInitialSystemMessage, normalizeContext, resolveTranscript } from "../utils/transcript.ts";
 import { uuidv7 } from "../utils/uuid.ts";
+import { describeChatGptUsageLimitEvent, describeChatGptUsageLimitResponse } from "./chatgpt-usage-limit.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import {
 	type ChatGptSubscriptionWebSocketDebugStats,
@@ -60,6 +61,7 @@ import {
 	isWebSocketSseFallbackActive,
 	recordWebSocketFailure,
 	recordWebSocketSseFallback,
+	recordWebSocketSuccess,
 } from "./openai-codex-responses/fallback-state.ts";
 import { buildCodexReasoning, type CodexReasoningSummaryInput } from "./openai-codex-responses/reasoning.ts";
 import { applyChatGptSubscriptionCacheAffinityHeaders, clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
@@ -352,6 +354,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 							throw new Error("Request was aborted");
 						}
 						assertSuccessfulOutput(output);
+						recordWebSocketSuccess(cacheSessionId);
 						stream.push({
 							type: "done",
 							reason: output.stopReason,
@@ -374,17 +377,18 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 						if (aborted || (isCodexNonTransportError(error) && !connectionLimitBeforeStart)) {
 							throw error;
 						}
+						const phase = websocketStarted ? "after_message_stream_start" : "before_message_stream_start";
 						appendAssistantMessageDiagnostic(
 							output,
 							createAssistantMessageDiagnostic("provider_transport_failure", error, {
 								configuredTransport: transport,
 								...(websocketStarted ? {} : { fallbackTransport: "sse" }),
 								eventsEmitted: websocketStarted,
-								phase: websocketStarted ? "after_message_stream_start" : "before_message_stream_start",
+								phase,
 								requestBytes: new TextEncoder().encode(bodyJson).byteLength,
 							}),
 						);
-						recordWebSocketFailure(cacheSessionId, error);
+						recordWebSocketFailure(cacheSessionId, error, phase);
 						if (websocketStarted) {
 							throw error;
 						}
@@ -465,7 +469,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 						status: response.status,
 						statusText: response.statusText,
 					});
-					const info = await parseErrorResponse(fakeResponse);
+					const info = await parseErrorResponse(fakeResponse, response.headers);
 					let errorMessage = info.friendlyMessage || info.message;
 					if (response.status === 429) {
 						const hintMs = extract429RetryAfterMs({
@@ -653,14 +657,14 @@ function buildRequestBody(
 }
 
 function getServiceTierCostMultiplier(
-	model: Pick<Model<"openai-codex-responses">, "id">,
+	model: Pick<Model<"openai-codex-responses">, "id" | "upstreamModelId">,
 	serviceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast" | undefined,
 ): number {
 	switch (serviceTier) {
 		case "ultrafast":
-			// OpenAI publishes an Ultrafast price for GPT-6 Astra only: 6x Standard on every
+			// OpenAI prices GPT-6 Astra and GPT-6.1 Sol Ultrafast at 6x Standard on every
 			// token class and context tier. Any other model keeps its base rate.
-			return model.id === "gpt-6-astra" ? 6 : 1;
+			return ["gpt-6-astra", "gpt-6.1-sol"].includes(model.upstreamModelId ?? model.id) ? 6 : 1;
 		case "flex":
 			return 0.5;
 		case "priority":
@@ -674,7 +678,7 @@ function getServiceTierCostMultiplier(
 function applyServiceTierPricing(
 	usage: Usage,
 	serviceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast" | undefined,
-	model: Pick<Model<"openai-codex-responses">, "id">,
+	model: Pick<Model<"openai-codex-responses">, "id" | "upstreamModelId">,
 ) {
 	const multiplier = getServiceTierCostMultiplier(model, serviceTier);
 	if (multiplier === 1) return;
@@ -844,7 +848,8 @@ async function* mapCodexEvents(
 		if (type === "error") {
 			const code = getCodexEventErrorCode(event);
 			const message = getCodexEventErrorMessage(event);
-			let errorText = `Codex error: ${message || code || JSON.stringify(event)}`;
+			let errorText =
+				describeChatGptUsageLimitEvent(event) ?? `Codex error: ${message || code || JSON.stringify(event)}`;
 			const hintMs = extract429RetryAfterMs({ bodyText: JSON.stringify(event) });
 			if (hintMs !== undefined) {
 				errorText = appendRetryAfterMsMarker(errorText, hintMs);
@@ -1688,26 +1693,19 @@ async function processWebSocketStream(
 // Error Handling
 // ============================================================================
 
-async function parseErrorResponse(response: Response): Promise<{ message: string; friendlyMessage?: string }> {
+async function parseErrorResponse(
+	response: Response,
+	headers: Headers,
+): Promise<{ message: string; friendlyMessage?: string }> {
 	const raw = await response.text();
 	let message = raw || response.statusText || "Request failed";
 	let friendlyMessage: string | undefined;
 
 	try {
-		const parsed = JSON.parse(raw) as {
-			error?: { code?: string; type?: string; message?: string; plan_type?: string; resets_at?: number };
-		};
-		const err = parsed?.error;
+		const parsed: unknown = JSON.parse(raw);
+		friendlyMessage = describeChatGptUsageLimitResponse(response.status, parsed, headers);
+		const err = (parsed as { error?: { message?: string } } | null)?.error;
 		if (err) {
-			const code = err.code || err.type || "";
-			if (/usage_limit_reached|usage_not_included|rate_limit_exceeded/i.test(code) || response.status === 429) {
-				const plan = err.plan_type ? ` (${err.plan_type.toLowerCase()} plan)` : "";
-				const mins = err.resets_at
-					? Math.max(0, Math.round((err.resets_at * 1000 - Date.now()) / 60000))
-					: undefined;
-				const when = mins !== undefined ? ` Try again in ~${mins} min.` : "";
-				friendlyMessage = `You have hit your ChatGPT usage limit${plan}.${when}`.trim();
-			}
 			message = err.message || friendlyMessage || message;
 		}
 	} catch {}

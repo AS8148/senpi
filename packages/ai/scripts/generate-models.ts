@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "fs";
+import { applyDatedListPrice } from "./dated-list-prices.ts";
 import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { getBaiModels } from "./generate-models-bai.ts";
@@ -35,9 +36,11 @@ import type {
 import {
 	assertExactModelIds,
 	createModelDataManifest,
+	type ModelDataManifest,
 	type ModelDataStructure,
 	MODEL_DATA_MANIFEST_FILE,
 	readModelDataProviderIds,
+	stableGeneratedAt,
 	readModelDataStructure,
 	validateGeneratedModelData,
 	validateModelDataDirectory,
@@ -411,11 +414,13 @@ const KIMI_K3_THINKING_LEVEL_MAP = {
 	max: "max",
 } as const;
 const KIMI_K3_MAX_TOKENS = 131072;
+// Official Kimi K3 API prices per 1M tokens (platform.kimi.ai/docs/pricing/chat): cache writes bill at the
+// default 5-minute TTL rate, $3 ($6 for the 1-hour TTL); a cache hit bills only the cached-input price.
 const KIMI_K3_COST = {
 	input: 3,
 	output: 15,
 	cacheRead: 0.3,
-	cacheWrite: 0,
+	cacheWrite: 3,
 } as const;
 const KIMI_CODING_STABLE_MODELS = {
 	"kimi-for-coding": {
@@ -496,6 +501,8 @@ const OPENAI_MAX_CONTEXT_INPUT_CAP = 922000;
 // same 1,050,000 window and 922,000 input cap); GPT-6 Luna ships the full 922,000 input cap.
 const GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW = 600000;
 const GPT_6_SOL_DEFAULT_CONTEXT_WINDOW = 400000;
+// Live Codex catalog, 2026-10-12T00:15Z: subscription default only; API budgets stay unchanged (#3150).
+const CHATGPT_SUBSCRIPTION_GPT_61_SOL_CONTEXT_WINDOW = 500000;
 const GPT_6_LUNA_DEFAULT_CONTEXT_WINDOW = OPENAI_MAX_CONTEXT_INPUT_CAP;
 const OPENAI_FLAGSHIP_DEFAULT_CONTEXT_WINDOWS: ReadonlyMap<string, number> = new Map([
 	["gpt-5.6-sol", 650000],
@@ -847,27 +854,33 @@ function supportsAnthropicMidConvoEffort(modelId: string): boolean {
 	const id = modelId.toLowerCase().replace(/^~?anthropic\//, "");
 	return (
 		/^claude-opus-5(?:[.-]5)?(?:-\d{8})?$/.test(id) ||
-		/^claude-sonnet-5[.-]5(?:-\d{8})?$/.test(id) ||
+		/^claude-(?:sonnet|haiku)-5[.-]5(?:-\d{8})?$/.test(id) ||
 		/^claude-(?:fable|mythos)-5(?:[.-]1)(?:-\d{8})?$/.test(id)
 	);
 }
 
 // Opus 5.5 and Sonnet 5.5 reject `thinking: {type: "disabled"}` and `{type: "enabled"}` alike (400:
 // `"thinking.type.disabled" is not supported for this model`); only adaptive thinking is accepted.
+// Haiku 5.5 rejects `enabled` too, but its effort docs accept `disabled` at effort `high` or below (400 only
+// at `xhigh` / `max`, and a differing per-message effort while disabled is a 400). Exposing that real
+// thinking-off needs marker handling (senpi#2927), so until then it is held to the adaptive-only contract,
+// whose thinking-off shape (unset + effort `low`) is valid either way.
 function isAnthropicAdaptiveOnlyModel(modelId: string): boolean {
 	return (
 		modelId.includes("fable-5") ||
 		modelId.includes("opus-5-5") ||
 		modelId.includes("opus-5.5") ||
 		modelId.includes("sonnet-5-5") ||
-		modelId.includes("sonnet-5.5")
+		modelId.includes("sonnet-5.5") ||
+		modelId.includes("haiku-5-5") ||
+		modelId.includes("haiku-5.5")
 	);
 }
 
 function supportsAnthropicMidConvoSystemMessages(modelId: string): boolean {
 	return (
 		/^claude-opus-(?:4[.-]8|5(?:[.-]5)?)(?:-\d{8})?$/.test(modelId) ||
-		/^claude-sonnet-5[.-]5(?:-\d{8})?$/.test(modelId) ||
+		/^claude-(?:sonnet|haiku)-5[.-]5(?:-\d{8})?$/.test(modelId) ||
 		/^claude-(?:fable|mythos)-5(?:[.-]1)?(?:-\d{8})?$/.test(modelId)
 	);
 }
@@ -888,7 +901,9 @@ function isAnthropicAdaptiveThinkingModel(modelId: string): boolean {
 		modelId.includes("sonnet.5") ||
 		modelId.includes("opus-5") ||
 		modelId.includes("opus.5") ||
-		modelId.includes("fable-5")
+		modelId.includes("fable-5") ||
+		modelId.includes("haiku-5-5") ||
+		modelId.includes("haiku-5.5")
 	);
 }
 
@@ -902,7 +917,9 @@ function isAnthropicTemperatureUnsupportedModel(modelId: string): boolean {
 		id.includes("opus-5") ||
 		id.includes("opus.5") ||
 		id.includes("sonnet-5-5") ||
-		id.includes("sonnet-5.5")
+		id.includes("sonnet-5.5") ||
+		id.includes("haiku-5-5") ||
+		id.includes("haiku-5.5")
 	);
 }
 
@@ -1277,6 +1294,10 @@ function applyOpenAIConfigurationUpdateMetadata(model: Model<Api>): void {
 // first-party OpenAI catalogs carry the input cap, so the effective Astra budget
 // changed with the provider that routed the request.
 function applyGpt6ContextWindow(model: Model<Api>): void {
+	if (model.provider === "chatgpt-subscription" && model.id === "gpt-6.1-sol") {
+		model.contextWindow = CHATGPT_SUBSCRIPTION_GPT_61_SOL_CONTEXT_WINDOW;
+		return;
+	}
 	const contextWindow = gpt6FamilyDefaultContextWindow(model.id);
 	if (contextWindow === undefined) return;
 	model.contextWindow = contextWindow;
@@ -1605,6 +1626,28 @@ function normalizeNvidiaModelId(modelId: string): string {
 
 function roundCost(value: number): number {
 	return Number(value.toFixed(6));
+}
+
+// Claude Haiku 5.5 bills the whole request at five times every base rate once the prompt exceeds 100K input
+// tokens, on every route (https://platform.claude.com/docs/en/about-claude/pricing). Catalogs that list it
+// with flat prices (regional Bedrock, batch variants, gateways) take the tier from their own base rates.
+const CLAUDE_HAIKU_55_LONG_CONTEXT_INPUT_THRESHOLD = 100000;
+const CLAUDE_HAIKU_55_BANDED_MAX_TOKENS = 32000;
+
+function withClaudeHaiku55LongContextPricing(cost: ModelCost): ModelCost {
+	if (cost.tiers?.length) return cost;
+	return {
+		...cost,
+		tiers: [
+			{
+				inputTokensAbove: CLAUDE_HAIKU_55_LONG_CONTEXT_INPUT_THRESHOLD,
+				input: roundCost(cost.input * 5),
+				output: roundCost(cost.output * 5),
+				cacheRead: roundCost(cost.cacheRead * 5),
+				cacheWrite: roundCost(cost.cacheWrite * 5),
+			},
+		],
+	};
 }
 
 function getModelsDevCost(cost: ModelsDevModel["cost"]): ModelCost {
@@ -2666,7 +2709,9 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 		// - null/undefined/@ai-sdk/openai-compatible → openai-completions
 		const opencodeVariants = [
 			{ key: "opencode", provider: "opencode", basePath: "https://opencode.ai/zen" },
-			{ key: "opencode-go", provider: "opencode-go", basePath: "https://opencode.ai/zen/go" },
+			// Go's documented base (https://opencode.ai/docs/go/). The legacy /zen/go keeps the OpenAI and
+			// Anthropic wires but has no native generate-content route (404), senpi#3377.
+			{ key: "opencode-go", provider: "opencode-go", basePath: "https://opencode.ai/inference/go" },
 		] as const;
 
 		for (const variant of opencodeVariants) {
@@ -3377,7 +3422,40 @@ async function generateModels() {
 				max: "max",
 			},
 			input: ["text", "image"],
-			cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+			cost: { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
+			contextWindow: 1000000,
+			maxTokens: 128000,
+		});
+	}
+
+	// Keep Claude Haiku 5.5 when models.dev omits it. A prompt over 100K input tokens bills the whole
+	// request at the long-context rates.
+	// https://platform.claude.com/docs/en/models/haiku-5-5/overview
+	if (!allModels.some((model) => model.provider === "anthropic" && model.id === "claude-haiku-5-5")) {
+		allModels.push({
+			id: "claude-haiku-5-5",
+			name: "Claude Haiku 5.5",
+			api: "anthropic-messages",
+			provider: "anthropic",
+			baseUrl: "https://api.anthropic.com",
+			reasoning: true,
+			thinkingLevelMap: {
+				off: null,
+				minimal: null,
+				low: "low",
+				medium: "medium",
+				high: "high",
+				xhigh: "xhigh",
+				max: "max",
+			},
+			input: ["text", "image"],
+			cost: {
+				input: 0.1,
+				output: 0.5,
+				cacheRead: 0.01,
+				cacheWrite: 0.125,
+				tiers: [{ inputTokensAbove: 100000, input: 0.5, output: 2.5, cacheRead: 0.05, cacheWrite: 0.625 }],
+			},
 			contextWindow: 1000000,
 			maxTokens: 128000,
 		});
@@ -3434,10 +3512,23 @@ async function generateModels() {
 			candidate.contextWindow = 1000000;
 		}
 
-		// models.dev may list Opus 5.5 and Sonnet 5.5 before their effort metadata is complete.
+		if (/haiku-5[.-]5/.test(candidate.id)) {
+			candidate.cost = withClaudeHaiku55LongContextPricing(candidate.cost);
+			// Open at the 100K price band so compaction runs before a prompt crosses into the 5x rates; the
+			// full 1M window with the documented 128K output is an explicit models.json `modelOverrides` opt-in
+			// (oh-my-pi #14903 caps the window the same way; senpi#2916 tracks a first-class opt-in). Output
+			// drops to 32K with it: compaction reserves min(maxTokens, half the window) for output, so 128K would
+			// start emergency pruning at under half of a 100K window.
+			candidate.contextWindow = Math.min(candidate.contextWindow, CLAUDE_HAIKU_55_LONG_CONTEXT_INPUT_THRESHOLD);
+			candidate.maxTokens = Math.min(candidate.maxTokens, CLAUDE_HAIKU_55_BANDED_MAX_TOKENS);
+		}
+
+		// models.dev may list Opus 5.5, Sonnet 5.5 and Haiku 5.5 before their effort metadata is complete.
 		if (
 			(candidate.provider === "anthropic" &&
-				(candidate.id === "claude-opus-5-5" || candidate.id === "claude-sonnet-5-5")) ||
+				(candidate.id === "claude-opus-5-5" ||
+					candidate.id === "claude-sonnet-5-5" ||
+					candidate.id === "claude-haiku-5-5")) ||
 			(candidate.provider === "github-copilot" && candidate.id === "claude-opus-5.5")
 		) {
 			mergeThinkingLevelMap(candidate, {
@@ -3914,7 +4005,11 @@ async function generateModels() {
 			candidate.id.includes("deepseek-v4") &&
 			!QWEN_TOKEN_PLAN_PROVIDER_IDS.has(candidate.provider)
 		) {
-			const preservesNativeReasoningEffort = candidate.provider === "openrouter" || candidate.provider === "opencode";
+			// Venice's request schema is additionalProperties:false and has no `thinking` field, so
+			// DeepSeek's native `thinking: { type }` object 400s every request there (senpi#3308); its
+			// deepseek models take thinking through `reasoning_effort` like OpenRouter and OpenCode.
+			const preservesNativeReasoningEffort =
+				candidate.provider === "openrouter" || candidate.provider === "opencode" || candidate.provider === "venice";
 			candidate.compat = {
 				...candidate.compat,
 				...(preservesNativeReasoningEffort
@@ -3942,7 +4037,8 @@ async function generateModels() {
 	// OpenAI Codex (ChatGPT OAuth) models
 	// NOTE: These are not fetched from models.dev; we keep a small, explicit list to avoid aliases.
 	// Older model limits are based on observed server behavior. GPT-5.6 Luna and Terra follow Codex's 272k
-	// catalog limit (formerly 372k); Sol defaults to 400k. GPT-6 Astra is stamped with the fork's series
+	// catalog limit (formerly 372k); 6.1 Sol defaults to the live Codex catalog's 500k in the final pass.
+	// GPT-6 Sol keeps 400k. GPT-6 Astra is stamped with the fork's series
 	// default by applyGpt6AstraContextWindow in the final metadata pass.
 	const CODEX_BASE_URL = "https://chatgpt.com/backend-api";
 	const CODEX_CONTEXT = 272000;
@@ -3996,7 +4092,7 @@ async function generateModels() {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: withOpenAiLongContextPricing(OPENAI_GPT_6_STANDARD_COSTS["gpt-6.1-sol"]),
-			contextWindow: GPT_6_SOL_DEFAULT_CONTEXT_WINDOW,
+			contextWindow: CHATGPT_SUBSCRIPTION_GPT_61_SOL_CONTEXT_WINDOW,
 			maxTokens: CODEX_MAX_TOKENS,
 		},
 		{
@@ -4178,6 +4274,7 @@ async function generateModels() {
 		applyBaiReasoningConsistency(model);
 		applyPromptCacheMetadata(model);
 		applyImageInputMetadata(model);
+		applyDatedListPrice(model);
 	}
 	applyAnthropicAllowedFallbackModelMetadata(allModels.filter(isAnthropicFallbackMetadataModel));
 
@@ -4210,6 +4307,22 @@ async function generateModels() {
 		});
 	}
 	allModels.push(...openAiFastVariants, ...codexFastVariants);
+
+	// Subscription-only alias: keep Standard rates; adapters apply Ultrafast pricing at request time.
+	// Clone after metadata application, just like the Priority variants above.
+	const codexUltrafastVariants: Model<Api>[] = [];
+	for (const model of allModels) {
+		if (model.provider !== "chatgpt-subscription" || model.id !== "gpt-6.1-sol") continue;
+		codexUltrafastVariants.push({
+			...model,
+			id: `${model.id}-ultrafast`,
+			name: `${model.name} Ultrafast`,
+			upstreamModelId: model.id,
+			serviceTier: "ultrafast",
+			defaultThinkingLevel: "xhigh",
+		});
+	}
+	allModels.push(...codexUltrafastVariants);
 
 	// Keep chat and image catalogs separate so one upstream ID can expose both
 	// operations with different API implementations.
@@ -4329,9 +4442,25 @@ async function generateModels() {
 				fileContents[filename] = content;
 				writeFileSync(join(stagedDataDir, filename), content);
 			}
+
+			// Idempotent timestamp: when the regenerated content (the whole manifest except generatedAt)
+			// equals the committed catalog, keep its generatedAt so a content-unchanged regeneration is
+			// byte-identical and the drift check stays green. An explicit --generatedAt always wins.
+			let stableTs = generatedAt;
+			if (generatorOptions.generatedAt === undefined) {
+				const newManifest = createModelDataManifest(modelDataStructure, fileContents, generatedAt);
+				try {
+					const committedManifestPath = join(packageRoot, "src/providers/data", MODEL_DATA_MANIFEST_FILE);
+					const committedManifest = JSON.parse(readFileSync(committedManifestPath, "utf8")) as ModelDataManifest;
+					stableTs = stableGeneratedAt(newManifest, committedManifest);
+				} catch (error) {
+					// No committed manifest yet, or it is corrupt: fall back to the fresh timestamp.
+					console.warn(`generate-models: no readable committed manifest (${error instanceof Error ? error.message : String(error)}); using the fresh timestamp.`);
+				}
+			}
 			writeJson(
 				join(stagedDataDir, MODEL_DATA_MANIFEST_FILE),
-				createModelDataManifest(modelDataStructure, fileContents, generatedAt),
+				createModelDataManifest(modelDataStructure, fileContents, stableTs),
 			);
 			validateModelDataDirectory(modelDataStructure, stagedDataDir);
 

@@ -147,6 +147,7 @@ export interface McpServerCounters {
 export interface McpStartupCatalogClaim {
 	readonly cachedCatalog: McpCachedServerCatalog | undefined;
 	readonly ownsRegistration: () => boolean;
+	readonly settled: () => Promise<void>;
 }
 
 export interface McpConnectionEntry {
@@ -158,10 +159,17 @@ export interface McpConnectionEntry {
 	readonly createdAtMs: number;
 	readonly counters: McpServerCounters;
 	readonly agentDir?: string;
+	/** The env the connection spawned with; with `agentDir`, its credentials resolve against it (senpi#2986). */
+	readonly env?: Record<string, string | undefined>;
 	readonly artifacts?: McpOutputArtifacts;
 	readonly authPlan?: ServerAuthPlan;
+	readonly isCurrent?: () => boolean;
+	readonly credentialIdentity?: string;
+	readonly credentialsCurrent?: () => boolean;
+	readonly onCredentialsChanged?: () => Promise<void>;
 	cachedCatalog?: McpCachedServerCatalog;
 	cacheRefreshedAfterConnect: boolean;
+	catalogGeneration?: number;
 	startupCatalogClaim?: McpStartupCatalogClaim;
 	/** Full mcp tool names last registered for this server (list_changed diffing). */
 	knownToolNames?: string[];

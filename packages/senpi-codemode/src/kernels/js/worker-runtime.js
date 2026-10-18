@@ -1,10 +1,13 @@
 // allow: SIZE_OK — private runtime state and installed globals must stay in one worker module.
+import { pathToFileURL } from "node:url";
+import { createCellRequire, createRequire } from "./worker-require.js";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
 import { inspect } from "node:util";
 import { encodeDisplayImage, resolveDisplayOps } from "./display-image.js";
-import { terminateProcessTrees } from "./process-tree.js";
+import { terminateProcessGroups, terminateProcessTrees } from "./process-tree.js";
 import { awaitMaybePromise, indirectEval, wrapUserCode } from "./worker-indirect-eval.js";
+import { INJECTED_GROUP } from "./worker-cwd.js";
 import { installShellCapture } from "./worker-shell-capture.js";
 import { bindKernelBun } from "./worker-webview.js";
 import { createWorkpool } from "./workpool.js";
@@ -31,6 +34,10 @@ export class JsWorkerRuntime {
 	#hooks = null;
 	#pendingDisplays = [];
 	#children = new Set();
+	// Groups the worker created for cell children (senpi#2995). A group outlives its leader, so a grandchild re-parented
+	// to init is still found through it at retirement (senpi#3020).
+	#ownedGroups = new Map();
+	#childrenStopping;
 	#shellWaits = new Set();
 	#onChildEvent;
 	#onShellWaitChange;
@@ -74,32 +81,48 @@ export class JsWorkerRuntime {
 				if (typeof prepared.sourceFile === "string") sourceName = prepared.sourceFile;
 			}
 			if (prelude) indirectEval(prelude, PRELUDE_SOURCE_URL);
-			const value = await awaitMaybePromise(indirectEval(bindKernelBun(wrapUserCode(cellCode)), sourceName));
+			const shadowed = [];
+			const source = bindKernelBun(wrapUserCode(cellCode, shadowed));
+			if (shadowed.length > 0) this.#emitText("stderr", shadowNote(shadowed));
+			const value = await awaitMaybePromise(indirectEval(source, sourceName));
 			await this.#drainPendingDisplays();
 			return value;
 		} finally {
-			this.#pendingDisplays = [];
-			// A child still running here has lost its only owner: the cell that
-			// spawned it is over, nothing will await it again, and it would be
-			// reparented to init. Retire it the way timeout and abort cleanup
-			// already do, unless the cell asked for a detached process.
-			await this.#terminateChildren();
-			this.#hooks = null;
+			// A released run finishing late must not clear the state of the cell running now.
+			if (this.#hooks === hooks) await this.release();
 		}
+	}
+
+	/** Ends the current run's ownership now: its displays, its hooks, and (unless detached) its child processes. */
+	async release() {
+		const hooks = this.#hooks;
+		this.#pendingDisplays = [];
+		// A child still running here has lost its only owner: the cell that
+		// spawned it is over, nothing will await it again, and it would be
+		// reparented to init. Retire it the way timeout and abort cleanup
+		// already do, unless the cell asked for a detached process.
+		await Promise.all([this.#childrenStopping, this.#terminateChildren()]);
+		this.#childrenStopping = undefined;
+		if (this.#hooks === hooks) this.#hooks = null;
 	}
 
 	interrupt() {
 		// The tree snapshot, SIGTERM, and SIGKILL escalation run on their own so
 		// the caller's interrupt latency stays that of the acknowledgement.
-		void this.#terminateChildren();
+		this.#childrenStopping = this.#terminateChildren();
 	}
 
 	#trackChild(child, spawnOptions) {
 		if (child === null || typeof child !== "object" || typeof child.kill !== "function") return;
 		// `detached: true` is the cell saying it wants the process to outlive it.
-		if (isPlainObject(spawnOptions) && spawnOptions.detached === true) return;
+		const groupInjected = (globalThis[INJECTED_GROUP] ?? 0) > 0;
+		if (isPlainObject(spawnOptions) && spawnOptions.detached === true && !groupInjected) return;
 		this.#children.add(child);
 		const pid = Number.isInteger(child.pid) && child.pid > 0 ? child.pid : null;
+		// Bun.spawn children get their group from worker-cwd.js without the injection marker, so every tracked child is
+		// recorded; a child that is not a group leader names no group, and signalling it later finds nothing.
+		const ownGroupLeader = !(isPlainObject(spawnOptions) && spawnOptions.detached === false);
+		if (pid !== null && process.platform !== "win32" && ownGroupLeader) this.#ownedGroups.set(pid, child);
 		// The host keeps its own copy of live pids: if this worker is terminated
 		// while blocked, only the host can still retire them.
 		if (pid !== null) this.#onChildEvent?.({ pid, state: "spawned" });
@@ -113,10 +136,20 @@ export class JsWorkerRuntime {
 	#terminateChildren() {
 		const children = [...this.#children].filter(child => child.exitCode === null && child.signalCode === null);
 		this.#children.clear();
-		if (children.length === 0) return undefined;
+		// A leader that already exited leaves its group id reserved only while the group has members; if that pid now
+		// names a live process, it was reused by someone else and the group is not ours to signal (senpi#3020 review).
+		const groups = [...this.#ownedGroups].map(([pgid, child]) => ({
+			pgid,
+			leaderExited: child.exitCode !== null || child.signalCode !== null,
+		}));
+		this.#ownedGroups.clear();
+		if (children.length === 0 && groups.length === 0) return undefined;
 		const roots = children.map(child => child.pid).filter(pid => Number.isInteger(pid) && pid > 0);
 		const settled = Promise.allSettled(children.map(child => (child.exited instanceof Promise ? child.exited : Promise.resolve())));
-		return terminateProcessTrees(roots, { graceMs: CHILD_TERMINATION_GRACE_MS, settled });
+		return Promise.all([
+			roots.length > 0 ? terminateProcessTrees(roots, { graceMs: CHILD_TERMINATION_GRACE_MS, settled }) : undefined,
+			terminateProcessGroups(groups, { graceMs: CHILD_TERMINATION_GRACE_MS }),
+		]);
 	}
 
 	async #drainPendingDisplays() {
@@ -148,6 +181,17 @@ export class JsWorkerRuntime {
 			return isPlainObject(opts) && opts.handle === true ? handles.handle(value) : value;
 		};
 		globalThis.wait = async (list, options) => await handles.wait(list, options);
+		// The `%bun add` / `%npm add` installer as a call: same environment, receipt, cancellation and codes (senpi row 38).
+		globalThis.packages = Object.freeze({
+			install: async (manager, requirements, options = {}) => {
+				if (!isPlainObject(options)) throw new TypeError("packages.install(): options must be an object, e.g. { timeout: 120 }");
+				return await this.#callTool("__packages_install__", {
+					manager,
+					requirements,
+					...(options.timeout !== undefined ? { timeout: options.timeout } : {}),
+				});
+			},
+		});
 		globalThis.handle = value => handles.handle(value);
 		globalThis.tool = createToolNamespace(
 			(fn, metadata) => this.#tools.define(fn, metadata),
@@ -155,6 +199,8 @@ export class JsWorkerRuntime {
 			{ defined: () => this.#tools.defined(), undefine: (name) => this.#tools.undefine(name) },
 		);
 		globalThis.tools = globalThis.tool;
+		globalThis.require = createCellRequire(() => globalThis.__senpi_module_context__ ?? { cwdUrl: pathToFileURL(`${process.cwd()}/`).href });
+		globalThis.createRequire = createRequire;
 		const originalLog = console.log.bind(console);
 		const originalError = console.error.bind(console);
 		const originalStdoutWrite = process.stdout.write;
@@ -421,6 +467,12 @@ export class JsWorkerRuntime {
 		}
 		return current;
 	}
+}
+
+function shadowNote(names) {
+	const list = names.map((name) => `\`${name}\``).join(", ");
+	const restore = names.map((name) => `delete ${name}`).join("; ");
+	return `Note: ${list} ${names.length === 1 ? "shadows a kernel or platform global" : "shadow kernel or platform globals"} in your later cells; the kernel and imported libraries keep the original. \`${restore}\` restores ${names.length === 1 ? "it" : "them"}.\n`;
 }
 
 function isPlainObject(value) {

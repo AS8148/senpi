@@ -1,6 +1,119 @@
 {
 	"version": 1,
 	"nodes": {
+		"senpi#3612": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/extension/kernel-globals-ledger.ts",
+				"imports/extension/packages/senpi-codemode/src/kernels/py/death-reason.ts",
+				"imports/extension/packages/senpi-codemode/src/kernels/shared/host-memory-state.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/extension/kernel-globals-ledger.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/py/death-reason.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/host-memory-state.ts",
+				"legacyContracts/test/kernel-death-reason.test.ts/pythonDeathReason names the prelude's parent watch when it stopped the kernel itself",
+				"legacyContracts/test/kernel-death-reason.test.ts/pythonDeathReason is the exit status with the last memory reading otherwise",
+				"legacyContracts/test/kernel-death-reason.test.ts/host memory state reads the macOS pressure level and swap in use",
+				"legacyContracts/test/kernel-death-reason.test.ts/host memory state reads Linux available memory and swap in use",
+				"legacyContracts/test/py-kernel-global-names.test.ts/a Python result names the user globals defined so far (senpi#3612) lists what cells defined, never the prelude's own helpers",
+				"legacyContracts/test/py-kernel-global-names.test.ts/a Python result names the user globals defined so far (senpi#3612) caps the names it lists but still counts every global",
+				"legacyContracts/test/py-kernel-lost-globals-notice.test.ts/restart notices name the globals a lost Python kernel held a SIGKILL from outside names the lost globals, the last reading, and the host's memory state",
+				"legacyContracts/test/py-kernel-lost-globals-notice.test.ts/restart notices name the globals a lost Python kernel held a later generation of the same session names what the previous kernel held, once",
+				"legacyContracts/test/py-kernel-lost-globals-notice.test.ts/restart notices name the globals a lost Python kernel held a reset leaves nothing for a later generation to announce",
+				"legacyContracts/test/py-kernel-pipe-error-death.test.ts/a Python interpreter whose death surfaces as a pipe error before its exit between cells: the next cell runs on a replacement that carries the restart notice",
+				"legacyContracts/test/py-kernel-pipe-error-death.test.ts/a Python interpreter whose death surfaces as a pipe error before its exit during a cell: that cell is lost, and the next one carries the restart notice",
+				"legacyContracts/test/py-kernel-pipe-error-death.test.ts/a Python interpreter whose death surfaces as a pipe error before its exit with no exit after it: the pipe error alone is the death, announced on the next cell"
+			],
+			"reason": "Refs senpi#3612: reviewed additive changes. Three new modules enter the extension and first-kernel import scopes (the per-session lost-globals ledger, the Python death reason, the host memory reader); new contracts prove a pipe error before the exit is still a reported, announced death, restart notices name the lost globals and the cause of an outside SIGKILL with the host memory state, a later session generation announces what the previous kernel held, a reset clears it, and Python results name the user globals."
+		},
+		"senpi#3205": {
+			"additions": [
+				"legacyContracts/test/js-rewrite-imports-host-cost.test.ts/rewriteImports host cost does not parse a cell whose only import text is inside data",
+				"legacyContracts/test/js-rewrite-imports-host-cost.test.ts/rewriteImports host cost still rewrites real static and dynamic imports",
+				"legacyContracts/test/js-rewrite-imports-host-cost.test.ts/rewriteImports host cost still rewrites a comment before a dynamic call",
+				"legacyContracts/test/js-rewrite-imports-host-cost.test.ts/rewriteImports host cost still rewrites a block comment before named bindings",
+				"legacyContracts/test/js-rewrite-imports-host-cost.test.ts/rewriteImports host cost still rewrites a line comment before a default binding",
+				"legacyContracts/test/js-rewrite-imports-host-cost.test.ts/rewriteImports host cost still rewrites a non-ASCII binding",
+				"legacyContracts/test/js-rewrite-imports-host-cost.test.ts/rewriteImports host cost prepares a large data cell full of comment-like import text in linear time"
+			],
+			"reason": "senpi#3205 adds contracts proving a cell whose only import text is data is prepared without a Babel parse, that real static and dynamic imports are still rewritten (including after a comment and with a non-ASCII binding, which the review found the first gate skipped), and that a large data cell full of comment-like import text is prepared in linear time. The frozen baseline and every existing contract remain unchanged."
+		},
+		"senpi#3064": {
+			"additions": [
+				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root pip scratch is owned and removed after success (#3064)",
+				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root pip scratch is owned and removed after failure (#3064)",
+				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root pip scratch is owned and removed after cancel (#3064)",
+				"legacyContracts/test/js-process-fixtures.test.ts/awaits a fixture kernel child before removing its cwd (#3064)",
+				"legacyContracts/test/environments/py-installer-cleanup.test.ts/pip scratch cleanup errors preserves success and reports exhausted cleanup retries (#3064)",
+				"legacyContracts/test/environments/py-installer-cleanup.test.ts/pip scratch cleanup errors preserves failure and reports exhausted cleanup retries (#3064)",
+				"legacyContracts/test/environments/py-installer-cleanup.test.ts/pip scratch cleanup errors preserves cancel and reports exhausted cleanup retries (#3064)"
+			],
+			"reason": "senpi#3064 adds real pip subprocess contracts proving scratch containment and removal after success, failure, and cancellation, preserves install outcomes when cleanup fails, and awaits kernel exit before removing its cwd. Every existing approval and contract remains unchanged."
+		},
+		"senpi#3072": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/extension/eval-cells-rpc.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/extension/eval-cells-rpc.ts"
+			],
+			"reason": "senpi#3072: reviewed session-scoped, model-invisible RPC handlers share the existing eval cell manager. Record only this module's additive import membership in the frozen baseline."
+		},
+		"senpi#3048": {
+			"additions": [
+				"legacyContracts/test/kernels/jl/lazy-globals.test.ts/Julia lazy globals declarations (Refs senpi#3048) installs zero sizing declarations before a below-threshold first result",
+				"legacyContracts/test/kernels/jl/lazy-handles.test.ts/Julia lazy handles (Refs senpi#3048) installs zero handle declarations before the first result",
+				"legacyContracts/test/kernels/jl/lazy-handles.test.ts/Julia lazy handles (Refs senpi#3048) returns empty globals when the sizing asset is missing",
+				"legacyContracts/test/kernels/jl/lazy-handles.test.ts/Julia lazy handles (Refs senpi#3048) returns empty globals when the sizing asset is invalid",
+				"legacyContracts/test/kernels/jl/lazy-handles.test.ts/Julia lazy handles (Refs senpi#3048) creates the first handle inside @async from an empty cwd",
+				"legacyContracts/test/kernels/jl/lazy-handles.test.ts/Julia lazy handles (Refs senpi#3048) creates the first handle inside Threads.@spawn from an empty cwd",
+				"legacyContracts/test/kernels/jl/lazy-handles.test.ts/Julia lazy handles (Refs senpi#3048) includes once when two real tasks create their first handles concurrently",
+				"legacyContracts/test/kernels/jl/lazy-handles.test.ts/Julia lazy handles (Refs senpi#3048) keeps task waiting lazy before any handle is created",
+				"legacyContracts/test/kernels/jl/lazy-handles.test.ts/Julia lazy handles (Refs senpi#3048) loads named handle types before annotations and isa checks are evaluated",
+				"legacyContracts/test/kernels/jl/lazy-handles.test.ts/Julia lazy handles (Refs senpi#3048) serializes and displays a first handle inside a user function",
+				"legacyContracts/test/kernels/jl/lazy-handles.test.ts/Julia lazy handles (Refs senpi#3048) restarts with zero declarations and recreates a saved handle reference",
+				"legacyContracts/test/kernels/jl/lazy-handles.test.ts/Julia lazy handles (Refs senpi#3048) wraps the first completion handle without predeclared types",
+				"legacyContracts/test/bench/rescore.test.ts/rescoring a saved measurement refuses legacy embedded-clock samples instead of treating them as post-result CPU",
+				"legacyContracts/test/bench/session-postresult.test.ts/benchmark post-result CPU boundary (Refs senpi#3048) counts cold encoding before-value and flush work before sampling the received result",
+				"legacyContracts/test/bench/session-postresult.test.ts/benchmark post-result CPU boundary (Refs senpi#3048) counts cold encoding during-result and flush work before sampling the received result",
+				"legacyContracts/test/kernels/jl/startup-frames.test.ts/Julia startup frames (Refs senpi#3048) reports every startup stage without running the frame encoder in the first or the replacement interpreter"
+			],
+			"reason": "Refs senpi#3048: reviewed additive real-Julia contracts cover zero eager sizing bindings below the memory threshold, zero eager handle declarations, empty-cwd first use in async and threaded tasks, empty diagnostic replies for missing/invalid sizing assets, atomic concurrent first inclusion, named types, first-use serialization/display and reference recreation after reset; existing contracts prove complete post-result CPU sampling and refuse legacy saved CPU boundaries without changing the frozen baseline; a real-Julia interrupt contract proves pre-encoded startup frames keep the first and replacement interpreters from running the frame encoder before their first cell."
+		},
+		"senpi#3034": {
+			"additions": [
+				"legacyContracts/test/py-kernel-bookkeeping.test.ts/Python per-cell bookkeeping uses two FIFO operations zero Python queue locks and one capture scope per cell"
+			],
+			"reason": "senpi#3034, plan row 45 fix c: deterministic reader/main work counts retain two FIFO operations and one owner acquire/release while removing Python queue condition work and halving capture-scope setups."
+		},
+		"senpi#3028": {
+			"additions": [
+				"legacyContracts/test/kernel-memory-globals.test.ts/lazy memory globals jl does no globals work or payload serialization below threshold",
+				"legacyContracts/test/kernel-memory-globals.test.ts/lazy memory globals jl preserves above threshold notice and globals payload",
+				"legacyContracts/test/kernel-memory-globals.test.ts/lazy memory globals jl collects globals above threshold when hysteresis suppresses notice",
+				"legacyContracts/test/kernel-memory-globals.test.ts/lazy memory globals rb does no globals work or payload serialization below threshold",
+				"legacyContracts/test/kernel-memory-globals.test.ts/lazy memory globals rb preserves above threshold notice and globals payload",
+				"legacyContracts/test/kernel-memory-globals.test.ts/lazy memory globals rb collects globals above threshold when hysteresis suppresses notice",
+				"legacyContracts/test/subprocess-memory-globals.test.ts/owned memory globals request retains ownership until a matching reply and reads the footprint once",
+				"legacyContracts/test/subprocess-memory-globals.test.ts/owned memory globals request ignores replies from a different process cell or pending run",
+				"legacyContracts/test/subprocess-memory-globals.test.ts/owned memory globals request bounds a missing reply without skipping the footprint notice",
+				"legacyContracts/test/subprocess-memory-globals.test.ts/owned memory globals request retires the pending deadline on reset without formatting a stale notice",
+				"legacyContracts/test/subprocess-memory-globals.test.ts/owned memory globals request requests globals at an enabled ceiling even when the notice threshold is disabled",
+				"legacyContracts/test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (rb) memory ceiling Given a finished cell waiting for globals when it is stopped then its result settles and kernel state survives",
+				"legacyContracts/test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (jl) memory ceiling Given a finished cell waiting for globals when it is stopped then its result settles and kernel state survives",
+				"imports/extension/packages/senpi-codemode/src/kernels/shared/subprocess-memory-globals.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/subprocess-memory-globals.ts"
+			],
+			"reason": "senpi#3028 separates every-cell footprint accounting from bounded, cell-owned globals diagnostics; below-threshold work counts and main notice snapshots prove parity."
+		},
+		"senpi#3033": {
+			"additions": [
+				"legacyContracts/test/session-manager-warm-cwd.test.ts/warm cells validate the session cwd without async stat round trips performs zero async stat round trips on each warm cell",
+				"legacyContracts/test/session-manager-warm-cwd.test.ts/warm cells validate the session cwd without async stat round trips refuses the very next cell when the cwd is deleted",
+				"legacyContracts/test/session-manager-warm-cwd.test.ts/warm cells validate the session cwd without async stat round trips refuses the very next cell when the cwd is replaced by a file",
+				"legacyContracts/test/session-manager-warm-cwd.test.ts/warm cells validate the session cwd without async stat round trips surfaces the original EACCES error on warm reuse",
+				"legacyContracts/test/session-manager-warm-cwd.test.ts/warm cells validate the session cwd without async stat round trips surfaces the original ELOOP error on warm reuse",
+				"legacyContracts/test/session-manager-warm-cwd.test.ts/warm cells validate the session cwd without async stat round trips surfaces the original EMFILE error on warm reuse",
+				"legacyContracts/test/session-manager-warm-cwd.test.ts/warm cells validate the session cwd without async stat round trips surfaces the original EIO error on warm reuse"
+			],
+			"reason": "senpi#3033, plan row 45 fix b: warm cells check the real cwd on every reuse without an async filesystem round trip; deletion and replacement refuse the next cell with the existing error, and unrelated I/O errors retain their identity."
+		},
 		"1": {
 			"additions": [],
 			"reason": "The initial harness preserves the merge-base surfaces without additive production changes."
@@ -491,6 +604,78 @@
 			],
 			"reason": "Node 16: %load runs a local file as a Python or JavaScript cell, read at the cell's turn in the kernel queue; load-cell.ts and kernels/shared/cell-source-at-start.ts join the scoped census, plus the %load contracts. No prompt or eval schema change."
 		},
+		"17": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/kernels/js/process-worker.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/process-worker.ts",
+				"imports/extension/packages/senpi-codemode/src/kernels/js/process-memory-host.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/process-memory-host.ts",
+				"imports/extension/packages/senpi-codemode/src/kernels/js/process-entry.js",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/process-entry.js",
+				"imports/extension/packages/senpi-codemode/src/kernels/js/kernel-memory.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/kernel-memory.ts",
+				"imports/extension/packages/senpi-codemode/src/kernels/js/control-frames.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/control-frames.ts",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation initializes, runs cells, round-trips tool calls, interrupts a cell, and closes the child",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation routes a cell's direct fd 1 writes into text frames and keeps the frame channel intact",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation survives a SIGSEGV of its child and runs the next cell on a replacement with the restart notice",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation leaves no child or process-group member behind after the session closes",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When the host's executable is not bun or node (a compiled binary) and neither is on PATH, then the cell settles with a capability gap naming the runtime",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell writes frame-shaped lines to every fd it can reach, then each arrives as output text and none is taken as a frame",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When cell code walks globals, the require cache, env and argv for the frame token, then nothing it finds forges a frame",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell writes a raw line straight to fd 1, then it arrives as output text and the next cell still runs",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation refuses a kernel-tool definition when kernel tools are turned off, exactly as the worker does",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation still starts and runs cells when libc cannot be loaded, instead of exiting before it can report why",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation delivers all of a Bun.spawnSync child's output after a Bun.spawn child left fd 1 non-blocking",
+				"legacyContracts/test/process-drain-scan.test.ts/Given the fd 1 reader scanning output for result markers When the stream arrives in one read, then the output and both result keys come out in order",
+				"legacyContracts/test/process-drain-scan.test.ts/Given the fd 1 reader scanning output for result markers When a read boundary falls anywhere, including inside a marker, then nothing is lost or reordered",
+				"legacyContracts/test/process-drain-scan.test.ts/Given the fd 1 reader scanning output for result markers When the stream is cut twice, then every pair of boundaries still yields the same output and keys",
+				"legacyContracts/test/process-drain-scan.test.ts/Given the fd 1 reader scanning output for result markers When output contains a NUL that is not a marker, then it is delivered as output",
+				"legacyContracts/test/process-worker-exit-cause.test.ts/Given a process kernel child that reports its crash cause on stderr When its exit is observed before the cause arrives on stderr, then the cell still gets the cause",
+				"legacyContracts/test/process-worker-exit-cause.test.ts/Given a process kernel child that reports its crash cause on stderr When the cause arrived before the exit, then the cell gets the cause as before",
+				"legacyContracts/test/process-worker-exit-cause.test.ts/Given a process kernel child that reports its crash cause on stderr When the child dies without a cause and stderr never ends, then the bare exit is reported after a bounded wait",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation reports a kernel that never becomes ready within its startup deadline, stops it, and starts a fresh one",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation still times out a cell whose kernel process stops being scheduled, replaces the process, and runs the next cell",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation settles a cell whose value is undefined, the way worker mode does",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation labels the process-mode badge with the isolation",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation reports the child's process footprint in the result memory and registry reading",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation keeps the worker default when no isolation is asked for",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation drives a WebView natively on the child's main thread in process mode",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell prints more than the 10 MiB frame limit, then the output arrives whole and the kernel keeps its globals",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a timer from a cell throws, then the crashed cell names the error and the next result says the kernel restarted",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell writes straight to fd 1 and returns, then the line arrives with that cell's output, before its result",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a worker-mode cell crashes, then the next result carries no restart notice, as before process mode existed",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When the runtime is resolved under native Node ESM (no injected require), then a node on PATH is found",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When the host is killed with SIGKILL, then its process-mode kernel child is gone too",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When the host is exits without closing its kernel, then its process-mode kernel child is gone too",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell in a bun child reads fd 0, then it reads nothing and the host can still interrupt it",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a worker-mode cell calls a host tool with a BigInt and an undefined field, then the host receives them as worker mode does",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a process-mode cell calls a host tool with a BigInt and an undefined field, then the host receives them as worker mode does",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a process-mode kernel starts, then its child runs on bun, the product's runtime",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell runs a child process that inherits fd 1 and prints 300 KB, then the cell settles with all of it",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell writes to fd 1 in a loop that ignores failed writes and returns, then the cell settles",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell returns a value whose UTF-8 form exceeds the frame limit, then the cell fails and the kernel keeps its globals",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell calls a host tool with arguments larger than the frame limit, then the call fails in the cell at once",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell sends data shaped like the value markers, then the host receives it unchanged",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell in a node child crashes while waiting on a host tool, then the cell settles with the crash at once",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When the host is killed with SIGKILL while a cell spins, then its process-mode kernel child is gone too",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell runs cat on a 4 MB file with fd 1 inherited, then the command succeeds and every byte arrives",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a cell writes 4 MB to fd 1 in one writeSync call, then the call writes it all and every byte arrives",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a blocked cell's child process prints 100 MiB through fd 1, then the kernel's memory stays flat and all of it arrives",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When the host's parent is a subreaper and the host is killed while a cell spins, then the kernel child is gone too",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a process-mode kernel starts, then fd 1 carries no non-blocking, append, async or sync flag",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a bun child writes to the inherited fd 1, then a 4 MB cat in the next cell still delivers every byte",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When one cell runs a bun child that writes to fd 1 and then a 4 MB cat, then the cat delivers every byte",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a node child is SIGKILLed after writing to fd 1, then a 4 MB cat afterwards still delivers every byte",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When the kernel crashes while a child floods fd 1, then every crashed cell names its crash cause",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When the host stalls while a child and the cell both write, then every output line arrives whole and the result is ok",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a crash's message is longer than the stderr window, then the crashed cell still names it",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a Linux kernel child crashes with SIGSEGV, then the crash is reported within 2 s and names the signal",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When a Linux kernel child starts, then it is not dumpable, and a subprocess of a cell is",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation When SENPI_KERNEL_CORE_DUMPS=1 is set, then the Linux kernel child stays dumpable"
+			],
+			"reason": "Node 17: opt-in process-isolated JavaScript kernel (isolation.js: \"process\", worker default unchanged). The child runs worker-core over the framed subprocess transport (fd 0 in, a private dup of fd 1 out; fd 1 re-pointed at a pipe drained into text frames), with no inline fallback in process mode (a failed start is a capability-gap result naming the runtime). process-entry.js, process-worker.ts and process-memory-host.ts join the scoped census, plus the new contracts. No prompt or eval schema change."
+		},
 		"18": {
 			"additions": [
 				"schemas/js+sandbox",
@@ -587,6 +772,40 @@
 				"legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop cleans up when the shell exits before connecting"
 			],
 			"reason": "Lead decision A (2026-10-01), node 32: add event-ordered shell restart notice and preservation witnesses without changing default prompts, schemas, helpers, or native shell semantics."
+		},
+		"37": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/bridges/eval-environment-schemas.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/bridges/eval-environment-schemas.ts",
+				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries are exactly the five documented names",
+				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries document the magics, %load and the environment modes",
+				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries document isolate, its refusals and the sandbox limits",
+				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries name only error codes the source actually emits",
+				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries keep each code in the entry that owns it"
+			],
+			"reason": "Plan row 37 (F4/F5 shortfall, IS-3): the eval:environments and eval:isolation virtual tool_schema entries, a module the extension and first kernel load, and their contract tests. Additive only; no prompt cell changes."
+		},
+		"38": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/environments/packages-install.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/environments/packages-install.ts",
+				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a JavaScript cell When it installs a local tarball with bun, then it returns the receipt %bun add reports and the next cell imports the package",
+				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a JavaScript cell When the owning cell is cancelled once the installer has started, then nothing is published and the kernel answers the next cell",
+				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a JavaScript cell When the manager is not a JavaScript installer, then the cell fails with environment_installer_unavailable and installs nothing",
+				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a Python cell When it installs a local wheel, then it returns the %pip receipt and the next cell imports the package",
+				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a Python cell When the install fails, then the cell error carries environment_install_failed and pip's stderr tail",
+				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch fails with environment_install_timeout when the install outlives its timeout",
+				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch reports the owning cell's stop as environment_install_cancelled, not as a timeout",
+				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch refuses a manager whose environment the cell does not have",
+				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch refuses malformed arguments before any install starts",
+				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a JavaScript cell When the owning cell is cancelled once the installer has started, then the install itself is cancelled, nothing is published and the kernel answers the next cell",
+				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a Python cell When the owning cell is cancelled once pip has started, then the install itself is cancelled and nothing is published",
+				"legacyContracts/test/environments/packages-install-runtime-wiring.test.ts/Given a session runtime with Python enabled When it is created, then the bridge's packages.install() and the %pip magics share one Python environment",
+				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch passes the requirement list to the session installer as separate arguments, never re-split, and returns its receipt",
+				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch validates a list with the same %pip rules, keeping markers and backslashes as written",
+				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root When packages.install() passes a requirement list, then each item reaches pip as one argument: a path with a space and a marker stay intact"
+			],
+			"reason": "Plan row 38 (F4 shortfall, IS-6): the packages.install() cell helper, a module the extension and first kernel load, and its contract tests. The helper is reached through a reserved bridge tool and documented on demand; no prompt cell changes."
 		},
 		"2718": {
 			"additions": [
@@ -924,6 +1143,552 @@
 					"reason": "senpi#1396 makes an unknown language value fail with a distinct error from an omitted language, so this contract leaves the baseline; its honest rename 'parseEvalRequest language and code enforcement throws a distinct actionable error for an unknown language value' is listed under additions (reviewed by the gate owner on the PR)."
 				}
 			]
+		},
+		"senpi#2811": {
+			"additions": [
+				"legacyContracts/test/sandbox/isolated-cell.test.ts/Given sandbox cells are turned on Given an isolated cell when it settles then its result names QuickJS as its runtime, with no host path (senpi#2811)",
+				"legacyContracts/test/sandbox/isolated-cell.test.ts/Given sandbox cells are turned on Given a persistent cell in a session with isolated cells when it settles then it keeps the kernel's runtime (senpi#2811)"
+			],
+			"reason": "senpi#2811: an isolated (QuickJS) cell's result reports { name: 'quickjs', version: <pinned quickjs-wasi>, isolation: 'sandbox' } as its runtime instead of the persistent kernel's, read from the installed quickjs-wasi package only when an isolated cell runs (no host path). The isolated-runtime contract fails on main."
+		},
+		"senpi#2790": {
+			"additions": [
+				"legacyContracts/test/eval-detach-terminal-truth.test.ts/detached cell terminal truth Given a running detached cell when it is stopped then its notification shows the cancelled outcome without a running frame (#2791)",
+				"legacyContracts/test/eval-detach-terminal-truth.test.ts/detached cell terminal truth Given a cell first in line while its kernel is still starting when it detaches then it says it waits for the kernel instead of an empty predecessor (#2790)",
+				"legacyContracts/test/eval-detach-terminal-truth.test.ts/detached cell terminal truth Given a cell queued behind a running cell when it detaches then it still names that predecessor",
+				"legacyContracts/test/eval-detach-terminal-truth.test.ts/detached cell terminal truth Given a detached cell whose run throws when it is peeked and notified then the error text is shown with its output",
+				"legacyContracts/test/eval-detach-terminal-truth.test.ts/detached cell terminal truth Given a stopped predecessor still winding down in its kernel when a new cell detaches then the new cell names it",
+				"legacyContracts/test/eval-detach-terminal-truth.test.ts/detached cell terminal truth Given a queued cell with nothing ahead of it when its result renders then the header says it waits for the kernel"
+			],
+			"reason": "senpi#2790/#2791: a detached cell with nothing ahead of it says it waits for the kernel (detach reply, eval list, TUI header) instead of an empty predecessor list; a stopped or failed detached cell settles with its buffered output or error text, never the live 'running' frame. These contracts fail on main."
+		},
+		"senpi#2793": {
+			"additions": [
+				"legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence Given a cell that declares a platform global name when later cells run then they see the cell's value while the kernel and libraries keep the built-in",
+				"legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence Given let, var and destructured declarations of platform global names when later cells run then each persists for the cells",
+				"legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence Given a cell that declares a kernel helper name when later cells run then they see the cell's value and the kernel still prints",
+				"legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence Given a shadowed name when a cell deletes it then later cells see the original global again",
+				"legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence Given a cell that shadows kernel globals when it runs then its output notes each name once and how to restore it",
+				"legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence Given a cell that declares globalThis when it runs then it is refused and later cells still persist variables"
+			],
+			"reason": "senpi#2793: a top-level declaration of a kernel or platform global name (log, fetch, print, URL...) persists for the user's cells in a per-kernel user scope while globalThis keeps the original; `delete` restores it and the cell gets a note. These contracts fail on main, which refuses such declarations.",
+			"changes": [
+				{
+					"key": "legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence rejects a top-level declaration that would replace a platform global",
+					"reason": "senpi#2793 replaces the refusal with a cell-scoped binding: a declaration of a kernel or platform global name now persists for the user's cells while globalThis keeps the original, so the old refusal contract leaves the baseline; its replacement is listed under additions."
+				},
+				{
+					"key": "legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence rejects let and var declarations that would replace a platform global",
+					"reason": "senpi#2793 replaces the refusal with a cell-scoped binding: a declaration of a kernel or platform global name now persists for the user's cells while globalThis keeps the original, so the old refusal contract leaves the baseline; its replacement is listed under additions."
+				},
+				{
+					"key": "legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence rejects destructured bindings that would replace a platform global",
+					"reason": "senpi#2793 replaces the refusal with a cell-scoped binding: a declaration of a kernel or platform global name now persists for the user's cells while globalThis keeps the original, so the old refusal contract leaves the baseline; its replacement is listed under additions."
+				},
+				{
+					"key": "legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence rejects a declaration that would replace a kernel prelude global",
+					"reason": "senpi#2793 replaces the refusal with a cell-scoped binding: a declaration of a kernel or platform global name now persists for the user's cells while globalThis keeps the original, so the old refusal contract leaves the baseline; its replacement is listed under additions."
+				}
+			]
+		},
+		"senpi#2802": {
+			"additions": [
+				"legacyContracts/test/eval-render-summary.test.ts/eval summary display bounds the summary to the live frame's one-line headline (senpi#2802)",
+				"legacyContracts/test/eval-tool-execution-render.test.ts/eval summary in transcript frames Given a running eval with a summary when the frame renders then the header leads with the summary (senpi#2802)",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a running cell when its row renders collapsed then the header leads with the summary, language and state, and the code is hidden",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a queued and a detached cell when their rows render then both lead with the summary",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a running cell when its row is expanded then the code is shown once and the summary is not repeated",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a running cell without a summary when its row renders then the headline is its first code line, cut to the width",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a running cell with no output yet when its row renders collapsed then it is one line with no empty frame",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a completed cell when its row renders then it keeps the done header, the summary line and the code preview",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a call still streaming with only code when it renders then it shows a headline row instead of failing",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a complete call before its result arrives when it renders then it leads with the summary",
+				"imports/extension/packages/senpi-codemode/src/tool/live-headline.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/live-headline.ts"
+			],
+			"reason": "senpi#2802: in-progress, queued and detached eval rows lead with the cell's summary (else the first code line), then the language, state and elapsed time, with the code behind expand; a call still streaming its arguments renders that headline instead of throwing into the host's raw key=value fallback. Completed rows are unchanged. The new contracts fail on main. live-headline.ts (about 40 lines, no dependencies beyond types.ts) is imported by render.ts, which already loads with the extension.",
+			"changes": [
+				{
+					"key": "legacyContracts/test/eval-render-summary.test.ts/eval summary display bounds the summary inside the live cell frame too",
+					"reason": "senpi#2802: an in-progress eval row now leads with the cell's summary on its header line instead of the summary line plus code below it; the same coverage moves to the renamed contract listed under additions."
+				},
+				{
+					"key": "legacyContracts/test/eval-tool-execution-render.test.ts/eval summary in transcript frames Given a running eval with a summary when the frame renders then the header drops the label segment and the summary sits under it",
+					"reason": "senpi#2802: an in-progress eval row now leads with the cell's summary on its header line instead of the summary line plus code below it; the same coverage moves to the renamed contract listed under additions."
+				}
+			]
+		},
+		"senpi#2789": {
+			"additions": [
+				"legacyContracts/test/detached-cell-notification-budget.test.ts/detached cell notification parity with the foreground result Given a detached cell whose output is a few kilobytes when it completes then the notification carries all of it",
+				"legacyContracts/test/detached-cell-notification-budget.test.ts/detached cell notification parity with the foreground result Given a detached cell that returned one long line of JSON when it completes then the notification carries all of it",
+				"legacyContracts/test/detached-cell-notification-budget.test.ts/detached cell notification parity with the foreground result Given a detached cell whose result the output sink bounded when it completes then the notification shows exactly the foreground text, marker and artifact notice included",
+				"legacyContracts/test/detached-cell-notification-budget.test.ts/detached cell notification parity with the foreground result Given a large notification when it is built then the outcome line and the kernel-state note frame the output",
+				"legacyContracts/test/detached-cell-notification-budget.test.ts/detached cell notification parity with the foreground result Given a detached cell that displayed an image when it completes then the notification delivers the image",
+				"legacyContracts/test/eval-detach.test.ts/eval detached cells reports a detached kernel crash with the cell's whole result, as the foreground would"
+			],
+			"reason": "senpi#2789: a detached cell's completion notification carries the same text its result would show in the foreground (the output sink's configured head, tail, middle marker and artifact notice) instead of a 512-byte tail, framed by the outcome line and kernel-state note, and delivers the cell's images. All five fail on main: it shows a 512-byte tail, appends a cap marker after the state note, and drops images.",
+			"changes": [
+				{
+					"key": "legacyContracts/test/eval-detach.test.ts/eval detached cells reports detached kernel crashes with the buffered tail and spills oversized notifications to an absolute path",
+					"reason": "senpi#2789: a detached notification now carries the cell's foreground result text unchanged, so there is no separate notification spill file any more; the crash contract is kept as 'reports a detached kernel crash with the cell's whole result, as the foreground would' under additions."
+				}
+			]
+		},
+		"senpi#2792": {
+			"additions": [
+				"helperCensus/js/createRequire",
+				"helperCensus/js/require",
+				"helperCensus/js-bun/createRequire",
+				"helperCensus/js-bun/require",
+				"helperCensus/js-node/createRequire",
+				"helperCensus/js-node/require",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/worker-require.js",
+				"legacyContracts/test/kernel-js-require.test.ts/require in JavaScript cells Given a cell when it requires a builtin then it gets the runtime's module, with or without the node: prefix",
+				"legacyContracts/test/kernel-js-require.test.ts/require in JavaScript cells Given a project with a CommonJS package when a cell requires it then the package from the project's node_modules loads",
+				"legacyContracts/test/kernel-js-require.test.ts/require in JavaScript cells Given a cell when it requires a relative CommonJS file and a JSON file then both resolve from the session directory",
+				"legacyContracts/test/kernel-js-require.test.ts/require in JavaScript cells Given a cell when it builds its own require with createRequire then that require resolves from the given path",
+				"legacyContracts/test/kernel-js-require.test.ts/require in JavaScript cells Given a cell that builds its own require from createRequire, the common ESM idiom, when it runs then its require works and later cells keep it",
+				"legacyContracts/test/kernel-js-require.test.ts/require in JavaScript cells Given a module that does not exist when a cell requires it then the runtime's not-found error names it and the kernel keeps its state"
+			],
+			"reason": "senpi#2792: JavaScript cells get require and createRequire (resolved like the cell's import: builtins, relative CommonJS and JSON files, the project's packages, then the managed package environment), installed as kernel helpers from worker-require.js. The require contracts fail on main ('require is not defined')."
+		},
+		"senpi#2788": {
+			"additions": [
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/cell-run-context.js",
+				"legacyContracts/test/js-kernel-cooperative-interrupt.test.ts/JavaScriptKernel cooperative interrupt Given a cell parked on a promise nothing settles when interrupted then the worker keeps its state",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a cell awaiting a promise nothing settles when stopped then earlier globals survive on the same worker",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a cell awaiting a fetch whose server never answers when stopped then earlier globals survive on the same worker",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a stopped cell that resumes later when it prints or calls a tool then nothing reaches the next cell",
+				"legacyContracts/test/js-kernel-interrupt-bun.test.ts/JavaScript kernel under Bun interrupts a running cell Given a cell looping over short Bun.spawn children when interrupted then the worker state survives",
+				"legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop keeps globals and refuses the shell when a cell swallows Stop and then starts a native shell",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a stopped cell that resumes later when it starts a fetch then the request is refused",
+				"legacyContracts/test/js-kernel-interrupt-bun.test.ts/JavaScript kernel under Bun interrupts a running cell Given a cell polling on Bun.sleep when interrupted then the loop stops and the worker state survives",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a stopped cell that left a fetch and a derived chain unawaited then the kernel keeps its state and does not crash",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a stopped cell with an open socket server and client when stopped then both close and earlier globals survive",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation keeps the child and its globals when a stopped cell left a fetch unawaited (#2788)",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation stops a polling loop and keeps the child's globals when a cell is stopped twice (#2788)",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/rejection-reports.js",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a stopped cell whose floating fetch rethrows a new error with a cause then the kernel keeps its state and reports it on the next cell",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a cell that leaves many promises rejecting unhandled when it runs then one report and a count reach its output and the kernel keeps its state",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given an uncaught exception in a timer when it fires then the worker still restarts and says variables are lost",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a stopped cell that started a node:worker_threads Worker then the worker is terminated and earlier globals survive",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/cell-ownership.js",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on global setTimeout when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on global setInterval when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on node:timers setTimeout when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on node:timers setImmediate when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on node:timers setInterval when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on node:timers/promises when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on a short fs/promises read when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on an fs callback read when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on an fs read stream when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on readline over a file stream when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on a MessageChannel round trip when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a socket the cell constructed directly when stopped then it is destroyed, and sockets Node creates still pass instanceof",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a resource that will not close when its cell is stopped then the failure is reported and the stop still keeps the state",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given an http server the cell started when stopped then it served while live and is closed after, and Node's own constructors still work"
+			],
+			"reason": "senpi#2788: Stop on a free event loop releases the cell in the worker and keeps the VM. cell-run-context.js (the per-cell async context and the released-cell guards) joins the first-kernel import census; the new contracts are RED before the fix (stateRetained false) and GREEN after. The JavaScript worker reports unhandled rejections through rejection-reports.js instead of crashing (the lead-approved behavior for #2788). Round 3: the node:timers module timers, fs callback operations and streams, readline, and directly constructed net/tls/http/dgram sockets and servers are owned too (cell-ownership.js); a resource that will not close is reported instead of swallowed. The polling-loop contracts moved to js-kernel-stop-ends-loops.test.ts. Round 4: Node's socket and server types are owned on connect/listen/bind instead of by subclassing (http.Server calls net.Server as a function); a cell's http server serves while live and closes on Stop.",
+			"changes": [
+				{
+					"key": "legacyContracts/test/js-kernel-cooperative-interrupt.test.ts/JavaScriptKernel cooperative interrupt Given a cell parked on a promise nothing settles when interrupted then the worker restarts and the note is truthful",
+					"reason": "senpi#2788: a stop the worker acknowledges no longer costs the VM when the cell only awaits something that never settles; the worker releases the cell and keeps its globals. This contract leaves the baseline; its honest rename is 'Given a cell parked on a promise nothing settles when interrupted then the worker keeps its state'."
+				},
+				{
+					"key": "legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop reports state loss when Stop interrupts a native late wait",
+					"reason": "senpi#2788: the 'late' case swallowed Stop on a host-tool wait and then started a native shell; the released cell now refuses that shell, so the worker keeps its state instead of restarting. Replaced by 'keeps globals and refuses the shell when a cell swallows Stop and then starts a native shell'. Stopping a running Bun.$ wait still restarts (#2453 Decision A; the shell/text/lines cases are unchanged)."
+				}
+			]
+		},
+		"senpi#2831": {
+			"additions": [
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay one clean line (senpi#2831) Given a summary carrying escape and control characters when its live row renders then the row is one line with none of them",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay one clean line (senpi#2831) Given a wide-character summary when its live row renders in a narrow terminal then the row fits the width in screen cells",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay one clean line (senpi#2831) Given a peek or stop call still streaming without its cell id when it renders then the title has no undefined"
+			],
+			"changes": [],
+			"reason": "senpi#2831 (follow-ups from #2810's review): pins that a live row's summary is sanitized to one clean line, that the collapsed headline is measured and cut in screen cells so a wide-character summary stays on one line, and that a streaming peek/stop without its cell id renders the action alone instead of 'undefined'."
+		},
+		"senpi#2839": {
+			"additions": [
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay one clean line (senpi#2831) Given a cell without a summary whose first code line carries escape and control characters when its live row renders then the row is one clean line (senpi#2839)"
+			],
+			"reason": "senpi#2839: a live eval row sanitizes its code-line headline (the summary-less fallback) before measuring it; the contract fails before the change."
+		},
+		"senpi#2832": {
+			"additions": [
+				"legacyContracts/test/kernel-js-require-resolve.test.ts/the cell-global require in worker mode (senpi#2832) Given a project package and a relative file when a cell calls require.resolve then it gets the absolute paths the call itself would load",
+				"legacyContracts/test/kernel-js-require-resolve.test.ts/the cell-global require in worker mode (senpi#2832) Given a module that does not exist when a cell calls require.resolve then the runtime's not-found error names it",
+				"legacyContracts/test/kernel-js-require-resolve.test.ts/the cell-global require in worker mode (senpi#2832) Given a cell when it reads require.resolve.paths and require.cache then both exist, and the cache holds a module the cell required",
+				"legacyContracts/test/kernel-js-require-resolve.test.ts/the cell-global require in process mode (senpi#2832) Given a project package and a relative file when a cell calls require.resolve then it gets the absolute paths the call itself would load",
+				"legacyContracts/test/kernel-js-require-resolve.test.ts/the cell-global require in process mode (senpi#2832) Given a module that does not exist when a cell calls require.resolve then the runtime's not-found error names it",
+				"legacyContracts/test/kernel-js-require-resolve.test.ts/the cell-global require in process mode (senpi#2832) Given a cell when it reads require.resolve.paths and require.cache then both exist, and the cache holds a module the cell required",
+				"legacyContracts/test/kernel-js-require-order.test.ts/the cell's require lookup order (senpi#2832) Given a package only the managed environment has when a cell requires and resolves it then both use the managed copy",
+				"legacyContracts/test/kernel-js-require-order.test.ts/the cell's require lookup order (senpi#2832) Given a package both the project and the managed environment have when a cell requires and resolves it then both use the project copy",
+				"legacyContracts/test/kernel-js-require-order.test.ts/the cell's require lookup order (senpi#2832) Given a project package whose own dependency is missing when a cell requires it then the dependency's error surfaces and the managed copy is never loaded",
+				"legacyContracts/test/kernel-js-require-order.test.ts/the cell's require lookup order (senpi#2832) Given builtins when a cell resolves them then the runtime's own ids come back and their lookup paths are null",
+				"legacyContracts/test/kernel-js-require-order.test.ts/the cell's require lookup order (senpi#2832) Given a bare name when a cell reads its lookup paths then the project's come first, then the managed environment's, each once",
+				"legacyContracts/test/kernel-js-require-order.test.ts/the cell's require lookup order (senpi#2832) Given a module a cell required when its cache entry is deleted then the next require loads it again",
+				"legacyContracts/test/kernel-js-require-resolve.test.ts/the cell-global require under Bun, the product's runtime (senpi#2832) Given a Bun builtin when a process-mode cell resolves and requires it then the id is Bun's own and it loads"
+			],
+			"reason": "senpi#2832: the cell-global require carries resolve, resolve.paths and cache like Node's own require; the call and resolve share one lookup (builtins natively, then the project, then the managed package environment). The six contracts fail before the fix ('require.resolve is not a function'). Round 2 (review 5434200346): the call loads exactly what require.resolve names, so the two cannot pick different copies; builtins resolve natively (Bun's bun:sqlite too); the order contracts run against createCellRequire with real project and managed roots."
+		},
+		"senpi#2850": {
+			"additions": [
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay one clean line (senpi#2831) Given a cell without a summary whose first code line is only escape and control characters when its live row renders then the headline is the next line with content (senpi#2850)"
+			],
+			"reason": "senpi#2850: a summary-less live row skips a first code line that sanitizes to nothing; the contract fails before the change (the row shows only the ellipsis)."
+		},
+		"senpi#2909": {
+			"additions": [
+				"legacyContracts/test/bench/run-retry.test.ts/per-block spike retry (senpi#2909) keeps nothing from a discarded attempt that had already collected data",
+				"legacyContracts/test/bench/run-retry.test.ts/per-block spike retry (senpi#2909) never discards a worker failure together with a spike",
+				"legacyContracts/test/bench/run-retry.test.ts/per-block spike retry (senpi#2909) settles between every retry and labels the block once retries run out",
+				"legacyContracts/test/bench/run.test.ts/paired runtime scheduling discards a first runtime's reports when a later runtime in the same attempt spikes (senpi#2909)",
+				"legacyContracts/test/bench/run.test.ts/paired runtime scheduling labels a block that spikes over 80 on every attempt instead of refusing the run (senpi#2909)",
+				"legacyContracts/test/bench/run.test.ts/paired runtime scheduling re-runs only the block a host-load spike over 80 hits, keeping the others (senpi#2909)",
+				"legacyContracts/test/bench/settle.test.ts/waitForLoadBelow (senpi#2909) gives up after its timeout and says so",
+				"legacyContracts/test/bench/settle.test.ts/waitForLoadBelow (senpi#2909) waits while a decaying 1-minute load is over the ceiling",
+				"legacyContracts/test/bench/block-spike.test.ts/a block attempt's spike checks (senpi#2909) discards the attempt when the block's start load is over 80",
+				"legacyContracts/test/bench/block-spike.test.ts/a block attempt's spike checks (senpi#2909) discards the attempt when only the closing host sample is over 80",
+				"legacyContracts/test/bench/block-spike.test.ts/a block attempt's spike checks (senpi#2909) discards the attempt when a runtime's own report saw load over 80",
+				"legacyContracts/test/bench/settle-process.test.ts/waitForLoadBelow keeps its process alive (senpi#2909) finishes the wait in a process that has nothing else to do",
+				"legacyContracts/test/bench/run-retry.test.ts/per-block spike retry (senpi#2909) waits for the load from before a spike that was already under way when the block started"
+			],
+			"changes": [
+				{
+					"key": "legacyContracts/test/bench/run.test.ts/paired runtime scheduling refuses the run end to end when host load crosses 80 between measurements",
+					"reason": "senpi#2909: a host-load spike over 80 no longer refuses the whole run; only the affected block is discarded and re-run (up to 3 retries, each after the load falls back to its last pre-spike level, or the core count if higher), and a block that spikes every time is labelled so the run is INCONCLUSIVE. The same coverage moves to the renamed contracts listed under additions ('re-runs only the block a host-load spike over 80 hits' and 'labels a block that spikes over 80 on every attempt instead of refusing the run'). The pre-run admission refusal is unchanged."
+				}
+			],
+			"reason": "senpi#2909: per-block bench spike guard. A load spike over 80 discards and re-runs only the affected block after the load settles, never discards a worker failure, and labels a block that keeps spiking; new contracts in run.test.ts, run-retry.test.ts, block-spike.test.ts, settle.test.ts and settle-process.test.ts."
+		},
+		"senpi#2922": {
+			"additions": [
+				"legacyContracts/test/bench/run-retry.test.ts/per-block spike retry (senpi#2909) never waits for a load at or above the refusal ceiling (senpi#2922)",
+				"legacyContracts/test/bench/run-retry.test.ts/per-block spike retry (senpi#2909) caps the target even when the host has more cores than the cap (senpi#2922)"
+			],
+			"reason": "senpi#2922: the spike-retry settle target is capped 10 under the refusal ceiling, so a calm level near 80 cannot set a target a retry would start into; two new contracts in run-retry.test.ts (the cap, and the cap on a host with more cores than the cap)."
+		},
+		"senpi#2921": {
+			"additions": [
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a first cell whose import of node:net is built from a string at run time when stopped then its server closes"
+			],
+			"reason": "senpi#2921 review: a new stop contract pins that a server the first cell opens through a string-built import (new Function) is closed by a stop, so a future cold-start deferral of the socket and server builtins cannot reopen that gap. Test-only; no prompt cell changes."
+		},
+		"senpi#2933": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/tool/render-agent.ts",
+				"imports/extension/packages/senpi-codemode/src/tool/render-blocks.ts",
+				"imports/extension/packages/senpi-codemode/src/tool/render-call.ts",
+				"imports/extension/packages/senpi-codemode/src/tool/render-cell.ts",
+				"imports/extension/packages/senpi-codemode/src/tool/render-detail.ts",
+				"imports/extension/packages/senpi-codemode/src/tool/render-live.ts",
+				"imports/extension/packages/senpi-codemode/src/tool/render-result.ts",
+				"imports/extension/packages/senpi-codemode/src/tool/render-status.ts",
+				"imports/extension/packages/senpi-codemode/src/tool/render-tail.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/render-agent.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/render-blocks.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/render-call.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/render-cell.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/render-detail.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/render-live.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/render-result.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/render-status.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/render-tail.ts",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a done cell with badges at 40 cols then the row is exactly one line",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a long headline at 40 cols with a badge then the headline is cut before elapsed drops (review MEDIUM-3)",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a queued cell behind another at 200 cols then the header is one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a queued cell behind another at 40 cols then the header is one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a queued cell behind another at 50 cols then the header is one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a queued cell behind another at 60 cols then the header is one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a queued cell behind another at 80 cols then the header is one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a queued cell waiting on the kernel at 200 cols then the header is one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a queued cell waiting on the kernel at 40 cols then the header is one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a queued cell waiting on the kernel at 50 cols then the header is one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a queued cell waiting on the kernel at 60 cols then the header is one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a queued cell waiting on the kernel at 80 cols then the header is one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a running cell with a bounded status history when its live block renders then the stored omission count survives (senpi#2933 review HIGH-2)",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a streaming call with reset and timeout at 200 cols then the header is one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a streaming call with reset and timeout at 40 cols then the header is one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a streaming call with reset and timeout at 50 cols then the header is one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a streaming call with reset and timeout at 60 cols then the header is one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a streaming call with reset and timeout at 80 cols then the header is one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given a very long summary at 40 cols then the summary keeps a readable remainder",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given running with reset and timeout at 200 cols across elapsed values then the height is constant",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given running with reset and timeout at 40 cols across elapsed values then the height is constant",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given running with reset and timeout at 50 cols across elapsed values then the height is constant",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given running with reset and timeout at 60 cols across elapsed values then the height is constant",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given running with reset and timeout at 80 cols across elapsed values then the height is constant",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given running with timeout 600 at 200 cols then the header stays one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given running with timeout 600 at 40 cols then the header stays one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given running with timeout 600 at 50 cols then the header stays one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given running with timeout 600 at 60 cols then the header stays one row",
+				"legacyContracts/test/eval-render-header-width.test.ts/eval live header is always one row (senpi#2933 review HIGH-1) Given running with timeout 600 at 80 cols then the header stays one row",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: constant total height with output and events (senpi#2933 review MEDIUM-2) Given streaming through running with output and status events then the total height is identical",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: fixed-height streaming (senpi#2933) Given code longer than the window when streaming then the newest line is visible and the marker is inside the height",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: fixed-height streaming (senpi#2933) Given exactly window-length code when streaming then no earlier-lines marker appears",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: fixed-height streaming (senpi#2933) Given more streamed lines when re-rendered then the height does not grow",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: fixed-height streaming (senpi#2933) Given streaming code when rendered at 200 columns then the block keeps a constant line count",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: fixed-height streaming (senpi#2933) Given streaming code when rendered at 40 columns then the block keeps a constant line count",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: fixed-height streaming (senpi#2933) Given streaming code when rendered at 80 columns then the block keeps a constant line count",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: fixed-height streaming (senpi#2933) Given wrapping code at a narrow width then visual lines count toward the window",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: one-line terminal rows (senpi#2933) Given a cancelled cell when rendered collapsed then it is exactly one line",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: one-line terminal rows (senpi#2933) Given a completed cell when rendered collapsed then it is exactly one line with icon summary status and duration",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: one-line terminal rows (senpi#2933) Given a completed cell when rendered expanded then the full code and output are shown",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: one-line terminal rows (senpi#2933) Given an errored cell when rendered collapsed then it is exactly one line with the error icon",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: partial-arg totality (senpi#2933) Given code and language args without a summary when rendered then it never throws",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: partial-arg totality (senpi#2933) Given code-only args when rendered then it never throws",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: partial-arg totality (senpi#2933) Given empty args when rendered then it never throws and never falls back to key=value",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: queued and running header (senpi#2933) Given a queued cell when rendered then the block shows a queued badge and keeps the fixed height",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: queued and running header (senpi#2933) Given a running cell when rendered then the block has the same fixed height as streaming",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: queued and running header (senpi#2933) Given a running cell when the clock advances then spinner and elapsed advance with the height unchanged",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: streaming header names the state (senpi#2933) Given a call still streaming when rendered then the header says streaming with the spinner and no elapsed",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: streaming header names the state (senpi#2933) Given a call still streaming when the host gives no spinner frame then the header still says streaming (review MEDIUM-1)",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: streaming header names the state (senpi#2933) Given a running cell when rendered then the header says running with elapsed",
+				"legacyContracts/test/eval-render-live-block.test.ts/eval live block: streaming header names the state (senpi#2933) Given a streaming call when the host gives no spinner frame then the call lane arms its own ticker (review MEDIUM-5)",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a complete call before its result arrives when it renders then the header says streaming (senpi#2933)",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a completed cell when its row renders collapsed then it is one line with icon summary status and duration (senpi#2933)",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a running cell when its row renders collapsed then the header leads with the summary and the code window follows (senpi#2933)",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a running cell with no output yet when its row renders collapsed then it is the fixed-height block (senpi#2933)",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay clean in the terminal (senpi#2831) Given a cell without a summary whose first code line carries escape and control characters when its live row renders then the header and window carry none of them (senpi#2839)",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay clean in the terminal (senpi#2831) Given a cell without a summary whose first code line is only escape and control characters when its live row renders then the headline is the next line with content (senpi#2850)",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay clean in the terminal (senpi#2831) Given a peek or stop call still streaming without its cell id when it renders then the title has no undefined",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay clean in the terminal (senpi#2831) Given a summary carrying escape and control characters when its live row renders then the header is one clean line with none of them",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay clean in the terminal (senpi#2831) Given a wide-character summary when its live row renders in a narrow terminal then the header fits the width in screen cells",
+				"legacyContracts/test/eval-render-runtime.test.ts/eval renderer runtime badge keeps the done row one line at 40 cols by letting the badge drop (senpi#2933 review MEDIUM-1)",
+				"legacyContracts/test/eval-render-runtime.test.ts/eval renderer runtime badge renders the collapsed one-line row without any badge when runtime is unknown (senpi#2933)",
+				"legacyContracts/test/eval-render-runtime.test.ts/eval renderer runtime badge shows version and home-contracted interpreter path in the collapsed one-line cell row (senpi#2933)",
+				"legacyContracts/test/eval-render-theme.test.ts/eval renderer theme hierarchy Given a themed live status tail whose newest event overflows then every row keeps one frame border and whole escape sequences (senpi#2933 review NEW-3)",
+				"legacyContracts/test/eval-render-theme.test.ts/eval renderer theme hierarchy Given themed status events when rendered expanded then operation and error summaries use semantic colors (senpi#2933)",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live block: truly constant total height (senpi#2933 review HIGH-C) Given a long status event at 40 cols then its newest rows stay inside the budget and the cut rows are counted",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live block: truly constant total height (senpi#2933 review HIGH-C) Given every tail shape at 200 cols then the total height is identical",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live block: truly constant total height (senpi#2933 review HIGH-C) Given every tail shape at 40 cols then the total height is identical",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live block: truly constant total height (senpi#2933 review HIGH-C) Given every tail shape at 80 cols then the total height is identical",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live block: truly constant total height (senpi#2933 review HIGH-C) Given one output line when rendered then the block keeps the full height (no flicker)",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live output tail counts hidden rows exactly (senpi#2933 review NEW-1) Given 10 output lines at 80 cols then the marker says 9 earlier lines and shows the last line",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live output tail counts hidden rows exactly (senpi#2933 review NEW-1) Given 3 output lines at 80 cols then the marker says 2 earlier lines and shows the last line",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live output tail counts hidden rows exactly (senpi#2933 review NEW-1) Given 4 output lines at 80 cols then the marker says 3 earlier lines and shows the last line",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live output tail counts hidden rows exactly (senpi#2933 review NEW-1) Given one 200-char output line at 40 cols then the marker counts every hidden wrapped row",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live status tail keeps the newest event rows (senpi#2933 review NEW-2) Given the stored bound, folded events and a cut event at 20 cols then the one-row marker keeps both counts",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live status tail keeps the newest event rows (senpi#2933 review NEW-2) Given the stored bound, folded events and a cut event at 25 cols then the one-row marker keeps both counts",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live status tail keeps the newest event rows (senpi#2933 review NEW-2) Given the stored bound, folded events and a cut event at 30 cols then the one-row marker keeps both counts",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live status tail keeps the newest event rows (senpi#2933 review NEW-2) Given one 4-line event at 40 cols then its newest row is kept and the marker counts the rows cut from its head",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live status tail keeps the newest event rows (senpi#2933 review NEW-2) Given two 2-line events at 40 cols then the newest event is visible and older rows fold into the marker",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live window always shows the newest line (senpi#2933 review HIGH-B) Given 20 wrapped source lines at 40 cols then the marker counts hidden source lines",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live window always shows the newest line (senpi#2933 review HIGH-B) Given 3 source lines with one 150-char line at 40 cols then the newest line stays visible",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live window always shows the newest line (senpi#2933 review HIGH-B) Given a single source line taller than the window then its last rows show with the marker",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live window always shows the newest line (senpi#2933 review HIGH-B) Given the 6-line JS cell with one long SQL line at 100 cols then the newest line is visible and the marker is not zero",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live window always shows the newest line (senpi#2933 review HIGH-B) Given the 6-line JS cell with one long SQL line at 40 cols then the newest line is visible and the hidden SQL line is counted once",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live window always shows the newest line (senpi#2933 review HIGH-B) Given a long SQL line whose head rows are cut by the window when running with output then the marker counts the cut line",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live window keeps indentation (senpi#2933 review HIGH-A) Given an indented Python cell when running then the window keeps inner spacing and indentation",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live window keeps indentation (senpi#2933 review HIGH-A) Given an indented Python cell when streaming then the window keeps leading whitespace",
+				"legacyContracts/test/eval-render-window-content.test.ts/eval live window keeps indentation (senpi#2933 review HIGH-A) Given code with tabs then the window expands them without collapsing indentation",
+				"legacyContracts/test/eval-render.test.ts/eval renderer Given completed cell details when rendered expanded then framed status agent and JSON output are visible (senpi#2933)",
+				"legacyContracts/test/eval-tool-execution-render.test.ts/eval summary in transcript frames Given a completed eval with a summary when the result row renders then the one-line row carries the summary (senpi#2933)",
+				"legacyContracts/test/eval-tool-execution-render.test.ts/eval summary in transcript frames Given a six-line cell with a summary when collapsed and expanded then the one-line row and the full code render (senpi#2933)"
+			],
+			"changes": [
+				{
+					"key": "legacyContracts/test/eval-render-runtime.test.ts/eval renderer runtime badge shows version and home-contracted interpreter path in the cell header",
+					"reason": "senpi#2933 changes the collapsed eval row to the fixed-height live block while streaming/running and one line when done, so this contract's old layout leaves the baseline; its honest rename 'eval renderer runtime badge shows version and home-contracted interpreter path in the collapsed one-line cell row (senpi#2933)' is listed under additions."
+				},
+				{
+					"key": "legacyContracts/test/eval-render-runtime.test.ts/eval renderer runtime badge renders headers without any badge when runtime is unknown",
+					"reason": "senpi#2933 changes the collapsed eval row to the fixed-height live block while streaming/running and one line when done, so this contract's old layout leaves the baseline; its honest rename 'eval renderer runtime badge renders the collapsed one-line row without any badge when runtime is unknown (senpi#2933)' is listed under additions."
+				},
+				{
+					"key": "legacyContracts/test/eval-render-theme.test.ts/eval renderer theme hierarchy Given themed status events when rendered then operation and error summaries use semantic colors",
+					"reason": "senpi#2933 changes the collapsed eval row to the fixed-height live block while streaming/running and one line when done, so this contract's old layout leaves the baseline; its honest rename 'eval renderer theme hierarchy Given themed status events when rendered expanded then operation and error summaries use semantic colors (senpi#2933)' is listed under additions."
+				},
+				{
+					"key": "legacyContracts/test/eval-render.test.ts/eval renderer Given completed cell details when rendered then framed status agent and JSON output are visible",
+					"reason": "senpi#2933 changes the collapsed eval row to the fixed-height live block while streaming/running and one line when done, so this contract's old layout leaves the baseline; its honest rename 'eval renderer Given completed cell details when rendered expanded then framed status agent and JSON output are visible (senpi#2933)' is listed under additions."
+				},
+				{
+					"key": "legacyContracts/test/eval-tool-execution-render.test.ts/eval summary in transcript frames Given a completed eval with a summary when the result frame renders then it carries the summary",
+					"reason": "senpi#2933 changes the collapsed eval row to the fixed-height live block while streaming/running and one line when done, so this contract's old layout leaves the baseline; its honest rename 'eval summary in transcript frames Given a completed eval with a summary when the result row renders then the one-line row carries the summary (senpi#2933)' is listed under additions."
+				},
+				{
+					"key": "legacyContracts/test/eval-tool-execution-render.test.ts/eval summary in transcript frames Given a six-line cell with a summary when collapsed then the summary line and a four-line code preview render",
+					"reason": "senpi#2933 changes the collapsed eval row to the fixed-height live block while streaming/running and one line when done, so this contract's old layout leaves the baseline; its honest rename 'eval summary in transcript frames Given a six-line cell with a summary when collapsed and expanded then the one-line row and the full code render (senpi#2933)' is listed under additions."
+				},
+				{
+					"key": "legacyContracts/test/eval-tool-execution-render.test.ts/eval ToolExecutionComponent lifecycle Given the pending -> running -> done lifecycle then exactly one framed box renders at every state",
+					"reason": "senpi#2933: same title, subject updated — the pre-result call lane reads 'streaming' (MEDIUM-1); the terminal row renders as one line."
+				},
+				{
+					"key": "legacyContracts/test/eval-render-theme.test.ts/eval renderer theme hierarchy Given a themed JavaScript call when rendered then the framed code uses syntax highlighting",
+					"reason": "senpi#2933: same title, subject updated — the pre-result call lane reads 'streaming' (MEDIUM-1); the terminal row renders as one line."
+				},
+				{
+					"key": "legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay one clean line (senpi#2831) Given a cell without a summary whose first code line is only escape and control characters when its live row renders then the headline is the next line with content (senpi#2850)",
+					"reason": "senpi#2933: renamed — the live row is now the fixed block, so the headline assertion moved to the block header (╭─) and the 8-row block."
+				},
+				{
+					"key": "legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay one clean line (senpi#2831) Given a wide-character summary when its live row renders in a narrow terminal then the row fits the width in screen cells",
+					"reason": "senpi#2933: renamed — the live row is now the fixed block; the wide-character header assertion moved to the block header."
+				},
+				{
+					"key": "legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay one clean line (senpi#2831) Given a peek or stop call still streaming without its cell id when it renders then the title has no undefined",
+					"reason": "senpi#2933: renamed — the peek/stop streaming title contract is unchanged; the row shape changed to the block."
+				},
+				{
+					"key": "legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay one clean line (senpi#2831) Given a cell without a summary whose first code line carries escape and control characters when its live row renders then the row is one clean line (senpi#2839)",
+					"reason": "senpi#2933: renamed — the live row is now the fixed block; the headline and window stay control-free."
+				},
+				{
+					"key": "legacyContracts/test/eval-render-window-content.test.ts/eval live window always shows the newest line (senpi#2933 review HIGH-B) Given a 5-line JS cell with one long SQL line at 100 cols then the newest line is visible and the marker is exact",
+					"reason": "Opus round-3 MEDIUM-E: the fixture is 6 lines, not 5, and the title overstated its check; renamed to the honest 'the 6-line JS cell with one long SQL line at 100 cols then the newest line is visible and the marker is not zero' and listed under additions."
+				},
+				{
+					"key": "legacyContracts/test/eval-render-window-content.test.ts/eval live window always shows the newest line (senpi#2933 review HIGH-B) Given a 5-line JS cell with one long SQL line at 40 cols then the newest line is visible",
+					"reason": "Opus round-3 MEDIUM-E: the fixture is 6 lines, not 5, and the title overstated its check; renamed to the honest 'the 6-line JS cell with one long SQL line at 40 cols then the newest line is visible and the hidden SQL line is counted once' (exact count asserted) and listed under additions."
+				}
+			],
+			"reason": "senpi#2933 (Q): render.ts is split by responsibility into render-*.ts modules (pure move, new import-census entries for the extension and first kernel), and the eval row gains a fixed-height live code window while streaming/queued/running plus a one-line collapsed row for done/error/cancelled; new contracts in eval-render-live-block.test.ts, and the live-row contracts whose layout changed are renamed (see changes). No prompt cell changes."
+		},
+		"senpi#2999": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/kernels/js/windows-tree-kill-host.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/windows-tree-kill-host.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/windows-tree-kill.js",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill, host copy (senpi#2999) #given a kernel child on wininit's recycled parent pid #when its tree is planned #then the system tree stays out",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill, host copy (senpi#2999) #given a listing or none #when kill args are built #then pids are named without /T, or /T on the root alone",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill, host copy (senpi#2999) #given a protected image under the root #when planned #then only the root is killed",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill, host copy (senpi#2999) #given an older process that names the root's recycled pid #when planned #then it is not adopted",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill, host copy (senpi#2999) #given the root is an ancestor of this process #when planned #then nothing is killed",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill, host copy (senpi#2999) #given the root is no longer listed #when planned #then nothing is killed",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill, worker copy (senpi#2999) #given a kernel child on wininit's recycled parent pid #when its tree is planned #then the system tree stays out",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill, worker copy (senpi#2999) #given a listing or none #when kill args are built #then pids are named without /T, or /T on the root alone",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill, worker copy (senpi#2999) #given a protected image under the root #when planned #then only the root is killed",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill, worker copy (senpi#2999) #given an older process that names the root's recycled pid #when planned #then it is not adopted",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill, worker copy (senpi#2999) #given the root is an ancestor of this process #when planned #then nothing is killed",
+				"legacyContracts/test/windows-tree-kill.test.ts/codemode Windows tree kill, worker copy (senpi#2999) #given the root is no longer listed #when planned #then nothing is killed"
+			],
+			"reason": "senpi#2999: codemode's Windows tree kill computes the tree from creation-time-checked parentage instead of taskkill /T. The listed keys are the parameterized contracts that run on both the host copy (windows-tree-kill-host.ts) and the worker copy (windows-tree-kill.js), plus the import-graph additions those modules bring."
+		},
+		"senpi#3003": {
+			"additions": [
+				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries document packages.install with its signature, managers, receipt and codes",
+				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries document every error code the source raises"
+			],
+			"reason": "senpi#3003: tool_schema(\"eval:environments\") now documents packages.install(manager, requirements, {timeout?}) — its signature, the per-language managers (pip; bun/npm), the receipt fields, cancellation by stop and the environment_install_timeout code — and the virtual-schema contract test gains a two-way emitted-vs-documented code check plus the packages.install assertions. No prompt, description, snippet, guidelines or input-schema changes."
+		},
+		"senpi#2995": {
+			"additions": [
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/group-signal-notice.js",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given   kill -TERM -- -5 when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given PG=$(ps -o pgid= -p $W | tr -d ' '); kill -TERM -- -$PG when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given a ps that cannot be spawned when the agent group is read then the lookup returns nothing instead of throwing",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given bash -lc 'kill -KILL -- -$GROUP' when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given echo \"killall bun stops every bun\" when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given echo \"run kill -9 on the stuck pid\" when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given echo \"use kill -9 1234 if needed\" when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given echo killed -- -1 when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given for p in 1; do kill -- -$p; done when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given git log --grep kill foo -1 when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given grep -c killall notes.txt when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given if true; then kill -- -5; fi when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill $PID; head -5 log.txt when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -- -$$ when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -- -1234 when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -0 1234 when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -9 -1234 when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -9 1234 when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -TERM $PID when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -TERM -$(cat /tmp/job.pgid) when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -TERM 1234 -5678 when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -l when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -s TERM -${PG} when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill 1234 when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given killall bun when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given no readable process group when the notice is built then it still carries its tag",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given nohup kill -- -5 when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given pkill --pgroup 5 sleep when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given pkill -g 77 sleep when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given pkill -g0 sleep when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given sh -c 'killall -TERM node' when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given skill -9 1234 when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given sudo -n kill -9 -5 when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given sudo killall node when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given xargs kill -- -5 when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given { kill -- -5; } when scanned then it is a group signal",
+				"legacyContracts/test/js-kernel-cell-process-group-bun.test.ts/JavaScript kernel children start their own process group (senpi#2995) Given a Bun.$ command that signals a process group when it runs then the cell gets the shared-group notice",
+				"legacyContracts/test/js-kernel-cell-process-group-bun.test.ts/JavaScript kernel children start their own process group (senpi#2995) Given a Bun.spawn background job when the cell signals the job's process group then the agent is not in it and the job is gone",
+				"legacyContracts/test/js-kernel-cell-process-group-bun.test.ts/JavaScript kernel children start their own process group (senpi#2995) Given a cell that promisifies child_process.exec when it runs then the result keeps stdout and stderr and the group-signal notice still fires",
+				"legacyContracts/test/js-kernel-cell-process-group-bun.test.ts/JavaScript kernel children start their own process group (senpi#2995) Given a node:child_process background job when the cell signals the job's process group then the agent is not in it and the job is gone"
+			],
+			"reason": "senpi#2995: the worker's shell capture imports the new group-signal-notice.js. It warns when a Bun.$, exec/execFile or synchronous-spawner command signals a process group, since those children stay in the agent's group. The listed contracts cover child process groups, the detector, the notice tag, a missing ps, and promisify(exec)."
+		},
+		"senpi#3016": {
+			"additions": [
+				"legacyContracts/test/subprocess-stdin-epipe.test.ts/subprocess kernel stdin write failures (senpi#3016) Given a Python interpreter that closed its stdin when the transport sends its init frame then start fails with the EPIPE and the host survives",
+				"legacyContracts/test/subprocess-stdin-epipe.test.ts/subprocess kernel stdin write failures (senpi#3016) Given a kernel child that closed its stdin when a frame is sent then the EPIPE is reported once through onError and the host survives"
+			],
+			"reason": "senpi#3016: a kernel child's stdin write failure (EPIPE) is reported once through onError, for the shared subprocess kernels and the Python transport, instead of an unhandled stream error ending the host. A send after exit is refused."
+		},
+		"senpi#3020": {
+			"additions": [
+				"legacyContracts/test/js-kernel-cell-orphan-group-bun.test.ts/JavaScript kernel retires a cell's orphaned grandchildren through their process group (senpi#3020) Given a Bun.spawn child whose grandchild was re-parented to init when the cell settles then the grandchild is gone and the agent is alive",
+				"legacyContracts/test/js-kernel-cell-orphan-group-bun.test.ts/JavaScript kernel retires a cell's orphaned grandchildren through their process group (senpi#3020) Given a node:child_process child whose grandchild was re-parented to init when the cell settles then the grandchild is gone and the agent is alive",
+				"legacyContracts/test/process-group-retire.test.ts/cell process-group retirement (senpi#3020) Given a cell child's live group when groups are retired then it gets SIGTERM and then SIGKILL",
+				"legacyContracts/test/process-group-retire.test.ts/cell process-group retirement (senpi#3020) Given a recorded leader that exited and a live process now holding its pid when groups are retired then that group is left alone",
+				"legacyContracts/test/process-group-retire.test.ts/cell process-group retirement (senpi#3020) Given the agent's own process group in the list when groups are retired then it is never signalled"
+			],
+			"reason": "senpi#3020: at cell retirement every process group the kernel gave a cell child is signalled, so a grandchild re-parented to init is stopped. The agent's own group, and a group whose exited leader's pid is held by a live process again, are never signalled."
+		},
+		"senpi#3005": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/kernels/shared/bun-ffi.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/bun-ffi.ts"
+			],
+			"reason": "The shared isBunFfi/loadBunFfi guard module replaces the two getBuiltinModule('bun:ffi') casts in process-cpu.ts and process-group-cpu.ts; no behavior change."
+		},
+		"senpi#3025": {
+			"additions": [
+				"legacyContracts/test/bench/head-budget.test.ts/crash-queue-100 absolute head budget (rb, jl) passes a head that recovers and runs every queued cell under the ceiling, although the base ratio is ~20x",
+				"legacyContracts/test/bench/head-budget.test.ts/crash-queue-100 absolute head budget (rb, jl) fails a head that leaves a queued cell unrun",
+				"legacyContracts/test/bench/head-budget.test.ts/crash-queue-100 absolute head budget (rb, jl) fails a head that runs a queued cell twice",
+				"legacyContracts/test/bench/head-budget.test.ts/crash-queue-100 absolute head budget (rb, jl) fails a head whose median wall time exceeds the ceiling",
+				"legacyContracts/test/bench/head-budget.test.ts/crash-queue-100 absolute head budget (rb, jl) keeps the base-ratio gate for runtimes without a budget",
+				"legacyContracts/test/bench/head-budget.test.ts/crash-queue-100 absolute head budget (rb, jl) fails a head whose median cpu exceeds the ceiling while wall stays under it",
+				"legacyContracts/test/bench/head-budget.test.ts/crash-queue-100 absolute head budget (rb, jl) tests the wall ceiling through --inject-slow, keeping the recorded observations"
+			],
+			"reason": "senpi#3025: the bench judges crash-queue-100 on rb and jl by an absolute head budget (all 100 queued cells run once after one replacement, within a median-wall ceiling), because their base never recovered from the crash and the head/base ratio compares a failure path with the real work. The listed contracts are the new comparator tests."
+		},
+		"senpi#3261": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/tool/display-json-bounds.ts",
+				"imports/extension/packages/senpi-codemode/src/tool/display-json-size.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/display-json-bounds.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/display-json-size.ts",
+				"legacyContracts/test/display-json-bounds-shapes.test.ts/display values keep every top-level key within the budget (#3261 review) a 100,000-character key is trimmed, the sibling is kept, and the budget holds",
+				"legacyContracts/test/display-json-bounds-shapes.test.ts/display values keep every top-level key within the budget (#3261 review) a key after an escaped string is kept",
+				"legacyContracts/test/display-json-bounds-shapes.test.ts/display values keep every top-level key within the budget (#3261 review) a key of 3,000 control characters is trimmed, the sibling is kept, and the budget holds",
+				"legacyContracts/test/display-json-bounds-shapes.test.ts/display values keep every top-level key within the budget (#3261 review) a paginated response keeps its scalars after a large rows array",
+				"legacyContracts/test/display-json-bounds-shapes.test.ts/display values keep every top-level key within the budget (#3261 review) emoji keys stay keys and a trimmed emoji string never splits a surrogate pair",
+				"legacyContracts/test/display-json-bounds-shapes.test.ts/display values keep every top-level key within the budget (#3261 review) emoji-heavy records keep their scalars and the budget holds",
+				"legacyContracts/test/display-json-bounds-shapes.test.ts/display values keep every top-level key within the budget (#3261 review) kept records keep all their own fields",
+				"legacyContracts/test/display-json-bounds-shapes.test.ts/display values keep every top-level key within the budget (#3261 review) too many keys to show still stays within the budget with a visible count",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) Given a displayed object wrapping a large Buffer when the cell settles then the stored jsonOutputs entry is bounded",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) Given a legacy oversized stored Buffer entry when rendered then a bounded placeholder line is shown",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) Given a legacy oversized stored entry when rendered then a bounded summary replaces the tree",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) Given a malformed stored entry when rendered then the failure stays local to the entry",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) Given the real legacy shape with the Buffer nested under a key when rendered then the placeholder shows for the buffer key",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) stored entries keep every top-level shape under the budget (#3261 review) a Buffer nested under a key becomes a placeholder summary with its sibling keys",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) stored entries keep every top-level shape under the budget (#3261 review) a control-character string keeps its sibling keys and stays inside the budget",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) stored entries keep every top-level shape under the budget (#3261 review) a deeply nested value keeps its top-level keys with a depth marker",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) stored entries keep every top-level shape under the budget (#3261 review) a long array of records stays a non-empty partial array with an elision marker",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) stored entries keep every top-level shape under the budget (#3261 review) a long string under a key truncates with a marker and keeps its sibling keys",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display jsonOutputs bounds (#3261) stored entries keep every top-level shape under the budget (#3261 review) a wide object keeps its leading keys with an elision marker, not a dropped value",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display wrapped image detection (#3261) Given an object holding only image bytes under buffer when displayed then just the frame resolves",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display wrapped image detection (#3261) Given an object whose buffer field holds BM-prefixed non-BMP bytes when displayed then it stays on the JSON path",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display wrapped image detection (#3261) Given an object whose buffer field holds image bytes when displayed then it resolves to an image frame plus metadata text",
+				"legacyContracts/test/eval-display-json-bounds.test.ts/eval display wrapped image detection (#3261) Given an object whose buffer field holds non-image bytes when displayed then it stays on the JSON path"
+			],
+			"reason": "senpi#3261 adds contracts proving stored display jsonOutputs follow the display text budget (serialized Buffers collapse to placeholders), legacy oversized or malformed entries render a bounded local summary instead of throwing, and { buffer: <image bytes>, ...metadata } displays as an image frame plus metadata text. The frozen baseline and every existing contract remain unchanged. The review rounds add the display-json-bounds/display-json-size modules (split for size) and contracts proving every top-level key survives trimming, keys are trimmed within the budget, and characters above U+FFFF count at their serialized length. The frozen baseline and every existing contract remain unchanged."
 		}
 	}
 }

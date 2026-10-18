@@ -1,3 +1,241 @@
+## 2026-10-16 - A forced release tests its code before stamping the version and changelogs (senpi#3446)
+
+### What changed
+
+- `scripts/release.mjs`: with `--force-tests`, the suite (clean, build, then `CI=1 npm test`) runs right after the test-evidence step (catalog regeneration and its commit), before any version bump or CHANGELOG stamping. The release still cleans and builds again after stamping. Without `--force-tests` the order of commands is unchanged.
+
+### Why
+
+- `scripts/release.mjs`: the suite used to run after `stampChangelogs`, so any test that reads a real CHANGELOG.md saw no `[Unreleased]` section; the v2026.10.16 forced release (run 38824836070) failed on `scripts/model-catalog-refresh.test.mjs`. CI always tests the unstamped commit, so the forced path never matched it.
+
+### Why an extension could not handle it
+
+- `scripts/release.mjs`: release orchestration is repository build tooling.
+
+### Expected merge conflict zones
+
+- `scripts/release.mjs`: `main()`'s step list and `runForcedTests`.
+
+## 2026-10-15 - The forced release test suite is bounded and dispatchable (senpi#3426, Refs senpi#2291)
+
+### What changed
+
+- `scripts/release.mjs`: `runForcedTests` (the `--force-tests` path) runs the suite through `runForcedTestSuite` from `release-test-gate.mjs` instead of `runCommand("npm", ["test"], { CI: "1" })`. The suite runs under a 110-minute budget as the leader of its own process group (`release-forced-test-supervisor.mjs`), and a timeout kills the whole group and fails with a named error. The default path, which waits for the release commit's green "Check and test" run, is unchanged.
+
+### Why
+
+- `scripts/release.mjs`: when GitHub-hosted macOS runners are backlogged, the release commit's "Check and test" never reports and the release fails after 40 minutes without publishing (two v2026.10.16 attempts on 2026-10-15). `--force-tests` is the existing fallback, but the workflow could not pass it, and the in-job suite once hung silently in packages/ai vitest until the job timeout killed it (senpi#2291). The budget is about twice the serial cost estimated from green main CI (the ubuntu Test jobs sum to 56.8-62.7 min).
+
+### Why an extension could not handle it
+
+- `scripts/release.mjs`: the release orchestration and its workflow are repository build tooling.
+
+### Expected merge conflict zones
+
+- `scripts/release.mjs`: `runForcedTests` and the `release-test-gate.mjs` import; the `release` job's `timeout-minutes` and inputs in `publish-npm.yml`.
+
+## 2026-10-15 - The ./models entry graph reaches the cost-card leaf (senpi#3378)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs`: the `@earendil-works/pi-ai` `./models` budget is 24 files (was 23 after senpi#3292). The added file is `model-cost.ts`, the type-only leaf that picks the cost card in force; the reason is recorded beside the budget and the forbid rules are unchanged.
+
+### Why
+
+- senpi#3378: `calculateCost` in `models.ts` selects the dated card, which brings the leaf into the `./models` graph.
+
+### Why an extension could not handle it
+
+- The entry-graph budgets are a repository build check.
+
+### Expected merge conflict zones
+
+- The `./models` row in `check-entry-graphs.mjs`, which senpi#3292 also raised.
+
+## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
+
+### What changed
+
+Remove the retired generated protocol-tree example from the runtime dependency auditor comment; the audit rules are unchanged.
+
+- `scripts/check-runtime-deps.mjs`
+
+### Why
+
+The executable Codex compatibility layer is being removed. Shared Native runtime behavior and historical records must remain independent of that layer.
+
+### Why an extension could not handle it
+
+These host contracts, import paths and build or verification targets belong to the repository; an extension cannot retire them.
+
+### Expected merge conflict zones
+
+The listed paths, especially command dispatch, mode unions and process identity imports. Keep the supported runtime branches and the shared utility behavior.
+
+## 2026-10-12 - System-temp scan safeguards have mutation-tested contracts (Refs senpi#3064)
+
+### What changed
+
+- Add real snapshot/check contracts for a foreign job's preexisting `sj-*` directory and a new nonrepository system-temp name. Both remain intact and the guard passes.
+- Removing the baseline filter or repository-name filter independently makes the corresponding contract fail.
+
+### Why
+
+- System scans must detect our new entries without failing on preexisting jobs or newly created unrelated names.
+
+### Why an extension could not handle it
+
+- The guard is CI/bootstrap tooling outside the extension runtime.
+
+### Expected merge conflict zones
+
+- `scripts/test-temp-system.test.mjs`: keep the controlled system-temp fixture scoped away from concurrent live jobs.
+
+## 2026-10-12 - Temp guards report surviving owners and system escapes (Refs senpi#3064)
+
+### What changed
+
+- `scripts/test-temp-guard.mjs`: count before retiring recorded roots, print surviving root contents, fail when any root needed retirement, and scan both pre-export temp and POSIX `/tmp` for new repository-created names. Unknown system names are reported without failing; shared system entries are never removed.
+- `scripts/test-temp-guard.mjs`: remove speculative scan/journal caps and the exact-single-entry scope check; retain prefix and baseline protection before deleting creator-owned roots.
+- `scripts/run-tests.mjs`: allocate a short system-temp root when inherited TMPDIR leaves no room for the 103-byte fallback socket; report cleanup failure without skipping signal-handler removal or leftover reporting.
+- `scripts/node-bundle-smoke.test.ts`: the grammar probe uses the existing hermetic environment, including owned temp variables.
+- `scripts/ci-test-temp-workflow.test.mjs`: structurally require every CI test-runtime step to sit between snapshot setup and an always-run final count.
+
+### Why
+
+- `scripts/test-temp-guard.mjs`: retiring a late root into a green result hid leaked processes; checking only the exclusive scope missed callers that ignored TMPDIR. Remaining fixture migration is tracked in senpi#3138, so this PR references rather than closes #3064.
+
+### Why an extension could not handle it
+
+- `scripts/run-tests.mjs`, `scripts/test-temp-guard.mjs`: temporary ownership and CI checks run before agent extensions.
+
+### Expected merge conflict zones
+
+- `scripts/run-tests.mjs`, `scripts/test-temp-guard.mjs`: run-root allocation, snapshot fields, final count and cleanup ordering.
+
+## 2026-10-10 - Test invocations own their temporary storage (senpi#3064)
+
+### What changed
+
+- `scripts/run-tests.mjs`: launch test processes with a private TMPDIR/TEMP/TMP before Vitest initializes, remove that root after child exit, and forward catchable interrupts to the child's process group before teardown. CI compares sorted top-level temp names after cleanup, bounded at 100000 entries, and fails with each leftover name.
+- `scripts/vitest-temp.ts`: shared file-scoped fixture creation registers teardown even when an assertion fails.
+- `scripts/vitest-temp-setup.ts`: register Vitest hooks only in framework setup; the fixture registry and harness also load in plain Bun subprocess workers without importing Vitest.
+- `scripts/test-temp-guard.mjs`: the bounded top-level scanner is shared by the launcher and a snapshot/check CLI. A job-final check can report residue even if the launcher itself was killed.
+- `scripts/test-temp-guard.mjs`, `scripts/run-tests.mjs`: snapshot setup creates an ownership journal exported explicitly to subsequent CI steps. Job teardown removes only roots recorded by their creator, including roots recreated after per-invocation teardown; unregistered entries still fail and are never removed.
+- `scripts/test-temp-guard.mjs`: CI snapshot setup gives the job an exclusive, short temp parent instead of counting unrelated macOS daemon directories in the shared host temp tree. It reports remaining job entries, removes only that newly allocated job parent on success or failure, and restores the previous temp environment for post-job actions. No system-directory name exceptions or shared-temp sweeps are used.
+- `scripts/test-temp-guard.mjs`: allocate npm's default Node compile cache inside the owned job parent at setup; it remains enabled during tests and is removed with that parent at teardown rather than becoming an unowned temp entry.
+- `scripts/run-tests.mjs`, `scripts/node-bundle-cursor-exec.test.ts`, `scripts/node-bundle-smoke.test.ts`, `scripts/node-bundle-reinstall.test.ts`: keep jiti's pnpm cwd workaround from ignoring owned TMPDIR via JITI_RESPECT_TMPDIR_ENV; hermetic bundle and compiled-probe child environments preserve TMPDIR/TEMP/TMP on every OS.
+
+### Why
+
+- Vitest 5 forks write SSR transform copies into its core temp directory independently of cacheDir. Its core directory survives normal close; workers killed before project close also leave copies. Test fixtures without teardown add smaller directories.
+
+### Why an extension could not handle it
+
+- These are test-process bootstrap and fixture ownership rules, not agent runtime extension behavior.
+
+### Expected merge conflict zones
+
+- Test command wiring in package manifests and workflows; Vitest's temp-copy implementation should be rechecked after dependency upgrades.
+
+## 2026-10-11 - Allow exact restoration of tagged released changelog sections (senpi#3126)
+
+### What changed
+
+- `scripts/check-pr-changelog.mjs`: collect tagged section slices for changed released sections using the same changelog path at `refs/tags/v<section name>`. Accept a differing section only when its name stays in place and its full slice equals the tagged bytes. Only plain CalVer section names qualify, and the tag must exist as that exact ref (`show-ref --verify`), so revision syntax such as `~1` never resolves another commit. Missing tags, and tags that lack the changelog, provide no exemption.
+- `scripts/check-pr-changelog.test.mjs`: pure verdict cases and a real tagged CLI fixture cover restoration, non-tag edits, absent tags, whitespace differences, a revision-syntax name, a non-CalVer name with a matching tag, and a tag without the changelog file.
+
+### Why
+
+- The PR base can contain an entry added after a release shipped. Comparing only against that base rejected restoring the shipped section while moving the misplaced entry to Unreleased.
+
+### Why an extension could not handle it
+
+- The required PR changelog gate runs in repository tooling, outside the extension runtime.
+
+### Expected merge conflict zones
+
+- `scripts/check-pr-changelog.mjs`: section parsing, released-section verdict, and `collectPrFacts` changelog collection.
+- `scripts/check-pr-changelog.test.mjs`: released-section unit cases and the #2609 CLI fixture.
+
+## 2026-10-09 - The agent ./harness/env/nodejs entry graph allows one more file (senpi#2999)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs`: the `@earendil-works/pi-agent-core` `./harness/env/nodejs` budget is 6 files (was 5). The added file is `harness/env/windows-process-tree.ts`, the leaf that plans Windows process-tree kills from one process listing with creation-time-checked parentage, used instead of `taskkill /T`. It imports only `node:child_process`; the reason is recorded beside the budget and the forbid rules are unchanged.
+
+### Why
+
+`NodeExecutionEnv` kills command trees through it, so the entry graph grows by exactly that one module.
+
+### Why an extension could not handle it
+
+Entry-graph budgets are repository tooling.
+
+### Expected merge conflict zones
+
+- The `./harness/env/nodejs` row in `check-entry-graphs.mjs`.
+
+## 2026-10-08 - The release reuses the release commit's sharded CI instead of re-running the suite (senpi#2943)
+
+### What changed
+
+- `scripts/release.mjs`: the release regenerates the model catalog and checks the provider defaults first. A manifest change that is only the `generatedAt` stamp is restored. If the catalog really changed, it is committed alone and pushed to `main`. The release then waits (`awaitCiEvidence`) for that commit's green "Check and test" run, CI's fan-in of every shard and required job, instead of running `CI=1 npm test` in the job:
+  - red stops the release before it commits, tags or pushes;
+  - a run cancelled by a newer `main` push follows `main` forward, but only when the new tip contains the commit;
+  - no result within 40 minutes fails with the reason.
+  A failed fan-in's workflow run is looked up (`lookupWorkflowRun`), so a cancellation is not mistaken for red CI. `CI=1 npm test` runs only with `--force-tests`.
+- `scripts/release-test-gate.mjs` holds the pure decisions: `planCiEvidence`, `awaitCiEvidence`, `isTimestampOnlyManifestChange`, `discardTimestampOnlyCatalogChange`. `decideTestGate` and `isCiCheckGreen` are gone.
+- `.github/workflows/publish-npm.yml`: `timeout-minutes` 90 to 60.
+
+### Why
+
+The catalog was regenerated inside the release job, after `main`'s CI, so a changed catalog was a tree CI never tested. Since senpi#2645 that forced a serial in-job suite, which outgrew 50 minutes. Every regeneration also re-stamped the manifest, so every release looked like catalog drift.
+
+### Why an extension could not handle it
+
+Release orchestration is repository tooling.
+
+### Expected merge conflict zones
+
+- `main()` and the test-gate section of `scripts/release.mjs`; the `release` job comment and timeout in `publish-npm.yml`.
+
+## 2026-10-15 - The ./models entry graph reaches the generation-4 thinking leaf (senpi#3292)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs`: the `@earendil-works/pi-ai` `./models` budget is 23 files (was 22). The added file is `google-thinking-generation.ts`, a type-only leaf that gives a generation-4 row with no level map its low/medium/high levels; the reason is recorded beside the budget and the forbid rules are unchanged.
+
+### Why
+
+senpi#3292: generation-4 rows reject a thinking budget with HTTP 400, so `getSupportedThinkingLevels` in `models.ts` must know their levels even when the catalog row ships no map. That brings the leaf into the `./models` graph.
+
+### Why an extension could not handle it
+
+The entry-graph budgets are a repository build check.
+
+### Expected merge conflict zones
+
+- The `./models` row in `check-entry-graphs.mjs`.
+
+## 2026-10-07 - The ./models entry graph allows one more file (senpi#2893)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs`: the `@earendil-works/pi-ai` `./models` budget is 22 files (was 21). The added file is `utils/oauth-refresh-error.ts`, the typed transient/permanent refresh classification that `auth/resolve.ts` raises; the reason is recorded beside the budget.
+
+### Why
+
+senpi#2893: a transient OAuth refresh failure must be typed where it happens. `resolve.ts` raises that type, so its module joins the `./models` graph.
+
+### Why an extension could not handle it
+
+The entry-graph budgets are a repository build check.
+
+### Expected merge conflict zones
+
+- The `./models` row in `check-entry-graphs.mjs`.
+
 ## 2026-10-03 - Publish-only releases ship the full native PTY prebuild matrix (senpi#1193)
 
 ### What changed
@@ -1868,3 +2106,23 @@ Build tooling is not an extension surface.
 ### Expected merge conflict zones
 
 Upstream edits to scripts/build-binaries.sh at the next sync.
+
+## 2026-10-11 - Changelog gate reports every violation (senpi#3055, senpi#3123)
+
+### What changed
+
+- `scripts/check-pr-changelog.mjs`: collect every changed released section across all changed changelogs, every tracker removal, and every Unreleased-removal violation. Return a `violations` array and retain the string `reason`, joined with "; ". The CLI preserves its first failure line and prints each violation on its own line before the existing remediation.
+- `scripts/check-pr-changelog.test.mjs`: extend the #2609 CLI fixture with a simultaneous released-section edit and tracker removal, and verify aggregation across sections and files plus the returned reason contract.
+
+### Why
+
+- `scripts/check-pr-changelog.mjs`: #3055 both misplaced a changelog bullet in a released section and removed existing tracker lines. The first-only violation chain masked the tracker removal until the released-section problem was fixed, requiring another push. Reporting all existing checks changes no policy; per-PR fragments remain the longer-term work in #3123.
+
+### Why an extension could not handle it
+
+- `scripts/check-pr-changelog.mjs`: the PR gate runs as repository tooling, before runtime extensions load.
+
+### Expected merge conflict zones
+
+- `scripts/check-pr-changelog.mjs`: released-section detection, `checkPrChangelog` aggregation, and CLI failure output.
+- `scripts/check-pr-changelog.test.mjs`: the #2609 CLI fixture and aggregation assertions.

@@ -1,3 +1,392 @@
+## 2026-10-17 - /files lists the whole active path after a reopen (senpi#3519)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/files.ts`: `/files` reads `ctx.sessionManager.getFullBranch()` instead of `getBranch()`.
+
+### Why
+
+- A reopened compacted session keeps only its latest compaction window in memory (#3519), so `getBranch()` covers only that window; `/files` promises the files of the whole session.
+
+### Why an extension could not handle it
+
+- This is the builtin extension itself; the fix is the call it makes.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/files.ts`, the branch read at the top of the handler.
+
+## 2026-10-15 - TPS is timed from the first streamed token to the last (senpi#3393)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/tps.ts`: the rate divides the output of assistant messages that actually streamed by their first-to-last delta time (`text_delta`, `thinking_delta`, `toolcall_delta` from `message_update`). No tok/s is shown when nothing streamed or the streamed time is under 0.5 s. The rest of the notice (cache hit, elapsed message time) is unchanged. A message that reasoned before its first delta (its usage reports reasoning tokens, or it carries a thinking block, redacted included, whose text never streamed: Bedrock and omitted-display thinking report no reasoning count) is timed from its own start instead; thinking that streamed as `thinking_delta` keeps the first-to-last-delta window: reasoning can be hidden, or only summarised after it finished, so the first delta comes after most of it was generated. Aborted, errored and zero-output messages add nothing to the rate.
+
+### Why
+
+- Timing from `message_start` to `message_end` made a non-streamed reply read thousands of tok/s (`12853.9 tok/s ... 0.0s` on 5.1.30), and counted time-to-first-token for streamed ones. Regression: `test/suite/tps-extension.test.ts` (#3393 cases).
+
+### Why an extension could not handle it
+
+- This is the extension.
+
+### Expected merge conflict zones
+
+- LOW: the `message_update` handler and the rate line in `agent_end`.
+## 2026-10-14 - vertex-model-garden provider extension
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/index.ts`: registers the new `vertex-model-garden` builtin after `cursor-cli-oauth`.
+- `packages/coding-agent/src/core/extensions/builtin/vertex-model-garden/transport.ts`: keeps the URL builder private; the SDK-wire test owns the global endpoint contract without a duplicate helper test or test-only export.
+- `packages/coding-agent/src/core/extensions/builtin/vertex-model-garden/` (fork-only): registers only `vertex-garden` for Model Garden open models through `.../locations/global/endpoints/openapi` (`openai-completions`). It wraps the builtin API stream, injects an ADC bearer token plus `x-goog-user-project`, and is gated on the ADC credential chain through `ambientAuth` (`auth.ts`, composed by `provider-composer.ts`), so the lane is available while ADC is present without counting as a configured provider and never takes the automatic default over one the user configured (senpi#2327). The target project comes from `GOOGLE_CLOUD_PROJECT`/`GCLOUD_PROJECT`, else the ADC quota project, else `getProjectId()`; the API-key slot is never read, so a stored secret cannot reach the request URL. The starter catalog is exactly `deepseek-ai/deepseek-v4.1-flash-maas` (1,000,000-token context from the existing `deepseek-v4-1-flash` catalog data) and `zai-org/glm-5.2-maas`, priced at the model card's published MaaS list prices — DeepSeek V4.1 Flash $0.30/$1.20 per 1M tokens with a $0.03 cache hit, GLM 5.2 $1.40/$4.40 with a $0.14 cached input rate (https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing, "Deepseek's models" and "GLM's models"; DeepSeek V4.1 Flash is listed at no charge through 2026-10-16). Both models declare reasoning with every thinking level marked unsupported, so no level is offered that these endpoints cannot steer. Claude registration, catalog, rawPredict transport and tests are removed.
+
+### Why
+
+- Vertex Model Garden open models previously needed a hand-written models.json and a token script.
+- Marketplace partner models, including Claude and Grok, are excluded because they are card-billed and promotional credits do not apply.
+
+### Why an extension could not handle it
+
+- It is an extension; only the one-line registration in `builtin/index.ts` sits outside it.
+
+### Expected merge conflict zones
+
+- LOW: one import and one `builtinExtensions` entry.
+## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
+
+### What changed
+
+Remove the retired mode from recommendation policy and update the shared async-answer ownership comment. Existing mode behavior and model provenance checks stay intact.
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`
+- `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`
+
+### Why
+
+The executable Codex compatibility layer is being removed. Shared Native runtime behavior and historical records must remain independent of that layer.
+
+### Why an extension could not handle it
+
+These host contracts, import paths and build or verification targets belong to the repository; an extension cannot retire them.
+
+### Expected merge conflict zones
+
+The listed paths, especially command dispatch, mode unions and process identity imports. Keep the supported runtime branches and the shared utility behavior.
+
+## 2026-10-13 - tps: per-run stats notify is TUI-only (senpi#3236)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/tps.ts`: the `agent_end` handler returns early when `ctx.mode !== "tui"`, so the TPS/cache-hit notice is sent only to the TUI footer. Message text, timing accumulation, and the `output > 0`/`elapsedMs > 0` guards are unchanged.
+- `packages/coding-agent/test/suite/tps-extension.test.ts`: the ctx mock carries `mode: "tui"`, matching `ExtensionContext`.
+- `packages/coding-agent/test/suite/regressions/3236-tps-notify-tui-only.test.ts` (new): a TUI ctx still receives exactly one unchanged notice; rpc/app-server/json/print ctxs receive none.
+
+### Why
+
+In RPC mode `ctx.ui.notify` becomes an `extension_ui_request`, and the desktop rendered each one as an info warning row ("Work Log") once per agent run. The notice is a TUI footer nicety and has no RPC-mode consumer; the desktop now drops the string server-side (omo-desktop-app #2327), and this change stops the engine from emitting it outside the TUI in the first place.
+
+### Why an extension could not handle it
+
+It is an extension — the guard lives inside the existing `tps` builtin, whose notify call site is the only emitter of this string.
+
+### Expected merge conflict zones
+
+- LOW in `tps.ts` around the `agent_end` early-return block; LOW in `tps-extension.test.ts` around the ctx mock shape.
+
+## 2026-10-11 - Restore shipped defaults and cache-preserving search policy (senpi#3125 delta)
+
+### What changed
+
+- `server-search-fallback.ts` separates fallback from disabled metadata and preserves the original hook on cache-retaining summaries.
+- Anthropic and OpenAI native injectors restore main's direct API/Claude OAuth and OpenAI/Azure defaults. Both consult failure memory using the request model, not the selected session model.
+- Server-tool exclusion preserves client search declarations and omits empty tools arrays.
+
+### Why
+
+- New opt-in routes must not remove shipped defaults or invalidate the main-turn cache prefix.
+
+### Why an extension could not handle it
+
+- These are corrections to the existing built-in injection and fallback extensions.
+
+### Expected merge conflict zones
+
+- Capability predicates, payload filters and request-model failure lookup.
+
+## 2026-10-11 - Preserve search fallback schemas and keepalive prefixes (senpi#3122 review)
+
+### What changed
+
+- `server-search-fallback.ts`: session/model failure memory is shared by native injectors and standalone search; suppression markers are request-local and never serialized.
+- `cache-keepalive/index.ts`: explicitly requests the main-turn server-search prefix rather than using the search-disabled auxiliary default.
+- Native search extensions preserve provider-built function declarations after a failure and require opt-in on unverified routes.
+
+### Why
+
+- Schema normalization and a stable cache prefix must survive native-search fallback without adding duplicate tools or another failed request per prompt.
+
+### Why an extension could not handle it
+
+- These are coordinated changes to existing built-in extensions.
+
+### Expected merge conflict zones
+
+- Fallback metadata, native injector hooks, and keepalive request preparation.
+
+## 2026-10-11 - Classify the Moonshot server-search echo tool (senpi#3122)
+
+### What changed
+
+- `moved-path-guard/tool-classes.ts` classifies `$web_search` as `none`: it echoes server-generated arguments and performs no filesystem access.
+
+### Why
+
+- The native-first search extension registers this additional tool; the full-load regression requires every built-in tool to carry an explicit moved-path class.
+
+### Why an extension could not handle it
+
+- The moved-path guard owns the built-in tool classification table.
+
+### Expected merge conflict zones
+
+- `moved-path-guard/tool-classes.ts`: the path-free search tool entries.
+
+## 2026-10-08 - moved-path-guard: folder check follows only a legacy-root symlink (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/moved-path-guard/walk.ts`, `resolve.ts`, `resolve-async.ts`, `breadcrumb-trust.ts`: the breadcrumb folder step follows a symlink (`stat`) only when the folder is, by text, a legacy data root directly under a home spelling; anywhere else it uses `lstat`, so a symlinked folder is untrusted.
+
+### Why
+
+The seventh-review delta check reproduced a race on the `stat` fix: another local user could repoint a symlink of theirs between the breadcrumb read (through a shared folder) and the folder check (now naming a folder the user owns), so a planted breadcrumb was trusted. A link inside the user's own home cannot be repointed by anyone else, so following only there keeps the LOW-B fix for a symlinked `~/.t3`.
+
+### Why an extension could not handle it
+
+It is an extension.
+
+### Expected merge conflict zones
+
+- Fork-only directory.
+
+## 2026-10-08 - moved-path-guard: seventh review fixes (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/moved-path-guard/resolve.ts`, `resolve-async.ts`, `breadcrumb-trust.ts`: the breadcrumb folder check uses `stat` (follows a symlinked old root) instead of `lstat`.
+- `known-moves.ts`, `walk.ts`: an old root's called spelling is registered only when it is, by text, a legacy data root (`.t3`, `.omo-app`) directly under one of the user's home spellings (`isLegacyRoot`).
+
+### Why
+
+Seventh review of PR #2900: with `~/.t3` a symlink and the path's canonicalization failing, `lstat` saw the symlink and the first call failed open; a same-named symlink elsewhere (`~/code/worktrees -> ~/.t3/worktrees`) registered `~/code` as an old-root spelling and refused live paths there on a step timeout.
+
+### Why an extension could not handle it
+
+It is an extension.
+
+### Expected merge conflict zones
+
+- Fork-only directory.
+
+## 2026-10-08 - moved-path-guard: sixth review fixes (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/moved-path-guard/known-moves.ts`, `walk.ts`, `path-match.ts`: a trusted old root is also registered as the walk's caller spelled it (the called path minus the segments the canonical path has below the root), and every registered spelling is re-spelled under each home spelling; all spellings key their decisions by the realpath'd root. The walk documents that a remembered "re-used" answer does not expire by itself (accepted).
+- `breadcrumb-trust.ts`, `walk.ts`, `resolve.ts`, `resolve-async.ts`: the fifth review's `nlink === 1` rule is removed; once a breadcrumb lists the path, the walk `lstat`s its folder and, on POSIX, trusts it only when this user owns the folder and nobody else can write it.
+- `resolve.ts`: the `.git` step uses `accessSync`, `false` only for ENOENT/ENOTDIR and unknown otherwise, as the async probe does. `resolve-async.ts` reads the error code without `instanceof Error`.
+
+### Why
+
+Sixth review of PR #2900: a symlinked `~/.t3` still made the text fallback and ranking fail open; the nlink rule let a second hard link (another user, or a `cp -al`/`rsync --link-dest` backup) turn the guard off for its owner; the sync resolver still overwrote a remembered "re-used" on EACCES/ELOOP.
+
+### Why an extension could not handle it
+
+It is an extension.
+
+### Expected merge conflict zones
+
+- Fork-only directory.
+
+## 2026-10-08 - moved-path-guard: fifth review fixes (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/moved-path-guard/known-moves.ts`: `knownMove` skips a listed prefix whose last `.git` answer in this process was "re-used"; a trusted old root is registered under every spelling of the user's home the walk resolved (`os.homedir()` and its realpath).
+- `walk.ts`: passes the home spellings to `rememberTrustedBreadcrumb`.
+- `breadcrumb-trust.ts`: on POSIX a trust file must have exactly one link (`nlink === 1`).
+- `resolve-async.ts`: `pathExists` returns `false` only for ENOENT/ENOTDIR and `undefined` (unknown) for any other `access` error.
+
+### Why
+
+Fifth review of PR #2900: a timed-out breadcrumb read sent a re-used worktree to a text fallback that ignored the remembered re-used decision; with a symlinked `$HOME` the text fallback and the probe ranking compared `~` spellings against the realpath'd old root and allowed moved targets; a hard link of the user's breadcrumb passed the uid/mode checks; an unreadable `.git` overwrote a remembered "re-used".
+
+### Why an extension could not handle it
+
+It is an extension.
+
+### Expected merge conflict zones
+
+- Fork-only directory.
+
+## 2026-10-08 - moved-path-guard: fourth review fixes (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/moved-path-guard/breadcrumb-trust.ts`: trust files are opened with `O_NONBLOCK` (and `O_NOFOLLOW`), so a FIFO named as a breadcrumb opens at once and `fstat` rejects it; without `O_NONBLOCK` (Windows) an `lstat` refuses non-regular files first. `movedTo` may lie under `os.homedir()` or its realpath.
+- `walk.ts`, `resolve.ts`, `resolve-async.ts`: the home's realpath is one more yielded step (sync `realpathSync`, async memoized `realpath`); a `.git` check that cannot answer uses this process's last answer for the prefix, else "not re-used".
+- `known-moves.ts`: remembers `.git` answers by `prefixKey`.
+- `index.ts`: after any step timeout every target gets the text check; targets are probed in three tiers (known listed prefix, legacy root only, rest).
+
+### Why
+
+Fourth review of PR #2900: a planted FIFO hung the synchronous resolver and pinned threadpool threads; a symlinked home silently disabled the guard; timed-out breadcrumb and `.git` steps decided the opposite of the text fallback; unlisted legacy paths could push a re-used worktree into the text fallback.
+
+### Why an extension could not handle it
+
+It is an extension.
+
+### Expected merge conflict zones
+
+- Fork-only directory.
+
+## 2026-10-08 - moved-path-guard: third review fixes (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/moved-path-guard/walk.ts`: a path whose canonicalization fails or times out is walked by its own spelling, so a moved prefix is still refused and an unrelated path still is not; the re-used (`.git`) decision is recorded before the breadcrumb is remembered, and a breadcrumb whose `movedTo` lies outside the user's home is ignored before that folder is touched.
+- `resolve-async.ts`, `known-moves.ts`, `index.ts`: the probe records step timeouts (logged as `call_bound_reached {bound: "step"}`), clears every target under a re-used prefix (keyed by breadcrumb content, so every spelling of a root shares it), never text-refuses a cleared target, and stops all filesystem work at the call deadline.
+- `breadcrumb-trust.ts`: trust is decided from `fstat` of an `O_NOFOLLOW` descriptor, and at most that size is read from the same descriptor.
+- `guard-log.ts`: rotates once at 1 MiB, dedupes on the reason (not the count), and computes its path inside the write chain.
+- `resolve.ts`: documents the synchronous bound.
+
+### Why
+
+Third review of PR #2900: the step deadline failed open silently; the text fallback refused re-used worktrees; trust was decided on a different open than the read; the log was unbounded; the probe kept working past the deadline; the sync open path could touch any `movedTo`.
+
+### Why an extension could not handle it
+
+It is an extension.
+
+### Expected merge conflict zones
+
+- Fork-only directory.
+
+## 2026-10-08 - moved-path-guard: re-review fixes (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/moved-path-guard/walk.ts` (new): the one decision both resolvers drive; every filesystem step is yielded, and a failed or timed-out step answers "not moved". The listed-prefix match runs before the marker at `movedTo` is read. `resolve.ts` and `resolve-async.ts` only answer the steps.
+- `breadcrumb-trust.ts`: a breadcrumb or marker counts only as a regular file (lstat, never followed) of at most 64 KiB, owned by the current uid and not group/world-writable on POSIX. `home-marker.ts`: a newer marker schema is untrusted and logged at warn level.
+- `guard-log.ts` (new): asynchronous, ordered JSON-line log at `<agentDir>/logs/moved-path-guard.log`; no synchronous write on the tool-call path.
+- `known-moves.ts` (new), `index.ts`: legacy-root and known-prefix targets are probed first; at most 64 paths get filesystem work within 2 s (500 ms per step); paths past either bound are refused by text against breadcrumbs trusted earlier in this process, and reaching a bound is logged.
+- `command-paths.ts`: clustered short flags (`-xf/path`) and `@/path` are scanned; the mention-in-text over-block is documented.
+
+### Why
+
+Re-review of PR #2900: realpath errors escaped into tool calls and failed ordinary commands; a planted shared-folder breadcrumb was trusted; the call bounds failed open.
+
+### Why an extension could not handle it
+
+It is an extension.
+
+### Expected merge conflict zones
+
+- Fork-only directory.
+
+## 2026-10-08 - moved-path-guard: review fixes (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/moved-path-guard/breadcrumb.ts`, `home-marker.ts` (new), `breadcrumb-trust.ts` (new), `resolve.ts`: a breadcrumb is trusted only when `movedTo` is absolute and normalized on the host's path rules, lies outside the breadcrumb's folder, and holds the desktop's ownership marker `omo-desktop-home.json` with the breadcrumb's `homeId`. Ignored breadcrumbs go to the debug log, not the terminal.
+- `resolve-async.ts` (new), `index.ts`: tool calls are checked with an async probe that canonicalizes through `canonicalizeFilesystemPath`; at most `MAX_PATHS_PER_CALL` (64) paths and `CALL_DEADLINE_MS` (2 s) per call. A tool missing from the class table has every string argument scanned.
+- `command-paths.ts`: anchored paths are found anywhere in the text (inline code, glued flags, quote-split words); relative words resolve against the latest `cd` in the same text.
+- `tool-classes.ts`: `eval` (its `code`) and `tool_search` are classified.
+
+### Why
+
+Review of PR #2900: an untrusted breadcrumb could redirect writes, embedded or `cd`-relative paths bypassed the command guard, an unclassified tool was allowed, and the per-call check did unbounded synchronous I/O on the session loop.
+
+### Why an extension could not handle it
+
+It is an extension.
+
+### Expected merge conflict zones
+
+- Fork-only directory.
+
+## 2026-10-08 - moved-path-guard: guard and resolve paths the OmO desktop moved (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/moved-path-guard/` (new): `breadcrumb.ts` vendors the `omo-desktop-moved.json` contract (writer: omo-desktop-app `packages/shared/src/appHomePrepare.ts`; a higher `schemaVersion` is ignored and logged); `path-match.ts` matches prefixes on a segment boundary, case-folded on darwin and win32, `/`/`\` equal and `\\?\` stripped on win32; `resolve.ts` exports `findMovedPath`/`resolveMovedPath` (realpath of the deepest existing ancestor, ancestor walk to `$HOME`'s parent or the root, up to three moves, a listed `worktrees/...` prefix that holds its own `.git` is not moved); `tool-classes.ts` classifies every builtin tool; `command-paths.ts` extracts path tokens from shell text; `index.ts` registers a filesystem policy (deny writes into a moved prefix; deny a read/enumerate of a moved path that is gone, with the new location) and a blocking `tool_call` handler for `apply_patch`, the shell tools and path-field tools.
+- `packages/coding-agent/src/core/extensions/builtin/index.ts`: registers `moved-path-guard` right after `loop-guard`, ahead of hooks and the permission system.
+
+### Why
+
+After the OmO desktop moves its data home (omo-desktop-app#1829), session history still names absolute paths under the old root; `write` creates parents and `bash` can `mkdir -p`, so an agent reusing one silently re-creates the old worktree and writes outside the real one.
+
+### Why an extension could not handle it
+
+It is an extension; it is builtin so the guard runs in every session, CLI and desktop alike, without configuration.
+
+### Expected merge conflict zones
+
+- Fork-only directory. The `builtinExtensions` order in `index.ts`.
+
+## 2026-10-06 — html-render writes its offline policy first in every page (#2846)
+
+**What:** `html-render/bootstrap.ts` starts every written page with a UTF-8 byte order mark, `<!doctype html>` and the policy meta, and drops a page's own leading doctype only when it is printable ASCII. Tests: comment forms `<!-->`, `<!--->`, `--!>` and plain comments ahead of a doctype, and an ISO-2022-JP escape inside a doctype.
+
+**Why:** the old placement skipped comments before a doctype, but browsers end a comment at `<!-->`, `<!--->` and `--!>`, so a page could run a script ahead of the policy and push the meta into `<body>`. Skipping a doctype that holds an ISO-2022-JP escape let a later `<meta charset>` decode the policy as text. The BOM fixes the encoding as UTF-8 for a file opened from disk.
+
+**Must not break:** nothing the page wrote may precede the preamble; mirrors desktop `packages/shared/src/htmlRenderBootstrap.ts`.
+
+## 2026-10-06 — show_html_page hands the page to the host in its details
+
+**What:** `html-render/tool.ts` caps `html` at 512,000 characters (the desktop html_render input limit) and returns the page as written in `details.html`. The model-visible `content` is unchanged and never carries it. Tests: the page is in details and absent from content; a 512,001-character page fails the schema; inlined images past 25 MiB throw the cap error and write nothing.
+
+**Why:** the desktop publishes a completed `show_html_page` call into the thread itself (omo-desktop-app#1724). OmO sessions do not get the desktop's MCP `html_render`, so this is the OmO path to an inline page.
+
+**Must not break:** `details.html` stays out of `content`; the desktop re-applies its own caps and snapshot policy before publishing.
+
+## 2026-10-06 — show_html_page points at nothing unshipped
+
+**What:** the `show_html_page` description and guidelines drop the "load the bundled visualize skill" pointer.
+
+**Why:** that skill ships in a later PR; until then the line points the agent at something that does not exist.
+
+**Must not break:** the PR that ships the visualize skill adds the pointer back in the same change.
+
+## 2026-10-06 — html-render pages are offline snapshots
+
+**What:** `html-render/bootstrap.ts` puts a Content-Security-Policy meta at the start of every page `show_html_page` writes (after a doctype, ahead of everything the page wrote): `default-src 'none'`, inline and data:/blob: scripts, styles, images, fonts and media only, `connect-src`/`frame-src`/`form-action`/`base-uri` `'none'`. Mirrors the desktop's `packages/shared/src/htmlRenderBootstrap.ts` (omo-desktop-app#1724).
+
+**Why:** the tool tells the agent the viewer blocks network access; this makes it true wherever the written file is opened, so a page cannot reach the reader's local network or call home.
+
+**Must not break:** the policy stays the document's first element; a page's own policy can only narrow it.
+
+The `show_html_page` description and guideline now say it plainly ("No network: inline every script, style and image (data: URIs)"), so an agent does not ship a CDN `<script src>` that leaves the page blank, and no longer point at a `preview_html_page` tool that senpi does not register.
+
+## 2026-10-06 - HTML page rendering for standalone senpi (omo-desktop-app#1724)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/html-render/`: new builtin extension registering `show_html_page`. `bootstrap.ts` injects the theme bootstrap (theme variables + base stylesheet) at the start of the document head, mirroring the desktop's `packages/shared/src/htmlRender.ts`; `images.ts` inlines absolute-path local images as data URIs only after a magic-byte/SVG-root check (a renamed secret is refused) and enforces the 10 MiB-per-image / 25 MiB-per-page caps, mirroring the desktop's `HtmlRender.ts`; `tool.ts` writes the prepared page to `.senpi/html-pages/` and returns the path with an open-in-desktop hint. Registered as `html-render` in `builtin/index.ts`. A desktop thread reaches the same capability through the desktop's MCP `html_render` instead; this tool is the standalone (TUI/local) path, where there is no inline frame, so the artifact is the file.
+
+### Why
+
+Q's port of upstream t3code #15968: an agent builds a self-contained HTML page and the reader sees it. The desktop thread shows it inline (PR omo-desktop-app#1733); a standalone senpi agent needs the same page-preparation rules so a TUI-written page is the same shape the desktop would store.
+
+### Why an extension could not handle it
+
+This is a builtin extension by design; the prepare logic (bootstrap injection, image byte check, size caps) must mirror the desktop port exactly.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/index.ts`: the import block and `builtinExtensions` array.
+
 ## 2026-10-01 - The compaction log no longer writes synchronously (senpi#2508)
 
 ### What changed
@@ -251,7 +640,6 @@ The provider id is resolved inside the package before any extension loads, and t
 
 - `packages/coding-agent/src/core/extensions/builtin/ask-user/render.ts`: renderer exports.
 - `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: attachment options.
-
 
 ## 2026-09-20 - Recover unsettled async questions after restart (#1857 I3)
 

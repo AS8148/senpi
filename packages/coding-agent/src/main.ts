@@ -1,4 +1,4 @@
-// allow: SIZE_OK - CLI coordinator is pre-existing oversized glue; app-server command handling is extracted for this branch and a full main split needs behavior-locked follow-up coverage.
+// allow: SIZE_OK - CLI coordinator is pre-existing oversized glue; a full main split needs behavior-locked follow-up coverage.
 /**
  * Main entry point for the coding agent CLI.
  *
@@ -33,7 +33,6 @@ import { movedSessionToContinue } from "./cli/continue-moved.ts";
 import { resolveCredentialForPrint } from "./cli/credential-print.ts";
 import { chooseCrossProjectAction, confirmSameRepositoryRebind } from "./cli/cross-project-session.ts";
 import {
-	dispatchAppServerCommand,
 	dispatchConfigCommand,
 	dispatchHostCommand,
 	dispatchPackageCommand,
@@ -46,13 +45,16 @@ import { writeHelpFlagsCache } from "./cli/help-flags-cache.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
 import { isModelsDiscoverCommand, runModelsDiscoverCommand } from "./cli/models-command.ts";
+import { exitAfterOutput, printThenExit } from "./cli/print-then-exit.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
+import { prepareSessionOpening } from "./cli/session-opening.ts";
 import {
 	createStartupLoadingIndicator,
 	pauseIndicatorDuringPrompts,
 	shouldShowStartupLoadingIndicator,
 } from "./cli/startup-loading-indicator.ts";
 import { shouldRunFirstTimeSetup, showFirstTimeSetup, showStartupSelector } from "./cli/startup-ui.ts";
+import { resolveToolRuntime, type ToolRuntimeKind } from "./cli/tool-runtime.ts";
 import {
 	APP_NAME,
 	DISPLAY_VERSION,
@@ -76,6 +78,8 @@ import { AuthStorage, ReadOnlyAuthStorage } from "./core/auth-storage.ts";
 import { envValue } from "./core/brand.ts";
 import { type CredentialAccountSummary, summarizeCredentialAccounts } from "./core/credential-accounts.ts";
 import { exportFromFile } from "./core/export-html/index.ts";
+import { ModelUsabilityBudgetError } from "./core/extensions/builtin/compaction/model-usability-budget.ts";
+import { resolveMovedPath } from "./core/extensions/builtin/moved-path-guard/resolve.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
 import { applyHttpProxySettings, configureHttpDispatcher } from "./core/http-dispatcher.ts";
 import { installMemoryReportSignal } from "./core/memory-report/memory-report-write.ts";
@@ -86,10 +90,10 @@ import {
 	type ScopedModel,
 } from "./core/model-resolver.ts";
 import { ModelRuntime } from "./core/model-runtime.ts";
-import { markMovedSessions, withMovedSessions } from "./core/moved-sessions.ts";
+import { markMovedSessions, movedHereSessionToContinue, withMovedSessions } from "./core/moved-sessions.ts";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.ts";
 import { recordProcessLifetime } from "./core/process-crash-record.ts";
-import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
+import { type AppMode, presetTrustsProject, resolveProjectTrusted } from "./core/project-trust.ts";
 import { resolveResumeTarget } from "./core/resume-target.ts";
 import type { CreateAgentSessionOptions } from "./core/sdk.ts";
 import {
@@ -174,9 +178,6 @@ function isTruthyEnvFlag(value: string | undefined): boolean {
 }
 
 function resolveAppMode(parsed: Args, stdinIsTTY: boolean, stdoutIsTTY: boolean): AppMode {
-	if (parsed.mode === undefined && parsed.messages[0] === "app-server") {
-		return "app-server";
-	}
 	if (parsed.mode === "rpc") {
 		return "rpc";
 	}
@@ -191,10 +192,6 @@ function resolveAppMode(parsed: Args, stdinIsTTY: boolean, stdoutIsTTY: boolean)
 
 function toPrintOutputMode(appMode: AppMode): Exclude<Mode, "rpc"> {
 	return appMode === "json" ? "json" : "text";
-}
-
-function toProjectTrustMode(appMode: AppMode): AppMode {
-	return appMode === "app-server" ? "print" : appMode;
 }
 
 /**
@@ -574,8 +571,11 @@ export async function createSessionManager(
 				return openSessionOrExit(resolved.path, sessionDir);
 
 			case "global": {
+				// Recorded under a folder the OmO desktop moved here: this folder's own session (senpi#2990).
+				if (resolved.cwd !== "" && resolvePath(resolveMovedPath(resolved.cwd)) === resolvePath(cwd))
+					return openSessionOrExit(resolved.path, sessionDir);
 				// The confirmation blocks on readline, which only an interactive session can
-				// answer. Print, JSON, RPC, and app-server runs reach here with a TTY attached
+				// answer. Print, JSON, and RPC runs reach here with a TTY attached
 				// too (`-p` from a terminal), where the question hangs the process or resolves
 				// as "no" on stdin EOF, so they get the exact commands and a non-zero exit.
 				const action = await chooseCrossProjectAction({
@@ -638,10 +638,14 @@ export async function createSessionManager(
 	}
 
 	if (parsed.continue) {
+		// A shared session dir matches sessions the OmO desktop moved here in continueRecent. In the default per-folder
+		// layout they sit in the old folder's dir: continue the newest of those and the folder's own, in place (senpi#2990).
+		const movedHere = sessionDir === undefined ? await movedHereSessionToContinue(cwd) : undefined;
+		if (movedHere !== undefined) return SessionManager.open(movedHere, sessionDir);
 		const recent = SessionManager.continueRecent(cwd, sessionDir);
 		const recentFile = recent.getSessionFile();
 		if (recentFile !== undefined && existsSync(recentFile)) return recent;
-		const moved = await movedSessionToContinue({
+		const movedChoice = await movedSessionToContinue({
 			cwd,
 			...(sessionDir === undefined ? {} : { sessionDir }),
 			interactive: appMode === "interactive",
@@ -649,7 +653,7 @@ export async function createSessionManager(
 			out: (line) => console.log(line),
 			err: (line) => console.error(line),
 		});
-		return moved === undefined ? recent : rebindSessionOrExit(moved, cwd, sessionDir);
+		return movedChoice === undefined ? recent : rebindSessionOrExit(movedChoice, cwd, sessionDir);
 	}
 
 	if (parsed.sessionId) {
@@ -702,7 +706,7 @@ function buildSessionOptions(
 			diagnostics.push({ type: "warning", message: resolved.warning });
 		}
 		if (resolved.error) {
-			diagnostics.push({ type: "error", message: resolved.error });
+			diagnostics.push({ type: "error", message: resolved.error, code: "model_unresolved" });
 		}
 		if (resolved.model) {
 			options.model = resolved.model;
@@ -822,6 +826,8 @@ export interface CliRuntimeConfiguration {
 	cwd: string;
 	agentDir: string;
 	appMode: AppMode;
+	/** Resolved `--tool-runtime` (flag, then env); absent means `in-process`. A worker isolate never re-reads env. */
+	toolRuntime?: ToolRuntimeKind;
 }
 
 /** Fixed launch data is cloneable; UI callbacks and extension factories stay in their isolate. */
@@ -855,7 +861,7 @@ export function createCliRuntimeFactory(
 	const trustStore = new ProjectTrustStore(agentDir);
 	const projectTrustByCwd = new Map<string, boolean>();
 	const trustPromptMode: AppMode =
-		parsed.help || parsed.listModels !== undefined || parsed.listTips ? "print" : toProjectTrustMode(appMode);
+		parsed.help || parsed.listModels !== undefined || parsed.listTips ? "print" : appMode;
 	const resolvedExtensionPaths = resolveCliPaths(cwd, parsed.extensions);
 	const resolvedSkillPaths = resolveCliPaths(cwd, parsed.skills);
 	const resolvedPromptTemplatePaths = resolveCliPaths(cwd, parsed.promptTemplates);
@@ -875,14 +881,32 @@ export function createCliRuntimeFactory(
 		const projectTrustDiagnostics: AgentSessionRuntimeDiagnostic[] = [];
 		const cachedProjectTrust = projectTrustByCwd.get(cwd);
 		const hasTrustRequiringResources = hasTrustRequiringProjectResources(cwd);
+		// A full-access session trusts its project without asking, for that session only: nothing is
+		// cached here or saved to the trust store, and a saved "do not trust" still wins (#2465).
+		const fullAccessTrust =
+			presetTrustsProject(
+				sessionExtensionFlagValues(parsed.unknownFlags, launchProfile).get("permission-preset"),
+				(startupSettingsManager.getGlobalSettings() as { readonly permissionPreset?: unknown }).permissionPreset,
+			) && trustStore.get(cwd) !== false;
 		const shouldResolveProjectTrust =
-			parsed.projectTrustOverride === undefined && cachedProjectTrust === undefined && hasTrustRequiringResources;
+			parsed.projectTrustOverride === undefined &&
+			cachedProjectTrust === undefined &&
+			!fullAccessTrust &&
+			hasTrustRequiringResources;
 		const projectTrusted = shouldResolveProjectTrust
 			? false
 			: (cachedProjectTrust ??
 				parsed.projectTrustOverride ??
-				(!hasTrustRequiringResources || trustStore.get(cwd) === true));
-		const runtimeSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted });
+				(fullAccessTrust || !hasTrustRequiringResources || trustStore.get(cwd) === true));
+		// Trusted only because of Full access (resources need trust and nothing else granted it): leaving
+		// Full access withdraws it (#3420 review T5).
+		const trustFromFullAccess =
+			fullAccessTrust &&
+			hasTrustRequiringResources &&
+			cachedProjectTrust === undefined &&
+			parsed.projectTrustOverride === undefined &&
+			trustStore.get(cwd) !== true;
+		const runtimeSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted, trustFromFullAccess });
 		// The opener's per-session fallback policy is an in-memory override: never saved, never shared.
 		if (launchProfile?.retryFallback) applyRetryFallbackProfile(runtimeSettingsManager, launchProfile.retryFallback);
 		const services = await createAgentSessionServices({
@@ -907,7 +931,7 @@ export function createCliRuntimeFactory(
 									pauseIndicatorDuringPrompts(
 										createProjectTrustContext({
 											cwd,
-											mode: isInitialRuntime ? trustPromptMode : toProjectTrustMode(appMode),
+											mode: isInitialRuntime ? trustPromptMode : appMode,
 											settingsManager: startupSettingsManager,
 											hasUI: isInitialRuntime && trustPromptMode === "interactive",
 										}),
@@ -1127,7 +1151,7 @@ export async function main(args: string[], options?: MainOptions) {
 			// https://github.com/nodejs/node/issues/56645
 			return;
 		}
-		process.exit(exitCode);
+		await exitAfterOutput("", exitCode);
 		return;
 	}
 
@@ -1135,21 +1159,17 @@ export async function main(args: string[], options?: MainOptions) {
 		return;
 	}
 
-	if (await dispatchAppServerCommand(args)) {
-		return;
-	}
-
 	// The shared-daemon command: one JSON line on stdout and an exit code that classifies it, so it
 	// exits here rather than falling through into argument parsing and the interactive path.
 	const hostExitCode = await dispatchHostCommand(args);
 	if (hostExitCode !== undefined) {
-		process.exit(hostExitCode);
+		await exitAfterOutput("", hostExitCode);
 	}
 
 	// Durable scheduled prompts: fired out of process, so a job scheduled by an exited --print run still runs.
 	const scheduleExitCode = await dispatchScheduleCommand(args);
 	if (scheduleExitCode !== undefined) {
-		process.exit(scheduleExitCode);
+		await exitAfterOutput("", scheduleExitCode);
 	}
 
 	const parsed = parseArgs(args);
@@ -1162,11 +1182,17 @@ export async function main(args: string[], options?: MainOptions) {
 			process.exit(1);
 		}
 	}
+	const toolRuntimeResolution = resolveToolRuntime(parsed);
+	// --version and --help never run a tool, so a bad tool-runtime env value must not block them.
+	if (!toolRuntimeResolution.ok && !parsed.version && !parsed.help) {
+		console.error(chalk.red(`Error: ${toolRuntimeResolution.message}`));
+		process.exit(1);
+	}
+	const toolRuntime = toolRuntimeResolution.ok ? toolRuntimeResolution.value : "in-process";
 	time("parseArgs");
 
 	if (parsed.version) {
-		console.log(DISPLAY_VERSION);
-		process.exit(0);
+		await printThenExit(() => console.log(DISPLAY_VERSION), 0);
 	}
 
 	if (parsed.export) {
@@ -1179,8 +1205,7 @@ export async function main(args: string[], options?: MainOptions) {
 			console.error(chalk.red(`Error: ${message}`));
 			process.exit(1);
 		}
-		console.log(`Exported to: ${result}`);
-		process.exit(0);
+		await printThenExit(() => console.log(`Exported to: ${result}`), 0);
 	}
 
 	let appMode = resolveAppMode(parsed, process.stdin.isTTY, process.stdout.isTTY);
@@ -1231,16 +1256,16 @@ export async function main(args: string[], options?: MainOptions) {
 			noExtensions: parsed.noExtensions === true,
 			...(extensionFactories ? { extensionFactories } : {}),
 		});
-		printHelp(flags);
 		writeHelpFlagsCache({ scope, flags, extensionPaths });
-		printTimings();
-		process.exit(0);
+		await printThenExit(() => {
+			printHelp(flags);
+			printTimings();
+		}, 0);
 	}
 
 	if (parsed.listTips) {
 		const { listTips } = await import("./cli/list-tips.ts");
-		listTips();
-		process.exit(0);
+		await printThenExit(listTips, 0);
 	}
 
 	if (parsed.listModels !== undefined) {
@@ -1268,8 +1293,7 @@ export async function main(args: string[], options?: MainOptions) {
 			...collectAuthDiagnostics(services.authStorage, "model listing"),
 		]);
 		const searchPattern = typeof parsed.listModels === "string" ? parsed.listModels : undefined;
-		await listModels(services.modelRuntime, searchPattern);
-		process.exit(0);
+		await printThenExit(() => listModels(services.modelRuntime, searchPattern), 0);
 	}
 
 	// Experimental first-time setup: theme choice and analytics opt-in.
@@ -1295,7 +1319,7 @@ export async function main(args: string[], options?: MainOptions) {
 	if (appMode === "rpc" && parsed.multiSession) {
 		if (options?.extensionFactories?.length)
 			throw new Error("Shared RPC workers require file-backed extensions; inline factories cannot cross isolates");
-		const runtimeConfiguration = { parsed, cwd, agentDir, appMode };
+		const runtimeConfiguration = { parsed, cwd, agentDir, appMode, toolRuntime };
 		// Socket hosts (the machine-wide daemon) run every session IN this process:
 		// createHostCore selects the worker registry only when a workerConfiguration
 		// is passed, so withholding it is what selects the uncapped in-process registry.
@@ -1334,6 +1358,7 @@ export async function main(args: string[], options?: MainOptions) {
 				parsed.provider && parsed.model ? { provider: parsed.provider, modelId: parsed.model } : undefined,
 			initialThinkingLevel: parsed.thinking,
 			listen: parsed.listen,
+			toolRuntime,
 		});
 	}
 
@@ -1397,7 +1422,7 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	const createRuntime = createCliRuntimeFactory(
-		{ parsed, cwd, agentDir, appMode },
+		{ parsed, cwd, agentDir, appMode, toolRuntime },
 		{ extensionFactories, startupSettingsManager, startupLoadingIndicator },
 	);
 	time("createRuntime");
@@ -1405,10 +1430,20 @@ export async function main(args: string[], options?: MainOptions) {
 		cwd: sessionManager.getCwd(),
 		agentDir,
 		sessionManager,
-	}).finally(() => {
-		startupLoadingIndicator.stop();
-	});
+	})
+		.catch((error: unknown) => {
+			// A model that cannot start is the user's to fix, not a crash: one line and its fix (senpi#3333).
+			if (!(error instanceof ModelUsabilityBudgetError)) throw error;
+			// Stop the spinner first: exit runs before `.finally`, and its line has no newline.
+			startupLoadingIndicator.stop();
+			console.error(chalk.red(error.message));
+			process.exit(1);
+		})
+		.finally(() => {
+			startupLoadingIndicator.stop();
+		});
 	time("createAgentSessionRuntime");
+	await prepareSessionOpening(sessionManager, appMode);
 	const { services, session, modelFallbackMessage } = runtime;
 	const { settingsManager, modelRuntime, resourceLoader } = services;
 	setCapabilityOverrides(settingsManager.getTerminalCapabilityOverrides());
@@ -1418,8 +1453,7 @@ export async function main(args: string[], options?: MainOptions) {
 	const loadedExtensions = resourceLoader.getExtensions().extensions;
 	const extensionFlags = loadedExtensions.flatMap((extension) => Array.from(extension.flags.values()));
 	if (parsed.help) {
-		printHelp(extensionFlags);
-		process.exit(0);
+		await printThenExit(() => printHelp(extensionFlags), 0);
 	}
 	time("extensionFlags");
 	// Every full launch refreshes what `--help` reads, so the fast path stays warm without a help
@@ -1469,6 +1503,14 @@ export async function main(args: string[], options?: MainOptions) {
 		reportDiagnostics([{ type: "warning", message: formatThinkingClampWarning(startupThinkingClamp) }]);
 	}
 	if (appMode !== "interactive") {
+		reportDiagnostics(
+			[...(resourceLoader.getAgentsFiles().diagnostics ?? []), ...resourceLoader.getSkills().diagnostics]
+				.filter((diagnostic) => diagnostic.type === "warning" && diagnostic.category === "size-limit")
+				.map((diagnostic) => ({
+					type: "warning" as const,
+					message: diagnostic.path ? `${diagnostic.path}: ${diagnostic.message}` : diagnostic.message,
+				})),
+		);
 		reportDiagnostics(collectAuthDiagnostics(services.authStorage, "runtime creation"));
 	}
 	if (runtime.diagnostics.some((diagnostic) => diagnostic.type === "error")) {
@@ -1510,7 +1552,7 @@ export async function main(args: string[], options?: MainOptions) {
 	if (appMode === "rpc") {
 		const { runRpcMode } = await import("./modes/rpc/rpc-mode.ts");
 		printTimings();
-		await runRpcMode(runtime);
+		await runRpcMode(runtime, toolRuntime);
 	} else if (appMode === "interactive") {
 		// Keep the TUI graph out of headless RPC children. This is intentionally at the
 		// mode seam: interactive startup still loads the same module before first use.

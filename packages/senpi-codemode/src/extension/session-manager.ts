@@ -1,9 +1,10 @@
 import { join } from "node:path";
 import type { ExtensionContext } from "@code-yeongyu/senpi";
+import { readProcessFootprint } from "@code-yeongyu/senpi";
 import { type BridgeServerHandle, startBridgeServer } from "../bridge/http-server.ts";
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
-import { resolveKernelToolsEnabled } from "../config/feature-settings.ts";
+import { resolveJsIsolation, resolveKernelToolsEnabled } from "../config/feature-settings.ts";
 import { resolveKernelMemoryThresholds } from "../config/memory-settings.ts";
 import { collectOrphanedChildren } from "../host-sdk.ts";
 import { JavaScriptKernel } from "../kernels/js/context-manager.ts";
@@ -15,6 +16,7 @@ import { type BridgeDispatchContext, dispatchBridgeCompletion } from "./bridge-d
 import { type BridgeToolCallRequest, routeBridgeToolCall } from "./bridge-tool-call.ts";
 import { CellKernelTools } from "./cell-kernel-tools.ts";
 import { parkWhenIdle } from "./idle-parking-kernel.ts";
+import { KernelGlobalsLedger } from "./kernel-globals-ledger.ts";
 import {
 	javaScriptKernelMemory,
 	SessionKernelRegistrations,
@@ -23,7 +25,7 @@ import {
 } from "./kernel-registration.ts";
 import type { RegisteredKernelSource } from "./kernel-registry.ts";
 import { ReplaceableKernel } from "./kernel-replacement.ts";
-import { assertSessionCwdAvailable } from "./session-cwd.ts";
+import { assertSessionCwdAvailable, assertSessionCwdAvailableSync } from "./session-cwd.ts";
 import type {
 	BridgeEndpoint,
 	CodemodeSessionManager,
@@ -68,6 +70,8 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 	readonly #registrations: SessionKernelRegistrations;
 	#kernelCreations = new Map<EvalLanguage, Promise<EvalKernel>>();
 	#onMessageRefs = new Map<EvalLanguage, (message: KernelToHostMessage) => void>();
+	/** One per language for the manager's life, so an idle-park restart never re-announces an earlier generation. */
+	readonly #ledgers = new Map<EvalLanguage, Promise<KernelGlobalsLedger>>();
 	readonly #cellKernelTools = new CellKernelTools();
 	#context: ExtensionContext | undefined;
 	#generation = 0;
@@ -113,7 +117,7 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 		this.#onMessageRefs.set(language, onMessage);
 		const existing = this.#kernels.get(language);
 		if (existing) {
-			await assertSessionCwdAvailable(this.#options.cwd);
+			assertSessionCwdAvailableSync(this.#options.cwd);
 			return existing;
 		}
 		const pending = this.#kernelCreations.get(language);
@@ -230,11 +234,21 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 	): Promise<{ readonly kernel: EvalKernel; readonly memory: RegisteredKernelSource | undefined }> {
 		if (language === "js") return await this.#createKernel(language, onMessage);
 		let memory: RegisteredKernelSource | undefined;
-		const kernel = await ReplaceableKernel.create(language, async (lifecycle) => {
-			const created = await this.#createKernel(language, onMessage, lifecycle);
-			memory ??= created.memory;
-			return created.kernel;
-		});
+		let ledger = this.#ledgers.get(language);
+		if (ledger === undefined) {
+			ledger = KernelGlobalsLedger.open(this.#options.artifactsDir, language);
+			this.#ledgers.set(language, ledger);
+		}
+		const options = { ledger: await ledger };
+		const kernel = await ReplaceableKernel.create(
+			language,
+			async (lifecycle) => {
+				const created = await this.#createKernel(language, onMessage, lifecycle);
+				memory ??= created.memory;
+				return created.kernel;
+			},
+			options,
+		);
 		return { kernel, memory };
 	}
 
@@ -254,6 +268,8 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 			this.#options.localRoots ??
 			(this.#options.artifactsDir ? { local: join(this.#options.artifactsDir, "local") } : undefined);
 		if (language === "js") {
+			const memoryThresholds = resolveKernelMemoryThresholds(this.#options.settings.memory);
+			const processIsolation = resolveJsIsolation(this.#options.settings) === "process";
 			const kernel = new JavaScriptKernel({
 				sessionId: this.#options.sessionId,
 				cwd: this.#options.cwd,
@@ -261,8 +277,12 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 				onMessage,
 				hostToolNames: () => this.#options.listTools?.().map((tool) => tool.name) ?? [],
 				foreignLanguageNames: () => this.#foreignKernelToolNames(),
-				memory: resolveKernelMemoryThresholds(this.#options.settings.memory),
+				memory: memoryThresholds,
 				collectOrphanedChildren,
+				...(processIsolation ? { isolation: "process" as const } : {}),
+				...(processIsolation && memoryThresholds !== undefined
+					? { processMemory: { thresholds: memoryThresholds, readFootprint: readProcessFootprint } }
+					: {}),
 				...(resolveKernelToolsEnabled(this.#options.settings) ? {} : { kernelToolsEnabled: false }),
 				...(this.#options.sessionEnv ? { sessionEnv: this.#options.sessionEnv } : {}),
 				...(localRoots ? { localRoots: { ...localRoots } } : {}),
@@ -304,8 +324,8 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 	/** Only an already running JavaScript kernel can define a colliding name; none is started for this. */
 	#javaScriptKernelToolsDescribe(names: readonly string[]): Promise<KernelToolsDescribeResult> | undefined {
 		const js = this.#kernels.get("js");
-		if (!js || !("describeKernelTools" in js) || typeof js.describeKernelTools !== "function") return undefined;
-		return (js.describeKernelTools as (names: readonly string[]) => Promise<KernelToolsDescribeResult>)(names);
+		if (!js || typeof js.describeKernelTools !== "function") return undefined;
+		return js.describeKernelTools(names);
 	}
 
 	#foreignKernelToolNames(): string[] {

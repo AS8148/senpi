@@ -1,4 +1,5 @@
 import { bindToProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
+import { EventLoopSlicer } from "../../../event-loop-slicer.ts";
 import type { ExtensionAPI, ExtensionFactory } from "../../types.ts";
 import { AnthropicNativeToolSearchAdapter, isMcpNativeToolSearchEnabled } from "./native-search.ts";
 import {
@@ -12,13 +13,17 @@ export function createToolSearchExtension(service: ToolSearchService): Extension
 	return (pi: ExtensionAPI): void => {
 		service.bindRuntime(pi);
 
-		pi.on("session_start", (_event, ctx) => {
+		pi.on("session_start", async (_event, ctx) => {
 			service.beginSession();
-			service.maybeRehydrateFromHistory(ctx.sessionManager.getEntries());
+			await service.maybeRehydrateFromHistoryInSlices(ctx.sessionManager.getEntries(), new EventLoopSlicer());
 		});
-		pi.on("context", (event) => {
-			service.maybeRehydrateFromHistory(event.messages);
-		});
+		pi.on(
+			"context",
+			(event) => {
+				service.maybeRehydrateFromHistory(event.messages);
+			},
+			{ mutatesMessages: false },
+		);
 		// A retired generation's activator declines, so the current generation's activator answers.
 		pi.registerLazyToolActivator((toolName) => !service.isDisposed && service.activateTool(toolName));
 		let toolRegistered = false;

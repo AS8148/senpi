@@ -1,5 +1,43 @@
 # changes — senpi-monorepo root
 
+## 2026-10-17 - Pin TypeScript type roots to the repository (senpi#3482)
+
+### What changed
+
+- `tsconfig.base.json`: `typeRoots` is pinned to the repository's own `node_modules/@types` and `node_modules`, next to the existing `types: ["node"]`.
+
+### Why
+
+- With only `types`, TypeScript also looks for `@types` packages in every ancestor directory, so a checkout below a folder with its own `node_modules/@types/node` (for example `~/node_modules`) could typecheck against that copy instead of the repository's. The type roots resolve relative to this file, so every package config that extends it reads types only from the checkout.
+
+### Why an extension could not handle it
+
+- The TypeScript project configuration is read by the compiler before any agent code exists.
+
+### Expected merge conflict zones
+
+- The `compilerOptions` block of `tsconfig.base.json`. Keep `typeRoots` next to `types` when upstream changes either.
+
+## 2026-10-10 - Isolate test-process temp directories (senpi#3064)
+
+### What changed
+
+- `package.json`: script tests run under the temp-owning test launcher.
+- `packages/agent/package.json`, `packages/ai/package.json`, `packages/chord/package.json`, `packages/client/package.json`, `packages/coding-agent/package.json`, `packages/evals/package.json`, `packages/protocol/package.json`, `packages/pty/package.json`, `packages/senpi-codemode/package.json`, `packages/server/package.json`, `packages/session-backends/sqlite-node/package.json`, `packages/telemetry/package.json`, `packages/tui/package.json`: package test commands retain their arguments while launching under private temporary storage.
+- `.github/workflows/ci.yml`, `.github/workflows/releasability.yml`: direct Vitest/Bun test invocations use the same launcher and enable its post-exit temp leak guard.
+
+### Why
+
+- The launcher must set TMPDIR before Vitest constructs its core transform-copy cache, and CI must exercise the same cleanup contract as local package tests.
+
+### Why an extension could not handle it
+
+- Package scripts and CI workflows execute before any agent extension is loaded.
+
+### Expected merge conflict zones
+
+- Test scripts and CI commands. Preserve the selected runtime, reporters, shards and forwarded arguments when merging.
+
 ## 2026-10-04 - Biome skips the vendored pi codemode runtime (codemode plan node 18, part 1)
 
 ### What changed

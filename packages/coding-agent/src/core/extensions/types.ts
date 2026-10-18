@@ -8,6 +8,10 @@
  * - Interact with the user via UI primitives
  */
 
+import type { ContextEvent } from "./context-event.ts";
+
+export type { ContextEvent } from "./context-event.ts";
+
 import type {
 	AgentMessage,
 	AgentTool,
@@ -22,6 +26,8 @@ import type {
 	Api,
 	AssistantMessageEvent,
 	AssistantMessageEventStream,
+	AuthContext,
+	AuthResult,
 	ClassifierApi,
 	ConstrainedSamplingConfig,
 	Context,
@@ -68,6 +74,7 @@ import type { ExecOptions, ExecResult } from "../exec.ts";
 import type { ReadonlyFooterDataProvider } from "../footer-data-provider.ts";
 import type { KeybindingsManager } from "../keybindings.ts";
 import type { CustomMessage } from "../messages.ts";
+import type { ModelChangeOrigin } from "../model-change-origin.ts";
 import type { ModelRegistry } from "../model-registry.ts";
 import type { InitialModelProvenance, ScopedModel } from "../model-resolver.ts";
 import type {
@@ -105,9 +112,11 @@ import type {
 import type { ReadClassifier } from "../tools/read-classifiers.ts";
 import type { ModelRoute, ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
 import type { McpServerDeclaration } from "./builtin/mcp/config-schema.ts";
+import type { PermissionPresetName } from "./builtin/permission-system/types.ts";
 import type { EvalHandleHost } from "./eval-handle-host.ts";
 import type { ExtensionKernelTools } from "./kernel-tools-context.ts";
 import type { SessionControlActions, SessionControlWakeEvent } from "./session-control-types.ts";
+import type { UserActivityKind } from "./user-activity.ts";
 
 export type { ExecOptions, ExecResult } from "../exec.ts";
 export type { AppKeybinding, KeybindingsManager } from "../keybindings.ts";
@@ -178,6 +187,8 @@ export interface QuestionRequest {
 	}>;
 	waitForAnswer: boolean;
 	timeoutMs: number;
+	/** The question gates an action: a missing answer means the action is not taken (senpi#2949). */
+	required?: boolean;
 }
 
 /** Outcome of ExtensionUIContext.question. */
@@ -464,7 +475,7 @@ export type FilesystemPolicyChecker = (request: Readonly<FilesystemPolicyRequest
 /**
  * Context passed to extension event handlers.
  */
-export type ExtensionMode = "tui" | "rpc" | "app-server" | "json" | "print";
+export type ExtensionMode = "tui" | "rpc" | "json" | "print";
 
 export interface ExtensionContext {
 	/** UI methods for user interaction */
@@ -549,6 +560,8 @@ export interface ExtensionContext {
 	getContextUsage(): ContextUsage | undefined;
 	/** Get resolved compaction settings from global/project/user overrides. */
 	getCompactionSettings(): CompactionPreparation["settings"];
+	/** Session-selected usable summarization model; throws when every authenticated account is spent. */
+	getCompactionModel?(): Model<Api> | undefined;
 	/**
 	 * Longest a tool may block in the foreground before the active model's prompt
 	 * cache expires, or `undefined` when no cache-derived budget applies. Reads the
@@ -557,6 +570,8 @@ export interface ExtensionContext {
 	getPromptCacheSafeWaitSeconds?(): number | undefined;
 	/** Maximum Goal monitor continuation backstop configured for prompt-cache waits. */
 	getPromptCacheGoalBackstopMaxSeconds?(): number;
+	/** Subscribe to host-authenticated activity; extensions cannot publish it. */
+	onUserActivity?(listener: (kind: UserActivityKind) => void): () => void;
 	/** Resolved opt-in prompt-cache keep-alive policy. */
 	getPromptCacheKeepAliveSettings?(): {
 		enabled: boolean;
@@ -576,9 +591,13 @@ export interface ExtensionContext {
 	compact(options?: CompactOptions): void;
 	/**
 	 * Prepare a request-local provider context through the normal extension
-	 * boundary. Persisted session messages are never modified.
+	 * boundary. Persisted session messages are never modified. Server search is
+	 * disabled for these auxiliary requests unless preserving a keepalive prefix.
 	 */
-	prepareProviderRequest?(messages: AgentMessage[]): Promise<ProviderRequestPreparation>;
+	prepareProviderRequest?(
+		messages: AgentMessage[],
+		options?: { allowServerSearch?: boolean },
+	): Promise<ProviderRequestPreparation>;
 	/**
 	 * The provider request prefix the next user turn will send, with an empty conversation:
 	 * the system prompt composed through a `before_agent_start` preview pass, the session's
@@ -1337,18 +1356,6 @@ export type SessionEvent =
 // ============================================================================
 
 /**
- * Fired before each LLM call. Can modify messages.
- *
- * `messages` holds the conversation without system messages. The prompt and tool state
- * belong to Pi: it restores them after the handler returns, so a handler cannot drop
- * them and does not need to preserve them.
- */
-export interface ContextEvent {
-	type: "context";
-	messages: AgentMessage[];
-}
-
-/**
  * Fired before each LLM call, after every `context` handler has run and Pi has restored
  * the prompt and tool state. `messages` is the full transcript including system messages,
  * and the result is sent as returned: the handler owns the prompt and tool declarations.
@@ -1434,6 +1441,20 @@ export interface BeforeAgentStartHandlerOptions {
 	previewSafe?: boolean;
 }
 
+/** Registration options for `pi.on("context", handler, options)` and `pi.on("context_with_system", handler, options)`. */
+export interface ContextHandlerOptions {
+	/**
+	 * Opt-in performance declaration (senpi#2525). `false` declares that the handler never
+	 * mutates a message object — or anything nested in one — in place; it may still return a
+	 * new list holding new message objects. When every `context` and `context_with_system`
+	 * handler about to run declares this, the runner shares the live transcript objects with
+	 * those handlers instead of deep-cloning the whole context every turn. While any handler
+	 * has not declared it, behavior is unchanged: one deep clone up front, and in-place edits
+	 * stay isolated from the runtime transcript.
+	 */
+	mutatesMessages?: boolean;
+}
+
 /** Fired when an agent loop starts */
 export interface AgentStartEvent {
 	type: "agent_start";
@@ -1449,6 +1470,12 @@ export interface AgentEndEvent {
 	willRetry?: boolean;
 	/** Present when the host can attribute the abort to a user action or internal operation. */
 	abortSource?: "user" | "system" | "provider";
+	/**
+	 * Present on a system abort the turn deadline lease caused (`turn_inactivity_ms` or
+	 * `turn_max_runtime_ms`). A deadline stop is never auto-continued: goal continuations,
+	 * monitor backstops and hidden nudges hold off until admitted user input clears the hold.
+	 */
+	deadline?: { kind: "inactivity" | "max_runtime"; limitMs: number; elapsedMs: number };
 }
 
 export type AgentActivityOutcome = "completed" | "aborted" | "error";
@@ -2258,8 +2285,16 @@ export interface ExtensionAPI {
 		handler: ExtensionHandler<SessionBeforeTreeEvent, SessionBeforeTreeResult>,
 	): () => void;
 	on(event: "session_tree", handler: ExtensionHandler<SessionTreeEvent>): () => void;
-	on(event: "context", handler: ExtensionHandler<ContextEvent, ContextEventResult>): () => void;
-	on(event: "context_with_system", handler: ExtensionHandler<ContextWithSystemEvent, ContextEventResult>): () => void;
+	on(
+		event: "context",
+		handler: ExtensionHandler<ContextEvent, ContextEventResult>,
+		options?: ContextHandlerOptions,
+	): () => void;
+	on(
+		event: "context_with_system",
+		handler: ExtensionHandler<ContextWithSystemEvent, ContextEventResult>,
+		options?: ContextHandlerOptions,
+	): () => void;
 	on(
 		event: "before_provider_request",
 		handler: ExtensionHandler<BeforeProviderRequestEvent, BeforeProviderRequestEventResult>,
@@ -2372,6 +2407,14 @@ export interface ExtensionAPI {
 	/** Get the value of a registered CLI flag. */
 	getFlag(name: string): boolean | string | undefined;
 
+	/**
+	 * The permission preset the permission system enforces for this session right now: the flag, then
+	 * project and global settings (with the same untrusted-project handling), then the `full-access`
+	 * default. A preset flag changed since the last tool call is applied first. `undefined` when the
+	 * permission system is not running for the session, its setup failed, or the session is not bound yet.
+	 */
+	getPermissionPreset(): PermissionPresetName | undefined;
+
 	// =========================================================================
 	// Message Rendering
 	// =========================================================================
@@ -2421,7 +2464,7 @@ export interface ExtensionAPI {
 	): void;
 
 	/** Append a custom entry to the session for state persistence (not sent to LLM). */
-	appendEntry<T = unknown>(customType: string, data?: T): void;
+	appendEntry<T = unknown>(customType: string, data?: T, options?: AppendEntryOptions): void;
 
 	// =========================================================================
 	// Session Metadata
@@ -2665,6 +2708,24 @@ export interface ProviderConfig {
 	 * Use context.publish({ persist: entry }) when the catalog should persist across sessions.
 	 */
 	refreshModels?(context: RefreshModelsContext): Promise<ProviderModelConfig[]>;
+	/**
+	 * Ambient api-key auth resolved from a shared cloud credential chain (Google
+	 * ADC, AWS env) rather than a credential configured for this provider. The
+	 * provider counts as configured only while `resolve` yields a result, and the
+	 * ambient marker keeps it from outranking a provider the user configured when
+	 * the automatic default model is chosen (senpi#2327). Ignored when `apiKey` or
+	 * credential headers already supply auth.
+	 */
+	ambientAuth?: {
+		/** Display name, e.g. "Google Cloud credentials". */
+		name?: string;
+		/**
+		 * Resolve from the ambient chain. `undefined` means the chain currently
+		 * supplies no credential, so the provider stays unavailable. A returned
+		 * result should carry `ambient: true`.
+		 */
+		resolve(input: { ctx: AuthContext; signal: AbortSignal }): Promise<AuthResult | undefined>;
+	};
 	/** OAuth provider for /login support. The `id` is set automatically from the provider name. */
 	oauth?: {
 		/** Display name for the provider in login UI. */
@@ -2822,7 +2883,16 @@ export type SendUserMessageHandler = (
 	options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean },
 ) => void;
 
-export type AppendEntryHandler = <T = unknown>(customType: string, data?: T) => void;
+export interface AppendEntryOptions {
+	/**
+	 * Mark the entry as bookkeeping written at session start without any user action. A session file this
+	 * process created that holds only setup entries and such bookkeeping is removed when the session closes
+	 * without a conversation (senpi#3263). Leave it unset for anything a user created or anything billed.
+	 */
+	startupBookkeeping?: boolean;
+}
+
+export type AppendEntryHandler = <T = unknown>(customType: string, data?: T, options?: AppendEntryOptions) => void;
 
 export type SetSessionNameHandler = (name: string) => void;
 
@@ -2899,7 +2969,7 @@ export type RefreshToolsHandler = () => void;
 
 export type RegisterRemovedToolHintHandler = (name: string, hint: string) => void;
 
-export type SetModelHandler = (model: Model<any>) => Promise<boolean>;
+export type SetModelHandler = (model: Model<any>, origin?: ModelChangeOrigin) => Promise<boolean>;
 
 export type GetThinkingLevelHandler = () => ThinkingLevel;
 
@@ -3023,8 +3093,10 @@ export interface ExtensionContextActions {
 	shutdown: () => void;
 	getContextUsage: () => ContextUsage | undefined;
 	getCompactionSettings: () => CompactionPreparation["settings"];
+	getCompactionModel?: () => Model<Api> | undefined;
 	getPromptCacheSafeWaitSeconds?: () => number | undefined;
 	getPromptCacheGoalBackstopMaxSeconds?: () => number;
+	onUserActivity?: (listener: (kind: UserActivityKind) => void) => () => void;
 	getPromptCacheKeepAliveSettings?: () => {
 		enabled: boolean;
 		maxRequestsPerSession: number;
@@ -3123,6 +3195,8 @@ export interface Extension {
 	handlers: Map<string, HandlerFn[]>;
 	/** `before_agent_start` handlers registered with `{ previewSafe: true }`. */
 	previewSafeHandlers?: WeakSet<HandlerFn>;
+	/** `context`/`context_with_system` handlers registered with `{ mutatesMessages: false }`. */
+	nonMutatingContextHandlers?: WeakSet<HandlerFn>;
 	tools: Map<string, RegisteredTool>;
 	/** Optional for compatibility with extension records created before this additive registry. */
 	removedToolHints?: Map<string, string>;

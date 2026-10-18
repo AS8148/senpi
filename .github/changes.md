@@ -1,3 +1,266 @@
+## 2026-10-18 - CI runs the main-screen wheel and ask-user hint tests on Windows (senpi#3604)
+
+### What changed
+
+- `.github/workflows/ci.yml`: a `tui-mouse-windows` job (`TUI mouse wheel and hint (Windows)`, `windows-latest`) runs `packages/tui/test/tui-main-screen-mouse.test.ts` and `packages/coding-agent/test/suite/ask-user-widget-mouse.test.ts` between the OS-temp snapshot and check steps, and is listed in the `Check and test` fan-in.
+
+### Why
+
+- Main-screen mouse tracking is gated on `WT_SESSION` on win32, and the reporter of #3604 was on Windows Terminal. The wheel-yield state machine and the Shift selection hint need a Windows run, which no other job covered.
+
+### Why an extension could not handle it
+
+- CI jobs are repository workflow configuration.
+
+### Expected merge conflict zones
+
+- LOW: the new job block and the `Check and test` `needs` list.
+
+## 2026-10-17 - CI and release workflows pin Bun 1.4.3
+
+### What changed
+
+- `.github/workflows/build-binaries.yml`: the `oven-sh/setup-bun` step installs Bun `1.4.3` instead of `1.4.2`.
+- `.github/workflows/ci.yml`, `publish-npm.yml`, `releasability.yml`, `read-summary-binary-parity.yml` and `session-worker-compile.yml`: every `oven-sh/setup-bun` step installs Bun `1.4.3` instead of `1.4.2` (senpi#3078).
+
+### Why
+
+Bun 1.4.3 carries the idle-GC fixes oven-sh/bun#43681 and oven-sh/bun#43174: idle JS threads, Workers included, now run their own full collections. CI and the release binaries must build and test on the runtime users get. The codemode kernel's own idle collection (#2261) already gates itself to Bun `<1.4.3` and Node, so on 1.4.3 it no longer runs.
+
+### Why an extension could not handle it
+
+The toolchain version CI installs is repository workflow configuration.
+
+### Expected merge conflict zones
+
+- LOW: the `bun-version` lines in the six workflows above, if upstream changes its Bun pin.
+
+
+## 2026-10-13 - Catalog refresh branches regenerate on main data changes and refuse hand commits (#3243)
+
+### What changed
+
+- `.github/workflows/opengateway-catalog-refresh.yml`: also runs on a push to `main` that touches `packages/ai/src/providers/data/**`, so the refresh branch is regenerated on top of the new main (or its PR closed when main already matches the gateway).
+- `.github/workflows/automation-branch-guard.yml` (new): on a pull request from `automation/opengateway-catalog-refresh`, `scripts/check-bot-branch-commits.mjs` fails when any commit between base and head was not written by the bot (`actions@github.com`), including a hand merge of main.
+- Review delta (Opus on a73f822521): the guard refuses a PR whose head repository is not this one (a fork can reuse the branch name), and runs the checker from the base commit, not the branch under review. The checker compares real file URLs to decide it was started directly, because a hand-built `file://` URL missed paths with spaces or symlinks and then exited 0 without checking. It requires both the author and committer email to be the bot's and passes `--end-of-options` before the range. `scripts/check-bot-branch-commits.test.mjs` adds two cases, a person-committed bot commit and a start through a symlinked path with a space, and both fail on the reviewed script.
+- Delta review nits (Opus on 393e302e74): the workflow comments now say that running the checker from the base commit protects the script, not the workflow file. A pull request can still edit or delete the workflow, because GitHub reads it from the PR's merge ref, so the guard stops accidents, not forgery, and only a required check makes a missing guard fail.
+
+### Why
+
+- `.github/workflows/opengateway-catalog-refresh.yml`: #3243 was opened at 01:55Z; #3248 and #3256 then refreshed the catalog on main, and a hand merge of main into the bot branch kept the branch's older manifest and `opengateway.json` over the newer data. That left a manifest `check:model-data` rejects and put `maxTokens` 943718 back to 393216, under a title that still read as a routine refresh. Regenerating on main data changes keeps the branch current without hand edits; the guard keeps a hand-edited branch from merging.
+
+### Why an extension could not handle it
+
+- CI workflow configuration, not runtime behavior.
+
+### Expected merge conflict zones
+
+- The `on:` block of `.github/workflows/opengateway-catalog-refresh.yml`.
+
+## 2026-10-13 - Catalog drift is advisory in the releasability gate
+
+### What changed
+
+- `.github/workflows/releasability.yml`: the `Model catalog regeneration` job reports generated drift as a warning (`Report generated drift`) instead of failing the job; the warning step prints the catalog diff (first 400 lines) and the step summary says the drift is advisory, with the changed files in a details block. Regeneration, the Claude-id check, static checks, build and both test suites against the regenerated catalog still fail the job.
+
+### Why
+
+- `.github/workflows/releasability.yml`: provider listings and prices move within hours, so the committed catalog went stale between the regeneration commit and the end of the gate's ~50 min test step repeatedly on 2026-10-13: three data-only PRs and two blocked release cuts, each needing another gate run. `scripts/release.mjs` already regenerates the catalog, commits any change to main and waits for that commit's green CI before tagging, so drift never ships; the gate only needs to prove the regenerated catalog builds and passes tests.
+
+### Why an extension could not handle it
+
+- CI workflow configuration, not runtime behavior.
+
+### Expected merge conflict zones
+
+- The drift steps of the `model-catalog-regen` job in `.github/workflows/releasability.yml`.
+
+## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
+
+### What changed
+
+Replace the retired app-server daemon job target with the shared process identity suite on Windows.
+
+- `.github/workflows/ci.yml`
+
+### Why
+
+The executable Codex compatibility layer is being removed. Shared Native runtime behavior and historical records must remain independent of that layer.
+
+### Why an extension could not handle it
+
+These host contracts, import paths and build or verification targets belong to the repository; an extension cannot retire them.
+
+### Expected merge conflict zones
+
+The listed paths, especially command dispatch, mode unions and process identity imports. Keep the supported runtime branches and the shared utility behavior.
+
+## 2026-10-12 - The Windows zip install fails in its own step when Chocolatey is down (senpi#3088)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `Install archive tool` step of the `Compiled extensions (Windows)` job retries `choco install zip` up to four times with a short backoff and fails the step unless `zip` is on PATH afterwards, naming the likely cause.
+
+### Why
+
+- `.github/workflows/ci.yml`: when the Chocolatey community feed returns 503, `choco install` reports "installed 0/0 packages" and exits 0, so the job continued until `scripts/build-binaries.sh` failed with `zip: command not found` (exit 127) inside an unrelated test, sending reviewers to the PR's code.
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: CI tool installation is repository configuration.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: the `Install archive tool` step of the `compiled-extensions-windows` job.
+
+## 2026-10-10 - Test-run temporary storage has an owner (senpi#3064)
+
+### What changed
+
+- `.github/workflows/ci.yml`, `.github/workflows/releasability.yml`: test invocations use scripts/run-tests.mjs so TMPDIR/TEMP/TMP are scoped before the test runtime starts and cleaned after exit.
+- `.github/workflows/ci.yml`, `.github/workflows/releasability.yml`: every test job snapshots the OS temp directory before its first test step and runs final teardown/check with `always()` when that snapshot succeeded. Unowned leftovers fail the job and are named; snapshots live under gitignored local-ignore.
+- `.github/workflows/ci.yml`, `.github/workflows/releasability.yml`: snapshot setup explicitly exports a creator-owned cleanup journal. Final teardown retires only recorded run roots before checking for unowned residue, including a run root recreated by late Windows child activity.
+- `.github/workflows/ci.yml`, `.github/workflows/releasability.yml`: exported TMPDIR/TEMP/TMP make the job's count an exclusive measurement, not a count of unrelated host daemons. Final teardown removes its own job parent and restores the host temp environment before post-job actions.
+- `.github/workflows/ci.yml`: the real CLI recovery self-test added on main also runs inside the temp owner, between snapshot setup and an always-run final count, before the workspace build.
+
+### Why
+
+- Vitest SSR copies and interrupted fixture writes must not accumulate in the OS temp directory.
+
+### Why an extension could not handle it
+
+- Test-process bootstrap is repository tooling, before runtime extensions load.
+
+### Expected merge conflict zones
+
+- Test command arguments and runtime selection; preserve existing reporters, shards and test filters.
+
+## 2026-10-11 - Require the real CLI text-tool recovery self-test (senpi#3109)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the Ubuntu `Static checks` job runs the 22-assertion Anthropic real-CLI mock-loop self-test with a five-minute timeout. The existing required `Check and test` fan-in includes this job; the step has no skip condition or failure tolerance.
+
+### Why
+
+- `.github/workflows/ci.yml`: the leaked-call scenario stopped declaring its scripted shell tool after eval-only routing became the default, but no CI step ran it. The scenario now selects the direct `bash` tool surface explicitly. This required self-test covers complete and truncated leaked calls, the Anthropic API round-trip, credential isolation, sandbox cleanup, and command dispatch.
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: required checks and their failure propagation are repository CI configuration.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: the `check` job's steps between static validation and the workspace build.
+
+## 2026-10-10 - A failing WebView suite prints its vitest output (senpi#3092)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `Run eval kernel WebView suites (Bun)` step captures the background suite's exit status with `wait "$suite" || status=$?` instead of a bare `wait` followed by `status=$?`, then prints the vitest output and exits with that status.
+
+### Why
+
+- `.github/workflows/ci.yml`: the step runs under `bash -eo pipefail` (GitHub `shell: bash` default), so a failing `wait` ended the step before `cat "$out"`. A failing suite showed no test output at all (seen on PR #3091), only the hang path printed it.
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: CI step scripting is repository configuration.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: the WebView step's `run` script in the eval-kernel WebView job.
+
+## 2026-10-10 - Bash-tool grandchildren stay console-free on Windows, and a known upstream window is documented (omo#7691)
+
+### What changed
+
+- `.github/workflows/ci.yml`: a new job, `bash-grandchild-console-windows` (`Bash grandchild consoles (Windows)`), runs `test/bash-grandchild-console-windows.test.ts` on `windows-latest` with the JSON reporter. A following step fails unless all 12 cases ran, and prints the raw console-probe measurements. The required `Check and test` fan-in includes the job.
+
+### Why
+
+- `.github/workflows/ci.yml`: omo#7691 reported focus-stealing console windows from bash-tool commands. The suite proves on a real Windows runner that a bash command's node and its children stay console-free in every common launch shape, with a no-windowsHide control that must show a window. It also documents firebase-tools' detached shell spawn (firebase/firebase-tools#11261), which opens a window that no flag on senpi's spawn can reach. Only a Windows runner can measure console windows.
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: runner selection and required-status fan-in are repository CI configuration.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: job definitions, the `check-and-test.needs` array and its summary list.
+
+## 2026-10-10 - POSIX supervisor exit tests run on Linux and macOS (senpi#3054)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `rpc-owner-lifetime` matrix runs the owner-lifetime, owner-review, child-exit, missing-compiler and legacy-drain regressions on `ubuntu-latest` and `macos-latest`. A compiler preflight fails explicitly when `cc` is absent; tests compile the native exit waiter on demand. The required `Check and test` fan-in includes this matrix. Windows is excluded from this POSIX job.
+
+### Why
+
+- `.github/workflows/ci.yml`: the normal coding-agent shards cover Linux only. The kqueue branch also needs macOS coverage, and a missing C compiler must fail rather than silently skipping exit observation.
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: runner selection, compiler availability and required-status fan-in are repository CI configuration.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: job definitions, the `check-and-test.needs` array and its summary list.
+
+## 2026-10-09 - The changelog gate audits the whole tree against the upstream pin (senpi#3006)
+
+### What changed
+
+- `.github/workflows/changelog-gate.yml`: a new step, "Audit changes.md coverage against the upstream pin", runs `node scripts/audit-changes-md.mjs` after the per-PR gate in the same job. The job already checks out the PR head with `fetch-depth: 0`, so the pinned upstream commit is present; the audit exits 1 when any upstream-owned production path is uncovered by its exact nearest changes.md tracker.
+
+### Why
+
+The per-PR gate (`scripts/check-pr-changelog.mjs`) sees only the PR's own diff, so it cannot catch a newly added nearest changes.md tracker that shadows coverage a parent tracker already provided — the senpi#2895 shape that left 43 paths uncovered (senpi#3006). The repository-wide audit sees exactly that state; running it on every pull request keeps the next shadowing tracker from merging.
+
+### Why an extension could not handle it
+
+CI job composition is repository workflow configuration.
+
+### Expected merge conflict zones
+
+- LOW: the changelog-gate steps list, if upstream ever grows an equivalent job.
+
+## 2026-10-08 - Every main commit gets its own CI run, never cancelled or replaced by a later merge (senpi#2960)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the concurrency group is `ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}` (was `ci-${{ github.ref }}`), and `cancel-in-progress` is `${{ github.event_name == 'pull_request' }}` (was `true`). A pull request keeps one group per ref, so a newer push or restack still cancels the run it supersedes. Each `main` push gets a group of its own, so its run starts at once and is never cancelled, queued or replaced by a later merge. `scripts/ci-concurrency.test.mjs` evaluates the group and the cancel flag for two `main` commits and two pushes to one pull request.
+
+### Why
+
+Since senpi#2945 the release's test evidence is the release commit's green "Check and test" run. With one group for `main`, a merge during a release cancelled that run, or, with cancel-in-progress off, left it waiting behind the previous run and let a later merge replace it before it started. Either way the release lost its evidence and timed out; two merges in one window made the release miss its 40-minute window twice.
+
+### Why an extension could not handle it
+
+The CI concurrency policy is repository workflow configuration.
+
+### Expected merge conflict zones
+
+- The `concurrency:` block at the top of `ci.yml`.
+
+## 2026-10-05 - The process-mode kernel suite runs on Linux and macOS (codemode plan node 17)
+
+### What changed
+
+- `.github/workflows/ci.yml`: a new job, `process-kernel` (`Eval kernel process isolation (ubuntu-latest)` and `(macos-latest)`), runs `test/js-process-kernel.test.ts` with the JSON reporter on both platforms. A following step fails unless the suite ran (at least 30 passed, none failed, and on macOS only the Linux-only subreaper case skipped) and no `process-entry.js` child was left behind with ppid 1.
+
+### Why
+
+- Process mode could not start on Linux at all (a spawn's stdout is a socket there, and the entry reopened it by path), and no CI run caught it: the suite never ran on macOS, and the PR that added it was stacked, so it got no test workflow (#2759). A platform where the kernel child cannot start must fail a check instead of shipping.
+
+### Why an extension could not handle it
+
+- This is CI configuration.
+
+### Expected merge conflict zones
+
+- LOW: the job list in `ci.yml`, where the new job sits before `python-kernel-windows`.
+
 ## 2026-10-05 - CI runs on pull requests to any branch (senpi#2759)
 
 ### What changed

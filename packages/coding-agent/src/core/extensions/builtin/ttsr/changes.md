@@ -1,5 +1,78 @@
 # TTSR Fork Tracker
 
+## 2026-10-09 - A failed engine pause write preserves the TTSR stop announcement (senpi#3014)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/index.ts`: retain the existing loop-stop entry, event and notice before attempting the new engine pause entry; catch and warn on that additive publication failure using a session logger captured before publication.
+
+### Why
+
+The new second append could throw between the existing loop-stop entry and its event/notice, hiding the stop announcement.
+
+### Why an extension could not handle it
+
+This builtin owns the repeated-rule stop branch and must complete its existing announcement.
+
+### Expected merge conflict zones
+
+`ttsr/index.ts` logger import and repeated-rule `agent_settled` branch. Keep the existing announcement ahead of the best-effort engine pause write.
+
+## 2026-10-09 - Publish the common engine pause entry (senpi#3007)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/index.ts`: the consumed repeated-rule nudge appends `engine-paused` with reason `repetition`, its rule, and `ttsr-injection`, alongside the unchanged `ttsr-loop-stopped` entry, event, and notice.
+
+### Why
+
+Clients need one durable self-stop signal rather than interpreting TTSR notices.
+
+### Why an extension could not handle it
+
+This builtin owns the repeated-rule stop decision and consumes the nudge exactly once.
+
+### Expected merge conflict zones
+
+The `agent_settled` repeated-rule branch. The final idle case for a one-shot repetitive-turns correction is recorded in the engine after all deferred turn claims settle.
+
+## 2026-10-08 - One corrective follow-up per rule per user message (senpi#2967)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/follow-up-limit.ts` (new): `ruleAlreadyCorrected(entries, rule)` reports whether a `ttsr-injection` for that rule was already sent since the user's last message, read from the session entries.
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/index.ts`: `agent_settled` sends a rule's corrective nudge (with `triggerTurn`) at most once per user message; a repeat appends `ttsr-loop-stopped`, emits `ttsr:loop-stopped` and tells the user the rule flagged the reply again after its correction.
+
+### Why
+
+- One user message drove 66 turns in about 66 s through the `repetitive-turns` nudge until Stop (senpi#2967). The desktop's server-hosted session fires `session_start` around every turn, so this extension started each automatic turn with fresh in-memory state and re-armed. The limit is read from the session, so a rebuild cannot reset it; the engine-wide turn bound (`src/core/engine-turn-limit.ts`) covers every other source.
+
+### Why an extension could not handle it
+
+- The follow-up turn is started by this builtin's own `agent_settled` handler.
+
+### Expected merge conflict zones
+
+- LOW: `ttsr/index.ts` `agent_settled` handler and imports.
+
+## 2026-10-07 - Code-shaped lines are left out of near-duplicate scoring (senpi#2865)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/detectors/collapse-near-duplicates.ts`: `foldLine` leaves out an unfenced line shaped like code (indented and not a nested list item, or ending in `{ } [ ] ( ; , >`, the set oh-my-pi uses; `)` is left out because prose often ends in a parenthesis), so a paragraph made only of such lines is never scored. Fenced paragraphs keep their existing exemption.
+
+### Why
+
+Same-shaped code or markup (SVG elements, JSON objects) repeats one skeleton with different literals and scored as near-duplicate paragraphs. TTSR then aborted the stream and retried, discarding the model's valid output. oh-my-pi v18.8.0 drops the same line shapes before its loop heuristics. Trade-off, accepted on review: oh-my-pi applies its rule only to Gemini, DeepSeek and Grok streams, while TTSR applies it to every model, so a narration loop in which EVERY paragraph ends in `,` or `>` or is indented is no longer counted by this detector. Real narration (the incident fixture) carries no such lines and is still caught.
+
+### Why an extension could not handle it
+
+The paragraph scoring is inside the TTSR detector itself.
+
+### Expected merge conflict zones
+
+- `foldLine` and the line state in `collapse-near-duplicates.ts`.
+
 ## 2026-09-25 - The handoff Ask exemption needs a closing status label (senpi#2143)
 
 ### What changed

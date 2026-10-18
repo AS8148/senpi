@@ -10,6 +10,256 @@
 
 ### Fixed
 
+- In main-screen mode the mouse wheel scrolls the terminal's scrollback again while a component holds a mouse lease: the first wheel notch hands the mouse back to the terminal, and the next key press takes it back ([#3604](https://github.com/code-yeongyu/senpi/issues/3604)).
+
+- On Windows, a WezTerm build older than 20250208-160106 (including the 20240203 stable release) now shows the image placeholder with a hint to update WezTerm instead of a blank gap: its bundled ConPTY drops Kitty graphics before they reach WezTerm. Newer WezTerm nightly builds keep inline images ([#3596](https://github.com/code-yeongyu/senpi/issues/3596)).
+
+### Removed
+
+## [2026.10.18-1] - 2026-10-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.18] - 2026-10-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.16-4] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.16-3] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.16-2] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.16] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.15] - 2026-10-15
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.13] - 2026-10-13
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.12] - 2026-10-12
+
+### Breaking Changes
+
+### Added
+
+- `EditorTheme.keywordHighlight` (`EditorKeywordHighlight`) decorates keyword runs per character with the offset inside the run, so a gradient stays continuous across wrapped rows; a mention or the cursor grapheme takes precedence, and row widths never change ([#3160](https://github.com/code-yeongyu/senpi/issues/3160), requested by @code-yeongyu).
+
+### Changed
+
+### Fixed
+
+- `PI_TUI_DEBUG` render dumps honor the configured OS temporary directory instead of writing to a hard-coded `/tmp/tui` path ([#3103](https://github.com/code-yeongyu/senpi/pull/3103)).
+
+### Removed
+
+## [2026.10.11] - 2026-10-11
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-12] - 2026-10-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-11] - 2026-10-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-10] - 2026-10-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-9] - 2026-10-08
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-8] - 2026-10-08
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Inside tmux, screen or Zellij, a focus event or a pane width change no longer re-emits the whole transcript into the pane's history: a pane that loses focus repaints nothing, and one that regains focus or changes width repaints only its visible rows, so scrollback is not flooded with a copy of the transcript per event ([#1704](https://github.com/code-yeongyu/senpi/issues/1704)).
+
+### Removed
+
+## [2026.10.10-6] - 2026-10-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-5] - 2026-10-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-4] - 2026-10-06
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-3] - 2026-10-06
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-2] - 2026-10-05
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
 ### Removed
 
 ## [2026.10.10] - 2026-10-05

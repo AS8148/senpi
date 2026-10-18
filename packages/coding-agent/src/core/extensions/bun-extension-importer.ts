@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { createRequire, isBuiltin } from "node:module";
 import { dirname, extname, resolve } from "node:path";
@@ -12,6 +13,7 @@ import {
 	extensionNamespace,
 	type ModuleSource,
 	registerExtensionGraph,
+	runtimeModulePath,
 } from "./bun-extension-registry.ts";
 
 export { bunExtensionImporterStats } from "./bun-extension-registry.ts";
@@ -119,6 +121,7 @@ export function createBunExtensionImporter(
 	virtualModules: Readonly<Record<string, Readonly<Record<string, unknown>>>>,
 ) {
 	const sources = new Map<string, ModuleSource>();
+	const fingerprints = new Map<string, string>();
 	const commonJs = new Set<string>();
 	// Live `module` objects by id, registered while a CommonJS body runs: a require inside a
 	// cycle receives the partially built exports, as in Node, instead of an unset ESM default.
@@ -257,9 +260,13 @@ export function createBunExtensionImporter(
 					"});",
 				].join("\n");
 			}
-			contents = `import { metadata as ${name}Factory } from "${extensionNamespace}:runtime";\nconst ${name} = ${name}Factory(${JSON.stringify(registration.generation)}, ${JSON.stringify(filename)});\n${contents}`;
+			// Bun <= 1.4.2 bakes the resolved runtime path into its transpile cache, keyed by this source; naming
+			// the path re-keys the cache when an update moves the runtime and heals entries an older runtime
+			// baked before the prune (senpi#3300). Same line, so diagnostics keep their line numbers.
+			contents = `import { metadata as ${name}Factory } from "${extensionNamespace}:runtime"; // runtime ${runtimeModulePath === undefined ? "virtual" : encodeURI(runtimeModulePath)}\nconst ${name} = ${name}Factory(${JSON.stringify(registration.generation)}, ${JSON.stringify(filename)});\n${contents}`;
 			const prepared = { contents, loader: "js" } satisfies ModuleSource;
 			sources.set(filename, prepared);
+			fingerprints.set(filename, createHash("sha256").update(source).digest("hex"));
 			return prepared;
 		},
 	};
@@ -281,14 +288,15 @@ export function createBunExtensionImporter(
 				return factory.apply(this, args);
 			};
 		},
-		// The generation's staleness check reads these: every source file it transpiled.
-		compiledFiles(): readonly string[] {
-			return [...sources.keys()];
+		// Capture identity from the transpiler input, never from a later disk snapshot.
+		compiledSources(): ReadonlyMap<string, string> {
+			return fingerprints;
 		},
 		dispose() {
 			active = false;
 			registration.dispose();
 			sources.clear();
+			fingerprints.clear();
 			commonJs.clear();
 			commonJsModules.clear();
 		},

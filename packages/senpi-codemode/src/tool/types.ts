@@ -1,4 +1,9 @@
-import type { AgentToolResult, AgentToolUpdateCallback, KernelPreludeContribution } from "@code-yeongyu/senpi";
+import type {
+	AgentToolResult,
+	AgentToolUpdateCallback,
+	ExtensionKernelTools,
+	KernelPreludeContribution,
+} from "@code-yeongyu/senpi";
 import { type TSchema, type TUnsafe, Type } from "typebox";
 import type { KernelMemoryReport } from "../bridge/memory-protocol.ts";
 import type { HostToKernelMessage, KernelToHostMessage } from "../bridge/protocol.ts";
@@ -8,7 +13,7 @@ import {
 	DEFAULT_RUN_BUDGET_SECONDS,
 	defaultCodemodeSettings,
 } from "../config/settings.ts";
-import type { KernelToolsCapability } from "../kernels/js/kernel-tools-types.ts";
+import type { KernelToolsCapability, KernelToolsDescribeResult } from "../kernels/js/kernel-tools-types.ts";
 import type { TruncationMeta } from "../output/output-meta.ts";
 
 export const evalLanguageOrder = ["js", "py", "rb", "jl"] as const;
@@ -238,6 +243,10 @@ export interface EvalKernel {
 	isAlive?(): boolean;
 	/** Hands over, and forgets, every queued cell of a dead kernel that never started. */
 	drainPending?(): readonly PendingCell[];
+	/** Describes this kernel's registered kernel tools; only an in-process JS kernel has them. */
+	describeKernelTools?(names: readonly string[]): Promise<KernelToolsDescribeResult>;
+	/** Invokes one of this kernel's kernel tools; present exactly when `describeKernelTools` is. */
+	invokeKernelTool?: ExtensionKernelTools["invoke"];
 }
 
 export interface EvalKernelManager {
@@ -279,6 +288,8 @@ export interface EvalRuntimeInfo {
 	readonly name: string;
 	readonly version: string;
 	readonly path?: string;
+	/** JS only: the kernel runs in a child process (`process`), or the cell ran in an isolated QuickJS VM (`sandbox`). */
+	readonly isolation?: "process" | "sandbox";
 }
 
 export type EvalRuntimes = Readonly<Partial<Record<EvalLanguage, EvalRuntimeInfo>>>;

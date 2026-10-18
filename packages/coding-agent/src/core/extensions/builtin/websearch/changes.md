@@ -1,3 +1,106 @@
+## 2026-10-11 - Preserve intentional empty main-turn tool arrays (senpi#3125 delta)
+
+### What changed
+
+- `server-search.ts` rewrites a non-Moonshot request's top-level tools only when the Moonshot filter removes a declaration. Unchanged payloads, including intentional `tools: []` with tool history, retain their original reference and array.
+
+### Why
+
+- The Completions adapter deliberately supplies an empty array for LiteLLM-style proxies when history contains tool calls or results. Sanitizing an unrelated provider tool must not erase that contract.
+
+### Why an extension could not handle it
+
+- This extension owns the cross-route Moonshot sanitizer that removed the array.
+
+### Expected merge conflict zones
+
+- `serverSearchPayload` top-level Moonshot declaration filtering.
+
+## 2026-10-11 - Narrow auxiliary exclusion and track the failed request model (senpi#3125 delta)
+
+### What changed
+
+- `index.ts` records native-search failures against the model identified by the assistant response and its actual request, not an unrelated selected session model.
+- `server-search.ts` separates disabled server-tool exclusion from fallback, preserves client `web_search`, omits empty tools arrays, and shares Moonshot declaration/choice detection.
+
+### Why
+
+- Auxiliary requests must not lose client tools or acquire invalid empty arrays. Model-fallback requests must not poison another model's session memory.
+
+### Why an extension could not handle it
+
+- This extension owns native routing and failure memory.
+
+### Expected merge conflict zones
+
+- Request/response model matching and payload tool filtering.
+
+## 2026-10-11 - Review: isolate and evidence-gate server search (senpi#3122)
+
+### What changed
+
+- `index.ts`: `$web_search` cannot be lazily activated and is active only on an explicitly opted-in Moonshot route. Search failures persist per session/model across prompts and model switches, and a new session clears them.
+- `server-search.ts`: Gemini, OpenRouter, retiring Moonshot, Z.AI and Sonar native-bypass routing require explicit opt-in. Non-Moonshot declarations and choices lose `$web_search`, including when no server search is enabled.
+- Fallback preserves adapter-built function schemas; Gemini keeps its existing single function-declaration entry. Search-disabled summary/title/projection payloads never acquire native tools.
+- Official route documentation distinguishes held live proof from failed probes and doc-only support. A different `nativeModel` is ignored on enabled server-search routes.
+
+### Why
+
+- A documented tool is not live evidence, and a provider-only echo tool must not enter another API's tool catalog or request.
+
+### Why an extension could not handle it
+
+- The existing websearch extension owns tool registration, routing, and fallback.
+
+### Expected merge conflict zones
+
+- Tool registration, native bypass, payload tool filtering, and lifecycle hooks.
+
+## 2026-10-11 - Server search before auxiliary search models (senpi#3122)
+
+### What changed
+
+- CI follow-up: `index.ts` registers the Moonshot echo tool as search-exposed so it stays inactive before session binding, and declares a read-only `before_agent_start` preview path so prewarm and keep-alive retain the exact turn prefix. `../moved-path-guard/tool-classes.ts` classifies the echo tool as path-free. The status-label fixture supplies the active-tool API used by route selection.
+- `server-search.ts` declares API-specific server tool shapes with official documentation references, restores the function search tool on a failed native turn, and detects search-specific request/result errors without treating cancellation or unrelated provider failures as search failures.
+- `index.ts` defers the standalone tool on eligible routes, records one fallback reason, and uses the existing `agent_settled` continuation once when core retry does not already own the continuation. Moonshot's documented built-in flow echoes generated search arguments without another HTTP request; its tool is active only on the matching route.
+- `websearch/search-model.ts` keeps eligible routes on their session model. Cheaper auxiliary defaults and settings remain available on no-server routes.
+- Focused payload, extension and real AgentSession regressions cover native-first dispatch, restored fallback, cancellation, retry ownership and next-prompt reset.
+- Review follow-ups keep completed answers from receiving duplicate continuations, reject unrelated auth/quota/function-schema errors, and mark fallback payloads with non-serialized request metadata so native injectors cannot re-enable search regardless of handler order.
+- Gemini 2/3 attempt their documented grounding tool first; an explicit mixed-tool rejection falls back once rather than assuming before the request that server search is unavailable.
+
+### Why
+
+- Requested by @code-yeongyu: the active model should search in its main request when the provider supports a server tool, rather than routing that work through a cheaper auxiliary model.
+
+### Why an extension could not handle it
+
+- These are the existing built-in native and standalone search extensions; their shared routing state must agree.
+
+### Expected merge conflict zones
+
+- `index.ts` registration and native bypass; `websearch/native.ts` metadata interface and `websearch/search-model.ts` default selection.
+- Senpi PR #3118 independently changes auxiliary session headers in `websearch/native.ts`; this change adds capability metadata only and does not replace that fix.
+
+## 2026-10-05 - Keenable web search provider, keyed and keyless-public
+
+### What changed
+
+- `websearch/providers/keenable.ts` (new): POSTs `{query, max_results (<=50), site?}` to `https://api.keenable.ai/v1/search` with `X-API-Key` when `apiKey` is configured, and to `https://api.keenable.ai/v1/search/public` with an `X-Keenable-Title: <APP_NAME>` header when it is not. A lone `allowedDomains` entry maps to the native host-only `site` field; multiple allowed or any blocked domains stay `site:`/`-site:` query terms via `appendDomainFilters`. Response `results[]` normalize `snippet` (falling back to `description`) and `published_at` into `publishedAt`; non-http(s) or control-character URLs are dropped.
+- `websearch/types.ts`, `provider-endpoints.ts`, `providers.ts`, `config.ts`: `keenable` joins the provider union, the default endpoint table, the module registry and `PROVIDERS`/`KEYLESS_PROVIDERS`. Keyless means `websearch.json` may list it without `apiKey`, and a block cools it down like the other keyless engines; it is deliberately not in `DEFAULT_FREE_CONFIG` because the public tier is a shared per-IP pool.
+- Covered by `test/suite/websearch-keenable-provider.test.ts`.
+
+### Why
+
+- Keenable is a search API with a keyless public tier; explicit config entries can use it with or without a key.
+
+### Why an extension could not handle it
+
+- The provider registry and config validation are private to this builtin.
+
+### Expected merge conflict zones
+
+- LOW: one line per provider in `types.ts`, `config.ts` `PROVIDERS`/`KEYLESS_PROVIDERS`, `provider-endpoints.ts`, `providers.ts`.
+
 ## 2026-09-29 - Free keyless engine chain, per-engine cooldown, SearXNG (senpi#2339)
 
 ### What changed

@@ -1,3 +1,184 @@
+## 2026-10-14 - Negotiate modern MCP behind an SDK lifecycle bridge (senpi#3304)
+
+### What changed
+
+- HTTP connections discover the protocol era before constructing the selected transport. Modern HTTP uses stateless POST requests; legacy connections retain the existing SDK materializer and wire behavior after discovery.
+- `modern/sdk-bridge.ts` answers the SDK's `initialize` locally from validated discovery and consumes `notifications/initialized` locally. Connection diagnostics distinguish the real negotiated wire version from the SDK compatibility version.
+- `modern/era.ts` uses the shared request builder, headers and strict code-only classifier in `wire.ts`. Era tests now use -32020 (HeaderMismatch), -32021 (MissingRequiredClientCapabilityError), and -32022 (UnsupportedProtocolVersionError). Named -32000-class forms in the compatibility prose do not establish the modern era; generic error text cannot safely select a different protocol.
+- Stdio probes discovery on the actual spawned transport before initialization and retains that same process for legacy fallback. A modern stdio child keeps that same process: `stdio-probe.ts` answers the SDK's `initialize` locally from discovery (the HTTP bridge's `modernInitializeResult`), drops `notifications/initialized`, and rewrites every later request and notification with the per-request `_meta` at the negotiated version (`wire.ts` `modernizeRequest`, shared with the HTTP transport). A modern stdio child whose discovery answers only with a modern error fails the connect with that error and is closed, never restarted or sent a legacy `initialize`; a -32022 rejection gets one retry at the newest mutual version, as on HTTP.
+- The stdio probe never breaks a legacy server that connects today. It waits at most `STDIO_PROBE_MS` (2 s, capped at a quarter of the connect timeout) under a string id (`senpi-era-probe`) the SDK, which numbers its requests from 0, can never produce. A clean non-modern JSON-RPC error reply, or no reply in time (a slow start, or a server that ignores unknown requests), keeps the SAME process for the legacy handshake; nothing is killed for being slow. Until the SDK's `initialize` gets its reply the probe window stays open: if that silent child then exits or writes non-JSON (a slow `uvx`/`npx` start of an older Python server that dies on the unknown request), it is restarted and the recorded `initialize` is replayed on the fresh process. If its discovery reply arrives late and complete and it then rejects `initialize` with any error, the rejection is replaced by the local initialize answer and the stream switches to modern (a legacy server cannot produce a complete discovery, so any error is safe to upgrade on); a slow-starting modern server thus connects on its first process, with one rejected legacy `initialize` on its wire. If instead `initialize` succeeds, the connection stays legacy for its lifetime even when a late discovery reply arrived. The upgrade relies on the server answering in order, as stdio servers do. A slow server that prints a non-JSON banner to stdout before answering `initialize` is therefore restarted once (startup paid twice), the same rule that applies inside the probe window; it still connects. Requests the SDK sends while a child is being replaced wait for the fresh process, so `initialize` reaches it exactly once. Once `initialize` is answered the probe wrappers are removed. Late probe replies never reach the SDK. Only a child that exited (as older Python SDK servers do on an unknown request) or wrote non-JSON to stdout is reaped and replaced by a fresh process for the untouched legacy handshake; the old child's close event is swallowed once, and a dispose that races the respawn closes the new child. A server that crashes on start is therefore spawned twice (probe, then legacy) and never more; `test/mcp/connection.test.ts`'s spawn count reflects that. Once a server has answered -32022 it is never downgraded: an unclean retry fails the connect as modern.
+- On HTTP, a well-formed JSON-RPC error without a modern code means legacy at any status (some servers answer an unknown method with 200), and an authorization failure during the probe propagates as needs-auth instead of being read as a transport error, so the OAuth flow is not started a second time by the legacy transport.
+- The two strict per-directory tsconfigs left from the implementation waves are removed; the root typecheck covers `modern/`.
+- No era cache: each connection probes once at materialization, and a cache scoped to one connection could never be reused. Caching across reconnects would need a service-scoped owner keyed by endpoint and credentials, and is left for when it is measured to matter.
+- `connection.ts` owns a pending connection before discovery and handles materialization errors through its existing connect-failure path. Disposing a pending connection aborts discovery. Each connection owns its era cache, so endpoint metadata and credentials cannot leak across sessions. Legacy session-required 404 responses still use the original SDK initialization and diagnostics.
+
+### Why
+
+Contract (a), a transport-level SDK compatibility adapter, preserves the installed SDK's actual invariants without copying its client implementation or mutating private state. SDK 1.32.1 installs protocol callbacks, requests `initialize`, validates `InitializeResultSchema` and its supported-version list, populates capabilities/serverInfo/instructions, calls `setProtocolVersion`, sends `notifications/initialized`, and installs capability-dependent list handlers. The bridge supplies discovery's capabilities, namespaced serverInfo and instructions through that normal validation path, using the SDK's own latest version solely for its local schema dialect; discovery must independently support the real modern wire version. That local version never reaches the modern transport or server. A facade would duplicate catalog, elicitation and notification behavior; post-connect seeding would couple us to private fields and skip initialization side effects. Once the SDK supports modern discovery natively, delete the bridge and the factory dispatch rather than replacing downstream Client consumers.
+
+### Why an extension could not handle it
+
+The MCP builtin owns transport construction and SDK initialization; another extension cannot replace this private lifecycle seam.
+
+### Expected merge conflict zones
+
+`transport.ts`'s materialization seam, `connection.ts`'s pending connection ownership, and the `modern/` modules. The legacy SDK materializer remains unchanged.
+
+Fixture accounting decision: `test/mcp/fixtures/sharing-http.ts` now increments `connects` only in the SDK's one-time `onsessioninitialized` callback, rather than for every sessionless POST. The existing sharing, reconnect, lifecycle, and catalog assertions measure established MCP sessions, not raw HTTP requests; none require raw POST accounting. Counting initialization events therefore preserves every assertion's intent without changing any assertion, remains independent of session-map cleanup during graceful shutdown, and avoids a discovery-specific exception that would still count other rejected sessionless requests as connections. Legacy containment is behavioral: the discovery probe does not establish a session or alter subsequent legacy traffic.
+
+## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
+
+### What changed
+
+Capture session wire inventory for Native RPC only after removing app-server mode. Preserve the session-scoped inventory and credential ownership logic.
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`
+
+### Why
+
+The executable Codex compatibility layer is being removed. Shared Native runtime behavior and historical records must remain independent of that layer.
+
+### Why an extension could not handle it
+
+These host contracts, import paths and build or verification targets belong to the repository; an extension cannot retire them.
+
+### Expected merge conflict zones
+
+The listed paths, especially command dispatch, mode unions and process identity imports. Keep the supported runtime branches and the shared utility behavior.
+
+## 2026-10-10 - Unsubscribe the control-inventory listeners on a reload, not only on quit
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: the shared-service (`sessionOwned === false`) `session_shutdown` handler now runs `disposeControlInventory()` for every reason, including `reload`. It used to skip it on a reload.
+
+### Why
+
+- The reload builds a new runner, and the new factory subscribes `onWireStatusChanged` and the control-inventory request again. The old subscription stayed in the process-wide service's `#wireStatusListeners`, and its closure holds the old `pi`, so the old `ExtensionRunner` and everything it reaches stayed alive: one extension generation per reload. A heap snapshot after 20 reloads showed all 20 old runners reachable from the service's listener set; with every other builtin enabled and `mcp` disabled none were.
+- Every config-reload (any watched settings or `omo.jsonc` edit) reloads every live session, so a long-lived RPC worker grew by tens of MB per reload. Workers that went through a reload loop held 15GB.
+
+### Why an extension could not handle it
+
+- The leak is the MCP builtin's own subscription lifetime; nothing outside it can unsubscribe its listeners.
+
+### Expected merge conflict zones
+
+- The `session_shutdown` handler in `createMcpExtension` in `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`.
+
+## 2026-10-08 - Resolve and spawn each session's MCP servers with its own trust, env and agent dir (senpi#2986)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: each session binding now keeps the `McpSessionOptions` it attached with (trust, env, agent dir) beside its config, and the process-wide `#sessionOptions`, `#authAgentDir` and `#authEnv` are gone. `attachSkillMcpServers` resolves a skill's `${VAR}` values with the declaring session's own trust (`options.projectTrusted`, else its context's) and env.
+- `service.ts`: `#syncFromConfig` spawns each server with the options and cwd of a session that declares it with the same config hash. The attaching session is used when it declares the server; otherwise the live binding the effective config took the server from. The catalog cache for a server is read from that session's agent dir.
+- `service.ts`, `service-types.ts` and `service-connection.ts`: a connection entry records the env it spawned with, next to its agent dir. `getAuthTarget` (re-auth), `getServerAuthStatus` and the wire and lifecycle auth status resolve credentials with the connection's own agent dir and env. They fall back to a live declaring session's options when the server has no connection.
+- `service.ts`: a session is offered a connection only when its own config declares the server with the connection's config hash and its own agent dir and env resolve the credential identity (`mcpCredentialIdentity`) the connection spawned with. `#registerDirectTools` and the `#handleServerToolsChanged` refresh targets share this check (`offersConnection`), so republishes, credential-change resyncs and list_changed tombstones follow it too. A session whose credentials differ gets none of that server's tools, and its earlier offers are refused once the connection is replaced. An undefined identity (no bearer token, no stored OAuth tokens) matches only another undefined one, as the connection key's `?? "unknown"` does, so a connection holding no credentials stays shared.
+
+### Why
+
+- Every attach overwrote one process-wide options record, and skill-server expansion, connection spawns and auth all read it. A trusted session attaching after an untrusted one therefore expanded the untrusted project's skill servers as trusted, with the trusted session's environment. Spawns and re-auth likewise used the last attach's credentials for servers that session never declared.
+- Connections are one per server name, and offers compared only the config hash. Two sessions declaring the same server with the same config but different agent dirs or envs therefore shared the connection, so one session's calls ran with the other's bearer token or OAuth login.
+
+### Why an extension could not handle it
+
+- The options record, the per-session bindings and the connection spawn path are private state of the MCP builtin's shared service; no extension can see or replace them.
+
+### Expected merge conflict zones
+
+- `McpSessionBinding`, `attachSession`, `#bind`, `attachSkillMcpServers`, `#syncFromConfig`, `#serverSnapshot`, `#handleServerToolsChanged`, `#registerDirectTools`, `getAuthTarget`, `getServerAuthStatus`, `wireAuthStatus` and `offersConnection` in `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`; `McpConnectionEntry` in `service-types.ts`; the entry literal in `createMcpSessionConnection` in `service-connection.ts`.
+
+## 2026-10-08 - Fence each session's MCP tools with its own config, not the last attach's (senpi#2597)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: each session binding now records the `ResolvedMcpConfig` it attached with. `#registerDirectTools` registers a session's tools from that config and only for the connections `offersConnection` offers it: same `configHash`, and its own agent dir and env resolve the connection's credential identity. The invocation fence no longer compares the process-wide `#config` identity. A session's offers stay current while its own binding and the connection entry they were made against are current. A new attach by the same session replaces its binding and retires its old offers; a peer's attach does not.
+- `service.ts`: the shared connections follow an effective config. That config is the attaching session's config plus every server another live binding declares that it does not. A peer whose config lacks a server, such as an OmO memory sidecar loaded without extension-registered servers, no longer tears down a connection a live session still declares. On a name collision the attaching config wins, as before, because connections are one per server name. A credential change (`onCredentialsChanged`, which OAuth token refresh relies on) no longer checks the config's object identity. When its connection is still current, it re-syncs the current config through the counted attach queue that a release re-sync also uses, with the most recent live binding's options. With no live session, it uses the options of the owner of the sync that created the connection. This supersedes the identical-config preservation bullet in the senpi#2843 entry.
+- `service.ts`: skill-declared servers (`attachSkillMcpServers`) merge into the declaring session's own config, then into the effective config. That sync runs on the attach queue and counts as a pending sync, like a release re-sync. It runs only if the declaring session's binding is still live when its turn comes. Attaches, release re-syncs, credential re-syncs and skill attaches share one queue-and-count helper, `#queueSync`. A list_changed refresh re-registers and tombstones only in sessions that declare that server with the refreshed connection's hash.
+- `service.ts`: `releaseSession` now re-syncs the connections when a session is gone (a dispose reason: quit, or the builtin removed) and live sessions remain. A release with no reason (reload, new, resume, fork) does not re-sync: that session attaches again next, and its attach drops what no live session declares without restarting the servers it still declares. The effective config of the most recent live binding is used, with that binding's options, so a server only the released session declared is stopped instead of keeping its process and credentials alive. The resync runs on the attach queue so it never interleaves with an attach's sync. The release awaits it only when no sync of any kind (attach, skill attach, re-sync, credential re-sync) is pending, so a hung attach still cannot hold a quit. When a connection entry is added, removed or re-created, every live session re-registers its tools, and the most recent live session's wire status refreshes. When no live session remains, the existing dispose and deferred-dispose path is unchanged.
+- `service.ts`: a session's MCP status (`refreshWireStatusSnapshot`, which serves the control inventory and the app-server wire status) is built from that session's own config, not the merged one. `#statusOwner` finds the live binding whose context's `sessionManager.getSessionId()` matches the session id, or the most recently attached live binding when no id is given. An attach that binds no session reports its own config. The status lists only the servers that config declares. A server's connection, catalog, server info and connection-derived login status count only when the session declares the server with the connection's config hash and its own agent dir and env resolve the credentials the connection's own options resolve now (`resolvesSameCredentials`). A connection whose tokens went stale therefore still shows as needing auth in its own session, while a peer's connection with other credentials never shows. Otherwise the session's own agent dir and env decide its login status. The merged config still decides which connections live. `releaseSession` deletes the released session's snapshot from `#wireStatusBySession` unless a live binding still reports under that session id. Each binding records its session id at attach (`McpSessionBinding.sessionId`), because a released session's context may already be stale and throw on read.
+- `service.ts`: a release re-sync counts as a pending sync, as an attach does (`#pendingAttaches` is now `#pendingSyncs`). A release that leaves no live session while a re-sync is queued or running defers its dispose until the re-sync settles, as it does for a pending attach. `#syncFromConfig` re-checks `#disposed` after each await and creates no connection once the service is disposed. The re-sync stops republishing tools and status once the service is disposed.
+- Correction to the senpi#2514 entry's review follow-up: a session that quits while its own attach is still queued now starts nothing when that attach runs. It is not bound, resolves no config, sets no session context and leaves the shared config and its live peers' connections untouched. When it was the only session, the deferred dispose still disposes the service once the attach settles.
+- `service.ts`: `releaseSession` re-syncs on a dispose reason even when this call finds no binding because an earlier release with no reason already dropped it. A reload into a runtime without the MCP builtin fires `session_shutdown` (a release with no reason) and then `session_extensions_removed` (a release with `reload`), so the second release now stops the servers only that session declared. It hands `#sessionContext` to the most recent live binding only when it released the binding that held it.
+- `service.ts`: `#syncFromConfig` never keeps a connection whose credentials went stale (`credentialsCurrent()` is false), even when its recomputed key is unchanged. It re-creates the connection with the options of the session that declares it now, so the most recent live declarer's credentials win, as they do at attach. `#resyncToLiveSessions` decides whether to republish by comparing the connection entries before and after the sync, not their keys, because a re-created connection keeps its key and the offers made against the old entry stay retired until the tools are republished.
+- `service.ts`: a credential re-sync (`#resyncToLiveSessions` called with a fallback owner, from `onCredentialsChanged`) syncs the current `#config` and no longer recomputes the effective config of the live sessions. It re-keys the changed connection and stops nothing. A release re-sync still recomputes the effective config.
+- `service.ts`: an attach's status capture resolves its owner when the capture runs: the attaching session's binding only while it is still that session's current binding, and nothing once the session was released. An attach that binds no session still reports its own config.
+
+### Why
+
+- The fence compared one process-wide `#config` object, and any attach with a different resolved config replaced it. On a multi-session host, the main session (with extension-registered servers) and sidecar sessions (without them) share one service. Each sidecar attach therefore refused every MCP tool in the main session with "MCP session or server configuration was replaced.". The refusal was permanent, because no later attach restored the identity and the main session's binding was never republished. The same last-attach config also decided which connections lived, so a sidecar attach disposed the main session's extension-registered servers.
+- Once connections followed every live session's config, nothing recomputed them when a session left. A server only the released session declared therefore kept running with that session's credentials until the whole service was disposed.
+- Every session's status snapshot was built from the merged config. Once connections followed every live session, a session's `/mcp` status therefore listed a peer's servers, tool catalog, server info and login status.
+- Every captured status snapshot stayed in `#wireStatusBySession` until the shared service was disposed, so each closed session's snapshot outlived it on a long-lived multi-session host.
+- A release re-synced whatever its reason. A reload with a live peer therefore stopped the reloading session's own servers and re-spawned them on its next attach, while the same reload with no peer kept them running.
+- The skill-attach sync ran outside the attach queue. While it awaited the catalog-cache reads, a quit's release re-sync could stop servers. The skill sync then resumed with the servers it had computed before that release and re-created them. The result was a connection, and later a process, for a server no live session declared.
+- A credential change re-keyed its connection only while `#config` was still the object its creating sync saw. A skill attach always assigned a new object, and an attach or release re-sync did whenever the merged config changed. After that, a changed token never re-keyed the connection: `getConnection` returned nothing, the server's tools were dropped and its calls refused.
+- A session that quit while its first attach was queued had no binding, so its release returned without a re-sync. Its attach then ran anyway and adopted its config as the attaching one, so for a server name both it and a live peer declared, the closed session's config won. The peer's connection was replaced and its tools refused, and servers only the closed session declared kept running while no live session declared them.
+- The re-sync checked `#disposed` only before its sync, and nothing counted it. When two sessions quit close together, the second release found no live session and no pending attach, so it disposed the service while the first release's re-sync was still stopping a server. The re-sync then resumed and created connections for the remaining servers that nothing would close.
+- A reload or session switch into a runtime without the MCP builtin released the session twice: first with no reason, which dropped the binding without a re-sync, then with `reload`, which found no binding and returned. While a peer stayed live, the servers only that session declared kept running with its options and credentials.
+- A connection created with one session's env stayed bound to that env while a peer resolving the same token shared it. When the first session's token rotated, the credential re-sync recomputed the key from the peer's still-matching credentials, found it unchanged and kept the stale connection. `getConnection` then returned nothing and every sharing session's calls were refused, with nothing left to re-key the connection.
+- A credential re-sync recomputed the effective config from the live sessions. During a peer's reload window (released with no reason, not yet attached again) that config lacked the reloading session's servers, so a token change in another session stopped them, and the reloaded attach then re-spawned them: the restart the reasonless release had stopped doing.
+- An attach's status capture fell back to the binding it created even after the session was released. A session that quit while its own attach was running therefore had its snapshot stored after the release had already deleted it, and the snapshot outlived the session.
+
+### Why an extension could not handle it
+
+- The fence and the connection set are private state of the MCP builtin's shared service; no extension can see or replace them.
+
+### Expected merge conflict zones
+
+- `McpSessionBinding`, `attachSession`, `#bind`, `releaseSession`, `#resyncToLiveSessions`, `#effectiveConfig`, `attachSkillMcpServers`, `#handleServerToolsChanged`, `#registerDirectTools`, `refreshWireStatusSnapshot`, `#refreshWireStatus`, `#statusOwner`, `#captureWireStatus`, `#captureWireStatusServer`, `#serverSnapshot`, `resolvesSameCredentials`, `#pendingSyncs`, `#queueSync`, `#releasedSessions`, `#disposeIfDeferredAndIdle` and the `#disposed` checks and the `onCredentialsChanged` closure in `#syncFromConfig` in `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`.
+
+## 2026-10-06 - Nonblocking first-turn MCP admission (senpi#2843)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: first-turn and preview prompt assembly no longer wait for deferred remote catalog completion. They retain single-flight session attachment and compose from the known instructions; completed background registration refreshes subsequent turns.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: startup connections are backgrounded immediately, and RPC inventory reads the known catalog instead of issuing remote list requests during admission. Pending startup catalogs report a connecting state.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/catalog-cache.ts`: background catalog collection also retains resource templates so the local RPC inventory can present them without remote requests.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/catalog-cache.ts`: per-server cache updates merge under the existing bounded filesystem-lock pattern before atomic replacement, preserving different servers' concurrent updates rather than only preventing torn JSON.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/catalog-cache.ts`, `startup-race.ts`, `service-tools-changed.ts`, and `shared-connection.ts`: delayed writes recheck current ownership after lock acquisition, reads and temporary-file writes; retired owners cannot replace the cache. Shared writes require at least one current lease, and temporary files are cleaned on every exit.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/catalog-cache.ts` and `service.ts`: matching last-known metadata remains eligible regardless of age. Age triggers a nonblocking background refresh for lazy servers; config and credential mismatches still withhold metadata, and invocation checks the fresh catalog.
+- `auth/{token-store,legacy-lock,legacy-migration,oauth-refresh}.ts`: background OAuth preparation acquires the existing legacy migration file lock asynchronously instead of spinning on the session event loop. Synchronous and asynchronous readers share one migration module and the same exclusive grant claim; first-provider delivery proceeds while another process owns that lock. Token persistence remains in the store.
+- `invocation.ts`, `catalog.ts`, `service-register.ts`, and `expose/{register,proxy,tier-b,session}.ts`: direct, promoted, and proxy calls use one current-catalog resolver, raw-schema validation without coercion, session/configuration checks, and a final synchronous permission fence. Removed tools return a structured unavailable result without a remote call; private offered-operation identity follows deferred promotion and each proxy owns its schema identity.
+- `startup-race.ts`, `service-types.ts`, `service-connection.ts`, and `service.ts`: readiness is single-flight per entry and bound to the connection generation. Successful metadata becomes available only after collection, remains in memory when persistence fails, and replaced/disabled entries cannot publish it as current.
+- `shared-connection.ts`: a failed cache write warns the current lease owners but does not reject the successful live catalog or memoize failed readiness. Real-service regressions block the cache directory and retain both the first and later calls on private and shared connections.
+- `permission-system/dispatch.ts`: retired authority remains required for the same session-manager lifetime, including an inline extension without a builtin path identifier. Preparation, approval and final dispatch reject retirement until a new authorizer registers. A session where enforcement was never loaded remains distinct; intentionally disabling enforcement on reload does not clear an existing retired registration and currently requires a fresh session (follow-up senpi#2873).
+- `expose/call.ts` and `expose/register.ts`: connection readiness and bounded renewal complete before the narrowly classified failed-send retry; each actual retry still resolves current metadata and permission before dispatch. The invocation deadline uses the existing safe timer and output error path.
+- `expose/tier-b.ts`: selected catalog refresh retains previously promoted current tool definitions, including default search promotion, without restoring vanished or remapped operations.
+- `service.ts`: OAuth inventory uses a local credential snapshot without token migration. Revoked credentials retain public re-authentication guidance and `needs_auth` status while obsolete transports, catalog entries, and server metadata remain unavailable.
+- `service.ts`: attaching a peer with an identical resolved configuration preserves the current configuration object, so that peer's attach and later teardown cannot retire another live session's invocation fence. An actual configuration change still replaces the object and invalidates prior offers; binding, connection and credential checks remain independent.
+- `auth/catalog-identity.ts`, `catalog-cache.ts`, `service.ts`, `service-connection.ts`, `service-types.ts`, `connection-types.ts`, `sharing-policy.ts`, `shared-connection.ts`, `startup-race.ts`, `service-tools-changed.ts`, and `service-register.ts`: opaque credential fingerprints bind cached metadata and connection ownership. Local OAuth snapshots never invoke token migration or refresh. A changed credential withholds prior tools, instructions, and RPC metadata; selected readiness replaces only that owner's connection, and final dispatch rejects obsolete credentials. Token rotation conservatively invalidates cached metadata and Once evidence instead of inferring account continuity.
+
+### Why
+
+- A cold MCP catalog delayed the first provider request even when the message required no MCP tool. A held local catalog response reproduces the admission barrier through the real session and extension harness.
+
+### Why an extension could not handle it
+
+- The wait belongs to the existing MCP builtin's prompt hook and cannot be removed by another extension.
+
+### Expected merge conflict zones
+
+- Single-flight attachment and `before_agent_start` in `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`.
+- Startup synchronization and wire inventory in `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`; collection and normalization in `packages/coding-agent/src/core/extensions/builtin/mcp/catalog-cache.ts`.
+
+## 2026-10-09 - Concurrent log rotation never disables a log sink (senpi#2976)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/log.ts`: `FileMcpLogger` rotates through `rotateLogIfNeeded` (its private `#rotateIfNeeded` is gone) and its file sink retries after `LOG_SINK_RETRY_MS` instead of staying disabled for the process lifetime; the ring buffer still records the failure.
+
+### Why
+
+- Several processes share one agent dir (engine host, CLI, desktop host). Rotation was a non-atomic stat, remove `.1`, rename: when two crossed the cap together, the loser's rename threw ENOENT and its sink stayed disabled for the rest of the process, and the remove step could delete a generation another process had just rotated. A four-process burst dropped hundreds of lines per losing process. Rotation now goes through `core/log-file-rotation.ts` (an exclusive lock file and a size re-check under it), a lost race keeps appending, a failed sink retries after `LOG_SINK_RETRY_MS` (5 s), and the mode is set on the open descriptor.
+
+### Why an extension could not handle it
+
+- This is the builtin extension's own log writer.
+
+### Expected merge conflict zones
+
+- LOW: `FileMcpLogger.#writeFile` in `mcp/log.ts`.
+
 ## 2026-10-04 - Interactive MCP server manager (senpi#2716)
 
 ### What changed
@@ -985,3 +1166,26 @@ The token store is the fork's credential-persistence layer; no extension hook si
 ### Expected merge conflict zones
 
 Upstream edits to `token-store.ts` legacy migration at the next sync.
+
+
+## 2026-10-08 - Bind stored OAuth credentials to their authorization server; legible cross-origin redirect refusal (senpi#2940)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@modelcontextprotocol/sdk` 1.30.0 -> 1.32.1 (GHSA-6qxp-vccf-f47h: the OAuth client could send credentials to an authorization server chosen by the MCP server). `proxy-addr` resolves 2.0.8 (GHSA-jqcg-44mw-7w3h) in the lockfiles.
+- `auth/token-store.ts`, `auth/oauth-provider.ts`: `McpStoredAuth.issuer` records the authorization server that issued the tokens. `mergeTokensIntoStoredAuth` keeps the SDK's `issuer` stamp (it was dropped before, so the SDK's binding never applied to refresh tokens), and `storedAuthToTokens` hands it back. `storedGrantIssuer` falls back to the sign-in's `discoveryState.authorizationServerUrl` for a record saved before the stamp existed; a record with neither cannot be attributed, and its refresh token is withheld.
+- `auth/oauth-refresh.ts`: `McpRefreshManager` refreshes only at the authorization server that issued the grant. An unattributed grant or one bound to a different authorization server is a continuity break: the credentials are cleared and `needs_auth` asks for a fresh sign-in, naming both servers.
+- `auth/oauth.ts`: client-credentials tokens are stamped with the discovered authorization server.
+- `transport.ts`: the SDK (1.32+) follows HTTP redirects only within the endpoint's origin; senpi keeps that default. A connect that fails on a cross-origin redirect now names the endpoint origin, the redirect origin, the same-origin rule and the URL to configure.
+
+### Why
+
+A refresh token is a long-lived credential; presenting it to an authorization server other than its issuer leaks it. The SDK fixed this by stamping what it saves, which only works if the provider persists the stamp.
+
+### Why an extension could not handle it
+
+The token store and refresh manager are this builtin's credential layer.
+
+### Expected merge conflict zones
+
+`auth/oauth-provider.ts` token mapping and `auth/oauth-refresh.ts` `#doRefresh` at the next SDK or upstream sync.

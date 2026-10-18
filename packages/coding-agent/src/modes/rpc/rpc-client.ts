@@ -16,8 +16,11 @@ import { type ClientMessageIdentity, clientMessageIdentity } from "../../core/cl
 import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
+import type { ResolvedMessagePath } from "../../core/message-path-resolution.ts";
 import { MissingSessionCwdError } from "../../core/session-cwd.ts";
 import { unknownCommandErrorFromWire } from "../../core/unknown-command.ts";
+import { DETACH_CONNECTION_CAPABILITY } from "./custom-capability.ts";
+import { ORIGIN_HOST_INSTANCE_FIELD, originHostInstance } from "./host-observe-request.ts";
 
 /** A command the host refused; `errorCode` carries the typed code when the command defines one. */
 export class RpcCommandError extends Error {
@@ -40,8 +43,12 @@ import {
 	OPEN_AFTER_QUEUED_DEADLINE_MS,
 	openStalledMessage,
 	PROMPT_ACK_MAX_WAIT_MS,
+	PROMPT_AFTER_QUEUED_DEADLINE_MS,
 	PROMPT_COMPACTION_DEADLINE_MS,
+	promptStalledMessage,
 	REQUEST_DEADLINE_MS,
+	RpcRequestTimeoutError,
+	requestDeadlineMs,
 } from "./rpc-request-deadline.ts";
 import type {
 	EditAssistantMessageResult,
@@ -49,6 +56,8 @@ import type {
 	RpcAccountFailoverEvent,
 	RpcAuthAccountsChangedEvent,
 	RpcCommand,
+	RpcEvalCell,
+	RpcEvalCellSnapshot,
 	RpcExtensionEvent,
 	RpcExtensionUIProgress,
 	RpcExtensionUIRequest,
@@ -61,6 +70,7 @@ import type {
 	RpcSessionReplacedEvent,
 	RpcSessionState,
 	RpcSlashCommand,
+	RpcUnloadAnswer,
 } from "./rpc-types.ts";
 import { RPC_ERROR_UNKNOWN_COMMAND } from "./rpc-types.ts";
 import {
@@ -169,6 +179,15 @@ export function isTransportGoneError(error: unknown): error is RpcTransportGoneE
 	);
 }
 
+/** The options of a typed `abort` (see `docs/rpc.md`, `abort`). */
+export type RpcAbortOptions = Omit<Extract<RpcCommand, { type: "abort" }>, "type" | "id" | "sessionId">;
+/** The host's answer to a typed `abort`; an older host answers with no data. */
+export type RpcAbortAnswer = Extract<RpcResponse, { command: "abort"; success: true }>["data"];
+/** `get_effect_status`: the receipt, or proof the whole transcript holds none. */
+export type RpcEffectStatusAnswer = Extract<RpcResponse, { command: "get_effect_status"; success: true }>["data"];
+/** `get_pending_inputs`: pending inputs in durable custody, and an outcome for each known id. */
+export type RpcPendingInputsAnswer = Extract<RpcResponse, { command: "get_pending_inputs"; success: true }>["data"];
+
 export class RpcClientOpenInFlightError extends Error {
 	readonly code = "open_session_in_flight" as const;
 
@@ -215,6 +234,8 @@ export class RpcClient {
 	private disconnectNotified = false;
 	private stopping = false;
 	private options: RpcClientOptions;
+	/** The host generation this client runs inside, named on every socket request (#3272). */
+	private readonly originHost = originHostInstance();
 
 	constructor(options: RpcClientOptions = {}) {
 		this.options = options;
@@ -282,7 +303,7 @@ export class RpcClient {
 				// SENPI_RUNTIME=bun pin makes the launcher re-exec under Bun via spawnSync, so a
 				// SIGTERM to the wrapper leaves the Bun host running: it keeps the session lease
 				// and keeps writing session state after stop() resolved. Pin the runtime to the
-				// interpreter chosen here, the same way app-server/daemon.ts does; options.env is
+				// interpreter chosen here; options.env is
 				// spread last so a caller can still override the pin explicitly.
 				SENPI_RUNTIME: "node",
 				...this.options.env,
@@ -455,6 +476,8 @@ export class RpcClient {
 	}
 
 	async openSession(options: {
+		/** Attach only on this generation; requires `expected_host_instance`. */
+		expectedHostInstance?: string;
 		sessionPath?: string;
 		cwd?: string;
 		provider?: string;
@@ -499,6 +522,17 @@ export class RpcClient {
 		await this.send(progress, true, undefined, false);
 	}
 
+	/** `unload_session`: a refusal is an answer (`outcome: "refused"` with reason and action), not a throw. */
+	async unloadSession(
+		options: Omit<Extract<RpcCommand, { type: "unload_session" }>, "type" | "id" | "sessionId"> & {
+			readonly sessionId?: string;
+		},
+	): Promise<RpcUnloadAnswer> {
+		const sessionId = options.sessionId ?? this.sessionId;
+		if (!sessionId) throw new Error("unload_session needs a session");
+		return this.getData<RpcUnloadAnswer>(await this.send({ ...options, type: "unload_session", sessionId }, false));
+	}
+
 	async closeSession(sessionId = this.sessionId): Promise<void> {
 		if (!sessionId) return;
 		try {
@@ -512,7 +546,23 @@ export class RpcClient {
 		}
 	}
 
-	async listSessions(): Promise<
+	/**
+	 * Drop this connection's session attachments and wait until the host confirms they are gone (senpi#3238).
+	 * A host without `detach_connection` is left to today's release on socket close: `"unsupported"`.
+	 * Otherwise `deferred` names the sessions that still count this connection (see `detach_connection`).
+	 */
+	async detachConnection(): Promise<{ readonly deferred: readonly string[] } | "unsupported"> {
+		const info = this.getData<{ capabilities?: unknown }>(await this.send({ type: "get_protocol_info" }, false));
+		if (!Array.isArray(info.capabilities) || !info.capabilities.includes(DETACH_CONNECTION_CAPABILITY))
+			return "unsupported";
+		const data = this.getData<{ deferred?: unknown }>(await this.send({ type: "detach_connection" }, false));
+		const deferred = Array.isArray(data?.deferred)
+			? data.deferred.filter((id): id is string => typeof id === "string")
+			: [];
+		return { deferred };
+	}
+
+	async listSessions(options?: { observe?: boolean; include_workers?: boolean }): Promise<
 		Array<{
 			sessionId: string;
 			durableSessionId?: string;
@@ -524,7 +574,7 @@ export class RpcClient {
 			attachments?: number;
 		}>
 	> {
-		const response = await this.send({ type: "list_sessions" }, false);
+		const response = await this.send({ type: "list_sessions", ...options }, false);
 		return this.getData<{
 			sessions: Array<{
 				sessionId: string;
@@ -660,14 +710,57 @@ export class RpcClient {
 	}
 
 	/**
-	 * Abort current operation.
+	 * Abort current operation. With no options this is the fire-and-forget abort it always was (transport
+	 * loss resolves). With options it is the typed abort: `effectId` records a receipt, `awaitIdle` answers
+	 * once the turn stopped (or `graceMs` passed), `clearQueue` drains queued input first; the host's
+	 * answer (`effectId`, `state`, `effect`, `stopped`, `idle`, `cleared`) is returned.
 	 */
-	async abort(): Promise<void> {
-		try {
-			await this.send({ type: "abort" });
-		} catch (error) {
-			if (!isTransportGoneError(error)) throw error;
+	async abort(): Promise<void>;
+	async abort(options: RpcAbortOptions): Promise<RpcAbortAnswer>;
+	async abort(options?: RpcAbortOptions): Promise<RpcAbortAnswer | undefined>;
+	async abort(options?: RpcAbortOptions): Promise<unknown> {
+		if (options === undefined) {
+			try {
+				await this.send({ type: "abort" });
+			} catch (error) {
+				if (!isTransportGoneError(error)) throw error;
+			}
+			return;
 		}
+		return this.getData<RpcAbortAnswer>(await this.send({ ...options, type: "abort" }));
+	}
+
+	/**
+	 * The newest receipt of one effect (`get_effect_status`, capability `effect_ledger`). With `sessionPath`
+	 * the host reads that transcript from disk, so a session no host holds is answered without loading it.
+	 */
+	async getEffectStatus(
+		effectId: string,
+		options: { readonly sessionPath?: string } = {},
+	): Promise<RpcEffectStatusAnswer> {
+		const command = {
+			type: "get_effect_status" as const,
+			effectId,
+			...(options.sessionPath === undefined ? {} : { sessionPath: options.sessionPath }),
+		};
+		return this.getData<RpcEffectStatusAnswer>(await this.send(command, options.sessionPath === undefined));
+	}
+
+	/**
+	 * The pending inputs in durable custody (queued, sending, failed) and an explicit outcome for each id in
+	 * `knownClientMessageIds` (at most 64), consistent through `throughCursor`.
+	 */
+	async getPendingInputs(knownClientMessageIds?: readonly string[]): Promise<RpcPendingInputsAnswer> {
+		const command = {
+			type: "get_pending_inputs" as const,
+			...(knownClientMessageIds === undefined ? {} : { knownClientMessageIds: [...knownClientMessageIds] }),
+		};
+		return this.getData<RpcPendingInputsAnswer>(await this.send(command));
+	}
+
+	/** Abort with host refusals and transport loss surfaced to machine callers. */
+	async abortStrict(): Promise<void> {
+		this.getData(await this.send({ type: "abort" }));
 	}
 
 	async abortCompaction(): Promise<void> {
@@ -690,7 +783,7 @@ export class RpcClient {
 	async clearQueue(options?: { abortWillFollow?: boolean }): Promise<{
 		steering: string[];
 		followUp: string[];
-		ordered: Array<{ text: string; mode: "steer" | "followUp"; enqueueOrder: number }>;
+		ordered: Array<{ text: string; mode: "steer" | "followUp"; enqueueOrder: number; revision: number }>;
 	}> {
 		const response = await this.send({ type: "clear_queue", abortWillFollow: options?.abortWillFollow });
 		return this.getData(response);
@@ -933,6 +1026,11 @@ export class RpcClient {
 		return this.getData(response);
 	}
 
+	/** Which file a message's path means, by the engine's one rule (senpi#3415). */
+	async resolvePath(path: string): Promise<ResolvedMessagePath> {
+		const response = await this.send({ type: "resolve_path", path });
+		return this.getData(response);
+	}
 	/**
 	 * Export session to HTML.
 	 */
@@ -985,11 +1083,19 @@ export class RpcClient {
 	}
 
 	/**
-	 * Get session entries in append order, optionally only those after the `since` entry id.
+	 * Get session entries in append order, optionally only those after the `since` entry id. Pass `page`
+	 * (`limit` and/or `maxBytes`) to read a long history in bounded pages: repeat with `since: nextSince`
+	 * until `hasMore` is false. An unpaged read of a history too large for one answer fails with
+	 * `response_too_large`.
 	 */
-	async getEntries(since?: string): Promise<{ entries: SessionEntry[]; leafId: string | null }> {
-		const response = await this.send({ type: "get_entries", since });
-		return this.getData<{ entries: SessionEntry[]; leafId: string | null }>(response);
+	async getEntries(
+		since?: string,
+		page?: { readonly limit?: number; readonly maxBytes?: number },
+	): Promise<{ entries: SessionEntry[]; leafId: string | null; hasMore?: boolean; nextSince?: string }> {
+		const response = await this.send({ type: "get_entries", since, ...page });
+		return this.getData<{ entries: SessionEntry[]; leafId: string | null; hasMore?: boolean; nextSince?: string }>(
+			response,
+		);
 	}
 
 	/**
@@ -1100,6 +1206,23 @@ export class RpcClient {
 		return this.getData<T>(response);
 	}
 
+	/** Read live and recently settled eval cells without a model tool call. */
+	async listEvalCells(): Promise<RpcEvalCell[]> {
+		return this.getData<RpcEvalCell[]>(await this.send({ type: "eval_cells.list" }));
+	}
+
+	/** Read a bounded UTF-8 output tail; the host caps tailBytes at 64 KiB. */
+	async peekEvalCell(cellId: string, tailBytes?: number): Promise<RpcEvalCellSnapshot> {
+		return this.getData<RpcEvalCellSnapshot>(
+			await this.send({ type: "eval_cells.peek", cellId, ...(tailBytes === undefined ? {} : { tailBytes }) }),
+		);
+	}
+
+	/** Stop a session-owned cell and return its confirmed terminal snapshot. */
+	async stopEvalCell(cellId: string): Promise<RpcEvalCellSnapshot> {
+		return this.getData<RpcEvalCellSnapshot>(await this.send({ type: "eval_cells.stop", cellId }));
+	}
+
 	/** List safe metadata for the named provider's configured account slots. */
 	async getProviderAccounts(provider: string): Promise<RpcProviderAccount[]> {
 		const response = await this.send({ type: "get_provider_accounts", provider });
@@ -1109,6 +1232,11 @@ export class RpcClient {
 	/** Pin a provider account for future session-affine requests, or clear the pin. */
 	async pinProviderAccount(provider: string, name: string | null): Promise<void> {
 		await this.send({ type: "account_pin", provider, name });
+	}
+
+	/** Set the order the provider's accounts are tried in after a pin, or clear it with null. */
+	async orderProviderAccounts(provider: string, names: string[] | null): Promise<void> {
+		await this.send({ type: "account_order", provider, names });
 	}
 
 	/** Remove a persisted provider account slot. Environment slots are read-only. */
@@ -1298,6 +1426,7 @@ export class RpcClient {
 			...command,
 			...(route && this.sessionId && !("sessionId" in command) ? { sessionId: this.sessionId } : {}),
 			...(ownId === undefined ? { id } : {}),
+			...(this.socket && this.originHost ? { [ORIGIN_HOST_INSTANCE_FIELD]: this.originHost } : {}),
 		} as RpcCommand;
 
 		if (!expectResponse) {
@@ -1308,6 +1437,7 @@ export class RpcClient {
 		return new Promise((resolve, reject) => {
 			const timeoutMessage = () => `Timeout waiting for response to ${command.type}. Stderr: ${this.stderr}`;
 			let promptCap: ReturnType<typeof setTimeout> | undefined;
+			let promptReceived = false;
 			const expire = (timeoutError: Error) => {
 				clearTimeout(promptCap);
 				const pending = this.pendingRequests.get(id);
@@ -1318,7 +1448,7 @@ export class RpcClient {
 			const deadline = armRequestDeadline(
 				command.type === "prompt" && sessionId === this.sessionId && this.isCompacting()
 					? PROMPT_COMPACTION_DEADLINE_MS
-					: REQUEST_DEADLINE_MS,
+					: requestDeadlineMs(command),
 				timeoutMessage,
 				expire,
 			);
@@ -1326,7 +1456,7 @@ export class RpcClient {
 			if (command.type === "prompt") {
 				promptCap = setTimeout(() => {
 					deadline.clear();
-					expire(new Error(timeoutMessage()));
+					expire(new RpcRequestTimeoutError(timeoutMessage()));
 				}, PROMPT_ACK_MAX_WAIT_MS);
 			}
 
@@ -1345,10 +1475,18 @@ export class RpcClient {
 				...(command.type === "prompt"
 					? {
 							onCompaction: (compacting: boolean) =>
-								deadline.extend(
-									compacting ? PROMPT_COMPACTION_DEADLINE_MS : REQUEST_DEADLINE_MS,
-									timeoutMessage,
-								),
+								compacting
+									? deadline.extend(PROMPT_COMPACTION_DEADLINE_MS, timeoutMessage)
+									: promptReceived
+										? deadline.extend(PROMPT_AFTER_QUEUED_DEADLINE_MS, promptStalledMessage)
+										: deadline.extend(REQUEST_DEADLINE_MS, timeoutMessage),
+							// The host received the prompt: its preflight may outlive the plain request deadline (senpi#2871).
+							// A compaction's own wait is longer: the acknowledgement must never shorten it.
+							onQueued: () => {
+								promptReceived = true;
+								if (!this.isCompacting())
+									deadline.extend(PROMPT_AFTER_QUEUED_DEADLINE_MS, promptStalledMessage);
+							},
 						}
 					: {}),
 				...(command.type === "open_session"

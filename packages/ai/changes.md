@@ -1,3 +1,195 @@
+## 2026-10-15 - Effective-dated cost cards in the generated catalog (senpi#3378)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: the per-model post-pass calls `applyDatedListPrice` (new fork file `scripts/dated-list-prices.ts`), which pins the Argon rows on `google` and `google-vertex` to the introductory card plus a `2026-12-01T08:00:00Z` list-price card. `google.json` and `google-vertex.json` were regenerated with `--strict --providers google,google-vertex`: no row added or removed, and only the two Argon rows' `cost` changed.
+- `packages/ai/scripts/model-data.ts`: `cost.effectiveRates` is validated: a non-empty array, ISO UTC `effectiveFrom` (seconds or milliseconds, `Z` only), no two cards starting at the same instant, and four finite non-negative rates per card.
+
+### Why
+
+- senpi#3378: the provider moves the 2026-10-13 Argon model from $2/$10 to $4/$20 per 1M tokens on 2026-12-01 08:00Z. A single static card under-reports every request after that instant by 2x until a catalog refresh, and a session loaded before the refresh keeps the old card even after it.
+
+### Why an extension could not handle it
+
+- The cost card is baked into the generated catalog and its validator is the generator's schema authority; an extension cannot change either.
+
+### Expected merge conflict zones
+
+- LOW: the post-pass loop in `generate-models.ts` (one line) and the cost block of `validateModelEntry` in `model-data.ts`.
+
+## 2026-10-14 - Direct google-auth-library dependency
+
+### What changed
+
+- `packages/ai/package.json`: adds `google-auth-library` 10.6.2 as a direct dependency (already installed at that version through `@google/genai`; lockfiles gain only the workspace edge).
+
+### Why
+
+- `packages/ai/package.json`: the direct dependency supports `src/api/google-vertex-adc.ts`, which imports `GoogleAuth` to mint ADC access tokens for the `vertex-model-garden` open-model extension; a transitive import would violate pinned-dependency rules. No Claude-specific AI transport is included.
+
+### Why an extension could not handle it
+
+- `packages/ai/package.json`: package dependencies must be declared by the package that imports them, before runtime extensions load.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/package.json`, one line in the `dependencies` block.
+
+## 2026-10-15 - OpenCode Go uses its documented inference base (senpi#3377)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: the `opencode-go` variant's base path is `https://opencode.ai/inference/go` instead of `https://opencode.ai/zen/go`. `src/providers/data/opencode-go.json` was regenerated with `--providers opencode-go`: all 31 rows kept, and only `baseUrl` changed (`/zen/go` -> `/inference/go`, `/zen/go/v1` -> `/inference/go/v1`).
+
+### Why
+
+- The legacy base still proxies the OpenAI and Anthropic wires but has no route for the native generate-content wire: `POST /zen/go/v1/models/<id>:streamGenerateContent` returns a 404 HTML page, while the same path on `/inference/go/v1` reaches the API. The Argon Contributor row is served only over that wire, so every request to it failed (senpi#3377; measured 2026-10-15).
+
+### Why an extension could not handle it
+
+- The base URL is baked into the generated catalog every builtin provider request reads; an extension cannot move a builtin row's endpoint.
+
+### Expected merge conflict zones
+
+- LOW: the `opencodeVariants` entry in `generate-models.ts`; `opencode-go.json` and `.manifest.json` are generated.
+
+## 2026-10-14 - Venice deepseek models take thinking through reasoning_effort (senpi#3308)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: the deepseek-v4 compat post-pass treats `venice` like `openrouter` and `opencode`. It keeps only `requiresReasoningContentOnAssistantMessages` and leaves Venice's auto-detected `reasoning_effort` format in place, instead of stamping DeepSeek's native `thinkingFormat: "deepseek"`. `src/providers/data/venice.json` was regenerated with `--providers venice` (no model added or removed). The six Venice deepseek-v4 entries lost `thinkingFormat: "deepseek"`, and their `thinkingLevelMap` now follows Venice's published efforts (`off: "none"`, then `low`/`medium`/`high`/`max` as models.dev lists them per model).
+
+### Why
+
+- Venice's chat schema is `additionalProperties: false` and has no `thinking` field. The deepseek format always sent `thinking: { type: "enabled" | "disabled" }`, so every request to a Venice deepseek model failed with `400 Invalid request parameters` ("Unrecognized key(s) in object: 'thinking'"), whatever the thinking level (senpi#3308, captured on the wire by the reporter).
+
+### Why an extension could not handle it
+
+- The compat flags are baked into the generated catalog that every provider request reads; an extension cannot change a builtin model's request shape before the provider builds the payload.
+
+### Expected merge conflict zones
+
+- LOW: the `preservesNativeReasoningEffort` line in the deepseek-v4 post-pass of `generate-models.ts`; `venice.json` and `.manifest.json` are generated.
+
+## 2026-10-13 - Idempotent catalog generation (whole-manifest key)
+
+### What changed
+
+- `packages/ai/scripts/model-data.ts`: `stableGeneratedAt(newManifest, committedManifest)` keeps the committed `generatedAt` when the new manifest equals the committed one on `structureHash` AND every `files` hash; otherwise the fresh timestamp.
+- `packages/ai/scripts/generate-models.ts`: builds the new manifest after `fileContents` is populated and applies the stable timestamp only when no explicit `--generatedAt` was passed.
+- The committed catalog (`.manifest.json`, `opencode.json`, `openrouter.json`) is refreshed from the live providers.
+
+### Why
+
+The releasability drift check regenerated the catalog with a fresh `generatedAt` and diffed the whole file, so it always failed on the timestamp. An idempotent key that covers the whole manifest except the timestamp keeps the drift check green on unchanged content while still tripping on a real change (a new/removed model, or a field edit).
+
+### Why an extension could not handle it
+
+The catalog's `generatedAt` and the manifest comparison are build-time constants in the generator, not something an extension can override at runtime.
+
+### Expected merge conflict zones
+
+The manifest's `generatedAt` and `structureHash` lines.
+
+## 2026-10-10 - Test-run temporary storage has an owner (senpi#3064)
+
+### What changed
+
+- `packages/ai/package.json`: test invocations use scripts/run-tests.mjs so TMPDIR/TEMP/TMP are scoped before the test runtime starts and cleaned after exit.
+- `packages/ai/vitest.config.ts`: always load the fixture teardown adapter, retaining CI diagnostics; plain subprocess helpers do not import framework hooks.
+
+### Why
+
+- Vitest SSR copies and interrupted fixture writes must not accumulate in the OS temp directory.
+
+### Why an extension could not handle it
+
+- Test-process bootstrap is repository tooling, before runtime extensions load.
+
+### Expected merge conflict zones
+
+- Test command arguments and runtime selection; preserve existing reporters, shards and test filters.
+
+## 2026-10-12 - Subscription GPT-6.1 Sol 500k default (senpi#3150)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: the ChatGPT subscription `gpt-6.1-sol` row literal and final context metadata pass both use the subscription-specific 500000 prompt budget. Priority and Ultrafast clone that processed row. The subscription shard and manifest are regenerated with `--strict --providers chatgpt-subscription`.
+
+### Why
+
+- Requested by @code-yeongyu for the next release. The live Codex catalog fetched 2026-10-12T00:15Z reports `context_window: 500000`, `max_context_window: 872000`, and no explicit auto-compaction limit. The previous 400000 was a deliberate project budget inherited from GPT-6 Sol, not this live subscription default.
+- API and gateway budgets, other subscription models, output limits and the >272K price tier remain unchanged. Subscription surcharge removal is unconfirmed. The shared model contract has no separate subscription maximum field, so none is added.
+- Compaction thresholds/reserve and context-usage display already derive from the selected model window. The 500000 default yields a 350000 adaptive threshold, a 20000 scaled reserve, and 25000 retained-token budget under the existing default policy.
+
+### Why an extension could not handle it
+
+- `packages/ai/scripts/generate-models.ts` owns the shipped builtin catalog and its clone metadata; local overrides cannot correct the default for every installation.
+
+### Expected merge conflict zones
+
+- LOW: the constants and final context metadata pass in `packages/ai/scripts/generate-models.ts`. Regenerate the subscription shard and manifest rather than hand-merging generated data.
+
+## 2026-10-08 - Native ChatGPT Subscription Sol Ultrafast catalog variant
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: clones the fully processed ChatGPT Subscription `gpt-6.1-sol` row into `gpt-6.1-sol-ultrafast`, with upstream model `gpt-6.1-sol`, service tier `ultrafast`, and default thinking level `xhigh`. The generated subscription shard and manifest are regenerated with a provider-scoped run.
+
+### Why
+
+- Make the working subscription alias selectable from the native catalog without a local extension. Preserve Sol's Standard base and long-context cost metadata; the adapters apply the published Ultrafast 6x multiplier at request time without double-counting.
+- The `xhigh` default deliberately preserves the existing local alias's high-reasoning preset while requesting faster serving; it is not the backend's default effort or a minimum-latency preset, and users can select a lower effort.
+
+### Why an extension could not handle it
+
+- A local extension can register the alias, but cannot make it part of the shipped catalog for every installation.
+
+### Expected merge conflict zones
+
+- LOW: the variant emission block after metadata application in `packages/ai/scripts/generate-models.ts`. Regenerate catalog JSON and its manifest rather than hand-merging.
+
+## 2026-10-08 - Claude Haiku 5.5 catalog rows (senpi#2892)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`:
+  - An explicit `claude-haiku-5-5` anthropic row, kept only when models.dev omits it: limits 1M/128000, text + image input, effort low..max, and the 100K tier over the 0.1 / 0.5 / 0.01 / 0.125 base.
+  - `isAnthropicAdaptiveOnlyModel`, `isAnthropicAdaptiveThinkingModel`, `isAnthropicTemperatureUnsupportedModel`, `supportsAnthropicMidConvoEffort` and `supportsAnthropicMidConvoSystemMessages` match `haiku-5-5` / `haiku-5.5` the way they match Sonnet 5.5, and the effort-metadata merge covers `claude-haiku-5-5`.
+  - The adaptive-only comment records that Haiku 5.5 accepts `thinking: {type: "disabled"}` at effort `high` or below (its effort docs), and that a real thinking-off waits on marker handling (senpi#2927).
+  - `withClaudeHaiku55LongContextPricing`, run in the temporary-overrides pass, gives every Haiku 5.5 row that has no tier `inputTokensAbove: 100000` at five times each of its own base rates. Anthropic's long-context rates are exactly 5x the base. This covers regional Bedrock rows, OpenRouter's batch variant and gateway markups, and models.dev-tiered rows keep their tiers.
+  - The explicit Sonnet 5.5 fallback row's cache read is 0.1.
+  - The same pass caps every Haiku 5.5 row at `contextWindow: 100000` (the threshold of the 5x band) and, unconditionally, `maxTokens: 32000`, so compaction runs before a prompt crosses into long-context billing (upstream oh-my-pi #14903 caps the same way). The documented 1M / 128K is a `models.json` `modelOverrides` opt-in until senpi#2916 adds a first-class setting. Output drops with the window because compaction reserves min(maxTokens, half the window) for output: at 100K / 128K, emergency pruning would start at 47.5K, below the 60K adaptive threshold.
+- Regenerated with `--strict --providers anthropic,amazon-bedrock,opencode,opencode-go`:
+  - `anthropic.json` `claude-haiku-5-5`.
+  - `amazon-bedrock.json` `anthropic.`, `global.`, `us.`, `eu.`, `jp.`, `au.anthropic.claude-haiku-5-5`.
+  - `opencode.json` and `opencode-go.json` `claude-haiku-5-5`.
+  - Drift that rode along in `anthropic.json` from models.dev:
+    - `claude-sonnet-5-5` cache read 0.2 -> 0.1.
+    - `claude-sonnet-4-5` / `claude-sonnet-4-5-20250929` context 1M -> 200K with 100 images per request (https://platform.claude.com/docs/en/build-with-claude/context-windows).
+- `openrouter.json` (`anthropic/claude-haiku-5.5`, `anthropic/claude-haiku-5.5:batch`), `vercel-ai-gateway.json` (`anthropic/claude-haiku-5.5`) and `venice.json` (`claude-haiku-5-5`):
+  - Each row is the generator's own output from a `--strict --providers openrouter,venice,vercel-ai-gateway` run, inserted alone into the committed file.
+  - The manifest is rebuilt with `createModelDataManifest` and `check:model-data` passes.
+  - The rest of that run, unrelated upstream drift, was left out: about 25 OpenRouter metadata refreshes, 3 Vercel removals, and Venice price changes.
+- No `ANTHROPIC_ALLOWED_FALLBACK_MODELS` entry: Haiku 5.5 has no server-side refusal fallback.
+
+### Why
+
+Claude Haiku 5.5 shipped on 2026-10-07 (https://platform.claude.com/docs/en/models/haiku-5-5/overview):
+- adaptive thinking only (`budget_tokens` is a 400);
+- no sampling parameters;
+- signed thinking bound to the preceding conversation, like Sonnet 5.5;
+- forced `tool_choice` accepted;
+- request-wide long-context pricing above 100K input tokens.
+
+### Why an extension could not handle it
+
+Generated catalog data and the generator's model-family rules.
+
+### Expected merge conflict zones
+
+- LOW: the Anthropic family helpers, the explicit Opus/Sonnet/Haiku 5.5 rows and the temporary-overrides loop (Haiku 5.5 tier and window cap) in `generate-models.ts`. Generated JSON regenerates. A full regeneration of openrouter, vercel-ai-gateway or venice also brings the drift left out here.
+
 ## 2026-10-02 - OpenGateway catalog stays current: shared OpenAI input cap (senpi#2552)
 
 ### What changed
@@ -1804,3 +1996,22 @@ The package manifest and its export map are not an extension surface.
 ### Expected merge conflict zones
 
 Upstream manifest edits at the next sync.
+
+
+## 2026-10-08 - Official Kimi K3 cache-write price
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: `KIMI_K3_COST.cacheWrite` 0 -> 3, used for Moonshot's own K3 endpoints when upstream omits a price and for the Kimi Coding implied estimate.
+
+### Why
+
+- The official Kimi API price list (https://platform.kimi.ai/docs/pricing/chat) bills Kimi K3 cache writes at $3 per 1M tokens for the default 5-minute TTL ($6 for 1 hour); the catalog still had them at $0, which undercounted cost on requests that write the cache and failed the 2026.10.10-8 release regeneration once upstream data caught up.
+
+### Why an extension could not handle it
+
+- Built-in model prices are catalog data generated or kept in this package; nothing at runtime can correct them.
+
+### Expected merge conflict zones
+
+- LOW: the Kimi K3 cost constants when upstream reprices Kimi models.

@@ -1,3 +1,314 @@
+## 2026-10-18 - The pending-input module is a public subpath (senpi#3549)
+
+### What changed
+
+- `packages/coding-agent/package.json`: a new `./pending-input` export pointing at `dist/core/pending-input-public.{js,d.ts}`, a re-export-only barrel of the pending-input reducer, projection, types and store.
+
+### Why
+
+- `packages/coding-agent/package.json`: the desktop server and the omo child queue must embed the exact lifecycle module instead of reimplementing it (desktop #2838 plan).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/package.json`: package exports are part of the package manifest.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/package.json`, the `exports` map next to `./prompt-presets`.
+
+## 2026-10-15 - A removed custom provider stops being served after logout (senpi#3339)
+
+### What changed
+
+Regression tests only. `test/model-registry.test.ts` removes a custom provider id with a stored key and expects it gone from `getAll()` and `getAvailable()` after `refresh()`. `test/suite/rpc-auth-and-connection-handler.test.ts` runs the desktop's removal sequence over RPC (delete the models.json block, then `logout`) for a key-bearing and a keyless custom provider and expects `get_available_models` to drop it without a restart. `test/suite/rpc-connection-harness.ts` takes an optional `modelsJsonPath`, because the default passes the temp directory as the models path.
+
+### Why
+
+Desktop sisyphuslabs/omo-desktop-app#1812 kept its Remove action off because a removed server's models stayed listed. Current `logout` + unscoped `refresh()` rebuilds providers from `models.json`, and socket hosts share one `ModelRuntime`; nothing pinned that.
+
+### Why an extension could not handle it
+
+Tests of core RPC and model-runtime behavior.
+
+### Expected merge conflict zones
+
+- LOW: the `describe` blocks these tests join, when upstream adds neighbors there.
+
+## 2026-10-13 - Claude Agent SDK 0.3.296 (senpi#3258)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` pin moves 0.3.292 -> 0.3.296; `bun.lock` refreshes the pin and its 8 platform optionalDependencies.
+- The root `package-lock.json` (the 8 platform packages relocked) and `packages/coding-agent/install-lock/package-lock.json` follow the same pin; CI's `npm ci` jobs and the install-lock gate read those two.
+
+### Why
+
+- The releasability gate's "Claude Agent SDK currency" job fails while the pin trails the latest published release, blocking the 2026.10.12 release; the bump keeps new Claude models usable on anthropic-subscription.
+
+### Why an extension could not handle it
+
+- The SDK pin and its platform binaries are build-time dependency resolution, not runtime extension surface.
+
+### Expected merge conflict zones
+
+- The dependency pin line in `packages/coding-agent/package.json` and the matching `bun.lock` entries.
+- The SDK entries in the root `package-lock.json` and `packages/coding-agent/install-lock/package-lock.json` at the next dependency sync.
+
+## 2026-10-13 - Cover retired commands after leading options (senpi#3167)
+
+### What changed
+
+Extend `test/suite/regressions/3167-retired-app-server.test.ts` with leading boolean and valued options, early rejection before model-runtime creation, and positive controls for explicit modes, print values, delimiter-separated text, ordinary prompts and option values.
+
+### Why
+
+The first retirement guard missed legacy commands when a recognized option came first.
+
+### Why an extension could not handle it
+
+These tests verify CLI parsing before extensions or a model runtime are initialized.
+
+### Expected merge conflict zones
+
+The invocation tables and main-entry assertion in the retirement regression.
+
+## 2026-10-13 - Keep shared TPS regressions on supported modes (senpi#3167)
+
+### What changed
+
+Remove the retired app-server value from the context fixture and negative-mode cases in `test/suite/regressions/3236-tps-notify-tui-only.test.ts`, introduced by the main merge. Preserve the TUI notice and zero-output/elapsed assertions, and the RPC, JSON and print no-notice cases.
+
+### Why
+
+The retired protocol has no runnable mode; the shared TPS regression must continue covering every surviving mode.
+
+### Why an extension could not handle it
+
+This updates a repository test fixture, not runtime behavior.
+
+### Expected merge conflict zones
+
+The context mode union and `it.each` mode array in the TPS regression.
+
+## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
+
+### What changed
+
+Remove the dedicated app-server QA command, direct ws and @types/ws dependencies, and the deleted generated-tree build exclusion. Keep Native RPC QA on qa-shared, with a protocol-neutral fake API key.
+
+- `packages/coding-agent/package.json`
+- `packages/coding-agent/scripts/qa-rpc-socket/ensure-host.mjs`
+- `packages/coding-agent/scripts/qa-rpc-socket/host-lifecycle.mjs`
+- `packages/coding-agent/scripts/qa-rpc-socket/load-1000.mjs`
+- `packages/coding-agent/scripts/qa-shared/lib/env.mjs`
+- `packages/coding-agent/tsconfig.build.json`
+- `packages/coding-agent/vitest.config.ts`
+- `packages/coding-agent/test/compile-cache-invocation.test.ts`: retain session-cache coverage with JSON print mode instead of the retired command; preserve the legacy OpenAI provider argument cases.
+
+### Why
+
+The executable Codex compatibility layer is being removed. Shared Native runtime behavior and historical records must remain independent of that layer.
+
+### Why an extension could not handle it
+
+These host contracts, import paths and build or verification targets belong to the repository; an extension cannot retire them.
+
+### Expected merge conflict zones
+
+The listed paths, especially command dispatch, mode unions and process identity imports. Keep the supported runtime branches and the shared utility behavior.
+
+## 2026-10-12 - Native RPC QA owns neutral helper imports (Refs senpi#3167)
+
+### What changed
+
+- Moved scratch environment, process cleanup, the HTTP model fixture, and cleanup regression coverage to `scripts/qa-shared/lib`.
+- Extracted the shared PASS/FAIL reporter from the Codex JSON-RPC client.
+- Native RPC QA now imports the neutral modules. The existing app-server environment and cleanup entry points forward to the same module instances until the protocol removal lands, preserving external OmO QA consumers.
+- Added regression coverage for package-root resolution, environment isolation, shared scratch ownership, and a real HTTP fixture request.
+
+### Why
+
+- Native RPC and OmO QA reuse these helpers but do not speak the Codex app-server protocol. They must remain available when that protocol is removed.
+
+### Why an extension could not handle it
+
+- These scripts own test-process setup and teardown before runtime extensions load.
+
+### Expected merge conflict zones
+
+- `scripts/qa-app-server/lib` is removed by the following retirement PR. Preserve the neutral modules and their shared behavior tests.
+
+## 2026-10-12 - Document config/state separation (senpi#3178)
+
+### What changed
+
+- `packages/coding-agent/docs/settings.md` removes bookkeeping from settings tables and the config example, describes `state.json` migration and downgrade behavior, and adds git configuration guidance.
+- Settings and model-memory tests now inspect the separate state file; config-default assertions still inspect settings.
+- `packages/coding-agent/CHANGELOG.md` records the user-visible config stability change under Unreleased.
+
+### Why
+
+- Users need to know which files are portable configuration and which files to ignore.
+
+### Why an extension could not handle it
+
+- Documentation, regression fixtures and the release changelog belong to the package.
+
+### Expected merge conflict zones
+
+- Settings tables/examples, settings persistence assertions and the Unreleased Changed section.
+
+## 2026-10-12 - Host CLI fixtures own their spawned processes (Refs senpi#3064)
+
+### What changed
+
+- Windows fixture teardown records the PID from a successful `ensure --json`, opens supervisor/descendant handles before signalling that owned PID, and awaits their exits without relying on a CIM registration identity.
+- POSIX teardown retains the sandbox argv/descendant reaper after registration-based stop.
+- Each sandbox and direct fixture child is cleaned independently; teardown failures are aggregated after all remaining entries are attempted.
+- The Windows tests assert their start receipt is tracked, the owned PID is no longer alive, and the sandbox root is gone after teardown.
+- Scrubbed session-holder/logger and live-spike child environments retain owned TMPDIR/TEMP/TMP. The real tsx holder asserts that its compiler cache is created inside the fixture root.
+
+### Why
+
+- An unknown process-start identity made the prior Windows watcher path unreachable and the fallback stop refused, leaving a host alive. Production identity observation is investigated separately in senpi#3141.
+
+### Why an extension could not handle it
+
+- Test fixtures own subprocess lifetime before any runtime extension can affect cleanup.
+
+### Expected merge conflict zones
+
+- `test/suite/host-cli-support.ts` ownership receipts and cleanup ordering; keep POSIX and Windows stop paths distinct.
+
+## 2026-10-10 - Test-run temporary storage has an owner (senpi#3064)
+
+### What changed
+
+- `packages/coding-agent/package.json`: test invocations use scripts/run-tests.mjs so TMPDIR/TEMP/TMP are scoped before the test runtime starts and cleaned after exit.
+- `packages/coding-agent/vitest.config.ts`: register automatic fixture teardown in setup, not in a harness also imported by plain subprocess workers.
+
+### Why
+
+- Vitest SSR copies and interrupted fixture writes must not accumulate in the OS temp directory.
+
+### Why an extension could not handle it
+
+- Test-process bootstrap is repository tooling, before runtime extensions load.
+
+### Expected merge conflict zones
+
+- Test command arguments and runtime selection; preserve existing reporters, shards and test filters.
+
+## 2026-10-11 - Source-only eval RPC regression wiring (senpi#3072)
+
+### What changed
+
+- `packages/coding-agent/vitest.config.ts` resolves `@code-yeongyu/senpi` to its workspace source entry for the codemode/RPC integration regression, matching the codemode package's existing source-only test convention.
+
+### Why
+
+The regression must run the real codemode extension inside the coding-agent session without requiring a build or another lane's install.
+
+### Why an extension could not handle it
+
+The alias belongs to the package test runner's module resolution configuration.
+
+### Expected merge conflict zones
+
+- The additive `resolve.alias` entry in `packages/coding-agent/vitest.config.ts`.
+
+## 2026-10-11 - Public prompt generation facade (senpi#3104)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `./prompt-presets` now targets the generation facade, retaining every existing contract export and adding Native's preset/default builders and their types.
+
+### Why
+
+- Downstream hosts must generate the same model core rather than copy Native prompt bodies. Requested by @devxoul.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/package.json` owns public package exports; an extension cannot establish the supported import boundary.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/package.json`: the `exports["./prompt-presets"]` target.
+
+## 2026-10-10 - Runtime auto-routing delegates to the shared contract (omo #9851)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/presets.ts`: after the settings and `model.promptPreset` branches, `resolvePresetName` returns `resolveContractPresetName({ providerID, modelID, name })` instead of re-walking its own copy of the 22-branch precedence chain.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/contract.ts`: dropped the unused `PROMPT_PRESET_NAMES` export (duplicated `VALID_PRESETS` minus `auto`) and the redundant `as const` on readonly-annotated arrays.
+- `packages/coding-agent/test/suite/prompt-presets-contract.test.ts`: the whole `models.generated.ts` catalog resolves through both the runtime resolver and the contract and must match exactly, plus probe ids that fail when routing changes in only one resolver.
+
+### Why
+
+The matchers were single-source but the precedence order was duplicated between `presets.ts` and `contract.ts`, so a routing change made in only one of them (the past dotted-before-generic and snapshot-before-alias bugs) shipped silently. One resolver now owns the order.
+
+### Why an extension could not handle it
+
+The precedence lives inside the builtin prompt-preset extension's own dispatch; an external extension can only re-implement it, which is the drift this removes.
+
+### Expected merge conflict zones
+
+`presets.ts` `resolvePresetName` at the next upstream sync that touches prompt-preset routing.
+
+## 2026-10-10 - Public prompt-presets contract export (omo #9851)
+
+### What changed
+
+- `packages/coding-agent/package.json`: new public `./prompt-presets` export subpath serving the shared preset-resolution contract (`resolvePresetName`, `PROMPT_PRESET_MODEL_CASES`, `AUTO_RESOLVED_PRESET_NAMES`).
+
+### Why
+
+Downstream per-model prompt routing (oh-my-openagent #9856) needs to resolve model ids to the same presets as the runtime; the resolution logic was internal and unexported.
+
+### Why an extension could not handle it
+
+The export surface lives in the package manifest; a separate extension cannot add a public subpath.
+
+### Expected merge conflict zones
+
+The `exports` map in `packages/coding-agent/package.json` at the next upstream manifest sync.
+
+## 2026-10-07 - Claude Agent SDK 0.3.292 (senpi#2545)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` 0.3.289 -> 0.3.292; `bun.lock`, the root `package-lock.json` (with the 8 platform packages relocked) and `packages/coding-agent/install-lock` follow.
+
+### Why
+
+The nightly Releasability gate (senpi#2545) fails its SDK currency check while a newer SDK is published; 0.3.292 bundles Claude Code 2.1.292.
+
+### Why an extension could not handle it
+
+The SDK pin and the advertised Claude Code version are fixed at build time in the package manifest and the provider module.
+
+### Expected merge conflict zones
+
+The SDK pin line and the lockfiles at the next upstream dependency sync.
+
+## 2026-10-06 - Deterministic cross-generation close reproduction (#2729)
+
+### What changed
+
+- Added regressions that hold real claim deletion or an in-flight attachment rename, covering close completion, failed-start retry and preservation of successor ownership.
+
+### Why
+
+The reported handoff failure needs a deterministic product reproduction before changing teardown or the existing integration test.
+
+### Why an extension could not handle it
+
+Cross-generation reservation release and close completion belong to the RPC host lifecycle.
+
+### Expected merge conflict zones
+
+The RPC teardown, reservation implementation and this changelog.
+
 ## 2026-10-04 - Claude Agent SDK 0.3.289
 
 ### What changed
@@ -1588,3 +1899,22 @@ amplification or dropping classic per-event backpressure.
 - HIGH: `packages/coding-agent/package.json` `scripts`, `exports`, `dependencies` and `files` on every upstream release.
 - MEDIUM: `tsconfig.build.json` `paths`/`exclude` and `vitest.config.ts` `alias` when upstream adds workspaces.
 - LOW: `install-lock/package.json` (regenerated, never hand-edited).
+
+
+## 2026-10-08 - MCP SDK 1.32.1 for the OAuth issuer advisory (senpi#2940)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@modelcontextprotocol/sdk` pin 1.30.0 -> 1.32.1 (GHSA-6qxp-vccf-f47h). The lockfiles also resolve `proxy-addr` 2.0.8 (GHSA-jqcg-44mw-7w3h) inside the existing range. The issuer binding and redirect handling that go with it are recorded in `src/core/extensions/builtin/mcp/changes.md`.
+
+### Why
+
+- 1.30.0 can send saved OAuth credentials to an authorization server the MCP server chooses; the shipped-dependency audit flags it high.
+
+### Why an extension could not handle it
+
+- The SDK version is a package dependency pin; nothing at runtime can change it.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/package.json` `dependencies` when upstream moves the MCP SDK pin.

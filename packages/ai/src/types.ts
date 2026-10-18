@@ -23,6 +23,13 @@ import type { AssistantMessageEventStream } from "./utils/event-stream.ts";
 export type { Model } from "./model.ts";
 export type { SessionAffinityFormat } from "./openai-responses-compat.ts";
 export type OpenAIResponsesCompat = BaseOpenAIResponsesCompat & {
+	/**
+	 * Exact native search type for a compatible Responses endpoint.
+	 * OpenAI supports both names; xAI documents only web_search.
+	 * https://developers.openai.com/api/docs/guides/tools-web-search
+	 * https://docs.x.ai/developers/tools/web-search
+	 */
+	webSearchToolType?: "web_search" | "web_search_preview";
 	/** Whether the model supports message-anchored `additional_tools` input items. Default: false. */
 	supportsAdditionalTools?: boolean;
 	/** Whether the exact model accepts developer or system messages after the conversation has started. When false, later system messages are folded into the leading system message. Default: false; the generated model catalog enables it for verified models. */
@@ -725,6 +732,8 @@ export interface AssistantMessage {
 	stopDetails?: AssistantStopDetails;
 	deferred?: DeferredHandle;
 	errorMessage?: string;
+	/** Redaction-safe cause retained when a session projects a provider limit as user-facing advice. */
+	errorCause?: { type: "usage_limit"; scope: "account" | "model" };
 	/** Structured provider failure family, minted only by a provider adapter from structured error metadata. */
 	providerDiagnostic?: ProviderDiagnostic;
 	/** Explicit owner for an abort initiated by the provider retry watchdog. */
@@ -918,8 +927,9 @@ export interface Context {
 	tools?: Tool[];
 	/**
 	 * Names from `tools` the model may call on this request; absent means every tool is callable.
-	 * Set only for models whose compat declares `supportsAllowedTools`: the adapter keeps `tools`
-	 * byte-stable and restricts callability through `tool_choice` (senpi#2095).
+	 * Set only for models that `supportsAllowedToolChoice` accepts (the compat flag on a native OpenAI API
+	 * host): the adapter keeps `tools` byte-stable and restricts callability through `tool_choice`
+	 * (senpi#2095, senpi#3080).
 	 */
 	activeToolNames?: string[];
 }
@@ -979,6 +989,16 @@ export type AssistantMessageEvent =
  * Use this to override URL-based auto-detection for custom providers.
  */
 export interface OpenAICompletionsCompat {
+	/**
+	 * In-turn web search support on this exact endpoint. OpenRouter and Moonshot
+	 * have documented native defaults; Z.AI PAYG chat requires explicit opt-in
+	 * because its coding-plan endpoint documents remote MCP search instead.
+	 * https://openrouter.ai/docs/guides/features/server-tools/web-search
+	 * https://platform.kimi.ai/docs/guide/use-web-search
+	 * https://docs.z.ai/guides/tools/web-search
+	 * https://docs.z.ai/devpack/mcp/search-mcp-server
+	 */
+	supportsWebSearch?: boolean;
 	/** Whether the provider supports the `store` field. Default: auto-detected from URL. */
 	supportsStore?: boolean;
 	/** Whether the provider supports the `developer` role (vs `system`). Default: auto-detected from URL. */
@@ -1302,9 +1322,19 @@ export interface ModelCostTier extends ModelCostRates {
 	inputTokensAbove: number;
 }
 
-export interface ModelCost extends ModelCostRates {
+export interface ModelCostCard extends ModelCostRates {
 	/** Request-wide pricing tiers. The highest matching input threshold applies to the full request. */
 	tiers?: ModelCostTier[];
+}
+
+export interface ModelCostEffectiveRate extends ModelCostCard {
+	/** ISO 8601 UTC instant from which this card replaces the base card and every earlier dated card. */
+	effectiveFrom: string;
+}
+
+export interface ModelCost extends ModelCostCard {
+	/** Scheduled list-price changes, each billed for requests at or after its `effectiveFrom`. */
+	effectiveRates?: ModelCostEffectiveRate[];
 }
 
 export interface ModelImageResizeOptions {

@@ -1,3 +1,171 @@
+## 2026-10-18 - --tool-runtime selects where heavy tool work runs (senpi#3566)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: `Args.toolRuntime`, one parse branch for `--tool-runtime <in-process|child>` (an unknown value pushes the parse error "--tool-runtime must be in-process or child" and sets nothing) and one help line. The default and the `SENPI_TOOL_RUNTIME` fallback live in the fork-only `cli/tool-runtime.ts` (`resolveToolRuntime`), not here.
+
+### Why
+
+The per-session tool child (senpi#3566) needs one switch every mode reads. The flag is plumbing only in this step: it changes no execution.
+
+### Why an extension could not handle it
+
+CLI flags that the host process itself reads before any extension loads are parsed in core.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/cli/args.ts`: the `Args` interface beside `sessionRuntime`, the parse switch beside `--session-runtime`, and the help block.
+
+## 2026-10-15 - senpi host session unload (senpi#3225)
+
+### What changed
+
+- `packages/coding-agent/src/cli/host-session-command.ts`: `unload <ref> [--interrupt] [--force] [--clear-queue] [--children refuse|detach]`.
+
+### Why
+
+The CLI reaches every host session command.
+
+### Why an extension could not handle it
+
+Host CLI parsing is core.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/cli/host-session-command.ts`: the action list and parse switch.
+
+## 2026-10-13 - Treat a trailing print flag like an explicit mode after the retired command (senpi#3167)
+
+### What changed
+
+- `args.ts`: `--verbose app-server -p` now keeps `app-server` as the print prompt, exactly like `--verbose app-server --mode json`. The retired-command rejection applies only when neither an explicit mode nor print mode was requested.
+
+### Why
+
+The Opus review of #3223 found that the two explicit-mode spellings disagreed: a trailing `--mode` kept the prompt, while a trailing `-p` rejected it.
+
+### Why an extension could not handle it
+
+Argument parsing runs before any extension loads, so only the CLI parser can decide whether a positional word is a prompt.
+
+### Expected merge conflict zones
+
+The retired-command check near the end of `parseArgs` in `args.ts`.
+
+## 2026-10-13 - Reject retired commands after leading options (senpi#3167)
+
+### What changed
+
+Reject an implicit app-server command after recognized leading options before it can become a model prompt. Keep explicit modes, including a mode supplied after the positional argument, explicit print values, delimiter-separated text, option values and non-command prompt tokens unchanged.
+
+### Why
+
+The initial retirement guard checked only the first raw argument, so a former invocation such as `--verbose app-server` could silently become a prompt.
+
+### Why an extension could not handle it
+
+Argument rejection must happen before model-runtime or extension initialization.
+
+### Expected merge conflict zones
+
+The positional and final-validation branches in `args.ts`, and the focused `3167-retired-app-server.test.ts` regression cases.
+
+## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
+
+### What changed
+
+Reject the retired app-server command before runtime creation, remove its lazy dispatch and help entries, and drop its project-trust mode conversion. Explicit prompt text and Native RPC arguments retain their normal parsing.
+
+- `packages/coding-agent/src/cli/args.ts`
+- `packages/coding-agent/src/cli/deferred-commands.ts`
+- `packages/coding-agent/src/cli/project-trust.ts`
+
+### Why
+
+The executable Codex compatibility layer is being removed. Shared Native runtime behavior and historical records must remain independent of that layer.
+
+### Why an extension could not handle it
+
+These host contracts, import paths and build or verification targets belong to the repository; an extension cannot retire them.
+
+### Expected merge conflict zones
+
+The listed paths, especially command dispatch, mode unions and process identity imports. Keep the supported runtime branches and the shared utility behavior.
+
+## 2026-10-10 - Session control CLI over the shared host (senpi#3073)
+
+### What changed
+
+- `packages/coding-agent/src/cli/host-command.ts`: `resolveHostSocket` is exported (no behavior change) and the usage text gains one `session <open|close|model|prompt|steer|abort|read|state|list|wait> ...` line.
+- `packages/coding-agent/src/cli/deferred-commands.ts`: `dispatchHostCommand` routes `senpi host session <sub>` to a lazily-imported `host-session-command.ts` before falling into the existing `host-command.ts` path, keeping the RPC client graph out of every other `host` subcommand's module load.
+
+### Why
+
+An orchestrating agent or script that drives senpi sessions had to write its own RPC client against `packages/coding-agent/src/modes/rpc/rpc-client.ts` and scrape terminal panes; `senpi host session <sub>` gives it one process-level command per operation with one JSON line of output.
+
+### Why an extension could not handle it
+
+Command routing, process exit codes and the lazy-import boundary that keeps `senpi host status` from loading the RPC client graph are CLI dispatch concerns that run before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the `session` dispatch branch in `deferred-commands.ts` and the one `session` USAGE line plus the `resolveHostSocket` export in `host-command.ts`.
+
+## 2026-10-08 - Selected-session startup warning (senpi#2951)
+
+### What changed
+
+- `packages/coding-agent/src/cli/session-opening.ts`: warns interactive users about live foreign session holders after the runtime publishes its own hold; lookup errors warn and continue. Naming remains in `main.ts`.
+
+### Why
+
+A resumed session was opened silently even when another process already held its JSONL.
+
+### Why an extension could not handle it
+
+The warning belongs to CLI startup and must work with extensions disabled.
+
+### Expected merge conflict zones
+
+- Fork-only file; the startup warning.
+
+## 2026-10-08 - Scheduled session delivery does not replay an eval caller (senpi#2599)
+
+### What changed
+
+- `packages/coding-agent/src/cli/schedule-watch.ts`: default session delivery applies `runtimeExecArgv()` before the CLI entry. Operator `--exec` delivery is unchanged.
+
+### Why
+
+An embedding `node -p` or `node -e` process must resume the scheduled session instead of executing its embedding code in the child.
+
+### Why an extension could not handle it
+
+The schedule runner constructs the child command before the child's extension dispatch.
+
+### Expected merge conflict zones
+
+- LOW: the default `sessionResumeDelivery()` launch in `resolveDelivery()`.
+
+## 2026-10-08 - Schedule delivery follows paths the OmO desktop moved (senpi#2898)
+
+### What changed
+
+- `packages/coding-agent/src/cli/schedule-delivery.ts`: new `movedJobPaths(job)` maps a job's `sessionFile` and `cwd` through `resolveMovedPath`.
+- `packages/coding-agent/src/cli/schedule-runner.ts`: the defer probe and the delivered `scheduled_prompt` event take the job's paths from `movedJobPaths`. The job file itself, its re-arm and its settlement keep the stored paths.
+
+### Why
+
+A job created in a desktop thread before the desktop moved its data home (omo-desktop-app#1829) stores the old session file and working directory; it must fire against the moved ones instead of failing with "session file no longer exists", and the "session is open elsewhere" probe must look at the moved file's holders.
+
+### Why an extension could not handle it
+
+`senpi schedule run` delivers out of process, with no session or extension loaded.
+
+### Expected merge conflict zones
+
+- Fork-only files. `fireOne` (the defer probe call) and the event built in `deliverClaimed`; the helper block above `deferWhileSessionOpen`.
+
 ## 2026-10-02 - `host handoff --when idle` flags (desktop #1364)
 
 ### What changed

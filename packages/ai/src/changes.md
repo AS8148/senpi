@@ -1,3 +1,213 @@
+## 2026-10-17 - Export the provider credential env names (senpi#3531)
+
+### What changed
+
+- `packages/ai/src/env-api-keys.ts`: the provider-to-variable map is the module-level `API_KEY_ENV_VARS`, read by `getApiKeyEnvVars` exactly as before. New exports:
+  - `apiKeyEnvProviders()`: every provider id `getApiKeyEnvVars` maps.
+  - `providerCredentialEnvNames()`: every name `getEnvApiKey` can read, meaning those variables plus the Vertex ADC and Bedrock names.
+
+### Why
+
+senpi#3531: the RPC host daemon's environment allowlist was a separate hand-written list. It dropped credential names the lookup reads (`COPILOT_GITHUB_TOKEN`, `HF_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, every numbered slot), so a host never saw credentials a direct process used. The daemon now derives its list from these exports.
+
+### Why an extension could not handle it
+
+The map is private to `pi-ai`; a consumer can only enumerate it through an export.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/env-api-keys.ts`: the map moved out of `getApiKeyEnvVars`, and the two exports sit above it.
+
+## 2026-10-15 - ProviderDiagnostic gains the network category and structured_transport evidence (senpi#3228)
+
+### What changed
+
+- `packages/ai/src/provider-diagnostic.ts`: `ProviderDiagnosticCategory` adds `network`; `ProviderDiagnosticEvidence` adds `structured_transport`; `sanitizeProviderDiagnostic` accepts a transport diagnostic only with no status and a code from the allowlist.
+
+### Why
+
+See `utils/changes.md` (senpi#3228): connection failures need a category clients can act on.
+
+### Why an extension could not handle it
+
+The diagnostic type and its boundary validation are part of the `pi-ai` contract.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/provider-diagnostic.ts`: the category and evidence unions and `sanitizeProviderDiagnostic`.
+
+## 2026-10-15 - Bill usage with the cost card in force (senpi#3378)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `ModelCostCard` (the rates plus `tiers`) and `ModelCostEffectiveRate` (`effectiveFrom` plus a card); `ModelCost` gains optional `effectiveRates`.
+- `packages/ai/src/models.ts`: `calculateCost(model, usage, atMs = Date.now())` bills with `costCardAt(model.cost, atMs)` and takes the tiers from that card.
+- `packages/ai/src/index.ts`: re-exports the new fork file `model-cost.ts` (`costCardAt`).
+
+### Why
+
+- senpi#3378: the provider moves the 2026-10-13 Argon model from $2/$10 to $4/$20 per 1M tokens on 2026-12-01 08:00Z. A single static card under-reports every request after that instant by 2x until a catalog refresh, and a session loaded before the refresh keeps the old card even after it.
+
+### Why an extension could not handle it
+
+- `calculateCost` is the single billing function every wire adapter calls; an extension cannot change how a builtin adapter bills.
+
+### Expected merge conflict zones
+
+- LOW: the first lines of `calculateCost`, the `ModelCost` interface block in `types.ts`, and the export list in `index.ts`.
+
+## 2026-10-14 - Map-less generation-4 rows offer only the levels the provider accepts (senpi#3292 review)
+
+### What changed
+
+- `packages/ai/src/models.ts`: new `inferThinkingLevelMap` returns the row's own map, else the OpenAI inference, else `inferGoogleThinkingLevelMap` from the fork-only `packages/ai/src/google-thinking-generation.ts`. `getSupportedThinkingLevels` reads it, so a generation-4-or-later Google row without a `thinkingLevelMap` offers only `low`, `medium` and `high`, and `clampThinkingLevel` raises `off` and `minimal` to `low`.
+
+### Why
+
+Custom `models.json` and discovered rows usually carry no map. Before this, such a row still offered `off` (sent as a zero budget) and `minimal`, both rejected with HTTP 400; the review of #3293 found the fix only worked for rows that shipped a map.
+
+### Why an extension could not handle it
+
+Supported levels and clamping are computed in the core model runtime before any adapter or extension sees the request.
+
+### Expected merge conflict zones
+
+- LOW: the import block of `packages/ai/src/models.ts` and the line in `getSupportedThinkingLevels` that reads the inferred map.
+
+## 2026-10-11 - Usage-limit advice retains structured cause (senpi#3131 review)
+
+### What changed
+
+- `packages/ai/src/types.ts`: assistant messages have an optional redaction-safe `errorCause` identifying account- or model-scoped usage exhaustion independently of presentation text.
+
+### Why
+
+Recovery advice includes `/model`, so parsing the rewritten sentence loses the original account scope.
+
+### Why an extension could not handle it
+
+The shared assistant message is the transport contract consumed by session events and RPC history.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/types.ts`: optional assistant failure metadata.
+
+## 2026-10-11 - Evidence-gated server search opt-in (senpi#3122 review)
+
+### What changed
+
+- `model.ts`: Google generation and Vertex models accept typed `compat.supportsWebSearch`.
+- `providers/xai.ts`: retains the documented `webSearchToolType` without setting `supportsWebSearchPreview: true`; the unverified route now requires explicit opt-in.
+
+### Why
+
+- Documented tool support and an accepted request are not proof of executed search and replay. The held xAI probe failed authentication.
+
+### Why an extension could not handle it
+
+- Model compatibility types and provider catalog defaults belong to pi-ai.
+
+### Expected merge conflict zones
+
+- `model.ts` compatibility conditional and the xAI catalog mapping.
+
+## 2026-10-11 - Explicit in-turn search capabilities (senpi#3122)
+
+### What changed
+
+- `providers/xai.ts` marks the built-in Responses catalogue with `supportsWebSearchPreview: true`; the coding-agent injector uses xAI's documented `web_search` type, not OpenAI's legacy preview type.
+- `api/openai-responses.ts` gates the current `web_search` name alongside the two legacy preview names, preventing unsupported custom endpoints from receiving hook-injected native search.
+- `types.ts` adds optional `OpenAICompletionsCompat.supportsWebSearch` for endpoint-specific completion server search, and the compatibility resolver keeps this declaration optional rather than synthesizing support for a coding-plan endpoint.
+- Focused xAI, custom-Responses and existing Anthropic encrypted-replay tests cover the boundary.
+
+### Why
+
+- Server search must be the first choice on a supported main-request API. Search capability belongs to the exact provider/API route, not to a guessed proxy hostname or an auxiliary search model.
+
+### Why an extension could not handle it
+
+- Provider catalogue capabilities, shared model types and the final wire sanitizer are owned by pi-ai.
+
+### Expected merge conflict zones
+
+- The xAI catalogue mapping, optional completion compatibility fields, and the Responses native-tool predicate.
+
+## 2026-10-10 - allowed_tools only on native OpenAI API hosts (senpi#3080)
+
+### What changed
+
+- `packages/ai/src/types.ts`: the `Context.activeToolNames` doc names the predicate that now gates it, `supportsAllowedToolChoice`, which requires the compat flag and a native OpenAI API host.
+
+### Why
+
+A flagged model behind a Responses-compatible gateway was sent `tool_choice: allowed_tools`, which the gateway rejects on every turn.
+
+### Why an extension could not handle it
+
+The doc describes the core request contract between the session and the provider adapters.
+
+### Expected merge conflict zones
+
+- The `activeToolNames` doc comment on `Context`.
+
+## 2026-10-07 - Claude Agent SDK 0.3.292 (senpi#2545)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `claudeCodeVersion` 2.1.289 -> 2.1.292, the Claude Code version the bundled SDK 0.3.292 declares.
+- `packages/ai/test/anthropic-oauth-claude-code-version.test.ts`: the two `claude_code_version_too_old` retry tests name one patch above the version a request advertises by default instead of a literal `2.1.290`, which the bundled version had passed.
+
+### Why
+
+The nightly Releasability gate (senpi#2545) fails its SDK currency check while a newer SDK is published; 0.3.292 bundles Claude Code 2.1.292.
+
+### Why an extension could not handle it
+
+The SDK pin and the advertised Claude Code version are fixed at build time in the package manifest and the provider module.
+
+### Expected merge conflict zones
+
+The SDK pin line and the lockfiles at the next upstream dependency sync.
+
+## 2026-10-07 - A tool-change system param never lands directly before a user turn (senpi#2864)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `convertMessages` flushes the pending mid-conversation system messages when an assistant param is actually pushed, after the `blocks.length === 0` skip, instead of at the start of every assistant message.
+
+### Why
+
+A reply that converts to no blocks (for example a same-model reply that ended with nothing replayable) was skipped after the flush, leaving the tool-change `system` param directly before the next `user` turn. Anthropic rejects that (`role 'system' must precede an 'assistant' message`), and since the transcript keeps the layout, every later request in the session failed. The same class was fixed upstream in oh-my-pi v18.8.0.
+
+### Why an extension could not handle it
+
+The placement of system params is decided inside the provider's message conversion.
+
+### Expected merge conflict zones
+
+- The assistant branch of `convertMessages` in `packages/ai/src/api/anthropic-messages.ts`, around the `blocks.length === 0` skip.
+
+## 2026-10-06 - A forced tool_choice refused inside a 200 stream is retried (senpi#2801)
+
+### What changed
+
+- `packages/ai/src/utils/tool-choice-fallback.ts`: `primeStreamUntilContent` reads a forced request's stream until its first content (text, reasoning, a tool call or a finish), replaying what it read. An error the stream raises before that is marked as a request refusal, and `isForcedToolChoiceUnsupportedError` / `refusalNamesForcedTool` treat it like a 400. The existing rules apply unchanged: the known wordings, the forced-tool naming rule, one retry, and no memory for thinking-blamed refusals.
+- `packages/ai/src/api/openai-completions.ts`: the forced request's `send` primes its stream through `primeStreamUntilContent` (`chatChunkHasContent`). An unforced request's stream is untouched.
+- `packages/ai/test/openai-completions-tool-choice.test.ts`: the fake gateway can now answer 200 and raise in-band. Five new cases, three of which fail on main: an in-band refusal is retried once and the turn completes; a thinking-blamed one is not remembered; a second refusal surfaces once. Two guards: a refusal after content streamed is not retried (nothing is sent twice), and an unforced request is not retried.
+
+### Why
+
+A keepalive gateway serving Kimi K3 with thinking on answered the first-turn forced `todo` request with 200 and then `tool_choice 'specified' is incompatible with thinking enabled` in-band. The retry only wrapped the HTTP response, so the first turn ended in an error until the user typed `continue`.
+
+### Why an extension could not handle it
+
+The refusal has to be caught where the provider request is sent and its stream is opened, which is inside the AI package's provider implementation.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/api/openai-completions.ts`: the `createRequest` call to `sendWithForcedToolChoiceFallback` and the helpers next to `isForcedOpenAICompletionsToolChoice`.
+- `packages/ai/src/utils/tool-choice-fallback.ts`: the status gate at the top of `isForcedToolChoiceUnsupportedError` and `refusalNamesForcedTool`.
+
 ## 2026-10-04 - Claude Agent SDK 0.3.289
 
 ### What changed
@@ -5829,3 +6039,20 @@ Provider authentication and API behaviour live in this package, below any extens
 ### Expected merge conflict zones
 
 Upstream provider/auth changes in these files at the next sync.
+## 2026-10-11 - Explain account-wide usage limits (senpi#3131)
+
+### What changed
+
+- `packages/ai/src/utils/provider-failure-description.ts`: accepts the caller's classified usage-limit scope and describes an account limit with provider identity, a reset hint, and model-switch/fallback recovery.
+
+### Why
+
+Raw provider JSON does not explain that another model on the same account will also fail.
+
+### Why an extension could not handle it
+
+The shared provider-error formatter owns presentation across session, print, and interactive consumers.
+
+### Expected merge conflict zones
+
+The options type and account-limit branch in `describeProviderFailureForUser`.

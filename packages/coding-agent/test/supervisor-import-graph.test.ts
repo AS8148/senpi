@@ -31,9 +31,25 @@ const SUPERVISOR_CORE_ALLOWLIST = new Set(["brand.js", "process-crash-record.js"
 /**
  * The measured module count of the supervisor graph when this budget was set; it may only shrink. 35 was
  * measured before main's #2460 added `modes/rpc/host-exec-argv.ts` (the launch's forwarded-argv filter) to
- * the graph; 36 is the count on that base.
+ * the graph; 36 is the count on that base. senpi#2566 takes it to 52, every module named:
+ * - 11 split `host-lifecycle` and `host-daemon-paths` by responsibility (each file under 250 lines):
+ *   `host-lifecycle-{launch,proxy,activity,drain,shutdown,scratch,stall-wait}`, `host-cli-entry`,
+ *   `host-supervisor-log` (out of `host-lifecycle`; `stall-wait` is the new bounded wait for a stalled
+ *   child), and `host-endpoint-names`, `host-generation-paths` (out of `host-daemon-paths`);
+ * - 5 are what the supervisor now does: `host-stop-intent` (who stopped the host and why),
+ *   `host-stalled-evidence` + `loop-lag-threshold` (waiting for a stalled child instead of killing it),
+ *   `host-state-json` (their atomic writes) and `ownership-safe-lock` (one terminal record per generation).
+ * Measured over main's graph: +31.6 KB of built code.
+ * The in-host watchdog stays out: the supervisor reads only its threshold, from the `loop-lag-threshold` leaf.
+ * senpi#3059 permits exactly three supervisor-local additions, bringing the measured graph to 55:
+ * - `host-admission`: monotonic stopping state and typed refusal (51 code lines);
+ * - `host-admission-proxy`: public socket framing/admission, using Node builtins and the existing `jsonl`
+ *   leaf (188 code lines);
+ * - `host-lifecycle-ticker`: the extracted idle/owner ticker, with type-only imports (32 code lines).
+ * Together these are 9,930 source bytes, not new CLI/provider/core dependencies. The core allowlist and
+ * every forbidden-import assertion below remain unchanged; this is no allowance for further graph growth.
  */
-const SUPERVISOR_MODULE_CEILING = 36;
+const SUPERVISOR_MODULE_CEILING = 55;
 
 function loadedModules(entries: readonly { phase: string; url: string }[]): string[] {
 	const repo = `file://${repoRoot}`;
@@ -45,7 +61,7 @@ function loadedModules(entries: readonly { phase: string; url: string }[]): stri
 }
 
 describe("RPC host supervisor import graph", () => {
-	it("stays inside its module budget: no core module beyond the allowlist, no interactive or app-server module but the daemon process reader", () => {
+	it("stays inside its module budget: no core module beyond the allowlist, no interactive or retired app-server module", () => {
 		const modules = loadedModules(
 			probeImportGraph(repoRoot, `${repoRoot}/packages/coding-agent/dist/modes/rpc/host-lifecycle.js`).entries,
 		);
@@ -56,13 +72,7 @@ describe("RPC host supervisor import graph", () => {
 			core.filter((url) => !SUPERVISOR_CORE_ALLOWLIST.has(url.slice("packages/coding-agent/dist/core/".length))),
 		).toEqual([]);
 		expect(modules.filter((url) => url.startsWith("packages/coding-agent/dist/modes/interactive/"))).toEqual([]);
-		expect(
-			modules.filter(
-				(url) =>
-					url.startsWith("packages/coding-agent/dist/modes/app-server/") &&
-					url !== "packages/coding-agent/dist/modes/app-server/daemon/process.js",
-			),
-		).toEqual([]);
+		expect(modules.filter((url) => url.startsWith("packages/coding-agent/dist/modes/app-server/"))).toEqual([]);
 		expect(modules.length).toBeLessThanOrEqual(SUPERVISOR_MODULE_CEILING);
 	});
 

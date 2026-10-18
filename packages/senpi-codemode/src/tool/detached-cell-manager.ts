@@ -13,7 +13,7 @@ import type {
 	EvalDetachedCellSnapshot,
 	EvalDetachedCellStatusEntry,
 } from "./detached-cell-contract.ts";
-import { currentDetachedResult, detachedErrorResult, snapshotDetachedCell } from "./detached-cell-snapshot.ts";
+import { cancelledDetachedResult, detachedErrorResult, snapshotDetachedCell } from "./detached-cell-snapshot.ts";
 import {
 	activeDetachedCellReuseError,
 	allowsDetachedCellTransition,
@@ -35,11 +35,20 @@ export type {
 	EvalDetachedCellStatusEntry,
 } from "./detached-cell-contract.ts";
 
+export class EvalCellNotFoundError extends Error {
+	readonly code = "eval_cell_not_found";
+
+	constructor(cellId: string) {
+		super(`Unknown detached eval cell "${cellId}"`);
+		this.name = "EvalCellNotFoundError";
+	}
+}
+
 export class EvalDetachedCellManager {
-	readonly #artifactsDir: string | undefined;
 	readonly #onStatusChange: ((entries: readonly EvalDetachedCellStatusEntry[]) => void) | undefined;
 	readonly #onWakeSourceState: ((state: WakeSourceState) => void) | undefined;
 	readonly #cells = new Map<string, ManagedCell>();
+	readonly #interrupting = new Map<string, ManagedCell>();
 	readonly #detached = new Map<string, ManagedCell>();
 	readonly #terminalSnapshots: TerminalSnapshotStore;
 	readonly #notificationQueue: DetachedNotificationQueue;
@@ -49,7 +58,6 @@ export class EvalDetachedCellManager {
 	readonly #maxDetachedCells: number;
 
 	constructor(options: EvalDetachedCellManagerOptions = {}) {
-		this.#artifactsDir = options.artifactsDir;
 		this.#onStatusChange = options.onStatusChange;
 		this.#onWakeSourceState = options.onWakeSourceState;
 		this.#notificationQueue = new DetachedNotificationQueue(options.notifier);
@@ -85,7 +93,6 @@ export class EvalDetachedCellManager {
 		const cell = createManagedCell({
 			cellId,
 			input,
-			artifactsDir: this.#artifactsDir,
 			now: this.#now,
 			defaultHardLimitSeconds: this.#hardLimitSeconds,
 			defaultRunBudgetSeconds: this.#runBudgetSeconds,
@@ -159,10 +166,11 @@ export class EvalDetachedCellManager {
 	}
 
 	async stop(cellId: string, reason = "Stopped detached eval cell"): Promise<EvalDetachedCellSnapshot> {
-		const live = this.#cells.get(cellId);
+		const live = this.#cells.get(cellId) ?? this.#interrupting.get(cellId);
 		if (live === undefined) return this.#terminal(cellId);
 		if (live.state === "queued") this.#cancelQueued(live, reason);
-		else if (live.detached) await this.#cancel(live, reason);
+		else if (detachedCellIsActive(live.state)) await this.#cancel(live, reason);
+		await live.interruptOutcome?.promise;
 		return this.#snapshot(live);
 	}
 
@@ -239,7 +247,6 @@ export class EvalDetachedCellManager {
 						await cell.interruptOutcome?.promise;
 						return this.#snapshot(cell);
 					},
-					spillPath: cell.spillPath,
 				});
 			}
 		}
@@ -260,7 +267,7 @@ export class EvalDetachedCellManager {
 			return;
 		}
 		if (foreground) {
-			if (this.#settle(cell, "cancelled", currentDetachedResult(cell))) cell.onKill?.(expiry.error);
+			if (this.#settle(cell, "cancelled", cancelledDetachedResult(cell))) cell.onKill?.(expiry.error);
 			return;
 		}
 		await this.#cancel(cell, expiry.error.message);
@@ -269,7 +276,7 @@ export class EvalDetachedCellManager {
 	#cancelQueued(cell: ManagedCell, reason: string, error = new Error(reason)): void {
 		const dequeued = cell.kernel?.cancelQueued(cell.cellId, reason) ?? false;
 		cell.stateRetained = true;
-		this.#settle(cell, "cancelled", currentDetachedResult(cell));
+		this.#settle(cell, "cancelled", cancelledDetachedResult(cell));
 		// Acquisition/reset has no queue promise yet; its execution has no interrupt target either.
 		if (!dequeued) cell.onKill?.(error);
 	}
@@ -277,13 +284,15 @@ export class EvalDetachedCellManager {
 	async #cancel(cell: ManagedCell, reason: string): Promise<void> {
 		const outcome = Promise.withResolvers<void>();
 		cell.interruptOutcome = outcome;
+		this.#interrupting.set(cell.cellId, cell);
 		try {
-			if (!this.#settle(cell, "cancelled", currentDetachedResult(cell)) || cell.kernel === undefined) return;
+			if (!this.#settle(cell, "cancelled", cancelledDetachedResult(cell)) || cell.kernel === undefined) return;
 			const handle = await cell.kernel.interrupt(reason, cell.cellId);
 			cell.interruptNote = handle.note;
 			cell.stateRetained = await handle.stateRetained;
 		} finally {
 			outcome.resolve();
+			if (this.#interrupting.get(cell.cellId) === cell) this.#interrupting.delete(cell.cellId);
 			this.#refreshTerminalSnapshot(cell);
 		}
 	}
@@ -308,7 +317,7 @@ export class EvalDetachedCellManager {
 
 	#terminal(cellId: string): EvalDetachedCellSnapshot {
 		const snapshot = this.#terminalSnapshots.get(cellId);
-		if (snapshot === undefined) throw new Error(`Unknown detached eval cell "${cellId}"`);
+		if (snapshot === undefined) throw new EvalCellNotFoundError(cellId);
 		return snapshot;
 	}
 }

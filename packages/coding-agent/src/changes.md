@@ -1,3 +1,357 @@
+## 2026-10-18 - The host resolves and advertises its tool runtime (senpi#3566)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: right after argument parsing, `resolveToolRuntime(parsed)` (flag, then `SENPI_TOOL_RUNTIME`, then `in-process`) runs once; an invalid env value prints `Error: ...` and exits 1, like an invalid flag, except for `--version` and `--help`, which run no tool. `CliRuntimeConfiguration` gains an optional `toolRuntime` (absent means `in-process`), set on both the multi-session and the single-session configuration, `runMultiSessionHost` receives `toolRuntime`, which the router advertises as `tool_runtime:<value>` in `get_protocol_info`, and `runRpcMode(runtime, toolRuntime)` does the same for a single-session RPC process.
+
+### Why
+
+Clients must be able to see which tool runtime a host they attach to uses, and a worker isolate must not re-read the env to learn it.
+
+### Why an extension could not handle it
+
+The host's startup configuration and its protocol answer are assembled in core before extensions load.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: the parse-diagnostics block in `main`, `CliRuntimeConfiguration`, and the `runMultiSessionHost` call.
+
+## 2026-10-16 - Non-interactive startup reports context size warnings once (senpi#3460)
+
+### What changed
+
+- `main.ts`: print, JSON, and RPC startup report only the loader warnings tagged `category: "size-limit"` through `reportDiagnostics`, retaining a diagnostic's path as a prefix. Pre-existing skill validation warnings stay silent on stderr. The size checks themselves no longer print, and interactive startup leaves their warnings to the TUI resource notices.
+
+### Why
+
+Returning diagnostics lets the owning mode display them without duplicate stderr output.
+
+### Why an extension could not handle it
+
+Core resources load before mode startup.
+
+### Expected merge conflict zones
+
+- `main.ts`: the non-interactive diagnostics block after runtime creation.
+
+## 2026-10-16 - A full-access session trusts its project without asking (senpi#3414)
+
+### What changed
+
+- `main.ts` `createServices` (inside `createCliRuntimeFactory`, which builds every interactive and RPC host session): an explicit `full-access` preset (`presetTrustsProject` in `core/project-trust.ts`) skips the "Trust project folder?" prompt and trusts the project for that session only, with no cache and no trust-store write. A saved "do not trust", `--no-trust` and an answer already given in this host still win. Details: `core/changes.md`.
+
+### Why
+
+Full access means no prompt anywhere (sisyphuslabs/omo-desktop-app#2465); the trust prompt never read the preset.
+
+### Why an extension could not handle it
+
+Project trust is decided before extensions load and decides whether project extensions load at all.
+
+### Expected merge conflict zones
+
+`main.ts` `createServices`, the trust block before `createAgentSessionServices`.
+
+## 2026-10-15 - The package exports the abort cause type (senpi#3357)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: exports the `AgentAbortCause` type, so RPC and SDK callers can read `agent_end.abortCause` (set when a turn stops because its session was replaced) with its type.
+
+### Why
+
+- A caller reacting to a replaced session needs the cause's shape; the runtime change is tracked in `core/changes.md`.
+
+### Why an extension could not handle it
+
+- The package's public type surface is defined only by its entry point.
+
+### Expected merge conflict zones
+
+- LOW: the type export list in `src/index.ts`.
+
+## 2026-10-15 - Print and RPC processes contain a retired extension ctx too (senpi#3389)
+
+### What changed
+
+- `packages/coding-agent/src/cli-main.ts`: installs `installStaleExtensionContainment()` (fork-only `core/stale-extension-containment.ts`) right after the early inspector seam. It adds one process `uncaughtException` listener that logs and contains only the stale-ctx guard (`StaleExtensionContextError`) and keeps every other uncaught throw fatal (`console.error` + exit 1), unless interactive mode has registered its own handler (`markModeCrashHandler`). It adds no `unhandledRejection` listener: that would change the default routing of every rejection, including the Inspector rejection the early seam recovers. So under Bun an async stale throw in print or RPC mode still exits, as before; the TUI already logs rejections and keeps running.
+- `packages/coding-agent/src/inspector-policy.ts`: the early inspector listener defers only to a handler interactive mode registered with `markModeCrashHandler` (fork-only `core/bootstrap-crash-listeners.ts`), never to another bootstrap or library listener; it leaves a stale-ctx error to the containment seam, and the containment seam leaves the recoverable Inspector rejection to it. Before this, with `SENPI_RECOVER_INSPECTOR_VM_IMPORT=1`, the two bootstrap listeners each deferred to the other and a real crash kept the process running.
+
+### Why
+
+- Print mode and the RPC host have no crash handler of their own, so the same stale-ctx throw from a timer ended a headless run or every session on a host (senpi#3389, oh-my-openagent#7114).
+
+### Why an extension could not handle it
+
+- The listener has to exist before any extension loads, and process-wide; the entry point is the only place that covers every mode.
+
+### Expected merge conflict zones
+
+- LOW: the bootstrap block in `cli-main.ts` beside `installEarlyInspectorVmImportRecovery()`; the listener registration and `otherHandlerActive` check in `inspector-policy.ts`.
+
+## 2026-10-14 - A model that cannot start is reported, not crashed on (senpi#3333)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: a `ModelUsabilityBudgetError` from `createAgentSessionRuntime` prints its one-line message in red and exits 1, instead of escaping as an uncaught error with a stack and minified bundle source.
+
+### Why
+
+The startup refusal is the user's to fix; a stack trace hid the reason and the fix.
+
+### Why an extension could not handle it
+
+The error is thrown while the runtime is created, before extensions are bound.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: the `createAgentSessionRuntime` call.
+
+## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
+
+### What changed
+
+Remove app-server dispatch and its mode/trust special cases from CLI startup. The parser refuses the retired command rather than treating it as a prompt.
+
+- `packages/coding-agent/src/main.ts`
+
+### Why
+
+The executable Codex compatibility layer is being removed. Shared Native runtime behavior and historical records must remain independent of that layer.
+
+### Why an extension could not handle it
+
+These host contracts, import paths and build or verification targets belong to the repository; an extension cannot retire them.
+
+### Expected merge conflict zones
+
+The listed paths, especially command dispatch, mode unions and process identity imports. Keep the supported runtime branches and the shared utility behavior.
+
+## 2026-10-12 - Print-then-exit commands skip startup compile caching (senpi#3166)
+
+### What changed
+
+- `packages/coding-agent/src/compile-cache.ts`: `enableStartupCompileCache` checks command arguments before enabling or publishing the cache. Package and host routing reuse `cli/deferred-commands.ts`; schedule commands skip caching except `run --watch`. Root `--version`/`-v` uses the same parser-free check as `cli.ts`. Other candidate help/list/export flags lazily use the existing argument parser so prompt and option values do not disable session caching. Parse/import failures fall through to the previous cache enablement behavior, leaving errors to the CLI. Multi-session RPC hosts retain caching even with `--help`. Ordinary sessions still enable the cache before loading the parser.
+- `packages/coding-agent/src/cli.ts` and `packages/coding-agent/src/cli-main.ts` await the shared decision before continuing startup, including help's fast path and isolated child entries.
+- `packages/coding-agent/test/compile-cache-invocation.test.ts` observes the enable call and inherited environment without timing thresholds, including legacy provider IDs, deferred commands, schedule watchers and multi-session RPC hosts. `packages/coding-agent/test/compile-cache.test.ts` observes parser module resolution to protect the parser-free version path; its cache subprocess drivers await the decision. Node-bundle smoke tests are unchanged.
+
+### Why
+
+Bun 1.4.3 writes a cold compile cache at process exit more slowly than 1.4.2. Metadata-only invocations paid this shutdown cost despite never opening a session. Real sessions retain compile caching for later launches.
+
+An externally supplied `NODE_COMPILE_CACHE` remains untouched: the runtime may enable that cache before CLI startup, so skipping senpi's programmatic enablement does not disable the external cache.
+
+### Why an extension could not handle it
+
+Cache enablement happens in the CLI bootstrap before extension loading and before the help fast path.
+
+### Expected merge conflict zones
+
+- LOW: the shared startup compile-cache helper and its two entry-point calls. Preserve the pre-import ordering for sessions and await the command decision.
+
+## 2026-10-11 - Export eval cell RPC contracts (senpi#3072)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts` and `packages/coding-agent/src/modes/index.ts` export `RpcEvalCell` and `RpcEvalCellSnapshot` beside the established RPC types.
+
+### Why
+
+Typed downstream clients need the new session-owned cell control results through the public coding-agent entry point.
+
+### Why an extension could not handle it
+
+Extensions cannot add exports to the host's public package entry point.
+
+### Expected merge conflict zones
+
+- Additive RPC type export lists in the two barrels; no runtime initialization changes.
+
+## 2026-10-10 - Runtime dependency snapshots omit development payload (#3083 part B)
+
+### What changed
+
+- `packages/coding-agent/src/runtime-snapshot/layout.ts` (fork-only) keeps the full nested/hoisted dependency closure, applying `packages/coding-agent/src/runtime-snapshot/dependency-files.ts` to each dependency's payload. Development trees, root Markdown and extensionless README/changelog/history files are omitted unless a manifest entry names them; license files remain. Redundant TypeScript under `src` is omitted only for packages with an existing built JavaScript entry; source-only extensions, source assets, skills, native binaries and wasm remain.
+- `packages/coding-agent/src/runtime-snapshot/tree.ts` and `packages/coding-agent/src/runtime-snapshot/package-files.ts` extract tree planning and the existing shipped-package policy from layout, without changing the package-root selection. The real CLI inventory regression observes Node resolution hooks, Bun loads/resolution and transpiler reads across help, external TypeScript/typebox loading, a faux turn, Claude executable resolution, photon, grep and codemode bootstrap. Glob-only shipping is now tested at the snapshot boundary.
+
+### Why
+
+Copying dependency tests, documentation and duplicate TypeScript sources increases file-system work on every new snapshot. A representative run cannot prove an unvisited provider or dynamic extension will never load a package, so it must not become a package allowlist. Both runtimes resolve the Claude platform binary inside the snapshot; it stays eagerly copied with the existing clone/link/copy mechanism, independent of install updates.
+
+### Why an extension could not handle it
+
+Snapshot materialization precedes extension loading. An extension cannot reduce this first-launch copy or safely repair a missing dependency after an update deletes the original install.
+
+### Expected merge conflict zones
+
+- None upstream: `runtime-snapshot/` is fork-only. Part A's package selection moved from layout into package-files; preserve it when merging other snapshot changes.
+
+## 2026-10-10 - The runtime snapshot copies the shipped package files only (#3083)
+
+### What changed
+
+- `packages/coding-agent/src/runtime-snapshot/layout.ts` (fork-only): `materializeRuntimeSnapshot` plans the package root with `planPackageRoot`, which copies the entries of the package's `files` field (honouring its `!` exclusions, including nested ones such as `!dist/experimental`) plus the files npm always ships (`package.json`, `README*`, `LICENSE*`). A package without `files` is still copied whole. The dependency closure is unchanged.
+
+### Why
+
+From a repository checkout the snapshot copied the package's sources, tests and scripts too: 11,080 files and 508 MB for `packages/coding-agent`. That made the bundle smoke tests' cold start take 2.9 s on CI with Bun 1.4.2 and exceed the 5 s test timeout with Bun 1.4.3 (#3078). A published install already holds only the `files` entries, so it is unaffected.
+
+### Why an extension could not handle it
+
+The snapshot is built before any extension loads, by the launcher that decides where the session runs from.
+
+### Expected merge conflict zones
+
+- None upstream: `runtime-snapshot/` is fork-only.
+
+## 2026-10-09 - `--session <id>` opens a session recorded under a folder the OmO desktop moved here (senpi#2990)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: in `createSessionManager`, a `--session <id>` match found in another project (the `global` branch) whose non-empty recorded cwd `resolveMovedPath` maps to the current cwd opens directly instead of offering or printing the cross-project rebind/fork choice. `--continue` without a session dir first asks `movedHereSessionToContinue` (`core/moved-sessions.ts`) for a session the OmO desktop moved here that is newer, by file mtime, than the folder's own newest, so the session used last wins as it already does with a shared session dir. That lookup reads no git identity and lists only dirs whose recorded path moved here. The moved-repository rebind offer, which does both, still runs only when the folder has neither. `SessionManager.open` then maps the cwd; the file is not rewritten.
+
+### Why
+
+After the desktop moves its data home, a session recorded in the old folder sits in that folder's default session dir, so `--session <id>` from the new folder only finds it in the global search. It is the same folder's session, and rebinding or forking it would rewrite or copy a file the desktop expects to stay as it is.
+
+### Why an extension could not handle it
+
+Session selection runs in `main.ts` before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the start of the `case "global"` block under `if (parsed.session)` and the `if (parsed.continue)` block in `createSessionManager`.
+
+## 2026-10-08 - Interactive startup warns about live session holders (senpi#2951)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: prints the interactive holder warning after runtime creation publishes the CLI's own hold. Existing `--name` validation and persistence stay at their original post-selection location.
+
+### Why
+
+Opening the same JSONL in a CLI and a host silently admitted two writers.
+
+### Why an extension could not handle it
+
+The warning belongs to CLI startup and must work with extensions disabled.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: imports and the block after runtime creation.
+
+## 2026-10-08 - JSON print mode exits non-zero when the run ran out of context (senpi#2925)
+
+### What changed
+
+- `packages/coding-agent/src/modes/print-mode.ts`: in `--mode json`, a run whose last assistant message stopped with `REQUIRED_COMPACTION_ERROR_MESSAGE` returns exit code 1. Text mode already exited 1 on any error stop. JSON mode keeps exit 0 for other error stops, because a JSON consumer reads them from the event stream.
+
+### Why
+
+A parent agent that delegates through `-p --mode json` and only checks the exit code took a run that could not fit its context for an empty success.
+
+### Why an extension could not handle it
+
+The exit code is decided by print mode itself after the session settles.
+
+### Expected merge conflict zones
+
+- LOW: the block after `waitForSettledSessionWork()` in `runPrintMode`.
+
+## 2026-10-08 - An unresolvable session model is a tagged diagnostic (senpi#2906)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `buildSessionOptions` tags the error diagnostic it records when `--model` (or an `open_session` `creationModel`) cannot be resolved with `code: "model_unresolved"`. Message, severity and the standalone CLI's exit are unchanged.
+
+### Why
+
+An RPC host `open_session` whose requested model did not resolve opened anyway on the default model and reported success, because the host never read the diagnostics. The host now fails that open; it needs to tell this one diagnostic apart from every other startup error (extension load failures, auth notes) without matching message text.
+
+### Why an extension could not handle it
+
+Session options are built before any extension loads, and the RPC host's open path is core.
+
+### Expected merge conflict zones
+
+- LOW: the `resolved.error` push in `buildSessionOptions`'s `--model` branch.
+
+## 2026-10-08 - Print-then-exit CLI paths deliver all of their output before exiting (senpi#2937)
+
+### What changed
+
+- `packages/coding-agent/src/cli/print-then-exit.ts` (new): `printThenExit(print, code)` runs the printing function with stdout collected (`console.log` and `process.stdout.write`), writes the collected text as one chunk, waits for that write's own callback and for stderr, then exits. `exitAfterOutput(output, code)` is the same wait for a command that already printed. The wait is bounded (`OUTPUT_DELIVERY_LIMIT_MS`, 30 s, unref'd timer) and an EPIPE from a reader that closed the pipe ends it at once. Output that is already redirected (json mode routes `console.log` to stderr) is not collected.
+- `packages/coding-agent/src/main.ts`: `--list-models`, `--version`, `--export`, `--list-tips` and both `--help` branches (plain and the one reached with `--mode`/`-p`) use `printThenExit`; the package, host and schedule commands, which stream their own output, end with `exitAfterOutput`. `host` writes its one line with `writeSync`, so it is complete on both runtimes; package and `schedule` output still streams through `process.stdout`, so under Bun output past the pipe buffer can still be dropped for a reader that falls behind (senpi#2947).
+- `packages/coding-agent/src/cli.ts`: the `--version` and help fast paths use the same helper.
+
+### Why
+
+- Under Node a write to a pipe is asynchronous: `process.exit()` right after printing dropped what a slow reader had not taken (0 of 20,000 lines to a reader 1.5 s late) and still exited 0; a consumer of `--list-models` received 541 of 1,843 rows.
+- Under Bun `console.log` output queued behind an earlier `process.stdout` write is discarded at exit, and neither a write callback, `Bun.stdout` flush, nor a natural exit recovers it: `senpi --list-models` delivered 0 to 138 KB of 224,697 bytes, exit 0. A single write whose callback is awaited is the shape both runtimes deliver in full (senpi#2937).
+- A `drain`-based wait would hang when the queued tail never crossed the high-water mark; the write callback does not depend on it.
+
+### Why an extension could not handle it
+
+- These are CLI entry paths that run before or without any extension.
+
+### Expected merge conflict zones
+
+- LOW: `main.ts` and `cli.ts` at each early-exit branch named above, and their import blocks.
+
+## 2026-10-08 - Brand-dir copy-forward reserved-entry match folds case on darwin and win32 (senpi#2898 review L6)
+
+### What changed
+
+- `packages/coding-agent/src/brand-dir-migration.ts`: `isDesktopReserved` lower-cases the entry on darwin and win32 before matching `desktop` / `desktop.init-*`.
+
+### Why
+
+Those volumes fold case, so `Desktop` is the desktop's own folder there.
+
+### Why an extension could not handle it
+
+The copy-forward runs at startup, before any extension loads.
+
+### Expected merge conflict zones
+
+- Fork-only file. `isDesktopReserved`.
+
+## 2026-10-08 - Brand-dir copy-forward skips the OmO desktop's reserved entries (oh-my-openagent#9727)
+
+### What changed
+
+- `packages/coding-agent/src/brand-dir-migration.ts`: `isSkipped` also skips `desktop` and every `desktop.init-*` entry, so the copy-forward never creates or writes into them in the brand dir.
+
+### Why
+
+The OmO desktop app owns `~/.omo/desktop*` (omo-desktop-app#1829); an engine copy-forward must not create its data home or a half-initialized one.
+
+### Why an extension could not handle it
+
+The copy-forward runs at startup, before any extension loads.
+
+### Expected merge conflict zones
+
+- Fork-only file. `isSkipped`.
+
+## 2026-10-06 - visibleWidth export for extensions that lay out their own rows (senpi#2831)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: `visibleWidth` is exported from `@earendil-works/pi-tui` beside `sanitizeTerminalLabel`.
+
+### Why
+
+The eval extension's live row cuts its headline to the terminal width. Counting code points let a wide-character summary (Korean, Chinese, Japanese, emoji) wrap a narrow terminal. Measuring in screen cells needs the TUI's own width function, and extensions reach the TUI only through this package.
+
+### Why an extension could not handle it
+
+Extensions import `@code-yeongyu/senpi`, not `@earendil-works/pi-tui`, and a second copy of the width tables in an extension would drift from the renderer's.
+
+### Expected merge conflict zones
+
+- LOW: the `sanitizeTerminalLabel` export line at the top of `src/index.ts`.
+
 ## 2026-10-05 - A single-session rpc process takes its fallback chain over the wire (omo#9582)
 
 ### What changed
@@ -4651,3 +5005,40 @@ The runtime factory builds the session before any extension is loaded.
 ### Expected merge conflict zones
 
 The `promptSurface: launchProfile?.promptSurface` line in the session creation call.
+## 2026-10-11 - Print account limits through the shared formatter (senpi#3131)
+
+### What changed
+
+- `packages/coding-agent/src/modes/print-mode.ts`: supplies provider/model identity and classified usage-limit scope to the existing provider-failure formatter.
+
+### Why
+
+Print mode reads internal messages, where the raw provider detail remains for retry classification.
+
+### Why an extension could not handle it
+
+Print mode owns the final stderr error.
+
+### Expected merge conflict zones
+
+The provider-error branch and usage-limit import in `packages/coding-agent/src/modes/print-mode.ts`.
+
+## 2026-10-12 - Export the reserved-keyword matcher (senpi#3160)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`
+
+Exports `findReservedKeywordSpans`, `findReservedKeywordRuns` and their types from the fork-only `core/reserved-keywords.ts`, which follows the omo-senpi engine's arming rules (identifier/path guards plus quote, URL, relay-header and negation masks), so it marks only text that actually arms.
+
+### Why
+
+One matcher drives both the TUI rainbow and any SDK consumer that needs the engine's keyword detection.
+
+### Why an extension could not handle it
+
+The package barrel is the only public entry point; an extension cannot add exports to it.
+
+### Expected merge conflict zones
+
+- LOW: the `core/skills.ts` export block in `packages/coding-agent/src/index.ts`.

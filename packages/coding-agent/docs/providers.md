@@ -4,6 +4,7 @@ Senpi supports subscription-based providers via OAuth and API key providers via 
 
 ## Table of Contents
 
+- [In-Turn Web Search](#in-turn-web-search)
 - [Subscriptions](#subscriptions)
 - [API Keys](#api-keys)
 - [Auth File](#auth-file)
@@ -12,6 +13,93 @@ Senpi supports subscription-based providers via OAuth and API key providers via 
 - [llama.cpp](#llamacpp)
 - [Custom Providers](#custom-providers)
 - [Resolution Order](#resolution-order)
+
+## In-Turn Web Search
+
+The session model uses its provider's server search before the standalone
+`web_search` tool. A successful native search does not issue an auxiliary
+request on another model. A search-specific request error or native result
+error records one `websearch-native-fallback` entry and enables the standalone
+tool for that session/model, including later prompts and switches back to it.
+Starting a new session clears the failed-model set. Existing core retries own their retry
+when one is already pending; otherwise the extension continues once after
+the agent settles. User cancellation never schedules that continuation.
+A provider that recovers from a failed search and completes its answer does
+not receive a duplicate continuation. Sonar's inherent retrieval has no
+independent server-tool error contract; its model errors remain with core
+retry rather than receiving unsupported function-tool definitions.
+Standalone summaries, session titles and default projections exclude only server-search tools, not client function declarations. Tool-less requests do not gain empty tool arrays. Cache-friendly compaction and keepalive retain the exact main-turn payload transform, tools and include fields.
+
+Anthropic Messages supports `web_search_20250305`. The direct Anthropic API and
+Claude OAuth retain main's default-on behavior. Anthropic-compatible gateways
+must explicitly declare search and replay support. For example, merge this override into your existing provider entry,
+keeping its current credential configuration:
+
+```json
+{
+  "providers": {
+    "anthropic": {
+      "baseUrl": "https://your-proxy.example/anthropic",
+      "modelOverrides": {
+        "claude-opus-5-5": {
+          "compat": { "supportsWebSearch": true }
+        }
+      }
+    }
+  }
+}
+```
+
+This opt-in was verified with a real ccapi search and exact encrypted-result
+replay. Senpi does not infer support from a proxy hostname. Anthropic requires
+the assistant blocks and their `encrypted_content` to be replayed unchanged.
+
+| Route | In-turn tool / API | Capability and replay contract |
+| --- | --- | --- |
+| Direct Anthropic API / Claude OAuth | `web_search_20250305`, Messages | Default-on (unchanged from main); `compat.supportsWebSearch: false` opts out. No new direct-endpoint probe is claimed here. |
+| Anthropic-compatible gateways, including ccapi | `web_search_20250305`, Messages | Opt-in `compat.supportsWebSearch: true`. ccapi search and encrypted-result replay verified live. |
+| OpenAI API / Azure | `web_search_preview`, Responses | Default-on (unchanged from main). Custom Responses endpoints remain opt-in `compat.supportsWebSearchPreview: true`. The current `web_search` name is also supported. |
+| ChatGPT/Codex subscription | `web_search`, Codex Responses | First-party subscription default, except Spark; custom endpoints require opt-in. Real search and output-item replay verified. |
+| xAI | `web_search`, Responses | Opt-in `compat.supportsWebSearchPreview: true`. Catalogs select the tool shape but do not enable it. Held OAuth probe: HTTP 403, not live-verified. |
+| Google Gemini / Vertex | `googleSearch`, GenerateContent | Opt-in `compat.supportsWebSearch: true` on Gemini 2/3. Held probe: HTTP 400 `API_KEY_INVALID`, not live-verified. Explicit mixed-tool rejection enables the session/model fallback. |
+| OpenRouter | `openrouter:web_search`, Chat Completions or Responses | Opt-in `compat.supportsWebSearch: true`; doc only, not live-verified. Uses OpenRouter's own tool shape. |
+| Moonshot PAYG | `$web_search` / `builtin_function`, Chat Completions | Opt-in `compat.supportsWebSearch: true`; doc only, not live-verified. Echoes server-generated arguments without another search request. Retires October 20, 2026. Cannot be discovered or lazily activated through tool_search, or declared on another route. |
+| Kimi for Coding | Anthropic-compatible Messages | Not live-verified (no personal credential). Coding-plan integration docs do not specify a server-search name/shape or replay contract. Not default-on; generic Messages opt-in is not verification. Follow-up [#3134](https://github.com/code-yeongyu/senpi/issues/3134). |
+| DeepSeek | Claude Code search on its Anthropic-compatible endpoint | Not live-verified (no personal credential). Claude Code docs claim API search but do not publish its raw shape/replay contract; a manually configured Messages route remains opt-in, not default-on. Built-in Chat Completions remains unsupported, and Responses docs list `web_search` as ignored. Follow-up [#3134](https://github.com/code-yeongyu/senpi/issues/3134). |
+| Z.AI PAYG chat | `web_search`, Chat Completions | Explicit `compat.supportsWebSearch: true` on that route; never enabled automatically on the coding-plan endpoint. |
+| GLM coding plan, z.ai Anthropic endpoint | `web_search_20250305`, Messages | Supported, opt-in `compat.supportsWebSearch: true`. Live response `msg_202610120132474ee314e9947c4ea2` returned server search with a `tool_result` block, which now remains visible and replays with its same-model server-tool pair even when the search usage counter is zero. OpenAI-compatible coding probe: not verified (length limit, no search payload); bigmodel.cn: not verified (HTTP 401, expired key). Remote MCP `webSearchPrime` remains a separate option. |
+| Perplexity Sonar | Search inherent in its main completion | No extra tool injection. Native-bypass routing is opt-in `compat.supportsWebSearch: true`; doc only, not live-verified. |
+| Exa, Tavily, Brave, Kagi, Serper, Serpdive, Keenable, Google CSE, SearXNG and result-page engines | Dedicated retrieval APIs/MCP | Standalone search fallbacks, not session-model server tools. |
+
+Official references:
+
+Custom xAI-compatible Responses entries declare both
+`supportsWebSearchPreview: true` and `webSearchToolType: "web_search"`.
+The type selection belongs to the model compatibility entry, not a provider-id
+or hostname guess. OpenAI-compatible endpoints that only support the legacy
+preview type can retain `webSearchToolType: "web_search_preview"`.
+
+- [Anthropic tool and replay](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool)
+- [OpenAI Responses search](https://developers.openai.com/api/docs/guides/tools-web-search)
+- [Codex cached/live search](https://developers.openai.com/codex/config-basic/)
+- [xAI Responses search](https://docs.x.ai/developers/tools/web-search)
+- [Google grounding](https://ai.google.dev/gemini-api/docs/google-search)
+- [Google SDK examples](https://github.com/googleapis/js-genai/blob/main/codegen_instructions.md)
+- [OpenRouter server search](https://openrouter.ai/docs/guides/features/server-tools/web-search)
+- [Moonshot built-in flow](https://platform.kimi.ai/docs/guide/use-web-search)
+- [Kimi coding endpoint](https://www.kimi.com/code/docs/en/third-party-tools/claude-code)
+- [DeepSeek Claude Code integration](https://api-docs.deepseek.com/quick_start/agent_integrations/claude_code)
+- [DeepSeek Responses compatibility: built-in search ignored](https://api-docs.deepseek.com/guides/responses_api#tools)
+- [Z.AI PAYG chat search](https://docs.z.ai/guides/tools/web-search)
+- [GLM coding-plan search MCP](https://docs.z.ai/devpack/mcp/search-mcp-server)
+- [GLM Claude Code / Anthropic integration](https://docs.z.ai/devpack/tool/claude)
+- [Perplexity migration and conversation contract](https://docs.perplexity.ai/docs/sonar/quickstart)
+
+The `nativeModel` setting and cheaper same-provider defaults apply only to
+auxiliary search on routes without an in-turn server tool. They cannot
+preempt server search: a different `nativeModel` setting is ignored on an enabled
+server-search route. If an eligible route needs the standalone fallback,
+that retry uses the session model rather than swapping to a cheaper model.
 
 ## Subscriptions
 
@@ -54,7 +142,7 @@ The `anthropic-subscription` provider routes LLM calls through the official [Cla
 - Settings (`anthropicSubscriptionProvider`):
   - `systemPromptMode` — controls how the system prompt is delivered. **`full`** (default) sends senpi's composed system prompt verbatim; the lane no longer rebuilds from the SDK `claude_code` preset, so all prompt regions (project rules, response-language instructions, etc.) reach the model. **`preset-append`** is the previous behaviour (deprecated, kept for one release; emits a one-time warning). **`override`** loads the system prompt from a file (`systemPromptFile`). The legacy `appendSystemPrompt` key still works: `false` → `preset-append`, `true`/unset → `full`; setting both keys makes `systemPromptMode` win and warns.
   - In `full` and `override` modes, `settingSources` defaults to `[]` on every lane because senpi's prompt already carries project context — loading the SDK's own CLAUDE.md would double-inject it. The CLI always prepends its own `"You are a Claude agent, built on Anthropic's Claude Agent SDK."` block, which senpi cannot suppress; `full` means the prompt is delivered intact, not that it is the only system-prompt text.
-  - `settingSources` (filesystem settings load only in the ambient lane, so they cannot override your selected account), `strictMcpConfig`, `pinnedAccount`, `tokenInjection` (`oauth-slots` | `config-dir` | `ambient`), `resumeMode` (`auto` default | `off` restores per-turn sessions), `systemPromptFile`, `enabled` (default `false`; gates the ambient lane only).
+  - `settingSources` (filesystem settings load only in the ambient lane, so they cannot override your selected account), `strictMcpConfig`, `pinnedAccount`, `tokenInjection` (`oauth-slots` | `config-dir` | `ambient`), `resumeMode` (`auto` default | `off` restores per-turn sessions), `compactionOwner` (`senpi` default | `sdk` hands compaction to Claude Code's native auto-compact), `systemPromptFile`, `enabled` (default `false`; gates the ambient lane only).
 - **Environment overrides** (precedence: `env > project settings > global settings > default`; no new CLI flags):
 
   | Variable | Purpose |
@@ -66,11 +154,12 @@ The `anthropic-subscription` provider routes LLM calls through the official [Cla
   | `SENPI_CLAUDE_SDK_OAUTH_TOKEN_INJECTION` | `oauth-slots` \| `config-dir` \| `ambient` |
   | `SENPI_CLAUDE_SDK_OAUTH_SETTING_SOURCES` | Overrides `settingSources` |
   | `SENPI_CLAUDE_SDK_OAUTH_PINNED_ACCOUNT` | Overrides `pinnedAccount` |
+  | `SENPI_CLAUDE_SDK_OAUTH_COMPACTION_OWNER` | Overrides `compactionOwner` (`senpi` \| `sdk`) |
 
   Every `SENPI_*` variable is stripped from the Claude Code subprocess environment on all three lanes; other inherited variables are preserved.
-- **Native compaction.** This lane pins the SDK's session-scoped `autoCompactEnabled: true`, overriding the user's global Claude Code preference because native compaction is part of the lane contract. It does not set `autoCompactWindow`. With `resumeMode: "auto"`, the resident Claude Code session owns compaction; `resumeMode: "off"` restores per-turn sessions and returns compaction ownership to senpi.
+- **Compaction.** senpi owns compaction on this lane by default: speculative and idle compaction, restoration, degradation recovery and per-model thresholds apply, the summary is written by the session's own model unless `compaction.model` is set, and an accepted compaction cold-seeds a fresh resident session from the compacted branch. So that only one side compacts, the lane pins the SDK's session-scoped `autoCompactEnabled: false` (overriding the user's global Claude Code preference) and sets `CLAUDE_CODE_TOTAL_TOKENS_REMINDER=off` for the Claude Code subprocess, whose per-turn token reminder otherwise defeats prompt-cache reuse; at the hard limit Claude Code rejects the turn and senpi's overflow recovery compacts and retries it. If that compaction fails, the turn ends with the error instead of Claude Code compacting natively. Set `compactionOwner: "sdk"` (or `SENPI_CLAUDE_SDK_OAUTH_COMPACTION_OWNER=sdk`) to let the resident Claude Code session compact instead: the lane pins `autoCompactEnabled: true`, does not set `autoCompactWindow`, and senpi stands down its automatic compaction (manual `/compact` stays senpi's). The owner is fixed into the resident Claude Code process when it starts, so changing it mid-session restarts that process on the next turn. Under either owner senpi never rewrites a message the resident session already received, so its per-turn context reduction stays off on this lane. `resumeMode: "off"` restores per-turn sessions, where senpi always owns compaction.
 - **Session reuse.** By default one long-lived SDK query spans the entire senpi session instead of a fresh one per turn, so conversations continue with only the new delta sent. An accepted senpi compaction rewrites the transcript and forks to a fresh resident session; a rejected compaction leaves continuity unchanged. Reuse also fails closed on branch/fork navigation, account failover, an aborted turn, or any configuration change. Idle sessions retire after 30 minutes (max 32 resident); a session with an in-flight turn is never evicted. After a senpi process restart the lane always starts fresh. Set `resumeMode: "off"` (or `SENPI_CLAUDE_SDK_OAUTH_RESUME=off`) to restore the old per-turn behaviour. Accepted values are `"auto"` (default) and `"off"`; any other value is silently ignored.
-- Account state is exposed to desktop/automation clients: RPC `get_provider_accounts`, `account_pin`, `account_remove` and the `auth_accounts_changed` / `account_failover` events, mirrored through the app-server protocol. Token material is never included.
+- Account state is exposed to desktop/automation clients: RPC `get_provider_accounts`, `account_pin`, `account_order`, `account_remove` and the `auth_accounts_changed` / `account_failover` events. Token material is never included.
 
 #### Session continuity self-check
 

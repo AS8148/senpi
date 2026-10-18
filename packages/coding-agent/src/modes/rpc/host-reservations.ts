@@ -22,15 +22,22 @@
 import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { processIsLive, readProcessStartTime } from "../app-server/daemon/process.ts";
+import {
+	processIsLive,
+	processStartTimeMs,
+	readProcessStartTime,
+	sameProcessStartMs,
+} from "../../utils/process-identity.ts";
 import { createHostDaemonPaths, HOST_DAEMON_DIR_ENV, hostDaemonDirectoryPaths } from "./host-daemon-paths.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
+import { logUnknownHostIdentity } from "./host-supervisor-log.ts";
 
 /** How long a client should wait before retrying a path another generation still holds. */
 export const SESSION_PATH_RETRY_AFTER_MS = 2_000;
 
 export interface SessionPathOwner {
 	readonly instanceId: string;
+	readonly host_socket?: string;
 	readonly pid: number;
 	readonly processStartTime: string | null;
 	readonly sessionPath: string;
@@ -41,10 +48,12 @@ export interface SessionPathOwner {
 }
 
 export interface SessionPathReservations {
+	/** Live processes registered to this daemon, never inferred from a holder's own labels. */
+	holderPids?(observedStarts?: ReadonlyMap<number, number | undefined>): Promise<readonly number[]>;
 	/** Records this host as the holder of `sessionPath`, or reports the holder whose claim stands. */
 	claim(sessionPath: string, attached?: boolean): Promise<SessionPathOwner | undefined>;
 	/** Drops this host's claim. A claim made by another generation is never touched. */
-	release(sessionPath: string): void;
+	release(sessionPath: string): Promise<void>;
 	/** Republishes this host's claim with the attachment state that session now has. */
 	setAttached(sessionPath: string, attached: boolean): void;
 }
@@ -71,6 +80,7 @@ export function createEndpointReservations(host: {
 	readonly socket: string | undefined;
 	readonly instanceId: string;
 	readonly onFailure?: (message: string) => void;
+	readonly publicSocket?: string;
 }): SessionPathReservations | undefined {
 	const told = process.env[HOST_DAEMON_DIR_ENV];
 	const dir =
@@ -83,6 +93,7 @@ export function createEndpointReservations(host: {
 	return createSessionPathReservations({
 		daemonDir: dir,
 		instanceId: host.instanceId,
+		...(host.publicSocket === undefined ? {} : { publicSocket: host.publicSocket }),
 		...(host.onFailure ? { onFailure: host.onFailure } : {}),
 	});
 }
@@ -92,6 +103,7 @@ export function createSessionPathReservations(options: {
 	readonly daemonDir: string;
 	readonly instanceId: string;
 	readonly pid?: number;
+	readonly publicSocket?: string;
 	readonly onFailure?: (message: string) => void;
 }): SessionPathReservations {
 	const paths = hostDaemonDirectoryPaths(options.daemonDir);
@@ -102,10 +114,12 @@ export function createSessionPathReservations(options: {
 		() => null,
 	);
 	const held = new Set<string>();
+	const updates = new Map<string, Promise<void>>();
 	const report = (message: string): void => options.onFailure?.(message);
 	const publish = async (sessionPath: string, attached: boolean, stillHeld?: () => boolean): Promise<void> => {
 		const owner: SessionPathOwner = {
 			instanceId: options.instanceId,
+			...(options.publicSocket === undefined ? {} : { host_socket: options.publicSocket }),
 			pid,
 			processStartTime: await startTime,
 			sessionPath,
@@ -125,6 +139,60 @@ export function createSessionPathReservations(options: {
 		await rename(staging, file);
 	};
 	return {
+		async holderPids(observedStarts?: ReadonlyMap<number, number | undefined>): Promise<readonly number[]> {
+			const candidates = (await readSessionPathClaims(dir)).map(({ owner }) => owner);
+			const generations = await readdir(paths.generationsDir, { withFileTypes: true }).catch(() => []);
+			for (const generation of generations) {
+				if (!generation.isDirectory()) continue;
+				const record = parseJson(
+					await readFileOrUndefined(join(paths.generationsDir, generation.name, "host-child.pid")),
+				);
+				if (typeof record?.pid !== "number") continue;
+				candidates.push({
+					pid: record.pid,
+					processStartTime: typeof record.processStartTime === "string" ? record.processStartTime : null,
+					instanceId: generation.name,
+					sessionPath: "",
+				});
+			}
+			const byPid = new Map<number, SessionPathOwner[]>();
+			for (const owner of candidates) {
+				if (owner.pid === process.pid) continue;
+				const owners = byPid.get(owner.pid) ?? [];
+				owners.push(owner);
+				byPid.set(owner.pid, owners);
+			}
+			const live = await Promise.all(
+				[...byPid].map(async ([pid, owners]) => {
+					if (!processIsLive(pid)) return undefined;
+					if (observedStarts) {
+						// Only foreign-looking holders need family classification. Their bounded OS
+						// probes were already done by lease validation at this command's admission.
+						if (!observedStarts.has(pid)) return undefined;
+						const observed = observedStarts.get(pid);
+						return owners.some((owner) => {
+							if (owner.processStartTime === null) return false;
+							return sameProcessStartMs(processStartTimeMs(owner.processStartTime), observed);
+						})
+							? pid
+							: undefined;
+					}
+					const current = await readProcessStartTime(pid, process.platform, 1_000).catch(() => undefined);
+					// Recorded identities may carry an explicit UTC tag (host-child.pid, #3054) while this probe
+					// reads the local form: compare the parsed instant, never the raw text.
+					const observed = current === undefined ? undefined : processStartTimeMs(current);
+					return observed !== undefined &&
+						owners.some(
+							(owner) =>
+								owner.processStartTime !== null &&
+								sameProcessStartMs(processStartTimeMs(owner.processStartTime), observed),
+						)
+						? pid
+						: undefined;
+				}),
+			);
+			return [...new Set(live.filter((value): value is number => value !== undefined))];
+		},
 		async claim(sessionPath: string, attached = true): Promise<SessionPathOwner | undefined> {
 			const existing = await readOwner(reservationFile(dir, sessionPath));
 			if (existing && existing.pid !== pid) {
@@ -142,17 +210,22 @@ export function createSessionPathReservations(options: {
 			}
 			return undefined;
 		},
-		release(sessionPath: string): void {
+		async release(sessionPath: string): Promise<void> {
 			if (!held.delete(sessionPath)) return;
-			void rm(reservationFile(dir, sessionPath), { force: true }).catch((cause: unknown) => {
+			await updates.get(sessionPath);
+			updates.delete(sessionPath);
+			await rm(reservationFile(dir, sessionPath), { force: true }).catch((cause: unknown) => {
 				report(`session path reservation for ${sessionPath} could not be removed (${errorMessage(cause)})`);
 			});
 		},
 		setAttached(sessionPath: string, attached: boolean): void {
 			if (!held.has(sessionPath)) return;
-			void publish(sessionPath, attached, () => held.has(sessionPath)).catch((cause: unknown) => {
-				report(`session path reservation for ${sessionPath} could not be updated (${errorMessage(cause)})`);
-			});
+			const update = (updates.get(sessionPath) ?? Promise.resolve())
+				.then(() => publish(sessionPath, attached, () => held.has(sessionPath)))
+				.catch((cause: unknown) => {
+					report(`session path reservation for ${sessionPath} could not be updated (${errorMessage(cause)})`);
+				});
+			updates.set(sessionPath, update);
 		},
 	};
 }
@@ -200,13 +273,14 @@ async function readOwner(file: string): Promise<SessionPathOwner | undefined> {
 		return undefined;
 	}
 	if (typeof parsed !== "object" || parsed === null) return undefined;
-	const { instanceId, pid, processStartTime, sessionPath, attached } = parsed as Record<string, unknown>;
+	const { instanceId, pid, processStartTime, sessionPath, attached, host_socket } = parsed as Record<string, unknown>;
 	if (typeof instanceId !== "string" || typeof pid !== "number" || typeof sessionPath !== "string") return undefined;
 	return {
 		instanceId,
 		pid,
 		processStartTime: typeof processStartTime === "string" ? processStartTime : null,
 		sessionPath,
+		...(typeof host_socket === "string" ? { host_socket } : {}),
 		...(typeof attached === "boolean" ? { attached } : {}),
 	};
 }
@@ -217,9 +291,14 @@ async function readOwner(file: string): Promise<SessionPathOwner | undefined> {
  */
 export async function claimOwnerIsLive(owner: SessionPathOwner): Promise<boolean> {
 	if (!processIsLive(owner.pid)) return false;
-	if (owner.processStartTime === null) return true;
+	const recorded = owner.processStartTime === null ? undefined : processStartTimeMs(owner.processStartTime);
+	if (recorded === undefined) {
+		logUnknownHostIdentity("session-path-claim", owner.pid);
+		return true;
+	}
 	const current = await readProcessStartTime(owner.pid).catch(() => undefined);
-	return current === undefined || current === owner.processStartTime;
+	const observed = current === undefined ? undefined : processStartTimeMs(current);
+	return observed === undefined || sameProcessStartMs(recorded, observed);
 }
 
 function errorMessage(cause: unknown): string {

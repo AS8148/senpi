@@ -122,6 +122,7 @@ const ModelInputLimitsSchema = Type.Object({
 });
 
 const OpenAICompletionsCompatSchema = Type.Object({
+	supportsWebSearch: Type.Optional(Type.Boolean()),
 	supportsStore: Type.Optional(Type.Boolean()),
 	supportsDeveloperRole: Type.Optional(Type.Boolean()),
 	supportsReasoningEffort: Type.Optional(Type.Boolean()),
@@ -164,6 +165,7 @@ const OpenAICompletionsCompatSchema = Type.Object({
 });
 
 const OpenAIResponsesCompatSchema = Type.Object({
+	webSearchToolType: Type.Optional(Type.Union([Type.Literal("web_search"), Type.Literal("web_search_preview")])),
 	supportsDeveloperRole: Type.Optional(Type.Boolean()),
 	sessionAffinityFormat: Type.Optional(
 		Type.Union([Type.Literal("openai"), Type.Literal("openai-nosession"), Type.Literal("openrouter")]),
@@ -275,6 +277,7 @@ const ProviderConfigSchema = Type.Object({
 	authHeader: Type.Optional(Type.Boolean()),
 	whitelist: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
 	blacklist: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+	hideFreeModels: Type.Optional(Type.Boolean()),
 	models: Type.Optional(Type.Array(ModelDefinitionSchema)),
 	modelOverrides: Type.Optional(Type.Record(Type.String(), ModelOverrideSchema)),
 	credentials: Type.Optional(CredentialPolicySchema),

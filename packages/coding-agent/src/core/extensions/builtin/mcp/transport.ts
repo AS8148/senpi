@@ -6,7 +6,7 @@ import type { McpElicitationUiProvider } from "./elicitation.ts";
 import { AuthError, ConnectError, TimeoutError } from "./errors.ts";
 import type { McpLogger } from "./log.ts";
 import { delay, reapProcessTree } from "./process-tree.ts";
-import { type McpMaterializedTransport, type McpTransportSpec, materializeMcpTransport } from "./transport-sdk.ts";
+import type { McpMaterializedTransport, McpTransportSpec } from "./transport-sdk.ts";
 import { type McpAsyncErrorSink, safeInterval, safeTimer } from "./wrap.ts";
 
 export type McpTransportConnection = {
@@ -14,6 +14,8 @@ export type McpTransportConnection = {
 	readonly client: Client;
 	readonly transport: Transport;
 	readonly transportKind: "stdio" | "http";
+	/** The configured HTTP endpoint; undefined for stdio. */
+	readonly endpointUrl?: URL;
 	readonly connectTimeoutMs: number;
 	readonly asyncErrorSink: McpAsyncErrorSink;
 	/**
@@ -73,13 +75,15 @@ export async function connectMcpTransport(connection: McpTransportConnection): P
 		});
 	} catch (error) {
 		await shutdownMcpTransport(connection).catch(() => undefined);
+		if (error instanceof ConnectError && error.phase === "modern-stdio") throw error;
 		if (timedOut) {
 			throw new TimeoutError(
 				`MCP server ${connection.serverName} timed out during connect after ${connection.connectTimeoutMs}ms`,
 				{ cause: error, phase: "connect", retriable: true, serverName: connection.serverName },
 			);
 		}
-		throw new ConnectError(`MCP server ${connection.serverName} failed during connect: ${errorMessage(error)}`, {
+		const reason = crossOriginRedirectReason(error, connection.endpointUrl) ?? errorMessage(error);
+		throw new ConnectError(`MCP server ${connection.serverName} failed during connect: ${reason}`, {
 			cause: error,
 			phase: "connect",
 			retriable: true,
@@ -157,6 +161,7 @@ function createConnection(
 	const asyncErrorSink: McpAsyncErrorSink = { logger: options.logger };
 	let materialized: McpMaterializedTransport | undefined;
 	let pending: Promise<McpMaterializedTransport> | undefined;
+	const abort = new AbortController();
 	let lastRootPid: number | null = null;
 	const captureRootPid = (): void => {
 		lastRootPid = materialized?.readPid() ?? lastRootPid;
@@ -177,6 +182,7 @@ function createConnection(
 			return built().client;
 		},
 		closeTransport: async (): Promise<void> => {
+			abort.abort();
 			await materialized?.close();
 		},
 		connectTimeoutMs,
@@ -185,20 +191,32 @@ function createConnection(
 			return materialized?.readPid() ?? lastRootPid;
 		},
 		materialize: async (): Promise<void> => {
-			pending ??= materializeMcpTransport({
-				elicitationUiProvider: options.elicitationUiProvider,
-				logger: options.logger,
-				onStart: captureRootPid,
-				sink: asyncErrorSink,
-				spec,
-			});
+			pending ??= import("./modern/dispatch.ts").then(({ materializeNegotiatedTransport }) =>
+				materializeNegotiatedTransport(
+					{
+						elicitationUiProvider: options.elicitationUiProvider,
+						logger: options.logger,
+						onStart: captureRootPid,
+						sink: asyncErrorSink,
+						spec,
+					},
+					options.serverName,
+					connectTimeoutMs,
+					abort.signal,
+				),
+			);
 			materialized = await pending;
+			if (abort.signal.aborted) {
+				await materialized.close();
+				abort.signal.throwIfAborted();
+			}
 		},
 		serverName: options.serverName,
 		get transport(): Transport {
 			return built().transport;
 		},
 		transportKind: spec.kind,
+		...(spec.kind === "http" ? { endpointUrl: spec.url } : {}),
 	};
 }
 
@@ -235,3 +253,24 @@ function buildHeaders(options: CreateMcpTransportOptions): Record<string, string
 }
 
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+// The SDK (1.32+) refuses a redirect to another origin and reports `Redirect to <target> not followed` with a
+// 3xx code. senpi keeps that default (senpi#2940); this names both origins and the rule so the user can fix the URL.
+const UNFOLLOWED_REDIRECT = /Redirect to (\S+) not followed/;
+function crossOriginRedirectReason(error: unknown, endpoint: URL | undefined): string | undefined {
+	if (endpoint === undefined || !(error instanceof Error)) return undefined;
+	const code = (error as { code?: unknown }).code;
+	if (typeof code !== "number" || code < 300 || code >= 400) return undefined;
+	const target = UNFOLLOWED_REDIRECT.exec(error.message)?.[1];
+	if (target === undefined) return undefined;
+	let targetOrigin: string;
+	try {
+		targetOrigin = new URL(target).origin;
+	} catch (parseError) {
+		if (parseError instanceof TypeError) return undefined;
+		throw parseError;
+	}
+	// The SDK refuses some same-origin redirects too (a POST answered with 301-303, added userinfo); keep its text.
+	if (targetOrigin === endpoint.origin) return undefined;
+	return `the endpoint at ${endpoint.origin} redirected to ${targetOrigin}, and senpi only follows redirects within the same origin, so credentials and requests never move to another server without your say-so. Point the server's url at ${target} if that is where it now lives.`;
+}

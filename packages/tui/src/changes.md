@@ -1,3 +1,123 @@
+## 2026-10-18 - Main-screen hands the wheel back to the terminal while a mouse lease is held (senpi#3604)
+
+### What changed
+
+- `packages/tui/src/tui-main-screen.ts`: the first wheel report (button bit 64) while mouse tracking is on writes `MOUSE_TRACKING.disable` and enters a `yielded` state that keeps the lease; later mouse reports are consumed without dispatch. The next input that is not a terminal report (a key press or paste) re-arms tracking through `applyMouseTracking(true)` and still reaches the focused component. `applyMouseTracking` and `beforeTerminalStop` clear the state, so a released and re-acquired lease arms normally. `mouseCaptureState()` reports `"off" | "armed" | "yielded"`.
+- `packages/tui/src/tui.ts`: `TuiBase.mouseCaptureState()` (`"armed"` while an enabled lease exists, else `"off"`); `isTerminalReport` is exported for the main-screen renderer.
+
+### Why
+
+- In main-screen mode the transcript lives in the terminal's scrollback, which the app cannot scroll. With `?1000` on (a pending ask-user question holds a lease for clickable options), the terminal stopped scrolling and the renderer swallowed the wheel reports, so the wheel did nothing until the question was answered.
+- Tests: `packages/tui/test/tui-main-screen-mouse.test.ts` (yield on wheel, re-arm on a key that still reaches the editor, clicks dead while yielded and live after re-arm, no re-arm on terminal reports or focus changes, re-acquire after release).
+
+### Why an extension could not handle it
+
+- Mouse tracking bytes and input routing belong to the renderer; extensions only hold leases.
+
+### Expected merge conflict zones
+
+- MEDIUM: `TuiMainScreen.handleMouseInput` and `applyMouseTracking`. LOW: `TuiBase.mouseCaptureState`, the `isTerminalReport` export.
+
+## 2026-10-18 - Old WezTerm on Windows gets the image placeholder instead of a blank gap (Fixes senpi#3596)
+
+### What changed
+
+- `packages/tui/src/terminal-image.ts`: the WezTerm branch of `detectCapabilitiesFromEnvironment` reports `images: null` with `imageHint` when `isOldWindowsWezTerm(TERM_PROGRAM_VERSION, process.platform)` is true; `imageFallback` appends `imageHint` to the placeholder text. An explicit image choice (`PI_IMAGE_PROTOCOL` in `detectCapabilities`, an `images` override in `getCapabilities`) drops the detected hint through `withoutImageHint`, and `setCapabilityOverrides` compares `imageHint` too.
+- `packages/tui/src/terminal-capabilities.ts`: `TerminalCapabilities` gains optional `imageHint`, and `detectTerminalCapabilities` applies the same WezTerm rule.
+- `packages/tui/src/wezterm-windows-images.ts` (new): the version gate (`MIN_WEZTERM_WINDOWS_IMAGES_VERSION = 20250208-160106`, the build that bundled ConPTY 1.22) and the hint text. Missing or malformed versions and non-Windows platforms keep Kitty images; `PI_IMAGE_PROTOCOL` still overrides.
+
+### Why
+
+- `packages/tui/src/terminal-image.ts`: on Windows, WezTerm 20240203 (the latest stable) bundles a ConPTY that drops the Kitty graphics APC while passing plain text and OSC 1337, so images left blank rows. A byte capture through each bundled ConPTY showed the APC dropped by the 20240203 and 1.19 builds and delivered by 1.22 (nightly 20261010).
+
+### Why an extension could not handle it
+
+- `packages/tui/src/terminal-image.ts`: capability detection and the placeholder text are renderer internals with no extension hook.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/terminal-image.ts`: the WezTerm branch of `detectCapabilitiesFromEnvironment`, the import block, the override merges in `detectCapabilities` and `getCapabilities`, the `setCapabilityOverrides` equality check, and the tail of `imageFallback`.
+
+## 2026-10-12 - Render diagnostics honor the caller's temporary directory (Refs senpi#3064)
+
+### What changed
+
+- `packages/tui/src/tui.ts`: PI_TUI_DEBUG render dumps use `path.join(os.tmpdir(), "tui")` rather than literal `/tmp/tui`.
+- The diagnostic-permissions fixture uses its own temporary root for TMPDIR/TEMP/TMP and removes that entire root after the test.
+
+### Why
+
+- `packages/tui/src/tui.ts`: a workspace test left the shared `/tmp/tui` directory outside the run owner. Render dumps must follow the caller's configured temp ownership.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/tui.ts`: the renderer chooses and creates the diagnostic path.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui.ts`: PI_TUI_DEBUG path construction and diagnostic file permissions.
+
+## 2026-10-07 - Multiplexer focus events and width changes repaint the viewport only (senpi#1704)
+
+### What changed
+
+- `packages/tui/src/tui.ts`:
+  - `handleTerminalInput`: inside a multiplexer (when the mux scrollback is preserved), a focus-out event repaints nothing. A focus-in resets the capability cache, invalidates, and marks one viewport repaint (`#muxViewportRepaintPending`) instead of `requestRender(true)`, which reset every cached frame and re-emitted the whole buffer.
+  - `doRender`: a width change inside a multiplexer repaints the re-wrapped viewport through `renderMuxViewportRepaint(..., "absolute")`. The repaint homes the cursor, because the pane already re-wrapped the screen. A pending focus repaint goes through `renderMuxViewportRepaint` too, with relative homing; it follows rows a queued frame added to the bottom, keeps the viewport top after a shrink (as the deleted-lines path does), and `stop()` and a width change clear the pending flag. A forced render (`previousWidth` -1) keeps the full-render path. An image row in the viewport still falls back to the no-3J full render.
+  - `renderMuxViewportRepaint` takes a `home` argument (`relative` by default, as before).
+- `packages/tui/test/mux-scrollback.test.ts`:
+  - new: a focus event repaints at most the visible rows (and focus out nothing), and a width change rewrites only the visible rows with no screen or scrollback clear;
+  - the existing mux width-change test now asserts a home plus a viewport repaint instead of a screen clear.
+
+### Why
+
+In a tmux pane, each focus event and each width change cleared the screen and re-emitted every line of the transcript buffer. That scrolled a full copy of the transcript into the pane's history per event (about 1.7k lines each, with a ~1.9k-line transcript), evicted real history, and flashed the pane mid-replay.
+
+### Why an extension could not handle it
+
+The render path and the focus handling belong to the TUI renderer.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui.ts`: the focus branch of `handleTerminalInput`, the `widthChanged` branch of `doRender`, and `renderMuxViewportRepaint`'s signature and homing.
+
+## 2026-10-07 - Hold the scrollback replay while a reply streams (senpi#2836)
+
+### What changed
+
+- `packages/tui/src/tui.ts`:
+  - new `setScrollbackReplayHold(true | false | "until-input")` and `catchUpScrollback()`.
+  - While held, a main-screen frame that changes rows above the viewport while the line count changes takes `renderHeldRepaint()` instead of `renderScrollbackReplay()`. That rewrites the frame from the old viewport top down, so rows that scroll off land in scrollback in their current form, without `ESC[3J`. A user scrolled up keeps their place.
+  - Rows above the old viewport stay as the terminal shows them and are marked stale.
+  - The first key press, or `catchUpScrollback()`, triggers one catch-up replay. `"until-input"` keeps holding until that key press.
+  - What counts as a key press is decided after the color, color-scheme and other report consumers have run. `isTerminalReport()` excludes anything the terminal sends on its own: mouse and wheel reports, OSC/DCS/APC replies, DEC private reports such as the `ESC[?997;1n` theme flip, and window and cell-size reports.
+  - A pending catch-up that a resize frame skips leaves the rows marked stale for the next key press. `stop()` and forced resets clear the stale and pending flags. `stop()` keeps the hold itself, because the hold belongs to the turn: a `stop()`/`start()` handover for an external editor or a suspend mid-turn must not drop it. OSC/DCS/APC count as reports only with a body after the introducer, so a legacy Alt+] / Alt+Shift+P / Alt+_ key press still catches up.
+  - The multiplexer path, idle frames, resize and image rows behave as before.
+- `packages/tui/test/scrollback-replay-hold.test.ts`, a real `TUI` on a counting `VirtualTerminal` (60x12):
+  - a table widening every row streamed 30 rows deep causes 0 replays, and the newest row is on screen;
+  - a reader scrolled up 6 rows stays on the same row;
+  - 0 replays at turn end, all 30 rows in scrollback (some at older widths), exactly one replay at the next key that leaves every row at the final width, and none at the key after;
+  - idle frames still replay;
+  - mux panes still never replay, held or not;
+  - a wheel report, an OS theme flip, a cell-size reply and a late OSC reply leave a scrolled-up reader in place;
+  - after the turn, the next key releases the hold, so later updates replay normally again;
+  - the hold survives a `stop()`/`start()` handover mid-turn;
+  - a legacy `ESC]`, `ESC P` or `ESC _` key press catches up.
+
+  The first three fail on main. Removing the report filter fails the reports test, and making `"until-input"` never release fails the release test. Dropping the hold in `stop()` fails the handover test, and dropping the body check fails the Alt-key test.
+
+### Why
+
+A main-screen terminal cannot report its scroll position. Any frame that changed rows above the viewport replayed the whole scrollback, which throws a reader who scrolled up during a streaming reply back to the top, once per update.
+
+### Why an extension could not handle it
+
+Repaint decisions live inside the TUI renderer, below any extension.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui.ts`: the two non-mux `renderScrollbackReplay` call sites in `doRender()`, the start of `handleTerminalInput()`, and the new methods next to `renderNow()` and `renderMuxViewportRepaint()`.
+
 # TUI delta rendering fork changes
 
 ## 2026-10-04 - Accepting a suggestion list that predates the text re-queries instead of splicing
@@ -1604,3 +1724,26 @@ Rendering internals below any extension hook.
 ### Expected merge conflict zones
 
 Upstream TUI fixes in these files at the next sync.
+
+## 2026-10-12 - Editor keyword-run highlight hook (senpi#3160)
+
+### What changed
+
+- `packages/tui/src/components/editor.ts`
+- `packages/tui/src/components/editor-line-render.ts`
+- `packages/tui/src/index.ts`
+
+`EditorTheme` gains an optional `keywordHighlight` (`find` over the whole text joined with `\n`, `style` per character with its run offset and length). `Editor.render` caches runs per text and splits them per logical line and wrap chunk; `renderEditorLine` cuts segments at run edges, drops runs that overlap a mention, and styles the cursor grapheme in reverse video as before. `EditorKeywordHighlight` is exported from the barrel.
+
+### Why
+
+OmO's desktop composer paints reserved prompt keywords (`ulw`, `mass ulw`, `ulw research`, ...) with a rainbow; the TUI editor had no per-character decoration seam, so the same cue was missing in the terminal.
+
+### Why an extension could not handle it
+
+Row composition, wrapping and the cursor grapheme live inside `Editor.render`; an extension can only replace the whole editor, not decorate characters inside its rows.
+
+### Expected merge conflict zones
+
+- MEDIUM: `Editor.render` around the `renderEditorLine` call and `EditorTheme` in `packages/tui/src/components/editor.ts`.
+- LOW: the `Editor` export block in `packages/tui/src/index.ts`.

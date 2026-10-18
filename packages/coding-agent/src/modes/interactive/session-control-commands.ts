@@ -1,10 +1,11 @@
 /**
- * The terminal control endpoint's command surface: read-mostly by design. It answers who it is,
- * which one session it holds and that session's state and messages, renames it, streams its feed,
- * wakes its inbox drain, and relays an answer to a question the session itself asked. Nothing here
- * can prompt, steer, queue a follow-up, open a session, run a command or change a model - one
- * delivery authority (the registrant's drain) applies messages, through admission, and only there.
- * Every other command is answered `unsupported` as data.
+ * The terminal control endpoint's command surface. It answers who it is, which one session it holds
+ * and that session's state and messages, renames it, streams its feed, wakes its inbox drain, relays
+ * an answer to a question the session itself asked, and applies the pane's own session controls (a
+ * model, a thinking level, an interrupt - `session-control-session-commands.ts`). Nothing here can
+ * prompt, steer, queue a follow-up, open a session or run a command - one delivery authority (the
+ * registrant's drain) applies messages, through admission, and only there. Every other command is
+ * answered `unsupported` as data; `get_protocol_info` lists the accepted ones in `commands`.
  */
 import { VERSION } from "../../config.ts";
 import type { AgentSession } from "../../core/agent-session.ts";
@@ -15,12 +16,20 @@ import type {
 	QuestionResponse,
 	SessionControlDrainResult,
 } from "../../core/extensions/types.ts";
+import { SESSION_STATUS_CAPABILITY } from "../rpc/custom-capability.ts";
 import { answeredUiRequestId, settledQuestionStatus, unansweredQuestionIds } from "../rpc/extension-ui-response.ts";
 import { buildRpcSessionState } from "../rpc/rpc-session-state.ts";
+import type { ControlAttachments } from "./session-control-attach.ts";
 import type { ControlFeed } from "./session-control-feed.ts";
+import { runTuiRpcCommand, TUI_RPC_COMMANDS } from "./session-control-rpc-commands.ts";
 import { type ControlCommand, type ControlConnection, failure, success } from "./session-control-server.ts";
+import {
+	runSessionControlCommand,
+	SESSION_CONTROL_COMMANDS,
+	type TuiSessionControls,
+} from "./session-control-session-commands.ts";
 
-export interface TuiControlSurface {
+export interface TuiControlSurface extends TuiSessionControls {
 	draftHold(): AdmissionHoldReason | undefined;
 	blockingQuestion(): boolean;
 	pendingQuestionIds(): readonly string[];
@@ -35,15 +44,29 @@ export interface ControlCommandContext {
 	readonly surface: TuiControlSurface;
 	readonly feed: ControlFeed;
 	readonly wake: (deliveryIds?: readonly string[]) => Promise<SessionControlDrainResult>;
+	readonly attachments: ControlAttachments;
 }
 
 export const TUI_CONTROL_CAPABILITY = "tui_control";
+
+const TUI_CONTROL_COMMANDS = [
+	"get_protocol_info",
+	"list_sessions",
+	"get_state",
+	"get_messages",
+	"set_session_name",
+	"subscribe",
+	"wake",
+	"extension_ui_response",
+	...SESSION_CONTROL_COMMANDS,
+	...TUI_RPC_COMMANDS,
+];
 
 export async function runControlCommand(
 	context: ControlCommandContext,
 	connection: ControlConnection,
 	command: ControlCommand,
-): Promise<object> {
+): Promise<object | null> {
 	const { id, type } = command;
 	const { session } = context;
 	switch (type) {
@@ -52,12 +75,14 @@ export async function runControlCommand(
 			return success(id, type, {
 				protocolVersion: 1,
 				serverVersion: VERSION,
-				capabilities: [TUI_CONTROL_CAPABILITY],
+				capabilities: [TUI_CONTROL_CAPABILITY, SESSION_STATUS_CAPABILITY],
 				mode: "tui",
+				endpoint_kind: "tui",
 				instanceId: context.instanceId,
 				generation: 0,
 				engineVersion: build.text,
 				engineOrdinal: build.ordinal,
+				commands: TUI_CONTROL_COMMANDS,
 			});
 		}
 		case "list_sessions":
@@ -92,8 +117,11 @@ export async function runControlCommand(
 		}
 		case "extension_ui_response":
 			return answerQuestion(context.surface, command);
-		default:
-			return failure(id, type, "unsupported");
+		default: {
+			const rpc = await runTuiRpcCommand(context, connection, command);
+			if (rpc !== undefined) return rpc;
+			return (await runSessionControlCommand(session, context.surface, command)) ?? failure(id, type, "unsupported");
+		}
 	}
 }
 

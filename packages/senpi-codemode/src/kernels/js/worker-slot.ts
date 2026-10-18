@@ -19,6 +19,7 @@ export class WorkerSlot {
 	readonly #options: JavaScriptKernelOptions;
 	readonly #listeners: WorkerSlotListeners;
 	#worker: WorkerLike | null = null;
+	#lastProcessPid: number | undefined;
 	#webViews: KernelWebViewClients | null = null;
 	#mode: JavaScriptKernelMode = "worker";
 	#generation = 0;
@@ -32,6 +33,12 @@ export class WorkerSlot {
 
 	get mode(): JavaScriptKernelMode {
 		return this.#mode;
+	}
+
+	get processPid(): number | undefined {
+		const worker = this.#worker;
+		if (worker?.mode === "process") return worker.pid;
+		return this.#lastProcessPid;
 	}
 
 	get present(): boolean {
@@ -105,6 +112,7 @@ export class WorkerSlot {
 	#publish(worker: WorkerLike, generation: number): void {
 		if (!this.#listeners.isOpen() || generation !== this.#generation) throw new WorkerStartupCancelledError();
 		this.#worker = worker;
+		if (worker.mode === "process") this.#lastProcessPid = worker.pid;
 		const webViews = new KernelWebViewClients((message, transfer) => worker.postMessage(message, transfer));
 		this.#webViews = webViews;
 		worker.onMessage((message) => {

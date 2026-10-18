@@ -7,6 +7,8 @@ import { defaultCodemodeSettings } from "../../src/config/settings.ts";
 import { createCodemodeSessionManager } from "../../src/extension/session-manager.ts";
 import { createInterpreterDetector, getInterpreterAvailability } from "../../src/interpreters/detect.ts";
 import { createEvalTool } from "../../src/tool/eval-tool.ts";
+import { formatRuntimeBadge } from "../../src/tool/runtime-label.ts";
+import type { EvalRuntimeInfo } from "../../src/tool/types.ts";
 import { fakeExtensionContext } from "../eval/fakes.ts";
 
 const baseSettings = { ...defaultCodemodeSettings, languages: { js: true, py: false, rb: false, jl: false } };
@@ -49,6 +51,7 @@ async function session(sandbox: { enabled: boolean; memoryMb?: number; timeoutSe
 		listTools: () => [{ name: "read", description: "read a file" }, { name: "eval" }],
 		cellTimeoutSeconds: 120,
 		settings,
+		runtimes: { js: { name: "bun", version: "1.4.2", path: "/opt/bun/bin/bun" } },
 	});
 	cleanups.push(async () => {
 		await manager.dispose();
@@ -67,6 +70,48 @@ async function session(sandbox: { enabled: boolean; memoryMb?: number; timeoutSe
 }
 
 describe("Given sandbox cells are turned on", () => {
+	it("Given an isolated cell when it settles then its result names QuickJS as its runtime, with no host path (senpi#2811)", async () => {
+		const { run } = await session();
+
+		const isolated = await run("return 1", true);
+
+		expect(isolated.details).toMatchObject({
+			runtime: { name: "quickjs", version: expect.stringMatching(/^\d+\.\d+\.\d+/u), isolation: "sandbox" },
+		});
+		expect(JSON.stringify(isolated.details)).not.toContain("/opt/bun");
+		if (typeof isolated.details !== "object" || isolated.details === null || !("runtime" in isolated.details))
+			throw new Error("the isolated cell's details carry no runtime");
+		const runtime: EvalRuntimeInfo = (() => {
+			const value: unknown = isolated.details.runtime;
+			if (typeof value !== "object" || value === null)
+				throw new Error("the isolated cell's runtime is not an object");
+			const record = Object.fromEntries(Object.entries(value));
+			if (typeof record.name !== "string" || typeof record.version !== "string")
+				throw new Error(`unexpected runtime shape: ${JSON.stringify(record)}`);
+			const runtimeInfo: EvalRuntimeInfo = {
+				name: record.name,
+				version: record.version,
+				...(typeof record.path === "string" ? { path: record.path } : {}),
+				...(record.isolation === "process" || record.isolation === "sandbox"
+					? { isolation: record.isolation }
+					: {}),
+			};
+			return runtimeInfo;
+		})();
+		expect(formatRuntimeBadge("js", runtime)).toMatch(/^quickjs \d+\.\d+\.\d+, sandbox$/u);
+	}, 120_000);
+
+	it("Given a persistent cell in a session with isolated cells when it settles then it keeps the kernel's runtime (senpi#2811)", async () => {
+		const { run } = await session();
+
+		await run("return 1", true);
+		const persistent = await run("1 + 1");
+
+		expect(persistent.details).toMatchObject({
+			runtime: { name: "bun", version: "1.4.2", path: "/opt/bun/bin/bun" },
+		});
+	}, 120_000);
+
 	it("isolated-cell-has-no-ambient-host-or-persistence: the isolated cell sees neither the persistent kernel's globals nor process, can call tool.read, and the next isolated cell is fresh", async () => {
 		const { run, reads } = await session();
 		await run("globalThis.sentinel = 'persistent'; 'set'");
@@ -109,8 +154,24 @@ describe("Given sandbox cells are turned on", () => {
 			true,
 		);
 		const persistent = await run(`console.log("x".repeat(${size})); "ok"`);
-		const meta = (result: AgentToolResult<unknown>) =>
-			(result.details as unknown as { meta: { totalBytes: number; totalLines: number; truncatedBy: string } }).meta;
+		const meta = (
+			result: AgentToolResult<unknown>,
+		): { totalBytes: number; totalLines: number; truncatedBy: string } => {
+			const details: unknown = result.details;
+			if (typeof details !== "object" || details === null || !("meta" in details))
+				throw new Error("the cell's details carry no truncation meta");
+			const value: unknown = details.meta;
+			if (typeof value !== "object" || value === null)
+				throw new Error("the cell's truncation meta is not an object");
+			const record = Object.fromEntries(Object.entries(value));
+			if (
+				typeof record.totalBytes !== "number" ||
+				typeof record.totalLines !== "number" ||
+				typeof record.truncatedBy !== "string"
+			)
+				throw new Error(`unexpected truncation meta shape: ${JSON.stringify(record)}`);
+			return { totalBytes: record.totalBytes, totalLines: record.totalLines, truncatedBy: record.truncatedBy };
+		};
 
 		expect(meta(isolated).totalBytes).toBeGreaterThanOrEqual(size);
 		expect(meta(isolated)).toMatchObject({
@@ -118,7 +179,17 @@ describe("Given sandbox cells are turned on", () => {
 			truncatedBy: meta(persistent).truncatedBy,
 		});
 		expect(Math.abs(meta(isolated).totalBytes - meta(persistent).totalBytes)).toBeLessThanOrEqual(2);
-		expect((isolated.details as unknown as { cells: { status: string }[] }).cells[0]?.status).toBe("complete");
+		const cellStatuses = (result: AgentToolResult<unknown>): string[] => {
+			const details: unknown = result.details;
+			if (typeof details !== "object" || details === null || !("cells" in details) || !Array.isArray(details.cells))
+				throw new Error("the cell's details carry no cells array");
+			return details.cells.map((cell: unknown) => {
+				if (typeof cell !== "object" || cell === null || !("status" in cell) || typeof cell.status !== "string")
+					throw new Error(`unexpected cell entry: ${JSON.stringify(cell)}`);
+				return cell.status;
+			});
+		};
+		expect(cellStatuses(isolated)[0]).toBe("complete");
 		expect(textOf(isolated)).toContain("ok");
 	}, 180_000);
 

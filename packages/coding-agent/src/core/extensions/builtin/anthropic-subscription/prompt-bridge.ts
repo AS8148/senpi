@@ -1,6 +1,7 @@
 import type { AssistantMessage, Context } from "@earendil-works/pi-ai";
 import { replayHistoryImages } from "./cold-seed-images.ts";
 import { appendSdkContentBlocks } from "./content-blocks.ts";
+import type { PromptCacheTtl } from "./prompt-cache-ttl.ts";
 import type { ContentBlockParam, SDKUserMessage } from "./sdk-boundary.ts";
 import { mapPiToolNameToSdk } from "./tools.ts";
 
@@ -26,10 +27,49 @@ function appendContentBlocks(blocks: ContentBlockParam[], content: string | read
 	return appendSdkContentBlocks(blocks, content);
 }
 
+/**
+ * Text that closes the replayed history. Everything after it (recovered tool results, the
+ * response instruction, the final user message) changes every turn, so it stays after the
+ * cache breakpoint.
+ */
+export const CONVERSATION_HISTORY_CLOSER = "\n</conversation_history>";
+
+export const RESPOND_TO_USER_INSTRUCTION =
+	'The above is the conversation history so far, provided as context. Respond as the assistant to the user message below only. Never emit "USER:" or "ASSISTANT:" labels or continue the transcript.';
+
+/**
+ * A replay that ends with tool results (a model switch or fallback mid-turn) has no new user message. Saying "the
+ * user message below" there made the model read the last tool output, often images it generated itself, as something
+ * the user had just sent (senpi#2768).
+ */
+export const CONTINUE_TURN_INSTRUCTION =
+	'The above is the conversation history so far, provided as context. There is no new user message: the last entries are results of tool calls you made in your current turn, not anything the user sent. Continue that turn as the assistant. Never emit "USER:" or "ASSISTANT:" labels or continue the transcript.';
+
+export type PromptBlockOptions = {
+	/**
+	 * Mark the last history text block as a prompt-cache breakpoint with this lifetime. History only grows by
+	 * appending, so the next rebuilt prompt starts with the same bytes up to here and reads them from cache
+	 * (senpi#2982). The lifetime must equal the one Claude Code is pinned to (see prompt-cache-ttl.ts). Only for
+	 * one-shot queries: a resident session keeps this user message in its transcript, where Claude Code adds its own.
+	 */
+	cacheBreakpoint?: PromptCacheTtl;
+};
+
+/** Claude Code drops a breakpoint set on an image, so the last text block of the history carries it. */
+function markCacheBreakpoint(blocks: ContentBlockParam[], historyStart: number, ttl: PromptCacheTtl): void {
+	for (let index = blocks.length - 1; index >= historyStart; index--) {
+		const block = blocks[index];
+		if (block?.type !== "text") continue;
+		blocks[index] = { ...block, cache_control: { type: "ephemeral", ttl } };
+		return;
+	}
+}
+
 export function buildPromptBlocks(
 	context: Context,
 	customToolNameToSdk?: ReadonlyMap<string, string>,
 	toolWatchNote?: string,
+	options: PromptBlockOptions = {},
 ): ContentBlockParam[] {
 	const blocks: ContentBlockParam[] = [];
 	const pushText = (text: string): void => {
@@ -38,8 +78,11 @@ export function buildPromptBlocks(
 	const finalMessage = context.messages.at(-1);
 	const finalUserMessage = finalMessage?.role === "user" ? finalMessage : undefined;
 	const history = finalUserMessage ? context.messages.slice(0, -1) : context.messages;
+	// No new user message and the history ends with tool results: a model switch or fallback inside a turn.
+	const continuesTurn = !finalUserMessage && history.at(-1)?.role === "toolResult";
 
 	if (history.length > 0) {
+		const historyStart = blocks.length;
 		pushText("<conversation_history>\n");
 		let hasPreviousTurn = false;
 		const pushPrefix = (label: string): void => {
@@ -47,7 +90,9 @@ export function buildPromptBlocks(
 			hasPreviousTurn = true;
 		};
 
-		const replayedImages = replayHistoryImages(history, (name) => mapPiToolNameToSdk(name, customToolNameToSdk));
+		const replayedImages = replayHistoryImages(history, (name) => mapPiToolNameToSdk(name, customToolNameToSdk), {
+			inProgressTurn: continuesTurn,
+		});
 		for (const [index, message] of history.entries()) {
 			if (message.role === "user") {
 				pushPrefix("USER:");
@@ -68,7 +113,8 @@ export function buildPromptBlocks(
 			if (!appendContentBlocks(blocks, replayedImages.get(index) ?? message.content))
 				pushText("(see attached image)");
 		}
-		pushText("\n</conversation_history>");
+		if (options.cacheBreakpoint !== undefined) markCacheBreakpoint(blocks, historyStart, options.cacheBreakpoint);
+		pushText(CONVERSATION_HISTORY_CLOSER);
 	}
 
 	if (toolWatchNote?.trim()) {
@@ -77,10 +123,21 @@ export function buildPromptBlocks(
 		pushText("\n</recovered_tool_results>");
 	}
 	pushText(
-		'The above is the conversation history so far, provided as context. Respond as the assistant to the user message below only. Never emit "USER:" or "ASSISTANT:" labels or continue the transcript.',
+		history.at(-1)?.role === "toolResult" && !finalUserMessage
+			? CONTINUE_TURN_INSTRUCTION
+			: RESPOND_TO_USER_INSTRUCTION,
 	);
 	if (finalUserMessage && !appendContentBlocks(blocks, finalUserMessage.content)) pushText("(see attached image)");
 	return blocks;
+}
+
+/**
+ * A prompt that builds its blocks each time it is iterated. A failover retry hands the same prompt to a fresh query,
+ * and an async generator would be exhausted by then; building late also lets the blocks follow the auth lane the
+ * attempt resolved (its pinned cache lifetime).
+ */
+export function buildDeferredPromptStream(build: () => ContentBlockParam[]): AsyncIterable<SDKUserMessage> {
+	return { [Symbol.asyncIterator]: () => buildPromptStream(build())[Symbol.asyncIterator]() };
 }
 
 export function buildPromptStream(promptBlocks: ContentBlockParam[]): AsyncIterable<SDKUserMessage> {

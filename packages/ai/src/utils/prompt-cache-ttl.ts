@@ -62,7 +62,9 @@ const FORCED_TOOL_CHOICE_REJECTING_MODEL_ID = /^claude-(?:(?:fable|mythos)(?:-|$
 /**
  * Default for `supportsToolReferences`: first-party Anthropic models except
  * Haiku (rejects client-side tool_reference blocks) and models that predate
- * tool search (Claude 3.x, Opus/Sonnet 4.0, Opus 4.1).
+ * tool search (Claude 3.x, Opus/Sonnet 4.0, Opus 4.1). Haiku 5.5 is listed in
+ * Anthropic's tool-search table, as Haiku 4.5 is, but stays off until a live
+ * probe confirms it (senpi#2914).
  */
 function defaultSupportsToolReferences(model: Model<"anthropic-messages">): boolean {
 	if (model.provider !== "anthropic" || model.id.includes("haiku")) return false;
@@ -129,7 +131,9 @@ export type ResolvedOpenAICompletionsCompat = Omit<
 	| "thinkingTokenBudgetField"
 	| "veniceParameters"
 	| "supportsForcedToolChoice"
+	| "supportsWebSearch"
 > & {
+	supportsWebSearch?: OpenAICompletionsCompat["supportsWebSearch"];
 	/** Declared forced tool_choice support; absent means supported. */
 	supportsForcedToolChoice?: OpenAICompletionsCompat["supportsForcedToolChoice"];
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
@@ -267,6 +271,7 @@ export function getOpenAICompletionsCompat(model: Model<"openai-completions">): 
 	if (!model.compat) return detected;
 
 	return {
+		supportsWebSearch: model.compat.supportsWebSearch,
 		supportsStore: model.compat.supportsStore ?? detected.supportsStore,
 		supportsDeveloperRole: model.compat.supportsDeveloperRole ?? detected.supportsDeveloperRole,
 		supportsReasoningEffort: model.compat.supportsReasoningEffort ?? detected.supportsReasoningEffort,

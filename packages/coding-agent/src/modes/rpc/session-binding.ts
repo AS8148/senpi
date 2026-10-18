@@ -61,9 +61,25 @@ export async function createRpcSessionBinding(
 			return typeof value === "function" ? value.bind(runtime) : value;
 		},
 	});
+	// A reply can be written after its session closed: a prompt's preflight that outlived the client's
+	// deadline answers once the client already discarded the session. That record has no reader left, so it
+	// is dropped with one line naming the session instead of throwing "Provider scope is closed" out of
+	// an unawaited prompt (senpi#2871).
+	let droppedAfterClose = false;
 	const handler: RpcConnectionHandler = await runWithProviderScope(entry.scope, async () => {
+		const writeInScope = bindToProviderScope(enqueueRecords);
 		const taggedSink: RpcConnectionSink = {
-			writeRaw: bindToProviderScope(enqueueRecords),
+			writeRaw: (chunk) => {
+				if (entry.scope.state === "closed") {
+					if (!droppedAfterClose)
+						process.stderr.write(
+							`senpi rpc host: dropped a record for closed session ${sessionId} at ${new Date().toISOString()}\n`,
+						);
+					droppedAfterClose = true;
+					return;
+				}
+				writeInScope(chunk);
+			},
 			waitForBackpressure: bindToProviderScope(async () => {}),
 		};
 		return createRpcConnectionHandler(runtimeHost, taggedSink, {
@@ -71,6 +87,9 @@ export async function createRpcSessionBinding(
 			shutdownHandler: bindToProviderScope(requestClose),
 			disposeRuntime: false,
 			eventFlushScheduler: (flush) => flush(),
+			publishLoadedSurfacesChanged: (previous, digest) => {
+				if (entry.scope.state !== "closed") writer.publishLoadedSurfacesChanged(sessionId, previous, digest);
+			},
 			...options,
 		});
 	});

@@ -11,16 +11,24 @@ import {
 } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { resolveMovedPath } from "./extensions/builtin/moved-path-guard/resolve.ts";
 import {
 	breakStaleLock,
 	errorCode,
+	type LockProbes,
 	publishExclusive,
 	readLeaseText,
 	reclaimLockState,
 	unlinkIfPresent,
 } from "./extensions/builtin/terminal/lease-file.ts";
 import { ownProcessStartedAtMs, processBootAtMs } from "./extensions/builtin/terminal/process-identity.ts";
-import { SessionHeldError, type SessionHolder, SessionMovedError, SessionMovingError } from "./session-hold-errors.ts";
+import {
+	SessionHeldError,
+	type SessionHolder,
+	type SessionHolderEndpoint,
+	SessionMovedError,
+	SessionMovingError,
+} from "./session-hold-errors.ts";
 import { encodedSessionId } from "./session-sidecar-store.ts";
 
 export { SessionHeldError, type SessionHolder, SessionMovedError, SessionMovingError };
@@ -47,16 +55,18 @@ export interface SessionHold {
 	release(): void;
 }
 
+// A claim on an old spelling of a session file the desktop moved is a claim on the moved file (senpi#2898).
 function holdersDir(sessionFile: string, sessionId: string): string {
-	return join(dirname(sessionFile), HOLDERS_DIR, encodedSessionId(sessionId));
+	return join(dirname(resolveMovedPath(sessionFile)), HOLDERS_DIR, encodedSessionId(sessionId));
 }
 
-function identityRecord(cwd?: string): string {
+function identityRecord(cwd?: string, endpoint?: SessionHolderEndpoint): string {
 	return JSON.stringify({
 		pid: process.pid,
 		bootAtMs: processBootAtMs(),
 		processStartedAtMs: ownProcessStartedAtMs(),
 		...(cwd === undefined ? {} : { cwd }),
+		...endpoint,
 	});
 }
 
@@ -138,13 +148,17 @@ function parseCwd(raw: string): string | undefined {
 export function holdSessionFile(
 	sessionFile: string,
 	sessionId: string,
-	options: { readonly cwd?: string; readonly expectExisting: boolean },
+	options: {
+		readonly cwd?: string;
+		readonly expectExisting: boolean;
+		readonly holderEndpoint?: SessionHolderEndpoint;
+	},
 ): SessionHold {
 	const dir = holdersDir(sessionFile, sessionId);
 	const record = join(dir, `${process.pid}.json`);
 	const shared = holderRecordRefCounts.get(record) ?? 0;
 	if (shared === 0) {
-		publishHolderRecord(dir, record, identityRecord(options.cwd));
+		publishHolderRecord(dir, record, identityRecord(options.cwd, options.holderEndpoint));
 		installExitCleanup();
 	}
 	holderRecordRefCounts.set(record, shared + 1);
@@ -166,7 +180,7 @@ export function holdSessionFile(
 		release();
 		throw new SessionMovingError(sessionFile, mover.pid);
 	}
-	if (options.expectExisting && !existsSync(sessionFile)) {
+	if (options.expectExisting && !existsSync(resolveMovedPath(sessionFile))) {
 		release();
 		throw new SessionMovedError(sessionFile);
 	}
@@ -188,16 +202,32 @@ function publishHolderRecord(dir: string, record: string, content: string): void
 	}
 }
 
-async function liveHolders(dir: string): Promise<SessionHolder[]> {
+async function liveHolders(dir: string, probes: LockProbes = {}): Promise<SessionHolder[]> {
 	const holders: SessionHolder[] = [];
 	for (const name of await readdir(dir)) {
 		if (!HOLDER_RECORD.test(name)) continue;
 		const path = join(dir, name);
-		const state = await reclaimLockState(path);
+		const before = await readLeaseText(path);
+		const state = await reclaimLockState(path, probes);
 		if (state.state === "stale") await breakStaleLock(path, state.raw);
 		if (state.state !== "held" || state.holder === undefined) continue;
 		const raw = await readLeaseText(path);
-		holders.push({ pid: state.holder.pid, cwd: raw === undefined ? undefined : parseCwd(raw) });
+		// Never publish endpoint labels from a record replaced during the identity probe.
+		const stable = raw !== undefined && raw === before;
+		const parsed: unknown = stable ? JSON.parse(raw) : undefined;
+		const endpoint =
+			typeof parsed === "object" &&
+			parsed !== null &&
+			"host_instance" in parsed &&
+			typeof parsed.host_instance === "string"
+				? {
+						host_instance: parsed.host_instance,
+						...("host_socket" in parsed && typeof parsed.host_socket === "string"
+							? { host_socket: parsed.host_socket }
+							: {}),
+					}
+				: {};
+		holders.push({ pid: state.holder.pid, cwd: stable ? parseCwd(raw) : undefined, ...endpoint });
 	}
 	return holders;
 }
@@ -206,9 +236,13 @@ async function liveHolders(dir: string): Promise<SessionHolder[]> {
  * Live processes that have `sessionFile` open right now (stale records of dead or reused pids are
  * reclaimed on the way). A caller about to start another writer uses it to wait instead of racing one.
  */
-export async function liveSessionHolders(sessionFile: string, sessionId: string): Promise<SessionHolder[]> {
+export async function liveSessionHolders(
+	sessionFile: string,
+	sessionId: string,
+	probes: LockProbes = {},
+): Promise<SessionHolder[]> {
 	try {
-		return await liveHolders(holdersDir(sessionFile, sessionId));
+		return await liveHolders(holdersDir(sessionFile, sessionId), probes);
 	} catch (error) {
 		if (errorCode(error) === "ENOENT") return [];
 		throw error;
