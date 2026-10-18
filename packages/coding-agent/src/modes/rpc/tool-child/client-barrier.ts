@@ -67,6 +67,8 @@ export function createGenerationBarrier(options: {
 					enforcer.onDone(frame);
 					return true;
 				case "command_started":
+					enforcer.onCommandStarted(frame);
+					return true;
 				case "slot_state":
 					void log.record({ ...frame });
 					return true;

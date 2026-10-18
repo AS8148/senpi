@@ -160,10 +160,7 @@ export class ToolChildClient {
 			generation,
 			channel,
 			onViolation: (violation) => {
-				const failure = new ToolChildError(
-					"tool_child_barrier_violation",
-					`${violation.launchId}: ${violation.reason}`,
-				);
+				const failure = new ToolChildError(violation.code, `${violation.launchId}: ${violation.reason}`);
 				if (violation.jobId !== undefined) settle({ pending }, violation.jobId, (p) => p.reject(failure));
 				containment.kill();
 			},

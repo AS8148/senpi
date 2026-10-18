@@ -87,7 +87,7 @@ describe("LaunchEnforcer", () => {
 		const { enforcer, violations } = await rig();
 		await enforcer.onLaunch(launch("l1"));
 		enforcer.onProof({ type: "launch_proof", launchId: "l1", ...ticks });
-		expect(violations).toEqual([{ launchId: "l1", jobId: "j1", reason }]);
+		expect(violations).toEqual([{ launchId: "l1", jobId: "j1", reason, code: "tool_child_barrier_violation" }]);
 	});
 
 	it("raises proof_missing when the proof deadline passes after the ack", async () => {
@@ -95,7 +95,9 @@ describe("LaunchEnforcer", () => {
 		await enforcer.onLaunch(launch("l1"));
 		expect(timers.map((timer) => timer.ms)).toEqual([5_000]);
 		timers[0]?.fn();
-		expect(violations).toEqual([{ launchId: "l1", jobId: "j1", reason: "proof_missing" }]);
+		expect(violations).toEqual([
+			{ launchId: "l1", jobId: "j1", reason: "proof_missing", code: "tool_child_barrier_violation" },
+		]);
 	});
 
 	it("detects an invocation while the ack is still held, without ever acknowledging", async () => {
@@ -107,7 +109,9 @@ describe("LaunchEnforcer", () => {
 		const pending = enforcer.onLaunch(launch("l1"));
 		await new Promise((resolve) => setImmediate(resolve));
 		enforcer.onProof({ type: "launch_proof", launchId: "l1", ackTick: null, invokeTick: 2 });
-		expect(violations).toEqual([{ launchId: "l1", jobId: "j1", reason: "proof_unacked" }]);
+		expect(violations).toEqual([
+			{ launchId: "l1", jobId: "j1", reason: "proof_unacked", code: "tool_child_barrier_violation" },
+		]);
 		release();
 		await pending;
 		expect(acks).toEqual([]);
@@ -117,7 +121,9 @@ describe("LaunchEnforcer", () => {
 		const { enforcer, violations } = await rig();
 		enforcer.onProof({ type: "launch_proof", launchId: "ghost", ackTick: 1, invokeTick: 2 });
 		enforcer.onProof({ type: "launch_proof", launchId: "ghost2", ackTick: 1, invokeTick: 2 });
-		expect(violations).toEqual([{ launchId: "ghost", jobId: undefined, reason: "proof_unknown_launch" }]);
+		expect(violations).toEqual([
+			{ launchId: "ghost", jobId: undefined, reason: "proof_unknown_launch", code: "tool_child_barrier_violation" },
+		]);
 	});
 
 	it("sets no deadline on launch_done", async () => {
