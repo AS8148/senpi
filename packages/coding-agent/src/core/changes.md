@@ -16,6 +16,33 @@
 
 - LOW: `packages/coding-agent/src/core/session-manager.ts`, the `writeGuard` field next to `persist` and the first line of `_persist`.
 
+## 2026-10-18 - A hung extension handler cannot freeze the session (senpi#3650)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_applyExtensionBindings` gives every runner the extension handler budget (`extensionEventHandlerWarnMs` / `extensionEventHandlerTimeoutMs`), routes stalls to `reportExtensionHandlerStall`, and tags handler waits with `_handlerTurnScope` (advanced where a prompt arms the turn deadline); `releaseHeldExtensionHandlers()` releases only that turn's waits. `_handleAgentEvent` feeds `AgentRunContinuations`, and `_emitAgentSettled(agentEnd)` no longer waits for the agent to go idle when the core continued the run with input queued during `agent_end`: that continuation's own `agent_end` settles the run (senpi#3351 drain owner).
+- `packages/coding-agent/src/core/agent-session.ts` `_abortActiveAgentAndRetry`: an abort (Esc, or the turn deadline) the run does not honour within `TURN_DEADLINE_GRACE_MS` releases the turn's held handler waits (`_waitForIdleAfterAbort`), so Esc ends a handler-held turn too.
+- `packages/coding-agent/src/core/agent-run-continuation.ts` (new): `AgentRunContinuations`, which proves from emission order (a later `agent_start`) that the core continued a run.
+- `packages/coding-agent/src/core/settings-manager.ts`: the two settings, defaults 60 s (warning) and 20 min (hard cap, above the 15 min summarization budget a blocking compaction in `message_end` may use); `0` disables each.
+- `packages/coding-agent/src/core/session-log.ts`: `extension` and `handlerEvent` join the data-key allowlist, so `extension_handler_stalled` names the extension (basename), the event, the stage (`warn` / `timeout` / `released` / `late_failure`) and, for a late failure, its `error`.
+- `packages/coding-agent/src/core/turn-deadline.ts`: a turn still running one grace after the deadline abort has its turn's held handler waits released and gets one more grace; only a turn still running after that logs `turn_deadline_unsettled`, with the real time since the abort.
+- `packages/coding-agent/src/core/extension-handler-stall-report.ts` (new): logs every stall stage and shows a notice for the warning stage.
+
+### Why
+
+AgentSession persists agent events on one serial queue and awaited every extension handler without a bound. One handler that never settled froze a long-running session for 2 h 12 min: the turn was never written, the session stayed streaming, 25 queued steers were never delivered, nothing logged which handler held it, and the turn deadline could only report the turn unsettled. Review of the first version found that which side drains input queued during `agent_end` depended on microtask timing (two async `agent_end` handlers already deadlocked it on `main`).
+
+### Why an extension could not handle it
+
+The waits are the host's own awaits on extension handlers inside the session's event queue and the run's settle; no extension can bound another extension's handler, release the host's wait on it, or decide which owner continues a run.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-session.ts` `_emitAgentSettled` (the continuation check at the top) and the `agent_end` branch of `_processAgentEvent` that calls it; the start of `_handleAgentEvent`.
+- LOW: `agent-session.ts` `_applyExtensionBindings` (after `setToolHookLifecycleObserver`), the deadline-owner adapters beside `abortTurnForDeadline`, the `_deadlineTracker.arm()` line in `_promptAgent`, the abort promise in `_abortActiveAgentAndRetry`, and the field block beside `_isAgentRunActive`.
+- LOW: `settings-manager.ts` beside the `session_shutdown` handler budget; `session-log.ts` `ALLOWED_DATA_KEY`.
+- `turn-deadline.ts`, `agent-run-continuation.ts` and `extension-handler-stall-report.ts` are fork-only.
+
 ## 2026-10-18 - AgentSession keeps identified queued input in durable custody (senpi#3549, P2b)
 
 ### What changed
