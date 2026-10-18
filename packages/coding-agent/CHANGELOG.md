@@ -6,6 +6,7 @@
 
 ### Added
 
+- `anthropicSubscriptionProvider.accountFallback: false` keeps managed Claude requests on the selected account instead of automatically switching accounts, including subsequent requests while that account is blocked. Automatic account fallback remains enabled by default and is independent of model fallback ([#3473](https://github.com/code-yeongyu/senpi/pull/3473) by [@Yoonkeee](https://github.com/Yoonkeee)).
 - Command monitors accept `human_input: true` for watches that deliver messages a person wrote (a chat or inbox bridge). Those deliveries count as new user input for a running goal ([oh-my-openagent#10280](https://github.com/code-yeongyu/oh-my-openagent/issues/10280)).
 
 - Provider accounts can be ordered: RPC `account_order` (`names` or `null` to clear) stores the order beside the pin, and every lane that picks an account (the generic credential pool, the Claude subscription lane and the Cursor CLI lane) then tries the pin, then the first unblocked account in that order, then the rest in hash order, failing over down the list. `get_provider_accounts` lists accounts in effective order with `ordered`. A Claude session keeps the account its conversation lives on while it can serve. The TUI footer names the account the order serves. No order keeps today's behavior ([#3591](https://github.com/code-yeongyu/senpi/issues/3591)).
@@ -45,7 +46,6 @@
 - A permission prompt for a tool without its own parser offers a wider "Allow always": for a URL, that domain in this project ("Allow <tool> on <host> always in this project"); for other tools, the tool in this project. Commands, paths and built-in tools never get it.
 
 - `RpcClient.abort(options)` sends a typed abort (`effectId`, `awaitIdle`, `clearQueue`, `graceMs`) and returns the host's answer (`stopped`, `idle`, `cleared`, receipt); `RpcClient.getEffectStatus(effectId, { sessionPath? })` reads an effect receipt. `abort()` without options is unchanged ([#3453](https://github.com/code-yeongyu/senpi/issues/3453)).
-- `anthropicSubscriptionProvider.accountFallback: false` keeps managed Claude requests on the selected account instead of automatically switching accounts, including subsequent requests while that account is blocked. Automatic account fallback remains enabled by default and is independent of model fallback ([#3473](https://github.com/code-yeongyu/senpi/pull/3473) by [@Yoonkeee](https://github.com/Yoonkeee)).
 
 ### Changed
 
