@@ -34,17 +34,20 @@ export function createSessionQueuedInputPort(options: SessionQueuedInputPortOpti
 		return true;
 	};
 
+	// One journal record for the whole batch: a failed write leaves every input as it was, never half delivered.
 	const settle = async (
 		tx: PendingInputTransaction,
 		messages: readonly AgentMessage[],
 		type: "consumed" | "release",
-	): Promise<void> => {
-		for (const message of messages) {
+	): Promise<DeliveryToken[]> => {
+		const tokens = messages.flatMap((message) => {
 			const token = attempts.get(message);
-			if (token === undefined) continue;
-			await tx.apply(token.clientMessageId, { type, token });
-			attempts.delete(message);
-		}
+			return token === undefined ? [] : [token];
+		});
+		if (tokens.length === 0) return tokens;
+		await tx.applyAll(tokens.map((token) => ({ clientMessageId: token.clientMessageId, event: { type, token } })));
+		for (const message of messages) attempts.delete(message);
+		return tokens;
 	};
 
 	return {
@@ -55,13 +58,23 @@ export function createSessionQueuedInputPort(options: SessionQueuedInputPortOpti
 				for (const message of drain()) if (await reserve(tx, message)) claimed.push(message);
 				return claimed;
 			}),
-		commitConsumption: (_queue, messages) => options.store.transaction((tx) => settle(tx, messages, "consumed")),
+		commitConsumption: (_queue, messages) =>
+			options.store.transaction(async (tx) => {
+				await settle(tx, messages, "consumed");
+			}),
 		// Journal first: if the release cannot be recorded the input stays `sending` (uncertain on reopen) and is
-		// not put back natively, so it can never be delivered twice.
+		// not put back natively, so it can never be delivered twice. A clear that won the race keeps the messages
+		// out of the queue: their records are then removed too, so no record says queued with nothing behind it.
 		release: (_queue, messages, restore) =>
 			options.store.transaction(async (tx) => {
-				await settle(tx, messages, "release");
-				restore();
+				const released = await settle(tx, messages, "release");
+				if (restore() || released.length === 0) return;
+				await tx.applyAll(
+					released.map((token) => ({
+						clientMessageId: token.clientMessageId,
+						event: { type: "cancel", cause: "stop", consumerFenced: true },
+					})),
+				);
 			}),
 	};
 }

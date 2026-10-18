@@ -204,11 +204,15 @@ function parseRecord(data: unknown, entryId: string): PendingInputJournalRecord 
 	}
 	const result = "result" in data ? data.result : undefined;
 	if (result !== undefined && !isOperationResult(result)) throw new PendingInputJournalError(entryId);
+	const batch = "batch" in data ? data.batch : undefined;
+	if (batch !== undefined && !(Array.isArray(batch) && batch.every(isPendingInput)))
+		throw new PendingInputJournalError(entryId);
 	return {
 		type: PENDING_INPUT_TRANSITION,
 		cursor: data.cursor,
 		input: data.input,
 		...(result === undefined ? {} : { result }),
+		...(batch === undefined ? {} : { batch }),
 	};
 }
 

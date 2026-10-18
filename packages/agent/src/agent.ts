@@ -166,8 +166,11 @@ export interface AgentOptions {
 export interface QueuedInputPort {
 	/** Runs `drain` (the native queue's drain) under the owner's gate and returns what it may hand to a turn. */
 	claim(queue: "steering" | "followUp", drain: () => AgentMessage[]): Promise<AgentMessage[]>;
-	/** Gives claimed messages back: runs `restore` (the native prepend) under the owner's gate. */
-	release(queue: "steering" | "followUp", messages: AgentMessage[], restore: () => void): Promise<void>;
+	/**
+	 * Gives claimed messages back: runs `restore` (the native prepend) under the owner's gate. `restore` answers
+	 * false when a clear landed after the claim, so the messages stay out of the queue.
+	 */
+	release(queue: "steering" | "followUp", messages: AgentMessage[], restore: () => boolean): Promise<void>;
 	/**
 	 * Called with drained queued messages before any of them enters the context or a provider request.
 	 * Resolve once their consumption is durable; a rejection restores them and fails this attempt.
@@ -673,7 +676,10 @@ export class Agent {
 		try {
 			await port.commitConsumption(queue, messages);
 		} catch (error) {
-			await port.release(queue, messages, () => pendingQueue.prepend(messages));
+			await port.release(queue, messages, () => {
+				pendingQueue.prepend(messages);
+				return true;
+			});
 			throw error;
 		}
 		return messages;
@@ -716,14 +722,15 @@ export class Agent {
 		let followUpQueueGeneration = this.followUpQueue.getClearGeneration();
 		const finishTurn = this.finishTurn;
 		const queuedInputPort = this.queuedInputPort;
-		const restore = (queue: "steering" | "followUp", messages: AgentMessage[]): void => {
+		const restore = (queue: "steering" | "followUp", messages: AgentMessage[]): boolean => {
 			if (queue === "steering") {
-				if (this.steeringQueue.getClearGeneration() !== steeringQueueGeneration) return;
+				if (this.steeringQueue.getClearGeneration() !== steeringQueueGeneration) return false;
 				this.steeringQueue.prepend(messages);
-				return;
+				return true;
 			}
-			if (this.followUpQueue.getClearGeneration() !== followUpQueueGeneration) return;
+			if (this.followUpQueue.getClearGeneration() !== followUpQueueGeneration) return false;
 			this.followUpQueue.prepend(messages);
+			return true;
 		};
 		const reasoning = (this._state.reasoningBaseline as ThinkingLevel | undefined) ?? this._state.thinkingLevel;
 		return {
@@ -791,10 +798,10 @@ export class Agent {
 			commitQueuedConsumption: queuedInputPort
 				? (queue, messages) => queuedInputPort.commitConsumption(queue, messages)
 				: undefined,
-			restorePendingMessages: (queue, messages) =>
-				queuedInputPort
-					? queuedInputPort.release(queue, messages, () => restore(queue, messages))
-					: restore(queue, messages),
+			restorePendingMessages: async (queue, messages) => {
+				if (queuedInputPort) await queuedInputPort.release(queue, messages, () => restore(queue, messages));
+				else restore(queue, messages);
+			},
 		};
 	}
 

@@ -151,6 +151,9 @@ export class SessionPendingInputs {
 			const outcome = legacyOutcome(result?.outcome);
 			if (outcome !== "edited" && outcome !== "removed") return outcome;
 			const native = applyNative();
+			// A synchronous clear can empty the queue while the change is being journaled; its own record of the
+			// clear is queued behind this step and retires the input, so the change simply found nothing (review L1).
+			if (native === "not_found") return "not_found";
 			if (native !== outcome) throw new PendingInputDivergenceError(request.clientMessageId, outcome, native);
 			return outcome;
 		});

@@ -192,6 +192,22 @@ describe("session pending-input journal", () => {
 		expect(readFileSync(file, "utf8")).toBe(committed);
 	});
 
+	it("reads back a batch record with every input it names", async () => {
+		const dir = sessionDir();
+		const manager = SessionManager.create(dir, dir);
+		await (await storeOver(manager, "life-1")).submit(SUBMIT);
+		const [first] = await new SessionPendingInputJournal(manager).read();
+		if (first === undefined) throw new Error("no record");
+		const second = { ...first.input, clientMessageId: "c-2" };
+
+		await new SessionPendingInputJournal(manager).append({ ...first, cursor: 2, batch: [second] });
+		const records = await new SessionPendingInputJournal(
+			SessionManager.open(manager.getSessionFile() ?? "", dir),
+		).read();
+
+		expect(records.at(-1)?.batch?.map((input) => input.clientMessageId)).toEqual(["c-2"]);
+	});
+
 	it("refuses a corrupt transition in the middle of the file", async () => {
 		const dir = sessionDir();
 		const manager = SessionManager.create(dir, dir);

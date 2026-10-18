@@ -24,7 +24,11 @@ class MemoryJournal implements PendingInputJournal {
 		return [...this.records];
 	}
 	phases(clientMessageId: string): PendingInputPhase[] {
-		return this.records.filter((r) => r.input.clientMessageId === clientMessageId).map((r) => r.input.phase);
+		return this.records.flatMap((record) =>
+			[record.input, ...(record.batch ?? [])]
+				.filter((input) => input.clientMessageId === clientMessageId)
+				.map((input) => input.phase),
+		);
 	}
 }
 
@@ -152,6 +156,89 @@ describe("session queued-input port", () => {
 		expect(journal.phases("c-1")).toEqual(["queued", "sending", "queued"]);
 		expect(store.read("c-1")).toMatchObject({ projection: { state: "queued" } });
 		expect(texts(agent.peekQueuedMessages())).toBe("later");
+	});
+
+	it("records a claimed input removed when a clear keeps it out of the queue, so nothing reads queued (review H1)", async () => {
+		const { journal, store } = await setup();
+		await store.submit(SUBMIT);
+		const port = createSessionQueuedInputPort({
+			store,
+			ownerId: "owner-1",
+			writerGeneration: 1,
+			nextAttemptId: () => "a-x",
+		});
+		const claimed = await port.claim("followUp", () => [queuedUser("later", "c-1")]);
+
+		await port.release("followUp", claimed, () => false);
+
+		expect(journal.phases("c-1")).toEqual(["queued", "sending", "queued", "removed"]);
+		expect(store.read("c-1")).toMatchObject({ projection: { state: "removed" } });
+	});
+
+	it("commits a batch's consumption in one record: a failed write leaves every input queued (review H2)", async () => {
+		const { journal, store, agent, requests } = await setup();
+		agent.followUpMode = "all";
+		await store.submit(SUBMIT);
+		await store.submit({ ...SUBMIT, clientMessageId: "c-2", fingerprint: "fp2", text: "also" });
+		agent.followUp(queuedUser("later", "c-1"));
+		agent.followUp(queuedUser("also", "c-2"));
+		// Only the write that records c-2 delivered fails: a batch committed input by input would leave c-1 delivered.
+		journal.failWhen = (record) =>
+			[record.input, ...(record.batch ?? [])].some(
+				(input) => input.clientMessageId === "c-2" && input.phase === "delivered",
+			);
+
+		await agent.prompt("first");
+
+		expect(requests.map((request) => request.texts)).toEqual(["first"]);
+		expect(store.read("c-1")).toMatchObject({ projection: { state: "queued" } });
+		expect(store.read("c-2")).toMatchObject({ projection: { state: "queued" } });
+		expect(texts(agent.peekQueuedMessages())).toBe("later|also");
+	});
+
+	it("delivers a batch with one record that names every input", async () => {
+		const { journal, store, agent } = await setup();
+		agent.followUpMode = "all";
+		await store.submit(SUBMIT);
+		await store.submit({ ...SUBMIT, clientMessageId: "c-2", fingerprint: "fp2", text: "also" });
+		agent.followUp(queuedUser("later", "c-1"));
+		agent.followUp(queuedUser("also", "c-2"));
+
+		await agent.prompt("first");
+
+		const delivered = journal.records.filter((record) => record.input.phase === "delivered");
+		expect(delivered).toHaveLength(1);
+		expect([delivered[0]?.input, ...(delivered[0]?.batch ?? [])].map((input) => input?.clientMessageId)).toEqual([
+			"c-1",
+			"c-2",
+		]);
+	});
+
+	it("an abort while a claim is held leaves the input delivered and sent once, or queued with its native copy (review M2)", async () => {
+		const { journal, store, agent, requests } = await setup();
+		await store.submit(SUBMIT);
+		agent.followUp(queuedUser("later", "c-1"));
+		const originalAppend = journal.append.bind(journal);
+		journal.append = async (record) => {
+			await originalAppend(record);
+			if (record.input.phase === "sending") agent.abort();
+		};
+
+		await agent.prompt("first").catch(() => undefined);
+		await agent.waitForIdle();
+
+		const state = store.read("c-1");
+		const sent = requests.some((request) => request.texts.includes("later"));
+		const nativeCopy = texts(agent.peekQueuedMessages()) === "later";
+		expect(state.status).toBe("admitted");
+		if (state.status !== "admitted") return;
+		expect(["delivered", "queued"]).toContain(state.projection.state);
+		// Delivered means it reached exactly one request and left the queue; queued means it was never sent.
+		const delivered = state.projection.state === "delivered";
+		expect({ sent, nativeCopy }).toEqual(
+			delivered ? { sent: true, nativeCopy: false } : { sent: false, nativeCopy: true },
+		);
+		expect(requests.filter((request) => request.texts.endsWith("later"))).toHaveLength(delivered ? 1 : 0);
 	});
 
 	it("passes input the store never admitted straight through", async () => {

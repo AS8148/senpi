@@ -374,6 +374,41 @@ describe("SessionPendingInputs.change", () => {
 		).rejects.toThrow("disk full");
 		expect(nativeChanged).toBe(false);
 	});
+
+	it("answers not_found when a clear emptied the queue while the edit was being saved, and the clear retires it", async () => {
+		const records: PendingInputJournalRecord[] = [];
+		let midAppend: (() => void) | undefined;
+		const journal: PendingInputJournal = {
+			append: async (record) => {
+				records.push(record);
+				const run = midAppend;
+				midAppend = undefined;
+				run?.();
+			},
+			read: async () => records,
+		};
+		let queuedIds = 0;
+		const inputs = new SessionPendingInputs({
+			sessionManager: SessionManager.inMemory(),
+			nextQueuedId: () => `q_${++queuedIds}`,
+			journal,
+		});
+		await inputs.admit({ clientMessageId: "c-1", text: "draft", mode: "followUp" }, () => undefined);
+		let nativeQueued = true;
+		let cleared: Promise<void> | undefined;
+		midAppend = () => {
+			nativeQueued = false;
+			cleared = inputs.recordCleared(["c-1"]);
+		};
+
+		const outcome = await inputs.change({ clientMessageId: "c-1", text: "final" }, () =>
+			nativeQueued ? "edited" : "not_found",
+		);
+		await cleared;
+
+		expect(outcome).toBe("not_found");
+		expect(records.at(-1)?.input).toMatchObject({ clientMessageId: "c-1", phase: "removed" });
+	});
 });
 
 describe("pending-input recovery on reopen", () => {

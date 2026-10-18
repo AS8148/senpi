@@ -183,6 +183,25 @@ describe("Agent queuedInputPort (senpi#3549)", () => {
 		]);
 	});
 
+	it("tells the port its give-back was refused when a clear landed after the claim", async () => {
+		const log: string[] = [];
+		let agent: Agent | undefined;
+		const port = loggingPort(log, async () => {
+			agent?.clearAllQueues();
+			throw new Error("journal unavailable");
+		});
+		port.release = async (queue, messages, restore) => {
+			log.push(`release:${queue}:${texts(messages).join("|")}:restored=${restore()}`);
+		};
+		agent = new Agent({ streamFn: recordingStream(log), queuedInputPort: port });
+		agent.followUp(user("later"));
+
+		await agent.prompt("first").catch(() => undefined);
+
+		expect(log).toContain("release:followUp:later:restored=false");
+		expect(texts(agent.peekQueuedMessages())).toEqual([]);
+	});
+
 	it("leaves the standalone queue behavior unchanged without a port", async () => {
 		const log: string[] = [];
 		const agent = new Agent({ streamFn: recordingStream(log) });
