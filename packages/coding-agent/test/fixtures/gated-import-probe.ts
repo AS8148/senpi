@@ -8,7 +8,10 @@ import {
 	CHILD_PROCESS_REDIRECTS,
 	childProcessVirtualModule,
 	GATED_CHILD_PROCESS_ID,
+	GATED_WORKER_THREADS_ID,
 	installChildProcessModule,
+	WORKER_THREADS_REDIRECTS,
+	workerThreadsVirtualModule,
 } from "../../src/modes/rpc/tool-child/gated-modules.ts";
 
 const role = process.argv[2];
@@ -35,11 +38,17 @@ writeFileSync(
 );
 writeFileSync(
 	join(dir, "ext.ts"),
-	'import { spawnSync } from "node:child_process";\nimport cpDefault from "child_process";\nimport viaDep from "dep";\nexport default () => [spawnSync("true").status, cpDefault.spawnSync("true").status, viaDep()];',
+	'import { spawnSync } from "node:child_process";\nimport cpDefault from "child_process";\nimport { Worker } from "node:worker_threads";\nimport viaDep from "dep";\nexport const nested = () => { try { new Worker("export {}", { eval: true }).terminate(); return "started"; } catch (error) { return error.code; } };\nexport default () => [spawnSync("true").status, cpDefault.spawnSync("true").status, viaDep()];',
 );
 const importer = createBunExtensionImporter(
-	{ [GATED_CHILD_PROCESS_ID]: childProcessVirtualModule() },
-	CHILD_PROCESS_REDIRECTS,
+	{
+		[GATED_CHILD_PROCESS_ID]: childProcessVirtualModule(),
+		...(role === "child" ? { [GATED_WORKER_THREADS_ID]: workerThreadsVirtualModule() } : {}),
+	},
+	role === "child" ? { ...CHILD_PROCESS_REDIRECTS, ...WORKER_THREADS_REDIRECTS } : CHILD_PROCESS_REDIRECTS,
 );
-const factory = (await importer.import(join(dir, "ext.ts"), { default: true })) as () => number[];
-console.log(JSON.stringify({ statuses: factory(), calls }));
+const namespace = (await importer.importNamespace(join(dir, "ext.ts"))) as {
+	default: () => number[];
+	nested: () => string;
+};
+console.log(JSON.stringify({ statuses: namespace.default(), calls, nested: namespace.nested() }));

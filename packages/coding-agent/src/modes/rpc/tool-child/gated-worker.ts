@@ -8,10 +8,10 @@ import realChildProcess from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
 import { extname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parentPort, Worker, type WorkerOptions } from "node:worker_threads";
+import realWorkerThreads, { parentPort, Worker, type WorkerOptions } from "node:worker_threads";
 import { type BunGateBypass, type BunLaunchGlobals, installGatedBun } from "./gated-bun.ts";
 import { createGatedChildProcess } from "./gated-child-process.ts";
-import { CHILD_PROCESS_LAUNCH_FUNCTIONS, installChildProcessModule } from "./gated-modules.ts";
+import { CHILD_PROCESS_LAUNCH_FUNCTIONS, installChildProcessModule, RefusedWorker } from "./gated-modules.ts";
 import type { LaunchGate } from "./launch-gate.ts";
 import { readTestControls } from "./test-controls.ts";
 import { WorkerLaunchClient, type WorkerLaunchMessage } from "./worker-launch.ts";
@@ -71,6 +71,10 @@ export function installWorkerBarrier(data: GatedWorkerData, env: NodeJS.ProcessE
 	}
 	// Node re-binds named ESM imports of the builtin to the patched functions only after this call (Bun never does;
 	// there, extension code reaches the gated module through the importer's redirect).
+	// A job worker never starts threads of its own: their launches would not pass this barrier.
+	Object.defineProperty(realWorkerThreads, "Worker", { value: RefusedWorker, configurable: true, writable: true });
+	if (Reflect.get(globalThis, "Worker") !== undefined)
+		Object.defineProperty(globalThis, "Worker", { value: RefusedWorker, configurable: true, writable: true });
 	syncBuiltinESMExports();
 	return client;
 }

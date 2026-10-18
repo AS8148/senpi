@@ -9,6 +9,7 @@
  */
 import realChildProcess from "node:child_process";
 import { promisify } from "node:util";
+import realWorkerThreads from "node:worker_threads";
 
 export const GATED_CHILD_PROCESS_ID = "senpi-tool-child:child_process";
 
@@ -55,6 +56,35 @@ export function childProcessVirtualModule(): Readonly<Record<string, unknown>> {
 			});
 		exports[name] = forward;
 	}
+	exports.default = exports;
+	return exports;
+}
+
+export const GATED_WORKER_THREADS_ID = "senpi-tool-child:worker_threads";
+
+export const WORKER_THREADS_REDIRECTS: Readonly<Record<string, string>> = {
+	"node:worker_threads": GATED_WORKER_THREADS_ID,
+	worker_threads: GATED_WORKER_THREADS_ID,
+};
+
+export class NestedWorkerRefusedError extends Error {
+	readonly code = "tool_child_nested_worker_refused";
+	constructor() {
+		super(
+			"tool_child_nested_worker_refused: a tool-child job worker cannot start worker threads of its own (their launches would bypass the execution barrier)",
+		);
+		this.name = "NestedWorkerRefusedError";
+	}
+}
+
+/** The Worker a job worker sees: constructing it throws, so no thread outside the barrier ever starts. */
+export function RefusedWorker(): never {
+	throw new NestedWorkerRefusedError();
+}
+
+/** `node:worker_threads` for a job worker's module graph: the builtin's exports with `Worker` refused. */
+export function workerThreadsVirtualModule(): Readonly<Record<string, unknown>> {
+	const exports: Record<string, unknown> = { ...realWorkerThreads, Worker: RefusedWorker };
 	exports.default = exports;
 	return exports;
 }

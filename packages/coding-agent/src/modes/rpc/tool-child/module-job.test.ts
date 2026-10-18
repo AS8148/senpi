@@ -123,3 +123,12 @@ describe("launch ids across a generation's workers", () => {
 		expect(new Set(launches.map((record) => record.launchId)).size).toBe(2);
 	}, 60_000);
 });
+
+describe("nested workers in a job worker", () => {
+	it("refuses a worker thread a module job tries to start, typed", async () => {
+		const instance = await startChild([extensionDir]);
+		expect(await instance.run("module", { modulePath, export: "startNestedWorker", args: null })).toBe(
+			"tool_child_nested_worker_refused",
+		);
+	}, 60_000);
+});

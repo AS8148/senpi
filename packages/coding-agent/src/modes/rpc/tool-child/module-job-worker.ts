@@ -3,7 +3,14 @@
 // importer with only the child_process redirect (never loader.ts, which pulls the session writers in).
 import { parentPort, workerData } from "node:worker_threads";
 import { createBunExtensionImporter } from "../../../core/extensions/bun-extension-importer.ts";
-import { CHILD_PROCESS_REDIRECTS, childProcessVirtualModule, GATED_CHILD_PROCESS_ID } from "./gated-modules.ts";
+import {
+	CHILD_PROCESS_REDIRECTS,
+	childProcessVirtualModule,
+	GATED_CHILD_PROCESS_ID,
+	GATED_WORKER_THREADS_ID,
+	WORKER_THREADS_REDIRECTS,
+	workerThreadsVirtualModule,
+} from "./gated-modules.ts";
 import { type GatedWorkerData, installWorkerBarrier } from "./gated-worker.ts";
 
 interface ModuleWorkerData extends GatedWorkerData {
@@ -18,8 +25,11 @@ installWorkerBarrier(data);
 async function loadNamespace(path: string): Promise<Record<string, unknown>> {
 	if (Reflect.get(globalThis, "Bun") === undefined) return import(path);
 	const importer = createBunExtensionImporter(
-		{ [GATED_CHILD_PROCESS_ID]: childProcessVirtualModule() },
-		CHILD_PROCESS_REDIRECTS,
+		{
+			[GATED_CHILD_PROCESS_ID]: childProcessVirtualModule(),
+			[GATED_WORKER_THREADS_ID]: workerThreadsVirtualModule(),
+		},
+		{ ...CHILD_PROCESS_REDIRECTS, ...WORKER_THREADS_REDIRECTS },
 	);
 	return importer.importNamespace(path);
 }
