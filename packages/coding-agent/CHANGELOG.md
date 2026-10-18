@@ -14,6 +14,7 @@
 
 ### Fixed
 
+- A queued message with several text blocks, such as an async question answered with a comment or typed words, now leaves the queue when it is delivered. It used to reach the model but stay listed as `Steering:` above the editor (and in queue counts and RPC queue snapshots) for the rest of the session ([#3588](https://github.com/code-yeongyu/senpi/issues/3588)).
 - Opening a large session on a shared RPC host no longer stalls every other session: the transcript is read, parsed and indexed in short slices, and the tool-search history scan no longer serializes every message. On a 231 MB transcript the longest wait seen by another connection dropped from about 1 s to the level of opening an empty session ([#3518](https://github.com/code-yeongyu/senpi/issues/3518)).
 
 - A host emptied within a minute of its previous memory trim now trims once that minute ends, instead of keeping the freed memory until sessions come and go again ([#3360](https://github.com/code-yeongyu/senpi/issues/3360)).

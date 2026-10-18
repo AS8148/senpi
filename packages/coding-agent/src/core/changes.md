@@ -1,3 +1,22 @@
+## 2026-10-18 - A multi-block queued input leaves the queue when it starts (senpi#3588)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the `message_start` match that removes a started user message from `_steeringMessages` / `_followUpMessages` and the queued-input order now reads the message text with `contentText(content)` (blocks joined by `"\n"`) instead of `contentText(content, "")`. `_extractUserMessageText`, which records the text of a started prompt that a competing run displaced into the steer queue, joins by `"\n"` too.
+
+### Why
+
+- Since senpi#2920 a later ask-user answer keeps its frame and the user's words in separate text blocks, and `userTextContent` keeps blocks only while `blocks.join("\n") === text`. The queue records that `text`; the old match joined with no separator, so a multi-block steer or follow-up reached the model but stayed queued for the rest of the session (the TUI kept showing `Steering: [Answer to question <id>]`; queue counts and RPC queue snapshots counted it).
+- Regression: `test/suite/regressions/issue-3588-multi-block-queued-input-leaves-queue.test.ts` (extension steer, extension follow-up, identified steer with `clientMessageId`, displaced started prompt). All four fail on main; reverting either half fails its cases.
+
+### Why an extension could not handle it
+
+- Queue bookkeeping for delivered input lives in the session's event handler.
+
+### Expected merge conflict zones
+
+- LOW: the two changed lines in `agent-session.ts`.
+
 ## 2026-10-17 - Opening a large session no longer holds a shared host's event loop (senpi#3518)
 
 ### What changed

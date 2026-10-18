@@ -2911,7 +2911,7 @@ export class AgentSession {
 		return content
 			.filter((part): part is { type: "text"; text: string } => part.type === "text")
 			.map((part) => part.text)
-			.join("");
+			.join("\n");
 	}
 
 	// Track last assistant message for auto-compaction check
@@ -3303,7 +3303,7 @@ export class AgentSession {
 		if (event.type === "message_start" && event.message.role === "user") {
 			this._overflowRecoveryRungs = 0;
 			this._retryFallback.resetTurn();
-			const messageText = contentText(event.message.content, "");
+			const messageText = contentText(event.message.content);
 			if (messageText) {
 				const { clientMessageId } = readClientMessageIdentity(event.message);
 				const queued =
