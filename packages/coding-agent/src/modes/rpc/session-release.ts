@@ -91,7 +91,8 @@ interface Releasable {
 }
 
 export async function releaseSession(port: SessionReleasePort, command: ReleaseSessionCommand): Promise<RpcResponse> {
-	if (command.reason !== "takeover") return refusal(command.id, RPC_ERROR_INVALID_RELEASE_REASON);
+	const validMove = command.reason === "move" && typeof command.moveId === "string" && command.moveId !== "";
+	if (command.reason !== "takeover" && !validMove) return refusal(command.id, RPC_ERROR_INVALID_RELEASE_REASON);
 	if (port.draining()) return refusal(command.id, RPC_ERROR_HOST_DRAINING);
 	const first = releasable(port, command, undefined);
 	if (!("session" in first)) return first;
@@ -161,6 +162,7 @@ async function claimAndRelease(
 		// On disk or not at all: a failed write leaves no entry a later append could chain onto.
 		ready.session.sessionManager.appendCustomEntry(SESSION_RELEASED_ENTRY_TYPE, {
 			reason: command.reason,
+			...(command.reason === "move" ? { move_id: command.moveId, target: command.target ?? "" } : {}),
 			interrupted,
 			attachments: ready.attachments,
 			host_instance: port.hostInstance ?? null,

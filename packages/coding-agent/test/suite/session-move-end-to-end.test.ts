@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -14,7 +14,7 @@ import {
 	SESSION_RECLAIMED,
 	SessionMovedAwayError,
 } from "../../src/core/session-move/ownership.ts";
-import { finishMove, requeueDroppedInput } from "../../src/core/session-move/finish.ts";
+import { finishMove } from "../../src/core/session-move/finish.ts";
 
 const SESSION_ID = "0197f6e4-4cf9-7f44-a2d8-f8f7f49ee9d3";
 const REPO: RepositoryIdentity = { rootCommits: ["d".repeat(40)] };
@@ -60,7 +60,17 @@ function customTypes(file: string): string[] {
 		.split("\n")
 		.map((line) => JSON.parse(line) as { type: string; customType?: string })
 		.filter((entry) => entry.type === "custom")
-		.map((entry) => entry.customType ?? "");
+		.map((entry) => entry.customType ?? "")
+		.filter((customType) => customType.startsWith("session_"));
+}
+
+function admittedInputs(file: string): string[] {
+	return readFileSync(file, "utf8")
+		.trim()
+		.split("\n")
+		.map((line) => JSON.parse(line) as { customType?: string; data?: { input?: { clientMessageId?: string; text?: string }; result?: { outcome?: string } } })
+		.filter((entry) => entry.customType === "pending_input_transition" && entry.data?.result?.outcome === "admitted")
+		.map((entry) => entry.data?.input?.text ?? "");
 }
 
 function appendUserMessage(file: string, text: string): void {
@@ -103,7 +113,7 @@ describe("session move between two folders", () => {
 		const header = JSON.parse(readFileSync(sessionFile, "utf8").split("\n")[0] ?? "") as { cwd: string; id: string };
 		expect(header).toMatchObject({ id: SESSION_ID, cwd: cwdB });
 		expect(customTypes(sessionFile).at(-1)).toBe(SESSION_MOVED_IN);
-		expect(readFileSync(sessionFile, "utf8")).toContain("queued follow-up");
+		expect(admittedInputs(sessionFile)).toEqual(["queued follow-up"]);
 		expect(existsSync(join(dirname(sessionFile), "extensions", "goal", `${SESSION_ID}.json`))).toBe(true);
 		expect(() => appendUserMessage(sessionFile, "on B")).not.toThrow();
 		expect(await ledger.answerStatus(MOVE, { movedIn: true })).toEqual({ state: "accepted" });
@@ -119,14 +129,14 @@ describe("session move between two folders", () => {
 	});
 
 	it("#given a different repository at B #then the import is refused with a reason and nothing lands at B", async () => {
-		const { cwdB, bundleDir, ledger, readIdentity } = await setup(OTHER);
+		const { cwdB, source, bundleDir, ledger, readIdentity } = await setup(OTHER);
 		await expect(importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity })).rejects.toMatchObject({
 			code: "move_repository_mismatch",
 		});
 		await expect(importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity })).rejects.toBeInstanceOf(
 			MoveRefusedError,
 		);
-		expect(existsSync(getDefaultSessionDir(cwdB))).toBe(false);
+		expect(existsSync(join(getDefaultSessionDir(cwdB), basename(source)))).toBe(false);
 	});
 
 	it("#given a tampered bundle #then the import fails and B records failed", async () => {
@@ -152,16 +162,19 @@ describe("session move between two folders", () => {
 		const { source, bundleDir } = await setup();
 		await finishMove({ sessionFile: source, bundleDir, answer: { state: "declined", reason: "no_record" } });
 		expect(customTypes(source).at(-1)).toBe(SESSION_RECLAIMED);
-		expect(readFileSync(source, "utf8")).toContain("queued follow-up");
+		expect(admittedInputs(source)).toEqual(["queued follow-up"]);
 		expect(() => appendUserMessage(source, "back on A")).not.toThrow();
 		expect(existsSync(bundleDir)).toBe(false);
 	});
 
-	it("#given a reclaim that crashed after re-queueing #when it runs again #then the input is queued once", async () => {
-		const { source, bundleDir } = await setup();
+	it("#given a reclaim that crashed before deleting its bundle #when it runs again #then the input is queued once", async () => {
+		const { base, source, bundleDir } = await setup();
 		const answer = { state: "declined", reason: "no_record" } as const;
-		await requeueDroppedInput(source, bundleDir);
+		const kept = join(base, "bundle-kept");
+		cpSync(bundleDir, kept, { recursive: true });
 		await finishMove({ sessionFile: source, bundleDir, answer });
-		expect(readFileSync(source, "utf8").split("queued follow-up").length - 1).toBe(1);
+		cpSync(kept, bundleDir, { recursive: true });
+		await finishMove({ sessionFile: source, bundleDir, answer });
+		expect(admittedInputs(source)).toEqual(["queued follow-up"]);
 	});
 });

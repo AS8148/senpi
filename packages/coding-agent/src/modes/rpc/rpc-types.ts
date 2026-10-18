@@ -600,7 +600,10 @@ export type RpcCommand =
 			 */
 			type: "release_session";
 			sessionId: string;
-			reason: "takeover";
+			/** `move` seals the file for a move to another device (`moveId` required); writes are refused here after. */
+			reason: "takeover" | "move";
+			moveId?: string;
+			target?: string;
 			interrupt?: boolean;
 			force?: boolean;
 	  }
