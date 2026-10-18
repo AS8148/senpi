@@ -13,6 +13,8 @@
 
 ### Fixed
 
+- A session file left claimed by a stopped engine host no longer blocks reopening its thread ([#3652](https://github.com/code-yeongyu/senpi/issues/3652)).
+
 ### Removed
 
 ## [2026.10.18-1] - 2026-10-18
