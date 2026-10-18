@@ -26,7 +26,7 @@ function isLaunchMessage(value: unknown): value is WorkerLaunchMessage {
 		typeof value === "object" &&
 		value !== null &&
 		"kind" in value &&
-		(value.kind === "launch" || value.kind === "invoking" || value.kind === "done")
+		(value.kind === "launch" || value.kind === "invoking" || value.kind === "started" || value.kind === "done")
 	);
 }
 
