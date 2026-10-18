@@ -140,9 +140,9 @@ export const launchApisAckGatedScenario = Object.freeze({
 				assert(typeof commandPid === "number" && commandPid !== child.pid, `${call.api} detached launch names no command pid apart from the child`);
 				assert(alive(commandPid), `the detached fixture ${commandPid} was not alive to clean up`);
 				kill(commandPid, "SIGKILL");
-				const gone = await ctx.awaitGone(commandPid);
-				ctx.log.write({ type: "fixture_cleanup", launchId, pid: commandPid, method: "SIGKILL", gone });
-				assert(gone, `detached fixture ${commandPid} survived SIGKILL`);
+				const ended = await ctx.awaitGone(commandPid);
+				ctx.log.write({ type: "fixture_cleanup", launchId, pid: commandPid, method: "SIGKILL", ...ended });
+				assert(ended.gone, `detached fixture ${commandPid} survived SIGKILL (ps state ${ended.state})`);
 			}
 		}
 	},
