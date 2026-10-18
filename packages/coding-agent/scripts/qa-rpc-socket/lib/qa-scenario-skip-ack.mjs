@@ -7,7 +7,7 @@
  * so "detected" can never mean "detected before anything ran". Run with
  * `--inject HOLD_LAUNCH_ACK,SKIP_ACK_WAIT,HOLD_LAUNCH_PROOF:detached --expect-failure tool_child_barrier_violation`.
  */
-import { copyFileSync } from "node:fs";
+import { copyFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { kill } from "node:process";
 import { launchLog } from "./qa-launch-tail.mjs";
@@ -85,6 +85,12 @@ export function skipAckWaitScenario() {
 				sessions.push({ index, entry, sessionId, exited, spawned });
 			}
 			const detected = [];
+			const toolEnds = new Map();
+			ctx.rpc.subscribe((r) => {
+				if (r.type === "tool_execution_end" && r.toolName === "qa_spawn")
+					toolEnds.set(r.sessionId, { isError: r.isError === true, result: JSON.stringify(r.result?.content ?? null).slice(0, 400) });
+			});
+			try {
 			for (const session of sessions) {
 				const { index, entry, sessionId } = session;
 				const child = await session.spawned;
@@ -117,6 +123,16 @@ export function skipAckWaitScenario() {
 				await ctx.control.releaseAck(launch.launchId);
 				copyFileSync(log.path, join(ctx.evidenceDir, `launches-${index}.jsonl`));
 				detected.push(launch.launchId);
+			}
+			} finally {
+				// Every session's launch log and tool result is evidence, also when an earlier session failed the run.
+				for (const session of sessions) {
+					const durable = await ctx.durableSessionIdOf(session.sessionId).catch(() => undefined);
+					const path = durable === undefined ? undefined : launchLog(ctx.agentDir, durable).path;
+					const copied = path !== undefined && existsSync(path);
+					if (copied) copyFileSync(path, join(ctx.evidenceDir, `launches-${session.index}.jsonl`));
+					ctx.log.write({ type: "session_evidence", index: session.index, api: session.entry.api, copied, tool: toolEnds.get(session.sessionId) ?? null });
+				}
 			}
 			ctx.log.write({ type: "detected_all", count: detected.length });
 			throw new QaFailure("tool_child_barrier_violation", `${detected.length}/6 launches caught invoking before their ack`);
