@@ -1,3 +1,21 @@
+## 2026-10-18 - ctx.offload runs registered child modules through the session's dispatcher (senpi#3566 todo 8)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the extension context actions gain `offload(id, args, options)`, which resolves the id among the runner's registered child modules and hands the `module` job to the session's tool dispatcher (`tool-dispatch/offload.ts`); the tool child's module roots now include registered child-module files as well as child-placed tools' modules.
+
+### Why
+
+Extensions need to run their own CPU-bound or blocking work off the host's event loop without a third execution path; the dispatcher already chooses the child (`--tool-runtime child`) or this process (`in-process`).
+
+### Why an extension could not handle it
+
+The context actions and the tool child's module roots are built inside the session; an extension cannot reach the dispatcher or grant its module to the child.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the `offload` entry beside `getModel` in the context actions, and the `moduleRoots` provider of the tool child.
+
 ## 2026-10-18 - A session answers its tool child's host calls (senpi#3566 todo 7)
 
 ### What changed

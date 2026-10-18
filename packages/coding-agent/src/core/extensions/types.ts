@@ -478,6 +478,13 @@ export type FilesystemPolicyChecker = (request: Readonly<FilesystemPolicyRequest
 export type ExtensionMode = "tui" | "rpc" | "json" | "print";
 
 export interface ExtensionContext {
+	/**
+	 * Runs the child module registered as `id` with `args` and resolves its export's return value: on the session's
+	 * tool child under `--tool-runtime child` (spawned on demand, never falling back in-process), in this process under
+	 * `in-process`. A module that cannot be loaded fails `offload_module_unavailable` in both. Optional for
+	 * compatibility with contexts built outside a session runner; every runner-built context has it.
+	 */
+	readonly offload?: (id: string, args: unknown, options?: OffloadOptions) => Promise<unknown>;
 	/** UI methods for user interaction */
 	ui: ExtensionUIContext;
 	/** Current run mode. Use "tui" to guard terminal-only UI such as custom components. */
@@ -923,6 +930,31 @@ export type ToolPlacement = "server" | "child";
 export interface ToolChildModule {
 	readonly path: string;
 	readonly export: string;
+}
+
+/**
+ * A module the session may run on its tool child (`ctx.offload(id, ...)`), registered with `pi.registerChildModule`.
+ * File-backed only: `module` is a path (relative to the registering extension's file, or absolute) whose `export`
+ * receives `(args, { signal })`. Under `--tool-runtime child` it runs on the session's child; under `in-process` the
+ * server imports the same module and runs it directly. `idempotent` lets a job lost to a child exit run once more.
+ */
+export interface ChildModuleRegistration {
+	readonly id: string;
+	readonly module: string;
+	readonly export: string;
+	readonly idempotent?: boolean;
+}
+
+export interface RegisteredChildModule {
+	readonly registration: ChildModuleRegistration;
+	/** The registering extension's source, which a relative `module` path resolves against. */
+	readonly sourceInfo: SourceInfo;
+}
+
+export interface OffloadOptions {
+	readonly signal?: AbortSignal;
+	/** Fails the job `tool_child_deadline` after this long; the default is the module job's own deadline. */
+	readonly deadlineMs?: number;
 }
 
 export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = unknown, TState = any> {
@@ -2388,6 +2420,9 @@ export interface ExtensionAPI {
 	 */
 	registerFilesystemPolicy(policy: FilesystemPolicy): void;
 
+	/** Registers a file-backed module `ctx.offload(id, ...)` can run (see {@link ChildModuleRegistration}). */
+	registerChildModule(registration: ChildModuleRegistration): void;
+
 	/** Register an MCP server that the agent can use. Factory-time only. */
 	registerMcpServer(name: string, config: McpServerDeclaration): void;
 
@@ -3096,6 +3131,8 @@ export interface ExtensionActions {
  * Required by all modes.
  */
 export interface ExtensionContextActions {
+	/** Runs a registered child module through the session's tool dispatcher; absent where no session backs the runner. */
+	offload?: (id: string, args: unknown, options?: OffloadOptions) => Promise<unknown>;
 	getModel: () => Model<any> | undefined;
 	getServiceTier: () => ServiceTier | undefined;
 	/** Effective request tier (fast mode included). Defaults to `getServiceTier` when omitted. */
@@ -3217,6 +3254,8 @@ export interface Extension {
 	/** `context`/`context_with_system` handlers registered with `{ mutatesMessages: false }`. */
 	nonMutatingContextHandlers?: WeakSet<HandlerFn>;
 	tools: Map<string, RegisteredTool>;
+	/** Optional for compatibility with extension records created before child modules. */
+	childModules?: Map<string, RegisteredChildModule>;
 	/** Optional for compatibility with extension records created before this additive registry. */
 	removedToolHints?: Map<string, string>;
 	lazyToolActivators?: LazyToolActivator[];

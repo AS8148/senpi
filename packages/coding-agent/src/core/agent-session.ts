@@ -369,6 +369,7 @@ import {
 	type HostCallTarget,
 	type RegisteredHostCallKind,
 } from "./tool-child-host-calls.ts";
+import { childModuleRoots, offload } from "./tool-dispatch/offload.ts";
 import { createToolDispatcher, type ToolDispatcher } from "./tool-dispatch/tool-dispatcher.ts";
 import type { BashOperations } from "./tools/bash.ts";
 import { composeFilesystemPolicies } from "./tools/filesystem-policy.ts";
@@ -1485,7 +1486,10 @@ export class AgentSession {
 				? new SessionToolChild({
 						dir: join(this._agentDir, "tool-children", this.sessionManager.getSessionId()),
 						cwd: this._cwd,
-						moduleRoots: () => toolChildModuleRoots(this._extensionRunner.getAllRegisteredTools()),
+						moduleRoots: () => [
+							...toolChildModuleRoots(this._extensionRunner.getAllRegisteredTools()),
+							...childModuleRoots(this._extensionRunner.getAllChildModules()),
+						],
 						onRecord: (record) => this._emit({ type: "session_tool_child", ...record }),
 						onHostCall: createSessionHostCallHandler({
 							executeNested: (parentToolCallId, name, args, signal) =>
@@ -9677,6 +9681,8 @@ export class AgentSession {
 				}),
 			},
 			{
+				offload: (id, args, options) =>
+					offload(this._toolDispatcher, this._extensionRunner.getAllChildModules(), id, args, options),
 				getModel: () => this.model,
 				getServiceTier: () => this.serviceTier,
 				getEffectiveServiceTier: () => this.effectiveServiceTier,

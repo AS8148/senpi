@@ -71,11 +71,13 @@ import type {
 	MessageRenderer,
 	ModelSelectEvent,
 	ModelSelectEventResult,
+	OffloadOptions,
 	ProjectTrustContext,
 	ProjectTrustEvent,
 	ProjectTrustEventResult,
 	ProviderConfig,
 	ProviderRequestPreparation,
+	RegisteredChildModule,
 	RegisteredCommand,
 	RegisteredMcpServerDeclaration,
 	RegisteredTool,
@@ -518,6 +520,7 @@ export class ExtensionRunner {
 	private onUserActivityFn: ExtensionContextActions["onUserActivity"];
 	private getAgentDirFn: () => string = () => getAgentDir();
 	private executeToolFn: ExtensionContextActions["executeTool"];
+	private offloadFn: ExtensionContextActions["offload"];
 	private getCallableToolsFn: () => readonly AgentTool[] = () => [];
 	private newSessionHandler: NewSessionHandler = async () => ({ cancelled: false });
 	private forkHandler: ForkHandler = async () => ({ cancelled: false });
@@ -600,6 +603,7 @@ export class ExtensionRunner {
 		if (actions.sessionControl) this.runtime.sessionControl = actions.sessionControl;
 		this.runtime.createContext = () => this.createContext();
 
+		this.offloadFn = contextActions.offload;
 		// Context actions (required)
 		this.getModel = contextActions.getModel;
 		this.getServiceTier = contextActions.getServiceTier;
@@ -837,6 +841,13 @@ export class ExtensionRunner {
 	 * Get all registered tools from all extensions. The first registration within a source tier
 	 * wins, while a non-builtin extension may override a builtin extension tool.
 	 */
+	/** Every registered child module by id; a later registration of the same id wins, as for tools. */
+	getAllChildModules(): Map<string, RegisteredChildModule> {
+		const modules = new Map<string, RegisteredChildModule>();
+		for (const ext of this.extensions) for (const [id, entry] of ext.childModules ?? []) modules.set(id, entry);
+		return modules;
+	}
+
 	getAllRegisteredTools(): RegisteredTool[] {
 		const toolsByName = new Map<string, RegisteredTool>();
 		for (const ext of this.extensions) {
@@ -1227,6 +1238,12 @@ export class ExtensionRunner {
 		const getScopedModels = this.getScopedModels;
 		let compactionSignal: AbortSignal | undefined;
 		return {
+			offload: (id: string, args: unknown, options?: OffloadOptions) => {
+				runner.assertActive();
+				if (runner.offloadFn === undefined)
+					return Promise.reject(new Error(`offload_unavailable: no session backs this context (offload ${id})`));
+				return runner.offloadFn(id, args, options);
+			},
 			get ui() {
 				runner.assertActive();
 				return runner.uiContext;

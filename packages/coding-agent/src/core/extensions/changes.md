@@ -1,3 +1,25 @@
+## 2026-10-18 - registerChildModule and ctx.offload (senpi#3566 todo 8)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ChildModuleRegistration`, `RegisteredChildModule`, `OffloadOptions`; `ExtensionAPI.registerChildModule`; optional `ExtensionContext.offload` (optional only so contexts built outside a runner still type-check; every runner-built context has it); `Extension.childModules`; `ExtensionContextActions.offload`.
+- `packages/coding-agent/src/core/extensions/loader.ts`: `registerChildModule` validates a file-backed registration (an inline function or empty field throws `offload_bad_registration`) and records it with the registering extension's source.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `getAllChildModules()` (a later id wins) and the context's `offload`, which delegates to the session's action and fails `offload_unavailable` where no session backs the runner.
+
+### Why
+
+The plan's offload API: an extension names a module file once and runs it where the session's runtime places work, on the tool child or in-process.
+
+### Why an extension could not handle it
+
+Registration and the context are the extension API itself.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: the new interfaces before `ToolDefinition`, the `ExtensionContext` head, `registerChildModule` beside `registerFilesystemPolicy`, `Extension.childModules`, and `ExtensionContextActions`'s head.
+- `packages/coding-agent/src/core/extensions/loader.ts`: `registerChildModule` beside `registerFilesystemPolicy` and the types import.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `getAllChildModules` beside `getAllRegisteredTools`, the `offload` member of `createContext`, and `offloadFn`.
+
 ## 2026-10-18 - ToolDefinition.childModule: a child-placed tool's file-backed body (senpi#3566)
 
 ### What changed

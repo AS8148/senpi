@@ -15,6 +15,7 @@ import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/p
 import type { ToolRuntimeKind } from "../../cli/tool-runtime.ts";
 import type { ExtensionToolContext, ToolDefinition, ToolPlacement } from "../extensions/types.ts";
 import { type BashOperations, createLocalBashOperations } from "../tools/bash.ts";
+import { OffloadError, runModuleInProcess } from "./offload.ts";
 
 export type { ToolPlacement } from "../extensions/types.ts";
 
@@ -49,6 +50,16 @@ export interface ToolChildModuleJob {
 	readonly args: unknown;
 	/** A lost job is retried once on a fresh child only when this is true. */
 	readonly idempotent?: boolean;
+	/** Overrides the job's default deadline (`ctx.offload`'s `deadlineMs`). */
+	readonly deadlineMs?: number;
+}
+
+/** Where an offloaded module ran, and what it returned. */
+export interface OffloadOutcome {
+	readonly value: unknown;
+	readonly placement: ToolPlacement;
+	readonly pid: number;
+	readonly generation: number;
 }
 
 export interface ToolChildRunResult {
@@ -71,6 +82,8 @@ export interface ToolDispatcher {
 	run<TDetails = unknown>(call: ToolDispatchCall<TDetails>): Promise<AgentToolResult<TDetails>>;
 	bashOperations(options?: { shellPath?: string }): BashOperations;
 	onDispatched(observer: ToolDispatchObserver): () => void;
+	/** Runs a registered child module (`ctx.offload`) where this runtime places it. */
+	offload(job: ToolChildModuleJob, signal: AbortSignal | undefined): Promise<OffloadOutcome>;
 }
 
 /**
@@ -94,6 +107,8 @@ abstract class BaseToolDispatcher implements ToolDispatcher {
 	abstract run<TDetails>(call: ToolDispatchCall<TDetails>): Promise<AgentToolResult<TDetails>>;
 
 	abstract bashOperations(options?: { shellPath?: string }): BashOperations;
+
+	abstract offload(job: ToolChildModuleJob, signal: AbortSignal | undefined): Promise<OffloadOutcome>;
 
 	private readonly observers = new Set<ToolDispatchObserver>();
 	private readonly pinNotified = new Set<string>();
@@ -141,6 +156,10 @@ export class InProcessToolDispatcher extends BaseToolDispatcher {
 	bashOperations(options?: { shellPath?: string }): BashOperations {
 		return createLocalBashOperations(options);
 	}
+
+	async offload(job: ToolChildModuleJob, signal: AbortSignal | undefined): Promise<OffloadOutcome> {
+		return { value: await runModuleInProcess(job, signal), placement: "server", pid: process.pid, generation: 0 };
+	}
 }
 
 /**
@@ -181,6 +200,14 @@ export class ChildToolDispatcher extends BaseToolDispatcher {
 
 	bashOperations(): BashOperations {
 		return unavailableBashOperations();
+	}
+
+	/** Always on the session's child, started on demand; never in-process (no fallback). */
+	async offload(job: ToolChildModuleJob, signal: AbortSignal | undefined): Promise<OffloadOutcome> {
+		if (this.#childRunner === undefined)
+			throw new OffloadError("tool_runtime_unavailable", "this session has no tool child to run the module on");
+		const { value, pid, generation } = await this.#childRunner(job, signal);
+		return { value, placement: "child", pid, generation };
 	}
 }
 
