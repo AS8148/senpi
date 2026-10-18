@@ -1,4 +1,3 @@
-import { chatGptUsageLimitDescription } from "./chatgpt-usage-limit.ts";
 import {
 	describeProviderStallForUser,
 	formatStallDuration,
@@ -7,6 +6,13 @@ import {
 } from "./retry.ts";
 
 const CLAUDE_EXTRA_USAGE_URL = "https://claude.ai/settings/usage";
+
+/**
+ * Opens the sentence an adapter adds when its own account-limit text already names the next step
+ * (senpi#3615). Such text is shown as written instead of the generic switch-provider advice.
+ */
+export const ACCOUNT_LIMIT_NEXT_STEP_LEAD = "To keep going now, ";
+const RETRY_AFTER_MARKER = /\s*\(retry-after-ms: \d+\)$/;
 
 /**
  * senpi#3259: the billing path is the whole story. On the direct `anthropic` provider a Claude
@@ -78,8 +84,7 @@ export function describeProviderFailureForUser(
 		return describeAnthropicThirdPartyBilling(options.model?.split("/")[0]);
 	}
 	if (options.usageLimit === "account") {
-		const chatGpt = chatGptUsageLimitDescription(message);
-		if (chatGpt !== undefined) return chatGpt;
+		if (message.includes(ACCOUNT_LIMIT_NEXT_STEP_LEAD)) return message.replace(RETRY_AFTER_MARKER, "");
 		const provider = options.model?.split("/")[0];
 		const reset = /\bresets?\s+([^"}\n]+)/i
 			.exec(message)?.[1]

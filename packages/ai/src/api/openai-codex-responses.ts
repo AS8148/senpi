@@ -38,7 +38,6 @@ import type {
 } from "../types.ts";
 import { combineAbortSignals } from "../utils/abort-signals.ts";
 import { extractChatGptSubscriptionAccountId } from "../utils/chatgpt-subscription-auth.ts";
-import { describeChatGptUsageLimitEvent, describeChatGptUsageLimitResponse } from "../utils/chatgpt-usage-limit.ts";
 import {
 	appendAssistantMessageDiagnostic,
 	createAssistantMessageDiagnostic,
@@ -52,6 +51,7 @@ import { appendRetryAfterMsMarker, extract429RetryAfterMs } from "../utils/retry
 import { getSystemMessageText } from "../utils/text.ts";
 import { getDeclaredTools, getInitialSystemMessage, normalizeContext, resolveTranscript } from "../utils/transcript.ts";
 import { uuidv7 } from "../utils/uuid.ts";
+import { describeChatGptUsageLimitEvent, describeChatGptUsageLimitResponse } from "./chatgpt-usage-limit.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import {
 	type ChatGptSubscriptionWebSocketDebugStats,

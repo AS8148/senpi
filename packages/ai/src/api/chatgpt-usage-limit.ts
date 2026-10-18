@@ -11,6 +11,8 @@
  * for that reason, since its wording is the backend's and can name models.
  */
 
+import { ACCOUNT_LIMIT_NEXT_STEP_LEAD } from "../utils/provider-failure-description.ts";
+
 export const CHATGPT_USAGE_LIMIT_PREFIX = "You have hit your ChatGPT usage limit";
 
 export interface ChatGptUsageLimitInput {
@@ -21,16 +23,7 @@ export interface ChatGptUsageLimitInput {
 	readonly nowMs?: number;
 }
 
-const OTHER_ROUTES =
-	"To keep going now, add an OpenAI API key, sign in with another ChatGPT account, or switch providers.";
-const RETRY_AFTER_MARKER = /\s*\(retry-after-ms: \d+\)$/;
-
-/** The adapter's own wording (with its next step), minus the retry marker; undefined for any other text. */
-export function chatGptUsageLimitDescription(message: string): string | undefined {
-	return message.startsWith(CHATGPT_USAGE_LIMIT_PREFIX) && message.includes(OTHER_ROUTES)
-		? message.replace(RETRY_AFTER_MARKER, "")
-		: undefined;
-}
+const OTHER_ROUTES = `${ACCOUNT_LIMIT_NEXT_STEP_LEAD}add an OpenAI API key, sign in with another ChatGPT account, or switch providers.`;
 const USAGE_PAGE = "https://chatgpt.com/settings/usage";
 
 const REACHED_TYPE_ADVICE: Readonly<Record<string, string>> = {
