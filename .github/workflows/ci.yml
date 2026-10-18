@@ -385,6 +385,17 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
         working-directory: packages/coding-agent
 
+      - name: Show what the tests left in the job temp
+        if: always() && steps.test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: |
+          for entry in "$TMPDIR"/*; do
+            [ -e "$entry" ] || continue
+            echo "== $entry"
+            ls -la "$entry" 2>&1 | head -20
+            file "$entry" 2>/dev/null || true
+          done
+
       - name: Check OS temp after tests
         if: always() && steps.test_temp_snapshot.outcome == 'success'
         shell: bash
