@@ -6,7 +6,7 @@
  * of the installed extension directories the server granted this child at spawn (`SENPI_TOOL_CHILD_MODULE_ROOTS`), so a
  * job can never name an arbitrary file.
  */
-import { realpathSync } from "node:fs";
+import { realpathSync, statSync } from "node:fs";
 import { isAbsolute, relative, sep } from "node:path";
 import type { ToolChildJobContext } from "./entry.ts";
 import { ToolChildJobError } from "./entry.ts";
@@ -53,7 +53,7 @@ function realpathOrUndefined(path: string): string | undefined {
 	}
 }
 
-/** The module's realpath when it lies inside a granted root (both sides realpath'd); otherwise a typed refusal. */
+/** The module's realpath when it is a granted file or lies inside a granted directory (both realpath'd); otherwise refused. */
 export function containedModulePath(modulePath: string, roots: readonly string[]): string {
 	const resolved = realpathOrUndefined(modulePath);
 	if (resolved === undefined)
@@ -61,6 +61,8 @@ export function containedModulePath(modulePath: string, roots: readonly string[]
 	for (const root of roots) {
 		const realRoot = realpathOrUndefined(root);
 		if (realRoot === undefined) continue;
+		// A granted file is granted exactly; a granted directory grants what is strictly inside it.
+		if (resolved === realRoot && statSync(resolved).isFile()) return resolved;
 		const inside = relative(realRoot, resolved);
 		if (inside !== "" && !inside.startsWith(`..${sep}`) && inside !== ".." && !isAbsolute(inside)) return resolved;
 	}
