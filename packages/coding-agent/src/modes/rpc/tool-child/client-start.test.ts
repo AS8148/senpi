@@ -1,12 +1,13 @@
-// senpi#3566 todo 4 (review HIGH 3, LOW 1): a session directory too deep for sun_path still starts its child, a start
+// senpi#3566 todo 4 (review HIGH 3, LOW 1, delta LOW 1): a session directory too deep for sun_path still starts its child
+// (and a symlink planted at its fallback directory is refused untouched), a start
 // that fails for any reason never leaves the client "spawning", and an unsubscribed channel listener hears nothing.
-import { lstat, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { MAX_SOCKET_PATH_BYTES } from "../socket-ownership.ts";
-import { channelSocketPath, connectChannel, openChannelListener } from "./channel.ts";
+import { channelSocketPath, connectChannel, fallbackSocketRoot, openChannelListener } from "./channel.ts";
 import { ToolChildClient } from "./client.ts";
 
 const resolver = pathToFileURL(resolve(import.meta.dirname, "../../../experimental/source-resolver.ts")).href;
@@ -37,6 +38,18 @@ describe.skipIf(process.platform === "win32")("tool child start", () => {
 		await instance.start();
 		expect(await instance.ping()).toBeGreaterThan(0);
 	}, 30_000);
+
+	it("refuses a planted symlink at the fallback directory and never changes what it points to", async () => {
+		const base = await scratch("tcs-");
+		const deep = join(base, "z".repeat(60), "w".repeat(60), "tool-children", "0123456789abcdef0123456789abcdef0123");
+		const target = await scratch("tcs-target-");
+		await chmod(target, 0o755);
+		const root = fallbackSocketRoot(deep);
+		await symlink(target, root);
+		cleanups.push(() => rm(root, { force: true }));
+		await expect(channelSocketPath(deep, 1)).rejects.toThrow("socket_dir_unsafe");
+		expect((await lstat(target)).mode & 0o777).toBe(0o755);
+	});
 
 	it("fails a start whose command cannot spawn typed, and is not left spawning", async () => {
 		const dir = await scratch("tcs-");
