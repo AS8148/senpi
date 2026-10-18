@@ -8,6 +8,8 @@
  */
 import type * as ChildProcessModule from "node:child_process";
 import type { ChildProcess, SpawnOptions } from "node:child_process";
+import { TOOL_CHILD_ROLE_ENV } from "./channel.ts";
+import { LAUNCH_SHIM_ARGV_ENV, TOOL_CHILD_REENTRY_ENV } from "./launch-shim-role.ts";
 import type { LaunchApi } from "./protocol.ts";
 import type { WorkerLaunchClient } from "./worker-launch.ts";
 
@@ -91,6 +93,72 @@ function ownGroupSpawn(
 	return shim;
 }
 
+/**
+ * Windows `detached: true`: the command must outlive the tool child, so it starts outside the child's Job Object
+ * through the `launch-shim` role (re-entering this engine exactly as the child was started). The shim reports the
+ * command's pid on fd 3 and exits with its exit code; the caller gets the shim's handle.
+ */
+function breakawaySpawn(
+	real: ChildProcessApi,
+	client: WorkerLaunchClient,
+	command: string,
+	args: readonly string[],
+	options: SpawnOptions,
+): ChildProcess {
+	const reentry = parseReentry(process.env[TOOL_CHILD_REENTRY_ENV]);
+	const argv = options.shell ? ["cmd.exe", "/d", "/s", "/c", [command, ...args].join(" ")] : [command, ...args];
+	const launchId = client.acquire({
+		origin: "kernel",
+		api: "cp.spawn",
+		containment: "breakaway",
+		lifetime: "detached",
+	});
+	client.invoke(launchId);
+	const stdio = Array.isArray(options.stdio)
+		? options.stdio
+		: [options.stdio ?? "ignore", options.stdio ?? "ignore", options.stdio ?? "ignore"];
+	const shim = real.spawn(reentry.command, [...reentry.args], {
+		...options,
+		shell: false,
+		detached: false,
+		env: {
+			...(options.env ?? process.env),
+			[TOOL_CHILD_ROLE_ENV]: "launch-shim",
+			[LAUNCH_SHIM_ARGV_ENV]: JSON.stringify(argv),
+		},
+		stdio: [stdio[0] ?? "ignore", stdio[1] ?? "ignore", stdio[2] ?? "ignore", "pipe"],
+		windowsHide: true,
+	});
+	const pidPipe = shim.stdio[3];
+	if (pidPipe !== null && pidPipe !== undefined && "on" in pidPipe) {
+		let buffered = "";
+		pidPipe.on("data", (chunk: Buffer) => {
+			buffered += chunk.toString("utf8");
+			const line = buffered.split("\n")[0];
+			if (line === undefined || !buffered.includes("\n")) return;
+			const pid = Number((JSON.parse(line) as { pid?: unknown }).pid);
+			if (Number.isSafeInteger(pid)) client.started(launchId, pid, true);
+		});
+	}
+	return trackExit(client, launchId, shim);
+}
+
+function parseReentry(raw: string | undefined): { readonly command: string; readonly args: readonly string[] } {
+	const parsed: unknown = raw === undefined ? undefined : JSON.parse(raw);
+	if (
+		typeof parsed !== "object" ||
+		parsed === null ||
+		typeof Reflect.get(parsed, "command") !== "string" ||
+		!Array.isArray(Reflect.get(parsed, "args"))
+	)
+		throw new Error(`tool_child_breakaway_failed: ${TOOL_CHILD_REENTRY_ENV} is missing or malformed`);
+	const args: unknown = Reflect.get(parsed, "args");
+	return {
+		command: String(Reflect.get(parsed, "command")),
+		args: Array.isArray(args) ? Array.from(args, String) : [],
+	};
+}
+
 /** A `node:child_process` module object whose launch APIs pass the execution barrier. Non-launch exports pass through. */
 export function createGatedChildProcess(
 	module: ChildProcessApi,
@@ -118,10 +186,7 @@ export function createGatedChildProcess(
 	): ChildProcess => {
 		const args = isArgList(argsOrOptions) ? argsOrOptions : [];
 		const options: SpawnOptions = (isArgList(argsOrOptions) ? maybeOptions : argsOrOptions) ?? {};
-		if (!posix && options.detached === true)
-			throw new Error(
-				"tool_child_breakaway_unavailable: a detached launch from a Windows tool child needs the breakaway shim (senpi#3566)",
-			);
+		if (!posix && options.detached === true) return breakawaySpawn(real, client, command, args, options);
 		if (posix && options.detached !== false)
 			return ownGroupSpawn(real, client, command, args, options, options.detached === true ? "detached" : "owned");
 		const launchId = client.acquire({

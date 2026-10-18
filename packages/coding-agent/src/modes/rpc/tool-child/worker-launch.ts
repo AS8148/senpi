@@ -13,7 +13,7 @@ import type { LaunchRequest } from "./launch-gate.ts";
 export type WorkerLaunchMessage =
 	| { readonly kind: "launch"; readonly launchId: string; readonly slot: number; readonly request: LaunchRequest }
 	| { readonly kind: "invoking"; readonly launchId: string }
-	| { readonly kind: "started"; readonly launchId: string; readonly pid: number }
+	| { readonly kind: "started"; readonly launchId: string; readonly pid: number; readonly breakaway: boolean }
 	| { readonly kind: "done"; readonly launchId: string; readonly exitCode?: number; readonly signal?: string };
 
 export interface WorkerLaunchClientOptions {
@@ -70,8 +70,8 @@ export class WorkerLaunchClient {
 	}
 
 	/** Windows: the command's pid once the real call returned it, for the server's creation-time membership record. */
-	started(launchId: string, pid: number): void {
-		this.#options.post({ kind: "started", launchId, pid });
+	started(launchId: string, pid: number, breakaway = false): void {
+		this.#options.post({ kind: "started", launchId, pid, breakaway });
 	}
 
 	done(launchId: string, outcome: { readonly exitCode?: number | null; readonly signal?: string | null }): void {

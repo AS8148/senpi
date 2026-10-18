@@ -64,7 +64,7 @@ export class LaunchGate {
 	readonly #creatorInJob: () => boolean;
 
 	/** Windows: the command a launch started, with whether its creator (this child) was inside a job when it did. */
-	started(launchId: string, pid: number): void {
+	started(launchId: string, pid: number, breakaway = false): void {
 		if (!this.#slots.has(launchId)) return;
 		this.#channel.send({
 			type: "command_started",
@@ -72,7 +72,7 @@ export class LaunchGate {
 			pid,
 			startedAtMs: Date.now(),
 			creatorInJob: this.#creatorInJob(),
-			breakaway: false,
+			breakaway,
 		});
 	}
 
@@ -105,7 +105,7 @@ export class LaunchGate {
 	handleWorker(message: WorkerLaunchMessage): void {
 		if (message.kind === "launch") this.adopt(message.launchId, message.slot, message.request);
 		else if (message.kind === "invoking") this.invoking(message.launchId);
-		else if (message.kind === "started") this.started(message.launchId, message.pid);
+		else if (message.kind === "started") this.started(message.launchId, message.pid, message.breakaway);
 		else
 			this.done(message.launchId, {
 				...(message.exitCode === undefined ? {} : { exitCode: message.exitCode }),

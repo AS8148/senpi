@@ -6,6 +6,7 @@ import { runtimeExecArgv } from "../../../utils/runtime-exec-argv.ts";
 import { resolveCliMainPathAsync } from "../host-cli-entry.ts";
 import { TOOL_CHILD_ROLE_ENV } from "./channel.ts";
 import { TOOL_CHILD_GENERATION_ENV } from "./entry.ts";
+import { TOOL_CHILD_REENTRY_ENV } from "./launch-shim-role.ts";
 
 export interface ToolChildCommand {
 	readonly command: string;
@@ -47,6 +48,8 @@ export function spawnToolChild(options: {
 			...options.channelEnv,
 			[TOOL_CHILD_ROLE_ENV]: "tool-child",
 			[TOOL_CHILD_GENERATION_ENV]: String(options.generation),
+			// How to re-enter this engine: the Windows launch shim is started the same way the child was.
+			[TOOL_CHILD_REENTRY_ENV]: JSON.stringify(options.command),
 		},
 		// POSIX: the child leads its own group, so its whole tree can be signalled as one. Windows: the job is the handle.
 		detached: process.platform !== "win32",
