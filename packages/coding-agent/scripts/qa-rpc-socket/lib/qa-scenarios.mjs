@@ -8,6 +8,7 @@
  */
 import { fixtureDeadlineScenario } from "./qa-scenario-fixture-deadline.mjs";
 import { fixtureToolsScenario } from "./qa-scenario-fixture-tools.mjs";
+import { hostcallLargeScenario, lockDrainScenario } from "./qa-scenario-hostcall.mjs";
 import { launchApisAckGatedScenario } from "./qa-scenario-launch-barrier.mjs";
 import { skipAckWaitScenario } from "./qa-scenario-skip-ack.mjs";
 
@@ -33,8 +34,6 @@ export const REQUIREMENT_CAPABILITIES = Object.freeze({
 });
 
 const LATER = [
-	["7-hostcall-large-args-and-reply", [4, 7]],
-	["7-lock-drain", [4, 7]],
 	["8-offload-session-start", [4, 8]],
 	["8-offload-legacy-no-child", [8]],
 	["9-stream", [4, 9]],
@@ -70,6 +69,8 @@ export const SCENARIOS = Object.freeze([
 	launchApisAckGatedScenario,
 	skipAckWaitScenario(),
 	fixtureDeadlineScenario,
+	hostcallLargeScenario,
+	lockDrainScenario,
 	...LATER.map(([id, requires]) => ({ id, requires, run: undefined })),
 ]);
 

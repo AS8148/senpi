@@ -21,7 +21,7 @@ const TOOL_RUNTIME_ENV_SUFFIX = "TOOL_RUNTIME";
  * What the tool child already serves, advertised as `placement:<name>` beside `tool_runtime:child` (senpi#3566): each
  * later todo appends the placement it lands, so a client (and the QA driver) can tell which work moved.
  */
-export const TOOL_CHILD_PLACEMENTS = ["launch-barrier", "job-policy"] as const;
+export const TOOL_CHILD_PLACEMENTS = ["launch-barrier", "job-policy", "hostcall"] as const;
 
 export function toolRuntimeCapabilities(runtime: ToolRuntimeKind): string[] {
 	return [

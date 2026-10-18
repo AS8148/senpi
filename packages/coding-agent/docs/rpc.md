@@ -285,7 +285,10 @@ The child's state is visible two ways:
 A multi-session host and a single-session `--mode rpc` process each advertise their choice as one
 `tool_runtime:in-process` or `tool_runtime:child` entry in `get_protocol_info.capabilities`. Under `child` they also
 advertise one `placement:<name>` entry for each part of the tool child that has landed (`placement:launch-barrier`:
-every command a child-run tool starts passes the execution barrier). A job worker cannot start worker threads of its
+every command a child-run tool starts passes the execution barrier; `placement:job-policy`: per-kind deadlines,
+liveness and the cancel ladder; `placement:hostcall`: a child-run tool body reaches the session over the reverse
+bridge - `tool`, `completion`, `reserved`, `list_tools`, `authorize` and drain-before-release `lock_file`/`unlock_file`,
+with large arguments and replies carried by acknowledged references). A job worker cannot start worker threads of its
 own (`tool_child_nested_worker_refused`), so no launch escapes the barrier that way.
 
 ### Host identity (`get_protocol_info`)
