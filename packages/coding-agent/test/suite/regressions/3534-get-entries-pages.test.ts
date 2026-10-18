@@ -1,8 +1,14 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentSessionRuntime } from "../../../src/core/agent-session-runtime.ts";
 import { createRpcConnectionHandler } from "../../../src/modes/rpc/connection-handler.ts";
-import { entryPageBounds, pageEntries, RPC_RESPONSE_BYTE_BUDGET } from "../../../src/modes/rpc/get-entries-page.ts";
+import {
+	ENTRY_WALK_HOLD_MS,
+	entryPageBounds,
+	pageEntries,
+	RPC_RESPONSE_BYTE_BUDGET,
+	setResponseByteBudgetForTesting,
+} from "../../../src/modes/rpc/get-entries-page.ts";
 import { createHarness, type Harness } from "../harness.ts";
 
 type Answer = {
@@ -15,6 +21,7 @@ type Answer = {
 describe("#3534 get_entries in bounded pages", () => {
 	const harnesses: Harness[] = [];
 	afterEach(() => {
+		vi.useRealTimers();
 		for (const harness of harnesses.splice(0)) harness.cleanup();
 	});
 
@@ -100,6 +107,56 @@ describe("#3534 get_entries in bounded pages", () => {
 		}
 	});
 
+	it("lets a walk the client abandons go after the hold expires on an idle session", async () => {
+		// given an idle session and a page walk that stops after its first page
+		const { harness, handler, ask } = await connectedSession(4);
+		const release = vi.spyOn(harness.session, "releaseFullHistoryView");
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		try {
+			const first = await ask({ type: "get_entries", limit: 2 });
+			expect(first.data?.hasMore).toBe(true);
+			expect(release).not.toHaveBeenCalled();
+
+			// when no next page arrives before the hold expires
+			vi.advanceTimersByTime(ENTRY_WALK_HOLD_MS);
+
+			// then the session lets the full-history view go
+			expect(release).toHaveBeenCalledTimes(1);
+		} finally {
+			vi.useRealTimers();
+			await handler.dispose();
+		}
+	});
+
+	it("refuses an unpaged read past the budget with response_too_large and keeps the connection", async () => {
+		const { harness, handler, ask } = await connectedSession(4);
+		const entryCount = harness.sessionManager.getEntries().length;
+		const restore = setResponseByteBudgetForTesting(1024);
+		try {
+			const refused = await ask({ type: "get_entries" });
+			expect(refused).toMatchObject({ success: false, errorCode: "response_too_large" });
+
+			const paged = await ask({ type: "get_entries", limit: entryCount });
+			expect(paged.success).toBe(true);
+		} finally {
+			restore();
+			await handler.dispose();
+		}
+	});
+
+	it("refuses a page whose first entry alone is larger than the budget instead of sending it", async () => {
+		const { handler, ask } = await connectedSession(1);
+		const restore = setResponseByteBudgetForTesting(16);
+		try {
+			const answer = await ask({ type: "get_entries", limit: 1 });
+
+			expect(answer).toMatchObject({ success: false, errorCode: "response_too_large" });
+		} finally {
+			restore();
+			await handler.dispose();
+		}
+	});
+
 	it("refuses bounds that are not positive integers", async () => {
 		const { handler, ask } = await connectedSession(1);
 		try {
@@ -134,7 +191,7 @@ describe("#3534 page bounds", () => {
 	it("marks the last page without a cursor", () => {
 		const page = pageEntries(entries, (entry) => entry, { limit: 10, maxBytes: entryBytes * 10 });
 
-		expect(page).toEqual({ entries, hasMore: false });
+		expect(page).toEqual({ entries, hasMore: false, firstEntryBytes: entryBytes });
 	});
 
 	it("gives an unpaged read the response budget and a paged read at most that", () => {
