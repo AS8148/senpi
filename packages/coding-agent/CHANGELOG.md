@@ -19,6 +19,7 @@
 
 ### Fixed
 
+- The mouse wheel scrolls the transcript again while an `ask_user_question` prompt is waiting. The first notch pauses option clicking (the hint says so) and any key turns it back on. The text-selection hint now names the right modifier per terminal, including VS Code on macOS ([#3604](https://github.com/code-yeongyu/senpi/issues/3604)).
 - A host daemon now inherits every credential variable the engine reads, including `CLAUDE_CODE_OAUTH_TOKEN`, `COPILOT_GITHUB_TOKEN`, `HF_TOKEN` and numbered slots such as `OPENAI_API_KEY_2`, so a Claude subscription from the environment works through a host as it does in a direct process (#3531).
 
 - `get_auth_providers` reports a Claude subscription supplied by `CLAUDE_CODE_OAUTH_TOKEN` or an ambient Claude Code login on the subscription's sign-in row instead of its API-key row, so RPC clients show it as a connected subscription. The TUI `/login` picker and `get_auth_providers` share one rule, so a runtime `--api-key` never shows as a configured sign-in, and a stored subscription keeps its row beside one (#3537).

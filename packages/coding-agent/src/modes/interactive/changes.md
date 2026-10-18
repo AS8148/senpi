@@ -1,3 +1,22 @@
+## 2026-10-18 - The pending-question mouse hint follows the live capture state and names the right selection modifier (senpi#3604)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/ask-user-async-widget.ts`: the mouse hint reads `tui.mouseCaptureState()` at render. Armed: `click an option · <bypass> to select text`. Yielded (the wheel handed the mouse to the terminal): `wheel scrolls · press any key to click options again`. Off: no line. `selectionBypassHint()` names Option for iTerm2 and Terminal.app, Option with `terminal.integrated.macOptionClickForcesSelection` for VS Code on macOS, a tmux-specific note, and Shift elsewhere (Windows Terminal, Ghostty, WezTerm, kitty, VS Code on Windows/Linux).
+
+### Why
+
+- The main-screen renderer now yields the mouse on the first wheel notch (senpi#3604), so the hint has to say when clicking is paused and how to resume it. VS Code on macOS was told "shift+drag", which does nothing there.
+- Tests: `test/suite/ask-user-widget-mouse.test.ts` (bypass table; armed, yielded and re-armed hint on a real `TuiMainScreen`).
+
+### Why an extension could not handle it
+
+- The widget is the interactive host's own component.
+
+### Expected merge conflict zones
+
+- LOW: the hint block in `render` and the new `selectionBypassHint` export.
+
 ## 2026-10-17 - The /login picker attributes a credential to its row through the shared rule (senpi#3537)
 
 ### What changed

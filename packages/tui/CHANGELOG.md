@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- In main-screen mode the mouse wheel scrolls the terminal's scrollback again while a component holds a mouse lease: the first wheel notch hands the mouse back to the terminal, and the next key press takes it back ([#3604](https://github.com/code-yeongyu/senpi/issues/3604)).
+
 ### Removed
 
 ## [2026.10.16-4] - 2026-10-16

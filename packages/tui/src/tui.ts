@@ -1132,6 +1132,14 @@ export abstract class TuiBase extends Container {
 		return this.mouseLeases.size > 0 && this.mouseBlockers.size === 0;
 	}
 
+	/**
+	 * Whether mouse reports reach the app right now: `"off"` without an enabled lease, `"armed"` while
+	 * they do, `"yielded"` while a renderer has handed the mouse back to the terminal (main-screen wheel).
+	 */
+	mouseCaptureState(): "off" | "armed" | "yielded" {
+		return this.mouseCaptureEnabled ? "armed" : "off";
+	}
+
 	protected applyMouseTracking(_enabled: boolean): void {}
 
 	protected getMouseLayoutRoots(): readonly Component[] {
@@ -3630,7 +3638,7 @@ export abstract class TuiBase extends Container {
  * replies, DEC private reports (`ESC[?...`) and window/cell-size reports (`ESC[...t`). OSC/DCS/APC need
  * a body after the introducer, so a legacy Alt+] / Alt+Shift+P / Alt+_ key press is still a key.
  */
-function isTerminalReport(data: string): boolean {
+export function isTerminalReport(data: string): boolean {
 	return (
 		data.startsWith("\x1b[<") ||
 		data.startsWith("\x1b[M") ||
