@@ -6,6 +6,7 @@
 - `command-monitor-source.ts` `#settle`: a timed-out command watch now summarizes as `watcher killed at deadline (timed_out)`.
 - `rpc-monitor-source.ts`: the deadline summary stays `watcher timed_out` (an RPC watch kills nothing) and both its sites share `RPC_WATCHER_TIMED_OUT_SUMMARY`, so the ended-reason classifier can never drift from the settle string.
 - `test/suite/terminal-monitor.test.ts`: the timed-watch test asserts the machine-read ended reason `timeout` through `MonitorRegistry`'s `onEnded` instead of pinning summary prose.
+- `test/suite/terminal-bash-foreground-exit.test.ts` (new): proves the other side of the contract — a `nohup` background job SURVIVES a normal foreground return (probed alive by a later call), because only the deadline path ever signals the group.
 
 ### Why
 
