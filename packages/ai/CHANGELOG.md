@@ -6,6 +6,8 @@
 
 ### Added
 
+- Anthropic requests of 4096+ characters to `api.anthropic.com` are sent gzip-compressed, as Claude Code does; `compat.supportsGzipRequestBody` turns it on or off per model, and an endpoint that refuses the encoding gets the same request uncompressed once and stays uncompressed. A custom `fetch` (or a test stub of the global fetch) for `api.anthropic.com` now receives those bodies as gzip bytes with `Content-Encoding: gzip` instead of a JSON string; set `compat.supportsGzipRequestBody: false` to keep the old behavior ([#3643](https://github.com/code-yeongyu/senpi/issues/3643)).
+
 ### Changed
 
 ### Fixed
