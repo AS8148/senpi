@@ -1250,7 +1250,8 @@ For `tool_call`, this state is synchronized through the current assistant messag
 
 ```typescript
 ctx.sessionManager.getEntries()             // All entries
-ctx.sessionManager.getBranch()              // Current branch
+ctx.sessionManager.getBranch()              // Current branch (from the latest compaction window once the session compacted)
+ctx.sessionManager.getFullBranch()          // Current branch over the whole history, read from the session file
 ctx.sessionManager.buildContextEntries()    // Active branch entries with compaction applied
 ctx.sessionManager.getLeafId()              // Current leaf entry ID
 ```
@@ -1711,7 +1712,7 @@ runtime's steering or follow-up queue like the user's queued input. The protocol
 |---|---|---|
 | `registerControlEndpoint({ inboxDir, drain, isSessionReferenced? })` | `Promise<SessionControlRegistration>` | POSIX interactive session: binds the `tui` control endpoint and answers `{ status: "registered", socket, dispose }`. On a multi-session host with a public socket it binds nothing and `socket` is the host's. Otherwise `{ status: "unsupported", reason: "unsupported_platform" \| "unsupported_mode" }`, or `{ status: "failed", reason }` when a registration step failed. `drain(event)` runs on every [`session_control_wake`](#session_control_wake) edge and answers `{ admitted: [{ delivery_id, kind }] }`. `inboxDir` is created 0700 and its entry creations and deletions wake the drain. At clean exit a header-only session file is removed unless `isSessionReferenced()` answers `true`. |
 | `admissionGate()` | `{ can_admit, hold_reason?, editor_revision, turn_epoch }` | Read-only pre-check; `hold_reason` is `draft` while the user composes or their submission is still on its way into the runtime. |
-| `admitExternalMessage({ delivery_id, text, deliverAs, expected_turn_id?, sender?, display_text? })` | `{ kind, turn_epoch }` | Decides and acts in one synchronous call. `kind` is `started`, `queued`, `steered`, `turn_conflict` (stale epoch, or a steer without one), `held_draft` (nothing enqueued; retry on the next wake) or `already_admitted` (also for a delivery whose entry the file refused, until the run that refused it has settled and the file's last write succeeded). The delivery becomes a `custom` entry `session_control_delivery` whose `details.delivery_id` proves it was applied. Throws once a host started handing the session over (`release_session`). `sender` (`{ kind: "agent", session_id, name? }`, `{ kind: "command_line", user? }` or `{ kind: "external", platform, author? }`) and `display_text` (the message as written) go to the entry's `details`: the terminal labels the message by its sender over `display_text`, while the model reads `text`. |
+| `admitExternalMessage({ delivery_id, text, deliverAs, expected_turn_id?, sender?, display_text?, whenIdle? })` | `{ kind, turn_epoch }` | Decides and acts in one synchronous call. `whenIdle` (`start`, the default, or `queue`) is what an idle session does with it: start a turn, or hold it (`queued`) in the `deliverAs` queue for the next turn. `kind` is `started`, `queued`, `steered`, `turn_conflict` (stale epoch, or a steer without one), `held_draft` (nothing enqueued; retry on the next wake) or `already_admitted` (also for a delivery whose entry the file refused, until the run that refused it has settled and the file's last write succeeded). The delivery becomes a `custom` entry `session_control_delivery` whose `details.delivery_id` proves it was applied. Throws once a host started handing the session over (`release_session`). `sender` (`{ kind: "agent", session_id, name? }`, `{ kind: "command_line", user? }` or `{ kind: "external", platform, author? }`) and `display_text` (the message as written) go to the entry's `details`: the terminal labels the message by its sender over `display_text`, while the model reads `text`. |
 | `listAdmittedDeliveries()` | `{ pending, emitted, failed? }` | The process-lifetime ledger: `pending` is held by the runtime, `emitted` has its transcript entry written, `failed` (present only when non-empty, `[{ delivery_id, error }]`) had its entry refused by the session file: no longer held, still with its sender, admissible again once the run that refused it has settled and the file's last write succeeded. |
 | `persistHeaderNow()` | `Promise<void>` | Writes the session header now, so the session id is durable before anything exposes it. |
 
@@ -2030,9 +2031,17 @@ From a command handler, send the text before the handler returns: messages anoth
 
 See [send-user-message.ts](../examples/extensions/send-user-message.ts) for a complete example.
 
-### pi.appendEntry(customType, data?)
+### pi.appendEntry(customType, data?, options?)
 
 Persist extension data. Custom entries do NOT participate in LLM context. In interactive mode, they can also render inside the chat transcript when paired with `pi.registerEntryRenderer()`.
+
+Pass `{ startupBookkeeping: true }` for an entry your extension writes at session start without any user action (a scan record, an environment fingerprint). A session that closes without a conversation then leaves no file behind if it holds only setup entries and such bookkeeping. Leave the option unset for anything a user created or anything billed: an unmarked entry keeps the session file.
+
+```typescript
+pi.on("session_start", () => {
+  pi.appendEntry("my-ext.scan", { at: Date.now() }, { startupBookkeeping: true });
+});
+```
 
 ```typescript
 pi.appendEntry("my-state", { count: 42 });
@@ -2248,6 +2257,18 @@ pi.registerFlag("plan", {
 if (pi.getFlag("plan")) {
   // Plan mode enabled
 }
+```
+
+### pi.getPermissionPreset()
+
+The permission preset the built-in permission system enforces for this session right now (`"full-access"`, `"workspace"`, `"accept-edits"`, `"auto"`, `"read-only"` or `"ask"`). It resolves like the permission system does: the `--permission-preset` flag, then project and global settings (with the same untrusted-project handling), then the `full-access` default. A preset flag changed on a live session is applied before the read. It returns `undefined` when the permission system is not running for the session, its setup failed, or the session is not bound yet (during extension loading).
+
+```typescript
+pi.on("tool_call", () => {
+  if (pi.getPermissionPreset() === "full-access") {
+    // Nothing will prompt for permission in this session.
+  }
+});
 ```
 
 ### pi.exec(command, args, options?)

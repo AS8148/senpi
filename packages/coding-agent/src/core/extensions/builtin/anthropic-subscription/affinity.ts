@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { applyAccountOrder } from "@earendil-works/pi-ai/auth/pool/select";
 import { activeModelBlockUntil, pruneModelBlocks } from "../../../credential-pool/model-scope.ts";
 import type { AccountSlot } from "./accounts.ts";
 
@@ -13,6 +14,8 @@ export type AffinityOptions = {
 	 * session does not move accounts and re-send its whole conversation (senpi#2891).
 	 */
 	preferredAccount?: string;
+	/** The user's account order (senpi#3591): tried after the pin and the session's own account, before HRW. */
+	accountOrder?: readonly string[];
 	now?: number;
 	/** The requested model; an account blocked only for another model stays eligible for it. */
 	model?: string;
@@ -69,7 +72,7 @@ export function rendezvousOrder(key: string, accounts: readonly AccountSlot[]): 
 }
 
 function isAccountBlocked(account: AccountSlot, now: number): boolean {
-	return account.blockReason === "auth_error" || (account.blockedUntil !== undefined && account.blockedUntil > now);
+	return account.blockedUntil !== undefined && account.blockedUntil > now;
 }
 
 /** Whether the account can serve `model` now: no account-level block and no live block on that model. */
@@ -77,12 +80,16 @@ export function isBlockedFor(account: AccountSlot, now: number, model?: string):
 	return isAccountBlocked(account, now) || activeModelBlockUntil(account.modelBlocks, model, now) !== undefined;
 }
 
-/** Removes elapsed rate/capacity blocks but deliberately retains auth blocks until login refreshes the slot. */
+/**
+ * Removes elapsed blocks, auth blocks included: an auth block lasts until its
+ * re-probe time (senpi#3264), and one persisted before re-probe times existed
+ * has no expiry and clears at once, so the next request probes the account.
+ */
 export function clearExpiredBlocks(accounts: readonly AccountSlot[], now = Date.now()): AccountSlot[] {
 	return accounts.map((account) => {
 		let available = account;
-		if (account.blockReason !== "auth_error" && account.blockedUntil !== undefined && account.blockedUntil <= now) {
-			const { blockedUntil: _blockedUntil, blockReason: _blockReason, ...rest } = account;
+		if (account.blockReason !== undefined && (account.blockedUntil === undefined || account.blockedUntil <= now)) {
+			const { blockedUntil: _blockedUntil, blockReason: _blockReason, blockedAt: _blockedAt, ...rest } = account;
 			available = rest;
 		}
 		if (available.modelBlocks === undefined) return available;
@@ -107,7 +114,7 @@ function selectUnblocked(
 			? undefined
 			: accounts.find((account) => account.name === options.preferredAccount);
 	if (preferred && !isBlockedFor(preferred, now, options.model)) return preferred;
-	return rendezvousOrder(getAffinityKey(options), accounts).find(
+	return applyAccountOrder(options.accountOrder, rendezvousOrder(getAffinityKey(options), accounts)).find(
 		(account) => !isBlockedFor(account, now, options.model),
 	);
 }

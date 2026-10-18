@@ -10,6 +10,82 @@
 
 ### Fixed
 
+### Removed
+
+## [2026.10.16-4] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.16-3] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.16-2] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Julia writes its startup status and ready frames pre-encoded, so neither a fresh nor an interrupt-replacement interpreter runs the frame encoder before its first cell; all startup stages are still reported ([#3048](https://github.com/code-yeongyu/senpi/issues/3048)).
+
+### Removed
+
+## [2026.10.16] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.15] - 2026-10-15
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- `display()` of a large object, such as a screenshot result that wraps a multi-MB Buffer, no longer writes megabytes into the session file or breaks the session render. The stored copy is trimmed inside the value instead of dropped: every top-level key is kept, Buffers become a `<Buffer N MB>` summary, long strings, arrays and keys keep a prefix with a visible marker, and the entry stays within the display budget, emoji included. Older sessions holding such entries render a short summary, and an object whose `buffer` holds image bytes now displays as the image with its metadata ([#3320](https://github.com/code-yeongyu/senpi/pull/3320)).
+
+### Removed
+
+## [2026.10.13] - 2026-10-13
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
 - Large JavaScript `eval` data cells no longer stall the shared RPC host on unnecessary import parsing. Cells without possible import syntax skip Babel, and the whole-AST walk runs only when a dynamic import is possible. The dynamic-import check stays linear on comment-heavy data; imports with comments or non-ASCII bindings still rewrite correctly ([#3206](https://github.com/code-yeongyu/senpi/pull/3206)).
 
 ### Removed

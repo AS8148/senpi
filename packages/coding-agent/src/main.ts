@@ -1,4 +1,4 @@
-// allow: SIZE_OK - CLI coordinator is pre-existing oversized glue; app-server command handling is extracted for this branch and a full main split needs behavior-locked follow-up coverage.
+// allow: SIZE_OK - CLI coordinator is pre-existing oversized glue; a full main split needs behavior-locked follow-up coverage.
 /**
  * Main entry point for the coding agent CLI.
  *
@@ -33,7 +33,6 @@ import { movedSessionToContinue } from "./cli/continue-moved.ts";
 import { resolveCredentialForPrint } from "./cli/credential-print.ts";
 import { chooseCrossProjectAction, confirmSameRepositoryRebind } from "./cli/cross-project-session.ts";
 import {
-	dispatchAppServerCommand,
 	dispatchConfigCommand,
 	dispatchHostCommand,
 	dispatchPackageCommand,
@@ -55,6 +54,7 @@ import {
 	shouldShowStartupLoadingIndicator,
 } from "./cli/startup-loading-indicator.ts";
 import { shouldRunFirstTimeSetup, showFirstTimeSetup, showStartupSelector } from "./cli/startup-ui.ts";
+import { resolveToolRuntime, type ToolRuntimeKind } from "./cli/tool-runtime.ts";
 import {
 	APP_NAME,
 	DISPLAY_VERSION,
@@ -78,6 +78,7 @@ import { AuthStorage, ReadOnlyAuthStorage } from "./core/auth-storage.ts";
 import { envValue } from "./core/brand.ts";
 import { type CredentialAccountSummary, summarizeCredentialAccounts } from "./core/credential-accounts.ts";
 import { exportFromFile } from "./core/export-html/index.ts";
+import { ModelUsabilityBudgetError } from "./core/extensions/builtin/compaction/model-usability-budget.ts";
 import { resolveMovedPath } from "./core/extensions/builtin/moved-path-guard/resolve.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
 import { applyHttpProxySettings, configureHttpDispatcher } from "./core/http-dispatcher.ts";
@@ -92,7 +93,7 @@ import { ModelRuntime } from "./core/model-runtime.ts";
 import { markMovedSessions, movedHereSessionToContinue, withMovedSessions } from "./core/moved-sessions.ts";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.ts";
 import { recordProcessLifetime } from "./core/process-crash-record.ts";
-import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
+import { type AppMode, presetTrustsProject, resolveProjectTrusted } from "./core/project-trust.ts";
 import { resolveResumeTarget } from "./core/resume-target.ts";
 import type { CreateAgentSessionOptions } from "./core/sdk.ts";
 import {
@@ -177,9 +178,6 @@ function isTruthyEnvFlag(value: string | undefined): boolean {
 }
 
 function resolveAppMode(parsed: Args, stdinIsTTY: boolean, stdoutIsTTY: boolean): AppMode {
-	if (parsed.mode === undefined && parsed.messages[0] === "app-server") {
-		return "app-server";
-	}
 	if (parsed.mode === "rpc") {
 		return "rpc";
 	}
@@ -194,10 +192,6 @@ function resolveAppMode(parsed: Args, stdinIsTTY: boolean, stdoutIsTTY: boolean)
 
 function toPrintOutputMode(appMode: AppMode): Exclude<Mode, "rpc"> {
 	return appMode === "json" ? "json" : "text";
-}
-
-function toProjectTrustMode(appMode: AppMode): AppMode {
-	return appMode === "app-server" ? "print" : appMode;
 }
 
 /**
@@ -581,7 +575,7 @@ export async function createSessionManager(
 				if (resolved.cwd !== "" && resolvePath(resolveMovedPath(resolved.cwd)) === resolvePath(cwd))
 					return openSessionOrExit(resolved.path, sessionDir);
 				// The confirmation blocks on readline, which only an interactive session can
-				// answer. Print, JSON, RPC, and app-server runs reach here with a TTY attached
+				// answer. Print, JSON, and RPC runs reach here with a TTY attached
 				// too (`-p` from a terminal), where the question hangs the process or resolves
 				// as "no" on stdin EOF, so they get the exact commands and a non-zero exit.
 				const action = await chooseCrossProjectAction({
@@ -832,6 +826,8 @@ export interface CliRuntimeConfiguration {
 	cwd: string;
 	agentDir: string;
 	appMode: AppMode;
+	/** Resolved `--tool-runtime` (flag, then env); absent means `in-process`. A worker isolate never re-reads env. */
+	toolRuntime?: ToolRuntimeKind;
 }
 
 /** Fixed launch data is cloneable; UI callbacks and extension factories stay in their isolate. */
@@ -865,7 +861,7 @@ export function createCliRuntimeFactory(
 	const trustStore = new ProjectTrustStore(agentDir);
 	const projectTrustByCwd = new Map<string, boolean>();
 	const trustPromptMode: AppMode =
-		parsed.help || parsed.listModels !== undefined || parsed.listTips ? "print" : toProjectTrustMode(appMode);
+		parsed.help || parsed.listModels !== undefined || parsed.listTips ? "print" : appMode;
 	const resolvedExtensionPaths = resolveCliPaths(cwd, parsed.extensions);
 	const resolvedSkillPaths = resolveCliPaths(cwd, parsed.skills);
 	const resolvedPromptTemplatePaths = resolveCliPaths(cwd, parsed.promptTemplates);
@@ -885,14 +881,32 @@ export function createCliRuntimeFactory(
 		const projectTrustDiagnostics: AgentSessionRuntimeDiagnostic[] = [];
 		const cachedProjectTrust = projectTrustByCwd.get(cwd);
 		const hasTrustRequiringResources = hasTrustRequiringProjectResources(cwd);
+		// A full-access session trusts its project without asking, for that session only: nothing is
+		// cached here or saved to the trust store, and a saved "do not trust" still wins (#2465).
+		const fullAccessTrust =
+			presetTrustsProject(
+				sessionExtensionFlagValues(parsed.unknownFlags, launchProfile).get("permission-preset"),
+				(startupSettingsManager.getGlobalSettings() as { readonly permissionPreset?: unknown }).permissionPreset,
+			) && trustStore.get(cwd) !== false;
 		const shouldResolveProjectTrust =
-			parsed.projectTrustOverride === undefined && cachedProjectTrust === undefined && hasTrustRequiringResources;
+			parsed.projectTrustOverride === undefined &&
+			cachedProjectTrust === undefined &&
+			!fullAccessTrust &&
+			hasTrustRequiringResources;
 		const projectTrusted = shouldResolveProjectTrust
 			? false
 			: (cachedProjectTrust ??
 				parsed.projectTrustOverride ??
-				(!hasTrustRequiringResources || trustStore.get(cwd) === true));
-		const runtimeSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted });
+				(fullAccessTrust || !hasTrustRequiringResources || trustStore.get(cwd) === true));
+		// Trusted only because of Full access (resources need trust and nothing else granted it): leaving
+		// Full access withdraws it (#3420 review T5).
+		const trustFromFullAccess =
+			fullAccessTrust &&
+			hasTrustRequiringResources &&
+			cachedProjectTrust === undefined &&
+			parsed.projectTrustOverride === undefined &&
+			trustStore.get(cwd) !== true;
+		const runtimeSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted, trustFromFullAccess });
 		// The opener's per-session fallback policy is an in-memory override: never saved, never shared.
 		if (launchProfile?.retryFallback) applyRetryFallbackProfile(runtimeSettingsManager, launchProfile.retryFallback);
 		const services = await createAgentSessionServices({
@@ -917,7 +931,7 @@ export function createCliRuntimeFactory(
 									pauseIndicatorDuringPrompts(
 										createProjectTrustContext({
 											cwd,
-											mode: isInitialRuntime ? trustPromptMode : toProjectTrustMode(appMode),
+											mode: isInitialRuntime ? trustPromptMode : appMode,
 											settingsManager: startupSettingsManager,
 											hasUI: isInitialRuntime && trustPromptMode === "interactive",
 										}),
@@ -1145,10 +1159,6 @@ export async function main(args: string[], options?: MainOptions) {
 		return;
 	}
 
-	if (await dispatchAppServerCommand(args)) {
-		return;
-	}
-
 	// The shared-daemon command: one JSON line on stdout and an exit code that classifies it, so it
 	// exits here rather than falling through into argument parsing and the interactive path.
 	const hostExitCode = await dispatchHostCommand(args);
@@ -1172,6 +1182,13 @@ export async function main(args: string[], options?: MainOptions) {
 			process.exit(1);
 		}
 	}
+	const toolRuntimeResolution = resolveToolRuntime(parsed);
+	// --version and --help never run a tool, so a bad tool-runtime env value must not block them.
+	if (!toolRuntimeResolution.ok && !parsed.version && !parsed.help) {
+		console.error(chalk.red(`Error: ${toolRuntimeResolution.message}`));
+		process.exit(1);
+	}
+	const toolRuntime = toolRuntimeResolution.ok ? toolRuntimeResolution.value : "in-process";
 	time("parseArgs");
 
 	if (parsed.version) {
@@ -1302,7 +1319,7 @@ export async function main(args: string[], options?: MainOptions) {
 	if (appMode === "rpc" && parsed.multiSession) {
 		if (options?.extensionFactories?.length)
 			throw new Error("Shared RPC workers require file-backed extensions; inline factories cannot cross isolates");
-		const runtimeConfiguration = { parsed, cwd, agentDir, appMode };
+		const runtimeConfiguration = { parsed, cwd, agentDir, appMode, toolRuntime };
 		// Socket hosts (the machine-wide daemon) run every session IN this process:
 		// createHostCore selects the worker registry only when a workerConfiguration
 		// is passed, so withholding it is what selects the uncapped in-process registry.
@@ -1341,6 +1358,7 @@ export async function main(args: string[], options?: MainOptions) {
 				parsed.provider && parsed.model ? { provider: parsed.provider, modelId: parsed.model } : undefined,
 			initialThinkingLevel: parsed.thinking,
 			listen: parsed.listen,
+			toolRuntime,
 		});
 	}
 
@@ -1404,7 +1422,7 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	const createRuntime = createCliRuntimeFactory(
-		{ parsed, cwd, agentDir, appMode },
+		{ parsed, cwd, agentDir, appMode, toolRuntime },
 		{ extensionFactories, startupSettingsManager, startupLoadingIndicator },
 	);
 	time("createRuntime");
@@ -1412,9 +1430,18 @@ export async function main(args: string[], options?: MainOptions) {
 		cwd: sessionManager.getCwd(),
 		agentDir,
 		sessionManager,
-	}).finally(() => {
-		startupLoadingIndicator.stop();
-	});
+	})
+		.catch((error: unknown) => {
+			// A model that cannot start is the user's to fix, not a crash: one line and its fix (senpi#3333).
+			if (!(error instanceof ModelUsabilityBudgetError)) throw error;
+			// Stop the spinner first: exit runs before `.finally`, and its line has no newline.
+			startupLoadingIndicator.stop();
+			console.error(chalk.red(error.message));
+			process.exit(1);
+		})
+		.finally(() => {
+			startupLoadingIndicator.stop();
+		});
 	time("createAgentSessionRuntime");
 	await prepareSessionOpening(sessionManager, appMode);
 	const { services, session, modelFallbackMessage } = runtime;
@@ -1476,6 +1503,14 @@ export async function main(args: string[], options?: MainOptions) {
 		reportDiagnostics([{ type: "warning", message: formatThinkingClampWarning(startupThinkingClamp) }]);
 	}
 	if (appMode !== "interactive") {
+		reportDiagnostics(
+			[...(resourceLoader.getAgentsFiles().diagnostics ?? []), ...resourceLoader.getSkills().diagnostics]
+				.filter((diagnostic) => diagnostic.type === "warning" && diagnostic.category === "size-limit")
+				.map((diagnostic) => ({
+					type: "warning" as const,
+					message: diagnostic.path ? `${diagnostic.path}: ${diagnostic.message}` : diagnostic.message,
+				})),
+		);
 		reportDiagnostics(collectAuthDiagnostics(services.authStorage, "runtime creation"));
 	}
 	if (runtime.diagnostics.some((diagnostic) => diagnostic.type === "error")) {
@@ -1517,7 +1552,7 @@ export async function main(args: string[], options?: MainOptions) {
 	if (appMode === "rpc") {
 		const { runRpcMode } = await import("./modes/rpc/rpc-mode.ts");
 		printTimings();
-		await runRpcMode(runtime);
+		await runRpcMode(runtime, toolRuntime);
 	} else if (appMode === "interactive") {
 		// Keep the TUI graph out of headless RPC children. This is intentionally at the
 		// mode seam: interactive startup still loads the same module before first use.

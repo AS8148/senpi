@@ -456,7 +456,7 @@ so providers can interpret it independently.
 ## Detached cells
 
 `eval` accepts `on_timeout: "detach"|"error"`. The default is `"detach"` in
-interactive TUI, RPC, and app-server sessions; print and JSON one-shot runs
+interactive TUI and RPC sessions; print and JSON one-shot runs
 default to `"error"` so their result is never silently detached. A detached
 cell keeps only its own language kernel busy. New same-language cells are admitted
 into its FIFO queue; calls in other languages continue normally. Queued cells may
@@ -654,7 +654,7 @@ bun run --cwd packages/senpi-codemode gate --target <base-checkout> \
 ```
 
 Record with the canonical runtimes, so the baseline's runtime observations do not
-flip between recordings: Bun 1.4.2, Python 3.14, Julia 1.12 and Ruby 4.x from
+flip between recordings: Bun 1.4.3, Python 3.14, Julia 1.12 and Ruby 4.x from
 Homebrew (put `/opt/homebrew/opt/ruby/bin` first on `PATH`; macOS's system Ruby
 2.6 records a different runtime). Check `ruby --version` and `python3 --version`
 before `--write-baseline`.

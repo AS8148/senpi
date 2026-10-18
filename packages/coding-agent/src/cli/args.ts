@@ -10,6 +10,7 @@ import { APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, ENV_SESSION_DIR } from "../co
 import type { ExtensionFlag } from "../core/extensions/types.ts";
 import type { TuiMode } from "../core/settings-manager.ts";
 import { isGrokNeoEnabled } from "./grok-neo-gate.ts";
+import { isToolRuntimeKind, type ToolRuntimeKind } from "./tool-runtime.ts";
 
 export type Mode = "text" | "json" | "rpc";
 
@@ -68,6 +69,8 @@ export interface Args {
 	listen?: string;
 	/** Explicit session runtime for a multi-session host; `resolveSessionRuntime` owns the default. */
 	sessionRuntime?: SessionRuntimeKind;
+	/** Explicit tool runtime; `resolveToolRuntime` owns the default and the env fallback. */
+	toolRuntime?: ToolRuntimeKind;
 	messages: string[];
 	fileArgs: string[];
 	/** Unknown flags (potentially extension flags) - map of flag name to value */
@@ -116,6 +119,15 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 		diagnostics: [],
 	};
 
+	if (args[0] === "app-server") {
+		result.diagnostics.push({
+			type: "error",
+			message: `The app-server command has been removed. Use "${APP_NAME} --mode rpc" for process integration.`,
+		});
+		return result;
+	}
+
+	let hasRetiredCommand = false;
 	for (let i = 0; i < args.length; i++) {
 		const arg = args[i];
 
@@ -293,6 +305,11 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 			if (value !== undefined && !value.startsWith("--")) i++;
 			if (value !== undefined && isSessionRuntimeKind(value)) result.sessionRuntime = value;
 			else result.diagnostics.push({ type: "error", message: "--session-runtime must be in-process or worker" });
+		} else if (arg === "--tool-runtime") {
+			const value = args[i + 1];
+			if (value !== undefined && !value.startsWith("--")) i++;
+			if (value !== undefined && isToolRuntimeKind(value)) result.toolRuntime = value;
+			else result.diagnostics.push({ type: "error", message: "--tool-runtime must be in-process or child" });
 		} else if (arg === "--listen" && result.mode === "rpc") {
 			const value = args[i + 1];
 			if (value === undefined || value.startsWith("--")) {
@@ -321,8 +338,17 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 		} else if (arg.startsWith("-") && !arg.startsWith("--")) {
 			result.diagnostics.push({ type: "error", message: `Unknown option: ${arg}` });
 		} else if (!arg.startsWith("-")) {
+			if (result.messages.length === 0 && arg === "app-server") hasRetiredCommand = true;
 			result.messages.push(arg);
 		}
+	}
+
+	if (hasRetiredCommand && result.mode === undefined && !result.print) {
+		result.messages = [];
+		result.diagnostics.push({
+			type: "error",
+			message: `The app-server command has been removed. Use "${APP_NAME} --mode rpc" for process integration.`,
+		});
 	}
 
 	return result;
@@ -358,10 +384,6 @@ ${chalk.bold("Commands:")}
                                  Open TUI to enable/disable package resources (Tab switches scope)
   ${APP_NAME} models discover <provider>
                                  Add an OpenAI-compatible provider's /models listing to models.json
-  ${APP_NAME} app-server [--listen <url>] [--extension <path>]...
-                                 Serve agent sessions over the Codex app-server protocol
-  ${APP_NAME} app-server daemon <start|stop|status|restart> [--listen <url>] [--extension <path>]...
-                                 Manage the app-server daemon
   ${APP_NAME} host <ensure|status|stop|handoff|shard-path|gc> [--launch-spec <file>]
                                  Get, inspect or end the shared RPC daemon (one JSON line per call)
   ${APP_NAME} schedule <list|cancel|run> [--watch] [--exec <command>]
@@ -416,6 +438,7 @@ ${chalk.bold("Options:")}
 ${grokNeoOptionsText}  --multi-session               Serve multiple routed RPC sessions
   --listen <address>            RPC listener: stdio://, unix://, unix:///path, or a socket path
   --session-runtime <kind>      Multi-session host runtime: in-process (socket default) or worker
+  --tool-runtime <kind>         Where heavy tool work runs: in-process (default) or child
   --auto-title-sessions         Auto-generate session titles outside interactive mode (deprecated for hosts; prefer open_session.auto_title)
   --help, -h                     Show this help
   --version, -v                  Show version number
@@ -483,10 +506,6 @@ ${chalk.bold("Examples:")}
   # Export a session file to HTML
   ${APP_NAME} --export ~/${CONFIG_DIR_NAME}/agent/sessions/--path--/session.jsonl
   ${APP_NAME} --export session.jsonl output.html
-
-  # Start Codex app-server protocol scaffolding
-  ${APP_NAME} app-server --listen stdio://
-  ${APP_NAME} app-server --listen ws://127.0.0.1:18991
 
 ${chalk.bold("Environment Variables:")}
   ANTHROPIC_AUTH_TOKEN             - Anthropic bearer auth token

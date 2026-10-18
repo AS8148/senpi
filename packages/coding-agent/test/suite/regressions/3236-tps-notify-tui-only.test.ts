@@ -7,7 +7,7 @@ import tpsExtension from "../../../src/core/extensions/builtin/tps.ts";
 // when ctx.mode is "tui".
 
 type ExtensionContextLike = {
-	mode: "tui" | "rpc" | "app-server" | "json" | "print";
+	mode: "tui" | "rpc" | "json" | "print";
 	hasUI: true;
 	ui: {
 		notify(message: string): void;
@@ -74,7 +74,14 @@ async function runAgentTurn(notifications: string[], mode: ExtensionContextLike[
 
 	await harness.emit("agent_start", { type: "agent_start" }, ctx);
 	await harness.emit("message_start", { type: "message_start", message }, ctx);
+	const delta = {
+		type: "message_update",
+		message,
+		assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "x", partial: message },
+	};
+	await harness.emit("message_update", delta, ctx);
 	vi.advanceTimersByTime(1_000);
+	await harness.emit("message_update", delta, ctx);
 	await harness.emit("message_end", { type: "message_end", message }, ctx);
 	await harness.emit("agent_end", { type: "agent_end", messages: [message] }, ctx);
 }
@@ -94,7 +101,7 @@ describe("tps builtin extension notify gating (senpi#3236)", () => {
 		expect(notifications).toEqual(["TPS 100.0 tok/s. Cache hit 75.0%, 1.0s"]);
 	});
 
-	it.each(["rpc", "app-server", "json", "print"] as const)("does not notify in %s mode", async (mode) => {
+	it.each(["rpc", "json", "print"] as const)("does not notify in %s mode", async (mode) => {
 		vi.useFakeTimers();
 		vi.setSystemTime(0);
 		const notifications: string[] = [];

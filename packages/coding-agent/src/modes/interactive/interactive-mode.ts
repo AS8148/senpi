@@ -79,7 +79,8 @@ import {
 } from "../../core/agent-session.ts";
 import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.ts";
 import { formatNoModelsAvailableMessage } from "../../core/auth-guidance.ts";
-import { isApiKeyLoginProvider } from "../../core/auth-providers.ts";
+import { isApiKeyLoginProvider, loginRowStatus } from "../../core/auth-providers.ts";
+import { markModeCrashHandler } from "../../core/bootstrap-crash-listeners.ts";
 import { envValue } from "../../core/brand.ts";
 import {
 	CACHE_TTL_MS,
@@ -130,6 +131,7 @@ import {
 	type ScopedModel,
 } from "../../core/model-resolver.ts";
 import { CredentialSynchronizationError } from "../../core/model-runtime.ts";
+import { formatProviderFailure } from "../../core/provider-failure.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { usageLimitCause } from "../../core/retry-fallback/usage-limit.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
@@ -138,6 +140,7 @@ import { type SessionEntry, SessionManager, sessionEntryToContextMessages } from
 import type { FullscreenExitOutput, QuietStartup, TuiMode } from "../../core/settings-manager.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
+import { containStaleExtensionError } from "../../core/stale-extension-containment.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
 import { formatThinkingClampWarning } from "../../core/thinking-levels.ts";
 import { formatTimings, resetTimings, time } from "../../core/timings.ts";
@@ -203,6 +206,7 @@ import { formatKeyText, keyDisplayText, keyHint, keyText, rawKeyHint } from "./c
 import { LoadedResourceSection } from "./components/loaded-resource-section.ts";
 import { LoginDialogComponent } from "./components/login-dialog.ts";
 import { createMermaidMarkdownTransformer } from "./components/mermaid.ts";
+import { createMessagePathLinkTransformer } from "./components/message-path-links.ts";
 import {
 	type FavoriteModelIds,
 	getModelFullId,
@@ -1051,6 +1055,7 @@ export class InteractiveMode {
 		getMode: () => this.settingsManager.getMermaidRenderingMode(),
 		theme,
 	});
+	private readonly messagePathLinkTransformer = createMessagePathLinkTransformer(() => this.sessionManager.getCwd());
 
 	// Skill commands: command name -> skill file path
 	private skillCommands = new Map<string, string>();
@@ -2631,13 +2636,17 @@ export class InteractiveMode {
 		}
 
 		if (showDiagnostics) {
-			const addDiagnosticNotice = (title: string, diagnostics: readonly ResourceDiagnostic[]): void => {
+			const addDiagnosticNotice = (
+				title: string,
+				diagnostics: readonly ResourceDiagnostic[],
+				why = "Conflicting or invalid loaded resources were found.",
+			): void => {
 				this.loadedResourcesContainer.addChild(
 					buildNoticeBox(
 						{
 							title,
 							tone: "warning",
-							why: "Conflicting or invalid loaded resources were found.",
+							why,
 							extra: this.formatDiagnostics(diagnostics, sourceInfos),
 						},
 						{ expanded: this.toolOutputExpanded },
@@ -2647,7 +2656,19 @@ export class InteractiveMode {
 				this.loadedResourcesContainer.addChild(new Spacer(1));
 			};
 
-			const skillDiagnostics = skillsResult.diagnostics;
+			const contextDiagnostics = [
+				...(this.session.resourceLoader.getAgentsFiles().diagnostics ?? []),
+				...skillsResult.diagnostics.filter((diagnostic) => diagnostic.category === "size-limit"),
+			];
+			if (contextDiagnostics.length > 0) {
+				addDiagnosticNotice(
+					"Context size limits",
+					contextDiagnostics,
+					"Context files or skill catalogs were limited to keep requests bounded.",
+				);
+			}
+
+			const skillDiagnostics = skillsResult.diagnostics.filter((diagnostic) => diagnostic.category !== "size-limit");
 			if (skillDiagnostics.length > 0) {
 				addDiagnosticNotice("Skill conflicts", skillDiagnostics);
 			}
@@ -2919,7 +2940,11 @@ export class InteractiveMode {
 	}
 
 	private getMarkdownTransformers(): MarkdownTransformer[] {
-		return [this.mermaidMarkdownTransformer, ...this.session.extensionRunner.getMarkdownTransformers()];
+		return [
+			this.mermaidMarkdownTransformer,
+			this.messagePathLinkTransformer,
+			...this.session.extensionRunner.getMarkdownTransformers(),
+		];
 	}
 
 	/**
@@ -5469,6 +5494,7 @@ export class InteractiveMode {
 				}
 				this.detachAssistantTextSegments();
 				this.clearPendingTools();
+				if (event.failure !== undefined && !event.willRetry) this.showError(formatProviderFailure(event.failure));
 
 				this.ui.requestRender();
 				break;
@@ -6726,6 +6752,7 @@ export class InteractiveMode {
 			this.showWarning(INSPECTOR_VM_IMPORT_WARNING);
 			return;
 		}
+		if (containStaleExtensionError(error, origin)) return;
 		this.isShuttingDown = true;
 		try {
 			this.unregisterSignalHandlers();
@@ -6839,9 +6866,11 @@ export class InteractiveMode {
 		// in pi) leaves the terminal in raw mode with no cursor.
 		const uncaughtExceptionHandler = (error: Error, origin: "uncaughtException" | "unhandledRejection") =>
 			this.uncaughtCrash(error, origin);
+		markModeCrashHandler(uncaughtExceptionHandler);
 		process.prependListener("uncaughtException", uncaughtExceptionHandler);
 		this.signalCleanupHandlers.push(() => process.off("uncaughtException", uncaughtExceptionHandler));
 		const unhandledRejectionHandler = (reason: unknown) => this.unhandledRejection(reason);
+		markModeCrashHandler(unhandledRejectionHandler);
 		process.prependListener("unhandledRejection", unhandledRejectionHandler);
 		this.signalCleanupHandlers.push(() => process.off("unhandledRejection", unhandledRejectionHandler));
 
@@ -8831,20 +8860,13 @@ export class InteractiveMode {
 	private getLoginProviderOptions(authType?: "oauth" | "api_key"): AuthSelectorProvider[] {
 		const options: AuthSelectorProvider[] = [];
 		for (const provider of this.session.modelRuntime.getProviders()) {
-			const authStatus = this.session.modelRuntime.getProviderAuthStatus(provider.id);
-			const status = authStatus.configured
-				? {
-						type: this.session.modelRuntime.isUsingOAuth(provider.id) ? ("oauth" as const) : ("api_key" as const),
-						source: authStatus.label ?? authStatus.source,
-					}
-				: undefined;
 			if ((!authType || authType === "oauth") && provider.auth.oauth) {
 				options.push({
 					id: provider.id,
 					name: provider.name,
 					authType: "oauth",
 					method: provider.auth.oauth,
-					status,
+					status: loginRowStatus(this.session.modelRegistry, provider, "oauth"),
 				});
 			}
 			if ((!authType || authType === "api_key") && provider.auth.apiKey) {
@@ -8853,7 +8875,7 @@ export class InteractiveMode {
 					name: provider.name,
 					authType: "api_key",
 					method: provider.auth.apiKey,
-					status,
+					status: loginRowStatus(this.session.modelRegistry, provider, "api_key"),
 				});
 			}
 		}
