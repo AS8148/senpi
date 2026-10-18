@@ -1,5 +1,5 @@
 // A real tool child for the lifecycle tests (senpi#3566 todo 4): the production entry with test-only job kinds.
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { connectChannel } from "../../src/modes/rpc/tool-child/channel.ts";
 import { runToolChild, ToolChildJobError } from "../../src/modes/rpc/tool-child/entry.ts";
 import { startGatedWorker } from "../../src/modes/rpc/tool-child/gated-worker.ts";
@@ -41,6 +41,12 @@ if (mode === "hang") {
 					});
 					worker.once("error", reject);
 				}),
+			childEnv: async (_args, { jobId, gate }) => {
+				const { value } = await gateInherited(gate, { jobId, origin: "tool", api: "cp.execFileSync" }, () =>
+					execFileSync("/usr/bin/env", { encoding: "utf8" }),
+				);
+				return { names: value.split("\n").map((line) => line.split("=")[0]) };
+			},
 			inheritedSleep: async (_args, { jobId, gate }) => {
 				const { value } = await gateInherited(gate, { jobId, origin: "tool", api: "cp.spawn" }, () =>
 					spawn("/bin/sleep", ["300"], { stdio: "ignore" }),

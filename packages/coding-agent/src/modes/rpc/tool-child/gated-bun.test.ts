@@ -9,7 +9,11 @@ const bunAvailable = spawnSync("bun", ["--version"]).status === 0;
 
 describe.skipIf(process.platform === "win32" || !bunAvailable)("gated Bun globals in a tool-child worker", () => {
 	it("gates Bun.spawn (own group, detached), Bun.spawnSync and Bun.$ with ordered proofs", () => {
-		const run = spawnSync("bun", [fixture], { encoding: "utf8", timeout: 60_000 });
+		const run = spawnSync("bun", [fixture], {
+			encoding: "utf8",
+			timeout: 60_000,
+			env: { ...process.env, SENPI_ENV_PROBE: "set" },
+		});
 		expect(run.status, run.stderr).toBe(0);
 		const { result, violations, records } = JSON.parse(run.stdout.trim().split("\n").at(-1) ?? "{}") as {
 			result: Record<string, number>;
@@ -23,6 +27,7 @@ describe.skipIf(process.platform === "win32" || !bunAvailable)("gated Bun global
 			shell: 0,
 			stdioArrayExit: 0,
 			stdioArrayRan: true,
+			envProbe: "unset",
 		});
 		expect(result.ownedPgid).toBe(result.ownedPid);
 		const launches = records.filter((record) => record.type === "launch");
@@ -31,10 +36,11 @@ describe.skipIf(process.platform === "win32" || !bunAvailable)("gated Bun global
 			["bun.spawn", "own-group", "detached"],
 			["bun.spawnSync", "inherited", "owned"],
 			["bun.spawn", "own-group", "owned"],
+			["bun.spawnSync", "inherited", "owned"],
 			["bun.shell", "inherited", "owned"],
 		]);
 		const proofs = records.filter((record) => record.type === "launch_proof");
-		expect(proofs).toHaveLength(5);
+		expect(proofs).toHaveLength(6);
 		for (const proof of proofs) expect(Number(proof.ackTick)).toBeLessThan(Number(proof.invokeTick));
 		expect(violations).toEqual([]);
 	}, 90_000);

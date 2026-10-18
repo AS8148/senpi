@@ -30,8 +30,30 @@ const stdioArrayExit = await Bun.spawn(["sh", "-c", `echo ran > "${marker}"`], {
 	stdio: ["ignore", "ignore", "ignore"],
 }).exited;
 const stdioArrayRan = existsSync(marker);
+// A key deleted from process.env must not reach a gated Bun launch that names no env (Bun's own default would pass it).
+// The test starts this process with SENPI_ENV_PROBE in its environment (Bun's default env is the startup one).
+delete process.env.SENPI_ENV_PROBE;
+const envProbe = new TextDecoder()
+	.decode(
+		(
+			Bun.spawnSync(["sh", "-c", 'echo "${SENPI_ENV_PROBE:-unset}"'], { stdout: "pipe" }) as unknown as {
+				stdout: Uint8Array;
+			}
+		).stdout,
+	)
+	.trim();
 const shell = (await (Bun.$`sh -c "exit 0"` as Promise<{ exitCode: number }>)).exitCode;
 port.postMessage({
 	kind: "result",
-	value: { ownedPid: owned.pid, ownedPgid, ownedExit, detachedExit, syncExit, shell, stdioArrayExit, stdioArrayRan },
+	value: {
+		ownedPid: owned.pid,
+		ownedPgid,
+		ownedExit,
+		detachedExit,
+		syncExit,
+		shell,
+		stdioArrayExit,
+		stdioArrayRan,
+		envProbe,
+	},
 });

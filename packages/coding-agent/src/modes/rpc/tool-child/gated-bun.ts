@@ -74,12 +74,15 @@ export function installGatedBun(bun: BunLaunchGlobals, client: WorkerLaunchClien
 				lifetime: "owned",
 			});
 			client.invoke(launchId);
-			const child = real.spawn([...cmd], opts);
+			const child = real.spawn([...cmd], withCurrentEnv(opts));
 			void child.exited.then((exitCode) => client.done(launchId, { exitCode }));
 			return child;
 		}
 		const { stdin: userStdin, options: shimOptions } = withPipedStdin(opts);
-		const child = real.spawn(["/bin/sh", "-c", GO_LINE_SHIM, ...cmd], { ...shimOptions, detached: true });
+		const child = real.spawn(
+			["/bin/sh", "-c", GO_LINE_SHIM, ...cmd],
+			withCurrentEnv({ ...shimOptions, detached: true }),
+		);
 		const launchId = client.acquire({
 			origin: "kernel",
 			api: "bun.spawn",
@@ -107,7 +110,8 @@ export function installGatedBun(bun: BunLaunchGlobals, client: WorkerLaunchClien
 			lifetime: "owned",
 		});
 		client.invoke(launchId);
-		const result = real.spawnSync(commandOrOptions, options);
+		const { cmd, opts } = splitArgs(commandOrOptions, options);
+		const result = real.spawnSync([...cmd], withCurrentEnv(opts));
 		client.done(launchId, { exitCode: result.exitCode });
 		return result;
 	};
@@ -143,6 +147,15 @@ function withPipedStdin(opts: BunSpawnOptions): { readonly stdin: unknown; reado
 		return { stdin: first, options: { ...opts, stdin: "pipe", stdio: ["pipe", ...rest] } };
 	}
 	return { stdin: opts.stdin, options: { ...opts, stdin: "pipe" } };
+}
+
+/**
+ * Bun.spawn without an `env` hands the child the environment the process STARTED with, ignoring keys deleted from
+ * `process.env` since (measured on Bun 1.4: a deleted key still reaches `Bun.spawnSync`, not `node:child_process` or
+ * `Bun.$`). Passing the current `process.env` keeps every launch API equal: the tool child's scrubbed internals stay out.
+ */
+function withCurrentEnv(opts: BunSpawnOptions): BunSpawnOptions {
+	return opts.env === undefined ? { ...opts, env: { ...process.env } } : opts;
 }
 
 function exitCodeOf(value: unknown): number | undefined {

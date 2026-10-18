@@ -70,7 +70,7 @@ export function containedModulePath(modulePath: string, roots: readonly string[]
 	);
 }
 
-export function createModuleJobHandler(env: NodeJS.ProcessEnv = process.env) {
+export function createModuleJobHandler(env: NodeJS.ProcessEnv = { ...process.env }) {
 	return async (value: unknown, context: ToolChildJobContext): Promise<unknown> => {
 		const job = parseModuleJobArgs(value);
 		const modulePath = containedModulePath(job.modulePath, parseModuleRoots(env));
