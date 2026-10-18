@@ -23,7 +23,7 @@ Where a tool runs is decided by the session's dispatcher, and the extension's so
 ### What changed
 
 - `packages/coding-agent/src/core/extensions/bun-extension-importer.ts`: `createBunExtensionImporter(virtualModules, builtinRedirects = {})` resolves a specifier listed in `builtinRedirects` to the mapped id before the builtin check, in every module the extension graph transpiles (transitive dependencies included) and for `require`.
-- `packages/coding-agent/src/core/extensions/loader.ts`: the Bun path passes `CHILD_PROCESS_REDIRECTS` (`node:child_process`, `child_process`) and registers the per-process virtual module from `modes/rpc/tool-child/gated-modules.ts`. It serves the real `node:child_process` unless a tool child installed its gated module, so the server's behavior is unchanged.
+- The session's own extension loader does not use the redirect: on the default in-process path every extension gets the real `node:child_process`, unchanged. Only the tool child's module-job worker builds an importer with `CHILD_PROCESS_REDIRECTS` and the gated module.
 
 ### Why
 
@@ -31,12 +31,11 @@ The per-session tool child must not start any process before the server has reco
 
 ### Why an extension could not handle it
 
-The rewrite has to happen where the loader resolves every extension module's specifiers, before any extension code runs.
+The rewrite has to happen where the importer resolves every extension module's specifiers, before any extension code runs.
 
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/core/extensions/bun-extension-importer.ts`: the `createBunExtensionImporter` signature and the start of `resolveTarget`.
-- `packages/coding-agent/src/core/extensions/loader.ts`: the `createExtensionModuleImporter` Bun branch and the import block.
 
 ## 2026-10-18 - ToolDefinition placement metadata and dispatcher-routed extension tools (senpi#3566)
 

@@ -6,6 +6,7 @@ import { runtimeExecArgv } from "../../../utils/runtime-exec-argv.ts";
 import { resolveCliMainPathAsync } from "../host-cli-entry.ts";
 import { TOOL_CHILD_ROLE_ENV } from "./channel.ts";
 import { TOOL_CHILD_GENERATION_ENV } from "./entry.ts";
+import { TOOL_CHILD_LEDGER_ENV } from "./launch-env-names.ts";
 
 export interface ToolChildCommand {
 	readonly command: string;
@@ -39,6 +40,8 @@ export function spawnToolChild(options: {
 	readonly env: NodeJS.ProcessEnv;
 	readonly command: ToolChildCommand;
 	readonly cwd: string;
+	/** This generation's ledger: the child sweeps the owned groups it names if its host disappears. */
+	readonly ledgerPath: string;
 }): ChildProcess {
 	return spawn(options.command.command, [...options.command.args], {
 		cwd: options.cwd,
@@ -47,6 +50,7 @@ export function spawnToolChild(options: {
 			...options.channelEnv,
 			[TOOL_CHILD_ROLE_ENV]: "tool-child",
 			[TOOL_CHILD_GENERATION_ENV]: String(options.generation),
+			[TOOL_CHILD_LEDGER_ENV]: options.ledgerPath,
 		},
 		// POSIX: the child leads its own group, so its whole tree can be signalled as one. Windows: the job is the handle.
 		detached: process.platform !== "win32",

@@ -1343,6 +1343,8 @@ export class AgentSession {
 	private _cwd: string;
 	private _agentDir: string;
 	private readonly _toolChild: SessionToolChild | undefined;
+	/** Settles once dispose() has stopped the tool child and swept what it launched. */
+	private _toolChildClosed: Promise<void> = Promise.resolve();
 	private _extensionRunnerRef?: { current?: ExtensionRunner };
 	private _initialActiveToolNames?: string[];
 	private _defaultToolNames?: Set<string>;
@@ -2688,6 +2690,11 @@ export class AgentSession {
 	 * receive as `ctx.cwd`, so a host surface (RPC) reads project settings identically.
 	 */
 	/** The `list_sessions` row of this session's tool child (senpi#3566); `none` under the in-process runtime. */
+	/** Resolves after dispose() once the tool child has exited and its launched groups are swept; awaited by disposers. */
+	whenToolChildClosed(): Promise<void> {
+		return this._toolChildClosed;
+	}
+
 	toolChildRow(): SessionToolChildRow {
 		return this._toolChild?.row() ?? { state: "none" };
 	}
@@ -4100,9 +4107,11 @@ export class AgentSession {
 			"This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). For newSession, fork, and switchSession, move post-replacement work into withSession and use the ctx passed to withSession. For reload, do not use the old ctx after await ctx.reload().",
 		);
 		this._releaseToolSearchService("session disposed");
-		void this._toolChild
-			?.close()
-			.catch((error: unknown) => this._sessionLogger.warn("tool_child_close_failed", { error: String(error) }));
+		this._toolChildClosed =
+			this._toolChild
+				?.close()
+				.catch((error: unknown) => this._sessionLogger.warn("tool_child_close_failed", { error: String(error) })) ??
+			Promise.resolve();
 		this._disconnectFromAgent();
 		this._unsubscribeSettingsSource?.();
 		this._unsubscribeSettingsSource = undefined;

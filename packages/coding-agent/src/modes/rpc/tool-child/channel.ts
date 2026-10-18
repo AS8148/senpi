@@ -6,9 +6,11 @@
  * address and the secret file from its environment, never from argv. Frames are `codec.ts` length-prefixed frames, never
  * stdout, so nothing a tool prints can corrupt the protocol. Any codec error is terminal for the channel.
  */
-import { chmod, mkdir, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { chmod, lstat, mkdir, rm } from "node:fs/promises";
 import { createConnection, createServer, type Socket } from "node:net";
 import { join } from "node:path";
+import { MAX_SOCKET_PATH_BYTES } from "../socket-ownership.ts";
 import {
 	authenticateSocket,
 	createSocketSecret,
@@ -31,7 +33,8 @@ export type ChannelCloseReason =
 
 export interface ToolChildChannel {
 	send(message: ToolChildMessage): boolean;
-	onMessage(listener: (message: ToolChildMessage) => void): void;
+	/** Subscribes; the returned function unsubscribes. */
+	onMessage(listener: (message: ToolChildMessage) => void): () => void;
 	readonly closed: Promise<ChannelCloseReason>;
 	close(): void;
 }
@@ -86,6 +89,10 @@ export function wrapChannelSocket(socket: Socket): ToolChildChannel {
 		onMessage: (listener) => {
 			listeners.push(listener);
 			for (const message of early.splice(0)) listener(message);
+			return () => {
+				const index = listeners.indexOf(listener);
+				if (index >= 0) listeners.splice(index, 1);
+			};
 		},
 		closed,
 		close: () => finish({ kind: "eof" }),
@@ -99,13 +106,40 @@ export interface ChannelListener {
 	close(): Promise<void>;
 }
 
+/**
+ * `<dir>/c-<generation>.sock` when it fits `sun_path`; otherwise the same name under a short private directory,
+ * `/tmp/senpi-tc-<sha256(dir)[:12]>/` - never `TMPDIR`, whose macOS default is itself too long. The fallback is
+ * predictable, so it is used only when it is a real directory of this user with no group or other access.
+ */
+export async function channelSocketPath(dir: string, generation: number): Promise<string> {
+	const name = `c-${generation}.sock`;
+	const primary = join(dir, name);
+	if (process.platform === "win32" || Buffer.byteLength(primary) <= MAX_SOCKET_PATH_BYTES) {
+		await makePrivateDirectory(dir);
+		return primary;
+	}
+	const root = join("/tmp", `senpi-tc-${createHash("sha256").update(dir).digest("hex").slice(0, 12)}`);
+	await makePrivateDirectory(root);
+	const stat = await lstat(root);
+	if (
+		!stat.isDirectory() ||
+		(process.getuid !== undefined && stat.uid !== process.getuid()) ||
+		(stat.mode & 0o077) !== 0
+	)
+		throw new Error(`socket_dir_unsafe: ${root} is not a private directory of this user`);
+	return join(root, name);
+}
+
+async function makePrivateDirectory(directory: string): Promise<void> {
+	await mkdir(directory, { recursive: true, mode: 0o700 });
+	await chmod(directory, 0o700);
+}
+
 export async function openChannelListener(options: {
 	readonly dir: string;
 	readonly generation: number;
 }): Promise<ChannelListener> {
-	await mkdir(options.dir, { recursive: true, mode: 0o700 });
-	await chmod(options.dir, 0o700);
-	const logicalPath = join(options.dir, `c-${options.generation}.sock`);
+	const logicalPath = await channelSocketPath(options.dir, options.generation);
 	const secretPath = socketSecretPath(logicalPath);
 	await rm(logicalPath, { force: true });
 	const secret = await createSocketSecret(secretPath);

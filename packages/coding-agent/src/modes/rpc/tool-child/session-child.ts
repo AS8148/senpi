@@ -4,7 +4,7 @@
  * `session_tool_child{state: "spawned" | "exited" | "respawned", generation, pid}` records and the `list_sessions`
  * row `tool_child: {state: "none" | "live" | "exited", generation?, pid?}`.
  */
-import { dirname } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 import type { RegisteredTool } from "../../../core/extensions/types.ts";
 import type {
 	ToolChildModuleJob,
@@ -42,11 +42,19 @@ export interface SessionToolChildOptions {
 
 /** The directories of the extensions whose tools declare a `childModule`: the only places a `module` job may load from. */
 export function toolChildModuleRoots(tools: readonly RegisteredTool[]): readonly string[] {
+	// Exactly the files tools declared, never their directory: a single-file extension in a broad directory (a project
+	// root, `extensions/`) would otherwise grant every module beside it.
 	return [
 		...new Set(
-			tools
-				.filter((tool) => tool.definition.childModule !== undefined && !tool.sourceInfo.path.startsWith("<"))
-				.map((tool) => dirname(tool.sourceInfo.path)),
+			tools.flatMap((tool) => {
+				const childModule = tool.definition.childModule;
+				if (childModule === undefined || tool.sourceInfo.path.startsWith("<")) return [];
+				return [
+					isAbsolute(childModule.path)
+						? childModule.path
+						: resolve(dirname(tool.sourceInfo.path), childModule.path),
+				];
+			}),
 		),
 	];
 }
