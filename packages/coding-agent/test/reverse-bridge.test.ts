@@ -58,7 +58,8 @@ function batchingHandler(total: number) {
 describe("reverse bridge", () => {
 	it("answers a module job's host call with the server's value, naming the calling job", async () => {
 		const instance = await startChild(async (request) => ({
-			tool: request.tool,
+			kind: request.kind,
+			name: request.name,
 			args: request.args,
 			jobId: request.jobId,
 		}));
@@ -67,7 +68,7 @@ describe("reverse bridge", () => {
 			export: "askHost",
 			args: { tool: "echo", payload: { x: 1 } },
 		});
-		expect(value).toMatchObject({ tool: "echo", args: { x: 1 } });
+		expect(value).toMatchObject({ kind: "tool", name: "echo", args: { x: 1 } });
 		expect(String(Reflect.get(Object(value), "jobId"))).toMatch(/^j\d+$/);
 	}, 60_000);
 

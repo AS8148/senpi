@@ -1,17 +1,18 @@
 /**
  * The server side of the reverse bridge (senpi#3566 todo 7). Each `host_call` from the child is admitted on receipt
- * against the same capacity the child enforces - run, queued FIFO, or refused with `host_call_refused` naming its
- * `callId` - and answered exactly once with `host_reply`. A job that ends cancels its calls still waiting; a running call
- * is told through its signal and still answers.
+ * against its job's capacity - the same one the child enforces - and run, queued FIFO, or refused with
+ * `host_call_refused` naming its `callId`; every admitted call is answered exactly once with `host_reply`. A job that
+ * ends signals its running calls and answers its queued calls without running them.
  */
 import { HostCallAdmission } from "./admission.ts";
 import type { ToolChildChannel } from "./channel.ts";
-import type { ToolChildMessage, ToolChildMessageOf } from "./protocol.ts";
+import type { HostCallKind, ToolChildMessage, ToolChildMessageOf } from "./protocol.ts";
 
 export interface HostCallRequest {
 	readonly callId: string;
 	readonly jobId: string;
-	readonly tool: string;
+	readonly kind: HostCallKind;
+	readonly name: string | undefined;
 	readonly args: unknown;
 	readonly signal: AbortSignal;
 }
@@ -26,7 +27,7 @@ interface ServerCall {
 export class ServerHostCalls {
 	readonly #channel: Pick<ToolChildChannel, "send">;
 	readonly #handler: HostCallHandler;
-	readonly #admission = new HostCallAdmission();
+	readonly #admissions = new Map<string, HostCallAdmission>();
 	readonly #calls = new Map<string, ServerCall>();
 
 	constructor(channel: Pick<ToolChildChannel, "send">, handler: HostCallHandler) {
@@ -34,19 +35,18 @@ export class ServerHostCalls {
 		this.#handler = handler;
 	}
 
-	get active(): number {
-		return this.#admission.active;
-	}
-
-	get waiting(): number {
-		return this.#admission.waiting;
+	/** Calls running and queued for one job (0 for a job with none). */
+	load(jobId: string): { active: number; waiting: number } {
+		const admission = this.#admissions.get(jobId);
+		return { active: admission?.active ?? 0, waiting: admission?.waiting ?? 0 };
 	}
 
 	/** Takes a `host_call`; returns false for every other frame. */
 	handle(frame: ToolChildMessage): boolean {
 		if (frame.type !== "host_call") return false;
-		const decision = this.#admission.submit(frame.callId);
+		const decision = this.#admission(frame.jobId).submit(frame.callId);
 		if (decision.state === "refused") {
+			this.#forgetIdle(frame.jobId);
 			this.#channel.send(decision.frame);
 			return true;
 		}
@@ -57,19 +57,38 @@ export class ServerHostCalls {
 
 	/** The job ended: its running calls are signalled, its queued calls are answered without running. */
 	endJob(jobId: string): void {
-		for (const [callId, call] of this.#calls) {
-			if (call.frame.jobId !== jobId) continue;
-			call.abort.abort();
+		for (const call of this.#calls.values()) if (call.frame.jobId === jobId) call.abort.abort();
+	}
+
+	#admission(jobId: string): HostCallAdmission {
+		let admission = this.#admissions.get(jobId);
+		if (admission === undefined) {
+			admission = new HostCallAdmission();
+			this.#admissions.set(jobId, admission);
 		}
+		return admission;
+	}
+
+	#forgetIdle(jobId: string): void {
+		const admission = this.#admissions.get(jobId);
+		if (admission !== undefined && admission.active === 0 && admission.waiting === 0) this.#admissions.delete(jobId);
 	}
 
 	#run(callId: string): void {
 		const call = this.#calls.get(callId);
 		if (call === undefined) return;
 		const { frame } = call;
+		const label = frame.name ?? frame.kind;
 		const answered = call.abort.signal.aborted
-			? Promise.reject(new Error(`${frame.tool}: the job ended before this call ran`))
-			: this.#handler({ callId, jobId: frame.jobId, tool: frame.tool, args: frame.args, signal: call.abort.signal });
+			? Promise.reject(new Error(`${label}: the job ended before this call ran`))
+			: this.#handler({
+					callId,
+					jobId: frame.jobId,
+					kind: frame.kind,
+					name: frame.name,
+					args: frame.args,
+					signal: call.abort.signal,
+				});
 		void answered.then(
 			(value) => this.#answer(callId, { type: "host_reply", callId, value: value ?? null }),
 			(error: unknown) =>
@@ -82,9 +101,13 @@ export class ServerHostCalls {
 	}
 
 	#answer(callId: string, reply: ToolChildMessageOf<"host_reply">): void {
-		if (!this.#calls.delete(callId)) return;
+		const call = this.#calls.get(callId);
+		if (call === undefined) return;
+		this.#calls.delete(callId);
 		this.#channel.send(reply);
-		const promoted = this.#admission.settle(callId);
+		const { jobId } = call.frame;
+		const promoted = this.#admissions.get(jobId)?.settle(callId);
+		this.#forgetIdle(jobId);
 		if (promoted !== undefined) this.#run(promoted);
 	}
 }

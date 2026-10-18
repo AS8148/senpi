@@ -182,7 +182,8 @@ export class ToolChildClient {
 		const onHostCall = this.#options.onHostCall;
 		const hostCalls = new ServerHostCalls(
 			channel,
-			onHostCall ?? ((request) => Promise.reject(new Error(`no host-call handler for ${request.tool}`))),
+			onHostCall ??
+				((request) => Promise.reject(new Error(`no host-call handler for ${request.name ?? request.kind}`))),
 		);
 		const live: Live = {
 			generation,

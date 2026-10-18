@@ -5,7 +5,7 @@
  * server is the single writer of every session file.
  */
 import { connectChannel, type ToolChildChannel } from "./channel.ts";
-import { ChildHostCalls } from "./host-calls-child.ts";
+import { ChildHostCalls, type HostCallTarget } from "./host-calls-child.ts";
 import { LaunchGate } from "./launch-gate.ts";
 import type { ToolChildMessageOf } from "./protocol.ts";
 import { readTestControls } from "./test-controls.ts";
@@ -19,7 +19,7 @@ export interface ToolChildJobContext {
 	readonly channel: ToolChildChannel;
 	readonly gate: LaunchGate;
 	/** A call to the server for this job (reverse bridge); settles with its reply, refusal or the job's cancel. */
-	readonly hostCall: (tool: string, args: unknown) => Promise<unknown>;
+	readonly hostCall: (target: HostCallTarget) => Promise<unknown>;
 }
 
 export type ToolChildJobHandler = (args: unknown, context: ToolChildJobContext) => Promise<unknown>;
@@ -111,7 +111,7 @@ async function runJob(
 	const controller = new AbortController();
 	running.set(job.jobId, controller);
 	try {
-		const hostCall = (tool: string, args: unknown) => hostCalls.call(job.jobId, tool, args, controller.signal);
+		const hostCall = (target: HostCallTarget) => hostCalls.call(job.jobId, target, controller.signal);
 		const value = await handler(job.args, { jobId: job.jobId, signal: controller.signal, channel, gate, hostCall });
 		channel.send({ type: "result", jobId: job.jobId, value: value ?? null });
 	} catch (error) {

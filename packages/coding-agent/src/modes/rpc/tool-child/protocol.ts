@@ -52,6 +52,10 @@ export const REF_NACK_REASONS = ["cancelled", "corrupt", "missing", "budget", "f
 export type RefNackReason = (typeof REF_NACK_REASONS)[number];
 
 /** A payload moved through a file in the channel generation's directory. The receiver derives the path itself. */
+/** What a reverse call reaches on the server (DESIGN PART 1): a tool by `name`, the model, a reserved tool, the tool list. */
+export const HOST_CALL_KINDS = ["tool", "completion", "reserved", "list_tools"] as const;
+export type HostCallKind = (typeof HOST_CALL_KINDS)[number];
+
 export interface PayloadRef {
 	refId: string;
 	/** The channel's child generation; refs of both directions live under that generation's directory. */
@@ -107,7 +111,15 @@ export type ChildToServer =
 	| { type: "result_ref"; jobId: string; ref: PayloadRef }
 	| { type: "job_error"; jobId: string; code: string; message: string }
 	| { type: "job_refused"; jobId: string; code: string }
-	| { type: "host_call"; callId: string; jobId: string; tool: string; args?: unknown; argsRef?: PayloadRef }
+	| {
+			type: "host_call";
+			callId: string;
+			jobId: string;
+			kind: HostCallKind;
+			name?: string;
+			args?: unknown;
+			argsRef?: PayloadRef;
+	  }
 	| {
 			type: "launch";
 			launchId: string;

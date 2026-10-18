@@ -1,13 +1,19 @@
 /**
  * The child side of the reverse bridge (senpi#3566 todo 7): a job's call to the server. Every call is admitted against
- * the shared host-call capacity before it is sent - running, queued FIFO and sent when a slot frees, or refused with a
+ * its job's host-call capacity before it is sent - running, queued FIFO and sent when a slot frees, or refused with a
  * correlated error. Nothing is dropped: each call settles exactly once, by its reply, its refusal, its job's abort or the
  * channel closing.
  */
 import { HostCallAdmission } from "./admission.ts";
 import type { ToolChildChannel } from "./channel.ts";
 import { ToolChildJobError } from "./entry-error.ts";
-import type { ToolChildMessage, ToolChildMessageOf } from "./protocol.ts";
+import type { HostCallKind, ToolChildMessage, ToolChildMessageOf } from "./protocol.ts";
+
+export interface HostCallTarget {
+	readonly kind: HostCallKind;
+	readonly name?: string;
+	readonly args?: unknown;
+}
 
 interface PendingCall {
 	readonly frame: ToolChildMessageOf<"host_call">;
@@ -17,7 +23,7 @@ interface PendingCall {
 
 export class ChildHostCalls {
 	readonly #channel: Pick<ToolChildChannel, "send">;
-	readonly #admission = new HostCallAdmission();
+	readonly #admissions = new Map<string, HostCallAdmission>();
 	readonly #pending = new Map<string, PendingCall>();
 	#next = 0;
 
@@ -25,23 +31,30 @@ export class ChildHostCalls {
 		this.#channel = channel;
 	}
 
-	get active(): number {
-		return this.#admission.active;
+	/** Calls running and queued for one job (0 for a job with none). */
+	load(jobId: string): { active: number; waiting: number } {
+		const admission = this.#admissions.get(jobId);
+		return { active: admission?.active ?? 0, waiting: admission?.waiting ?? 0 };
 	}
 
-	get waiting(): number {
-		return this.#admission.waiting;
-	}
-
-	call(jobId: string, tool: string, args: unknown, signal: AbortSignal): Promise<unknown> {
+	call(jobId: string, target: HostCallTarget, signal: AbortSignal): Promise<unknown> {
+		const label = target.name ?? target.kind;
 		if (signal.aborted)
-			return Promise.reject(new ToolChildJobError("tool_child_cancelled", `${tool}: job cancelled`));
+			return Promise.reject(new ToolChildJobError("tool_child_cancelled", `${label}: job cancelled`));
 		const callId = `h${++this.#next}`;
-		const frame: ToolChildMessageOf<"host_call"> = { type: "host_call", callId, jobId, tool, args };
+		const frame: ToolChildMessageOf<"host_call"> = {
+			type: "host_call",
+			callId,
+			jobId,
+			kind: target.kind,
+			...(target.name === undefined ? {} : { name: target.name }),
+			...(target.args === undefined ? {} : { args: target.args }),
+		};
 		return new Promise((resolve, reject) => {
-			const decision = this.#admission.submit(callId);
+			const decision = this.#admission(jobId).submit(callId);
 			if (decision.state === "refused") {
-				reject(new ToolChildJobError(decision.frame.code, `${tool}: host call ${callId} refused`));
+				this.#forgetIdle(jobId);
+				reject(new ToolChildJobError(decision.frame.code, `${label}: host call ${callId} refused`));
 				return;
 			}
 			this.#pending.set(callId, { frame, resolve, reject });
@@ -49,7 +62,7 @@ export class ChildHostCalls {
 				"abort",
 				() =>
 					this.#settle(callId, (call) =>
-						call.reject(new ToolChildJobError("tool_child_cancelled", `${tool}: job cancelled`)),
+						call.reject(new ToolChildJobError("tool_child_cancelled", `${label}: job cancelled`)),
 					),
 				{ once: true },
 			);
@@ -82,11 +95,27 @@ export class ChildHostCalls {
 			this.#settle(callId, (call) => call.reject(new ToolChildJobError("tool_child_exited", "the channel closed")));
 	}
 
+	#admission(jobId: string): HostCallAdmission {
+		let admission = this.#admissions.get(jobId);
+		if (admission === undefined) {
+			admission = new HostCallAdmission();
+			this.#admissions.set(jobId, admission);
+		}
+		return admission;
+	}
+
+	#forgetIdle(jobId: string): void {
+		const admission = this.#admissions.get(jobId);
+		if (admission !== undefined && admission.active === 0 && admission.waiting === 0) this.#admissions.delete(jobId);
+	}
+
 	#settle(callId: string, apply: (call: PendingCall) => void): void {
 		const call = this.#pending.get(callId);
 		if (call === undefined) return;
 		this.#pending.delete(callId);
-		const promoted = this.#admission.settle(callId);
+		const { jobId } = call.frame;
+		const promoted = this.#admissions.get(jobId)?.settle(callId);
+		this.#forgetIdle(jobId);
 		apply(call);
 		if (promoted !== undefined) {
 			const next = this.#pending.get(promoted);

@@ -25,8 +25,15 @@ describe("ServerHostCalls admission", () => {
 			() => new Promise((resolveCall) => held.push(() => resolveCall("ok"))),
 		);
 		for (let index = 1; index <= 265; index++)
-			calls.handle({ type: "host_call", callId: `c${index}`, jobId: "j1", tool: "count", args: { index } });
-		expect({ active: calls.active, waiting: calls.waiting, running: held.length }).toEqual({
+			calls.handle({
+				type: "host_call",
+				callId: `c${index}`,
+				jobId: "j1",
+				kind: "tool",
+				name: "count",
+				args: { index },
+			});
+		expect({ ...calls.load("j1"), running: held.length }).toEqual({
 			active: 8,
 			waiting: 256,
 			running: 8,
@@ -40,10 +47,10 @@ describe("ServerHostCalls admission", () => {
 		expect(replies.map((frame) => frame.callId)).toEqual(
 			Array.from({ length: 264 }, (_unused, index) => `c${index + 1}`),
 		);
-		expect({ active: calls.active, waiting: calls.waiting }).toEqual({ active: 0, waiting: 0 });
+		expect(calls.load("j1")).toEqual({ active: 0, waiting: 0 });
 	});
 
-	it("answers a call whose job ended before it ran with an error, never running it", async () => {
+	it("answers a queued call of an ended job with an error, never running it", async () => {
 		const { channel, sent } = recordingChannel();
 		const held: Array<() => void> = [];
 		let ran = 0;
@@ -52,14 +59,8 @@ describe("ServerHostCalls admission", () => {
 			return new Promise((resolveCall) => held.push(() => resolveCall("ok")));
 		});
 		for (let index = 1; index <= 9; index++)
-			calls.handle({
-				type: "host_call",
-				callId: `c${index}`,
-				jobId: index === 9 ? "j2" : "j1",
-				tool: "t",
-				args: null,
-			});
-		calls.endJob("j2");
+			calls.handle({ type: "host_call", callId: `c${index}`, jobId: "j1", kind: "tool", name: "t", args: null });
+		calls.endJob("j1");
 		for (const release of held.splice(0)) release();
 		await new Promise((resolveTurn) => setImmediate(resolveTurn));
 		await new Promise((resolveTurn) => setImmediate(resolveTurn));
@@ -67,5 +68,21 @@ describe("ServerHostCalls admission", () => {
 		expect(sent.find((frame) => frame.type === "host_reply" && frame.callId === "c9")).toMatchObject({
 			error: expect.stringContaining("job ended"),
 		});
+	});
+
+	it("holds each job to its own capacity: a full job never delays another job's call", () => {
+		const { channel, sent } = recordingChannel();
+		const running: string[] = [];
+		const calls = new ServerHostCalls(channel, (request) => {
+			running.push(request.callId);
+			return new Promise(() => {});
+		});
+		for (let index = 1; index <= 264; index++)
+			calls.handle({ type: "host_call", callId: `a${index}`, jobId: "j1", kind: "tool", name: "t", args: null });
+		calls.handle({ type: "host_call", callId: "b1", jobId: "j2", kind: "tool", name: "t", args: null });
+		expect(calls.load("j1")).toEqual({ active: 8, waiting: 256 });
+		expect(calls.load("j2")).toEqual({ active: 1, waiting: 0 });
+		expect(running).toContain("b1");
+		expect(sent).toEqual([]);
 	});
 });

@@ -12,6 +12,7 @@ import type { Worker } from "node:worker_threads";
 import type { ToolChildJobContext } from "./entry.ts";
 import { ToolChildJobError } from "./entry.ts";
 import { siblingWorkerUrl, startGatedWorker } from "./gated-worker.ts";
+import { HOST_CALL_KINDS, type HostCallKind } from "./protocol.ts";
 
 export const MODULE_JOB_KIND = "module";
 export const TOOL_CHILD_MODULE_ROOTS_ENV = "SENPI_TOOL_CHILD_MODULE_ROOTS";
@@ -122,16 +123,24 @@ export function createModuleJobHandler(env: NodeJS.ProcessEnv = process.env) {
 /** A host call from the module's worker, forwarded over the reverse bridge; the reply goes back to that worker. */
 function forwardHostCall(worker: Worker, context: ToolChildJobContext, message: object): void {
 	const callId = Reflect.get(message, "callId");
-	const tool = Reflect.get(message, "tool");
-	if (typeof callId !== "string" || typeof tool !== "string") return;
-	context.hostCall(tool, Reflect.get(message, "args")).then(
-		(value) => worker.postMessage({ kind: "host_reply", callId, value }),
-		(error: unknown) =>
-			worker.postMessage({
-				kind: "host_reply",
-				callId,
-				error: error instanceof Error ? error.message : String(error),
-				code: error instanceof ToolChildJobError ? error.code : "host_call_failed",
-			}),
-	);
+	const kind = Reflect.get(message, "hostKind");
+	const name = Reflect.get(message, "name");
+	if (typeof callId !== "string" || !isHostCallKind(kind)) return;
+	const args: unknown = Reflect.get(message, "args");
+	context
+		.hostCall({ kind, ...(typeof name === "string" ? { name } : {}), ...(args === undefined ? {} : { args }) })
+		.then(
+			(value) => worker.postMessage({ kind: "host_reply", callId, value }),
+			(error: unknown) =>
+				worker.postMessage({
+					kind: "host_reply",
+					callId,
+					error: error instanceof Error ? error.message : String(error),
+					code: error instanceof ToolChildJobError ? error.code : "host_call_failed",
+				}),
+		);
+}
+
+function isHostCallKind(value: unknown): value is HostCallKind {
+	return typeof value === "string" && HOST_CALL_KINDS.some((kind) => kind === value);
 }

@@ -26,7 +26,14 @@ async function loadNamespace(path: string): Promise<Record<string, unknown>> {
 
 /** The second argument of a module export: calls to the server for this job (the reverse bridge). */
 export interface ModuleHost {
-	call(tool: string, args: unknown): Promise<unknown>;
+	/** Runs a session tool on the server (hooks once), like `ctx.executeTool`. */
+	call(name: string, args: unknown): Promise<unknown>;
+	/** A model completion through the session's runtime. */
+	complete(args: unknown): Promise<unknown>;
+	/** A reserved tool, run server-side. */
+	reserved(name: string, args: unknown): Promise<unknown>;
+	/** The tools callable through `call`. */
+	listTools(): Promise<unknown>;
 }
 
 function createModuleHost(): ModuleHost {
@@ -45,13 +52,17 @@ function createModuleHost(): ModuleHost {
 			call.reject(Object.assign(new Error(error), { code: Reflect.get(message, "code") }));
 		else call.resolve(Reflect.get(message, "value"));
 	});
+	const send = (hostKind: string, name: string | undefined, args: unknown) =>
+		new Promise<unknown>((resolve, reject) => {
+			const callId = `m${++next}`;
+			pending.set(callId, { resolve, reject });
+			port.postMessage({ kind: "host_call", callId, hostKind, name, args });
+		});
 	return {
-		call: (tool, args) =>
-			new Promise((resolve, reject) => {
-				const callId = `m${++next}`;
-				pending.set(callId, { resolve, reject });
-				port.postMessage({ kind: "host_call", callId, tool, args });
-			}),
+		call: (name, args) => send("tool", name, args),
+		complete: (args) => send("completion", undefined, args),
+		reserved: (name, args) => send("reserved", name, args),
+		listTools: () => send("list_tools", undefined, undefined),
 	};
 }
 
