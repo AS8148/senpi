@@ -336,7 +336,7 @@ Transport selection and the fallback cooldown live inside the provider adapter, 
 ### What changed
 
 - `packages/ai/src/api/openai-codex-responses.ts`: `parseErrorResponse` takes the response headers and delegates the usage-limit wording to `describeChatGptUsageLimitResponse`; the in-stream `error` event branch uses `describeChatGptUsageLimitEvent` for a `usage_limit_reached`/`usage_not_included` event before falling back to the `Codex error:` text.
-- `packages/ai/src/utils/chatgpt-usage-limit.ts` (fork-only): reads `x-codex-rate-limit-reached-type`, `x-codex-credits-has-credits` and `x-codex-promo-message` next to the body's `plan_type` and `resets_at`, and states the workspace-credits, spend-cap, has-credits, promo or plan case plus the ways to keep going. `chatGptUsageLimitDescription` lets `utils/provider-failure-description.ts` keep that wording when the session projects an account-wide limit, instead of replacing it with the generic switch-provider sentence (seen in CLI QA: the projection hid the new text).
+- `packages/ai/src/utils/chatgpt-usage-limit.ts` (fork-only): reads `x-codex-rate-limit-reached-type` and `x-codex-credits-has-credits` next to the body's `plan_type` and `resets_at`, and states the workspace-credits, spend-cap, has-credits or plan case plus the ways to keep going. Codex's free-form `x-codex-promo-message` is left out: a model name in it would make the fallback layer scope the limit to one model. `chatGptUsageLimitDescription` lets `utils/provider-failure-description.ts` keep that wording when the session projects an account-wide limit, instead of replacing it with the generic switch-provider sentence (seen in CLI QA: the projection hid the new text).
 
 ### Why
 

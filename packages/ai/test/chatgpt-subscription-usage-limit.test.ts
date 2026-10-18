@@ -117,12 +117,12 @@ describe("ChatGPT usage-limit refusal wording (#3615)", () => {
 		);
 	});
 
-	it("uses the backend's promo message when one is sent", async () => {
+	it("leaves the backend's free-form promo out, so a model name in it cannot narrow the limit to one model", async () => {
 		const message = await errorMessageFor(
-			http429(usageLimitBody("plus"), { "x-codex-promo-message": "Your free reset is ready in Settings" }),
+			http429(usageLimitBody("plus"), { "x-codex-promo-message": "Try a smaller model for more usage" }),
 		);
 		expect(message).toBe(
-			`You have hit your ChatGPT usage limit (plus plan). Your free reset is ready in Settings. ${OTHER_ROUTES}`,
+			`You have hit your ChatGPT usage limit (plus plan). Upgrade to Pro, or buy credits at https://chatgpt.com/settings/usage. ${OTHER_ROUTES}`,
 		);
 	});
 

@@ -2,12 +2,13 @@
  * User-facing wording for a ChatGPT sign-in refusal past the plan's usage limit (senpi#3615).
  *
  * Codex CLI sends no flag to spend credits: the backend decides from the account, and when it
- * refuses it explains which limit applies through `x-codex-rate-limit-reached-type`,
- * `x-codex-credits-has-credits` and `x-codex-promo-message` next to the body's `plan_type` and
- * `resets_at` (openai/codex `codex-rs/protocol/src/error.rs`). This mirrors those cases and always
- * ends on a next step. The text keeps the "You have hit your ChatGPT usage limit" opening every
- * usage-limit classifier already matches, and never says "model": a model word would make the
- * fallback layer treat an account-wide limit as one model's limit.
+ * refuses it explains which limit applies through `x-codex-rate-limit-reached-type` and
+ * `x-codex-credits-has-credits` next to the body's `plan_type` and `resets_at` (openai/codex
+ * `codex-rs/protocol/src/error.rs`). This mirrors those cases and always ends on a next step. The
+ * text keeps the "You have hit your ChatGPT usage limit" opening every usage-limit classifier
+ * already matches, and never says "model": a model word would make the fallback layer treat an
+ * account-wide limit as one model's limit. Codex's free-form `x-codex-promo-message` is left out
+ * for that reason, since its wording is the backend's and can name models.
  */
 
 export const CHATGPT_USAGE_LIMIT_PREFIX = "You have hit your ChatGPT usage limit";
@@ -67,8 +68,6 @@ function limitAdvice(input: ChatGptUsageLimitInput, plan: string | undefined): s
 	if (headerBool(input.header("x-codex-credits-has-credits")) === true) {
 		return "This account has ChatGPT credits, but ChatGPT did not apply them to this request.";
 	}
-	const promo = input.header("x-codex-promo-message")?.trim();
-	if (promo) return /[.!?]$/.test(promo) ? promo : `${promo}.`;
 	return plan ? PLAN_ADVICE[plan] : undefined;
 }
 
