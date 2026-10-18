@@ -2,10 +2,10 @@
 // Bun; skipped with a reason elsewhere, and the CI job refuses a skip).
 
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, watch } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ToolChildClient } from "./client.ts";
 import { TOOL_CHILD_MODULE_ROOTS_ENV } from "./module-job.ts";
@@ -53,6 +53,24 @@ describe.skipIf(reason !== undefined)(`breakaway launch on kernel32${reason ? ` 
 const extensionDir = resolve(import.meta.dirname, "../../../../test/fixtures/module-job-ext");
 const roleEntry = resolve(import.meta.dirname, "../../../tool-child-main.ts");
 
+/** Resolves once `path` contains `needle` (watching its directory), or after `ms` with whatever it holds then. */
+function fileContains(path: string, needle: string, ms: number): Promise<void> {
+	const holds = () => existsSync(path) && readFileSync(path, "utf8").includes(needle);
+	if (holds()) return Promise.resolve();
+	return new Promise((resolveWait) => {
+		const finish = () => {
+			watcher.close();
+			clearTimeout(timer);
+			resolveWait();
+		};
+		const watcher = watch(dirname(path), () => {
+			if (holds()) finish();
+		});
+		const timer = setTimeout(finish, ms);
+		if (holds()) finish();
+	});
+}
+
 function processAlive(pid: number): boolean {
 	const listed = execFileSync("tasklist", ["/FI", `PID eq ${pid}`, "/NH"], { encoding: "utf8" });
 	return listed.includes(String(pid));
@@ -89,20 +107,15 @@ describe.skipIf(reason !== undefined)(`tool child job on kernel32${reason ? ` (s
 			})) as { details: { pid: number } };
 			const commandPid = started.details.pid;
 			const log = join(dirs[0] ?? "", "launches.jsonl");
-			const deadline = Date.now() + 10_000;
-			while (
-				!(existsSync(log) && (await readFile(log, "utf8")).includes('"job_membership"')) &&
-				Date.now() < deadline
-			)
-				await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+			await fileContains(log, '"job_membership"', 10_000);
 			const records = (await readFile(log, "utf8"))
 				.trim()
 				.split("\n")
 				.map((line) => JSON.parse(line) as Record<string, unknown>);
-			expect(records.find((record) => record.type === "job_membership")).toMatchObject({
-				member: true,
-				evidence: "creation",
-			});
+			expect(
+				records.find((record) => record.type === "job_membership"),
+				`launches.jsonl: ${JSON.stringify(records)}`,
+			).toMatchObject({ member: true, evidence: "creation" });
 			expect(records.some((record) => record.type === "heartbeat")).toBe(false);
 			expect(processAlive(commandPid)).toBe(true);
 			process.kill(victim.pid ?? -1);
