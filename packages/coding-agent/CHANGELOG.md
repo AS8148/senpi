@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Forking a session file whose line-1 header was lost no longer fails with "source session file is empty or invalid". A file whose every entry is a session entry is forked whole under a new header, and an empty file and a file that is not a session now get distinct errors ([omo#10375](https://github.com/code-yeongyu/oh-my-openagent/issues/10375)).
+
 ### Removed
 
 ## [2026.10.18-1] - 2026-10-18
