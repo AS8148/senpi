@@ -1,3 +1,4 @@
+import { chatGptUsageLimitDescription } from "./chatgpt-usage-limit.ts";
 import {
 	describeProviderStallForUser,
 	formatStallDuration,
@@ -77,6 +78,8 @@ export function describeProviderFailureForUser(
 		return describeAnthropicThirdPartyBilling(options.model?.split("/")[0]);
 	}
 	if (options.usageLimit === "account") {
+		const chatGpt = chatGptUsageLimitDescription(message);
+		if (chatGpt !== undefined) return chatGpt;
 		const provider = options.model?.split("/")[0];
 		const reset = /\bresets?\s+([^"}\n]+)/i
 			.exec(message)?.[1]

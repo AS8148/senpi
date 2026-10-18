@@ -10,7 +10,8 @@ afterEach(() => {
 });
 
 const ENDPOINT = "https://chatgpt.com/backend-api/codex/responses";
-const OTHER_ROUTES = "To keep going now, add an OpenAI API key, sign in with another ChatGPT account, or switch providers.";
+const OTHER_ROUTES =
+	"To keep going now, add an OpenAI API key, sign in with another ChatGPT account, or switch providers.";
 
 function mockToken(): string {
 	const payload = Buffer.from(
@@ -87,7 +88,10 @@ describe("ChatGPT usage-limit refusal wording (#3615)", () => {
 	});
 
 	it.each([
-		["workspace_owner_credits_depleted", "Your workspace is out of credits: add credits at https://chatgpt.com/settings/usage."],
+		[
+			"workspace_owner_credits_depleted",
+			"Your workspace is out of credits: add credits at https://chatgpt.com/settings/usage.",
+		],
 		["workspace_member_credits_depleted", "Your workspace is out of credits: ask your workspace owner to add more."],
 		["workspace_owner_usage_limit_reached", "You hit the spend cap set for your workspace: raise it to continue."],
 		[
