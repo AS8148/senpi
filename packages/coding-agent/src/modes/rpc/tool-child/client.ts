@@ -7,13 +7,15 @@
  */
 import type { ChildProcess } from "node:child_process";
 import { once } from "node:events";
+import { join } from "node:path";
 import { openChannelListener, type ToolChildChannel } from "./channel.ts";
 import { createGenerationBarrier, type GenerationBarrier } from "./client-barrier.ts";
 import { TOOL_CHILD_PROTOCOL_VERSION } from "./entry.ts";
-import { type HostCallHandler, ServerHostCalls } from "./host-calls-server.ts";
+import { type HostCallHandler, type HostCallRefs, ServerHostCalls } from "./host-calls-server.ts";
 import { policyFor } from "./job-policy.ts";
 import { JobSupervisor, type SupervisorTimers } from "./job-supervisor.ts";
 import { spawnToolChild, type ToolChildCommand, toolChildCommand } from "./launch.ts";
+import { PayloadRefReader, PayloadRefWriter } from "./payload-ref.ts";
 import type { ToolChildMessage } from "./protocol.ts";
 
 export type ToolChildState = "none" | "spawning" | "live" | "retiring" | "dead";
@@ -67,6 +69,7 @@ interface Live {
 	readonly barrier: GenerationBarrier;
 	readonly supervisor: JobSupervisor;
 	readonly hostCalls: ServerHostCalls;
+	readonly refs: HostCallRefs;
 	ended?: Promise<void>;
 }
 
@@ -75,6 +78,9 @@ export class ToolChildClient {
 	#generation = 0;
 	#nextJob = 0;
 	readonly #hostContexts = new Map<string, unknown>();
+	get #refsRoot(): string {
+		return join(this.#options.dir, "refs");
+	}
 	#nextPing = 0;
 	#live: Live | undefined;
 	#lastEnded: Promise<void> = Promise.resolve();
@@ -118,6 +124,7 @@ export class ToolChildClient {
 			env: typeof this.#options.env === "function" ? this.#options.env() : (this.#options.env ?? process.env),
 			command: this.#options.command ?? (await toolChildCommand()),
 			cwd: this.#options.cwd,
+			refsRoot: this.#refsRoot,
 		});
 		const exited = once(child, "exit").then(() => undefined);
 		let timer: ReturnType<typeof setTimeout> | undefined;
@@ -181,11 +188,16 @@ export class ToolChildClient {
 			this.#options.timers,
 		);
 		const onHostCall = this.#options.onHostCall;
+		const refs: HostCallRefs = {
+			writer: new PayloadRefWriter({ root: this.#refsRoot, generation }),
+			reader: new PayloadRefReader({ root: this.#refsRoot, generation, send: (control) => channel.send(control) }),
+		};
 		const hostCalls = new ServerHostCalls(
 			channel,
 			onHostCall ??
 				((request) => Promise.reject(new Error(`no host-call handler for ${request.name ?? request.kind}`))),
 			(jobId) => this.#hostContexts.get(jobId),
+			refs,
 		);
 		const live: Live = {
 			generation,
@@ -197,6 +209,7 @@ export class ToolChildClient {
 			barrier,
 			supervisor,
 			hostCalls,
+			refs,
 		};
 		this.#live = live;
 		this.#state = "live";
@@ -270,6 +283,10 @@ export class ToolChildClient {
 		if (this.#live !== live) return;
 		if (live.barrier.handle(frame)) return;
 		if (live.hostCalls.handle(frame)) return;
+		if (frame.type === "ref_ack" || frame.type === "ref_nack") {
+			void live.refs.writer.handle(frame);
+			return;
+		}
 		switch (frame.type) {
 			case "result":
 				settle(live, frame.jobId, (p) => p.resolve(frame.value));
@@ -310,7 +327,7 @@ export class ToolChildClient {
 			this.#state = "dead";
 		}
 		this.#options.onStatus?.({ state: "exited", generation: live.generation, pid: live.child.pid ?? -1 });
-		live.ended = live.barrier.teardown(undefined).then(() => undefined);
+		live.ended = Promise.all([live.barrier.teardown(undefined), live.refs.writer.teardown()]).then(() => undefined);
 		this.#lastEnded = live.ended;
 	}
 

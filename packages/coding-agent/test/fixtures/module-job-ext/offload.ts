@@ -1,5 +1,6 @@
 // A file-backed module the tool child's `module` job runs (senpi#3566 todo 4): plain named imports, no barrier code.
 import { execFileSync as runOnce, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync as markerExists, writeFileSync as writeMarker } from "node:fs";
 
 export function whoAmI(args: { readonly code: number }): { pid: number; status: number | null } {
@@ -58,4 +59,17 @@ export async function fanOut(
 		outcome.status === "rejected" ? [String(Reflect.get(Object(outcome.reason), "code") ?? outcome.reason)] : [],
 	);
 	return { ok: settled.length - failed.length, failed };
+}
+
+/** Sends `bytes` of arguments to the server: what the server received, and this side's own sha256 to compare. */
+export async function sinkLarge(args: { readonly bytes: number }, host: FixtureHost): Promise<unknown> {
+	const payload = "s".repeat(args.bytes);
+	const reply = await host.call("sink", { payload });
+	return { reply, sent: createHash("sha256").update(payload).digest("hex") };
+}
+
+/** Asks the server for a `bytes`-long reply and reports what arrived. */
+export async function blobLarge(args: { readonly bytes: number }, host: FixtureHost): Promise<{ length: number }> {
+	const reply = await host.call("blob", { bytes: args.bytes });
+	return { length: typeof reply === "string" ? reply.length : -1 };
 }

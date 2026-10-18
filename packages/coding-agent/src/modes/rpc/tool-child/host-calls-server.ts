@@ -6,7 +6,15 @@
  */
 import { HostCallAdmission } from "./admission.ts";
 import type { ToolChildChannel } from "./channel.ts";
+import type { PayloadRefReader, PayloadRefWriter } from "./payload-ref.ts";
+import { packPayload, unpackPayload } from "./payload-wire.ts";
 import type { HostCallKind, ToolChildMessage, ToolChildMessageOf } from "./protocol.ts";
+
+/** The side's ref writer (payloads it sends) and reader (payloads it receives); absent = inline only. */
+export interface HostCallRefs {
+	readonly writer: PayloadRefWriter;
+	readonly reader: PayloadRefReader;
+}
 
 export interface HostCallRequest {
 	readonly callId: string;
@@ -29,6 +37,15 @@ interface ServerCall {
 	readonly abort: AbortController;
 }
 
+/** Calls `run` now, in this turn; a synchronous throw becomes a rejection like an async one. */
+function settleNow<T>(run: () => T | Promise<T>): Promise<T> {
+	try {
+		return Promise.resolve(run());
+	} catch (error) {
+		return Promise.reject(error);
+	}
+}
+
 export class ServerHostCalls {
 	readonly #channel: Pick<ToolChildChannel, "send">;
 	readonly #handler: HostCallHandler;
@@ -36,12 +53,15 @@ export class ServerHostCalls {
 	readonly #calls = new Map<string, ServerCall>();
 
 	readonly #contextOf: HostCallContextOf;
+	readonly #refs: HostCallRefs | undefined;
 
 	constructor(
 		channel: Pick<ToolChildChannel, "send">,
 		handler: HostCallHandler,
 		contextOf: HostCallContextOf = () => undefined,
+		refs?: HostCallRefs,
 	) {
+		this.#refs = refs;
 		this.#channel = channel;
 		this.#handler = handler;
 		this.#contextOf = contextOf;
@@ -91,19 +111,24 @@ export class ServerHostCalls {
 		if (call === undefined) return;
 		const { frame } = call;
 		const label = frame.name ?? frame.kind;
+		const invoke = (args: unknown) =>
+			this.#handler({
+				callId,
+				jobId: frame.jobId,
+				kind: frame.kind,
+				name: frame.name,
+				args,
+				signal: call.abort.signal,
+				context: this.#contextOf(frame.jobId),
+			});
 		const answered = call.abort.signal.aborted
-			? Promise.reject(new Error(`${label}: the job ended before this call ran`))
-			: this.#handler({
-					callId,
-					jobId: frame.jobId,
-					kind: frame.kind,
-					name: frame.name,
-					args: frame.args,
-					signal: call.abort.signal,
-					context: this.#contextOf(frame.jobId),
-				});
+			? this.#refuseArgs(frame).then(() => Promise.reject(new Error(`${label}: the job ended before this call ran`)))
+			: frame.argsRef === undefined
+				? // Inline arguments start the handler in this turn, as admission promised; only a ref waits on its read.
+					settleNow(() => invoke(frame.args))
+				: this.#args(frame, call.abort.signal).then(invoke);
 		void answered.then(
-			(value) => this.#answer(callId, { type: "host_reply", callId, value: value ?? null }),
+			(value) => void this.#reply(callId, value ?? null),
 			(error: unknown) =>
 				this.#answer(callId, {
 					type: "host_reply",
@@ -111,6 +136,38 @@ export class ServerHostCalls {
 					error: error instanceof Error ? error.message : String(error),
 				}),
 		);
+	}
+
+	/** The call's arguments: inline, or a child-written ref accepted (acked, now owned here) and consumed. */
+	async #args(frame: ToolChildMessageOf<"host_call">, signal: AbortSignal): Promise<unknown> {
+		if (frame.argsRef === undefined) return frame.args;
+		if (this.#refs === undefined) throw new Error("host_call carried argsRef but this side reads no refs");
+		return unpackPayload(frame.argsRef, this.#refs.reader, signal);
+	}
+
+	/** A call whose job ended before it ran never opens its ref: the child's file is nacked and deleted by its writer. */
+	async #refuseArgs(frame: ToolChildMessageOf<"host_call">): Promise<void> {
+		if (frame.argsRef !== undefined) this.#refs?.reader.refuse(frame.argsRef, "cancelled");
+	}
+
+	/** A reply above the inline threshold travels as a server-written ref the child acks and then owns. */
+	async #reply(callId: string, value: unknown): Promise<void> {
+		try {
+			const packed =
+				this.#refs === undefined ? { inline: true as const, value } : await packPayload(value, this.#refs.writer);
+			this.#answer(
+				callId,
+				packed.inline
+					? { type: "host_reply", callId, value: packed.value }
+					: { type: "host_reply", callId, valueRef: packed.ref },
+			);
+		} catch (error) {
+			this.#answer(callId, {
+				type: "host_reply",
+				callId,
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
 	}
 
 	#answer(callId: string, reply: ToolChildMessageOf<"host_reply">): void {

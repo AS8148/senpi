@@ -1,6 +1,7 @@
 // senpi#3566 todo 7: the reverse bridge against a real tool child - a module job calls the server through `host.call`,
 // and both sides hold the shared capacity (8 running, 256 queued, the next one refused with a correlated error).
-import { mkdtemp, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -18,8 +19,9 @@ afterEach(async () => {
 	for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-async function startChild(onHostCall: HostCallHandler) {
+async function startChild(onHostCall: HostCallHandler, onDir: (dir: string) => void = () => {}) {
 	const dir = await mkdtemp(join(tmpdir(), "trb-"));
+	onDir(dir);
 	const instance = new ToolChildClient({
 		dir,
 		cwd: dir,
@@ -91,4 +93,38 @@ describe("reverse bridge", () => {
 		});
 		expect(batching.stats()).toEqual({ received: 264, maxRunning: 8 });
 	}, 60_000);
+
+	it("carries 17 MiB of arguments by an acknowledged ref the server owns, deleted once the call settles", async () => {
+		let dir = "";
+		const instance = await startChild(
+			async (request) => {
+				const payload = String(Reflect.get(Object(request.args), "payload"));
+				return { received: payload.length, sha256: createHash("sha256").update(payload).digest("hex") };
+			},
+			(created) => {
+				dir = created;
+			},
+		);
+		const bytes = 17 * 1024 * 1024;
+		const value = (await instance.run("module", { modulePath, export: "sinkLarge", args: { bytes } })) as {
+			reply: { received: number; sha256: string };
+			sent: string;
+		};
+		expect(value.reply.received).toBe(bytes);
+		expect(value.reply.sha256).toBe(value.sent);
+		expect(await readdir(join(dir, "refs", "1")).catch(() => [])).toEqual([]);
+	}, 120_000);
+
+	it("carries a 20 MiB reply by an acknowledged ref the child owns, deleted once delivered", async () => {
+		let dir = "";
+		const instance = await startChild(
+			async (request) => "b".repeat(Number(Reflect.get(Object(request.args), "bytes"))),
+			(created) => {
+				dir = created;
+			},
+		);
+		const bytes = 20 * 1024 * 1024;
+		expect(await instance.run("module", { modulePath, export: "blobLarge", args: { bytes } })).toEqual({ length: bytes });
+		expect(await readdir(join(dir, "refs", "1")).catch(() => [])).toEqual([]);
+	}, 120_000);
 });

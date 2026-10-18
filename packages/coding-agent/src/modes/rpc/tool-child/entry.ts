@@ -6,8 +6,10 @@
  */
 import { connectChannel, type ToolChildChannel } from "./channel.ts";
 import { ChildHostCalls, type HostCallTarget } from "./host-calls-child.ts";
+import { TOOL_CHILD_REFS_ROOT_ENV } from "./launch-env.ts";
 import { LaunchGate } from "./launch-gate.ts";
-import type { ToolChildMessageOf } from "./protocol.ts";
+import { PayloadRefReader, PayloadRefWriter } from "./payload-ref.ts";
+import type { RefControl, ToolChildMessageOf } from "./protocol.ts";
 import { readTestControls } from "./test-controls.ts";
 
 export const TOOL_CHILD_GENERATION_ENV = "SENPI_TOOL_CHILD_GENERATION";
@@ -47,7 +49,19 @@ export async function runToolChild(options: ToolChildEntryOptions): Promise<void
 	if (controls.enabled("EXIT_ON_START")) exit(1);
 	const running = new Map<string, AbortController>();
 	const gate = new LaunchGate(channel);
-	const hostCalls = new ChildHostCalls(channel);
+	const refsRoot = env[TOOL_CHILD_REFS_ROOT_ENV];
+	const refs =
+		refsRoot === undefined
+			? undefined
+			: {
+					writer: new PayloadRefWriter({ root: refsRoot, generation }),
+					reader: new PayloadRefReader({
+						root: refsRoot,
+						generation,
+						send: (control: RefControl) => channel.send(control),
+					}),
+				};
+	const hostCalls = new ChildHostCalls(channel, refs);
 	let readerBlocked = false;
 	channel.onMessage((message) => {
 		if (controls.enabled("BLOCK_READER") && !readerBlocked) {
@@ -57,6 +71,10 @@ export async function runToolChild(options: ToolChildEntryOptions): Promise<void
 		}
 		if (gate.handle(message)) return;
 		if (hostCalls.handle(message)) return;
+		if (message.type === "ref_ack" || message.type === "ref_nack") {
+			void refs?.writer.handle(message);
+			return;
+		}
 		switch (message.type) {
 			case "ping":
 				channel.send({ type: "pong", seq: message.seq });
