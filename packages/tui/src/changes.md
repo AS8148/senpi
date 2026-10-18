@@ -1,3 +1,43 @@
+## 2026-10-18 - Main-screen hands the wheel back to the terminal while a mouse lease is held (senpi#3604)
+
+### What changed
+
+- `packages/tui/src/tui-main-screen.ts`: the first wheel report (button bit 64) while mouse tracking is on writes `MOUSE_TRACKING.disable` and enters a `yielded` state that keeps the lease; later mouse reports are consumed without dispatch. The next input that is not a terminal report (a key press or paste) re-arms tracking through `applyMouseTracking(true)` and still reaches the focused component. `applyMouseTracking` and `beforeTerminalStop` clear the state, so a released and re-acquired lease arms normally. `mouseCaptureState()` reports `"off" | "armed" | "yielded"`.
+- `packages/tui/src/tui.ts`: `TuiBase.mouseCaptureState()` (`"armed"` while an enabled lease exists, else `"off"`); `isTerminalReport` is exported for the main-screen renderer.
+
+### Why
+
+- In main-screen mode the transcript lives in the terminal's scrollback, which the app cannot scroll. With `?1000` on (a pending ask-user question holds a lease for clickable options), the terminal stopped scrolling and the renderer swallowed the wheel reports, so the wheel did nothing until the question was answered.
+- Tests: `packages/tui/test/tui-main-screen-mouse.test.ts` (yield on wheel, re-arm on a key that still reaches the editor, clicks dead while yielded and live after re-arm, no re-arm on terminal reports or focus changes, re-acquire after release).
+
+### Why an extension could not handle it
+
+- Mouse tracking bytes and input routing belong to the renderer; extensions only hold leases.
+
+### Expected merge conflict zones
+
+- MEDIUM: `TuiMainScreen.handleMouseInput` and `applyMouseTracking`. LOW: `TuiBase.mouseCaptureState`, the `isTerminalReport` export.
+
+## 2026-10-18 - Old WezTerm on Windows gets the image placeholder instead of a blank gap (Fixes senpi#3596)
+
+### What changed
+
+- `packages/tui/src/terminal-image.ts`: the WezTerm branch of `detectCapabilitiesFromEnvironment` reports `images: null` with `imageHint` when `isOldWindowsWezTerm(TERM_PROGRAM_VERSION, process.platform)` is true; `imageFallback` appends `imageHint` to the placeholder text. An explicit image choice (`PI_IMAGE_PROTOCOL` in `detectCapabilities`, an `images` override in `getCapabilities`) drops the detected hint through `withoutImageHint`, and `setCapabilityOverrides` compares `imageHint` too.
+- `packages/tui/src/terminal-capabilities.ts`: `TerminalCapabilities` gains optional `imageHint`, and `detectTerminalCapabilities` applies the same WezTerm rule.
+- `packages/tui/src/wezterm-windows-images.ts` (new): the version gate (`MIN_WEZTERM_WINDOWS_IMAGES_VERSION = 20250208-160106`, the build that bundled ConPTY 1.22) and the hint text. Missing or malformed versions and non-Windows platforms keep Kitty images; `PI_IMAGE_PROTOCOL` still overrides.
+
+### Why
+
+- `packages/tui/src/terminal-image.ts`: on Windows, WezTerm 20240203 (the latest stable) bundles a ConPTY that drops the Kitty graphics APC while passing plain text and OSC 1337, so images left blank rows. A byte capture through each bundled ConPTY showed the APC dropped by the 20240203 and 1.19 builds and delivered by 1.22 (nightly 20261010).
+
+### Why an extension could not handle it
+
+- `packages/tui/src/terminal-image.ts`: capability detection and the placeholder text are renderer internals with no extension hook.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/terminal-image.ts`: the WezTerm branch of `detectCapabilitiesFromEnvironment`, the import block, the override merges in `detectCapabilities` and `getCapabilities`, the `setCapabilityOverrides` equality check, and the tail of `imageFallback`.
+
 ## 2026-10-12 - Render diagnostics honor the caller's temporary directory (Refs senpi#3064)
 
 ### What changed
