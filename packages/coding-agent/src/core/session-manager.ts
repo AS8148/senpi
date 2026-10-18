@@ -1354,7 +1354,7 @@ export class SessionManager {
 		// evicts, so clearing them bounds the directory to one process lifetime.
 		this._releaseBlobsDirUnlessShared();
 
-		if (migrateToCurrentVersion(this.fileEntries)) {
+		if (migrateToCurrentVersion(this.fileEntries) && this.writeGuard.isWritable(this.fileEntries)) {
 			this._rewriteFile();
 		}
 		return true;
@@ -1514,6 +1514,7 @@ export class SessionManager {
 
 	private _rewriteFile(): void {
 		if (!this.persist || !this.sessionFile) return;
+		this.writeGuard.assertRewritable(this.fileEntries, this.sessionFile);
 		reserveSessionWrite(this.sessionFile);
 		replaceFileAtomically(this.sessionFile, this._serializedFileEntries());
 	}

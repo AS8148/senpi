@@ -88,13 +88,14 @@ export class MoveLedger {
 		});
 	}
 
-	/** Cancel, expiry or a refused chunk: never overrides an accepted move. */
+	/** Cancel, expiry or a refused chunk: only before the bundle was verified and receiving began, never after. */
 	decline(moveId: MoveId, reason: DeclineReason): Promise<MoveRecord> {
-		return this.settle(moveId, { state: "declined", reason });
+		return this.settle(moveId, { state: "declined", reason }, ["accepted", "receiving"]);
 	}
 
+	/** A verified import that could not finish; it may end a receiving move but never an accepted one. */
 	fail(moveId: MoveId, reason: FailReason): Promise<MoveRecord> {
-		return this.settle(moveId, { state: "failed", reason });
+		return this.settle(moveId, { state: "failed", reason }, ["accepted"]);
 	}
 
 	/** Runs the import's commit (the atomic rename) under the move's lock, then records it accepted. */
@@ -110,10 +111,10 @@ export class MoveLedger {
 		});
 	}
 
-	private settle(moveId: MoveId, next: MoveRecord): Promise<MoveRecord> {
+	private settle(moveId: MoveId, next: MoveRecord, keeps: readonly MoveRecord["state"][]): Promise<MoveRecord> {
 		return this.locked(moveId, () => {
 			const record = this.read(moveId);
-			if (record?.state === "accepted") return record;
+			if (record !== undefined && keeps.includes(record.state)) return record;
 			this.write(moveId, next);
 			return next;
 		});

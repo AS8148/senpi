@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, posix, win32 } from "node:path";
 import { parseRepositoryIdentity, type RepositoryIdentity } from "../repository-identity.ts";
 import type { MoveId } from "./ownership.ts";
 
@@ -50,13 +50,26 @@ export function sha256File(path: string): string {
 
 const isString = (value: unknown): value is string => typeof value === "string";
 
+/** Both separators count: a bundle written on one OS is read on another. */
+function leavesBundle(path: string): boolean {
+	return posix.isAbsolute(path) || win32.isAbsolute(path) || path.split(/[\\/]/).includes("..");
+}
+
 function parseFile(value: unknown): BundleFile {
 	const file = value as Partial<BundleFile> | null;
 	if (typeof file !== "object" || file === null || !isString(file.path) || !isString(file.sha256))
 		throw new MoveBundleInvalidError("a listed file is malformed");
-	if (file.path.startsWith("/") || file.path.split("/").includes(".."))
-		throw new MoveBundleInvalidError(`a listed path leaves the bundle: ${file.path}`);
+	if (leavesBundle(file.path)) throw new MoveBundleInvalidError(`a listed path leaves the bundle: ${file.path}`);
 	return { path: file.path, sha256: file.sha256 };
+}
+
+/** The importer joins this name onto its session folder, so it must be a plain session file name and nothing else. */
+const SESSION_FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*\.jsonl$/;
+
+function parseSessionFileName(value: string): string {
+	if (!SESSION_FILE_NAME.test(value) || value.includes(".."))
+		throw new MoveBundleInvalidError(`the session file name is not a plain file name: ${value}`);
+	return value;
 }
 
 export function readManifest(bundleDir: string): MoveManifest {
@@ -81,7 +94,7 @@ export function readManifest(bundleDir: string): MoveManifest {
 		format: MOVE_BUNDLE_FORMAT,
 		moveId: m.moveId as MoveId,
 		sessionId: m.sessionId as string,
-		sessionFileName: m.sessionFileName as string,
+		sessionFileName: parseSessionFileName(m.sessionFileName as string),
 		sourceCwd: m.sourceCwd as string,
 		repository: parseRepositoryIdentity(m.repository),
 		session: parseFile(m.session),

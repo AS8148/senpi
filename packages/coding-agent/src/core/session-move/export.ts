@@ -1,5 +1,7 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
+import { SessionHeldError } from "../session-hold-errors.ts";
+import { liveSessionHolders } from "../session-holders.ts";
 import { loadEntriesFromFile, SessionManager } from "../session-manager.ts";
 import { readRecordedRepositoryIdentity, readSessionCwd } from "../session-rebind.ts";
 import { encodedSessionId } from "../session-sidecar-store.ts";
@@ -11,7 +13,13 @@ import {
 	SESSION_BUNDLE_PATH,
 	sha256File,
 } from "./bundle.ts";
-import { type MoveId, SESSION_RELEASED, SessionMovedAwayError, sessionOwnership } from "./ownership.ts";
+import {
+	headerSessionId,
+	type MoveId,
+	SESSION_RELEASED,
+	SessionMovedAwayError,
+	sessionOwnership,
+} from "./ownership.ts";
 
 export interface ExportSessionForMoveOptions {
 	/** A session no live runtime holds: an RPC host releases it first (`release_session` reason `move`). */
@@ -30,7 +38,12 @@ export interface ExportSessionForMoveOptions {
  */
 export async function exportSessionForMove(options: ExportSessionForMoveOptions): Promise<MoveManifest> {
 	const { sessionFile, moveId } = options;
-	const ownership = sessionOwnership(loadEntriesFromFile(sessionFile));
+	const entries = loadEntriesFromFile(sessionFile);
+	const sessionId = headerSessionId(entries) ?? "";
+	// A live runtime could still write the transcript, its sidecars or its resident blobs after the seal.
+	const holders = await liveSessionHolders(sessionFile, sessionId);
+	if (holders.length > 0) throw new SessionHeldError(sessionFile, holders);
+	const ownership = sessionOwnership(entries);
 	if (!ownership.writable && !(ownership.state === "moving" && ownership.moveId === moveId)) {
 		throw new SessionMovedAwayError(sessionFile, ownership);
 	}
@@ -38,12 +51,11 @@ export async function exportSessionForMove(options: ExportSessionForMoveOptions)
 		SessionManager.open(sessionFile).appendCustomEntry(SESSION_RELEASED, {
 			reason: "move",
 			move_id: moveId,
+			session_id: sessionId,
 			target: options.target,
 			released_at: new Date().toISOString(),
 		});
 	}
-	const header = loadEntriesFromFile(sessionFile)[0] as { readonly id?: unknown } | undefined;
-	const sessionId = typeof header?.id === "string" ? header.id : "";
 	const staging = `${options.bundleDir}.partial-${process.pid}`;
 	rmSync(staging, { recursive: true, force: true });
 	mkdirSync(join(staging, dirname(SESSION_BUNDLE_PATH)), { recursive: true });
@@ -82,7 +94,7 @@ function copySidecars(sessionDir: string, sessionId: string, staging: string): B
 		const path = join("files", relative(sessionDir, source));
 		mkdirSync(dirname(join(staging, path)), { recursive: true });
 		copyFileSync(source, join(staging, path));
-		return { path, sha256: sha256File(source) };
+		return { path, sha256: sha256File(join(staging, path)) };
 	});
 }
 

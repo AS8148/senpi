@@ -162,7 +162,13 @@ async function claimAndRelease(
 		// On disk or not at all: a failed write leaves no entry a later append could chain onto.
 		ready.session.sessionManager.appendCustomEntry(SESSION_RELEASED_ENTRY_TYPE, {
 			reason: command.reason,
-			...(command.reason === "move" ? { move_id: command.moveId, target: command.target ?? "" } : {}),
+			...(command.reason === "move"
+				? {
+						move_id: command.moveId,
+						target: command.target ?? "",
+						session_id: ready.session.sessionManager.getSessionId(),
+					}
+				: {}),
 			interrupted,
 			attachments: ready.attachments,
 			host_instance: port.hostInstance ?? null,

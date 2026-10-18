@@ -1836,8 +1836,7 @@ no longer lists it and the handle answers `unknown_session`.
   `session_released` entry on disk or in memory, and a later release can be retried. A teardown that fails
   after it claimed the session leaves it closing.
 
-
-A release with `reason: "move"` (and a `moveId`) seals the session for a move to another device: its `session_released` entry records `move_id` and `target`, and from then on any write to the file is refused with `session_moved_away` until the move is reclaimed. A `move` without `moveId` is refused with `invalid_release_reason`.
+A release with `reason: "move"` (and a `moveId`) seals the session for a move to another device: its `session_released` entry records `move_id`, `target` and `session_id`, and from then on any write to the file is refused with `session_moved_away` until that same move is reclaimed. A later `takeover` release, or any ownership entry for another move, is refused too. A `move` without `moveId` is refused with `invalid_release_reason`.
 
 ### Host self-observation (event-loop stalls and memory pressure)
 
