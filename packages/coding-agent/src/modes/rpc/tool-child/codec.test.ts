@@ -236,6 +236,21 @@ describe("encode-time normalization (senpi#3569 review)", () => {
 		expect(decoded).toMatchObject({ type: "result", jobId: "j", value: null });
 	});
 
+	it("optional fields set to undefined keep stringify's default drop and still encode (delta review HIGH 1)", () => {
+		const [decoded] = new FrameDecoder().push(
+			encodeFrame({ type: "launch_done", launchId: "l1", signal: "SIGTERM" } as never),
+		);
+		expect(decoded).toEqual({ type: "launch_done", launchId: "l1", signal: "SIGTERM" });
+		expect("exitCode" in (decoded as Record<string, unknown>)).toBe(false);
+	});
+
+	it("nested undefined payload keys stay dropped, matching the ref path (delta review MEDIUM 2)", () => {
+		const [decoded] = new FrameDecoder().push(
+			encodeFrame({ type: "result", jobId: "j", value: { content: "x", details: undefined } } as never),
+		);
+		expect((decoded as { value: Record<string, unknown> }).value).toEqual({ content: "x" });
+	});
+
 	it("a non-finite required number is refused at encode with a typed error, never as a frame", () => {
 		expect(() => encodeFrame({ type: "heartbeat", seq: Number.POSITIVE_INFINITY })).toThrow(ToolChildCodecError);
 	});

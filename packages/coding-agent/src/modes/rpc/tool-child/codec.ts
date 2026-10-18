@@ -23,22 +23,27 @@ const tooLarge = (bytes: number): ToolChildCodecError =>
 	new ToolChildCodecError("tool_child_frame_too_large", `${bytes} bytes exceeds ${TOOL_CHILD_LIMITS.frameBytes}`);
 
 export function encodeFrame(message: ToolChildMessage): Uint8Array {
-	// JSON.stringify drops undefined fields and turns NaN/Infinity into null; the peer's guard rejects both and a
-	// rejected frame is terminal for the channel. Normalize at the source: undefined and non-finite numbers become an
-	// explicit null. Where null is NOT acceptable (a required number like heartbeat seq), the round-trip check with
-	// the SAME predicate the decoder applies refuses the message HERE - a typed per-message error instead of a frame
-	// that kills the channel remotely.
-	const json = JSON.stringify(message, (_key, value) =>
-		typeof value === "number" && !Number.isFinite(value) ? null : value === undefined ? null : value,
-	);
+	// JSON.stringify drops undefined-valued properties (what optional fields rely on) and natively serializes
+	// NaN/Infinity as null on BOTH the inline and the ref path, so payload contents encode identically either way.
+	// The one case JSON cannot represent is a REQUIRED json field that is undefined (today only result.value - a
+	// tool returning undefined); it becomes an explicit null the guard takes. The round-trip with the decoder's own
+	// predicate refuses anything else unsendable HERE - a typed per-message error, never a channel-killing frame
+	// (senpi#3569 delta review: optional undefined must keep stringify's default drop).
+	const normalized: ToolChildMessage =
+		message.type === "result" && message.value === undefined ? { ...message, value: null } : message;
+	const json = JSON.stringify(normalized);
+	const bodyBytes = Buffer.byteLength(json, "utf8");
+	if (bodyBytes > TOOL_CHILD_LIMITS.frameBytes) throw tooLarge(bodyBytes);
 	if (!isToolChildMessage(JSON.parse(json))) {
 		throw new ToolChildCodecError(
 			"tool_child_encode_invalid",
 			"the message serializes to a frame the peer's guard rejects",
 		);
 	}
-	const bodyBytes = Buffer.byteLength(json, "utf8");
-	if (bodyBytes > TOOL_CHILD_LIMITS.frameBytes) throw tooLarge(bodyBytes);
+	return frameFromBody(json, bodyBytes);
+}
+
+function frameFromBody(json: string, bodyBytes: number): Uint8Array {
 	const frame = Buffer.allocUnsafe(FRAME_HEADER_BYTES + bodyBytes);
 	frame.writeUInt32BE(bodyBytes, 0);
 	frame.write(json, FRAME_HEADER_BYTES, "utf8");
