@@ -1,6 +1,6 @@
 import type { ModelThinkingLevel, ThinkingLevelMap } from "../types.ts";
 import aliasData from "./cursor-variant-aliases.json" with { type: "json" };
-import { cleanCursorGroupName, sanitizeCursorDisplayName } from "./display-name.ts";
+import { cleanCursorGroupName, dropUnservedSizeToken, sanitizeCursorDisplayName } from "./display-name.ts";
 import {
 	CURSOR_MODEL_CAPABILITIES,
 	type CursorModelCapability,
@@ -242,7 +242,7 @@ export function normalizeCursorCatalog(rawEntries: readonly CursorCatalogRawEntr
 			const thinkingMode = baseId.startsWith("claude-") ? first.thinking === true : undefined;
 			out.push({
 				id: first.alias.targetId,
-				name: cleanCursorGroupName(members, baseId, thinkingMode),
+				name: dropUnservedSizeToken(cleanCursorGroupName(members, baseId, thinkingMode), capability),
 				reasoning: true,
 				thinkingLevelMap: derivedGroup ? buildDerivedLevelMap(members) : buildLevelMap(members, capability),
 				window: capability?.window ?? FALLBACK_WINDOW,
@@ -263,7 +263,7 @@ export function normalizeCursorCatalog(rawEntries: readonly CursorCatalogRawEntr
 			const memberCapability = CURSOR_MODEL_CAPABILITIES[memberBase];
 			out.push({
 				id: member.raw.id,
-				name: sanitizeCursorDisplayName(member.raw.name),
+				name: dropUnservedSizeToken(sanitizeCursorDisplayName(member.raw.name), memberCapability),
 				reasoning: false,
 				window: memberCapability?.window ?? FALLBACK_WINDOW,
 				...(memberCapability?.maxWindow !== undefined ? { maxWindow: memberCapability.maxWindow } : {}),

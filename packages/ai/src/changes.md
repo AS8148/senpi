@@ -34,11 +34,19 @@ The map is private to `pi-ai`; a consumer can only enumerate it through an expor
   so gains "Thinking".
 - `src/cursor/model-input.ts` (moved out of `api/cursor-agent.ts`): image input follows AvailableModels'
   `supportsImages`, adding Kimi K3, Muse and Grok 4.5/4.6.
+- `src/cursor/model-capabilities.ts` + `src/cursor/display-name.ts` + `src/cursor/catalog-grouping.ts` (review LOW-1 fix):
+  the ten families' entries carry the new `served-checkpoint` evidence kind, and a display name drops its `1M` size
+  token when the measured window is smaller — Opus 5.5, Fable 5.1 and Muse Spark 1.3 serve 300k for the default option
+  senpi sends; Cursor's `1M` label names the extended-context tier (`maxWindow`). `available-models` entries keep
+  Cursor's label untouched (their mismatch is senpi#3621's scope).
 
 ### Why
 
 - The ten families answered live requests through the #2038 derived grouping but advertised the 200k placeholder
   window, two carried broken names, and image-capable families were offered as text-only.
+- A picker name promising 1M while the served window is 300k misleads (review LOW-1); the name now follows the window
+  the server was measured serving, sourced from the committed 2026-10-18 checkpoint fixture and Cursor's published
+  "up to 1M with extended context" tier.
 
 ### Why an extension couldn't do it
 

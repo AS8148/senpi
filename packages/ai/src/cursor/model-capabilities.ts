@@ -2,7 +2,7 @@ import type { ModelThinkingLevel } from "../types.ts";
 import { CURSOR_MODEL_CAPABILITIES } from "./capability-table.ts";
 import aliasData from "./cursor-variant-aliases.json" with { type: "json" };
 
-export type CursorCapabilityEvidence = "available-models" | "cli-live" | "suffix-only";
+export type CursorCapabilityEvidence = "available-models" | "cli-live" | "suffix-only" | "served-checkpoint";
 export type CursorLevelEncoding = "parameters" | "variant-id";
 export type CursorParameterId = "thinking" | "context" | "effort" | "reasoning" | "reasoning_effort" | "fast";
 

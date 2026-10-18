@@ -84,7 +84,9 @@ describe("cursor model capabilities", () => {
 
 	it("marks evidence provenance for every entry", () => {
 		for (const [id, cap] of Object.entries(CURSOR_MODEL_CAPABILITIES)) {
-			expect(["available-models", "cli-live", "suffix-only"], `${id} evidence`).toContain(cap.evidence);
+			expect(["available-models", "cli-live", "suffix-only", "served-checkpoint"], `${id} evidence`).toContain(
+				cap.evidence,
+			);
 		}
 	});
 });

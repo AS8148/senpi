@@ -67,7 +67,7 @@ function served(
 ): CursorModelCapability {
 	const context = order.includes("context") ? CONTEXT_TOKEN[window] : undefined;
 	return {
-		evidence: "available-models",
+		evidence: "served-checkpoint",
 		window,
 		...(maxWindow !== undefined ? { maxWindow } : {}),
 		parameterOrder: order,

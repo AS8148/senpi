@@ -45,3 +45,21 @@ export function cleanCursorGroupName(
 	name = sanitizeCursorDisplayName(name.replaceAll(NO_ZDR_MARK, "(NO ZDR)"));
 	return name.length === 0 ? baseId : name;
 }
+
+/** A window the server was measured serving; `window` is what senpi sends. */
+export interface CursorSizedCapability {
+	readonly evidence?: string;
+	readonly window: number;
+}
+
+/**
+ * A size token may stay in a display name only while the served window backs it. Cursor
+ * labels the 2026-10 generation "1M" for the extended-context tier; the checkpoint the
+ * catalog measures reports 300k for the default option senpi requests, so the token
+ * misleads (senpi#3620 review LOW-1). Entries whose window is only advertised
+ * (`available-models`) keep Cursor's label; their mismatch is senpi#3621's call.
+ */
+export function dropUnservedSizeToken(name: string, capability: CursorSizedCapability | undefined): string {
+	if (capability?.evidence !== "served-checkpoint" || capability.window >= 1_000_000) return name;
+	return sanitizeCursorDisplayName(name.replace(/\s+1M\b/g, ""));
+}
