@@ -6,7 +6,17 @@
 
 ### Added
 
-- Added DeepSeek V4.1 Flash 1017 (`deepseek/deepseek-v4.1-flash-1017`), DeepSeek's 2026-10-17 snapshot, to the bundled OpenRouter and Vercel AI Gateway catalogs with reasoning, image input, and its $0.15 / $0.60 per 1M rate card; it uses the DeepSeek V4.1 Flash prompt preset ([#3511](https://github.com/code-yeongyu/senpi/issues/3511)).
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.18] - 2026-10-18
+
+### Breaking Changes
+
+### Added
 
 - `auth/pool/select`: `applyAccountOrder` puts the accounts a user order names first, in that order, ahead of the ranked rest; `withoutOrderedAccount` drops a removed account from a stored order. `PooledCredential` gains `order` ([#3591](https://github.com/code-yeongyu/senpi/issues/3591)).
 - `apiKeyEnvProviders()` and `providerCredentialEnvNames()` list the providers and variable names the environment credential lookup reads (#3531).
