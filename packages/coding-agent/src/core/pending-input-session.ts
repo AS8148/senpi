@@ -81,7 +81,9 @@ export class SessionPendingInputs {
 		const journaled = options.sessionManager
 			.getEntries()
 			.some((entry) => entry.type === "custom" && entry.customType === PENDING_INPUT_TRANSITION);
-		if (journaled) void this.store();
+		// Opened eagerly, unawaited: every later use awaits this same opening and surfaces its failure, so the
+		// eager start only must not report it a second time as an unhandled rejection.
+		if (journaled) this.store().catch(() => undefined);
 	}
 
 	/**

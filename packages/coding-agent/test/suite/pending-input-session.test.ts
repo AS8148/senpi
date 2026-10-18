@@ -453,6 +453,36 @@ describe("pending-input recovery on reopen", () => {
 		return new SessionPendingInputs({ sessionManager, nextQueuedId: () => `q_${++queuedIds}` });
 	}
 
+	it("reports a failed eager open to the next caller, never as an unhandled rejection", async () => {
+		const records: PendingInputJournalRecord[] = [];
+		let failAppends = false;
+		const journal: PendingInputJournal = {
+			append: async (record) => {
+				if (failAppends) throw new Error("disk gone");
+				records.push(record);
+			},
+			read: async () => records,
+		};
+		const sessionManager = SessionManager.inMemory();
+		const before = new SessionPendingInputs({ sessionManager, nextQueuedId: () => "q_1", journal });
+		await before.admit({ clientMessageId: "c-1", text: "q", mode: "followUp" }, () => undefined);
+		sessionManager.appendCustomEntry(PENDING_INPUT_TRANSITION, records[0]);
+		failAppends = true;
+		const unhandled: unknown[] = [];
+		const onUnhandled = (reason: unknown) => unhandled.push(reason);
+		process.on("unhandledRejection", onUnhandled);
+		try {
+			const after = new SessionPendingInputs({ sessionManager, nextQueuedId: () => "q_2", journal });
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			await new Promise<void>((resolve) => setImmediate(resolve));
+
+			expect(unhandled).toEqual([]);
+			await expect(after.snapshot()).rejects.toThrow("disk gone");
+		} finally {
+			process.off("unhandledRejection", onUnhandled);
+		}
+	});
+
 	it("recovers a queued input and an attempt cut off before delivery, and retires a delivered one", async () => {
 		const dir = sessionDir();
 		const first = SessionManager.create(dir, dir);
