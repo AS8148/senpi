@@ -4,6 +4,7 @@ import { gunzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import type { Context, Model } from "../src/types.ts";
+import { withGzipRequestBodies } from "../src/utils/gzip-request-body.ts";
 import { getAnthropicCompat } from "../src/utils/prompt-cache-ttl.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
 
@@ -150,6 +151,18 @@ describe("Anthropic gzip request bodies", () => {
 		const { requests, stopReasons } = await run([LONG], { supportsGzipRequestBody: true }, reply);
 		expect(stopReasons).toEqual(["stop"]);
 		expect(requests.map((request) => request.encoding)).toEqual(["gzip", undefined]);
+	});
+
+	it("keeps a Request input's own headers when it gzips the body", async () => {
+		let seen: Headers | undefined;
+		const wrapped = withGzipRequestBodies(async (_input, init) => {
+			seen = new Headers(init?.headers);
+			return new Response("{}", { status: 200 });
+		});
+		const request = new Request("http://127.0.0.1/v1/messages", { method: "POST", headers: { "x-api-key": "k" } });
+		await wrapped(request, { method: "POST", body: LONG });
+		expect(seen?.get("x-api-key")).toBe("k");
+		expect(seen?.get("content-encoding")).toBe("gzip");
 	});
 
 	it("does not resend an ordinary API error", async () => {

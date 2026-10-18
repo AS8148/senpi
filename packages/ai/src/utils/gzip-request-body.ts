@@ -64,6 +64,8 @@ function isFromAnthropic(response: Response): boolean {
  * Whether a non-OK answer to a gzip request means the body encoding itself was refused: a 415, a 400/403
  * from a hop that is not Anthropic (a proxy that cannot decode it), or Anthropic reporting that it could
  * not parse the body as JSON. Other API errors (bad request, rate limits, auth) are returned as they are.
+ * A misfire (an unrelated proxy 400/403) costs one uncompressed resend of a request that was never processed
+ * and turns gzip off for that origin; it cannot double-bill.
  */
 async function isGzipRejection(response: Response): Promise<boolean> {
 	if (response.status === 415) return true;
@@ -95,7 +97,7 @@ export function withGzipRequestBodies(baseFetch: Fetch = globalThis.fetch): Fetc
 		) {
 			return baseFetch(input, init);
 		}
-		const headers = new Headers(init?.headers);
+		const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
 		headers.set("content-encoding", "gzip");
 		headers.delete("content-length");
 		const compressed = zlib.gzipSync(body + lengthPadding());
