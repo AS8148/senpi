@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- RPC `get_pending_inputs` reads the inputs in durable custody with an explicit outcome per known id, and `pending_input_update` publishes each change with its journal cursor; the module is also exported as `@code-yeongyu/senpi/pending-input` ([#3549](https://github.com/code-yeongyu/senpi/issues/3549)).
+- Queued input with a client id is kept in durable custody: it is journaled in the session file before it is queued, delivered only after its consumption is recorded, and edited or removed in its record and the queue together; a repeated identical submit queues it once and a reused id with another payload is refused ([#3549](https://github.com/code-yeongyu/senpi/issues/3549)).
+
 ### Breaking Changes
 
 ### Added
@@ -11,6 +14,18 @@
 ### Fixed
 
 - `/share` no longer uploads the raw session. By default it shares only your messages, the replies and the tool calls; tool outputs (file contents, command output, extension messages) are replaced by `[output omitted]` unless you choose "Include tool outputs" in the preview. Everything shared is first redacted: keys, tokens, private keys, auth headers, cookies, emails, IP addresses, your home path, account name and host name (images are left out). The preview shows what will be uploaded and who can read it, and nothing uploads until you choose Upload; "Review the exact file first" writes the exact bytes to a private temporary file that is deleted afterwards, and Cancel uploads nothing. The export no longer goes through a shared temporary file, and there is no default third-party viewer: the gist link is printed unless `PI_SHARE_VIEWER_URL` is set. `PI_DISABLE_SHARE=1` or the `enableSessionShare: false` setting turns `/share` off ([#3524](https://github.com/code-yeongyu/senpi/issues/3524)).
+
+### Removed
+
+## [2026.10.18-1] - 2026-10-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
 
 - A compiled build finds a Claude Code platform binary shipped in `node_modules` beside its executable, as the bundled copy; a newer `claude` on PATH still wins ([#3639](https://github.com/code-yeongyu/senpi/issues/3639))
 

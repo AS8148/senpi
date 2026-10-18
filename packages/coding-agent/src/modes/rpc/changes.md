@@ -1,3 +1,22 @@
+## 2026-10-18 - get_pending_inputs and pending_input_update (senpi#3549, P2b)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `get_pending_inputs { knownClientMessageIds? }` command and its response (`PendingInputSnapshot`: the inputs still in durable custody and an explicit outcome per known id, consistent through `throughCursor`), plus the `RpcPendingInputUpdateEvent` type of the `pending_input_update` session event.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `RpcClient.getPendingInputs(knownClientMessageIds?)` and the `RpcPendingInputsAnswer` type.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`: a client that reconnects must read what the engine holds for each input it sent, rather than infer an outcome from the queue's absence (desktop #2838). The `pending_input_lifecycle_v1` capability is not advertised until the TUI shares the module (P2c).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the RPC command surface and its client are owned by the RPC mode, not the extension API.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/rpc-types.ts`, next to `get_effect_status` in the command and response unions and before `RpcSkillInvocationEvent`; `packages/coding-agent/src/modes/rpc/rpc-client.ts`, the answer types and the method after `getEffectStatus`.
+
 ## 2026-10-17 - A refused connect is proof of absence only where a full backlog cannot refuse (senpi#3541 second review)
 
 ### What changed
