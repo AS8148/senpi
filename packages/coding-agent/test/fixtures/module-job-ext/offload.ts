@@ -164,3 +164,13 @@ export async function writeIfAllowed(args: { readonly path: string }, host: Lock
 	if (!decision.allow) throw new Error(decision.reason);
 	return "allowed";
 }
+
+/** `n` concurrent large-argument calls at once (more than run at a time): settles only if every call does. */
+export async function sinkMany(
+	args: { readonly bytes: number; readonly n: number },
+	host: FixtureHost,
+): Promise<number> {
+	const payload = "m".repeat(args.bytes);
+	const replies = await Promise.all(Array.from({ length: args.n }, () => host.call("sink", { payload })));
+	return replies.length;
+}

@@ -1,6 +1,7 @@
 // senpi#3566 todo 7: the reverse bridge against a real tool child - a module job calls the server through `host.call`,
 // and both sides hold the shared capacity (8 running, 256 queued, the next one refused with a correlated error).
 import { createHash } from "node:crypto";
+import { watch } from "node:fs";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -55,6 +56,36 @@ function batchingHandler(total: number) {
 			if (held.length === 8 || received === total) for (const release of held.splice(0)) release();
 		});
 	return { handler, stats: () => ({ received, maxRunning }) };
+}
+
+/** Resolves once no payload file is left under `root` (every generation directory empty), watching it (bounded). */
+async function refsEmpty(root: string, timeoutMs: number): Promise<void> {
+	const files = async () => {
+		const generations = await readdir(root).catch(() => []);
+		const counts = await Promise.all(
+			generations.map((generation) => readdir(join(root, generation)).catch(() => [])),
+		);
+		return counts.flat();
+	};
+	const deadline = Date.now() + timeoutMs;
+	for (;;) {
+		const left = await files();
+		if (left.length === 0) return;
+		if (Date.now() > deadline) throw new Error(`refs left after cancel: ${left.join(", ")}`);
+		await new Promise<void>((resolveChange) => {
+			const watcher = watch(root, { recursive: true }, () => {
+				watcher.close();
+				resolveChange();
+			});
+			setTimeout(
+				() => {
+					watcher.close();
+					resolveChange();
+				},
+				Math.max(0, deadline - Date.now()),
+			);
+		});
+	}
 }
 
 describe("reverse bridge", () => {
@@ -124,7 +155,48 @@ describe("reverse bridge", () => {
 			},
 		);
 		const bytes = 20 * 1024 * 1024;
-		expect(await instance.run("module", { modulePath, export: "blobLarge", args: { bytes } })).toEqual({ length: bytes });
+		expect(await instance.run("module", { modulePath, export: "blobLarge", args: { bytes } })).toEqual({
+			length: bytes,
+		});
 		expect(await readdir(join(dir, "refs", "1")).catch(() => [])).toEqual([]);
 	}, 120_000);
+
+	it("rejects a cancelled job's outstanding calls and leaves no ref behind, sent or queued", async () => {
+		let dir = "";
+		const aborted: string[] = [];
+		let running = 0;
+		let allRunning!: () => void;
+		const eightRunning = new Promise<void>((resolveRunning) => {
+			allRunning = resolveRunning;
+		});
+		const instance = await startChild(
+			(request) =>
+				new Promise((_resolve, reject) => {
+					running += 1;
+					if (running === 8) allRunning();
+					request.signal.addEventListener(
+						"abort",
+						() => {
+							aborted.push(request.callId);
+							reject(new Error("cancelled"));
+						},
+						{ once: true },
+					);
+				}),
+			(childDir) => {
+				dir = childDir;
+			},
+		);
+		const cancel = new AbortController();
+		const run = instance.run(
+			"module",
+			{ modulePath, export: "sinkMany", args: { bytes: 2 * 1024 * 1024, n: 12 } },
+			cancel.signal,
+		);
+		await eightRunning;
+		cancel.abort();
+		await expect(run).rejects.toMatchObject({ code: "tool_child_cancelled" });
+		expect(aborted).toHaveLength(8);
+		await refsEmpty(join(dir, "refs"), 10_000);
+	}, 60_000);
 });

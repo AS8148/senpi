@@ -1,8 +1,8 @@
 // senpi#3566 todo 7: a child-run tool body calls a server tool through the reverse bridge in a real session turn. The
 // server tool runs on the server, as a nested call of the child tool's call, with the session's hooks run exactly once.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, watch, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { DefaultResourceLoader } from "../../src/core/resource-loader.ts";
@@ -52,6 +52,24 @@ export default function (pi) {
 		execute: async () => ({ content: [{ type: "text", text: "in-process" }], details: {} }),
 	});
 	pi.registerTool({
+		name: "child_wait",
+		label: "child wait",
+		description: "waits in the tool child until its job is cancelled",
+		placement: "child",
+		childModule: { path: "./body.ts", export: "childWait" },
+		parameters: Type.Object({ dir: Type.String() }),
+		execute: async () => ({ content: [{ type: "text", text: "in-process" }], details: {} }),
+	});
+	pi.registerTool({
+		name: "calls_slow",
+		label: "calls slow",
+		description: "calls child_wait from the tool child",
+		placement: "child",
+		childModule: { path: "./body.ts", export: "callsSlow" },
+		parameters: Type.Object({ dir: Type.String() }),
+		execute: async () => ({ content: [{ type: "text", text: "in-process" }], details: {} }),
+	});
+	pi.registerTool({
 		name: "asks_completion",
 		label: "asks completion",
 		description: "asks the server for a completion from the tool child",
@@ -63,7 +81,25 @@ export default function (pi) {
 }
 `;
 
-const BODY = `export async function complete(input, host) {
+const BODY = `import { writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+
+export function childWait(input, host) {
+	writeFileSync(join(input.params.dir, "nested-started"), "");
+	return new Promise((resolveWait) =>
+		host.signal.addEventListener("abort", () => {
+			writeFileSync(join(input.params.dir, "nested-aborted"), "");
+			resolveWait({ content: [{ type: "text", text: "aborted" }], details: {} });
+		}, { once: true }),
+	);
+}
+
+export async function callsSlow(input, host) {
+	const reply = await host.call("child_wait", { dir: input.params.dir });
+	return { content: [{ type: "text", text: "slow done" }], details: { reply } };
+}
+
+export async function complete(input, host) {
 	const reply = await host.complete({ prompt: input.params.word });
 	return { content: [{ type: "text", text: JSON.stringify(reply) }], details: { childPid: process.pid, reply } };
 }
@@ -109,6 +145,24 @@ async function childSession() {
 			rmSync(dir, { recursive: true, force: true });
 		},
 	};
+}
+
+/** Resolves once `path` exists, watching its directory (bounded). */
+function appears(path: string, timeoutMs: number): Promise<void> {
+	return new Promise((resolveFile, reject) => {
+		const timer = setTimeout(() => {
+			watcher.close();
+			reject(new Error(`${path} did not appear within ${timeoutMs} ms`));
+		}, timeoutMs);
+		const check = () => {
+			if (!existsSync(path)) return;
+			clearTimeout(timer);
+			watcher.close();
+			resolveFile();
+		};
+		const watcher = watch(dirname(path), check);
+		check();
+	});
 }
 
 describe.skipIf(process.platform === "win32")("reverse bridge in a session", () => {
@@ -179,6 +233,25 @@ describe.skipIf(process.platform === "win32")("reverse bridge in a session", () 
 			expect(details.reply.result.details.pid).toBe(details.childPid);
 			expect(Reflect.get(globalThis, HOOK_COUNTS)).toEqual({ calls_child: 1, child_echo: 1 });
 		} finally {
+			cleanup();
+		}
+	}, 90_000);
+
+	it("a parent cancel reaches the nested job it started on the child", async () => {
+		const { harness, cleanup } = await childSession();
+		const markers = mkdtempSync(join(tmpdir(), "rb-nested-"));
+		try {
+			harness.setResponses([
+				fauxAssistantMessage(fauxToolCall("calls_slow", { dir: markers }), { stopReason: "toolUse" }),
+				fauxAssistantMessage("done"),
+			]);
+			const prompted = harness.session.prompt("go");
+			await appears(join(markers, "nested-started"), 30_000);
+			await harness.session.abort();
+			await prompted.catch(() => undefined);
+			await appears(join(markers, "nested-aborted"), 10_000);
+		} finally {
+			rmSync(markers, { recursive: true, force: true });
 			cleanup();
 		}
 	}, 90_000);
