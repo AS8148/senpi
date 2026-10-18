@@ -18,6 +18,8 @@
 
 ### Changed
 
+- The built-in default model for `amazon-bedrock` is now `us.anthropic.claude-opus-5-5` (was `us.anthropic.claude-opus-4-6-v1`). It applies only when no model is saved in settings and none is passed on the command line. Your AWS account needs Bedrock model access to Claude Opus 5.5 in its region; without it, save the old default with `/model` ([#3180](https://github.com/code-yeongyu/senpi/pull/3180)).
+
 - Goals no longer stop after a fixed 150 automatic continuations. They stop only after 60 automatic continuations in a row without progress (no new tool effect, todo change, or new message from a person; re-running the same command, failing commands, and output that differs only in timings or ids are not progress), with a notice that says why and that any message resumes the goal ([oh-my-openagent#10280](https://github.com/code-yeongyu/oh-my-openagent/issues/10280)).
 
 ### Fixed
@@ -222,8 +224,6 @@
 - RPC clients now see scheduled goal continuations, their due time, and their resumption through the `goal_continuation_scheduled`, `goal_continuation_timer_state`, and `goal_continuation_resumed` extension events. The `goal_continuation_fire_now` extension request runs an armed continuation immediately through its normal eligibility checks; a timer held while the user types stays held ([#3208](https://github.com/code-yeongyu/senpi/pull/3208)).
 
 ### Changed
-
-- The built-in default model for `amazon-bedrock` is now `us.anthropic.claude-opus-5-5` (was `us.anthropic.claude-opus-4-6-v1`). It applies only when no model is saved in settings and none is passed on the command line ([#3180](https://github.com/code-yeongyu/senpi/pull/3180)).
 
 - The bundled Claude Agent SDK is updated to 0.3.296 (from 0.3.292), so the Anthropic subscription lane runs Claude Code 2.1.296 and the models it knows ([#3258](https://github.com/code-yeongyu/senpi/pull/3258)).
 

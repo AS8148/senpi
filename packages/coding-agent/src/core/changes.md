@@ -1,4 +1,4 @@
-## 2026-10-12 - Amazon Bedrock's provider default is Claude Opus 5.5
+## 2026-10-18 - Amazon Bedrock's provider default is Claude Opus 5.5
 
 ### What changed
 
