@@ -70,6 +70,9 @@ export function containedModulePath(modulePath: string, roots: readonly string[]
 	);
 }
 
+/** How long a cancelled module body may take to settle on its own before its worker is ended. */
+export const MODULE_CANCEL_GRACE_MS = 2_000;
+
 export function createModuleJobHandler(env: NodeJS.ProcessEnv = { ...process.env }) {
 	return async (value: unknown, context: ToolChildJobContext): Promise<unknown> => {
 		const job = parseModuleJobArgs(value);
@@ -82,10 +85,18 @@ export function createModuleJobHandler(env: NodeJS.ProcessEnv = { ...process.env
 				workerData: { modulePath, exportName: job.export, args: job.args },
 			},
 		);
-		const abort = () => void worker.terminate();
+		// A cancel reaches the body as an aborted signal; a body that has not settled within the grace is ended with its
+		// worker. Either way the job fails tool_child_cancelled and the owned groups it still runs are ended.
+		let cancelled = false;
+		let graceTimer: ReturnType<typeof setTimeout> | undefined;
+		const abort = () => {
+			cancelled = true;
+			worker.postMessage({ kind: "cancel" });
+			graceTimer = setTimeout(() => void worker.terminate(), MODULE_CANCEL_GRACE_MS);
+		};
 		context.signal.addEventListener("abort", abort, { once: true });
 		try {
-			return await new Promise((resolve, reject) => {
+			const outcome = new Promise((resolve, reject) => {
 				worker.on("message", (message: unknown) => {
 					if (typeof message !== "object" || message === null) return;
 					const kind = Reflect.get(message, "kind");
@@ -107,9 +118,17 @@ export function createModuleJobHandler(env: NodeJS.ProcessEnv = { ...process.env
 					reject(new ToolChildJobError("module_job_failed", `worker exited (${code})`)),
 				);
 			});
+			try {
+				return await outcome;
+			} catch (error) {
+				if (!cancelled) throw error;
+				throw new ToolChildJobError("tool_child_cancelled", "the job was cancelled");
+			}
 		} finally {
 			context.signal.removeEventListener("abort", abort);
+			clearTimeout(graceTimer);
 			void worker.terminate();
+			if (cancelled) context.gate.endJobGroups(context.jobId);
 		}
 	};
 }

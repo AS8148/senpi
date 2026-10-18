@@ -24,6 +24,13 @@ async function loadNamespace(path: string): Promise<Record<string, unknown>> {
 	return importer.importNamespace(path);
 }
 
+/** The second argument of a module export: `signal` aborts when the job is cancelled. */
+const cancellation = new AbortController();
+parentPort?.on("message", (message: unknown) => {
+	if (typeof message === "object" && message !== null && Reflect.get(message, "kind") === "cancel")
+		cancellation.abort();
+});
+
 try {
 	const namespace = await loadNamespace(data.modulePath);
 	const target = namespace[data.exportName];
@@ -34,7 +41,10 @@ try {
 			message: `${data.modulePath} has no function export "${data.exportName}"`,
 		});
 	} else {
-		parentPort?.postMessage({ kind: "module_result", value: await target(data.args) });
+		parentPort?.postMessage({
+			kind: "module_result",
+			value: await target(data.args, { signal: cancellation.signal }),
+		});
 	}
 } catch (error) {
 	parentPort?.postMessage({

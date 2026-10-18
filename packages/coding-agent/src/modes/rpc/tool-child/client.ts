@@ -194,9 +194,22 @@ export class ToolChildClient {
 		if (this.#state !== "live" || live === undefined)
 			return Promise.reject(new ToolChildError("tool_child_unavailable", this.#state));
 		const jobId = `j${++this.#nextJob}`;
+		if (signal?.aborted === true)
+			return Promise.reject(new ToolChildError("tool_child_cancelled", "cancelled before it started"));
 		return new Promise((resolve, reject) => {
-			live.pending.set(jobId, { resolve, reject });
-			signal?.addEventListener("abort", () => live.channel.send({ type: "cancel", jobId }), { once: true });
+			const cancel = () => live.channel.send({ type: "cancel", jobId });
+			const unlisten = () => signal?.removeEventListener("abort", cancel);
+			live.pending.set(jobId, {
+				resolve: (value) => {
+					unlisten();
+					resolve(value);
+				},
+				reject: (error) => {
+					unlisten();
+					reject(error);
+				},
+			});
+			signal?.addEventListener("abort", cancel, { once: true });
 			live.channel.send({ type: "job", jobId, kind, args });
 		});
 	}
