@@ -78,8 +78,8 @@ export function installGatedBun(bun: BunLaunchGlobals, client: WorkerLaunchClien
 			void child.exited.then((exitCode) => client.done(launchId, { exitCode }));
 			return child;
 		}
-		const userStdin = opts.stdin;
-		const child = real.spawn(["/bin/sh", "-c", GO_LINE_SHIM, ...cmd], { ...opts, detached: true, stdin: "pipe" });
+		const { stdin: userStdin, options: shimOptions } = withPipedStdin(opts);
+		const child = real.spawn(["/bin/sh", "-c", GO_LINE_SHIM, ...cmd], { ...shimOptions, detached: true });
 		const launchId = client.acquire({
 			origin: "kernel",
 			api: "bun.spawn",
@@ -130,6 +130,19 @@ export function installGatedBun(bun: BunLaunchGlobals, client: WorkerLaunchClien
 		return shell;
 	};
 	return bypass;
+}
+
+/**
+ * The go-line shim reads its `go` from stdin, so stdin must be a pipe. In Bun a `stdio` array outranks a separate
+ * `stdin` option: its first entry is replaced too. Returns the caller's own stdin choice, honoured after the go line.
+ */
+function withPipedStdin(opts: BunSpawnOptions): { readonly stdin: unknown; readonly options: BunSpawnOptions } {
+	const stdio: unknown = opts.stdio;
+	if (Array.isArray(stdio)) {
+		const [first, ...rest] = stdio;
+		return { stdin: first, options: { ...opts, stdin: "pipe", stdio: ["pipe", ...rest] } };
+	}
+	return { stdin: opts.stdin, options: { ...opts, stdin: "pipe" } };
 }
 
 function exitCodeOf(value: unknown): number | undefined {

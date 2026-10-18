@@ -16,17 +16,25 @@ describe.skipIf(process.platform === "win32" || !bunAvailable)("gated Bun global
 			violations: unknown[];
 			records: Array<Record<string, unknown>>;
 		};
-		expect(result).toMatchObject({ ownedExit: 0, detachedExit: 0, syncExit: 4, shell: 0 });
+		expect(result).toMatchObject({
+			ownedExit: 0,
+			detachedExit: 0,
+			syncExit: 4,
+			shell: 0,
+			stdioArrayExit: 0,
+			stdioArrayRan: true,
+		});
 		expect(result.ownedPgid).toBe(result.ownedPid);
 		const launches = records.filter((record) => record.type === "launch");
 		expect(launches.map((launch) => [launch.api, launch.containment, launch.lifetime])).toEqual([
 			["bun.spawn", "own-group", "owned"],
 			["bun.spawn", "own-group", "detached"],
 			["bun.spawnSync", "inherited", "owned"],
+			["bun.spawn", "own-group", "owned"],
 			["bun.shell", "inherited", "owned"],
 		]);
 		const proofs = records.filter((record) => record.type === "launch_proof");
-		expect(proofs).toHaveLength(4);
+		expect(proofs).toHaveLength(5);
 		for (const proof of proofs) expect(Number(proof.ackTick)).toBeLessThan(Number(proof.invokeTick));
 		expect(violations).toEqual([]);
 	}, 90_000);
