@@ -9,8 +9,10 @@ import type { ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { openChannelListener, type ToolChildChannel } from "./channel.ts";
 import { createGenerationBarrier, type GenerationBarrier } from "./client-barrier.ts";
+import { generationLedgerPath } from "./descendants.ts";
 import { TOOL_CHILD_PROTOCOL_VERSION } from "./entry.ts";
 import { spawnToolChild, type ToolChildCommand, toolChildCommand } from "./launch.ts";
+import { sweepStaleGenerations } from "./orphan-sweep.ts";
 import type { ToolChildMessage } from "./protocol.ts";
 
 export type ToolChildState = "none" | "spawning" | "live" | "retiring" | "dead";
@@ -112,6 +114,9 @@ export class ToolChildClient {
 	}
 
 	async #bootstrap(generation: number): Promise<void> {
+		// A crashed predecessor (host or child) may have left owned groups and a ledger this generation would reuse.
+		await this.#lastEnded;
+		await sweepStaleGenerations(this.#options.dir);
 		const listener = await openChannelListener({ dir: this.#options.dir, generation });
 		const child = spawnToolChild({
 			generation,
@@ -119,6 +124,7 @@ export class ToolChildClient {
 			env: typeof this.#options.env === "function" ? this.#options.env() : (this.#options.env ?? process.env),
 			command: this.#options.command ?? (await toolChildCommand()),
 			cwd: this.#options.cwd,
+			ledgerPath: generationLedgerPath(this.#options.dir, generation),
 		});
 		let spawnError: Error | undefined;
 		child.once("error", (error) => {

@@ -1,8 +1,9 @@
 // A real tool child for the lifecycle tests (senpi#3566 todo 4): the production entry with test-only job kinds.
+import { spawn } from "node:child_process";
 import { connectChannel } from "../../src/modes/rpc/tool-child/channel.ts";
 import { runToolChild, ToolChildJobError } from "../../src/modes/rpc/tool-child/entry.ts";
 import { startGatedWorker } from "../../src/modes/rpc/tool-child/gated-worker.ts";
-import { launchOwnGroup } from "../../src/modes/rpc/tool-child/launch-barrier.ts";
+import { gateInherited, launchOwnGroup } from "../../src/modes/rpc/tool-child/launch-barrier.ts";
 
 const mode = process.env.TOOL_CHILD_FIXTURE_MODE ?? "serve";
 
@@ -40,6 +41,13 @@ if (mode === "hang") {
 					});
 					worker.once("error", reject);
 				}),
+			inheritedSleep: async (_args, { jobId, gate }) => {
+				const { value } = await gateInherited(gate, { jobId, origin: "tool", api: "cp.spawn" }, () =>
+					spawn("/bin/sleep", ["300"], { stdio: "ignore" }),
+				);
+				value.unref();
+				return { pid: value.pid };
+			},
 			spawnSleep: async (_args, { jobId, gate }) => {
 				const { child } = await launchOwnGroup({
 					gate,

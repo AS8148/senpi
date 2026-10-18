@@ -5,8 +5,13 @@
  * command can run. That is what lets the server clean up descendants even when the child that started them is gone.
  */
 import { appendFile, mkdir, open, readFile, rm } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import type { LaunchApi, LaunchContainment, LaunchLifetime, LaunchOrigin } from "./protocol.ts";
+
+/** Where a generation's ledger lives under a session's tool-child directory; the server writes it, the child reads it. */
+export function generationLedgerPath(dir: string, generation: number): string {
+	return join(dir, `g${generation}`, "descendants.ledger");
+}
 
 export interface DescendantEntry {
 	readonly launchId: string;

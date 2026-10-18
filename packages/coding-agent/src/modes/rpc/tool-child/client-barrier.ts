@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import type { ToolChildChannel } from "./channel.ts";
-import { DescendantsLedger, LaunchLog } from "./descendants.ts";
+import { DescendantsLedger, generationLedgerPath, LaunchLog } from "./descendants.ts";
 import { defaultGroupProbes, type LedgeredGroup, type SweepOutcome, sweepGroups } from "./group-ownership.ts";
 import { type BarrierViolation, LaunchEnforcer } from "./launch-enforcer.ts";
 import type { ToolChildMessage } from "./protocol.ts";
@@ -28,7 +28,7 @@ export function createGenerationBarrier(options: {
 		(controls.enabled("HOLD_LAUNCH_ACK")
 			? (launchId: string) => controls.released(`release-${launchId}`)
 			: undefined);
-	const ledger = new DescendantsLedger(join(options.dir, `g${options.generation}`, "descendants.ledger"));
+	const ledger = new DescendantsLedger(generationLedgerPath(options.dir, options.generation));
 	const log = new LaunchLog(join(options.dir, "launches.jsonl"));
 	const enforcer = new LaunchEnforcer({
 		generation: options.generation,
