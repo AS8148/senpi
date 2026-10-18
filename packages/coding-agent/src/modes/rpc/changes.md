@@ -16,7 +16,6 @@ The channel between the RPC host and its own helper process is host internals; e
 
 None: every file is new and fork-only.
 
-||||||| 4836fc9fb
 ## 2026-10-18 - get_pending_inputs and pending_input_update (senpi#3549, P2b)
 
 ### What changed
