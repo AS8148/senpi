@@ -48,6 +48,8 @@ export interface ManifestMonitor {
 	readonly path?: string;
 	readonly event?: "create" | "modify";
 	readonly filter?: string;
+	/** Command watch whose output lines are a person's words; absent on older entries. */
+	readonly humanInput?: boolean;
 	readonly cwd?: string;
 	readonly approvedParent?: string;
 	/** Rpc watches: the target as written, the record kinds reported and dropped. */
@@ -89,6 +91,7 @@ export interface CommandMonitorSpec {
 	readonly description: string;
 	readonly command: string;
 	readonly filter?: string;
+	readonly humanInput?: boolean;
 	readonly cwd?: string;
 	readonly persistent: boolean;
 }

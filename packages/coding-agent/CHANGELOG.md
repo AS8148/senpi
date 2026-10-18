@@ -6,6 +6,8 @@
 
 ### Added
 
+- Command monitors accept `human_input: true` for watches that deliver messages a person wrote (a chat or inbox bridge). Those deliveries count as new user input for a running goal ([oh-my-openagent#10280](https://github.com/code-yeongyu/oh-my-openagent/issues/10280)).
+
 - Provider accounts can be ordered: RPC `account_order` (`names` or `null` to clear) stores the order beside the pin, and every lane that picks an account (the generic credential pool, the Claude subscription lane and the Cursor CLI lane) then tries the pin, then the first unblocked account in that order, then the rest in hash order, failing over down the list. `get_provider_accounts` lists accounts in effective order with `ordered`. A Claude session keeps the account its conversation lives on while it can serve. The TUI footer names the account the order serves. No order keeps today's behavior ([#3591](https://github.com/code-yeongyu/senpi/issues/3591)).
 - The pending-input lifecycle module, its store and session journal, and cross-process writer claims; not wired in yet ([#3549](https://github.com/code-yeongyu/senpi/issues/3549)).
 - RPC `get_pending_inputs` reads the inputs in durable custody with an explicit outcome per known id, and `pending_input_update` publishes each change with its journal cursor; the module is also exported as `@code-yeongyu/senpi/pending-input` ([#3549](https://github.com/code-yeongyu/senpi/issues/3549)).
@@ -17,6 +19,8 @@
 - `SessionManager.getFullBranch()` (also on `ctx.sessionManager`) returns the active path over the whole session history, including entries before the latest compaction ([#3519](https://github.com/code-yeongyu/senpi/issues/3519)).
 
 ### Changed
+
+- Goals no longer stop after a fixed 150 automatic continuations. They stop only after 60 automatic continuations in a row without progress (no new tool effect, todo change, or new message from a person; re-running the same command, failing commands, and output that differs only in timings or ids are not progress), with a notice that says why and that any message resumes the goal ([oh-my-openagent#10280](https://github.com/code-yeongyu/oh-my-openagent/issues/10280)).
 
 ### Fixed
 

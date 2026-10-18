@@ -269,6 +269,7 @@ export class TerminalManifestWriter {
 			path: spec.kind === "file" ? spec.path : undefined,
 			event: spec.kind === "file" ? spec.event : undefined,
 			filter: spec.kind === "file" ? undefined : spec.filter,
+			humanInput: spec.kind === "command" && spec.humanInput === true ? true : undefined,
 			cwd: spec.kind === "rpc" ? undefined : spec.cwd,
 			...(spec.kind === "rpc"
 				? {
