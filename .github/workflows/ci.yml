@@ -345,6 +345,11 @@ jobs:
       - name: Build workspace package entries
         run: npm run build
 
+      - name: Snapshot OS temp before tests
+        id: test_temp_snapshot
+        shell: bash
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
+
       - name: Run tool child Windows tests under Bun
         shell: bash
         run: bun --bun ../../node_modules/vitest/vitest.mjs run src/modes/rpc/tool-child/windows-job.win32.test.ts src/modes/rpc/tool-child/launch-barrier.win32.test.ts src/modes/rpc/tool-child/child-containment.test.ts src/modes/rpc/tool-child/windows-breakaway.test.ts src/modes/rpc/tool-child/windows-command-line.test.ts --reporter=verbose --reporter=json --outputFile=vitest-tool-child-win32.json
@@ -365,6 +370,11 @@ jobs:
             ' "$name"
           done
         working-directory: packages/coding-agent
+
+      - name: Check OS temp after tests
+        if: always() && steps.test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: node scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
 
       - name: Summary
         if: always()

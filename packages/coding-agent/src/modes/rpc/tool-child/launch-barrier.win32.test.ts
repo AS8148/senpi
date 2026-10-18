@@ -117,7 +117,10 @@ describe.skipIf(reason !== undefined)(`tool child job on kernel32${reason ? ` (s
 				`launches.jsonl: ${JSON.stringify(records)}`,
 			).toMatchObject({ member: true, evidence: "creation" });
 			expect(records.some((record) => record.type === "heartbeat")).toBe(false);
-			expect(processAlive(commandPid)).toBe(true);
+			expect(
+				processAlive(commandPid),
+				`command ${commandPid} gone before the kill; marker=${existsSync(marker)}; launches.jsonl: ${JSON.stringify(records)}`,
+			).toBe(true);
 			process.kill(victim.pid ?? -1);
 			expect(await goneWithin(commandPid, 3_000)).toBe(true);
 			const slept = (await bystander.run("module", {
