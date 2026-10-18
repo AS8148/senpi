@@ -1,45 +1,3 @@
-## 2026-10-18 - Disposing or replacing a session waits for its tool child to stop (senpi#3566)
-
-### What changed
-
-- `packages/coding-agent/src/core/agent-session-runtime.ts`: `dispose()` and `teardownCurrent()` (new, switch, fork, resume) await `session.whenToolChildClosed()` after `session.dispose()` - `dispose()` before releasing the session hold, `teardownCurrent()` before the replacement is built - so a session closed under `--tool-runtime child` has stopped its tool child and swept every command it launched by the time disposal settles. On the default in-process path the promise is already resolved.
-- `packages/coding-agent/src/core/agent-session.ts`: `dispose()` keeps the tool child's close promise instead of discarding it, and `whenToolChildClosed()` returns it.
-
-### Why
-
-A review of the tool child (senpi#3576) reproduced commands that outlived their session: the close was fired and forgotten, so a host exiting right after disposal raced the sweep.
-
-### Why an extension could not handle it
-
-Disposal order lives in the session runtime; extensions see only `session_shutdown`, emitted before disposal starts.
-
-### Expected merge conflict zones
-
-- `packages/coding-agent/src/core/agent-session-runtime.ts`: the body of `dispose()` and the dispose step of `teardownCurrent()`.
-- `packages/coding-agent/src/core/agent-session.ts`: the tool-child close in `dispose()` and the accessor beside `toolChildRow()`.
-
-## 2026-10-18 - Tool calls and user bash run through a per-session ToolDispatcher (senpi#3566)
-
-### What changed
-
-- `packages/coding-agent/src/core/tool-dispatch/tool-dispatcher.ts` (new): `ToolDispatcher` with `run()` (executes one wrapped tool call), `bashOperations({ shellPath })` (resolves the operations `executeBash` runs) and `onDispatched({ toolCallId, placement, pid, generation })`. `InProcessToolDispatcher` calls `definition.execute` exactly as the wrappers did; `ChildToolDispatcher` (stub until the tool child runtime lands) keeps server-placed work in-process, refuses child-placed calls with an `isError` result naming `tool_runtime_unavailable`, and backs `bashOperations()` with operations whose `exec` fails closed with the same code - no in-server fallback under `child`. `resolveToolPlacement` dispatches to the child only when `placement === "child"` under the child runtime and the definition is not server-pinned; a pinned child-placed tool logs one `tool_placement_pinned` notice per tool name.
-- `packages/coding-agent/src/core/agent-session.ts`: `AgentSessionConfig.toolRuntime` (absent = in-process) constructs the dispatcher in the constructor (`notify` wired to the session log); `toolDispatcher` getter; `_refreshToolRegistry` passes the dispatcher to both `wrapRegisteredTools` calls; `executeBash` resolves `options?.operations ?? this._toolDispatcher.bashOperations({ shellPath })`, so a caller-supplied override stays with its caller. `prepareToolCall`/after-hook wiring is untouched: hooks still fire exactly once per call around the dispatcher.
-- `packages/coding-agent/src/core/sdk.ts`: `CreateAgentSessionOptions.toolRuntime` forwarded into the `AgentSession` config.
-- `packages/coding-agent/src/core/agent-session-services.ts`: `CreateAgentSessionFromServicesOptions.toolRuntime` forwarded to `createAgentSession`.
-
-### Why
-
-Three execution paths (model-issued, nested `executeTool`, eval kernel) and the user-bash path executed inline with no seam to move heavy tool work onto a per-session child (senpi#3566); the dispatcher is that seam, behavior-identical while the runtime is in-process.
-
-### Why an extension could not handle it
-
-The tool wrappers, the session's tool registry, and `executeBash` are session internals assembled in core before extensions bind.
-
-### Expected merge conflict zones
-
-- `packages/coding-agent/src/core/agent-session.ts`: `AgentSessionConfig`, the constructor's logger/dispatcher block, `_refreshToolRegistry`'s two `wrapRegisteredTools` calls, and `executeBash`'s operations argument.
-- `packages/coding-agent/src/core/tool-dispatch/tool-dispatcher.ts` is fork-only.
-
 ## 2026-10-18 - A session moved to another device refuses writes on the device it left (senpi#3630)
 
 ### What changed
@@ -4953,6 +4911,7 @@ runtime it registered into is private or shared.
 - MEDIUM: `packages/coding-agent/src/core/remote-catalog-provider.ts` refresh publication and provider wrapper.
 - LOW: new `packages/coding-agent/src/core/remote-catalog-merge.ts` and the colocated remote catalog regression tests.
 
+## 2026-09-11 - Keep static model capabilities authoritative over remote catalog refreshes (senpi#1527)
 
 ### What changed
 
@@ -5512,6 +5471,7 @@ runtime it registered into is private or shared.
 
 - Agent-session thinking-level transitions, session-manager context assembly, and compaction lifecycle.
 
+## 2026-09-05 - Persist Astra reasoning configuration updates
 
 ### What changed
 
