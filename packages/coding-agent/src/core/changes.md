@@ -16,7 +16,6 @@ The abort path and the host's wait on extension handlers are session internals; 
 
 - LOW: `agent-session.ts` `abortTurnForDeadline` and the line after `_abortActiveAgentAndRetry("user")` in `_abortWithProvenance`.
 
-||||||| 575091872
 ## 2026-10-18 - A session moved to another device refuses writes on the device it left (senpi#3630)
 
 ### What changed
