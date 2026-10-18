@@ -10,6 +10,8 @@
 - `packages/coding-agent/src/modes/rpc/host-handover-request.ts`: the idle handover's CLI refuses `foreign_agent_dir` before it asks (the same `foreignAgentDirRefusal`), and `begin_handover` carries its `agent_dir`.
 - `packages/coding-agent/src/modes/rpc/host-handover-wire.ts` and `packages/coding-agent/src/modes/rpc/host-idle-handover.ts`: `begin_handover` parses an optional non-empty `agent_dir` into `IdleHandoverRequest.agentDir`.
 - `packages/coding-agent/src/modes/rpc/host-core-gate.ts` and `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: the host's agent dir and public socket reach the gate (`HostCoreHooks.endpoint`), which refuses a `begin_handover` naming another agent dir before `begin` claims the operation (`agentDirMismatch`, shared with the generation handoff). A request without `agent_dir` (an older CLI) is not checked.
+- `packages/coding-agent/src/modes/rpc/protocol-identity.ts` and `packages/coding-agent/src/modes/rpc/session-command-router.ts` (review follow-up): a socket host reports the agent dir it captured at startup (`RpcHostSessionDefaults.agentDir`), not a per-call `resolve(getAgentDir())` that a cwd change can move.
+- `packages/coding-agent/src/modes/rpc/host-handoff.ts` (review follow-up): an empty-string `agentDir` keeps its old meaning (this process's default), and every successor's environment now pins `ENV_AGENT_DIR` to the one resolved dir.
 
 ### Why
 

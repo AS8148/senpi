@@ -68,8 +68,8 @@ export function socketHostLaunchProfile(hostArgs: readonly string[], cwd: string
 	return hostLaunchProfile(["--mode", "rpc", "--multi-session", "--listen", "unix://", ...hostArgs], cwd);
 }
 
-/** The identity fields of this host's `get_protocol_info` answer. */
-export function protocolIdentity(): RpcProtocolIdentity {
+/** The identity fields of this host's `get_protocol_info` answer. A socket host passes the agent dir it captured at startup; anything else reports this process's. */
+export function protocolIdentity(agentDir: string = resolve(getAgentDir())): RpcProtocolIdentity {
 	cachedProfile ??= hostLaunchProfile(process.argv.slice(2), process.cwd());
 	const build = engineBuildIdentity();
 	return {
@@ -78,6 +78,6 @@ export function protocolIdentity(): RpcProtocolIdentity {
 		engineVersion: build.text,
 		engineOrdinal: build.ordinal,
 		launch_profile: cachedProfile,
-		agentDir: resolve(getAgentDir()),
+		agentDir,
 	};
 }

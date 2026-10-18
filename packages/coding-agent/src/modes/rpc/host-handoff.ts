@@ -137,8 +137,9 @@ export async function handoffHost(options: HandoffHostOptions): Promise<HandoffR
 /** The handoff itself, for a caller that already holds this socket's ensure lock: an ensure's upgrade. */
 export async function handoffHostLocked(requested: HandoffHostOptions): Promise<HandoffResult> {
 	if (handoffUnsupported(requested)) return { action: "refuse", reason: "upgrade_unsupported", upgradeable: false };
-	// One agent dir for the guard, the daemon paths and the successor's environment alike.
-	const options = { ...requested, agentDir: requested.agentDir ?? getAgentDir() };
+	// One agent dir for the guard, the daemon paths and the successor's environment alike (an empty
+	// string keeps its pre-#3563 meaning: this process's default).
+	const options = { ...requested, agentDir: requested.agentDir || getAgentDir() };
 	const paths = createHostDaemonPaths({ socket: options.socket, agentDir: options.agentDir });
 	await createDaemonDirectories(paths);
 	const host = await probeProtocolInfo(options.socket, HANDOFF_PROBE_TIMEOUT_MS);
