@@ -16,13 +16,20 @@ import { readTestControls } from "./test-controls.ts";
 export const TOOL_CHILD_GENERATION_ENV = "SENPI_TOOL_CHILD_GENERATION";
 export const TOOL_CHILD_PROTOCOL_VERSION = 1;
 
+/** The signal of a host call that outlives its job's cancel. */
+const NEVER_CANCELLED = new AbortController().signal;
+
 export interface ToolChildJobContext {
 	readonly jobId: string;
 	readonly signal: AbortSignal;
 	readonly channel: ToolChildChannel;
 	readonly gate: LaunchGate;
-	/** A call to the server for this job (reverse bridge); settles with its reply, refusal or the job's cancel. */
-	readonly hostCall: (target: HostCallTarget) => Promise<unknown>;
+	/**
+	 * A call to the server for this job (reverse bridge); settles with its reply, refusal or the job's cancel. A call made
+	 * with `survivesCancel` is not settled by the cancel (a lock must be released after the job's writes stop, not when
+	 * the cancel arrives); it still settles by its reply, its refusal or the channel closing.
+	 */
+	readonly hostCall: (target: HostCallTarget, options?: { readonly survivesCancel?: boolean }) => Promise<unknown>;
 }
 
 export type ToolChildJobHandler = (args: unknown, context: ToolChildJobContext) => Promise<unknown>;
@@ -136,7 +143,8 @@ async function runJob(
 	const controller = new AbortController();
 	running.set(job.jobId, controller);
 	try {
-		const hostCall = (target: HostCallTarget) => hostCalls.call(job.jobId, target, controller.signal);
+		const hostCall = (target: HostCallTarget, options?: { readonly survivesCancel?: boolean }) =>
+			hostCalls.call(job.jobId, target, options?.survivesCancel === true ? NEVER_CANCELLED : controller.signal);
 		const value = await handler(job.args, { jobId: job.jobId, signal: controller.signal, channel, gate, hostCall });
 		channel.send({ type: "result", jobId: job.jobId, value: value ?? null });
 	} catch (error) {

@@ -1,3 +1,21 @@
+## 2026-10-18 - A session answers its tool child's host calls (senpi#3566 todo 7)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: under `--tool-runtime child` the session hands its tool child a host-call handler (`createSessionHostCallHandler`, `tool-child-host-calls.ts`). A child-run body's `tool` call runs through `_executeNestedToolCall` (hooks once, as `ctx.executeTool`), `list_tools` names the callable tools, `completion`/`reserved` reach targets registered with `registerToolChildHostTarget`, `authorize` asks the same composed filesystem policy the built-in file tools enforce (kept in `_filesystemPolicy` when the tools are rebuilt), and `lock_file`/`unlock_file` hold a file's slot in the shared mutation queue. On the default in-process path none of this is constructed.
+
+### Why
+
+Tool bodies placed in the child still need the session's tools, model, policy and file serialization; those stay on the server (the plan's Must NOT: no policy or model calls in the child), so the child asks over the reverse bridge.
+
+### Why an extension could not handle it
+
+The tool pipeline, the composed filesystem policy and the tool child's construction are session internals; no extension hook reaches them.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the tool-child construction in the runtime setup (its `onHostCall` deps), the `_filesystemPolicy` assignment beside `composeFilesystemPolicies`, and the fields beside `_toolChildHostTargets`.
+
 ## 2026-10-18 - Disposing a session waits for its tool child to stop (senpi#3566)
 
 ### What changed

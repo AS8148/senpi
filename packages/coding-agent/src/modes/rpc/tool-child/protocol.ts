@@ -53,7 +53,15 @@ export type RefNackReason = (typeof REF_NACK_REASONS)[number];
 
 /** A payload moved through a file in the channel generation's directory. The receiver derives the path itself. */
 /** What a reverse call reaches on the server (DESIGN PART 1): a tool by `name`, the model, a reserved tool, the tool list. */
-export const HOST_CALL_KINDS = ["tool", "completion", "reserved", "list_tools"] as const;
+export const HOST_CALL_KINDS = [
+	"tool",
+	"completion",
+	"reserved",
+	"list_tools",
+	"authorize",
+	"lock_file",
+	"unlock_file",
+] as const;
 export type HostCallKind = (typeof HOST_CALL_KINDS)[number];
 
 export interface PayloadRef {

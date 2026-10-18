@@ -25,7 +25,25 @@ export interface HostCallRequest {
 	readonly signal: AbortSignal;
 	/** What the job's dispatcher attached to it (the calling tool call, for a session); undefined when none. */
 	readonly context: unknown;
+	/** The child generation the call came from: whether its job is still live, and when the child's exit is observed. */
+	readonly generation: HostCallGeneration;
 }
+
+/** What a handler may know about the generation a call came from (file locks are held per generation). */
+export interface HostCallGeneration {
+	/** Settles once the child that made the call has exited (observed by the server). */
+	readonly exited: Promise<void>;
+	/** Whether the calling job is still live (the server has not settled it). */
+	readonly jobLive: () => boolean;
+}
+
+/** The generation facts ServerHostCalls hands each request. */
+export interface HostCallScope {
+	readonly exited: Promise<void>;
+	readonly jobLive: (jobId: string) => boolean;
+}
+
+const UNSCOPED: HostCallScope = { exited: new Promise(() => {}), jobLive: () => true };
 
 export type HostCallHandler = (request: HostCallRequest) => Promise<unknown>;
 
@@ -54,14 +72,17 @@ export class ServerHostCalls {
 
 	readonly #contextOf: HostCallContextOf;
 	readonly #refs: HostCallRefs | undefined;
+	readonly #scope: HostCallScope;
 
 	constructor(
 		channel: Pick<ToolChildChannel, "send">,
 		handler: HostCallHandler,
 		contextOf: HostCallContextOf = () => undefined,
 		refs?: HostCallRefs,
+		scope: HostCallScope = UNSCOPED,
 	) {
 		this.#refs = refs;
+		this.#scope = scope;
 		this.#channel = channel;
 		this.#handler = handler;
 		this.#contextOf = contextOf;
@@ -120,6 +141,7 @@ export class ServerHostCalls {
 				args,
 				signal: call.abort.signal,
 				context: this.#contextOf(frame.jobId),
+				generation: { exited: this.#scope.exited, jobLive: () => this.#scope.jobLive(frame.jobId) },
 			});
 		const answered = call.abort.signal.aborted
 			? this.#refuseArgs(frame).then(() => Promise.reject(new Error(`${label}: the job ended before this call ran`)))

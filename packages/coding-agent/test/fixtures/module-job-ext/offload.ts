@@ -1,7 +1,14 @@
 // A file-backed module the tool child's `module` job runs (senpi#3566 todo 4): plain named imports, no barrier code.
 import { execFileSync as runOnce, spawn as spawnOwned, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync as markerExists, writeFileSync as writeMarker } from "node:fs";
+import {
+	appendFileSync as appendLine,
+	existsSync as markerExists,
+	readFileSync as readText,
+	watch as watchDir,
+	writeFileSync as writeMarker,
+} from "node:fs";
+import { dirname } from "node:path";
 import { Worker as NestedWorker } from "node:worker_threads";
 
 export function whoAmI(args: { readonly code: number }): { pid: number; status: number | null } {
@@ -98,4 +105,62 @@ export async function startNestedWorker(): Promise<string> {
 	} catch (error) {
 		return String(Reflect.get(Object(error), "code") ?? error);
 	}
+}
+
+interface LockingHost {
+	withFileLock<T>(path: string, fn: () => Promise<T>): Promise<T>;
+	authorize(request: {
+		operation: "read" | "enumerate" | "write";
+		canonicalPath: string;
+		toolName: string;
+	}): Promise<{ allow: true } | { allow: false; reason: string }>;
+}
+
+/** Resolves once `path` exists (watching its directory; no polling). */
+function fileAppears(path: string): Promise<void> {
+	return new Promise((resolveFile) => {
+		const watcher = watchDir(dirname(path), () => {
+			if (!markerExists(path)) return;
+			watcher.close();
+			resolveFile();
+		});
+		if (markerExists(path)) {
+			watcher.close();
+			resolveFile();
+		}
+	});
+}
+
+/**
+ * Takes the file's lock, reports it holds it (`held` marker), then waits for `gate` before appending its line: a write
+ * still in flight when the job is cancelled.
+ */
+export async function appendWhenGated(
+	args: { readonly file: string; readonly line: string; readonly held: string; readonly gate: string },
+	host: LockingHost,
+): Promise<string> {
+	return host.withFileLock(args.file, async () => {
+		writeMarker(args.held, "");
+		await fileAppears(args.gate);
+		appendLine(args.file, `${args.line}\n`);
+		return readText(args.file, "utf8");
+	});
+}
+
+/** Appends its line under the file's lock and returns the file as it then reads. */
+export async function appendLocked(
+	args: { readonly file: string; readonly line: string },
+	host: LockingHost,
+): Promise<string> {
+	return host.withFileLock(args.file, async () => {
+		appendLine(args.file, `${args.line}\n`);
+		return readText(args.file, "utf8");
+	});
+}
+
+/** Asks the session's filesystem policy before a write; a denial fails the job with the policy's own reason. */
+export async function writeIfAllowed(args: { readonly path: string }, host: LockingHost): Promise<string> {
+	const decision = await host.authorize({ operation: "write", canonicalPath: args.path, toolName: "write" });
+	if (!decision.allow) throw new Error(decision.reason);
+	return "allowed";
 }

@@ -255,6 +255,7 @@ import type {
 	ApplyCompactionResult,
 	CompactionReason,
 	CompactionRejectionCause,
+	FilesystemPolicyChecker,
 	ModelSelectSource,
 } from "./extensions/types.ts";
 import { normalizeToolExposure, RUNTIME_EXTENSION_PATH } from "./extensions/types.ts";
@@ -1349,6 +1350,8 @@ export class AgentSession {
 	private _agentDir: string;
 	private readonly _toolChild: SessionToolChild | undefined;
 	private readonly _toolChildHostTargets = new Map<RegisteredHostCallKind, HostCallTarget>();
+	/** The composed filesystem policy the built-in file tools enforce; a tool child's `authorize` asks the same one. */
+	private _filesystemPolicy: FilesystemPolicyChecker | undefined;
 	/** Settles once dispose() has stopped the tool child and swept what it launched. */
 	private _toolChildClosed: Promise<void> = Promise.resolve();
 	private _extensionRunnerRef?: { current?: ExtensionRunner };
@@ -1489,6 +1492,7 @@ export class AgentSession {
 								this._executeNestedToolCall(parentToolCallId, name, args, { signal }),
 							callableToolNames: () => this._callableToolNames(),
 							target: (kind) => this._toolChildHostTargets.get(kind),
+							filesystemPolicy: () => this._filesystemPolicy,
 						}),
 					})
 				: undefined;
@@ -10078,6 +10082,7 @@ export class AgentSession {
 		const filesystemPolicy = composeFilesystemPolicies(
 			extensionsResult.extensions.flatMap((extension) => extension.filesystemPolicies ?? []),
 		);
+		this._filesystemPolicy = filesystemPolicy;
 		const baseToolDefinitions = this._baseToolsOverride
 			? Object.fromEntries(
 					Object.entries(this._baseToolsOverride).map(([name, tool]) => [

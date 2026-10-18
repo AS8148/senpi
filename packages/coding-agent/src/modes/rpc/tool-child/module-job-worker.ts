@@ -53,6 +53,17 @@ export interface ModuleHost {
 	reserved(name: string, args: unknown): Promise<unknown>;
 	/** The tools callable through `call`. */
 	listTools(): Promise<unknown>;
+	/** The session's filesystem policy decision for one access (never cached; ask before each). */
+	authorize(request: {
+		operation: "read" | "enumerate" | "write";
+		canonicalPath: string;
+		toolName: string;
+	}): Promise<{ allow: true } | { allow: false; reason: string }>;
+	/**
+	 * Runs `fn` holding the file's slot in the session's mutation queue - the same one its own file tools use - and
+	 * releases it once `fn` settles. A cancel does not release it early: the slot passes on only after `fn` is done.
+	 */
+	withFileLock<T>(path: string, fn: () => Promise<T>): Promise<T>;
 }
 
 function createModuleHost(): ModuleHost {
@@ -83,6 +94,15 @@ function createModuleHost(): ModuleHost {
 		complete: (args) => send("completion", undefined, args),
 		reserved: (name, args) => send("reserved", name, args),
 		listTools: () => send("list_tools", undefined, undefined),
+		authorize: (request) => send("authorize", undefined, request) as ReturnType<ModuleHost["authorize"]>,
+		withFileLock: async (path, fn) => {
+			const { lockId } = (await send("lock_file", undefined, { path })) as { lockId: string };
+			try {
+				return await fn();
+			} finally {
+				await send("unlock_file", undefined, { lockId });
+			}
+		},
 	};
 }
 

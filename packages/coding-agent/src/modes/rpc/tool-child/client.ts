@@ -231,6 +231,7 @@ export class ToolChildClient {
 				((request) => Promise.reject(new Error(`no host-call handler for ${request.name ?? request.kind}`))),
 			(jobId) => this.#hostContexts.get(jobId),
 			refs,
+			{ exited, jobLive: (jobId) => pending.has(jobId) },
 		);
 		const live: Live = {
 			generation,
