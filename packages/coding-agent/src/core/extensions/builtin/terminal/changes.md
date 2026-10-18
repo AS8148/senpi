@@ -1,3 +1,24 @@
+## 2026-10-18 - Monitor deadline docs, accurate & / nohup guidance, and a killed-at-deadline summary (senpi#3611)
+
+### What changed
+
+- `tools/bash.ts` (`run_in_background` description), `prompt.ts`, and the bun-1-4 skill: state what the code does — a plain `&` job dies with the call's PTY hangup; `nohup`/`setsid` survive a normal exit only as untracked orphans (no `bash_id`, no captured log) that the call's timeout or kill still group-kills; a non-persistent command watch's `timeout_ms` kills the watched command (`session_threads.rs` deadline path).
+- `command-monitor-source.ts` `#settle`: a timed-out command watch now summarizes as `watcher killed at deadline (timed_out)`.
+- `rpc-monitor-source.ts`: the deadline summary stays `watcher timed_out` (an RPC watch kills nothing) and both its sites share `RPC_WATCHER_TIMED_OUT_SUMMARY`, so the ended-reason classifier can never drift from the settle string.
+- `test/suite/terminal-monitor.test.ts`: the timed-watch test asserts the machine-read ended reason `timeout` through `MonitorRegistry`'s `onEnded` instead of pinning summary prose.
+
+### Why
+
+Both behaviors strand or destroy long jobs agents believed they had started, and the old `watcher timed_out` read as an observation rather than the kill it is on the command branch (senpi#3611, reported via KakaoTalk). Verified by real runs under the bash tool: on a normal foreground exit a `nohup sleep` survives, reparented to init, while the plain `&` sleep dies at PTY hangup; inside a call that hits its timeout the nohup job dies with the group kill.
+
+### Why an extension could not handle it
+
+- The tool descriptions, the prompt section, the monitor summaries and the ended-reason classifier are this builtin's own registered contract; an external extension cannot re-describe another extension's tools or re-word its emitted summaries.
+
+### Expected merge conflict zones
+
+- LOW: this tracker's top, the `tools/monitor.ts` guidelines list, the first bullet of the prompt section, and `rpc-monitor-source.ts` around the deadline settle.
+
 ## 2026-10-17 - Human-input command monitors (oh-my-openagent#10280)
 
 ### What changed

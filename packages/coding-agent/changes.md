@@ -1,6 +1,4 @@
-## 2026-10-18 - Document monitor deadline kills and foreground & / nohup reaping; timed-out summary says "killed at deadline" (senpi#3611)
-
-### What changed
+## What changed
 
 - `src/core/extensions/builtin/terminal/prompt.ts`: the terminal prompt section now states both survival semantics — `&`/`nohup` inside a foreground call do not survive it, and a non-persistent watch's `timeout_ms` kills the watched command.
 - `src/core/extensions/builtin/terminal/tools/bash.ts`: the `run_in_background` param description says backgrounding with `&`/`nohup` inside a foreground command dies with the call.
