@@ -32,6 +32,7 @@ export interface Kernel32Job {
 	TerminateJobObject(job: unknown, exitCode: number): number;
 	CloseHandle(handle: unknown): number;
 	GetLastError(): number;
+	GetCurrentProcess(): unknown;
 }
 
 export class WindowsJobError extends Error {
@@ -152,6 +153,7 @@ export function loadKernel32Job(): Kernel32Job | undefined {
 		TerminateJobObject: { args: ["ptr", "u32"], returns: "i32" },
 		CloseHandle: { args: ["ptr"], returns: "i32" },
 		GetLastError: { args: [], returns: "u32" },
+		GetCurrentProcess: { args: [], returns: "ptr" },
 	});
 	const call = (name: string, ...args: unknown[]): unknown => {
 		const fn = lib.symbols[name];
@@ -170,5 +172,29 @@ export function loadKernel32Job(): Kernel32Job | undefined {
 		TerminateJobObject: (job, exitCode) => Number(call("TerminateJobObject", job, exitCode)),
 		CloseHandle: (handle) => Number(call("CloseHandle", handle)),
 		GetLastError: () => Number(call("GetLastError")),
+		GetCurrentProcess: () => call("GetCurrentProcess"),
 	};
+}
+
+let defaultInJob: boolean | undefined;
+
+/**
+ * Whether this process runs inside any Job Object (`IsProcessInJob(GetCurrentProcess(), NULL)`). Off Windows, or
+ * without bun:ffi, it is false: there is no job to be in. The answer for this host's own kernel is computed once.
+ */
+export function currentProcessInJob(kernel?: Kernel32Job): boolean {
+	if (kernel !== undefined) return queryInJob(kernel);
+	if (defaultInJob === undefined) {
+		const loaded = loadKernel32Job();
+		defaultInJob = loaded === undefined ? false : queryInJob(loaded);
+	}
+	return defaultInJob;
+}
+
+function queryInJob(kernel: Kernel32Job): boolean {
+	const result = new Uint8Array(4);
+	return (
+		kernel.IsProcessInJob(kernel.GetCurrentProcess(), null, result) !== 0 &&
+		new DataView(result.buffer).getInt32(0, true) !== 0
+	);
 }

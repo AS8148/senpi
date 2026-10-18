@@ -11,6 +11,7 @@ const FINISHED_SLOT_STATES = 256;
 import type { ToolChildChannel } from "./channel.ts";
 import type { LaunchApi, LaunchContainment, LaunchLifetime, LaunchOrigin, ToolChildMessage } from "./protocol.ts";
 import { readTestControls, type TestControls } from "./test-controls.ts";
+import { currentProcessInJob } from "./windows-job.ts";
 import type { WorkerLaunchMessage } from "./worker-launch.ts";
 
 export interface LaunchRequest {
@@ -52,10 +53,27 @@ export class LaunchGate {
 		channel: ToolChildChannel,
 		clock: BarrierClock = BarrierClock.create(),
 		env: NodeJS.ProcessEnv = process.env,
+		creatorInJob: () => boolean = currentProcessInJob,
 	) {
 		this.#channel = channel;
 		this.clock = clock;
 		this.#controls = readTestControls(env);
+		this.#creatorInJob = creatorInJob;
+	}
+
+	readonly #creatorInJob: () => boolean;
+
+	/** Windows: the command a launch started, with whether its creator (this child) was inside a job when it did. */
+	started(launchId: string, pid: number): void {
+		if (!this.#slots.has(launchId)) return;
+		this.#channel.send({
+			type: "command_started",
+			launchId,
+			pid,
+			startedAtMs: Date.now(),
+			creatorInJob: this.#creatorInJob(),
+			breakaway: false,
+		});
 	}
 
 	/** Test-only `SKIP_ACK_WAIT` mutation: launch paths invoke without awaiting the ack. */
@@ -87,6 +105,7 @@ export class LaunchGate {
 	handleWorker(message: WorkerLaunchMessage): void {
 		if (message.kind === "launch") this.adopt(message.launchId, message.slot, message.request);
 		else if (message.kind === "invoking") this.invoking(message.launchId);
+		else if (message.kind === "started") this.started(message.launchId, message.pid);
 		else
 			this.done(message.launchId, {
 				...(message.exitCode === undefined ? {} : { exitCode: message.exitCode }),

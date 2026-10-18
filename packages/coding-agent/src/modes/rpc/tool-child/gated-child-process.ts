@@ -19,7 +19,13 @@ function isArgList(value: readonly string[] | SpawnOptions | undefined): value i
 	return Array.isArray(value);
 }
 
-function trackExit(client: WorkerLaunchClient, launchId: string, child: ChildProcess): ChildProcess {
+function trackExit(
+	client: WorkerLaunchClient,
+	launchId: string,
+	child: ChildProcess,
+	reportStart = false,
+): ChildProcess {
+	if (reportStart && child.pid !== undefined) client.started(launchId, child.pid);
 	child.once("exit", (exitCode, signal) => client.done(launchId, { exitCode, signal }));
 	child.once("error", () => client.done(launchId, { exitCode: 1 }));
 	return child;
@@ -30,11 +36,15 @@ function runInherited<T>(
 	api: LaunchApi,
 	call: () => T,
 	statusOf: (value: T) => number | null,
+	containment: "inherited" | "job",
+	pidOf: (value: T) => number | undefined = () => undefined,
 ): T {
-	const launchId = client.acquire({ origin: "kernel", api, containment: "inherited", lifetime: "owned" });
+	const launchId = client.acquire({ origin: "kernel", api, containment, lifetime: "owned" });
 	client.invoke(launchId);
 	try {
 		const value = call();
+		const pid = containment === "job" ? pidOf(value) : undefined;
+		if (pid !== undefined) client.started(launchId, pid);
 		client.done(launchId, { exitCode: statusOf(value) });
 		return value;
 	} catch (error) {
@@ -82,7 +92,11 @@ function ownGroupSpawn(
 }
 
 /** A `node:child_process` module object whose launch APIs pass the execution barrier. Non-launch exports pass through. */
-export function createGatedChildProcess(module: ChildProcessApi, client: WorkerLaunchClient): ChildProcessApi {
+export function createGatedChildProcess(
+	module: ChildProcessApi,
+	client: WorkerLaunchClient,
+	platform: NodeJS.Platform = process.platform,
+): ChildProcessApi {
 	// Captured before anyone patches `module` in place: the gated functions must call the originals, never themselves.
 	const real: ChildProcessApi = {
 		...module,
@@ -94,7 +108,9 @@ export function createGatedChildProcess(module: ChildProcessApi, client: WorkerL
 		execFileSync: module.execFileSync,
 		fork: module.fork,
 	};
-	const posix = process.platform !== "win32";
+	const posix = platform !== "win32";
+	// Windows: every command the child starts inherits its Job Object, so the containment is the job.
+	const inherited = posix ? "inherited" : "job";
 	const spawn = (
 		command: string,
 		argsOrOptions?: readonly string[] | SpawnOptions,
@@ -102,23 +118,27 @@ export function createGatedChildProcess(module: ChildProcessApi, client: WorkerL
 	): ChildProcess => {
 		const args = isArgList(argsOrOptions) ? argsOrOptions : [];
 		const options: SpawnOptions = (isArgList(argsOrOptions) ? maybeOptions : argsOrOptions) ?? {};
+		if (!posix && options.detached === true)
+			throw new Error(
+				"tool_child_breakaway_unavailable: a detached launch from a Windows tool child needs the breakaway shim (senpi#3566)",
+			);
 		if (posix && options.detached !== false)
 			return ownGroupSpawn(real, client, command, args, options, options.detached === true ? "detached" : "owned");
 		const launchId = client.acquire({
 			origin: "kernel",
 			api: "cp.spawn",
-			containment: "inherited",
+			containment: inherited,
 			lifetime: "owned",
 		});
 		client.invoke(launchId);
-		return trackExit(client, launchId, real.spawn(command, [...args], options));
+		return trackExit(client, launchId, real.spawn(command, [...args], options), !posix);
 	};
 	const asyncInherited =
 		<F extends (...args: never[]) => ChildProcess>(api: LaunchApi, original: F) =>
 		(...args: Parameters<F>): ChildProcess => {
-			const launchId = client.acquire({ origin: "kernel", api, containment: "inherited", lifetime: "owned" });
+			const launchId = client.acquire({ origin: "kernel", api, containment: inherited, lifetime: "owned" });
 			client.invoke(launchId);
-			return trackExit(client, launchId, original(...args));
+			return trackExit(client, launchId, original(...args), !posix);
 		};
 	const gated: Record<string, unknown> = {
 		...real,
@@ -132,6 +152,8 @@ export function createGatedChildProcess(module: ChildProcessApi, client: WorkerL
 				"cp.spawnSync",
 				() => real.spawnSync(...args),
 				(result) => result.status,
+				inherited,
+				(result) => result.pid,
 			),
 		execSync: (...args: Parameters<ChildProcessApi["execSync"]>) =>
 			runInherited(
@@ -139,6 +161,7 @@ export function createGatedChildProcess(module: ChildProcessApi, client: WorkerL
 				"cp.execFileSync",
 				() => real.execSync(...args),
 				() => 0,
+				inherited,
 			),
 		execFileSync: (...args: Parameters<ChildProcessApi["execFileSync"]>) =>
 			runInherited(
@@ -146,6 +169,7 @@ export function createGatedChildProcess(module: ChildProcessApi, client: WorkerL
 				"cp.execFileSync",
 				() => real.execFileSync(...args),
 				() => 0,
+				inherited,
 			),
 	};
 	gated.default = gated;

@@ -1,6 +1,7 @@
 // senpi#3566 todo 4: the Job Object's limit flags and assignment proof, checked against a recorded kernel32.
 import { describe, expect, it } from "vitest";
 import {
+	currentProcessInJob,
 	EXTENDED_LIMIT_INFORMATION_BYTES,
 	JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS,
 	type Kernel32Job,
@@ -52,6 +53,7 @@ function recordedKernel(overrides: Partial<Kernel32Job> = {}) {
 			return 1;
 		},
 		GetLastError: () => 5,
+		GetCurrentProcess: () => "self",
 		...overrides,
 	};
 	return { kernel, calls, limits: () => limits };
@@ -97,5 +99,17 @@ describe("WindowsJob", () => {
 		job.close();
 		job.terminate();
 		expect(calls.slice(2)).toEqual(["Terminate:9", "Close:job"]);
+	});
+
+	it("reports whether this process is in a job, from IsProcessInJob on the current process", () => {
+		const answer = (inside: boolean) =>
+			recordedKernel({
+				IsProcessInJob: (process, job, result) => {
+					new DataView(result.buffer).setInt32(0, inside && process === "self" && job === null ? 1 : 0, true);
+					return 1;
+				},
+			}).kernel;
+		expect(currentProcessInJob(answer(true))).toBe(true);
+		expect(currentProcessInJob(answer(false))).toBe(false);
 	});
 });

@@ -37,6 +37,7 @@ function fakeKernel(options: { assign?: boolean; inJob?: boolean } = {}) {
 			return 1;
 		},
 		GetLastError: () => 5,
+		GetCurrentProcess: () => 0,
 	};
 	return { kernel, calls };
 }
