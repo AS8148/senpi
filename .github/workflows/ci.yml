@@ -371,11 +371,6 @@ jobs:
           done
         working-directory: packages/coding-agent
 
-      - name: Check OS temp after tests
-        if: always() && steps.test_temp_snapshot.outcome == 'success'
-        shell: bash
-        run: node scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
-
       - name: Summary
         if: always()
         shell: bash
@@ -390,6 +385,10 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
         working-directory: packages/coding-agent
 
+      - name: Check OS temp after tests
+        if: always() && steps.test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: node scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
   schedule-windows:
     name: Scheduled prompts (Windows)
     runs-on: windows-latest
