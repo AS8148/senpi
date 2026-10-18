@@ -60,6 +60,27 @@
 - `packages/tui/src/terminal.ts`: `resolveEscapeTimeoutMs` and the escape-timeout constants.
 - `packages/tui/src/stdin-buffer.ts`: `DEFAULT_ESCAPE_TIMEOUT_MS` and the `process()` gap accounting.
 
+## 2026-10-18 - Rows inserted above the viewport never scroll stale live-area rows into the scrollback (senpi#3649)
+
+### What changed
+
+- `packages/tui/src/tui.ts`:
+  - The insert-scroll fast path now comes from `planViewportInsertScroll` in the new fork-only `viewport-insert-scroll.ts`. The plan also requires that the rows the scroll region pushes out of the viewport are the new frame's rows at those indexes; a frame whose rows were inserted at or above the viewport top takes the general repaint paths instead.
+  - `renderHeldRepaint` starts its rewrite where the old viewport's rows moved to (`insertedAboveViewport` in the new fork-only `viewport-shift.ts`), so rows that already sit in the scrollback are not written into it again. The rows inserted above stay stale until the existing catch-up replay, as the held contract already allows.
+- `packages/tui/test/regression-3649-live-area-insert-above.test.ts` covers both paths, the catch-up, and the multiplexer path.
+
+### Why
+
+- `packages/tui/src/tui.ts`: with a tall /btw panel the live area fills the screen, so a running eval's expanded output grows at or above the viewport top. The scroll-region path then dropped the eval rows and pushed the stale top rows of the live area out of the viewport, and during a turn the held repaint re-pushed the rows above the viewport on every frame, so the panel and the eval output piled up and overwrote each other.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/tui.ts`: the choice of repaint path and the rows written into native scrollback are private renderer state (`previousLines`, viewport top, hardware cursor, synchronized frame writes).
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui.ts`: the `insertScrollPlan` call in `doRender()`, the removed `createViewportInsertScrollPlan` method and `MAX_SCROLL_DIFF_ROWS` constant, and the start row of `renderHeldRepaint()`.
+
 ## 2026-10-12 - Render diagnostics honor the caller's temporary directory (Refs senpi#3064)
 
 ### What changed
