@@ -7,7 +7,7 @@
 ### Why
 
 - Since senpi#2920 a later ask-user answer keeps its frame and the user's words in separate text blocks, and `userTextContent` keeps blocks only while `blocks.join("\n") === text`. The queue records that `text`; the old match joined with no separator, so a multi-block steer or follow-up reached the model but stayed queued for the rest of the session (the TUI kept showing `Steering: [Answer to question <id>]`; queue counts and RPC queue snapshots counted it).
-- Regression: `test/suite/regressions/issue-3588-multi-block-queued-input-leaves-queue.test.ts` (extension steer, extension follow-up, identified steer with `clientMessageId`, displaced started prompt). All four fail on main; reverting either half fails its cases.
+- Regression: `test/suite/regressions/issue-3588-multi-block-queued-input-leaves-queue.test.ts` (the real `ask_user_question` tool answered while a tool runs, extension steer, extension follow-up, identified steer with `clientMessageId`, displaced started prompt). All five fail on main; reverting either half fails its cases.
 
 ### Why an extension could not handle it
 
