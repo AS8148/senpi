@@ -1,5 +1,43 @@
 # loop-guard changes
 
+## loop-guard: escalate non-consecutive identical repeats to the hard-stop ladder (2026-10-18)
+
+- `detectors.ts` gains `detectWindowedRepeat`: occurrences of the last call's exact
+  signature anywhere in the 64-record tracker window at or above the new
+  `policy.ts WINDOWED_REPEAT_THRESHOLD = 8` produce an `identical` detection with
+  `windowed: true` (the consecutive detector reports `windowed: false`). Detection
+  order is consecutive-identical, then windowed-identical, then cycle, then similar.
+- `escalation.ts`: a windowed episode does not reset when a different-signature call
+  arrives between repeats (that interleave is the caught pattern, not a break from
+  it); `clearEpisode()` plus the `windowedEpisodeFingerprint` getter support age-out;
+  block/hardStop decisions carry `windowed` so the block reason can name the scope.
+- `index.ts` ages a windowed episode out when its signature's in-window occurrence
+  count falls below the threshold (the observable signal the loop stopped) and passes
+  `windowed` to the block-reason builder.
+- `notice.ts` adds a windowed identical reminder (no "in a row" phrasing, no
+  "change one parameter" suggestion, which taught evasion in the 2026-08-25
+  incident) and a segment-scope block reason; `renderer.ts` renders the windowed
+  expanded line.
+- Why: senpi#3629 reported one identical `eval` call repeated 455+ times across a
+  7-day session. `detectIdenticalRun` counts only the trailing consecutive run, so
+  todo/read interleaves kept the run at 1 and nothing fired; `detectCycle` sees only
+  periods up to 6 and similar/cycle detections never arm blocks (#2905); and the
+  escalation episode reset on any different-signature call, so even an armed ladder
+  disengaged on the first interleave.
+- Why: `WINDOWED_REPEAT_THRESHOLD = 8` sits above the observed legitimate repeat
+  plateau (a codemode stress fixture plateaued at exactly 6 identical eval calls on
+  2026-09-19) and far below every incident count (197 / 455+ / 655).
+- This cannot live in another extension: the builtin owns the private tracker,
+  detector and escalation state and the `tool_call` veto; no public API exposes them.
+- Coverage: `test/suite/loop-guard-windowed-detector.test.ts` (threshold, priority,
+  gate doubling 8 -> 16, windowed reminder) and
+  `test/suite/regressions/issue-3629-windowed-identical-repeat.test.ts` (full
+  notice -> block -> hard-stop ladder on an interleaved stream, interleave
+  tolerance, age-out; all three fail on pre-fix code).
+- Expected merge conflict zones: MEDIUM in `detectors.ts` (detection union) and
+  `escalation.ts` (episode shape); LOW in `policy.ts`, `index.ts`, `notice.ts`,
+  `renderer.ts`, and the two test files; NONE in public extension APIs.
+
 ## loop-guard: give polling blocks a terminal recovery action (2026-08-25)
 
 - Block reasons for `bash_output` and `task_output` now tell the agent to stop

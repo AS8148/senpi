@@ -13,6 +13,7 @@ import {
 } from "./notice.ts";
 import { renderLoopGuardEscalation, renderLoopGuardNotice } from "./renderer.ts";
 import { ToolCallTracker } from "./tracker.ts";
+import { WINDOWED_REPEAT_THRESHOLD } from "./policy.ts";
 
 const LOOP_GUARD_HARD_STOP_WAKE_SOURCE = "loop-guard-hard-stop";
 
@@ -51,6 +52,20 @@ export default function loopGuardExtension(pi: ExtensionAPI): void {
 		setContinuationHoldActive(false);
 	};
 
+	// A windowed episode persists across interleaves; it ends when its signature
+	// ages out of the tracker window, which is the observable signal the loop stopped.
+	const ageOutWindowedEpisode = (): void => {
+		const fingerprint = escalation.windowedEpisodeFingerprint;
+		if (fingerprint === undefined) return;
+		let occurrences = 0;
+		for (const entry of tracker.records) {
+			if (entry.signature === fingerprint) occurrences++;
+		}
+		if (occurrences < WINDOWED_REPEAT_THRESHOLD) {
+			escalation.clearEpisode();
+		}
+	};
+
 	pi.registerMessageRenderer(LOOP_GUARD_NOTICE_CUSTOM_TYPE, renderLoopGuardNotice);
 	pi.registerMessageRenderer(LOOP_GUARD_ESCALATION_CUSTOM_TYPE, renderLoopGuardEscalation);
 
@@ -63,6 +78,7 @@ export default function loopGuardExtension(pi: ExtensionAPI): void {
 
 	pi.on("tool_execution_start", (event) => {
 		const record = tracker.record(event.toolName, event.args);
+		ageOutWindowedEpisode();
 		const patternChanged = escalation.observeAttempt(event.toolCallId, record);
 		if (patternChanged) {
 			pendingRecoveryToolName = undefined;
@@ -95,7 +111,7 @@ export default function loopGuardExtension(pi: ExtensionAPI): void {
 			case "block":
 				return {
 					block: true,
-					reason: buildLoopGuardBlockReason(decision.toolName, decision.blockedCallCount),
+					reason: buildLoopGuardBlockReason(decision.toolName, decision.blockedCallCount, decision.windowed),
 					terminate: false,
 				};
 			case "hardStop": {
@@ -121,7 +137,7 @@ export default function loopGuardExtension(pi: ExtensionAPI): void {
 				ctx.abort("system");
 				return {
 					block: true,
-					reason: buildLoopGuardBlockReason(decision.toolName, decision.blockedCallCount),
+					reason: buildLoopGuardBlockReason(decision.toolName, decision.blockedCallCount, decision.windowed),
 					terminate: false,
 				};
 			}

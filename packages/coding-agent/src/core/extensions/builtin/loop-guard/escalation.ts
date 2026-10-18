@@ -4,17 +4,19 @@ import type { ToolCallRecord } from "./tracker.ts";
 
 export type IdenticalEscalationDecision =
 	| { readonly kind: "allow" }
-	| { readonly kind: "block"; readonly toolName: string; readonly blockedCallCount: number }
+	| { readonly kind: "block"; readonly toolName: string; readonly blockedCallCount: number; readonly windowed: boolean }
 	| {
 			readonly kind: "hardStop";
 			readonly toolName: string;
 			readonly blockedCallCount: number;
 			readonly announce: boolean;
+			readonly windowed: boolean;
 	  };
 
 interface IdenticalLoopEpisode {
 	fingerprint: string;
 	toolName: string;
+	windowed: boolean;
 	admittedNoticeCount: number;
 	activateBlockAfterAttempt: boolean;
 	blockActive: boolean;
@@ -29,7 +31,10 @@ export class IdenticalLoopEscalation {
 	private readonly attempts = new Map<string, ToolCallRecord>();
 
 	observeAttempt(toolCallId: string, record: ToolCallRecord): boolean {
-		const patternChanged = this.episode !== undefined && this.episode.fingerprint !== record.signature;
+		// Windowed episodes are armed by non-consecutive repeats, so a different-signature
+		// call between repeats is the pattern itself, not a break from it.
+		const patternChanged =
+			this.episode !== undefined && !this.episode.windowed && this.episode.fingerprint !== record.signature;
 		if (patternChanged) {
 			this.reset();
 		}
@@ -47,6 +52,7 @@ export class IdenticalLoopEscalation {
 					this.episode = {
 						fingerprint: detection.fingerprint,
 						toolName: detection.toolName,
+						windowed: detection.windowed,
 						admittedNoticeCount: 0,
 						activateBlockAfterAttempt: false,
 						blockActive: false,
@@ -88,13 +94,25 @@ export class IdenticalLoopEscalation {
 				toolName: this.episode.toolName,
 				blockedCallCount: this.episode.blockedCallCount,
 				announce,
+				windowed: this.episode.windowed,
 			};
 		}
 		return {
 			kind: "block",
 			toolName: this.episode.toolName,
 			blockedCallCount: this.episode.blockedCallCount,
+			windowed: this.episode.windowed,
 		};
+	}
+
+	/** Drops the armed episode while keeping per-turn attempt correlation. */
+	clearEpisode(): void {
+		this.episode = undefined;
+	}
+
+	/** Fingerprint of an active windowed episode, for age-out checks against the tracker window. */
+	get windowedEpisodeFingerprint(): string | undefined {
+		return this.episode?.windowed ? this.episode.fingerprint : undefined;
 	}
 
 	reset(): void {

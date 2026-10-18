@@ -51,6 +51,9 @@ function whyLine(detection: LoopGuardDetection): string {
 function expandedLine(detection: LoopGuardDetection): string {
 	switch (detection.kind) {
 		case "identical":
+			if (detection.windowed) {
+				return `tool ${detection.toolName} · ${detection.count} identical calls in the tracked window (not consecutive) when the reminder fired`;
+			}
 			return `tool ${detection.toolName} · ${detection.count} consecutive identical calls when the reminder fired`;
 		case "similar":
 			return `tool ${detection.toolName} · ${detection.count} consecutive same-tool calls at ~${Math.round(detection.similarity * 100)}% args similarity`;

@@ -11,6 +11,11 @@
  *   show mean adjacent-args bigram-Dice ~0.52-0.55 (p90 <= 0.72), while repetitive
  *   classes (read pagination, bash_output/task_output polling) sit at 0.84-0.93.
  *   0.85 cleanly separates distinct work from near-identical repetition.
+ * - WINDOWED_REPEAT_THRESHOLD = 8: a legitimate senpi-codemode stress fixture
+ *   plateaued at exactly 6 identical eval calls before varying args (2026-09-19
+ *   daemon-host-runner storm), while real incidents repeat one identical call 197
+ *   (todo view, session 01a00f43), 455+ (eval, senpi#3629) and 655 (bash_output)
+ *   times. 8 sits above the legitimate ceiling and far below every incident.
  */
 
 /** Max tool-call records kept per prompt segment. Covers 6-period cycles at escalated counts. */
@@ -18,6 +23,9 @@ export const TRACK_WINDOW = 64;
 
 /** Consecutive byte-identical (tool + canonical args) calls before the firm reminder fires. */
 export const IDENTICAL_RUN_THRESHOLD = 3;
+
+/** Occurrences of one byte-identical signature anywhere in the tracker window before the windowed reminder fires. */
+export const WINDOWED_REPEAT_THRESHOLD = 8;
 
 /** Admitted identical-loop reminders ignored before the next same call is blocked. */
 export const IDENTICAL_BLOCK_NOTICE_THRESHOLD = 2;

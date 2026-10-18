@@ -13,12 +13,17 @@ export interface LoopGuardEscalationDetails {
 
 const POLLING_TOOL_NAMES = new Set(["bash_output", "task_output"]);
 
-export function buildLoopGuardBlockReason(toolName: string, blockedCallCount: number): string {
+export function buildLoopGuardBlockReason(
+	toolName: string,
+	blockedCallCount: number,
+	windowed = false,
+): string {
 	const recovery = POLLING_TOOL_NAMES.has(toolName)
 		? "Stop polling this target. If you need to wait for a change, arm a monitor or rely on a completion notification when this mode supports it; otherwise re-plan or choose a different tool."
 		: "Reuse the existing result, stop repeating this call, and re-plan from the current goal or choose a different tool.";
+	const scope = windowed ? "with arguments that already triggered two identical-call warnings in this segment" : "with arguments that already triggered two identical-call warnings";
 	return [
-		`Loop guard blocked repeated call ${blockedCallCount} to \`${toolName}\` with arguments that already triggered two identical-call warnings.`,
+		`Loop guard blocked repeated call ${blockedCallCount} to \`${toolName}\` ${scope}.`,
 		recovery,
 	].join(" ");
 }
@@ -37,6 +42,18 @@ export function buildLoopGuardHardStopSteer(toolName: string): string {
 export function buildLoopGuardReminder(detection: LoopGuardDetection): string {
 	switch (detection.kind) {
 		case "identical": {
+			if (detection.windowed) {
+				const { toolName, count } = detection;
+				return [
+					`<system-reminder>`,
+					`LOOP GUARD - REPEATED IDENTICAL TOOL CALLS: you called \`${toolName}\` ${count} times in this segment with the EXACT same arguments, with other calls in between. Re-issuing the same call returns the same result:`,
+					`- reuse the result you already received from this exact call;`,
+					`- if you were re-checking for new output or state, switch to the monitor/watch tool instead of polling;`,
+					`- if nothing is actually changing, stop calling this tool, state what is blocking you, and try a different tool or ask the user.`,
+					`This call is on its way to being blocked. Do not call \`${toolName}\` again with identical arguments.`,
+					`</system-reminder>`,
+				].join("\n");
+			}
 			const { toolName, count } = detection;
 			return [
 				`<system-reminder>`,

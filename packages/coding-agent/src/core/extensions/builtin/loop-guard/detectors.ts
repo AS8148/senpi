@@ -7,6 +7,7 @@ import {
 	SIMILAR_RUN_THRESHOLD,
 	SIMILARITY_THRESHOLD,
 	TRACK_WINDOW,
+	WINDOWED_REPEAT_THRESHOLD,
 } from "./policy.ts";
 import { meanAdjacentSimilarity } from "./similarity.ts";
 import type { ToolCallRecord } from "./tracker.ts";
@@ -21,7 +22,13 @@ const TARGET_FIELDS = new Map<string, readonly string[]>([
 ]);
 
 export type LoopGuardDetection =
-	| { readonly kind: "identical"; readonly toolName: string; readonly count: number; readonly fingerprint: string }
+	| {
+			readonly kind: "identical";
+			readonly windowed: boolean;
+			readonly toolName: string;
+			readonly count: number;
+			readonly fingerprint: string;
+		}
 	| {
 			readonly kind: "similar";
 			readonly toolName: string;
@@ -75,7 +82,19 @@ export function detectIdenticalRun(records: readonly ToolCallRecord[]): LoopGuar
 		run++;
 	}
 	if (run < IDENTICAL_RUN_THRESHOLD) return undefined;
-	return { kind: "identical", toolName: last.toolName, count: run, fingerprint: last.signature };
+	return { kind: "identical", windowed: false, toolName: last.toolName, count: run, fingerprint: last.signature };
+}
+
+export function detectWindowedRepeat(records: readonly ToolCallRecord[]): LoopGuardDetection | undefined {
+	if (detectIdenticalRun(records) !== undefined) return undefined;
+	const last = records[records.length - 1];
+	if (last === undefined) return undefined;
+	let occurrences = 0;
+	for (const record of records) {
+		if (record.signature === last.signature) occurrences++;
+	}
+	if (occurrences < WINDOWED_REPEAT_THRESHOLD) return undefined;
+	return { kind: "identical", windowed: true, toolName: last.toolName, count: occurrences, fingerprint: last.signature };
 }
 
 export function detectSimilarRun(records: readonly ToolCallRecord[]): LoopGuardDetection | undefined {
@@ -179,7 +198,7 @@ export class NoticeGate {
 }
 
 export function detectLoop(records: readonly ToolCallRecord[], gate: NoticeGate): LoopGuardDetection | undefined {
-	const detections = [detectIdenticalRun(records), detectCycle(records), detectSimilarRun(records)];
+	const detections = [detectIdenticalRun(records), detectWindowedRepeat(records), detectCycle(records), detectSimilarRun(records)];
 	const active = new Map<LoopGuardKind, string>();
 	for (const detection of detections) {
 		if (detection !== undefined) active.set(detection.kind, detection.fingerprint);

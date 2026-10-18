@@ -12,6 +12,7 @@
 
 ### Fixed
 
+- Loop guard now stops an identical tool call repeated non-consecutively — other calls in between — the same way it stops consecutive repeats: a warning at the 8th occurrence in the tracked window, blocking after a second warning, and a hard stop if the calls continue. Before, only consecutive identical runs escalated, so an interleaved loop could repeat one call hundreds of times ([#3629](https://github.com/code-yeongyu/senpi/issues/3629)).
 - Bare model-family fallback no longer silently selects OpenGateway or Vercel AI Gateway when those providers have credentials. Like OpenRouter, these gateways require an explicit provider-qualified fallback selector ([#2774](https://github.com/code-yeongyu/senpi/issues/2774)).
 - A project whose `.senpi/codemode.json` sets a setting that names an executable (today `languages.pyInterpreter`) now asks for project trust before the session starts, like a project `mcp.json`; before, such a project counted as trusted without asking, so the interpreter it named ran at session start.
 - RPC model lists now reflect credentials added or removed by another session without reopening the session, fixing an empty desktop model picker after connecting a provider ([#2769](https://github.com/code-yeongyu/senpi/issues/2769)).

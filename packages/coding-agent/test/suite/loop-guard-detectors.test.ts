@@ -192,7 +192,13 @@ describe("ToolCallTracker", () => {
 
 describe("buildLoopGuardReminder", () => {
 	it("wraps every kind in system-reminder tags with the kind-specific headline", () => {
-		const identical = buildLoopGuardReminder({ kind: "identical", toolName: "read", count: 3, fingerprint: "fp" });
+		const identical = buildLoopGuardReminder({
+			kind: "identical",
+			windowed: false,
+			toolName: "read",
+			count: 3,
+			fingerprint: "fp",
+		});
 		expect(identical).toContain("<system-reminder>");
 		expect(identical).toContain("IDENTICAL TOOL CALLS");
 		expect(identical).toContain("`read` 3 times");
