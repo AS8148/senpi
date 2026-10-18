@@ -51,6 +51,7 @@ import {
 import { materializeSessionEntries } from "./session-entry-materializer.ts";
 import { replaceFileAtomically } from "./session-file-replace.ts";
 import { planLoadedTail } from "./session-loaded-tail.ts";
+import { SessionWriteGuard } from "./session-move/write-guard.ts";
 import { type ResidentStoreStats, ResidentStringStore } from "./session-resident-store.ts";
 import {
 	discardFailedFirstFlush,
@@ -1120,6 +1121,7 @@ export class SessionManager {
 	private sessionDir: string;
 	private cwd: string;
 	private persist: boolean;
+	private readonly writeGuard = new SessionWriteGuard();
 	private flushed: boolean = false;
 	private headerWrite: Promise<void> | undefined;
 	// The file persistHeaderNow() created in this process; only it may be discarded on close (senpi#3263).
@@ -1352,7 +1354,7 @@ export class SessionManager {
 		// evicts, so clearing them bounds the directory to one process lifetime.
 		this._releaseBlobsDirUnlessShared();
 
-		if (migrateToCurrentVersion(this.fileEntries)) {
+		if (migrateToCurrentVersion(this.fileEntries) && this.writeGuard.isWritable(this.fileEntries)) {
 			this._rewriteFile();
 		}
 		return true;
@@ -1512,6 +1514,7 @@ export class SessionManager {
 
 	private _rewriteFile(): void {
 		if (!this.persist || !this.sessionFile) return;
+		this.writeGuard.assertRewritable(this.fileEntries, this.sessionFile);
 		reserveSessionWrite(this.sessionFile);
 		replaceFileAtomically(this.sessionFile, this._serializedFileEntries());
 	}
@@ -1650,6 +1653,7 @@ export class SessionManager {
 	 */
 	_persist(entry: SessionEntry): void {
 		if (!this.persist || !this.sessionFile) return;
+		this.writeGuard.assertWritable(this.fileEntries, entry, this.sessionFile);
 		reserveSessionWrite(this.sessionFile);
 		const persistedEntry = this.residentStore.materialize(entry);
 
