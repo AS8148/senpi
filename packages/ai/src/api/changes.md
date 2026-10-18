@@ -1,3 +1,22 @@
+## 2026-10-18 - Anthropic request bodies are gzip-compressed where the endpoint accepts it (senpi#3643)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `createClient` receives `withGzipRequestBodies(options.fetch)` when `getAnthropicCompat(model).supportsGzipRequestBody` is true, so the SDK's fetch sends 4096+ character bodies with `Content-Encoding: gzip`.
+- `packages/ai/src/api/warm-prompt-cache.ts`: the Anthropic prewarm client wraps its fetch the same way.
+
+### Why
+
+- Claude Code 2.1.302 gzips first-party request bodies; long sessions re-upload 0.5-8 MB of JSON per turn, which gzip shrinks 2.2x at the median (measured in senpi#3643).
+
+### Why an extension could not handle it
+
+- The SDK client and its fetch are built inside the adapter; an extension can supply `options.fetch` per call but cannot apply a per-model compat default to every request and to the prewarm.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/api/anthropic-messages.ts` import block and the `createClient(...)` call in `openClient`; `packages/ai/src/api/warm-prompt-cache.ts` import block and the `new Anthropic({ fetch })` line.
+
 ## 2026-10-14 - Shared Vertex ADC resolution for Model Garden open models
 
 ### What changed
