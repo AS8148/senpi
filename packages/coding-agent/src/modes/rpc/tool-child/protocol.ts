@@ -47,6 +47,7 @@ export const LAUNCH_APIS = [
 	"cp.spawn",
 	"cp.spawnSync",
 	"cp.execFileSync",
+	"pty.spawn",
 ] as const;
 export type LaunchApi = (typeof LAUNCH_APIS)[number];
 

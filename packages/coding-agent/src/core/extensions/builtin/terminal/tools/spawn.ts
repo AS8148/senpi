@@ -28,9 +28,10 @@ export async function spawnCommandSession(
 	const useStdin = shell.commandTransport === "stdin";
 	const args = useStdin ? [...shell.args] : [...shell.args, request.command];
 
+	const launch = ctx.launchBarrier?.wrap(shell.shell, args) ?? { command: shell.shell, args };
 	const created = await ctx.manager.create(shell.shell, {
-		command: shell.shell,
-		args,
+		command: launch.command,
+		args: [...launch.args],
 		cwd: request.cwd ?? ctx.cwd,
 		env: { ...ctx.getEnv(), ...request.envOverrides } as Record<string, string | undefined>,
 		cols: request.cols,
@@ -38,6 +39,14 @@ export async function spawnCommandSession(
 		timeoutMs: request.timeoutMs,
 	});
 
+	if (ctx.launchBarrier !== undefined) {
+		const session = created.runtime.session;
+		await ctx.launchBarrier.release({
+			pid: session.pid,
+			write: (data) => session.write(data),
+			onExit: (listener) => session.onExit(() => listener(session.exitResult?.exitCode ?? null)),
+		});
+	}
 	if (useStdin) {
 		created.runtime.session.write(`${request.command}\n`);
 	}

@@ -1,3 +1,23 @@
+## 2026-10-18 - Terminal launches can pass the tool child's execution barrier (senpi#3566 todo 9)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/context.ts`: optional `TerminalToolContext.launchBarrier` (`wrap` + `release`).
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/spawn.ts`: `spawnCommandSession` starts the command through `launchBarrier.wrap` and awaits `launchBarrier.release` (the server records the started PTY session's group, then the go-line is written) before any stdin-transport command is written. Without a barrier - the in-process path - it spawns exactly as before.
+
+### Why
+
+On the session's tool child every launch must pass the execution barrier, PTY launches included; the terminal bodies run there unchanged, so the hook sits at their one spawn point.
+
+### Why an extension could not handle it
+
+The spawn point is inside the terminal extension's own tool bodies, which the tool child reuses.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/context.ts`: the end of `TerminalToolContext` and the new `TerminalLaunchBarrier`.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/spawn.ts`: the `manager.create` call and the lines after it.
+
 ## 2026-10-13 - Session workers share the host process start instant (senpi#3255)
 
 ### What changed

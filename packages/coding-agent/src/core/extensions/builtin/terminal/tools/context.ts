@@ -41,6 +41,21 @@ export interface TerminalToolContext {
 	 * registration. Resolves immediately when persistence is already bound or unavailable.
 	 */
 	readonly ensurePersistence?: () => Promise<void>;
+	/**
+	 * The tool child's execution barrier for terminal launches (senpi#3566 todo 9). When set, every command starts
+	 * behind a go-line shim inside its PTY: `wrap` rewrites the launch, and `release` records the started session with
+	 * the server and only then lets the command run. Absent on the in-process path, which spawns exactly as before.
+	 */
+	readonly launchBarrier?: TerminalLaunchBarrier;
+}
+
+export interface TerminalLaunchBarrier {
+	wrap(command: string, args: readonly string[]): { readonly command: string; readonly args: readonly string[] };
+	release(session: {
+		readonly pid: number | undefined;
+		write(data: string): unknown;
+		onExit(listener: (exitCode: number | null) => void): unknown;
+	}): Promise<void>;
 }
 
 /** Minimal tool-result shape returned by the terminal tools. */
