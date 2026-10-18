@@ -15,7 +15,18 @@ export interface SessionHostCallDeps {
 		signal: AbortSignal,
 	) => Promise<AgentToolCallOutcome>;
 	readonly callableToolNames: () => readonly string[];
+	/** The `completion` / `reserved` targets registered on the session (codemode's runtime registers them). */
+	readonly target: (kind: RegisteredHostCallKind) => HostCallTarget | undefined;
 }
+
+export type RegisteredHostCallKind = "completion" | "reserved";
+
+/** Serves one registered kind on the server; it runs with whatever server-side context its registrar holds. */
+export type HostCallTarget = (request: {
+	readonly name: string | undefined;
+	readonly args: unknown;
+	readonly signal: AbortSignal;
+}) => Promise<unknown>;
 
 export class HostCallError extends Error {
 	readonly code: string;
@@ -39,8 +50,15 @@ export function createSessionHostCallHandler(deps: SessionHostCallDeps): HostCal
 			case "list_tools":
 				return [...deps.callableToolNames()];
 			case "completion":
-			case "reserved":
-				throw new HostCallError("host_call_unsupported_kind", `${request.kind} calls are not served yet`);
+			case "reserved": {
+				const target = deps.target(request.kind);
+				if (target === undefined)
+					throw new HostCallError(
+						"host_call_unsupported_kind",
+						`no ${request.kind} target is registered on this session`,
+					);
+				return target({ name: request.name, args: request.args, signal: request.signal });
+			}
 		}
 	};
 }

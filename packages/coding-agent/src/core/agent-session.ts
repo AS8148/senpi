@@ -363,7 +363,11 @@ import {
 } from "./thinking-levels.ts";
 import { resetTimings, time } from "./timings.ts";
 import { type SessionMessageUpdateEvent, withResolvedToolName } from "./tool-call-display-name.ts";
-import { createSessionHostCallHandler } from "./tool-child-host-calls.ts";
+import {
+	createSessionHostCallHandler,
+	type HostCallTarget,
+	type RegisteredHostCallKind,
+} from "./tool-child-host-calls.ts";
 import { createToolDispatcher, type ToolDispatcher } from "./tool-dispatch/tool-dispatcher.ts";
 import type { BashOperations } from "./tools/bash.ts";
 import { composeFilesystemPolicies } from "./tools/filesystem-policy.ts";
@@ -1344,6 +1348,7 @@ export class AgentSession {
 	private _cwd: string;
 	private _agentDir: string;
 	private readonly _toolChild: SessionToolChild | undefined;
+	private readonly _toolChildHostTargets = new Map<RegisteredHostCallKind, HostCallTarget>();
 	private _extensionRunnerRef?: { current?: ExtensionRunner };
 	private _initialActiveToolNames?: string[];
 	private _defaultToolNames?: Set<string>;
@@ -1481,6 +1486,7 @@ export class AgentSession {
 							executeNested: (parentToolCallId, name, args, signal) =>
 								this._executeNestedToolCall(parentToolCallId, name, args, { signal }),
 							callableToolNames: () => this._callableToolNames(),
+							target: (kind) => this._toolChildHostTargets.get(kind),
 						}),
 					})
 				: undefined;
@@ -4397,6 +4403,17 @@ export class AgentSession {
 	 */
 	resolveToolCallName(requested: string): string {
 		return resolveToolNameAlias(requested, this._callableToolNames()) ?? requested;
+	}
+
+	/**
+	 * Serves the tool child's `completion` or `reserved` calls on the server (codemode registers its completion handler and
+	 * `runReservedTool`, which hold `evalHandleHost`). Returns the unregister function; a later registration replaces it.
+	 */
+	registerToolChildHostTarget(kind: RegisteredHostCallKind, target: HostCallTarget): () => void {
+		this._toolChildHostTargets.set(kind, target);
+		return () => {
+			if (this._toolChildHostTargets.get(kind) === target) this._toolChildHostTargets.delete(kind);
+		};
 	}
 
 	async executeTool<TDetails = unknown>(

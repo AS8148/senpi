@@ -33,36 +33,61 @@ export default function (pi) {
 		parameters: Type.Object({ word: Type.String() }),
 		execute: async () => ({ content: [{ type: "text", text: "in-process" }], details: {} }),
 	});
+	pi.registerTool({
+		name: "asks_completion",
+		label: "asks completion",
+		description: "asks the server for a completion from the tool child",
+		placement: "child",
+		childModule: { path: "./body.ts", export: "complete" },
+		parameters: Type.Object({ word: Type.String() }),
+		execute: async () => ({ content: [{ type: "text", text: "in-process" }], details: {} }),
+	});
 }
 `;
 
-const BODY = `export async function run(input, host) {
+const BODY = `export async function complete(input, host) {
+	const reply = await host.complete({ prompt: input.params.word });
+	return { content: [{ type: "text", text: JSON.stringify(reply) }], details: { childPid: process.pid, reply } };
+}
+
+export async function run(input, host) {
 	const reply = await host.call("server_echo", { word: input.params.word });
 	return { content: [{ type: "text", text: "child got " + JSON.stringify(reply.result.content) }], details: { childPid: process.pid, reply } };
 }
 `;
 
+async function childSession() {
+	const dir = mkdtempSync(join(tmpdir(), "rb-session-"));
+	const extensionDir = join(dir, "ext");
+	mkdirSync(extensionDir);
+	writeFileSync(join(extensionDir, "index.ts"), EXTENSION);
+	writeFileSync(join(extensionDir, "body.ts"), BODY);
+	const loader = new DefaultResourceLoader({
+		cwd: dir,
+		agentDir: join(dir, "agent"),
+		settingsManager: SettingsManager.inMemory({}),
+		additionalExtensionPaths: [join(extensionDir, "index.ts")],
+		noSkills: true,
+		noPromptTemplates: true,
+		noThemes: true,
+		noContextFiles: true,
+	});
+	await loader.reload();
+	const harness = await createHarness({ resourceLoader: loader, cwd: dir, toolRuntime: "child" });
+	await harness.session.bindExtensions({});
+	return {
+		harness,
+		cleanup: () => {
+			harness.cleanup();
+			rmSync(dir, { recursive: true, force: true });
+		},
+	};
+}
+
 describe.skipIf(process.platform === "win32")("reverse bridge in a session", () => {
 	it("runs a server tool called from a child-run body on the server, hooks once", async () => {
-		const dir = mkdtempSync(join(tmpdir(), "rb-session-"));
-		const extensionDir = join(dir, "ext");
-		mkdirSync(extensionDir);
-		writeFileSync(join(extensionDir, "index.ts"), EXTENSION);
-		writeFileSync(join(extensionDir, "body.ts"), BODY);
-		const loader = new DefaultResourceLoader({
-			cwd: dir,
-			agentDir: join(dir, "agent"),
-			settingsManager: SettingsManager.inMemory({}),
-			additionalExtensionPaths: [join(extensionDir, "index.ts")],
-			noSkills: true,
-			noPromptTemplates: true,
-			noThemes: true,
-			noContextFiles: true,
-		});
-		await loader.reload();
-		const harness = await createHarness({ resourceLoader: loader, cwd: dir, toolRuntime: "child" });
+		const { harness, cleanup } = await childSession();
 		try {
-			await harness.session.bindExtensions({});
 			harness.setResponses([
 				fauxAssistantMessage(fauxToolCall("asks_host", { word: "hi" }), { stopReason: "toolUse" }),
 				fauxAssistantMessage("done"),
@@ -80,8 +105,30 @@ describe.skipIf(process.platform === "win32")("reverse bridge in a session", () 
 			expect(result.content).toEqual([{ type: "text", text: 'child got [{"type":"text","text":"echo hi"}]' }]);
 			expect(Reflect.get(globalThis, HOOK_COUNTS)).toEqual({ asks_host: 1, server_echo: 1 });
 		} finally {
-			harness.cleanup();
-			rmSync(dir, { recursive: true, force: true });
+			cleanup();
+		}
+	}, 90_000);
+
+	it("serves a completion call through the target registered on the session, on the server", async () => {
+		const { harness, cleanup } = await childSession();
+		const unregister = harness.session.registerToolChildHostTarget("completion", async (call) => ({
+			answer: `completed ${String(Reflect.get(Object(call.args), "prompt"))}`,
+			pid: process.pid,
+		}));
+		try {
+			harness.setResponses([
+				fauxAssistantMessage(fauxToolCall("asks_completion", { word: "ping" }), { stopReason: "toolUse" }),
+				fauxAssistantMessage("done"),
+			]);
+			await harness.session.prompt("go");
+			const result = getToolResult(harness, "asks_completion");
+			const details = result.details as { childPid: number; reply: { answer: string; pid: number } };
+			expect(result.isError).toBe(false);
+			expect(details.childPid).not.toBe(process.pid);
+			expect(details.reply).toEqual({ answer: "completed ping", pid: process.pid });
+		} finally {
+			unregister();
+			cleanup();
 		}
 	}, 90_000);
 });
