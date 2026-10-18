@@ -67,7 +67,7 @@ async function replayBuffer(root, bytes) {
 	return rows;
 }
 
-async function frameViolations(root, bytes, fromOffset) {
+async function frameViolations(root, bytes, fromOffset, pinnedFrom) {
 	const require = createRequire(join(root, "packages", "tui", "package.json"));
 	const { Terminal } = require("@xterm/headless");
 	const terminal = new Terminal({ cols: COLS, rows: ROWS, scrollback: 100_000, allowProposedApi: true });
@@ -87,7 +87,10 @@ async function frameViolations(root, bytes, fromOffset) {
 		const panelStart = viewport.findIndex((row) => /btw answer line \d+$/u.test(row) || row.endsWith(BTW_END));
 		const intruders = panelStart < 0 ? [] : viewport.slice(panelStart).filter((row) => row.includes("eval output line"));
 		const repeated = [...BTW_LINES, `btw: ${QUESTION}`].filter((line) => rows.filter((row) => row.endsWith(line)).length > 1);
-		if (intruders.length > 0 || repeated.length > 0) violations.push({ frame: index, intruders: intruders.length, repeated });
+		const panelMissing = offset > pinnedFrom && !viewport.some((row) => row.endsWith(BTW_END));
+		if (intruders.length > 0 || repeated.length > 0 || panelMissing) {
+			violations.push({ frame: index, intruders: intruders.length, repeated, panelMissing });
+		}
 	}
 	terminal.dispose();
 	return violations;
@@ -275,13 +278,13 @@ async function main() {
 	const panelHeaders = countRows(liveBuffer, `btw: ${QUESTION}`);
 	const panelEnds = countRows(liveBuffer, BTW_END);
 	const evalRowCopies = Array.from({ length: EVAL_LINES }, (_, line) => countEvalRow(doneBuffer, line));
-	const violations = await frameViolations(root, liveRaw || raw, btwAt);
+	const violations = await frameViolations(root, liveRaw || raw, btwAt, settledAt);
 	writeFileSync(join(evidence, "frame-violations.json"), `${JSON.stringify(violations, null, 2)}\n`);
 	const repeatedEvalRows = evalRowCopies.filter((copies) => copies > 1).length;
 	checks.ok("scenario completed without runtime error", runError === undefined, runError instanceof Error ? runError.message : "");
 	checks.ok("the btw side query reached the fake provider", (server?.requests.length ?? 0) >= 3, `requests=${server?.requests.length ?? 0}`);
 	checks.ok("xterm.js rendered the live and done frames", live.ok && done.ok, live.error || done.error);
-	checks.ok("no frame from /btw on paints eval rows into the panel or repeats a panel row", violations.length === 0, `badFrames=${violations.length}${violations[0] ? ` first=${JSON.stringify(violations[0])}` : ""}`);
+	checks.ok("no frame from /btw on paints eval rows into the panel or repeats a panel row, and every frame after the answer shows the panel", violations.length === 0, `badFrames=${violations.length}${violations[0] ? ` first=${JSON.stringify(violations[0])}` : ""}`);
 	checks.ok("the panel header is in the buffer exactly once while the eval runs", panelHeaders === 1, `copies=${panelHeaders}`);
 	checks.ok("the panel's last answer row is in the buffer exactly once", panelEnds === 1, `copies=${panelEnds}`);
 	checks.ok("no eval output row is written twice", repeatedEvalRows === 0, `rowsWithCopies=${repeatedEvalRows}`);
