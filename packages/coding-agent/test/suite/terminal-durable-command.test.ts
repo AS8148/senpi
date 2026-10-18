@@ -210,6 +210,16 @@ describe("restartable-command durability class", () => {
 		expect(refused.content[0]).toMatchObject({
 			text: expect.stringContaining("human_input applies to command monitors"),
 		});
+
+		const rpcRefused = await createMonitorTool(ctx).execute("rpc-human", {
+			description: "children status",
+			type: "rpc",
+			target: "children",
+			human_input: true,
+		});
+		expect(rpcRefused.content[0]).toMatchObject({
+			text: expect.stringContaining("an rpc watch reports session status"),
+		});
 	});
 
 	it("(b3) a restored human_input watch keeps tagging its lines; the restore notice stays machine status", async () => {

@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `tools/monitor-schema.ts` / `tools/monitor.ts`: command monitors accept `human_input: true` for watches whose output lines are messages a person wrote (a chat or inbox bridge); the file branch refuses it.
+- `tools/monitor-schema.ts` / `tools/monitor.ts`: command monitors accept `human_input: true` for watches whose output lines are messages a person wrote (a chat or inbox bridge); the file and rpc branches refuse it.
 - `command-monitor-source.ts` tags that watch's output lines `humanInput: true` (`monitor-types.ts`); restore notices and exit summaries stay untagged. `monitor-notify.ts` sets `humanInput: true` on the matching `details.monitors` entry, and the custom type plus `isHumanInputMonitorNotification` live in the shared `monitor-state-event.ts` seam the goal builtin reads.
 - `terminal-manifest*.ts` / `durable-command.ts`: the flag persists on the manifest entry and a restored watch keeps it.
 

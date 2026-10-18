@@ -183,6 +183,10 @@ export function createMonitorTool(ctx: TerminalToolContext) {
 			const source = monitorSourceOf(input);
 			if (typeof source !== "string") return errorResult(source.error);
 			if (source === "rpc") {
+				if (input.human_input === true)
+					return errorResult(
+						"human_input applies to command monitors; an rpc watch reports session status, not a person's text.",
+					);
 				await ctx.ensurePersistence?.();
 				if (input.persistent === true) {
 					const refused = durableAdmissionError(ctx);
