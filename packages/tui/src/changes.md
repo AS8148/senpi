@@ -1,3 +1,23 @@
+## 2026-10-18 - Main-screen hands the wheel back to the terminal while a mouse lease is held (senpi#3604)
+
+### What changed
+
+- `packages/tui/src/tui-main-screen.ts`: the first wheel report (button bit 64) while mouse tracking is on writes `MOUSE_TRACKING.disable` and enters a `yielded` state that keeps the lease; later mouse reports are consumed without dispatch. The next input that is not a terminal report (a key press or paste) re-arms tracking through `applyMouseTracking(true)` and still reaches the focused component. `applyMouseTracking` and `beforeTerminalStop` clear the state, so a released and re-acquired lease arms normally. `mouseCaptureState()` reports `"off" | "armed" | "yielded"`.
+- `packages/tui/src/tui.ts`: `TuiBase.mouseCaptureState()` (`"armed"` while an enabled lease exists, else `"off"`); `isTerminalReport` is exported for the main-screen renderer.
+
+### Why
+
+- In main-screen mode the transcript lives in the terminal's scrollback, which the app cannot scroll. With `?1000` on (a pending ask-user question holds a lease for clickable options), the terminal stopped scrolling and the renderer swallowed the wheel reports, so the wheel did nothing until the question was answered.
+- Tests: `packages/tui/test/tui-main-screen-mouse.test.ts` (yield on wheel, re-arm on a key that still reaches the editor, clicks dead while yielded and live after re-arm, no re-arm on terminal reports or focus changes, re-acquire after release).
+
+### Why an extension could not handle it
+
+- Mouse tracking bytes and input routing belong to the renderer; extensions only hold leases.
+
+### Expected merge conflict zones
+
+- MEDIUM: `TuiMainScreen.handleMouseInput` and `applyMouseTracking`. LOW: `TuiBase.mouseCaptureState`, the `isTerminalReport` export.
+
 ## 2026-10-18 - Old WezTerm on Windows gets the image placeholder instead of a blank gap (Fixes senpi#3596)
 
 ### What changed
