@@ -69,9 +69,9 @@ function loggingPort(log: string[], commit?: () => Promise<void>): QueuedInputPo
 			if (messages.length > 0) log.push(`claim:${queue}:${texts(messages).join("|")}`);
 			return messages;
 		},
-		release: async (queue, messages, restore) => {
+		release: async (queue, messages, giveBack) => {
 			log.push(`release:${queue}:${texts(messages).join("|")}`);
-			restore();
+			giveBack.restore();
 		},
 		commitConsumption: async (queue, messages) => {
 			log.push(`commit:${queue}:${texts(messages).join("|")}`);
@@ -190,8 +190,8 @@ describe("Agent queuedInputPort (senpi#3549)", () => {
 			agent?.clearAllQueues();
 			throw new Error("journal unavailable");
 		});
-		port.release = async (queue, messages, restore) => {
-			log.push(`release:${queue}:${texts(messages).join("|")}:restored=${restore()}`);
+		port.release = async (queue, messages, giveBack) => {
+			log.push(`release:${queue}:${texts(messages).join("|")}:restored=${giveBack.restore()}`);
 		};
 		agent = new Agent({ streamFn: recordingStream(log), queuedInputPort: port });
 		agent.followUp(user("later"));
@@ -200,6 +200,78 @@ describe("Agent queuedInputPort (senpi#3549)", () => {
 
 		expect(log).toContain("release:followUp:later:restored=false");
 		expect(texts(agent.peekQueuedMessages())).toEqual([]);
+	});
+
+	// senpi#3586 review H1-residual: the exits that take the queue outside the loop share the loop's give-back,
+	// so a clear that lands while their commit runs keeps the input out on every one of them.
+	describe("a clear during a failed commit keeps the input out on every queue exit", () => {
+		function clearingPort(log: string[], agent: () => Agent): QueuedInputPort {
+			const port = loggingPort(log, async () => {
+				agent().clearAllQueues();
+				throw new Error("journal unavailable");
+			});
+			port.release = async (queue, messages, giveBack) => {
+				log.push(`release:${queue}:${texts(messages).join("|")}:restorable=${giveBack.restorable()}`);
+				log.push(`restored=${giveBack.restore()}`);
+			};
+			return port;
+		}
+
+		it("continue() after an assistant message", async () => {
+			const log: string[] = [];
+			let agent: Agent | undefined;
+			agent = new Agent({
+				initialState: { messages: [user("first"), assistant("done")] },
+				streamFn: recordingStream(log),
+				queuedInputPort: clearingPort(log, () => agent as Agent),
+			});
+			agent.followUp(user("queued"));
+
+			await agent.continue();
+
+			expect(log).toContain("release:followUp:queued:restorable=false");
+			expect(log).toContain("restored=false");
+			expect(texts(agent.peekQueuedMessages())).toEqual([]);
+		});
+
+		it("continueWithQueuedMessages()", async () => {
+			const log: string[] = [];
+			let agent: Agent | undefined;
+			agent = new Agent({
+				initialState: { messages: [user("first")] },
+				streamFn: recordingStream(log),
+				queuedInputPort: clearingPort(log, () => agent as Agent),
+			});
+			agent.steer(user("queued"));
+
+			await agent.continueWithQueuedMessages().catch(() => undefined);
+
+			expect(log).toContain("release:steering:queued:restorable=false");
+			expect(log).toContain("restored=false");
+			expect(texts(agent.peekQueuedMessages())).toEqual([]);
+		});
+
+		it("the drain after agent_end", async () => {
+			const log: string[] = [];
+			let agent: Agent | undefined;
+			agent = new Agent({
+				streamFn: recordingStream(log),
+				queuedInputPort: clearingPort(log, () => agent as Agent),
+			});
+			let queuedAtEnd = false;
+			agent.subscribe((event) => {
+				if (event.type !== "agent_end" || queuedAtEnd) return;
+				queuedAtEnd = true;
+				agent?.followUp(user("after"));
+			});
+
+			await agent.prompt("first").catch(() => undefined);
+			await agent.waitForIdle();
+
+			expect(log).toContain("release:followUp:after:restorable=false");
+			expect(log).toContain("restored=false");
+			expect(texts(agent.peekQueuedMessages())).toEqual([]);
+		});
 	});
 
 	it("leaves the standalone queue behavior unchanged without a port", async () => {

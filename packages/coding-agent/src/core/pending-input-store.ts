@@ -42,7 +42,7 @@ export interface PendingInputStoreOptions {
 }
 
 /** Called after each committed transition with its projection and the journal cursor it was written at. */
-export type PendingInputListener = (projection: PendingInputProjection, cursor: number) => void;
+export type PendingInputListener = (projections: readonly PendingInputProjection[], cursor: number) => void;
 
 /** Transitions inside one gated step: each is committed directly, since the caller already holds the gate. */
 export interface PendingInputTransaction {
@@ -253,15 +253,16 @@ export class PendingInputStore {
 		}
 		this.cursor = record.cursor;
 		for (const { next } of committed) this.inputs.set(next.clientMessageId, next);
-		for (const { next, decision } of committed) {
-			const projection = projectPendingInput(next);
-			for (const listener of this.listeners) {
-				try {
-					listener(projection, record.cursor);
-				} catch (error) {
-					this.reportListenerError(error);
-				}
+		// One notification per record: every input it changed, under its one cursor.
+		const projections = committed.map(({ next }) => projectPendingInput(next));
+		for (const listener of this.listeners) {
+			try {
+				listener(projections, record.cursor);
+			} catch (error) {
+				this.reportListenerError(error);
 			}
+		}
+		for (const { next, decision } of committed) {
 			for (const effect of decision.effects) {
 				if (effect.type === "dispatch") this.options.dispatch?.(effect.token, next);
 				if (effect.type === "restore_to_draft") this.options.restoreToDraft?.(effect.text);

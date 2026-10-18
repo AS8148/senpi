@@ -72,6 +72,8 @@ export class SessionPendingInputs {
 	private storeOpening: Promise<PendingInputStore> | undefined;
 	private port: QueuedInputPort | undefined;
 	private attempts = 0;
+	/** Bumped synchronously by every clear, so a change can tell a clear it raced from a real divergence. */
+	private clears = 0;
 
 	constructor(options: SessionPendingInputsOptions) {
 		this.options = options;
@@ -130,6 +132,7 @@ export class SessionPendingInputs {
 		applyNative: () => QueuedInputChangeOutcome,
 	): Promise<QueuedInputChangeOutcome | undefined> {
 		if (this.storeOpening === undefined) return undefined;
+		const clearsAtStart = this.clears;
 		const store = await this.storeOpening;
 		return store.transaction(async (tx) => {
 			const current = tx.current(request.clientMessageId);
@@ -152,8 +155,9 @@ export class SessionPendingInputs {
 			if (outcome !== "edited" && outcome !== "removed") return outcome;
 			const native = applyNative();
 			// A synchronous clear can empty the queue while the change is being journaled; its own record of the
-			// clear is queued behind this step and retires the input, so the change simply found nothing (review L1).
-			if (native === "not_found") return "not_found";
+			// clear is queued behind this step and retires the input, so the change simply found nothing. Any other
+			// missing native copy is a real divergence (review L1, L-c).
+			if (native === "not_found" && this.clears !== clearsAtStart) return "not_found";
 			if (native !== outcome) throw new PendingInputDivergenceError(request.clientMessageId, outcome, native);
 			return outcome;
 		});
@@ -164,6 +168,7 @@ export class SessionPendingInputs {
 	 * native queue: each still-queued one is removed by `stop`, so a reopen never queues it again.
 	 */
 	async recordCleared(clientMessageIds: readonly string[]): Promise<void> {
+		this.clears += 1;
 		if (this.storeOpening === undefined || clientMessageIds.length === 0) return;
 		const store = await this.storeOpening;
 		// One record for the whole clear: it lands or not as a unit, never split around a later entry.
@@ -202,10 +207,10 @@ export class SessionPendingInputs {
 		return {
 			claim: async (queue, drain) => (await this.openPort())?.claim(queue, drain) ?? drain(),
 			commitConsumption: async (queue, messages) => (await this.openPort())?.commitConsumption(queue, messages),
-			release: async (queue, messages, restore) => {
+			release: async (queue, messages, giveBack) => {
 				const port = await this.openPort();
-				if (port === undefined) restore();
-				else await port.release(queue, messages, restore);
+				if (port === undefined) giveBack.restore();
+				else await port.release(queue, messages, giveBack);
 			},
 		};
 	}
@@ -221,8 +226,8 @@ export class SessionPendingInputs {
 		}).then((store) => {
 			const onChange = this.options.onChange;
 			if (onChange !== undefined)
-				store.subscribe((projection, cursor) =>
-					onChange({ lifetimeId: this.lifetimeId, cursor, changes: [projection] }),
+				store.subscribe((projections, cursor) =>
+					onChange({ lifetimeId: this.lifetimeId, cursor, changes: projections }),
 				);
 			return store;
 		});

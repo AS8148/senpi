@@ -48,7 +48,7 @@ describe("pending input store", () => {
 		const { store, dispatched } = await openStore(journal);
 		await store.submit(SUBMIT);
 		const seen: string[] = [];
-		store.subscribe((projection) => seen.push(projection.state));
+		store.subscribe((projections) => seen.push(...projections.map((projection) => projection.state)));
 		journal.failNext = true;
 		const token = {
 			ownerId: "o",

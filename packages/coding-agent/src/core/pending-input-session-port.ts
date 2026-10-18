@@ -50,6 +50,27 @@ export function createSessionQueuedInputPort(options: SessionQueuedInputPortOpti
 		return tokens;
 	};
 
+	// Consumption was never committed, so no consumer can hold these: removing them is fenced (senpi#3549).
+	const cancelOf = (clientMessageId: string) => ({
+		clientMessageId,
+		event: { type: "cancel" as const, cause: "stop" as const, consumerFenced: true },
+	});
+	const cancelClaims = async (tx: PendingInputTransaction, messages: readonly AgentMessage[]): Promise<void> => {
+		const ids = messages.flatMap((message) => {
+			const token = attempts.get(message);
+			attempts.delete(message);
+			return token === undefined ? [] : [token.clientMessageId];
+		});
+		if (ids.length > 0) await tx.applyAll(ids.map(cancelOf));
+	};
+	const cancelReleased = async (tx: PendingInputTransaction, messages: readonly AgentMessage[]): Promise<void> => {
+		const ids = messages.flatMap((message) => {
+			const clientMessageId = clientMessageIdOf(message);
+			return clientMessageId === undefined || tx.current(clientMessageId) === undefined ? [] : [clientMessageId];
+		});
+		if (ids.length > 0) await tx.applyAll(ids.map(cancelOf));
+	};
+
 	return {
 		claim: (_queue, drain) =>
 			options.store.transaction(async (tx) => {
@@ -63,18 +84,17 @@ export function createSessionQueuedInputPort(options: SessionQueuedInputPortOpti
 				await settle(tx, messages, "consumed");
 			}),
 		// Journal first: if the release cannot be recorded the input stays `sending` (uncertain on reopen) and is
-		// not put back natively, so it can never be delivered twice. A clear that won the race keeps the messages
-		// out of the queue: their records are then removed too, so no record says queued with nothing behind it.
-		release: (_queue, messages, restore) =>
+		// not put back natively, so it can never be delivered twice. A clear that won keeps the messages out of the
+		// queue and their records removed, in one record. Only a clear landing during the release's own append
+		// needs the second, removing record.
+		release: (_queue, messages, giveBack) =>
 			options.store.transaction(async (tx) => {
-				const released = await settle(tx, messages, "release");
-				if (restore() || released.length === 0) return;
-				await tx.applyAll(
-					released.map((token) => ({
-						clientMessageId: token.clientMessageId,
-						event: { type: "cancel", cause: "stop", consumerFenced: true },
-					})),
-				);
+				if (!giveBack.restorable()) {
+					await cancelClaims(tx, messages);
+					return;
+				}
+				await settle(tx, messages, "release");
+				if (!giveBack.restore()) await cancelReleased(tx, messages);
 			}),
 	};
 }

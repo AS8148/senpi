@@ -162,15 +162,21 @@ export interface AgentOptions {
 	cursorExecHandlers?: AgentLoopConfig["cursorExecHandlers"];
 }
 
+/**
+ * Claimed messages going back to their queue. Both answers are false once a clear landed after the claim:
+ * `restorable` asks before anything is recorded, `restore` puts the messages back only while that still holds.
+ */
+export interface QueuedGiveBack {
+	restorable(): boolean;
+	restore(): boolean;
+}
+
 /** The owner side of the steering and follow-up queues; every drain, restore and consumption goes through it. */
 export interface QueuedInputPort {
 	/** Runs `drain` (the native queue's drain) under the owner's gate and returns what it may hand to a turn. */
 	claim(queue: "steering" | "followUp", drain: () => AgentMessage[]): Promise<AgentMessage[]>;
-	/**
-	 * Gives claimed messages back: runs `restore` (the native prepend) under the owner's gate. `restore` answers
-	 * false when a clear landed after the claim, so the messages stay out of the queue.
-	 */
-	release(queue: "steering" | "followUp", messages: AgentMessage[], restore: () => boolean): Promise<void>;
+	/** Gives claimed messages back under the owner's gate; a clear that landed after the claim wins. */
+	release(queue: "steering" | "followUp", messages: AgentMessage[], giveBack: QueuedGiveBack): Promise<void>;
 	/**
 	 * Called with drained queued messages before any of them enters the context or a provider request.
 	 * Resolve once their consumption is durable; a rejection restores them and fails this attempt.
@@ -671,18 +677,33 @@ export class Agent {
 		const pendingQueue = queue === "steering" ? this.steeringQueue : this.followUpQueue;
 		const port = this.queuedInputPort;
 		if (!port) return pendingQueue.drain();
-		const messages = await port.claim(queue, () => pendingQueue.drain());
+		let generation = pendingQueue.getClearGeneration();
+		const messages = await port.claim(queue, () => {
+			generation = pendingQueue.getClearGeneration();
+			return pendingQueue.drain();
+		});
 		if (messages.length === 0) return messages;
 		try {
 			await port.commitConsumption(queue, messages);
 		} catch (error) {
-			await port.release(queue, messages, () => {
-				pendingQueue.prepend(messages);
-				return true;
-			});
+			await port.release(queue, messages, this.giveBack(queue, messages, generation));
 			throw error;
 		}
 		return messages;
+	}
+
+	/** The one give-back every queue exit uses: a clear since `generation` (read at the claim) wins. */
+	private giveBack(queue: "steering" | "followUp", messages: AgentMessage[], generation: number): QueuedGiveBack {
+		const pendingQueue = queue === "steering" ? this.steeringQueue : this.followUpQueue;
+		const restorable = () => pendingQueue.getClearGeneration() === generation;
+		return {
+			restorable,
+			restore: () => {
+				if (!restorable()) return false;
+				pendingQueue.prepend(messages);
+				return true;
+			},
+		};
 	}
 
 	private async runContinuation(options: AgentContinuationOptions = {}): Promise<void> {
@@ -722,16 +743,8 @@ export class Agent {
 		let followUpQueueGeneration = this.followUpQueue.getClearGeneration();
 		const finishTurn = this.finishTurn;
 		const queuedInputPort = this.queuedInputPort;
-		const restore = (queue: "steering" | "followUp", messages: AgentMessage[]): boolean => {
-			if (queue === "steering") {
-				if (this.steeringQueue.getClearGeneration() !== steeringQueueGeneration) return false;
-				this.steeringQueue.prepend(messages);
-				return true;
-			}
-			if (this.followUpQueue.getClearGeneration() !== followUpQueueGeneration) return false;
-			this.followUpQueue.prepend(messages);
-			return true;
-		};
+		const giveBack = (queue: "steering" | "followUp", messages: AgentMessage[]): QueuedGiveBack =>
+			this.giveBack(queue, messages, queue === "steering" ? steeringQueueGeneration : followUpQueueGeneration);
 		const reasoning = (this._state.reasoningBaseline as ThinkingLevel | undefined) ?? this._state.thinkingLevel;
 		return {
 			model: this._state.model,
@@ -799,8 +812,8 @@ export class Agent {
 				? (queue, messages) => queuedInputPort.commitConsumption(queue, messages)
 				: undefined,
 			restorePendingMessages: async (queue, messages) => {
-				if (queuedInputPort) await queuedInputPort.release(queue, messages, () => restore(queue, messages));
-				else restore(queue, messages);
+				if (queuedInputPort) await queuedInputPort.release(queue, messages, giveBack(queue, messages));
+				else giveBack(queue, messages).restore();
 			},
 		};
 	}

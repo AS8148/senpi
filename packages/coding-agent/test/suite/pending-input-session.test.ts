@@ -5,7 +5,11 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
-import { ClientMessageIdConflictError, SessionPendingInputs } from "../../src/core/pending-input-session.ts";
+import {
+	ClientMessageIdConflictError,
+	PendingInputDivergenceError,
+	SessionPendingInputs,
+} from "../../src/core/pending-input-session.ts";
 import {
 	PENDING_INPUT_TRANSITION,
 	type PendingInputJournal,
@@ -408,6 +412,27 @@ describe("SessionPendingInputs.change", () => {
 
 		expect(outcome).toBe("not_found");
 		expect(records.at(-1)?.input).toMatchObject({ clientMessageId: "c-1", phase: "removed" });
+	});
+
+	it("still refuses a missing native copy that no clear explains (review L-c)", async () => {
+		const records: PendingInputJournalRecord[] = [];
+		const journal: PendingInputJournal = {
+			append: async (record) => {
+				records.push(record);
+			},
+			read: async () => records,
+		};
+		let queuedIds = 0;
+		const inputs = new SessionPendingInputs({
+			sessionManager: SessionManager.inMemory(),
+			nextQueuedId: () => `q_${++queuedIds}`,
+			journal,
+		});
+		await inputs.admit({ clientMessageId: "c-1", text: "draft", mode: "followUp" }, () => undefined);
+
+		await expect(inputs.change({ clientMessageId: "c-1", text: "final" }, () => "not_found")).rejects.toBeInstanceOf(
+			PendingInputDivergenceError,
+		);
 	});
 });
 

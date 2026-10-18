@@ -158,7 +158,7 @@ describe("session queued-input port", () => {
 		expect(texts(agent.peekQueuedMessages())).toBe("later");
 	});
 
-	it("records a claimed input removed when a clear keeps it out of the queue, so nothing reads queued (review H1)", async () => {
+	it("records a claimed input removed in ONE record when a clear won before the give-back (review H1, L-a)", async () => {
 		const { journal, store } = await setup();
 		await store.submit(SUBMIT);
 		const port = createSessionQueuedInputPort({
@@ -169,7 +169,27 @@ describe("session queued-input port", () => {
 		});
 		const claimed = await port.claim("followUp", () => [queuedUser("later", "c-1")]);
 
-		await port.release("followUp", claimed, () => false);
+		const recordsBefore = journal.records.length;
+
+		await port.release("followUp", claimed, { restorable: () => false, restore: () => false });
+
+		expect(journal.phases("c-1")).toEqual(["queued", "sending", "removed"]);
+		expect(journal.records.length - recordsBefore).toBe(1);
+		expect(store.read("c-1")).toMatchObject({ projection: { state: "removed" } });
+	});
+
+	it("removes a released input when a clear lands during the release's own write", async () => {
+		const { journal, store } = await setup();
+		await store.submit(SUBMIT);
+		const port = createSessionQueuedInputPort({
+			store,
+			ownerId: "owner-1",
+			writerGeneration: 1,
+			nextAttemptId: () => "a-x",
+		});
+		const claimed = await port.claim("followUp", () => [queuedUser("later", "c-1")]);
+
+		await port.release("followUp", claimed, { restorable: () => true, restore: () => false });
 
 		expect(journal.phases("c-1")).toEqual(["queued", "sending", "queued", "removed"]);
 		expect(store.read("c-1")).toMatchObject({ projection: { state: "removed" } });
@@ -194,6 +214,30 @@ describe("session queued-input port", () => {
 		expect(store.read("c-1")).toMatchObject({ projection: { state: "queued" } });
 		expect(store.read("c-2")).toMatchObject({ projection: { state: "queued" } });
 		expect(texts(agent.peekQueuedMessages())).toBe("later|also");
+	});
+
+	it("notifies a batch once, with every input it changed under its one cursor (review L-b)", async () => {
+		const { store, agent } = await setup();
+		agent.followUpMode = "all";
+		await store.submit(SUBMIT);
+		await store.submit({ ...SUBMIT, clientMessageId: "c-2", fingerprint: "fp2", text: "also" });
+		agent.followUp(queuedUser("later", "c-1"));
+		agent.followUp(queuedUser("also", "c-2"));
+		const notifications: { cursor: number; changes: string[] }[] = [];
+		store.subscribe((projections, cursor) =>
+			notifications.push({
+				cursor,
+				changes: projections.map((projection) => `${projection.clientMessageId}:${projection.state}`),
+			}),
+		);
+
+		await agent.prompt("first");
+
+		const delivered = notifications.filter((notification) =>
+			notification.changes.some((change) => change.endsWith(":delivered")),
+		);
+		expect(delivered).toHaveLength(1);
+		expect(delivered[0]?.changes).toEqual(["c-1:delivered", "c-2:delivered"]);
 	});
 
 	it("delivers a batch with one record that names every input", async () => {
