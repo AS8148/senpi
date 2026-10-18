@@ -99,6 +99,8 @@ export interface DeadlineSessionOwner {
 	_recordDeadlineStop(deadline: TurnDeadline): void;
 	/** End the turn through the normal system abort (tools see the abort signal); resolves once the session is idle. */
 	abortTurnForDeadline(): Promise<void>;
+	/** Stop waiting on extension handlers that still hold the turn; returns how many were released (senpi#3650). */
+	releaseHeldExtensionHandlers(): number;
 	/** True while a provider retry is in flight; the engine is actively recovering the turn. */
 	readonly isRetryInFlight: boolean;
 	readonly isIdle: boolean;
@@ -225,12 +227,16 @@ export class AgentDeadlineTracker {
 		}
 		// The abort signal reaches every running tool (the bash tool kills its process tree on it), and the
 		// normal settle path emits agent_idle once the run ends. A turn still running after the grace is held by
-		// something no abort can end (an extension handler that never returns): it is reported, never faked idle.
+		// something no abort can end, usually an extension handler that never returns: the host stops waiting on
+		// those handlers and gives the settle one more grace. Only a turn still running after that is reported.
 		let abortError: string | undefined;
 		const aborting = this.session.abortTurnForDeadline().catch((error: unknown) => {
 			abortError = error instanceof Error ? error.message : String(error);
 		});
-		const settled = await within(aborting, TURN_DEADLINE_GRACE_MS);
+		let settled = await within(aborting, TURN_DEADLINE_GRACE_MS);
+		if (!settled && this.session.releaseHeldExtensionHandlers() > 0) {
+			settled = await within(aborting, TURN_DEADLINE_GRACE_MS);
+		}
 		if (abortError !== undefined) this.session._warnDeadline("turn_deadline_abort_failed", abortError);
 		if (settled && abortError === undefined) return;
 		if (!this.session.isIdle)

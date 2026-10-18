@@ -1,3 +1,22 @@
+## 2026-10-18 - Agent lifecycle event handlers run under a host budget (senpi#3650)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: handlers of the agent lifecycle events the session awaits on its event queue (`agent_start`, `agent_end`, `agent_settled`, `turn_start`, `message_start`, `message_update`, `message_end`, `tool_execution_*`) run under a host budget set with `setEventHandlerBudget(budget, onStall)`. Past the warning the stall listener hears it; at the hard cap, or when the turn deadline calls `releaseHeldHandlers()`, the host stops waiting, reports an extension error (`handler timed out after Nms` / `handler released by the turn deadline`) and moves to the next handler; the handler keeps running detached. `session_shutdown` keeps its own budget and messages, now on the same implementation.
+- `packages/coding-agent/src/core/extensions/handler-budget.ts` (new): `runBudgetedHandler` (the `session_shutdown` path, with the abort signal) and `guardRunningHandler` (the lifecycle path). The guard starts nothing and adds no microtask link when a handler settles in time, because which owner drains input queued during `agent_end` depends on that timing (senpi#3351).
+
+### Why
+
+One lifecycle handler that never settled held the session's event queue forever (senpi#3650); only `session_shutdown` was host-bounded.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: the runner is the only place that awaits extension handlers; an extension cannot bound another extension's handler.
+
+### Expected merge conflict zones
+
+- MEDIUM: `runner.ts` `dispatchEmit` handler loop and `emitMessageEnd` handler call; `runSessionShutdownHandler` (body replaced by `runBudgetedHandler`); the `ExtensionRunner` field block and the methods after `onError`.
+
 ## 2026-10-16 - ProviderConfig declares ambient api-key auth (senpi#2327)
 
 ### What changed

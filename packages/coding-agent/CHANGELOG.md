@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- An extension handler that never settles on an agent lifecycle event no longer freezes the session: past `extensionEventHandlerWarnMs` (default 60 s) the session shows which extension and event it is waiting on, at `extensionEventHandlerTimeoutMs` (default 20 min) it stops waiting, persists the turn and delivers queued input, and the turn deadline releases such a wait instead of only logging `turn_deadline_unsettled`; every stage is logged as `extension_handler_stalled` in session.log ([#3650](https://github.com/code-yeongyu/senpi/issues/3650)).
 - RPC `get_pending_inputs` reads the inputs in durable custody with an explicit outcome per known id, and `pending_input_update` publishes each change with its journal cursor; the module is also exported as `@code-yeongyu/senpi/pending-input` ([#3549](https://github.com/code-yeongyu/senpi/issues/3549)).
 - Queued input with a client id is kept in durable custody: it is journaled in the session file before it is queued, delivered only after its consumption is recorded, and edited or removed in its record and the queue together; a repeated identical submit queues it once and a reused id with another payload is refused ([#3549](https://github.com/code-yeongyu/senpi/issues/3549)).
 

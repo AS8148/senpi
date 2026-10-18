@@ -1,3 +1,27 @@
+## 2026-10-18 - A hung extension handler cannot freeze the session (senpi#3650)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_applyExtensionBindings` gives every runner the agent lifecycle handler budget (`extensionEventHandlerWarnMs` / `extensionEventHandlerTimeoutMs`, read per handler) and routes stalls to `reportExtensionHandlerStall`; the deadline owner gains `releaseHeldExtensionHandlers()`.
+- `packages/coding-agent/src/core/settings-manager.ts`: the two settings, defaults 60 s (warning) and 20 min (hard cap, above the 15 min summarization budget a blocking compaction in `message_end` may use); `0` disables each.
+- `packages/coding-agent/src/core/session-log.ts`: `extension` and `handlerEvent` join the data-key allowlist, so `extension_handler_stalled` names the extension (basename) and the event it held.
+- `packages/coding-agent/src/core/turn-deadline.ts`: a turn still running one grace after the deadline abort has its held extension handler waits released and gets one more grace to settle; only a turn still running after that logs `turn_deadline_unsettled`.
+- `packages/coding-agent/src/core/extension-handler-stall-report.ts` (new): logs every stall stage and shows a notice for the warning stage.
+
+### Why
+
+AgentSession persists agent events on one serial queue and awaits every extension handler before persisting. One handler that never settled froze a long-running session for 2 h 12 min: the turn's messages were never written, the session stayed streaming, 25 queued steers were never delivered, nothing logged which handler held it, and the turn deadline could only report the turn as unsettled.
+
+### Why an extension could not handle it
+
+The wait is the host's own await on extension handlers inside the session's event queue; no extension can bound another extension's handler or release the host's wait on it.
+
+### Expected merge conflict zones
+
+- LOW: `agent-session.ts` `_applyExtensionBindings` (after `setToolHookLifecycleObserver`) and the deadline-owner adapters beside `abortTurnForDeadline`.
+- LOW: `settings-manager.ts` beside the `session_shutdown` handler budget constants, fields and getters; `session-log.ts` `ALLOWED_DATA_KEY`.
+- `turn-deadline.ts` and `extension-handler-stall-report.ts` are fork-only.
+
 ## 2026-10-18 - AgentSession keeps identified queued input in durable custody (senpi#3549, P2b)
 
 ### What changed

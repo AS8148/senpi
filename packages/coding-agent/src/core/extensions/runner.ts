@@ -28,6 +28,15 @@ import { goalFilePath } from "./builtin/goal/persistence.ts";
 import { goalStoreRef } from "./builtin/goal/store-ref.ts";
 import { disableServerSearch } from "./builtin/server-search-fallback.ts";
 import { dispatchContextMessages } from "./context-dispatch.ts";
+import {
+	type ExtensionHandlerBudget,
+	type ExtensionHandlerStall,
+	guardRunningHandler,
+	HANDLER_RELEASED,
+	HANDLER_TIMED_OUT,
+	HeldHandlerWaits,
+	runBudgetedHandler,
+} from "./handler-budget.ts";
 import { kernelToolsStorage } from "./kernel-tools-context.ts";
 import { drainPendingProviderRegistrations } from "./loader.ts";
 import { SessionStartTurnGate } from "./session-start-turn-gate.ts";
@@ -329,13 +338,24 @@ export type ReloadHandler = () => Promise<void>;
 
 export type ShutdownHandler = () => void;
 
-/** Host budget applied to each individual `session_shutdown` handler. */
-interface SessionShutdownHandlerBudget {
-	/** Log a warning once the handler has run this long; 0 disables the warning. */
-	warnMs: number;
-	/** Abort the handler's signal and stop waiting for it after this long; 0 disables the cap. */
-	timeoutMs: number;
-}
+/**
+ * Agent lifecycle events the session awaits on its serial event queue before it persists a turn (senpi#3650).
+ * Their handlers observe; none may hold the queue indefinitely, so each runs under the host's event handler budget.
+ */
+const QUEUED_LIFECYCLE_EVENTS: ReadonlySet<string> = new Set([
+	"agent_start",
+	"agent_end",
+	"agent_settled",
+	"turn_start",
+	"message_start",
+	"message_update",
+	"message_end",
+	"tool_execution_start",
+	"tool_execution_update",
+	"tool_execution_end",
+]);
+
+const UNBOUNDED_HANDLER_BUDGET: ExtensionHandlerBudget = { warnMs: 0, timeoutMs: 0 };
 
 /**
  * Helper function to emit session_shutdown event to extensions.
@@ -456,6 +476,9 @@ export class ExtensionRunner {
 	private modelRegistry: ModelRegistry;
 	private eventBus: EventBus;
 	private errorListeners: Set<ExtensionErrorListener> = new Set();
+	private eventHandlerBudget: () => ExtensionHandlerBudget = () => UNBOUNDED_HANDLER_BUDGET;
+	private handlerStallListener: ((stall: ExtensionHandlerStall) => void) | undefined;
+	private readonly heldHandlerWaits = new HeldHandlerWaits();
 	private getModel: () => Model<any> | undefined = () => undefined;
 	private getServiceTier: () => ServiceTier | undefined = () => undefined;
 	private getEffectiveServiceTier: () => ServiceTier | undefined = () => this.getServiceTier();
@@ -996,6 +1019,45 @@ export class ExtensionRunner {
 	onError(listener: ExtensionErrorListener): () => void {
 		this.errorListeners.add(listener);
 		return () => this.errorListeners.delete(listener);
+	}
+
+	/** The host's budget for handlers of the queued lifecycle events, read per handler, and who hears their stalls. */
+	setEventHandlerBudget(budget: () => ExtensionHandlerBudget, onStall: (stall: ExtensionHandlerStall) => void): void {
+		this.eventHandlerBudget = budget;
+		this.handlerStallListener = onStall;
+	}
+
+	/** Stops waiting on every lifecycle handler still running (the turn deadline's release). Returns the count. */
+	releaseHeldHandlers(): number {
+		return this.heldHandlerWaits.releaseAll();
+	}
+
+	/** Guards one queued lifecycle handler that is already running; await the result exactly like the handler itself. */
+	private guardLifecycleHandler(extensionPath: string, event: string, pending: unknown): unknown {
+		return guardRunningHandler(pending, {
+			extensionPath,
+			event,
+			budget: this.eventHandlerBudget(),
+			held: this.heldHandlerWaits,
+			onStall: (stall) => this.handlerStallListener?.(stall),
+		});
+	}
+
+	/** A handler past its cap, or released by the turn deadline, is reported as an extension error and skipped. */
+	private stoppedLifecycleHandler(extensionPath: string, event: string, outcome: unknown): boolean {
+		if (outcome === HANDLER_TIMED_OUT) {
+			this.emitError({
+				extensionPath,
+				event,
+				error: `handler timed out after ${this.eventHandlerBudget().timeoutMs}ms`,
+			});
+			return true;
+		}
+		if (outcome === HANDLER_RELEASED) {
+			this.emitError({ extensionPath, event, error: "handler released by the turn deadline" });
+			return true;
+		}
+		return false;
 	}
 
 	emitError(error: ExtensionError): void {
@@ -1613,7 +1675,7 @@ export class ExtensionRunner {
 	 * effect without a reload). A malformed value must never break teardown, so
 	 * an invalid setting is reported and the shipped defaults are used.
 	 */
-	private resolveSessionShutdownBudget(): SessionShutdownHandlerBudget {
+	private resolveSessionShutdownBudget(): ExtensionHandlerBudget {
 		try {
 			const settings = SettingsManager.create(this.cwd, this.getAgentDirFn(), {
 				projectTrusted: this.isProjectTrustedFn(),
@@ -1646,62 +1708,28 @@ export class ExtensionRunner {
 		extensionPath: string,
 		event: SessionShutdownEvent,
 		handler: (...args: unknown[]) => Promise<unknown>,
-		budget: SessionShutdownHandlerBudget,
+		budget: ExtensionHandlerBudget,
 	): Promise<void> {
-		const controller = new AbortController();
-		const startedAt = Date.now();
-		let outcome: { ok: true } | { ok: false; error: unknown } | undefined;
-		// Settle the handler through a captured outcome so a late rejection after a
-		// timeout is already handled instead of becoming an unhandled rejection.
-		const settled = Promise.resolve(
-			handler({ ...event, signal: controller.signal }, this.createContext(extensionPath)),
-		).then(
-			() => {
-				outcome = { ok: true };
+		const outcome = await runBudgetedHandler({
+			extensionPath,
+			event: "session_shutdown",
+			budget,
+			run: (signal) => handler({ ...event, signal }, this.createContext(extensionPath)),
+			onStall: (stall) => {
+				if (stall.stage !== "warn") return;
+				const capNote = budget.timeoutMs > 0 ? ` (hard cap ${budget.timeoutMs}ms)` : "";
+				console.warn(
+					`Extension ${extensionPath} is still running its session_shutdown handler after ${stall.elapsedMs}ms${capNote}.`,
+				);
 			},
-			(error: unknown) => {
-				outcome = { ok: false, error };
-			},
-		);
-
-		if (budget.warnMs > 0 || budget.timeoutMs > 0) {
-			let warnTimer: ReturnType<typeof setTimeout> | undefined;
-			let capTimer: ReturnType<typeof setTimeout> | undefined;
-			let timedOut = false;
-			try {
-				timedOut = await new Promise<boolean>((resolve) => {
-					if (budget.warnMs > 0) {
-						warnTimer = setTimeout(() => {
-							const capNote = budget.timeoutMs > 0 ? ` (hard cap ${budget.timeoutMs}ms)` : "";
-							console.warn(
-								`Extension ${extensionPath} is still running its session_shutdown handler after ${Date.now() - startedAt}ms${capNote}.`,
-							);
-						}, budget.warnMs);
-					}
-					if (budget.timeoutMs > 0) {
-						capTimer = setTimeout(() => resolve(true), budget.timeoutMs);
-					}
-					void settled.then(() => resolve(false));
-				});
-			} finally {
-				clearTimeout(warnTimer);
-				clearTimeout(capTimer);
-			}
-			if (timedOut) {
-				controller.abort(new Error(`session_shutdown handler timed out after ${budget.timeoutMs}ms`));
-				this.emitError({
-					extensionPath,
-					event: "session_shutdown",
-					error: `handler timed out after ${budget.timeoutMs}ms`,
-				});
-				return;
-			}
-		} else {
-			await settled;
-		}
-
-		if (outcome && !outcome.ok) {
-			throw outcome.error;
+		});
+		if (outcome.kind === "failed") throw outcome.error;
+		if (outcome.kind === "timed_out") {
+			this.emitError({
+				extensionPath,
+				event: "session_shutdown",
+				error: `handler timed out after ${budget.timeoutMs}ms`,
+			});
 		}
 	}
 
@@ -1714,12 +1742,13 @@ export class ExtensionRunner {
 
 	private async dispatchEmit<TEvent extends RunnerEmitEvent>(event: TEvent): Promise<RunnerEmitResult<TEvent>> {
 		let result: SessionBeforeEventResult | undefined;
-		// session_shutdown is the one host-bounded event: a hung handler must not hold
-		// Ctrl+C / quit / reload / new / resume hostage. Every other event still awaits
-		// its handlers without a cap (ask-user and approval dialogs legitimately block).
-		// The budget is resolved lazily so runners with no shutdown handler read no settings.
+		// Host-bounded events: a hung session_shutdown handler must not hold Ctrl+C / quit / reload / new / resume
+		// hostage, and a hung lifecycle handler must not hold the session's event queue (senpi#3650). Every other
+		// event still awaits its handlers without a cap (ask-user and approval dialogs legitimately block).
+		// The shutdown budget is resolved lazily so runners with no shutdown handler read no settings.
 		const isSessionShutdown = event.type === "session_shutdown";
-		let shutdownBudget: SessionShutdownHandlerBudget | undefined;
+		const isQueuedLifecycleEvent = QUEUED_LIFECYCLE_EVENTS.has(event.type);
+		let shutdownBudget: ExtensionHandlerBudget | undefined;
 
 		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, event.type)) {
 			for (const handler of handlers) {
@@ -1732,6 +1761,15 @@ export class ExtensionRunner {
 							handler,
 							shutdownBudget,
 						);
+						continue;
+					}
+					if (isQueuedLifecycleEvent) {
+						const outcome = await this.guardLifecycleHandler(
+							ext.path,
+							event.type,
+							handler(event, this.createContext(ext.path)),
+						);
+						this.stoppedLifecycleHandler(ext.path, event.type, outcome);
 						continue;
 					}
 					const handlerResult = await handler(event, this.createContext(ext.path));
@@ -1813,9 +1851,13 @@ export class ExtensionRunner {
 			for (const handler of handlers) {
 				try {
 					const currentEvent: MessageEndEvent = { ...event, message: currentMessage };
-					const handlerResult = (await handler(currentEvent, this.createContext(ext.path))) as
-						| MessageEndEventResult
-						| undefined;
+					const outcome = await this.guardLifecycleHandler(
+						ext.path,
+						"message_end",
+						handler(currentEvent, this.createContext(ext.path)),
+					);
+					if (this.stoppedLifecycleHandler(ext.path, "message_end", outcome)) continue;
+					const handlerResult = outcome as MessageEndEventResult | undefined;
 					if (!handlerResult?.message) continue;
 
 					if (handlerResult.message.role !== currentMessage.role) {
