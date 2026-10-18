@@ -10,6 +10,7 @@ import { once } from "node:events";
 import { openChannelListener, type ToolChildChannel } from "./channel.ts";
 import { createGenerationBarrier, type GenerationBarrier } from "./client-barrier.ts";
 import { TOOL_CHILD_PROTOCOL_VERSION } from "./entry.ts";
+import { type HostCallHandler, ServerHostCalls } from "./host-calls-server.ts";
 import { policyFor } from "./job-policy.ts";
 import { JobSupervisor, type SupervisorTimers } from "./job-supervisor.ts";
 import { spawnToolChild, type ToolChildCommand, toolChildCommand } from "./launch.ts";
@@ -43,6 +44,8 @@ export interface ToolChildClientOptions {
 	readonly onStatus?: (status: ToolChildStatus) => void;
 	/** Tests inject a fake clock for the job supervisor. */
 	readonly timers?: SupervisorTimers;
+	/** Serves the child's reverse-bridge calls (tool, completion, reserved, list_tools); unset = every call fails. */
+	readonly onHostCall?: HostCallHandler;
 	/** Observes the child's cancel acknowledgements (tests and status). */
 	readonly onCancelAck?: (jobId: string) => void;
 	/** Read for `SENPI_TOOL_CHILD_DEADLINE_<KIND>_MS` fixture overrides. */
@@ -63,6 +66,7 @@ interface Live {
 	readonly pongs: Map<number, () => void>;
 	readonly barrier: GenerationBarrier;
 	readonly supervisor: JobSupervisor;
+	readonly hostCalls: ServerHostCalls;
 	ended?: Promise<void>;
 }
 
@@ -175,7 +179,22 @@ export class ToolChildClient {
 			},
 			this.#options.timers,
 		);
-		const live: Live = { generation, child, channel, exited, pending, pongs: new Map(), barrier, supervisor };
+		const onHostCall = this.#options.onHostCall;
+		const hostCalls = new ServerHostCalls(
+			channel,
+			onHostCall ?? ((request) => Promise.reject(new Error(`no host-call handler for ${request.tool}`))),
+		);
+		const live: Live = {
+			generation,
+			child,
+			channel,
+			exited,
+			pending,
+			pongs: new Map(),
+			barrier,
+			supervisor,
+			hostCalls,
+		};
 		this.#live = live;
 		this.#state = "live";
 		channel.onMessage((frame) => this.#onFrame(live, frame));
@@ -197,6 +216,7 @@ export class ToolChildClient {
 		return new Promise((resolve, reject) => {
 			const done = (finish: () => void) => () => {
 				live.supervisor.settle(jobId);
+				live.hostCalls.endJob(jobId);
 				finish();
 			};
 			live.pending.set(jobId, {
@@ -244,6 +264,7 @@ export class ToolChildClient {
 	#onFrame(live: Live, frame: ToolChildMessage): void {
 		if (this.#live !== live) return;
 		if (live.barrier.handle(frame)) return;
+		if (live.hostCalls.handle(frame)) return;
 		switch (frame.type) {
 			case "result":
 				settle(live, frame.jobId, (p) => p.resolve(frame.value));

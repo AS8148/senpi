@@ -1,0 +1,93 @@
+// senpi#3566 todo 7: the reverse bridge against a real tool child - a module job calls the server through `host.call`,
+// and both sides hold the shared capacity (8 running, 256 queued, the next one refused with a correlated error).
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import { afterEach, describe, expect, it } from "vitest";
+import { ToolChildClient } from "../src/modes/rpc/tool-child/client.ts";
+import type { HostCallHandler } from "../src/modes/rpc/tool-child/host-calls-server.ts";
+import { TOOL_CHILD_MODULE_ROOTS_ENV } from "../src/modes/rpc/tool-child/module-job.ts";
+
+const resolver = pathToFileURL(resolve(import.meta.dirname, "../src/experimental/source-resolver.ts")).href;
+const roleEntry = resolve(import.meta.dirname, "../src/tool-child-main.ts");
+const extensionDir = resolve(import.meta.dirname, "fixtures/module-job-ext");
+const modulePath = join(extensionDir, "offload.ts");
+const cleanups: Array<() => Promise<void>> = [];
+afterEach(async () => {
+	for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
+});
+
+async function startChild(onHostCall: HostCallHandler) {
+	const dir = await mkdtemp(join(tmpdir(), "trb-"));
+	const instance = new ToolChildClient({
+		dir,
+		cwd: dir,
+		command: { command: process.execPath, args: ["--import", resolver, roleEntry] },
+		env: { ...process.env, [TOOL_CHILD_MODULE_ROOTS_ENV]: JSON.stringify([extensionDir]) },
+		onHostCall,
+	});
+	cleanups.push(async () => {
+		await instance.close();
+		await rm(dir, { recursive: true, force: true });
+	});
+	await instance.start();
+	return instance;
+}
+
+/** Holds calls and releases them 8 at a time (or the remainder); records the most ever running at once. */
+function batchingHandler(total: number) {
+	const held: Array<() => void> = [];
+	let received = 0;
+	let running = 0;
+	let maxRunning = 0;
+	const handler: HostCallHandler = () =>
+		new Promise((resolveCall) => {
+			received += 1;
+			running += 1;
+			maxRunning = Math.max(maxRunning, running);
+			held.push(() => {
+				running -= 1;
+				resolveCall({ ok: true });
+			});
+			if (held.length === 8 || received === total) for (const release of held.splice(0)) release();
+		});
+	return { handler, stats: () => ({ received, maxRunning }) };
+}
+
+describe("reverse bridge", () => {
+	it("answers a module job's host call with the server's value, naming the calling job", async () => {
+		const instance = await startChild(async (request) => ({
+			tool: request.tool,
+			args: request.args,
+			jobId: request.jobId,
+		}));
+		const value = await instance.run("module", {
+			modulePath,
+			export: "askHost",
+			args: { tool: "echo", payload: { x: 1 } },
+		});
+		expect(value).toMatchObject({ tool: "echo", args: { x: 1 } });
+		expect(String(Reflect.get(Object(value), "jobId"))).toMatch(/^j\d+$/);
+	}, 60_000);
+
+	it("runs 264 concurrent calls 8 at a time with 256 queued: none refused, all complete", async () => {
+		const batching = batchingHandler(264);
+		const instance = await startChild(batching.handler);
+		expect(await instance.run("module", { modulePath, export: "fanOut", args: { n: 264 } })).toEqual({
+			ok: 264,
+			failed: [],
+		});
+		expect(batching.stats()).toEqual({ received: 264, maxRunning: 8 });
+	}, 60_000);
+
+	it("refuses exactly the 265th call with a correlated host_call_capacity and loses none of the rest", async () => {
+		const batching = batchingHandler(264);
+		const instance = await startChild(batching.handler);
+		expect(await instance.run("module", { modulePath, export: "fanOut", args: { n: 265 } })).toEqual({
+			ok: 264,
+			failed: ["host_call_capacity"],
+		});
+		expect(batching.stats()).toEqual({ received: 264, maxRunning: 8 });
+	}, 60_000);
+});

@@ -8,6 +8,7 @@
  */
 import { realpathSync } from "node:fs";
 import { isAbsolute, relative, sep } from "node:path";
+import type { Worker } from "node:worker_threads";
 import type { ToolChildJobContext } from "./entry.ts";
 import { ToolChildJobError } from "./entry.ts";
 import { siblingWorkerUrl, startGatedWorker } from "./gated-worker.ts";
@@ -89,6 +90,10 @@ export function createModuleJobHandler(env: NodeJS.ProcessEnv = process.env) {
 				worker.on("message", (message: unknown) => {
 					if (typeof message !== "object" || message === null) return;
 					const kind = Reflect.get(message, "kind");
+					if (kind === "host_call") {
+						forwardHostCall(worker, context, message);
+						return;
+					}
 					if (kind === "module_result") resolve(Reflect.get(message, "value"));
 					else if (kind === "module_error")
 						reject(
@@ -112,4 +117,21 @@ export function createModuleJobHandler(env: NodeJS.ProcessEnv = process.env) {
 			void worker.terminate();
 		}
 	};
+}
+
+/** A host call from the module's worker, forwarded over the reverse bridge; the reply goes back to that worker. */
+function forwardHostCall(worker: Worker, context: ToolChildJobContext, message: object): void {
+	const callId = Reflect.get(message, "callId");
+	const tool = Reflect.get(message, "tool");
+	if (typeof callId !== "string" || typeof tool !== "string") return;
+	context.hostCall(tool, Reflect.get(message, "args")).then(
+		(value) => worker.postMessage({ kind: "host_reply", callId, value }),
+		(error: unknown) =>
+			worker.postMessage({
+				kind: "host_reply",
+				callId,
+				error: error instanceof Error ? error.message : String(error),
+				code: error instanceof ToolChildJobError ? error.code : "host_call_failed",
+			}),
+	);
 }

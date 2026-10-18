@@ -5,6 +5,7 @@
  * server is the single writer of every session file.
  */
 import { connectChannel, type ToolChildChannel } from "./channel.ts";
+import { ChildHostCalls } from "./host-calls-child.ts";
 import { LaunchGate } from "./launch-gate.ts";
 import type { ToolChildMessageOf } from "./protocol.ts";
 import { readTestControls } from "./test-controls.ts";
@@ -17,6 +18,8 @@ export interface ToolChildJobContext {
 	readonly signal: AbortSignal;
 	readonly channel: ToolChildChannel;
 	readonly gate: LaunchGate;
+	/** A call to the server for this job (reverse bridge); settles with its reply, refusal or the job's cancel. */
+	readonly hostCall: (tool: string, args: unknown) => Promise<unknown>;
 }
 
 export type ToolChildJobHandler = (args: unknown, context: ToolChildJobContext) => Promise<unknown>;
@@ -27,14 +30,9 @@ export interface ToolChildEntryOptions {
 	readonly exit?: (code: number) => never;
 }
 
-export class ToolChildJobError extends Error {
-	readonly code: string;
-	constructor(code: string, message: string) {
-		super(message);
-		this.code = code;
-		this.name = "ToolChildJobError";
-	}
-}
+export { ToolChildJobError } from "./entry-error.ts";
+
+import { ToolChildJobError } from "./entry-error.ts";
 
 export async function runToolChild(options: ToolChildEntryOptions): Promise<void> {
 	const env = options.env ?? process.env;
@@ -49,6 +47,7 @@ export async function runToolChild(options: ToolChildEntryOptions): Promise<void
 	if (controls.enabled("EXIT_ON_START")) exit(1);
 	const running = new Map<string, AbortController>();
 	const gate = new LaunchGate(channel);
+	const hostCalls = new ChildHostCalls(channel);
 	let readerBlocked = false;
 	channel.onMessage((message) => {
 		if (controls.enabled("BLOCK_READER") && !readerBlocked) {
@@ -57,13 +56,14 @@ export async function runToolChild(options: ToolChildEntryOptions): Promise<void
 			Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 30_000);
 		}
 		if (gate.handle(message)) return;
+		if (hostCalls.handle(message)) return;
 		switch (message.type) {
 			case "ping":
 				channel.send({ type: "pong", seq: message.seq });
 				return;
 			case "job":
 				if (controls.value("EXIT_MID_JOB") === message.kind) exit(1);
-				void runJob(channel, gate, options.handlers, running, message);
+				void runJob(channel, gate, hostCalls, options.handlers, running, message);
 				return;
 			case "cancel":
 				if (controls.enabled("IGNORE_CANCEL")) return;
@@ -81,6 +81,7 @@ export async function runToolChild(options: ToolChildEntryOptions): Promise<void
 		channel.send({ type: "hello", generation, pid: process.pid, protocol: TOOL_CHILD_PROTOCOL_VERSION });
 	if (controls.enabled("STOP_SELF")) process.kill(process.pid, "SIGSTOP");
 	await channel.closed;
+	hostCalls.close();
 	for (const controller of running.values()) controller.abort();
 	exit(0);
 }
@@ -88,6 +89,7 @@ export async function runToolChild(options: ToolChildEntryOptions): Promise<void
 async function runJob(
 	channel: ToolChildChannel,
 	gate: LaunchGate,
+	hostCalls: ChildHostCalls,
 	handlers: Readonly<Record<string, ToolChildJobHandler>>,
 	running: Map<string, AbortController>,
 	job: ToolChildMessageOf<"job">,
@@ -109,7 +111,8 @@ async function runJob(
 	const controller = new AbortController();
 	running.set(job.jobId, controller);
 	try {
-		const value = await handler(job.args, { jobId: job.jobId, signal: controller.signal, channel, gate });
+		const hostCall = (tool: string, args: unknown) => hostCalls.call(job.jobId, tool, args, controller.signal);
+		const value = await handler(job.args, { jobId: job.jobId, signal: controller.signal, channel, gate, hostCall });
 		channel.send({ type: "result", jobId: job.jobId, value: value ?? null });
 	} catch (error) {
 		const code =

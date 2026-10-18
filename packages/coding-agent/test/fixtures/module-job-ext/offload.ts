@@ -33,3 +33,29 @@ export function launchTrue(): { ok: true } {
 	runOnce("true");
 	return { ok: true };
 }
+
+interface FixtureHost {
+	call(tool: string, args: unknown): Promise<unknown>;
+}
+
+/** One reverse-bridge call: returns what the server answered. */
+export function askHost(
+	args: { readonly tool: string; readonly payload: unknown },
+	host: FixtureHost,
+): Promise<unknown> {
+	return host.call(args.tool, args.payload);
+}
+
+/** `n` concurrent reverse-bridge calls: how many succeeded and the codes of those that failed. */
+export async function fanOut(
+	args: { readonly n: number },
+	host: FixtureHost,
+): Promise<{ ok: number; failed: string[] }> {
+	const settled = await Promise.allSettled(
+		Array.from({ length: args.n }, (_unused, index) => host.call("count", { index })),
+	);
+	const failed = settled.flatMap((outcome) =>
+		outcome.status === "rejected" ? [String(Reflect.get(Object(outcome.reason), "code") ?? outcome.reason)] : [],
+	);
+	return { ok: settled.length - failed.length, failed };
+}

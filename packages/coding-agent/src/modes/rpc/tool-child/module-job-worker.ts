@@ -24,6 +24,37 @@ async function loadNamespace(path: string): Promise<Record<string, unknown>> {
 	return importer.importNamespace(path);
 }
 
+/** The second argument of a module export: calls to the server for this job (the reverse bridge). */
+export interface ModuleHost {
+	call(tool: string, args: unknown): Promise<unknown>;
+}
+
+function createModuleHost(): ModuleHost {
+	const port = parentPort;
+	if (port === null) throw new Error("module job worker without a parent port");
+	const pending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
+	let next = 0;
+	port.on("message", (message: unknown) => {
+		if (typeof message !== "object" || message === null || Reflect.get(message, "kind") !== "host_reply") return;
+		const callId = String(Reflect.get(message, "callId"));
+		const call = pending.get(callId);
+		if (call === undefined) return;
+		pending.delete(callId);
+		const error = Reflect.get(message, "error");
+		if (typeof error === "string")
+			call.reject(Object.assign(new Error(error), { code: Reflect.get(message, "code") }));
+		else call.resolve(Reflect.get(message, "value"));
+	});
+	return {
+		call: (tool, args) =>
+			new Promise((resolve, reject) => {
+				const callId = `m${++next}`;
+				pending.set(callId, { resolve, reject });
+				port.postMessage({ kind: "host_call", callId, tool, args });
+			}),
+	};
+}
+
 try {
 	const namespace = await loadNamespace(data.modulePath);
 	const target = namespace[data.exportName];
@@ -34,7 +65,7 @@ try {
 			message: `${data.modulePath} has no function export "${data.exportName}"`,
 		});
 	} else {
-		parentPort?.postMessage({ kind: "module_result", value: await target(data.args) });
+		parentPort?.postMessage({ kind: "module_result", value: await target(data.args, createModuleHost()) });
 	}
 } catch (error) {
 	parentPort?.postMessage({
