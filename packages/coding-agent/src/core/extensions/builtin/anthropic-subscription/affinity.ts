@@ -23,6 +23,12 @@ export type AffinityOptions = {
 	model?: string;
 };
 
+/**
+ * The one account a request may use when account fallback is off (senpi#3465): its name, and whether it
+ * is still configured. A pin or a session's resident account can name an account that was later removed.
+ */
+export type UnavailableAccount = { readonly name: string; readonly configured: boolean };
+
 export class AllAccountsBlockedError extends Error {
 	readonly soonestUnblockAt: number | undefined;
 	/**
@@ -37,8 +43,15 @@ export class AllAccountsBlockedError extends Error {
 	 * chain moves only this model and keeps the provider for the others.
 	 */
 	readonly limitedModel: string | undefined;
+	/** Set only when account fallback is off, so the guidance names that account instead of the whole pool. */
+	readonly unavailableAccount: UnavailableAccount | undefined;
 
-	constructor(soonestUnblockAt: number | undefined, blockReason?: "auth_error", limitedModel?: string) {
+	constructor(
+		soonestUnblockAt: number | undefined,
+		blockReason?: "auth_error",
+		limitedModel?: string,
+		unavailableAccount?: UnavailableAccount,
+	) {
 		const until = soonestUnblockAt === undefined ? undefined : new Date(soonestUnblockAt).toISOString();
 		super(
 			limitedModel !== undefined && until !== undefined
@@ -51,6 +64,7 @@ export class AllAccountsBlockedError extends Error {
 		this.name = "AllAccountsBlockedError";
 		this.soonestUnblockAt = soonestUnblockAt;
 		this.blockReason = blockReason;
+		this.unavailableAccount = unavailableAccount;
 	}
 }
 
@@ -152,12 +166,14 @@ function limitedModel(accounts: readonly AccountSlot[], now: number, model: stri
 export function selectAccount(accounts: readonly AccountSlot[], options: AffinityOptions = {}): AccountSlot {
 	const now = options.now ?? Date.now();
 	let candidates = accounts;
+	let unavailableAccount: UnavailableAccount | undefined;
 	if (options.accountFallback === false) {
 		const name =
 			options.pinnedAccount ??
 			options.preferredAccount ??
 			applyAccountOrder(options.accountOrder, rendezvousOrder(getAffinityKey(options), accounts))[0]?.name;
 		candidates = accounts.filter((account) => account.name === name);
+		if (name !== undefined) unavailableAccount = { name, configured: candidates.length > 0 };
 	}
 	const selected = selectUnblocked(candidates, options, now);
 	if (selected) return selected;
@@ -171,5 +187,6 @@ export function selectAccount(accounts: readonly AccountSlot[], options: Affinit
 		soonestUnblockAt(candidates, now, options.model),
 		candidates.some((account) => account.blockReason === "auth_error") ? "auth_error" : undefined,
 		limitedModel(candidates, now, options.model),
+		unavailableAccount,
 	);
 }

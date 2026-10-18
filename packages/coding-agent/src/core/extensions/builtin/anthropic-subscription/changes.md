@@ -2007,6 +2007,7 @@ This is the builtin's own denial reason, which the deny hook hands to Claude Cod
 
 ### Expected merge conflict zones
 - `tools.ts`: the denial constant and the fingerprint version.
+
 ## 2026-10-16 - Opt out of managed account fallback (senpi#3465)
 
 ### What changed
@@ -2014,6 +2015,7 @@ This is the builtin's own denial reason, which the deny hook hands to Claude Cod
 - `settings.ts` parses `anthropicSubscriptionProvider.accountFallback` and `SENPI_CLAUDE_SDK_OAUTH_ACCOUNT_FALLBACK`, defaulting to the existing enabled behavior.
 - `affinity.ts` limits selection to the explicit pin, resident account, or the first account of the user's order (senpi#3591) over the deterministic affinity ranking when disabled, including subsequent requests after that account is blocked.
 - `auth-lane.ts` passes the policy to account selection and `failover.ts`, which limits attempts to one account while preserving same-account retries and refresh recovery. `account-command.ts` uses the same selection policy for the displayed affinity pick.
+- `affinity.ts` attaches `unavailableAccount` (`name`, `configured`) to `AllAccountsBlockedError` when fallback is disabled; the error message keeps its machine-read wording. `guidance.ts` adds `singleAccountUnavailableGuidance`, which `stream-guidance.ts` shows for that case: it names the account, says fallback is off, and lists the remedies that work (wait for the reset, `/claude-account pin`, `accountFallback: true`), or, for a pin or resident account that is no longer configured, says so and points at re-pinning or a new session. The cause words stay, so the credential-pool classifier reads the same verdict.
 
 ### Why
 
@@ -2025,4 +2027,4 @@ This is the builtin's own denial reason, which the deny hook hands to Claude Cod
 
 ### Expected merge conflict zones
 
-- LOW: provider settings parsing, the candidate list in `selectAccount`, and the attempt bound in `runFailover`.
+- LOW: provider settings parsing, the candidate list in `selectAccount`, and the attempt bound in `runFailover`, plus `AllAccountsBlockedError` construction and the `AllAccountsBlockedError` branch in `withAuthGuidance`.

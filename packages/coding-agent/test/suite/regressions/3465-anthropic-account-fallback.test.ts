@@ -14,6 +14,7 @@ import {
 import { forgetSessionBlocksFor } from "../../../src/core/extensions/builtin/anthropic-subscription/failover.ts";
 import type { SDKMessage, SdkQuery } from "../../../src/core/extensions/builtin/anthropic-subscription/sdk-boundary.ts";
 import { loadAnthropicSubscriptionProviderSettings } from "../../../src/core/extensions/builtin/anthropic-subscription/settings.ts";
+import { withAuthGuidance } from "../../../src/core/extensions/builtin/anthropic-subscription/stream-guidance.ts";
 import { InMemorySettingsStorage, SettingsManager } from "../../../src/core/settings-manager.ts";
 
 const now = 1_800_000_000_000;
@@ -94,6 +95,16 @@ function request(
 	return { attempts, completion };
 }
 
+/** What the user sees for a rejected turn: the lane's guidance, not the raw error. */
+async function shownGuidance(completion: Promise<unknown>): Promise<string> {
+	const error = await completion.then(
+		() => undefined,
+		(reason: unknown) => reason,
+	);
+	if (!(error instanceof Error)) throw new Error("expected the turn to be rejected");
+	return withAuthGuidance(error, error.message);
+}
+
 afterEach(() => {
 	// A plain rate limit is held per session in process memory (senpi#3466); every case reuses one session.
 	for (const name of ["primary", "secondary", "alpha", "bravo"]) forgetSessionBlocksFor(name);
@@ -128,6 +139,15 @@ describe("Anthropic account fallback opt-out", () => {
 		const run = request(settings({ accountFallback: false }), () => undefined);
 		await expect(run.completion).rejects.toMatchObject({ name: "AllAccountsBlockedError" });
 		expect(run.attempts).toEqual([]);
+		// The healthy sibling is never used, so the advice names this account and the remedies that apply.
+		const shown = await shownGuidance(run.completion);
+		expect(shown).toContain("Claude account 'primary'");
+		expect(shown).toContain(`until ${new Date(now + 60_000).toISOString()}`);
+		expect(shown).toContain("account fallback is off");
+		expect(shown).toContain("/claude-account pin");
+		expect(shown).toContain("accountFallback: true");
+		expect(shown).not.toContain("All Claude accounts");
+		expect(shown).not.toContain("add another account");
 	});
 
 	it("keeps an unpinned session on its blocked resident account", async () => {
@@ -173,7 +193,15 @@ describe("Anthropic account fallback opt-out", () => {
 		];
 		const options = { sessionId: "session-01", accountOrder: ["bravo", "alpha"], now };
 		expect(selectAccount(accounts, options).name).toBe("alpha");
-		expect(() => selectAccount(accounts, { ...options, accountFallback: false })).toThrowError(/blocked/);
+		const error = (() => {
+			try {
+				selectAccount(accounts, { ...options, accountFallback: false });
+			} catch (thrown) {
+				return thrown;
+			}
+		})();
+		expect(error).toMatchObject({ name: "AllAccountsBlockedError", unavailableAccount: { name: "bravo" } });
+		expect(withAuthGuidance(error, "")).toContain("Claude account 'bravo'");
 	});
 
 	it("fails closed when the explicitly selected account is missing", async () => {
@@ -181,6 +209,24 @@ describe("Anthropic account fallback opt-out", () => {
 		const run = request(settings({ accountFallback: false }), () => undefined, { pinnedAccount: "missing" });
 		await expect(run.completion).rejects.toMatchObject({ name: "AllAccountsBlockedError" });
 		expect(run.attempts).toEqual([]);
+		const shown = await shownGuidance(run.completion);
+		expect(shown).toContain("Claude account 'missing'");
+		expect(shown).toContain("is not configured");
+		expect(shown).not.toContain("re-login");
+	});
+
+	it("names a removed resident account instead of reporting a re-login retry", async () => {
+		// session-stream passes the session's account as preferredAccount even after it was removed.
+		const store = await configure();
+		await store.modify(providerId, async () => ({ ...emptyCredential(), accounts: [primary, secondary] }));
+		const run = request(settings({ accountFallback: false }), () => undefined, { preferredAccount: "retired" });
+		await expect(run.completion).rejects.toMatchObject({ name: "AllAccountsBlockedError" });
+		expect(run.attempts).toEqual([]);
+		const shown = await shownGuidance(run.completion);
+		expect(shown).toContain("Claude account 'retired'");
+		expect(shown).toContain("is not configured");
+		expect(shown).toContain("Start a new session");
+		expect(shown).not.toContain("after re-login");
 	});
 
 	it("does not use ambient credentials when the managed pool is empty", async () => {
