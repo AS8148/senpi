@@ -1,3 +1,21 @@
+## 2026-10-19 - An abort that joins an open agent_end boundary still releases a held handler (senpi#3650 follow-up)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `abortTurnForDeadline` awaits `_waitForIdleAfterAbort()` when the session is still not idle after `_abortActiveAgentAndRetry`, and `_abortWithProvenance` (Esc) starts it without awaiting. An abort that joined an open `agent_end` boundary returns at once, so a held `agent_before_settle` (or `turn_end`) handler was never released and the session stayed streaming.
+
+### Why
+
+Review of #3655 found Esc and the turn deadline covered a held lifecycle handler but not one held inside the `agent_end` boundary, where the abort takes the boundary-join branch and returns before any grace runs.
+
+### Why an extension could not handle it
+
+The abort path and the host's wait on extension handlers are session internals; no extension can release the host's wait on another extension's boundary handler.
+
+### Expected merge conflict zones
+
+- LOW: `agent-session.ts` `abortTurnForDeadline` and the line after `_abortActiveAgentAndRetry("user")` in `_abortWithProvenance`.
+
 ## 2026-10-18 - A hung extension handler cannot freeze the session (senpi#3650)
 
 ### What changed
