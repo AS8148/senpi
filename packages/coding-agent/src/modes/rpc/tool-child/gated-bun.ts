@@ -4,9 +4,9 @@
  * through the POSIX shim; `Bun.spawnSync` and `Bun.$` stay in the child's ledgered group. The worker blocks until the
  * ack in every case, so the real call and every stdin write happen only after the server recorded the launch.
  */
+import { writeSync } from "node:fs";
+import { controlFd, goShimScript, withControlPipe } from "./go-shim.ts";
 import type { WorkerLaunchClient } from "./worker-launch.ts";
-
-const GO_LINE_SHIM = 'IFS= read -r _go || exit 127; exec "$0" "$@"';
 
 interface BunSubprocess {
 	readonly pid: number;
@@ -78,10 +78,24 @@ export function installGatedBun(bun: BunLaunchGlobals, client: WorkerLaunchClien
 			void child.exited.then((exitCode) => client.done(launchId, { exitCode }));
 			return child;
 		}
-		const { stdin: userStdin, options: shimOptions } = withPipedStdin(opts);
+		const program = cmd[0] ?? "";
+		// A program Bun cannot find is refused here, before anything starts, exactly as an ungated Bun.spawn throws.
+		const which: unknown = Reflect.get(bun, "which");
+		const pathEnv = opts.env === undefined ? process.env.PATH : String(Reflect.get(Object(opts.env), "PATH") ?? "");
+		if (
+			typeof which === "function" &&
+			Reflect.apply(which, bun, [program, { PATH: pathEnv, cwd: opts.cwd }]) === null
+		)
+			throw bunEnoentError(program);
+		const callerStdio = bunStdio(opts);
+		const fd = controlFd(callerStdio);
 		const child = real.spawn(
-			["/bin/sh", "-c", GO_LINE_SHIM, ...cmd],
-			withCurrentEnv({ ...shimOptions, detached: true }),
+			["/bin/sh", "-c", goShimScript(fd), ...cmd],
+			withCurrentEnv({
+				...opts,
+				stdio: withControlPipe<unknown>(callerStdio, fd, "ignore", "pipe"),
+				detached: true,
+			}),
 		);
 		const launchId = client.acquire({
 			origin: "kernel",
@@ -93,12 +107,8 @@ export function installGatedBun(bun: BunLaunchGlobals, client: WorkerLaunchClien
 		});
 		void child.exited.then((exitCode) => client.done(launchId, { exitCode }));
 		client.invoke(launchId);
-		const stdin = child.stdin;
-		if (stdin !== undefined && stdin !== null && typeof stdin !== "number") {
-			stdin.write("go\n");
-			if (userStdin !== "pipe") stdin.end();
-			else stdin.flush?.();
-		}
+		const control: unknown = Reflect.get(Object(Reflect.get(child, "stdio")), fd);
+		if (typeof control === "number") writeSync(control, "go\n");
 		return child;
 	};
 	bun.spawnSync = (commandOrOptions, options) => {
@@ -140,13 +150,21 @@ export function installGatedBun(bun: BunLaunchGlobals, client: WorkerLaunchClien
  * The go-line shim reads its `go` from stdin, so stdin must be a pipe. In Bun a `stdio` array outranks a separate
  * `stdin` option: its first entry is replaced too. Returns the caller's own stdin choice, honoured after the go line.
  */
-function withPipedStdin(opts: BunSpawnOptions): { readonly stdin: unknown; readonly options: BunSpawnOptions } {
+/** The caller's stdin, stdout and stderr as one array (a `stdio` array outranks the separate options, as in Bun). */
+function bunStdio(opts: BunSpawnOptions): unknown[] {
 	const stdio: unknown = opts.stdio;
-	if (Array.isArray(stdio)) {
-		const [first, ...rest] = stdio;
-		return { stdin: first, options: { ...opts, stdin: "pipe", stdio: ["pipe", ...rest] } };
-	}
-	return { stdin: opts.stdin, options: { ...opts, stdin: "pipe" } };
+	if (Array.isArray(stdio)) return [...stdio];
+	return [opts.stdin ?? "ignore", Reflect.get(opts, "stdout") ?? "pipe", Reflect.get(opts, "stderr") ?? "inherit"];
+}
+
+/** The error an ungated Bun.spawn throws for a program it cannot find. */
+function bunEnoentError(program: string): NodeJS.ErrnoException {
+	return Object.assign(new Error(`ENOENT: no such file or directory, posix_spawn '${program}'`), {
+		errno: -2,
+		code: "ENOENT",
+		syscall: "posix_spawn",
+		path: program,
+	});
 }
 
 /**

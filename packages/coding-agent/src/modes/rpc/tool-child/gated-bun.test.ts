@@ -28,6 +28,8 @@ describe.skipIf(process.platform === "win32" || !bunAvailable)("gated Bun global
 			stdioArrayExit: 0,
 			stdioArrayRan: true,
 			envProbe: "unset",
+			blobEcho: "blob-input",
+			missingCode: "ENOENT",
 		});
 		expect(result.ownedPgid).toBe(result.ownedPid);
 		const launches = records.filter((record) => record.type === "launch");
@@ -37,10 +39,11 @@ describe.skipIf(process.platform === "win32" || !bunAvailable)("gated Bun global
 			["bun.spawnSync", "inherited", "owned"],
 			["bun.spawn", "own-group", "owned"],
 			["bun.spawnSync", "inherited", "owned"],
+			["bun.spawn", "own-group", "owned"],
 			["bun.shell", "inherited", "owned"],
 		]);
 		const proofs = records.filter((record) => record.type === "launch_proof");
-		expect(proofs).toHaveLength(6);
+		expect(proofs).toHaveLength(7);
 		for (const proof of proofs) expect(Number(proof.ackTick)).toBeLessThan(Number(proof.invokeTick));
 		expect(violations).toEqual([]);
 	}, 90_000);

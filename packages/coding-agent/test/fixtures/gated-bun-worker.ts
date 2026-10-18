@@ -42,6 +42,17 @@ const envProbe = new TextDecoder()
 		).stdout,
 	)
 	.trim();
+// The caller's own stdin (a Blob) reaches the command; a program Bun cannot find throws ENOENT, as ungated.
+const blobEcho = await new Response(
+	(Bun.spawn(["cat"], { stdin: new Blob(["blob-input"]), stdout: "pipe" }) as unknown as { stdout: ReadableStream })
+		.stdout,
+).text();
+let missingCode: unknown;
+try {
+	Bun.spawn(["senpi-definitely-missing-program"]);
+} catch (error) {
+	missingCode = Reflect.get(Object(error), "code");
+}
 const shell = (await (Bun.$`sh -c "exit 0"` as Promise<{ exitCode: number }>)).exitCode;
 port.postMessage({
 	kind: "result",
@@ -55,5 +66,7 @@ port.postMessage({
 		stdioArrayExit,
 		stdioArrayRan,
 		envProbe,
+		blobEcho,
+		missingCode,
 	},
 });
