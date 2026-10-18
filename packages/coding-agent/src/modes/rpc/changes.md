@@ -17,6 +17,24 @@ The daemon environment is built by the host lifecycle before any extension runs.
 
 - `packages/coding-agent/src/modes/rpc/host-daemon-env.ts`: the imports, the set above `WINDOWS_SYSTEM_ENV_NAMES`, and `daemonEnvIsAllowed`.
 
+## 2026-10-18 - get_auth_providers rows come from the shared row rule (senpi#3537)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `get_auth_providers` calls `authMethodStatus(modelRegistry, info)` without the "provider has an api_key row" flag. A key (runtime `--api-key`, env key, models.json) no longer shows as configured on a provider's only listed sign-in row (for example `github-copilot` or `chatgpt-subscription` with a runtime key).
+
+### Why
+
+senpi#3537 review: the RPC rows and the TUI picker fed the shared rule different row-capability inputs, so the same credential could land on different rows. A desktop client also showed a runtime key as a connected subscription.
+
+### Why an extension could not handle it
+
+`get_auth_providers` is answered by the RPC router from the registry.
+
+### Expected merge conflict zones
+
+- LOW: the `get_auth_providers` case in `connection-handler.ts`.
+
 ## 2026-10-18 - A single-session RPC process advertises its tool runtime (senpi#3566)
 
 ### What changed

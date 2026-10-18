@@ -15,6 +15,9 @@
 ### Fixed
 
 - A host daemon now inherits every credential variable the engine reads, including `CLAUDE_CODE_OAUTH_TOKEN`, `COPILOT_GITHUB_TOKEN`, `HF_TOKEN` and numbered slots such as `OPENAI_API_KEY_2`, so a Claude subscription from the environment works through a host as it does in a direct process (#3531).
+
+- `get_auth_providers` reports a Claude subscription supplied by `CLAUDE_CODE_OAUTH_TOKEN` or an ambient Claude Code login on the subscription's sign-in row instead of its API-key row, so RPC clients show it as a connected subscription. The TUI `/login` picker and `get_auth_providers` share one rule, so a runtime `--api-key` never shows as a configured sign-in, and a stored subscription keeps its row beside one (#3537).
+
 - Opening a large session on a shared RPC host no longer stalls every other session: the transcript is read, parsed and indexed in short slices, and the tool-search history scan no longer serializes every message. On a 231 MB transcript the longest wait seen by another connection dropped from about 1 s to the level of opening an empty session ([#3518](https://github.com/code-yeongyu/senpi/issues/3518)).
 
 - A host emptied within a minute of its previous memory trim now trims once that minute ends, instead of keeping the freed memory until sessions come and go again ([#3360](https://github.com/code-yeongyu/senpi/issues/3360)).
