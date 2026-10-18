@@ -185,6 +185,8 @@ export type RpcAbortOptions = Omit<Extract<RpcCommand, { type: "abort" }>, "type
 export type RpcAbortAnswer = Extract<RpcResponse, { command: "abort"; success: true }>["data"];
 /** `get_effect_status`: the receipt, or proof the whole transcript holds none. */
 export type RpcEffectStatusAnswer = Extract<RpcResponse, { command: "get_effect_status"; success: true }>["data"];
+/** `get_pending_inputs`: pending inputs in durable custody, and an outcome for each known id. */
+export type RpcPendingInputsAnswer = Extract<RpcResponse, { command: "get_pending_inputs"; success: true }>["data"];
 
 export class RpcClientOpenInFlightError extends Error {
 	readonly code = "open_session_in_flight" as const;
@@ -744,6 +746,18 @@ export class RpcClient {
 		return this.getData<RpcEffectStatusAnswer>(await this.send(command, options.sessionPath === undefined));
 	}
 
+	/**
+	 * The pending inputs in durable custody (queued, sending, failed) and an explicit outcome for each id in
+	 * `knownClientMessageIds` (at most 64), consistent through `throughCursor`.
+	 */
+	async getPendingInputs(knownClientMessageIds?: readonly string[]): Promise<RpcPendingInputsAnswer> {
+		const command = {
+			type: "get_pending_inputs" as const,
+			...(knownClientMessageIds === undefined ? {} : { knownClientMessageIds: [...knownClientMessageIds] }),
+		};
+		return this.getData<RpcPendingInputsAnswer>(await this.send(command));
+	}
+
 	/** Abort with host refusals and transport loss surfaced to machine callers. */
 	async abortStrict(): Promise<void> {
 		this.getData(await this.send({ type: "abort" }));
@@ -1069,11 +1083,19 @@ export class RpcClient {
 	}
 
 	/**
-	 * Get session entries in append order, optionally only those after the `since` entry id.
+	 * Get session entries in append order, optionally only those after the `since` entry id. Pass `page`
+	 * (`limit` and/or `maxBytes`) to read a long history in bounded pages: repeat with `since: nextSince`
+	 * until `hasMore` is false. An unpaged read of a history too large for one answer fails with
+	 * `response_too_large`.
 	 */
-	async getEntries(since?: string): Promise<{ entries: SessionEntry[]; leafId: string | null }> {
-		const response = await this.send({ type: "get_entries", since });
-		return this.getData<{ entries: SessionEntry[]; leafId: string | null }>(response);
+	async getEntries(
+		since?: string,
+		page?: { readonly limit?: number; readonly maxBytes?: number },
+	): Promise<{ entries: SessionEntry[]; leafId: string | null; hasMore?: boolean; nextSince?: string }> {
+		const response = await this.send({ type: "get_entries", since, ...page });
+		return this.getData<{ entries: SessionEntry[]; leafId: string | null; hasMore?: boolean; nextSince?: string }>(
+			response,
+		);
 	}
 
 	/**
@@ -1210,6 +1232,11 @@ export class RpcClient {
 	/** Pin a provider account for future session-affine requests, or clear the pin. */
 	async pinProviderAccount(provider: string, name: string | null): Promise<void> {
 		await this.send({ type: "account_pin", provider, name });
+	}
+
+	/** Set the order the provider's accounts are tried in after a pin, or clear it with null. */
+	async orderProviderAccounts(provider: string, names: string[] | null): Promise<void> {
+		await this.send({ type: "account_order", provider, names });
 	}
 
 	/** Remove a persisted provider account slot. Environment slots are read-only. */

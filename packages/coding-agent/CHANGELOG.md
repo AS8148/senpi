@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- The engine can offload tool runs to a per-session child process over a new wire protocol - the protocol layer (framing, single admission, payload refs) lands first (internal preview, fork-only until the offload stack ships) ([#3566](https://github.com/code-yeongyu/senpi/issues/3566)).
+- A session can be exported for a move to another device and imported there under the same id: the device it left keeps a read-only copy and refuses writes to it, the receiver takes ownership in one atomic step, queued input travels with it, and a declined move gives the session back with its queued input. `release_session` accepts `reason: "move"` with a `moveId` ([#3630](https://github.com/code-yeongyu/senpi/issues/3630)).
+
+- An extension handler that never settles on an agent lifecycle or boundary event (`turn_end`, `agent_before_settle`) no longer freezes the session: past `extensionEventHandlerWarnMs` (default 60 s) the session shows which extension and event it is waiting on, at `extensionEventHandlerTimeoutMs` (default 20 min) it stops waiting, persists the turn and delivers queued input, and an Esc or the turn deadline that the run does not honour within 10 s releases such a wait instead of only logging `turn_deadline_unsettled`; every stage, including a failure after the host stopped waiting, is logged as `extension_handler_stalled` in session.log. Input queued while `agent_end` handlers run is delivered once and the session settles however many async `agent_end` handlers run before it ([#3650](https://github.com/code-yeongyu/senpi/issues/3650), [#3351](https://github.com/code-yeongyu/senpi/issues/3351)).
+- RPC `get_pending_inputs` reads the inputs in durable custody with an explicit outcome per known id, and `pending_input_update` publishes each change with its journal cursor; the module is also exported as `@code-yeongyu/senpi/pending-input` ([#3549](https://github.com/code-yeongyu/senpi/issues/3549)).
+- Queued input with a client id is kept in durable custody: it is journaled in the session file before it is queued, delivered only after its consumption is recorded, and edited or removed in its record and the queue together; a repeated identical submit queues it once and a reused id with another payload is refused ([#3549](https://github.com/code-yeongyu/senpi/issues/3549)).
+
 ### Breaking Changes
 
 ### Added
@@ -10,13 +17,70 @@
 - `--tool-runtime in-process|child` (env `SENPI_TOOL_RUNTIME`) selects where a session's heavy tool work runs. The default is `in-process` and nothing changes yet; a multi-session host advertises its choice as `tool_runtime:<value>` in `get_protocol_info`. An unknown value is a startup error ([#3566](https://github.com/code-yeongyu/senpi/issues/3566)).
 - `dequeue_message` and `edit_queued_message` accept `expectedRevision`: every queued input carries a `revision` (1 when queued, +1 per edit), and a change based on a stale revision answers `conflict` with `currentRevision` and changes nothing, so two clients editing one queued message can no longer overwrite each other silently. Capability `queued_message_revision` ([#3459](https://github.com/code-yeongyu/senpi/issues/3459)).
 - Terminal control endpoints serve their own session like a host: `open_session` by path attaches with the host's record stream and replay, `subscribe_sessions` runs the status stream (with `mirror`) over that session, and `steer`/`follow_up`/`prompt` are delivered through the terminal's admission (the user's draft holds them) with the host's `whenIdle` choice, as remote deliveries; fields admission cannot carry (`images`, `thinkingLevel`, ...) are refused by name. `admitExternalMessage` gains `whenIdle` (`start` default, `queue`) ([#3229](https://github.com/code-yeongyu/senpi/issues/3229)).
+- `--tool-runtime in-process|child` (env `SENPI_TOOL_RUNTIME`) selects where a session's heavy tool work runs. The default is `in-process` and nothing changes yet; a multi-session host advertises its choice as `tool_runtime:<value>` in `get_protocol_info`. An unknown value is a startup error ([#3566](https://github.com/code-yeongyu/senpi/issues/3566)).
+- `dequeue_message` and `edit_queued_message` accept `expectedRevision`: every queued input carries a `revision` (1 when queued, +1 per edit), and a change based on a stale revision answers `conflict` with `currentRevision` and changes nothing, so two clients editing one queued message can no longer overwrite each other silently. Capability `queued_message_revision` ([#3459](https://github.com/code-yeongyu/senpi/issues/3459)).
+- Terminal control endpoints serve their own session like a host: `open_session` by path attaches with the host's record stream and replay, `subscribe_sessions` runs the status stream (with `mirror`) over that session, and `steer`/`follow_up`/`prompt` are delivered through the terminal's admission (the user's draft holds them) with the host's `whenIdle` choice, as remote deliveries; fields admission cannot carry (`images`, `thinkingLevel`, ...) are refused by name. `admitExternalMessage` gains `whenIdle` (`start` default, `queue`) ([#3229](https://github.com/code-yeongyu/senpi/issues/3229)).
+### Changed
+
+### Fixed
+
+- The mouse wheel scrolls the transcript again while an `ask_user_question` prompt is waiting. The first notch pauses option clicking (the hint says so) and any key turns it back on. The text-selection hint now names the right modifier per terminal, including VS Code on macOS ([#3604](https://github.com/code-yeongyu/senpi/issues/3604)).
+
+- Alt+Q restores queued messages on WSL again: Windows keybinding defaults detect WSL through `WSL_DISTRO_NAME`/`WSL_INTEROP`/`WSLENV` or a `/proc/version` fallback when the environment is sanitized, and split-delivery ESC+q reassembly uses the standard 50ms window (100ms on WSL; a lone local Escape now settles up to 40ms later) ([#3628](https://github.com/code-yeongyu/senpi/issues/3628)).
+
+### Removed
+
+## [2026.10.18-1] - 2026-10-18
+
+### Breaking Changes
+
+### Added
 
 ### Changed
 
 ### Fixed
 
+- A compiled build finds a Claude Code platform binary shipped in `node_modules` beside its executable, as the bundled copy; a newer `claude` on PATH still wins ([#3639](https://github.com/code-yeongyu/senpi/issues/3639))
+
+- `senpi host ensure` refuses with `endpoint_occupied` (exit 3) when an unregistered process holds the public socket and does not answer, instead of starting a host that loses the bind and exits 1 with only `host_error`.
+
+### Removed
+
+## [2026.10.18] - 2026-10-18
+
+### Breaking Changes
+
+### Added
+
+- Command monitors accept `human_input: true` for watches that deliver messages a person wrote (a chat or inbox bridge). Those deliveries count as new user input for a running goal ([oh-my-openagent#10280](https://github.com/code-yeongyu/oh-my-openagent/issues/10280)).
+
+- Provider accounts can be ordered: RPC `account_order` (`names` or `null` to clear) stores the order beside the pin, and every lane that picks an account (the generic credential pool, the Claude subscription lane and the Cursor CLI lane) then tries the pin, then the first unblocked account in that order, then the rest in hash order, failing over down the list. `get_provider_accounts` lists accounts in effective order with `ordered`. A Claude session keeps the account its conversation lives on while it can serve. The TUI footer names the account the order serves. No order keeps today's behavior ([#3591](https://github.com/code-yeongyu/senpi/issues/3591)).
+- The pending-input lifecycle module, its store and session journal, and cross-process writer claims; not wired in yet ([#3549](https://github.com/code-yeongyu/senpi/issues/3549)).
+- The `monitor` tool watches other sessions: `monitor({ type: "rpc", target: "children" | "all" | <session id, path or st_ task id>, events?, exclude?, filter?, persistent? })` lists the matched sessions on arm, then injects each status change and effect receipt as a line, and with `events: "all"` their content too (streaming collapsed to one line per session per 2 s). It reads every RPC host and terminal endpoint through the status stream's `mirror` opt-in, so it never attaches; children spawned after arming are matched by the host; a persistent watch survives a restart and reports what changed while detached ([#3226](https://github.com/code-yeongyu/senpi/issues/3226)).
+- `--tool-runtime in-process|child` (env `SENPI_TOOL_RUNTIME`) selects where a session's heavy tool work runs. The default is `in-process` and nothing changes yet; a multi-session host and a single-session `--mode rpc` process advertise the choice as `tool_runtime:<value>` in `get_protocol_info`. An unknown value is a startup error (except for `--version` and `--help`) ([#3566](https://github.com/code-yeongyu/senpi/issues/3566)).
+- `dequeue_message` and `edit_queued_message` accept `expectedRevision`: every queued input carries a `revision` (1 when queued, +1 per edit), and a change based on a stale revision answers `conflict` with `currentRevision` and changes nothing, so two clients editing one queued message can no longer overwrite each other silently. Capability `queued_message_revision` ([#3459](https://github.com/code-yeongyu/senpi/issues/3459)).
+- Terminal control endpoints serve their own session like a host: `open_session` by path attaches with the host's record stream and replay, `subscribe_sessions` runs the status stream (with `mirror`) over that session, and `steer`/`follow_up`/`prompt` are delivered through the terminal's admission (the user's draft holds them) with the host's `whenIdle` choice, as remote deliveries; fields admission cannot carry (`images`, `thinkingLevel`, ...) are refused by name. `admitExternalMessage` gains `whenIdle` (`start` default, `queue`) ([#3229](https://github.com/code-yeongyu/senpi/issues/3229)).
+- `SessionManager.getFullBranch()` (also on `ctx.sessionManager`) returns the active path over the whole session history, including entries before the latest compaction ([#3519](https://github.com/code-yeongyu/senpi/issues/3519)).
+
+### Changed
+
+- The built-in default model for `amazon-bedrock` is now `us.anthropic.claude-opus-5-5` (was `us.anthropic.claude-opus-4-6-v1`). It applies only when no model is saved in settings and none is passed on the command line. Your AWS account needs Bedrock model access to Claude Opus 5.5 in its region; without it, save the old default with `/model` ([#3180](https://github.com/code-yeongyu/senpi/pull/3180)).
+
+- Goals no longer stop after a fixed 150 automatic continuations. They stop only after 60 automatic continuations in a row without progress (no new tool effect, todo change, or new message from a person; re-running the same command, failing commands, and output that differs only in timings or ids are not progress), with a notice that says why and that any message resumes the goal ([oh-my-openagent#10280](https://github.com/code-yeongyu/oh-my-openagent/issues/10280)).
+
+### Fixed
+
+- A host daemon now inherits every credential variable the engine reads, including `CLAUDE_CODE_OAUTH_TOKEN`, `COPILOT_GITHUB_TOKEN`, `HF_TOKEN` and numbered slots such as `OPENAI_API_KEY_2`, so a Claude subscription from the environment works through a host as it does in a direct process (#3531).
+
+- `get_auth_providers` reports a Claude subscription supplied by `CLAUDE_CODE_OAUTH_TOKEN` or an ambient Claude Code login on the subscription's sign-in row instead of its API-key row, so RPC clients show it as a connected subscription. The TUI `/login` picker and `get_auth_providers` share one rule, so a runtime `--api-key` never shows as a configured sign-in, and a stored subscription keeps its row beside one (#3537).
+
+- Opening a large session on a shared RPC host no longer stalls every other session: the transcript is read, parsed and indexed in short slices, and the tool-search history scan no longer serializes every message. On a 231 MB transcript the longest wait seen by another connection dropped from about 1 s to the level of opening an empty session ([#3518](https://github.com/code-yeongyu/senpi/issues/3518)).
+
 - A host emptied within a minute of its previous memory trim now trims once that minute ends, instead of keeping the freed memory until sessions come and go again ([#3360](https://github.com/code-yeongyu/senpi/issues/3360)).
 - The ripgrep grep fallback starts far fewer `rg` processes on the host. Explicitly named files no longer cost three launches each; they share one binary scan and one search. A capped directory walk also grows its batches instead of searching 200 files per launch. Every launch keeps its whole command line under the OS limit (32,000 characters on Windows, quoting included), so a large batch becomes several launches and no argument is truncated; a pattern or path too long for any launch fails with a clear error instead of an opaque spawn failure. A `grep` call over this repository now starts 5 to 14 rg processes instead of 63 to 87, with identical results ([#3516](https://github.com/code-yeongyu/senpi/issues/3516)).
+- RPC `get_entries` on a very long session no longer closes the connection: it reads in pages (`limit`, `maxBytes`, `hasMore`, `nextSince`), and an unpaged read too large for one answer (or an entry too large for any answer) returns `response_too_large`; `RpcClient.getEntries` can page ([#3534](https://github.com/code-yeongyu/senpi/issues/3534)).
+- A reopened session keeps only its latest compaction window in memory, so an RPC host holding long sessions no longer grows to multi-GB heaps; four of the largest local transcripts went from 1441 MB to 216 MB of live heap ([#3519](https://github.com/code-yeongyu/senpi/issues/3519)).
+- Usage totals no longer drop the turns a compaction trimmed, and forking or exporting (JSONL) a compacted session keeps the history from before the compaction ([#3519](https://github.com/code-yeongyu/senpi/issues/3519)).
 
 ### Removed
 

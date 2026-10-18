@@ -32,11 +32,8 @@ import type { AgentSession } from "../../core/agent-session.ts";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
 import { authMethodStatus, buildLoginProviderInfos } from "../../core/auth-providers.ts";
 import { ContinueFromLeafError } from "../../core/continue-from-leaf.ts";
-import {
-	getCredentialAccounts,
-	pinCredentialAccount,
-	removeCredentialAccount,
-} from "../../core/credential-accounts.ts";
+import { listCredentialAccounts, orderCredentialAccounts } from "../../core/credential-account-order.ts";
+import { pinCredentialAccount, removeCredentialAccount } from "../../core/credential-accounts.ts";
 import { AssistantEditError, SessionStreamingError } from "../../core/edited-assistant-message.ts";
 import { UserEditError } from "../../core/edited-user-message.ts";
 import {
@@ -97,6 +94,13 @@ import { EffectLedger } from "./effect-ledger.ts";
 import { EFFECT_LEDGER_CAPABILITY } from "./effect-record.ts";
 import { createRpcEventOutputBuffer } from "./event-output-buffer.ts";
 import { settleExtensionUiResponse } from "./extension-ui-response.ts";
+import {
+	currentResponseByteBudget,
+	endEntryWalk,
+	entryPageBounds,
+	holdEntryWalk,
+	pageEntries,
+} from "./get-entries-page.ts";
 import { HostSessionControl } from "./host-session-control.ts";
 import { createRpcLoginPromptCallbacks } from "./login-prompts.ts";
 import { answerMemoryReport } from "./memory-report-command.ts";
@@ -126,8 +130,10 @@ import {
 	RPC_ERROR_ENTRY_NOT_FOUND,
 	RPC_ERROR_EVAL_CELL_NOT_FOUND,
 	RPC_ERROR_EVAL_CELLS_UNAVAILABLE,
+	RPC_ERROR_INVALID_ARGUMENT,
 	RPC_ERROR_INVALID_EVAL_CELL_REQUEST,
 	RPC_ERROR_MEDIA_NOT_FOUND,
+	RPC_ERROR_RESPONSE_TOO_LARGE,
 	STEER_WHEN_IDLE_CAPABILITY,
 } from "./rpc-types.ts";
 import { availableModelsData, interruptRunningTurn } from "./session-control-actions-data.ts";
@@ -874,13 +880,19 @@ export function createRpcConnectionHandler(
 			// The subscription is already installed on the replaced session above, so
 			// the deferred refresh only needs its failure reported. Re-installing here
 			// would replay the settings-source selection a second time.
-			void refresh.catch((cause) => {
-				outputEvent({ type: "rpc_error", error: String(cause) });
-			});
+			void refresh.then(
+				() => session.releaseSettledSessionMemory(),
+				(cause) => {
+					outputEvent({ type: "rpc_error", error: String(cause) });
+				},
+			);
 			return;
 		}
 		await refresh;
 		await ClientAdmissions.forSession(session).ready;
+		// The open-time readers above (receipt seals, extension starts) read the full history; an idle
+		// session lets it go now instead of holding it until its first turn settles (senpi#3519).
+		session.releaseSettledSessionMemory();
 	};
 
 	/**
@@ -1095,6 +1107,7 @@ export function createRpcConnectionHandler(
 			case "clear_queue": {
 				ClientAdmissions.clearQueuedFor(session);
 				const cleared = session.clearQueue({ abortWillFollow: command.abortWillFollow ?? false });
+				await session.whenQueueClearRecorded();
 				return success(id, "clear_queue", {
 					steering: cleared.steering,
 					followUp: cleared.followUp,
@@ -1156,6 +1169,9 @@ export function createRpcConnectionHandler(
 
 			case "get_effect_status":
 				return runGetEffectStatus(effectContext(), command);
+
+			case "get_pending_inputs":
+				return success(id, "get_pending_inputs", await session.getPendingInputs(command.knownClientMessageIds));
 
 			// =================================================================
 			// Model
@@ -1578,9 +1594,39 @@ export function createRpcConnectionHandler(
 					}
 					entries = entries.slice(sinceIndex + 1);
 				}
+				const bounds = entryPageBounds(command);
+				if (!bounds.ok) return error(id, "get_entries", bounds.message, RPC_ERROR_INVALID_ARGUMENT);
+				const page = pageEntries(entries, describeUsageLimitEntry, bounds);
+				// A client walking pages asks again at once; holding the view until the last page spares each page a
+				// full re-read of the file. The hold expires on its own, so a walk the client abandons on an idle
+				// session does not pin the whole history; any other answer lets the view go now.
+				if (bounds.paged && page.hasMore) holdEntryWalk(session, () => session.releaseFullHistoryView());
+				else {
+					endEntryWalk(session);
+					session.releaseFullHistoryView();
+				}
+				const budget = currentResponseByteBudget();
+				if (page.firstEntryBytes > budget) {
+					return error(
+						id,
+						"get_entries",
+						`Entry ${entries[0]?.id ?? ""} alone is larger than one answer can carry (${budget} bytes), so it cannot be sent over RPC.`,
+						RPC_ERROR_RESPONSE_TOO_LARGE,
+					);
+				}
+				if (!bounds.paged && page.hasMore) {
+					return error(
+						id,
+						"get_entries",
+						`The session history is larger than one answer can carry (${budget} bytes). Read it in pages: pass limit or maxBytes, then since: nextSince until hasMore is false.`,
+						RPC_ERROR_RESPONSE_TOO_LARGE,
+					);
+				}
 				return success(id, "get_entries", {
-					entries: entries.map(describeUsageLimitEntry),
+					entries: page.entries,
 					leafId: sessionManager.getLeafId(),
+					...(bounds.paged ? { hasMore: page.hasMore } : {}),
+					...(page.nextSince === undefined ? {} : { nextSince: page.nextSince }),
 				});
 			}
 
@@ -1593,6 +1639,7 @@ export function createRpcConnectionHandler(
 					node.entry = describeUsageLimitEntry(node.entry);
 					for (const child of node.children) nodes.push(child);
 				}
+				session.releaseFullHistoryView();
 				return success(id, "get_tree", { tree, leafId: sessionManager.getLeafId() });
 			}
 
@@ -1703,12 +1750,11 @@ export function createRpcConnectionHandler(
 				const modelRegistry = session.modelRegistry;
 				const oauthInfos = buildLoginProviderInfos(modelRegistry, "oauth");
 				const apiKeyInfos = buildLoginProviderInfos(modelRegistry, "api_key");
-				const apiKeyRows = new Set(apiKeyInfos.map((info) => info.id));
 				const providers: RpcAuthProvider[] = [...oauthInfos, ...apiKeyInfos].map((info) => ({
 					id: info.id,
 					name: info.name,
 					authType: info.authType,
-					status: authMethodStatus(modelRegistry, info, apiKeyRows.has(info.id)),
+					status: authMethodStatus(modelRegistry, info),
 					...storedKeyHint(modelRegistry, info),
 				}));
 				return success(id, "get_auth_providers", { providers });
@@ -1754,8 +1800,8 @@ export function createRpcConnectionHandler(
 			}
 
 			case "get_provider_accounts": {
-				const accounts = await getCredentialAccounts(session.modelRegistry.authStorage, command.provider);
-				return success(id, "get_provider_accounts", { accounts });
+				const listing = await listCredentialAccounts(session.modelRegistry.authStorage, command.provider);
+				return success(id, "get_provider_accounts", { accounts: listing.accounts, ordered: listing.ordered });
 			}
 
 			case "account_pin": {
@@ -1766,6 +1812,15 @@ export function createRpcConnectionHandler(
 			case "account_remove": {
 				await removeCredentialAccount(session.modelRegistry.authStorage, command.provider, command.name);
 				return success(id, "account_remove");
+			}
+
+			case "account_order": {
+				const names: unknown = command.names;
+				if (names !== null && !(Array.isArray(names) && names.every((name) => typeof name === "string"))) {
+					throw new Error("account_order names must be an array of account names, or null to clear the order");
+				}
+				await orderCredentialAccounts(session.modelRegistry.authStorage, command.provider, command.names);
+				return success(id, "account_order");
 			}
 
 			default: {

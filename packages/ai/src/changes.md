@@ -1,3 +1,41 @@
+## 2026-10-18 - AnthropicMessagesCompat.supportsGzipRequestBody (senpi#3643)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `AnthropicMessagesCompat` gains optional `supportsGzipRequestBody`.
+
+### Why
+
+- Lets a model or provider opt in or out of gzip request bodies (senpi#3643).
+
+### Why an extension could not handle it
+
+- The compat type is part of the public model contract in `pi-ai`.
+
+### Expected merge conflict zones
+
+- LOW: the end of `AnthropicMessagesCompat` in `packages/ai/src/types.ts`.
+
+## 2026-10-17 - Export the provider credential env names (senpi#3531)
+
+### What changed
+
+- `packages/ai/src/env-api-keys.ts`: the provider-to-variable map is the module-level `API_KEY_ENV_VARS`, read by `getApiKeyEnvVars` exactly as before. New exports:
+  - `apiKeyEnvProviders()`: every provider id `getApiKeyEnvVars` maps.
+  - `providerCredentialEnvNames()`: every name `getEnvApiKey` can read, meaning those variables plus the Vertex ADC and Bedrock names.
+
+### Why
+
+senpi#3531: the RPC host daemon's environment allowlist was a separate hand-written list. It dropped credential names the lookup reads (`COPILOT_GITHUB_TOKEN`, `HF_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, every numbered slot), so a host never saw credentials a direct process used. The daemon now derives its list from these exports.
+
+### Why an extension could not handle it
+
+The map is private to `pi-ai`; a consumer can only enumerate it through an export.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/env-api-keys.ts`: the map moved out of `getApiKeyEnvVars`, and the two exports sit above it.
+
 ## 2026-10-15 - ProviderDiagnostic gains the network category and structured_transport evidence (senpi#3228)
 
 ### What changed

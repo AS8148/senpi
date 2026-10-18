@@ -32,6 +32,24 @@ Build configuration of the package itself; extensions cannot change what tsc emi
 
 `packages/coding-agent/tsconfig.build.json` (the exclude list) only.
 
+## 2026-10-18 - The pending-input module is a public subpath (senpi#3549)
+
+### What changed
+
+- `packages/coding-agent/package.json`: a new `./pending-input` export pointing at `dist/core/pending-input-public.{js,d.ts}`, a re-export-only barrel of the pending-input reducer, projection, types and store.
+
+### Why
+
+- `packages/coding-agent/package.json`: the desktop server and the omo child queue must embed the exact lifecycle module instead of reimplementing it (desktop #2838 plan).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/package.json`: package exports are part of the package manifest.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/package.json`, the `exports` map next to `./prompt-presets`.
+
 ## 2026-10-15 - A removed custom provider stops being served after logout (senpi#3339)
 
 ### What changed

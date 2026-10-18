@@ -40,6 +40,210 @@ The tool wrappers, the session's tool registry, and `executeBash` are session in
 - `packages/coding-agent/src/core/agent-session.ts`: `AgentSessionConfig`, the constructor's logger/dispatcher block, `_refreshToolRegistry`'s two `wrapRegisteredTools` calls, and `executeBash`'s operations argument.
 - `packages/coding-agent/src/core/tool-dispatch/tool-dispatcher.ts` is fork-only.
 
+## 2026-10-18 - A session moved to another device refuses writes on the device it left (senpi#3630)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: `_persist` asks a `SessionWriteGuard` (`session-move/write-guard.ts`) before every persisted write. When the file's last ownership entry is a `session_released` with reason `move` or a `session_moved`, any write other than an ownership entry throws `SessionMovedAwayError`, which names the reason and what to do (wait, open it on the other device, or copy it here).
+
+### Why
+
+- `packages/coding-agent/src/core/session-manager.ts`: moving a session between devices (sisyphuslabs/omo-desktop-app#3137) needs exactly one writer per session id; the device that sent the session must not keep appending to its copy, whatever opens the file (TUI, desktop, RPC host).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/session-manager.ts`: every write to a session file goes through this funnel, below extensions and below every mode, so the single-owner rule can only hold here.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/session-manager.ts`, the `writeGuard` field next to `persist` and the first line of `_persist`.
+
+## 2026-10-18 - A hung extension handler cannot freeze the session (senpi#3650)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_applyExtensionBindings` gives every runner the extension handler budget (`extensionEventHandlerWarnMs` / `extensionEventHandlerTimeoutMs`), routes stalls to `reportExtensionHandlerStall`, and tags handler waits with `_handlerTurnScope` (advanced where a prompt arms the turn deadline); `releaseHeldExtensionHandlers()` releases only that turn's waits. `_handleAgentEvent` feeds `AgentRunContinuations`, and `_emitAgentSettled(agentEnd)` no longer waits for the agent to go idle when the core continued the run with input queued during `agent_end`: that continuation's own `agent_end` settles the run (senpi#3351 drain owner).
+- `packages/coding-agent/src/core/agent-session.ts` `_abortActiveAgentAndRetry`: an abort (Esc, or the turn deadline) the run does not honour within `TURN_DEADLINE_GRACE_MS` releases the turn's held handler waits (`_waitForIdleAfterAbort`), so Esc ends a handler-held turn too.
+- `packages/coding-agent/src/core/agent-run-continuation.ts` (new): `AgentRunContinuations`, which proves from emission order (a later `agent_start`) that the core continued a run.
+- `packages/coding-agent/src/core/settings-manager.ts`: the two settings, defaults 60 s (warning) and 20 min (hard cap, above the 15 min summarization budget a blocking compaction in `message_end` may use); `0` disables each.
+- `packages/coding-agent/src/core/session-log.ts`: `extension` and `handlerEvent` join the data-key allowlist, so `extension_handler_stalled` names the extension (basename), the event, the stage (`warn` / `timeout` / `released` / `late_failure`) and, for a late failure, its `error`.
+- `packages/coding-agent/src/core/turn-deadline.ts`: a turn still running one grace after the deadline abort has its turn's held handler waits released and gets one more grace; only a turn still running after that logs `turn_deadline_unsettled`, with the real time since the abort.
+- `packages/coding-agent/src/core/extension-handler-stall-report.ts` (new): logs every stall stage and shows a notice for the warning stage.
+
+### Why
+
+AgentSession persists agent events on one serial queue and awaited every extension handler without a bound. One handler that never settled froze a long-running session for 2 h 12 min: the turn was never written, the session stayed streaming, 25 queued steers were never delivered, nothing logged which handler held it, and the turn deadline could only report the turn unsettled. Review of the first version found that which side drains input queued during `agent_end` depended on microtask timing (two async `agent_end` handlers already deadlocked it on `main`).
+
+### Why an extension could not handle it
+
+The waits are the host's own awaits on extension handlers inside the session's event queue and the run's settle; no extension can bound another extension's handler, release the host's wait on it, or decide which owner continues a run.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-session.ts` `_emitAgentSettled` (the continuation check at the top) and the `agent_end` branch of `_processAgentEvent` that calls it; the start of `_handleAgentEvent`.
+- LOW: `agent-session.ts` `_applyExtensionBindings` (after `setToolHookLifecycleObserver`), the deadline-owner adapters beside `abortTurnForDeadline`, the `_deadlineTracker.arm()` line in `_promptAgent`, the abort promise in `_abortActiveAgentAndRetry`, and the field block beside `_isAgentRunActive`.
+- LOW: `settings-manager.ts` beside the `session_shutdown` handler budget; `session-log.ts` `ALLOWED_DATA_KEY`.
+- `turn-deadline.ts`, `agent-run-continuation.ts` and `extension-handler-stall-report.ts` are fork-only.
+
+## 2026-10-18 - AgentSession keeps identified queued input in durable custody (senpi#3549, P2b)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the session owns a `SessionPendingInputs` (`pending-input-session.ts`) and installs its queue port on the agent, so every queued message is claimed, committed and released through the pending-input store. `steer`/`followUp` with a `clientMessageId` admit the input and enqueue it in one gated step (a repeated identical submit queues nothing; a reused id with another payload throws `ClientMessageIdConflictError`). New `changeQueuedInput(queuedId, text | undefined, options)` edits or removes an identified input in its record first and in the native queue in the same step; `_recordQueuedInput` accepts the admitted queue id so the record and the store share one id. Input without a client id keeps the legacy path, and `dequeueQueuedInput` / `editQueuedInput` are unchanged.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: a queued input was only in memory and in five parallel queue structures; a crash or a concurrent edit could lose it or deliver an old version (desktop #2838).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: the queues, their drain into a turn, and edit/remove are owned by the session runtime, below the extension API.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/core/agent-session.ts`, the constructor (store and port), `_queueSteer` / `_queueFollowUp`, `_enqueuePreparedInput`, `_recordQueuedInput` and the new `changeQueuedInput` above `_changeQueuedInput`.
+
+## 2026-10-18 - WSL detection survives sanitized environments (Refs senpi#3628)
+
+### What changed
+
+- `packages/coding-agent/src/core/keybindings.ts`: `useWindowsKeybindings` takes an optional `procVersionPath` and delegates Linux WSL detection to `isWSL` (`../utils/wsl.ts`: `WSL_DISTRO_NAME`/`WSL_INTEROP`/`WSLENV` plus a `/proc/version` fallback) instead of reading only the first two env markers.
+- `packages/coding-agent/src/core/footer-data-provider.ts`: `isWslEnvironment` delegates to the same `isWSL` helper instead of its own env-only copy.
+
+### Why
+
+- `packages/coding-agent/src/core/keybindings.ts`: on WSL sessions whose launcher environment carries no WSL markers (multiplexer sanitation, sudo), the dequeue chord fell back to `alt+up`, so Alt+Q fired nothing.
+- `packages/coding-agent/src/core/footer-data-provider.ts`: footer git polling for Windows-mounted paths silently stopped under the same sanitized environments.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/keybindings.ts`: default keybinding tables are core module state evaluated before extensions bind.
+- `packages/coding-agent/src/core/footer-data-provider.ts`: the footer provider is core-injected, not extension-owned.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/keybindings.ts`: `useWindowsKeybindings`.
+- `packages/coding-agent/src/core/footer-data-provider.ts`: `isWslEnvironment`.
+
+## 2026-10-18 - Amazon Bedrock's provider default is Claude Opus 5.5
+
+### What changed
+
+- `packages/coding-agent/src/core/model-resolver.ts`: `defaultModelPerProvider` row `amazon-bedrock` is `us.anthropic.claude-opus-5-5` (was `us.anthropic.claude-opus-4-6-v1`).
+
+### Why
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the bundled `amazon-bedrock` catalog lists `us.anthropic.claude-opus-5-5`, but the default was still Opus 4.6, four Opus releases behind the newest Opus that the retry fallback chains and prompt presets already lead with. The default applies only when no model is saved in settings and none is passed on the command line.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the built-in provider default table is core resolver data read before any extension runs.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the `amazon-bedrock` row of `defaultModelPerProvider`.
+
+## 2026-10-17 - A reopened session keeps only its latest compaction window resident (senpi#3519)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: loading an existing session file (`_setSessionFile` and `_setSessionFileAsync`: open, `openAsync`, resume, `reloadFromDisk`) keeps only the latest compaction window on the leaf's branch in the resident mirror (`_retainLoadedTail`, planned by the new fork-only `session-loaded-tail.ts`): the header, the leaf path's non-message entries before the window, every label and session name, and every entry from the compaction's first kept entry on. The trimmed ids join `trimmedIds`, the mirror is marked trimmed, and the full-history entry count and usage totals are taken from the whole file before the trim. A file with duplicated ids, no compaction on the leaf's branch, or a kept-window entry whose parent lies before the window stays fully resident as before.
+- `packages/coding-agent/src/core/session-manager.ts`: a load that trims seeds `historyView` with the entries it already parsed, so the open-time full-history readers (receipt seals, extension session starts, `wasFlushed`) do not read the file a second time; the view goes with the other views when the session settles idle (`releaseSettledSessionMemory`).
+- `packages/coding-agent/src/core/session-manager.ts`: `_buildIndex` leaves `usageTotals` alone while the mirror is trimmed, like `fullEntryCount`, so a live compaction's trim no longer drops the usage of the turns it trimmed.
+- `packages/coding-agent/src/core/session-manager.ts`: `branch` and `branchWithSummary` to an entry outside the mirror reload the whole file into it (`_loadFullMirrorFor`); before, `branch` reloaded and `branchWithSummary` refused.
+- `packages/coding-agent/src/core/session-manager.ts`: new `getFullBranch(fromId?)` (also on `ReadonlySessionManager`) walks the active path over the whole persisted history; `getBranch()` keeps answering a trimmed mirror from the latest compaction window, as it already did after a live compaction. `createBranchedSession` (fork, clone) builds its new file from `getFullBranch`, so a fork of a compacted session keeps the history before the compaction; before, a fork from an entry still in the mirror wrote the window only, after a live compaction as well.
+- `packages/coding-agent/src/core/session-manager.ts`: `appendLabelChange` accepts a target the mirror trimmed when the session file holds it, checked against the memoized full history (`getEntries()`) rather than a fresh parse of the file.
+- `packages/coding-agent/src/core/agent-session.ts`: `exportToJsonl` writes `getFullBranch()`, so the JSONL export of a compacted session keeps the history before the compaction.
+- `packages/coding-agent/src/core/session-export.ts`: `serializeSessionBranch` (and so `exportSessionToJsonl`) walks `getFullBranch()` instead of `getBranch()`, the same rule as `exportToJsonl`, so a caller exporting a compacted session gets its whole path.
+- `packages/coding-agent/src/core/agent-session.ts`: new `releaseFullHistoryView()` drops the materialized views while no run or session work is active and a full-history view is held; unlike `releaseSettledSessionMemory` it tokenizes nothing in place.
+
+### Why
+
+- A long session keeps growing its file across compactions, while its context needs only the window after the latest one. Reopening a 279 MB transcript held ~320 MB of live heap although its window is 2 MB; across the eight largest local transcripts the window was 0-13 MB of 142-279 MB. A host with 22 such threads idled at 4.5-6.5 GB footprint and its collections stalled every session (#3519). `test/benchmarks/3519-host-heap.ts` (a real RPC host from source, generated compacted transcripts, live heap from a heap snapshot after a full collection) measures four 100 MB transcripts at 512 MB of live heap on main 9aaf1722f and 64 MB with this change. One RPC host holding four of the largest local transcripts (843 MB of files) went from 1441 MB of live heap after a full collection to 216 MB (phys_footprint 810 MB to 277 MB).
+- Full-history readers (`getEntries`, `getTree`, `getEntry`, `getFullBranch`, forks, labels, branching to an old entry) read the file once the mirror is trimmed. `getBranch()` readers see the latest compaction window after a reopen, which is what they already saw after a live compaction; readers that need the whole path use `getFullBranch()`.
+
+### Why an extension could not handle it
+
+- The resident mirror, its trim and the usage totals are private `SessionManager` state built while a session file loads; no extension hook runs there.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/core/session-manager.ts`, `_setSessionFile` and `_setSessionFileAsync` (one `_retainLoadedTail()` call between `_adoptFileEntries` and the externalize map), `_completeFileLoad` (takes the loaded history and sets the view after `_buildIndex`) and the head of `_buildIndex`.
+- LOW: `packages/coding-agent/src/core/session-manager.ts`, the first lines of `branch`, `branchWithSummary`, `appendLabelChange` and `createBranchedSession`, `getFullBranch`, the `ReadonlySessionManager` pick list, the `loadingFullMirror` field and `emptyUsageTotals`.
+- LOW: `packages/coding-agent/src/core/agent-session.ts`, `releaseFullHistoryView` beside `releaseSettledSessionMemory` and the branch read in `exportToJsonl`.
+- LOW: `packages/coding-agent/src/core/session-export.ts`, the branch read in `serializeSessionBranch` and its doc comment.
+
+## 2026-10-17 - A non-stored subscription sign-in is reported on the sign-in row (senpi#3537)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-runtime.ts`: `resolveProviderAuth(providerId)` returns `{ status, signIn }` and `getProviderAuthStatus` is its `status`. `signIn` is set only by the last branch, when the provider's own check resolves `type: "oauth"`. A runtime key, a stored credential or a configured models.json/extension key wins first, from the same branch order as the status.
+- `packages/coding-agent/src/core/model-registry.ts`: `resolveProviderAuth(provider)`, the facade with the #2249 live-store fallback; `getProviderAuthStatus` returns its `status`.
+- `packages/coding-agent/src/core/auth-providers.ts`: `authMethodStatus(modelRegistry, info)` takes no row-capability input, so every surface attributes a row the same way:
+  - a stored credential lights the row of its own type, even beside a runtime key;
+  - a non-stored sign-in lights the `oauth` row;
+  - every other credential is a key and lights only the `api_key` row, never a provider's only sign-in row.
+- `packages/coding-agent/src/core/auth-providers.ts`: `loginRowStatus` gives the TUI picker each row's own status, or the other method's for the "API key configured" hint.
+
+### Why
+
+senpi#3537: `CLAUDE_CODE_OAUTH_TOKEN` and the ambient Claude Code login pass `anthropic-subscription`'s check as `type: "oauth"`, and the router uses them as a sign-in. `get_auth_providers` still filed them on the api_key row, so RPC clients (the OmO desktop, sisyphuslabs/omo-desktop-app#2988) showed the subscription as not connected beside a second "API key".
+
+### Why an extension could not handle it
+
+Row status is computed by core `get_auth_providers`; an extension supplies only the check.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/auth-providers.ts`: `authMethodStatus` and its doc comment.
+- `packages/coding-agent/src/core/model-runtime.ts`: `getProviderAuthStatus` and the new `resolveProviderAuth` below it.
+- `packages/coding-agent/src/core/model-registry.ts`: `getProviderAuthStatus` and `resolveProviderAuth`.
+
+## 2026-10-17 - Opening a large session no longer holds a shared host's event loop (senpi#3518)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: `SessionManager.openAsync(path, sessionDir?, cwdOverride?, options?, slicer?)` opens like `open` but reads the transcript with asynchronous I/O and parses and externalizes it in slices that yield to the event loop (`packages/coding-agent/src/core/event-loop-slicer.ts`, 8 ms budget, `setImmediate` between slices). `_setSessionFile` is split into `_beginSessionFile` (point at the file, or start a new session at a missing path), `_adoptFileEntries` (empty/invalid file handling, header id, blob release, migration) and `_completeFileLoad` (index and flags), so the synchronous and the async path run the same steps; the constructor takes a private deferred-load marker for `openAsync`. `open` shares `discoverOpenHeader`/`openLocation` with it, and terminates an unterminated final line by reading only the last byte of a regular file (`terminateFinalSessionLine`; a FIFO or device is left to the loader, as before) instead of reading the whole file. `loadEntriesFromFile` and the line parser moved to `packages/coding-agent/src/core/session-entry-file.ts` (re-exported here), next to `loadEntriesFromFileAsync`.
+- `packages/coding-agent/src/modes/rpc/session-registry.ts`: the in-process host's `openSession` uses `openAsync`. A registry built with `sessionFileLoad: "blocking"` keeps the synchronous `open`: `packages/coding-agent/src/modes/rpc/session-worker.ts` does, through `createSessionWorkerRegistry` (`session-worker-registry.ts`), because a session worker owns its isolate's loop and nothing else waits on it. `createSlicer` injects the slicer (tests pass a stepping clock).
+- `packages/coding-agent/src/core/extensions/builtin/tool-search/`: the session-start history scan (`maybeRehydrateFromHistoryInSlices`) yields between messages, and `parseActivationMarkers` skips `JSON.stringify` for every message that cannot hold a marker (`engine/marker-candidates.ts`, exact for plain JSON data).
+
+### Why
+
+- One multi-session host runs every session on one loop. On main, opening a 231 MB transcript made a concurrent `get_protocol_info` wait 899-1198 ms (3 runs; an empty open: 368-1037 ms): about 0.8 s JSONL parse, 0.25 s externalize, 0.7 s of per-message `JSON.stringify` in the tool-search marker scan, plus a full-file read just to check the last byte.
+- After: 251-677 ms on the same transcript, within the empty-open range (284-585 ms), which is #1844's fixed per-open cost.
+- Accepted residual: a line another process is still writing when the sliced reader reaches EOF is dropped as malformed, then exists on disk but not in memory. The synchronous load had the same race; slicing widens it from milliseconds to the length of the load. `reserveSessionWrite` guards writers within one process only.
+- Regressions: `test/suite/regressions/issue-3518-open-session-yields.test.ts` (open/openAsync parity incl. a torn final line; an append during a sliced load; a mid-load failure; loop turns during `openAsync` and during the host's `openSession`, which saw 0 turns on main) and `test/tool-search/marker-candidates.test.ts`.
+
+### Why an extension could not handle it
+
+- Loading the session file happens before any extension runs, inside the session manager the host constructs.
+
+### Expected merge conflict zones
+
+- MEDIUM: `_setSessionFile` and its new stage methods, the private constructor's preloaded-entries parameter, and `static open` in `session-manager.ts`. LOW: the `loadEntriesFromFile` re-export and the import block.
+
+## 2026-10-17 - The pending-input lifecycle module, store, writer claims and session journal (senpi#3549, P2a)
+
+### What changed
+
+- `packages/coding-agent/src/core/pending-input.ts`, `pending-input-types.ts`, `pending-input-mutations.ts`, `pending-input-projection.ts`: one reducer and one projection for a pending input (queued, sending, delivered, removed, failed; edited and superseded are facts of the same record).
+- `packages/coding-agent/src/core/pending-input-store.ts`: the store commits one journal record per transition before it publishes or dispatches, serializes every command, and rebuilds and rebinds on reopen.
+- `packages/coding-agent/src/core/session-writer-claims.ts`: one writer per session file across processes, as an append-only chain of immutable claims.
+- `packages/coding-agent/src/core/pending-input-journal.ts`: the session JSONL as the store's journal.
+- Nothing calls this code yet; P2b wires it into AgentSession, RPC and the TUI.
+
+### Why
+
+- `packages/coding-agent/src/core/pending-input.ts`: the TUI and RPC paths kept separate views of a queued input, and nothing beyond admission was durable (senpi#3549, desktop #2838).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/pending-input.ts`: queued-input custody is owned by the session runtime, below the extension API.
+
+### Expected merge conflict zones
+
+- LOW: new files only.
+
 ## 2026-10-16 - Queued-input changes can require the revision they were based on (senpi#3459)
 
 ### What changed
@@ -4749,7 +4953,6 @@ runtime it registered into is private or shared.
 - MEDIUM: `packages/coding-agent/src/core/remote-catalog-provider.ts` refresh publication and provider wrapper.
 - LOW: new `packages/coding-agent/src/core/remote-catalog-merge.ts` and the colocated remote catalog regression tests.
 
-## 2026-09-11 - Keep static model capabilities authoritative over remote catalog refreshes (senpi#1527)
 
 ### What changed
 
@@ -5309,7 +5512,6 @@ runtime it registered into is private or shared.
 
 - Agent-session thinking-level transitions, session-manager context assembly, and compaction lifecycle.
 
-## 2026-09-05 - Persist Astra reasoning configuration updates
 
 ### What changed
 

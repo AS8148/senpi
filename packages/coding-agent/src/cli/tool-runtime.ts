@@ -88,7 +88,10 @@ function resolveRequestedToolRuntime(
 	const fromEnv = envValue(TOOL_RUNTIME_ENV_SUFFIX, env);
 	if (fromEnv === undefined || fromEnv === "") return { ok: true, value: "in-process" };
 	if (isToolRuntimeKind(fromEnv)) return { ok: true, value: fromEnv };
-	const name = brandEnvNames(TOOL_RUNTIME_ENV_SUFFIX)[0] ?? TOOL_RUNTIME_ENV_SUFFIX;
+	// Name the variable that actually carried the value: a legacy prefix is read too (as for every brand setting).
+	const name =
+		brandEnvNames(TOOL_RUNTIME_ENV_SUFFIX).find((candidate) => env[candidate] !== undefined) ??
+		TOOL_RUNTIME_ENV_SUFFIX;
 	return {
 		ok: false,
 		message: `${name} (--tool-runtime) must be in-process or child, got ${JSON.stringify(fromEnv)}`,

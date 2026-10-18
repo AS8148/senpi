@@ -32,7 +32,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.3"
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -107,7 +107,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.3"
 
       - name: Check
         run: npm run check
@@ -182,7 +182,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.3"
 
       - name: Snapshot OS temp before tests
         id: test_temp_snapshot
@@ -224,7 +224,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.3"
 
       - name: Install system dependencies
         run: |
@@ -316,6 +316,43 @@ jobs:
         run: node scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
 
 
+  # senpi#3604: main-screen mouse tracking is gated on WT_SESSION on win32, and the ask-user hint
+  # names Windows Terminal's Shift selection bypass. Run the wheel-yield and hint tests on Windows.
+  tui-mouse-windows:
+    name: TUI mouse wheel and hint (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Snapshot OS temp before tests
+        id: test_temp_snapshot
+        shell: bash
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
+
+      - name: Run main-screen mouse tests
+        run: node ../../scripts/run-tests.mjs node --test --import tsx --import ./test/setup-multiplexer-env.mjs test/tui-main-screen-mouse.test.ts
+        working-directory: packages/tui
+
+      - name: Run ask-user widget mouse tests
+        run: node ../../scripts/run-tests.mjs vitest run test/suite/ask-user-widget-mouse.test.ts
+        working-directory: packages/coding-agent
+
+      - name: Check OS temp after tests
+        if: always() && steps.test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: node scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
+
   # Durable scheduled prompts: rename claims, runner leases, ungated delivery locks, taskkill
   # timeouts and cmd.exe `--exec` hooks all behave differently on Windows.
   schedule-windows:
@@ -370,7 +407,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.3"
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -460,7 +497,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.3"
 
       - name: Install archive tool
         shell: pwsh
@@ -527,7 +564,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.3"
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -587,7 +624,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.3"
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -648,7 +685,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.3"
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -733,7 +770,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.3"
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -803,7 +840,7 @@ jobs:
           python-version: "3.12.10"
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.3"
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts
       - name: Snapshot OS temp before tests
@@ -880,7 +917,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.3"
 
       - name: Install system dependencies
         run: |
@@ -1009,6 +1046,7 @@ jobs:
         rpc-owner-lifetime,
         grep-native-contract,
         hooks-trust-storage-windows,
+        tui-mouse-windows,
         schedule-windows,
         rpc-windows,
         compiled-extensions-windows,

@@ -1,7 +1,11 @@
 import { TOOL_CHILD_LIMITS, type ToolChildMessage } from "./protocol.ts";
 import { isToolChildMessage } from "./protocol-guard.ts";
 
-export type ToolChildCodecErrorCode = "tool_child_frame_too_large" | "tool_child_truncated" | "tool_child_malformed";
+export type ToolChildCodecErrorCode =
+	| "tool_child_frame_too_large"
+	| "tool_child_truncated"
+	| "tool_child_malformed"
+	| "tool_child_encode_invalid";
 
 export class ToolChildCodecError extends Error {
 	readonly code: ToolChildCodecErrorCode;
@@ -19,9 +23,27 @@ const tooLarge = (bytes: number): ToolChildCodecError =>
 	new ToolChildCodecError("tool_child_frame_too_large", `${bytes} bytes exceeds ${TOOL_CHILD_LIMITS.frameBytes}`);
 
 export function encodeFrame(message: ToolChildMessage): Uint8Array {
-	const json = JSON.stringify(message);
+	// JSON.stringify drops undefined-valued properties (what optional fields rely on) and natively serializes
+	// NaN/Infinity as null on BOTH the inline and the ref path, so payload contents encode identically either way.
+	// The one case JSON cannot represent is a REQUIRED json field that is undefined (today only result.value - a
+	// tool returning undefined); it becomes an explicit null the guard takes. The round-trip with the decoder's own
+	// predicate refuses anything else unsendable HERE - a typed per-message error, never a channel-killing frame
+	// (senpi#3569 delta review: optional undefined must keep stringify's default drop).
+	const normalized: ToolChildMessage =
+		message.type === "result" && message.value === undefined ? { ...message, value: null } : message;
+	const json = JSON.stringify(normalized);
 	const bodyBytes = Buffer.byteLength(json, "utf8");
 	if (bodyBytes > TOOL_CHILD_LIMITS.frameBytes) throw tooLarge(bodyBytes);
+	if (!isToolChildMessage(JSON.parse(json))) {
+		throw new ToolChildCodecError(
+			"tool_child_encode_invalid",
+			"the message serializes to a frame the peer's guard rejects",
+		);
+	}
+	return frameFromBody(json, bodyBytes);
+}
+
+function frameFromBody(json: string, bodyBytes: number): Uint8Array {
 	const frame = Buffer.allocUnsafe(FRAME_HEADER_BYTES + bodyBytes);
 	frame.writeUInt32BE(bodyBytes, 0);
 	frame.write(json, FRAME_HEADER_BYTES, "utf8");
