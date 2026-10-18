@@ -28,8 +28,16 @@ import {
 	readProcessStartTime,
 	sameProcessStartMs,
 } from "../../utils/process-identity.ts";
-import { createHostDaemonPaths, HOST_DAEMON_DIR_ENV, hostDaemonDirectoryPaths } from "./host-daemon-paths.ts";
+import {
+	createHostDaemonPaths,
+	generationPaths,
+	HOST_DAEMON_DIR_ENV,
+	type HostDaemonDirectory,
+	hostDaemonDirectoryPaths,
+} from "./host-daemon-paths.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
+import { stallRefusalWindowMs } from "./host-stalled-evidence.ts";
+import { ageOf, readJsonObject } from "./host-state-json.ts";
 import { logUnknownHostIdentity } from "./host-supervisor-log.ts";
 
 /** How long a client should wait before retrying a path another generation still holds. */
@@ -196,7 +204,7 @@ export function createSessionPathReservations(options: {
 		async claim(sessionPath: string, attached = true): Promise<SessionPathOwner | undefined> {
 			const existing = await readOwner(reservationFile(dir, sessionPath));
 			if (existing && existing.pid !== pid) {
-				const standing = await standingOwner(existing, paths.pointerFile);
+				const standing = await standingOwner(existing, paths);
 				if (standing) return standing;
 			}
 			try {
@@ -251,11 +259,34 @@ export async function readSessionPathClaims(dir: string): Promise<readonly Sessi
  * writing the file. A superseded owner that published `attached: false` is draining (or should
  * be), so its claim is released rather than obeyed. A claim without the flag predates it and is
  * honored, so a running older generation is never reclaimed from.
+ *
+ * A superseded owner whose identity cannot be PROVEN - no start time was recorded, or none can be read
+ * now - needs one more piece of evidence before it may block an open (#3652). On Windows a terminated
+ * generation leaves its claim behind and the OS hands its pid to an unrelated process; without a
+ * readable start time that stranger would hold the session file for as long as it runs. So such a
+ * claim stands only while its generation still heartbeats: a heartbeat older than the stall-refusal
+ * window is the same "died without cleaning up" verdict `hostLoopStalled` already reaches. A live
+ * host whose probe is merely starved (#1609) keeps heartbeating and keeps its claim; a claim with no
+ * heartbeat at all (an unsupervised or older host) keeps the previous benefit of the doubt.
  */
-async function standingOwner(owner: SessionPathOwner, pointerFile: string): Promise<SessionPathOwner | undefined> {
-	if (!(await claimOwnerIsLive(owner))) return undefined;
-	const current = (await currentInstanceId(pointerFile)) === owner.instanceId;
+async function standingOwner(
+	owner: SessionPathOwner,
+	paths: HostDaemonDirectory,
+): Promise<SessionPathOwner | undefined> {
+	const identity = await claimOwnerIdentity(owner);
+	if (identity === "gone") return undefined;
+	const current = (await currentInstanceId(paths.pointerFile)) === owner.instanceId;
+	if (!current && identity === "unproven" && (await heartbeatStopped(paths, owner.instanceId))) return undefined;
 	return current || owner.attached !== false ? { ...owner, current } : undefined;
+}
+
+/** Whether the owner's generation left a heartbeat that is older than a stalled host could explain. */
+async function heartbeatStopped(paths: HostDaemonDirectory, instanceId: string): Promise<boolean> {
+	// A claim file is untrusted input: an instance id that is not a plain directory name names no generation.
+	if (instanceId === "" || instanceId === "." || instanceId === ".." || /[\\/]/.test(instanceId)) return false;
+	const heartbeat = await readJsonObject(generationPaths(paths, instanceId).aliveFile);
+	const age = ageOf(heartbeat?.at, Date.now());
+	return age !== undefined && age >= stallRefusalWindowMs();
 }
 
 /** The generation the pointer names, or nothing when no pointer describes this endpoint. */
@@ -290,15 +321,24 @@ async function readOwner(file: string): Promise<SessionPathOwner | undefined> {
  * what separates "that host is still writing" from "the OS handed its pid to something else".
  */
 export async function claimOwnerIsLive(owner: SessionPathOwner): Promise<boolean> {
-	if (!processIsLive(owner.pid)) return false;
+	return (await claimOwnerIdentity(owner)) !== "gone";
+}
+
+/**
+ * `proven`: the pid runs and its start time matches the claim. `gone`: the pid is dead, or runs with a
+ * different start time. `unproven`: the pid runs but no start time was recorded or none can be read.
+ */
+async function claimOwnerIdentity(owner: SessionPathOwner): Promise<"proven" | "gone" | "unproven"> {
+	if (!processIsLive(owner.pid)) return "gone";
 	const recorded = owner.processStartTime === null ? undefined : processStartTimeMs(owner.processStartTime);
 	if (recorded === undefined) {
 		logUnknownHostIdentity("session-path-claim", owner.pid);
-		return true;
+		return "unproven";
 	}
 	const current = await readProcessStartTime(owner.pid).catch(() => undefined);
 	const observed = current === undefined ? undefined : processStartTimeMs(current);
-	return observed === undefined || sameProcessStartMs(recorded, observed);
+	if (observed === undefined) return "unproven";
+	return sameProcessStartMs(recorded, observed) ? "proven" : "gone";
 }
 
 function errorMessage(cause: unknown): string {
