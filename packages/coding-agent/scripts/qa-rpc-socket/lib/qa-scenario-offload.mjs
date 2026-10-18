@@ -9,11 +9,21 @@
  */
 import { QaFailure } from "./qa-failure.mjs";
 
-function offloadResult(ctx, sessionId) {
-	return ctx.awaitRecord(
+/**
+ * The session's qa_offload_result entry. It may be appended before open_session returns (in-process, the module runs at
+ * once during session_start), so the entries already in the session are read too; otherwise its entry_appended record.
+ */
+async function offloadResult(ctx, sessionId) {
+	const appended = ctx.awaitRecord(
 		(r) => r.sessionId === sessionId && r.type === "entry_appended" && r.entry?.customType === "qa_offload_result",
 		{ name: "qa_offload_result entry", deadlineMs: 90_000 },
 	);
+	const listed = await ctx.rpc.request({ type: "get_entries", sessionId });
+	const existing = (listed.data?.entries ?? []).find((entry) => entry.customType === "qa_offload_result");
+	if (existing === undefined) return appended;
+	appended.catch(() => undefined);
+	ctx.log.write({ type: "step", step: "result_entry_already_appended" });
+	return { entry: existing };
 }
 
 function outcomeOf(record) {
