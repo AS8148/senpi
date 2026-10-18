@@ -1503,7 +1503,9 @@ export class AgentSession {
 		this._toolDispatcher = createToolDispatcher({
 			runtime: toolRuntime,
 			notify: (event, data) => this._sessionLogger.info(event, data),
-			...(this._toolChild === undefined ? {} : { childRunner: this._toolChild.runner }),
+			...(this._toolChild === undefined
+				? {}
+				: { childRunner: this._toolChild.runner, childKindRunner: this._toolChild.kindRunner }),
 		});
 		this._fallbackValidationWarnings = validateFallbackChains(
 			this.settingsManager.getRawFallbackChains(),

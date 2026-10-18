@@ -7,6 +7,7 @@
 import { dirname, isAbsolute, resolve } from "node:path";
 import type { RegisteredTool } from "../../../core/extensions/types.ts";
 import type {
+	ToolChildKindRunner,
 	ToolChildModuleJob,
 	ToolChildRunner,
 	ToolChildRunResult,
@@ -98,6 +99,21 @@ export class SessionToolChild {
 			if (!lostToExit || job.idempotent !== true || signal?.aborted === true) throw error;
 			return this.#runOnce(job, signal);
 		}
+	};
+
+	/**
+	 * Runs a job of a built-in kind (`ToolDefinition.childJob`, e.g. `terminal.bash`) on this session's child, streaming
+	 * its updates to `onUpdate`. Never retried: such a job's state (a PTY session) does not survive a child exit.
+	 */
+	readonly kindRunner: ToolChildKindRunner = async (kind, args, call) => {
+		await this.#ensureLive();
+		const generation = this.#client.generation;
+		const pid = this.#client.pid ?? -1;
+		const value = await this.#client.run(kind, args, call.signal, {
+			hostContext: { toolCallId: call.toolCallId },
+			...(call.onUpdate === undefined ? {} : { onUpdate: call.onUpdate }),
+		});
+		return { value, pid, generation };
 	};
 
 	async #runOnce(job: ToolChildModuleJob, signal: AbortSignal | undefined): Promise<ToolChildRunResult> {

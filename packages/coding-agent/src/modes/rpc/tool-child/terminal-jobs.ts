@@ -24,13 +24,9 @@ import { ToolChildJobError } from "./entry-error.ts";
 /** Inside the PTY: no echo while it waits for the go-line, then the real command keeps the PTY's pid and group. */
 const PTY_GO_SHIM = 'stty -echo 2>/dev/null; IFS= read -r _go || exit 127; stty echo 2>/dev/null; exec "$0" "$@"';
 
-export const TERMINAL_JOB_KINDS = {
-	bash: "terminal.bash",
-	output: "terminal.output",
-	input: "terminal.input",
-	resize: "terminal.resize",
-	kill: "terminal.kill",
-} as const;
+import { TERMINAL_CHILD_JOB_KINDS as TERMINAL_JOB_KINDS } from "../../../core/extensions/builtin/terminal/tools/child-placement.ts";
+
+export { TERMINAL_JOB_KINDS };
 
 /** What a terminal tool needs to run here: its schema (to check the params) and its body. */
 interface ChildRunnableTool<P extends TSchema> {

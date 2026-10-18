@@ -927,6 +927,11 @@ export type ToolPlacement = "server" | "child";
  * Tool definition for registerTool().
  */
 /** A tool body loaded from a file on the session's tool child (senpi#3566). */
+export interface ToolChildJob {
+	readonly kind: string;
+	args(params: unknown, toolCallId: string, ctx: ExtensionToolContext): unknown;
+}
+
 export interface ToolChildModule {
 	readonly path: string;
 	readonly export: string;
@@ -1062,6 +1067,11 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	 * child-placed tool reports `tool_runtime_unavailable` under `--tool-runtime child`; `execute` still runs in-process.
 	 */
 	childModule?: ToolChildModule;
+	/**
+	 * A child-placed tool whose body is a tool-child job kind (built-in tools that keep state on the child, such as the
+	 * terminal's PTY sessions) instead of a `childModule`: `args` builds the job's arguments on the server from the call.
+	 */
+	childJob?: ToolChildJob;
 	/** Set by built-in tool factories that capture injected operations or a policy override; such a definition always executes on the session's server process, even when {@link ToolDefinition.placement} is `"child"`, and the dispatcher logs one notice per tool when it pins one. */
 	serverPinned?: boolean;
 

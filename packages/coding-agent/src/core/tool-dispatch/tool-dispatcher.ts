@@ -68,6 +68,17 @@ export interface ToolChildRunResult {
 	readonly generation: number;
 }
 
+/** Runs a job of a built-in kind on the session's tool child (`ToolDefinition.childJob`), streaming its updates. */
+export type ToolChildKindRunner = (
+	kind: string,
+	args: unknown,
+	call: {
+		readonly toolCallId: string;
+		readonly signal: AbortSignal | undefined;
+		readonly onUpdate?: (value: unknown) => void;
+	},
+) => Promise<ToolChildRunResult>;
+
 /** Runs a `module` job on the session's tool child, starting the child on first use. */
 export type ToolChildRunner = (job: ToolChildModuleJob, signal: AbortSignal | undefined) => Promise<ToolChildRunResult>;
 
@@ -75,6 +86,7 @@ export interface ToolDispatcherOptions {
 	runtime: ToolRuntimeKind;
 	notify?: ToolDispatchNotify;
 	childRunner?: ToolChildRunner;
+	childKindRunner?: ToolChildKindRunner;
 }
 
 export interface ToolDispatcher {
@@ -170,20 +182,56 @@ export class InProcessToolDispatcher extends BaseToolDispatcher {
 export class ChildToolDispatcher extends BaseToolDispatcher {
 	readonly kind: ToolRuntimeKind = "child";
 	readonly #childRunner: ToolChildRunner | undefined;
+	readonly #kindRunner: ToolChildKindRunner | undefined;
 
-	constructor(notify?: ToolDispatchNotify, childRunner?: ToolChildRunner) {
+	constructor(notify?: ToolDispatchNotify, childRunner?: ToolChildRunner, kindRunner?: ToolChildKindRunner) {
 		super(notify);
 		this.#childRunner = childRunner;
+		this.#kindRunner = kindRunner;
 	}
 
 	run<TDetails>(call: ToolDispatchCall<TDetails>): Promise<AgentToolResult<TDetails>> {
 		if (this.placementFor(call.definition) === "server") {
 			return this.runOnServer(call);
 		}
+		const childJob = call.definition.childJob;
+		if (childJob !== undefined) {
+			if (this.#kindRunner === undefined) return Promise.resolve(unavailableToolResult(call.definition.name));
+			return this.#runKind(
+				this.#kindRunner,
+				childJob.kind,
+				childJob.args(call.params, call.toolCallId, call.ctx),
+				call,
+			);
+		}
 		const job = childModuleJob(call);
 		if (job === undefined || this.#childRunner === undefined)
 			return Promise.resolve(unavailableToolResult(call.definition.name));
 		return this.#runOnChild(this.#childRunner, job, call);
+	}
+
+	async #runKind<TDetails>(
+		runner: ToolChildKindRunner,
+		kind: string,
+		args: unknown,
+		call: ToolDispatchCall<TDetails>,
+	): Promise<AgentToolResult<TDetails>> {
+		const onUpdate = call.onUpdate;
+		const { value, pid, generation } = await runner(kind, args, {
+			toolCallId: call.toolCallId,
+			signal: call.signal,
+			...(onUpdate === undefined
+				? {}
+				: {
+						onUpdate: (update: unknown) => {
+							if (isToolResult<TDetails>(update)) onUpdate(update);
+						},
+					}),
+		});
+		this.emitDispatched({ toolCallId: call.toolCallId, placement: "child", pid, generation });
+		if (!isToolResult<TDetails>(value))
+			throw new Error(`tool_child_invalid_result: ${kind} must return { content: [...] }`);
+		return value;
 	}
 
 	async #runOnChild<TDetails>(
@@ -213,7 +261,7 @@ export class ChildToolDispatcher extends BaseToolDispatcher {
 
 export function createToolDispatcher(options: ToolDispatcherOptions): ToolDispatcher {
 	return options.runtime === "child"
-		? new ChildToolDispatcher(options.notify, options.childRunner)
+		? new ChildToolDispatcher(options.notify, options.childRunner, options.childKindRunner)
 		: new InProcessToolDispatcher();
 }
 
