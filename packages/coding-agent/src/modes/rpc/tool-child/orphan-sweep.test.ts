@@ -10,7 +10,7 @@ import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { generationLedgerPath } from "./descendants.ts";
 import { defaultGroupProbes } from "./group-ownership.ts";
-import { sweepStaleGenerations } from "./orphan-sweep.ts";
+import { recordGenerationChild, sweepStaleGenerations } from "./orphan-sweep.ts";
 
 const resolver = pathToFileURL(resolve(import.meta.dirname, "../../../experimental/source-resolver.ts")).href;
 const hostFixture = resolve(import.meta.dirname, "../../../../test/fixtures/tool-child-host-fixture.ts");
@@ -105,5 +105,34 @@ describe.skipIf(process.platform === "win32")("orphan sweep", () => {
 				() => "removed",
 			),
 		).toBe("removed");
+	}, 30_000);
+
+	it("leaves a generation whose child still runs - another host on the same session - untouched", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "tos-"));
+		cleanups.push(() => rm(dir, { recursive: true, force: true }));
+		const liveChild = spawn("/bin/sleep", ["300"], { stdio: "ignore" });
+		const owned = spawn("/bin/sleep", ["300"], { detached: true, stdio: "ignore" });
+		const ownedPid = owned.pid ?? -1;
+		killLater([liveChild.pid ?? -1, ownedPid]);
+		const ledger = generationLedgerPath(dir, 4);
+		await recordGenerationChild(dir, 4, liveChild.pid ?? -1);
+		await writeFile(
+			ledger,
+			`${JSON.stringify({
+				launchId: `W1-${ownedPid}`,
+				generation: 4,
+				origin: "tool",
+				api: "cp.spawn",
+				containment: "own-group",
+				lifetime: "owned",
+				pid: ownedPid,
+				pgid: ownedPid,
+				atMs: Date.now(),
+				leaderStart: (await defaultGroupProbes.startOf(ownedPid)) ?? "",
+			})}\n`,
+		);
+		expect(await sweepStaleGenerations(dir)).toEqual([]);
+		expect(alive(ownedPid)).toBe(true);
+		expect(await stat(ledger).then(() => "present")).toBe("present");
 	}, 30_000);
 });

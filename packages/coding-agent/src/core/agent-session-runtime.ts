@@ -405,6 +405,8 @@ export class AgentSessionRuntime {
 		const replaced = this.session.sessionManager;
 		this.session.dispose();
 		this._disposedSession = this.session;
+		// As in dispose(): the replaced session's tool child has stopped and its commands are swept before replacement.
+		await this.session.whenToolChildClosed();
 		// Nothing writes to the replaced manager once its session is disposed, so the
 		// shared host may hand its session file to another worker.
 		unregisterSessionWriter(replaced);

@@ -14,7 +14,7 @@ import { TOOL_CHILD_PROTOCOL_VERSION } from "./entry.ts";
 import { policyFor } from "./job-policy.ts";
 import { JobSupervisor, type SupervisorTimers } from "./job-supervisor.ts";
 import { spawnToolChild, type ToolChildCommand, toolChildCommand } from "./launch.ts";
-import { sweepStaleGenerations } from "./orphan-sweep.ts";
+import { recordGenerationChild, sweepStaleGenerations } from "./orphan-sweep.ts";
 import type { ToolChildMessage } from "./protocol.ts";
 
 export type ToolChildState = "none" | "spawning" | "live" | "retiring" | "dead";
@@ -144,6 +144,8 @@ export class ToolChildClient {
 			() => undefined,
 			() => undefined,
 		);
+		// Marks this generation live while its child runs: another start on the same session never sweeps it.
+		if (child.pid !== undefined) await recordGenerationChild(this.#options.dir, generation, child.pid);
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		const timedOut = new Promise<"timeout">((resolve) => {
 			timer = setTimeout(() => resolve("timeout"), this.#options.readyMs ?? 10_000);
