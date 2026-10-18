@@ -216,7 +216,7 @@ describe("terminal monitor tool", () => {
 		expect(firstText(timedResult)).toMatch(/^Monitor started with ID: mon_[0-9A-HJKMNP-TV-Z]{16}$/);
 		await timedOut;
 		// The machine-read outcome, not the summary prose: a timed watch ends with reason
-		// "timeout" exactly once, proving the deadline killed the watched session.
+		// "timeout" exactly once (derived from exit.timedOut at the settle site).
 		expect(endedEvents.filter((event) => event.reason === "timeout")).toHaveLength(1);
 
 		const persistent = sink.waitFor(
