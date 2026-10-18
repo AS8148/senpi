@@ -5,6 +5,7 @@ import {
 	type AccountSlot,
 	emptyCredential,
 } from "../../../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
+import { selectAccount } from "../../../src/core/extensions/builtin/anthropic-subscription/affinity.ts";
 import {
 	overrideAuthLaneBoundary,
 	queryWithAuthLane,
@@ -162,6 +163,17 @@ describe("Anthropic account fallback opt-out", () => {
 		const run = request(settings({ accountFallback: false }), () => undefined);
 		await expect(run.completion).rejects.toMatchObject({ name: "AllAccountsBlockedError" });
 		expect(run.attempts).toEqual([]);
+	});
+
+	it("keeps the head of the user's account order instead of skipping it when it is blocked", () => {
+		// senpi#3591 lets the user order accounts; with fallback off, that order picks the one account.
+		const accounts = [
+			{ ...primary, name: "alpha" },
+			{ ...secondary, name: "bravo", blockReason: "rate_limit", blockedUntil: now + 60_000 },
+		];
+		const options = { sessionId: "session-01", accountOrder: ["bravo", "alpha"], now };
+		expect(selectAccount(accounts, options).name).toBe("alpha");
+		expect(() => selectAccount(accounts, { ...options, accountFallback: false })).toThrowError(/blocked/);
 	});
 
 	it("fails closed when the explicitly selected account is missing", async () => {

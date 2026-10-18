@@ -2012,7 +2012,7 @@ This is the builtin's own denial reason, which the deny hook hands to Claude Cod
 ### What changed
 
 - `settings.ts` parses `anthropicSubscriptionProvider.accountFallback` and `SENPI_CLAUDE_SDK_OAUTH_ACCOUNT_FALLBACK`, defaulting to the existing enabled behavior.
-- `affinity.ts` limits selection to the explicit pin, resident account, or deterministic affinity winner when disabled, including subsequent requests after that account is blocked.
+- `affinity.ts` limits selection to the explicit pin, resident account, or the first account of the user's order (senpi#3591) over the deterministic affinity ranking when disabled, including subsequent requests after that account is blocked.
 - `auth-lane.ts` passes the policy to account selection and `failover.ts`, which limits attempts to one account while preserving same-account retries and refresh recovery. `account-command.ts` uses the same selection policy for the displayed affinity pick.
 
 ### Why
