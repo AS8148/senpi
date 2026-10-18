@@ -12,7 +12,6 @@ import {
 	createAgentSessionRuntime,
 	createAgentSessionServices,
 } from "../../src/core/agent-session-runtime.ts";
-import { AuthStorage } from "../../src/core/auth-storage.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import type { ExtensionAPI } from "../../src/index.ts";
 
@@ -55,8 +54,6 @@ describe.skipIf(process.platform === "win32")("replacing a session under the chi
 		writeFileSync(join(extensionDir, "index.ts"), EXTENSION);
 		writeFileSync(join(extensionDir, "body.ts"), BODY);
 		const faux = registerFauxProvider({ models: [{ id: "faux-1", reasoning: false }] });
-		const authStorage = AuthStorage.inMemory();
-		await authStorage.modify(faux.getModel().provider, async () => ({ type: "api_key", key: "faux-key" }));
 		// Whether the replaced session's commands were still alive at the moment its replacement started being built.
 		let atReplacement: boolean[] | undefined;
 		let watched: { sleepPid: number; childPid: number } | undefined;
@@ -64,7 +61,6 @@ describe.skipIf(process.platform === "win32")("replacing a session under the chi
 			if (watched !== undefined) atReplacement = [alive(watched.sleepPid), alive(watched.childPid)];
 			const services = await createAgentSessionServices({
 				agentDir: join(dir, "agent"),
-				authStorage,
 				cwd,
 				resourceLoaderOptions: {
 					additionalExtensionPaths: [join(extensionDir, "index.ts")],
