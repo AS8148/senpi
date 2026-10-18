@@ -77,6 +77,28 @@ Row status is computed by core `get_auth_providers`; an extension supplies only 
 
 - MEDIUM: `_setSessionFile` and its new stage methods, the private constructor's preloaded-entries parameter, and `static open` in `session-manager.ts`. LOW: the `loadEntriesFromFile` re-export and the import block.
 
+## 2026-10-17 - The pending-input lifecycle module, store, writer claims and session journal (senpi#3549, P2a)
+
+### What changed
+
+- `packages/coding-agent/src/core/pending-input.ts`, `pending-input-types.ts`, `pending-input-mutations.ts`, `pending-input-projection.ts`: one reducer and one projection for a pending input (queued, sending, delivered, removed, failed; edited and superseded are facts of the same record).
+- `packages/coding-agent/src/core/pending-input-store.ts`: the store commits one journal record per transition before it publishes or dispatches, serializes every command, and rebuilds and rebinds on reopen.
+- `packages/coding-agent/src/core/session-writer-claims.ts`: one writer per session file across processes, as an append-only chain of immutable claims.
+- `packages/coding-agent/src/core/pending-input-journal.ts`: the session JSONL as the store's journal.
+- Nothing calls this code yet; P2b wires it into AgentSession, RPC and the TUI.
+
+### Why
+
+- `packages/coding-agent/src/core/pending-input.ts`: the TUI and RPC paths kept separate views of a queued input, and nothing beyond admission was durable (senpi#3549, desktop #2838).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/pending-input.ts`: queued-input custody is owned by the session runtime, below the extension API.
+
+### Expected merge conflict zones
+
+- LOW: new files only.
+
 ## 2026-10-16 - Queued-input changes can require the revision they were based on (senpi#3459)
 
 ### What changed
