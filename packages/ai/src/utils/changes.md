@@ -1,3 +1,22 @@
+## 2026-10-18 - Anthropic compat gains supportsGzipRequestBody (senpi#3643)
+
+### What changed
+
+- `packages/ai/src/utils/prompt-cache-ttl.ts`: `getAnthropicCompat` resolves `supportsGzipRequestBody`, default true only for `api.anthropic.com` (same rule as `supportsWebSearch`).
+- `packages/ai/src/utils/gzip-request-body.ts` (fork-only): `withGzipRequestBodies(fetch)` gzips string bodies of 4096+ characters with 0-256 characters of random trailing whitespace (length padding), and on a refused encoding (415, a 400/403 without an Anthropic `req_` request id, or Anthropic's "not valid JSON" 400) resends the same request uncompressed once and keeps that origin uncompressed for the process.
+
+### Why
+
+- Per-provider opt-in keeps proxies and compatible endpoints that cannot decode gzip unaffected; the fallback covers the ones that are opted in by mistake.
+
+### Why an extension could not handle it
+
+- The compat matrix is resolved in `pi-ai` and read by the adapter before any extension hook.
+
+### Expected merge conflict zones
+
+- LOW: the returned object of `getAnthropicCompat`.
+
 ## 2026-10-15 - Connection failures classify as network from structured transport codes (senpi#3228)
 
 ### What changed
