@@ -1220,6 +1220,11 @@ export class RpcClient {
 		await this.send({ type: "account_pin", provider, name });
 	}
 
+	/** Set the order the provider's accounts are tried in after a pin, or clear it with null. */
+	async orderProviderAccounts(provider: string, names: string[] | null): Promise<void> {
+		await this.send({ type: "account_order", provider, names });
+	}
+
 	/** Remove a persisted provider account slot. Environment slots are read-only. */
 	async removeProviderAccount(provider: string, name: string): Promise<void> {
 		await this.send({ type: "account_remove", provider, name });

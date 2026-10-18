@@ -28,11 +28,8 @@ import type { AgentSession } from "../../core/agent-session.ts";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
 import { authMethodStatus, buildLoginProviderInfos } from "../../core/auth-providers.ts";
 import { ContinueFromLeafError } from "../../core/continue-from-leaf.ts";
-import {
-	getCredentialAccounts,
-	pinCredentialAccount,
-	removeCredentialAccount,
-} from "../../core/credential-accounts.ts";
+import { listCredentialAccounts, orderCredentialAccounts } from "../../core/credential-account-order.ts";
+import { pinCredentialAccount, removeCredentialAccount } from "../../core/credential-accounts.ts";
 import { AssistantEditError, SessionStreamingError } from "../../core/edited-assistant-message.ts";
 import { UserEditError } from "../../core/edited-user-message.ts";
 import {
@@ -1792,8 +1789,8 @@ export function createRpcConnectionHandler(
 			}
 
 			case "get_provider_accounts": {
-				const accounts = await getCredentialAccounts(session.modelRegistry.authStorage, command.provider);
-				return success(id, "get_provider_accounts", { accounts });
+				const listing = await listCredentialAccounts(session.modelRegistry.authStorage, command.provider);
+				return success(id, "get_provider_accounts", { accounts: listing.accounts, ordered: listing.ordered });
 			}
 
 			case "account_pin": {
@@ -1804,6 +1801,15 @@ export function createRpcConnectionHandler(
 			case "account_remove": {
 				await removeCredentialAccount(session.modelRegistry.authStorage, command.provider, command.name);
 				return success(id, "account_remove");
+			}
+
+			case "account_order": {
+				const names: unknown = command.names;
+				if (names !== null && !(Array.isArray(names) && names.every((name) => typeof name === "string"))) {
+					throw new Error("account_order names must be an array of account names, or null to clear the order");
+				}
+				await orderCredentialAccounts(session.modelRegistry.authStorage, command.provider, command.names);
+				return success(id, "account_order");
 			}
 
 			default: {
