@@ -17,6 +17,28 @@
 
 - LOW: `packages/coding-agent/src/modes/rpc/rpc-types.ts`, next to `get_effect_status` in the command and response unions and before `RpcSkillInvocationEvent`; `packages/coding-agent/src/modes/rpc/rpc-client.ts`, the answer types and the method after `getEffectStatus`.
 
+## 2026-10-18 - Account order over RPC (senpi#3591)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: new command `{ type: "account_order"; provider; names: string[] | null }` and its response; `get_provider_accounts` response data gains `ordered: boolean`.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `account_order` refuses a `names` that is not an array of strings (or null), then calls `orderCredentialAccounts`; `get_provider_accounts` answers from `listCredentialAccounts`, which lists in effective order and reports `ordered`.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `orderProviderAccounts(provider, names | null)`.
+
+### Why
+
+senpi#3591: accounts could be pinned or removed but not ordered, so a client (the OmO desktop, sisyphuslabs/omo-desktop-app#2973) could not say which account to try first.
+
+### Why an extension could not handle it
+
+The RPC command union, its dispatch and the typed client are core protocol surfaces; extensions cannot add a typed command to them.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the account command arms in `RpcCommand` and the `get_provider_accounts`/`account_*` response arms.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the credential-accounts imports and the `get_provider_accounts`/`account_*` cases.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the provider-account methods.
+
 ## 2026-10-17 - A host daemon inherits every credential the engine reads (senpi#3531)
 
 ### What changed
@@ -107,6 +129,30 @@ Host self-trimming is host internals.
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/modes/rpc/host-zero-session-trim.ts`: `check()`.
+
+## 2026-10-17 - get_entries reads a long history in pages and never closes the connection (senpi#3534)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `get_entries` takes `limit` and `maxBytes`. A paged read answers one page (`get-entries-page.ts`, fork-only) with `hasMore` and `nextSince`; an unpaged read whose history does not fit in 48 MiB answers `errorCode: "response_too_large"`; invalid bounds answer `invalid_argument`. Only the returned page is projected and measured.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: a read whose first entry alone is larger than the 48 MiB budget is refused with `response_too_large` instead of being sent. While a paged walk has more pages the full-history view is held for the next page (`holdEntryWalk`); the hold expires 30 s after the last page request (`ENTRY_WALK_HOLD_MS`), so a walk a client abandons on an already-idle session does not pin the whole history, and any answer that is not a continuing page releases it at once.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `getEntries(since?, page?)` takes `limit` / `maxBytes` and returns `hasMore` / `nextSince`, so the bundled client can page a long history.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `get_entries` command gains `limit?` and `maxBytes?`, its answer `hasMore?` and `nextSince?`, and `RPC_ERROR_RESPONSE_TOO_LARGE` is new.
+
+### Why
+
+- An unpaged `get_entries` on a long session (279 MB transcript) built one ~290 MB line; the connection's 64 MiB event queue refused it and closed the connection, cutting every session on it, so Desktop could not hydrate such a thread at all (#3534).
+- Holding the full-history view across pages keeps a walk from re-reading the file for every page (194 s to 66-72 s for 38 pages of a 279 MB transcript), but a hold without an expiry would pin that history on an idle session whose client stopped mid-walk, which is the retention #3519 removed.
+
+### Why an extension could not handle it
+
+- The answer is built and framed inside the RPC command handler; no extension hook runs there.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/connection-handler.ts`, the `get_entries` case and the `rpc-types.ts` import list.
+- LOW: `packages/coding-agent/src/modes/rpc/rpc-types.ts`, the `get_entries` command and answer shapes and the error-code constants.
+- LOW: `packages/coding-agent/src/modes/rpc/rpc-client.ts`, the `getEntries` signature.
 
 ## 2026-10-17 - Binding, get_entries and get_tree do not keep an idle session's history resident (senpi#3519)
 
