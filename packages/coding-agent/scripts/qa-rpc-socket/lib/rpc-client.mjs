@@ -14,6 +14,7 @@ export const HARNESS_RPC_COMMANDS = Object.freeze([
 	"close_session",
 	"get_state",
 	"get_entries",
+	"list_sessions",
 ]);
 
 const KNOWN = new Set(HARNESS_RPC_COMMANDS);

@@ -20,7 +20,7 @@ const FORBIDDEN = [
 ];
 // Worker entries are started with `new URL("./x.ts", import.meta.url)`, so they are part of the child's graph too.
 const SPECIFIER =
-	/new\s+URL\(\s*["'](\.{1,2}\/[^"']+)["']\s*,\s*import\.meta\.url|(?:import|export)\s[^'"]*?from\s*["'](\.{1,2}\/[^"']+)["']|import\s*\(\s*["'](\.{1,2}\/[^"']+)["']\s*\)|import\s+["'](\.{1,2}\/[^"']+)["']/g;
+	/(?:new\s+URL|siblingWorkerUrl)\(\s*["'](\.{1,2}\/[^"']+)["']\s*,\s*import\.meta\.url|(?:import|export)\s[^'"]*?from\s*["'](\.{1,2}\/[^"']+)["']|import\s*\(\s*["'](\.{1,2}\/[^"']+)["']\s*\)|import\s+["'](\.{1,2}\/[^"']+)["']/g;
 
 function reachable(roots: readonly string[]): Set<string> {
 	const seen = new Set<string>();

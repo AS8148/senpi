@@ -10,7 +10,7 @@ import { realpathSync } from "node:fs";
 import { isAbsolute, relative, sep } from "node:path";
 import type { ToolChildJobContext } from "./entry.ts";
 import { ToolChildJobError } from "./entry.ts";
-import { startGatedWorker } from "./gated-worker.ts";
+import { siblingWorkerUrl, startGatedWorker } from "./gated-worker.ts";
 
 export const MODULE_JOB_KIND = "module";
 export const TOOL_CHILD_MODULE_ROOTS_ENV = "SENPI_TOOL_CHILD_MODULE_ROOTS";
@@ -74,9 +74,14 @@ export function createModuleJobHandler(env: NodeJS.ProcessEnv = process.env) {
 	return async (value: unknown, context: ToolChildJobContext): Promise<unknown> => {
 		const job = parseModuleJobArgs(value);
 		const modulePath = containedModulePath(job.modulePath, parseModuleRoots(env));
-		const worker = startGatedWorker(context.gate, new URL("./module-job-worker.ts", import.meta.url), context.jobId, {
-			workerData: { modulePath, exportName: job.export, args: job.args },
-		});
+		const worker = startGatedWorker(
+			context.gate,
+			siblingWorkerUrl("./module-job-worker.ts", import.meta.url),
+			context.jobId,
+			{
+				workerData: { modulePath, exportName: job.export, args: job.args },
+			},
+		);
 		const abort = () => void worker.terminate();
 		context.signal.addEventListener("abort", abort, { once: true });
 		try {

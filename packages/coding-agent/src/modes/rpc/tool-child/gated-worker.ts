@@ -6,6 +6,8 @@
  */
 import realChildProcess from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
+import { extname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parentPort, Worker, type WorkerOptions } from "node:worker_threads";
 import { type BunLaunchGlobals, installGatedBun } from "./gated-bun.ts";
 import { createGatedChildProcess } from "./gated-child-process.ts";
@@ -80,4 +82,13 @@ function isBunLaunchGlobals(value: unknown): value is BunLaunchGlobals {
 		typeof Reflect.get(value, "spawnSync") === "function" &&
 		typeof Reflect.get(value, "$") === "function"
 	);
+}
+
+/**
+ * A worker entry beside the calling module, named by its source path: the built package ships `.js`, so the extension
+ * follows the caller's own file. Keep the `"./x.ts"` literal - the single-writer audit follows it into the worker.
+ */
+export function siblingWorkerUrl(sourceSpecifier: string, callerUrl: string): URL {
+	const extension = extname(fileURLToPath(callerUrl));
+	return new URL(sourceSpecifier.replace(/\.ts$/, extension), callerUrl);
 }
