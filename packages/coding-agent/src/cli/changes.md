@@ -875,7 +875,7 @@ Upstream edits to cli/args.ts at the next sync.
 ### What changed
 
 - `packages/coding-agent/src/cli/args.ts`: parse and document `--print-prompt-sizes`.
-- Contract: no provider request; built-in remote attach is skipped; third-party session_start hooks still run and may use the network. The help line states this boundary; JSON names those third-party extensions and reports MCP as "not attached; tool sizes exclude them" with configured server names/count, not speculative sizes.
+- Contract: zero model calls. Only two built-in `session_start` effects are skipped: MCP attach (configured servers are listed by name/count as "not attached; tool sizes exclude them", never sized) and the cache-keepalive prewarm. Every other handler runs, so hooks, loop and image-generation state match a normal first turn. Third-party `session_start` hooks still run; the report names them with a warning that they ran and may have used the network. The help line states this boundary.
 - `packages/coding-agent/src/cli/print-prompt-sizes.ts`: bind a normal session, request a sizes-only prefix preview, emit JSON and exit. Missing models and skipped previews exit nonzero with a reason. Prompt and tool content never enter the output.
 - `packages/coding-agent/src/cli/print-prompt-sizes.ts`: bind with the explicit sizes-only startup signal; other session starts keep their existing behavior.
 

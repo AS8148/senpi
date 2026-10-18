@@ -1,21 +1,3 @@
-## 2026-10-18 - Do not resume goals during size inspection (senpi#3483)
-
-### What changed
-
-- `index.ts`: diagnostic startup skips goal continuation arming and resume delivery.
-
-### Why
-
-Inspection must not restart an autonomous provider turn.
-
-### Why an extension could not handle it
-
-The goal built-in owns continuation scheduling.
-
-### Expected merge conflict zones
-
-- `index.ts`: the beginning of `session_start`.
-
 ## 2026-10-17 - No fixed auto-continue cap; a no-progress guard instead (oh-my-openagent#10280)
 
 ### What changed

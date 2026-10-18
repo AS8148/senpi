@@ -155,7 +155,6 @@ export default function hooksExtension(pi: ExtensionAPI): void {
 	}
 
 	pi.on("session_start", async (event, ctx) => {
-		if (event.sizesOnly) return;
 		const state = refreshState(ctx);
 		const input = buildSessionStartHookInput(event, ctx);
 		const result = await dispatchLifecycleHookEvent({

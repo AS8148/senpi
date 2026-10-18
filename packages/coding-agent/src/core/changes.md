@@ -10757,10 +10757,10 @@ Context files and the skills section are assembled by core before extensions see
 ### What changed
 
 - `packages/coding-agent/src/core/agent-session.ts`: `_rebuildSystemPrompt` delegates loader custom and append branches to the same dynamic builder; the resulting bytes are unchanged.
-- `packages/coding-agent/src/core/agent-session.ts`: retain the real base render's parts for inspection, and pass `ExtensionBindings.sizesOnly` to `session_start` only for diagnostic startup.
+- `packages/coding-agent/src/core/agent-session.ts`: retain the real base render's parts for inspection, and pass `ExtensionBindings.sizesOnly` to `session_start` only for diagnostic startup. During that startup, `sendCustomMessage` with `triggerTurn` and `sendUserMessage` keep the message (next-turn / follow-up queue) and start no turn, so the zero-model-call guarantee holds while every handler runs.
 - `packages/coding-agent/src/core/prompt-cache-prefix-request.ts`: each preview composition carries its base parts and observed extension byte deltas into a sizes-only report, measured with tools from `buildProviderContext`. A recomposition pass discards the prior pass's accounting. Sizes-only inspection skips credential preparation, which can refresh credentials over the network.
 - `packages/coding-agent/src/core/prompt-size-report.ts`: per-component UTF-8 bytes, engine token estimates, home-relative sources, context file details, skill bounds and count, and provider tools with count and the ten largest declarations. Replacing a prompt is marked `rewritten` with its signed net delta.
-- Preset replacements supply their own exact render parts, discarding replaced base sections and policy text. Other opaque replacements retain signed delta accounting. Ordinary prewarm builds create no accounting or report; the redundant initial accounting construction is removed.
+- Preset replacements supply their own exact render parts, discarding replaced base sections and policy text. Other opaque replacements retain signed delta accounting; replacement parts that do not join to the replacement prompt are named under `presetPartsMismatch` instead of being silently dropped. Ordinary prewarm builds create no accounting or report; the redundant initial accounting construction is removed.
 - `prompt-size-extension-names.ts` reuses nearest-package identity, falls back to directory names for index/main entrypoints, and adds a path hash only when names collide. `prompt-size-startup.ts` reports MCP server names/count without attaching or exposing endpoints and lists third-party extensions with startup handlers.
 
 ### Why
@@ -10774,5 +10774,5 @@ Only the shared builder sees both the real preview composition and the agent loo
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/core/agent-session.ts`: `_rebuildSystemPrompt` custom/append branch.
-- `packages/coding-agent/src/core/agent-session.ts`: `ExtensionBindings` and the `session_start` emission.
+- `packages/coding-agent/src/core/agent-session.ts`: `ExtensionBindings`, the `session_start` emission, and the sizes-only guards at the top of `sendCustomMessage` and before `sendUserMessage` prompts.
 - `packages/coding-agent/src/core/prompt-cache-prefix-request.ts`: preview composition and ready result.

@@ -722,8 +722,7 @@ export function createLoopExtension(deps: LoopExtensionDeps = {}): ExtensionFact
 		deps.onControllerReady?.(controller);
 		registerLoopCommand(pi, { controller });
 
-		pi.on("session_start", async (event, nextCtx) => {
-			if (event.sizesOnly) return;
+		pi.on("session_start", async (_event, nextCtx) => {
 			ctx = nextCtx;
 			timers.cancelAll();
 			timers = makeTimers();

@@ -23,7 +23,7 @@ export function promptSizeStartupNotes(input: {
 	const names = promptSizeExtensionNames(input.runner.getExtensionPaths());
 	const thirdPartySessionStart = {
 		names: input.runner.getThirdPartySessionStartPaths().map((path) => names.get(path) ?? "extension"),
-		note: "third-party session_start hooks still run and may use the network",
+		note: "these third-party session_start hooks ran during startup and may have used the network",
 	};
 	if (!input.sizesOnlyStartup) return { thirdPartySessionStart };
 	const context = input.runner.createContext();

@@ -156,8 +156,7 @@ export default function promptUrlWidgetExtension(pi: ExtensionAPI) {
 		});
 	};
 
-	pi.on("session_start", async (event, ctx) => {
-		if (event.sizesOnly) return;
+	pi.on("session_start", async (_event, ctx) => {
 		rebuildFromSession(ctx);
 	});
 }

@@ -5930,6 +5930,12 @@ export class AgentSession {
 			details: message.details,
 			timestamp: Date.now(),
 		} satisfies CustomMessage<T>;
+		if (this._sizesOnlyStartup && options?.triggerTurn === true) {
+			// Size inspection makes no model call (#3483): keep the message for a turn that never starts.
+			this._pendingNextTurnMessages.push(appMessage);
+			deferredTurnClaim?.resolve("finished-without-start");
+			return;
+		}
 		const waitForExistingSessionWork =
 			options?.triggerTurn === true &&
 			options.deliverAs !== "nextTurn" &&
@@ -6214,6 +6220,16 @@ export class AgentSession {
 			throw error;
 		}
 
+		if (this._sizesOnlyStartup) {
+			// Size inspection makes no model call (#3483): queue the input instead of starting a turn.
+			try {
+				await this._queueFollowUp(text, images, { textBlocks });
+			} finally {
+				deferredTurnClaim?.resolve("finished-without-start");
+				resolveBindingPromptReadiness?.();
+			}
+			return;
+		}
 		// An extension binding invokes this method fire-and-forget. When it
 		// arrives during session work, retain a barrier token after the prior work
 		// settles so callers observing session idle cannot race its provider turn.

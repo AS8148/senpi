@@ -1161,7 +1161,7 @@ export interface ResourcesDiscoverResult {
 /** Fired when a session is started, loaded, or reloaded */
 export interface SessionStartEvent {
 	type: "session_start";
-	/** Diagnostic startup: built-ins skip remote attach and background request work. User hooks still run. */
+	/** Diagnostic startup: built-in MCP attach and cache prewarm are skipped; every other handler runs; no turn starts. */
 	readonly sizesOnly?: boolean;
 	/** Why this session start happened. */
 	reason: "startup" | "reload" | "new" | "resume" | "fork";

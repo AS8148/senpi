@@ -1,28 +1,3 @@
-## 2026-10-18 - Bound built-in diagnostic startup side effects (senpi#3483)
-
-### What changed
-
-- `packages/coding-agent/src/core/extensions/builtin/prompt-url-widget.ts`: skip startup GitHub metadata fetching for sizes-only inspection (print mode already has no widget UI).
-- `packages/coding-agent/src/core/extensions/builtin/hooks/index.ts`: skip configured SessionStart command execution; commands may use the network.
-- `packages/coding-agent/src/core/extensions/builtin/loop/index.ts`: skip restored loop timers and delivery, which could start provider turns.
-- `packages/coding-agent/src/core/extensions/builtin/openai-image-gen/index.ts`: retain static native-tool arbitration but skip client credential resolution during diagnostic startup and preview; resolving gateway credentials can refresh OAuth over the network.
-- MCP attach, cache warming, terminal command restoration and goal continuation are recorded in their own trackers.
-
-### Why
-
-The contract is: no provider request; built-in remote attach is skipped; third-party session_start hooks still run. This is not a sandbox for third-party code. Their registered extension names are included in the size report.
-
-### Why an extension could not handle it
-
-Each built-in owns the startup side effect and must stop it before it starts.
-
-### Expected merge conflict zones
-
-- `packages/coding-agent/src/core/extensions/builtin/prompt-url-widget.ts`: startup subscription.
-- `packages/coding-agent/src/core/extensions/builtin/hooks/index.ts`: startup subscription.
-- `packages/coding-agent/src/core/extensions/builtin/loop/index.ts`: startup subscription.
-- `packages/coding-agent/src/core/extensions/builtin/openai-image-gen/index.ts`: arbitration state and startup subscription.
-
 ## 2026-10-17 - /files lists the whole active path after a reopen (senpi#3519)
 
 ### What changed

@@ -26,6 +26,7 @@ export interface PromptSizeEntry {
 export interface PromptSizeReport extends Partial<PromptSizeStartupNotes> {
 	readonly sections: readonly PromptSizeEntry[];
 	readonly total: { readonly bytes: number; readonly estimatedTokens: number };
+	readonly presetPartsMismatch?: { readonly names: readonly string[]; readonly note: string };
 }
 
 function entry(part: DynamicSystemPromptPart): PromptSizeEntry {
@@ -46,6 +47,7 @@ export class PromptSizeAccounting {
 	readonly #entries: PromptSizeEntry[];
 	readonly #skillCount: number;
 	readonly #extensionNames: ReadonlyMap<string, string>;
+	readonly #presetPartsMismatch: string[] = [];
 
 	constructor(input: {
 		readonly base: string;
@@ -75,12 +77,15 @@ export class PromptSizeAccounting {
 		readonly parts?: readonly DynamicSystemPromptPart[];
 	}): void {
 		const { path, before, after, parts } = contribution;
-		if (parts !== undefined && parts.map((part) => part.text).join("") === after) {
-			this.#entries.splice(0, this.#entries.length, ...parts.map(entry));
-			return;
+		const name = this.#extensionNames.get(path) ?? path.replace(/^<[^:]+:|>$/g, "");
+		if (parts !== undefined) {
+			if (parts.map((part) => part.text).join("") === after) {
+				this.#entries.splice(0, this.#entries.length, ...parts.map(entry));
+				return;
+			}
+			this.#presetPartsMismatch.push(name);
 		}
 		if (before === after) return;
-		const name = this.#extensionNames.get(path) ?? path.replace(/^<[^:]+:|>$/g, "");
 		const added = after.startsWith(before)
 			? after.slice(before.length)
 			: after.endsWith(before)
@@ -144,6 +149,14 @@ export class PromptSizeAccounting {
 				bytes: sections.reduce((sum, part) => sum + part.bytes, 0),
 				estimatedTokens: sections.reduce((sum, part) => sum + part.estimatedTokens, 0),
 			},
+			...(this.#presetPartsMismatch.length === 0
+				? {}
+				: {
+						presetPartsMismatch: {
+							names: [...this.#presetPartsMismatch],
+							note: "replacement parts did not join to its prompt; its row is the net delta",
+						},
+					}),
 		};
 	}
 }

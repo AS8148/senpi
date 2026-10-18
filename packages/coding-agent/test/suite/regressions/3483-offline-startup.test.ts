@@ -14,22 +14,32 @@ afterEach(() => {
 });
 
 describe("sizes-only startup network boundary (#3483)", () => {
-	it("does not resolve client image credentials during diagnostic startup or preview", async () => {
-		// Given: credential resolution can perform OAuth network work.
+	it("resolves image generation exactly like a normal startup, since its auth decides the tools", async () => {
+		// Given: the real arbitration over a client (non-native) model.
 		const resolve = vi.spyOn(imageGenAuth, "resolveImageGenAuth");
-		const harness = await createHarness({ extensionFactories: [openaiImageGen] });
-		try {
-			// When
-			await harness.session.bindExtensions({ mode: "print", sizesOnly: true });
-			const result = await harness.getExtensionRunner().createContext().getPromptCachePrefixRequest?.({
-				sizesOnly: true,
-			});
-			// Then
-			expect(result?.status).toBe("ready");
-			expect(resolve).not.toHaveBeenCalled();
-		} finally {
-			harness.cleanup();
-		}
+		const run = async (sizesOnly: boolean) => {
+			resolve.mockClear();
+			const harness = await createHarness({ extensionFactories: [openaiImageGen] });
+			try {
+				await harness.session.bindExtensions({ mode: "print", sizesOnly });
+				const result = await harness.getExtensionRunner().createContext().getPromptCachePrefixRequest?.({
+					sizesOnly: true,
+				});
+				if (result?.status !== "ready") throw new Error("Expected prefix");
+				return {
+					resolutions: resolve.mock.calls.length,
+					tools: result.request.context.tools?.map((tool) => tool.name),
+				};
+			} finally {
+				harness.cleanup();
+			}
+		};
+		// When
+		const normal = await run(false);
+		const sizesOnly = await run(true);
+		// Then
+		expect(normal.resolutions).toBeGreaterThan(0);
+		expect(sizesOnly).toEqual(normal);
 	});
 	it.each([true, false])("skips connections only for sizesOnly=%s", async (sizesOnly) => {
 		// Given: a real recording MCP server and the actual built-in extension.

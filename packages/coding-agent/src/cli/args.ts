@@ -432,8 +432,8 @@ ${chalk.bold("Options:")}
   --no-context-files, -nc        Disable AGENTS.md and CLAUDE.md discovery and loading
   --export <file>                Export session file to HTML and exit
   --list-models [search]         List available models (with optional fuzzy search)
-  --print-prompt-sizes           Print sizes as JSON; no provider request; built-in remote attach is skipped;
-                                 third-party session_start hooks still run
+  --print-prompt-sizes           Print first-turn sizes as JSON with zero model calls; MCP attach is skipped
+                                 (servers listed); third-party session_start hooks still run (named)
   --list-tips                    List all tips as JSON
   --verbose                      Force verbose startup (overrides quietStartup setting)
   --tui-mode <mode>              TUI mode: regular (default) or fullscreen
