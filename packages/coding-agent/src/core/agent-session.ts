@@ -6587,7 +6587,13 @@ export class AgentSession {
 		await this._abortActiveAgentAndRetry("user");
 		// An Esc that joined an open agent_end boundary returns at once: a boundary handler that holds the run is still
 		// released after the grace (senpi#3650), without making abort() itself wait for it.
-		if (!this.isIdle) void this._waitForIdleAfterAbort();
+		if (!this.isIdle) {
+			this._waitForIdleAfterAbort().catch((error: unknown) => {
+				this._sessionLogger.warn("abort_release_failed", {
+					error: error instanceof Error ? error.message : String(error),
+				});
+			});
+		}
 		if (!shouldEmitAbort) return;
 		try {
 			await this._emitSessionAbort();

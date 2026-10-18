@@ -243,40 +243,44 @@ describe("senpi#3650 a hung extension handler cannot freeze the session", () => 
 		30_000,
 	);
 
-	it("lets Esc release a held handler when the budget and the deadline are both disabled", async () => {
-		// given no handler budget, no turn deadline, and an agent_start handler that never settles
-		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
-		const { api } = await startHeld("agent_start", {
-			extensionEventHandlerWarnMs: 0,
-			extensionEventHandlerTimeoutMs: 0,
-			turn_inactivity_ms: 0,
-			turn_max_runtime_ms: 0,
-		});
-		api.sendMessage({ customType: NOTIFICATION, content: "monitor event", display: false }, { triggerTurn: true });
-		const steering = harness.session.prompt("late steer", { streamingBehavior: "steer" });
-		await vi.advanceTimersByTimeAsync(0);
+	it.each(["agent_start", "agent_before_settle"] as const)(
+		"lets Esc release a held %s handler when the budget and the deadline are both disabled",
+		async (handlerEvent) => {
+			// given no handler budget, no turn deadline, and a handler that never settles
+			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
+			const { api } = await startHeld(handlerEvent, {
+				extensionEventHandlerWarnMs: 0,
+				extensionEventHandlerTimeoutMs: 0,
+				turn_inactivity_ms: 0,
+				turn_max_runtime_ms: 0,
+			});
+			api.sendMessage({ customType: NOTIFICATION, content: "monitor event", display: false }, { triggerTurn: true });
+			const steering = harness.session.prompt("late steer", { streamingBehavior: "steer" });
+			await vi.advanceTimersByTimeAsync(0);
 
-		// when the user presses Esc and the abort grace runs out
-		const aborting = harness.session.abort();
-		await vi.advanceTimersByTimeAsync(10_000);
-		vi.useRealTimers();
-		await withinRealTime(steering, "the steer to be accepted");
-		await withinRealTime(aborting, "the abort to finish");
-		await withinRealTime(harness.session.waitForIdle(), "the session to settle after Esc");
-		await withinRealTime(harness.session.waitForSettledSessionWork(), "session work to settle");
+			// when the user presses Esc and the abort grace runs out
+			const aborting = harness.session.abort();
+			await vi.advanceTimersByTimeAsync(10_000);
+			vi.useRealTimers();
+			await withinRealTime(steering, "the steer to be accepted");
+			await withinRealTime(aborting, "the abort to finish");
+			await withinRealTime(harness.session.waitForIdle(), "the session to settle after Esc");
+			await withinRealTime(harness.session.waitForSettledSessionWork(), "session work to settle");
 
-		// then the held handler was released, the session settled, and the steer was delivered exactly once
-		expect(harness.session.isStreaming).toBe(false);
-		expect(getUserTexts(harness).filter((text) => text === "late steer")).toHaveLength(1);
-		expect(harness.session.agent.hasQueuedMessages()).toBe(false);
-		expect(sessionLogEvents(harness)).toContainEqual(
-			expect.objectContaining({
-				event: "extension_handler_stalled",
-				handlerEvent: "agent_start",
-				stage: "released",
-			}),
-		);
-	}, 30_000);
+			// then the held handler was released, the session settled, and the steer was delivered exactly once
+			expect(harness.session.isStreaming).toBe(false);
+			expect(getUserTexts(harness).filter((text) => text === "late steer")).toHaveLength(1);
+			expect(harness.session.agent.hasQueuedMessages()).toBe(false);
+			expect(sessionLogEvents(harness)).toContainEqual(
+				expect.objectContaining({
+					event: "extension_handler_stalled",
+					handlerEvent,
+					stage: "released",
+				}),
+			);
+		},
+		30_000,
+	);
 
 	it("logs a handler that fails after the host stopped waiting on it", async () => {
 		// given an agent_start handler that rejects 300 ms in, under a 100 ms cap
