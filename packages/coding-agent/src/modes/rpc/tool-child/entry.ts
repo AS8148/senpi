@@ -15,7 +15,8 @@ import type { PayloadRef, RefControl, ToolChildMessageOf } from "./protocol.ts";
 import { readTestControls } from "./test-controls.ts";
 
 export const TOOL_CHILD_GENERATION_ENV = "SENPI_TOOL_CHILD_GENERATION";
-export const TOOL_CHILD_PROTOCOL_VERSION = 1;
+/** 2: `hello` carries the child's `jobKinds` manifest. */
+export const TOOL_CHILD_PROTOCOL_VERSION = 2;
 
 /** The signal of a host call that outlives its job's cancel. */
 const NEVER_CANCELLED = new AbortController().signal;
@@ -110,7 +111,13 @@ export async function runToolChild(options: ToolChildEntryOptions): Promise<void
 		}
 	});
 	if (!controls.enabled("HANG_BEFORE_READY"))
-		channel.send({ type: "hello", generation, pid: process.pid, protocol: TOOL_CHILD_PROTOCOL_VERSION });
+		channel.send({
+			type: "hello",
+			generation,
+			pid: process.pid,
+			protocol: TOOL_CHILD_PROTOCOL_VERSION,
+			jobKinds: Object.keys(options.handlers).sort(),
+		});
 	if (controls.enabled("STOP_SELF")) process.kill(process.pid, "SIGSTOP");
 	await channel.closed;
 	hostCalls.close();

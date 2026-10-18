@@ -19,6 +19,7 @@ type FieldKind =
 	| "entries"
 	| "detail"
 	| "number|null"
+	| "strings"
 	| readonly string[];
 
 interface FieldRule {
@@ -46,7 +47,7 @@ const SHAPES = {
 	slot_query: { launchId: req("string") },
 	ping: { seq: req("number") },
 	shutdown: {},
-	hello: { generation: req("number"), pid: req("number"), protocol: req("number") },
+	hello: { generation: req("number"), pid: req("number"), protocol: req("number"), jobKinds: req("strings") },
 	heartbeat: { seq: req("number") },
 	pong: { seq: req("number") },
 	cancel_ack: { jobId: req("string") },
@@ -156,6 +157,8 @@ function matches(kind: FieldKind, value: unknown): boolean {
 			return isTraceDetail(value);
 		case "number|null":
 			return value === null || (typeof value === "number" && Number.isFinite(value));
+		case "strings":
+			return Array.isArray(value) && value.every((item) => typeof item === "string");
 	}
 }
 

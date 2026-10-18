@@ -72,6 +72,8 @@ interface Live {
 	readonly supervisor: JobSupervisor;
 	readonly hostCalls: ServerHostCalls;
 	readonly refs: HostCallRefs;
+	/** The child's manifest from its `hello`: the job kinds it runs. */
+	readonly jobKinds: ReadonlySet<string>;
 	ended?: Promise<void>;
 }
 
@@ -116,6 +118,11 @@ export class ToolChildClient {
 
 	get dir(): string {
 		return this.#options.dir;
+	}
+
+	/** The live child's manifest (its `hello`'s job kinds); empty when no child is live. */
+	get jobKinds(): readonly string[] {
+		return [...(this.#live?.jobKinds ?? [])].sort();
 	}
 
 	get generation(): number {
@@ -261,6 +268,7 @@ export class ToolChildClient {
 			supervisor,
 			hostCalls,
 			refs,
+			jobKinds: new Set(message.jobKinds),
 		};
 		this.#live = live;
 		this.#state = "live";
@@ -278,6 +286,13 @@ export class ToolChildClient {
 		const live = this.#live;
 		if (this.#state !== "live" || live === undefined)
 			return Promise.reject(new ToolChildError("tool_child_unavailable", this.#state));
+		if (!live.jobKinds.has(kind))
+			return Promise.reject(
+				new ToolChildError(
+					"tool_child_unknown_kind",
+					`the child runs [${[...live.jobKinds].join(", ")}], not ${kind}`,
+				),
+			);
 		const jobId = `j${++this.#nextJob}`;
 		if (signal?.aborted === true)
 			return Promise.reject(new ToolChildError("tool_child_cancelled", "cancelled before it started"));

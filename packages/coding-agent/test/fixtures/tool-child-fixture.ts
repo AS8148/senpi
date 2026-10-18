@@ -14,7 +14,7 @@ if (mode === "hang") {
 	process.exit(3);
 } else if (mode === "bad-generation") {
 	const channel = await connectChannel(process.env);
-	channel.send({ type: "hello", generation: 999, pid: process.pid, protocol: 1 });
+	channel.send({ type: "hello", generation: 999, pid: process.pid, protocol: 2, jobKinds: [] });
 	setInterval(() => {}, 1_000);
 } else {
 	await runToolChild({

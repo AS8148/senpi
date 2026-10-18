@@ -59,7 +59,7 @@ describe.each(ENTRIES)("%s with the tool-child role", (entry) => {
 		);
 		const channel = await listener.accepted;
 		const hello = await new Promise<ToolChildMessage>((done) => channel.onMessage(done));
-		expect(hello).toEqual({ type: "hello", generation: 7, pid: child.pid, protocol: 1 });
+		expect(hello).toEqual({ type: "hello", generation: 7, pid: child.pid, protocol: 2, jobKinds: ["module"] });
 		channel.close();
 		const result = await exited;
 		expect(result.code).toBe(0);

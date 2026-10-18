@@ -111,7 +111,8 @@ export type ServerToChild =
 	| { type: "shutdown" };
 
 export type ChildToServer =
-	| { type: "hello"; generation: number; pid: number; protocol: number }
+	/** `jobKinds`: the job kinds this child runs (its manifest); a job of any other kind is refused before it is sent. */
+	| { type: "hello"; generation: number; pid: number; protocol: number; jobKinds: string[] }
 	| { type: "heartbeat"; seq: number }
 	| { type: "pong"; seq: number }
 	| { type: "cancel_ack"; jobId: string }
