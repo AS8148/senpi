@@ -9,7 +9,11 @@ const owned = (capabilities: readonly string[]) => capabilities.filter(isHostOwn
 describe("tool runtime capabilities", () => {
 	it("advertises the tool child's placements only under child", () => {
 		expect(toolRuntimeCapabilities("in-process")).toEqual(["tool_runtime:in-process"]);
-		expect(toolRuntimeCapabilities("child")).toEqual(["tool_runtime:child", "placement:launch-barrier"]);
+		expect(toolRuntimeCapabilities("child")).toEqual([
+			"tool_runtime:child",
+			"placement:launch-barrier",
+			"placement:job-policy",
+		]);
 	});
 
 	it("drops negotiated tool_runtime and placement entries so the host's own answer is the only one", () => {
@@ -18,6 +22,6 @@ describe("tool runtime capabilities", () => {
 		expect(owned(inProcess)).toEqual(["tool_runtime:in-process"]);
 		expect(inProcess).toContain("custom:keep");
 		const child = multiSessionHostCapabilities({ warm: false, toolRuntime: "child", negotiated });
-		expect(owned(child)).toEqual(["tool_runtime:child", "placement:launch-barrier"]);
+		expect(owned(child)).toEqual(["tool_runtime:child", "placement:launch-barrier", "placement:job-policy"]);
 	});
 });

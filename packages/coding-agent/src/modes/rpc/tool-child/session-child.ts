@@ -12,7 +12,7 @@ import type {
 	ToolChildRunResult,
 } from "../../../core/tool-dispatch/tool-dispatcher.ts";
 import { ToolChildClient, ToolChildError, type ToolChildStatus } from "./client.ts";
-import { CrashLoop } from "./job-policy.ts";
+import { CrashLoop, fixtureDeadline } from "./job-policy.ts";
 import type { ToolChildCommand } from "./launch.ts";
 import { MODULE_JOB_KIND, TOOL_CHILD_MODULE_ROOTS_ENV } from "./module-job.ts";
 
@@ -92,7 +92,11 @@ export class SessionToolChild {
 		await this.#ensureLive();
 		const generation = this.#client.generation;
 		const pid = this.#client.pid ?? -1;
-		const value = await this.#client.run(MODULE_JOB_KIND, job, signal, { idempotent: job.idempotent === true });
+		const deadlineMs = fixtureDeadline(job.export, this.#options.env ?? process.env);
+		const value = await this.#client.run(MODULE_JOB_KIND, job, signal, {
+			idempotent: job.idempotent === true,
+			...(deadlineMs === undefined ? {} : { deadlineMs }),
+		});
 		return { value, pid, generation };
 	}
 

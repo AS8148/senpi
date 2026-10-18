@@ -6,6 +6,7 @@
  * requirement (`prerequisite_missing`, exit 3), so a scenario can never invoke a migrated tool before
  * its todo. Bodies of the later scenarios land with the todo that advertises their capability.
  */
+import { fixtureDeadlineScenario } from "./qa-scenario-fixture-deadline.mjs";
 import { fixtureToolsScenario } from "./qa-scenario-fixture-tools.mjs";
 import { launchApisAckGatedScenario } from "./qa-scenario-launch-barrier.mjs";
 import { skipAckWaitScenario } from "./qa-scenario-skip-ack.mjs";
@@ -32,7 +33,6 @@ export const REQUIREMENT_CAPABILITIES = Object.freeze({
 });
 
 const LATER = [
-	["6-fixture-deadline", [4, 6]],
 	["7-hostcall-large-args-and-reply", [4, 7]],
 	["7-lock-drain", [4, 7]],
 	["8-offload-session-start", [4, 8]],
@@ -69,6 +69,7 @@ export const SCENARIOS = Object.freeze([
 	fixtureToolsScenario,
 	launchApisAckGatedScenario,
 	skipAckWaitScenario(),
+	fixtureDeadlineScenario,
 	...LATER.map(([id, requires]) => ({ id, requires, run: undefined })),
 ]);
 
