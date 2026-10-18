@@ -74,11 +74,25 @@ export const launchApisAckGatedScenario = Object.freeze({
 		const child = await spawned;
 		const log = launchLog(ctx.agentDir, await ctx.durableSessionIdOf(sessionId));
 		const launchIds = [];
+		const auxiliary = [];
+		// The fixture itself launches helpers (mkfifo for a gated command); those are released, recorded, never asserted.
+		const nextTargetLaunch = async (index, call) => {
+			for (;;) {
+				const launch = await Promise.race([
+					log.waitFor((r) => r.type === "launch" && !launchIds.includes(r.launchId) && !auxiliary.includes(r.launchId), {
+						name: `launch #${index} (${call.api})`,
+						deadlineMs: 60_000,
+					}),
+					toolFailed,
+				]);
+				if (launch.api === call.api) return launch;
+				auxiliary.push(launch.launchId);
+				ctx.log.write({ type: "auxiliary_launch", forCall: index, launchId: launch.launchId, api: launch.api });
+				await ctx.control.releaseAck(launch.launchId);
+			}
+		};
 		for (const [index, call] of CALLS.entries()) {
-			const launch = await Promise.race([
-				log.waitFor((r) => r.type === "launch" && !launchIds.includes(r.launchId), { name: `launch #${index} (${call.api})`, deadlineMs: 60_000 }),
-				toolFailed,
-			]);
+			const launch = await nextTargetLaunch(index, call);
 			launchIds.push(launch.launchId);
 			const held = await slotState(ctx, log, launch.launchId, 1);
 			ctx.log.write({ type: "assert", step: "held", api: call.api, launchId: launch.launchId, invocations: held.invocations });

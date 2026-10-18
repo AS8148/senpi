@@ -1,3 +1,4 @@
+import { threadId } from "node:worker_threads";
 /**
  * The execution barrier inside a tool-child worker thread (senpi#3566, plan todo 4).
  *
@@ -24,6 +25,8 @@ export interface WorkerLaunchClientOptions {
 	readonly skipAckWait?: boolean;
 	/** Bounded wait for the ack; the server kills the child long before this in practice. */
 	readonly ackTimeoutMs?: number;
+	/** The worker's identity inside launch ids; the worker thread id by default. */
+	readonly workerId?: number;
 }
 
 export class WorkerLaunchError extends Error {
@@ -50,7 +53,9 @@ export class WorkerLaunchClient {
 		const slot = this.#clock.claimSlot();
 		if (slot === undefined)
 			throw new WorkerLaunchError("tool_child_launch_capacity", `${this.#clock.slots} launches in flight`);
-		const launchId = `W${process.pid}-${slot}-${++this.#next}`;
+		// Worker threads share the pid and each job's worker starts its own counter: the thread id keeps ids unique
+		// across every worker of a generation.
+		const launchId = `W${process.pid}-${this.#options.workerId ?? threadId}-${slot}-${++this.#next}`;
 		this.#options.post({ kind: "launch", launchId, slot, request: { ...request, jobId: this.#options.jobId() } });
 		if (this.#options.skipAckWait !== true) {
 			if (this.#clock.waitForAck(slot, this.#options.ackTimeoutMs ?? 60_000) === "timed-out") {

@@ -19,8 +19,9 @@ afterEach(async () => {
 	for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-async function startChild(roots: readonly string[]) {
+async function startChild(roots: readonly string[], onDir: (dir: string) => void = () => {}) {
 	const dir = await mkdtemp(join(tmpdir(), "tmj-"));
+	onDir(dir);
 	const instance = new ToolChildClient({
 		dir,
 		cwd: dir,
@@ -102,5 +103,23 @@ describe.skipIf(process.platform === "win32")("module job in the real tool child
 		await expect(instance.run("module", { modulePath, export: "notAFunction", args: null })).rejects.toThrow(
 			/offload_module_unavailable/,
 		);
+	}, 60_000);
+});
+
+describe("launch ids across a generation's workers", () => {
+	it("gives each job's worker its own ids: two jobs that each launch once leave two distinct ledger entries", async () => {
+		let dir = "";
+		const instance = await startChild([extensionDir], (created) => {
+			dir = created;
+		});
+		for (let job = 0; job < 2; job++)
+			expect(await instance.run("module", { modulePath, export: "launchTrue", args: null })).toEqual({ ok: true });
+		const launches = (await readFile(join(dir, "launches.jsonl"), "utf8"))
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line) as { type: string; launchId: string })
+			.filter((record) => record.type === "launch");
+		expect(launches).toHaveLength(2);
+		expect(new Set(launches.map((record) => record.launchId)).size).toBe(2);
 	}, 60_000);
 });

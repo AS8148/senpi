@@ -30,4 +30,21 @@ describe.skipIf(process.platform === "win32" || !bunAvailable)("gated Bun global
 		for (const proof of proofs) expect(Number(proof.ackTick)).toBeLessThan(Number(proof.invokeTick));
 		expect(violations).toEqual([]);
 	}, 90_000);
+
+	it("gates a node:child_process launch exactly once when the Bun globals are gated too", () => {
+		const run = spawnSync("bun", [fixture, "./gated-barrier-cp-worker.ts"], { encoding: "utf8", timeout: 60_000 });
+		expect(run.status, run.stderr).toBe(0);
+		const { result, violations, records } = JSON.parse(run.stdout.trim().split("\n").at(-1) ?? "{}") as {
+			result: Record<string, unknown>;
+			violations: unknown[];
+			records: Array<Record<string, unknown>>;
+		};
+		expect(result).toEqual({ detachedExit: 0, markerWritten: true });
+		const launches = records.filter((record) => record.type === "launch");
+		expect(launches.map((launch) => [launch.api, launch.containment, launch.lifetime])).toEqual([
+			["cp.spawn", "own-group", "detached"],
+			["cp.execFileSync", "inherited", "owned"],
+		]);
+		expect(violations).toEqual([]);
+	}, 90_000);
 });
