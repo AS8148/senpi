@@ -352,7 +352,7 @@ jobs:
 
       - name: Run tool child Windows tests under Bun
         shell: bash
-        run: bun --bun ../../node_modules/vitest/vitest.mjs run src/modes/rpc/tool-child/windows-job.win32.test.ts src/modes/rpc/tool-child/launch-barrier.win32.test.ts src/modes/rpc/tool-child/child-containment.test.ts src/modes/rpc/tool-child/windows-breakaway.test.ts src/modes/rpc/tool-child/windows-command-line.test.ts --reporter=verbose --reporter=json --outputFile=vitest-tool-child-win32.json
+        run: node ../../scripts/run-tests.mjs bun --bun ../../node_modules/vitest/vitest.mjs run src/modes/rpc/tool-child/windows-job.win32.test.ts src/modes/rpc/tool-child/launch-barrier.win32.test.ts src/modes/rpc/tool-child/child-containment.test.ts src/modes/rpc/tool-child/windows-breakaway.test.ts src/modes/rpc/tool-child/windows-command-line.test.ts --reporter=verbose --reporter=json --outputFile=vitest-tool-child-win32.json
         working-directory: packages/coding-agent
 
       # A skipped suite exits 0: fail unless both real-kernel files executed and every test in them passed.
@@ -384,17 +384,6 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
         working-directory: packages/coding-agent
-
-      - name: Show what the tests left in the job temp
-        if: always() && steps.test_temp_snapshot.outcome == 'success'
-        shell: bash
-        run: |
-          for entry in "$TMPDIR"/*; do
-            [ -e "$entry" ] || continue
-            echo "== $entry"
-            ls -la "$entry" 2>&1 | head -20
-            file "$entry" 2>/dev/null || true
-          done
 
       - name: Check OS temp after tests
         if: always() && steps.test_temp_snapshot.outcome == 'success'
