@@ -1,5 +1,23 @@
 # core/tools changes
 
+## 2026-10-18 - The file mutation queue can be held across a call (senpi#3566 todo 7)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/file-mutation-queue.ts`: `acquireFileMutationLock(filePath, signal?)` takes the same per-file slot as `withFileMutationQueue` (same map, same `getMutationQueueKey` identity, same registration order) and resolves with its release once every earlier mutation of the file has finished. A waiter whose signal aborts rejects without ever holding the slot, and the slot it queued passes on as soon as its predecessor finishes. `withFileMutationQueue` is unchanged.
+
+### Why
+
+A tool body running in the session's tool child must serialize its writes with the session's own file tools; the server holds the slot for it between `lock_file` and `unlock_file`, which a callback-scoped queue cannot express.
+
+### Why an extension could not handle it
+
+The queue map is module-private to this file; a second queue elsewhere would not serialize against the built-in edit and write tools.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/tools/file-mutation-queue.ts`: the new export between `getMutationQueueKey` and `withFileMutationQueue`.
+
 ## 2026-10-18 - Tool factories pin injected operations to the server; the wrapper routes through ToolDispatcher (senpi#3566)
 
 ### What changed
