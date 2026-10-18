@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- A Kitty key release no longer turns main-screen mouse capture back on after the wheel handed the mouse to the terminal; only a key press or paste does ([#3604](https://github.com/code-yeongyu/senpi/issues/3604)).
 - In main-screen mode the mouse wheel scrolls the terminal's scrollback again while a component holds a mouse lease: the first wheel notch hands the mouse back to the terminal, and the next key press takes it back ([#3604](https://github.com/code-yeongyu/senpi/issues/3604)).
 
 - On Windows, a WezTerm build older than 20250208-160106 (including the 20240203 stable release) now shows the image placeholder with a hint to update WezTerm instead of a blank gap: its bundled ConPTY drops Kitty graphics before they reach WezTerm. Newer WezTerm nightly builds keep inline images ([#3596](https://github.com/code-yeongyu/senpi/issues/3596)).

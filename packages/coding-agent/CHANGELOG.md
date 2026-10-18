@@ -14,6 +14,7 @@
 
 ### Fixed
 
+- On macOS Terminal.app the question hint now says `cmd+r` (toggle mouse reporting) to select text, since Terminal has no drag modifier that bypasses an app's mouse reporting ([#3604](https://github.com/code-yeongyu/senpi/issues/3604)).
 - The mouse wheel scrolls the transcript again while an `ask_user_question` prompt is waiting. The first notch pauses option clicking (the hint says so) and any key turns it back on. The text-selection hint now names the right modifier per terminal, including VS Code on macOS ([#3604](https://github.com/code-yeongyu/senpi/issues/3604)).
 
 ### Removed
