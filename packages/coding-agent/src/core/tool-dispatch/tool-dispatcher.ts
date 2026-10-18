@@ -15,6 +15,7 @@ import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/p
 import type { ToolRuntimeKind } from "../../cli/tool-runtime.ts";
 import type { ExtensionToolContext, ToolChildJob, ToolDefinition, ToolPlacement } from "../extensions/types.ts";
 import { type BashOperations, createLocalBashOperations } from "../tools/bash.ts";
+import { childBashOperations } from "./child-bash-operations.ts";
 import { OffloadError, runModuleInProcess } from "./offload.ts";
 
 export type { ToolPlacement } from "../extensions/types.ts";
@@ -243,8 +244,9 @@ export class ChildToolDispatcher extends BaseToolDispatcher {
 		return value;
 	}
 
-	bashOperations(): BashOperations {
-		return unavailableBashOperations();
+	bashOperations(options?: { shellPath?: string }): BashOperations {
+		if (this.#kindRunner === undefined) return unavailableBashOperations();
+		return childBashOperations(this.#kindRunner, options);
 	}
 
 	/** Always on the session's child, started on demand; never in-process (no fallback). */
