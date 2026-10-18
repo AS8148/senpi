@@ -8,7 +8,7 @@ const probe = resolve(import.meta.dirname, "../fixtures/loader-child-process-pro
 const bunAvailable = spawnSync("bun", ["--version"]).status === 0;
 
 describe.skipIf(!bunAvailable)("extension child_process on the default path", () => {
-	it("is the real builtin in every import form, and promisify(exec) resolves { stdout, stderr }", () => {
+	it("is the real builtin in every import form, promisify(exec) resolves { stdout, stderr }, and packages named after Object.prototype keys load", () => {
 		const run = spawnSync("bun", [probe], { encoding: "utf8", timeout: 60_000 });
 		expect(run.status, run.stderr).toBe(0);
 		expect(JSON.parse(run.stdout.trim().split("\n").at(-1) ?? "{}")).toEqual({
@@ -18,6 +18,7 @@ describe.skipIf(!bunAvailable)("extension child_process on the default path", ()
 			requiredIsReal: true,
 			requiredBareIsReal: true,
 			promised: { stdout: "hi\n", stderr: "" },
+			prototypeNamedPackages: [42, 42],
 		});
 	}, 90_000);
 });

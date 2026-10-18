@@ -9,12 +9,24 @@ import { loadExtensions } from "../../src/core/extensions/loader.ts";
 
 const dir = join(tmpdir(), `lcp-${process.pid}`);
 mkdirSync(dir, { recursive: true });
+// Packages named after Object.prototype keys: the importer's redirect lookup must not see inherited keys.
+for (const name of ["constructor", "hasOwnProperty"]) {
+	mkdirSync(join(dir, "node_modules", name), { recursive: true });
+	writeFileSync(
+		join(dir, "node_modules", name, "package.json"),
+		JSON.stringify({ name, version: "1.0.0", main: "index.js" }),
+	);
+	writeFileSync(join(dir, "node_modules", name, "index.js"), "module.exports = 42;\n");
+}
 const extension = join(dir, "probe-ext.ts");
 writeFileSync(
 	extension,
 	`import cp, { exec } from "node:child_process";
 import { createRequire } from "node:module";
+import ctor from "constructor";
+import own from "hasOwnProperty";
 export default function () {
+	globalThis.__lcpPrototypeNamed = [ctor, own];
 	const req = createRequire(import.meta.url);
 	globalThis.__lcpProbe = { defaultImport: cp, namedExec: exec, required: req("node:child_process"), requiredBare: req("child_process") };
 }
@@ -32,6 +44,7 @@ console.log(
 		requiredIsReal: probe?.required === realChildProcess,
 		requiredBareIsReal: probe?.requiredBare === realChildProcess,
 		promised,
+		prototypeNamedPackages: Reflect.get(globalThis, "__lcpPrototypeNamed") ?? null,
 	}),
 );
 process.exit(0);

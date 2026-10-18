@@ -142,7 +142,8 @@ export function createBunExtensionImporter(
 		/\.[cm]?[jt]sx?$/.test(resolved) ? { id: moduleId(resolved), path: resolved } : { id: resolved };
 	const resolveTarget = (specifier: string, filename: string): { readonly id: string; readonly path?: string } => {
 		assertActive();
-		const redirect = builtinRedirects[specifier];
+		// Own keys only: a package named after an Object.prototype key ("constructor") is not a redirect.
+		const redirect = Object.hasOwn(builtinRedirects, specifier) ? builtinRedirects[specifier] : undefined;
 		if (redirect !== undefined) return { id: redirect };
 		if (Object.hasOwn(virtualModules, specifier) || isBuiltin(specifier) || specifier.startsWith("bun:"))
 			return { id: specifier };
