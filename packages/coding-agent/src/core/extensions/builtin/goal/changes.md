@@ -11,6 +11,8 @@
 
 - A persistent setup paused after 150 continuations even while it worked, because the budget refilled only on typed input and a person's message delivered through a monitor never counted. Thresholds: across 593 local goal sessions (30 days), toolless stretches that recovered into tool use peaked at 29 (p99 7); the #1139 stall ran 122 toolless turns. 60 is twice the measured peak and above the #447 50-turn pin.
 
+- This supersedes the 2026-08-27 unattended continuation backstop (#1139) entry below.
+
 ### Why an extension could not handle it
 
 - Admission, the persisted counters and progress detection are private to the goal builtin.
@@ -709,7 +711,7 @@ Terminal-provider-error classification is goal-extension core logic; nothing for
   result is unchanged.
 - Tests: `test/goal-renderers.test.ts`.
 
-## 2026-08-27 - unattended continuation backstop (#1139) - superseded by the no-progress guard (oh-my-openagent#10280)
+## 2026-08-27 - unattended continuation backstop (#1139)
 
 ### What changed
 
