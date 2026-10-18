@@ -1,15 +1,14 @@
 /**
- * Host budget for one extension event handler (senpi#3650). `session_shutdown` and the agent lifecycle events the
- * session persists on its serial event queue share this one implementation: past `warnMs` the host reports the
- * handler as stalled, at `timeoutMs` it aborts the handler's signal and stops waiting (the handler keeps running
- * detached), and the turn deadline can release every wait still held. A value of 0 disables that limit.
+ * Host budget for extension event handlers (senpi#3650). Past `warnMs` the host reports a handler as stalled; at
+ * `timeoutMs`, or when the turn deadline releases the turn it belongs to, the host stops waiting on it and moves on
+ * (the handler keeps running detached). A value of 0 disables that limit.
  */
 export interface ExtensionHandlerBudget {
 	readonly warnMs: number;
 	readonly timeoutMs: number;
 }
 
-export type ExtensionHandlerStallStage = "warn" | "timeout" | "released";
+export type ExtensionHandlerStallStage = "warn" | "timeout" | "released" | "late_failure";
 
 export interface ExtensionHandlerStall {
 	readonly extensionPath: string;
@@ -17,7 +16,10 @@ export interface ExtensionHandlerStall {
 	readonly stage: ExtensionHandlerStallStage;
 	readonly elapsedMs: number;
 	readonly timeoutMs: number;
+	readonly error?: string;
 }
+
+export type HandlerStopVerdict = "timed_out" | "released";
 
 export type BudgetedHandlerOutcome<T> =
 	| { readonly kind: "settled"; readonly value: T }
@@ -25,59 +27,77 @@ export type BudgetedHandlerOutcome<T> =
 	| { readonly kind: "timed_out" }
 	| { readonly kind: "released" };
 
+/** Waits on running handlers, tagged with the turn that owns them so a deadline releases only its own turn's waits. */
 export class HeldHandlerWaits {
-	private readonly releases = new Set<() => void>();
+	private readonly releases = new Map<() => void, number>();
 
-	hold(release: () => void): () => void {
-		this.releases.add(release);
+	hold(scope: number, release: () => void): () => void {
+		this.releases.set(release, scope);
 		return () => this.releases.delete(release);
 	}
 
-	releaseAll(): number {
-		const pending = [...this.releases];
-		this.releases.clear();
-		for (const release of pending) release();
-		return pending.length;
+	release(scope: number): number {
+		const owned = [...this.releases].filter(([, owner]) => owner === scope).map(([release]) => release);
+		for (const release of owned) {
+			this.releases.delete(release);
+			release();
+		}
+		return owned.length;
 	}
 }
 
-export const HANDLER_TIMED_OUT: unique symbol = Symbol("extension handler timed out");
-export const HANDLER_RELEASED: unique symbol = Symbol("extension handler released");
-export type HandlerGuardVerdict = typeof HANDLER_TIMED_OUT | typeof HANDLER_RELEASED;
+const describeError = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
-/**
- * Guards a handler that is already running without adding a microtask hop when it settles in time: the caller awaits
- * the returned race exactly as it awaited the handler before, and timers are cleared on a side chain. Turn ownership
- * in the agent_end window depends on that timing (senpi#3351), so this path must not add `then`/`finally` links.
- */
-export function guardRunningHandler(pending: unknown, options: Omit<BudgetedHandlerRun<unknown>, "run">): unknown {
-	if (typeof (pending as { then?: unknown } | null | undefined)?.then !== "function") return pending;
-	const running = pending as PromiseLike<unknown>;
-	const { budget, extensionPath, event } = options;
-	const now = options.now ?? Date.now;
+interface HandlerWatch {
+	readonly startedAt: number;
+	disarm(): void;
+}
+
+interface WatchOptions {
+	readonly extensionPath: string;
+	readonly event: string;
+	readonly budget: ExtensionHandlerBudget;
+	readonly onStall?: (stall: ExtensionHandlerStall) => void;
+	readonly now: () => number;
+}
+
+function watchHandler(
+	options: WatchOptions,
+	stop: (verdict: HandlerStopVerdict) => void,
+	held?: HeldHandlerSlot,
+): HandlerWatch {
+	const { budget, extensionPath, event, now } = options;
 	const startedAt = now();
 	const stall = (stage: ExtensionHandlerStallStage): void =>
 		options.onStall?.({ extensionPath, event, stage, elapsedMs: now() - startedAt, timeoutMs: budget.timeoutMs });
-	let warnTimer: ReturnType<typeof setTimeout> | undefined;
-	let capTimer: ReturnType<typeof setTimeout> | undefined;
-	let unhold: (() => void) | undefined;
-	const cleanup = (): void => {
+	let stopped = false;
+	const end = (verdict: HandlerStopVerdict): void => {
+		if (stopped) return;
+		stopped = true;
+		disarm();
+		stall(verdict === "timed_out" ? "timeout" : "released");
+		stop(verdict);
+	};
+	const warnTimer = budget.warnMs > 0 ? setTimeout(() => stall("warn"), budget.warnMs) : undefined;
+	const capTimer = budget.timeoutMs > 0 ? setTimeout(() => end("timed_out"), budget.timeoutMs) : undefined;
+	const unhold = held?.waits.hold(held.scope(), () => end("released"));
+	function disarm(): void {
 		clearTimeout(warnTimer);
 		clearTimeout(capTimer);
 		unhold?.();
+	}
+	return {
+		startedAt,
+		disarm: () => {
+			stopped = true;
+			disarm();
+		},
 	};
-	const guard = new Promise<HandlerGuardVerdict>((resolve) => {
-		const stop = (verdict: HandlerGuardVerdict): void => {
-			cleanup();
-			stall(verdict === HANDLER_TIMED_OUT ? "timeout" : "released");
-			resolve(verdict);
-		};
-		if (budget.warnMs > 0) warnTimer = setTimeout(() => stall("warn"), budget.warnMs);
-		if (budget.timeoutMs > 0) capTimer = setTimeout(() => stop(HANDLER_TIMED_OUT), budget.timeoutMs);
-		unhold = options.held?.hold(() => stop(HANDLER_RELEASED));
-	});
-	running.then(cleanup, cleanup);
-	return Promise.race([running, guard]);
+}
+
+export interface HeldHandlerSlot {
+	readonly waits: HeldHandlerWaits;
+	readonly scope: () => number;
 }
 
 export interface BudgetedHandlerRun<T> {
@@ -85,52 +105,119 @@ export interface BudgetedHandlerRun<T> {
 	readonly event: string;
 	readonly budget: ExtensionHandlerBudget;
 	readonly run: (signal: AbortSignal) => Promise<T> | T;
-	readonly held?: HeldHandlerWaits;
 	readonly onStall?: (stall: ExtensionHandlerStall) => void;
 	readonly now?: () => number;
 }
 
+/** One handler under the budget, with an abort signal it can observe (the `session_shutdown` path). */
 export async function runBudgetedHandler<T>(options: BudgetedHandlerRun<T>): Promise<BudgetedHandlerOutcome<T>> {
-	const { budget, extensionPath, event } = options;
-	const now = options.now ?? Date.now;
 	const controller = new AbortController();
-	const startedAt = now();
-	// The handler starts synchronously, as a direct call would: input it queues during agent_end must land before
-	// the core's post-agent_end drain. Its outcome is captured before any race, so a late rejection after a timeout
-	// is already handled.
+	// The handler outcome is captured before any race, so a late rejection after a timeout is already handled.
 	let started: Promise<T>;
 	try {
 		started = Promise.resolve(options.run(controller.signal));
 	} catch (error) {
 		started = Promise.reject(error);
 	}
-	const settled: Promise<BudgetedHandlerOutcome<T>> = started.then(
+	const settled = started.then(
 		(value): BudgetedHandlerOutcome<T> => ({ kind: "settled", value }),
 		(error: unknown): BudgetedHandlerOutcome<T> => ({ kind: "failed", error }),
 	);
-	const stall = (stage: ExtensionHandlerStallStage): void =>
-		options.onStall?.({ extensionPath, event, stage, elapsedMs: now() - startedAt, timeoutMs: budget.timeoutMs });
-
-	if (budget.warnMs <= 0 && budget.timeoutMs <= 0 && options.held === undefined) return settled;
-
-	let warnTimer: ReturnType<typeof setTimeout> | undefined;
-	let capTimer: ReturnType<typeof setTimeout> | undefined;
-	let unhold: (() => void) | undefined;
-	try {
-		const outcome = await new Promise<BudgetedHandlerOutcome<T>>((resolve) => {
-			if (budget.warnMs > 0) warnTimer = setTimeout(() => stall("warn"), budget.warnMs);
-			if (budget.timeoutMs > 0) capTimer = setTimeout(() => resolve({ kind: "timed_out" }), budget.timeoutMs);
-			unhold = options.held?.hold(() => resolve({ kind: "released" }));
-			void settled.then(resolve);
+	if (options.budget.warnMs <= 0 && options.budget.timeoutMs <= 0) return settled;
+	let watch: HandlerWatch | undefined;
+	const outcome = await new Promise<BudgetedHandlerOutcome<T>>((resolve) => {
+		watch = watchHandler({ ...options, now: options.now ?? Date.now }, (verdict) => {
+			controller.abort(new Error(`${options.event} handler ${verdict === "timed_out" ? "timed out" : "released"}`));
+			resolve({ kind: verdict });
 		});
-		if (outcome.kind === "timed_out" || outcome.kind === "released") {
-			controller.abort(new Error(`${event} handler ${outcome.kind === "timed_out" ? "timed out" : "released"}`));
-			stall(outcome.kind === "timed_out" ? "timeout" : "released");
-		}
-		return outcome;
-	} finally {
-		clearTimeout(warnTimer);
-		clearTimeout(capTimer);
-		unhold?.();
-	}
+		void settled.then(resolve);
+	});
+	watch?.disarm();
+	return outcome;
+}
+
+export type HandlerCallOutcome =
+	| { readonly ok: true; readonly value: unknown }
+	| { readonly ok: false; readonly error: unknown };
+
+export interface BudgetedSequence<R> {
+	readonly event: string;
+	readonly length: number;
+	extensionPath(index: number): string;
+	/** Calls handler `index`; returns its result or promise, unwrapped by the sequence with a plain `await`. */
+	start(index: number): unknown;
+	/** Applies a handler's outcome; may return a promise only when it has async host work of its own. */
+	settle(index: number, outcome: HandlerCallOutcome): void | Promise<void>;
+	skip(index: number, verdict: HandlerStopVerdict, budget: ExtensionHandlerBudget): void;
+	/** Ends the walk early (for example a retired runner); the sequence then resolves with `finish()`. */
+	halted?(): boolean;
+	finish(): R;
+}
+
+export interface SequenceOptions {
+	readonly budget: ExtensionHandlerBudget;
+	readonly held?: HeldHandlerSlot;
+	readonly onStall?: (stall: ExtensionHandlerStall) => void;
+	readonly now?: () => number;
+}
+
+/**
+ * Walks an emission's handlers under the budget. A handler that settles in time is awaited exactly as a direct
+ * `await handler()` would be, so a timely emission keeps its microtask timing. A handler past its cap, or released
+ * by the turn deadline, is skipped: the walk resumes at the next handler in a new run that settles the emission,
+ * and the abandoned run stops when its handler ever returns. A failure after the host stopped waiting is reported.
+ */
+export function runBudgetedSequence<R>(sequence: BudgetedSequence<R>, options: SequenceOptions): Promise<R> {
+	const now = options.now ?? Date.now;
+	return new Promise<R>((resolve, reject) => {
+		let generation = 0;
+		const run = async (from: number, owner: number): Promise<void> => {
+			for (let index = from; index < sequence.length; index += 1) {
+				if (owner !== generation) return;
+				if (sequence.halted?.()) break;
+				const extensionPath = sequence.extensionPath(index);
+				const watchOptions = {
+					extensionPath,
+					event: sequence.event,
+					budget: options.budget,
+					onStall: options.onStall,
+					now,
+				};
+				const watch = watchHandler(
+					watchOptions,
+					(verdict) => {
+						if (owner !== generation) return;
+						generation += 1;
+						sequence.skip(index, verdict, options.budget);
+						run(index + 1, generation).catch(reject);
+					},
+					options.held,
+				);
+				let outcome: HandlerCallOutcome;
+				try {
+					outcome = { ok: true, value: await sequence.start(index) };
+				} catch (error) {
+					outcome = { ok: false, error };
+				}
+				watch.disarm();
+				if (owner !== generation) {
+					if (!outcome.ok) {
+						options.onStall?.({
+							extensionPath,
+							event: sequence.event,
+							stage: "late_failure",
+							elapsedMs: now() - watch.startedAt,
+							timeoutMs: options.budget.timeoutMs,
+							error: describeError(outcome.error),
+						});
+					}
+					return;
+				}
+				const settling = sequence.settle(index, outcome);
+				if (settling !== undefined) await settling;
+			}
+			if (owner === generation) resolve(sequence.finish());
+		};
+		run(0, 0).catch(reject);
+	});
 }

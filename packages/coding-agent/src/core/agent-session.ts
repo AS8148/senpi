@@ -97,6 +97,7 @@ import { sleep } from "../utils/sleep.ts";
 import { normalizeToolResultImages } from "../utils/tool-result-images.ts";
 import { AgentAbortProvenance, type AgentAbortSource } from "./agent-abort-provenance.ts";
 import { AgentBusyError } from "./agent-busy-error.ts";
+import { AgentRunContinuations } from "./agent-run-continuation.ts";
 import { AgentSettledDelivery, type DeferredAgentSettledAction, DeferredTurnClaim } from "./agent-settled-delivery.ts";
 import { resolveAssistantUsageScope } from "./assistant-usage-scope.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
@@ -1159,6 +1160,10 @@ export class AgentSession {
 	/** Settles once the queued message_end processing (persistence included) of that exact message has run. */
 	private readonly _messageEndPersistence = new WeakMap<AgentMessage, Promise<void>>();
 	private _isAgentRunActive = false;
+	/** senpi#3650: the core may continue a run after agent_end; the settle must not wait on that continuation. */
+	private readonly _runContinuations = new AgentRunContinuations();
+	/** senpi#3650: the turn that owns extension handler waits started now; the turn deadline releases only its own. */
+	private _handlerTurnScope = 0;
 	private _toolExecutionDepth = 0;
 	private readonly _toolContextDisposers = new Set<() => void>();
 	private _promptStartPending = false;
@@ -2744,9 +2749,14 @@ export class AgentSession {
 		resolve();
 	}
 
-	private async _emitAgentSettled(): Promise<void> {
-		if (this.agent.state.isStreaming) {
-			await this.agent.waitForIdle();
+	private async _emitAgentSettled(agentEnd?: AgentEvent): Promise<void> {
+		if (
+			this.agent.state.isStreaming &&
+			(await this._runContinuations.idleOrContinued(agentEnd, () => this.agent.waitForIdle()))
+		) {
+			// The core continued this run with input queued during agent_end; that continuation settles it.
+			this._abortProvenance.closeAgentEndBoundary();
+			return;
 		}
 		if (!this._isAgentRunActive) {
 			this._abortProvenance.closeAgentEndBoundary();
@@ -2857,6 +2867,7 @@ export class AgentSession {
 		this._isAgentRunActive = true;
 		// A new turn admitted: arm the inactivity lease and the hard max-runtime cap.
 		this._deadlineTracker.arm();
+		this._handlerTurnScope += 1;
 		// A new prompt replaces any retry that compaction before it scheduled.
 		this._failedResponse = undefined;
 		this._recordSelection();
@@ -2942,6 +2953,7 @@ export class AgentSession {
 
 	/** Internal handler for agent events - shared by subscribe and reconnect */
 	private _handleAgentEvent = (event: AgentEvent, signal: AbortSignal): void => {
+		this._runContinuations.observe(event);
 		// Record the calls a tool made through ctx.executeTool() and their usage on its result message,
 		// synchronously so the message carries them before any listener or persistence sees it.
 		if (this._nestedToolCalls) {
@@ -3669,7 +3681,7 @@ export class AgentSession {
 				launchedContinuation = true;
 			}
 			if (!launchedContinuation) {
-				await this._emitAgentSettled();
+				await this._emitAgentSettled(event);
 			} else {
 				this._abortProvenance.closeAgentEndBoundary();
 			}
@@ -4322,7 +4334,7 @@ export class AgentSession {
 
 	/** Adapter for the deadline owner interface: stop waiting on extension handlers that hold the turn (senpi#3650). */
 	releaseHeldExtensionHandlers(): number {
-		return this._extensionRunner.releaseHeldHandlers();
+		return this._extensionRunner.releaseHeldHandlers(this._handlerTurnScope);
 	}
 
 	/** Record a deadline stop durably so the goal engine holds off until admitted user input. */
@@ -9560,6 +9572,7 @@ export class AgentSession {
 				reportExtensionHandlerStall(stall, this._sessionLogger, (message, type) =>
 					runner.getUIContext().notify(message, type),
 				),
+			() => this._handlerTurnScope,
 		);
 		runner.bindCommandContext(this._extensionCommandContextActions);
 

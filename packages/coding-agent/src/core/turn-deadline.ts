@@ -230,6 +230,7 @@ export class AgentDeadlineTracker {
 		// something no abort can end, usually an extension handler that never returns: the host stops waiting on
 		// those handlers and gives the settle one more grace. Only a turn still running after that is reported.
 		let abortError: string | undefined;
+		const abortStartedAt = this.now();
 		const aborting = this.session.abortTurnForDeadline().catch((error: unknown) => {
 			abortError = error instanceof Error ? error.message : String(error);
 		});
@@ -242,7 +243,7 @@ export class AgentDeadlineTracker {
 		if (!this.session.isIdle)
 			this.session._warnDeadline(
 				"turn_deadline_unsettled",
-				`turn still running ${TURN_DEADLINE_GRACE_MS} ms after the ${kind} deadline abort`,
+				`turn still running ${this.now() - abortStartedAt} ms after the ${kind} deadline abort`,
 			);
 	}
 }

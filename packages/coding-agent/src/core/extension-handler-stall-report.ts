@@ -20,6 +20,7 @@ export function reportExtensionHandlerStall(stall: ExtensionHandlerStall, logger
 		handlerEvent: stall.event,
 		stage: stall.stage,
 		durationMs: stall.elapsedMs,
+		...(stall.error === undefined ? {} : { error: stall.error }),
 	});
 	if (stall.stage !== "warn") return;
 	const cap =
