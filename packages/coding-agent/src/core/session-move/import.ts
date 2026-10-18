@@ -1,9 +1,13 @@
 import { copyFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { normalizePath, resolvePath } from "../../utils/paths.ts";
-import { compareRepositoryIdentities, type RepositoryIdentity, readRepositoryIdentity } from "../repository-identity.ts";
-import { rebindSessionFile } from "../session-rebind.ts";
+import {
+	compareRepositoryIdentities,
+	type RepositoryIdentity,
+	readRepositoryIdentity,
+} from "../repository-identity.ts";
 import { getDefaultSessionDir, loadEntriesFromFile, SessionManager } from "../session-manager.ts";
+import { rebindSessionFile } from "../session-rebind.ts";
 import { MoveBundleInvalidError, type MoveManifest, readManifest, verifyBundle } from "./bundle.ts";
 import type { MoveLedger } from "./move-ledger.ts";
 import { type MoveId, SESSION_MOVED_IN } from "./ownership.ts";
@@ -44,7 +48,9 @@ const movedInFor = (file: string, moveId: MoveId): boolean =>
  * `session_moved_in`, so the rename into the session directory, run under the move's ledger lock, is the single
  * commit point. Importing a bundle already imported returns the session without changing it.
  */
-export async function importMovedSession(options: ImportMovedSessionOptions): Promise<{ readonly sessionFile: string }> {
+export async function importMovedSession(
+	options: ImportMovedSessionOptions,
+): Promise<{ readonly sessionFile: string }> {
 	const manifest = readManifest(options.bundleDir);
 	const targetCwd = resolvePath(options.targetCwd);
 	const sessionDir = options.sessionDir ? normalizePath(options.sessionDir) : getDefaultSessionDir(targetCwd);

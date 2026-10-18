@@ -64,7 +64,6 @@ function standaloneEntries(sessionPath: string) {
 }
 
 describe("release_session", () => {
-
 	it("#given reason move with a move id #then the release records move_id and target and the file refuses further writes", async () => {
 		const dir = await rigDir();
 		await using rig = createInProcessRig(dir);
@@ -78,7 +77,9 @@ describe("release_session", () => {
 			(entry) => entry.type === "custom" && entry.customType === SESSION_RELEASED_ENTRY_TYPE,
 		);
 		expect(released).toEqual([
-			expect.objectContaining({ data: expect.objectContaining({ reason: "move", move_id: "move-7", target: "laptop" }) }),
+			expect.objectContaining({
+				data: expect.objectContaining({ reason: "move", move_id: "move-7", target: "laptop" }),
+			}),
 		]);
 		expect(() =>
 			SessionManager.open(sessionPath).appendMessage({ role: "user", content: "late", timestamp: 1 }),

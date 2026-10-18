@@ -1,7 +1,7 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
-import { readRecordedRepositoryIdentity, readSessionCwd } from "../session-rebind.ts";
 import { loadEntriesFromFile, SessionManager } from "../session-manager.ts";
+import { readRecordedRepositoryIdentity, readSessionCwd } from "../session-rebind.ts";
 import { encodedSessionId } from "../session-sidecar-store.ts";
 import {
 	type BundleFile,

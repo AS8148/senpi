@@ -64,7 +64,9 @@ export function readManifest(bundleDir: string): MoveManifest {
 	try {
 		raw = JSON.parse(readFileSync(join(bundleDir, MANIFEST_FILE), "utf8"));
 	} catch (error) {
-		throw new MoveBundleInvalidError(`manifest unreadable: ${error instanceof Error ? error.message : String(error)}`);
+		throw new MoveBundleInvalidError(
+			`manifest unreadable: ${error instanceof Error ? error.message : String(error)}`,
+		);
 	}
 	const m = raw as Record<string, unknown>;
 	if (m.format !== MOVE_BUNDLE_FORMAT) throw new MoveBundleInvalidError(`unknown bundle format ${String(m.format)}`);

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { REPOSITORY_IDENTITY_ENTRY_TYPE, type RepositoryIdentity } from "../../src/core/repository-identity.ts";
 import { getDefaultSessionDir, SessionManager } from "../../src/core/session-manager.ts";
 import { exportSessionForMove } from "../../src/core/session-move/export.ts";
+import { finishMove } from "../../src/core/session-move/finish.ts";
 import { importMovedSession, MoveRefusedError } from "../../src/core/session-move/import.ts";
 import { MoveLedger } from "../../src/core/session-move/move-ledger.ts";
 import {
@@ -14,7 +15,6 @@ import {
 	SESSION_RECLAIMED,
 	SessionMovedAwayError,
 } from "../../src/core/session-move/ownership.ts";
-import { finishMove } from "../../src/core/session-move/finish.ts";
 
 const SESSION_ID = "0197f6e4-4cf9-7f44-a2d8-f8f7f49ee9d3";
 const REPO: RepositoryIdentity = { rootCommits: ["d".repeat(40)] };
@@ -38,7 +38,14 @@ function writeSession(cwd: string): string {
 	const file = join(sessionDir, `2026-10-18T00-00-00-000Z_${SESSION_ID}.jsonl`);
 	const lines = [
 		{ type: "session", version: 3, id: SESSION_ID, timestamp: "2026-10-18T00:00:00.000Z", cwd },
-		{ type: "custom", id: "r1", parentId: null, timestamp: "2026-10-18T00:00:00.500Z", customType: REPOSITORY_IDENTITY_ENTRY_TYPE, data: REPO },
+		{
+			type: "custom",
+			id: "r1",
+			parentId: null,
+			timestamp: "2026-10-18T00:00:00.500Z",
+			customType: REPOSITORY_IDENTITY_ENTRY_TYPE,
+			data: REPO,
+		},
 		{
 			type: "message",
 			id: "u1",
@@ -68,7 +75,13 @@ function admittedInputs(file: string): string[] {
 	return readFileSync(file, "utf8")
 		.trim()
 		.split("\n")
-		.map((line) => JSON.parse(line) as { customType?: string; data?: { input?: { clientMessageId?: string; text?: string }; result?: { outcome?: string } } })
+		.map(
+			(line) =>
+				JSON.parse(line) as {
+					customType?: string;
+					data?: { input?: { clientMessageId?: string; text?: string }; result?: { outcome?: string } };
+				},
+		)
 		.filter((entry) => entry.customType === "pending_input_transition" && entry.data?.result?.outcome === "admitted")
 		.map((entry) => entry.data?.input?.text ?? "");
 }
@@ -154,7 +167,10 @@ describe("session move between two folders", () => {
 		await expect(importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity })).rejects.toMatchObject({
 			code: "move_bundle_invalid",
 		});
-		expect(await ledger.answerStatus(MOVE, { movedIn: false })).toEqual({ state: "failed", reason: "bundle_invalid" });
+		expect(await ledger.answerStatus(MOVE, { movedIn: false })).toEqual({
+			state: "failed",
+			reason: "bundle_invalid",
+		});
 	});
 
 	it("#given B accepted #when A finishes #then A records session_moved and stays read-only", async () => {

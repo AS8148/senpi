@@ -49,7 +49,9 @@ export function ownershipOf(entry: CustomLike): SessionOwnership | undefined {
 	const target = field(entry.data, "target") ?? "";
 	switch (entry.customType) {
 		case SESSION_RELEASED:
-			return field(entry.data, "reason") === "move" ? { writable: false, state: "moving", moveId, target } : { writable: true };
+			return field(entry.data, "reason") === "move"
+				? { writable: false, state: "moving", moveId, target }
+				: { writable: true };
 		case SESSION_MOVED:
 			return { writable: false, state: "moved", moveId, target };
 		case SESSION_MOVED_IN:

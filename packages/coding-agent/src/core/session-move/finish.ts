@@ -22,7 +22,7 @@ export interface FinishMoveOptions {
 export async function finishMove(options: FinishMoveOptions): Promise<void> {
 	const { sessionFile, bundleDir, answer } = options;
 	const ownership = sessionOwnership(loadEntriesFromFile(sessionFile));
-	if (ownership.state === "moved") {
+	if (!ownership.writable && ownership.state === "moved") {
 		rmSync(bundleDir, { recursive: true, force: true });
 		return;
 	}
