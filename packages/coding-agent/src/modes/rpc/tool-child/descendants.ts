@@ -28,6 +28,7 @@ export interface DescendantEntry {
 
 export class DescendantsLedger {
 	readonly #path: string;
+	#durableDir = false;
 	readonly #entries = new Map<string, DescendantEntry>();
 
 	constructor(path: string) {
@@ -43,7 +44,17 @@ export class DescendantsLedger {
 	}
 
 	async append(entry: DescendantEntry): Promise<void> {
-		await mkdir(dirname(this.#path), { recursive: true, mode: 0o700 });
+		if (!this.#durableDir) {
+			// The first entry creates the generation directory and the file: both directory entries are synced, or a crash
+			// could leave an fsynced ledger that no directory names.
+			const directory = dirname(this.#path);
+			await mkdir(directory, { recursive: true, mode: 0o700 });
+			const created = await open(this.#path, "a", 0o600);
+			await created.close();
+			await syncDirectory(directory);
+			await syncDirectory(dirname(directory));
+			this.#durableDir = true;
+		}
 		const handle = await open(this.#path, "a", 0o600);
 		try {
 			await handle.write(`${JSON.stringify(entry)}\n`);
@@ -77,6 +88,17 @@ export class DescendantsLedger {
 	async remove(): Promise<void> {
 		this.#entries.clear();
 		await rm(this.#path, { force: true });
+	}
+}
+
+/** fsync a directory so the entries created in it survive a crash; a platform that cannot open a directory skips it. */
+async function syncDirectory(directory: string): Promise<void> {
+	if (process.platform === "win32") return;
+	const handle = await open(directory, "r");
+	try {
+		await handle.sync();
+	} finally {
+		await handle.close();
 	}
 }
 
