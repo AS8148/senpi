@@ -1,3 +1,4 @@
+import { type ToolRuntimeKind, toolRuntimeCapability } from "../../cli/tool-runtime.ts";
 import { messagePathProjectRoot, resolveMessagePath } from "../../core/message-path-resolution.ts";
 import { clientFacingIdentity } from "./client-admission-record.ts";
 /**
@@ -148,6 +149,8 @@ export interface RpcConnectionOptions {
 	 * session connection leaves it off; a host session takes its chain from `open_session.retryFallback`.
 	 */
 	retryFallbackCommand?: boolean;
+	/** A single-session `--mode rpc` process advertises its `--tool-runtime` as `tool_runtime:<value>`. */
+	toolRuntime?: ToolRuntimeKind;
 	/**
 	 * Shared-session capability registry. A `set_client_info` carrying `capabilities`
 	 * registers them for the connection that sent it; absent on a classic connection.
@@ -867,13 +870,19 @@ export function createRpcConnectionHandler(
 			// The subscription is already installed on the replaced session above, so
 			// the deferred refresh only needs its failure reported. Re-installing here
 			// would replay the settings-source selection a second time.
-			void refresh.catch((cause) => {
-				outputEvent({ type: "rpc_error", error: String(cause) });
-			});
+			void refresh.then(
+				() => session.releaseSettledSessionMemory(),
+				(cause) => {
+					outputEvent({ type: "rpc_error", error: String(cause) });
+				},
+			);
 			return;
 		}
 		await refresh;
 		await ClientAdmissions.forSession(session).ready;
+		// The open-time readers above (receipt seals, extension starts) read the full history; an idle
+		// session lets it go now instead of holding it until its first turn settles (senpi#3519).
+		session.releaseSettledSessionMemory();
 	};
 
 	/**
@@ -973,6 +982,7 @@ export function createRpcConnectionHandler(
 								AUTH_KEY_VERIFY_CAPABILITY,
 								QUEUED_MESSAGE_REVISION_CAPABILITY,
 								...(options.retryFallbackCommand ? [RETRY_FALLBACK_COMMAND_CAPABILITY] : []),
+								...(options.toolRuntime ? [toolRuntimeCapability(options.toolRuntime)] : []),
 								// Client flags cannot advertise a host guard this classic binding does not run.
 								...(options.capabilities ?? []).filter((capability) => capability !== SESSION_HELD_CAPABILITY),
 							]),
@@ -1567,10 +1577,9 @@ export function createRpcConnectionHandler(
 					}
 					entries = entries.slice(sinceIndex + 1);
 				}
-				return success(id, "get_entries", {
-					entries: entries.map(describeUsageLimitEntry),
-					leafId: sessionManager.getLeafId(),
-				});
+				const described = entries.map(describeUsageLimitEntry);
+				session.releaseFullHistoryView();
+				return success(id, "get_entries", { entries: described, leafId: sessionManager.getLeafId() });
 			}
 
 			case "get_tree": {
@@ -1582,6 +1591,7 @@ export function createRpcConnectionHandler(
 					node.entry = describeUsageLimitEntry(node.entry);
 					for (const child of node.children) nodes.push(child);
 				}
+				session.releaseFullHistoryView();
 				return success(id, "get_tree", { tree, leafId: sessionManager.getLeafId() });
 			}
 
@@ -1692,12 +1702,11 @@ export function createRpcConnectionHandler(
 				const modelRegistry = session.modelRegistry;
 				const oauthInfos = buildLoginProviderInfos(modelRegistry, "oauth");
 				const apiKeyInfos = buildLoginProviderInfos(modelRegistry, "api_key");
-				const apiKeyRows = new Set(apiKeyInfos.map((info) => info.id));
 				const providers: RpcAuthProvider[] = [...oauthInfos, ...apiKeyInfos].map((info) => ({
 					id: info.id,
 					name: info.name,
 					authType: info.authType,
-					status: authMethodStatus(modelRegistry, info, apiKeyRows.has(info.id)),
+					status: authMethodStatus(modelRegistry, info),
 					...storedKeyHint(modelRegistry, info),
 				}));
 				return success(id, "get_auth_providers", { providers });
