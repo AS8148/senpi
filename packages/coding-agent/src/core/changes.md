@@ -16,6 +16,24 @@
 
 - MEDIUM: `packages/coding-agent/src/core/agent-session.ts`, the constructor (store and port), `_queueSteer` / `_queueFollowUp`, `_enqueuePreparedInput`, `_recordQueuedInput` and the new `changeQueuedInput` above `_changeQueuedInput`.
 
+## 2026-10-18 - Amazon Bedrock's provider default is Claude Opus 5.5
+
+### What changed
+
+- `packages/coding-agent/src/core/model-resolver.ts`: `defaultModelPerProvider` row `amazon-bedrock` is `us.anthropic.claude-opus-5-5` (was `us.anthropic.claude-opus-4-6-v1`).
+
+### Why
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the bundled `amazon-bedrock` catalog lists `us.anthropic.claude-opus-5-5`, but the default was still Opus 4.6, four Opus releases behind the newest Opus that the retry fallback chains and prompt presets already lead with. The default applies only when no model is saved in settings and none is passed on the command line.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the built-in provider default table is core resolver data read before any extension runs.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the `amazon-bedrock` row of `defaultModelPerProvider`.
+
 ## 2026-10-17 - A reopened session keeps only its latest compaction window resident (senpi#3519)
 
 ### What changed
