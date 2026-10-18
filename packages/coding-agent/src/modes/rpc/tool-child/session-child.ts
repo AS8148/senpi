@@ -11,7 +11,8 @@ import type {
 	ToolChildRunner,
 	ToolChildRunResult,
 } from "../../../core/tool-dispatch/tool-dispatcher.ts";
-import { ToolChildClient, type ToolChildStatus } from "./client.ts";
+import { ToolChildClient, ToolChildError, type ToolChildStatus } from "./client.ts";
+import { CrashLoop } from "./job-policy.ts";
 import type { ToolChildCommand } from "./launch.ts";
 import { MODULE_JOB_KIND, TOOL_CHILD_MODULE_ROOTS_ENV } from "./module-job.ts";
 
@@ -35,6 +36,8 @@ export interface SessionToolChildOptions {
 	readonly onRecord: (record: SessionToolChildRecord) => void;
 	readonly env?: NodeJS.ProcessEnv;
 	readonly command?: ToolChildCommand;
+	/** The crash loop's clock; tests inject a fake one. */
+	readonly now?: () => number;
 }
 
 /** The directories of the extensions whose tools declare a `childModule`: the only places a `module` job may load from. */
@@ -54,9 +57,11 @@ export class SessionToolChild {
 	#starting: Promise<void> | undefined;
 	#last: { readonly generation: number; readonly pid: number } | undefined;
 	#closed = false;
+	readonly #crashLoop: CrashLoop;
 
 	constructor(options: SessionToolChildOptions) {
 		this.#options = options;
+		this.#crashLoop = new CrashLoop(options.now ?? Date.now);
 		this.#client = new ToolChildClient({
 			dir: options.dir,
 			cwd: options.cwd,
@@ -69,13 +74,27 @@ export class SessionToolChild {
 		});
 	}
 
+	/**
+	 * Runs a module job on this session's child. A job lost to the child's exit is retried exactly once, on a fresh
+	 * generation, and only when it is idempotent; a non-idempotent job reports the error and is never re-run.
+	 */
 	readonly runner: ToolChildRunner = async (job: ToolChildModuleJob, signal: AbortSignal | undefined) => {
+		try {
+			return await this.#runOnce(job, signal);
+		} catch (error) {
+			const lostToExit = error instanceof ToolChildError && error.code === "tool_child_exited";
+			if (!lostToExit || job.idempotent !== true || signal?.aborted === true) throw error;
+			return this.#runOnce(job, signal);
+		}
+	};
+
+	async #runOnce(job: ToolChildModuleJob, signal: AbortSignal | undefined): Promise<ToolChildRunResult> {
 		await this.#ensureLive();
 		const generation = this.#client.generation;
 		const pid = this.#client.pid ?? -1;
-		const value = await this.#client.run(MODULE_JOB_KIND, job, signal);
-		return { value, pid, generation } satisfies ToolChildRunResult;
-	};
+		const value = await this.#client.run(MODULE_JOB_KIND, job, signal, { idempotent: job.idempotent === true });
+		return { value, pid, generation };
+	}
 
 	row(): SessionToolChildRow {
 		const state = this.#client.state;
@@ -92,8 +111,10 @@ export class SessionToolChild {
 	}
 
 	async #ensureLive(): Promise<void> {
-		if (this.#closed) throw new Error("tool_child_unavailable: the session is closed");
+		if (this.#closed) throw new ToolChildError("tool_child_unavailable", "the session is closed");
 		if (this.#client.state === "live") return;
+		if (this.#crashLoop.unavailable())
+			throw new ToolChildError("tool_child_unavailable", "the tool child keeps exiting; it is paused for a minute");
 		this.#starting ??= this.#client.start().finally(() => {
 			this.#starting = undefined;
 		});
@@ -111,6 +132,7 @@ export class SessionToolChild {
 			});
 			return;
 		}
+		this.#crashLoop.recordExit();
 		this.#options.onRecord({ state: "exited", generation: status.generation, pid: status.pid });
 	}
 }
