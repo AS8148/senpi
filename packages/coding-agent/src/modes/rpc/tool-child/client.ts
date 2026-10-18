@@ -18,7 +18,8 @@ import { JobSupervisor, type SupervisorTimers } from "./job-supervisor.ts";
 import { spawnToolChild, type ToolChildCommand, toolChildCommand } from "./launch.ts";
 import { recordGenerationChild, sweepStaleGenerations } from "./orphan-sweep.ts";
 import { PayloadRefReader, PayloadRefWriter } from "./payload-ref.ts";
-import { TOOL_CHILD_LIMITS, type ToolChildMessage } from "./protocol.ts";
+import { unpackPayload } from "./payload-wire.ts";
+import { TOOL_CHILD_LIMITS, type ToolChildMessage, type ToolChildMessageOf } from "./protocol.ts";
 
 export type ToolChildState = "none" | "spawning" | "live" | "retiring" | "dead";
 
@@ -59,6 +60,10 @@ export interface ToolChildClientOptions {
 interface Pending {
 	readonly resolve: (value: unknown) => void;
 	readonly reject: (error: Error) => void;
+	/** Receives the job's streamed updates in order; absent when the caller does not stream. */
+	readonly onUpdate?: (value: unknown) => void;
+	/** Every update received so far, delivered and acknowledged in order; a result settles after it. */
+	delivered: Promise<void>;
 }
 
 interface Live {
@@ -283,7 +288,12 @@ export class ToolChildClient {
 		kind: string,
 		args: unknown,
 		signal?: AbortSignal,
-		options: { readonly idempotent?: boolean; readonly deadlineMs?: number; readonly hostContext?: unknown } = {},
+		options: {
+			readonly idempotent?: boolean;
+			readonly deadlineMs?: number;
+			readonly hostContext?: unknown;
+			readonly onUpdate?: (value: unknown) => void;
+		} = {},
 	): Promise<unknown> {
 		const live = this.#live;
 		if (this.#state !== "live" || live === undefined)
@@ -310,6 +320,8 @@ export class ToolChildClient {
 			live.pending.set(jobId, {
 				resolve: (value) => done(() => resolve(value))(),
 				reject: (error) => done(() => reject(error))(),
+				...(options.onUpdate === undefined ? {} : { onUpdate: options.onUpdate }),
+				delivered: Promise.resolve(),
 			});
 			live.supervisor.track(jobId, {
 				reject: (error) => settle(live, jobId, (pending) => pending.reject(error)),
@@ -367,13 +379,18 @@ export class ToolChildClient {
 			return;
 		}
 		switch (frame.type) {
+			case "update":
+				this.#onUpdate(live, frame);
+				return;
 			case "result":
-				settle(live, frame.jobId, (p) => p.resolve(frame.value));
+				afterUpdates(live, frame.jobId, () => settle(live, frame.jobId, (p) => p.resolve(frame.value)));
 				return;
 			case "job_error":
 			case "job_refused":
-				settle(live, frame.jobId, (p) =>
-					p.reject(new ToolChildError(frame.code, frame.type === "job_error" ? frame.message : "refused")),
+				afterUpdates(live, frame.jobId, () =>
+					settle(live, frame.jobId, (p) =>
+						p.reject(new ToolChildError(frame.code, frame.type === "job_error" ? frame.message : "refused")),
+					),
 				);
 				return;
 			case "cancel_ack":
@@ -390,6 +407,25 @@ export class ToolChildClient {
 			default:
 				return;
 		}
+	}
+
+	/** Delivers one update after the job's earlier ones (reading a ref first), then returns its credit. */
+	#onUpdate(live: Live, frame: ToolChildMessageOf<"update">): void {
+		const pending = live.pending.get(frame.jobId);
+		if (pending === undefined) {
+			if (frame.valueRef !== undefined) live.refs.reader.refuse(frame.valueRef, "cancelled");
+			return;
+		}
+		const read = (): Promise<unknown> =>
+			frame.valueRef === undefined ? Promise.resolve(frame.value) : unpackPayload(frame.valueRef, live.refs.reader);
+		pending.delivered = pending.delivered.then(async () => {
+			try {
+				const value = await read();
+				pending.onUpdate?.(value);
+			} finally {
+				live.channel.send({ type: "update_ack", jobId: frame.jobId, seq: frame.seq });
+			}
+		});
 	}
 
 	#onExit(live: Live): void {
@@ -420,6 +456,13 @@ export class ToolChildClient {
 			// The child's group is already gone.
 		}
 	}
+}
+
+/** Runs `then` once every update the job sent before it has been delivered (at once when there is none). */
+function afterUpdates(live: Pick<Live, "pending">, jobId: string, then: () => void): void {
+	const pending = live.pending.get(jobId);
+	if (pending === undefined) return;
+	void pending.delivered.then(then, then);
 }
 
 function settle(live: Pick<Live, "pending">, jobId: string, apply: (pending: Pending) => void): void {

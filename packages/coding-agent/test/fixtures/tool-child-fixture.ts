@@ -20,6 +20,12 @@ if (mode === "hang") {
 	await runToolChild({
 		handlers: {
 			echo: async (args) => args,
+			stream: async (args, { update }) => {
+				const { count, bigBytes } = args as { count: number; bigBytes: number };
+				for (let index = 1; index <= count; index++) await update({ index });
+				if (bigBytes > 0) await update({ big: "u".repeat(bigBytes) });
+				return { sent: count + (bigBytes > 0 ? 1 : 0) };
+			},
 			print: async () => {
 				process.stdout.write("\u0000\u0000\u0000\u0005{not a frame}\n");
 				return "printed";

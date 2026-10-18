@@ -53,6 +53,8 @@ const SAMPLES: ToolChildMessage[] = [
 		],
 	},
 	{ type: "hello", generation: 3, pid: 99, protocol: 2, jobKinds: ["module"] },
+	{ type: "update", jobId: "j1", seq: 1, value: { index: 1 } },
+	{ type: "update_ack", jobId: "j1", seq: 1 },
 	{ type: "hello_ack", generation: 3 },
 	{ type: "heartbeat", seq: 7 },
 	{ type: "job", jobId: "j1", kind: "read", args: { path: "a\nb.txt" } },

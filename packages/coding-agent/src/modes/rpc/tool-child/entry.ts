@@ -6,6 +6,7 @@
  */
 import { connectChannel, type ToolChildChannel } from "./channel.ts";
 import { ChildHostCalls, type HostCallTarget } from "./host-calls-child.ts";
+import { JobUpdates } from "./job-updates.ts";
 import { scrubToolChildEnv, TOOL_CHILD_LEDGER_ENV, TOOL_CHILD_REFS_ROOT_ENV } from "./launch-env-names.ts";
 import { LaunchGate } from "./launch-gate.ts";
 import { sweepLedger } from "./orphan-sweep.ts";
@@ -32,6 +33,8 @@ export interface ToolChildJobContext {
 	 * the cancel arrives); it still settles by its reply, its refusal or the channel closing.
 	 */
 	readonly hostCall: (target: HostCallTarget, options?: { readonly survivesCancel?: boolean }) => Promise<unknown>;
+	/** Streams a partial result to the server in order; waits for credit when too many are unacknowledged. */
+	readonly update: (value: unknown) => Promise<void>;
 }
 
 export type ToolChildJobHandler = (args: unknown, context: ToolChildJobContext) => Promise<unknown>;
@@ -61,6 +64,7 @@ export async function runToolChild(options: ToolChildEntryOptions): Promise<void
 	// the gated Bun.spawn passes process.env explicitly).
 	if (options.env === undefined) scrubToolChildEnv(process.env);
 	const running = new Map<string, AbortController>();
+	const streams = new Map<string, JobUpdates>();
 	const gate = new LaunchGate(channel);
 	const refsRoot = env[TOOL_CHILD_REFS_ROOT_ENV];
 	const refs =
@@ -95,7 +99,10 @@ export async function runToolChild(options: ToolChildEntryOptions): Promise<void
 				return;
 			case "job":
 				if (controls.value("EXIT_MID_JOB") === message.kind) exit(1);
-				void runJob(channel, gate, hostCalls, refs?.reader, options.handlers, running, message);
+				void runJob(channel, gate, hostCalls, refs, options.handlers, running, streams, message);
+				return;
+			case "update_ack":
+				streams.get(message.jobId)?.acked(message.seq);
 				return;
 			case "cancel":
 				if (controls.enabled("IGNORE_CANCEL")) return;
@@ -141,11 +148,13 @@ async function runJob(
 	channel: ToolChildChannel,
 	gate: LaunchGate,
 	hostCalls: ChildHostCalls,
-	refReader: PayloadRefReader | undefined,
+	refs: { readonly reader: PayloadRefReader; readonly writer: PayloadRefWriter } | undefined,
 	handlers: Readonly<Record<string, ToolChildJobHandler>>,
 	running: Map<string, AbortController>,
+	streams: Map<string, JobUpdates>,
 	job: ToolChildMessageOf<"job">,
 ): Promise<void> {
+	const refReader = refs?.reader;
 	const handler = handlers[job.kind];
 	if ((handler === undefined || running.has(job.jobId)) && job.argsRef !== undefined)
 		refReader?.refuse(job.argsRef, "cancelled");
@@ -169,7 +178,21 @@ async function runJob(
 			hostCalls.call(job.jobId, target, options?.survivesCancel === true ? NEVER_CANCELLED : controller.signal);
 		// Large arguments arrive by a server-written reference: acked (now this child's), consumed, deleted.
 		const args = job.argsRef === undefined ? job.args : await readJobArgs(job.argsRef, refReader, controller.signal);
-		const value = await handler(args, { jobId: job.jobId, signal: controller.signal, channel, gate, hostCall });
+		const stream = new JobUpdates({
+			jobId: job.jobId,
+			channel,
+			...(refs === undefined ? {} : { writer: refs.writer }),
+		});
+		streams.set(job.jobId, stream);
+		const update = (value: unknown) => stream.update(value);
+		const value = await handler(args, {
+			jobId: job.jobId,
+			signal: controller.signal,
+			channel,
+			gate,
+			hostCall,
+			update,
+		});
 		channel.send({ type: "result", jobId: job.jobId, value: value ?? null });
 	} catch (error) {
 		const code =
@@ -186,6 +209,8 @@ async function runJob(
 		});
 	} finally {
 		running.delete(job.jobId);
+		streams.get(job.jobId)?.end();
+		streams.delete(job.jobId);
 	}
 }
 
