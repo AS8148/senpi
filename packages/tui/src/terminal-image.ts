@@ -142,6 +142,12 @@ function parseBooleanCapabilityOverride(value: string | undefined): boolean | un
 	return value === "1" ? true : value === "0" ? false : undefined;
 }
 
+// The hint explains why detection turned images off; an explicit image choice makes it wrong.
+function withoutImageHint<T extends TerminalCapabilities>(caps: T): Omit<T, "imageHint"> {
+	const { imageHint: _imageHint, ...rest } = caps;
+	return rest;
+}
+
 export function detectCapabilities(
 	tmuxForwardsHyperlink?: () => boolean,
 	tmuxPassthroughState?: () => TmuxPassthroughState,
@@ -160,7 +166,7 @@ export function detectCapabilities(
 					: undefined;
 		const trueColor = parseBooleanCapabilityOverride(process.env.PI_TRUE_COLOR);
 		return {
-			...detected,
+			...(images !== undefined ? withoutImageHint(detected) : detected),
 			...(images !== undefined ? { images } : {}),
 			...(trueColor !== undefined ? { trueColor } : {}),
 			...(hyperlinks !== undefined ? { hyperlinks } : {}),
@@ -193,8 +199,9 @@ export function detectCapabilities(
 export function getCapabilities(): TerminalCapabilities {
 	if (!cachedCapabilities) {
 		const hyperlinks = capabilityOverrides.hyperlinks;
+		const detected = detectCapabilities(hyperlinks === undefined ? undefined : () => hyperlinks);
 		cachedCapabilities = {
-			...detectCapabilities(hyperlinks === undefined ? undefined : () => hyperlinks),
+			...(capabilityOverrides.images !== undefined ? withoutImageHint(detected) : detected),
 			...capabilityOverrides,
 		};
 	}
@@ -214,7 +221,8 @@ export function setCapabilityOverrides(overrides: Partial<TerminalCapabilities>)
 	if (
 		capabilityOverrides.images === overrides.images &&
 		capabilityOverrides.trueColor === overrides.trueColor &&
-		capabilityOverrides.hyperlinks === overrides.hyperlinks
+		capabilityOverrides.hyperlinks === overrides.hyperlinks &&
+		capabilityOverrides.imageHint === overrides.imageHint
 	) {
 		return;
 	}

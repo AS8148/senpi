@@ -20,7 +20,7 @@ const WEZTERM_VERSION = /^(\d{8})-(\d{6})-[0-9a-f]+/i;
  */
 export function isOldWindowsWezTerm(version: string | undefined, platform: NodeJS.Platform): boolean {
 	if (platform !== "win32" || version === undefined) return false;
-	const match = WEZTERM_VERSION.exec(version.trim());
+	const match = WEZTERM_VERSION.exec(version);
 	if (!match) return false;
 	return `${match[1]}-${match[2]}` < MIN_WEZTERM_WINDOWS_IMAGES_VERSION;
 }
