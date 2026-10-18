@@ -159,6 +159,7 @@ export class ToolChildClient {
 			dir: this.#options.dir,
 			generation,
 			channel,
+			...(containment.isMember === undefined ? {} : { confirmMember: containment.isMember }),
 			onViolation: (violation) => {
 				const failure = new ToolChildError(violation.code, `${violation.launchId}: ${violation.reason}`);
 				if (violation.jobId !== undefined) settle({ pending }, violation.jobId, (p) => p.reject(failure));

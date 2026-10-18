@@ -16,7 +16,7 @@ afterEach(async () => {
 	}
 });
 
-async function rig() {
+async function rig(confirmMember?: (pid: number) => boolean) {
 	const root = await mkdtemp(join(tmpdir(), "tlm-"));
 	const log = new LaunchLog(join(root, "launches.jsonl"));
 	roots.push({ root, log });
@@ -29,6 +29,7 @@ async function rig() {
 		onViolation: (violation) => violations.push(violation),
 		leaderStart: async () => undefined,
 		setTimer: () => () => {},
+		...(confirmMember === undefined ? {} : { confirmMember }),
 	});
 	const records = async () => {
 		await log.settled();
@@ -74,6 +75,19 @@ describe("LaunchEnforcer and command_started", () => {
 			expect.objectContaining({ launchId: "away", member: false, evidence: "creation" }),
 		]);
 		expect(violations).toEqual([]);
+	});
+
+	it("adds a live listing as confirmation for a member, and records a missing listing without refuting it", async () => {
+		for (const listed of [true, false]) {
+			const { enforcer, violations, records } = await rig(() => listed);
+			await enforcer.onLaunch(launch("l", "job"));
+			enforcer.onCommandStarted(started("l", { creatorInJob: true, breakaway: false }));
+			expect((await records()).find((record) => record.type === "job_membership")).toMatchObject({
+				member: true,
+				confirmed: listed,
+			});
+			expect(violations).toEqual([]);
+		}
 	});
 
 	it("never claims membership when the creator itself was outside the job", async () => {

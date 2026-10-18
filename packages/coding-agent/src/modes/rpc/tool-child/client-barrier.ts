@@ -21,6 +21,7 @@ export function createGenerationBarrier(options: {
 	readonly channel: ToolChildChannel;
 	readonly onViolation: (violation: BarrierViolation) => void;
 	readonly holdAck?: (launchId: string) => Promise<void>;
+	readonly confirmMember?: (pid: number) => boolean;
 }): GenerationBarrier {
 	const controls = readTestControls(process.env);
 	const holdAck =
@@ -38,6 +39,7 @@ export function createGenerationBarrier(options: {
 		onViolation: options.onViolation,
 		leaderStart: (pid) => defaultGroupProbes.startOf(pid),
 		...(holdAck === undefined ? {} : { holdAck }),
+		...(options.confirmMember === undefined ? {} : { confirmMember: options.confirmMember }),
 	});
 	// Test-only: with SENPI_TOOL_CHILD_TRACE=1 a control file `query-slot-<launchId>.<n>` asks the child for that launch's
 	// slot counts; the reply (`slot_state`) lands in launches.jsonl beside the launch it describes.

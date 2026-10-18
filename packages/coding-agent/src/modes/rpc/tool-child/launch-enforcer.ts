@@ -34,6 +34,8 @@ export interface LaunchEnforcerOptions {
 	readonly holdAck?: (launchId: string) => Promise<void>;
 	readonly setTimer?: (fn: () => void, ms: number) => () => void;
 	readonly proofMs?: number;
+	/** Windows: a live job listing, recorded as confirmation of creation-time membership (never as a refutation). */
+	readonly confirmMember?: (pid: number) => boolean;
 }
 
 interface Inflight {
@@ -117,12 +119,15 @@ export class LaunchEnforcer {
 			this.#violate(frame.launchId, "breakaway_contradicts_containment", "tool_child_containment_violation");
 			return;
 		}
+		const member = frame.creatorInJob && !frame.breakaway;
+		const confirm = this.#options.confirmMember;
 		void this.#options.log.record({
 			type: "job_membership",
 			launchId: frame.launchId,
 			pid: frame.pid,
-			member: frame.creatorInJob && !frame.breakaway,
+			member,
 			evidence: "creation",
+			...(member && confirm !== undefined ? { confirmed: confirm(frame.pid) } : {}),
 		});
 	}
 

@@ -13,6 +13,8 @@ export interface ChildContainment {
 	kill(): void;
 	/** Releases the handle; the job's kill-on-close ends any member still running. */
 	close(): void;
+	/** Windows: whether a running pid is listed in the job right now (confirmation only, never a refutation). */
+	readonly isMember?: (pid: number) => boolean;
 }
 
 export interface ContainmentHost {
@@ -54,6 +56,7 @@ export function containChild(child: ChildProcess, host: ContainmentHost = DEFAUL
 		kind: "job",
 		kill: () => job.terminate(),
 		close: () => job.close(),
+		isMember: (pid) => job.memberPids().includes(pid),
 	};
 }
 
