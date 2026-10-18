@@ -17,6 +17,32 @@
 
 - LOW: the two changed lines in `agent-session.ts`.
 
+## 2026-10-17 - A non-stored subscription sign-in is reported on the sign-in row (senpi#3537)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-runtime.ts`: `resolveProviderAuth(providerId)` returns `{ status, signIn }` and `getProviderAuthStatus` is its `status`. `signIn` is set only by the last branch, when the provider's own check resolves `type: "oauth"`. A runtime key, a stored credential or a configured models.json/extension key wins first, from the same branch order as the status.
+- `packages/coding-agent/src/core/model-registry.ts`: `resolveProviderAuth(provider)`, the facade with the #2249 live-store fallback; `getProviderAuthStatus` returns its `status`.
+- `packages/coding-agent/src/core/auth-providers.ts`: `authMethodStatus(modelRegistry, info)` takes no row-capability input, so every surface attributes a row the same way:
+  - a stored credential lights the row of its own type, even beside a runtime key;
+  - a non-stored sign-in lights the `oauth` row;
+  - every other credential is a key and lights only the `api_key` row, never a provider's only sign-in row.
+- `packages/coding-agent/src/core/auth-providers.ts`: `loginRowStatus` gives the TUI picker each row's own status, or the other method's for the "API key configured" hint.
+
+### Why
+
+senpi#3537: `CLAUDE_CODE_OAUTH_TOKEN` and the ambient Claude Code login pass `anthropic-subscription`'s check as `type: "oauth"`, and the router uses them as a sign-in. `get_auth_providers` still filed them on the api_key row, so RPC clients (the OmO desktop, sisyphuslabs/omo-desktop-app#2988) showed the subscription as not connected beside a second "API key".
+
+### Why an extension could not handle it
+
+Row status is computed by core `get_auth_providers`; an extension supplies only the check.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/auth-providers.ts`: `authMethodStatus` and its doc comment.
+- `packages/coding-agent/src/core/model-runtime.ts`: `getProviderAuthStatus` and the new `resolveProviderAuth` below it.
+- `packages/coding-agent/src/core/model-registry.ts`: `getProviderAuthStatus` and `resolveProviderAuth`.
+
 ## 2026-10-17 - Opening a large session no longer holds a shared host's event loop (senpi#3518)
 
 ### What changed
