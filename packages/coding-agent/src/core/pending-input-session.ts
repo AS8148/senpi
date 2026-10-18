@@ -166,11 +166,16 @@ export class SessionPendingInputs {
 	async recordCleared(clientMessageIds: readonly string[]): Promise<void> {
 		if (this.storeOpening === undefined || clientMessageIds.length === 0) return;
 		const store = await this.storeOpening;
+		// One record for the whole clear: it lands or not as a unit, never split around a later entry.
 		await store.transaction(async (tx) => {
-			for (const clientMessageId of clientMessageIds) {
-				if (tx.current(clientMessageId)?.phase !== "queued") continue;
-				await tx.apply(clientMessageId, { type: "cancel", cause: "stop", consumerFenced: true });
-			}
+			const queued = clientMessageIds.filter((clientMessageId) => tx.current(clientMessageId)?.phase === "queued");
+			if (queued.length === 0) return;
+			await tx.applyAll(
+				queued.map((clientMessageId) => ({
+					clientMessageId,
+					event: { type: "cancel", cause: "stop", consumerFenced: true },
+				})),
+			);
 		});
 	}
 

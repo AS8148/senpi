@@ -136,8 +136,9 @@ describe("release_session and gateway deliveries (real host)", () => {
 			if (entry.customType === "rpc_client_message_admission")
 				ledger.set(String(entry.data?.clientMessageId), entry.data?.state);
 			if (entry.customType === "pending_input_transition") {
-				const input = entry.data?.input as { clientMessageId?: string; phase?: string } | undefined;
-				journal.set(String(input?.clientMessageId), input?.phase);
+				type Recorded = { clientMessageId?: string; phase?: string };
+				const inputs = [entry.data?.input, ...((entry.data?.batch as Recorded[] | undefined) ?? [])] as Recorded[];
+				for (const input of inputs) journal.set(String(input?.clientMessageId), input?.phase);
 			}
 		}
 		expect(Object.fromEntries(ledger)).toEqual({ "c-steer": "completed", "c-follow": "completed" });
