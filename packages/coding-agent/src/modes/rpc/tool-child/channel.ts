@@ -9,9 +9,8 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { chmod, mkdir, open, rm, rmdir } from "node:fs/promises";
-import { dirname } from "node:path";
 import { createConnection, createServer, type Socket } from "node:net";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { MAX_SOCKET_PATH_BYTES } from "../socket-ownership.ts";
 import {
 	authenticateSocket,
