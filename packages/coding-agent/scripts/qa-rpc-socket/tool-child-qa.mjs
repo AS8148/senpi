@@ -64,12 +64,17 @@ function awaitControlFile(dir, match, deadlineMs) {
 }
 
 /** The plan's cleanup rule: a killed process must be gone (not even a zombie) within 3 s. */
+/**
+ * Whether `pid` ended within the window, and the last `ps` state seen. A zombie (`Z`) has ended - reaping it is its
+ * parent's job - so it counts as gone and is reported as `zombie: true`; any other listed state is still running.
+ */
 async function awaitGone(pid, windowMs = 3_000) {
 	const deadline = Date.now() + windowMs;
 	for (;;) {
 		const state = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).stdout.trim();
-		if (state === "") return true;
-		if (Date.now() >= deadline) return false;
+		if (state === "") return { gone: true, zombie: false, state };
+		if (state.startsWith("Z")) return { gone: true, zombie: true, state };
+		if (Date.now() >= deadline) return { gone: false, zombie: false, state };
 		await new Promise((resolveWait) => setTimeout(resolveWait, 100));
 	}
 }

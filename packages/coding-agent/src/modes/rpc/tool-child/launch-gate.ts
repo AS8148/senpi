@@ -43,7 +43,10 @@ export class LaunchGateError extends Error {
 export class LaunchGate {
 	readonly clock: BarrierClock;
 	readonly #channel: ToolChildChannel;
-	readonly #slots = new Map<string, { slot: number; ack: () => void; lifetime: LaunchLifetime }>();
+	readonly #slots = new Map<
+		string,
+		{ slot: number; ack: () => void; lifetime: LaunchLifetime; request: LaunchRequest }
+	>();
 	/** Final slot state of recent finished launches, so a test query after `launch_done` still reads the counts. */
 	readonly #finished = new Map<string, SlotState>();
 	readonly #controls: TestControls;
@@ -90,7 +93,7 @@ export class LaunchGate {
 		const acked = new Promise<void>((resolve) => {
 			ack = resolve;
 		});
-		this.#slots.set(launchId, { slot, ack, lifetime: request.lifetime });
+		this.#slots.set(launchId, { slot, ack, lifetime: request.lifetime, request });
 		this.#channel.send({ type: "launch", launchId, ...request });
 		if (this.#controls.enabled("STOP_AFTER_SPAWN")) process.kill(process.pid, "SIGSTOP");
 		return { launchId, slot, acked };
@@ -98,7 +101,7 @@ export class LaunchGate {
 
 	/** Protocol loop: a launch a worker announced on a slot it claimed itself on the shared clock. */
 	adopt(launchId: string, slot: number, request: LaunchRequest): void {
-		this.#slots.set(launchId, { slot, ack: () => undefined, lifetime: request.lifetime });
+		this.#slots.set(launchId, { slot, ack: () => undefined, lifetime: request.lifetime, request });
 		this.#channel.send({ type: "launch", launchId, ...request });
 	}
 
@@ -157,6 +160,29 @@ export class LaunchGate {
 			return;
 		}
 		send();
+	}
+
+	/**
+	 * Ends the owned own-group commands a cancelled job started that are still running (no `launch_done` yet). Their
+	 * leaders are this process's unreaped children, so each pgid is still the group this job created - never a reused
+	 * one. Detached launches outlive their job by contract and are left alone. Returns the groups signalled.
+	 */
+	endJobGroups(jobId: string): number[] {
+		const ended: Array<{ readonly launchId: string; readonly pgid: number }> = [];
+		for (const [launchId, { request }] of this.#slots) {
+			if (request.jobId !== jobId || request.lifetime !== "owned" || request.containment !== "own-group") continue;
+			if (request.pgid === undefined || request.pgid <= 1) continue;
+			try {
+				process.kill(-request.pgid, "SIGKILL");
+				ended.push({ launchId, pgid: request.pgid });
+			} catch {
+				// The group ended between its last member and our signal.
+			}
+		}
+		// The worker that would have reported these launches' completion is gone with its job: report it here, so the
+		// slots return to the clock and the server's log is complete.
+		for (const { launchId } of ended) this.done(launchId, { signal: "SIGKILL" });
+		return ended.map(({ pgid }) => pgid);
 	}
 
 	done(launchId: string, outcome: { readonly exitCode?: number; readonly signal?: string }): void {

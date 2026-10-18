@@ -6,7 +6,7 @@
  * of the installed extension directories the server granted this child at spawn (`SENPI_TOOL_CHILD_MODULE_ROOTS`), so a
  * job can never name an arbitrary file.
  */
-import { realpathSync } from "node:fs";
+import { realpathSync, statSync } from "node:fs";
 import { isAbsolute, relative, sep } from "node:path";
 import type { ToolChildJobContext } from "./entry.ts";
 import { ToolChildJobError } from "./entry.ts";
@@ -53,7 +53,7 @@ function realpathOrUndefined(path: string): string | undefined {
 	}
 }
 
-/** The module's realpath when it lies inside a granted root (both sides realpath'd); otherwise a typed refusal. */
+/** The module's realpath when it is a granted file or lies inside a granted directory (both realpath'd); otherwise refused. */
 export function containedModulePath(modulePath: string, roots: readonly string[]): string {
 	const resolved = realpathOrUndefined(modulePath);
 	if (resolved === undefined)
@@ -61,6 +61,8 @@ export function containedModulePath(modulePath: string, roots: readonly string[]
 	for (const root of roots) {
 		const realRoot = realpathOrUndefined(root);
 		if (realRoot === undefined) continue;
+		// A granted file is granted exactly; a granted directory grants what is strictly inside it.
+		if (resolved === realRoot && statSync(resolved).isFile()) return resolved;
 		const inside = relative(realRoot, resolved);
 		if (inside !== "" && !inside.startsWith(`..${sep}`) && inside !== ".." && !isAbsolute(inside)) return resolved;
 	}
@@ -70,7 +72,10 @@ export function containedModulePath(modulePath: string, roots: readonly string[]
 	);
 }
 
-export function createModuleJobHandler(env: NodeJS.ProcessEnv = process.env) {
+/** How long a cancelled module body may take to settle on its own before its worker is ended. */
+export const MODULE_CANCEL_GRACE_MS = 2_000;
+
+export function createModuleJobHandler(env: NodeJS.ProcessEnv = { ...process.env }) {
 	return async (value: unknown, context: ToolChildJobContext): Promise<unknown> => {
 		const job = parseModuleJobArgs(value);
 		const modulePath = containedModulePath(job.modulePath, parseModuleRoots(env));
@@ -82,10 +87,18 @@ export function createModuleJobHandler(env: NodeJS.ProcessEnv = process.env) {
 				workerData: { modulePath, exportName: job.export, args: job.args },
 			},
 		);
-		const abort = () => void worker.terminate();
+		// A cancel reaches the body as an aborted signal; a body that has not settled within the grace is ended with its
+		// worker. Either way the job fails tool_child_cancelled and the owned groups it still runs are ended.
+		let cancelled = false;
+		let graceTimer: ReturnType<typeof setTimeout> | undefined;
+		const abort = () => {
+			cancelled = true;
+			worker.postMessage({ kind: "cancel" });
+			graceTimer = setTimeout(() => void worker.terminate(), MODULE_CANCEL_GRACE_MS);
+		};
 		context.signal.addEventListener("abort", abort, { once: true });
 		try {
-			return await new Promise((resolve, reject) => {
+			const outcome = new Promise((resolve, reject) => {
 				worker.on("message", (message: unknown) => {
 					if (typeof message !== "object" || message === null) return;
 					const kind = Reflect.get(message, "kind");
@@ -107,9 +120,17 @@ export function createModuleJobHandler(env: NodeJS.ProcessEnv = process.env) {
 					reject(new ToolChildJobError("module_job_failed", `worker exited (${code})`)),
 				);
 			});
+			try {
+				return await outcome;
+			} catch (error) {
+				if (!cancelled) throw error;
+				throw new ToolChildJobError("tool_child_cancelled", "the job was cancelled");
+			}
 		} finally {
 			context.signal.removeEventListener("abort", abort);
+			clearTimeout(graceTimer);
 			void worker.terminate();
+			if (cancelled) context.gate.endJobGroups(context.jobId);
 		}
 	};
 }

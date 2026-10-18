@@ -5,7 +5,9 @@
  * server is the single writer of every session file.
  */
 import { connectChannel, type ToolChildChannel } from "./channel.ts";
+import { scrubToolChildEnv, TOOL_CHILD_LEDGER_ENV } from "./launch-env-names.ts";
 import { LaunchGate } from "./launch-gate.ts";
+import { sweepLedger } from "./orphan-sweep.ts";
 import type { ToolChildMessageOf } from "./protocol.ts";
 
 export const TOOL_CHILD_GENERATION_ENV = "SENPI_TOOL_CHILD_GENERATION";
@@ -36,7 +38,7 @@ export class ToolChildJobError extends Error {
 }
 
 export async function runToolChild(options: ToolChildEntryOptions): Promise<void> {
-	const env = options.env ?? process.env;
+	const env = { ...(options.env ?? process.env) };
 	const exit = options.exit ?? ((code: number) => process.exit(code));
 	const generation = Number(env[TOOL_CHILD_GENERATION_ENV]);
 	if (!Number.isSafeInteger(generation) || generation < 0) {
@@ -44,8 +46,12 @@ export async function runToolChild(options: ToolChildEntryOptions): Promise<void
 		exit(70);
 	}
 	const channel = await connectChannel(env);
+	// Read once; from here no command this child starts may see them (only node:child_process honours a deleted key, so
+	// the gated Bun.spawn passes process.env explicitly).
+	if (options.env === undefined) scrubToolChildEnv(process.env);
 	const running = new Map<string, AbortController>();
 	const gate = new LaunchGate(channel);
+	let shutdownRequested = false;
 	channel.onMessage((message) => {
 		if (gate.handle(message)) return;
 		switch (message.type) {
@@ -59,6 +65,7 @@ export async function runToolChild(options: ToolChildEntryOptions): Promise<void
 				running.get(message.jobId)?.abort();
 				return;
 			case "shutdown":
+				shutdownRequested = true;
 				channel.close();
 				return;
 			default:
@@ -68,6 +75,7 @@ export async function runToolChild(options: ToolChildEntryOptions): Promise<void
 	channel.send({ type: "hello", generation, pid: process.pid, protocol: TOOL_CHILD_PROTOCOL_VERSION });
 	await channel.closed;
 	for (const controller of running.values()) controller.abort();
+	if (!shutdownRequested) await orphanedByHost(env);
 	exit(0);
 }
 
@@ -112,5 +120,21 @@ async function runJob(
 		});
 	} finally {
 		running.delete(job.jobId);
+	}
+}
+
+/**
+ * The host is gone without asking this child to stop (a crash, SIGKILL, an exit that never closed the session): nobody
+ * is left to sweep. Sweep the owned groups the ledger names, then end this child's own group - the inherited commands
+ * share it - with this process in it.
+ */
+async function orphanedByHost(env: NodeJS.ProcessEnv): Promise<void> {
+	const ledger = env[TOOL_CHILD_LEDGER_ENV];
+	if (ledger !== undefined) await sweepLedger(ledger).catch(() => []);
+	if (process.platform === "win32") return;
+	try {
+		process.kill(-process.pid, "SIGKILL");
+	} catch {
+		// Not a group leader (a test harness started this entry in-process): nothing more to end.
 	}
 }

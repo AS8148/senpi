@@ -15,8 +15,10 @@ import {
 	containChild,
 } from "./child-containment.ts";
 import { createGenerationBarrier, type GenerationBarrier } from "./client-barrier.ts";
+import { generationLedgerPath } from "./descendants.ts";
 import { TOOL_CHILD_PROTOCOL_VERSION } from "./entry.ts";
 import { spawnToolChild, type ToolChildCommand, toolChildCommand } from "./launch.ts";
+import { sweepStaleGenerations } from "./orphan-sweep.ts";
 import type { ToolChildMessage } from "./protocol.ts";
 
 export type ToolChildState = "none" | "spawning" | "live" | "retiring" | "dead";
@@ -106,6 +108,24 @@ export class ToolChildClient {
 			throw new ToolChildError("tool_child_busy", `already ${this.#state}`);
 		const generation = ++this.#generation;
 		this.#state = "spawning";
+		try {
+			await this.#bootstrap(generation);
+		} catch (error) {
+			// Whatever failed (the listener, the spawn, the hello), the client never stays "spawning": the next job retries.
+			if (this.#state === "spawning") this.#state = "dead";
+			throw error instanceof ToolChildError
+				? error
+				: new ToolChildError(
+						"tool_child_bootstrap_failed",
+						`spawn_failed: ${error instanceof Error ? error.message : String(error)}`,
+					);
+		}
+	}
+
+	async #bootstrap(generation: number): Promise<void> {
+		// A crashed predecessor (host or child) may have left owned groups and a ledger this generation would reuse.
+		await this.#lastEnded;
+		await sweepStaleGenerations(this.#options.dir);
 		const listener = await openChannelListener({ dir: this.#options.dir, generation });
 		const child = spawnToolChild({
 			generation,
@@ -113,15 +133,23 @@ export class ToolChildClient {
 			env: typeof this.#options.env === "function" ? this.#options.env() : (this.#options.env ?? process.env),
 			command: this.#options.command ?? (await toolChildCommand()),
 			cwd: this.#options.cwd,
+			ledgerPath: generationLedgerPath(this.#options.dir, generation),
 		});
-		const exited = once(child, "exit").then(() => undefined);
+		let spawnError: Error | undefined;
+		child.once("error", (error) => {
+			spawnError = error;
+		});
+		// A spawn that fails (ENOENT, a missing cwd) emits "error" instead of "exit": both end the child.
+		const exited = Promise.race([once(child, "exit"), once(child, "error")]).then(
+			() => undefined,
+			() => undefined,
+		);
 		let containment: ChildContainment;
 		try {
 			containment = containChild(child, this.#options.containmentHost);
 		} catch (error) {
 			child.kill("SIGKILL");
 			await listener.close();
-			this.#state = "dead";
 			throw error instanceof ChildContainmentError ? new ToolChildError(error.code, error.message) : error;
 		}
 		let timer: ReturnType<typeof setTimeout> | undefined;
@@ -140,7 +168,11 @@ export class ToolChildClient {
 			this.#state = "dead";
 			throw new ToolChildError(
 				"tool_child_bootstrap_failed",
-				outcome === "timeout" ? "ready_timeout" : "exited_before_ready",
+				outcome === "timeout"
+					? "ready_timeout"
+					: spawnError
+						? `spawn_failed: ${spawnError.message}`
+						: "exited_before_ready",
 			);
 		}
 		const { channel, message } = outcome;
@@ -179,9 +211,22 @@ export class ToolChildClient {
 		if (this.#state !== "live" || live === undefined)
 			return Promise.reject(new ToolChildError("tool_child_unavailable", this.#state));
 		const jobId = `j${++this.#nextJob}`;
+		if (signal?.aborted === true)
+			return Promise.reject(new ToolChildError("tool_child_cancelled", "cancelled before it started"));
 		return new Promise((resolve, reject) => {
-			live.pending.set(jobId, { resolve, reject });
-			signal?.addEventListener("abort", () => live.channel.send({ type: "cancel", jobId }), { once: true });
+			const cancel = () => live.channel.send({ type: "cancel", jobId });
+			const unlisten = () => signal?.removeEventListener("abort", cancel);
+			live.pending.set(jobId, {
+				resolve: (value) => {
+					unlisten();
+					resolve(value);
+				},
+				reject: (error) => {
+					unlisten();
+					reject(error);
+				},
+			});
+			signal?.addEventListener("abort", cancel, { once: true });
 			live.channel.send({ type: "job", jobId, kind, args });
 		});
 	}
@@ -259,8 +304,20 @@ function settle(live: Pick<Live, "pending">, jobId: string, apply: (pending: Pen
 	apply(pending);
 }
 
+/** The channel's first frame; the subscription ends with it (frames after it belong to the live client's handler). */
 function firstMessage(channel: ToolChildChannel): Promise<ToolChildMessage> {
-	return new Promise((resolve) => channel.onMessage(resolve));
+	return new Promise((resolve) => {
+		let done = false;
+		let unsubscribe: (() => void) | undefined;
+		unsubscribe = channel.onMessage((message) => {
+			if (done) return;
+			done = true;
+			resolve(message);
+			unsubscribe?.();
+		});
+		// onMessage replays a queued frame synchronously, before it returned the unsubscribe function.
+		if (done) unsubscribe();
+	});
 }
 
 function delay(ms: number): Promise<void> {

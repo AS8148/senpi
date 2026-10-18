@@ -3,7 +3,14 @@
 // importer with only the child_process redirect (never loader.ts, which pulls the session writers in).
 import { parentPort, workerData } from "node:worker_threads";
 import { createBunExtensionImporter } from "../../../core/extensions/bun-extension-importer.ts";
-import { CHILD_PROCESS_REDIRECTS, childProcessVirtualModule, GATED_CHILD_PROCESS_ID } from "./gated-modules.ts";
+import {
+	CHILD_PROCESS_REDIRECTS,
+	childProcessVirtualModule,
+	GATED_CHILD_PROCESS_ID,
+	GATED_WORKER_THREADS_ID,
+	WORKER_THREADS_REDIRECTS,
+	workerThreadsVirtualModule,
+} from "./gated-modules.ts";
 import { type GatedWorkerData, installWorkerBarrier } from "./gated-worker.ts";
 
 interface ModuleWorkerData extends GatedWorkerData {
@@ -18,11 +25,21 @@ installWorkerBarrier(data);
 async function loadNamespace(path: string): Promise<Record<string, unknown>> {
 	if (Reflect.get(globalThis, "Bun") === undefined) return import(path);
 	const importer = createBunExtensionImporter(
-		{ [GATED_CHILD_PROCESS_ID]: childProcessVirtualModule() },
-		CHILD_PROCESS_REDIRECTS,
+		{
+			[GATED_CHILD_PROCESS_ID]: childProcessVirtualModule(),
+			[GATED_WORKER_THREADS_ID]: workerThreadsVirtualModule(),
+		},
+		{ ...CHILD_PROCESS_REDIRECTS, ...WORKER_THREADS_REDIRECTS },
 	);
 	return importer.importNamespace(path);
 }
+
+/** The second argument of a module export: `signal` aborts when the job is cancelled. */
+const cancellation = new AbortController();
+parentPort?.on("message", (message: unknown) => {
+	if (typeof message === "object" && message !== null && Reflect.get(message, "kind") === "cancel")
+		cancellation.abort();
+});
 
 try {
 	const namespace = await loadNamespace(data.modulePath);
@@ -34,7 +51,10 @@ try {
 			message: `${data.modulePath} has no function export "${data.exportName}"`,
 		});
 	} else {
-		parentPort?.postMessage({ kind: "module_result", value: await target(data.args) });
+		parentPort?.postMessage({
+			kind: "module_result",
+			value: await target(data.args, { signal: cancellation.signal }),
+		});
 	}
 } catch (error) {
 	parentPort?.postMessage({

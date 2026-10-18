@@ -18,6 +18,7 @@ export interface BarrierViolation {
 		| "proof_unacked"
 		| "proof_unordered"
 		| "proof_unknown_launch"
+		| "ledger_unwritable"
 		| "breakaway_contradicts_containment";
 	/** `tool_child_containment_violation` when the started command is not where its launch said it would be. */
 	readonly code: "tool_child_barrier_violation" | "tool_child_containment_violation";
@@ -49,6 +50,7 @@ interface Inflight {
 export class LaunchEnforcer {
 	readonly #options: LaunchEnforcerOptions;
 	readonly #inflight = new Map<string, Inflight>();
+	readonly #recordings = new Set<Promise<void>>();
 	#violated = false;
 
 	constructor(options: LaunchEnforcerOptions) {
@@ -64,6 +66,43 @@ export class LaunchEnforcer {
 			proven: false,
 		};
 		this.#inflight.set(frame.launchId, inflight);
+		const recording = this.#record(frame);
+		this.#recordings.add(recording);
+		try {
+			await recording;
+		} catch {
+			// No ledger entry means no containment record: the launch is never acked, and the child cannot be trusted
+			// to stay inside the barrier, so it ends like any other violation (never an unhandled rejection).
+			this.#violate(frame.launchId, "ledger_unwritable");
+			return;
+		} finally {
+			this.#recordings.delete(recording);
+		}
+		await this.#options.holdAck?.(frame.launchId);
+		if (this.#violated || inflight.proven) return;
+		inflight.acked = true;
+		this.#options.sendAck(frame.launchId);
+		// Armed before any await: the proof can arrive while the ack is being logged, and a timer armed after that would
+		// still fire (proof_missing) for a launch already proven.
+		if (!inflight.proven) {
+			const setTimer = this.#options.setTimer ?? defaultTimer;
+			inflight.cancelTimer = setTimer(
+				() => this.#violate(frame.launchId, "proof_missing"),
+				this.#options.proofMs ?? LAUNCH_PROOF_MS,
+			);
+		}
+		await this.#options.log.record({ type: "launch_ack", launchId: frame.launchId });
+	}
+
+	/**
+	 * Resolves once every launch received so far is in the ledger. Teardown reads the ledger after this: a launch whose
+	 * entry was still being written when the child was killed (a violation kills at once) is swept like any other.
+	 */
+	async recorded(): Promise<void> {
+		await Promise.allSettled([...this.#recordings]);
+	}
+
+	async #record(frame: ToolChildMessageOf<"launch">): Promise<void> {
 		const leaderStart =
 			frame.pgid === undefined ? undefined : await this.#options.leaderStart(frame.pgid).catch(() => undefined);
 		const entry: DescendantEntry = {
@@ -78,18 +117,9 @@ export class LaunchEnforcer {
 			...(leaderStart === undefined ? {} : { leaderStart }),
 			atMs: Date.now(),
 		};
-		await this.#options.log.record({ ...frame });
+		// The ledger is the containment record and gates the ack; the diagnostic log is written beside it, off that path.
+		void this.#options.log.record({ ...frame });
 		await this.#options.ledger.append(entry);
-		await this.#options.holdAck?.(frame.launchId);
-		if (this.#violated || inflight.proven) return;
-		inflight.acked = true;
-		this.#options.sendAck(frame.launchId);
-		await this.#options.log.record({ type: "launch_ack", launchId: frame.launchId });
-		const setTimer = this.#options.setTimer ?? defaultTimer;
-		inflight.cancelTimer = setTimer(
-			() => this.#violate(frame.launchId, "proof_missing"),
-			this.#options.proofMs ?? LAUNCH_PROOF_MS,
-		);
 	}
 
 	onProof(frame: ToolChildMessageOf<"launch_proof">): void {
