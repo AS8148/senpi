@@ -6,7 +6,7 @@
  * every other session's requests for seconds (senpi#3518). `loadEntriesFromFileAsync` reads
  * with asynchronous I/O and hands the loop back whenever its slice budget is spent.
  */
-import { appendFileSync, closeSync, existsSync, fstatSync, openSync, readSync, statSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, ftruncateSync, openSync, readSync, statSync, writeSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { StringDecoder } from "node:string_decoder";
 import { normalizePath } from "../utils/paths.ts";
@@ -115,24 +115,38 @@ export async function loadEntriesFromFileAsync(
 }
 
 /**
- * Terminate a final unterminated JSONL entry so this process's appends start on a new line.
- * Reads only the last byte: reading the whole file to look at its end cost a full copy of
- * every transcript on every open. Only a regular file has a last byte to read; anything else
- * (a FIFO, a device) is left to the loader, as before.
+ * Make this process's appends start on a new line. A final line with no newline is either a whole entry written
+ * without one (it parses: it is terminated and kept) or a line a crash tore part-way (it does not parse: it was
+ * never committed, so the file is cut back to its last complete line, senpi#3549). Terminating a torn line instead
+ * would turn it into a complete, corrupt line that no reader can tell from real corruption. Only the final
+ * segment is read, never the whole transcript; anything but a regular file is left to the loader, as before.
  */
 export function terminateFinalSessionLine(filePath: string): void {
 	if (!existsSync(filePath) || !statSync(filePath).isFile()) return;
-	const fd = openSync(filePath, "r");
-	let lastByte: number | undefined;
+	const fd = openSync(filePath, "r+");
 	try {
 		const size = fstatSync(fd).size;
-		if (size > 0) {
-			const byte = Buffer.alloc(1);
-			readSync(fd, byte, 0, 1, size - 1);
-			lastByte = byte[0];
-		}
+		const segmentStart = finalSegmentStart(fd, size);
+		if (segmentStart === size) return;
+		const segment = Buffer.alloc(size - segmentStart);
+		readSync(fd, segment, 0, segment.length, segmentStart);
+		if (parseSessionEntryLine(segment.toString("utf8")) === null) ftruncateSync(fd, segmentStart);
+		else writeSync(fd, "\n", size);
 	} finally {
 		closeSync(fd);
 	}
-	if (lastByte !== undefined && lastByte !== 10) appendFileSync(filePath, "\n");
+}
+
+/** The offset just after the file's last newline (0 when it has none); `size` when it ends in one. */
+function finalSegmentStart(fd: number, size: number): number {
+	const chunk = Buffer.alloc(Math.min(64 * 1024, size));
+	let end = size;
+	while (end > 0) {
+		const start = Math.max(0, end - chunk.length);
+		const read = readSync(fd, chunk, 0, end - start, start);
+		const newline = chunk.subarray(0, read).lastIndexOf(10);
+		if (newline >= 0) return start + newline + 1;
+		end = start;
+	}
+	return 0;
 }
