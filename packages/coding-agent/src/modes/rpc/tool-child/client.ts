@@ -97,6 +97,21 @@ export class ToolChildClient {
 			throw new ToolChildError("tool_child_busy", `already ${this.#state}`);
 		const generation = ++this.#generation;
 		this.#state = "spawning";
+		try {
+			await this.#bootstrap(generation);
+		} catch (error) {
+			// Whatever failed (the listener, the spawn, the hello), the client never stays "spawning": the next job retries.
+			if (this.#state === "spawning") this.#state = "dead";
+			throw error instanceof ToolChildError
+				? error
+				: new ToolChildError(
+						"tool_child_bootstrap_failed",
+						`spawn_failed: ${error instanceof Error ? error.message : String(error)}`,
+					);
+		}
+	}
+
+	async #bootstrap(generation: number): Promise<void> {
 		const listener = await openChannelListener({ dir: this.#options.dir, generation });
 		const child = spawnToolChild({
 			generation,
@@ -105,7 +120,15 @@ export class ToolChildClient {
 			command: this.#options.command ?? (await toolChildCommand()),
 			cwd: this.#options.cwd,
 		});
-		const exited = once(child, "exit").then(() => undefined);
+		let spawnError: Error | undefined;
+		child.once("error", (error) => {
+			spawnError = error;
+		});
+		// A spawn that fails (ENOENT, a missing cwd) emits "error" instead of "exit": both end the child.
+		const exited = Promise.race([once(child, "exit"), once(child, "error")]).then(
+			() => undefined,
+			() => undefined,
+		);
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		const timedOut = new Promise<"timeout">((resolve) => {
 			timer = setTimeout(() => resolve("timeout"), this.#options.readyMs ?? 10_000);
@@ -121,7 +144,11 @@ export class ToolChildClient {
 			this.#state = "dead";
 			throw new ToolChildError(
 				"tool_child_bootstrap_failed",
-				outcome === "timeout" ? "ready_timeout" : "exited_before_ready",
+				outcome === "timeout"
+					? "ready_timeout"
+					: spawnError
+						? `spawn_failed: ${spawnError.message}`
+						: "exited_before_ready",
 			);
 		}
 		const { channel, message } = outcome;
@@ -252,8 +279,20 @@ function settle(live: Pick<Live, "pending">, jobId: string, apply: (pending: Pen
 	apply(pending);
 }
 
+/** The channel's first frame; the subscription ends with it (frames after it belong to the live client's handler). */
 function firstMessage(channel: ToolChildChannel): Promise<ToolChildMessage> {
-	return new Promise((resolve) => channel.onMessage(resolve));
+	return new Promise((resolve) => {
+		let done = false;
+		let unsubscribe: (() => void) | undefined;
+		unsubscribe = channel.onMessage((message) => {
+			if (done) return;
+			done = true;
+			resolve(message);
+			unsubscribe?.();
+		});
+		// onMessage replays a queued frame synchronously, before it returned the unsubscribe function.
+		if (done) unsubscribe();
+	});
 }
 
 function delay(ms: number): Promise<void> {
