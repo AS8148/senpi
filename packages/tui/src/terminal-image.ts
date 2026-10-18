@@ -8,6 +8,7 @@ import {
 	type TerminalCapabilities,
 } from "./terminal-capabilities.ts";
 import { sanitizeTerminalLabel, shortenImagePath } from "./terminal-text.ts";
+import { isOldWindowsWezTerm, WEZTERM_WINDOWS_IMAGES_HINT } from "./wezterm-windows-images.ts";
 
 export type { ImageProtocol, TerminalCapabilities } from "./terminal-capabilities.ts";
 export { outerKittyGraphicsMode } from "./terminal-capabilities.ts";
@@ -97,7 +98,9 @@ function detectCapabilitiesFromEnvironment(tmuxForwardsHyperlink: () => boolean)
 	}
 
 	if (process.env.WEZTERM_PANE || termProgram === "wezterm") {
-		return { images: "kitty", trueColor: true, hyperlinks: true };
+		return isOldWindowsWezTerm(process.env.TERM_PROGRAM_VERSION, process.platform)
+			? { images: null, trueColor: true, hyperlinks: true, imageHint: WEZTERM_WINDOWS_IMAGES_HINT }
+			: { images: "kitty", trueColor: true, hyperlinks: true };
 	}
 
 	// Warp supports the Kitty graphics protocol and OSC 8 hyperlinks.
@@ -839,5 +842,6 @@ export function imageFallback(mimeType: string, dimensions?: ImageDimensions, fi
 	}
 	parts.push(`[${sanitizeTerminalLabel(mimeType)}]`);
 	if (dimensions) parts.push(`${dimensions.widthPx}x${dimensions.heightPx}`);
-	return `[Image: ${parts.join(" ")}]`;
+	const hint = getCapabilities().imageHint;
+	return hint ? `[Image: ${parts.join(" ")}] (${hint})` : `[Image: ${parts.join(" ")}]`;
 }
