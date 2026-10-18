@@ -875,7 +875,9 @@ Upstream edits to cli/args.ts at the next sync.
 ### What changed
 
 - `packages/coding-agent/src/cli/args.ts`: parse and document `--print-prompt-sizes`.
+- Contract: no provider request; built-in remote attach is skipped; third-party session_start hooks still run and may use the network. The help line states this boundary; JSON names those third-party extensions and reports MCP as "not attached; tool sizes exclude them" with configured server names/count, not speculative sizes.
 - `packages/coding-agent/src/cli/print-prompt-sizes.ts`: bind a normal session, request a sizes-only prefix preview, emit JSON and exit. Missing models and skipped previews exit nonzero with a reason. Prompt and tool content never enter the output.
+- `packages/coding-agent/src/cli/print-prompt-sizes.ts`: bind with the explicit sizes-only startup signal; other session starts keep their existing behavior.
 
 ### Why
 

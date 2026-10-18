@@ -137,6 +137,7 @@ import {
 import { admitCursorHistory, cursorAdmissionBudgetBytes } from "./cursor-history-admission.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import { resolveDiscoveredResourcePaths } from "./discovered-resource-scope.ts";
+import type { DynamicSystemPromptPart } from "./dynamic-prompt/build.ts";
 import {
 	type BuildDynamicSystemPromptOptions,
 	buildDynamicSystemPrompt,
@@ -923,6 +924,7 @@ class MissingModelAccessError extends Error {
 	}
 }
 export interface ExtensionBindings {
+	readonly sizesOnly?: boolean;
 	uiContext?: ExtensionUIContext;
 	mode?: ExtensionMode;
 	commandContextActions?: ExtensionCommandContextActions;
@@ -1411,6 +1413,8 @@ export class AgentSession {
 		customPrompt?: string;
 		appendSystemPrompt?: string;
 	};
+	private _baseSystemPromptParts: readonly DynamicSystemPromptPart[] = [];
+	private _sizesOnlyStartup = false;
 	private _systemPromptOverride?: string;
 	private _promptSurface: PromptSurface | undefined;
 	private _browserEngine: BrowserEngine | undefined;
@@ -4842,7 +4846,12 @@ export class AgentSession {
 			customPrompt: loaderSystemPrompt,
 			appendSystemPrompt: loaderAppendSystemPrompt.length > 0 ? loaderAppendSystemPrompt.join("\n\n") : undefined,
 		};
-		const prompt = buildDynamicSystemPrompt(this._baseSystemPromptOptions);
+		const prompt = buildDynamicSystemPrompt({
+			...this._baseSystemPromptOptions,
+			onParts: (parts) => {
+				this._baseSystemPromptParts = parts;
+			},
+		});
 		if (!this._isEvalOnlyPolicyArmed()) return prompt;
 		const armed = this._evalOnlyToolNames ?? new Set<string>();
 		const registered = new Set([...armed].filter((name) => this._toolRegistry.has(name)));
@@ -9373,6 +9382,7 @@ export class AgentSession {
 	}
 
 	async bindExtensions(bindings: ExtensionBindings): Promise<void> {
+		this._sizesOnlyStartup = bindings.sizesOnly === true;
 		const finishBindingWork = this._sessionWorkBarrier.begin();
 		const settleSessionStart = this._beginSessionStartSettlement();
 		const bindingPromptReadiness = new Set<Promise<void>>();
@@ -9399,7 +9409,10 @@ export class AgentSession {
 
 			this._applyExtensionBindings(this._extensionRunner);
 			this.syncPromptCacheSafeWaitEnv();
-			await this._extensionRunner.emit(this._sessionStartEvent);
+			await this._extensionRunner.emit({
+				...this._sessionStartEvent,
+				...(this._sizesOnlyStartup ? { sizesOnly: true } : {}),
+			});
 			this._enforceConfiguredDefaultTools();
 			await this.extendResourcesFromExtensions(this._sessionStartEvent.reason === "reload" ? "reload" : "startup");
 		} finally {
@@ -9779,6 +9792,8 @@ export class AgentSession {
 							getServiceTier: () => this.effectiveServiceTier,
 							getBaseSystemPrompt: () => this._baseSystemPrompt,
 							getBaseSystemPromptOptions: () => this._baseSystemPromptOptions,
+							getBaseSystemPromptParts: () => this._baseSystemPromptParts,
+							sizesOnlyStartup: this._sizesOnlyStartup,
 						},
 						options,
 					),

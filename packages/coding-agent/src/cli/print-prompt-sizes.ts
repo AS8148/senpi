@@ -16,7 +16,7 @@ export async function printPromptSizes(runtime: AgentSessionRuntime): Promise<ne
 			output = { error: { reason: "session initialization failed" } };
 		} else {
 			initTheme(runtime.services.settingsManager.getTheme(), false);
-			await runtime.session.bindExtensions({ mode: "print" });
+			await runtime.session.bindExtensions({ mode: "print", sizesOnly: true });
 			const context = runtime.session.extensionRunner.createContext();
 			const result = await context.getPromptCachePrefixRequest?.({ sizesOnly: true });
 			if (result === undefined) {

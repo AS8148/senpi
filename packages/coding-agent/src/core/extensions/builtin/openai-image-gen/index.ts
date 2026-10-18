@@ -30,13 +30,20 @@ Generate images with the built-in image_generation tool instead of a client-side
 
 const UNKNOWN_MODEL_REASON = "No model is selected, so image generation availability is unknown.";
 
-async function resolveState(model: NativeImageGenTarget, ctx: ExtensionContext): Promise<ImageGenArbitrationState> {
+async function resolveState(
+	model: NativeImageGenTarget,
+	ctx: ExtensionContext,
+	sizesOnly: boolean,
+): Promise<ImageGenArbitrationState> {
 	const modelKey = nativeImageGenModelKey(model);
 	if (model === undefined) {
 		return { kind: "unavailable", modelKey, reason: UNKNOWN_MODEL_REASON };
 	}
 	if (supportsNativeOpenAiImageGeneration(model) && isOpenAiImageGenEnabled()) {
 		return { kind: "native", modelKey, source: model.baseUrl };
+	}
+	if (sizesOnly) {
+		return { kind: "unavailable", modelKey, reason: "Client credential resolution skipped for size inspection." };
 	}
 
 	const auth = await resolveImageGenAuth({ modelRegistry: imageGenRegistryOverride() ?? ctx.modelRegistry });
@@ -48,9 +55,10 @@ async function resolveState(model: NativeImageGenTarget, ctx: ExtensionContext):
 
 export default function openaiImageGenExtension(pi: ExtensionAPI): void {
 	let state: ImageGenArbitrationState = { kind: "unavailable", modelKey: "", reason: UNKNOWN_MODEL_REASON };
+	let sizesOnly = false;
 
 	async function refresh(model: NativeImageGenTarget, ctx: ExtensionContext): Promise<void> {
-		state = await resolveState(model, ctx);
+		state = await resolveState(model, ctx, sizesOnly);
 		// Cross-builtin wiring: the client tool defers only while this builtin will
 		// actually inject the server tool for this exact model. Both flip directions
 		// run through here, so a switch back to a proxied endpoint re-arms the tool.
@@ -76,10 +84,11 @@ export default function openaiImageGenExtension(pi: ExtensionAPI): void {
 	/** The arbitration for `model` without committing it or the bypass it arms (a preview, senpi#2115). */
 	async function peekKind(model: NativeImageGenTarget, ctx: ExtensionContext): Promise<ImageGenMode> {
 		if (nativeImageGenModelKey(model) === state.modelKey) return state.kind;
-		return (await resolveState(model, ctx)).kind;
+		return (await resolveState(model, ctx, sizesOnly)).kind;
 	}
 
-	pi.on("session_start", async (_event, ctx) => {
+	pi.on("session_start", async (event, ctx) => {
+		sizesOnly = event.sizesOnly === true;
 		await refresh(ctx.model, ctx);
 	});
 

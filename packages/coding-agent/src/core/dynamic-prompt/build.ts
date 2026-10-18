@@ -32,6 +32,8 @@ export interface DynamicPromptCoreContext {
 }
 
 export interface BuildDynamicSystemPromptOptions {
+	/** Observe the parts from this exact render without composing the prompt again. */
+	onParts?: (parts: readonly DynamicSystemPromptPart[]) => void;
 	/** Loader replacement and additions, assembled here with the same separators as the session. */
 	customPrompt?: string;
 	appendSystemPrompt?: string;
@@ -156,7 +158,7 @@ export function buildDynamicSystemPromptParts(options: BuildDynamicSystemPromptO
 }
 
 export function buildDynamicSystemPrompt(options: BuildDynamicSystemPromptOptions): string {
-	return buildDynamicSystemPromptParts(options)
-		.map((part) => part.text)
-		.join("");
+	const parts = buildDynamicSystemPromptParts(options);
+	options.onParts?.(parts);
+	return parts.map((part) => part.text).join("");
 }

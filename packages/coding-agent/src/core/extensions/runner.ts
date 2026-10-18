@@ -11,6 +11,7 @@ import { type Theme, theme } from "../../modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../../utils/ansi.ts";
 import type { ResourceDiagnostic } from "../diagnostics.ts";
 import type { DiscoveredResourceEntry } from "../discovered-resource-scope.ts";
+import type { DynamicSystemPromptPart } from "../dynamic-prompt/build.ts";
 import { createEventBus, type EventBus, EXTENSION_RPC_EVENT_CHANNEL, type ExtensionRpcEvent } from "../event-bus.ts";
 import type { KeybindingsConfig } from "../keybindings.ts";
 import type { NamedMemoryReporter } from "../memory-report/memory-report-registry.ts";
@@ -2081,6 +2082,13 @@ export class ExtensionRunner {
 		return headers;
 	}
 
+	/** Use the loader's provenance, including bundled modules and generated global-default shims. */
+	getThirdPartySessionStartPaths(): string[] {
+		return this.extensions
+			.filter((ext) => ext.sourceInfo.source !== "builtin" && (ext.handlers.get("session_start")?.length ?? 0) > 0)
+			.map((ext) => ext.path);
+	}
+
 	/** Paths of extensions with a `before_agent_start` handler not registered `{ previewSafe: true }`. */
 	getPreviewUnsafeBeforeAgentStartPaths(): string[] {
 		const paths: string[] = [];
@@ -2101,7 +2109,12 @@ export class ExtensionRunner {
 			readonly signal?: AbortSignal;
 			readonly trigger?: BeforeAgentStartEvent["trigger"];
 			/** Internal size accounting; observes only preview composition, never real turns. */
-			readonly observePrompt?: (extensionPath: string, before: string, after: string) => void;
+			readonly observePrompt?: (contribution: {
+				readonly path: string;
+				readonly before: string;
+				readonly after: string;
+				readonly parts?: readonly DynamicSystemPromptPart[];
+			}) => void;
 		} = {},
 	): Promise<BeforeAgentStartCombinedResult | undefined> {
 		let currentSystemPrompt = systemPrompt;
@@ -2135,6 +2148,7 @@ export class ExtensionRunner {
 					};
 					const promptBefore = currentSystemPrompt;
 					const handlerResult = await handler(event, ctx);
+					let parts: readonly DynamicSystemPromptPart[] | undefined;
 
 					if (handlerResult) {
 						const result = handlerResult as BeforeAgentStartEventResult;
@@ -2144,10 +2158,16 @@ export class ExtensionRunner {
 						if (result.systemPrompt !== undefined) {
 							currentSystemPrompt = result.systemPrompt;
 							systemPromptModified = true;
+							parts = result.systemPromptParts;
 						}
 					}
 					if (options.preview === true) {
-						options.observePrompt?.(ext.path, promptBefore, currentSystemPrompt);
+						options.observePrompt?.({
+							path: ext.path,
+							before: promptBefore,
+							after: currentSystemPrompt,
+							...(parts === undefined ? {} : { parts }),
+						});
 					}
 				} catch (err) {
 					const message = err instanceof Error ? err.message : String(err);

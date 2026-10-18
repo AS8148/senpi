@@ -8,6 +8,7 @@ import {
 	type TranscriptContext,
 } from "@earendil-works/pi-ai";
 import { isValidThinkingLevel } from "../cli/args.ts";
+import type { DynamicSystemPromptPart } from "./dynamic-prompt/build.ts";
 import type { ExtensionRunner } from "./extensions/runner.ts";
 import type {
 	BuildSystemPromptOptions,
@@ -16,7 +17,9 @@ import type {
 	ServiceTier,
 } from "./extensions/types.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
+import { promptSizeExtensionNames } from "./prompt-size-extension-names.ts";
 import { PromptSizeAccounting } from "./prompt-size-report.ts";
+import { promptSizeStartupNotes } from "./prompt-size-startup.ts";
 
 export interface PromptCachePrefixSources {
 	readonly agent: Agent;
@@ -24,9 +27,11 @@ export interface PromptCachePrefixSources {
 	readonly modelRuntime: ModelRuntime;
 	/** Settles once the session start the prefix depends on (tools, discovered skills) has run. */
 	readonly ready: Promise<void>;
+	readonly sizesOnlyStartup?: boolean;
 	getServiceTier(): ServiceTier | undefined;
 	getBaseSystemPrompt(): string;
 	getBaseSystemPromptOptions(): BuildSystemPromptOptions;
+	getBaseSystemPromptParts?(): readonly DynamicSystemPromptPart[];
 }
 
 export const PROMPT_STARTED_REASON = "a prompt started composing its turn before the prefix was built";
@@ -94,7 +99,10 @@ export async function buildPromptCachePrefixRequest(
 	if (unsafe.length > 0) {
 		return skipped(`before_agent_start handlers not registered previewSafe: ${unsafe.join(", ")}`);
 	}
-	const composed = await untilAborted(composeTurnSystemPrompt(sources, signal), signal);
+	const composed = await untilAborted(
+		composeTurnSystemPrompt(sources, signal, requestOptions.sizesOnly === true),
+		signal,
+	);
 	if (composed === CANCELLED) return cancelled(signal);
 	const { agent, runner } = sources;
 	const state = agent.state;
@@ -132,7 +140,18 @@ export async function buildPromptCachePrefixRequest(
 			model: prepared.model,
 			context: toPrefixContext(transcript),
 			options: prepared.options,
-			sizeReport: composed.accounting.report(getCurrentTools(transcript.messages)),
+			...(composed.accounting === undefined
+				? {}
+				: {
+						sizeReport: {
+							...composed.accounting.report(getCurrentTools(transcript.messages)),
+							...promptSizeStartupNotes({
+								cwd: sources.getBaseSystemPromptOptions().cwd,
+								runner,
+								sizesOnlyStartup: sources.sizesOnlyStartup === true,
+							}),
+						},
+					}),
 		},
 	};
 }
@@ -152,18 +171,38 @@ function toPrefixContext(transcript: TranscriptContext): Context {
 	};
 }
 
-async function composeTurnSystemPrompt(sources: PromptCachePrefixSources, signal: AbortSignal) {
+async function composeTurnSystemPrompt(sources: PromptCachePrefixSources, signal: AbortSignal, sizesOnly: boolean) {
 	let systemPrompt = sources.getBaseSystemPrompt();
-	let accounting = new PromptSizeAccounting(systemPrompt, sources.getBaseSystemPromptOptions());
+	let accounting: PromptSizeAccounting | undefined;
+	const extensionNames = sizesOnly
+		? promptSizeExtensionNames(sources.runner.getExtensionPaths())
+		: new Map<string, string>();
 	for (let pass = 0; pass < MAX_COMPOSITION_PASSES && !signal.aborted; pass += 1) {
 		const base = sources.getBaseSystemPrompt();
-		accounting = new PromptSizeAccounting(base, sources.getBaseSystemPromptOptions());
+		accounting = sizesOnly
+			? new PromptSizeAccounting({
+					base,
+					options: sources.getBaseSystemPromptOptions(),
+					parts: sources.getBaseSystemPromptParts?.() ?? [],
+					extensionNames,
+				})
+			: undefined;
+		const currentAccounting = accounting;
 		const result = await sources.runner.emitBeforeAgentStart(
 			"",
 			undefined,
 			base,
 			sources.getBaseSystemPromptOptions(),
-			{ preview: true, signal, observePrompt: (path, before, after) => accounting.observe(path, before, after) },
+			{
+				preview: true,
+				signal,
+				...(currentAccounting === undefined
+					? {}
+					: {
+							observePrompt: (contribution: Parameters<PromptSizeAccounting["observe"]>[0]) =>
+								currentAccounting.observe(contribution),
+						}),
+			},
 		);
 		systemPrompt = result?.systemPrompt ?? base;
 		if (sources.getBaseSystemPrompt() === base) break;

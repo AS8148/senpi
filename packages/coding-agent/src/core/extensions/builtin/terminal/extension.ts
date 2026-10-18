@@ -145,7 +145,7 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 				state.recordedBackgroundIds.clear();
 				bindTerminalManifestWriter(sessionKey, writer);
 			}
-		} else if (sessionKey !== undefined) {
+		} else if (sessionKey !== undefined && !event.sizesOnly) {
 			await startPersistence({ pi, state, toolCtx, sessionKey });
 		}
 		syncToolset(pi, state);

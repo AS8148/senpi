@@ -141,6 +141,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		}) ?? (() => {});
 
 	pi.on("session_start", async (event, ctx) => {
+		if (event.sizesOnly) return;
 		ctx.ui.setStatus("todo-waiting", undefined);
 		activeContext = ctx;
 		monitorContinuation.start(ctx);

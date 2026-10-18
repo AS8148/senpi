@@ -1,3 +1,21 @@
+## 2026-10-18 - Do not restore commands during size inspection (senpi#3483)
+
+### What changed
+
+- `extension.ts`: diagnostic startup preserves tool setup but skips persistence restoration, which can restart saved remote commands and command monitors.
+
+### Why
+
+Inspecting a prompt must not restart prior background work.
+
+### Why an extension could not handle it
+
+The terminal built-in owns command restoration.
+
+### Expected merge conflict zones
+
+- `extension.ts`: the `startPersistence` branch in `session_start`.
+
 ## 2026-10-17 - Human-input command monitors (oh-my-openagent#10280)
 
 ### What changed

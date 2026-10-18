@@ -1,10 +1,10 @@
 import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename } from "node:path";
 import type { Tool } from "@earendil-works/pi-ai";
 import { estimateTextTokens } from "@earendil-works/pi-ai/utils/estimate";
-import { buildDynamicSystemPromptParts, type DynamicSystemPromptPart } from "./dynamic-prompt/build.ts";
+import type { DynamicSystemPromptPart } from "./dynamic-prompt/build.ts";
 import type { BuildSystemPromptOptions } from "./extensions/types.ts";
+import type { PromptSizeStartupNotes } from "./prompt-size-startup.ts";
 import {
 	COMPACT_SKILL_CATALOG_COUNT,
 	COMPACT_SKILL_CATALOG_DESCRIPTION_BYTES,
@@ -23,7 +23,7 @@ export interface PromptSizeEntry {
 	readonly topTools?: readonly { readonly name: string; readonly bytes: number }[];
 }
 
-export interface PromptSizeReport {
+export interface PromptSizeReport extends Partial<PromptSizeStartupNotes> {
 	readonly sections: readonly PromptSizeEntry[];
 	readonly total: { readonly bytes: number; readonly estimatedTokens: number };
 }
@@ -45,35 +45,42 @@ function entry(part: DynamicSystemPromptPart): PromptSizeEntry {
 export class PromptSizeAccounting {
 	readonly #entries: PromptSizeEntry[];
 	readonly #skillCount: number;
+	readonly #extensionNames: ReadonlyMap<string, string>;
 
-	constructor(base: string, options: BuildSystemPromptOptions) {
-		const parts = buildDynamicSystemPromptParts({
-			...options,
-			selectedTools: options.selectedTools ?? [],
-			toolSnippets: options.toolSnippets ?? {},
-			promptGuidelines: options.promptGuidelines ?? [],
-			contextFiles: options.contextFiles ?? [],
-			skills: options.skills ?? [],
-		});
+	constructor(input: {
+		readonly base: string;
+		readonly options: BuildSystemPromptOptions;
+		readonly parts: readonly DynamicSystemPromptPart[];
+		readonly extensionNames: ReadonlyMap<string, string>;
+	}) {
+		const { base, options, parts } = input;
+		this.#extensionNames = input.extensionNames;
 		const rendered = parts.map((part) => part.text).join("");
 		// Session policies may append guidance after the dynamic builder. Preserve it as
 		// its own contribution; a truly opaque loader/preset stays one opaque component.
-		this.#entries = base.startsWith(rendered)
-			? [
-					...parts,
-					...(base === rendered ? [] : [{ name: "session_policy", text: base.slice(rendered.length) }]),
-				].map(entry)
-			: [entry({ name: "core", source: "session", text: base })];
+		this.#entries =
+			parts.length > 0 && base.startsWith(rendered)
+				? [
+						...parts,
+						...(base === rendered ? [] : [{ name: "session_policy", text: base.slice(rendered.length) }]),
+					].map(entry)
+				: [entry({ name: "core", source: "session", text: base })];
 		this.#skillCount = (options.skills ?? []).filter((skill) => !skill.disableModelInvocation).length;
 	}
 
-	observe(extensionPath: string, before: string, after: string): void {
+	observe(contribution: {
+		readonly path: string;
+		readonly before: string;
+		readonly after: string;
+		readonly parts?: readonly DynamicSystemPromptPart[];
+	}): void {
+		const { path, before, after, parts } = contribution;
+		if (parts !== undefined && parts.map((part) => part.text).join("") === after) {
+			this.#entries.splice(0, this.#entries.length, ...parts.map(entry));
+			return;
+		}
 		if (before === after) return;
-		const name = extensionPath.startsWith("<")
-			? extensionPath.replace(/^<[^:]+:|>$/g, "")
-			: basename(extensionPath)
-					.replace(/\.[^.]+$/, "")
-					.replace(/^builtin:/, "");
+		const name = this.#extensionNames.get(path) ?? path.replace(/^<[^:]+:|>$/g, "");
 		const added = after.startsWith(before)
 			? after.slice(before.length)
 			: after.endsWith(before)
@@ -112,11 +119,13 @@ export class PromptSizeAccounting {
 		if (project.length > 0) {
 			sections.push({
 				name: "project_context",
-				source: "context files",
+				source: project[0]?.source.startsWith("prompt-preset:") ? project[0].source : "context files",
 				bytes: project.reduce((sum, part) => sum + part.bytes, 0),
 				estimatedTokens: project.reduce((sum, part) => sum + part.estimatedTokens, 0),
 				boundingSettings: ["contextFiles.maxBytesPerFile", "contextFiles.maxTotalBytes"],
-				files: project.filter((part) => part.source !== "dynamic-prompt").sort((a, b) => b.bytes - a.bytes),
+				files: project
+					.filter((part) => part.source !== "dynamic-prompt" && !part.source.startsWith("prompt-preset:"))
+					.sort((a, b) => b.bytes - a.bytes),
 			});
 		}
 		const serializedTools = JSON.stringify(tools);
