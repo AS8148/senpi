@@ -5,7 +5,7 @@
  * loaded OAuth flow modules, never from browser-facing entry points.
  */
 
-import { createServer, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { oauthErrorHtml, oauthSuccessHtml } from "../../utils/oauth-page.ts";
 import type { ProviderAuthInteraction } from "../types.ts";
 
@@ -47,6 +47,20 @@ export interface OAuthCallbackServer<T> {
 	close(): void;
 }
 
+/**
+ * Header a newer login on this machine sends with its takeover request. A web page cannot send it:
+ * a custom header on a cross-origin request needs a CORS preflight this server never approves, and a
+ * plain GET (an `<img>` tag) or form POST cannot carry it. Requests that carry `Origin` came from a
+ * page and are refused outright (senpi#3623 review).
+ */
+export const OAUTH_CANCEL_HEADER = "x-oauth-callback-cancel";
+
+function isLocalCancelRequest(request: IncomingMessage): boolean {
+	return (
+		request.method === "POST" && request.headers[OAUTH_CANCEL_HEADER] === "1" && request.headers.origin === undefined
+	);
+}
+
 function sendPage(response: ServerResponse, status: number, html: string): void {
 	response.writeHead(status, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
 	response.end(html);
@@ -83,7 +97,11 @@ export async function startOAuthCallbackServer<T>(
 	const server = createServer((request, response) => {
 		void (async () => {
 			const url = new URL(request.url ?? "/", "http://localhost");
-			if (request.method === "GET" && options.cancelPath !== undefined && url.pathname === options.cancelPath) {
+			if (options.cancelPath !== undefined && url.pathname === options.cancelPath) {
+				if (!isLocalCancelRequest(request)) {
+					sendPage(response, 403, oauthErrorHtml("Not allowed."));
+					return;
+				}
 				sendPage(response, 200, oauthErrorHtml("This sign-in was replaced by a newer one."));
 				if (!claimed) {
 					finish({ value: undefined });

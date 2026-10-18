@@ -75,6 +75,29 @@ describe("ChatGPT login callback port (#3623)", () => {
 		await expect(startChatGptCallback({ host: "127.0.0.1", state: "s", signal, ports })).resolves.toBeUndefined();
 	});
 
+	it.each([
+		["a plain GET, as an <img> tag sends", { method: "GET" }],
+		["a POST without the takeover header, as a form sends", { method: "POST" }],
+		[
+			"a page's POST that carries the header and an Origin",
+			{ method: "POST", headers: { "x-oauth-callback-cancel": "1", origin: "https://example.com" } },
+		],
+	])("refuses %s to /cancel and keeps waiting for the browser", async (_label, init) => {
+		const [primary, fallback] = [await freePort(), await freePort()];
+		const login = await startChatGptCallback({
+			host: "127.0.0.1",
+			state: "mine",
+			signal,
+			ports: [primary, fallback],
+		});
+		if (login) opened.push(login.server);
+
+		const refused = await fetch(`http://127.0.0.1:${primary}/cancel`, init);
+		expect(refused.status).toBe(403);
+		expect((await callback(primary, "mine")).status).toBe(200);
+		await expect(login?.server.wait()).resolves.toBe("the-code");
+	});
+
 	it("tells a browser that carries another login's state to paste the address into the waiting session", async () => {
 		const [primary, fallback] = [await freePort(), await freePort()];
 		const login = await startChatGptCallback({

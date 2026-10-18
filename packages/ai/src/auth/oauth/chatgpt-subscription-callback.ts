@@ -3,7 +3,7 @@
  *
  * OpenAI registers only ports 1455 and 1457 for this client, so the port cannot be ephemeral. When
  * another login on this machine (a second session, an abandoned RPC prompt, the desktop engine, or
- * Codex CLI) still holds 1455, this asks it to let go through `/cancel` and retries briefly, then
+ * Codex CLI) still holds 1455, this asks it to let go with a `POST /cancel` carrying a header no web page can send (Codex CLI's server answers any method on `/cancel`) and retries briefly, then
  * falls back to 1457, the same order as Codex CLI's `bind_server`. The authorize URL must name the
  * port actually bound, so callers build it from the returned `redirectUri`.
  *
@@ -13,7 +13,7 @@
 import { request } from "node:http";
 import { getProviderEnvValue } from "../../utils/provider-env.ts";
 import { sleep } from "../../utils/sleep.ts";
-import { type OAuthCallbackServer, startOAuthCallbackServer } from "./callback-server.ts";
+import { OAUTH_CANCEL_HEADER, type OAuthCallbackServer, startOAuthCallbackServer } from "./callback-server.ts";
 
 export const CHATGPT_CALLBACK_PORTS: readonly number[] = [1455, 1457];
 const PORTS_ENV = "PI_CHATGPT_OAUTH_CALLBACK_PORTS";
@@ -50,7 +50,14 @@ function isAddressInUse(error: unknown): boolean {
 function askHolderToCancel(host: string, port: number): Promise<void> {
 	return new Promise((resolve) => {
 		const outgoing = request(
-			{ host, port, path: CANCEL_PATH, method: "GET", timeout: CANCEL_TIMEOUT_MS },
+			{
+				host,
+				port,
+				path: CANCEL_PATH,
+				method: "POST",
+				headers: { [OAUTH_CANCEL_HEADER]: "1" },
+				timeout: CANCEL_TIMEOUT_MS,
+			},
 			(response) => {
 				response.resume();
 				response.on("end", resolve);
