@@ -1,9 +1,14 @@
 // senpi#3566 todo 4 (Windows half): the breakaway launch against the real kernel32 (runs in the Windows CI job under
 // Bun; skipped with a reason elsewhere, and the CI job refuses a skip).
+
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { ToolChildClient } from "./client.ts";
+import { TOOL_CHILD_MODULE_ROOTS_ENV } from "./module-job.ts";
 import { loadKernel32Process, startBreakaway } from "./windows-breakaway.ts";
 
 const kernel = loadKernel32Process();
@@ -43,4 +48,75 @@ describe.skipIf(reason !== undefined)(`breakaway launch on kernel32${reason ? ` 
 			await rm(dir, { recursive: true, force: true });
 		}
 	});
+});
+
+const extensionDir = resolve(import.meta.dirname, "../../../../test/fixtures/module-job-ext");
+const roleEntry = resolve(import.meta.dirname, "../../../tool-child-main.ts");
+
+function processAlive(pid: number): boolean {
+	const listed = execFileSync("tasklist", ["/FI", `PID eq ${pid}`, "/NH"], { encoding: "utf8" });
+	return listed.includes(String(pid));
+}
+
+async function goneWithin(pid: number, ms: number): Promise<boolean> {
+	const deadline = Date.now() + ms;
+	while (Date.now() < deadline) {
+		if (!processAlive(pid)) return true;
+		await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+	}
+	return !processAlive(pid);
+}
+
+describe.skipIf(reason !== undefined)(`tool child job on kernel32${reason ? ` (skipped: ${reason})` : ""}`, () => {
+	it("ends a recorded member when the child is killed, and leaves another session's job untouched", async () => {
+		const dirs = [await mkdtemp(join(tmpdir(), "tkw-a-")), await mkdtemp(join(tmpdir(), "tkw-b-"))];
+		const client = (dir: string) =>
+			new ToolChildClient({
+				dir,
+				cwd: dir,
+				command: { command: process.execPath, args: [roleEntry] },
+				env: { ...process.env, [TOOL_CHILD_MODULE_ROOTS_ENV]: JSON.stringify([extensionDir]) },
+			});
+		const [victim, bystander] = [client(dirs[0] ?? ""), client(dirs[1] ?? "")];
+		try {
+			await victim.start();
+			await bystander.start();
+			const marker = join(dirs[0] ?? "", "started.txt");
+			const started = (await victim.run("module", {
+				modulePath: join(extensionDir, "win-gated.ts"),
+				export: "startGated",
+				args: { params: { marker, gate: `SenpiGateKill${process.pid}` }, toolCallId: "t1" },
+			})) as { details: { pid: number } };
+			const commandPid = started.details.pid;
+			const log = join(dirs[0] ?? "", "launches.jsonl");
+			const deadline = Date.now() + 10_000;
+			while (
+				!(existsSync(log) && (await readFile(log, "utf8")).includes('"job_membership"')) &&
+				Date.now() < deadline
+			)
+				await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+			const records = (await readFile(log, "utf8"))
+				.trim()
+				.split("\n")
+				.map((line) => JSON.parse(line) as Record<string, unknown>);
+			expect(records.find((record) => record.type === "job_membership")).toMatchObject({
+				member: true,
+				evidence: "creation",
+			});
+			expect(records.some((record) => record.type === "heartbeat")).toBe(false);
+			expect(processAlive(commandPid)).toBe(true);
+			process.kill(victim.pid ?? -1);
+			expect(await goneWithin(commandPid, 3_000)).toBe(true);
+			const slept = (await bystander.run("module", {
+				modulePath: join(extensionDir, "win-gated.ts"),
+				export: "sleepFor",
+				args: { params: { ms: 200 }, toolCallId: "t2" },
+			})) as { details: { pid: number } };
+			expect(slept.details.pid).toBe(bystander.pid);
+		} finally {
+			await victim.close().catch(() => {});
+			await bystander.close().catch(() => {});
+			for (const dir of dirs) await rm(dir, { recursive: true, force: true });
+		}
+	}, 60_000);
 });
