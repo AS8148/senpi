@@ -1,3 +1,24 @@
+## 2026-10-18 - A session-holder lease whose owner identity cannot be proven no longer blocks once its host generation ended (senpi#3658)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-stalled-evidence.ts`: new `holderGenerationEnded({ host_instance, host_daemon_dir })`. It is true when that generation's heartbeat stopped (`generationHeartbeatStopped`), or when the named daemon directory holds `endpoint.json` and the generation's directory is gone (a daemon removes it only after its child was judged not alive by the same rule). A lease without `host_daemon_dir` is read against this host's own daemon by heartbeat only. A fresh heartbeat, no heartbeat file, this host's own generation, an unsafe instance id or a relative directory never end.
+- `packages/coding-agent/src/modes/rpc/session-held.ts`: the admission check passes `holderEnded: holderGenerationEnded` to `foreignSessionHolders`.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: `open_session` adds `host_daemon_dir` (the supervised host's `SENPI_RPC_HOST_DAEMON_DIR`) to the holder endpoint. It is written into the holder record only; `session_held` errorData still names `pid`, `cwd`, `host_socket`, `host_instance`.
+- Core (fork-only): `core/extensions/builtin/terminal/lease-file.ts` `reclaimLockState` marks a live pid whose start time is unreadable `held` + `unproven`; `core/session-holders.ts` `liveHolders` reclaims such a record (only while it is unchanged) when `probes.holderEnded` says its generation ended; `core/session-hold-errors.ts` adds the optional `host_daemon_dir` to `SessionHolderEndpoint`; `core/foreign-session-holders.ts` takes the widened probes.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/host-stalled-evidence.ts`, `session-held.ts`, `session-command-router.ts`: with the two layers below, `host ensure` started a new host 122.5 s after a Windows tree kill, but every `open_session` on it was refused `session_held` naming the dead child's pid, which `PING.EXE` now wore (sisyphuslabs/omo-desktop-app#3157, run https://github.com/sisyphuslabs/omo-desktop-app/actions/runs/39166325038). The holder record's own start time is always numeric (computed in-process), so a refusal 134-180 s after the kill means the observed start time was unreadable, and `reclaimLockState` kept an unreadable holder `held` forever. The supervised host on win32 publishes no `host_socket`, so the lease needs its daemon directory to prove which daemon released it. Tests: `test/suite/regressions/3658-holder-lease-unprovable-owner.test.ts`, `3658-holder-generation-ended.test.ts`.
+
+### Why an extension could not handle it
+
+- Session-holder leases and RPC admission are core/RPC host internals with no extension hook.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `reclaimLockState` in `lease-file.ts`; `liveHolders` in `session-holders.ts`; the `holderEndpoint` literal in `session-command-router.ts`; the `foreignSessionHolders` probes in `session-held.ts`.
+
 ## 2026-10-18 - The host child's start time is recorded on Windows, and an unreadable one is released once its heartbeat stopped (senpi#3658)
 
 ### What changed

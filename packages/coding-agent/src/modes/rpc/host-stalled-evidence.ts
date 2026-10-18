@@ -10,15 +10,21 @@
  * endpoint directory during a handoff. A stalled host is still serving its sessions; nothing here
  * signals anything.
  */
-import { rm } from "node:fs/promises";
-import { join } from "node:path";
+import { rm, stat } from "node:fs/promises";
+import { isAbsolute, join } from "node:path";
+import type { HolderGeneration } from "../../core/session-holders.ts";
 import {
 	processIsLive,
 	processStartTimeMs,
 	readProcessIdentity,
 	sameProcessStartMs,
 } from "../../utils/process-identity.ts";
-import { HOST_DAEMON_DIR_ENV, type HostGenerationPaths } from "./host-daemon-paths.ts";
+import {
+	generationPaths,
+	HOST_DAEMON_DIR_ENV,
+	type HostGenerationPaths,
+	hostDaemonDirectoryPaths,
+} from "./host-daemon-paths.ts";
 import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
 import { parseIdleExitMs } from "./host-lifecycle-policy.ts";
 import { ageOf, readJsonObject, writeJsonAtomic } from "./host-state-json.ts";
@@ -114,6 +120,43 @@ export async function hostLoopStalled(
 export async function generationHeartbeatStopped(generation: HostGenerationPaths, now = Date.now()): Promise<boolean> {
 	const age = ageOf((await readJsonObject(generation.aliveFile))?.at, now);
 	return age !== undefined && age >= stallRefusalWindowMs();
+}
+
+const SAFE_INSTANCE_ID = /^[A-Za-z0-9_-]+$/;
+
+async function exists(path: string): Promise<boolean> {
+	return stat(path).then(
+		() => true,
+		() => false,
+	);
+}
+
+/**
+ * Whether the host generation a session-holder lease names has ENDED, for a holder whose pid is alive but
+ * whose start time cannot be compared (#3658). Two pieces of evidence count:
+ * - its heartbeat stopped (`generationHeartbeatStopped`, the rule claims and generations share);
+ * - the daemon directory the lease names is an endpoint's (`endpoint.json`, which every release leaves)
+ *   and the generation's directory is gone: a daemon removes it only after its child was judged not
+ *   alive, by the same heartbeat rule. A lease without a daemon directory is read against this host's
+ *   own daemon, where only the heartbeat counts, since absence there cannot prove membership.
+ * A fresh heartbeat, no heartbeat file, or this host's own generation never ends: a live host whose
+ * probe is merely slow keeps its sessions (#1609).
+ */
+export async function holderGenerationEnded(
+	holder: HolderGeneration,
+	env: Readonly<Record<string, string | undefined>> = process.env,
+): Promise<boolean> {
+	const instance = holder.host_instance;
+	if (instance === undefined || !SAFE_INSTANCE_ID.test(instance) || instance === env[HOST_INSTANCE_ID_ENV])
+		return false;
+	const daemonDir = holder.host_daemon_dir ?? env[HOST_DAEMON_DIR_ENV];
+	if (daemonDir === undefined || !isAbsolute(daemonDir)) return false;
+	const directory = hostDaemonDirectoryPaths(daemonDir);
+	const generation = generationPaths(directory, instance);
+	if (await generationHeartbeatStopped(generation)) return true;
+	return (
+		holder.host_daemon_dir !== undefined && (await exists(directory.endpointFile)) && !(await exists(generation.dir))
+	);
 }
 
 /**

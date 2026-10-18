@@ -14,7 +14,7 @@
 ### Fixed
 
 - A session file left claimed by a stopped engine host no longer blocks reopening its thread ([#3652](https://github.com/code-yeongyu/senpi/issues/3652)).
-- On Windows, an engine host killed together with its process tree no longer keeps every later start refused as `host_stalled` once Windows reuses its process id: the host's process identity is now recorded, and a host whose identity cannot be read is released once it stopped heartbeating ([#3658](https://github.com/code-yeongyu/senpi/issues/3658)).
+- On Windows, an engine host killed together with its process tree no longer keeps every later start refused as `host_stalled` once Windows reuses its process id: the host's process identity is now recorded, a host whose identity cannot be read is released once it stopped heartbeating, and the dead host's session lease no longer refuses every reopen as `session_held` once that host's generation ended ([#3658](https://github.com/code-yeongyu/senpi/issues/3658)).
 
 ### Removed
 
