@@ -209,7 +209,9 @@ describe("terminal monitor tool", () => {
 			timeout_ms: 50,
 		});
 		expect(firstText(timedResult)).toMatch(/^Monitor started with ID: mon_[0-9A-HJKMNP-TV-Z]{16}$/);
-		expect(summaryEvent(await timedOut).summary).toContain("timed_out");
+		const timedSummary = summaryEvent(await timedOut).summary;
+		expect(timedSummary).toContain("killed at deadline");
+		expect(timedSummary).toContain("timed_out");
 
 		const persistent = sink.waitFor(
 			(event) => event.type === "summary" && event.description === "persistent",

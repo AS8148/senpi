@@ -23,7 +23,9 @@ manual \`&\` backgrounding — use the built-in session tools:
 - \`${bash}({ command, run_in_background: true })\` starts a persistent session and returns a
   \`bash_id\` immediately. Foreground calls still block and return output; their \`timeout\`
   (seconds) is a kill deadline. Background sessions ignore \`timeout\` and live until they
-  exit or you call \`kill_bash\`.
+  exit or you call \`kill_bash\`. Backgrounding with \`&\` or \`nohup\` inside a foreground
+  command does not survive the call — only \`run_in_background\` creates a session that
+  outlives it.
 - \`bash_output({ bash_id, filter, view })\` peeks at a session without blocking: new output
   since the last read, the status line, or a rendered full-screen snapshot of TUIs via
   \`view: "screen"\`. Completion arrives as a notification carrying the exit code and output
@@ -32,7 +34,10 @@ manual \`&\` backgrounding — use the built-in session tools:
   \`target\` — one branch per call, never two:
   - \`${monitor}({ description, command, filter?, timeout_ms?, persistent? })\` watches a command:
     newline-terminated PTY output lines (stderr included) matching \`filter\` arrive as injected
-    events while you keep working; command exit always delivers a summary. One-shot gate: wait
+    events while you keep working; command exit always delivers a summary. \`timeout_ms\` is
+    that watch's own deadline — it KILLS the watched command when it fires (the summary says
+    \`killed at deadline\`); for a job longer than the watch, start it with \`run_in_background\`
+    and only watch it. One-shot gate: wait
     inside the command and print one sentinel (\`until <cond>; do sleep 1; done;
     printf 'READY\\n'\`). Stream: \`tail -n 0 -F | grep --line-buffered\`. Filter noise at the
     source and stop with \`kill_bash\`. Persistent command watches are re-run after a restart with

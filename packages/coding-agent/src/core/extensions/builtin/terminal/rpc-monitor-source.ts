@@ -93,7 +93,7 @@ export class RpcMonitorSource {
 			deadline:
 				options.persistent || options.timeoutMs === undefined
 					? undefined
-					: setTimeout(() => this.settle(id, "watcher timed_out"), options.timeoutMs),
+					: setTimeout(() => this.settle(id, "watcher killed at deadline (timed_out)"), options.timeoutMs),
 		};
 		this.#records.set(id, record);
 		this.#host.changed();
@@ -116,7 +116,11 @@ export class RpcMonitorSource {
 			this.#host.emit(record, { type: "summary", id, description: record.description, summary });
 		this.#host.ended(
 			record,
-			summary === "watcher timed_out" ? "timeout" : summary === "watcher disposed" ? "disposed" : "killed",
+			summary === "watcher killed at deadline (timed_out)"
+				? "timeout"
+				: summary === "watcher disposed"
+					? "disposed"
+					: "killed",
 			null,
 		);
 		return true;

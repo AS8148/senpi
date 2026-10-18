@@ -34,7 +34,7 @@ export const ptyBashSchema = Type.Object({
 	run_in_background: Type.Optional(
 		Type.Boolean({
 			description:
-				"Run as a persistent background session. Returns a bash_id immediately; query it with bash_output, steer with bash_input, tear down with kill_bash.",
+				"Run as a persistent background session. Returns a bash_id immediately; query it with bash_output, steer with bash_input, tear down with kill_bash. Backgrounding with & or nohup inside a foreground command does not survive the call (the session reaps its process group) — this flag is the only way a job outlives the call.",
 		}),
 	),
 	cols: Type.Optional(Type.Number({ description: "PTY width in columns (default 120)." })),
