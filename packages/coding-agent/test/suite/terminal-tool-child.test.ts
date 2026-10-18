@@ -48,7 +48,7 @@ describe.skipIf(process.platform === "win32")("terminal background sessions on t
 			});
 			const id = (started.details as { bash_id?: string } | undefined)?.bash_id;
 			expect(id, textOf(started)).toBeTypeOf("string");
-			let peek = "";
+			let peek = textOf(started);
 			for (let i = 0; i < 50 && !peek.includes("marker-bg"); i++) {
 				peek += textOf(await harness.session.executeTool("bash_output", { bash_id: id }));
 			}
