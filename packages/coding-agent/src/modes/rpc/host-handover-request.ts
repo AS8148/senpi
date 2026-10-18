@@ -20,6 +20,7 @@ import { createHostDaemonPaths } from "./host-daemon-paths.ts";
 import { readHostRegistration } from "./host-daemon-registration.ts";
 import type { HostProtocolInfo } from "./host-decision.ts";
 import { HANDOFF_LOCK_HOLD_MS } from "./host-handoff.ts";
+import { foreignAgentDirRefusal } from "./host-handoff-agent-dir.ts";
 import { BEGIN_HANDOVER_COMMAND } from "./host-handover-wire.ts";
 import { defaultHostLaunch } from "./host-launch.ts";
 import type { ResolvedHostLaunchSpec } from "./host-launch-spec.ts";
@@ -58,6 +59,8 @@ export async function idleHandoverOutcome(
 	const before = await probeProtocolInfo(socket, PROBE_TIMEOUT_MS);
 	const refuse = (reason: string, extra: Record<string, unknown> = {}) =>
 		refusal("refuse", before, { reason, socket, operationId: terms.operationId, ...extra });
+	const foreign = before === undefined ? undefined : await foreignAgentDirRefusal(socket, target.agentDir, before);
+	if (foreign) return refuse(foreign.reason, { detail: foreign.detail });
 	const client = await clientRuntimeBuildId(spec);
 	if (client !== terms.targetRuntimeBuildId) {
 		return refuse("target_build_mismatch", {
@@ -75,7 +78,7 @@ export async function idleHandoverOutcome(
 		});
 	}
 	if (!before.capabilities.includes(RUNTIME_IDENTITY_HANDOVER_CAPABILITY)) return refuse("handover_unsupported");
-	const reply = await requestOnSocket(socket, beginHandoverCommand(spec, terms), BEGIN_HANDOVER_TIMEOUT_MS);
+	const reply = await requestOnSocket(socket, beginHandoverCommand(target, spec, terms), BEGIN_HANDOVER_TIMEOUT_MS);
 	if (!isRecord(reply)) return reconcileLostReply(target, terms, before);
 	if (typeof reply.refused === "string") {
 		return refuse(reply.refused, typeof reply.detail === "string" ? { detail: reply.detail } : {});
@@ -89,7 +92,11 @@ export async function idleHandoverOutcome(
 	return answered(target, "handover_pending", before, terms, reply);
 }
 
-function beginHandoverCommand(spec: ResolvedHostLaunchSpec, terms: IdleHandoverTerms): Record<string, unknown> {
+function beginHandoverCommand(
+	target: { readonly agentDir: string },
+	spec: ResolvedHostLaunchSpec,
+	terms: IdleHandoverTerms,
+): Record<string, unknown> {
 	const env: Record<string, string> = {};
 	for (const [name, value] of Object.entries(
 		daemonEnvironment(process.env, daemonEnvOverrides(process.env, spec.env)),
@@ -103,6 +110,7 @@ function beginHandoverCommand(spec: ResolvedHostLaunchSpec, terms: IdleHandoverT
 		if_instance_id: terms.ifInstanceId,
 		if_generation: terms.ifGeneration,
 		target_runtime_build_id: terms.targetRuntimeBuildId,
+		agent_dir: target.agentDir,
 		launch: { command: launch.command, args: launch.args },
 		host_args: spec.hostArgs,
 		env,

@@ -135,19 +135,18 @@ export async function handoffHost(options: HandoffHostOptions): Promise<HandoffR
 }
 
 /** The handoff itself, for a caller that already holds this socket's ensure lock: an ensure's upgrade. */
-export async function handoffHostLocked(options: HandoffHostOptions): Promise<HandoffResult> {
-	if (handoffUnsupported(options)) return { action: "refuse", reason: "upgrade_unsupported", upgradeable: false };
-	const paths = createHostDaemonPaths({
-		socket: options.socket,
-		...(options.agentDir ? { agentDir: options.agentDir } : {}),
-	});
+export async function handoffHostLocked(requested: HandoffHostOptions): Promise<HandoffResult> {
+	if (handoffUnsupported(requested)) return { action: "refuse", reason: "upgrade_unsupported", upgradeable: false };
+	// One agent dir for the guard, the daemon paths and the successor's environment alike.
+	const options = { ...requested, agentDir: requested.agentDir ?? getAgentDir() };
+	const paths = createHostDaemonPaths({ socket: options.socket, agentDir: options.agentDir });
 	await createDaemonDirectories(paths);
 	const host = await probeProtocolInfo(options.socket, HANDOFF_PROBE_TIMEOUT_MS);
 	if (!host) return { action: "refuse", reason: "no_host", upgradeable: false };
 	if (!host.capabilities.includes(GENERATION_HANDOFF_CAPABILITY)) {
 		return { action: "refuse", reason: "handoff_unsupported", upgradeable: false };
 	}
-	const foreign = await foreignAgentDirRefusal(options.socket, options.agentDir ?? getAgentDir(), host);
+	const foreign = await foreignAgentDirRefusal(options.socket, options.agentDir, host);
 	if (foreign) return foreign;
 	const registered = await readHostRegistration(paths);
 	const owner = await provenOwner(registered, options.socket);

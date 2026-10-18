@@ -567,12 +567,15 @@ A POSIX socket host with an id advertises `runtime_identity_handover` and accept
 `senpi host handoff --when idle --operation <id> --if-instance <instanceId> --if-generation <n>
 --target-build <runtimeBuildId>`. The CLI refuses `target_build_mismatch` unless the target is its own
 `clientRuntimeBuildId` (the successor runs the CLI's runtime), `stale_generation` unless the socket is served
-by the named generation, and `handover_unsupported` when the host does not advertise the capability. It then
-sends the host `begin_handover`, and the HOST owns the operation:
+by the named generation, `handover_unsupported` when the host does not advertise the capability, and
+`foreign_agent_dir` when the host belongs to another agent dir (the same check as the generation handoff's,
+`detail` naming both). It then sends the host `begin_handover`, carrying its own `agent_dir`, and the HOST
+owns the operation:
 
-1. a request with an `operationId` it already holds answers with that operation when the terms match (and
-   `operation_conflict` when they do not); a new operation is checked first against the named generation
-   (`stale_generation`);
+1. a request naming another `agent_dir` than the host's own refuses `foreign_agent_dir` before anything else
+   (a request without the field, from a CLI before it existed, is not checked); a request with an `operationId`
+   it already holds answers with that operation when the terms match (and `operation_conflict` when they do
+   not); a new operation is checked first against the named generation (`stale_generation`);
 2. it stops admitting new work: `prompt`, `steer`, `follow_up`, `send_custom_message`, `append_user_message`,
    `bash`, `compact`, `wake` and the two message edits answer `success: false` with an error starting
    `handover_pending:`. Running turns keep running and keep their control traffic (`abort` included);

@@ -6,6 +6,10 @@
 - `packages/coding-agent/src/modes/rpc/host-handoff.ts`: `handoffHostLocked` asks it right after the capability check, before reading any registration. `HandoffRefusal` gains `foreign_agent_dir`.
 - `packages/coding-agent/src/modes/rpc/protocol-identity.ts` and `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `get_protocol_info` reports `agentDir` (the resolved agent dir) in `RpcProtocolIdentity`.
 - `packages/coding-agent/src/modes/rpc/host-protocol-info.ts`: `HostProtocolInfo.agentDir` is optional, parsed only as a non-empty string.
+- `packages/coding-agent/src/modes/rpc/host-handoff.ts`: `handoffHostLocked` resolves the agent dir once (`options.agentDir ?? getAgentDir()`) and gives that one value to the guard, the daemon paths and the successor's environment.
+- `packages/coding-agent/src/modes/rpc/host-handover-request.ts`: the idle handover's CLI refuses `foreign_agent_dir` before it asks (the same `foreignAgentDirRefusal`), and `begin_handover` carries its `agent_dir`.
+- `packages/coding-agent/src/modes/rpc/host-handover-wire.ts` and `packages/coding-agent/src/modes/rpc/host-idle-handover.ts`: `begin_handover` parses an optional non-empty `agent_dir` into `IdleHandoverRequest.agentDir`.
+- `packages/coding-agent/src/modes/rpc/host-core-gate.ts` and `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: the host's agent dir and public socket reach the gate (`HostCoreHooks.endpoint`), which refuses a `begin_handover` naming another agent dir before `begin` claims the operation (`agentDirMismatch`, shared with the generation handoff). A request without `agent_dir` (an older CLI) is not checked.
 
 ### Why
 
@@ -19,6 +23,7 @@ The handoff decision and the protocol identity are RPC host internals; no extens
 
 - `packages/coding-agent/src/modes/rpc/host-handoff.ts`: `handoffHostLocked` and the `HandoffRefusal` union.
 - `packages/coding-agent/src/modes/rpc/protocol-identity.ts`: `protocolIdentity()`.
+- `packages/coding-agent/src/modes/rpc/host-core-gate.ts`: `answerBegin`; `packages/coding-agent/src/modes/rpc/host-handover-request.ts`: `idleHandoverOutcome` and `beginHandoverCommand`.
 
 ## 2026-10-17 - A host daemon inherits every credential the engine reads (senpi#3531)
 
