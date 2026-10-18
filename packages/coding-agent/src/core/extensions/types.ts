@@ -930,6 +930,11 @@ export type ToolPlacement = "server" | "child";
 export interface ToolChildJob {
 	readonly kind: string;
 	args(params: unknown, toolCallId: string, ctx: ExtensionToolContext): unknown;
+	/**
+	 * Sees the job's result with the child generation it ran on, and may replace it: state that lives on the child (a
+	 * PTY session) is gone once that generation exits, which only the server can tell apart from "never existed".
+	 */
+	result?(params: unknown, value: AgentToolResult<unknown>, generation: number): AgentToolResult<unknown>;
 }
 
 export interface ToolChildModule {

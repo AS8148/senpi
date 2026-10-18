@@ -13,7 +13,7 @@
 import { dirname, isAbsolute, resolve } from "node:path";
 import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import type { ToolRuntimeKind } from "../../cli/tool-runtime.ts";
-import type { ExtensionToolContext, ToolDefinition, ToolPlacement } from "../extensions/types.ts";
+import type { ExtensionToolContext, ToolChildJob, ToolDefinition, ToolPlacement } from "../extensions/types.ts";
 import { type BashOperations, createLocalBashOperations } from "../tools/bash.ts";
 import { OffloadError, runModuleInProcess } from "./offload.ts";
 
@@ -197,12 +197,7 @@ export class ChildToolDispatcher extends BaseToolDispatcher {
 		const childJob = call.definition.childJob;
 		if (childJob !== undefined) {
 			if (this.#kindRunner === undefined) return Promise.resolve(unavailableToolResult(call.definition.name));
-			return this.#runKind(
-				this.#kindRunner,
-				childJob.kind,
-				childJob.args(call.params, call.toolCallId, call.ctx),
-				call,
-			);
+			return this.#runKind(this.#kindRunner, childJob, call);
 		}
 		const job = childModuleJob(call);
 		if (job === undefined || this.#childRunner === undefined)
@@ -212,11 +207,12 @@ export class ChildToolDispatcher extends BaseToolDispatcher {
 
 	async #runKind<TDetails>(
 		runner: ToolChildKindRunner,
-		kind: string,
-		args: unknown,
+		childJob: ToolChildJob,
 		call: ToolDispatchCall<TDetails>,
 	): Promise<AgentToolResult<TDetails>> {
 		const onUpdate = call.onUpdate;
+		const kind = childJob.kind;
+		const args = childJob.args(call.params, call.toolCallId, call.ctx);
 		const { value, pid, generation } = await runner(kind, args, {
 			toolCallId: call.toolCallId,
 			signal: call.signal,
@@ -231,7 +227,8 @@ export class ChildToolDispatcher extends BaseToolDispatcher {
 		this.emitDispatched({ toolCallId: call.toolCallId, placement: "child", pid, generation });
 		if (!isToolResult<TDetails>(value))
 			throw new Error(`tool_child_invalid_result: ${kind} must return { content: [...] }`);
-		return value;
+		if (childJob.result === undefined) return value;
+		return childJob.result(call.params, value, generation) as AgentToolResult<TDetails>;
 	}
 
 	async #runOnChild<TDetails>(
