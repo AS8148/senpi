@@ -22,6 +22,11 @@ export interface OAuthCallbackServerOptions<T> {
 	/** Expected `state` parameter. Omit when the provider does not send one. */
 	state?: string;
 	/**
+	 * Path a newer login on this machine requests to take the port over (Codex CLI's `/cancel`). The
+	 * listener stops waiting for the browser and frees the port; its login keeps the paste prompt.
+	 */
+	cancelPath?: string;
+	/**
 	 * Finishes the sign-in with the received code before the browser page is sent, so the page can
 	 * show exchange failures. Pass `async (code) => code` to exchange the code later.
 	 */
@@ -78,12 +83,27 @@ export async function startOAuthCallbackServer<T>(
 	const server = createServer((request, response) => {
 		void (async () => {
 			const url = new URL(request.url ?? "/", "http://localhost");
+			if (request.method === "GET" && options.cancelPath !== undefined && url.pathname === options.cancelPath) {
+				sendPage(response, 200, oauthErrorHtml("This sign-in was replaced by a newer one."));
+				if (!claimed) {
+					finish({ value: undefined });
+					server.close();
+				}
+				return;
+			}
 			if (request.method !== "GET" || url.pathname !== options.path) {
 				sendPage(response, 404, oauthErrorHtml("Callback route not found."));
 				return;
 			}
 			if (options.state !== undefined && url.searchParams.get("state") !== options.state) {
-				sendPage(response, 400, oauthErrorHtml("State mismatch."));
+				sendPage(
+					response,
+					400,
+					oauthErrorHtml(
+						"State mismatch.",
+						"This page belongs to a different sign-in than the one listening here. Copy this page's address and paste it into the session that is waiting for it, or start the sign-in again.",
+					),
+				);
 				return;
 			}
 			if (claimed || settled) {
