@@ -8,8 +8,7 @@
 
 ### Changed
 
-- The terminal prompt section, the `bash`/`monitor` tool descriptions and the bun-1-4 skill now state what the code does: a plain `&` job dies with a foreground call's PTY hangup (native backend), `nohup`/`setsid` racily escape that hangup at best — a child can still die when the call returns before nohup takes effect — and survives only as an untracked orphan that the call's timeout group-kill removes; a non-persistent monitor's `timeout_ms` kills the watched command on both backends; a timed-out local command watch now summarizes as `watcher killed at deadline (timed_out)` while RPC watches keep `watcher timed_out` (they kill nothing) ([#3611](https://github.com/code-yeongyu/senpi/issues/3611)).
-
+- The terminal prompt section, the `bash`/`monitor` tool descriptions and the bun-1-4 skill now state what the code does: a plain `&` job dies with a foreground call's PTY hangup (native backend); `nohup` racily escapes that hangup (a child can still die when the call returns before nohup takes effect) and survives only as an untracked orphan that the call's timeout group-kill removes; `setsid` leaves the process group entirely and survives even that kill; a non-persistent monitor's `timeout_ms` kills the watched command on both backends; a timed-out local command watch now summarizes as `watcher killed at deadline (timed_out)` while RPC watches keep `watcher timed_out` (they kill nothing) ([#3611](https://github.com/code-yeongyu/senpi/issues/3611)).
 
 ### Fixed
 
