@@ -363,6 +363,7 @@ import {
 } from "./thinking-levels.ts";
 import { resetTimings, time } from "./timings.ts";
 import { type SessionMessageUpdateEvent, withResolvedToolName } from "./tool-call-display-name.ts";
+import { createSessionHostCallHandler } from "./tool-child-host-calls.ts";
 import { createToolDispatcher, type ToolDispatcher } from "./tool-dispatch/tool-dispatcher.ts";
 import type { BashOperations } from "./tools/bash.ts";
 import { composeFilesystemPolicies } from "./tools/filesystem-policy.ts";
@@ -1476,6 +1477,11 @@ export class AgentSession {
 						cwd: this._cwd,
 						moduleRoots: () => toolChildModuleRoots(this._extensionRunner.getAllRegisteredTools()),
 						onRecord: (record) => this._emit({ type: "session_tool_child", ...record }),
+						onHostCall: createSessionHostCallHandler({
+							executeNested: (parentToolCallId, name, args, signal) =>
+								this._executeNestedToolCall(parentToolCallId, name, args, { signal }),
+							callableToolNames: () => this._callableToolNames(),
+						}),
 					})
 				: undefined;
 		this._toolDispatcher = createToolDispatcher({

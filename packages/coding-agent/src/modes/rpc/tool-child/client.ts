@@ -74,6 +74,7 @@ export class ToolChildClient {
 	#state: ToolChildState = "none";
 	#generation = 0;
 	#nextJob = 0;
+	readonly #hostContexts = new Map<string, unknown>();
 	#nextPing = 0;
 	#live: Live | undefined;
 	#lastEnded: Promise<void> = Promise.resolve();
@@ -184,6 +185,7 @@ export class ToolChildClient {
 			channel,
 			onHostCall ??
 				((request) => Promise.reject(new Error(`no host-call handler for ${request.name ?? request.kind}`))),
+			(jobId) => this.#hostContexts.get(jobId),
 		);
 		const live: Live = {
 			generation,
@@ -207,17 +209,19 @@ export class ToolChildClient {
 		kind: string,
 		args: unknown,
 		signal?: AbortSignal,
-		options: { readonly idempotent?: boolean; readonly deadlineMs?: number } = {},
+		options: { readonly idempotent?: boolean; readonly deadlineMs?: number; readonly hostContext?: unknown } = {},
 	): Promise<unknown> {
 		const live = this.#live;
 		if (this.#state !== "live" || live === undefined)
 			return Promise.reject(new ToolChildError("tool_child_unavailable", this.#state));
 		const jobId = `j${++this.#nextJob}`;
+		if (options.hostContext !== undefined) this.#hostContexts.set(jobId, options.hostContext);
 		const policy = policyFor(kind, { ...options, env: this.#options.policyEnv ?? process.env });
 		return new Promise((resolve, reject) => {
 			const done = (finish: () => void) => () => {
 				live.supervisor.settle(jobId);
 				live.hostCalls.endJob(jobId);
+				this.#hostContexts.delete(jobId);
 				finish();
 			};
 			live.pending.set(jobId, {

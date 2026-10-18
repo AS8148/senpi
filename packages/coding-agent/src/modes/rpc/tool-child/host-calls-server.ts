@@ -15,9 +15,14 @@ export interface HostCallRequest {
 	readonly name: string | undefined;
 	readonly args: unknown;
 	readonly signal: AbortSignal;
+	/** What the job's dispatcher attached to it (the calling tool call, for a session); undefined when none. */
+	readonly context: unknown;
 }
 
 export type HostCallHandler = (request: HostCallRequest) => Promise<unknown>;
+
+/** The job context a request carries; ServerHostCalls reads it per call. */
+export type HostCallContextOf = (jobId: string) => unknown;
 
 interface ServerCall {
 	readonly frame: ToolChildMessageOf<"host_call">;
@@ -30,9 +35,16 @@ export class ServerHostCalls {
 	readonly #admissions = new Map<string, HostCallAdmission>();
 	readonly #calls = new Map<string, ServerCall>();
 
-	constructor(channel: Pick<ToolChildChannel, "send">, handler: HostCallHandler) {
+	readonly #contextOf: HostCallContextOf;
+
+	constructor(
+		channel: Pick<ToolChildChannel, "send">,
+		handler: HostCallHandler,
+		contextOf: HostCallContextOf = () => undefined,
+	) {
 		this.#channel = channel;
 		this.#handler = handler;
+		this.#contextOf = contextOf;
 	}
 
 	/** Calls running and queued for one job (0 for a job with none). */
@@ -88,6 +100,7 @@ export class ServerHostCalls {
 					name: frame.name,
 					args: frame.args,
 					signal: call.abort.signal,
+					context: this.#contextOf(frame.jobId),
 				});
 		void answered.then(
 			(value) => this.#answer(callId, { type: "host_reply", callId, value: value ?? null }),

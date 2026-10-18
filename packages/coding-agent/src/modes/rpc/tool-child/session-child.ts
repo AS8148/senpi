@@ -12,6 +12,7 @@ import type {
 	ToolChildRunResult,
 } from "../../../core/tool-dispatch/tool-dispatcher.ts";
 import { ToolChildClient, ToolChildError, type ToolChildStatus } from "./client.ts";
+import type { HostCallHandler } from "./host-calls-server.ts";
 import { CrashLoop, fixtureDeadline } from "./job-policy.ts";
 import type { ToolChildCommand } from "./launch.ts";
 import { MODULE_JOB_KIND, TOOL_CHILD_MODULE_ROOTS_ENV } from "./module-job.ts";
@@ -36,6 +37,8 @@ export interface SessionToolChildOptions {
 	readonly onRecord: (record: SessionToolChildRecord) => void;
 	readonly env?: NodeJS.ProcessEnv;
 	readonly command?: ToolChildCommand;
+	/** Serves the child's reverse-bridge calls; the request's `context.toolCallId` names the calling tool call. */
+	readonly onHostCall?: HostCallHandler;
 	/** The crash loop's clock; tests inject a fake one. */
 	readonly now?: () => number;
 }
@@ -71,6 +74,7 @@ export class SessionToolChild {
 			}),
 			...(options.command === undefined ? {} : { command: options.command }),
 			onStatus: (status) => this.#onStatus(status),
+			...(options.onHostCall === undefined ? {} : { onHostCall: options.onHostCall }),
 		});
 	}
 
@@ -95,6 +99,7 @@ export class SessionToolChild {
 		const deadlineMs = fixtureDeadline(job.export, this.#options.env ?? process.env);
 		const value = await this.#client.run(MODULE_JOB_KIND, job, signal, {
 			idempotent: job.idempotent === true,
+			hostContext: { toolCallId: callingToolCallId(job.args) },
 			...(deadlineMs === undefined ? {} : { deadlineMs }),
 		});
 		return { value, pid, generation };
@@ -146,4 +151,11 @@ export class SessionToolChild {
 		this.#crashLoop.recordExit();
 		this.#options.onRecord({ state: "exited", generation: status.generation, pid: status.pid });
 	}
+}
+
+/** The tool call a module job runs for (the dispatcher puts it in the job's arguments); undefined for other jobs. */
+function callingToolCallId(args: unknown): string | undefined {
+	if (typeof args !== "object" || args === null) return undefined;
+	const toolCallId: unknown = Reflect.get(args, "toolCallId");
+	return typeof toolCallId === "string" ? toolCallId : undefined;
 }
