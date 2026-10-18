@@ -9,6 +9,7 @@
 import { fixtureDeadlineScenario } from "./qa-scenario-fixture-deadline.mjs";
 import { fixtureToolsScenario } from "./qa-scenario-fixture-tools.mjs";
 import { hostcallLargeScenario, lockDrainScenario } from "./qa-scenario-hostcall.mjs";
+import { offloadLegacyNoChildScenario, offloadSessionStartScenario } from "./qa-scenario-offload.mjs";
 import { launchApisAckGatedScenario } from "./qa-scenario-launch-barrier.mjs";
 import { skipAckWaitScenario } from "./qa-scenario-skip-ack.mjs";
 
@@ -16,7 +17,7 @@ export const REQUIREMENT_CAPABILITIES = Object.freeze({
 	4: ["tool_runtime:child", "placement:launch-barrier"],
 	6: ["placement:job-policy"],
 	7: ["placement:hostcall"],
-	8: ["placement:offload"],
+	8: ["offload_api"],
 	9: ["placement:terminal"],
 	10: ["placement:durable-monitor"],
 	11: ["placement:search"],
@@ -34,8 +35,6 @@ export const REQUIREMENT_CAPABILITIES = Object.freeze({
 });
 
 const LATER = [
-	["8-offload-session-start", [4, 8]],
-	["8-offload-legacy-no-child", [8]],
 	["9-stream", [4, 9]],
 	["9-child-kill-background", [4, 9]],
 	["10-durable-recovery", [4, 10]],
@@ -71,6 +70,8 @@ export const SCENARIOS = Object.freeze([
 	fixtureDeadlineScenario,
 	hostcallLargeScenario,
 	lockDrainScenario,
+	offloadSessionStartScenario,
+	offloadLegacyNoChildScenario,
 	...LATER.map(([id, requires]) => ({ id, requires, run: undefined })),
 ]);
 

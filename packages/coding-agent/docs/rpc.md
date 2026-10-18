@@ -288,7 +288,9 @@ advertise one `placement:<name>` entry for each part of the tool child that has 
 every command a child-run tool starts passes the execution barrier; `placement:job-policy`: per-kind deadlines,
 liveness and the cancel ladder; `placement:hostcall`: a child-run tool body reaches the session over the reverse
 bridge - `tool`, `completion`, `reserved`, `list_tools`, `authorize` and drain-before-release `lock_file`/`unlock_file`,
-with large arguments and replies carried by acknowledged references). A job worker cannot start worker threads of its
+with large arguments and replies carried by acknowledged references). Both runtimes also advertise `offload_api`: an extension's
+`ctx.offload` / `pi.registerChildModule` are available, running on the tool child under `child`
+(`placement:offload`) and in the host process under `in-process`. A job worker cannot start worker threads of its
 own (`tool_child_nested_worker_refused`), so no launch escapes the barrier that way.
 
 ### Host identity (`get_protocol_info`)
