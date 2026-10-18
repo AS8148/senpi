@@ -61,6 +61,28 @@ The waits are the host's own awaits on extension handlers inside the session's e
 
 - MEDIUM: `packages/coding-agent/src/core/agent-session.ts`, the constructor (store and port), `_queueSteer` / `_queueFollowUp`, `_enqueuePreparedInput`, `_recordQueuedInput` and the new `changeQueuedInput` above `_changeQueuedInput`.
 
+## 2026-10-18 - WSL detection survives sanitized environments (Refs senpi#3628)
+
+### What changed
+
+- `packages/coding-agent/src/core/keybindings.ts`: `useWindowsKeybindings` takes an optional `procVersionPath` and delegates Linux WSL detection to `isWSL` (`../utils/wsl.ts`: `WSL_DISTRO_NAME`/`WSL_INTEROP`/`WSLENV` plus a `/proc/version` fallback) instead of reading only the first two env markers.
+- `packages/coding-agent/src/core/footer-data-provider.ts`: `isWslEnvironment` delegates to the same `isWSL` helper instead of its own env-only copy.
+
+### Why
+
+- `packages/coding-agent/src/core/keybindings.ts`: on WSL sessions whose launcher environment carries no WSL markers (multiplexer sanitation, sudo), the dequeue chord fell back to `alt+up`, so Alt+Q fired nothing.
+- `packages/coding-agent/src/core/footer-data-provider.ts`: footer git polling for Windows-mounted paths silently stopped under the same sanitized environments.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/keybindings.ts`: default keybinding tables are core module state evaluated before extensions bind.
+- `packages/coding-agent/src/core/footer-data-provider.ts`: the footer provider is core-injected, not extension-owned.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/keybindings.ts`: `useWindowsKeybindings`.
+- `packages/coding-agent/src/core/footer-data-provider.ts`: `isWslEnvironment`.
+
 ## 2026-10-18 - Amazon Bedrock's provider default is Claude Opus 5.5
 
 ### What changed
