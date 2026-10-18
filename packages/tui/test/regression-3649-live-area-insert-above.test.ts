@@ -102,6 +102,38 @@ describe("eval output growing above a tall live area (#3649)", () => {
 		ui.stop();
 	});
 
+	it("does not read an in-place re-layout plus an append under a tall live area as an insertion above", async () => {
+		const terminal = new RecordingTerminal(60, 12);
+		const ui = new TUI(terminal, { muxDetector: () => false });
+		const header = new Text("card header 0", 0, 0);
+		const table = new Text("", 0, 0);
+		ui.addChild(header);
+		ui.addChild(table);
+		ui.addChild(new Text(Array.from({ length: 7 }, (_, index) => `live row ${index}`).join("\n"), 0, 0));
+		const layOut = (rows: number) => {
+			const width = 6 + rows;
+			table.setText(Array.from({ length: rows }, (_, index) => `row ${index} `.padEnd(width, "w")).join("\n"));
+		};
+		layOut(6);
+		ui.start();
+		ui.renderNow();
+		ui.setScrollbackReplayHold(true);
+		for (let tick = 1; tick <= 6; tick++) {
+			header.setText(`card header ${tick}`);
+			layOut(6 + tick);
+			ui.renderNow();
+		}
+		await terminal.flush();
+		const rows = nonBlankRows(terminal);
+		for (let index = 0; index < 12; index++) {
+			assert.ok(
+				rows.some((row) => row.startsWith(`row ${index} `)),
+				`row ${index} is in the buffer during the turn (stale width allowed)`,
+			);
+		}
+		ui.stop();
+	});
+
 	it("leaves the multiplexer path free of duplicates when rows are inserted above the viewport", async () => {
 		const { terminal, ui, tick } = setup({ mux: true, cardFooterRows: 2 });
 		ui.setScrollbackReplayHold(true);

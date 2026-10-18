@@ -2703,10 +2703,11 @@ export abstract class TuiBase extends Container {
 
 	/**
 	 * The held frame of `setScrollbackReplayHold` (#2836): rows above the old viewport stay as the terminal
-	 * shows them (possibly stale), and the frame is rewritten from the old viewport top down. Rows the
-	 * document grew by scroll naturally into scrollback in their current form, so nothing is lost there and
-	 * nothing is cleared, and a reader who scrolled up keeps their place. Returns false when an image row is
-	 * involved, so the caller replays as before.
+	 * shows them (possibly stale), and the frame is rewritten from the old viewport top down, or from where the
+	 * old viewport's rows moved to when rows were inserted above it (senpi#3649), so rows already in the
+	 * scrollback are not written into it again. Rows the document grew by scroll naturally into scrollback in
+	 * their current form, so nothing is lost there and nothing is cleared, and a reader who scrolled up keeps
+	 * their place. Returns false when an image row is involved, so the caller replays as before.
 	 */
 	private renderHeldRepaint(
 		newLines: string[],

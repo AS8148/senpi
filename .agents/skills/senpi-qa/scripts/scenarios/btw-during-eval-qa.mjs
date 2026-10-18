@@ -113,7 +113,9 @@ async function reapProcessGroup(pid) {
 		} catch {}
 	}
 	const deadline = Date.now() + 5_000;
-	while (alive() && Date.now() < deadline) await new Promise((resolveTick) => setImmediate(resolveTick));
+	// The tsx child is not this process's child, so no exit event exists for it; a 50 ms timer bounds the wait
+	// without spinning the event loop.
+	while (alive() && Date.now() < deadline) await new Promise((resolveTick) => setTimeout(resolveTick, 50));
 	return !alive();
 }
 

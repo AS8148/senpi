@@ -66,8 +66,8 @@
 
 - `packages/tui/src/tui.ts`:
   - The insert-scroll fast path now comes from `planViewportInsertScroll` in the new fork-only `viewport-insert-scroll.ts`. The plan also requires that the rows the scroll region pushes out of the viewport are the new frame's rows at those indexes; a frame whose rows were inserted at or above the viewport top takes the general repaint paths instead.
-  - `renderHeldRepaint` starts its rewrite where the old viewport's rows moved to (`insertedAboveViewport` in the new fork-only `viewport-shift.ts`), so rows that already sit in the scrollback are not written into it again. The rows inserted above stay stale until the existing catch-up replay, as the held contract already allows.
-- `packages/tui/test/regression-3649-live-area-insert-above.test.ts` covers both paths, the catch-up, and the multiplexer path.
+  - `renderHeldRepaint` starts its rewrite where the old viewport's rows moved to (`insertedAboveViewport` in the new fork-only `viewport-shift.ts`), so rows that already sit in the scrollback are not written into it again. A shift counts only when the rows it skips are exactly the rows already in the scrollback right above the old viewport and most old visible rows reappear at it; an in-place re-layout plus an append (the #2836 streamed table) keeps the old start, so no on-screen row goes missing from the scrollback. The rows inserted above stay stale until the existing catch-up replay, as the held contract already allows.
+- `packages/tui/test/regression-3649-live-area-insert-above.test.ts` covers both paths, the catch-up, the multiplexer path, and a re-layout plus append under a tall live area.
 
 ### Why
 
