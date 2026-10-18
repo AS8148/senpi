@@ -27,7 +27,7 @@ const launch = (launchId: string): ToolChildMessageOf<"launch"> => ({
 	pgid: 4242,
 });
 
-async function rig(extra: { hold?: (id: string) => Promise<void> } = {}) {
+async function rig(extra: { hold?: (id: string) => Promise<void>; onAck?: (id: string) => void } = {}) {
 	const root = await mkdtemp(join(tmpdir(), "tle-"));
 	const acks: string[] = [];
 	const violations: BarrierViolation[] = [];
@@ -39,7 +39,10 @@ async function rig(extra: { hold?: (id: string) => Promise<void> } = {}) {
 		generation: 1,
 		ledger,
 		log,
-		sendAck: (id) => acks.push(id),
+		sendAck: (id) => {
+			acks.push(id);
+			extra.onAck?.(id);
+		},
 		onViolation: (violation) => violations.push(violation),
 		leaderStart: async () => "Sat Oct 18 05:00:00 2026",
 		...(extra.hold ? { holdAck: extra.hold } : {}),
@@ -55,6 +58,17 @@ async function rig(extra: { hold?: (id: string) => Promise<void> } = {}) {
 }
 
 describe("LaunchEnforcer", () => {
+	it("never reports proof_missing for a proof that arrived while the ack was being logged", async () => {
+		let enforcerRef: LaunchEnforcer | undefined;
+		const rigged = await rig({
+			onAck: (id) => enforcerRef?.onProof({ type: "launch_proof", launchId: id, ackTick: 1, invokeTick: 2 }),
+		});
+		enforcerRef = rigged.enforcer;
+		await rigged.enforcer.onLaunch(launch("L1"));
+		for (const timer of rigged.timers) if (!timer.cancelled) timer.fn();
+		expect(rigged.violations).toEqual([]);
+	});
+
 	it("persists the containment handle before acknowledging, and accepts an ordered proof", async () => {
 		const { root, ledger, log: launchLog, enforcer, acks, violations, timers } = await rig();
 		await enforcer.onLaunch(launch("l1"));

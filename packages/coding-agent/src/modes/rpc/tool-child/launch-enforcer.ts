@@ -60,12 +60,16 @@ export class LaunchEnforcer {
 		if (this.#violated || inflight.proven) return;
 		inflight.acked = true;
 		this.#options.sendAck(frame.launchId);
+		// Armed before any await: the proof can arrive while the ack is being logged, and a timer armed after that would
+		// still fire (proof_missing) for a launch already proven.
+		if (!inflight.proven) {
+			const setTimer = this.#options.setTimer ?? defaultTimer;
+			inflight.cancelTimer = setTimer(
+				() => this.#violate(frame.launchId, "proof_missing"),
+				this.#options.proofMs ?? LAUNCH_PROOF_MS,
+			);
+		}
 		await this.#options.log.record({ type: "launch_ack", launchId: frame.launchId });
-		const setTimer = this.#options.setTimer ?? defaultTimer;
-		inflight.cancelTimer = setTimer(
-			() => this.#violate(frame.launchId, "proof_missing"),
-			this.#options.proofMs ?? LAUNCH_PROOF_MS,
-		);
 	}
 
 	/**
