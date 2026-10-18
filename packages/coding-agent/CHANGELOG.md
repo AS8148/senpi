@@ -6,14 +6,27 @@
 
 ### Added
 
+- The `monitor` tool watches other sessions: `monitor({ type: "rpc", target: "children" | "all" | <session id, path or st_ task id>, events?, exclude?, filter?, persistent? })` lists the matched sessions on arm, then injects each status change and effect receipt as a line, and with `events: "all"` their content too (streaming collapsed to one line per session per 2 s). It reads every RPC host and terminal endpoint through the status stream's `mirror` opt-in, so it never attaches; children spawned after arming are matched by the host; a persistent watch survives a restart and reports what changed while detached ([#3226](https://github.com/code-yeongyu/senpi/issues/3226)).
+- `--tool-runtime in-process|child` (env `SENPI_TOOL_RUNTIME`) selects where a session's heavy tool work runs. The default is `in-process` and nothing changes yet; a multi-session host and a single-session `--mode rpc` process advertise the choice as `tool_runtime:<value>` in `get_protocol_info`. An unknown value is a startup error (except for `--version` and `--help`) ([#3566](https://github.com/code-yeongyu/senpi/issues/3566)).
+- `dequeue_message` and `edit_queued_message` accept `expectedRevision`: every queued input carries a `revision` (1 when queued, +1 per edit), and a change based on a stale revision answers `conflict` with `currentRevision` and changes nothing, so two clients editing one queued message can no longer overwrite each other silently. Capability `queued_message_revision` ([#3459](https://github.com/code-yeongyu/senpi/issues/3459)).
 - Terminal control endpoints serve their own session like a host: `open_session` by path attaches with the host's record stream and replay, `subscribe_sessions` runs the status stream (with `mirror`) over that session, and `steer`/`follow_up`/`prompt` are delivered through the terminal's admission (the user's draft holds them) with the host's `whenIdle` choice, as remote deliveries; fields admission cannot carry (`images`, `thinkingLevel`, ...) are refused by name. `admitExternalMessage` gains `whenIdle` (`start` default, `queue`) ([#3229](https://github.com/code-yeongyu/senpi/issues/3229)).
+
+- `SessionManager.getFullBranch()` (also on `ctx.sessionManager`) returns the active path over the whole session history, including entries before the latest compaction ([#3519](https://github.com/code-yeongyu/senpi/issues/3519)).
 
 ### Changed
 
 ### Fixed
 
+- A host daemon now inherits every credential variable the engine reads, including `CLAUDE_CODE_OAUTH_TOKEN`, `COPILOT_GITHUB_TOKEN`, `HF_TOKEN` and numbered slots such as `OPENAI_API_KEY_2`, so a Claude subscription from the environment works through a host as it does in a direct process (#3531).
+
+- `get_auth_providers` reports a Claude subscription supplied by `CLAUDE_CODE_OAUTH_TOKEN` or an ambient Claude Code login on the subscription's sign-in row instead of its API-key row, so RPC clients show it as a connected subscription. The TUI `/login` picker and `get_auth_providers` share one rule, so a runtime `--api-key` never shows as a configured sign-in, and a stored subscription keeps its row beside one (#3537).
+
+- Opening a large session on a shared RPC host no longer stalls every other session: the transcript is read, parsed and indexed in short slices, and the tool-search history scan no longer serializes every message. On a 231 MB transcript the longest wait seen by another connection dropped from about 1 s to the level of opening an empty session ([#3518](https://github.com/code-yeongyu/senpi/issues/3518)).
+
 - A host emptied within a minute of its previous memory trim now trims once that minute ends, instead of keeping the freed memory until sessions come and go again ([#3360](https://github.com/code-yeongyu/senpi/issues/3360)).
 - The ripgrep grep fallback starts far fewer `rg` processes on the host. Explicitly named files no longer cost three launches each; they share one binary scan and one search. A capped directory walk also grows its batches instead of searching 200 files per launch. Every launch keeps its whole command line under the OS limit (32,000 characters on Windows, quoting included), so a large batch becomes several launches and no argument is truncated; a pattern or path too long for any launch fails with a clear error instead of an opaque spawn failure. A `grep` call over this repository now starts 5 to 14 rg processes instead of 63 to 87, with identical results ([#3516](https://github.com/code-yeongyu/senpi/issues/3516)).
+- A reopened session keeps only its latest compaction window in memory, so an RPC host holding long sessions no longer grows to multi-GB heaps; four of the largest local transcripts went from 1441 MB to 216 MB of live heap ([#3519](https://github.com/code-yeongyu/senpi/issues/3519)).
+- Usage totals no longer drop the turns a compaction trimmed, and forking or exporting (JSONL) a compacted session keeps the history from before the compaction ([#3519](https://github.com/code-yeongyu/senpi/issues/3519)).
 
 ### Removed
 
