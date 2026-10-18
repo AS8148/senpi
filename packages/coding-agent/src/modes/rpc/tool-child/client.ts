@@ -18,7 +18,7 @@ import { JobSupervisor, type SupervisorTimers } from "./job-supervisor.ts";
 import { spawnToolChild, type ToolChildCommand, toolChildCommand } from "./launch.ts";
 import { sweepStaleGenerations } from "./orphan-sweep.ts";
 import { PayloadRefReader, PayloadRefWriter } from "./payload-ref.ts";
-import type { ToolChildMessage } from "./protocol.ts";
+import { TOOL_CHILD_LIMITS, type ToolChildMessage } from "./protocol.ts";
 
 export type ToolChildState = "none" | "spawning" | "live" | "retiring" | "dead";
 
@@ -73,6 +73,23 @@ interface Live {
 	readonly hostCalls: ServerHostCalls;
 	readonly refs: HostCallRefs;
 	ended?: Promise<void>;
+}
+
+/**
+ * Sends a job: inline at or below the reference threshold, otherwise by a server-written reference the child acks and
+ * then owns. A job settled (cancelled) while its reference was written never reaches the child, and its reference is
+ * released at once.
+ */
+function sendJob(live: Live, jobId: string, kind: string, args: unknown, failed: (error: unknown) => void): void {
+	const json = args === undefined ? undefined : JSON.stringify(args);
+	if (json === undefined || Buffer.byteLength(json, "utf8") <= TOOL_CHILD_LIMITS.REF_THRESHOLD) {
+		live.channel.send({ type: "job", jobId, kind, args });
+		return;
+	}
+	live.refs.writer.create(Buffer.from(json, "utf8")).then((ref) => {
+		if (live.pending.has(jobId)) live.channel.send({ type: "job", jobId, kind, argsRef: ref });
+		else void live.refs.writer.handle({ type: "ref_nack", refId: ref.refId, reason: "cancelled" });
+	}, failed);
 }
 
 export class ToolChildClient {
@@ -283,7 +300,16 @@ export class ToolChildClient {
 				userText: policy.userText,
 				...(signal === undefined ? {} : { signal }),
 			});
-			live.channel.send({ type: "job", jobId, kind, args });
+			sendJob(live, jobId, kind, args, (error) =>
+				settle(live, jobId, (pending) =>
+					pending.reject(
+						new ToolChildError(
+							"tool_child_args_unwritable",
+							error instanceof Error ? error.message : String(error),
+						),
+					),
+				),
+			);
 		});
 	}
 

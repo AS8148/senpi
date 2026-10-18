@@ -174,3 +174,8 @@ export async function sinkMany(
 	const replies = await Promise.all(Array.from({ length: args.n }, () => host.call("sink", { payload })));
 	return replies.length;
 }
+
+/** The sha256 and size of a job's own `payload` argument (a large one arrives by reference). */
+export function digestArgs(args: { readonly payload: string }): { sha256: string; bytes: number } {
+	return { sha256: createHash("sha256").update(args.payload).digest("hex"), bytes: Buffer.byteLength(args.payload) };
+}

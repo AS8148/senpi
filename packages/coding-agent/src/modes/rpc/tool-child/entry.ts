@@ -10,7 +10,8 @@ import { scrubToolChildEnv, TOOL_CHILD_LEDGER_ENV, TOOL_CHILD_REFS_ROOT_ENV } fr
 import { LaunchGate } from "./launch-gate.ts";
 import { sweepLedger } from "./orphan-sweep.ts";
 import { PayloadRefReader, PayloadRefWriter } from "./payload-ref.ts";
-import type { RefControl, ToolChildMessageOf } from "./protocol.ts";
+import { unpackPayload } from "./payload-wire.ts";
+import type { PayloadRef, RefControl, ToolChildMessageOf } from "./protocol.ts";
 import { readTestControls } from "./test-controls.ts";
 
 export const TOOL_CHILD_GENERATION_ENV = "SENPI_TOOL_CHILD_GENERATION";
@@ -93,7 +94,7 @@ export async function runToolChild(options: ToolChildEntryOptions): Promise<void
 				return;
 			case "job":
 				if (controls.value("EXIT_MID_JOB") === message.kind) exit(1);
-				void runJob(channel, gate, hostCalls, options.handlers, running, message);
+				void runJob(channel, gate, hostCalls, refs?.reader, options.handlers, running, message);
 				return;
 			case "cancel":
 				if (controls.enabled("IGNORE_CANCEL")) return;
@@ -118,15 +119,29 @@ export async function runToolChild(options: ToolChildEntryOptions): Promise<void
 	exit(0);
 }
 
+function readJobArgs(ref: PayloadRef, reader: PayloadRefReader | undefined, signal: AbortSignal): Promise<unknown> {
+	if (reader === undefined)
+		return Promise.reject(
+			new ToolChildJobError(
+				"tool_child_refs_unavailable",
+				"a job sent its arguments by reference, but this child reads no references",
+			),
+		);
+	return unpackPayload(ref, reader, signal);
+}
+
 async function runJob(
 	channel: ToolChildChannel,
 	gate: LaunchGate,
 	hostCalls: ChildHostCalls,
+	refReader: PayloadRefReader | undefined,
 	handlers: Readonly<Record<string, ToolChildJobHandler>>,
 	running: Map<string, AbortController>,
 	job: ToolChildMessageOf<"job">,
 ): Promise<void> {
 	const handler = handlers[job.kind];
+	if ((handler === undefined || running.has(job.jobId)) && job.argsRef !== undefined)
+		refReader?.refuse(job.argsRef, "cancelled");
 	if (handler === undefined) {
 		channel.send({
 			type: "job_error",
@@ -145,7 +160,9 @@ async function runJob(
 	try {
 		const hostCall = (target: HostCallTarget, options?: { readonly survivesCancel?: boolean }) =>
 			hostCalls.call(job.jobId, target, options?.survivesCancel === true ? NEVER_CANCELLED : controller.signal);
-		const value = await handler(job.args, { jobId: job.jobId, signal: controller.signal, channel, gate, hostCall });
+		// Large arguments arrive by a server-written reference: acked (now this child's), consumed, deleted.
+		const args = job.argsRef === undefined ? job.args : await readJobArgs(job.argsRef, refReader, controller.signal);
+		const value = await handler(args, { jobId: job.jobId, signal: controller.signal, channel, gate, hostCall });
 		channel.send({ type: "result", jobId: job.jobId, value: value ?? null });
 	} catch (error) {
 		const code =

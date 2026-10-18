@@ -58,12 +58,12 @@ function batchingHandler(total: number) {
 	return { handler, stats: () => ({ received, maxRunning }) };
 }
 
-/** Resolves once no payload file is left under `root` (every generation directory empty), watching it (bounded). */
+/** Resolves once no payload file is left in any `<root>/<generation>/refs/`, watching the root (bounded). */
 async function refsEmpty(root: string, timeoutMs: number): Promise<void> {
 	const files = async () => {
 		const generations = await readdir(root).catch(() => []);
 		const counts = await Promise.all(
-			generations.map((generation) => readdir(join(root, generation)).catch(() => [])),
+			generations.map((generation) => readdir(join(root, generation, "refs")).catch(() => [])),
 		);
 		return counts.flat();
 	};
@@ -197,6 +197,22 @@ describe("reverse bridge", () => {
 		cancel.abort();
 		await expect(run).rejects.toMatchObject({ code: "tool_child_cancelled" });
 		expect(aborted).toHaveLength(8);
+		await refsEmpty(join(dir, "refs"), 10_000);
+	}, 60_000);
+
+	it("carries a job's 17 MiB arguments by a server-written ref the child owns, deleted once read", async () => {
+		let dir = "";
+		const instance = await startChild(
+			() => Promise.reject(new Error("no host calls")),
+			(childDir) => {
+				dir = childDir;
+			},
+		);
+		const payload = "j".repeat(17 * 1024 * 1024);
+		expect(await instance.run("module", { modulePath, export: "digestArgs", args: { payload } })).toEqual({
+			sha256: createHash("sha256").update(payload).digest("hex"),
+			bytes: payload.length,
+		});
 		await refsEmpty(join(dir, "refs"), 10_000);
 	}, 60_000);
 });
