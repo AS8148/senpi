@@ -8,7 +8,8 @@
  */
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { chmod, mkdir, open, rm } from "node:fs/promises";
+import { chmod, mkdir, open, rm, rmdir } from "node:fs/promises";
+import { dirname } from "node:path";
 import { createConnection, createServer, type Socket } from "node:net";
 import { join } from "node:path";
 import { MAX_SOCKET_PATH_BYTES } from "../socket-ownership.ts";
@@ -202,6 +203,9 @@ export async function openChannelListener(options: {
 			if (server.listening) server.close();
 			await rm(secretPath, { force: true });
 			if (process.platform !== "win32") await rm(logicalPath, { force: true });
+			// The private socket root is per agent dir and generations share it, so rmdir succeeds only when this
+			// was the last one - a best-effort sweep that never races a live sibling (senpi#3576, CI temp guard).
+			await rmdir(dirname(logicalPath)).catch(() => {});
 		},
 	};
 }
