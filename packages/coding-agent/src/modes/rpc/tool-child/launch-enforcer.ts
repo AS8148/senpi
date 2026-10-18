@@ -39,6 +39,7 @@ interface Inflight {
 export class LaunchEnforcer {
 	readonly #options: LaunchEnforcerOptions;
 	readonly #inflight = new Map<string, Inflight>();
+	readonly #recordings = new Set<Promise<void>>();
 	#violated = false;
 
 	constructor(options: LaunchEnforcerOptions) {
@@ -48,6 +49,34 @@ export class LaunchEnforcer {
 	async onLaunch(frame: ToolChildMessageOf<"launch">): Promise<void> {
 		const inflight: Inflight = { jobId: frame.jobId, acked: false, cancelTimer: undefined, proven: false };
 		this.#inflight.set(frame.launchId, inflight);
+		const recording = this.#record(frame);
+		this.#recordings.add(recording);
+		try {
+			await recording;
+		} finally {
+			this.#recordings.delete(recording);
+		}
+		await this.#options.holdAck?.(frame.launchId);
+		if (this.#violated || inflight.proven) return;
+		inflight.acked = true;
+		this.#options.sendAck(frame.launchId);
+		await this.#options.log.record({ type: "launch_ack", launchId: frame.launchId });
+		const setTimer = this.#options.setTimer ?? defaultTimer;
+		inflight.cancelTimer = setTimer(
+			() => this.#violate(frame.launchId, "proof_missing"),
+			this.#options.proofMs ?? LAUNCH_PROOF_MS,
+		);
+	}
+
+	/**
+	 * Resolves once every launch received so far is in the ledger. Teardown reads the ledger after this: a launch whose
+	 * entry was still being written when the child was killed (a violation kills at once) is swept like any other.
+	 */
+	async recorded(): Promise<void> {
+		await Promise.allSettled([...this.#recordings]);
+	}
+
+	async #record(frame: ToolChildMessageOf<"launch">): Promise<void> {
 		const leaderStart =
 			frame.pgid === undefined ? undefined : await this.#options.leaderStart(frame.pgid).catch(() => undefined);
 		const entry: DescendantEntry = {
@@ -64,16 +93,6 @@ export class LaunchEnforcer {
 		};
 		await this.#options.log.record({ ...frame });
 		await this.#options.ledger.append(entry);
-		await this.#options.holdAck?.(frame.launchId);
-		if (this.#violated || inflight.proven) return;
-		inflight.acked = true;
-		this.#options.sendAck(frame.launchId);
-		await this.#options.log.record({ type: "launch_ack", launchId: frame.launchId });
-		const setTimer = this.#options.setTimer ?? defaultTimer;
-		inflight.cancelTimer = setTimer(
-			() => this.#violate(frame.launchId, "proof_missing"),
-			this.#options.proofMs ?? LAUNCH_PROOF_MS,
-		);
 	}
 
 	onProof(frame: ToolChildMessageOf<"launch_proof">): void {

@@ -76,6 +76,7 @@ export function createGenerationBarrier(options: {
 		},
 		async teardown(child) {
 			slotQueries?.close();
+			await enforcer.recorded();
 			enforcer.dispose();
 			const owned: LedgeredGroup[] = ledger.entries().flatMap((entry) =>
 				entry.pgid === undefined
