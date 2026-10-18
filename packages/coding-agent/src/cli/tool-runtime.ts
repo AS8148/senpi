@@ -21,7 +21,7 @@ const TOOL_RUNTIME_ENV_SUFFIX = "TOOL_RUNTIME";
  * What the tool child already serves, advertised as `placement:<name>` beside `tool_runtime:child` (senpi#3566): each
  * later todo appends the placement it lands, so a client (and the QA driver) can tell which work moved.
  */
-export const TOOL_CHILD_PLACEMENTS = ["launch-barrier", "job-policy", "hostcall", "offload"] as const;
+export const TOOL_CHILD_PLACEMENTS = ["launch-barrier", "job-policy", "hostcall", "offload", "terminal"] as const;
 
 /** Advertised in both runtimes: `ctx.offload` / `registerChildModule` exist (where they run is the runtime's choice). */
 export const OFFLOAD_API_CAPABILITY = "offload_api";

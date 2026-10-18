@@ -10,6 +10,7 @@ import { fixtureDeadlineScenario } from "./qa-scenario-fixture-deadline.mjs";
 import { fixtureToolsScenario } from "./qa-scenario-fixture-tools.mjs";
 import { hostcallLargeScenario, lockDrainScenario } from "./qa-scenario-hostcall.mjs";
 import { offloadLegacyNoChildScenario, offloadSessionStartScenario } from "./qa-scenario-offload.mjs";
+import { terminalChildKillScenario, terminalStreamScenario } from "./qa-scenario-terminal.mjs";
 import { launchApisAckGatedScenario } from "./qa-scenario-launch-barrier.mjs";
 import { skipAckWaitScenario } from "./qa-scenario-skip-ack.mjs";
 
@@ -35,8 +36,6 @@ export const REQUIREMENT_CAPABILITIES = Object.freeze({
 });
 
 const LATER = [
-	["9-stream", [4, 9]],
-	["9-child-kill-background", [4, 9]],
 	["10-durable-recovery", [4, 10]],
 	["10-durable-crash-loop", [4, 10]],
 	["11-grep-missing-path", [11]],
@@ -72,6 +71,8 @@ export const SCENARIOS = Object.freeze([
 	lockDrainScenario,
 	offloadSessionStartScenario,
 	offloadLegacyNoChildScenario,
+	terminalStreamScenario,
+	terminalChildKillScenario(),
 	...LATER.map(([id, requires]) => ({ id, requires, run: undefined })),
 ]);
 

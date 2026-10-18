@@ -15,6 +15,7 @@ describe("tool runtime capabilities", () => {
 			"placement:job-policy",
 			"placement:hostcall",
 			"placement:offload",
+			"placement:terminal",
 			"offload_api",
 		]);
 	});
@@ -31,6 +32,7 @@ describe("tool runtime capabilities", () => {
 			"placement:job-policy",
 			"placement:hostcall",
 			"placement:offload",
+			"placement:terminal",
 			"offload_api",
 		]);
 	});
