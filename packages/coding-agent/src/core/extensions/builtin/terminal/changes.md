@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `tools/bash.ts` (`run_in_background` description), `prompt.ts`, and the bun-1-4 skill: state what the code does — a plain `&` job dies with the call's PTY hangup; `nohup`/`setsid` survive a normal exit only as untracked orphans (no `bash_id`, no captured log) that the call's timeout or kill still group-kills; a non-persistent command watch's `timeout_ms` kills the watched command (`session_threads.rs` deadline path).
+- `tools/bash.ts` (`run_in_background` description), `prompt.ts`, and the bun-1-4 skill: state what the code does — a plain `&` job dies with the call's PTY hangup (native backend; the pipe fallback never hangups); `nohup`/`setsid` racily escape that hangup at best (a child can still die when the call returns before nohup takes effect) and survive only as untracked orphans (no `bash_id`, no captured log) that the call's timeout or kill still group-kills; a non-persistent command watch's `timeout_ms` kills the watched command on both backends (native `session_threads.rs` group kill, pipe `terminateChildTree`).
 - `command-monitor-source.ts` `#settle`: a timed-out command watch now summarizes as `watcher killed at deadline (timed_out)`.
 - `rpc-monitor-source.ts`: the deadline summary stays `watcher timed_out` (an RPC watch kills nothing) and both its sites share `RPC_WATCHER_TIMED_OUT_SUMMARY`, so the ended-reason classifier can never drift from the settle string.
 - `test/suite/terminal-monitor.test.ts`: the timed-watch test asserts the machine-read ended reason `timeout` through `MonitorRegistry`'s `onEnded` instead of pinning summary prose.
@@ -10,7 +10,7 @@
 
 ### Why
 
-Both behaviors strand or destroy long jobs agents believed they had started, and the old `watcher timed_out` read as an observation rather than the kill it is on the command branch (senpi#3611, reported via KakaoTalk). Verified by real runs under the bash tool: on a normal foreground exit a `nohup sleep` survives, reparented to init, while the plain `&` sleep dies at PTY hangup; inside a call that hits its timeout the nohup job dies with the group kill.
+Both behaviors strand or destroy long jobs agents believed they had started, and the old `watcher timed_out` read as an observation rather than the kill it is on the command branch (senpi#3611, reported via KakaoTalk). Verified by real runs under the bash tool: with the child ready before the shell exits, a `nohup sleep` survives a normal foreground return (reparented to init) while the plain `&` sleep dies at PTY hangup — though an IMMEDIATE return can kill the nohup child too, the hangup racing nohup's SIGHUP-ignore (5/5 dead in the reviewer's probe); inside a call that hits its timeout the nohup job dies with the group kill on both backends.
 
 ### Why an extension could not handle it
 

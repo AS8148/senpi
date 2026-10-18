@@ -14,10 +14,8 @@ describe("terminal bash foreground exit", () => {
 	let manager: TerminalManager;
 	let ctx: TerminalToolContext;
 	let dir: string;
-	const savedForcePipe = process.env.SENPI_PTY_FORCE_PIPE;
 
 	beforeEach(async () => {
-		process.env.SENPI_PTY_FORCE_PIPE = "1";
 		manager = new TerminalManager();
 		ctx = {
 			manager,
@@ -31,18 +29,20 @@ describe("terminal bash foreground exit", () => {
 
 	afterEach(async () => {
 		await manager.teardown();
-		if (savedForcePipe === undefined) delete process.env.SENPI_PTY_FORCE_PIPE;
-		else process.env.SENPI_PTY_FORCE_PIPE = savedForcePipe;
 		await rm(dir, { recursive: true, force: true });
 	});
 
-	it("a nohup background job survives a normal foreground return (the group is signalled only at a deadline, never on exit)", async () => {
+	it("nothing signals a normally-returning foreground job's process group: a ready nohup child stays alive across the call", async () => {
 		const tool = createPtyBashTool(ctx);
+		const ready = join(dir, "ready");
 		const pidFile = join(dir, "bg.pid");
-		// Load-bearing invariant: a NORMAL return (STARTED printed, no timeout, no abort) must
-		// not signal the process group — only the deadline path ever does (PtySession::wait).
+		// The readiness file only exists after the nohup'd child is running with SIGHUP
+		// ignored, so the shell exiting cannot race the ignore into a kill. On the native
+		// backend the PTY hangup then provably spares it; on the pipe fallback (no PTY, no
+		// hangup) the assertion guards the other half of the contract: a normal return must
+		// never signal the group — only the timeout path ever kills it.
 		const start = await tool.execute("fg-nohup-start", {
-			command: `nohup sleep 30 >/dev/null 2>&1 & echo $! > ${pidFile}; echo STARTED`,
+			command: `nohup sh -c 'touch ${ready}; exec sleep 30' >/dev/null 2>&1 & echo $! > ${pidFile}; until test -f ${ready}; do sleep 0.05; done; echo STARTED`,
 		});
 		expect(start.isError).toBeFalsy();
 		expect(firstText(start)).toContain("STARTED");

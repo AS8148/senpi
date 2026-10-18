@@ -24,9 +24,10 @@ manual \`&\` backgrounding — use the built-in session tools:
   \`bash_id\` immediately. Foreground calls still block and return output; their \`timeout\`
   (seconds) is a kill deadline. Background sessions ignore \`timeout\` and live until they
   exit or you call \`kill_bash\`. Backgrounding is not a session: a plain \`&\` job dies with the
-  call's PTY hangup, a \`nohup\`/\`setsid\` job survives a normal exit only as an untracked orphan
-  (no \`bash_id\`, no captured log) and dies with the call's timeout group-kill — only
-  \`run_in_background\` creates a session that outlives the call.
+  call's PTY hangup (native backend), a \`nohup\`/\`setsid\` job only racily escapes that hangup
+  (it still dies when the call returns before nohup takes effect) and survives at best as an
+  untracked orphan (no \`bash_id\`, no captured log) that the call's timeout group-kill still
+  removes — only \`run_in_background\` creates a session that outlives the call.
 - \`bash_output({ bash_id, filter, view })\` peeks at a session without blocking: new output
   since the last read, the status line, or a rendered full-screen snapshot of TUIs via
   \`view: "screen"\`. Completion arrives as a notification carrying the exit code and output

@@ -34,7 +34,7 @@ export const ptyBashSchema = Type.Object({
 	run_in_background: Type.Optional(
 		Type.Boolean({
 			description:
-				"Run as a persistent background session. Returns a bash_id immediately; query it with bash_output, steer with bash_input, tear down with kill_bash. A plain & job dies with the call's PTY hangup; nohup/setsid survive a normal exit only as untracked orphans (no bash_id, no captured log) that the call's timeout or kill still group-kills — this flag is the only way a job stays a steerable session.",
+			"Run as a persistent background session. Returns a bash_id immediately; query it with bash_output, steer with bash_input, tear down with kill_bash. A plain & job dies with the call's PTY hangup (native backend); nohup/setsid only racily escape that hangup — a child can still die when the call returns before nohup takes effect — and when one survives it is an untracked orphan (no bash_id, no captured log) that the call's timeout or kill still group-kills; this flag is the only way a job stays a steerable session.",
 		}),
 	),
 	cols: Type.Optional(Type.Number({ description: "PTY width in columns (default 120)." })),

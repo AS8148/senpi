@@ -182,7 +182,9 @@ export class CommandMonitorSource {
 			id: record.id,
 			description: record.description,
 			// A timed-out watch was KILLED by its own timeout_ms deadline; say so instead of a
-			// passive "timed_out" that reads like a mere observation.
+			// passive "timed_out" that reads like a mere observation. The exit code is
+			// deliberately omitted in this branch: a killed child's code is noise, and
+			// "killed at deadline" names the cause instead.
 			summary: exit?.timedOut ? `watcher killed at deadline (${status})` : `watcher ${status}${codeText}`,
 		});
 		this.#host.ended(record, exit?.timedOut ? "timeout" : exit?.cancelled ? "killed" : "exit", code ?? null);
