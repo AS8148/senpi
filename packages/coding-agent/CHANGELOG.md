@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- `--session <id>` finds a session by the id its file name carries (`<timestamp>_<id>.jsonl`, the id a resume hint prints) even when the header records another id, and opening a not-yet-existing session file adopts the file-name id (code-yeongyu/oh-my-openagent#7471).
 - `senpi host ensure` refuses with `endpoint_occupied` (exit 3) when an unregistered process holds the public socket and does not answer, instead of starting a host that loses the bind and exits 1 with only `host_error`.
 
 ### Removed

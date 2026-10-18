@@ -1330,7 +1330,7 @@ export class SessionManager {
 		const created = withFileNameId(resolvedFile, newSessionOptions);
 		this._resetToNewSession(created);
 		// A host-minted id is referenced by nothing yet, so its file may wait for the first
-		// assistant message. A CALLER-chosen id is already held in the caller's own records:
+		// assistant message. A CALLER-chosen id (or the id the file name carries) is already held in the caller's own records:
 		// the file has to answer to it now, or a reopen before the first reply would mint a
 		// different identity and the caller's record would point at nothing (#2010).
 		if (created?.id !== undefined) {

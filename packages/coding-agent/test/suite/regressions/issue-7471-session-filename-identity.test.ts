@@ -2,10 +2,10 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Args } from "../src/cli/args.ts";
-import { SessionManager } from "../src/core/session-manager.ts";
-import { SettingsManager } from "../src/core/settings-manager.ts";
-import { createSessionManager } from "../src/main.ts";
+import type { Args } from "../../../src/cli/args.ts";
+import { SessionManager } from "../../../src/core/session-manager.ts";
+import { SettingsManager } from "../../../src/core/settings-manager.ts";
+import { createSessionManager } from "../../../src/main.ts";
 
 // code-yeongyu/oh-my-openagent#7471: a session whose file name carries one id while its header
 // carries another cannot be found by the id the file name (and the printed resume hint) names.

@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/session-manager.ts`: new `sessionFileNameId(path)`; creating a session at a named path that does not exist yet (or is empty) adopts the id the file name carries instead of minting a new one, so name and header agree.
+- `packages/coding-agent/src/core/session-manager.ts`: new `sessionFileNameId(path)`; creating a session at a named path that does not exist yet (or is empty) adopts the id the file name carries instead of minting a new one, so name and header agree. The file is now written immediately (header only), like a caller-chosen id (#2010), instead of waiting for the first assistant message.
 
 ### Why
 
