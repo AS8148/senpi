@@ -2,6 +2,22 @@
 
 ### What changed
 
+- `tsconfig.build.json` now excludes `**/*.test.ts`: the tool-child runtime is the first code with tests inside `src/`, and the emitted `dist/**/*.test.js` made every CI shard sweep and fail the compiled copies.
+
+### Why
+
+- CI builds the workspace before the test shards and vitest's default exclude does not skip `dist/`, so any test compiled into `dist` runs as a duplicate and fails (its spawned children cannot bootstrap from dist). Main never hit this because no tests lived under `src/` before.
+
+### Why an extension could not handle it
+
+- Build configuration of the package itself; extensions cannot change what tsc emits.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/tsconfig.build.json` (the exclude list) only.
+
+## What changed
+
 `tsconfig.build.json` excludes `**/*.test.ts`. The tool-child runtime is the first code with tests inside `src/`, and the emitted `dist/**/*.test.js` made every CI shard sweep and fail the compiled copies (their spawned children cannot bootstrap from dist), so CI failed all three test shards.
 
 ### Why
