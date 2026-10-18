@@ -10,6 +10,8 @@ import { once } from "node:events";
 import { openChannelListener, type ToolChildChannel } from "./channel.ts";
 import { createGenerationBarrier, type GenerationBarrier } from "./client-barrier.ts";
 import { TOOL_CHILD_PROTOCOL_VERSION } from "./entry.ts";
+import { policyFor } from "./job-policy.ts";
+import { JobSupervisor, type SupervisorTimers } from "./job-supervisor.ts";
 import { spawnToolChild, type ToolChildCommand, toolChildCommand } from "./launch.ts";
 import type { ToolChildMessage } from "./protocol.ts";
 
@@ -39,6 +41,10 @@ export interface ToolChildClientOptions {
 	readonly readyMs?: number;
 	readonly shutdownMs?: number;
 	readonly onStatus?: (status: ToolChildStatus) => void;
+	/** Tests inject a fake clock for the job supervisor. */
+	readonly timers?: SupervisorTimers;
+	/** Read for `SENPI_TOOL_CHILD_DEADLINE_<KIND>_MS` fixture overrides. */
+	readonly policyEnv?: NodeJS.ProcessEnv;
 }
 
 interface Pending {
@@ -54,6 +60,7 @@ interface Live {
 	readonly pending: Map<string, Pending>;
 	readonly pongs: Map<number, () => void>;
 	readonly barrier: GenerationBarrier;
+	readonly supervisor: JobSupervisor;
 	ended?: Promise<void>;
 }
 
@@ -148,7 +155,25 @@ export class ToolChildClient {
 				this.#kill(child);
 			},
 		});
-		const live: Live = { generation, child, channel, exited, pending, pongs: new Map(), barrier };
+		const supervisor = new JobSupervisor(
+			{
+				sendCancel: (jobId) => channel.send({ type: "cancel", jobId }),
+				sendPing: (seq) => channel.send({ type: "ping", seq }),
+				signal: (signal) => {
+					if (signal === "SIGKILL") this.#kill(child);
+					else if (process.platform === "win32") this.#kill(child);
+					else if (child.pid !== undefined) {
+						try {
+							process.kill(-child.pid, "SIGTERM");
+						} catch {
+							// The child's group is already gone.
+						}
+					}
+				},
+			},
+			this.#options.timers,
+		);
+		const live: Live = { generation, child, channel, exited, pending, pongs: new Map(), barrier, supervisor };
 		this.#live = live;
 		this.#state = "live";
 		channel.onMessage((frame) => this.#onFrame(live, frame));
@@ -156,14 +181,32 @@ export class ToolChildClient {
 		this.#options.onStatus?.({ state: "spawned", generation, pid: child.pid ?? -1 });
 	}
 
-	run(kind: string, args: unknown, signal?: AbortSignal): Promise<unknown> {
+	run(
+		kind: string,
+		args: unknown,
+		signal?: AbortSignal,
+		options: { readonly idempotent?: boolean; readonly deadlineMs?: number } = {},
+	): Promise<unknown> {
 		const live = this.#live;
 		if (this.#state !== "live" || live === undefined)
 			return Promise.reject(new ToolChildError("tool_child_unavailable", this.#state));
 		const jobId = `j${++this.#nextJob}`;
+		const policy = policyFor(kind, { ...options, env: this.#options.policyEnv ?? process.env });
 		return new Promise((resolve, reject) => {
-			live.pending.set(jobId, { resolve, reject });
-			signal?.addEventListener("abort", () => live.channel.send({ type: "cancel", jobId }), { once: true });
+			const done = (finish: () => void) => () => {
+				live.supervisor.settle(jobId);
+				finish();
+			};
+			live.pending.set(jobId, {
+				resolve: (value) => done(() => resolve(value))(),
+				reject: (error) => done(() => reject(error))(),
+			});
+			live.supervisor.track(jobId, {
+				reject: (error) => settle(live, jobId, (pending) => pending.reject(error)),
+				backstopMs: policy.backstopMs(args),
+				userText: policy.userText,
+				...(signal === undefined ? {} : { signal }),
+			});
 			live.channel.send({ type: "job", jobId, kind, args });
 		});
 	}
@@ -206,6 +249,7 @@ export class ToolChildClient {
 				);
 				return;
 			case "pong": {
+				live.supervisor.pongReceived();
 				const done = live.pongs.get(frame.seq);
 				live.pongs.delete(frame.seq);
 				done?.();
@@ -217,6 +261,7 @@ export class ToolChildClient {
 	}
 
 	#onExit(live: Live): void {
+		live.supervisor.end();
 		const failure = new ToolChildError("tool_child_exited", `generation ${live.generation} exited`);
 		for (const [jobId, pending] of live.pending) {
 			live.pending.delete(jobId);

@@ -6,3 +6,8 @@ export function whoAmI(args: { readonly code: number }): { pid: number; status: 
 }
 
 export const notAFunction = 1;
+
+export async function sleepFor(args: { readonly ms: number }): Promise<{ slept: number }> {
+	await new Promise((resolveSleep) => setTimeout(resolveSleep, args.ms));
+	return { slept: args.ms };
+}
