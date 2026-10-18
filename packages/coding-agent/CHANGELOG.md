@@ -18,6 +18,7 @@
 
 ### Changed
 
+- A monitor command watch that reaches its `timeout_ms` now summarizes as `watcher killed at deadline (timed_out)` instead of `watcher timed_out` (both the local and the RPC monitor source; file watches are unchanged), and the terminal prompt section, the `bash`/`monitor` tool descriptions and the bun-1-4 skill now state both survival semantics: a non-persistent watch is a watcher whose deadline kills the watched command, and `&`/`nohup` inside a foreground bash call die with the call ([#3611](https://github.com/code-yeongyu/senpi/issues/3611)).
 - Goals no longer stop after a fixed 150 automatic continuations. They stop only after 60 automatic continuations in a row without progress (no new tool effect, todo change, or new message from a person; re-running the same command, failing commands, and output that differs only in timings or ids are not progress), with a notice that says why and that any message resumes the goal ([oh-my-openagent#10280](https://github.com/code-yeongyu/oh-my-openagent/issues/10280)).
 
 ### Fixed
