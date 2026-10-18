@@ -36,8 +36,7 @@ import {
 	hostDaemonDirectoryPaths,
 } from "./host-daemon-paths.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
-import { stallRefusalWindowMs } from "./host-stalled-evidence.ts";
-import { ageOf, readJsonObject } from "./host-state-json.ts";
+import { generationHeartbeatStopped } from "./host-stalled-evidence.ts";
 import { logUnknownHostIdentity } from "./host-supervisor-log.ts";
 
 /** How long a client should wait before retrying a path another generation still holds. */
@@ -284,9 +283,7 @@ async function standingOwner(
 async function heartbeatStopped(paths: HostDaemonDirectory, instanceId: string): Promise<boolean> {
 	// A claim file is untrusted input: an instance id that is not a plain directory name names no generation.
 	if (instanceId === "" || instanceId === "." || instanceId === ".." || /[\\/]/.test(instanceId)) return false;
-	const heartbeat = await readJsonObject(generationPaths(paths, instanceId).aliveFile);
-	const age = ageOf(heartbeat?.at, Date.now());
-	return age !== undefined && age >= stallRefusalWindowMs();
+	return generationHeartbeatStopped(generationPaths(paths, instanceId));
 }
 
 /** The generation the pointer names, or nothing when no pointer describes this endpoint. */

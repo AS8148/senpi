@@ -1,3 +1,26 @@
+## 2026-10-18 - The host child's start time is recorded on Windows, and an unreadable one is released once its heartbeat stopped (senpi#3658)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-scratch.ts`: `recordChildPid(file, pid, running)` writes `{ pid, processStartTime: null }` at once, then reads the child's start time the way `host-ensure-start.ts` reads the supervisor's - `waitForStartTime` (10 s of 1 s probes), then one unhurried 15 s read - and rewrites the record with it. An identity read after `running()` turned false is dropped.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: passes `running` from the spawned `ChildProcess` (`exitCode`/`signalCode` still null).
+- `packages/coding-agent/src/modes/rpc/host-stalled-evidence.ts`: new `generationHeartbeatStopped(generation)` (heartbeat older than `stallRefusalWindowMs`); `hostChildAlive` returns `false` for a live pid whose start time is unreadable (recorded or observed) once that holds. A fresh heartbeat or no heartbeat file still preserves.
+- `packages/coding-agent/src/modes/rpc/host-reservations.ts`: the #3652 `heartbeatStopped` delegates to `generationHeartbeatStopped`, so claims and generations share one rule.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-scratch.ts`, `host-lifecycle.ts`: one 1 s `Get-CimInstance` probe right after spawn recorded `processStartTime: null` for every host child on a Windows runner, while the supervisor's record (bounded wait + unhurried read, #1355) had one.
+- `packages/coding-agent/src/modes/rpc/host-stalled-evidence.ts`: with no comparable start time, `hostChildAlive` preserved the generation unconditionally; once Windows reused the killed child's pid, `ensureHost` refused `host_stalled` for as long as the unrelated process lived (sisyphuslabs/omo-desktop-app#3157). The heartbeat is positive evidence: a live host whose probe is merely slow keeps writing it (#1609). Tests: `test/suite/regressions/3658-host-child-start-time.test.ts`, `3054-supervisor-child-exit.test.ts`.
+- `packages/coding-agent/src/modes/rpc/host-reservations.ts`: one heartbeat rule, not two.
+
+### Why an extension could not handle it
+
+- Host child identity and generation liveness are RPC host internals with no extension hook.
+
+### Expected merge conflict zones
+
+- LOW: `recordChildPid` in `host-lifecycle-scratch.ts` and its call in `host-lifecycle.ts`; the tail of `hostChildAlive` in `host-stalled-evidence.ts`; `heartbeatStopped` in `host-reservations.ts`.
+
 ## 2026-10-18 - A superseded claim whose owner identity cannot be proven needs a live heartbeat (senpi#3652)
 
 ### What changed

@@ -107,7 +107,24 @@ export async function hostLoopStalled(
 	return heartbeatAge !== undefined && heartbeatAge > options.errorMs && heartbeatAge < options.windowMs;
 }
 
-/** Whether the generation's host CHILD is running, from its own pid record; `undefined` when unrecorded. */
+/**
+ * Whether the generation left a heartbeat older than any stall could explain: the same "died without
+ * cleaning up" verdict `hostLoopStalled` reaches past the window. No heartbeat file is no evidence.
+ */
+export async function generationHeartbeatStopped(generation: HostGenerationPaths, now = Date.now()): Promise<boolean> {
+	const age = ageOf((await readJsonObject(generation.aliveFile))?.at, now);
+	return age !== undefined && age >= stallRefusalWindowMs();
+}
+
+/**
+ * Whether the generation's host CHILD is running, from its own pid record; `undefined` when unrecorded.
+ *
+ * A live pid whose start time cannot be compared (none recorded, or none readable now) is preserved -
+ * a starved probe on a live host must not read as dead (#1609) - unless the generation's heartbeat has
+ * stopped (#3658). On Windows a killed generation's pid is handed to an unrelated process, and without
+ * that second piece of evidence the stranger would keep the generation, and every ensure refusing
+ * `host_stalled`, alive for as long as it runs.
+ */
 export async function hostChildAlive(generation: HostGenerationPaths): Promise<boolean | undefined> {
 	const record = await readJsonObject(generation.childPidFile);
 	const pid = record?.pid;
@@ -119,6 +136,10 @@ export async function hostChildAlive(generation: HostGenerationPaths): Promise<b
 		typeof record?.processStartTime === "string" ? processStartTimeMs(record.processStartTime) : undefined;
 	const observedMs = observed.kind === "present" ? processStartTimeMs(observed.identity) : undefined;
 	if (recordedMs !== undefined && observedMs !== undefined) return sameProcessStartMs(recordedMs, observedMs);
+	if (await generationHeartbeatStopped(generation)) {
+		supervisorLog(`host child pid ${pid} start time unreadable and its heartbeat stopped; releasing generation`);
+		return false;
+	}
 	supervisorLog(`host child pid ${pid} start time unreadable; preserving generation`);
 	return true;
 }
