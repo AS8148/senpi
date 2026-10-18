@@ -222,3 +222,21 @@ describe("ChildToolContext", () => {
 		expect(decoded).toEqual({ type: "job", jobId: "j", kind: "read", args: narrowed });
 	});
 });
+
+describe("encode-time normalization (senpi#3569 review)", () => {
+	it("a job result of undefined encodes as an explicit null the decoder accepts", () => {
+		const [decoded] = new FrameDecoder().push(encodeFrame({ type: "result", jobId: "j", value: undefined } as never));
+		expect(decoded).toMatchObject({ type: "result", jobId: "j", value: null });
+	});
+
+	it("a NaN job result encodes as null instead of killing the channel", () => {
+		const [decoded] = new FrameDecoder().push(
+			encodeFrame({ type: "result", jobId: "j", value: Number.NaN } as never),
+		);
+		expect(decoded).toMatchObject({ type: "result", jobId: "j", value: null });
+	});
+
+	it("a non-finite required number is refused at encode with a typed error, never as a frame", () => {
+		expect(() => encodeFrame({ type: "heartbeat", seq: Number.POSITIVE_INFINITY })).toThrow(ToolChildCodecError);
+	});
+});

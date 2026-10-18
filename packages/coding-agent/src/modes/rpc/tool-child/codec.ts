@@ -1,7 +1,11 @@
 import { TOOL_CHILD_LIMITS, type ToolChildMessage } from "./protocol.ts";
 import { isToolChildMessage } from "./protocol-guard.ts";
 
-export type ToolChildCodecErrorCode = "tool_child_frame_too_large" | "tool_child_truncated" | "tool_child_malformed";
+export type ToolChildCodecErrorCode =
+	| "tool_child_frame_too_large"
+	| "tool_child_truncated"
+	| "tool_child_malformed"
+	| "tool_child_encode_invalid";
 
 export class ToolChildCodecError extends Error {
 	readonly code: ToolChildCodecErrorCode;
@@ -19,7 +23,20 @@ const tooLarge = (bytes: number): ToolChildCodecError =>
 	new ToolChildCodecError("tool_child_frame_too_large", `${bytes} bytes exceeds ${TOOL_CHILD_LIMITS.frameBytes}`);
 
 export function encodeFrame(message: ToolChildMessage): Uint8Array {
-	const json = JSON.stringify(message);
+	// JSON.stringify drops undefined fields and turns NaN/Infinity into null; the peer's guard rejects both and a
+	// rejected frame is terminal for the channel. Normalize at the source: undefined and non-finite numbers become an
+	// explicit null. Where null is NOT acceptable (a required number like heartbeat seq), the round-trip check with
+	// the SAME predicate the decoder applies refuses the message HERE - a typed per-message error instead of a frame
+	// that kills the channel remotely.
+	const json = JSON.stringify(message, (_key, value) =>
+		typeof value === "number" && !Number.isFinite(value) ? null : value === undefined ? null : value,
+	);
+	if (!isToolChildMessage(JSON.parse(json))) {
+		throw new ToolChildCodecError(
+			"tool_child_encode_invalid",
+			"the message serializes to a frame the peer's guard rejects",
+		);
+	}
 	const bodyBytes = Buffer.byteLength(json, "utf8");
 	if (bodyBytes > TOOL_CHILD_LIMITS.frameBytes) throw tooLarge(bodyBytes);
 	const frame = Buffer.allocUnsafe(FRAME_HEADER_BYTES + bodyBytes);

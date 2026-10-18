@@ -5,9 +5,12 @@ export type PackedPayload = { inline: true; value: unknown } | { inline: false; 
 
 /** Inline at or below `REF_THRESHOLD` JSON bytes; above it, by acknowledged reference. Same rule in both directions. */
 export async function packPayload(value: unknown, writer: PayloadRefWriter): Promise<PackedPayload> {
-	const json = JSON.stringify(value);
+	// `undefined` stringifies to nothing (JSON.stringify returns undefined), which no decoder accepts; the explicit
+	// null is the encoding the peer's guard takes (senpi#3569 review).
+	const normalized = value === undefined ? null : value;
+	const json = JSON.stringify(normalized);
 	if (json === undefined || Buffer.byteLength(json, "utf8") <= TOOL_CHILD_LIMITS.REF_THRESHOLD) {
-		return { inline: true, value };
+		return { inline: true, value: normalized };
 	}
 	return { inline: false, ref: await writer.create(Buffer.from(json, "utf8")) };
 }
