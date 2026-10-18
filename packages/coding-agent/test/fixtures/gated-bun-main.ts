@@ -34,8 +34,14 @@ const gate = new LaunchGate(childSide);
 childSide.onMessage((message) => {
 	gate.handle(message);
 });
-const worker = new Worker(new URL("./gated-bun-worker.ts", import.meta.url), {
-	workerData: { buffer: gate.clock.buffer },
+const workerFile = process.argv[2] ?? "./gated-bun-worker.ts";
+const worker = new Worker(new URL(workerFile, import.meta.url), {
+	workerData: {
+		buffer: gate.clock.buffer,
+		barrierClock: gate.clock.buffer,
+		jobId: "job-1",
+		marker: join(root, "started"),
+	},
 } as WorkerOptions);
 const result = await new Promise<Record<string, unknown>>((resolve) => {
 	worker.addEventListener(

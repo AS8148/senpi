@@ -9,7 +9,7 @@ import { syncBuiltinESMExports } from "node:module";
 import { extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parentPort, Worker, type WorkerOptions } from "node:worker_threads";
-import { type BunLaunchGlobals, installGatedBun } from "./gated-bun.ts";
+import { type BunGateBypass, type BunLaunchGlobals, installGatedBun } from "./gated-bun.ts";
 import { createGatedChildProcess } from "./gated-child-process.ts";
 import { installChildProcessModule } from "./gated-modules.ts";
 import type { LaunchGate } from "./launch-gate.ts";
@@ -57,9 +57,12 @@ export function installWorkerBarrier(data: GatedWorkerData, env: NodeJS.ProcessE
 		jobId: () => data.jobId,
 		skipAckWait: readTestControls(env).enabled("SKIP_ACK_WAIT"),
 	});
-	const gated = createGatedChildProcess(realChildProcess, client);
+	// The Bun gate goes first: the gated child_process makes its real calls inside its bypass (one gate per launch).
+	const bun: unknown = Reflect.get(globalThis, "Bun");
+	const bypass: BunGateBypass = isBunLaunchGlobals(bun) ? installGatedBun(bun, client) : (fn) => fn();
+	const gated = createGatedChildProcess(bypassingBunGate(realChildProcess, bypass), client);
 	installChildProcessModule(gated);
-	for (const name of ["spawn", "spawnSync", "exec", "execSync", "execFile", "execFileSync", "fork"] as const) {
+	for (const name of LAUNCH_FUNCTIONS) {
 		Object.defineProperty(realChildProcess, name, {
 			value: Reflect.get(gated, name),
 			configurable: true,
@@ -69,9 +72,20 @@ export function installWorkerBarrier(data: GatedWorkerData, env: NodeJS.ProcessE
 	// Node re-binds named ESM imports of the builtin to the patched functions only after this call (Bun never does;
 	// there, extension code reaches the gated module through the importer's redirect).
 	syncBuiltinESMExports();
-	const bun: unknown = Reflect.get(globalThis, "Bun");
-	if (isBunLaunchGlobals(bun)) installGatedBun(bun, client);
 	return client;
+}
+
+const LAUNCH_FUNCTIONS = ["spawn", "spawnSync", "exec", "execSync", "execFile", "execFileSync", "fork"] as const;
+
+/** A copy of `node:child_process` whose launch functions run the original inside the Bun gate's bypass. */
+function bypassingBunGate(module: typeof realChildProcess, bypass: BunGateBypass): typeof realChildProcess {
+	const copy = { ...module };
+	for (const name of LAUNCH_FUNCTIONS) {
+		const original: unknown = Reflect.get(module, name);
+		if (typeof original !== "function") continue;
+		Reflect.set(copy, name, (...args: unknown[]) => bypass(() => Reflect.apply(original, module, args)));
+	}
+	return copy;
 }
 
 function isBunLaunchGlobals(value: unknown): value is BunLaunchGlobals {

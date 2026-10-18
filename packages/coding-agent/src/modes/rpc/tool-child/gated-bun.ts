@@ -43,10 +43,28 @@ function splitArgs(
 	return { cmd, opts: rest };
 }
 
-export function installGatedBun(bun: BunLaunchGlobals, client: WorkerLaunchClient): void {
+/** Runs `fn` with the gated Bun launch globals passing straight through to the real ones. */
+export type BunGateBypass = <T>(fn: () => T) => T;
+
+/**
+ * Gates the Bun launch globals and returns the bypass the gated `child_process` runs its real calls in: in Bun,
+ * `node:child_process` launches through `Bun.spawn`, and that launch is already gated (ack, proof, record, shim) by
+ * the outer call - gating it again would record it twice and wrap the command in a second go-line shim.
+ */
+export function installGatedBun(bun: BunLaunchGlobals, client: WorkerLaunchClient): BunGateBypass {
 	const real = { spawn: bun.spawn.bind(bun), spawnSync: bun.spawnSync.bind(bun), $: bun.$ };
 	const posix = process.platform !== "win32";
+	let bypassDepth = 0;
+	const bypass: BunGateBypass = (fn) => {
+		bypassDepth += 1;
+		try {
+			return fn();
+		} finally {
+			bypassDepth -= 1;
+		}
+	};
 	bun.spawn = (commandOrOptions, options) => {
+		if (bypassDepth > 0) return real.spawn(commandOrOptions, options);
 		const { cmd, opts } = splitArgs(commandOrOptions, options);
 		if (!posix || opts.detached === false) {
 			const launchId = client.acquire({
@@ -81,6 +99,7 @@ export function installGatedBun(bun: BunLaunchGlobals, client: WorkerLaunchClien
 		return child;
 	};
 	bun.spawnSync = (commandOrOptions, options) => {
+		if (bypassDepth > 0) return real.spawnSync(commandOrOptions, options);
 		const launchId = client.acquire({
 			origin: "kernel",
 			api: "bun.spawnSync",
@@ -93,6 +112,7 @@ export function installGatedBun(bun: BunLaunchGlobals, client: WorkerLaunchClien
 		return result;
 	};
 	bun.$ = (strings, ...values) => {
+		if (bypassDepth > 0) return real.$(strings, ...values);
 		const launchId = client.acquire({
 			origin: "kernel",
 			api: "bun.shell",
@@ -109,6 +129,7 @@ export function installGatedBun(bun: BunLaunchGlobals, client: WorkerLaunchClien
 		}
 		return shell;
 	};
+	return bypass;
 }
 
 function exitCodeOf(value: unknown): number | undefined {
