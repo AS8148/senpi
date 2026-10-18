@@ -16,6 +16,8 @@
 
 - The mouse wheel scrolls the transcript again while an `ask_user_question` prompt is waiting. The first notch pauses option clicking (the hint says so) and any key turns it back on. The text-selection hint now names the right modifier per terminal, including VS Code on macOS ([#3604](https://github.com/code-yeongyu/senpi/issues/3604)).
 
+- Alt+Q restores queued messages on WSL again: Windows keybinding defaults detect WSL through `WSL_DISTRO_NAME`/`WSL_INTEROP`/`WSLENV` or a `/proc/version` fallback when the environment is sanitized, and split-delivery ESC+q reassembly uses the standard 50ms window (100ms on WSL; a lone local Escape now settles up to 40ms later) ([#3628](https://github.com/code-yeongyu/senpi/issues/3628)).
+
 ### Removed
 
 ## [2026.10.18-1] - 2026-10-18

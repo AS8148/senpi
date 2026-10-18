@@ -14,6 +14,8 @@
 
 - On Windows, a WezTerm build older than 20250208-160106 (including the 20240203 stable release) now shows the image placeholder with a hint to update WezTerm instead of a blank gap: its bundled ConPTY drops Kitty graphics before they reach WezTerm. Newer WezTerm nightly builds keep inline images ([#3596](https://github.com/code-yeongyu/senpi/issues/3596)).
 
+- Alt+key chords split across reads merge into one key when the bytes arrive within the escape reassembly window; WSL sessions get the 100ms remote window (detected by env markers or `/proc/version`) and an over-window gap is now deterministically treated as a lone Escape. The plain default rises from 10ms to the standard 50ms, so a local lone-Escape press (interrupt) settles up to 40ms later than before; explicit `escapeTimeout` and `PI_TUI_ESC_TIMEOUT` settings are unchanged ([#3628](https://github.com/code-yeongyu/senpi/issues/3628)).
+
 ### Removed
 
 ## [2026.10.18-1] - 2026-10-18
