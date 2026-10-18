@@ -56,9 +56,10 @@ export const TOOL_RUNTIME_UNSUPPORTED_HOST = "tool_runtime_unsupported_host";
 export function toolRuntimeHostRefusal(
 	runtime: ToolRuntimeKind,
 	platform: NodeJS.Platform = process.platform,
+	hasFfi: () => boolean = () => process.getBuiltinModule("bun:ffi") !== undefined,
 ): string | undefined {
-	if (runtime !== "child" || platform !== "win32") return undefined;
-	return `${TOOL_RUNTIME_UNSUPPORTED_HOST}: --tool-runtime child is not available on Windows yet (senpi#3566); use in-process`;
+	if (runtime !== "child" || platform !== "win32" || hasFfi()) return undefined;
+	return `${TOOL_RUNTIME_UNSUPPORTED_HOST}: --tool-runtime child on Windows needs the Bun runtime (bun:ffi holds the tool child in a Job Object); run senpi under Bun or use in-process`;
 }
 
 export class ToolRuntimeUnsupportedHostError extends Error {
@@ -73,10 +74,11 @@ export function resolveToolRuntime(
 	parsed: { readonly toolRuntime?: ToolRuntimeKind },
 	env: NodeJS.ProcessEnv = process.env,
 	platform: NodeJS.Platform = process.platform,
+	hasFfi?: () => boolean,
 ): ToolRuntimeResolution {
 	const resolved = resolveRequestedToolRuntime(parsed, env);
 	if (!resolved.ok) return resolved;
-	const refusal = toolRuntimeHostRefusal(resolved.value, platform);
+	const refusal = toolRuntimeHostRefusal(resolved.value, platform, hasFfi);
 	return refusal === undefined ? resolved : { ok: false, message: refusal };
 }
 
