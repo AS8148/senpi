@@ -294,6 +294,7 @@ type RpcSessionCommand =
 	| { id?: string; type: "get_provider_accounts"; provider: string }
 	| { id?: string; type: "account_pin"; provider: string; name: string | null }
 	| { id?: string; type: "account_remove"; provider: string; name: string }
+	| { id?: string; type: "account_order"; provider: string; names: string[] | null }
 	| { id?: string; type: "set_client_info"; width: number; capabilities?: string[] };
 
 /** Stable multi-session protocol error codes. */
@@ -1310,10 +1311,11 @@ export type RpcResponse =
 			type: "response";
 			command: "get_provider_accounts";
 			success: true;
-			data: { accounts: RpcProviderAccount[] };
+			data: { accounts: RpcProviderAccount[]; ordered: boolean };
 	  }
 	| { id?: string; type: "response"; command: "account_pin"; success: true }
 	| { id?: string; type: "response"; command: "account_remove"; success: true }
+	| { id?: string; type: "response"; command: "account_order"; success: true }
 
 	// Error response (any command can fail)
 	| {

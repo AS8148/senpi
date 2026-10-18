@@ -129,6 +129,26 @@ Use `/account <provider> rename <id> <display name...>` or the corresponding `/g
 
 A label is stored NFC-normalized with internal whitespace collapsed, must contain at least one visible character, and may not exceed 32 terminal columns (measured in grapheme clusters, so CJK and emoji count two columns each). Uniqueness within a provider folds case, Unicode compatibility forms, invisible code points, and Cyrillic lookalikes, so two labels that render identically are refused.
 
+## Account order
+
+By default a provider's accounts are picked per session by rendezvous hashing, and a failed account fails over in that hash order. A user order replaces that ranking: requests try the pinned account first, then the first unblocked account in the order, then the accounts the order does not name, in hash order. On the Claude subscription lane, a session keeps the account its conversation already lives on while that account can serve, ahead of the order, so setting an order does not move running conversations.
+
+`get_provider_accounts` lists accounts in this effective order and reports `ordered: true` while a stored order names at least one listed account.
+
+#### account_order
+
+Set the order, or clear it with `names: null`:
+
+```json
+{"id": "o1", "type": "account_order", "provider": "openai", "names": ["work", "default"]}
+```
+
+```json
+{"id": "o1", "type": "response", "command": "account_order", "success": true}
+```
+
+`names` may name a subset; accounts it leaves out come after it. The command fails without changing anything when a name is not one of the provider's accounts, appears twice, or the list is empty, and when the provider has no stored credential (the order is kept beside the pin in `auth.json`). Removing an account drops it from the order. Success emits `auth_accounts_changed`. Only account names cross RPC, never credential material.
+
 ## Starting RPC Mode
 
 ### RPC client lifecycle

@@ -25,6 +25,8 @@ export type CredentialSlot = {
 export type PooledCredential = Credential & {
 	accounts?: CredentialSlot[];
 	pinned?: string;
+	/** User order: these accounts are tried first, in this order, after a pin (senpi#3591). */
+	order?: string[];
 };
 
 const SLOT_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;

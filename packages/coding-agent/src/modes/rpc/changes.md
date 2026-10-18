@@ -1,3 +1,25 @@
+## 2026-10-18 - Account order over RPC (senpi#3591)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: new command `{ type: "account_order"; provider; names: string[] | null }` and its response; `get_provider_accounts` response data gains `ordered: boolean`.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `account_order` calls `orderCredentialAccounts`; `get_provider_accounts` answers from `listCredentialAccounts`, which lists in effective order and reports `ordered`.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `orderProviderAccounts(provider, names | null)`.
+
+### Why
+
+senpi#3591: accounts could be pinned or removed but not ordered, so a client (the OmO desktop, sisyphuslabs/omo-desktop-app#2973) could not say which account to try first.
+
+### Why an extension could not handle it
+
+The RPC command union, its dispatch and the typed client are core protocol surfaces; extensions cannot add a typed command to them.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the account command arms in `RpcCommand` and the `get_provider_accounts`/`account_*` response arms.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the credential-accounts imports and the `get_provider_accounts`/`account_*` cases.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the provider-account methods.
+
 ## 2026-10-17 - A host daemon inherits every credential the engine reads (senpi#3531)
 
 ### What changed
