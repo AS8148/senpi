@@ -15,6 +15,10 @@
 
 ### Fixed
 
+- A compiled build finds a Claude Code platform binary shipped in `node_modules` beside its executable, as the bundled copy; a newer `claude` on PATH still wins ([#3639](https://github.com/code-yeongyu/senpi/issues/3639))
+
+- `senpi host ensure` refuses with `endpoint_occupied` (exit 3) when an unregistered process holds the public socket and does not answer, instead of starting a host that loses the bind and exits 1 with only `host_error`.
+
 ### Removed
 
 ## [2026.10.18] - 2026-10-18
