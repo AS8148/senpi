@@ -34,6 +34,24 @@ export default function (pi) {
 		execute: async () => ({ content: [{ type: "text", text: "in-process" }], details: {} }),
 	});
 	pi.registerTool({
+		name: "child_echo",
+		label: "child echo",
+		description: "answers from the tool child",
+		placement: "child",
+		childModule: { path: "./body.ts", export: "childEcho" },
+		parameters: Type.Object({ word: Type.String() }),
+		execute: async () => ({ content: [{ type: "text", text: "in-process" }], details: {} }),
+	});
+	pi.registerTool({
+		name: "calls_child",
+		label: "calls child",
+		description: "calls a child-placed tool from the tool child",
+		placement: "child",
+		childModule: { path: "./body.ts", export: "callsChild" },
+		parameters: Type.Object({ word: Type.String() }),
+		execute: async () => ({ content: [{ type: "text", text: "in-process" }], details: {} }),
+	});
+	pi.registerTool({
 		name: "asks_completion",
 		label: "asks completion",
 		description: "asks the server for a completion from the tool child",
@@ -48,6 +66,15 @@ export default function (pi) {
 const BODY = `export async function complete(input, host) {
 	const reply = await host.complete({ prompt: input.params.word });
 	return { content: [{ type: "text", text: JSON.stringify(reply) }], details: { childPid: process.pid, reply } };
+}
+
+export function childEcho(input) {
+	return { content: [{ type: "text", text: "child echo " + input.params.word }], details: { pid: process.pid } };
+}
+
+export async function callsChild(input, host) {
+	const reply = await host.call("child_echo", { word: input.params.word });
+	return { content: [{ type: "text", text: "nested done" }], details: { childPid: process.pid, reply } };
 }
 
 export async function run(input, host) {
@@ -128,6 +155,30 @@ describe.skipIf(process.platform === "win32")("reverse bridge in a session", () 
 			expect(details.reply).toEqual({ answer: "completed ping", pid: process.pid });
 		} finally {
 			unregister();
+			cleanup();
+		}
+	}, 90_000);
+
+	it("runs a child-placed tool called from a child-run body as a nested job on the same child", async () => {
+		const { harness, cleanup } = await childSession();
+		try {
+			harness.setResponses([
+				fauxAssistantMessage(fauxToolCall("calls_child", { word: "deep" }), { stopReason: "toolUse" }),
+				fauxAssistantMessage("done"),
+			]);
+			await harness.session.prompt("go");
+			const result = getToolResult(harness, "calls_child");
+			const details = result.details as {
+				childPid: number;
+				reply: { result: { content: unknown; details: { pid: number } }; isError: boolean };
+			};
+			expect(result.isError).toBe(false);
+			expect(details.childPid).not.toBe(process.pid);
+			expect(details.reply.isError).toBe(false);
+			expect(details.reply.result.content).toEqual([{ type: "text", text: "child echo deep" }]);
+			expect(details.reply.result.details.pid).toBe(details.childPid);
+			expect(Reflect.get(globalThis, HOOK_COUNTS)).toEqual({ calls_child: 1, child_echo: 1 });
+		} finally {
 			cleanup();
 		}
 	}, 90_000);
