@@ -102,6 +102,7 @@ export type ChildToServer =
 	| { type: "hello"; generation: number; pid: number; protocol: number }
 	| { type: "heartbeat"; seq: number }
 	| { type: "pong"; seq: number }
+	| { type: "cancel_ack"; jobId: string }
 	| { type: "result"; jobId: string; value: unknown }
 	| { type: "result_ref"; jobId: string; ref: PayloadRef }
 	| { type: "job_error"; jobId: string; code: string; message: string }

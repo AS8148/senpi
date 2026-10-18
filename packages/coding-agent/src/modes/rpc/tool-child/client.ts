@@ -43,6 +43,8 @@ export interface ToolChildClientOptions {
 	readonly onStatus?: (status: ToolChildStatus) => void;
 	/** Tests inject a fake clock for the job supervisor. */
 	readonly timers?: SupervisorTimers;
+	/** Observes the child's cancel acknowledgements (tests and status). */
+	readonly onCancelAck?: (jobId: string) => void;
 	/** Read for `SENPI_TOOL_CHILD_DEADLINE_<KIND>_MS` fixture overrides. */
 	readonly policyEnv?: NodeJS.ProcessEnv;
 }
@@ -223,7 +225,11 @@ export class ToolChildClient {
 
 	async close(): Promise<void> {
 		const live = this.#live;
-		if (live === undefined) return;
+		// A child that already died may still be tearing down (ledger, launch log): close() means all of it is finished.
+		if (live === undefined) {
+			await this.#lastEnded;
+			return;
+		}
 		this.#state = "retiring";
 		live.channel.send({ type: "shutdown" });
 		const graceful = await Promise.race([
@@ -247,6 +253,10 @@ export class ToolChildClient {
 				settle(live, frame.jobId, (p) =>
 					p.reject(new ToolChildError(frame.code, frame.type === "job_error" ? frame.message : "refused")),
 				);
+				return;
+			case "cancel_ack":
+				live.supervisor.cancelAcked(frame.jobId);
+				this.#options.onCancelAck?.(frame.jobId);
 				return;
 			case "pong": {
 				live.supervisor.pongReceived();

@@ -69,6 +69,21 @@ describe("JobSupervisor", () => {
 		supervisor.end();
 	});
 
+	it("stops the ladder when the child acknowledges the cancel; the job's backstop still applies", () => {
+		const { clock, events, track, supervisor, rejected } = rig();
+		const abort = new AbortController();
+		track("j1", { signal: abort.signal, backstopMs: 30_000 });
+		abort.abort();
+		supervisor.cancelAcked("j1");
+		for (let elapsed = 0; elapsed < 30_000; elapsed += 5_000) {
+			clock.advance(5_000);
+			supervisor.pongReceived();
+		}
+		expect(events.filter((event) => event.includes("SIG"))).toEqual([]);
+		expect(rejected).toEqual([{ jobId: "j1", code: "tool_child_deadline" }]);
+		supervisor.end();
+	});
+
 	it("stops the ladder when the job settles after the cancel", () => {
 		const { clock, events, track, supervisor } = rig();
 		const abort = new AbortController();

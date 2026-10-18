@@ -48,6 +48,7 @@ const SHAPES = {
 	hello: { generation: req("number"), pid: req("number"), protocol: req("number") },
 	heartbeat: { seq: req("number") },
 	pong: { seq: req("number") },
+	cancel_ack: { jobId: req("string") },
 	result: { jobId: req("string"), value: req("json") },
 	result_ref: { jobId: req("string"), ref: req("ref") },
 	job_error: { jobId: req("string"), code: req("string"), message: req("string") },

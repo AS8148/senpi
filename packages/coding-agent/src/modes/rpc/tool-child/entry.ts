@@ -7,6 +7,7 @@
 import { connectChannel, type ToolChildChannel } from "./channel.ts";
 import { LaunchGate } from "./launch-gate.ts";
 import type { ToolChildMessageOf } from "./protocol.ts";
+import { readTestControls } from "./test-controls.ts";
 
 export const TOOL_CHILD_GENERATION_ENV = "SENPI_TOOL_CHILD_GENERATION";
 export const TOOL_CHILD_PROTOCOL_VERSION = 1;
@@ -44,19 +45,30 @@ export async function runToolChild(options: ToolChildEntryOptions): Promise<void
 		exit(70);
 	}
 	const channel = await connectChannel(env);
+	const controls = readTestControls(env);
+	if (controls.enabled("EXIT_ON_START")) exit(1);
 	const running = new Map<string, AbortController>();
 	const gate = new LaunchGate(channel);
+	let readerBlocked = false;
 	channel.onMessage((message) => {
+		if (controls.enabled("BLOCK_READER") && !readerBlocked) {
+			readerBlocked = true;
+			// Test-only: the protocol loop stops reading for 30 s, so pings go unanswered.
+			Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 30_000);
+		}
 		if (gate.handle(message)) return;
 		switch (message.type) {
 			case "ping":
 				channel.send({ type: "pong", seq: message.seq });
 				return;
 			case "job":
+				if (controls.value("EXIT_MID_JOB") === message.kind) exit(1);
 				void runJob(channel, gate, options.handlers, running, message);
 				return;
 			case "cancel":
+				if (controls.enabled("IGNORE_CANCEL")) return;
 				running.get(message.jobId)?.abort();
+				channel.send({ type: "cancel_ack", jobId: message.jobId });
 				return;
 			case "shutdown":
 				channel.close();
@@ -65,7 +77,9 @@ export async function runToolChild(options: ToolChildEntryOptions): Promise<void
 				return;
 		}
 	});
-	channel.send({ type: "hello", generation, pid: process.pid, protocol: TOOL_CHILD_PROTOCOL_VERSION });
+	if (!controls.enabled("HANG_BEFORE_READY"))
+		channel.send({ type: "hello", generation, pid: process.pid, protocol: TOOL_CHILD_PROTOCOL_VERSION });
+	if (controls.enabled("STOP_SELF")) process.kill(process.pid, "SIGSTOP");
 	await channel.closed;
 	for (const controller of running.values()) controller.abort();
 	exit(0);

@@ -115,9 +115,16 @@ export class SessionToolChild {
 		if (this.#client.state === "live") return;
 		if (this.#crashLoop.unavailable())
 			throw new ToolChildError("tool_child_unavailable", "the tool child keeps exiting; it is paused for a minute");
-		this.#starting ??= this.#client.start().finally(() => {
-			this.#starting = undefined;
-		});
+		this.#starting ??= this.#client
+			.start()
+			.catch((error: unknown) => {
+				// A child that dies before ready is an exit too: it counts toward the crash loop.
+				this.#crashLoop.recordExit();
+				throw error;
+			})
+			.finally(() => {
+				this.#starting = undefined;
+			});
 		await this.#starting;
 	}
 

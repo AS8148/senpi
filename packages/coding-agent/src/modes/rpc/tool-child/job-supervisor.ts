@@ -36,6 +36,7 @@ export class JobSupervisorError extends Error {
 interface TrackedJob {
 	readonly reject: (error: Error) => void;
 	readonly cancelTimers: Array<() => void>;
+	readonly ladderTimers: Array<() => void>;
 	laddered: boolean;
 }
 
@@ -63,7 +64,7 @@ export class JobSupervisor {
 			readonly signal?: AbortSignal;
 		},
 	): void {
-		const job: TrackedJob = { reject: options.reject, cancelTimers: [], laddered: false };
+		const job: TrackedJob = { reject: options.reject, cancelTimers: [], ladderTimers: [], laddered: false };
 		this.#jobs.set(jobId, job);
 		if (options.backstopMs !== undefined) {
 			job.cancelTimers.push(
@@ -83,8 +84,15 @@ export class JobSupervisor {
 		const job = this.#jobs.get(jobId);
 		if (job === undefined) return;
 		this.#jobs.delete(jobId);
-		for (const cancel of job.cancelTimers) cancel();
+		for (const cancel of [...job.cancelTimers, ...job.ladderTimers]) cancel();
 		if (this.#jobs.size === 0) this.#stopPinging();
+	}
+
+	/** The child acted on the cancel: the ladder stops; the job settles on its own, still under its backstop. */
+	cancelAcked(jobId: string): void {
+		const job = this.#jobs.get(jobId);
+		if (job === undefined) return;
+		for (const cancel of job.ladderTimers.splice(0)) cancel();
 	}
 
 	pongReceived(): void {
@@ -95,7 +103,7 @@ export class JobSupervisor {
 	end(): void {
 		this.#ended = true;
 		this.#stopPinging();
-		for (const job of this.#jobs.values()) for (const cancel of job.cancelTimers) cancel();
+		for (const job of this.#jobs.values()) for (const cancel of [...job.cancelTimers, ...job.ladderTimers]) cancel();
 		this.#jobs.clear();
 	}
 
@@ -104,7 +112,7 @@ export class JobSupervisor {
 		job.laddered = true;
 		this.#child.sendCancel(jobId);
 		for (const rung of CANCEL_LADDER)
-			job.cancelTimers.push(
+			job.ladderTimers.push(
 				this.#timers.set(() => this.#child.signal(rung.step === "term" ? "SIGTERM" : "SIGKILL"), rung.atMs),
 			);
 	}
