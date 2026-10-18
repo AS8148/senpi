@@ -85,7 +85,10 @@ export class SessionPendingInputJournal implements PendingInputJournal {
 	 * session has no file, so its entries are the journal.
 	 */
 	private async transitionEntries(): Promise<readonly TransitionEntry[]> {
-		const file = this.session.isPersisted() ? this.session.getSessionFile() : undefined;
+		// A session whose file is not written yet (a branch with no message so far) holds its transitions only in
+		// memory; it was never trimmed, so reading its entries costs nothing (#3586 review H1).
+		const file =
+			this.session.isPersisted() && this.session.isTranscriptFlushed() ? this.session.getSessionFile() : undefined;
 		if (file === undefined)
 			return this.session
 				.getEntries()
@@ -137,11 +140,24 @@ async function scanTransitions(file: string): Promise<TransitionEntry[]> {
 			}
 			pending = pending.slice(start);
 		}
-		// What remains after the last newline is the torn tail of a crash, or nothing: never a committed line.
+		// After the last newline is the torn tail of a crash, or nothing. A final line that parses was written whole
+		// (a writer outside senpi that omits the newline); the loader keeps it, so it is read too (#3586 review L1).
+		const tail = finalSegmentTransition(pending, lineNumber + 1);
+		if (tail !== undefined) entries.push(tail);
 		return entries;
 	} finally {
 		await handle.close();
 	}
+}
+
+function finalSegmentTransition(segment: string, lineNumber: number): TransitionEntry | undefined {
+	if (!segment.includes(PENDING_INPUT_TRANSITION)) return undefined;
+	try {
+		JSON.parse(segment);
+	} catch {
+		return undefined;
+	}
+	return transitionOf(segment, lineNumber);
 }
 
 function transitionOf(line: string, lineNumber: number): TransitionEntry | undefined {
