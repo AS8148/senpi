@@ -2,17 +2,27 @@
 
 ### What changed
 
-- `src/core/extensions/builtin/terminal/prompt.ts`, `tools/bash.ts` (`run_in_background`), `tools/monitor.ts` (guidelines): one line each stating that a non-persistent monitor is a watcher whose `timeout_ms` KILLS the watched command (long jobs belong in `run_in_background`, watched from there), and that `&`/`nohup` inside a foreground bash call die with the call because the session reaps its process group.
-- `src/core/extensions/builtin/terminal/command-monitor-source.ts` `#settle` and `rpc-monitor-source.ts` deadline settle: a timed-out command watch now summarizes as `watcher killed at deadline (timed_out)` instead of `watcher timed_out`; the RPC classifier maps the new string to the same `timeout` ended-reason. File-branch summaries are unchanged.
+- `src/core/extensions/builtin/terminal/prompt.ts`: the terminal prompt section now states both survival semantics — `&`/`nohup` inside a foreground call do not survive it, and a non-persistent watch's `timeout_ms` kills the watched command.
+- `src/core/extensions/builtin/terminal/tools/bash.ts`: the `run_in_background` param description says backgrounding with `&`/`nohup` inside a foreground command dies with the call.
+- `src/core/extensions/builtin/terminal/tools/monitor.ts`: guidelines state a non-persistent command watch is a watcher with a deadline; long jobs go to `run_in_background` and are only watched.
+- `src/core/extensions/builtin/terminal/command-monitor-source.ts` and `src/core/extensions/builtin/terminal/rpc-monitor-source.ts`: a timed-out command watch now summarizes as `watcher killed at deadline (timed_out)` instead of `watcher timed_out`; the RPC classifier maps the new string to the same `timeout` ended-reason. File-branch summaries are unchanged.
 - `packages/senpi-codemode/src/skill/bun-1-4/SKILL.md`: operating rule 6 covers both survival semantics.
 
 ### Why
 
 Both behaviors are intended but were documented nowhere, and each silently destroys a long job the agent believed it had started; the old summary phrased the kill as a passive status (senpi#3611, reported via KakaoTalk).
 
+### Why an extension could not handle it
+
+The bash/monitor tool descriptions, the terminal prompt section, and the monitor summary strings are the terminal builtin's own registered contract; an external extension cannot re-describe another extension's tools or re-word its emitted summaries, so the wording must change in the builtin itself.
+
+### Expected merge conflict zones
+
+The top of this tracker (every PR appends here), the `tools/monitor.ts` guidelines list, and the first bullet of the prompt section — all three are append/edit hotspots other PRs touch.
+
 ### Testing
 
-- `test/suite/terminal-monitor.test.ts`: the timed-watch test now asserts `killed at deadline` alongside `timed_out`.
+- `test/suite/terminal-monitor.test.ts`: the timed-watch test asserts `killed at deadline` alongside `timed_out`.
 
 ## 2026-10-15 - A removed custom provider stops being served after logout (senpi#3339)
 
