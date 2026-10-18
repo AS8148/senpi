@@ -1,4 +1,5 @@
 import { isImageLine } from "./terminal-image.ts";
+import { shiftedBlockMoved } from "./viewport-shift.ts";
 
 // Keep scroll-region wins cheap when a few visible rows mutate during append streaming.
 const MAX_SCROLL_DIFF_ROWS = 4;
@@ -21,7 +22,9 @@ function viewportRows(lines: readonly string[], viewportTop: number, height: num
  * they are, so the plan only holds when the new frame keeps exactly those rows there. Rows inserted at or
  * above the viewport top (a live tool card growing above a tall live area such as the /btw panel) break that:
  * the scroll would lose the inserted rows and send stale copies of the live area into the scrollback on
- * every frame (senpi#3649), so such a frame takes the general repaint paths instead.
+ * every frame (senpi#3649), so such a frame takes the general repaint paths instead. Identical rows can make the
+ * departing rows equal the new ones by coincidence, so a frame that reads as rows moved down from above
+ * (`shiftedBlockMoved`) is refused too.
  */
 export function planViewportInsertScroll(
 	previousLines: readonly string[],
@@ -44,6 +47,7 @@ export function planViewportInsertScroll(
 	for (let row = 0; row < scrolledOut; row++) {
 		if (previousVisible[row] !== newLines[prevViewportTop + row]) return undefined;
 	}
+	if (shiftedBlockMoved(previousLines, newLines, prevViewportTop, scrolledOut, height)) return undefined;
 
 	let stableSuffixRows = 0;
 	while (

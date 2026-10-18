@@ -19,8 +19,8 @@ class RecordingTerminal extends VirtualTerminal {
 
 const BTW_PANEL = ["btw: QUESTION", ...Array.from({ length: 8 }, (_, index) => `answer ${index}`), "btw end"];
 
-function setup(options: { mux: boolean; cardFooterRows: number }) {
-	const terminal = new RecordingTerminal(60, 12);
+function setup(options: { mux: boolean; cardFooterRows: number; repeatedRowsAboveLiveArea?: number; rows?: number }) {
+	const terminal = new RecordingTerminal(60, options.rows ?? 12);
 	const ui = new TUI(terminal, { muxDetector: () => options.mux });
 	const transcript = new Container();
 	for (let index = 0; index < 6; index++) transcript.addChild(new Text(`earlier ${index}`, 0, 0));
@@ -28,6 +28,9 @@ function setup(options: { mux: boolean; cardFooterRows: number }) {
 	transcript.addChild(evalOutput);
 	for (let index = 0; index < options.cardFooterRows; index++) {
 		transcript.addChild(new Text(`card footer ${index}`, 0, 0));
+	}
+	for (let index = 0; index < (options.repeatedRowsAboveLiveArea ?? 0); index++) {
+		transcript.addChild(new Text("same row", 0, 0));
 	}
 	ui.addChild(transcript);
 	const status = new Text("Running eval (0s)", 0, 0);
@@ -84,6 +87,21 @@ describe("eval output growing above a tall live area (#3649)", () => {
 		assert.deepStrictEqual(duplicates(rows), []);
 		assert.strictEqual(rows.filter((row) => row === BTW_PANEL[0]).length, 1);
 		assert.deepStrictEqual((await terminal.flushAndGetViewport()).at(-1)?.trimEnd(), "> editor");
+		ui.stop();
+	});
+
+	it("detects an insertion above when identical rows sit right above the live area", async () => {
+		const { terminal, ui, tick } = setup({ mux: false, cardFooterRows: 1, repeatedRowsAboveLiveArea: 3, rows: 13 });
+		ui.setScrollbackReplayHold(true);
+		for (let second = 1; second <= 20; second++) tick(second);
+		await terminal.flush();
+		const rows = nonBlankRows(terminal);
+		assert.deepStrictEqual(
+			duplicates(rows).filter((row) => row !== "same row"),
+			[],
+		);
+		assert.strictEqual(rows.filter((row) => row === "same row").length, 3);
+		assert.strictEqual(rows.filter((row) => row === BTW_PANEL[0]).length, 1);
 		ui.stop();
 	});
 
