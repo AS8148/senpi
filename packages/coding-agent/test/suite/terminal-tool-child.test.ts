@@ -28,6 +28,44 @@ async function bashParentPid(runtime: ToolRuntimeKind): Promise<{ parent: number
 	}
 }
 
+function textOf(result: { content: ReadonlyArray<{ type: string; text?: string }> }): string {
+	return result.content.map((part) => (part.type === "text" ? (part.text ?? "") : "")).join("");
+}
+
+describe.skipIf(process.platform === "win32")("terminal background sessions on the tool child", () => {
+	it("a background session started by one call is read by bash_output and ended by kill_bash in later calls", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "ttc-bg-"));
+		const harness = await createHarness({
+			cwd: dir,
+			toolRuntime: "child",
+			extensionFactories: [registerTerminalExtension],
+		});
+		try {
+			await harness.session.bindExtensions({});
+			const started = await harness.session.executeTool("bash", {
+				command: "echo parent=$PPID; echo marker-bg; sleep 600",
+				run_in_background: true,
+			});
+			const id = (started.details as { bash_id?: string } | undefined)?.bash_id;
+			expect(id, textOf(started)).toBeTypeOf("string");
+			let peek = "";
+			for (let i = 0; i < 50 && !peek.includes("marker-bg"); i++) {
+				peek += textOf(await harness.session.executeTool("bash_output", { bash_id: id }));
+			}
+			expect(peek).toContain("marker-bg");
+			const parent = Number(/parent=(\d+)/.exec(peek)?.[1] ?? Number.NaN);
+			expect(harness.session.toolChildRow()).toMatchObject({ state: "live", pid: parent });
+			const killed = textOf(await harness.session.executeTool("kill_bash", { bash_id: id }));
+			expect(killed.toLowerCase()).toMatch(/kill|terminat|stop/);
+			const after = textOf(await harness.session.executeTool("bash_output", { bash_id: id }));
+			expect(after.toLowerCase()).toMatch(/exit|kill|not found|unknown|no (such|session)/);
+		} finally {
+			harness.cleanup();
+			rmSync(dir, { recursive: true, force: true });
+		}
+	}, 120_000);
+});
+
 describe.skipIf(process.platform === "win32")("terminal bash placement", () => {
 	it("runs on the session's tool child under child", async () => {
 		const { parent, row } = await bashParentPid("child");
