@@ -224,6 +224,36 @@ describe("senpi#3650 a hung extension handler cannot freeze the session", () => 
 		30_000,
 	);
 
+	it("lets Esc release a held handler when the budget and the deadline are both disabled", async () => {
+		// given no handler budget, no turn deadline, and an agent_start handler that never settles
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
+		const { api } = await startHeld("agent_start", {
+			extensionEventHandlerWarnMs: 0,
+			extensionEventHandlerTimeoutMs: 0,
+			turn_inactivity_ms: 0,
+			turn_max_runtime_ms: 0,
+		});
+		api.sendMessage({ customType: NOTIFICATION, content: "monitor event", display: false }, { triggerTurn: true });
+		await vi.advanceTimersByTimeAsync(0);
+
+		// when the user presses Esc and the abort grace runs out
+		const aborting = harness.session.abort();
+		await vi.advanceTimersByTimeAsync(10_000);
+		vi.useRealTimers();
+		await withinRealTime(aborting, "the abort to finish");
+		await withinRealTime(harness.session.waitForIdle(), "the session to settle after Esc");
+
+		// then the held handler was released and the session settled
+		expect(harness.session.isStreaming).toBe(false);
+		expect(sessionLogEvents(harness)).toContainEqual(
+			expect.objectContaining({
+				event: "extension_handler_stalled",
+				handlerEvent: "agent_start",
+				stage: "released",
+			}),
+		);
+	}, 30_000);
+
 	it("logs a handler that fails after the host stopped waiting on it", async () => {
 		// given an agent_start handler that rejects 300 ms in, under a 100 ms cap
 		let rejectLate!: (error: Error) => void;

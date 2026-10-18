@@ -235,7 +235,9 @@ export class AgentDeadlineTracker {
 			abortError = error instanceof Error ? error.message : String(error);
 		});
 		let settled = await within(aborting, TURN_DEADLINE_GRACE_MS);
-		if (!settled && this.session.releaseHeldExtensionHandlers() > 0) {
+		if (!settled) {
+			// The abort path may already have released the waits (its own grace); either way the release gets a grace.
+			this.session.releaseHeldExtensionHandlers();
 			settled = await within(aborting, TURN_DEADLINE_GRACE_MS);
 		}
 		if (abortError !== undefined) this.session._warnDeadline("turn_deadline_abort_failed", abortError);

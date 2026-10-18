@@ -369,6 +369,7 @@ import {
 	AgentDeadlineTracker,
 	resolveTurnDeadlineSettings,
 	TURN_DEADLINE_ENTRY_TYPE,
+	TURN_DEADLINE_GRACE_MS,
 	type TurnDeadline,
 	type TurnDeadlineWarning,
 } from "./turn-deadline.ts";
@@ -4332,6 +4333,22 @@ export class AgentSession {
 		await this._abortActiveAgentAndRetry("system");
 	}
 
+	/**
+	 * An abort (Esc, or the turn deadline) that the run does not honour within the grace is held by an extension handler
+	 * no abort signal reaches: release the turn's held handler waits so it settles (senpi#3650).
+	 */
+	private async _waitForIdleAfterAbort(): Promise<void> {
+		const idle = this.waitForIdle();
+		let graceTimer: ReturnType<typeof setTimeout> | undefined;
+		const graceOver = new Promise<true>((resolve) => {
+			graceTimer = setTimeout(() => resolve(true), TURN_DEADLINE_GRACE_MS);
+		});
+		const stillHeld = await Promise.race([idle.then(() => false), graceOver]);
+		clearTimeout(graceTimer);
+		if (stillHeld) this._extensionRunner.releaseHeldHandlers(this._handlerTurnScope);
+		await idle;
+	}
+
 	/** Adapter for the deadline owner interface: stop waiting on extension handlers that hold the turn (senpi#3650). */
 	releaseHeldExtensionHandlers(): number {
 		return this._extensionRunner.releaseHeldHandlers(this._handlerTurnScope);
@@ -7737,7 +7754,7 @@ export class AgentSession {
 
 		const abortPromise = (async () => {
 			this.agent.abort();
-			await this.waitForIdle();
+			await this._waitForIdleAfterAbort();
 		})();
 		this._userAbortPromise = abortPromise;
 		try {

@@ -68,12 +68,12 @@ describe("turn deadline tracker (senpi#3227 review)", () => {
 		expect(owner.warnings).toEqual([]);
 	});
 
-	it("reports a turn no abort can end after the grace instead of faking idle", async () => {
+	it("reports a turn neither the abort nor the handler release can end, after both graces, instead of faking idle", async () => {
 		const owner = fakeOwner();
 		const tracker = new AgentDeadlineTracker(owner, () => ({ inactivityMs: 60_000, maxRuntimeMs: 0 }));
 		tracker.arm();
 
-		await vi.advanceTimersByTimeAsync(60_000 + TURN_DEADLINE_GRACE_MS - 1);
+		await vi.advanceTimersByTimeAsync(60_000 + 2 * TURN_DEADLINE_GRACE_MS - 1);
 		expect(owner.warnings).toEqual([]);
 		await vi.advanceTimersByTimeAsync(1);
 
