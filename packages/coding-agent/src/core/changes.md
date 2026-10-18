@@ -1,8 +1,8 @@
-## 2026-10-18 - Session move phase 1 and related core changes arrive through the base merge (senpi#3631 lineage)
+## 2026-10-18 - Session move phase 1 and related core deltas arrive through the base merge (senpi#3631 lineage)
 
 ### What changed
 
-- `agent-session.ts`, `agent-session-runtime.ts`, `agent-session-services.ts`, `sdk.ts`: engine export/import with single-owner ownership (session move phase 1) and the surrounding core deltas landed on main and reach this branch through the pure base merge; this branch adds no change of its own to them beyond the tool-child runtime already tracked above.
+- `agent-session.ts`, `agent-session-runtime.ts`, `agent-session-services.ts`, `sdk.ts`: engine export/import with single-owner ownership (session move phase 1) and the surrounding core deltas landed on main and reach this branch through the pure base merge; this branch adds no change of its own to them beyond the tool-child runtime already tracked elsewhere.
 
 ### Why
 
@@ -14,11 +14,7 @@
 
 ### Expected merge conflict zones
 
-- `packages/coding-agent/src/core/changes.md` only.
-
-
-
-
+- `changes.md` only.
 
 - HIGH: `agent-session.ts` around `applyCompaction()`, compaction abort controllers, and extension context binding.
 - HIGH: `extensions/types.ts` and `extensions/runner.ts` around `ExtensionContext`/`ExtensionContextActions`.
