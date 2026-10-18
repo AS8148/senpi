@@ -1,3 +1,23 @@
+## 2026-10-18 - Disposing a session waits for its tool child to stop (senpi#3566)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `dispose()` awaits `session.whenToolChildClosed()` after `session.dispose()` and before releasing the session hold, so a session closed under `--tool-runtime child` has stopped its tool child and swept every command it launched by the time disposal settles. On the default in-process path the promise is already resolved.
+- `packages/coding-agent/src/core/agent-session.ts`: `dispose()` keeps the tool child's close promise instead of discarding it, and `whenToolChildClosed()` returns it.
+
+### Why
+
+A review of the tool child (senpi#3576) reproduced commands that outlived their session: the close was fired and forgotten, so a host exiting right after disposal raced the sweep.
+
+### Why an extension could not handle it
+
+Disposal order lives in the session runtime; extensions see only `session_shutdown`, emitted before disposal starts.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: the body of `dispose()`.
+- `packages/coding-agent/src/core/agent-session.ts`: the tool-child close in `dispose()` and the accessor beside `toolChildRow()`.
+
 ## 2026-10-18 - Tool calls and user bash run through a per-session ToolDispatcher (senpi#3566)
 
 ### What changed
