@@ -2778,6 +2778,16 @@ export class AgentSession {
 	}
 
 	/**
+	 * Drops the session manager's materialized views while nothing runs, when a full-history view of a trimmed
+	 * mirror is among them (senpi#3519). Unlike `releaseSettledSessionMemory`, nothing is tokenized in place, so a
+	 * history read can call it while its answer, which may share message objects, is still unwritten.
+	 */
+	releaseFullHistoryView(): void {
+		if (this._isAgentRunActive || this._sessionWorkBarrier.hasActiveWork) return;
+		if (this.sessionManager.holdsMaterializedHistory()) this.sessionManager.dropMaterializedCaches();
+	}
+
+	/**
 	 * Release the memoized session views and tokenize the runtime messages while nothing runs.
 	 * Called when a run settles idle and after a resumed session's first render, which builds the
 	 * views without any run settling afterwards.
@@ -11920,7 +11930,8 @@ export class AgentSession {
 			cwd: this.sessionManager.getCwd(),
 		};
 
-		const branchEntries = this.sessionManager.getBranch();
+		// The whole path from the file: a reopened or compacted session keeps only its latest window resident (senpi#3519).
+		const branchEntries = this.sessionManager.getFullBranch();
 		const lines = [JSON.stringify(header)];
 
 		// Re-chain parentIds to form a linear sequence

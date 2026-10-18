@@ -16,6 +16,36 @@
 
 - MEDIUM: `packages/coding-agent/src/core/agent-session.ts`, the constructor (store and port), `_queueSteer` / `_queueFollowUp`, `_enqueuePreparedInput`, `_recordQueuedInput` and the new `changeQueuedInput` above `_changeQueuedInput`.
 
+## 2026-10-17 - A reopened session keeps only its latest compaction window resident (senpi#3519)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: loading an existing session file (`_setSessionFile` and `_setSessionFileAsync`: open, `openAsync`, resume, `reloadFromDisk`) keeps only the latest compaction window on the leaf's branch in the resident mirror (`_retainLoadedTail`, planned by the new fork-only `session-loaded-tail.ts`): the header, the leaf path's non-message entries before the window, every label and session name, and every entry from the compaction's first kept entry on. The trimmed ids join `trimmedIds`, the mirror is marked trimmed, and the full-history entry count and usage totals are taken from the whole file before the trim. A file with duplicated ids, no compaction on the leaf's branch, or a kept-window entry whose parent lies before the window stays fully resident as before.
+- `packages/coding-agent/src/core/session-manager.ts`: a load that trims seeds `historyView` with the entries it already parsed, so the open-time full-history readers (receipt seals, extension session starts, `wasFlushed`) do not read the file a second time; the view goes with the other views when the session settles idle (`releaseSettledSessionMemory`).
+- `packages/coding-agent/src/core/session-manager.ts`: `_buildIndex` leaves `usageTotals` alone while the mirror is trimmed, like `fullEntryCount`, so a live compaction's trim no longer drops the usage of the turns it trimmed.
+- `packages/coding-agent/src/core/session-manager.ts`: `branch` and `branchWithSummary` to an entry outside the mirror reload the whole file into it (`_loadFullMirrorFor`); before, `branch` reloaded and `branchWithSummary` refused.
+- `packages/coding-agent/src/core/session-manager.ts`: new `getFullBranch(fromId?)` (also on `ReadonlySessionManager`) walks the active path over the whole persisted history; `getBranch()` keeps answering a trimmed mirror from the latest compaction window, as it already did after a live compaction. `createBranchedSession` (fork, clone) builds its new file from `getFullBranch`, so a fork of a compacted session keeps the history before the compaction; before, a fork from an entry still in the mirror wrote the window only, after a live compaction as well.
+- `packages/coding-agent/src/core/session-manager.ts`: `appendLabelChange` accepts a target the mirror trimmed when the session file holds it, checked against the memoized full history (`getEntries()`) rather than a fresh parse of the file.
+- `packages/coding-agent/src/core/agent-session.ts`: `exportToJsonl` writes `getFullBranch()`, so the JSONL export of a compacted session keeps the history before the compaction.
+- `packages/coding-agent/src/core/session-export.ts`: `serializeSessionBranch` (and so `exportSessionToJsonl`) walks `getFullBranch()` instead of `getBranch()`, the same rule as `exportToJsonl`, so a caller exporting a compacted session gets its whole path.
+- `packages/coding-agent/src/core/agent-session.ts`: new `releaseFullHistoryView()` drops the materialized views while no run or session work is active and a full-history view is held; unlike `releaseSettledSessionMemory` it tokenizes nothing in place.
+
+### Why
+
+- A long session keeps growing its file across compactions, while its context needs only the window after the latest one. Reopening a 279 MB transcript held ~320 MB of live heap although its window is 2 MB; across the eight largest local transcripts the window was 0-13 MB of 142-279 MB. A host with 22 such threads idled at 4.5-6.5 GB footprint and its collections stalled every session (#3519). `test/benchmarks/3519-host-heap.ts` (a real RPC host from source, generated compacted transcripts, live heap from a heap snapshot after a full collection) measures four 100 MB transcripts at 512 MB of live heap on main 9aaf1722f and 64 MB with this change. One RPC host holding four of the largest local transcripts (843 MB of files) went from 1441 MB of live heap after a full collection to 216 MB (phys_footprint 810 MB to 277 MB).
+- Full-history readers (`getEntries`, `getTree`, `getEntry`, `getFullBranch`, forks, labels, branching to an old entry) read the file once the mirror is trimmed. `getBranch()` readers see the latest compaction window after a reopen, which is what they already saw after a live compaction; readers that need the whole path use `getFullBranch()`.
+
+### Why an extension could not handle it
+
+- The resident mirror, its trim and the usage totals are private `SessionManager` state built while a session file loads; no extension hook runs there.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/core/session-manager.ts`, `_setSessionFile` and `_setSessionFileAsync` (one `_retainLoadedTail()` call between `_adoptFileEntries` and the externalize map), `_completeFileLoad` (takes the loaded history and sets the view after `_buildIndex`) and the head of `_buildIndex`.
+- LOW: `packages/coding-agent/src/core/session-manager.ts`, the first lines of `branch`, `branchWithSummary`, `appendLabelChange` and `createBranchedSession`, `getFullBranch`, the `ReadonlySessionManager` pick list, the `loadingFullMirror` field and `emptyUsageTotals`.
+- LOW: `packages/coding-agent/src/core/agent-session.ts`, `releaseFullHistoryView` beside `releaseSettledSessionMemory` and the branch read in `exportToJsonl`.
+- LOW: `packages/coding-agent/src/core/session-export.ts`, the branch read in `serializeSessionBranch` and its doc comment.
+
 ## 2026-10-17 - A non-stored subscription sign-in is reported on the sign-in row (senpi#3537)
 
 ### What changed
