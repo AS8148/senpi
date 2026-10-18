@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AssistantMessage, AssistantMessageEvent } from "@earendil-works/pi-ai";
 import { rendezvousOrder } from "@earendil-works/pi-ai/auth/pool/select";
-import type { PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
+import { type PooledCredential, projectSlot } from "@earendil-works/pi-ai/auth/pool/slots";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { sha256SlotHasher, streamWithCredentialRotation } from "../../../src/core/credential-pool/rotation-stream.ts";
 import { CredentialSlotRepository } from "../../../src/core/credential-pool/state-store.ts";
@@ -12,6 +12,16 @@ import {
 	rendezvousOrder as claudeRendezvousOrder,
 	selectAccount,
 } from "../../../src/core/extensions/builtin/anthropic-subscription/affinity.ts";
+import {
+	addAccount as addCursorAccount,
+	emptyCredential as emptyCursorCredential,
+	removeAccount as removeCursorAccount,
+} from "../../../src/core/extensions/builtin/cursor-cli-oauth/accounts.ts";
+import {
+	rendezvousOrder as cursorRendezvousOrder,
+	selectAccount as selectCursorAccount,
+} from "../../../src/core/extensions/builtin/cursor-cli-oauth/affinity.ts";
+import { accountFooterSuffix } from "../../../src/modes/interactive/components/footer.ts";
 
 // senpi#3591: a provider's accounts can carry a user order. Selection takes the
 // pin first, then the first unblocked account in the user order, then HRW for
@@ -173,5 +183,53 @@ describe("senpi#3591 account order: the Claude subscription lane", () => {
 				now: NOW,
 			}).name,
 		).toBe(claudeReversed[1]);
+	});
+});
+
+describe("senpi#3591 account order: the Cursor CLI lane", () => {
+	const accounts = NAMES.map((name) => ({ name }));
+	const cursorReversed = cursorRendezvousOrder(AFFINITY_KEY, accounts)
+		.map((entry) => entry.name)
+		.reverse();
+
+	it("selects the first ordered account over the HRW winner, and the pin over the order", () => {
+		expect(
+			selectCursorAccount(accounts, { affinityKey: AFFINITY_KEY, accountOrder: cursorReversed, now: NOW }).name,
+		).toBe(cursorReversed[0]);
+		expect(
+			selectCursorAccount(accounts, {
+				affinityKey: AFFINITY_KEY,
+				accountOrder: cursorReversed,
+				pinnedAccount: cursorReversed[2],
+				now: NOW,
+			}).name,
+		).toBe(cursorReversed[2]);
+	});
+
+	it("drops a removed account from the stored order", () => {
+		const credential = NAMES.reduce(
+			(current, name) =>
+				addCursorAccount(current, {
+					name,
+					access: `a-${name}`,
+					refresh: `r-${name}`,
+					expires: NOW,
+					source: "login",
+				}),
+			emptyCursorCredential(),
+		);
+		expect(removeCursorAccount({ ...credential, order: ["beta", "gamma"] }, "beta").order).toEqual(["gamma"]);
+	});
+});
+
+describe("senpi#3591 account order: what the TUI shows and hands to providers", () => {
+	it("names the first ordered account in the footer, and the pin over it", () => {
+		expect(accountFooterSuffix(pool({ order: REVERSED }), AFFINITY_KEY)).toBe(`@${REVERSED[0]}`);
+		expect(accountFooterSuffix(pool({ order: REVERSED, pinned: REVERSED[2] }), AFFINITY_KEY)).toBe(`@${REVERSED[2]}`);
+		expect(accountFooterSuffix(pool(), AFFINITY_KEY)).toBe(`@${HRW[0]}`);
+	});
+
+	it("strips the order from the projected per-account credential", () => {
+		expect(projectSlot(pool({ order: ["beta"] }), "beta")).not.toHaveProperty("order");
 	});
 });

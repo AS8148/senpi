@@ -3,7 +3,7 @@
 ### What changed
 
 - `packages/coding-agent/src/modes/rpc/rpc-types.ts`: new command `{ type: "account_order"; provider; names: string[] | null }` and its response; `get_provider_accounts` response data gains `ordered: boolean`.
-- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `account_order` calls `orderCredentialAccounts`; `get_provider_accounts` answers from `listCredentialAccounts`, which lists in effective order and reports `ordered`.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `account_order` refuses a `names` that is not an array of strings (or null), then calls `orderCredentialAccounts`; `get_provider_accounts` answers from `listCredentialAccounts`, which lists in effective order and reports `ordered`.
 - `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `orderProviderAccounts(provider, names | null)`.
 
 ### Why

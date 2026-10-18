@@ -274,7 +274,7 @@ export function projectSlot(credential: PooledCredential | undefined, name: stri
 	if (!credential) return undefined;
 	const slot = findSlot(credential, name);
 	if (!slot) return undefined;
-	const { accounts: _accounts, pinned: _pinned, ...flat } = credential;
+	const { accounts: _accounts, pinned: _pinned, order: _order, ...flat } = credential;
 	const env = slot.env === undefined ? {} : { env: slot.env };
 	if (flat.type === "oauth") {
 		if (slot.access === undefined || slot.refresh === undefined || slot.expires === undefined) return undefined;

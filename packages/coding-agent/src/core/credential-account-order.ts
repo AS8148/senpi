@@ -6,6 +6,7 @@ import {
 	type CredentialAccountSummary,
 	credentialPoolRepository,
 	getCredentialAccounts,
+	summarizeCredentialAccounts,
 } from "./credential-accounts.ts";
 import type { CredentialSlotRepository } from "./credential-pool/state-store.ts";
 import { emitProviderAccountsChanged } from "./extensions/builtin/anthropic-subscription/account-events.ts";
@@ -59,13 +60,12 @@ export async function orderCredentialAccounts(
 	env: NodeJS.ProcessEnv = process.env,
 	repository?: CredentialSlotRepository,
 ): Promise<void> {
-	if (storage.get(provider) === undefined) throw new Error(`No stored credential for provider: ${provider}`);
-	if (names !== null) {
-		const repo = repository ?? credentialPoolRepository(storage);
-		assertOrderNames(names, await getCredentialAccounts(storage, provider, env, repo));
-	}
+	const repo = repository ?? credentialPoolRepository(storage);
 	await storage.modify(provider, async (current) => {
 		if (current === undefined) throw new Error(`No stored credential for provider: ${provider}`);
+		// Validated against the credential this write replaces, under the store's lock,
+		// so an account removed concurrently cannot leave its name in the order.
+		if (names !== null) assertOrderNames(names, await summarizeCredentialAccounts(provider, current, env, repo));
 		return withOrder(current, names);
 	});
 	emitProviderAccountsChanged(provider);

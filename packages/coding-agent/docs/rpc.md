@@ -133,7 +133,7 @@ A label is stored NFC-normalized with internal whitespace collapsed, must contai
 
 By default a provider's accounts are picked per session by rendezvous hashing, and a failed account fails over in that hash order. A user order replaces that ranking: requests try the pinned account first, then the first unblocked account in the order, then the accounts the order does not name, in hash order. On the Claude subscription lane, a session keeps the account its conversation already lives on while that account can serve, ahead of the order, so setting an order does not move running conversations.
 
-`get_provider_accounts` lists accounts in this effective order and reports `ordered: true` while a stored order names at least one listed account.
+`get_provider_accounts` lists the accounts the order names first, in that order, then the rest in stored order (the hash ranking is per session, so a listing cannot show it). It reports `ordered: true` while a stored order names at least one listed account. A pinned account serves first wherever it is listed; read its `pinned` flag. Every lane that picks an account honors the order: the generic credential pool, the Claude subscription lane and the Cursor CLI lane.
 
 #### account_order
 

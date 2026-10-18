@@ -1764,6 +1764,10 @@ export function createRpcConnectionHandler(
 			}
 
 			case "account_order": {
+				const names: unknown = command.names;
+				if (names !== null && !(Array.isArray(names) && names.every((name) => typeof name === "string"))) {
+					throw new Error("account_order names must be an array of account names, or null to clear the order");
+				}
 				await orderCredentialAccounts(session.modelRegistry.authStorage, command.provider, command.names);
 				return success(id, "account_order");
 			}

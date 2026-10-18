@@ -101,6 +101,27 @@ describe("senpi#3591 account order: storage and listing", () => {
 		expect(storage.get("openai")).not.toHaveProperty("order");
 	});
 
+	it("validates names against the credential it writes, so a concurrent removal cannot leave a name behind", async () => {
+		await seed("openai");
+		const modify = storage.modify.bind(storage);
+		storage.modify = async (provider, fn) => {
+			await modify(provider, async (current) =>
+				current === undefined
+					? current
+					: {
+							...current,
+							accounts: (current as PooledCredential).accounts?.filter((slot) => slot.name !== "beta"),
+						},
+			);
+			return modify(provider, fn);
+		};
+
+		await expect(orderCredentialAccounts(storage, "openai", ["beta"], {}, repository)).rejects.toThrow(
+			"Provider account not found: beta",
+		);
+		expect(storage.get("openai")).not.toHaveProperty("order");
+	});
+
 	it("ignores a stale name in a stored order when listing", async () => {
 		await seed("openai", { order: ["ghost", "beta"] });
 
@@ -150,6 +171,15 @@ describe("senpi#3591 account order: RPC", () => {
 			expect(await collected.waitFor((message) => message.id === "bad")).toMatchObject({
 				command: "account_order",
 				success: false,
+			});
+
+			await handler.handleInputLine(
+				JSON.stringify({ id: "string", type: "account_order", provider: "openai", names: "gamma" }),
+			);
+			expect(await collected.waitFor((message) => message.id === "string")).toMatchObject({
+				command: "account_order",
+				success: false,
+				error: "account_order names must be an array of account names, or null to clear the order",
 			});
 
 			await handler.handleInputLine(
