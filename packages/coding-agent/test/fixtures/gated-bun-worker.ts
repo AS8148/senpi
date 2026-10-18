@@ -36,7 +36,9 @@ delete process.env.SENPI_ENV_PROBE;
 const envProbe = new TextDecoder()
 	.decode(
 		(
-			Bun.spawnSync(["sh", "-c", 'if [ -n "$SENPI_ENV_PROBE" ]; then echo set; else echo unset; fi'], { stdout: "pipe" }) as unknown as {
+			Bun.spawnSync(["sh", "-c", 'if [ -n "$SENPI_ENV_PROBE" ]; then echo set; else echo unset; fi'], {
+				stdout: "pipe",
+			}) as unknown as {
 				stdout: Uint8Array;
 			}
 		).stdout,
