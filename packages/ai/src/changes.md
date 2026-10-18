@@ -18,6 +18,36 @@ The map is private to `pi-ai`; a consumer can only enumerate it through an expor
 
 - `packages/ai/src/env-api-keys.ts`: the map moved out of `getApiKeyEnvVars`, and the two exports sit above it.
 
+
+## 2026-10-18 - Cursor families published after the 2026-08-18 capture (senpi#3620)
+
+### What changed
+
+- `src/cursor/capability-table.ts` (split out of `src/cursor/model-capabilities.ts`, which keeps the types, parser
+  and alias lookups): capability entries for `claude-opus-5-5`, `claude-fable-5-1`, `claude-sonnet-5-5`,
+  `claude-haiku-5-5`, `muse-wonder-1.0`, `muse-spark-1.3`, `grok-4.7`, `gemini-4-argon`, `gemini-3.8-flash` and
+  `default`. Each window is the ceiling the server reported on the first checkpoint on 2026-10-18 for the suffix
+  variant senpi sends; `maxWindow` is the largest context option AvailableModels offers. `reasoning_effort` joins
+  `CursorParameterId` (Sonnet 5.5, Haiku 5.5, Muse Wonder, Grok 4.7 and the Gemini 4/3.8 rows name the axis so).
+- `src/cursor/display-name.ts` (moved out of `catalog-grouping.ts`): names drop zero-width characters and doubled
+  spaces, the Haiku 5.5 plain group drops Cursor's "No Thinking" whole, and a thinking group whose label never said
+  so gains "Thinking".
+- `src/cursor/model-input.ts` (moved out of `api/cursor-agent.ts`): image input follows AvailableModels'
+  `supportsImages`, adding Kimi K3, Muse and Grok 4.5/4.6.
+
+### Why
+
+- The ten families answered live requests through the #2038 derived grouping but advertised the 200k placeholder
+  window, two carried broken names, and image-capable families were offered as text-only.
+
+### Why an extension couldn't do it
+
+- Catalog normalization and discovery run inside the provider before any extension sees a model.
+
+### Expected merge-conflict zones
+
+- `src/cursor/model-capabilities.ts`, `src/cursor/capability-table.ts`, `src/cursor/catalog-grouping.ts`, the
+  discovery block of `api/cursor-agent.ts`.
 ## 2026-10-15 - ProviderDiagnostic gains the network category and structured_transport evidence (senpi#3228)
 
 ### What changed

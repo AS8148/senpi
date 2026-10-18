@@ -78,8 +78,8 @@ describe("cursor model capabilities", () => {
 				uncovered.add(parsed.baseId);
 			}
 		}
-		// Only the bare `default` pseudo-model may lack a capability entry.
-		expect([...uncovered].sort()).toEqual(["default"]);
+		// `default` (Auto) gained its server-reported window in senpi#3620.
+		expect([...uncovered].sort()).toEqual([]);
 	});
 
 	it("marks evidence provenance for every entry", () => {

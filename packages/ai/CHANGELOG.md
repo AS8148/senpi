@@ -15,6 +15,8 @@
 
 ### Fixed
 
+- Cursor: Claude Opus 5.5, Fable 5.1, Sonnet 5.5, Haiku 5.5, Muse Wonder, Muse Spark 1.3, Grok 4.7, Gemini 4 Argon, Gemini 3.8 Flash and Auto advertise the context window Cursor actually serves instead of the 200k placeholder; Haiku 5.5 and Grok 4.7 Fast get clean names, and Kimi K3, Muse and Grok 4.5/4.6 accept images ([#3620](https://github.com/code-yeongyu/senpi/issues/3620)).
+
 ### Removed
 
 ## [2026.10.16-4] - 2026-10-16
