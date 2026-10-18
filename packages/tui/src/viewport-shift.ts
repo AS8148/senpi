@@ -7,7 +7,9 @@
  * where the old viewport's rows went, or every frame pushes another copy of them.
  *
  * A shift counts only when the rows it would skip are exactly the rows already in the scrollback right above
- * the old viewport, and most of the old visible rows reappear at it. A majority alone is not enough: a tall
+ * the old viewport, at least one of them differs from the row the old frame had at that position (identical
+ * rows across the viewport top, as in a run of repeated lines, are no evidence of a move), and most of the
+ * old visible rows reappear at it. A majority alone is not enough: a tall
  * stable live area matches at any offset after an append, while rows re-laid out in place (a streamed table,
  * #2836) are new rows that must still scroll into the scrollback, so the start stays at the old viewport top.
  */
@@ -28,11 +30,14 @@ export function insertedAboveViewport(
 		return matches;
 	};
 	const skipsOnlyScrolledRows = (shift: number): boolean => {
+		let movedAtPosition = false;
 		for (let row = 0; row < shift; row++) {
+			const skipped = newLines[prevViewportTop + row];
 			const scrolled = previousLines[prevViewportTop - shift + row];
-			if (scrolled === undefined || scrolled !== newLines[prevViewportTop + row]) return false;
+			if (scrolled === undefined || scrolled !== skipped) return false;
+			if (skipped !== previousLines[prevViewportTop + row]) movedAtPosition = true;
 		}
-		return true;
+		return movedAtPosition;
 	};
 	let best = 0;
 	let bestMatches = visibleMatchesAt(0);

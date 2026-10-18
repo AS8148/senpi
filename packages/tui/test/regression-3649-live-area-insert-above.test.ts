@@ -134,6 +134,32 @@ describe("eval output growing above a tall live area (#3649)", () => {
 		ui.stop();
 	});
 
+	it("does not take identical rows across the viewport top for an insertion above on a plain append", async () => {
+		const terminal = new RecordingTerminal(60, 12);
+		const ui = new TUI(terminal, { muxDetector: () => false });
+		const header = new Text("card header 0", 0, 0);
+		const table = new Text("", 0, 0);
+		ui.addChild(header);
+		ui.addChild(table);
+		ui.addChild(new Text(Array.from({ length: 7 }, (_, index) => `live row ${index}`).join("\n"), 0, 0));
+		table.setText(Array.from({ length: 3 }, () => "dup").join("\n"));
+		ui.start();
+		ui.renderNow();
+		ui.setScrollbackReplayHold(true);
+		for (let tick = 1; tick <= 4; tick++) {
+			header.setText(`card header ${tick}`);
+			table.setText(Array.from({ length: 3 + tick }, () => "dup").join("\n"));
+			ui.renderNow();
+		}
+		await terminal.flush();
+		assert.strictEqual(
+			nonBlankRows(terminal).filter((row) => row === "dup").length,
+			7,
+			"every appended row reaches the buffer during the turn",
+		);
+		ui.stop();
+	});
+
 	it("leaves the multiplexer path free of duplicates when rows are inserted above the viewport", async () => {
 		const { terminal, ui, tick } = setup({ mux: true, cardFooterRows: 2 });
 		ui.setScrollbackReplayHold(true);
