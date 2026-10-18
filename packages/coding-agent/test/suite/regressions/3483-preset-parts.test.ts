@@ -25,7 +25,7 @@ describe("prompt preset parts (#3483)", () => {
 		// Given
 		const accounting = new PromptSizeAccounting({
 			base: "base",
-			options: {},
+			options: { cwd: "/workspace" },
 			parts: [{ name: "core", text: "base" }],
 			extensionNames: new Map([["<builtin:prompt-preset>", "prompt-preset"]]),
 		});

@@ -1,6 +1,4 @@
-import { loadMcpConfig, mergeExtensionMcpServers } from "./extensions/builtin/mcp/config.ts";
 import type { ExtensionRunner } from "./extensions/runner.ts";
-import { promptSizeExtensionNames } from "./prompt-size-extension-names.ts";
 
 export interface PromptSizeStartupNotes {
 	readonly mcp?: {
@@ -14,22 +12,30 @@ export interface PromptSizeStartupNotes {
 	};
 }
 
-/** Config inventory only: never materializes MCP transports or exposes their endpoints. */
+/**
+ * Filesystem lookups behind a sizes-only report. They read synchronously, so only the one-shot
+ * `--print-prompt-sizes` CLI supplies them; the shared RPC host never runs them on a session path.
+ */
+export interface PromptSizeInventory {
+	/** Nearest `package.json` name of an extension path. */
+	packageNameOf(path: string): string | undefined;
+	/** Configured MCP server names, from config only: never attaches or exposes endpoints. */
+	mcpServerNames(input: { readonly cwd: string; readonly runner: ExtensionRunner }): readonly string[];
+}
+
 export function promptSizeStartupNotes(input: {
 	readonly cwd: string;
 	readonly runner: ExtensionRunner;
+	readonly extensionNames: ReadonlyMap<string, string>;
+	readonly inventory: PromptSizeInventory | undefined;
 	readonly sizesOnlyStartup: boolean;
 }): PromptSizeStartupNotes {
-	const names = promptSizeExtensionNames(input.runner.getExtensionPaths());
 	const thirdPartySessionStart = {
-		names: input.runner.getThirdPartySessionStartPaths().map((path) => names.get(path) ?? "extension"),
+		names: input.runner.getThirdPartySessionStartPaths().map((path) => input.extensionNames.get(path) ?? "extension"),
 		note: "these third-party session_start hooks ran during startup and may have used the network",
 	};
-	if (!input.sizesOnlyStartup) return { thirdPartySessionStart };
-	const context = input.runner.createContext();
-	const config = loadMcpConfig({ cwd: input.cwd, projectTrusted: context.isProjectTrusted() });
-	mergeExtensionMcpServers(config, context.getRegisteredMcpServers?.() ?? []);
-	const servers = Object.keys(config.servers).sort();
+	if (!input.sizesOnlyStartup || input.inventory === undefined) return { thirdPartySessionStart };
+	const servers = [...input.inventory.mcpServerNames({ cwd: input.cwd, runner: input.runner })].sort();
 	return {
 		mcp: { count: servers.length, names: servers, note: "not attached; tool sizes exclude them" },
 		thirdPartySessionStart,

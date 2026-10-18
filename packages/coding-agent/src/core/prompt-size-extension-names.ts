@@ -1,16 +1,17 @@
 import { createHash } from "node:crypto";
 import { basename, dirname } from "node:path";
-import { findNearestPackageIdentity } from "./package-identity.ts";
 
 /** Stable, content-free display names; paths are hashed only when names collide. */
-export function promptSizeExtensionNames(paths: readonly string[]): ReadonlyMap<string, string> {
+export function promptSizeExtensionNames(
+	paths: readonly string[],
+	packageNameOf: (path: string) => string | undefined = () => undefined,
+): ReadonlyMap<string, string> {
 	const names = new Map<string, string>();
 	for (const path of paths) {
 		const stem = basename(path).replace(/\.[^.]+$/, "");
 		const name = path.startsWith("<")
 			? path.replace(/^<[^:]+:|>$/g, "")
-			: (findNearestPackageIdentity(path)?.packageName ??
-				(stem === "index" || stem === "main" ? basename(dirname(path)) : stem));
+			: (packageNameOf(path) ?? (stem === "index" || stem === "main" ? basename(dirname(path)) : stem));
 		names.set(path, name);
 	}
 	const counts = new Map<string, number>();

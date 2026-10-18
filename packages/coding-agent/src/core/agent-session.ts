@@ -282,6 +282,7 @@ import { ModelSwitchAuthError } from "./model-switch-auth-error.ts";
 import { NestedToolCallRunner } from "./nested-tool-calls.ts";
 import { PROMPT_CACHE_SAFE_WAIT_ENV, resolvePromptCacheSafeWaitSeconds } from "./prompt-cache-budget.ts";
 import { PromptCachePrefixBuilds } from "./prompt-cache-prefix-request.ts";
+import type { PromptSizeInventory } from "./prompt-size-startup.ts";
 import { expandPromptTemplateWithMetadata, type PromptTemplate } from "./prompt-templates.ts";
 import { type ProviderFailure, providerFailureOf } from "./provider-failure.ts";
 import { rejectedImageSources } from "./provider-rejected-images.ts";
@@ -925,6 +926,8 @@ class MissingModelAccessError extends Error {
 }
 export interface ExtensionBindings {
 	readonly sizesOnly?: boolean;
+	/** Filesystem lookups for a sizes-only report; honoured only with `sizesOnly`. */
+	readonly promptSizeInventory?: PromptSizeInventory;
 	uiContext?: ExtensionUIContext;
 	mode?: ExtensionMode;
 	commandContextActions?: ExtensionCommandContextActions;
@@ -1415,6 +1418,7 @@ export class AgentSession {
 	};
 	private _baseSystemPromptParts: readonly DynamicSystemPromptPart[] = [];
 	private _sizesOnlyStartup = false;
+	private _promptSizeInventory: PromptSizeInventory | undefined;
 	private _systemPromptOverride?: string;
 	private _promptSurface: PromptSurface | undefined;
 	private _browserEngine: BrowserEngine | undefined;
@@ -9399,6 +9403,7 @@ export class AgentSession {
 
 	async bindExtensions(bindings: ExtensionBindings): Promise<void> {
 		this._sizesOnlyStartup = bindings.sizesOnly === true;
+		this._promptSizeInventory = this._sizesOnlyStartup ? bindings.promptSizeInventory : undefined;
 		const finishBindingWork = this._sessionWorkBarrier.begin();
 		const settleSessionStart = this._beginSessionStartSettlement();
 		const bindingPromptReadiness = new Set<Promise<void>>();
@@ -9810,6 +9815,9 @@ export class AgentSession {
 							getBaseSystemPromptOptions: () => this._baseSystemPromptOptions,
 							getBaseSystemPromptParts: () => this._baseSystemPromptParts,
 							sizesOnlyStartup: this._sizesOnlyStartup,
+							...(this._promptSizeInventory === undefined
+								? {}
+								: { promptSizeInventory: this._promptSizeInventory }),
 						},
 						options,
 					),

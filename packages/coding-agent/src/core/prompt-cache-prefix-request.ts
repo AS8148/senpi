@@ -19,7 +19,7 @@ import type {
 import type { ModelRuntime } from "./model-runtime.ts";
 import { promptSizeExtensionNames } from "./prompt-size-extension-names.ts";
 import { PromptSizeAccounting } from "./prompt-size-report.ts";
-import { promptSizeStartupNotes } from "./prompt-size-startup.ts";
+import { type PromptSizeInventory, promptSizeStartupNotes } from "./prompt-size-startup.ts";
 
 export interface PromptCachePrefixSources {
 	readonly agent: Agent;
@@ -28,6 +28,7 @@ export interface PromptCachePrefixSources {
 	/** Settles once the session start the prefix depends on (tools, discovered skills) has run. */
 	readonly ready: Promise<void>;
 	readonly sizesOnlyStartup?: boolean;
+	readonly promptSizeInventory?: PromptSizeInventory;
 	getServiceTier(): ServiceTier | undefined;
 	getBaseSystemPrompt(): string;
 	getBaseSystemPromptOptions(): BuildSystemPromptOptions;
@@ -148,6 +149,8 @@ export async function buildPromptCachePrefixRequest(
 							...promptSizeStartupNotes({
 								cwd: sources.getBaseSystemPromptOptions().cwd,
 								runner,
+								extensionNames: composed.extensionNames,
+								inventory: sources.promptSizeInventory,
 								sizesOnlyStartup: sources.sizesOnlyStartup === true,
 							}),
 						},
@@ -175,7 +178,9 @@ async function composeTurnSystemPrompt(sources: PromptCachePrefixSources, signal
 	let systemPrompt = sources.getBaseSystemPrompt();
 	let accounting: PromptSizeAccounting | undefined;
 	const extensionNames = sizesOnly
-		? promptSizeExtensionNames(sources.runner.getExtensionPaths())
+		? promptSizeExtensionNames(sources.runner.getExtensionPaths(), (path) =>
+				sources.promptSizeInventory?.packageNameOf(path),
+			)
 		: new Map<string, string>();
 	for (let pass = 0; pass < MAX_COMPOSITION_PASSES && !signal.aborted; pass += 1) {
 		const base = sources.getBaseSystemPrompt();
@@ -207,7 +212,7 @@ async function composeTurnSystemPrompt(sources: PromptCachePrefixSources, signal
 		systemPrompt = result?.systemPrompt ?? base;
 		if (sources.getBaseSystemPrompt() === base) break;
 	}
-	return { systemPrompt, accounting };
+	return { systemPrompt, accounting, extensionNames };
 }
 
 async function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T | typeof CANCELLED> {

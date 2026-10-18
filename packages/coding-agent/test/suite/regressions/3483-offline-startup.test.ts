@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { cliPromptSizeInventory } from "../../../src/cli/prompt-size-inventory.ts";
 import * as imageGenAuth from "../../../src/core/extensions/builtin/imagegen/auth.ts";
 import { createMcpExtension } from "../../../src/core/extensions/builtin/mcp/index.ts";
 import { McpService } from "../../../src/core/extensions/builtin/mcp/service.ts";
@@ -21,7 +22,11 @@ describe("sizes-only startup network boundary (#3483)", () => {
 			resolve.mockClear();
 			const harness = await createHarness({ extensionFactories: [openaiImageGen] });
 			try {
-				await harness.session.bindExtensions({ mode: "print", sizesOnly });
+				await harness.session.bindExtensions({
+					mode: "print",
+					sizesOnly,
+					promptSizeInventory: cliPromptSizeInventory,
+				});
 				const result = await harness.getExtensionRunner().createContext().getPromptCachePrefixRequest?.({
 					sizesOnly: true,
 				});

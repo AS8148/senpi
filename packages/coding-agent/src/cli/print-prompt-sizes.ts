@@ -4,6 +4,7 @@ import type { AgentSessionRuntime } from "../core/agent-session-runtime.ts";
 import { flushRawStdout, writeRawStdout } from "../core/output-guard.ts";
 import { initTheme } from "../modes/interactive/theme/theme.ts";
 import { exitAfterOutput } from "./print-then-exit.ts";
+import { cliPromptSizeInventory } from "./prompt-size-inventory.ts";
 
 /** A full session open, followed only by preview composition; never starts a turn. */
 export async function printPromptSizes(runtime: AgentSessionRuntime): Promise<never> {
@@ -16,7 +17,11 @@ export async function printPromptSizes(runtime: AgentSessionRuntime): Promise<ne
 			output = { error: { reason: "session initialization failed" } };
 		} else {
 			initTheme(runtime.services.settingsManager.getTheme(), false);
-			await runtime.session.bindExtensions({ mode: "print", sizesOnly: true });
+			await runtime.session.bindExtensions({
+				mode: "print",
+				sizesOnly: true,
+				promptSizeInventory: cliPromptSizeInventory,
+			});
 			const context = runtime.session.extensionRunner.createContext();
 			const result = await context.getPromptCachePrefixRequest?.({ sizesOnly: true });
 			if (result === undefined) {

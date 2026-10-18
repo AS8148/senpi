@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { cliPromptSizeInventory } from "../../../src/cli/prompt-size-inventory.ts";
 import promptPreset from "../../../src/core/extensions/builtin/prompt-preset/index.ts";
 import * as presets from "../../../src/core/extensions/builtin/prompt-preset/presets.ts";
 import type { ExtensionAPI } from "../../../src/core/extensions/types.ts";
@@ -51,7 +52,7 @@ describe("review accounting regressions (#3483)", () => {
 			return path;
 		});
 		// When
-		const names = [...promptSizeExtensionNames(paths).values()];
+		const names = [...promptSizeExtensionNames(paths, cliPromptSizeInventory.packageNameOf).values()];
 		// Then
 		expect(new Set(names).size).toBe(paths.length);
 		expect(names.slice(0, 2).every((name) => /^@fixture\/shared:[0-9a-f]{8}$/.test(name))).toBe(true);
