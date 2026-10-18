@@ -208,6 +208,27 @@ describe("session pending-input journal", () => {
 		expect(records.at(-1)?.batch?.map((input) => input.clientMessageId)).toEqual(["c-2"]);
 	});
 
+	it("reads a persisted session's journal from its file, never from the whole-history view (senpi#3535 retention)", async () => {
+		const dir = sessionDir();
+		const manager = SessionManager.create(dir, dir);
+		await (await storeOver(manager, "life-1")).submit(SUBMIT);
+		const reopened = SessionManager.open(manager.getSessionFile() ?? "", dir);
+		const noHistory = new Proxy(reopened, {
+			get(target, property, receiver) {
+				if (property === "getEntries")
+					return () => {
+						throw new Error("getEntries materializes the whole history of a trimmed session");
+					};
+				const value = Reflect.get(target, property, receiver);
+				return typeof value === "function" ? value.bind(target) : value;
+			},
+		});
+
+		const records = await new SessionPendingInputJournal(noHistory).read();
+
+		expect(records.map((record) => record.input.clientMessageId)).toEqual([SUBMIT.clientMessageId]);
+	});
+
 	it("refuses a corrupt transition in the middle of the file", async () => {
 		const dir = sessionDir();
 		const manager = SessionManager.create(dir, dir);
