@@ -10100,7 +10100,14 @@ export class AgentSession {
 				)
 			: createAllToolDefinitions(this._cwd, {
 					read: { autoResizeImages, filesystemPolicy },
-					bash: { commandPrefix: shellCommandPrefix, shellPath },
+					// The core bash tool's process work goes through the dispatcher's operations: the same
+					// local operations under in-process, and the tool child's user.bash job under child
+					// (senpi#3566 todo 9), while truncation and rendering stay on the server.
+					bash: {
+						commandPrefix: shellCommandPrefix,
+						shellPath,
+						operations: this._toolDispatcher.bashOperations({ shellPath }),
+					},
 					write: { filesystemPolicy },
 					edit: { filesystemPolicy },
 					grep: { filesystemPolicy },

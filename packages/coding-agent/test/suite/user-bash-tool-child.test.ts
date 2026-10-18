@@ -22,6 +22,27 @@ async function withSession<T>(
 	}
 }
 
+describe.skipIf(process.platform === "win32")("core bash tool placement", () => {
+	it("runs its process on the session's tool child under child and here under in-process", async () => {
+		const parents = {} as Record<ToolRuntimeKind, number>;
+		for (const runtime of ["child", "in-process"] as const) {
+			await withSession(runtime, async (session) => {
+				const result = await session.executeTool("bash", { command: "echo parent=$PPID" });
+				const text = result.content.map((part) => (part.type === "text" ? part.text : "")).join("");
+				parents[runtime] = Number(/parent=(\d+)/.exec(text)?.[1] ?? Number.NaN);
+				if (Number.isNaN(parents[runtime])) throw new Error(`no parent pid in: ${text.slice(0, 200)}`);
+				const row = session.toolChildRow();
+				if (runtime === "child") {
+					expect(row).toMatchObject({ state: "live", pid: parents[runtime] });
+				} else {
+					expect(parents[runtime]).toBe(process.pid);
+					expect(row).toEqual({ state: "none" });
+				}
+			});
+		}
+	}, 120_000);
+});
+
 describe.skipIf(process.platform === "win32")("user bash placement", () => {
 	it("runs on the session's tool child under child, streaming output and the exit code", async () => {
 		await withSession("child", async (session) => {
