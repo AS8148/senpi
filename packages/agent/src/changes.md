@@ -1,3 +1,43 @@
+## 2026-10-17 - Queued input's consumption is committed before a provider sees it (senpi#3549)
+
+### What changed
+
+- `packages/agent/src/types.ts`: `AgentLoopConfig.commitQueuedConsumption(queue, messages)`, awaited with the drained queued messages before any of them enters the context.
+- `packages/agent/src/agent-loop.ts`: `runLoop` remembers which queue the pending messages were drained from and awaits `commitQueuedConsumption` before inserting them; a rejection restores them to that queue and fails the attempt, so no provider request carries them.
+- `packages/agent/src/agent.ts`: an optional `AgentOptions.queuedInputPort` with `claim` (the native drain runs under the owner's gate), `release` (the native restore, likewise) and `commitConsumption`. The loop's queue polls and restores go through it, and so do the runs started from a queue (`continue()` after an assistant message, `continueWithQueuedMessages()`, the drain after `agent_end`): `takeQueuedMessages` claims, commits, and releases on a failed commit. Without a port every queue path behaves as before.
+
+### Why
+
+- `packages/agent/src/agent-loop.ts`: the coding-agent session journals a pending input's delivery; a message must not reach a provider before that record is durable, or a crash would leave it sent but still pending (desktop #2838).
+
+### Why an extension could not handle it
+
+- `packages/agent/src/agent-loop.ts`: the drain-to-context step happens inside the loop, with no hook between them.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/agent/src/agent-loop.ts`, the queue drains in `runLoop` (each now goes through `drainSteering` / `drainFollowUp`) and the insertion before the next request.
+- MEDIUM: `packages/agent/src/agent.ts` `continue`, `continueWithQueuedMessages`, `runQueuedMessagesAfterAgentEnd` (their drains now go through `runQueuedMessages` / `takeQueuedMessages`) and `createLoopConfig`.
+- LOW: `packages/agent/src/agent.ts` `AgentOptions`; `packages/agent/src/types.ts` `AgentLoopConfig`.
+
+## 2026-10-17 - A caller's plain abort reason is carried as the turn's message (senpi#3510)
+
+### What changed
+
+- `packages/agent/src/agent-loop.ts`: `abortError` keeps the caller's own words as the error message: a non-empty string reason (`controller.abort("user stop")`) or an object's non-empty `message`, capped at 500 characters with an ellipsis. An `Error` reason is kept as before (uncapped); a blank, empty, or any other reason still gets "Request was aborted".
+
+### Why
+
+- `packages/agent/src/agent-loop.ts`: a client that aborts with a reason expects to see it; the reason was dropped unless it was an `Error`.
+
+### Why an extension could not handle it
+
+- `packages/agent/src/agent-loop.ts`: the abort error is built inside the agent loop's request path.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/agent-loop.ts`, `abortError`.
+
 ## 2026-10-17 - A caller-aborted turn past the pre-stream bound carries the abort's message (senpi#3481)
 
 ### What changed

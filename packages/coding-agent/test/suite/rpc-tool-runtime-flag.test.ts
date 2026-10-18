@@ -58,11 +58,19 @@ describe("resolveToolRuntime", () => {
 		});
 		const fromEnv = resolveToolRuntime(parseArgs([]), { SENPI_TOOL_RUNTIME: "bogus" });
 		expect(fromEnv.ok).toBe(false);
-		expect(fromEnv.ok ? "" : fromEnv.message).toMatch(/in-process or child/);
+		expect(fromEnv.ok ? "" : fromEnv.message).toMatch(/^SENPI_TOOL_RUNTIME .*in-process or child/);
+		const fromLegacy = resolveToolRuntime(parseArgs([]), { PI_TOOL_RUNTIME: "bogus" });
+		expect(fromLegacy.ok ? "" : fromLegacy.message).toMatch(/^PI_TOOL_RUNTIME /);
 	});
 });
 
 describe("tool runtime at startup", () => {
+	it("lets --version through a bad tool-runtime env value", async () => {
+		const version = await runCli(["--version"], { SENPI_TOOL_RUNTIME: "bogus" });
+		expect(version.code).toBe(0);
+		expect(version.stderr).not.toContain("tool-runtime");
+	}, 60_000);
+
 	it("rejects an unknown tool runtime and exits non-zero before serving", async () => {
 		const flag = await runCli(["--mode", "rpc", "--multi-session", "--tool-runtime", "bogus"], {});
 		expect(flag.code).not.toBe(0);
@@ -140,14 +148,21 @@ describe("tool runtime at startup", () => {
 				_test: { readinessTimeoutMs: 60_000, launch: supervisorLaunch },
 			});
 			host.release();
-			const client = await JsonlPeer.connect(qa.socket);
-			peers.push(client);
-			const info = await client.request({ id: "info", type: "get_protocol_info" });
-			const capabilities = (info.data as { capabilities?: unknown } | undefined)?.capabilities;
-			expect(capabilities).toContain(expected);
-			expect(
-				Array.isArray(capabilities) ? capabilities.filter((c) => String(c).startsWith("tool_runtime:")) : [],
-			).toEqual([expected]);
+			const toolRuntimeEntries = async (peer: JsonlPeer, id: string) => {
+				const info = await peer.request({ id, type: "get_protocol_info" });
+				const capabilities = (info.data as { capabilities?: unknown } | undefined)?.capabilities;
+				return Array.isArray(capabilities) ? capabilities.filter((c) => String(c).startsWith("tool_runtime:")) : [];
+			};
+			const first = await JsonlPeer.connect(qa.socket);
+			peers.push(first);
+			expect(await toolRuntimeEntries(first, "first")).toEqual([expected]);
+			const concurrent = await JsonlPeer.connect(qa.socket);
+			peers.push(concurrent);
+			expect(await toolRuntimeEntries(concurrent, "second-connection")).toEqual([expected]);
+			first.destroy();
+			const reconnected = await JsonlPeer.connect(qa.socket);
+			peers.push(reconnected);
+			expect(await toolRuntimeEntries(reconnected, "after-reconnect")).toEqual([expected]);
 		},
 		120_000,
 	);

@@ -20,6 +20,7 @@ import type { EngineOrdinal } from "../../core/engine-build-identity.ts";
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
 import type { ContextUsage, SessionControlAdmission, SessionKind } from "../../core/extensions/types.ts";
 import type { ResolvedMessagePath } from "../../core/message-path-resolution.ts";
+import type { PendingInputSnapshot, PendingInputUpdate } from "../../core/pending-input-session.ts";
 import type { SessionEntry, SessionMessageEntry, SessionTreeNode, UsageTotals } from "../../core/session-manager.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import type { ApiKeyVerification } from "../../core/verify-api-key.ts";
@@ -144,6 +145,12 @@ type RpcSessionCommand =
 	 * whole file before answering `found: false`. For inputs `effectId` is the `clientMessageId`.
 	 */
 	| { id?: string; type: "get_effect_status"; effectId: string; sessionPath?: string }
+	/**
+	 * The pending inputs in durable custody (queued, sending, failed) and an explicit outcome for each listed id,
+	 * consistent through `throughCursor` (senpi#3549). Subscribe to `pending_input_update` first, then apply this
+	 * snapshot and only updates after its cursor. At most 64 ids.
+	 */
+	| { id?: string; type: "get_pending_inputs"; knownClientMessageIds?: string[] }
 
 	// Model
 	| { id?: string; type: "set_model"; provider: string; modelId: string; effectId?: string }
@@ -254,7 +261,7 @@ type RpcSessionCommand =
 	  }
 	| { id?: string; type: "clone" }
 	| { id?: string; type: "get_fork_messages" }
-	| { id?: string; type: "get_entries"; since?: string }
+	| { id?: string; type: "get_entries"; since?: string; limit?: number; maxBytes?: number }
 	| { id?: string; type: "get_tree" }
 	| { id?: string; type: "get_last_assistant_text" }
 	| { id?: string; type: "set_session_name"; name: string }
@@ -294,6 +301,7 @@ type RpcSessionCommand =
 	| { id?: string; type: "get_provider_accounts"; provider: string }
 	| { id?: string; type: "account_pin"; provider: string; name: string | null }
 	| { id?: string; type: "account_remove"; provider: string; name: string }
+	| { id?: string; type: "account_order"; provider: string; names: string[] | null }
 	| { id?: string; type: "set_client_info"; width: number; capabilities?: string[] };
 
 /** Stable multi-session protocol error codes. */
@@ -310,6 +318,8 @@ export const RPC_ERROR_MULTI_SESSION_DISABLED = "multi_session_disabled";
 export const RPC_ERROR_INVALID_PATH = "invalid_path";
 /** A command field outside its documented range; `errorData` carries `reason` and `action`. */
 export const RPC_ERROR_INVALID_ARGUMENT = "invalid_argument";
+/** An answer would pass the per-response byte budget; read the history in pages (`get_entries` `limit`/`maxBytes`). */
+export const RPC_ERROR_RESPONSE_TOO_LARGE = "response_too_large";
 export const RPC_ERROR_OPEN_FAILED = "open_failed";
 export const RPC_ERROR_OWNER_CHANGED = "owner_changed";
 export const RPC_ERROR_SESSION_NOT_HELD = "session_not_held";
@@ -1093,6 +1103,7 @@ export type RpcResponse =
 			success: true;
 			data: { found: true; effect: EffectStatus } | { found: false; searched: "complete" };
 	  }
+	| { id?: string; type: "response"; command: "get_pending_inputs"; success: true; data: PendingInputSnapshot }
 	| { id?: string; type: "response"; command: "set_favorite_models"; success: true }
 	| { id?: string; type: "response"; command: "set_scoped_models"; success: true }
 	| {
@@ -1224,7 +1235,7 @@ export type RpcResponse =
 			type: "response";
 			command: "get_entries";
 			success: true;
-			data: { entries: SessionEntry[]; leafId: string | null };
+			data: { entries: SessionEntry[]; leafId: string | null; hasMore?: boolean; nextSince?: string };
 	  }
 	| {
 			id?: string;
@@ -1310,10 +1321,11 @@ export type RpcResponse =
 			type: "response";
 			command: "get_provider_accounts";
 			success: true;
-			data: { accounts: RpcProviderAccount[] };
+			data: { accounts: RpcProviderAccount[]; ordered: boolean };
 	  }
 	| { id?: string; type: "response"; command: "account_pin"; success: true }
 	| { id?: string; type: "response"; command: "account_remove"; success: true }
+	| { id?: string; type: "response"; command: "account_order"; success: true }
 
 	// Error response (any command can fail)
 	| {
@@ -1538,6 +1550,9 @@ export interface RpcHighReasoningWarningEvent {
 	provider: string;
 	thinkingLevel: ThinkingLevel;
 }
+
+/** A pending input in durable custody changed; `changes` are complete projections, in cursor order. */
+export type RpcPendingInputUpdateEvent = { type: "pending_input_update" } & PendingInputUpdate;
 
 /** Emitted after explicit skill tokens are expanded for a user-authored request. */
 export interface RpcSkillInvocationEvent {
