@@ -87,8 +87,9 @@ async function killedFromOutside(session: Session): Promise<void> {
 
 async function lostToReload(session: Session): Promise<void> {
 	await py(session, "def loader():\n    return 'rows'\ncache = {}");
-	console.log("RELOAD: session.reload() (the path /reload and the config hot reload take)");
+	console.log("RELOAD: session.reload() + re-bind (the reload path; a bound host emits session_start, print mode needs the re-bind)");
 	await session.reload();
+	await session.bindExtensions({ mode: "print" });
 	const after = await py(session, "'loader' in globals()");
 	console.log(`AFTER_RELOAD_RESULT:\n${textOf(after)}`);
 	console.log(`AFTER_RELOAD_KERNEL_STATE: ${after.details.kernelState}`);
