@@ -49,7 +49,11 @@ export async function importMovedSession(options: ImportMovedSessionOptions): Pr
 	const targetCwd = resolvePath(options.targetCwd);
 	const sessionDir = options.sessionDir ? normalizePath(options.sessionDir) : getDefaultSessionDir(targetCwd);
 	const target = join(sessionDir, manifest.sessionFileName);
-	if (existsSync(target) && movedInFor(target, manifest.moveId)) return { sessionFile: target };
+	if (existsSync(target) && movedInFor(target, manifest.moveId)) {
+		// The rename already committed; a crash may have lost the ledger write, and the file is the authority.
+		await options.ledger.commit(manifest.moveId, () => undefined);
+		return { sessionFile: target };
+	}
 	try {
 		verifyBundle(options.bundleDir, manifest);
 	} catch (error) {

@@ -128,6 +128,14 @@ describe("session move between two folders", () => {
 		expect(readFileSync(second.sessionFile, "utf8")).toBe(before);
 	});
 
+	it("#given an import that crashed after its rename but before the ledger recorded it #when it runs again #then the move is recorded accepted", async () => {
+		const { cwdB, bundleDir, ledger, readIdentity } = await setup();
+		await importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity });
+		rmSync(ledger.dir, { recursive: true, force: true });
+		await importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity });
+		expect(await ledger.answerStatus(MOVE, { movedIn: false })).toEqual({ state: "accepted" });
+	});
+
 	it("#given a different repository at B #then the import is refused with a reason and nothing lands at B", async () => {
 		const { cwdB, source, bundleDir, ledger, readIdentity } = await setup(OTHER);
 		await expect(importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity })).rejects.toMatchObject({
