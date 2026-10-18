@@ -122,7 +122,7 @@ describe.skipIf(process.platform === "win32")("job policy injection switches", (
 		abort.abort();
 		await instance.ping();
 		expect(acks).toHaveLength(1);
-		expect(await settled).toMatchObject({ code: "module_job_failed" });
+		expect(await settled).toMatchObject({ code: "tool_child_cancelled" });
 		clock.advance(10_000);
 		expect(instance.state).toBe("live");
 	}, 30_000);

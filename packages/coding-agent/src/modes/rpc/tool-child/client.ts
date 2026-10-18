@@ -10,11 +10,13 @@ import { once } from "node:events";
 import { join } from "node:path";
 import { openChannelListener, type ToolChildChannel } from "./channel.ts";
 import { createGenerationBarrier, type GenerationBarrier } from "./client-barrier.ts";
+import { generationLedgerPath } from "./descendants.ts";
 import { TOOL_CHILD_PROTOCOL_VERSION } from "./entry.ts";
 import { type HostCallHandler, type HostCallRefs, ServerHostCalls } from "./host-calls-server.ts";
 import { policyFor } from "./job-policy.ts";
 import { JobSupervisor, type SupervisorTimers } from "./job-supervisor.ts";
 import { spawnToolChild, type ToolChildCommand, toolChildCommand } from "./launch.ts";
+import { sweepStaleGenerations } from "./orphan-sweep.ts";
 import { PayloadRefReader, PayloadRefWriter } from "./payload-ref.ts";
 import type { ToolChildMessage } from "./protocol.ts";
 
@@ -117,6 +119,24 @@ export class ToolChildClient {
 			throw new ToolChildError("tool_child_busy", `already ${this.#state}`);
 		const generation = ++this.#generation;
 		this.#state = "spawning";
+		try {
+			await this.#bootstrap(generation);
+		} catch (error) {
+			// Whatever failed (the listener, the spawn, the hello), the client never stays "spawning": the next job retries.
+			if (this.#state === "spawning") this.#state = "dead";
+			throw error instanceof ToolChildError
+				? error
+				: new ToolChildError(
+						"tool_child_bootstrap_failed",
+						`spawn_failed: ${error instanceof Error ? error.message : String(error)}`,
+					);
+		}
+	}
+
+	async #bootstrap(generation: number): Promise<void> {
+		// A crashed predecessor (host or child) may have left owned groups and a ledger this generation would reuse.
+		await this.#lastEnded;
+		await sweepStaleGenerations(this.#options.dir);
 		const listener = await openChannelListener({ dir: this.#options.dir, generation });
 		const child = spawnToolChild({
 			generation,
@@ -125,8 +145,17 @@ export class ToolChildClient {
 			command: this.#options.command ?? (await toolChildCommand()),
 			cwd: this.#options.cwd,
 			refsRoot: this.#refsRoot,
+			ledgerPath: generationLedgerPath(this.#options.dir, generation),
 		});
-		const exited = once(child, "exit").then(() => undefined);
+		let spawnError: Error | undefined;
+		child.once("error", (error) => {
+			spawnError = error;
+		});
+		// A spawn that fails (ENOENT, a missing cwd) emits "error" instead of "exit": both end the child.
+		const exited = Promise.race([once(child, "exit"), once(child, "error")]).then(
+			() => undefined,
+			() => undefined,
+		);
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		const timedOut = new Promise<"timeout">((resolve) => {
 			timer = setTimeout(() => resolve("timeout"), this.#options.readyMs ?? 10_000);
@@ -142,7 +171,11 @@ export class ToolChildClient {
 			this.#state = "dead";
 			throw new ToolChildError(
 				"tool_child_bootstrap_failed",
-				outcome === "timeout" ? "ready_timeout" : "exited_before_ready",
+				outcome === "timeout"
+					? "ready_timeout"
+					: spawnError
+						? `spawn_failed: ${spawnError.message}`
+						: "exited_before_ready",
 			);
 		}
 		const { channel, message } = outcome;
@@ -228,6 +261,8 @@ export class ToolChildClient {
 		if (this.#state !== "live" || live === undefined)
 			return Promise.reject(new ToolChildError("tool_child_unavailable", this.#state));
 		const jobId = `j${++this.#nextJob}`;
+		if (signal?.aborted === true)
+			return Promise.reject(new ToolChildError("tool_child_cancelled", "cancelled before it started"));
 		if (options.hostContext !== undefined) this.#hostContexts.set(jobId, options.hostContext);
 		const policy = policyFor(kind, { ...options, env: this.#options.policyEnv ?? process.env });
 		return new Promise((resolve, reject) => {
@@ -350,8 +385,20 @@ function settle(live: Pick<Live, "pending">, jobId: string, apply: (pending: Pen
 	apply(pending);
 }
 
+/** The channel's first frame; the subscription ends with it (frames after it belong to the live client's handler). */
 function firstMessage(channel: ToolChildChannel): Promise<ToolChildMessage> {
-	return new Promise((resolve) => channel.onMessage(resolve));
+	return new Promise((resolve) => {
+		let done = false;
+		let unsubscribe: (() => void) | undefined;
+		unsubscribe = channel.onMessage((message) => {
+			if (done) return;
+			done = true;
+			resolve(message);
+			unsubscribe?.();
+		});
+		// onMessage replays a queued frame synchronously, before it returned the unsubscribe function.
+		if (done) unsubscribe();
+	});
 }
 
 function delay(ms: number): Promise<void> {

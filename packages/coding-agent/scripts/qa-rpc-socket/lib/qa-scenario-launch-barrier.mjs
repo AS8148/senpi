@@ -130,14 +130,19 @@ export const launchApisAckGatedScenario = Object.freeze({
 			assert(proofs.length === 1 && proofs[0].ackTick !== null && proofs[0].ackTick < proofs[0].invokeTick, `${call.api} proof out of order`);
 			assert(launch.containment === call.containment && launch.lifetime === call.lifetime, `${call.api} containment ${launch.containment}/${launch.lifetime}`);
 			assert(details.markerSeen === true, `${call.api} marker not seen`);
-			const expectedGroup = call.containment === "own-group" ? details.pid : child.pid;
+			// An own-group launch leads its own group (the launch record names it); everything else stays in the child's.
+			const expectedGroup = call.containment === "own-group" ? launch.pgid : child.pid;
 			assert(details.pgid === expectedGroup, `${call.api} pgid ${details.pgid}, expected ${expectedGroup}`);
+			if (call.containment === "own-group") assert(launch.pgid !== child.pid, `${call.api} own group is the child's group`);
 			if (call.lifetime === "detached") {
-				assert(alive(details.pid), `the detached fixture ${details.pid} was not alive to clean up`);
-				kill(details.pid, "SIGKILL");
-				const gone = await ctx.awaitGone(details.pid);
-				ctx.log.write({ type: "fixture_cleanup", launchId, pid: details.pid, method: "SIGKILL", gone });
-				assert(gone, `detached fixture ${details.pid} survived SIGKILL`);
+				// The detached command is the launch record's pid; details.pid is the tool child running the fixture.
+				const commandPid = launch.pid;
+				assert(typeof commandPid === "number" && commandPid !== child.pid, `${call.api} detached launch names no command pid apart from the child`);
+				assert(alive(commandPid), `the detached fixture ${commandPid} was not alive to clean up`);
+				kill(commandPid, "SIGKILL");
+				const ended = await ctx.awaitGone(commandPid);
+				ctx.log.write({ type: "fixture_cleanup", launchId, pid: commandPid, method: "SIGKILL", ...ended });
+				assert(ended.gone, `detached fixture ${commandPid} survived SIGKILL (ps state ${ended.state})`);
 			}
 		}
 	},

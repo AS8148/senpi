@@ -282,8 +282,11 @@ The child's state is visible two ways:
 - `tool_child: { state: "none" | "live" | "exited", generation?, pid? }` on every `list_sessions` row (`none` under
   `in-process`, and for sessions on the worker runtime).
 
-A multi-session host and a single-session `--mode rpc` process each advertise their choice as exactly one
-`tool_runtime:in-process` or `tool_runtime:child` entry in `get_protocol_info.capabilities`.
+A multi-session host and a single-session `--mode rpc` process each advertise their choice as one
+`tool_runtime:in-process` or `tool_runtime:child` entry in `get_protocol_info.capabilities`. Under `child` they also
+advertise one `placement:<name>` entry for each part of the tool child that has landed (`placement:launch-barrier`:
+every command a child-run tool starts passes the execution barrier). A job worker cannot start worker threads of its
+own (`tool_child_nested_worker_refused`), so no launch escapes the barrier that way.
 
 ### Host identity (`get_protocol_info`)
 

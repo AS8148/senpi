@@ -7,21 +7,31 @@
  * ack in every case, so a caller can never write to a shim's stdin before its go-line.
  */
 import type * as ChildProcessModule from "node:child_process";
-import type { ChildProcess, SpawnOptions } from "node:child_process";
+import type { ChildProcess, IOType, SpawnOptions, StdioOptions } from "node:child_process";
+import { Socket } from "node:net";
+import { promisify } from "node:util";
+import { controlFd, enoentError, goShimScript, shimTarget, withControlPipe } from "./go-shim.ts";
 import type { LaunchApi } from "./protocol.ts";
 import type { WorkerLaunchClient } from "./worker-launch.ts";
 
 type ChildProcessApi = typeof ChildProcessModule;
-
-const GO_LINE_SHIM = 'IFS= read -r _go || exit 127; exec "$0" "$@"';
+/** One entry of a spawn `stdio` array. */
+type StdioEntry = Exclude<StdioOptions, IOType>[number];
 
 function isArgList(value: readonly string[] | SpawnOptions | undefined): value is readonly string[] {
 	return Array.isArray(value);
 }
 
+/** Reports the launch done exactly once: on exit, or on a spawn error (which may precede the shim's own exit). */
 function trackExit(client: WorkerLaunchClient, launchId: string, child: ChildProcess): ChildProcess {
-	child.once("exit", (exitCode, signal) => client.done(launchId, { exitCode, signal }));
-	child.once("error", () => client.done(launchId, { exitCode: 1 }));
+	let reported = false;
+	const report = (outcome: { readonly exitCode: number | null; readonly signal?: NodeJS.Signals | null }) => {
+		if (reported) return;
+		reported = true;
+		client.done(launchId, outcome);
+	};
+	child.once("exit", (exitCode, signal) => report({ exitCode, signal }));
+	child.once("error", () => report({ exitCode: 1 }));
 	return child;
 }
 
@@ -52,18 +62,16 @@ function ownGroupSpawn(
 	options: SpawnOptions,
 	lifetime: "owned" | "detached",
 ): ChildProcess {
-	const stdio = Array.isArray(options.stdio)
-		? options.stdio
+	const callerStdio: StdioEntry[] = Array.isArray(options.stdio)
+		? [...options.stdio]
 		: [options.stdio ?? "pipe", options.stdio ?? "pipe", options.stdio ?? "pipe"];
-	const userStdin = stdio[0];
-	const [program, programArgs] = options.shell
-		? ["/bin/sh", ["-c", [command, ...args].join(" ")]]
-		: [command, [...args]];
-	const shim = real.spawn("/bin/sh", ["-c", GO_LINE_SHIM, program, ...programArgs], {
+	const fd = controlFd(callerStdio);
+	const target = shimTarget(command, args, options.shell);
+	const shim = real.spawn("/bin/sh", ["-c", goShimScript(fd), target.program, ...target.args], {
 		...options,
 		shell: false,
 		detached: true,
-		stdio: ["pipe", stdio[1] ?? "pipe", stdio[2] ?? "pipe", ...stdio.slice(3)],
+		stdio: withControlPipe<StdioEntry>(callerStdio, fd, "ignore", "pipe"),
 	});
 	if (shim.pid === undefined) return shim;
 	const launchId = client.acquire({
@@ -76,9 +84,42 @@ function ownGroupSpawn(
 	});
 	trackExit(client, launchId, shim);
 	client.invoke(launchId);
-	if (userStdin === "pipe" || userStdin === undefined) shim.stdin?.write("go\n");
-	else shim.stdin?.end("go\n");
+	const control: unknown = shim.stdio[fd];
+	if (control instanceof Socket) {
+		let reply = "";
+		control.on("data", (chunk: Buffer) => {
+			reply += chunk.toString("utf8");
+			if (reply.startsWith("ENOENT")) shim.emit("error", enoentError(command, args));
+		});
+		// The command closed its copy at exec; the parent's end is only for the go line and the ENOENT reply.
+		control.on("error", () => {});
+		shim.once("exit", () => control.destroy());
+		control.unref();
+		control.write("go\n");
+	}
 	return shim;
+}
+
+/**
+ * Node's `exec` / `execFile` carry a `util.promisify.custom` that resolves `{ stdout, stderr }`; a gated replacement
+ * must too, or `promisify(exec)` silently resolves the stdout string alone. It calls the gated function, so the promised
+ * form passes the barrier like the callback form, and like Node it rejects with `stdout`/`stderr` on the error and
+ * exposes the process as `.child`.
+ */
+function withPromisified<F extends (...args: never[]) => ChildProcess>(gated: F): F {
+	const promised = (...args: unknown[]) => {
+		let child: ChildProcess | undefined;
+		const result = new Promise<{ stdout: unknown; stderr: unknown }>((resolve, reject) => {
+			child = Reflect.apply(gated, undefined, [
+				...args,
+				(error: Error | null, stdout: unknown, stderr: unknown) =>
+					error ? reject(Object.assign(error, { stdout, stderr })) : resolve({ stdout, stderr }),
+			]);
+		});
+		return Object.assign(result, { child });
+	};
+	Object.defineProperty(gated, promisify.custom, { value: promised });
+	return gated;
 }
 
 /** A `node:child_process` module object whose launch APIs pass the execution barrier. Non-launch exports pass through. */
@@ -123,8 +164,8 @@ export function createGatedChildProcess(module: ChildProcessApi, client: WorkerL
 	const gated: Record<string, unknown> = {
 		...real,
 		spawn,
-		exec: asyncInherited("cp.spawn", real.exec),
-		execFile: asyncInherited("cp.spawn", real.execFile),
+		exec: withPromisified(asyncInherited("cp.spawn", real.exec)),
+		execFile: withPromisified(asyncInherited("cp.spawn", real.execFile)),
 		fork: asyncInherited("cp.spawn", real.fork),
 		spawnSync: (...args: Parameters<ChildProcessApi["spawnSync"]>) =>
 			runInherited(

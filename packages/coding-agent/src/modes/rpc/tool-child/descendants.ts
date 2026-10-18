@@ -5,8 +5,13 @@
  * command can run. That is what lets the server clean up descendants even when the child that started them is gone.
  */
 import { appendFile, mkdir, open, readFile, rm } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import type { LaunchApi, LaunchContainment, LaunchLifetime, LaunchOrigin } from "./protocol.ts";
+
+/** Where a generation's ledger lives under a session's tool-child directory; the server writes it, the child reads it. */
+export function generationLedgerPath(dir: string, generation: number): string {
+	return join(dir, `g${generation}`, "descendants.ledger");
+}
 
 export interface DescendantEntry {
 	readonly launchId: string;
@@ -23,6 +28,7 @@ export interface DescendantEntry {
 
 export class DescendantsLedger {
 	readonly #path: string;
+	#durableDir = false;
 	readonly #entries = new Map<string, DescendantEntry>();
 
 	constructor(path: string) {
@@ -38,7 +44,17 @@ export class DescendantsLedger {
 	}
 
 	async append(entry: DescendantEntry): Promise<void> {
-		await mkdir(dirname(this.#path), { recursive: true, mode: 0o700 });
+		if (!this.#durableDir) {
+			// The first entry creates the generation directory and the file: both directory entries are synced, or a crash
+			// could leave an fsynced ledger that no directory names.
+			const directory = dirname(this.#path);
+			await mkdir(directory, { recursive: true, mode: 0o700 });
+			const created = await open(this.#path, "a", 0o600);
+			await created.close();
+			await syncDirectory(directory);
+			await syncDirectory(dirname(directory));
+			this.#durableDir = true;
+		}
 		const handle = await open(this.#path, "a", 0o600);
 		try {
 			await handle.write(`${JSON.stringify(entry)}\n`);
@@ -75,10 +91,22 @@ export class DescendantsLedger {
 	}
 }
 
+/** fsync a directory so the entries created in it survive a crash; a platform that cannot open a directory skips it. */
+async function syncDirectory(directory: string): Promise<void> {
+	if (process.platform === "win32") return;
+	const handle = await open(directory, "r");
+	try {
+		await handle.sync();
+	} finally {
+		await handle.close();
+	}
+}
+
 /** Append-only record of every barrier frame, for diagnostics and the QA driver. Not fsynced. */
 export class LaunchLog {
 	readonly #path: string;
 	#chain: Promise<void> = Promise.resolve();
+	#failedWrites = 0;
 
 	constructor(path: string) {
 		this.#path = path;
@@ -88,15 +116,25 @@ export class LaunchLog {
 		return this.#path;
 	}
 
+	/** Records the log could not write; the log is diagnostic, so a failed write is counted, never thrown. */
+	get failedWrites(): number {
+		return this.#failedWrites;
+	}
+
 	settled(): Promise<void> {
 		return this.#chain;
 	}
 
+	/** Appends in order. Never rejects: one failed write neither poisons later records nor what awaits settled(). */
 	record(record: Readonly<Record<string, unknown>>): Promise<void> {
 		const line = `${JSON.stringify({ atMs: Date.now(), ...record })}\n`;
 		this.#chain = this.#chain.then(async () => {
-			await mkdir(dirname(this.#path), { recursive: true, mode: 0o700 });
-			await appendFile(this.#path, line, { mode: 0o600 });
+			try {
+				await mkdir(dirname(this.#path), { recursive: true, mode: 0o700 });
+				await appendFile(this.#path, line, { mode: 0o600 });
+			} catch {
+				this.#failedWrites += 1;
+			}
 		});
 		return this.#chain;
 	}
