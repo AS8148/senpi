@@ -8,6 +8,7 @@
  */
 import type * as ChildProcessModule from "node:child_process";
 import type { ChildProcess, SpawnOptions } from "node:child_process";
+import { promisify } from "node:util";
 import type { LaunchApi } from "./protocol.ts";
 import type { WorkerLaunchClient } from "./worker-launch.ts";
 
@@ -81,6 +82,28 @@ function ownGroupSpawn(
 	return shim;
 }
 
+/**
+ * Node's `exec` / `execFile` carry a `util.promisify.custom` that resolves `{ stdout, stderr }`; a gated replacement
+ * must too, or `promisify(exec)` silently resolves the stdout string alone. It calls the gated function, so the promised
+ * form passes the barrier like the callback form, and like Node it rejects with `stdout`/`stderr` on the error and
+ * exposes the process as `.child`.
+ */
+function withPromisified<F extends (...args: never[]) => ChildProcess>(gated: F): F {
+	const promised = (...args: unknown[]) => {
+		let child: ChildProcess | undefined;
+		const result = new Promise<{ stdout: unknown; stderr: unknown }>((resolve, reject) => {
+			child = Reflect.apply(gated, undefined, [
+				...args,
+				(error: Error | null, stdout: unknown, stderr: unknown) =>
+					error ? reject(Object.assign(error, { stdout, stderr })) : resolve({ stdout, stderr }),
+			]);
+		});
+		return Object.assign(result, { child });
+	};
+	Object.defineProperty(gated, promisify.custom, { value: promised });
+	return gated;
+}
+
 /** A `node:child_process` module object whose launch APIs pass the execution barrier. Non-launch exports pass through. */
 export function createGatedChildProcess(module: ChildProcessApi, client: WorkerLaunchClient): ChildProcessApi {
 	// Captured before anyone patches `module` in place: the gated functions must call the originals, never themselves.
@@ -123,8 +146,8 @@ export function createGatedChildProcess(module: ChildProcessApi, client: WorkerL
 	const gated: Record<string, unknown> = {
 		...real,
 		spawn,
-		exec: asyncInherited("cp.spawn", real.exec),
-		execFile: asyncInherited("cp.spawn", real.execFile),
+		exec: withPromisified(asyncInherited("cp.spawn", real.exec)),
+		execFile: withPromisified(asyncInherited("cp.spawn", real.execFile)),
 		fork: asyncInherited("cp.spawn", real.fork),
 		spawnSync: (...args: Parameters<ChildProcessApi["spawnSync"]>) =>
 			runInherited(
