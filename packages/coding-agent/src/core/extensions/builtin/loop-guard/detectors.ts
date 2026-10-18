@@ -28,7 +28,7 @@ export type LoopGuardDetection =
 			readonly toolName: string;
 			readonly count: number;
 			readonly fingerprint: string;
-		}
+	  }
 	| {
 			readonly kind: "similar";
 			readonly toolName: string;
@@ -94,7 +94,13 @@ export function detectWindowedRepeat(records: readonly ToolCallRecord[]): LoopGu
 		if (record.signature === last.signature) occurrences++;
 	}
 	if (occurrences < WINDOWED_REPEAT_THRESHOLD) return undefined;
-	return { kind: "identical", windowed: true, toolName: last.toolName, count: occurrences, fingerprint: last.signature };
+	return {
+		kind: "identical",
+		windowed: true,
+		toolName: last.toolName,
+		count: occurrences,
+		fingerprint: last.signature,
+	};
 }
 
 export function detectSimilarRun(records: readonly ToolCallRecord[]): LoopGuardDetection | undefined {
@@ -198,7 +204,12 @@ export class NoticeGate {
 }
 
 export function detectLoop(records: readonly ToolCallRecord[], gate: NoticeGate): LoopGuardDetection | undefined {
-	const detections = [detectIdenticalRun(records), detectWindowedRepeat(records), detectCycle(records), detectSimilarRun(records)];
+	const detections = [
+		detectIdenticalRun(records),
+		detectWindowedRepeat(records),
+		detectCycle(records),
+		detectSimilarRun(records),
+	];
 	const active = new Map<LoopGuardKind, string>();
 	for (const detection of detections) {
 		if (detection !== undefined) active.set(detection.kind, detection.fingerprint);

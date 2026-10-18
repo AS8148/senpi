@@ -54,7 +54,10 @@ describe("detectWindowedRepeat", () => {
 
 	it("counts occurrences across a period-7 interleave the cycle detector cannot see", () => {
 		const fillerNames = ["read", "edit", "bash", "todo_view", "webfetch", "glob", "grep"];
-		const records = interleaved(WINDOWED_REPEAT_THRESHOLD, (i) => [fillerNames[i % fillerNames.length] ?? "read", { n: i }]);
+		const records = interleaved(WINDOWED_REPEAT_THRESHOLD, (i) => [
+			fillerNames[i % fillerNames.length] ?? "read",
+			{ n: i },
+		]);
 		expect(detectWindowedRepeat(records)?.count).toBe(WINDOWED_REPEAT_THRESHOLD);
 	});
 });
@@ -70,9 +73,10 @@ describe("detectLoop with windowed repeats", () => {
 		expect(first.count).toBe(WINDOWED_REPEAT_THRESHOLD);
 
 		const grow = (evalCount: number): ToolCallRecord[] =>
-			[...records, ...interleaved(evalCount - WINDOWED_REPEAT_THRESHOLD, (i) => ["todo_view", { step: 100 + i }])].slice(
-				-64,
-			);
+			[
+				...records,
+				...interleaved(evalCount - WINDOWED_REPEAT_THRESHOLD, (i) => ["todo_view", { step: 100 + i }]),
+			].slice(-64);
 		expect(detectLoop(grow(12), gate)).toBeUndefined();
 		expect(detectLoop(grow(16), gate)?.count).toBe(16);
 	});

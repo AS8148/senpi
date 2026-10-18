@@ -11,9 +11,9 @@ import {
 	LOOP_GUARD_NOTICE_CUSTOM_TYPE,
 	LOOP_GUARD_RECOVERY_CUSTOM_TYPE,
 } from "./notice.ts";
+import { WINDOWED_REPEAT_THRESHOLD } from "./policy.ts";
 import { renderLoopGuardEscalation, renderLoopGuardNotice } from "./renderer.ts";
 import { ToolCallTracker } from "./tracker.ts";
-import { WINDOWED_REPEAT_THRESHOLD } from "./policy.ts";
 
 const LOOP_GUARD_HARD_STOP_WAKE_SOURCE = "loop-guard-hard-stop";
 

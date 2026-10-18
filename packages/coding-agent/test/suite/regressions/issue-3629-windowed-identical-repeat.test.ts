@@ -14,7 +14,9 @@ const EVAL_ARGS = { code: "reverseEngineer(input)" } as const;
 const TODO_ARGS = { view: "list" } as const;
 
 function isBlockResult(value: unknown): value is BlockResult {
-	return typeof value === "object" && value !== null && "block" in value && (value as { block: unknown }).block === true;
+	return (
+		typeof value === "object" && value !== null && "block" in value && (value as { block: unknown }).block === true
+	);
 }
 
 async function runInterleavedRound(harness: LoopGuardHarness, round: number): Promise<unknown> {

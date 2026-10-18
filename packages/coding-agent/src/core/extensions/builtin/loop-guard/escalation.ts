@@ -4,7 +4,12 @@ import type { ToolCallRecord } from "./tracker.ts";
 
 export type IdenticalEscalationDecision =
 	| { readonly kind: "allow" }
-	| { readonly kind: "block"; readonly toolName: string; readonly blockedCallCount: number; readonly windowed: boolean }
+	| {
+			readonly kind: "block";
+			readonly toolName: string;
+			readonly blockedCallCount: number;
+			readonly windowed: boolean;
+	  }
 	| {
 			readonly kind: "hardStop";
 			readonly toolName: string;

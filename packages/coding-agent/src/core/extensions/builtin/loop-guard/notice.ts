@@ -13,19 +13,14 @@ export interface LoopGuardEscalationDetails {
 
 const POLLING_TOOL_NAMES = new Set(["bash_output", "task_output"]);
 
-export function buildLoopGuardBlockReason(
-	toolName: string,
-	blockedCallCount: number,
-	windowed = false,
-): string {
+export function buildLoopGuardBlockReason(toolName: string, blockedCallCount: number, windowed = false): string {
 	const recovery = POLLING_TOOL_NAMES.has(toolName)
 		? "Stop polling this target. If you need to wait for a change, arm a monitor or rely on a completion notification when this mode supports it; otherwise re-plan or choose a different tool."
 		: "Reuse the existing result, stop repeating this call, and re-plan from the current goal or choose a different tool.";
-	const scope = windowed ? "with arguments that already triggered two identical-call warnings in this segment" : "with arguments that already triggered two identical-call warnings";
-	return [
-		`Loop guard blocked repeated call ${blockedCallCount} to \`${toolName}\` ${scope}.`,
-		recovery,
-	].join(" ");
+	const scope = windowed
+		? "with arguments that already triggered two identical-call warnings in this segment"
+		: "with arguments that already triggered two identical-call warnings";
+	return [`Loop guard blocked repeated call ${blockedCallCount} to \`${toolName}\` ${scope}.`, recovery].join(" ");
 }
 
 export function buildLoopGuardHardStopWarning(toolName: string, blockedCallCount: number): string {

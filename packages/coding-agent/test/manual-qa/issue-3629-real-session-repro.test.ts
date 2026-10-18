@@ -51,15 +51,27 @@ describe("issue 3629 real-session repro", () => {
 
 		const transcript = harness.session.messages;
 		const evalExecutions = transcript.filter(
-			(message) => message.role === "toolResult" && message.toolName === "eval" && !JSON.stringify(message).includes("Loop guard blocked"),
+			(message) =>
+				message.role === "toolResult" &&
+				message.toolName === "eval" &&
+				!JSON.stringify(message).includes("Loop guard blocked"),
 		).length;
 		const blockedResults = transcript.filter(
-			(message) => message.role === "toolResult" && message.toolName === "eval" && JSON.stringify(message).includes("Loop guard blocked"),
+			(message) =>
+				message.role === "toolResult" &&
+				message.toolName === "eval" &&
+				JSON.stringify(message).includes("Loop guard blocked"),
 		).length;
-		const notices = transcript.filter((message) => JSON.stringify(message).includes("REPEATED IDENTICAL TOOL CALLS")).length;
-		const escalations = transcript.filter((message) => JSON.stringify(message).includes("loop-guard:escalation")).length;
+		const notices = transcript.filter((message) =>
+			JSON.stringify(message).includes("REPEATED IDENTICAL TOOL CALLS"),
+		).length;
+		const escalations = transcript.filter((message) =>
+			JSON.stringify(message).includes("loop-guard:escalation"),
+		).length;
 
-		console.log(`[3629-repro] scripted eval rounds: 50, executed evals: ${evalExecutions}, blocked: ${blockedResults}, notices: ${notices}, escalations: ${escalations}`);
+		console.log(
+			`[3629-repro] scripted eval rounds: 50, executed evals: ${evalExecutions}, blocked: ${blockedResults}, notices: ${notices}, escalations: ${escalations}`,
+		);
 
 		expect(notices).toBeGreaterThanOrEqual(1);
 		expect(escalations).toBeGreaterThanOrEqual(1);
