@@ -27,6 +27,8 @@
 
 ### Fixed
 
+- ChatGPT sign-in: a refusal past the plan's usage limit now says which limit applies (an account whose credits ChatGPT did not apply, workspace credits used up, a spend cap, or the plan limit) and how to keep going, from the `x-codex-*` headers Codex reads. Reported by 요즘잘자쿨오모냥이 ([#3615](https://github.com/code-yeongyu/senpi/issues/3615)).
+
 ### Removed
 
 ## [2026.10.16-4] - 2026-10-16
