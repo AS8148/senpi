@@ -110,7 +110,11 @@ export async function importMovedSession(
 	}
 }
 
-/** Only a read-only copy of the same session may be replaced; its sidecars go too so the moved ones take their place. */
+/**
+ * Only a read-only copy of the same session may be replaced; its sidecars go too so the moved ones take their place.
+ * It is removed before the rename: if the rename then fails, the move is recorded `import_failed`, the sender takes
+ * the session back, and nothing writable was lost here (the removed copy could not be written).
+ */
 function replacePredecessor(target: string, sessionId: string, sessionDir: string): void {
 	if (!existsSync(target)) return;
 	const entries = loadEntriesFromFile(target);

@@ -63,6 +63,22 @@ function parseFile(value: unknown): BundleFile {
 	return { path: file.path, sha256: file.sha256 };
 }
 
+/**
+ * Move ids and session ids become folder and file names (staging folder, ledger record, resident blobs), so they
+ * must be plain ids: a letter or digit first (never `.` or `..`), then letters, digits, `.`, `_`, `-`, at most 128.
+ */
+const PLAIN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+export function parsePlainId(value: unknown, what: string): string {
+	if (typeof value !== "string" || !PLAIN_ID.test(value))
+		throw new MoveBundleInvalidError(`the ${what} is not a plain id: ${JSON.stringify(value)}`);
+	return value;
+}
+
+export function parseMoveId(value: unknown): MoveId {
+	return parsePlainId(value, "move id") as MoveId;
+}
+
 /** The importer joins this name onto its session folder, so it must be a plain session file name and nothing else. */
 const SESSION_FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*\.jsonl$/;
 
@@ -92,8 +108,8 @@ export function readManifest(bundleDir: string): MoveManifest {
 	if (!dropped.every(isString)) throw new MoveBundleInvalidError("malformed queued input");
 	return {
 		format: MOVE_BUNDLE_FORMAT,
-		moveId: m.moveId as MoveId,
-		sessionId: m.sessionId as string,
+		moveId: parseMoveId(m.moveId),
+		sessionId: parsePlainId(m.sessionId, "session id"),
 		sessionFileName: parseSessionFileName(m.sessionFileName as string),
 		sourceCwd: m.sourceCwd as string,
 		repository: parseRepositoryIdentity(m.repository),
@@ -114,4 +130,13 @@ export function verifyBundle(bundleDir: string, manifest: MoveManifest): void {
 		}
 		if (actual !== file.sha256) throw new MoveBundleInvalidError(`${file.path} changed in transit`);
 	}
+	const header = readFileSync(join(bundleDir, manifest.session.path), "utf8").split("\n", 1)[0] ?? "";
+	let id: unknown;
+	try {
+		id = (JSON.parse(header) as { readonly id?: unknown }).id;
+	} catch {
+		id = undefined;
+	}
+	if (id !== manifest.sessionId)
+		throw new MoveBundleInvalidError("the session file's own id does not match the bundle's session id");
 }

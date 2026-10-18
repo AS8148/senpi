@@ -22,6 +22,7 @@
  * cannot hand over (`release_unsupported`: a worker isolate owns the runtime, or there is no file).
  */
 import type { AgentSession } from "../../core/agent-session.ts";
+import { SessionMovedAwayError } from "../../core/session-move/ownership.ts";
 import { isHandoffBusy } from "./handoff-activity.ts";
 import {
 	RPC_ERROR_ATTACHED,
@@ -122,6 +123,10 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 		answer = await claimAndRelease(port, command, interrupted, dropped);
 		return answer;
 	} catch (cause) {
+		if (cause instanceof SessionMovedAwayError) {
+			answer = refusal(command.id, cause.code, { detail: cause.message });
+			return answer;
+		}
 		answer = refusal(command.id, RPC_ERROR_RELEASE_FAILED, {
 			detail: cause instanceof Error ? cause.message : String(cause),
 			...(interrupted ? { interrupted: true, dropped } : {}),

@@ -7,6 +7,7 @@ import {
 	isLockError,
 } from "../lockfile-policy.ts";
 import { serializeByKey } from "../session-sidecar-store.ts";
+import { parseMoveId } from "./bundle.ts";
 import type { MoveId } from "./ownership.ts";
 
 /**
@@ -121,7 +122,7 @@ export class MoveLedger {
 	}
 
 	private path(moveId: MoveId): string {
-		return join(this.dir, `${encodeURIComponent(moveId)}.json`);
+		return join(this.dir, `${parseMoveId(moveId)}.json`);
 	}
 
 	private read(moveId: MoveId): MoveRecord | undefined {

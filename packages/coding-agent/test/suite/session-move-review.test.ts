@@ -42,6 +42,54 @@ describe("session move review fixes (senpi#3631)", () => {
 		expect(existsSync(join(base, "escaped.jsonl"))).toBe(false);
 	});
 
+	it("#given a bundle whose move id or session id is not a plain id #then the import refuses it before touching any folder", async () => {
+		const { base, cwdB, bundleDir, ledger, readIdentity } = await setup();
+		const sessionDir = getDefaultSessionDir(cwdB);
+		mkdirSync(sessionDir, { recursive: true });
+		const victim = join(sessionDir, "victim.jsonl");
+		writeFileSync(victim, "{}\n");
+		const bad = ["..", ".", "../x", "..\\x", "/abs", "C:\\abs", "a/b", "a\\b", "nul\u0000id", "", "x".repeat(200)];
+		for (const key of ["moveId", "sessionId"] as const) {
+			for (const value of bad) {
+				editManifest(bundleDir, (manifest) => {
+					manifest.moveId = MOVE;
+					manifest.sessionId = SESSION_ID;
+					manifest[key] = value;
+				});
+				await expect(
+					importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity }),
+				).rejects.toBeInstanceOf(MoveBundleInvalidError);
+			}
+		}
+		expect(existsSync(victim)).toBe(true);
+		expect(existsSync(join(sessionDir, ".move-staging"))).toBe(false);
+		expect(readdirSync(base)).not.toContain("x");
+	});
+
+	it("#given a bundle whose session id differs from the session file's own header #then the import refuses it", async () => {
+		const { cwdB, bundleDir, ledger, readIdentity } = await setup();
+		editManifest(bundleDir, (manifest) => {
+			manifest.sessionId = "0197f6e4-0000-7000-8000-000000000000";
+		});
+		await expect(importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity })).rejects.toBeInstanceOf(
+			MoveBundleInvalidError,
+		);
+	});
+
+	it("#given a move id that is not a plain id #then export refuses it", async () => {
+		const { base, cwdA } = await setup();
+		const other = join(getDefaultSessionDir(cwdA), `2026-10-18T00-00-00-000Z_${SESSION_ID}.jsonl`);
+		await expect(
+			exportSessionForMove({
+				sessionFile: other,
+				moveId: "../evil" as MoveId,
+				target: "device-b",
+				droppedUserMessages: [],
+				bundleDir: join(base, "bundle-evil"),
+			}),
+		).rejects.toBeInstanceOf(MoveBundleInvalidError);
+	});
+
 	it("#given a listed bundle path with Windows separators that leaves the bundle #then the bundle is invalid", async () => {
 		const { cwdB, bundleDir, ledger, readIdentity } = await setup();
 		editManifest(bundleDir, (manifest) => {

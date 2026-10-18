@@ -10,6 +10,7 @@ import {
 	MANIFEST_FILE,
 	MOVE_BUNDLE_FORMAT,
 	type MoveManifest,
+	parseMoveId,
 	SESSION_BUNDLE_PATH,
 	sha256File,
 } from "./bundle.ts";
@@ -37,7 +38,8 @@ export interface ExportSessionForMoveOptions {
  * manifest. Running it again for the same move rewrites the same bundle without a second release entry.
  */
 export async function exportSessionForMove(options: ExportSessionForMoveOptions): Promise<MoveManifest> {
-	const { sessionFile, moveId } = options;
+	const { sessionFile } = options;
+	const moveId = parseMoveId(options.moveId);
 	const entries = loadEntriesFromFile(sessionFile);
 	const sessionId = headerSessionId(entries) ?? "";
 	// A live runtime could still write the transcript, its sidecars or its resident blobs after the seal.
