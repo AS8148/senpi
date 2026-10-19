@@ -1,3 +1,21 @@
+## 2026-10-19 - CI runs the tool child's Job Object containment tests on Windows (senpi#3566)
+
+### What changed
+
+- `.github/workflows/ci.yml`: a `tool-child-windows` job (`Tool child Job Object (Windows)`, `windows-latest`, Bun `1.4.3`) runs the tool child's Windows containment tests (`windows-job.win32.test.ts`, `launch-barrier.win32.test.ts`, `child-containment.test.ts`, `windows-breakaway.test.ts`, `windows-command-line.test.ts`) under Bun between the OS-temp snapshot and check steps. A follow-up step fails the job unless both real-kernel files executed and every test in them passed, because a suite that skips itself exits 0. The job is listed in the `Check and test` fan-in.
+
+### Why
+
+- The tool child holds every command it launches in a Windows Job Object through `bun:ffi` calls into kernel32. Those tests skip themselves under Node and on other platforms, so no existing job ran them against the real kernel.
+
+### Why an extension could not handle it
+
+- CI jobs are repository workflow configuration.
+
+### Expected merge conflict zones
+
+- LOW: the new job block and the `Check and test` `needs` list.
+
 ## 2026-10-18 - CI runs the main-screen wheel and ask-user hint tests on Windows (senpi#3604)
 
 ### What changed
