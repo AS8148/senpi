@@ -12,7 +12,7 @@ export interface QuitHandlerBudget {
 
 /**
  * One deadline shared by every `session_shutdown` handler of a quit that ends in process exit (senpi#3711),
- * counted from the quit request. Each handler keeps its own cap
+ * counted from the moment the shutdown emission is armed. Each handler keeps its own cap
  * and is still started in order; the host only stops waiting once the deadline passes. A handler that starts after
  * the deadline gets 1 ms, so synchronous cleanup still completes and asynchronous work is left running.
  */

@@ -1,3 +1,21 @@
+## 2026-10-19 - Quit budget start, stated precisely (senpi#3711 follow-up)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/shutdown-quit-budget.ts`: the `QuitDeadline` comment says the budget counts from the moment the shutdown emission is armed. The entry below says "the quit request time"; `armProcessExitBudget()` actually runs inside `emitSessionShutdownEvent`, so the steps a quit takes before the handlers (stopping the TUI, draining input, closing the control endpoint) are not counted. No behavior change.
+
+### Why
+
+- Review LOW on #3713: the docs and this tracker overstated where the budget starts.
+
+### Why an extension could not handle it
+
+- Documentation of the runner's own budget.
+
+### Expected merge conflict zones
+
+- LOW: the `QuitDeadline` doc comment in `shutdown-quit-budget.ts`.
+
 ## 2026-10-19 - One total budget for quit-time session_shutdown handlers (senpi#3711)
 
 ### What changed

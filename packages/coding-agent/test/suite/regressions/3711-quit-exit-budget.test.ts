@@ -156,7 +156,7 @@ describe("senpi#3711 quit does not wait out a hung shutdown handler", () => {
 		}
 	});
 
-	it("counts the quit budget from the quit request, not from the first handler", async () => {
+	it("counts the quit budget from when it was armed, not from the first handler", async () => {
 		const fixture = await hungThenFast({ sessionShutdownQuitBudgetMs: 1000 });
 		try {
 			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });

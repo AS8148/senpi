@@ -620,7 +620,7 @@ senpi bounds each extension's `session_shutdown` handler so one slow extension c
 { "sessionShutdownHandlerWarnMs": 2000, "sessionShutdownHandlerTimeoutMs": 10000, "sessionShutdownQuitBudgetMs": 2000 }
 ```
 
-A quit that exits senpi (interactive quit, print mode, a single-connection RPC process) also has a total budget, counted from the quit request: every handler still starts, in order, but once `sessionShutdownQuitBudgetMs` has passed senpi stops waiting, logs one warning naming the extension that overran it and the elapsed time, and exits. Handlers that start after that point get 1 ms, so their synchronous cleanup still runs. `/reload`, `/new`, `/resume`, forks, and an RPC host closing one session while it keeps running keep only the per-handler limits.
+A quit that exits senpi (interactive quit, print mode, a single-connection RPC process) also has a total budget, counted from when senpi starts running the shutdown handlers (the steps before them, such as stopping the TUI, are not counted): every handler still starts, in order, but once `sessionShutdownQuitBudgetMs` has passed senpi stops waiting, logs one warning naming the extension that overran it and the elapsed time, and exits. Handlers that start after that point get 1 ms, so their synchronous cleanup still runs. `/reload`, `/new`, `/resume`, forks, and an RPC host closing one session while it keeps running keep only the per-handler limits.
 
 Only `session_shutdown` is bounded; other extension events (including ask-user and approval dialogs, which may legitimately wait for minutes) are unaffected.
 
