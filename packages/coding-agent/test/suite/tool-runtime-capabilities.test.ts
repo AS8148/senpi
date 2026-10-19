@@ -23,6 +23,11 @@ describe("tool runtime capabilities", () => {
 		expect(owned(inProcess)).toEqual(["tool_runtime:in-process"]);
 		expect(inProcess).toContain("custom:keep");
 		const child = multiSessionHostCapabilities({ warm: false, toolRuntime: "child", negotiated });
-		expect(owned(child)).toEqual(["tool_runtime:child", "placement:launch-barrier", "placement:job-policy", "placement:hostcall"]);
+		expect(owned(child)).toEqual([
+			"tool_runtime:child",
+			"placement:launch-barrier",
+			"placement:job-policy",
+			"placement:hostcall",
+		]);
 	});
 });
