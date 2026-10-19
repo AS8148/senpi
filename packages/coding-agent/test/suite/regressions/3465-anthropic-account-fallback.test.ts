@@ -229,6 +229,42 @@ describe("Anthropic account fallback opt-out", () => {
 		expect(shown).not.toContain("after re-login");
 	});
 
+	it("tells a CLI-pinned session to restart with another --claude-account instead of /claude-account pin", async () => {
+		// senpi#3672: a CLI pin outranks the stored pin, so /claude-account pin would change nothing.
+		await configure([primary, { ...secondary, blockReason: "rate_limit", blockedUntil: now + 60_000 }]);
+		const run = request(settings({ accountFallback: false }), () => undefined, { pinnedAccount: "secondary" });
+		await expect(run.completion).rejects.toMatchObject({ name: "AllAccountsBlockedError" });
+		const shown = await shownGuidance(run.completion);
+		expect(shown).toContain("Claude account 'secondary'");
+		expect(shown).toContain("--claude-account");
+		expect(shown).not.toContain("/claude-account pin");
+	});
+
+	it("tells a settings-pinned session to change the setting instead of /claude-account pin", async () => {
+		await configure([primary, { ...secondary, blockReason: "rate_limit", blockedUntil: now + 60_000 }]);
+		const run = request(settings({ accountFallback: false, pinnedAccount: "secondary" }), () => undefined);
+		await expect(run.completion).rejects.toMatchObject({ name: "AllAccountsBlockedError" });
+		const shown = await shownGuidance(run.completion);
+		expect(shown).toContain("Claude account 'secondary'");
+		expect(shown).toContain("anthropicSubscriptionProvider.pinnedAccount");
+		expect(shown).not.toContain("/claude-account pin");
+	});
+
+	it("points an auth-blocked account at /login and calls its time a re-check, not a wait", async () => {
+		// senpi#3672: an auth block does not clear by waiting; its time is only when the account is checked again.
+		const recheck = now + 60_000;
+		await configure([{ ...primary, blockReason: "auth_error", blockedUntil: recheck }, secondary]);
+		const run = request(settings({ accountFallback: false }), () => undefined);
+		await expect(run.completion).rejects.toMatchObject({ name: "AllAccountsBlockedError" });
+		const shown = await shownGuidance(run.completion);
+		expect(shown).toContain("Claude account 'primary'");
+		expect(shown).toContain("authentication error");
+		expect(shown).toContain("/login anthropic-subscription");
+		expect(shown).toContain(`Next automatic re-check: ${new Date(recheck).toISOString()}`);
+		expect(shown).not.toContain("Wait until");
+		expect(shown).not.toContain("can serve again");
+	});
+
 	it("does not use ambient credentials when the managed pool is empty", async () => {
 		await configure([]);
 		const run = request(settings({ accountFallback: false }), () => undefined);
