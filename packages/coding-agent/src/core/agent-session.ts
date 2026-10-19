@@ -5967,6 +5967,7 @@ export class AgentSession {
 			images: input.images,
 			mode: input.mode,
 			enqueueOrder,
+			...(input.source === undefined ? {} : { source: input.source }),
 		};
 		input.onQueuedInput?.(prepared);
 		const queue = input.mode === "steer" ? this._steeringMessages : this._followUpMessages;
@@ -5986,6 +5987,9 @@ export class AgentSession {
 			timestamp: Date.now(),
 			...clientMessageIdentity(input),
 		};
+		// New input always arrives with a source: `_enqueueQueuedInput` applies the same "interactive" default
+		// `prompt()` does. Only restored input can lack one (a record written before sources were kept), and it
+		// stays unstamped: unknown origin, never defaulted to a trusted source.
 		if (input.source !== undefined) this._userInputSources.set(message, input.source);
 		this._queuedMessages.set(queuedId, message);
 		if (this._promptStartPending && this._skipNextPostCompactionAssistantCheck) {

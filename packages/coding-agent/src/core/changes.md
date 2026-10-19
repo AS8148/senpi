@@ -24,7 +24,8 @@ The engine-turn bound and the session mirror are session internals; the builtin 
 ### What changed
 
 - `packages/coding-agent/src/core/session-manager.ts`: `SessionMessageEntry` declares `inputSource?: InputSource`, and `appendOwnedMessage(message, { inputSource })` writes it onto the entry, never onto the message.
-- `packages/coding-agent/src/core/agent-session.ts`: `_userInputSources`, a WeakMap from each user message the session admits to the `InputSource` its `input` event reported (`source ?? "interactive"`): filled where `prompt()` builds the user message and where `_enqueuePreparedInput` builds a queued steer/follow-up, and read when `message_end` persists that message. `sendUserMessage`'s fallback enqueue after a rejected `prompt()` now passes `source: "extension"`. Input restored from durable custody (`restoreQueuedInput`), requeued by a session move, or edited ran no `input` event and gets no `inputSource`.
+- `packages/coding-agent/src/core/agent-session.ts`: `_userInputSources`, a WeakMap from each user message the session admits to the `InputSource` its `input` event reported (`source ?? "interactive"`): filled where `prompt()` builds the user message and where `_enqueuePreparedInput` builds a queued steer/follow-up, and read when `message_end` persists that message. `sendUserMessage`'s fallback enqueue after a rejected `prompt()` now passes `source: "extension"`. The prepared record handed to durable custody (`onQueuedInput`) carries the same `source`, so `restoreQueuedInput` re-stamps restored input with its real source. Only restored input whose record has no source (written before this change), input requeued by a session move, and edited input get no `inputSource`; it is never defaulted at restore, because that would give unknown or extension-originated input a trusted source.
+- `packages/coding-agent/src/core/client-message-identity.ts`: `PreparedClientInput.source?: InputSource`.
 
 ### Why
 
@@ -37,7 +38,7 @@ The user message is built and persisted inside the session; an extension sees th
 ### Expected merge conflict zones
 
 - LOW: `session-manager.ts` `SessionMessageEntry`, `appendOwnedMessage` and `_appendMessage`.
-- LOW: `agent-session.ts`, the `_userInputSources` field beside `_queuedMessages`, the user-message literal in `prompt()`, the start of `_enqueueQueuedInput`, `_enqueuePreparedInput`, the `appendOwnedMessage` call in the `message_end` persistence branch, and the two fallback enqueues in `sendUserMessage`'s catch.
+- LOW: `agent-session.ts`, the `_userInputSources` field beside `_queuedMessages`, the user-message literal in `prompt()`, the start of `_enqueueQueuedInput`, `_enqueuePreparedInput`, the `appendOwnedMessage` call in the `message_end` persistence branch, the `prepared` literal in `_enqueuePreparedInput`, and the two fallback enqueues in `sendUserMessage`'s catch.
 
 ## 2026-10-19 - An abort that joins an open agent_end boundary still releases a held handler (senpi#3650 follow-up)
 

@@ -2,7 +2,9 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
+import type { PreparedClientInput } from "../../../src/core/client-message-identity.ts";
 import type { ExtensionAPI } from "../../../src/index.ts";
+import { clientAdmissionRecordSchema } from "../../../src/modes/rpc/client-admission-record.ts";
 import { createHarness, getMessageText, type Harness } from "../harness.ts";
 
 // omo#10378: an extension that rebuilds per-session trust state on resume must tell a typed user
@@ -14,6 +16,19 @@ function persistedUserSources(harness: Harness): { text: string; inputSource: un
 		if (entry.type !== "message" || entry.message.role !== "user") return [];
 		return [{ text: getMessageText(entry.message), inputSource: entry.inputSource }];
 	});
+}
+
+function waitTool(release: Promise<void>): AgentTool {
+	return {
+		name: "wait",
+		label: "Wait",
+		description: "Wait for release",
+		parameters: Type.Object({}),
+		execute: async () => {
+			await release;
+			return { content: [{ type: "text", text: "released" }], details: {} };
+		},
+	};
 }
 
 describe("omo#10378 persisted user input source", () => {
@@ -45,6 +60,90 @@ describe("omo#10378 persisted user input source", () => {
 			{ role: "user", content: [{ type: "text", text: "typed by a person" }], timestamp: expect.any(Number) },
 		]);
 		expect(persistedUserSources(harness)).toEqual([{ text: "typed by a person", inputSource: "interactive" }]);
+	});
+
+	it("#given a queued follow-up #when it is prepared for durable custody #then the prepared record carries the same source and survives the admission schema", async () => {
+		let releaseTool: (() => void) | undefined;
+		const harness = await createHarness({
+			tools: [waitTool(new Promise<void>((resolve) => (releaseTool = resolve)))],
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("done"),
+			fauxAssistantMessage("after"),
+		]);
+		const toolStarted = new Promise<void>((resolve) => {
+			const unsubscribe = harness.session.subscribe((event) => {
+				if (event.type === "tool_execution_start") {
+					unsubscribe();
+					resolve();
+				}
+			});
+		});
+		const prepared: PreparedClientInput[] = [];
+
+		const run = harness.session.prompt("start");
+		await toolStarted;
+		await harness.session.followUp("rpc follow-up", undefined, {
+			source: "rpc",
+			onQueuedInput: (input) => prepared.push(input),
+		});
+		releaseTool?.();
+		await run;
+		await harness.session.agent.waitForIdle();
+
+		expect(prepared.map((input) => input.source)).toEqual(["rpc"]);
+		const stored = clientAdmissionRecordSchema.parse({
+			clientMessageId: "c-1",
+			durableSessionId: "s",
+			fingerprint: "f",
+			disposition: "queued",
+			state: "queued",
+			prepared: prepared[0],
+		});
+		expect(stored.state === "queued" ? stored.prepared.source : undefined).toBe("rpc");
+	});
+
+	it("#given input restored from durable custody #when it is delivered #then a recorded source is kept and a missing one stays unknown", async () => {
+		let releaseTool: (() => void) | undefined;
+		const harness = await createHarness({
+			tools: [waitTool(new Promise<void>((resolve) => (releaseTool = resolve)))],
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("one"),
+			fauxAssistantMessage("two"),
+			fauxAssistantMessage("three"),
+		]);
+		const toolStarted = new Promise<void>((resolve) => {
+			const unsubscribe = harness.session.subscribe((event) => {
+				if (event.type === "tool_execution_start") {
+					unsubscribe();
+					resolve();
+				}
+			});
+		});
+
+		const run = harness.session.prompt("start");
+		await toolStarted;
+		await harness.session.restoreQueuedInput({
+			text: "restored rpc",
+			mode: "followUp",
+			enqueueOrder: 100,
+			source: "rpc",
+		});
+		await harness.session.restoreQueuedInput({ text: "restored legacy", mode: "followUp", enqueueOrder: 101 });
+		releaseTool?.();
+		await run;
+		await harness.session.waitForSettledSessionWork();
+		await harness.session.agent.waitForIdle();
+
+		expect(persistedUserSources(harness).filter((entry) => entry.text.startsWith("restored"))).toEqual([
+			{ text: "restored rpc", inputSource: "rpc" },
+			{ text: "restored legacy", inputSource: undefined },
+		]);
 	});
 
 	it("#given an rpc prompt #when it runs #then the entry records rpc", async () => {

@@ -90,7 +90,7 @@ interface UserMessage {
 }
 ```
 
-A `message` entry holding a user message the session admitted through `prompt`, `steer` or `followUp` (including an extension's `sendUserMessage`) also carries `inputSource` on the entry itself: `"interactive"`, `"rpc"` or `"extension"`, the same value the message's `input` event reported. It is stored on the entry and never on the message, so it is not part of any provider request. Input restored from durable custody, requeued by a session move, or edited ran no `input` event and has no `inputSource`; treat an absent value as unknown origin, never as typed input.
+A `message` entry holding a user message the session admitted through `prompt`, `steer` or `followUp` (including an extension's `sendUserMessage`) also carries `inputSource` on the entry itself: `"interactive"`, `"rpc"` or `"extension"`, the same value the message's `input` event reported. It is stored on the entry and never on the message, so it is not part of any provider request. Queued input restored after a host restart keeps the source its durable record carries. Input whose record has no source, input requeued by a session move, and edited input have no `inputSource`; treat an absent value as unknown origin, never as typed input.
 
 ```typescript
 
