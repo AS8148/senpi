@@ -7,6 +7,7 @@
  */
 import type { Credential, CredentialStore } from "@earendil-works/pi-ai";
 import { listSlots, type PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
+import { AUTH_BLOCK_REPROBE_MS } from "../credential-pool/auth-reprobe.ts";
 import {
 	type AnthropicSubscriptionCredential,
 	emptyCredential,
@@ -15,6 +16,7 @@ import {
 	refreshSlot,
 	type SlotRefresher,
 } from "../extensions/builtin/anthropic-subscription/accounts.ts";
+import { isGrantRejected } from "../extensions/builtin/anthropic-subscription/refresh-failure.ts";
 import type { UsageProvider } from "./usage-endpoints.ts";
 
 const EXPIRING_WITHIN_MS = 5 * 60_000;
@@ -77,12 +79,33 @@ function claudeAccounts(stored: Credential | undefined, sources: AccountSources)
 				return renewed === undefined || expiring(renewed.expires)
 					? { error: SIGN_IN_NEEDED }
 					: { access: renewed.access };
-			} catch {
-				// A refresh that failed for any reason (offline, busy store, revoked grant) is retried next interval.
-				return undefined;
+			} catch (error) {
+				// Offline or a busy store is retried next interval. A rejected grant is recorded on the slot the way a
+				// turn records it, so later polls stop at the auth_error branch above instead of asking the token
+				// endpoint again; only /login (or a turn's one-shot recovery) lifts it.
+				if (!isGrantRejected(error)) return undefined;
+				await markAuthRejected(sources, slot.name);
+				return { error: SIGN_IN_NEEDED };
 			}
 		},
 	}));
+}
+
+async function markAuthRejected(sources: AccountSources, name: string): Promise<void> {
+	const now = sources.now();
+	await sources.store.modify("anthropic-subscription", async (current) => {
+		if (current?.type !== "oauth") return current;
+		const credential = current as AnthropicSubscriptionCredential;
+		if (!credential.accounts?.some((slot) => slot.name === name)) return current;
+		return {
+			...credential,
+			accounts: credential.accounts.map((slot) =>
+				slot.name === name
+					? { ...slot, blockedUntil: now + AUTH_BLOCK_REPROBE_MS, blockReason: "auth_error", blockedAt: now }
+					: slot,
+			),
+		};
+	});
 }
 
 function chatgptAccounts(stored: Credential | undefined, now: () => number): PollAccount[] {

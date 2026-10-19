@@ -53,12 +53,15 @@ export class SubscriptionLimitStore {
 	/**
 	 * Keeps what a usage-endpoint poll learned (senpi#3684). The endpoint answers with the account's whole
 	 * window set, so it replaces the windows rather than merging; a failed poll keeps the last windows and
-	 * says why beside them. An account with no windows and no prior record stays absent on success.
+	 * says why beside them. An account with no windows and no prior record stays absent on success. A
+	 * reading older than what the store already holds (a sibling's cached poll adopted after a fresher turn)
+	 * is ignored, so the shown usage never goes backwards.
 	 */
 	report(provider: string, account: string, report: PollReport): void {
 		const key = `${provider}\u0000${account}`;
 		const previous = this.#accounts.get(key);
 		const reportedAt = report.reportedAt.toISOString();
+		if (previous !== undefined && reportedAt < previous.reportedAt) return;
 		if ("error" in report) {
 			if (previous?.error === report.error) return;
 			this.#publish(key, { ...(previous ?? { provider, account, windows: [], reportedAt }), error: report.error });

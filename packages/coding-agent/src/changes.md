@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/main.ts`: interactive and RPC startup (single-session and the multi-session host) call `startSubscriptionUsagePolling({ agentDir, report })` unless `--offline` is set; print mode never polls. The poller (`src/core/subscription-limits/usage-poller.ts`, fork-only) reads each signed-in Claude and ChatGPT subscription account's usage endpoint into the process's `SubscriptionLimitStore`, sharing one `subscription-usage.json` cache across processes.
+- `packages/coding-agent/src/main.ts`: interactive and RPC startup (single-session and the multi-session host) call `startSubscriptionUsagePolling({ agentDir, report })` unless `--offline` is set; print mode never polls. The poller (`src/core/subscription-limits/usage-poller.ts`, fork-only) reads each signed-in Claude and ChatGPT subscription account's usage endpoint into the process's `SubscriptionLimitStore`, sharing one `subscription-usage.json` cache across processes. The newest report wins: a cached poll older than a turn's report never replaces it. A refresh the token endpoint rejects marks the Claude slot `auth_error` (as a turn would), so polling stops asking for that account until `/login`.
 
 ### Why
 

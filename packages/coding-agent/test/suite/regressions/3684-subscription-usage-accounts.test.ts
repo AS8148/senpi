@@ -80,6 +80,58 @@ describe("usage poll accounts and payloads (senpi#3684)", () => {
 		expect(slots.find((slot: { name?: string }) => slot.name === "expiring")?.access).toBe(token("renewed"));
 	});
 
+	it("a revoked grant stops polling: blocked once, said once, never redeemed again", async () => {
+		const store = AuthStorage.inMemory({
+			"anthropic-subscription": {
+				type: "oauth",
+				access: "claude-sdk-oauth-managed",
+				refresh: "claude-sdk-oauth-managed",
+				expires: 4102444800000,
+				accounts: [claudeSlot("revoked", NOW - 1)],
+			},
+		} as never);
+		let refreshes = 0;
+		const sources = {
+			store,
+			env: () => undefined,
+			refresher: async () => {
+				refreshes += 1;
+				throw new Error('OAuth token refresh failed: status=400 {"error":"invalid_grant"}');
+			},
+			now: () => NOW,
+		};
+		const signal = new AbortController().signal;
+
+		const first = await (await listPollAccounts(sources))[0]?.access(signal);
+		const second = await (await listPollAccounts(sources))[0]?.access(signal);
+
+		expect([first, second]).toEqual([{ error: SIGN_IN_NEEDED }, { error: SIGN_IN_NEEDED }]);
+		expect(refreshes).toBe(1);
+		const stored = await store.read("anthropic-subscription");
+		const slots =
+			stored !== undefined && "accounts" in stored && Array.isArray(stored.accounts) ? stored.accounts : [];
+		expect(slots[0]).toMatchObject({ blockReason: "auth_error", blockedAt: NOW });
+	});
+
+	it("a transient refresh failure is retried next interval and blocks nothing", async () => {
+		const store = storage();
+		const accounts = await listPollAccounts({
+			store,
+			env: () => undefined,
+			refresher: async () => {
+				throw new Error("OAuth token refresh failed: status=503");
+			},
+			now: () => NOW,
+		});
+		const expiring = accounts.find((entry) => entry.account === "expiring");
+
+		expect(await expiring?.access(new AbortController().signal)).toBeUndefined();
+		const stored = await store.read("anthropic-subscription");
+		const slots =
+			stored !== undefined && "accounts" in stored && Array.isArray(stored.accounts) ? stored.accounts : [];
+		expect(slots.find((slot: { name?: string }) => slot.name === "expiring")?.blockReason).toBeUndefined();
+	});
+
 	it("reads Claude's limits[] and legacy shapes, and ChatGPT's windows, onto the turn ids", () => {
 		expect(
 			claudeWindowsFromUsage({

@@ -106,7 +106,7 @@ describe("subscription limits before the first turn (senpi#3684)", () => {
 			);
 			subscriptionLimits.report("anthropic-subscription", "poll-3684-claude", {
 				error: "rate limited",
-				reportedAt: new Date(0),
+				reportedAt: new Date("2026-10-19T04:05:00Z"),
 			});
 			await writer.flush();
 			const records = lines
@@ -198,6 +198,49 @@ describe("subscription limits before the first turn (senpi#3684)", () => {
 		await poller.pollOnce();
 		expect(store.snapshot()[0]?.error).toBe("rate limited");
 		expect(readUsageCache(path).accounts["anthropic-subscription/work"]?.nextAt).toBe(1_800_000 + 90_000);
+	});
+
+	it("newest report wins in both arrival orders: an older poll never replaces a newer turn", () => {
+		const turn = (store: SubscriptionLimitStore, at: number) =>
+			store.record(
+				"anthropic-subscription",
+				"work",
+				[{ id: "claude:5h", label: "5h", usedPercent: 70 }],
+				new Date(at),
+			);
+		const poll = (store: SubscriptionLimitStore, at: number) =>
+			store.report("anthropic-subscription", "work", {
+				windows: [{ id: "claude:5h", label: "5h", usedPercent: 20 }],
+				reportedAt: new Date(at),
+			});
+		const shown = (store: SubscriptionLimitStore) => store.snapshot()[0]?.windows[0]?.usedPercent;
+
+		const olderPollLate = new SubscriptionLimitStore();
+		turn(olderPollLate, 5_000);
+		poll(olderPollLate, 1_000);
+		const newerPollLate = new SubscriptionLimitStore();
+		turn(newerPollLate, 1_000);
+		poll(newerPollLate, 5_000);
+
+		expect([shown(olderPollLate), shown(newerPollLate)]).toEqual([70, 20]);
+	});
+
+	it("a sibling's cached poll adopted after a fresher turn does not roll the turn back", async () => {
+		const path = cachePath();
+		const { fetch } = countingFetch(payloads);
+		const deps = { cachePath: path, listAccounts: async () => [account("anthropic-subscription", "work")], fetch };
+		await new UsagePoller({ ...deps, store: new SubscriptionLimitStore(), now: () => 1_000 }).pollOnce();
+		const late = new SubscriptionLimitStore();
+		late.record(
+			"anthropic-subscription",
+			"work",
+			[{ id: "claude:5h", label: "5h", usedPercent: 88 }],
+			new Date(30_000),
+		);
+
+		await new UsagePoller({ ...deps, store: late, now: () => 31_000 }).pollOnce();
+
+		expect(late.snapshot()[0]?.windows.map((window) => [window.id, window.usedPercent])).toEqual([["claude:5h", 88]]);
 	});
 
 	it("extensions read and subscribe to the same records", async () => {
