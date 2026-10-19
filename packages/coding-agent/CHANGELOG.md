@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+### Added
+
+- A device receiving a moved session now takes it only after it said it is ready for that move: a bundle for a move it never readied is refused for good, and a ready move that sees no bundle within 10 minutes, or is cancelled by the sender, is declined so the sender can take its session back. A move already receiving or accepted is never declined by either ([#3676](https://github.com/code-yeongyu/senpi/issues/3676)).
+
+### Changed
+
+### Fixed
+
+- A Claude subscription (`anthropic-subscription`) reply now records its Anthropic message id as `responseId`. The Claude Agent SDK also writes every turn to `~/.claude/projects`, and usage readers such as the OmO desktop Usage page need that id to count the turn once instead of again as Claude Code usage ([oh-my-openagent#10547](https://github.com/code-yeongyu/oh-my-openagent/issues/10547)).
+- Moving a session is stricter at its edges: `release_session` with `reason: "move"` refuses a `moveId` the rest of the move would reject and a session whose own id is not a plain id, a `session_moved_away` refusal after an interrupt still returns the queued input it took, and export refuses a session whose own id is empty or not a plain id before sealing it ([#3662](https://github.com/code-yeongyu/senpi/issues/3662)).
+
+### Removed
+
+## [2026.10.19] - 2026-10-19
+
 - `get_available_models` reports each model's resolved `serviceTier` and `upstreamModelId`, including a `-fast` alias's pairing declared only in `models.json` or by an extension provider. Clients that verify a child opened on the base model of a requested `-fast` alias no longer refuse it as a substitution ([#3666](https://github.com/code-yeongyu/senpi/issues/3666)).
 
 - Esc or the turn deadline now also release an `agent_before_settle` (or other `agent_end` boundary) handler that never settles: an abort that joined the open boundary used to return before the grace-and-release ran, so the session stayed streaming ([#3650](https://github.com/code-yeongyu/senpi/issues/3650)).
