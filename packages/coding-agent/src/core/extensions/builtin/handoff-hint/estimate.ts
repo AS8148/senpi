@@ -48,10 +48,12 @@ function formatTokens(tokens: number): string {
 }
 
 export function hintText(estimate: HandoffEstimate, subscription: boolean): string {
-	const prices = subscription ? " at API prices (on your plan it counts toward your usage limits)" : "";
+	// The numbers lead: a one-line banner that clips its tail must still show them.
+	const prices = subscription ? " at API prices" : "";
+	const plan = subscription ? " On your plan it counts toward your usage limits." : "";
 	return (
-		`This session is ${formatTokens(estimate.contextTokens)} tokens and its cache has expired: ` +
-		`the next reply would cost about ${formatUsd(estimate.nextReplyUsd)}; ` +
-		`a fresh session about ${formatUsd(estimate.freshUsd)}${prices}.`
+		`The next reply would cost about ${formatUsd(estimate.nextReplyUsd)}${prices}; ` +
+		`a fresh session about ${formatUsd(estimate.freshUsd)}. ` +
+		`This session is ${formatTokens(estimate.contextTokens)} tokens and its cache has expired.${plan}`
 	);
 }

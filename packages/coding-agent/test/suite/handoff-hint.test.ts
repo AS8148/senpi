@@ -167,7 +167,7 @@ describe("handoff hint", () => {
 		expect(h.visible()).toBe(true);
 		const shown = h.widgets.at(-1)!;
 		expect(shown.lines).toHaveLength(1);
-		expect(shown.lines![0]).toContain("the next reply would cost about $2.50; a fresh session about $0.47");
+		expect(shown.lines![0]).toMatch(/^The next reply would cost about \$2\.50; a fresh session about \$0\.47\./);
 		expect(shown.options.actions).toEqual([
 			{ label: START_FRESH_LABEL, command: "/handoff" },
 			{ label: KEEP_GOING_LABEL, command: "/handoff keep" },
@@ -280,9 +280,11 @@ describe("handoff estimate and brief", () => {
 		expect(estimate.nextReplyUsd).toBeCloseTo(2.56, 2);
 		expect(estimate.freshUsd).toBeCloseTo(0.47, 2);
 		expect(hintText(estimate, false)).toBe(
-			"This session is 512k tokens and its cache has expired: the next reply would cost about $2.56; a fresh session about $0.47.",
+			"The next reply would cost about $2.56; a fresh session about $0.47. This session is 512k tokens and its cache has expired.",
 		);
-		expect(hintText(estimate, true)).toContain("at API prices");
+		expect(hintText(estimate, true)).toMatch(
+			/^The next reply would cost about \$2\.56 at API prices; a fresh session about \$0\.47\./,
+		);
 		expect(
 			estimateHandoff({ ...opus, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }, 512_000, 94_000, 0),
 		).toBeUndefined();
