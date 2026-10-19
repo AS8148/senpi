@@ -14,6 +14,7 @@
 
 ### Fixed
 
+- While the agent is paused for starting too many turns on its own, a stream of incoming notices no longer adds a `Paused: ...` warning for every notice: the warning shows once per pause ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)).
 - A long stream of background events (monitors, CI notices) no longer keeps a compacted session's whole history in memory: the engine-turn bound, the compaction checkpoint and the Stop hook read the history without holding it, so memory stays near what a fresh open of the session costs ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)).
 - A Claude subscription (`anthropic-subscription`) reply now records its Anthropic message id as `responseId`. The Claude Agent SDK also writes every turn to `~/.claude/projects`, and usage readers such as the OmO desktop Usage page need that id to count the turn once instead of again as Claude Code usage ([oh-my-openagent#10547](https://github.com/code-yeongyu/oh-my-openagent/issues/10547)).
 - Moving a session is stricter at its edges: `release_session` with `reason: "move"` refuses a `moveId` the rest of the move would reject and a session whose own id is not a plain id, a `session_moved_away` refusal after an interrupt still returns the queued input it took, and export refuses a session whose own id is empty or not a plain id before sealing it ([#3662](https://github.com/code-yeongyu/senpi/issues/3662)).
