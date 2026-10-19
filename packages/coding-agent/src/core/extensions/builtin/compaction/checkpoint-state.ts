@@ -1,4 +1,5 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { HistoryReducer } from "../../../session-history-reduce.ts";
 import type { BeforeAgentStartEventResult, ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { POST_COMPACT_RESTORATION_CUSTOM_TYPE } from "./restoration-tracker.ts";
 
@@ -142,21 +143,21 @@ export function persistCheckpoint(
 	pi.appendEntry(CHECKPOINT_CUSTOM_TYPE, serializeCheckpoint(piOrCheckpoint));
 }
 
+/** The session's latest valid checkpoint, folded without a full-history view: this runs every turn (senpi#2537). */
+const latestCheckpoint: HistoryReducer<AgentCheckpoint | null> = {
+	initial: () => null,
+	add: (latest, entry) =>
+		entry.type === "custom" && entry.customType === CHECKPOINT_CUSTOM_TYPE
+			? (parseCheckpoint(entry.data) ?? latest)
+			: latest,
+};
+
 export function getLatestCheckpoint(ctx: ExtensionContext): AgentCheckpoint | null;
 export function getLatestCheckpoint(source: LegacyCheckpointSource): AgentCheckpoint | undefined;
 export function getLatestCheckpoint(
 	source: ExtensionContext | LegacyCheckpointSource,
 ): AgentCheckpoint | null | undefined {
-	if ("sessionManager" in source) {
-		const entries = source.sessionManager.getEntries();
-		for (let index = entries.length - 1; index >= 0; index--) {
-			const entry = entries[index];
-			if (entry.type !== "custom" || entry.customType !== CHECKPOINT_CUSTOM_TYPE) continue;
-			const checkpoint = parseCheckpoint(entry.data);
-			if (checkpoint) return checkpoint;
-		}
-		return null;
-	}
+	if ("sessionManager" in source) return source.sessionManager.reduceHistory(latestCheckpoint);
 
 	const checkpoints = source.persistedCheckpoints ?? [];
 	if (checkpoints.length > 0) {
