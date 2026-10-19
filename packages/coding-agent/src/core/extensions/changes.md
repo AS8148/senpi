@@ -4,6 +4,7 @@
 
 - `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionAPI` gains `redactForUpload(text, { extraLiterals? }) -> { text, counts }` and `readonly hostVersion`.
 - `packages/coding-agent/src/core/extensions/loader.ts`: implements both; `redactForUpload` calls `core/share/upload-redaction.ts`, which is the `/share` redactor (`redactShareText`) with this machine's identity, and `hostVersion` is `VERSION`.
+- `packages/coding-agent/src/core/share/share-redaction.ts`: the context takes `extraLiterals`, and the literal pass (which runs last) no longer rewrites placeholders earlier passes wrote, so a literal such as `redacted` or `email` cannot corrupt `<redacted>` or `<email>`.
 
 ### Why
 

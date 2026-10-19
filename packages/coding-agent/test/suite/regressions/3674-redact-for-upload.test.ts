@@ -47,6 +47,21 @@ describe("#3674 pi.redactForUpload", () => {
 		expect(result.text).not.toContain("deploybot");
 	});
 
+	it("keeps earlier placeholders intact when an extra literal is also a placeholder word", async () => {
+		const pi = await extensionApi();
+
+		const result = pi.redactForUpload("Bearer abcdefghijkl1234 sent to user@example.com from redacted-host", {
+			extraLiterals: ["redacted", "email", "user", "host"],
+		});
+
+		expect(result.text).toContain("<redacted>");
+		expect(result.text).toContain("<email>");
+		expect(result.text).not.toMatch(/<<|>>/);
+		expect(pi.redactForUpload(result.text, { extraLiterals: ["redacted", "email", "user", "host"] }).text).toBe(
+			result.text,
+		);
+	});
+
 	it("is idempotent: running it on its own output changes nothing and counts nothing", async () => {
 		const pi = await extensionApi();
 		const first = pi.redactForUpload(`token ghp_${"a".repeat(36)} at ${homedir()}/x`);

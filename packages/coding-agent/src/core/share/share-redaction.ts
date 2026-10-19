@@ -148,6 +148,21 @@ function redactQuoted(quoted: string, tally: ShareRedactionTally): string {
 	return replaced;
 }
 
+// Placeholders this redactor writes. The literal pass runs last, so it must not rewrite a placeholder an earlier pass
+// produced (an identity literal such as "redacted" or "email" would otherwise turn "<redacted>" into "<<user>>").
+const PLACEHOLDER = /<(?:redacted(?: private key)?|email|ip|host|user)>|\[image omitted from share\]/g;
+
+function replaceOutsidePlaceholders(text: string, pattern: RegExp, replace: () => string): string {
+	let out = "";
+	let last = 0;
+	for (const match of text.matchAll(PLACEHOLDER)) {
+		const at = match.index ?? 0;
+		out += text.slice(last, at).replace(pattern, replace) + match[0];
+		last = at + match[0].length;
+	}
+	return out + text.slice(last).replace(pattern, replace);
+}
+
 export function redactShareText(text: string, context: ShareRedactionContext, tally: ShareRedactionTally): string {
 	if (text.length === 0) return text;
 	let result = text;
@@ -227,7 +242,7 @@ export function redactShareText(text: string, context: ShareRedactionContext, ta
 	] as const) {
 		const pattern = literalPattern(value);
 		if (!pattern) continue;
-		result = result.replace(pattern, () => {
+		result = replaceOutsidePlaceholders(result, pattern, () => {
 			count(tally, category);
 			return placeholder;
 		});
