@@ -16,6 +16,8 @@ export interface TerminalCapabilities {
 	kittyUnicodePlaceholders?: boolean;
 	/** Shown next to the image placeholder when the terminal could show images after a user action. */
 	imageHint?: string;
+	/** Set when image support is still unknown from the environment: the TUI must query the terminal and record the answer via `setProbedImageProtocol`. */
+	imageProbe?: "kitty";
 }
 
 export interface DetectedTerminalCapabilities extends TerminalCapabilities {

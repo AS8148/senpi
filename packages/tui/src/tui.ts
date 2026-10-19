@@ -8,6 +8,11 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { performance } from "node:perf_hooks";
 import { isKeyRelease, matchesKey } from "./keys.ts";
+import {
+	buildKittyGraphicsQuery,
+	KITTY_GRAPHICS_PROBE_TIMEOUT_MS,
+	parseKittyGraphicsProbeResponse,
+} from "./kitty-graphics-probe.ts";
 import { isMultiplexerSession, useLegacyMuxRender, viewportRenderEnabled } from "./mux.ts";
 import type { Terminal } from "./terminal.ts";
 import {
@@ -18,11 +23,13 @@ import {
 	type TerminalColors,
 } from "./terminal-colors.ts";
 import {
+	allocateImageId,
 	deleteKittyImage,
 	getCapabilities,
 	isImageLine,
 	resetCapabilitiesCache,
 	setCellDimensions,
+	setProbedImageProtocol,
 } from "./terminal-image.ts";
 import { consumeTmuxFocusEvent, DISABLE_FOCUS_REPORTING, ENABLE_FOCUS_REPORTING } from "./tmux-focus.ts";
 import { extractSegments, normalizeTerminalOutput, sliceByColumn, sliceWithWidth, visibleWidth } from "./utils.ts";
@@ -1045,6 +1052,7 @@ export abstract class TuiBase extends Container {
 	 * replies belong to the oldest one. Queries stay here after a timeout to collect late replies.
 	 */
 	private pendingTerminalColorQueries: PendingTerminalColorQuery[] = [];
+	private pendingKittyGraphicsProbe?: { imageId: number; timer: ReturnType<typeof setTimeout> };
 	private terminalColorSchemeListeners = new Set<(scheme: TerminalColorScheme) => void>();
 	private terminalColorSchemeNotificationsEnabled = false;
 	#lastCursorVisibility: boolean | undefined;
@@ -1680,6 +1688,7 @@ export abstract class TuiBase extends Container {
 			this.terminal.write("\x1b[?2031h");
 		}
 		this.queryCellSize();
+		this.probeKittyGraphics();
 		this.requestRender();
 	}
 
@@ -1721,6 +1730,37 @@ export abstract class TuiBase extends Container {
 		this.terminal.write("\x1b[16t");
 	}
 
+	private probeKittyGraphics(): void {
+		if (this.pendingKittyGraphicsProbe) return;
+		if (getCapabilities().imageProbe !== "kitty") return;
+
+		const imageId = allocateImageId();
+		const timer = setTimeout(() => this.resolveKittyGraphicsProbe(false), KITTY_GRAPHICS_PROBE_TIMEOUT_MS);
+		this.pendingKittyGraphicsProbe = { imageId, timer };
+		this.terminal.write(buildKittyGraphicsQuery(imageId));
+	}
+
+	private consumeKittyGraphicsProbeResponse(data: string): boolean {
+		const probe = this.pendingKittyGraphicsProbe;
+		if (!probe) return false;
+		const outcome = parseKittyGraphicsProbeResponse(data, probe.imageId);
+		if (outcome === null) return false;
+		this.resolveKittyGraphicsProbe(outcome === "ok");
+		return true;
+	}
+
+	private resolveKittyGraphicsProbe(supported: boolean): void {
+		const probe = this.pendingKittyGraphicsProbe;
+		if (!probe) return;
+		this.pendingKittyGraphicsProbe = undefined;
+		clearTimeout(probe.timer);
+		setProbedImageProtocol(supported ? "kitty" : null);
+		if (this.stopped) return;
+		if (supported) this.queryCellSize();
+		this.invalidate();
+		this.requestRender();
+	}
+
 	stop(options: TuiStopOptions = {}): void {
 		this.stopped = true;
 		// The hold itself belongs to the turn (interactive mode sets and releases it); a stop()/start() handover
@@ -1731,6 +1771,10 @@ export abstract class TuiBase extends Container {
 		this.renderRequested = false;
 		this.inputRenderPending = false;
 		this.cancelRenderTimer();
+		if (this.pendingKittyGraphicsProbe) {
+			clearTimeout(this.pendingKittyGraphicsProbe.timer);
+			this.pendingKittyGraphicsProbe = undefined;
+		}
 		if (this.terminalColorSchemeNotificationsEnabled) {
 			this.terminal.write("\x1b[?2031l");
 		}
@@ -1935,6 +1979,9 @@ export abstract class TuiBase extends Container {
 			return;
 		}
 		if (this.consumeTerminalColorSchemeReport(data)) {
+			return;
+		}
+		if (this.consumeKittyGraphicsProbeResponse(data)) {
 			return;
 		}
 		// A key press means the user is at the bottom again. Terminal reports (mouse/wheel, OSC/DCS replies,
