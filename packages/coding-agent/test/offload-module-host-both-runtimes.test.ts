@@ -1,14 +1,20 @@
 // senpi#3622 review: a registered child module gets the SAME host on both runtimes. Its export receives
 // `(args, host)` whether the session runs it in-process or on its tool child, and a deadline fails it the same way.
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import type { FilesystemPolicyRequest } from "../src/core/extensions/types.ts";
 import { createSessionHostCallHandler } from "../src/core/tool-child-host-calls.ts";
+import type { StuckModuleNotice } from "../src/core/tool-dispatch/in-process-module.ts";
 import { offload } from "../src/core/tool-dispatch/offload.ts";
 import { createToolDispatcher, type ToolChildModuleJob } from "../src/core/tool-dispatch/tool-dispatcher.ts";
+import {
+	acquireFileMutationLock,
+	FileLockedByStuckModuleError,
+	withFileMutationQueue,
+} from "../src/core/tools/file-mutation-queue.ts";
 import { ToolChildClient } from "../src/modes/rpc/tool-child/client.ts";
 import { TOOL_CHILD_MODULE_ROOTS_ENV } from "../src/modes/rpc/tool-child/module-job.ts";
 
@@ -94,15 +100,62 @@ describe("ctx.offload deadlines", () => {
 		},
 	);
 
-	it("fails an in-process module that outlives its deadline with tool_child_deadline", async () => {
-		const cwd = await mkdtemp(join(tmpdir(), "omh-"));
+	it("fails an in-process module past its deadline but keeps its file lock until its write settles", async () => {
+		const cwd = await realpath(await mkdtemp(join(tmpdir(), "omh-")));
 		cleanups.push(() => rm(cwd, { recursive: true, force: true }));
 		const dispatcher = createToolDispatcher({ runtime: "in-process", hostCalls: hostCallsIn(cwd, []) });
 		const file = join(cwd, "gated.txt");
+		const gate = join(cwd, "gate");
 		await writeFile(file, "");
-		const args = { file, line: "late", held: join(cwd, "held"), gate: join(cwd, "never-created") };
+		// The module's fs.watch waits for the gate; opening it on every path closes that watcher.
+		cleanups.push(() => writeFile(gate, ""));
+		const args = { file, line: "late", held: join(cwd, "held"), gate };
 		await expect(offload(dispatcher, modules, "slow", args, { deadlineMs: 200 })).rejects.toMatchObject({
 			code: "tool_child_deadline",
 		});
+		let secondWriter = false;
+		const second = acquireFileMutationLock(file).then((release) => {
+			secondWriter = true;
+			return release;
+		});
+		// Every release the deadline could trigger is promise-driven: two full event-loop turns let it land if it would.
+		for (let turn = 0; turn < 2; turn++) await new Promise((resolveTurn) => setImmediate(resolveTurn));
+		expect(secondWriter).toBe(false);
+		await writeFile(gate, "");
+		const release = await second;
+		await appendFile(file, "other\n");
+		release();
+		expect(await readFile(file, "utf8")).toBe("late\nother\n");
+	});
+	it("reports an in-process module stuck past its grace, fails every waiter on its lock fast, and releases it on dispose", async () => {
+		const cwd = await realpath(await mkdtemp(join(tmpdir(), "omh-")));
+		cleanups.push(() => rm(cwd, { recursive: true, force: true }));
+		const file = join(cwd, "stuck.txt");
+		const gate = join(cwd, "gate");
+		await writeFile(file, "");
+		cleanups.push(() => writeFile(gate, ""));
+		let reportStuck: (notice: StuckModuleNotice) => void = () => {};
+		const reported = new Promise<StuckModuleNotice>((resolveReported) => {
+			reportStuck = resolveReported;
+		});
+		const dispatcher = createToolDispatcher({
+			runtime: "in-process",
+			hostCalls: hostCallsIn(cwd, []),
+			stuckGraceMs: 50,
+			onModuleStuck: (notice) => reportStuck(notice),
+		});
+		const args = { file, line: "late", held: join(cwd, "held"), gate };
+		await expect(offload(dispatcher, modules, "slow", args, { deadlineMs: 100 })).rejects.toThrow(
+			`still holds the lock on ${file}`,
+		);
+		const notice = await reported;
+		expect(notice).toMatchObject({ export: "appendWhenGated", deadlineMs: 100, files: [file] });
+		expect(notice.notice).toContain("--tool-runtime child");
+		await expect(acquireFileMutationLock(file)).rejects.toMatchObject({ code: "file_locked_by_stuck_module" });
+		await expect(withFileMutationQueue(file, async () => "ran")).rejects.toBeInstanceOf(FileLockedByStuckModuleError);
+		await dispatcher.dispose();
+		const release = await acquireFileMutationLock(file);
+		release();
+		expect(await readFile(file, "utf8")).toBe("");
 	});
 });
