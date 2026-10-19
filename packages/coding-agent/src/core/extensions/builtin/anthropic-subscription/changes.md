@@ -3,6 +3,7 @@
 ### What changed
 
 - `stream-events.ts`: `applyStreamEvent` copies `message_start`'s `message.id` to the assistant message's `responseId` when the id is present.
+- `stream.ts`: an SDK `assistant` message sets `responseId` from `message.message.id` when the stream has not set it, so a result-only turn (no stream events) carries it too.
 
 ### Why
 
@@ -14,7 +15,7 @@ This is the builtin extension's own stream mapping.
 
 ### Expected merge conflict zones
 
-`stream-events.ts` `applyStreamEvent`, the `message_start` branch; fork-only file.
+`stream-events.ts` `applyStreamEvent`, the `message_start` branch; `stream.ts`, the SDK message loop's `assistant` branch. Both fork-only files.
 
 ## 2026-10-18 - A compiled build finds Claude Code shipped beside its executable (senpi#3639)
 
