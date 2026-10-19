@@ -175,10 +175,7 @@ export async function openChannelListener(options: {
 	readonly dir: string;
 	readonly generation: number;
 }): Promise<ChannelListener> {
-	const logicalPath = await channelSocketPath(options.dir, options.generation);
-	const secretPath = socketSecretPath(logicalPath);
-	await rm(logicalPath, { force: true });
-	const secret = await createSocketSecret(secretPath);
+	const { logicalPath, secretPath, secret } = await claimListenerFiles(options.dir, options.generation);
 	let resolveAccepted!: (channel: ToolChildChannel) => void;
 	const accepted = new Promise<ToolChildChannel>((resolve) => {
 		resolveAccepted = resolve;
@@ -217,11 +214,42 @@ export async function openChannelListener(options: {
 			if (server.listening) server.close();
 			await rm(secretPath, { force: true });
 			if (process.platform !== "win32") await rm(logicalPath, { force: true });
-			// The private socket root is per agent dir and generations share it, so rmdir succeeds only when this
-			// was the last one - a best-effort sweep that never races a live sibling (senpi#3576, CI temp guard).
+			// The socket root is shared by every generation of this session's tool-child dir (and, on the fallback,
+			// by every process starting one), so rmdir removes it only once it is empty. A sibling that claimed the
+			// root but has not written its secret yet can lose it here; `claimListenerFiles` re-claims and retries.
 			await rmdir(dirname(logicalPath)).catch(() => {});
 		},
 	};
+}
+
+/**
+ * Claims the socket root and writes this generation's secret into it. A sibling's close-time sweep can remove the
+ * still-empty root between the claim and the secret write (senpi#3685), and `createSocketSecret` then recreates it
+ * with a plain recursive mkdir - without the private mode, and inside whatever another user may have created at that
+ * name meanwhile. So the root is claimed again once the secret is in it: ours, it is tightened and kept (the secret
+ * keeps it non-empty, so no later sweep can remove it); not ours, the secret is withdrawn and the next attempt's
+ * claim refuses that root and moves to a fresh `mkdtemp` directory, which no sibling sweeps.
+ */
+async function claimListenerFiles(
+	dir: string,
+	generation: number,
+): Promise<{ readonly logicalPath: string; readonly secretPath: string; readonly secret: Buffer }> {
+	for (let attempt = 1; ; attempt++) {
+		const logicalPath = await channelSocketPath(dir, generation);
+		const root = dirname(logicalPath);
+		const secretPath = socketSecretPath(logicalPath);
+		await rm(logicalPath, { force: true });
+		const secret = await createSocketSecret(secretPath);
+		const reclaimed = await (root === dir ? makePrivateDirectory(root) : claimPrivateDirectory(root)).then(
+			() => true,
+			(error: unknown) => {
+				if (attempt >= 2 || !(error instanceof SocketDirUnsafeError)) throw error;
+				return false;
+			},
+		);
+		if (reclaimed) return { logicalPath, secretPath, secret };
+		await rm(secretPath, { force: true });
+	}
 }
 
 export function channelEnvPresent(env: NodeJS.ProcessEnv): boolean {

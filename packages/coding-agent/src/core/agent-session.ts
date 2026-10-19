@@ -2704,20 +2704,20 @@ export class AgentSession {
 		return this._agentDir;
 	}
 
-	/**
-	 * Working directory this session resolves settings against — the same value extensions
-	 * receive as `ctx.cwd`, so a host surface (RPC) reads project settings identically.
-	 */
-	/** The `list_sessions` row of this session's tool child (senpi#3566); `none` under the in-process runtime. */
 	/** Resolves after dispose() once the tool child has exited and its launched groups are swept; awaited by disposers. */
 	whenToolChildClosed(): Promise<void> {
 		return this._toolChildClosed;
 	}
 
+	/** The `list_sessions` row of this session's tool child (senpi#3566); `none` under the in-process runtime. */
 	toolChildRow(): SessionToolChildRow {
 		return this._toolChild?.row() ?? { state: "none" };
 	}
 
+	/**
+	 * Working directory this session resolves settings against — the same value extensions
+	 * receive as `ctx.cwd`, so a host surface (RPC) reads project settings identically.
+	 */
 	get cwd(): string {
 		return this._cwd;
 	}
