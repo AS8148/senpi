@@ -6,12 +6,18 @@
 
 ### Added
 
+- Under `--tool-runtime child`, each session can start its own tool child: a separate process the engine re-enters through an internal role. No command in it starts before the server has recorded the launch. A `"child"`-placed extension tool with a `childModule` (`{ path, export }`, a file inside the extension's directory) runs there, and its `pid` differs from the server's. A child-placed tool without one, or one under the default `in-process` runtime, behaves as before.
+- Extensions can redact text before sending it off the machine with `pi.redactForUpload(text, { extraLiterals })`, which returns `{ text, counts }` from the same redactor `/share` uses (so a feature like an in-app bug report does not need its own rules), and can read the host version as `pi.hostVersion`. Extra literals never rewrite a placeholder an earlier pass already wrote ([#3674](https://github.com/code-yeongyu/senpi/issues/3674)).
 - A device receiving a moved session now takes it only after it said it is ready for that move: a bundle for a move it never readied is refused for good, and a ready move that sees no bundle within 10 minutes, or is cancelled by the sender, is declined so the sender can take its session back. A move already receiving or accepted is never declined by either ([#3676](https://github.com/code-yeongyu/senpi/issues/3676)).
+- Extensions can fold a session's whole history without holding it in memory: `ctx.sessionManager.reduceHistory({ initial, add })` reads the history once and folds only new entries after that ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)).
 
 ### Changed
 
 ### Fixed
 
+- `ctx.sessionManager.reduceHistory`: a reducer that throws no longer leaves half-folded state behind; the next call reads the history again from the start instead of applying the same entries twice ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)).
+- A long stream of background events (monitors, CI notices) no longer keeps a compacted session's whole history in memory: the engine-turn bound, the compaction checkpoint and the Stop hook read the history without holding it, so memory stays near what a fresh open of the session costs ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)).
+- A Claude subscription (`anthropic-subscription`) reply now records its Anthropic message id as `responseId`. The Claude Agent SDK also writes every turn to `~/.claude/projects`, and usage readers such as the OmO desktop Usage page need that id to count the turn once instead of again as Claude Code usage ([oh-my-openagent#10547](https://github.com/code-yeongyu/oh-my-openagent/issues/10547)).
 - Moving a session is stricter at its edges: `release_session` with `reason: "move"` refuses a `moveId` the rest of the move would reject and a session whose own id is not a plain id, a `session_moved_away` refusal after an interrupt still returns the queued input it took, and export refuses a session whose own id is empty or not a plain id before sealing it ([#3662](https://github.com/code-yeongyu/senpi/issues/3662)).
 
 ### Removed
@@ -37,6 +43,8 @@
 ### Changed
 
 ### Fixed
+
+- `/share` no longer uploads the raw session. By default it shares only your messages, the replies and the tool calls; tool outputs (file contents, command output, extension messages) are replaced by `[output omitted]` unless you choose "Include tool outputs" in the preview. Everything shared is first redacted: keys, tokens, private keys, auth headers, cookies, emails, IP addresses, your home path, account name and host name (images are left out). The preview shows what will be uploaded and who can read it, and nothing uploads until you choose Upload; "Review the exact file first" writes the exact bytes to a private temporary file that is deleted afterwards, and Cancel uploads nothing. The export no longer goes through a shared temporary file, and there is no default third-party viewer: the gist link is printed unless `PI_SHARE_VIEWER_URL` is set. `PI_DISABLE_SHARE=1` or the `enableSessionShare: false` setting turns `/share` off ([#3524](https://github.com/code-yeongyu/senpi/issues/3524)).
 
 - The mouse wheel scrolls the transcript again while an `ask_user_question` prompt is waiting. The first notch pauses option clicking (the hint says so) and any key turns it back on. The text-selection hint now names the right modifier per terminal, including VS Code on macOS ([#3604](https://github.com/code-yeongyu/senpi/issues/3604)).
 - The /btw panel stays one fixed region while a running eval's expanded output grows above it; the eval rows no longer overwrite the panel or repeat in the scrollback ([#3649](https://github.com/code-yeongyu/senpi/issues/3649))

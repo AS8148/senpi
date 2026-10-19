@@ -1,3 +1,23 @@
+## 2026-10-19 - A sustained event stream no longer holds a compacted session's whole history (senpi#2537)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: new `reduceHistory(reducer)` (also on `ReadonlySessionManager`) folds the whole history, every branch in append order like `getEntries()`, without keeping a full-history view. The history is read once per load and later calls fold only the entries appended since (`session-history-reduce.ts`). A `historyGeneration` counter, bumped wherever the history is replaced but not on append or mirror trim, keys the memo, and `verbatimFromCount` records how much of the mirror's tail is the history's own tail after a trim (`planLoadedTail` now reports `windowLength`).
+- `packages/coding-agent/src/core/agent-session.ts`: `_stopEngineTurn` reads the engine-turn bound from `reduceHistory(engineTurnHistory)` instead of `getEntries()`.
+
+### Why
+
+On a compacted (trimmed) session, `getEntries()` materializes and memoizes the whole file's history. `_stopEngineTurn` called it for every engine-triggered turn, and the builtin compaction checkpoint and Stop hook called it every turn, so a stream of background events held a full-history view for as long as it kept the session from settling idle: 11.7 MB of the 20 MB a 10-minute, 2-events-per-second soak on a 10,000-entry session grew on main.
+
+### Why an extension could not handle it
+
+The engine-turn bound and the session mirror are session internals; the builtin readers needed a session-manager read that does not build the view.
+
+### Expected merge conflict zones
+
+- LOW: `session-manager.ts`, the `historyGeneration` / `verbatimFromCount` fields after `fullEntryCount`, one line in `_resetToNewSession`, `_completeFileLoad`, `_loadEntries`, `_buildIndex`, `_retainLoadedTail`, `_trimMirrorAfterCompaction` and both `createBranchedSession` branches, `reduceHistory` after `getEntryCount`, and the `ReadonlySessionManager` pick list.
+- LOW: `agent-session.ts`, the first argument of `engineTurnStop` in `_stopEngineTurn` and the `engine-turn-limit.ts` import.
+
 ## 2026-10-19 - An abort that joins an open agent_end boundary still releases a held handler (senpi#3650 follow-up)
 
 ### What changed
@@ -15,6 +35,24 @@ The abort path and the host's wait on extension handlers are session internals; 
 ### Expected merge conflict zones
 
 - LOW: `agent-session.ts` `abortTurnForDeadline` and the line after `_abortActiveAgentAndRetry("user")` in `_abortWithProvenance`.
+
+## 2026-10-18 - Session move phase 1 and related core deltas arrive through the base merge (senpi#3631 lineage)
+
+### What changed
+
+- `agent-session.ts`, `agent-session-runtime.ts`, `agent-session-services.ts`, `sdk.ts`: engine export/import with single-owner ownership (session move phase 1) and the surrounding core deltas landed on main and reach this branch through the pure base merge; this branch adds no change of its own to them beyond the tool-child runtime already tracked elsewhere.
+
+### Why
+
+- The changelog gate reads the merge-base diff, which after the base merge includes main's own changes to these files; this entry records that provenance.
+
+### Why an extension could not handle it
+
+- Core session ownership machinery; not extension surface.
+
+### Expected merge conflict zones
+
+- `changes.md` only.
 
 ## 2026-10-18 - A session moved to another device refuses writes on the device it left (senpi#3630)
 
@@ -60,6 +98,27 @@ The waits are the host's own awaits on extension handlers inside the session's e
 - LOW: `agent-session.ts` `_applyExtensionBindings` (after `setToolHookLifecycleObserver`), the deadline-owner adapters beside `abortTurnForDeadline`, the `_deadlineTracker.arm()` line in `_promptAgent`, the abort promise in `_abortActiveAgentAndRetry`, and the field block beside `_isAgentRunActive`.
 - LOW: `settings-manager.ts` beside the `session_shutdown` handler budget; `session-log.ts` `ALLOWED_DATA_KEY`.
 - `turn-deadline.ts`, `agent-run-continuation.ts` and `extension-handler-stall-report.ts` are fork-only.
+
+## 2026-10-17 - /share redacts the session, previews it and asks before uploading (senpi#3524)
+
+### What changed
+
+- `packages/coding-agent/src/core/export-html/index.ts`: `renderSessionToHtml(sm, state, opts)` renders in memory; `exportSessionToHtml` writes its result. `ExportOptions.sanitize` rewrites the entries before custom tools pre-render them and then the whole session payload.
+- `packages/coding-agent/src/core/agent-session.ts`: `AgentSession.renderToHtml({ themeName, sanitize })`; theme and tool-renderer resolution moved into the private `htmlExportOptions`, shared with `exportToHtml`.
+- `packages/coding-agent/src/core/settings-manager.ts`: `enableSessionShare` (default true; global or project) and `getEnableSessionShare()`.
+- New fork-only `packages/coding-agent/src/core/share/`: `share-redaction.ts` (identity first: home in every separator spelling, account and host names; then private keys, provider/GitHub/Slack/AWS/Google keys, JWTs, bearer/basic headers, URL credentials, cookies, sensitive key=value and JSON fields, emails, non-loopback IPv4; images replaced by a note; every replacement counted), `share-session.ts` (`runShare`: kill switch, gh check, redact, preview, Upload/Review/Cancel, upload, review copy in a private `mkdtemp` removed on every exit), `share-gh.ts` (gist created from stdin, nothing written to disk). `share-projection.ts` leaves tool outputs out by default (tool results, `!` output, extension messages and state, pre-rendered result HTML), `share-redaction-value.ts` walks structured values, `share-sensitive-key.ts` decides from a key's name alone (split across camelCase, snake_case, kebab-case and dots) whether its value is replaced whole: any sensitive word anywhere makes the name sensitive, with no word-level exemptions; only a short list of exact names stays ordinary (`PUBLIC_KEY`, `PUBLIC_KEY_PATH`, `KEY_ID`, `AUTH_MODE`, `AUTH_TYPE`, `MAX_TOKENS`, `MAX_OUTPUT_TOKENS`). AWS-style key ids under other names are therefore redacted too; over-redacting a path or URL under a sensitive name is accepted for a share, and `share-entropy.ts` holds the generic generated-secret detector (base62/base64 runs, splits across newlines, escaped newlines, continuations and string seams).
+
+### Why
+
+- `/share` uploaded the whole session unredacted, with no confirmation, to a secret (unlisted) gist, after writing it to a fixed `os.tmpdir()/session.html`, and pointed users at the third-party `pi.dev` viewer by default. Any key, token, home path or email in a prompt or tool result left the machine in clear text. Regressions: `test/suite/regressions/3524-share-redaction.test.ts`, `test/suite/regressions/3524-share-consent.test.ts`.
+
+### Why an extension could not handle it
+
+- `/share` is a built-in interactive command and the HTML export is core; an extension cannot intercept either before the upload.
+
+### Expected merge conflict zones
+
+- LOW: `exportSessionToHtml` / `renderSessionToHtml` in `export-html/index.ts`; `exportToHtml` in `agent-session.ts`; the settings interface and getter block in `settings-manager.ts`.
 
 ## 2026-10-18 - AgentSession keeps identified queued input in durable custody (senpi#3549, P2b)
 
