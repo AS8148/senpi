@@ -4,6 +4,7 @@ import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { parseArgs } from "../../../src/cli/args.ts";
+import { PIPED_STDIN_SKIP_HINT, pipedStdinOptions } from "../../../src/cli/piped-stdin-options.ts";
 import { PIPED_STDIN_GRACE_MS, type PipedStdin, readPipedStdin } from "../../../src/utils/piped-stdin.ts";
 
 const notAFile = () => false;
@@ -133,6 +134,60 @@ describe("readPipedStdin in a real process (#3715)", () => {
 			child.stdin.destroy();
 			child.kill("SIGKILL");
 		}
+	});
+});
+
+describe("pipedStdinOptions (#3715)", () => {
+	const capture = () => {
+		const written: string[] = [];
+		return { written, write: (text: string) => written.push(text) };
+	};
+
+	test("a positional message or an @file counts as a prompt argument; - forces the read", () => {
+		const stderr = capture();
+		expect(pipedStdinOptions(parseArgs(["-p", "hi"]), stderr)).toMatchObject({
+			hasPromptArgument: true,
+			forceRead: false,
+		});
+		expect(pipedStdinOptions(parseArgs(["-p", "@notes.md"]), stderr)).toMatchObject({ hasPromptArgument: true });
+		expect(pipedStdinOptions(parseArgs(["-p"]), stderr)).toMatchObject({
+			hasPromptArgument: false,
+			forceRead: false,
+		});
+		expect(pipedStdinOptions(parseArgs(["-p", "-", "hi"]), stderr)).toMatchObject({
+			hasPromptArgument: true,
+			forceRead: true,
+		});
+	});
+
+	test("a skipped stdin is reported with exactly one stderr line", async () => {
+		vi.useFakeTimers();
+		try {
+			const stderr = capture();
+			const stdin = new PassThrough();
+			const read = track(
+				readPipedStdin({ ...pipedStdinOptions(parseArgs(["-p", "hi"]), stderr), stdin, isRegularFile: notAFile }),
+			);
+			await vi.advanceTimersByTimeAsync(PIPED_STDIN_GRACE_MS);
+			expect(read).toEqual({ settled: true, value: undefined });
+			await vi.advanceTimersByTimeAsync(60_000);
+			expect(stderr.written).toEqual([`${PIPED_STDIN_SKIP_HINT}\n`]);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	test("stdin that delivers data is never reported as skipped", async () => {
+		const stderr = capture();
+		const stdin = new PassThrough();
+		const read = readPipedStdin({
+			...pipedStdinOptions(parseArgs(["-p", "hi"]), stderr),
+			stdin,
+			isRegularFile: notAFile,
+		});
+		stdin.end("data");
+		await expect(read).resolves.toBe("data");
+		expect(stderr.written).toEqual([]);
 	});
 });
 

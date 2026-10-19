@@ -45,6 +45,7 @@ import { writeHelpFlagsCache } from "./cli/help-flags-cache.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
 import { isModelsDiscoverCommand, runModelsDiscoverCommand } from "./cli/models-command.ts";
+import { pipedStdinOptions } from "./cli/piped-stdin-options.ts";
 import { exitAfterOutput, printThenExit } from "./cli/print-then-exit.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import { prepareSessionOpening } from "./cli/session-opening.ts";
@@ -1451,10 +1452,7 @@ export async function main(args: string[], options?: MainOptions) {
 	// Read piped stdin content (if any) - skip for RPC mode which uses stdin for JSON-RPC
 	let stdinContent: string | undefined;
 	if (appMode !== "rpc") {
-		stdinContent = await readPipedStdin({
-			hasPromptArgument: parsed.messages.length > 0 || parsed.fileArgs.length > 0,
-			forceRead: parsed.readStdin === true,
-		});
+		stdinContent = await readPipedStdin(pipedStdinOptions(parsed, process.stderr));
 		if (stdinContent !== undefined && appMode === "interactive") {
 			appMode = "print";
 		}

@@ -23,6 +23,7 @@ export interface ReadPipedStdinOptions {
 	stdin?: PipedStdin;
 	graceMs?: number;
 	isRegularFile?: (stdin: PipedStdin) => boolean;
+	onSkip?: () => void;
 }
 
 function stdinIsRegularFile(stdin: PipedStdin): boolean {
@@ -64,6 +65,7 @@ export function readPipedStdin(options: ReadPipedStdinOptions): Promise<string |
 				stdin.pause();
 				stdin.unref?.();
 				settle(undefined);
+				options.onSkip?.();
 			}, options.graceMs ?? PIPED_STDIN_GRACE_MS);
 		}
 		stdin.resume();
