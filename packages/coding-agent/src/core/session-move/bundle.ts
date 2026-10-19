@@ -69,8 +69,12 @@ function parseFile(value: unknown): BundleFile {
  */
 const PLAIN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
-export function isMoveId(value: unknown): value is MoveId {
+export function isPlainId(value: unknown): value is string {
 	return typeof value === "string" && PLAIN_ID.test(value);
+}
+
+export function isMoveId(value: unknown): value is MoveId {
+	return isPlainId(value);
 }
 
 export function parsePlainId(value: unknown, what: string): string {

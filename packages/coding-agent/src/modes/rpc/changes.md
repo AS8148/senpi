@@ -21,7 +21,7 @@ None: every file is new and fork-only.
 ### What changed
 
 - `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `release_session` accepts `reason: "move"` with `moveId` (required) and `target`.
-- `packages/coding-agent/src/modes/rpc/session-release.ts`: a `move` release records `move_id` and `target` in its `session_released` entry; a `move` whose `moveId` is missing or not a plain id (the `parseMoveId` rule export and the receiver's ledger apply) is refused with `invalid_release_reason`, and a `session_moved_away` refusal after an interrupt carries `interrupted` and `dropped` like every other refusal after one (senpi#3662). After it, the session manager refuses writes to the file (`core/session-move/`).
+- `packages/coding-agent/src/modes/rpc/session-release.ts`: a `move` release records `move_id` and `target` in its `session_released` entry; a `move` whose `moveId` is missing or not a plain id (the `parseMoveId` rule export and the receiver's ledger apply) is refused with `invalid_release_reason`, a session whose own id is not a plain id is refused with `release_unsupported` (`session_id_not_plain`) before the seal, and a `session_moved_away` refusal after an interrupt carries `interrupted` and `dropped` like every other refusal after one (senpi#3662). After it, the session manager refuses writes to the file (`core/session-move/`).
 
 ### Why
 
