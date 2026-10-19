@@ -32,7 +32,7 @@
  * drains a generation. Nothing here removes or reclaims state either way; a loss only starts a drain.
  */
 import { readFile } from "node:fs/promises";
-import { observeProtocolInfo } from "./host-probe.ts";
+import { OBSERVE_REQUEST_FIELD } from "./host-observe-request.ts";
 import { classifyEndpointOwnership, type SocketFileIdentity } from "./socket-ownership.ts";
 
 /** How often a generation re-checks that the public path still holds the socket it bound. */
@@ -162,8 +162,17 @@ async function pointerInstanceId(file: string): Promise<string | undefined> {
 }
 
 async function probeAnsweringInstance(path: string): Promise<string | undefined> {
-	const info = await observeProtocolInfo(path, IDENTITY_PROBE_TIMEOUT_MS).catch(() => undefined);
-	return info?.instanceId;
+	// Loaded on first use, and only by an endpoint with no file identity (a win32 named pipe) whose pointer already
+	// names another instance: the socket client is not part of the supervisor's startup graph, which has a module
+	// budget (test/supervisor-import-graph.test.ts). The raw answer is read, not the parsed protocol info, whose
+	// parser would pull the build-id reader in as well.
+	const { isRecord, requestOnSocket } = await import("./host-socket-request.ts");
+	const answer = await requestOnSocket(
+		path,
+		{ type: "get_protocol_info", [OBSERVE_REQUEST_FIELD]: true },
+		IDENTITY_PROBE_TIMEOUT_MS,
+	).catch(() => undefined);
+	return isRecord(answer) && typeof answer.instanceId === "string" ? answer.instanceId : undefined;
 }
 
 function ignore(): void {}
