@@ -97,6 +97,25 @@ describe("release_session", () => {
 		expect(reply).toMatchObject({ success: false, error: "invalid_release_reason" });
 		expect((await rig.list()).map((row) => row.sessionId)).toContain(sessionId);
 	});
+	it("#given reason move with a move id that is not a plain id #then the release is refused and nothing seals the file (senpi#3662)", async () => {
+		const dir = await rigDir();
+		await using rig = createInProcessRig(dir);
+		const { sessionId, sessionPath } = await openExchange(rig, dir, "bad-move-id");
+		await rig.drop("conn-a");
+
+		for (const moveId of ["../x", "..", ".", "a/b", "a\\b", "x".repeat(200)]) {
+			const reply = await release(rig, sessionId, { reason: "move", moveId, target: "laptop" });
+			expect(reply).toMatchObject({ success: false, error: "invalid_release_reason" });
+		}
+
+		expect((await rig.list()).map((row) => row.sessionId)).toContain(sessionId);
+		expect(
+			standaloneEntries(sessionPath).some(
+				(entry) => entry.type === "custom" && entry.customType === SESSION_RELEASED_ENTRY_TYPE,
+			),
+		).toBe(false);
+	});
+
 	it("hands an idle, detached session over: the host drops it and its file opens standalone", async () => {
 		// Given: a retained session with one exchange, whose only client detached.
 		const dir = await rigDir();

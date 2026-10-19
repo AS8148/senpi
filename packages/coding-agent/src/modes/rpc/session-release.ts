@@ -22,6 +22,7 @@
  * cannot hand over (`release_unsupported`: a worker isolate owns the runtime, or there is no file).
  */
 import type { AgentSession } from "../../core/agent-session.ts";
+import { isMoveId } from "../../core/session-move/bundle.ts";
 import { SessionMovedAwayError } from "../../core/session-move/ownership.ts";
 import { isHandoffBusy } from "./handoff-activity.ts";
 import {
@@ -92,7 +93,8 @@ interface Releasable {
 }
 
 export async function releaseSession(port: SessionReleasePort, command: ReleaseSessionCommand): Promise<RpcResponse> {
-	const validMove = command.reason === "move" && typeof command.moveId === "string" && command.moveId !== "";
+	// Export and the receiver's ledger accept only a plain move id; a release under any other id could never finish.
+	const validMove = command.reason === "move" && isMoveId(command.moveId);
 	if (command.reason !== "takeover" && !validMove) return refusal(command.id, RPC_ERROR_INVALID_RELEASE_REASON);
 	if (port.draining()) return refusal(command.id, RPC_ERROR_HOST_DRAINING);
 	const first = releasable(port, command, undefined);
@@ -124,7 +126,10 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 		return answer;
 	} catch (cause) {
 		if (cause instanceof SessionMovedAwayError) {
-			answer = refusal(command.id, cause.code, { detail: cause.message });
+			answer = refusal(command.id, cause.code, {
+				detail: cause.message,
+				...(interrupted ? { interrupted: true, dropped } : {}),
+			});
 			return answer;
 		}
 		answer = refusal(command.id, RPC_ERROR_RELEASE_FAILED, {
