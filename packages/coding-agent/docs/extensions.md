@@ -2280,6 +2280,19 @@ const result = await pi.exec("git", ["status"], { signal, timeout: 5000 });
 // result.stdout, result.stderr, result.code, result.killed
 ```
 
+### pi.redactForUpload(text, options?)
+
+Redact text before sending it off this machine, with the same rules `/share` uses: this machine's home path, account and host names, credentials, private keys, emails and IP addresses. Pass `extraLiterals` for other identity values you know about (for example a remote host's account name). The result is idempotent.
+
+```typescript
+const { text, counts } = pi.redactForUpload(logText, { extraLiterals: ["build-runner-07"] });
+// counts: { "home path": 1, credential: 2 }
+```
+
+### pi.hostVersion
+
+The running senpi version string.
+
 ### pi.getActiveTools() / pi.getAllTools() / pi.setActiveTools(names)
 
 Manage active tools. This works for both built-in tools and dynamically registered tools. `pi.getActiveTools()` returns the active tool names as `string[]`; `pi.getAllTools()` returns metadata for all configured tools.

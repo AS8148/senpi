@@ -8,6 +8,7 @@
  * - Interact with the user via UI primitives
  */
 
+import type { UploadRedaction, UploadRedactionOptions } from "../share/upload-redaction.ts";
 import type { ContextEvent } from "./context-event.ts";
 
 export type { ContextEvent } from "./context-event.ts";
@@ -2481,6 +2482,15 @@ export interface ExtensionAPI {
 
 	/** Execute a shell command. */
 	exec(command: string, args: string[], options?: ExecOptions): Promise<ExecResult>;
+
+	/**
+	 * Redact text before an extension sends it off this machine: the same rules `/share` applies (#3524), with this
+	 * machine's home path, account and host names plus any `extraLiterals`. Idempotent; `counts` is keyed by category.
+	 */
+	redactForUpload(text: string, options?: UploadRedactionOptions): UploadRedaction;
+
+	/** The running senpi version. */
+	readonly hostVersion: string;
 
 	/**
 	 * Execute an active tool through the same validation, tool_call, permission, and
