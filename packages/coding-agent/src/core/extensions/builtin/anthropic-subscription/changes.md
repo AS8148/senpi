@@ -1,3 +1,24 @@
+## 2026-10-19 - Single-account guidance follows the pin's source and the block's cause (senpi#3672)
+
+### What changed
+
+- `affinity.ts`: `AffinityOptions.pinSource` (`cli` | `settings` | `stored`); with account fallback off, `UnavailableAccount.pinnedBy` records it when the one account is a pin. `auth-lane.ts` passes `cli` for a request pin and `settings` or `stored` from the managed pool; `account-command.ts` passes the source it already computes.
+- `guidance.ts` (`singleAccountUnavailableGuidance`): the switch line depends on the pin's source. A CLI pin says to start a new session with another `--claude-account`; a settings pin names `anthropicSubscriptionProvider.pinnedAccount` (or `SENPI_CLAUDE_SDK_OAUTH_PINNED_ACCOUNT`); a stored pin, the session's own account, or the order head keeps `/claude-account pin`.
+- `guidance.ts`: an auth-blocked account leads with `/login` and calls its time "Next automatic re-check", as the pool-wide guidance does, instead of "Wait until ..., when this account can serve again". A rate-limited account is unchanged.
+- Documented and tested: an account that is not configured carries no cause words, so the credential-pool classifier returns `fail_request` rather than a rate-limit cooldown.
+
+### Why
+
+Review follow-ups to #3473. `/claude-account pin` only writes the stored pin, which a CLI or a settings pin outranks (`resolveClaudeAccountPin`), so that advice did nothing for those users. Waiting never fixes an auth block. A missing account cannot come back on a cooldown, so failing the request is the right verdict; it is now pinned by a test.
+
+### Why an extension could not handle it
+
+This is the builtin extension's own guidance and account selection.
+
+### Expected merge conflict zones
+
+`guidance.ts` `singleAccountUnavailableGuidance`, `affinity.ts` `selectAccount` and `AffinityOptions`, `auth-lane.ts` `managedPool`; fork-only files.
+
 ## 2026-10-19 - A reply records its Anthropic message id as responseId (oh-my-openagent#10547)
 
 ### What changed
