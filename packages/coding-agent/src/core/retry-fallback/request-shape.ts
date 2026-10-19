@@ -12,11 +12,15 @@ export const REQUEST_SHAPE_FAILURE_TEXT =
 
 const INVALID_REQUEST_PATTERN = /\binvalid_request_error\b/;
 
+/** Gateways speak the same wire but answer their own 400s; only Anthropic's own rejection is a replay-shape problem. */
+const ANTHROPIC_PROVIDER = "anthropic";
+
 /** A request-shape 400 is ours to fix, not the model's: it never walks the fallback chain (senpi#3727). */
 export function isAnthropicRequestShapeRejection(message: AssistantMessage, contextWindow: number): boolean {
 	return (
 		message.stopReason === "error" &&
 		message.api === "anthropic-messages" &&
+		message.provider === ANTHROPIC_PROVIDER &&
 		INVALID_REQUEST_PATTERN.test(message.errorMessage ?? "") &&
 		!isBillingErrorMessage(message.errorMessage) &&
 		!isContextOverflow(message, contextWindow)
@@ -61,7 +65,8 @@ export class RequestShapeRecovery {
 		this.cutoff = failedAt;
 	}
 
-	noteSuccess(): void {
+	/** Any non-request-shape outcome (success, another error, a new prompt) ends the streak. */
+	endStreak(): void {
 		this.attempted = false;
 	}
 

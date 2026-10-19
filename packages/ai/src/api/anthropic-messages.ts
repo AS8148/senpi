@@ -1457,11 +1457,14 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					maxRetries: 0,
 					...(payloadRequestMetadata.headers ? { headers: payloadRequestMetadata.headers } : {}),
 				};
-				const send = (body: MessageCreateParamsStreaming) =>
-					awaitProviderTransport(
+				// Logged before the call: the SDK throws on a non-2xx, and a rejected attempt is the one worth rebuilding.
+				const send = (body: MessageCreateParamsStreaming) => {
+					logAnthropicRequestShape(model, body);
+					return awaitProviderTransport(
 						() => client.beta.messages.create({ ...body, stream: true }, requestOptions).asResponse(),
 						anthropicProviderDiagnosticFromError,
 					);
+				};
 				const sent = await sendWithForcedToolChoiceFallback({
 					target: model,
 					params,
@@ -1469,7 +1472,6 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					isForced: isForcedAnthropicToolChoice,
 					send,
 				});
-				logAnthropicRequestShape(model, sent.params);
 				return { params: sent.params, response: sent.result };
 			};
 			// True when the error names web search payloads this request had not demoted yet.

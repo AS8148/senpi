@@ -1,6 +1,9 @@
 import { fauxAssistantMessage, type ProviderNativeContent } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
-import { REQUEST_SHAPE_RECOVERY_ENTRY_TYPE } from "../../../src/core/retry-fallback/request-shape.ts";
+import {
+	REQUEST_SHAPE_FAILURE_TEXT,
+	REQUEST_SHAPE_RECOVERY_ENTRY_TYPE,
+} from "../../../src/core/retry-fallback/request-shape.ts";
 import { registerFallbackModels } from "../fallback-provider-fixture.ts";
 import { createHarness, type Harness } from "../harness.ts";
 
@@ -39,16 +42,17 @@ describe("senpi#3727 request-shape 400 recovers on the same model", () => {
 		while (harnesses.length > 0) harnesses.pop()?.cleanup();
 	});
 
-	async function setup(): Promise<Harness> {
+	async function setup(provider = "anthropic"): Promise<Harness> {
 		const harness = await createHarness({
 			api: "anthropic-messages",
+			provider,
 			models: [{ id: "faux-1" }, { id: "faux-2" }],
 			settings: {
 				retry: {
 					enabled: true,
 					maxRetries: 2,
 					baseDelayMs: 1,
-					fallbackChains: { "faux/faux-1": ["other-faux/faux-2"] },
+					fallbackChains: { [`${provider}/faux-1`]: ["other-faux/faux-2"] },
 				},
 			},
 		});
@@ -101,6 +105,51 @@ describe("senpi#3727 request-shape 400 recovers on the same model", () => {
 		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-1"]);
 		expect(harness.eventsOfType("retry_fallback_applied")).toEqual([]);
 		const ends = harness.eventsOfType("auto_retry_end");
-		expect(ends.filter((event) => !event.success)).toHaveLength(1);
+		const failed = ends.filter((event) => !event.success);
+		expect(failed).toHaveLength(1);
+		expect(failed[0]?.finalError).toBe(REQUEST_SHAPE_FAILURE_TEXT);
+	});
+
+	it("leaves a gateway's invalid_request_error 400 on the ordinary retry path", async () => {
+		// Given: a gateway provider that speaks the Anthropic wire
+		const harness = await setup("gateway");
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: ORPHAN_400 }),
+			fauxAssistantMessage("answer"),
+		]);
+
+		// When: the gateway rejects the request
+		await harness.session.prompt("hello");
+
+		// Then: no request-shape recovery runs; the ordinary retry handles it
+		expect(
+			harness.session.sessionManager
+				.getEntries()
+				.filter((entry) => entry.type === "custom" && entry.customType === REQUEST_SHAPE_RECOVERY_ENTRY_TYPE),
+		).toEqual([]);
+		expect(harness.eventsOfType("auto_retry_end").map((event) => event.finalError)).not.toContain(
+			REQUEST_SHAPE_FAILURE_TEXT,
+		);
+		expect(harness.eventsOfType("auto_retry_end").map((event) => event.success)).toEqual([true]);
+	});
+
+	it("gives a later prompt its own recovery after a give-up", async () => {
+		// Given: one prompt that already gave up
+		const harness = await setup();
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: ORPHAN_400 }),
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: ORPHAN_400 }),
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: ORPHAN_400 }),
+			fauxAssistantMessage("recovered answer"),
+		]);
+		await harness.session.prompt("hello");
+
+		// When: the next prompt hits the same rejection
+		await harness.session.prompt("again");
+
+		// Then: it is retried once on the same model and recovers
+		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-1", "faux-1", "faux-1"]);
+		expect(harness.eventsOfType("auto_retry_end").filter((event) => !event.success)).toHaveLength(1);
+		expect(harness.eventsOfType("retry_fallback_applied")).toEqual([]);
 	});
 });

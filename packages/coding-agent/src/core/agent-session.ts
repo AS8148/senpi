@@ -3580,17 +3580,19 @@ export class AgentSession {
 			const retryAfterRequiredCompaction =
 				requiredAutoCompaction !== undefined && this._isRequiredCompactionError(msg);
 
-			if (msg.stopReason !== "error") this._requestShapeRecovery.noteSuccess();
 			const requestShape = this._requestShapeRecovery.decide(msg, this.model?.contextWindow ?? 0);
+			if (requestShape === "not-request-shape") this._requestShapeRecovery.endStreak();
 			if (
 				requestShape !== "not-request-shape" &&
 				!userAbortSuppressedQueuedContinuation &&
 				this.settingsManager.getRetrySettings().enabled
 			) {
-				if ((await this._handleRequestShapeRejection(msg, requestShape)) === "continued") {
+				const requestShapeOutcome = await this._handleRequestShapeRejection(msg, requestShape);
+				if (requestShapeOutcome === "continued") {
 					this._abortProvenance.closeAgentEndBoundary();
 					return;
 				}
+				retryContinuationBlocked ||= requestShapeOutcome === "blocked";
 			}
 			// Retry transient failures normally and eligible hard errors only through a fallback.
 			const retryableError = requestShape === "not-request-shape" && this._isRetryableError(msg);
@@ -10598,7 +10600,13 @@ export class AgentSession {
 		decision: "recover" | "give-up",
 	): Promise<"continued" | "blocked" | "not-handled" | "cancelled"> {
 		if (decision === "give-up") {
-			this._emit({ type: "auto_retry_end", success: false, attempt: 1, finalError: REQUEST_SHAPE_FAILURE_TEXT });
+			this._requestShapeRecovery.endStreak();
+			this._emit({
+				type: "auto_retry_end",
+				success: false,
+				attempt: Math.max(1, this._retryAttempt),
+				finalError: REQUEST_SHAPE_FAILURE_TEXT,
+			});
 			this._retryAttempt = 0;
 			return "not-handled";
 		}
