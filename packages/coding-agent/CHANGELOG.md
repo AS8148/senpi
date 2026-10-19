@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- `get_available_models` reports each model's resolved `serviceTier` and `upstreamModelId`, including a `-fast` alias's pairing declared only in `models.json` or by an extension provider. Clients that verify a child opened on the base model of a requested `-fast` alias no longer refuse it as a substitution ([#3666](https://github.com/code-yeongyu/senpi/issues/3666)).
+
 - A session can be exported for a move to another device and imported there under the same id: the device it left keeps a read-only copy and refuses writes to it, the receiver takes ownership in one atomic step, queued input travels with it, and a declined move gives the session back with its queued input. `release_session` accepts `reason: "move"` with a `moveId` ([#3630](https://github.com/code-yeongyu/senpi/issues/3630)).
 
 - An extension handler that never settles on an agent lifecycle or boundary event (`turn_end`, `agent_before_settle`) no longer freezes the session: past `extensionEventHandlerWarnMs` (default 60 s) the session shows which extension and event it is waiting on, at `extensionEventHandlerTimeoutMs` (default 20 min) it stops waiting, persists the turn and delivers queued input, and an Esc or the turn deadline that the run does not honour within 10 s releases such a wait instead of only logging `turn_deadline_unsettled`; every stage, including a failure after the host stopped waiting, is logged as `extension_handler_stalled` in session.log. Input queued while `agent_end` handlers run is delivered once and the session settles however many async `agent_end` handlers run before it ([#3650](https://github.com/code-yeongyu/senpi/issues/3650), [#3351](https://github.com/code-yeongyu/senpi/issues/3351)).
