@@ -30,6 +30,12 @@ export const handleOwnerStore = new AsyncLocalStorage<HandleOwner>();
  * `node:` and `native` frames never match.
  */
 const FRAME_PATH = /(?:^|[\s(])((?:file:\/\/)?(?:\/|[A-Za-z]:[\\/])[^()]*?):\d+:\d+\)?$/;
+/**
+ * A file extension Bun loads through senpi's importer names its frames by module id,
+ * `senpi-extension:<generation>/<encodeURIComponent(filename)>` (`bun-extension-registry.ts`).
+ * Not imported from there: the registry is Bun-only and loads lazily.
+ */
+const EXTENSION_MODULE_FRAME = /(?:^|[\s(])senpi-extension:[^/\s()]+\/([^\s()]+?):\d+:\d+\)?$/;
 const CREATOR_STACK_DEPTH = 16;
 /**
  * `creatorPath`, `creatingOwner` and the patched function sit above the creating call. Skipped by count, not
@@ -44,7 +50,10 @@ function creatorPath(): string | undefined {
 	const stack = new Error().stack ?? "";
 	Error.stackTraceLimit = limit;
 	for (const line of stack.split("\n").slice(1 + TRACKING_FRAMES)) {
-		const location = FRAME_PATH.exec(line.trim())?.[1];
+		const frame = line.trim();
+		const moduleFile = EXTENSION_MODULE_FRAME.exec(frame)?.[1];
+		if (moduleFile !== undefined) return decodeURIComponent(moduleFile);
+		const location = FRAME_PATH.exec(frame)?.[1];
 		if (location === undefined) continue;
 		return location.startsWith("file://") ? fileURLToPath(location) : location;
 	}

@@ -49,6 +49,25 @@ process.env.SENPI_CODING_AGENT_DIR = agentDir;
 process.env.OMO_CODING_AGENT_DIR = agentDir;
 for (const key of ["OMO_RPC_SOCKET_PATH", "OMO_RPC_SOCKET", "SENPI_RPC_SOCKET", "PI_RPC_SOCKET"]) delete process.env[key];
 
+// The #2292 fixture as a FILE extension (`-e`), like the issue's reproduction: a touched buffer kept
+// reachable by a loopback listener, stopped on session_shutdown only in `teardown` mode.
+const fixturePath = join(scratch, "memory-fixture.mjs");
+writeFileSync(
+	fixturePath,
+	`export default function (pi) {
+	const servers = [];
+	pi.rpc.handle("memory.allocate", () => {
+		const bytes = new Uint8Array(${allocMb} * 1024 * 1024);
+		bytes.fill(17);
+		const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response(String(bytes.byteLength)) });
+		servers.push(server);
+		return { port: server.port };
+	});
+	${extension === "teardown" ? 'pi.on("session_shutdown", () => servers.splice(0).forEach((s) => s.stop(true)));' : ""}
+}
+`,
+);
+
 const faux = registerFauxProvider({ models: [{ id: "faux-1", reasoning: false }] });
 const model = faux.getModel();
 const parsed = parseArgs([
@@ -56,6 +75,7 @@ const parsed = parseArgs([
 	"rpc",
 	"--multi-session",
 	"--no-extensions",
+	...(extension === "none" ? [] : ["-e", fixturePath]),
 	"--no-skills",
 	"--no-context-files",
 	"--no-prompt-templates",
@@ -79,19 +99,6 @@ const fauxProvider = (pi) =>
 		})),
 	});
 
-/** The #2292 fixture: a touched buffer kept reachable by a loopback listener. */
-const memoryFixture = (pi) => {
-	const servers = [];
-	pi.rpc.handle("memory.allocate", () => {
-		const bytes = new Uint8Array(allocMb * 1024 * 1024);
-		bytes.fill(17);
-		const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response(String(bytes.byteLength)) });
-		servers.push(server);
-		return { port: server.port };
-	});
-	if (extension === "teardown") pi.on("session_shutdown", () => servers.splice(0).forEach((s) => s.stop(true)));
-};
-
 const responses = new Map();
 const writer = new SessionEventWriter((chunk) => {
 	for (const line of chunk.split("\n")) {
@@ -107,7 +114,7 @@ const { router } = createHostCore(
 		permissionPreset: "full-access",
 		createRuntime: createCliRuntimeFactory(
 			{ parsed, cwd, agentDir, appMode: "rpc" },
-			{ extensionFactories: extension === "none" ? [fauxProvider] : [fauxProvider, memoryFixture] },
+			{ extensionFactories: [fauxProvider] },
 		),
 		creationModel: { provider: model.provider, modelId: model.id },
 	},

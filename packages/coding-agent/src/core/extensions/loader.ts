@@ -454,7 +454,9 @@ function createExtensionAPI(
 				);
 			}
 			extension.tools.set(tool.name, {
-				definition: { ...tool, execute: ownedBy(extension, tool.execute) },
+				definition: Object.assign(Object.create(Object.getPrototypeOf(tool)), tool, {
+					execute: ownedBy(extension, tool.execute),
+				}),
 				sourceInfo: extension.sourceInfo,
 			});
 			runtime.refreshTools();

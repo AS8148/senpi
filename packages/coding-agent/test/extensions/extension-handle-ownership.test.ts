@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type { Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +7,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { reclaimExtensionHandles, runOwnedBy } from "../../src/core/extensions/extension-handle-ledger.ts";
 import type { Extension } from "../../src/core/extensions/types.ts";
 import { createSyntheticSourceInfo } from "../../src/core/source-info.ts";
+
+const FIXTURE_SOURCE = [
+	'import net from "node:net";',
+	"export function open() {",
+	"\tconst interval = setInterval(() => {}, 60_000);",
+	"\tconst server = net.createServer();",
+	'\tconst listening = new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));',
+	"\treturn { server, interval, listening };",
+	"}",
+].join("\n");
 
 interface FixtureModule {
 	open(): { server: Server; interval: ReturnType<typeof setInterval>; listening: Promise<void> };
@@ -44,18 +54,9 @@ describe("extension handle ownership (senpi#2292)", () => {
 	beforeEach(async () => {
 		directory = mkdtempSync(join(tmpdir(), "handle-ownership-"));
 		const file = join(directory, "fixture.mjs");
-		writeFileSync(
-			file,
-			[
-				'import net from "node:net";',
-				"export function open() {",
-				"\tconst interval = setInterval(() => {}, 60_000);",
-				"\tconst server = net.createServer();",
-				'\tconst listening = new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));',
-				"\treturn { server, interval, listening };",
-				"}",
-			].join("\n"),
-		);
+		writeFileSync(file, FIXTURE_SOURCE);
+		// A package extension owns its whole directory; a single-file extension owns only its entry file.
+		writeFileSync(join(directory, "package.json"), "{}");
 		// The fixture must be a real file under the extension's directory: ownership is decided by the creating frame's path.
 		fixture = await import(pathToFileURL(file).href);
 		warn = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -109,6 +110,82 @@ describe("extension handle ownership (senpi#2292)", () => {
 	it("never tracks builtin extensions", async () => {
 		const extension = fakeExtension("builtin:fixture", "builtin", directory);
 		const opened = runOwnedBy(extension, () => fixture.open());
+		await opened.listening;
+
+		reclaimExtensionHandles([extension]);
+
+		expect(opened.server.listening).toBe(true);
+		expect(warn).not.toHaveBeenCalled();
+		clearInterval(opened.interval);
+		await new Promise<void>((resolve) => opened.server.close(() => resolve()));
+	});
+
+	it("never tracks inline factories, whose handles cannot be told from senpi's own", async () => {
+		const extension = fakeExtension("<inline>", "local", undefined);
+		const opened = runOwnedBy(extension, () => fixture.open());
+		await opened.listening;
+
+		reclaimExtensionHandles([extension]);
+
+		expect(opened.server.listening).toBe(true);
+		expect(warn).not.toHaveBeenCalled();
+		clearInterval(opened.interval);
+		await new Promise<void>((resolve) => opened.server.close(() => resolve()));
+	});
+
+	it("still reclaims a file extension whose source info was relabelled after its factory ran", async () => {
+		const extension = fakeExtension(join(directory, "index.ts"), "local", directory);
+		const opened = runOwnedBy(extension, () => fixture.open());
+		await opened.listening;
+		extension.sourceInfo = createSyntheticSourceInfo(extension.path, { source: "cli", baseDir: undefined });
+
+		reclaimExtensionHandles([extension]);
+
+		expect(opened.server.listening).toBe(false);
+		expect(String(warn.mock.calls[0]?.[0])).toContain("senpi closed 1 server, 0 sockets, 1 timer");
+	});
+
+	it("leaves alone what a bundled extension opened once it was relabelled builtin", async () => {
+		const extension = fakeExtension(join(directory, "index.ts"), "local", directory);
+		const opened = runOwnedBy(extension, () => fixture.open());
+		await opened.listening;
+		extension.sourceInfo = createSyntheticSourceInfo(extension.path, { source: "builtin", baseDir: directory });
+
+		reclaimExtensionHandles([extension]);
+
+		expect(opened.server.listening).toBe(true);
+		expect(warn).not.toHaveBeenCalled();
+		clearInterval(opened.interval);
+		await new Promise<void>((resolve) => opened.server.close(() => resolve()));
+	});
+
+	it("does not give a single-file extension what a neighbour in its directory created", async () => {
+		const loose = mkdtempSync(join(tmpdir(), "handle-ownership-loose-"));
+		try {
+			writeFileSync(join(loose, "neighbour.mjs"), FIXTURE_SOURCE);
+			const neighbour: FixtureModule = await import(pathToFileURL(join(loose, "neighbour.mjs")).href);
+			const extension = fakeExtension(join(loose, "single.ts"), "local", loose);
+			const opened = runOwnedBy(extension, () => neighbour.open());
+			await opened.listening;
+
+			reclaimExtensionHandles([extension]);
+
+			expect(opened.server.listening).toBe(true);
+			expect(warn).not.toHaveBeenCalled();
+			clearInterval(opened.interval);
+			await new Promise<void>((resolve) => opened.server.close(() => resolve()));
+		} finally {
+			rmSync(loose, { recursive: true, force: true });
+		}
+	});
+
+	it("does not give an extension what senpi's own packages created inside its directory", async () => {
+		const senpiPackage = join(directory, "node_modules", "@code-yeongyu", "senpi-tui");
+		mkdirSync(senpiPackage, { recursive: true });
+		writeFileSync(join(senpiPackage, "render.mjs"), FIXTURE_SOURCE);
+		const senpiCode: FixtureModule = await import(pathToFileURL(join(senpiPackage, "render.mjs")).href);
+		const extension = fakeExtension(join(directory, "index.ts"), "local", directory);
+		const opened = runOwnedBy(extension, () => senpiCode.open());
 		await opened.listening;
 
 		reclaimExtensionHandles([extension]);

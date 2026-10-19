@@ -1,6 +1,7 @@
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isSyntheticPath } from "../source-info.ts";
 import {
 	type HandleOwner,
 	handleOwnerStore,
@@ -53,48 +54,67 @@ class ExtensionHandleLedger implements HandleOwner {
 	}
 }
 
-/** `src/` (or `dist/`) of this package: code there is senpi's own, never an extension's. */
 function isInside(child: string, parent: string): boolean {
 	const relative = path.relative(parent, child);
 	return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
 /**
- * Both spellings of a directory: Bun's stack frames name real paths, Node's name the path a module was
- * imported by, so a directory reached through a symlink (macOS `/tmp`, a symlinked checkout) can appear as either.
+ * Both spellings of a path: Bun's stack frames name real paths, Node's name the path a module was
+ * imported by, so a path reached through a symlink (macOS `/tmp`, a symlinked checkout) can appear as either.
  */
-function directorySpellings(directory: string): readonly string[] {
+function spellings(location: string): readonly string[] {
 	try {
-		const real = realpathSync(directory);
-		return real === directory ? [directory] : [directory, real];
+		const real = realpathSync(location);
+		return real === location ? [location] : [location, real];
 	} catch {
-		return [directory];
+		return [location];
 	}
 }
 
 const isInsideAny = (child: string, parents: readonly string[]) => parents.some((parent) => isInside(child, parent));
 
-const SENPI_CODE_ROOTS = (() => {
+/**
+ * Where senpi's own code lives, never an extension's: the monorepo `packages/` directory (or this package
+ * alone when installed), the scoped packages senpi publishes, and a compiled binary's embedded filesystem.
+ */
+const SENPI_ROOTS = (() => {
 	const here = path.dirname(fileURLToPath(import.meta.url));
-	return directorySpellings(here.endsWith(path.join("core", "extensions")) ? path.resolve(here, "..", "..") : here);
+	if (!here.endsWith(path.join("core", "extensions"))) return spellings(here);
+	const packageRoot = path.resolve(here, "..", "..", "..");
+	const workspace = path.dirname(packageRoot);
+	return spellings(path.basename(workspace) === "packages" ? workspace : packageRoot);
 })();
+const SENPI_PACKAGE_SEGMENT =
+	/[\\/]node_modules[\\/]@(?:earendil-works|code-yeongyu)[\\/]|^\/\$bunfs\/|^[A-Za-z]:[\\/]~BUN[\\/]/;
+
+const isSenpiCode = (creatorPath: string): boolean =>
+	SENPI_PACKAGE_SEGMENT.test(creatorPath) || isInsideAny(creatorPath, SENPI_ROOTS);
 
 /**
- * The owner test for one extension. A file extension owns what code under its own
- * directory creates (its dependencies included when they live there). An inline
- * factory has no directory, so it owns what any code outside senpi's own creates.
+ * What a file extension's own code is: its package directory when the extension is a package (a
+ * `package.json` beside its entry), otherwise its entry file alone, so a single-file extension never
+ * owns what a neighbour in a shared extensions directory creates. Senpi's code is excluded either way.
  */
 function ownershipTest(extension: Extension): (creatorPath: string) => boolean {
-	if (extension.sourceInfo.baseDir === undefined) return (creatorPath) => !isInsideAny(creatorPath, SENPI_CODE_ROOTS);
-	const directories = directorySpellings(path.dirname(extension.resolvedPath));
-	return (creatorPath) => isInsideAny(creatorPath, directories);
+	const directory = path.dirname(extension.resolvedPath);
+	const owned = spellings(existsSync(path.join(directory, "package.json")) ? directory : extension.resolvedPath);
+	return (creatorPath) => isInsideAny(creatorPath, owned) && !isSenpiCode(creatorPath);
 }
 
 const ledgers = new WeakMap<Extension, ExtensionHandleLedger>();
 
-/** Builtin extensions are senpi's own code and manage their handles themselves. */
+/**
+ * Builtin extensions are senpi's own code and manage their handles themselves. An inline factory (a synthetic
+ * path such as `<inline>`) has no code location to tell its own handles from the senpi code it calls, so it is
+ * not tracked either. Decided by the path, not `sourceInfo`: the resource loader relabels `sourceInfo` after
+ * the factory ran (a `-e` file becomes source `cli` with no `baseDir`).
+ */
+const isUntracked = (extension: Extension): boolean =>
+	extension.sourceInfo.source === "builtin" || isSyntheticPath(extension.path);
+
 function ledgerFor(extension: Extension): ExtensionHandleLedger | undefined {
-	if (extension.sourceInfo.source === "builtin") return undefined;
+	if (isUntracked(extension)) return undefined;
 	let ledger = ledgers.get(extension);
 	if (ledger === undefined) {
 		ledger = new ExtensionHandleLedger(ownershipTest(extension));
@@ -116,7 +136,7 @@ export function ownedBy<This, Args extends unknown[], Result>(
 	extension: Extension,
 	fn: (this: This, ...args: Args) => Result,
 ): (this: This, ...args: Args) => Result {
-	if (extension.sourceInfo.source === "builtin") return fn;
+	if (isUntracked(extension)) return fn;
 	return function (this: This, ...args: Args): Result {
 		return runOwnedBy(extension, () => fn.apply(this, args));
 	};
@@ -146,6 +166,11 @@ export function reclaimExtensionHandles(extensions: readonly Extension[]): void 
 	for (const extension of extensions) {
 		const ledger = ledgers.get(extension);
 		if (ledger === undefined) continue;
+		// Bundled extensions and generated shims load as "local" and are relabelled builtin after their factory ran.
+		if (extension.sourceInfo.source === "builtin") {
+			ledgers.delete(extension);
+			continue;
+		}
 		const { counts, failures } = ledger.reclaim();
 		const total = counts.server + counts.socket + counts.timer;
 		if (total === 0 && failures.length === 0) continue;
