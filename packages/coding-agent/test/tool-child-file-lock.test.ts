@@ -30,6 +30,7 @@ async function sessionChild(): Promise<{ client: ToolChildClient; pid: () => num
 		command: { command: process.execPath, args: ["--import", resolver, roleEntry] },
 		env: { ...process.env, [TOOL_CHILD_MODULE_ROOTS_ENV]: JSON.stringify([extensionDir]) },
 		onHostCall: createSessionHostCallHandler({
+			cwd: process.cwd(),
 			executeNested: () => Promise.reject(new Error("not reached")),
 			callableToolNames: () => [],
 			target: () => undefined,

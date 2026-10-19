@@ -111,7 +111,7 @@ interface LockingHost {
 	withFileLock<T>(path: string, fn: () => Promise<T>): Promise<T>;
 	authorize(request: {
 		operation: "read" | "enumerate" | "write";
-		canonicalPath: string;
+		path: string;
 		toolName: string;
 	}): Promise<{ allow: true } | { allow: false; reason: string }>;
 }
@@ -160,7 +160,7 @@ export async function appendLocked(
 
 /** Asks the session's filesystem policy before a write; a denial fails the job with the policy's own reason. */
 export async function writeIfAllowed(args: { readonly path: string }, host: LockingHost): Promise<string> {
-	const decision = await host.authorize({ operation: "write", canonicalPath: args.path, toolName: "write" });
+	const decision = await host.authorize({ operation: "write", path: args.path, toolName: "write" });
 	if (!decision.allow) throw new Error(decision.reason);
 	return "allowed";
 }
