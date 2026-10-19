@@ -14,7 +14,19 @@ export interface AccountLimits {
 	readonly windows: readonly LimitWindow[];
 	/** ISO time of the response that reported them. */
 	readonly reportedAt: string;
+	/** The plan the provider's usage endpoint names (`pro`, `max`, ...), when it names one. */
+	readonly plan?: string;
+	/**
+	 * Why the last usage poll for this account failed (`sign-in needed`, `rate limited`, ...). The windows
+	 * beside it are the last ones reported; the next successful report clears it (senpi#3684).
+	 */
+	readonly error?: string;
 }
+
+/** What one usage-endpoint poll learned about an account: its full window set, or why it could not ask. */
+export type PollReport =
+	| { readonly windows: readonly LimitWindow[]; readonly plan?: string; readonly reportedAt: Date }
+	| { readonly error: string; readonly reportedAt: Date };
 
 type Listener = (limits: AccountLimits) => void;
 
@@ -26,9 +38,46 @@ export class SubscriptionLimitStore {
 	record(provider: string, account: string, windows: readonly LimitWindow[], now = new Date()): void {
 		if (windows.length === 0) return;
 		const key = `${provider}\u0000${account}`;
-		const merged = new Map((this.#accounts.get(key)?.windows ?? []).map((window) => [window.id, window]));
+		const previous = this.#accounts.get(key);
+		const merged = new Map((previous?.windows ?? []).map((window) => [window.id, window]));
 		for (const window of windows) merged.set(window.id, window);
-		const limits: AccountLimits = { provider, account, windows: [...merged.values()], reportedAt: now.toISOString() };
+		this.#publish(key, {
+			provider,
+			account,
+			windows: [...merged.values()],
+			reportedAt: now.toISOString(),
+			...(previous?.plan === undefined ? {} : { plan: previous.plan }),
+		});
+	}
+
+	/**
+	 * Keeps what a usage-endpoint poll learned (senpi#3684). The endpoint answers with the account's whole
+	 * window set, so it replaces the windows rather than merging; a failed poll keeps the last windows and
+	 * says why beside them. An account with no windows and no prior record stays absent on success. A
+	 * reading older than what the store already holds (a sibling's cached poll adopted after a fresher turn)
+	 * is ignored, so the shown usage never goes backwards.
+	 */
+	report(provider: string, account: string, report: PollReport): void {
+		const key = `${provider}\u0000${account}`;
+		const previous = this.#accounts.get(key);
+		const reportedAt = report.reportedAt.toISOString();
+		if (previous !== undefined && reportedAt < previous.reportedAt) return;
+		if ("error" in report) {
+			if (previous?.error === report.error) return;
+			this.#publish(key, { ...(previous ?? { provider, account, windows: [], reportedAt }), error: report.error });
+			return;
+		}
+		if (report.windows.length === 0 && previous === undefined) return;
+		this.#publish(key, {
+			provider,
+			account,
+			windows: [...report.windows],
+			reportedAt,
+			...(report.plan === undefined ? {} : { plan: report.plan }),
+		});
+	}
+
+	#publish(key: string, limits: AccountLimits): void {
 		this.#accounts.set(key, limits);
 		// A listener is a broadcast to clients: its failure (a closed sink) must never reach the provider
 		// response this runs inside, so it is reported and contained here.
