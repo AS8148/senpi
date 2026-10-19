@@ -100,6 +100,7 @@ import {
 	isAnthropicWebSearchReplayBlock,
 	isReplayableAnthropicProviderNativeBlock,
 } from "./anthropic-native-replay-blocks.ts";
+import { logAnthropicRequestShape } from "./anthropic-request-shape-log.ts";
 import { sanitizeAnthropicToolPairs } from "./anthropic-tool-pairs.ts";
 import { demoteToolReferenceReplay, demoteUnavailableToolReferences } from "./anthropic-tool-references.ts";
 import {
@@ -1468,6 +1469,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					isForced: isForcedAnthropicToolChoice,
 					send,
 				});
+				logAnthropicRequestShape(model, sent.params);
 				return { params: sent.params, response: sent.result };
 			};
 			// True when the error names web search payloads this request had not demoted yet.

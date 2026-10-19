@@ -10969,3 +10969,24 @@ Context files and the skills section are assembled by core before extensions see
 - `resource-loader.ts`: the import block and the `loadProjectContextFiles` call in `reload`.
 - `skills.ts`: the area where `formatSkillsForPrompt` used to live.
 - `settings-manager.ts`: the `Settings` interface beside `compaction`.
+
+## 2026-10-19 - A request-shape 400 recovers on the same model; Claude chains drop pre-5 Opus (senpi#3727)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/settings.ts`: `DEFAULT_FALLBACK_CHAINS` keeps only current-generation Opus rungs: `claude-fable-5-1` and `claude-fable-5` step to `claude-opus-5-5:max`, then `claude-opus-5:max`; `claude-opus-5-5` steps to `claude-opus-5:max`. `claude-opus-4-8` and `claude-opus-4-6` are gone from every shipped chain.
+- `packages/coding-agent/src/core/retry-fallback/request-shape.ts` (new): `isAnthropicRequestShapeRejection` (Anthropic `invalid_request_error`, not billing, not context overflow), `stripProviderNativeReplay` (removes assistant `providerNative` blocks at or before a cutoff, never user text or client tool pairs) and `RequestShapeRecovery` (one recovery per failing streak).
+- `packages/coding-agent/src/core/agent-session.ts`: on such a 400 the session never enters the hard-error fallback or the transient retry path. It records a `request-shape-recovery` custom entry, logs `request_shape_recovery`, and retries once on the same model with provider-native replay stripped from the history before the failure (applied in `transformContext`, so it covers every later request of the session). A second rejection ends the retry with one `auto_retry_end` whose `finalError` names the action to take. `_isHardErrorFallbackEligible` excludes request-shape rejections.
+
+### Why
+
+A long Opus 5.5 session got Anthropic 400s for an unpaired `web_search` server block. Each 400 was treated as a hard error and walked the shipped chain down to `claude-opus-4-8`. Another model cannot fix our request shape; it only worked by accident because cross-model replay drops the provider-native blocks.
+
+### Why an extension could not handle it
+
+Fallback eligibility and the agent_end retry decision are owned by `AgentSession`; an extension sees the error only after the controller already switched models.
+
+### Expected merge conflict zones
+
+- `agent-session.ts`: the retry-state fields, the `transformContext` wrapper in `_installAgentNextTurnRefresh`, the start of the agent_end retry block, and `_isHardErrorFallbackEligible`.
+- `retry-fallback/settings.ts`: `DEFAULT_FALLBACK_CHAINS`.
