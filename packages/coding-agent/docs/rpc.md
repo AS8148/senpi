@@ -1847,13 +1847,15 @@ A move hands a session to another host under the same id (capability `move_sessi
 | `prepare` | receiver | `moveId` | `{ state: "ready", expires_at }` (or `receiving` / `accepted` if it already is); the move must see its bundle within 10 minutes |
 | `cancel` | receiver | `moveId` | the record: `declined` with reason `cancelled`, unless already `receiving` or `accepted` |
 | `export` | sender | `sessionPath`, `moveId`, `target`, `droppedUserMessages?` | `{ move_id, session_id, bundle_dir, files }`; `bundle_dir` is the folder to send, kept until `finish` |
-| `import` | receiver | `bundleDir`, `cwd`, `from?` | `{ session_id, session_path }`; the session lands in this host's session folder for `cwd` |
+| `import` | receiver | `bundleDir`, `cwd` (both absolute), `from?` | `{ session_id, session_path }`; the session lands in this host's session folder for `cwd` |
 | `status` | receiver | `moveId`, `sessionPath?` | the answer for the sender: `receiving`, `accepted`, or `declined` / `failed` with `reason`; an unknown move is recorded `declined` (`no_record`) before the answer |
 | `finish` | sender | `sessionPath`, `moveId`, `answer` (the `status` data) | `{ ownership: "moved" \| "writable" \| "moving" }` |
 
+`export` and `finish` run one at a time per session file, so two `finish` calls for one move settle it once and hand the queued input back once; both refuse a session this host has open (compared after resolving `.`, `..` and symlinks).
+
 The order is: the receiver `prepare`s; the sender releases the session with `release_session` reason `move` (usually with `interrupt: true`) and passes its `dropped.user_messages` to `export`; the transport carries `bundle_dir` to the receiver, which `import`s it; the sender asks `status` (on start, on reconnect, and when the session is opened) and `finish`es with the answer. `accepted` leaves the sender's copy read-only for good; `declined` or `failed` makes it writable again with its queued input back. `receiving` changes nothing.
 
-Refusals carry `errorData.detail` (the reason and what to do): `invalid_move_request` (a field does not parse), `session_open_here` (export of a session this host has open), `move_not_released` (export of a file not sealed for that move), `move_fenced` (a move already answered, or a bundle for a move the receiver never readied), `move_bundle_invalid`, `move_repository_mismatch` (`cwd` is not a checkout of the same repository), `move_target_occupied`, `move_mismatch`, `session_moved_away`, `session_held`, and `move_failed` for anything else.
+Refusals carry `errorData.detail` (the reason and what to do): `invalid_move_request` (a field does not parse), `session_open_here` (export or finish of a session this host has open), `move_not_released` (export of a file not sealed for that move), `move_fenced` (a move already answered, or a bundle for a move the receiver never readied), `move_bundle_invalid`, `move_repository_mismatch` (`cwd` is not a checkout of the same repository), `move_target_occupied`, `move_mismatch`, `session_moved_away`, `session_held`, and `move_failed` for anything else.
 
 ### Host self-observation (event-loop stalls and memory pressure)
 
