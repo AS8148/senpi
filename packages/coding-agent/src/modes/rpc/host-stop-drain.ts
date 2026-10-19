@@ -71,6 +71,10 @@ export async function drainHost(paths: HostDaemonPaths, options: DrainHostOption
 			await writeDrainRequest(generation.drainRequestFile, {
 				sender: { pid: process.pid, kind: "stop" },
 				reason: "operator_drain",
+			}).catch((cause: unknown) => {
+				// The generation ended and released its directory between the ownership check and this write: it is
+				// already drained, and the exit check below reports it.
+				if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
 			});
 			return drained({ ...owner }, options.waitMs);
 		}
