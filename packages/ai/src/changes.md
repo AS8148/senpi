@@ -1,3 +1,21 @@
+## 2026-10-18 - AnthropicMessagesCompat.supportsGzipRequestBody (senpi#3643)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `AnthropicMessagesCompat` gains optional `supportsGzipRequestBody`.
+
+### Why
+
+- Lets a model or provider opt in or out of gzip request bodies (senpi#3643).
+
+### Why an extension could not handle it
+
+- The compat type is part of the public model contract in `pi-ai`.
+
+### Expected merge conflict zones
+
+- LOW: the end of `AnthropicMessagesCompat` in `packages/ai/src/types.ts`.
+
 ## 2026-10-17 - Export the provider credential env names (senpi#3531)
 
 ### What changed
