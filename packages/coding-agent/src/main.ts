@@ -107,6 +107,7 @@ import { assertValidSessionId, SessionManager } from "./core/session-manager.ts"
 import { classifySessionRepository, readSessionCwd, rebindSessionFile } from "./core/session-rebind.ts";
 import { collectSettingsDiagnosticsWithContext } from "./core/settings-diagnostics.ts";
 import { SettingsManager } from "./core/settings-manager.ts";
+import { startSubscriptionUsagePolling } from "./core/subscription-limits/usage-poller.ts";
 import { type ClampedThinkingSelection, formatThinkingClampWarning } from "./core/thinking-levels.ts";
 import { printTimings, recordTiming, resetTimings, time } from "./core/timings.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
@@ -1346,6 +1347,9 @@ export async function main(args: string[], options?: MainOptions) {
 		// otherwise theme-touching extensions fail with "Theme not initialized. Call
 		// initTheme() first." (senpi#1894).
 		initTheme(startupSettingsManager.getTheme(), false);
+		if (!offlineMode) {
+			startSubscriptionUsagePolling({ agentDir, report: (message) => void process.stderr.write(`${message}\n`) });
+		}
 		printTimings();
 		await runMultiSessionHost({
 			agentDir,
@@ -1548,6 +1552,15 @@ export async function main(args: string[], options?: MainOptions) {
 	const stopChildReaper = await startHostChildReaper(
 		appMode === "interactive" ? () => {} : (message) => void process.stderr.write(`${message}\n`),
 	);
+
+	// Subscription limits are known before the first turn (senpi#3684); one-shot print runs never poll.
+	if (!offlineMode && (appMode === "rpc" || appMode === "interactive")) {
+		startSubscriptionUsagePolling({
+			agentDir,
+			// The TUI owns stderr in interactive mode, as with the child reaper below.
+			report: appMode === "interactive" ? () => {} : (message) => void process.stderr.write(`${message}\n`),
+		});
+	}
 
 	if (appMode === "rpc") {
 		const { runRpcMode } = await import("./modes/rpc/rpc-mode.ts");

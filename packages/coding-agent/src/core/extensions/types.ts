@@ -90,6 +90,7 @@ import type {
 import type { Settings } from "../settings-manager.ts";
 import type { SlashCommandInfo } from "../slash-commands.ts";
 import type { SourceInfo, SourceScope } from "../source-info.ts";
+import type { AccountLimits } from "../subscription-limits/limit-store.ts";
 import type { BuildSystemPromptOptions } from "../system-prompt.ts";
 import type { BashOperations } from "../tools/bash.ts";
 import type { EditToolDetails } from "../tools/edit.ts";
@@ -2414,6 +2415,15 @@ export interface ExtensionAPI {
 	 * permission system is not running for the session, its setup failed, or the session is not bound yet.
 	 */
 	getPermissionPreset(): PermissionPresetName | undefined;
+
+	/**
+	 * Every subscription account's latest limit windows: the records `get_subscription_limits` serves, fed by
+	 * the engine's usage poll and by turns (senpi#3684). An account nothing has reported for is absent.
+	 */
+	getSubscriptionLimits(): readonly AccountLimits[];
+
+	/** Called each time an account's limits are reported; returns the unsubscribe. */
+	onSubscriptionLimits(listener: (limits: AccountLimits) => void): () => void;
 
 	// =========================================================================
 	// Message Rendering
