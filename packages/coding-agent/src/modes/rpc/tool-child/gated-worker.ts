@@ -12,6 +12,7 @@ import realWorkerThreads, { parentPort, Worker, type WorkerOptions } from "node:
 import { type BunGateBypass, type BunLaunchGlobals, installGatedBun } from "./gated-bun.ts";
 import { createGatedChildProcess } from "./gated-child-process.ts";
 import { CHILD_PROCESS_LAUNCH_FUNCTIONS, installChildProcessModule, RefusedWorker } from "./gated-modules.ts";
+import { toolChildReentry } from "./launch-env-names.ts";
 import type { LaunchGate } from "./launch-gate.ts";
 import { readTestControls } from "./test-controls.ts";
 import { WorkerLaunchClient, type WorkerLaunchMessage } from "./worker-launch.ts";
@@ -19,6 +20,8 @@ import { WorkerLaunchClient, type WorkerLaunchMessage } from "./worker-launch.ts
 export interface GatedWorkerData {
 	readonly barrierClock: SharedArrayBuffer;
 	readonly jobId: string;
+	/** The tool child's re-entry command: scrubbed from every environment, so it travels in the worker data. */
+	readonly reentry?: string | undefined;
 }
 
 function isLaunchMessage(value: unknown): value is WorkerLaunchMessage {
@@ -26,7 +29,7 @@ function isLaunchMessage(value: unknown): value is WorkerLaunchMessage {
 		typeof value === "object" &&
 		value !== null &&
 		"kind" in value &&
-		(value.kind === "launch" || value.kind === "invoking" || value.kind === "done")
+		(value.kind === "launch" || value.kind === "invoking" || value.kind === "started" || value.kind === "done")
 	);
 }
 
@@ -40,6 +43,7 @@ export function startGatedWorker(
 		...options.workerData,
 		barrierClock: gate.clock.buffer,
 		jobId,
+		reentry: toolChildReentry(),
 	};
 	const worker = new Worker(file, { ...options, workerData });
 	worker.on("message", (message: unknown) => {
@@ -60,7 +64,12 @@ export function installWorkerBarrier(data: GatedWorkerData, env: NodeJS.ProcessE
 	// The Bun gate goes first: the gated child_process makes its real calls inside its bypass (one gate per launch).
 	const bun: unknown = Reflect.get(globalThis, "Bun");
 	const bypass: BunGateBypass = isBunLaunchGlobals(bun) ? installGatedBun(bun, client) : (fn) => fn();
-	const gated = createGatedChildProcess(bypassingBunGate(realChildProcess, bypass), client);
+	const gated = createGatedChildProcess(
+		bypassingBunGate(realChildProcess, bypass),
+		client,
+		process.platform,
+		data.reentry,
+	);
 	installChildProcessModule(gated);
 	for (const name of CHILD_PROCESS_LAUNCH_FUNCTIONS) {
 		Object.defineProperty(realChildProcess, name, {

@@ -18,7 +18,10 @@ export interface BarrierViolation {
 		| "proof_unacked"
 		| "proof_unordered"
 		| "proof_unknown_launch"
-		| "ledger_unwritable";
+		| "ledger_unwritable"
+		| "breakaway_contradicts_containment";
+	/** `tool_child_containment_violation` when the started command is not where its launch said it would be. */
+	readonly code: "tool_child_barrier_violation" | "tool_child_containment_violation";
 }
 
 export interface LaunchEnforcerOptions {
@@ -32,10 +35,13 @@ export interface LaunchEnforcerOptions {
 	readonly holdAck?: (launchId: string) => Promise<void>;
 	readonly setTimer?: (fn: () => void, ms: number) => () => void;
 	readonly proofMs?: number;
+	/** Windows: a live job listing, recorded as confirmation of creation-time membership (never as a refutation). */
+	readonly confirmMember?: (pid: number) => boolean;
 }
 
 interface Inflight {
 	readonly jobId: string;
+	readonly containment: DescendantEntry["containment"];
 	acked: boolean;
 	cancelTimer: (() => void) | undefined;
 	proven: boolean;
@@ -52,7 +58,13 @@ export class LaunchEnforcer {
 	}
 
 	async onLaunch(frame: ToolChildMessageOf<"launch">): Promise<void> {
-		const inflight: Inflight = { jobId: frame.jobId, acked: false, cancelTimer: undefined, proven: false };
+		const inflight: Inflight = {
+			jobId: frame.jobId,
+			containment: frame.containment,
+			acked: false,
+			cancelTimer: undefined,
+			proven: false,
+		};
 		this.#inflight.set(frame.launchId, inflight);
 		const recording = this.#record(frame);
 		this.#recordings.add(recording);
@@ -124,6 +136,31 @@ export class LaunchEnforcer {
 			this.#violate(frame.launchId, "proof_unordered");
 	}
 
+	/**
+	 * Windows creation-time evidence: a command started by a creator inside the job is a member from creation (job
+	 * membership is inherited), unless it broke away. A `breakaway` that contradicts the ledgered containment means the
+	 * command is not where the server recorded it, so the generation is ended as a containment violation.
+	 */
+	onCommandStarted(frame: ToolChildMessageOf<"command_started">): void {
+		void this.#options.log.record({ ...frame });
+		const inflight = this.#inflight.get(frame.launchId);
+		if (inflight === undefined) return;
+		if (frame.breakaway !== (inflight.containment === "breakaway")) {
+			this.#violate(frame.launchId, "breakaway_contradicts_containment", "tool_child_containment_violation");
+			return;
+		}
+		const member = frame.creatorInJob && !frame.breakaway;
+		const confirm = this.#options.confirmMember;
+		void this.#options.log.record({
+			type: "job_membership",
+			launchId: frame.launchId,
+			pid: frame.pid,
+			member,
+			evidence: "creation",
+			...(member && confirm !== undefined ? { confirmed: confirm(frame.pid) } : {}),
+		});
+	}
+
 	onDone(frame: ToolChildMessageOf<"launch_done">): void {
 		void this.#options.log.record({ ...frame });
 	}
@@ -133,13 +170,17 @@ export class LaunchEnforcer {
 		this.#inflight.clear();
 	}
 
-	#violate(launchId: string, reason: BarrierViolation["reason"]): void {
+	#violate(
+		launchId: string,
+		reason: BarrierViolation["reason"],
+		code: BarrierViolation["code"] = "tool_child_barrier_violation",
+	): void {
 		const jobId = this.#inflight.get(launchId)?.jobId;
-		void this.#options.log.record({ type: "violation", code: "tool_child_barrier_violation", launchId, reason });
+		void this.#options.log.record({ type: "violation", code, launchId, reason });
 		if (this.#violated) return;
 		this.#violated = true;
 		this.dispose();
-		this.#options.onViolation({ launchId, jobId, reason });
+		this.#options.onViolation({ launchId, jobId, reason, code });
 	}
 }
 

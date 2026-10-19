@@ -1,3 +1,59 @@
+## 2026-10-19 - CI runs the tool child's Job Object containment tests on Windows (senpi#3566)
+
+### What changed
+
+- `.github/workflows/ci.yml`: a `tool-child-windows` job (`Tool child Job Object (Windows)`, `windows-latest`, Bun `1.4.3`) runs the tool child's Windows containment tests (`windows-job.win32.test.ts`, `launch-barrier.win32.test.ts`, `child-containment.test.ts`, `windows-breakaway.test.ts`, `windows-command-line.test.ts`) under Bun between the OS-temp snapshot and check steps. A follow-up step fails the job unless both real-kernel files executed and every test in them passed, because a suite that skips itself exits 0. The job is listed in the `Check and test` fan-in.
+
+### Why
+
+- The tool child holds every command it launches in a Windows Job Object through `bun:ffi` calls into kernel32. Those tests skip themselves under Node and on other platforms, so no existing job ran them against the real kernel.
+
+### Why an extension could not handle it
+
+- CI jobs are repository workflow configuration.
+
+### Expected merge conflict zones
+
+- LOW: the new job block and the `Check and test` `needs` list.
+
+## 2026-10-18 - CI runs the main-screen wheel and ask-user hint tests on Windows (senpi#3604)
+
+### What changed
+
+- `.github/workflows/ci.yml`: a `tui-mouse-windows` job (`TUI mouse wheel and hint (Windows)`, `windows-latest`) runs `packages/tui/test/tui-main-screen-mouse.test.ts` and `packages/coding-agent/test/suite/ask-user-widget-mouse.test.ts` between the OS-temp snapshot and check steps, and is listed in the `Check and test` fan-in.
+
+### Why
+
+- Main-screen mouse tracking is gated on `WT_SESSION` on win32, and the reporter of #3604 was on Windows Terminal. The wheel-yield state machine and the Shift selection hint need a Windows run, which no other job covered.
+
+### Why an extension could not handle it
+
+- CI jobs are repository workflow configuration.
+
+### Expected merge conflict zones
+
+- LOW: the new job block and the `Check and test` `needs` list.
+
+## 2026-10-17 - CI and release workflows pin Bun 1.4.3
+
+### What changed
+
+- `.github/workflows/build-binaries.yml`: the `oven-sh/setup-bun` step installs Bun `1.4.3` instead of `1.4.2`.
+- `.github/workflows/ci.yml`, `publish-npm.yml`, `releasability.yml`, `read-summary-binary-parity.yml` and `session-worker-compile.yml`: every `oven-sh/setup-bun` step installs Bun `1.4.3` instead of `1.4.2` (senpi#3078).
+
+### Why
+
+Bun 1.4.3 carries the idle-GC fixes oven-sh/bun#43681 and oven-sh/bun#43174: idle JS threads, Workers included, now run their own full collections. CI and the release binaries must build and test on the runtime users get. The codemode kernel's own idle collection (#2261) already gates itself to Bun `<1.4.3` and Node, so on 1.4.3 it no longer runs.
+
+### Why an extension could not handle it
+
+The toolchain version CI installs is repository workflow configuration.
+
+### Expected merge conflict zones
+
+- LOW: the `bun-version` lines in the six workflows above, if upstream changes its Bun pin.
+
+
 ## 2026-10-13 - Catalog refresh branches regenerate on main data changes and refuse hand commits (#3243)
 
 ### What changed
