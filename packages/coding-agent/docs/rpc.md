@@ -1836,6 +1836,8 @@ no longer lists it and the handle answers `unknown_session`.
   `session_released` entry on disk or in memory, and a later release can be retried. A teardown that fails
   after it claimed the session leaves it closing.
 
+A release with `reason: "move"` (and a `moveId`) seals the session for a move to another device: its `session_released` entry records `move_id`, `target` and `session_id`, and from then on any write to the file is refused with `session_moved_away` until that same move is reclaimed. A later `takeover` release, or any ownership entry for another move, is refused too. A `move` without `moveId` is refused with `invalid_release_reason`.
+
 ### Host self-observation (event-loop stalls and memory pressure)
 
 Every in-process session shares the host's event loop, so a session that blocks it freezes every other session and the
@@ -2054,7 +2056,7 @@ names a valid preset.
 | `close_session` | `sessionId` | `{}` | Refused with `unknown_session` when the requesting connection never attached to that handle (a close releases the CALLER's attachment, and `list_sessions` publishes every handle). Otherwise aborts active work, awaits agent idle + settled persistence for up to the host grace window (default 10s), then quarantines any worker that has not exited without releasing its path reservation; its response is the LAST record tagged with that handle for the first closer — no events after (test-pinned). An admitted concurrent close joins the same teardown and receives its own successful response; output saturation rejects admission with the bounded close-overflow/resync notice described above. |
 | `list_sessions` | `include_workers?` (default false) | `{ sessions: [{ sessionId, durableSessionId, sessionPath, cwd, name, status, attachments, kind, context? }] }` | Includes `opening`/`closing` entries. Internally quarantined workers remain externally `closing` until exit. `attachments` is the session's live client attachment count; `0` on an `open` row is a retained session with no client attached. Every row carries `kind`. Rows with `kind: "worker"` are omitted unless `include_workers: true`, and `context` is published ONLY on that listing — a default listing carries no `context` at all. |
 | `detach_connection` | - | `{ deferred: string[] }` | Multi-session hosts that advertise `detach_connection`. Meant as the connection's last request: the host releases every session attachment this connection holds and answers only after that, so another connection's next `list_sessions` no longer counts it. `deferred` names the sessions that still count it (see `#### detach_connection`). Closing the socket afterwards releases nothing more. `senpi host session` sends it before closing, bounded at 5 s; on a host without the capability, or after a request timed out or the connection was lost, it relies on the release at socket close. |
-| `release_session` | `sessionId`, `reason: "takeover"`, `interrupt?`, `force?` | `{ released: true, session_path, attachments }` | Hands the session to a runtime outside this host. See "Handing a session over (`release_session`)" below. |
+| `release_session` | `sessionId`, `reason: "takeover" \| "move"`, `moveId?` (required for `move`), `target?`, `interrupt?`, `force?` | `{ released: true, session_path, attachments }` | Hands the session to a runtime outside this host. See "Handing a session over (`release_session`)" below. |
 | `wake` | `sessionId`, `delivery_ids?` | `{ admitted: [{ delivery_id, kind }] }` | Runs the session's registered inbox drain once. See "Waking a host session (`wake`)" below. |
 | `warm` | `cwd?`, `kind?`, `context?` (as on `open_session`; `cwd` MUST be absolute) | `{ state: "warmed" \| "already_warm" \| "unsupported" }` | Loads what the next matching `open_session` needs without opening a session; never listed, never an attachment, idempotent per profile. See "Warming a host" above. Advertised as the `warm` capability by in-process hosts only. |
 | every existing command | + `sessionId` (REQUIRED in multi mode) | unchanged | Routed to that session. |
@@ -2532,6 +2534,18 @@ For both commands, `status` is `removed` / `edited`, or `already_delivered` (the
 {"type": "response", "command": "edit_queued_message", "success": true, "data": {"queuedId": "q_4", "status": "conflict", "currentRevision": 2, "reason": "conflict", "action": "read the input's current text and revision from get_state or queue_update, then retry with that expectedRevision if the change still applies"}}
 ```
 
+#### get_pending_inputs
+
+What the engine holds for every pending input, and the outcome of each id a client sent, read in one consistent step (senpi#3549). `inputs` lists every input still queued, sending or failed, each as a projection: `clientMessageId`, `state` (`queued`, `edited`, `sending`, `failed`), `text`, `requestedMode`, `revision`, `statusCode`, `statusText`, `actions` and `pendingDecoration`. `knownClientMessageIds` (at most 64 non-empty ids of at most 256 characters) asks for an outcome per id: `admitted` with its projection, including `delivered` and `removed`, or `not_admitted`. Absence from `inputs` is never an outcome; read the id's outcome instead.
+
+The answer is consistent through `throughCursor`. To follow changes without a gap, subscribe first, apply the snapshot, then apply only `pending_input_update` events whose `cursor` is later. Each event carries every input one committed change touched, under that change's single `cursor`, with the same `lifetimeId`. A different `lifetimeId` means the session reopened: read the snapshot again.
+
+```json
+{"type": "get_pending_inputs", "knownClientMessageIds": ["c-7"]}
+{"type": "response", "command": "get_pending_inputs", "success": true, "data": {"lifetimeId": "5b0c…", "throughCursor": 4, "inputs": [{"clientMessageId": "c-7", "state": "queued", "text": "also run the tests", "requestedMode": "followUp", "revision": 1, "statusCode": "queued_follow_up", "statusText": "Queued - sent after this turn", "actions": ["edit", "remove", "copy"], "pendingDecoration": true, "supersededVersions": []}], "outcomes": [{"clientMessageId": "c-7", "status": "admitted", "projection": {"clientMessageId": "c-7", "state": "queued"}}]}}
+{"type": "pending_input_update", "lifetimeId": "5b0c…", "cursor": 5, "changes": [{"clientMessageId": "c-7", "state": "sending"}]}
+```
+
 #### clear_queue
 
 Remove queued steering and follow-up messages and return their text.
@@ -2791,7 +2805,7 @@ List all configured models, refreshing credential availability on each request s
 {"type": "get_available_models"}
 ```
 
-Response contains an array of full [Model](#model) objects with supported thinking levels. Each row also carries `supportsAssistantPrefill`: whether the model accepts a request ending with an assistant message, given the session's current thinking level. It is `false` for every model today, so clients continue an edited answer with `continue_from_leaf`:
+Response contains an array of full [Model](#model) objects with supported thinking levels. A row's `serviceTier` and `upstreamModelId` are the values the session resolves for that model, including ones declared only in `models.json` or by an extension provider, so a `-fast` priority alias names its base model there and a client can tell a child opened on the base model is the alias it asked for. Each row also carries `supportsAssistantPrefill`: whether the model accepts a request ending with an assistant message, given the session's current thinking level. It is `false` for every model today, so clients continue an edited answer with `continue_from_leaf`:
 ```json
 {
   "type": "response",

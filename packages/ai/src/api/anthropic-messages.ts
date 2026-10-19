@@ -60,6 +60,7 @@ import {
 	limitGitHubCopilotTools,
 	recordGitHubCopilotToolLimit,
 } from "../utils/github-copilot-tool-limit.ts";
+import { withGzipRequestBodies } from "../utils/gzip-request-body.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
 import { parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
@@ -1370,7 +1371,9 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 						shouldUseFineGrainedToolStreamingBeta(model, normalizedContext),
 						options?.refusalFallbacks !== undefined && configuredBetaHeader(model, options) !== null,
 						optionsHeaders,
-						options?.fetch,
+						getAnthropicCompat(model).supportsGzipRequestBody
+							? withGzipRequestBodies(options?.fetch)
+							: options?.fetch,
 						copilotDynamicHeaders,
 						cacheSessionId,
 						options?.env,

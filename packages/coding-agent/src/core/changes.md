@@ -18,6 +18,110 @@
 - LOW: the two changed lines in `agent-session.ts`.
 
 
+
+## 2026-10-19 - An abort that joins an open agent_end boundary still releases a held handler (senpi#3650 follow-up)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `abortTurnForDeadline` awaits `_waitForIdleAfterAbort()` when the session is still not idle after `_abortActiveAgentAndRetry`, and `_abortWithProvenance` (Esc) starts it without awaiting. An abort that joined an open `agent_end` boundary returns at once, so a held `agent_before_settle` (or `turn_end`) handler was never released and the session stayed streaming.
+
+### Why
+
+Review of #3655 found Esc and the turn deadline covered a held lifecycle handler but not one held inside the `agent_end` boundary, where the abort takes the boundary-join branch and returns before any grace runs.
+
+### Why an extension could not handle it
+
+The abort path and the host's wait on extension handlers are session internals; no extension can release the host's wait on another extension's boundary handler.
+
+### Expected merge conflict zones
+
+- LOW: `agent-session.ts` `abortTurnForDeadline` and the line after `_abortActiveAgentAndRetry("user")` in `_abortWithProvenance`.
+
+## 2026-10-18 - A session moved to another device refuses writes on the device it left (senpi#3630)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: `_persist` asks a `SessionWriteGuard` (`session-move/write-guard.ts`) before every persisted write. When the file's last ownership entry is a `session_released` with reason `move` or a `session_moved`, any write other than an ownership entry throws `SessionMovedAwayError`, which names the reason and what to do (wait, open it on the other device, or copy it here).
+
+### Why
+
+- `packages/coding-agent/src/core/session-manager.ts`: moving a session between devices (sisyphuslabs/omo-desktop-app#3137) needs exactly one writer per session id; the device that sent the session must not keep appending to its copy, whatever opens the file (TUI, desktop, RPC host).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/session-manager.ts`: every write to a session file goes through this funnel, below extensions and below every mode, so the single-owner rule can only hold here.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/session-manager.ts`, the `writeGuard` field next to `persist` and the first line of `_persist`.
+
+## 2026-10-18 - A hung extension handler cannot freeze the session (senpi#3650)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_applyExtensionBindings` gives every runner the extension handler budget (`extensionEventHandlerWarnMs` / `extensionEventHandlerTimeoutMs`), routes stalls to `reportExtensionHandlerStall`, and tags handler waits with `_handlerTurnScope` (advanced where a prompt arms the turn deadline); `releaseHeldExtensionHandlers()` releases only that turn's waits. `_handleAgentEvent` feeds `AgentRunContinuations`, and `_emitAgentSettled(agentEnd)` no longer waits for the agent to go idle when the core continued the run with input queued during `agent_end`: that continuation's own `agent_end` settles the run (senpi#3351 drain owner).
+- `packages/coding-agent/src/core/agent-session.ts` `_abortActiveAgentAndRetry`: an abort (Esc, or the turn deadline) the run does not honour within `TURN_DEADLINE_GRACE_MS` releases the turn's held handler waits (`_waitForIdleAfterAbort`), so Esc ends a handler-held turn too.
+- `packages/coding-agent/src/core/agent-run-continuation.ts` (new): `AgentRunContinuations`, which proves from emission order (a later `agent_start`) that the core continued a run.
+- `packages/coding-agent/src/core/settings-manager.ts`: the two settings, defaults 60 s (warning) and 20 min (hard cap, above the 15 min summarization budget a blocking compaction in `message_end` may use); `0` disables each.
+- `packages/coding-agent/src/core/session-log.ts`: `extension` and `handlerEvent` join the data-key allowlist, so `extension_handler_stalled` names the extension (basename), the event, the stage (`warn` / `timeout` / `released` / `late_failure`) and, for a late failure, its `error`.
+- `packages/coding-agent/src/core/turn-deadline.ts`: a turn still running one grace after the deadline abort has its turn's held handler waits released and gets one more grace; only a turn still running after that logs `turn_deadline_unsettled`, with the real time since the abort.
+- `packages/coding-agent/src/core/extension-handler-stall-report.ts` (new): logs every stall stage and shows a notice for the warning stage.
+
+### Why
+
+AgentSession persists agent events on one serial queue and awaited every extension handler without a bound. One handler that never settled froze a long-running session for 2 h 12 min: the turn was never written, the session stayed streaming, 25 queued steers were never delivered, nothing logged which handler held it, and the turn deadline could only report the turn unsettled. Review of the first version found that which side drains input queued during `agent_end` depended on microtask timing (two async `agent_end` handlers already deadlocked it on `main`).
+
+### Why an extension could not handle it
+
+The waits are the host's own awaits on extension handlers inside the session's event queue and the run's settle; no extension can bound another extension's handler, release the host's wait on it, or decide which owner continues a run.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-session.ts` `_emitAgentSettled` (the continuation check at the top) and the `agent_end` branch of `_processAgentEvent` that calls it; the start of `_handleAgentEvent`.
+- LOW: `agent-session.ts` `_applyExtensionBindings` (after `setToolHookLifecycleObserver`), the deadline-owner adapters beside `abortTurnForDeadline`, the `_deadlineTracker.arm()` line in `_promptAgent`, the abort promise in `_abortActiveAgentAndRetry`, and the field block beside `_isAgentRunActive`.
+- LOW: `settings-manager.ts` beside the `session_shutdown` handler budget; `session-log.ts` `ALLOWED_DATA_KEY`.
+- `turn-deadline.ts`, `agent-run-continuation.ts` and `extension-handler-stall-report.ts` are fork-only.
+
+## 2026-10-18 - AgentSession keeps identified queued input in durable custody (senpi#3549, P2b)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the session owns a `SessionPendingInputs` (`pending-input-session.ts`) and installs its queue port on the agent, so every queued message is claimed, committed and released through the pending-input store. `steer`/`followUp` with a `clientMessageId` admit the input and enqueue it in one gated step (a repeated identical submit queues nothing; a reused id with another payload throws `ClientMessageIdConflictError`). New `changeQueuedInput(queuedId, text | undefined, options)` edits or removes an identified input in its record first and in the native queue in the same step; `_recordQueuedInput` accepts the admitted queue id so the record and the store share one id. Input without a client id keeps the legacy path, and `dequeueQueuedInput` / `editQueuedInput` are unchanged.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: a queued input was only in memory and in five parallel queue structures; a crash or a concurrent edit could lose it or deliver an old version (desktop #2838).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: the queues, their drain into a turn, and edit/remove are owned by the session runtime, below the extension API.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/core/agent-session.ts`, the constructor (store and port), `_queueSteer` / `_queueFollowUp`, `_enqueuePreparedInput`, `_recordQueuedInput` and the new `changeQueuedInput` above `_changeQueuedInput`.
+
+## 2026-10-18 - WSL detection survives sanitized environments (Refs senpi#3628)
+
+### What changed
+
+- `packages/coding-agent/src/core/keybindings.ts`: `useWindowsKeybindings` takes an optional `procVersionPath` and delegates Linux WSL detection to `isWSL` (`../utils/wsl.ts`: `WSL_DISTRO_NAME`/`WSL_INTEROP`/`WSLENV` plus a `/proc/version` fallback) instead of reading only the first two env markers.
+- `packages/coding-agent/src/core/footer-data-provider.ts`: `isWslEnvironment` delegates to the same `isWSL` helper instead of its own env-only copy.
+
+### Why
+
+- `packages/coding-agent/src/core/keybindings.ts`: on WSL sessions whose launcher environment carries no WSL markers (multiplexer sanitation, sudo), the dequeue chord fell back to `alt+up`, so Alt+Q fired nothing.
+- `packages/coding-agent/src/core/footer-data-provider.ts`: footer git polling for Windows-mounted paths silently stopped under the same sanitized environments.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/keybindings.ts`: default keybinding tables are core module state evaluated before extensions bind.
+- `packages/coding-agent/src/core/footer-data-provider.ts`: the footer provider is core-injected, not extension-owned.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/keybindings.ts`: `useWindowsKeybindings`.
+- `packages/coding-agent/src/core/footer-data-provider.ts`: `isWslEnvironment`.
+
 ## 2026-10-18 - Amazon Bedrock's provider default is Claude Opus 5.5
 
 ### What changed

@@ -97,6 +97,7 @@ import { sleep } from "../utils/sleep.ts";
 import { normalizeToolResultImages } from "../utils/tool-result-images.ts";
 import { AgentAbortProvenance, type AgentAbortSource } from "./agent-abort-provenance.ts";
 import { AgentBusyError } from "./agent-busy-error.ts";
+import { AgentRunContinuations } from "./agent-run-continuation.ts";
 import { AgentSettledDelivery, type DeferredAgentSettledAction, DeferredTurnClaim } from "./agent-settled-delivery.ts";
 import { resolveAssistantUsageScope } from "./assistant-usage-scope.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
@@ -174,6 +175,7 @@ import {
 import { areExperimentalFeaturesEnabled } from "./experimental.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
+import { reportExtensionHandlerStall } from "./extension-handler-stall-report.ts";
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./extensions/builtin/anthropic-subscription/account-management.ts";
 import { askUserAnswerDisplayText } from "./extensions/builtin/ask-user/format.ts";
 import { getPromptCachePrewarmUsage } from "./extensions/builtin/cache-keepalive/prewarm-entry.ts";
@@ -279,6 +281,7 @@ import { type AvailableModelsSource, getModelNarrowingPatterns, resolveModelScop
 import type { ModelRuntime } from "./model-runtime.ts";
 import { ModelSwitchAuthError } from "./model-switch-auth-error.ts";
 import { NestedToolCallRunner } from "./nested-tool-calls.ts";
+import { type PendingInputSnapshot, type PendingInputUpdate, SessionPendingInputs } from "./pending-input-session.ts";
 import { PROMPT_CACHE_SAFE_WAIT_ENV, resolvePromptCacheSafeWaitSeconds } from "./prompt-cache-budget.ts";
 import { PromptCachePrefixBuilds } from "./prompt-cache-prefix-request.ts";
 import { expandPromptTemplateWithMetadata, type PromptTemplate } from "./prompt-templates.ts";
@@ -366,6 +369,7 @@ import {
 	AgentDeadlineTracker,
 	resolveTurnDeadlineSettings,
 	TURN_DEADLINE_ENTRY_TYPE,
+	TURN_DEADLINE_GRACE_MS,
 	type TurnDeadline,
 	type TurnDeadlineWarning,
 } from "./turn-deadline.ts";
@@ -507,6 +511,8 @@ export type AgentSessionEvent =
 			type: "command_invocation";
 			command: CommandInvocation;
 	  }
+	/** A pending input changed in durable custody (senpi#3549); `changes` are complete projections. */
+	| ({ type: "pending_input_update" } & PendingInputUpdate)
 	| {
 			type: "queue_update";
 			steering: readonly string[];
@@ -1155,6 +1161,10 @@ export class AgentSession {
 	/** Settles once the queued message_end processing (persistence included) of that exact message has run. */
 	private readonly _messageEndPersistence = new WeakMap<AgentMessage, Promise<void>>();
 	private _isAgentRunActive = false;
+	/** senpi#3650: the core may continue a run after agent_end; the settle must not wait on that continuation. */
+	private readonly _runContinuations = new AgentRunContinuations();
+	/** senpi#3650: the turn that owns extension handler waits started now; the turn deadline releases only its own. */
+	private _handlerTurnScope = 0;
 	private _toolExecutionDepth = 0;
 	private readonly _toolContextDisposers = new Set<() => void>();
 	private _promptStartPending = false;
@@ -1187,6 +1197,9 @@ export class AgentSession {
 	private _abortCause: AgentAbortCause | undefined;
 	private _nextQueuedInputOrder = 0;
 	private _nextQueuedId = 0;
+	/** Identified queued input (with a client id) in durable custody; see pending-input-session.ts (senpi#3549). */
+	private readonly _pendingInputs: SessionPendingInputs;
+	private _queueClearRecorded: Promise<void> = Promise.resolve();
 	/** The exact message object queued for each `queuedId`, so removal and edits hit the native queue by identity. */
 	private readonly _queuedMessages = new Map<string, AgentMessage>();
 	/** Recently delivered `queuedId`s (bounded), so a late dequeue answers `already_delivered`, not `not_found`. */
@@ -1420,6 +1433,12 @@ export class AgentSession {
 		this._browserEngine = config.browserEngine;
 		this.agent = config.agent;
 		this.sessionManager = config.sessionManager;
+		this._pendingInputs = new SessionPendingInputs({
+			sessionManager: this.sessionManager,
+			nextQueuedId: () => this._mintQueuedId(),
+			onChange: (update) => this._emit({ type: "pending_input_update", ...update }),
+		});
+		this.agent.queuedInputPort = this._pendingInputs.queuedInputPort();
 		this.settingsManager = config.settingsManager;
 		this._unsubscribeSettingsSource = this.settingsManager.subscribeToSourceSelection((source) => {
 			this._emit({ type: "settings_source_selected", ...source });
@@ -2731,9 +2750,14 @@ export class AgentSession {
 		resolve();
 	}
 
-	private async _emitAgentSettled(): Promise<void> {
-		if (this.agent.state.isStreaming) {
-			await this.agent.waitForIdle();
+	private async _emitAgentSettled(agentEnd?: AgentEvent): Promise<void> {
+		if (
+			this.agent.state.isStreaming &&
+			(await this._runContinuations.idleOrContinued(agentEnd, () => this.agent.waitForIdle()))
+		) {
+			// The core continued this run with input queued during agent_end; that continuation settles it.
+			this._abortProvenance.closeAgentEndBoundary();
+			return;
 		}
 		if (!this._isAgentRunActive) {
 			this._abortProvenance.closeAgentEndBoundary();
@@ -2844,6 +2868,7 @@ export class AgentSession {
 		this._isAgentRunActive = true;
 		// A new turn admitted: arm the inactivity lease and the hard max-runtime cap.
 		this._deadlineTracker.arm();
+		this._handlerTurnScope += 1;
 		// A new prompt replaces any retry that compaction before it scheduled.
 		this._failedResponse = undefined;
 		this._recordSelection();
@@ -2929,6 +2954,7 @@ export class AgentSession {
 
 	/** Internal handler for agent events - shared by subscribe and reconnect */
 	private _handleAgentEvent = (event: AgentEvent, signal: AbortSignal): void => {
+		this._runContinuations.observe(event);
 		// Record the calls a tool made through ctx.executeTool() and their usage on its result message,
 		// synchronously so the message carries them before any listener or persistence sees it.
 		if (this._nestedToolCalls) {
@@ -3656,7 +3682,7 @@ export class AgentSession {
 				launchedContinuation = true;
 			}
 			if (!launchedContinuation) {
-				await this._emitAgentSettled();
+				await this._emitAgentSettled(event);
 			} else {
 				this._abortProvenance.closeAgentEndBoundary();
 			}
@@ -4305,6 +4331,29 @@ export class AgentSession {
 	/** Adapter for the deadline owner interface: end the turn through the normal system abort. */
 	async abortTurnForDeadline(): Promise<void> {
 		await this._abortActiveAgentAndRetry("system");
+		// An abort that joined an open agent_end boundary returns at once; the run is still held until it settles.
+		if (!this.isIdle) await this._waitForIdleAfterAbort();
+	}
+
+	/**
+	 * An abort (Esc, or the turn deadline) that the run does not honour within the grace is held by an extension handler
+	 * no abort signal reaches: release the turn's held handler waits so it settles (senpi#3650).
+	 */
+	private async _waitForIdleAfterAbort(): Promise<void> {
+		const idle = this.waitForIdle();
+		let graceTimer: ReturnType<typeof setTimeout> | undefined;
+		const graceOver = new Promise<true>((resolve) => {
+			graceTimer = setTimeout(() => resolve(true), TURN_DEADLINE_GRACE_MS);
+		});
+		const stillHeld = await Promise.race([idle.then(() => false), graceOver]);
+		clearTimeout(graceTimer);
+		if (stillHeld) this._extensionRunner.releaseHeldHandlers(this._handlerTurnScope);
+		await idle;
+	}
+
+	/** Adapter for the deadline owner interface: stop waiting on extension handlers that hold the turn (senpi#3650). */
+	releaseHeldExtensionHandlers(): number {
+		return this._extensionRunner.releaseHeldHandlers(this._handlerTurnScope);
 	}
 
 	/** Record a deadline stop durably so the goal engine holds off until admitted user input. */
@@ -5803,7 +5852,7 @@ export class AgentSession {
 		images?: ImageContent[],
 		options?: QueuedInputOptions & Pick<PromptOptions, "textBlocks">,
 	): Promise<void> {
-		this._enqueuePreparedInput({ ...options, text, images, mode: "steer" });
+		await this._enqueueQueuedInput({ ...options, text, images, mode: "steer" });
 	}
 
 	/**
@@ -5814,16 +5863,39 @@ export class AgentSession {
 		images?: ImageContent[],
 		options?: QueuedInputOptions & Pick<PromptOptions, "textBlocks">,
 	): Promise<void> {
-		this._enqueuePreparedInput({ ...options, text, images, mode: "followUp" });
+		await this._enqueueQueuedInput({ ...options, text, images, mode: "followUp" });
+	}
+
+	/** Identified input is admitted into durable custody and enqueued in one gated step; other input as before. */
+	private async _enqueueQueuedInput(
+		input: QueuedInputOptions & Omit<PreparedClientInput, "enqueueOrder"> & Pick<PromptOptions, "textBlocks">,
+	): Promise<void> {
+		const clientMessageId = input.clientMessageId;
+		if (clientMessageId === undefined) {
+			this._enqueuePreparedInput(input);
+			return;
+		}
+		await this._pendingInputs.admit(
+			{ clientMessageId, text: input.text, ...(input.images ? { images: input.images } : {}), mode: input.mode },
+			(queuedId) => this._enqueuePreparedInput({ ...input, queuedId }),
+		);
 	}
 
 	/** Restore accepted input without re-running input transforms or changing its enqueue order. */
 	async restoreQueuedInput(input: PreparedClientInput): Promise<void> {
-		this._enqueuePreparedInput(input);
+		const restored =
+			input.clientMessageId === undefined
+				? undefined
+				: await this._pendingInputs.restoreHandle(input.clientMessageId);
+		// The pending-input record is the authority: an input it already retired is not queued again.
+		if (restored === "retired") return;
+		this._enqueuePreparedInput(restored === undefined ? input : { ...input, queuedId: restored.queuedId });
 	}
 
 	private _enqueuePreparedInput(
-		input: QueuedInputOptions & Omit<PreparedClientInput, "enqueueOrder"> & Pick<PromptOptions, "textBlocks">,
+		input: QueuedInputOptions &
+			Omit<PreparedClientInput, "enqueueOrder"> &
+			Pick<PromptOptions, "textBlocks"> & { readonly queuedId?: string },
 	): void {
 		const enqueueOrder = input.enqueueOrder ?? this.reserveQueuedInputOrder();
 		const prepared = {
@@ -5836,7 +5908,7 @@ export class AgentSession {
 		input.onQueuedInput?.(prepared);
 		const queue = input.mode === "steer" ? this._steeringMessages : this._followUpMessages;
 		queue.push(input.text);
-		const queuedId = this._recordQueuedInput(input.text, input.mode, prepared);
+		const queuedId = this._recordQueuedInput(input.text, input.mode, prepared, undefined, input.queuedId);
 		this._sessionLogger.debug("queue_enqueue", {
 			mode: input.mode,
 			count: queue.length,
@@ -6264,11 +6336,11 @@ export class AgentSession {
 		mode: QueuedInput["mode"],
 		options?: QueuedInputOptions,
 		message?: AgentMessage,
+		admittedQueuedId?: string,
 	): string {
 		const order = options?.enqueueOrder ?? this.reserveQueuedInputOrder();
 		this._nextQueuedInputOrder = Math.max(this._nextQueuedInputOrder, order);
-		this._nextQueuedId += 1;
-		const queuedId = `q_${this._nextQueuedId}`;
+		const queuedId = admittedQueuedId ?? this._mintQueuedId();
 		this._queuedInputOrder.push({
 			text,
 			mode,
@@ -6279,6 +6351,11 @@ export class AgentSession {
 		});
 		if (message !== undefined) this._queuedMessages.set(queuedId, message);
 		return queuedId;
+	}
+
+	private _mintQueuedId(): string {
+		this._nextQueuedId += 1;
+		return `q_${this._nextQueuedId}`;
 	}
 
 	/** A queued input reached a turn: forget its record and remember its id as delivered. */
@@ -6310,6 +6387,32 @@ export class AgentSession {
 	/** Replaces the text of one queued input in place, keeping its order and identity, and bumps its revision. */
 	editQueuedInput(queuedId: string, text: string, options?: QueuedInputChangeOptions): QueuedInputChange {
 		return this._changeQueuedInput(queuedId, text, options?.expectedRevision);
+	}
+
+	/**
+	 * Removes (`text` undefined) or edits one queued input. An input in durable custody (admitted with a client id)
+	 * changes in its record first and in the native queue in the same gated step; any other input changes as
+	 * `dequeueQueuedInput` / `editQueuedInput` do.
+	 */
+	async changeQueuedInput(
+		queuedId: string,
+		text: string | undefined,
+		options?: QueuedInputChangeOptions & { readonly effectId?: string },
+	): Promise<QueuedInputChange> {
+		const clientMessageId = this._queuedInputOrder.find((input) => input.queuedId === queuedId)?.clientMessageId;
+		const durable =
+			clientMessageId === undefined
+				? undefined
+				: await this._pendingInputs.change(
+						{
+							clientMessageId,
+							text,
+							...(options?.expectedRevision === undefined ? {} : { expectedRevision: options.expectedRevision }),
+							...(options?.effectId === undefined ? {} : { effectId: options.effectId }),
+						},
+						() => this._changeQueuedInput(queuedId, text, undefined),
+					);
+		return durable ?? this._changeQueuedInput(queuedId, text, options?.expectedRevision);
 	}
 
 	// Synchronous from the revision check to the change: nothing else on the session loop can land in between.
@@ -6397,6 +6500,16 @@ export class AgentSession {
 		this._followUpMessages = [];
 		this._queuedInputOrder = [];
 		this._queuedMessages.clear();
+		const recorded = this._pendingInputs.recordCleared(
+			ordered.flatMap((input) => (input.clientMessageId === undefined ? [] : [input.clientMessageId])),
+		);
+		// A caller that acknowledges the clear awaits `recorded` and sees a failure; this logs it when nobody does.
+		recorded.catch((error: unknown) => {
+			this._sessionLogger.warn("pending_input_clear_unrecorded", {
+				error: error instanceof Error ? error.message : String(error),
+			});
+		});
+		this._queueClearRecorded = recorded;
 		this._postCompactionDeferredSteeringMessages = [];
 		this._postCompactionDeferredFollowUpMessages = [];
 		this.agent.clearAllQueues();
@@ -6408,6 +6521,14 @@ export class AgentSession {
 			enumerable: false,
 		});
 		return cleared;
+	}
+
+	/**
+	 * Settles once the last `clearQueue` is recorded in the pending-input journal. `clearQueue` stays synchronous;
+	 * a caller that acknowledges the clear (RPC `clear_queue`) awaits this first so its answer is durable.
+	 */
+	whenQueueClearRecorded(): Promise<void> {
+		return this._queueClearRecorded;
 	}
 
 	/** Number of pending messages (includes both steering and follow-up) */
@@ -6423,6 +6544,11 @@ export class AgentSession {
 	/** Get pending follow-up messages (read-only) */
 	getFollowUpMessages(): readonly string[] {
 		return this._followUpMessages;
+	}
+
+	/** The pending inputs in durable custody, and an explicit outcome for each id the caller already knows. */
+	getPendingInputs(knownClientMessageIds?: readonly string[]): Promise<PendingInputSnapshot> {
+		return this._pendingInputs.snapshot(knownClientMessageIds);
 	}
 
 	getQueuedInputs(): readonly QueuedInput[] {
@@ -6459,6 +6585,15 @@ export class AgentSession {
 		if (hasPendingTriggerTurnAdmission) this._recordUserAbort();
 		if (this._isBeforeSettle) this._abortDuringBeforeSettle = true;
 		await this._abortActiveAgentAndRetry("user");
+		// An Esc that joined an open agent_end boundary returns at once: a boundary handler that holds the run is still
+		// released after the grace (senpi#3650), without making abort() itself wait for it.
+		if (!this.isIdle) {
+			this._waitForIdleAfterAbort().catch((error: unknown) => {
+				this._sessionLogger.warn("abort_release_failed", {
+					error: error instanceof Error ? error.message : String(error),
+				});
+			});
+		}
 		if (!shouldEmitAbort) return;
 		try {
 			await this._emitSessionAbort();
@@ -7630,7 +7765,7 @@ export class AgentSession {
 
 		const abortPromise = (async () => {
 			this.agent.abort();
-			await this.waitForIdle();
+			await this._waitForIdleAfterAbort();
 		})();
 		this._userAbortPromise = abortPromise;
 		try {
@@ -9456,6 +9591,17 @@ export class AgentSession {
 		runner.setToolHookLifecycleObserver((event) => {
 			this._emit(event);
 		});
+		runner.setEventHandlerBudget(
+			() => ({
+				warnMs: this.settingsManager.getExtensionEventHandlerWarnMs(),
+				timeoutMs: this.settingsManager.getExtensionEventHandlerTimeoutMs(),
+			}),
+			(stall) =>
+				reportExtensionHandlerStall(stall, this._sessionLogger, (message, type) =>
+					runner.getUIContext().notify(message, type),
+				),
+			() => this._handlerTurnScope,
+		);
 		runner.bindCommandContext(this._extensionCommandContextActions);
 
 		this._extensionErrorUnsubscriber?.();
