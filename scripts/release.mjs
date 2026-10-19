@@ -36,7 +36,7 @@
 
 import { execFileSync } from "node:child_process";
 import { computeNextVersion } from "./calver.mjs";
-import { syncRemoteMainBeforePush } from "./release-git.mjs";
+import { pinReleaseCommit, syncRemoteMainBeforePush } from "./release-git.mjs";
 import {
 	runClaudeCodeModelSupportReport,
 	runGenerateModels,
@@ -72,6 +72,8 @@ function printUsage() {
 		"  --dry-run       Preview every shell command and file write; modify nothing.",
 		"                  Read-only git/npm reads (status, branch, tag --list,",
 		"                  npm view) still execute so the plan is accurate.",
+		"  --sha <sha>     Release this exact commit (40 hex chars, must be on main)",
+		"                  instead of main's tip; later main merges stay out of the tag.",
 		"  --force-tests   Run the CI=1 npm test suite in this job instead of",
 		"                  reusing the release commit's green \"Check and test\" CI run.",
 		"  --help, -h      Show this help and exit.",
@@ -82,7 +84,7 @@ function printUsage() {
 }
 
 function parseArgs(argv) {
-	const args = { dryRun: false, version: null, help: false, forceTests: false };
+	const args = { dryRun: false, version: null, help: false, forceTests: false, sha: null };
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
 		if (arg === "--help" || arg === "-h") {
@@ -91,6 +93,13 @@ function parseArgs(argv) {
 			args.forceTests = true;
 		} else if (arg === "--dry-run") {
 			args.dryRun = true;
+		} else if (arg === "--sha") {
+			i += 1;
+			if (i >= argv.length) {
+				process.stderr.write("[release] error: --sha requires an argument\n");
+				process.exit(1);
+			}
+			args.sha = argv[i];
 		} else if (arg === "--version") {
 			i += 1;
 			if (i >= argv.length) {
@@ -327,7 +336,7 @@ function remoteMain() {
  * A regenerated model catalog is committed and pushed to main on its own first, so CI tests exactly the tree the
  * release ships (the gap behind senpi#2645); then the release waits for that commit's green "Check and test".
  */
-function secureCiEvidence(version, dryRun, forceTests) {
+function secureCiEvidence(version, dryRun, forceTests, pinned) {
 	runGenerateModels(dryRun, runCommand, log, dryRunLog);
 	runProviderDefaultsCheck(dryRun, runCommand, log, dryRunLog);
 	if (dryRun) {
@@ -341,7 +350,15 @@ function secureCiEvidence(version, dryRun, forceTests) {
 	if (discardTimestampOnlyCatalogChange(process.cwd())) {
 		log("the regeneration changed only the catalog manifest's generatedAt stamp; keeping HEAD's catalog");
 	}
-	if (catalogChangedSinceHead(process.cwd())) {
+	if (catalogChangedSinceHead(process.cwd()) && pinned) {
+		// A pinned release cannot push a catalog commit to main for CI: main has moved past the pinned commit.
+		if (!forceTests) {
+			throw new Error("the regeneration changed the model catalog of a pinned release; dispatch it with force_tests so the suite runs on that tree");
+		}
+		log("the regeneration changed the model catalog; committing it on the pinned release only (force_tests runs the suite on it)");
+		runCommand("git", ["add", "--", ...REGENERATED_CATALOG_PATHS]);
+		gitCommit(`chore(ai): regenerate the model catalog for v${version}`, false);
+	} else if (catalogChangedSinceHead(process.cwd())) {
 		log("the regeneration changed the model catalog; committing it to main so CI tests the tree this release ships");
 		runCommand("git", ["add", "--", ...REGENERATED_CATALOG_PATHS]);
 		gitCommit(`chore(ai): regenerate the model catalog for v${version}`, false);
@@ -362,6 +379,7 @@ function secureCiEvidence(version, dryRun, forceTests) {
 			remoteMain,
 			fastForwardTo: (sha) => runCommand("git", ["merge", "--ff-only", sha]),
 			log,
+			pinned,
 		},
 	);
 }
@@ -394,6 +412,7 @@ function main() {
 		process.exit(0);
 	}
 
+	if (args.sha !== null) pinReleaseCommit(args.sha, args.dryRun, runCommand, log, dryRunLog);
 	preflight(args.dryRun);
 
 	const version = resolveVersion(args);
@@ -404,7 +423,7 @@ function main() {
 		dryRunLog("preview mode; no files, commits, tags, or npm state will be modified");
 	}
 
-	secureCiEvidence(version, args.dryRun, args.forceTests);
+	secureCiEvidence(version, args.dryRun, args.forceTests, args.sha !== null);
 	runForcedTests(args.dryRun, args.forceTests);
 	applyWorkspaceVersions(version, args.dryRun, log, dryRunLog);
 	runSyncVersions(args.dryRun, runCommand, log, dryRunLog);

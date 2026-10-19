@@ -86,6 +86,13 @@ describe("publish-only workflow", () => {
 		}
 	});
 
+	it("releases the dispatched sha when one is given, through release.mjs --sha", () => {
+		assert.match(workflow, /\n      sha:\n        description: [^\n]+\n        required: false\n        type: string\n        default: ''/);
+		const releaseStep = workflow.match(/- name: Run release[\s\S]*?npm run release -- "\$\{ARGS\[@\]\}"/)?.[0];
+		assert.ok(releaseStep, "expected the release step");
+		assert.match(releaseStep, /if \[ -n "\$\{\{ inputs\.sha \}\}" \]; then\n\s+ARGS\+=\(--sha "\$\{\{ inputs\.sha \}\}"\)/);
+	});
+
 	it("keeps binary package scripts shell-executable", () => {
 		assert.doesNotMatch(codingAgentPackage.scripts["copy-binary-assets"], /&&\s*&&/);
 	});

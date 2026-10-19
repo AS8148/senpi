@@ -1,3 +1,21 @@
+## 2026-10-19 - A release can be cut from an exact commit, not only from main at dispatch (senpi#3609)
+
+### What changed
+
+- `scripts/release.mjs`: a new `--sha <sha>` option (the `sha` input of `publish-npm.yml`) releases that exact commit. `pinReleaseCommit` in `release-git.mjs` refuses anything but a full 40-character sha, checks that `origin/main` contains it, then checks it out as `main`. The release stamps, commits and tags on that tree; the existing `syncRemoteMainBeforePush` still merges the newer main only after the tag, so later merges never reach the tagged commit. In pinned mode a cancelled CI run on the commit stops the release instead of moving it to main's tip, and a regenerated model catalog is committed on the release only and requires `force_tests`. Without `--sha` nothing changes.
+
+### Why
+
+- `scripts/release.mjs`: the release always took main's tip at dispatch, so a release could not ship the commit a full local suite had just verified once anything merged after it; the only way to keep the evidence valid was to freeze main, which is no longer allowed.
+
+### Why an extension could not handle it
+
+- `scripts/release.mjs`: release orchestration and its workflow are repository build tooling.
+
+### Expected merge conflict zones
+
+- `scripts/release.mjs`: `parseArgs`, `secureCiEvidence` and the top of `main()`; the `workflow_dispatch` inputs and the `Run release` step in `publish-npm.yml`.
+
 ## 2026-10-16 - A forced release tests its code before stamping the version and changelogs (senpi#3446)
 
 ### What changed

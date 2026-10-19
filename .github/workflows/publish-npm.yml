@@ -8,6 +8,11 @@ name: Release
         required: false
         type: string
         default: ''
+      sha:
+        description: 'Release this exact commit (full 40-char sha, must be on main) instead of main at dispatch; later merges stay out of the tag. Empty = main.'
+        required: false
+        type: string
+        default: ''
       dry_run:
         description: 'Dry-run preview only (no publish or push)'
         required: false
@@ -135,6 +140,9 @@ jobs:
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             ARGS+=(--dry-run)
           fi
+          if [ -n "${{ inputs.sha }}" ]; then
+            ARGS+=(--sha "${{ inputs.sha }}")
+          fi
           if [ "${{ inputs.force_tests }}" = "true" ]; then
             ARGS+=(--force-tests)
           fi
@@ -176,5 +184,5 @@ jobs:
             echo "| Dry run | ${{ inputs.dry_run }} |"
             echo "| Force tests | ${{ inputs.force_tests }} |"
             echo "| Version | ${{ inputs.version || 'auto' }} |"
-            echo "| Commit | ${{ github.sha }} |"
+            echo "| Commit | ${{ inputs.sha || github.sha }} |"
           } >> "$GITHUB_STEP_SUMMARY"
