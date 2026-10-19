@@ -69,9 +69,7 @@ describe("anthropic-subscription responseId (oh-my-openagent#10547)", () => {
 
 	it("records the Anthropic message id from message_start as responseId", async () => {
 		overrideSdkBoundary({
-			query: scriptedQuery(
-				textTurn({ id: "msg_01OmoTurn", usage: { input_tokens: 10, output_tokens: 0 } }),
-			),
+			query: scriptedQuery(textTurn({ id: "msg_01OmoTurn", usage: { input_tokens: 10, output_tokens: 0 } })),
 		});
 		const stream = streamAnthropicSubscription(model, { messages: [] });
 		for await (const _event of stream) {
