@@ -2971,3 +2971,23 @@ The tool card's content lifecycle is an interactive-mode internal; extensions do
 ### Expected merge conflict zones
 
 - LOW: `invalidate()`, `render()`, `updateDisplay()` and the field list of `ToolExecutionComponent`; the constructor of `ToolExecutionRenderer`.
+
+## 2026-10-20 - Message components keep less per-message state (senpi#2537)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/theme/theme.ts`: `getMarkdownTheme()` returns one object per active `Theme` instead of a new object per call; it is rebuilt when the theme switches, because Markdown's render cache keys on the theme object's identity.
+- `packages/coding-agent/src/modes/interactive/components/tool-execution-renderer.ts`: `releaseContent()` also drops the renderer's last render state (it held a filtered copy of the result); `update()` sets a fresh one before the card is painted again.
+- `packages/coding-agent/test/suite/regressions/2537-message-component-state.test.ts` (new).
+
+### Why
+
+Heap snapshots of the tool-turn soak in [#2537](https://github.com/code-yeongyu/senpi/issues/2537) attribute 11.5 KB per turn to mounted transcript components. Two parts of that were per-message duplicates: every message component (assistant, user, custom, skill, summaries) built its own markdown theme object (about 640 bytes each), and every released tool card's renderer kept a second, filtered copy of its result (about 2.1 KB each).
+
+### Why an extension could not handle it
+
+The markdown theme factory and the tool card's renderer are interactive-mode internals.
+
+### Expected merge conflict zones
+
+- LOW: `getMarkdownTheme()` in `theme.ts`; `releaseContent()` in `tool-execution-renderer.ts`.

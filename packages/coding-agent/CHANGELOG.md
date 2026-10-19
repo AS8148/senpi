@@ -21,6 +21,7 @@
 
 ### Fixed
 
+- Each mounted message no longer keeps its own copy of the markdown theme, and a tool card above the kept history no longer keeps a second copy of its result in its renderer: about 640 bytes per message and 2 KB per tool card for the rest of the session ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)).
 - Under `--tool-runtime child`, starting a session's tool child no longer removes anything through a short socket directory in `/tmp` before it is proven to be this user's private directory, and its secret is created as a new file that never follows or overwrites anything already at that name. On every failure the secret written there is destroyed, and it is unlinked only through a directory proven ours again, so a directory swapped in the meantime never leads the cleanup to another file; another local user holding that directory's name no longer blocks the start ([#3694](https://github.com/code-yeongyu/senpi/issues/3694)).
 - A timeout, abort or stop of a command that never started (missing binary, missing cwd) no longer SIGKILLs senpi and everything else in the terminal's foreground job on Node before 24.22 / 26.10, where `kill()` on a child without a pid signals the caller's own process group ([#3706](https://github.com/code-yeongyu/senpi/issues/3706)).
 - While the agent is paused for starting too many turns on its own, a stream of incoming notices no longer adds a `Paused: ...` warning for every notice: the warning shows once per pause ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)).
