@@ -46,19 +46,22 @@ function isExtensionAPI(value: ExtensionAPI | LegacyCaptureInput): value is Exte
 	return "getActiveTools" in value && "getThinkingLevel" in value;
 }
 
+/**
+ * The latest agent name any custom entry recorded, folded without a full-history view: compaction captures it
+ * while a run is active, when a materialized view of a long compacted session would be held until idle (senpi#3110).
+ */
+const latestAgentName: HistoryReducer<string | null> = {
+	initial: () => null,
+	add: (latest, entry) => {
+		if (entry.type !== "custom" || !isRecord(entry.data)) return latest;
+		if (typeof entry.data.agentName === "string") return entry.data.agentName;
+		if (typeof entry.data.agent === "string") return entry.data.agent;
+		return latest;
+	},
+};
+
 function deriveAgentName(ctx: ExtensionContext): string | null {
-	for (let index = ctx.sessionManager.getEntries().length - 1; index >= 0; index--) {
-		const entry = ctx.sessionManager.getEntries()[index];
-		if (entry.type !== "custom") continue;
-		const data = entry.data;
-		if (isRecord(data) && typeof data.agentName === "string") {
-			return data.agentName;
-		}
-		if (isRecord(data) && typeof data.agent === "string") {
-			return data.agent;
-		}
-	}
-	return null;
+	return ctx.sessionManager.reduceHistory(latestAgentName);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
