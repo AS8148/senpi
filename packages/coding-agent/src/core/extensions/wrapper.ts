@@ -43,6 +43,7 @@ export function wrapRegisteredTool(
 							signal,
 							onUpdate,
 							ctx: context,
+							sourcePath: registeredTool.sourceInfo.path,
 						})
 					: await registeredTool.definition.execute(toolCallId, params, signal, onUpdate, context);
 			} finally {

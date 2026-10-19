@@ -8,6 +8,7 @@
  * - Interact with the user via UI primitives
  */
 
+import type { UploadRedaction, UploadRedactionOptions } from "../share/upload-redaction.ts";
 import type { ContextEvent } from "./context-event.ts";
 
 export type { ContextEvent } from "./context-event.ts";
@@ -90,6 +91,7 @@ import type {
 import type { Settings } from "../settings-manager.ts";
 import type { SlashCommandInfo } from "../slash-commands.ts";
 import type { SourceInfo, SourceScope } from "../source-info.ts";
+import type { AccountLimits } from "../subscription-limits/limit-store.ts";
 import type { BuildSystemPromptOptions } from "../system-prompt.ts";
 import type { BashOperations } from "../tools/bash.ts";
 import type { EditToolDetails } from "../tools/edit.ts";
@@ -919,6 +921,12 @@ export type ToolPlacement = "server" | "child";
 /**
  * Tool definition for registerTool().
  */
+/** A tool body loaded from a file on the session's tool child (senpi#3566). */
+export interface ToolChildModule {
+	readonly path: string;
+	readonly export: string;
+}
+
 export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = unknown, TState = any> {
 	/** Tool name (used in LLM tool calls) */
 	name: string;
@@ -1018,6 +1026,13 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 
 	/** Where this tool's work runs once the per-session tool child exists (senpi#3566). */
 	placement?: ToolPlacement;
+	/**
+	 * The file-backed body a `"child"`-placed tool runs on the session's tool child (senpi#3566). `path` is absolute or
+	 * relative to the registering extension file and must stay inside that extension's directory; `export` names a
+	 * function that receives `{ params, toolCallId }` and returns a structured-cloneable tool result. Without it a
+	 * child-placed tool reports `tool_runtime_unavailable` under `--tool-runtime child`; `execute` still runs in-process.
+	 */
+	childModule?: ToolChildModule;
 	/** Set by built-in tool factories that capture injected operations or a policy override; such a definition always executes on the session's server process, even when {@link ToolDefinition.placement} is `"child"`, and the dispatcher logs one notice per tool when it pins one. */
 	serverPinned?: boolean;
 
@@ -2422,6 +2437,15 @@ export interface ExtensionAPI {
 	 */
 	getPermissionPreset(): PermissionPresetName | undefined;
 
+	/**
+	 * Every subscription account's latest limit windows: the records `get_subscription_limits` serves, fed by
+	 * the engine's usage poll and by turns (senpi#3684). An account nothing has reported for is absent.
+	 */
+	getSubscriptionLimits(): readonly AccountLimits[];
+
+	/** Called each time an account's limits are reported; returns the unsubscribe. */
+	onSubscriptionLimits(listener: (limits: AccountLimits) => void): () => void;
+
 	// =========================================================================
 	// Message Rendering
 	// =========================================================================
@@ -2488,6 +2512,15 @@ export interface ExtensionAPI {
 
 	/** Execute a shell command. */
 	exec(command: string, args: string[], options?: ExecOptions): Promise<ExecResult>;
+
+	/**
+	 * Redact text before an extension sends it off this machine: the same rules `/share` applies (#3524), with this
+	 * machine's home path, account and host names plus any `extraLiterals`. Idempotent; `counts` is keyed by category.
+	 */
+	redactForUpload(text: string, options?: UploadRedactionOptions): UploadRedaction;
+
+	/** The running senpi version. */
+	readonly hostVersion: string;
 
 	/**
 	 * Execute an active tool through the same validation, tool_call, permission, and
