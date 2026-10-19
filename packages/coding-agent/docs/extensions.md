@@ -1257,7 +1257,7 @@ ctx.sessionManager.buildContextEntries()    // Active branch entries with compac
 ctx.sessionManager.getLeafId()              // Current leaf entry ID
 ```
 
-A handler that runs every turn and needs only the latest or the since-last of something should use `reduceHistory` instead of scanning `getEntries()`: on a compacted session `getEntries()` reads and keeps the whole history. A reducer is a stable, module-level `{ initial(), add(state, entry) }`; the session reads the history once and folds only the entries appended since. Treat the returned state as read-only.
+A handler that runs every turn and needs only the latest or the since-last of something should use `reduceHistory` instead of scanning `getEntries()`: on a compacted session `getEntries()` reads and keeps the whole history. A reducer is a stable, module-level `{ initial(), add(state, entry) }`; the session reads the history once and folds only the entries appended since. Treat the returned state as read-only, and do not rely on `parentId`: an entry kept across a compaction can carry a rewritten link, as in `getEntries()`. A reducer that throws starts over on the next call.
 
 ```typescript
 const latestNote = { initial: () => undefined, add: (latest, entry) => (entry.type === "custom" && entry.customType === "note" ? entry : latest) };
@@ -2277,6 +2277,19 @@ pi.on("tool_call", () => {
     // Nothing will prompt for permission in this session.
   }
 });
+```
+
+### pi.getSubscriptionLimits()
+
+Every subscription account's latest limit windows, the same records RPC `get_subscription_limits` serves: `{ provider, account, windows, reportedAt, plan?, error? }`. The engine polls each signed-in Claude and ChatGPT subscription account's usage endpoint (interactive and RPC modes) and turns update the same records, so an account's windows are known before its first turn. An account nothing has reported for is absent. `error` says why the last poll failed (for example `auth stale - run /login`); the windows beside it are the last ones reported.
+
+### pi.onSubscriptionLimits(listener)
+
+Calls `listener(limits)` each time an account's limits are reported and returns the unsubscribe. Unsubscribe on `session_shutdown`.
+
+```typescript
+const stop = pi.onSubscriptionLimits((limits) => render(pi.getSubscriptionLimits()));
+pi.on("session_shutdown", () => stop());
 ```
 
 ### pi.exec(command, args, options?)

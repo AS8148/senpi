@@ -9,7 +9,8 @@ import type { SessionEntry } from "./session-manager.ts";
  * and every later call folds just the entries appended since.
  *
  * The reducer must be a stable (module-level) object, because its state is memoized per reducer. `add` may update
- * the state in place; callers must treat the returned state as read-only.
+ * the state in place; callers must treat the returned state as read-only. A reducer must not rely on `parentId`: an
+ * entry kept across a compaction can arrive with its link to the trimmed part rewritten, as `getEntries()` shows it.
  */
 export interface HistoryReducer<S> {
 	readonly initial: () => S;
@@ -50,19 +51,25 @@ export class HistoryReductions {
 			const state = previous.state as S;
 			if (previous.count === count) return state;
 			const appended = this.source.appendedSince(previous.count);
-			if (appended !== undefined) return this.store(reducer, generation, count, fold(reducer, state, appended));
+			if (appended !== undefined) return this.store(reducer, generation, count, this.fold(reducer, state, appended));
 		}
-		return this.store(reducer, generation, count, fold(reducer, reducer.initial(), this.source.readAll()));
+		return this.store(reducer, generation, count, this.fold(reducer, reducer.initial(), this.source.readAll()));
+	}
+
+	/** A fold that throws may have updated the memoized state in place, so the memo goes and the next call starts over. */
+	private fold<S>(reducer: HistoryReducer<S>, initial: S, entries: readonly SessionEntry[]): S {
+		try {
+			let state = initial;
+			for (const entry of entries) state = reducer.add(state, entry);
+			return state;
+		} catch (error) {
+			this.reductions.delete(reducer);
+			throw error;
+		}
 	}
 
 	private store<S>(reducer: HistoryReducer<S>, generation: number, count: number, state: S): S {
 		this.reductions.set(reducer, { generation, count, state });
 		return state;
 	}
-}
-
-function fold<S>(reducer: HistoryReducer<S>, initial: S, entries: readonly SessionEntry[]): S {
-	let state = initial;
-	for (const entry of entries) state = reducer.add(state, entry);
-	return state;
 }

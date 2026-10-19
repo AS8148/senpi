@@ -16,6 +16,27 @@ A client has to see whether a session's tool child exists and which generation a
 
 - `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `list_sessions` response row type, next to `idleMs`.
 
+## 2026-10-19 - `host status` reports the host's own footprint (senpi#3110)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-process-metrics.ts`: `readHostProcessMetrics` adds `host_footprint_mb`, the supervisor's and host's memory footprint read per pid through `readProcessFootprint` (`phys_footprint` on macOS, `RssAnon` on Linux), `null` when any of those processes has no readable counter.
+- `packages/coding-agent/src/modes/rpc/host-process-metrics.ts`: `core/process-footprint.ts` is loaded on the first metrics read (a cached `import()`), not imported, because this module is in the lifecycle supervisor's static graph and `core/` is outside that graph's allowlist (`test/supervisor-import-graph.test.ts`).
+- `packages/coding-agent/src/modes/rpc/host-status.ts`, `packages/coding-agent/src/modes/rpc/host-status-all.ts`: the report carries it beside `host_rss_mb` (`null` for an unaddressable endpoint).
+
+### Why
+
+#3110 sampled a task host at 1.3 GB RSS and 14 GB `phys_footprint`: RSS drops pages that were compressed or swapped out, so `host status` showed a small host while the machine ran out of memory. The issue asks for the host's own footprint in status, so a growing host is visible without OS tools.
+
+### Why an extension could not handle it
+
+`host status` is the daemon-control surface read from outside the host process; no session or extension exists on that path.
+
+### Expected merge conflict zones
+
+- `host-process-metrics.ts` `readHostProcessMetrics` return shape and `UNOBSERVED`.
+- `host-status.ts` `HostStatusReport` and `UNOBSERVED_METRICS`.
+
 ## 2026-10-18 - Tool-child protocol, one host-call capacity, codec and acknowledged payload refs (senpi#3566)
 
 ### What changed

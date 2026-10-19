@@ -773,7 +773,7 @@ which prints the bare socket path).
   `senpi host handoff` command.
 - `status` prints `{ reachable, lifecycle, socket, pid, instanceId, generation, engineVersion, capabilities,
   launchProfile, runtimeBuildId, handover, sessions: { total, interactive, worker, retained, foreign_attached, foreign_retained },
-  zombies, rss_mb, host_rss_mb, open_fds, memory_pressure, env_keys, generations, crashes, shard, session_rows,
+  zombies, rss_mb, host_rss_mb, host_footprint_mb, open_fds, memory_pressure, env_keys, generations, crashes, shard, session_rows,
   claims_live, claims }` and exits 3 when nothing answers - with the same
   field set, so a caller parses one shape and branches on one boolean. The additive `lifecycle` field is
   `"ready"` while an answering supervised host accepts opens, `"stopping"` while it shuts down or drains,
@@ -786,7 +786,10 @@ which prints the bare socket path).
   count from the point of view of a client holding none of those sessions itself. `rss_mb`, `open_fds` and
   `zombies` describe the daemon's whole process tree (supervisor, host, and every tool, kernel and server its
   sessions spawned); `host_rss_mb` is only the supervisor and the host process, the number `ps` shows for those
-  pids (the host's memory sampler judges pressure by the host's footprint instead, see "Memory pressure"). All are `null` where the platform does not publish them
+  pids (the host's memory sampler judges pressure by the host's footprint instead, see "Memory pressure").
+  `host_footprint_mb` is that footprint for the same supervisor and host processes (`phys_footprint` on macOS,
+  `RssAnon` on Linux): unlike RSS it keeps counting compressed and swapped pages, so a host whose RSS reads
+  1.3 GB can hold 14 GB, and it is the number to watch when a host grows. All are `null` where the platform does not publish them
   (`open_fds` is `/proc`-only). `generations` lists every ALIVE generation of
   this daemon as `{ instanceId, generation, pid, engineVersion, rss_mb, host_rss_mb, sessions, current, alive }`, newest
   ordinal last: `rss_mb` is that generation's own process tree, `host_rss_mb` only its supervisor and host processes, and `sessions` counts the session files it
@@ -2648,9 +2651,13 @@ The `model` field is a full [Model](#model) object or `null`. `pendingModelSwitc
 
 #### get_subscription_limits
 
-Every subscription account's latest limit windows (capability `subscription_limits`): what the provider
-reported with its most recent response for that account. An account nothing has reported for is absent -
-unknown, never 0%. The command only reads and may be sent with `observe: true`.
+Every subscription account's latest limit windows (capability `subscription_limits`). In interactive and
+RPC modes (not print mode or `--offline`) the engine polls each signed-in Claude and ChatGPT subscription
+account's usage endpoint (Claude every 5 minutes, ChatGPT every 2.5, `Retry-After` honoured, one request
+per account per interval across every senpi process on the machine), so an account's windows are known
+before its first turn; responses and the Claude SDK update the same record between polls. An account
+nothing has reported for is absent - unknown, never 0%. The command only reads and may be sent with
+`observe: true`.
 
 ```json
 {"type": "get_subscription_limits"}
@@ -2663,7 +2670,7 @@ stable within the account (`<limit>:<slot>`, for example `codex:primary` or `cla
 (`5h`, `7d`, `7d opus`), the window length in minutes when the provider sent it, `usedPercent` (0-100) and
 `resetsAt` (ISO) when known. ChatGPT subscriptions report them in `x-codex-primary-*`/`x-codex-secondary-*`
 response headers (one family per metered limit); Claude subscriptions in `anthropic-ratelimit-unified-*`
-headers, and through the Claude SDK lane in its `rate_limit_event` messages. A window the latest response did not mention keeps its last value. Every connection also hears a
+headers, and through the Claude SDK lane in its `rate_limit_event` messages. A window the latest response did not mention keeps its last value. A poll answers with the account's whole window set and replaces it. `plan` is the plan the usage endpoint names (ChatGPT), when it names one; `error` says why the last poll failed (`auth stale - run /login`, `rate limited`, `HTTP <status>`, `timed out`, `unreachable`), and the windows beside it are the last ones reported. The next successful report clears it. Every connection also hears a
 `subscription_limits` record (below) when an account's windows change.
 
 #### get_effect_status
