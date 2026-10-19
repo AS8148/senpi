@@ -17,6 +17,7 @@ import {
 	type SlotRefresher,
 } from "../extensions/builtin/anthropic-subscription/accounts.ts";
 import { isGrantRejected } from "../extensions/builtin/anthropic-subscription/refresh-failure.ts";
+import { CredentialStoreBusyError } from "../lockfile-policy.ts";
 import type { UsageProvider } from "./usage-endpoints.ts";
 
 const EXPIRING_WITHIN_MS = 5 * 60_000;
@@ -80,23 +81,34 @@ function claudeAccounts(stored: Credential | undefined, sources: AccountSources)
 					? { error: SIGN_IN_NEEDED }
 					: { access: renewed.access };
 			} catch (error) {
-				// Offline or a busy store is retried next interval. A rejected grant is recorded on the slot the way a
-				// turn records it, so later polls stop at the auth_error branch above instead of asking the token
-				// endpoint again; only /login (or a turn's one-shot recovery) lifts it.
+				// An aborted refresh (shutdown) and a busy store say nothing about the grant, exactly as in
+				// auth-lane.ts prepareSlot: retried next interval, never a lock. A rejected grant is recorded on the
+				// slot the way a turn records it, so later polls stop at the auth_error branch above instead of asking
+				// the token endpoint again; only /login (or a turn's one-shot recovery) lifts it.
+				if (signal.aborted || error instanceof CredentialStoreBusyError) return undefined;
 				if (!isGrantRejected(error)) return undefined;
-				await markAuthRejected(sources, slot.name);
+				try {
+					await markAuthRejected(sources, slot.name, slot.refresh);
+				} catch {
+					// The lock could not be written (a busy store): the next pass asks again and records it then.
+				}
 				return { error: SIGN_IN_NEEDED };
 			}
 		},
 	}));
 }
 
-async function markAuthRejected(sources: AccountSources, name: string): Promise<void> {
+/**
+ * Locks the slot only while it still holds the grant that was rejected: a /login, a sibling's refresh or a
+ * turn's recovery may have written new material since, and that token must not be locked (as failover.ts
+ * persistBlock guards).
+ */
+async function markAuthRejected(sources: AccountSources, name: string, rejectedRefresh: string): Promise<void> {
 	const now = sources.now();
 	await sources.store.modify("anthropic-subscription", async (current) => {
 		if (current?.type !== "oauth") return current;
 		const credential = current as AnthropicSubscriptionCredential;
-		if (!credential.accounts?.some((slot) => slot.name === name)) return current;
+		if (!credential.accounts?.some((slot) => slot.name === name && slot.refresh === rejectedRefresh)) return current;
 		return {
 			...credential,
 			accounts: credential.accounts.map((slot) =>

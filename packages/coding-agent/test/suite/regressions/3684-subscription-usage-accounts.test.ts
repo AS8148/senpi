@@ -6,6 +6,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { AuthStorage } from "../../../src/core/auth-storage.ts";
+import { CredentialStoreBusyError } from "../../../src/core/lockfile-policy.ts";
 import { listPollAccounts, SIGN_IN_NEEDED } from "../../../src/core/subscription-limits/usage-accounts.ts";
 import { claudeWindowsFromUsage, codexUsage } from "../../../src/core/subscription-limits/usage-endpoints.ts";
 
@@ -111,6 +112,91 @@ describe("usage poll accounts and payloads (senpi#3684)", () => {
 		const slots =
 			stored !== undefined && "accounts" in stored && Array.isArray(stored.accounts) ? stored.accounts : [];
 		expect(slots[0]).toMatchObject({ blockReason: "auth_error", blockedAt: NOW });
+	});
+
+	const revokedStore = () =>
+		AuthStorage.inMemory({
+			"anthropic-subscription": {
+				type: "oauth",
+				access: "claude-sdk-oauth-managed",
+				refresh: "claude-sdk-oauth-managed",
+				expires: 4102444800000,
+				accounts: [claudeSlot("work", NOW - 1)],
+			},
+		} as never);
+	const workSlot = async (store: ReturnType<typeof revokedStore>) => {
+		const stored = await store.read("anthropic-subscription");
+		const slots =
+			stored !== undefined && "accounts" in stored && Array.isArray(stored.accounts) ? stored.accounts : [];
+		return slots.find((slot: { name?: string }) => slot.name === "work") as {
+			blockReason?: string;
+			refresh?: string;
+		};
+	};
+
+	it("an aborted refresh (shutdown) never marks the grant revoked", async () => {
+		const store = revokedStore();
+		const controller = new AbortController();
+		const accounts = await listPollAccounts({
+			store,
+			env: () => undefined,
+			refresher: async () => {
+				controller.abort();
+				throw Object.assign(new Error("This operation was aborted"), { name: "AbortError" });
+			},
+			now: () => NOW,
+		});
+
+		expect(await accounts[0]?.access(controller.signal)).toBeUndefined();
+		expect((await workSlot(store)).blockReason).toBeUndefined();
+	});
+
+	it("a busy credential store is retried next interval, never a lock", async () => {
+		const store = revokedStore();
+		const accounts = await listPollAccounts({
+			store,
+			env: () => undefined,
+			refresher: async () => {
+				throw new CredentialStoreBusyError("auth.json", 5_000);
+			},
+			now: () => NOW,
+		});
+
+		expect(await accounts[0]?.access(new AbortController().signal)).toBeUndefined();
+		expect((await workSlot(store)).blockReason).toBeUndefined();
+	});
+
+	it("a grant replaced before the lock is written (a /login in between) is not locked", async () => {
+		const store = revokedStore();
+		// A /login lands between the refresh's locked section and the lock write (the second modify).
+		let modifies = 0;
+		const relogin = async (current: unknown) => {
+			const credential = current as { accounts: { name: string; refresh: string }[] };
+			return {
+				...credential,
+				accounts: credential.accounts.map((slot) => ({ ...slot, refresh: token("relogin") })),
+			} as never;
+		};
+		const racing = {
+			read: store.read.bind(store),
+			modify: async (...args: Parameters<typeof store.modify>) => {
+				modifies += 1;
+				if (modifies === 2) await store.modify("anthropic-subscription", relogin);
+				return store.modify(...args);
+			},
+		} as never;
+		const accounts = await listPollAccounts({
+			store: racing,
+			env: () => undefined,
+			refresher: async () => {
+				throw new Error('OAuth token refresh failed: status=400 {"error":"invalid_grant"}');
+			},
+			now: () => NOW,
+		});
+
+		expect(await accounts[0]?.access(new AbortController().signal)).toEqual({ error: SIGN_IN_NEEDED });
+		expect(await workSlot(store)).toMatchObject({ refresh: token("relogin") });
+		expect((await workSlot(store)).blockReason).toBeUndefined();
 	});
 
 	it("a transient refresh failure is retried next interval and blocks nothing", async () => {
