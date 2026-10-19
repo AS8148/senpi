@@ -81,6 +81,7 @@ import {
 	QUEUED_MESSAGE_REVISION_CAPABILITY,
 	RETRY_FALLBACK_COMMAND_CAPABILITY,
 	SESSION_HELD_CAPABILITY,
+	TOOL_BARRIER_CAPABILITY,
 } from "./custom-capability.ts";
 import {
 	type EffectCommandContext,
@@ -991,6 +992,7 @@ export function createRpcConnectionHandler(
 								EVAL_CELLS_CAPABILITY,
 								AUTH_KEY_VERIFY_CAPABILITY,
 								QUEUED_MESSAGE_REVISION_CAPABILITY,
+								TOOL_BARRIER_CAPABILITY,
 								...(options.retryFallbackCommand ? [RETRY_FALLBACK_COMMAND_CAPABILITY] : []),
 								...(options.toolRuntime ? toolRuntimeCapabilities(options.toolRuntime) : []),
 								// Client flags cannot advertise a host guard this classic binding does not run, nor a tool runtime.
@@ -1388,6 +1390,9 @@ export function createRpcConnectionHandler(
 					excludeFromContext: command.excludeFromContext,
 				});
 				return success(id, "record_bash_result");
+
+			case "release_tool_barrier":
+				return success(id, "release_tool_barrier", { released: session.releaseToolBarrier(command.barrierId) });
 
 			case "set_label":
 				session.sessionManager.appendLabelChange(command.entryId, command.label);

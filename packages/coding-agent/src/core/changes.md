@@ -1,3 +1,22 @@
+## 2026-10-19 - Session tool barrier (senpi#3717)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `armToolBarrier({ id, deadlineMs })` / `releaseToolBarrier(id)` over the new fork-only `tool-barrier.ts`. `preflightToolCall` (every tool call, nested `ctx.executeTool` calls and the Cursor exec bridge included) waits on an armed barrier, racing the run's abort signal, before the extension `tool_call` hook, unless the tool definition declares `workspaceEffect: "read"`; a waiting call emits `tool_barrier_waiting`, and a ceiling that passes emits `tool_barrier_expired`. `beforeToolCall` forwards the loop's signal into `preflightToolCall`. `PromptOptions.toolBarrier` is validated before acceptance and armed right before the `started` disposition, so only a prompt that starts its own turn arms it. The barrier clears on the final `agent_end` (not one followed by an automatic retry), when the queued-input port commits a follow-up (a drained follow-up starts a new turn inside the same run), and on dispose. The extension actions bind `armToolBarrier`/`releaseToolBarrier`.
+- `packages/coding-agent/src/core/tool-barrier.ts` (new, fork-only): `ToolBarrier`, `ToolBarrierSpec`, `ToolWorkspaceEffect`, `toolBarrierSpecError`.
+
+### Why
+
+A client that captures a pre-turn workspace checkpoint had to finish the capture before sending the prompt, because a write tool could run before it was ready; that capture sat on the send-to-first-request path. A session tool barrier lets the prompt go out at once while workspace-changing tools wait for the client's release.
+
+### Why an extension could not handle it
+
+Tool preflight, the agent_end boundary and the queued-input port are AgentSession internals; an extension `tool_call` hook runs after preflight and cannot hold nested or bridge calls, and RPC needs one engine primitive rather than per-client logic.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_installAgentToolHooks` (`beforeToolCall` signal), `preflightToolCall` options and its first lines, the `agent_end` block of `_handleAgentEvent`, the `queuedInputPort` assignment in the constructor, `dispose()`, the `promptDisposition("started")` lines of `_prompt`, and the extension actions object.
+
 ## 2026-10-19 - A sustained event stream no longer holds a compacted session's whole history (senpi#2537)
 
 ### What changed

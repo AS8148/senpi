@@ -105,6 +105,7 @@ function makeWebSearchTool(): ToolDefinition {
 	return {
 		type: "web_search_20250305",
 		name: "web_search",
+		workspaceEffect: "read",
 		...(allowedDomains ? { allowed_domains: allowedDomains } : {}),
 		...(blockedDomains ? { blocked_domains: blockedDomains } : {}),
 		max_uses: WEB_SEARCH_MAX_USES,

@@ -34,6 +34,8 @@ export const SESSION_HELD_CAPABILITY = "session_held";
 export const MEDIA_PLACEHOLDERS_CAPABILITY = "media_placeholders";
 /** Opt-in: the client can present a multi-question `extension_ui_request{method:"question"}`. */
 export const QUESTION_CAPABILITY = "question";
+/** HOST capability: `prompt.toolBarrier` and `release_tool_barrier` are honored (senpi#3717). */
+export const TOOL_BARRIER_CAPABILITY = "tool_barrier";
 
 /**
  * HOST capability (advertised in `get_protocol_info`, never sent by a client):
