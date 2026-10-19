@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Stopping a kernel or an environment install whose interpreter failed to start no longer SIGKILLs the host's own process group on Node < 24.22 / 26.10 ([#3706](https://github.com/code-yeongyu/senpi/issues/3706)).
+
 ### Removed
 
 ## [2026.10.19] - 2026-10-19

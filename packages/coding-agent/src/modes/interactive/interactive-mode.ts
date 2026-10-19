@@ -159,6 +159,7 @@ import {
 	isRecoverableInspectorVmImportError,
 } from "../../inspector-policy.ts";
 import { getNewEntries, normalizeChangelogLinks, parseChangelog } from "../../utils/changelog.ts";
+import { signalSpawnedChild } from "../../utils/child-signal.ts";
 import { copyToClipboard, readClipboardFilePaths, readClipboardText } from "../../utils/clipboard.ts";
 import { readClipboardImage } from "../../utils/clipboard-image.ts";
 import { parseGitUrl } from "../../utils/git.ts";
@@ -2007,7 +2008,7 @@ export class InteractiveMode {
 				});
 				let stdout = "";
 				const timer = setTimeout(() => {
-					proc.kill();
+					signalSpawnedChild(proc);
 					resolve(undefined);
 				}, 2000);
 
