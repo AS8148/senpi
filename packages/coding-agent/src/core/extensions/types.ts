@@ -1297,6 +1297,29 @@ export interface SessionAbortEvent {
 }
 
 /** Fired on the old extension runner when a reload or session replacement rebuilds the runner and one or more extensions are absent from it. */
+/**
+ * Fired when the session is released to move to another device, while this runtime is still live. Write the state
+ * this extension keeps for the session outside the session folder (records, logs, finished child sessions) into
+ * `dir`; it travels in the move's bundle. A handler that throws refuses the move: nothing is sealed.
+ */
+export interface SessionMoveExportEvent {
+	type: "session_move_export";
+	moveId: string;
+	/** An empty folder for this move; write under a subfolder named after the extension. */
+	dir: string;
+}
+
+/**
+ * Fired once on the receiving device, right after `session_start` of the first open after a move brought this
+ * session in, with the folder the sender's extensions filled. Restore from it; it is removed after every handler ran.
+ * A crash before that delivers it again on the next open, so a handler must tolerate seeing the same state twice.
+ */
+export interface SessionMoveImportEvent {
+	type: "session_move_import";
+	moveId: string;
+	dir: string;
+}
+
 export interface SessionExtensionsRemovedEvent {
 	type: "session_extensions_removed";
 	reason: SessionShutdownEvent["reason"];
@@ -1348,6 +1371,8 @@ export type SessionEvent =
 	| SessionShutdownEvent
 	| SessionAbortEvent
 	| SessionExtensionsRemovedEvent
+	| SessionMoveExportEvent
+	| SessionMoveImportEvent
 	| SessionBeforeTreeEvent
 	| SessionTreeEvent;
 
@@ -2280,6 +2305,8 @@ export interface ExtensionAPI {
 	on(event: "session_shutdown", handler: ExtensionHandler<SessionShutdownEvent>): () => void;
 	on(event: "session_abort", handler: ExtensionHandler<SessionAbortEvent>): () => void;
 	on(event: "session_extensions_removed", handler: ExtensionHandler<SessionExtensionsRemovedEvent>): () => void;
+	on(event: "session_move_export", handler: ExtensionHandler<SessionMoveExportEvent>): () => void;
+	on(event: "session_move_import", handler: ExtensionHandler<SessionMoveImportEvent>): () => void;
 	on(
 		event: "session_before_tree",
 		handler: ExtensionHandler<SessionBeforeTreeEvent, SessionBeforeTreeResult>,
