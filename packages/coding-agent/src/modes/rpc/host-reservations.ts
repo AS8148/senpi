@@ -22,6 +22,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { advanceSessionFence } from "../../core/session-write-fence.ts";
 import {
 	processIsLive,
 	processStartTimeMs,
@@ -204,8 +205,18 @@ export function createSessionPathReservations(options: {
 		async claim(sessionPath: string, attached = true): Promise<SessionPathOwner | undefined> {
 			const existing = await readOwner(reservationFile(dir, sessionPath));
 			if (existing && existing.pid !== pid) {
-				const standing = await standingOwner(existing, paths);
-				if (standing) return standing;
+				const verdict = await standingOwner(existing, paths);
+				if (verdict.kind === "stands") return verdict.owner;
+				const fenced =
+					verdict.kind === "released" ||
+					(await advanceSessionFence(sessionPath).then(
+						() => true,
+						(cause: unknown) => {
+							report(`session file ${sessionPath} could not be fenced for a takeover (${errorMessage(cause)})`);
+							return false;
+						},
+					));
+				if (!fenced) return { ...existing, current: false };
 			}
 			try {
 				await publish(sessionPath, attached);
@@ -269,16 +280,23 @@ export async function readSessionPathClaims(dir: string): Promise<readonly Sessi
  * host whose probe is merely starved (#1609) keeps heartbeating and keeps its claim; a claim with no
  * heartbeat at all (an unsupervised or older host) keeps the previous benefit of the doubt.
  */
-async function standingOwner(
-	owner: SessionPathOwner,
-	paths: HostDaemonDirectory,
-): Promise<SessionPathOwner | undefined> {
+async function standingOwner(owner: SessionPathOwner, paths: HostDaemonDirectory): Promise<ClaimVerdict> {
 	const identity = await claimOwnerIdentity(owner);
-	if (identity === "gone") return undefined;
+	if (identity === "gone") return { kind: "released" };
 	const current = (await currentInstanceId(paths.pointerFile)) === owner.instanceId;
-	if (!current && identity === "unproven" && (await heartbeatStopped(paths, owner.instanceId))) return undefined;
-	return current || owner.attached !== false ? { ...owner, current } : undefined;
+	if (!current && identity === "unproven" && (await heartbeatStopped(paths, owner.instanceId)))
+		return { kind: "presumed_done" };
+	return current || owner.attached !== false ? { kind: "stands", owner: { ...owner, current } } : { kind: "released" };
 }
+
+/**
+ * `presumed_done`: the owner may still be alive (a frozen loop or a sleeping machine also stops the heartbeat), so the
+ * takeover must fence it out of the session file first.
+ */
+type ClaimVerdict =
+	| { readonly kind: "stands"; readonly owner: SessionPathOwner }
+	| { readonly kind: "released" }
+	| { readonly kind: "presumed_done" };
 
 /** Whether the owner's generation left a heartbeat that is older than a stalled host could explain. */
 async function heartbeatStopped(paths: HostDaemonDirectory, instanceId: string): Promise<boolean> {
