@@ -7,7 +7,7 @@ import {
 	type HostDrainRequest,
 	watchDrainRequest,
 	writeDrainRequest,
-} from "../../src/modes/rpc/host-drain-request.ts";
+} from "../../src/modes/rpc/host-stop-intent.ts";
 
 // senpi#3653: the drain request is the signal-free channel every platform shares. A generation polls
 // its own request file; every distinct request it finds there is one drain request.

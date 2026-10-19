@@ -2,8 +2,8 @@ import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import * as drainRequest from "../../src/modes/rpc/host-drain-request.ts";
 import { stopHost } from "../../src/modes/rpc/host-stop.ts";
+import * as drainRequest from "../../src/modes/rpc/host-stop-intent.ts";
 import {
 	ensureSupervised,
 	expectGoneWithin,
@@ -19,7 +19,7 @@ import {
 // senpi#3657 review: the desktop drains the generation that still holds a session after the pointer moved on
 // (desktop#3157), so the named drain must work on a SUPERSEDED generation, refuse an id that could leave the
 // generations directory, and treat a generation that ended between the ownership check and the request as drained.
-vi.mock("../../src/modes/rpc/host-drain-request.ts", { spy: true });
+vi.mock("../../src/modes/rpc/host-stop-intent.ts", { spy: true });
 
 afterEach(async () => {
 	vi.restoreAllMocks();
