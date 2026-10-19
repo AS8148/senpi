@@ -137,7 +137,7 @@ import {
 	STEER_WHEN_IDLE_CAPABILITY,
 } from "./rpc-types.ts";
 import { availableModelsData, interruptRunningTurn } from "./session-control-actions-data.ts";
-import { SessionExtensionUiRequests } from "./session-extension-ui-requests.ts";
+import { SessionExtensionUiRequests, sessionDialogRequests } from "./session-extension-ui-requests.ts";
 import { subscribeSessionRecords } from "./session-record-stream.ts";
 
 export { buildRpcSessionState } from "./rpc-session-state.ts";
@@ -462,6 +462,7 @@ export function createRpcConnectionHandler(
 
 	// Pending extension UI requests waiting for response
 	const pendingExtensionRequests = new SessionExtensionUiRequests();
+	sessionDialogRequests.set(session, pendingExtensionRequests);
 	const questions = new ConnectionQuestionBridge(output);
 
 	let shutdownRequested = false;
@@ -505,6 +506,7 @@ export function createRpcConnectionHandler(
 			}
 
 			pendingExtensionRequests.set(id, {
+				frame: { type: "extension_ui_request", id, ...request } as RpcExtensionUIRequest,
 				resolve: (response: RpcExtensionUIResponse) => {
 					cleanup();
 					resolve(parseResponse(response));
@@ -659,6 +661,7 @@ export function createRpcConnectionHandler(
 			const id = crypto.randomUUID();
 			return new Promise((resolve, reject) => {
 				pendingExtensionRequests.set(id, {
+					frame: { type: "extension_ui_request", id, method: "editor", title, prefill },
 					resolve: (response: RpcExtensionUIResponse) => {
 						if ("cancelled" in response && response.cancelled) {
 							resolve(undefined);
@@ -761,6 +764,7 @@ export function createRpcConnectionHandler(
 		const replacedSession = session !== runtimeHost.session;
 		session = runtimeHost.session;
 		sessionQuestionBridges.set(session, questions);
+		sessionDialogRequests.set(session, pendingExtensionRequests);
 		// Installed before the bind below: extensions register their control endpoint on session_start.
 		sessionControl?.dispose();
 		sessionControl = new HostSessionControl(
