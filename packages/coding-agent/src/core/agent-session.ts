@@ -1519,6 +1519,7 @@ export class AgentSession {
 						],
 						onRecord: (record) => this._emit({ type: "session_tool_child", ...record }),
 						onHostCall: createSessionHostCallHandler({
+							cwd: this._cwd,
 							executeNested: (parentToolCallId, name, args, signal) =>
 								this._executeNestedToolCall(parentToolCallId, name, args, { signal }),
 							callableToolNames: () => this._callableToolNames(),

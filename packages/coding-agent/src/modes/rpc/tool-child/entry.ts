@@ -5,6 +5,7 @@
  * server is the single writer of every session file.
  */
 import { connectChannel, type ToolChildChannel } from "./channel.ts";
+import { ToolChildJobError } from "./entry-error.ts";
 import { ChildHostCalls, type HostCallTarget } from "./host-calls-child.ts";
 import { JobUpdates } from "./job-updates.ts";
 import {
@@ -52,8 +53,6 @@ export interface ToolChildEntryOptions {
 }
 
 export { ToolChildJobError } from "./entry-error.ts";
-
-import { ToolChildJobError } from "./entry-error.ts";
 
 export async function runToolChild(options: ToolChildEntryOptions): Promise<void> {
 	const env = { ...(options.env ?? process.env) };

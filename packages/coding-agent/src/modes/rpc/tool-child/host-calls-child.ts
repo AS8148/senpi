@@ -59,6 +59,11 @@ export class ChildHostCalls {
 			...(target.name === undefined ? {} : { name: target.name }),
 			...(packed.inline ? (packed.value === undefined ? {} : { args: packed.value }) : { argsRef: packed.ref }),
 		};
+		// An abort that landed while the payload was packed is seen here, before anything is sent.
+		if (signal.aborted) {
+			this.#releaseUnsent(frame);
+			throw new ToolChildJobError("tool_child_cancelled", `${label}: job cancelled`);
+		}
 		return new Promise((resolve, reject) => {
 			const decision = this.#admission(jobId).submit(callId);
 			if (decision.state === "refused") {
