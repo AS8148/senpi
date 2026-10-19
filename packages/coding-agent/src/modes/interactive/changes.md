@@ -1,3 +1,21 @@
+## 2026-10-19 - Suggest a fresh session with a handoff when a large session's cache has expired (senpi#3230)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `setExtensionWidget` renders a string-array widget's `actions` on its last line as muted `label: command` pairs.
+
+### Why
+
+The terminal cannot click, so each choice names the command that runs it (the handoff hint's `/handoff` and `/handoff keep`).
+
+### Why an extension could not handle it
+
+The widget renderer is host code; the extension only passes the choices.
+
+### Expected merge conflict zones
+
+- LOW: `setExtensionWidget`, the string-array branch.
+
 ## 2026-10-19 - Never signal a child whose spawn failed (senpi#3706)
 
 ### What changed

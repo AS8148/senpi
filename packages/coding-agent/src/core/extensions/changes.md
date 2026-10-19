@@ -1,3 +1,21 @@
+## 2026-10-19 - Suggest a fresh session with a handoff when a large session's cache has expired (senpi#3230)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionWidgetOptions` gains `actions?: readonly ExtensionWidgetAction[]` (`{ label, command }`), choices offered with a string-array widget. `command` is ordinary slash-command text.
+
+### Why
+
+The handoff hint offers two choices on one line. The TUI and every RPC client must reach the same command handler, so the choice is carried as the command text itself rather than a host-specific callback (one implementation, no RPC-only path).
+
+### Why an extension could not handle it
+
+The widget options type is the public extension contract; an extension cannot add a field the hosts read.
+
+### Expected merge conflict zones
+
+- LOW: `types.ts` `ExtensionWidgetOptions`, next to `WidgetPlacement`.
+
 ## 2026-10-19 - Closing a session closes what its extension code left open (senpi#2292)
 
 ### What changed

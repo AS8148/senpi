@@ -4776,6 +4776,8 @@ Set or clear a widget (block of text lines) displayed above or below the editor.
 
 Send `widgetLines: undefined` (or omit it) to clear the widget. The `widgetPlacement` field is `"aboveEditor"` (default) or `"belowEditor"`. Only string-array widgets are sent; a component factory needs a terminal to render into and produces no record.
 
+A widget may carry `widgetActions`, a list of `{ "label", "command" }` choices (for example the handoff hint's `{ "label": "Start fresh with a handoff", "command": "/handoff" }`). A client that renders a choice as a button sends its `command` text as an ordinary `prompt` when the user picks it, so the choice runs the same command handler the terminal user types. The field is omitted when the widget has no choices and on a clear.
+
 #### setTitle
 
 Set the terminal window/tab title. Fire-and-forget.
