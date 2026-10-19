@@ -144,8 +144,10 @@ export async function openChannelListener(options: {
 			taken = true;
 			// Stops accepting only: `server.close(callback)` would wait for the accepted channel itself to end.
 			if (server.listening) server.close();
-			await rm(secretPath, { force: true });
+			// The socket goes before the secret: while our secret is in it the root is non-empty, so no sibling sweep can
+			// remove it and no other user can put anything at its name that this removal would reach (senpi#3694).
 			if (process.platform !== "win32") await rm(logicalPath, { force: true });
+			await rm(secretPath, { force: true });
 			// The socket root is shared by every generation of this session's tool-child dir (and, on the fallback,
 			// by every process starting one), so rmdir removes it only once it is empty. A sibling that claimed the
 			// root but has not written its secret yet can lose it here; `claimListenerFiles` re-claims and retries.

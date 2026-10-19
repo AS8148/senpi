@@ -6,29 +6,18 @@ import { lstat, mkdtemp, readdir, rm, rmdir, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { resetSocketRootWindow, socketRootWindow } from "../../../../test/helpers/socket-root-window.ts";
 import { openChannelListener } from "./channel.ts";
 import { fallbackSocketRoot } from "./socket-root.ts";
 
-interface SecretHook {
-	beforeSecret: ((secretPath: string) => Promise<void>) | undefined;
-}
-const transport = vi.hoisted((): SecretHook => ({ beforeSecret: undefined }));
-vi.mock("../socket-transport.ts", async (importOriginal) => {
-	const original = await importOriginal<typeof import("../socket-transport.ts")>();
-	return {
-		...original,
-		createSocketSecret: async (path: string) => {
-			const hook = transport.beforeSecret;
-			transport.beforeSecret = undefined;
-			await hook?.(path);
-			return original.createSocketSecret(path);
-		},
-	};
+vi.mock("node:fs/promises", async (importOriginal) => {
+	const { withSocketRootWindow } = await import("../../../../test/helpers/socket-root-window.ts");
+	return withSocketRootWindow(await importOriginal<typeof import("node:fs/promises")>());
 });
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
-	transport.beforeSecret = undefined;
+	resetSocketRootWindow();
 	for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
@@ -60,10 +49,12 @@ describe.skipIf(process.platform === "win32")("tool-child fallback socket root s
 		cleanups.push(() => rm(foreign, { recursive: true, force: true }));
 		cleanups.push(() => rm(root, { recursive: true, force: true }));
 		// A sibling's sweep removes the claimed, still-empty root, and something else takes the name at once.
-		transport.beforeSecret = async () => {
-			await rmdir(root);
-			await symlink(foreign, root);
-		};
+		socketRootWindow.windows = [
+			async () => {
+				await rmdir(root);
+				await symlink(foreign, root);
+			},
+		];
 		const listener = await openChannelListener({ dir, generation: 1 });
 		const socketRoot = dirname(listener.env.SENPI_TOOL_CHILD_CHANNEL);
 		cleanups.push(() => rm(socketRoot, { recursive: true, force: true }));
@@ -82,9 +73,11 @@ describe.skipIf(process.platform === "win32")("tool-child fallback socket root s
 		const dir = await deepDir();
 		const root = fallbackSocketRoot(dir);
 		cleanups.push(() => rm(root, { recursive: true, force: true }));
-		transport.beforeSecret = async () => {
-			await rmdir(root);
-		};
+		socketRootWindow.windows = [
+			async () => {
+				await rmdir(root);
+			},
+		];
 		const listener = await openChannelListener({ dir, generation: 1 });
 		expect(dirname(listener.env.SENPI_TOOL_CHILD_CHANNEL)).toBe(root);
 		expect((await lstat(root)).mode & 0o077).toBe(0);
