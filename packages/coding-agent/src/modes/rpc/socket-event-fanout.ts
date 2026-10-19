@@ -1,4 +1,6 @@
+import { serializeJsonLine } from "./jsonl.ts";
 import { loopBlockedMark, loopBlockedMsSince } from "./loop-blocked-time.ts";
+import { isCorrelatedReply, type ResyncReason, SocketPeerRecovery } from "./socket-peer-recovery.ts";
 
 type SocketSink = {
 	writeRaw(chunk: string): void;
@@ -24,7 +26,7 @@ type QueueEntry = {
 // above any single burst a normal session produces.
 const DEFAULT_QUEUE_BYTES = 64 * 1024 * 1024;
 
-// Dead-peer detector, NOT a credit pacer. A session worker's output credit is
+// Backpressure budget, NOT a credit pacer. A session worker's output credit is
 // returned when every destination has ACCEPTED the record into its bounded queue
 // (session-event-writer.ts, waitForSessionBackpressure), so a peer's kernel drain
 // is no longer on the worker's critical path and this budget is deliberately
@@ -32,8 +34,8 @@ const DEFAULT_QUEUE_BYTES = 64 * 1024 * 1024;
 // that deadline, which made a client busy for 4 s with >= 16 KB pending (macOS unix
 // stream buffers are 8 KB each way) indistinguishable from a dead one: it was cut
 // and its sessions were released (#1774). Tens of seconds of no progress at all is
-// the liveness signal we actually want; the peer is then cut exactly like a byte
-// overflow - fail-closed, it must resync - while the session keeps running.
+// the legacy client's liveness signal. A client advertising event_resync instead
+// sheds its buffered events at this deadline and is cut only after a missed ping.
 //
 // The budget is loop-SERVED time. While the host's own loop is blocked nobody can
 // drain anything, and on unblock the timers phase runs before the pending drain I/O,
@@ -79,6 +81,8 @@ export class SocketEventSinkActor {
 	private draining?: Promise<void>;
 	private closed = false;
 	private failure?: unknown;
+	private recovery?: SocketPeerRecovery;
+	private readonly stopped = new AbortController();
 
 	private readonly sink: SocketSink;
 	private readonly onFailure: (cause: unknown) => void;
@@ -97,9 +101,23 @@ export class SocketEventSinkActor {
 		this.stallMs = stallMs;
 	}
 
+	enableRecovery(snapshot: (reason: ResyncReason) => () => readonly object[]): void {
+		this.recovery ??= new SocketPeerRecovery((line) => this.sink.writeRaw(line), snapshot);
+		this.recovery.acknowledge();
+	}
+
 	enqueue(line: string, key?: string, onWritten?: () => void, demotedLine?: string): void {
 		if (this.closed) return;
 		const bytes = Buffer.byteLength(line);
+		if (this.recovery?.pending) {
+			if (isCorrelatedReply(line)) {
+				if (this.queuedBytes + bytes <= this.maxQueueBytes) {
+					this.queue.push({ line, bytes, onWritten });
+					this.queuedBytes += bytes;
+				} else this.recovery.loseReply();
+			}
+			return;
+		}
 		if (key !== undefined) {
 			const existing = this.queue.find((entry) => entry.key === key);
 			if (existing) {
@@ -119,6 +137,12 @@ export class SocketEventSinkActor {
 			}
 		}
 		if (this.queuedBytes + bytes > this.maxQueueBytes) {
+			if (this.recovery) {
+				this.shed("overflow");
+				this.enqueue(line, undefined, onWritten);
+				void this.drain();
+				return;
+			}
 			const overflow = new SocketEventQueueOverflowError(
 				this.queuedBytes,
 				bytes,
@@ -162,6 +186,16 @@ export class SocketEventSinkActor {
 		this.closed = true;
 		this.queue.length = 0;
 		this.queuedBytes = 0;
+		this.stopped.abort();
+	}
+
+	private shed(reason: ResyncReason): void {
+		if (this.recovery?.pending) return;
+		const replies = this.queue.filter((entry) => isCorrelatedReply(entry.line));
+		this.queue.length = 0;
+		for (const reply of replies) this.queue.push(reply);
+		this.queuedBytes = replies.reduce((bytes, entry) => bytes + entry.bytes, 0);
+		this.recovery?.shed(reason);
 	}
 
 	/**
@@ -175,11 +209,31 @@ export class SocketEventSinkActor {
 		return new Promise<void>((resolve, reject) => {
 			let timer: ReturnType<typeof setTimeout>;
 			let blockedMark = loopBlockedMark();
+			const cleanup = (): void => {
+				clearTimeout(timer);
+				this.stopped.signal.removeEventListener("abort", onStop);
+			};
+			const onStop = (): void => {
+				cleanup();
+				resolve();
+			};
 			const onDeadline = (): void => {
 				const blockedMs = loopBlockedMsSince(blockedMark);
 				if (blockedMs > 0) {
 					blockedMark = loopBlockedMark();
 					timer = setTimeout(onDeadline, Math.min(blockedMs, this.stallMs));
+					return;
+				}
+				if (this.recovery) {
+					try {
+						this.shed("stall");
+						this.recovery.ping();
+						blockedMark = loopBlockedMark();
+						timer = setTimeout(onDeadline, this.stallMs);
+					} catch (cause) {
+						cleanup();
+						reject(cause);
+					}
 					return;
 				}
 				const stall = new SocketEventQueueStallError(this.queuedBytes + writtenBytes, this.stallMs);
@@ -188,16 +242,18 @@ export class SocketEventSinkActor {
 				} catch {
 					// The peer is unreachable either way; the failure below closes it.
 				}
+				cleanup();
 				reject(stall);
 			};
 			timer = setTimeout(onDeadline, this.stallMs);
+			this.stopped.signal.addEventListener("abort", onStop, { once: true });
 			this.sink.waitForBackpressure().then(
 				() => {
-					clearTimeout(timer);
+					cleanup();
 					resolve();
 				},
 				(cause) => {
-					clearTimeout(timer);
+					cleanup();
 					reject(cause);
 				},
 			);
@@ -208,7 +264,19 @@ export class SocketEventSinkActor {
 		if (this.draining) return this.draining;
 		this.draining = (async () => {
 			try {
-				while (!this.closed && this.queue.length > 0) {
+				while (!this.closed && (this.queue.length > 0 || this.recovery?.pending)) {
+					if (this.recovery?.pending && this.queue.length === 0) {
+						await this.waitForDrainOrStall(0);
+						if (this.closed) break;
+						const snapshot = this.recovery.takeSnapshot();
+						for (const record of snapshot) {
+							if (this.closed || this.recovery.pending) break;
+							const line = serializeJsonLine(record);
+							this.sink.writeRaw(line);
+							await this.waitForDrainOrStall(Buffer.byteLength(line));
+						}
+						continue;
+					}
 					const entry = this.queue.shift()!;
 					this.queuedBytes -= entry.bytes;
 					this.sink.writeRaw(entry.line);
@@ -226,7 +294,7 @@ export class SocketEventSinkActor {
 			this.draining = undefined;
 			// An enqueue that lands between the loop's exit and this reaction sees the
 			// stale settled promise and starts nothing; reschedule for it here.
-			if (!this.closed && this.queue.length > 0) void this.drain();
+			if (!this.closed && (this.queue.length > 0 || this.recovery?.pending)) void this.drain();
 		});
 		return this.draining;
 	}

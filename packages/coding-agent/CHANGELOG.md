@@ -21,6 +21,7 @@
 
 ### Fixed
 
+- Socket clients advertising `event_resync` recover from an event-queue overflow or stall on the same connection: buffered events are shed, current message snapshots are sent, and only a missed liveness heartbeat closes the peer. Clients without the capability retain the existing disconnect behavior ([#3728](https://github.com/code-yeongyu/senpi/issues/3728)).
 - A timeout, abort or stop of a command that never started (missing binary, missing cwd) no longer SIGKILLs senpi and everything else in the terminal's foreground job on Node before 24.22 / 26.10, where `kill()` on a child without a pid signals the caller's own process group ([#3706](https://github.com/code-yeongyu/senpi/issues/3706)).
 - While the agent is paused for starting too many turns on its own, a stream of incoming notices no longer adds a `Paused: ...` warning for every notice: the warning shows once per pause ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)).
 - Closing a session now closes the servers, sockets and timers an extension's own code opened during it and never stopped, after the extension's `session_shutdown` handlers run, and logs one line per extension naming what it closed. On a shared `--listen` host, an extension without teardown kept about 17 MB and a listening socket per closed session until the host exited; 30 closed sessions now leave none ([#2292](https://github.com/code-yeongyu/senpi/issues/2292)).

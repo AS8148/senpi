@@ -194,6 +194,51 @@ Rebranded distributions read the equivalent variable under their configured envi
 `extension_events` opts the client into generic extension-owned event records; clients that omit it
 retain the previous wire stream unchanged.
 
+#### event_resync
+
+A socket client may advertise `event_resync` in its connection-scoped `set_client_info`.
+This opts that connection into same-connection recovery instead of an event-queue overflow
+or stall disconnect. An old client that omits the capability keeps the legacy `overflow`
+record and disconnect behavior. Ordinary supersession remains lossless in both modes.
+
+The host immediately sends `{"type":"rpc_ping"}`. The client answers by sending
+`set_client_info` without a request id, repeating its complete capability list, and repeats
+that heartbeat every 10 seconds until the socket closes. The existing connection-scoped
+handler acknowledges liveness; no session command or session attachment is needed.
+Heartbeat pulses travel in the opposite direction from event traffic, so a blocked event
+reader can still prove it is alive. The host retains at most one buffered ping during a gap.
+An event stall still starts at 30 seconds of host loop-served time, but it sheds the queue
+rather than closing. A subsequent served budget without a heartbeat closes the peer.
+The host's loop-blocked-time credit also applies to that liveness deadline.
+
+On overflow or stall, the host drops buffered events and stops accumulating new events until
+transport drain. Correlated replies that fit within the queue's byte bound are retained and
+sent first; a reply that cannot fit has an unknown outcome. Only if a correlated reply was
+discarded does it send an untagged gap marker. It then sends a snapshot for every affected
+session attached to that connection:
+
+```json
+{"type":"resync_required","reason":"stall"}
+{"type":"resync_required","reason":"stall","sessionId":"rpc-1","message":{"role":"assistant","content":[{"type":"text","text":"The complete partial reply"}]}}
+```
+
+`reason` is `stall` or `overflow`. A session's `message` is the complete current in-progress
+message, or `null` when none exists. If a handle was detached during the gap, its record also
+has `"closed":true`; retire that handle through the normal session-close path without closing
+the socket. The affected handle set is remembered when shedding begins, so losing a close
+event cannot silently leave a client attached to a nonexistent handle.
+These snapshots are captured before later deltas are
+admitted and are delivered before those deltas. They replace the client's partial-message
+baseline; they are not text to append a second time. Media placeholders still apply.
+
+The untagged marker means outstanding requests may have lost their answers: settle them as
+**outcome unknown**, not success, and never automatically replay a mutation. Keep the socket,
+its epoch and its session handles. For each tagged marker, refresh that session with
+`get_state` and the existing paginated `get_entries` path, reconcile pending questions and
+run state, and replace its streaming preview from `message`. A read-only request may be
+retried. A closed-handle snapshot retires that session, not the connection.
+Another overflow during recovery produces another gap and a newer snapshot.
+
 #### media_placeholders
 
 A client that advertises `media_placeholders` in `set_client_info` tells the host it does not want
@@ -2048,7 +2093,8 @@ socket host, credit returns as soon as every destination of that session has ACC
 queue (64 MiB per connection), not when the peer's kernel has drained it: a client that is merely busy cannot withhold
 the producing worker's credit. On the shared stdio lane credit still waits for stdout backpressure. A five-second credit
 failure closes that session visibly (`session_error` followed by `session_closed`), rather than retaining an
-unbounded queue. Socket queues keep their independent overflow/disconnect behavior: a connection whose queue would
+unbounded queue. Socket clients advertising `event_resync` use the same-connection recovery described above.
+Other socket queues keep their independent overflow/disconnect behavior: a connection whose queue would
 exceed 64 MiB is cut immediately, and a peer that has not accepted a single pending write within 30 seconds
 (`DEFAULT_STALL_MS`) is cut as a dead peer. That budget is a transport liveness bound and is deliberately independent
 of the 5-second worker control deadline — a busy client is not a dead one. A cut connection receives one `overflow`
@@ -2058,8 +2104,8 @@ that notice, and everything already written to it, before EOF. A peer that is st
 its socket destroyed. A cut peer must reconnect and resynchronize, while the session keeps running and its other
 destinations keep receiving output. A failed or cut connection never withholds a session's credit and never fails the
 host writer; only the stdio lane can. Because credit no longer paces a session against its slowest reader, a
-session that outruns a peer fills that peer's 64 MiB queue instead of slowing down, and that peer is then cut on
-overflow. The default stdio
+session that outruns a peer fills that peer's 64 MiB queue instead of slowing down, and that peer then resynchronizes
+or, without `event_resync`, is cut on overflow. The default stdio
 queue is bounded at 64 MiB or 4096 records, with reserved terminal-failure records and one control-overflow notice.
 Close admission counts both queued output and pending close replies (including their serialized bytes) before
 releasing an attachment or waiting for teardown. An admitted first closer reserves its lifecycle and terminal reply;
