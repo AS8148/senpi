@@ -1,3 +1,22 @@
+## 2026-10-19 - An idle host stops waking five-plus times a second (senpi#3738)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-watchdog.ts`: while the inherited pipe watch is armed, the ppid check runs every `HOST_WATCH_PPID_BACKUP_INTERVAL_MS` (5 s) instead of 250 ms. It goes back to 250 ms when the pipe cannot be armed, or when the pipe socket errors later.
+- `packages/coding-agent/src/modes/rpc/loop-lag-watchdog.ts`: the probe is a self-rescheduling timer. After `LOOP_LAG_IDLE_AFTER_MS` (2 s) without session activity (no new mark, no open span) it ticks every `LOOP_LAG_IDLE_TICK_MS` (1 s, capped at the heartbeat interval); the first activity restores the 200 ms tick. `start()` resets to 200 ms.
+
+### Why
+
+The desktop keeps one host and supervisor per opened thread (omo-desktop-app#3359). An idle host woke ~11 times a second: 5 loop-lag ticks and 4 ppid checks, beside the pipe EOF watch that already reports supervisor death. Suppressing the loop-lag tick cut a measured idle host from 0.42-0.44% to 0.22-0.31% of a core, and the ppid poll from 0.42-0.44% to 0.30-0.33%.
+
+### Why an extension could not handle it
+
+Both timers are RPC host internals armed before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/host-watchdog.ts` `armHostWatchdog`, `watchFdForEof`, `watchPpid`; `packages/coding-agent/src/modes/rpc/loop-lag-watchdog.ts` `start`, `stop`, `tick` and the constants block.
+
 ## 2026-10-19 - Never signal a child whose spawn failed (senpi#3706)
 
 ### What changed
