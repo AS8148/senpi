@@ -1,3 +1,58 @@
+## 2026-10-19 - Never signal a child whose spawn failed (senpi#3706)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: its stop/timeout/abort path calls `signalSpawnedChild` (`packages/coding-agent/src/utils/child-signal.ts`), which sends nothing to a child without a pid, instead of calling `kill()` on it directly.
+
+### Why
+
+On Node before 24.22.0 / 26.10.0 (nodejs/node#65052), `kill()` on a child whose spawn failed (no pid) becomes `kill(0, signal)` and signals the caller's own process group, killing senpi and the rest of the terminal's foreground job.
+
+### Why an extension could not handle it
+
+The affected calls are inside core stop paths; nothing outside them owns those child processes.
+
+### Expected merge conflict zones
+
+The single `kill()` call on each listed path's stop/timeout/abort branch.
+
+## 2026-10-18 - The pending-question mouse hint follows the live capture state and names the right selection modifier (senpi#3604)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/ask-user-async-widget.ts`: the mouse hint reads `tui.mouseCaptureState()` at render. Armed: `click an option · <bypass> to select text`. Yielded (the wheel handed the mouse to the terminal): `wheel scrolls · press any key to click options again`. Off: no line. `selectionBypassHint()` names Option for iTerm2 and Terminal.app, Option with `terminal.integrated.macOptionClickForcesSelection` for VS Code on macOS, a tmux-specific note, and Shift elsewhere (Windows Terminal, Ghostty, WezTerm, kitty, VS Code on Windows/Linux).
+
+### Why
+
+- The main-screen renderer now yields the mouse on the first wheel notch (senpi#3604), so the hint has to say when clicking is paused and how to resume it. VS Code on macOS was told "shift+drag", which does nothing there.
+- Tests: `test/suite/ask-user-widget-mouse.test.ts` (bypass table; armed, yielded and re-armed hint on a real `TuiMainScreen`).
+
+### Why an extension could not handle it
+
+- The widget is the interactive host's own component.
+
+### Expected merge conflict zones
+
+- LOW: the hint block in `render` and the new `selectionBypassHint` export.
+
+## 2026-10-17 - /share redacts the session, previews it and asks before uploading (senpi#3524)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `handleShareCommand` runs `runShare` (`core/share/share-session.ts`) and maps its outcome to status/error lines; the cancellable gist loader moved to `uploadShareWithLoader`. The preview dialog offers Upload, Review the exact file first, and Cancel; cancel says nothing was uploaded. The unused `spawnSync` import is gone.
+
+### Why
+
+- `/share` uploaded the whole session unredacted, with no confirmation, to a secret (unlisted) gist, after writing it to a fixed `os.tmpdir()/session.html`, and pointed users at the third-party `pi.dev` viewer by default. Any key, token, home path or email in a prompt or tool result left the machine in clear text. Regressions: `test/suite/regressions/3524-share-redaction.test.ts`, `test/suite/regressions/3524-share-consent.test.ts`.
+
+### Why an extension could not handle it
+
+- `/share` is a built-in interactive command and the HTML export is core; an extension cannot intercept either before the upload.
+
+### Expected merge conflict zones
+
+- MEDIUM: `handleShareCommand` in `interactive-mode.ts` (rewritten); the `config.ts` import block.
+
 ## 2026-10-18 - The footer names the account the user order serves (senpi#3591)
 
 ### What changed
@@ -2896,3 +2951,23 @@ The editor theme is built by the interactive mode itself; extensions cannot inje
 ### Expected merge conflict zones
 
 - LOW: `getEditorTheme()` in `theme.ts` and the editor theme object in `GrokChrome`.
+
+## 2026-10-19 - Tool cards drop their built output when invalidated (senpi#2537)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/tool-execution.ts`: `ToolExecutionComponent.invalidate()` drops the card's built call and result content and marks it released instead of rebuilding it; `render()` rebuilds it from the card's state (`updateDisplay()`) the next time the card is painted. Grok rows and animating cards still rebuild at once. A renderer's own `context.invalidate()` (the renderer constructor's callback) still rebuilds at once and keeps `lastComponent`, so a renderer that caches async-loaded data on its component works as before. On a released card, `setExpanded`, `setShowImages` and `setImageWidthCells` only record the change; `render()` rebuilds it.
+- `packages/coding-agent/src/modes/interactive/components/tool-execution-renderer.ts`: `releaseContent()` detaches the content box, the self-render container and the fallback text and forgets the call and result renderer components. The built-in tool renderers come from one `createAllToolDefinitions(cwd)` per working directory instead of one per card.
+- `packages/coding-agent/test/suite/regressions/2537-tool-card-release.test.ts` (new).
+
+### Why
+
+A card's `invalidate()` rebuilt its content at once. The transcript invalidates every card that scrolls above the kept main-screen history, and the TUI invalidates the whole tree on a theme or terminal-capability change (the kitty graphics probe resolves once per session), so every finished card kept its styled output, and its own copy of all nine tool definitions, for the rest of the session. Heap snapshots of a 10-minute notice-stream soak traced that output through `ExplorationGroup.memberSnapshot -> ToolExecutionComponent -> renderer -> Text` ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)). Every path that paints the card again rebuilds the same lines, so nothing on screen changes.
+
+### Why an extension could not handle it
+
+The tool card's content lifecycle is an interactive-mode internal; extensions do not own the transcript's components.
+
+### Expected merge conflict zones
+
+- LOW: `invalidate()`, `render()`, `updateDisplay()` and the field list of `ToolExecutionComponent`; the constructor of `ToolExecutionRenderer`.

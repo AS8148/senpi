@@ -16,7 +16,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import type {
 	Agent,
@@ -89,14 +89,21 @@ import { isOAuthRefreshUnavailableError } from "@earendil-works/pi-ai/utils/oaut
 import { retryTransientCall } from "@earendil-works/pi-ai/utils/retry";
 import { extract429RetryAfterMs, parseRetryAfterMsMarker } from "@earendil-works/pi-ai/utils/retry-hint";
 import { retryBackoffDelayMs } from "@earendil-works/pi-ai/utils/retry-profile/backoff";
+import { type ToolRuntimeKind, ToolRuntimeUnsupportedHostError, toolRuntimeHostRefusal } from "../cli/tool-runtime.ts";
 import { getAgentDir } from "../config.ts";
 import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
+import {
+	SessionToolChild,
+	type SessionToolChildRow,
+	toolChildModuleRoots,
+} from "../modes/rpc/tool-child/session-child.ts";
 import { stripFrontmatter } from "../utils/frontmatter.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { sleep } from "../utils/sleep.ts";
 import { normalizeToolResultImages } from "../utils/tool-result-images.ts";
 import { AgentAbortProvenance, type AgentAbortSource } from "./agent-abort-provenance.ts";
 import { AgentBusyError } from "./agent-busy-error.ts";
+import { AgentRunContinuations } from "./agent-run-continuation.ts";
 import { AgentSettledDelivery, type DeferredAgentSettledAction, DeferredTurnClaim } from "./agent-settled-delivery.ts";
 import { resolveAssistantUsageScope } from "./assistant-usage-scope.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
@@ -162,6 +169,7 @@ import {
 	ENGINE_TURN_LIMIT_EVENT,
 	ENGINE_TURN_START_ENTRY_TYPE,
 	type EngineTurnStartRecord,
+	engineTurnHistory,
 	engineTurnLimitNotice,
 	engineTurnStop,
 	isUserDirectedTurn,
@@ -172,8 +180,14 @@ import {
 	resolveEnvironmentContext,
 } from "./environment-context.ts";
 import { areExperimentalFeaturesEnabled } from "./experimental.ts";
-import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
+import {
+	type ExportOptions,
+	exportSessionToHtml,
+	renderSessionToHtml,
+	type ToolHtmlRenderer,
+} from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
+import { reportExtensionHandlerStall } from "./extension-handler-stall-report.ts";
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./extensions/builtin/anthropic-subscription/account-management.ts";
 import { askUserAnswerDisplayText } from "./extensions/builtin/ask-user/format.ts";
 import { getPromptCachePrewarmUsage } from "./extensions/builtin/cache-keepalive/prewarm-entry.ts";
@@ -279,6 +293,7 @@ import { type AvailableModelsSource, getModelNarrowingPatterns, resolveModelScop
 import type { ModelRuntime } from "./model-runtime.ts";
 import { ModelSwitchAuthError } from "./model-switch-auth-error.ts";
 import { NestedToolCallRunner } from "./nested-tool-calls.ts";
+import { type PendingInputSnapshot, type PendingInputUpdate, SessionPendingInputs } from "./pending-input-session.ts";
 import { PROMPT_CACHE_SAFE_WAIT_ENV, resolvePromptCacheSafeWaitSeconds } from "./prompt-cache-budget.ts";
 import { PromptCachePrefixBuilds } from "./prompt-cache-prefix-request.ts";
 import { expandPromptTemplateWithMetadata, type PromptTemplate } from "./prompt-templates.ts";
@@ -357,7 +372,8 @@ import {
 } from "./thinking-levels.ts";
 import { resetTimings, time } from "./timings.ts";
 import { type SessionMessageUpdateEvent, withResolvedToolName } from "./tool-call-display-name.ts";
-import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
+import { createToolDispatcher, type ToolDispatcher } from "./tool-dispatch/tool-dispatcher.ts";
+import type { BashOperations } from "./tools/bash.ts";
 import { composeFilesystemPolicies } from "./tools/filesystem-policy.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
@@ -366,6 +382,7 @@ import {
 	AgentDeadlineTracker,
 	resolveTurnDeadlineSettings,
 	TURN_DEADLINE_ENTRY_TYPE,
+	TURN_DEADLINE_GRACE_MS,
 	type TurnDeadline,
 	type TurnDeadlineWarning,
 } from "./turn-deadline.ts";
@@ -473,6 +490,8 @@ export type AgentSessionEvent =
 	| SessionMessageUpdateEvent
 	| { type: "agent_settled" }
 	| { type: "agent_idle" }
+	/** The session's tool child changed state (senpi#3566; the minimal record todo 14 extends). */
+	| { type: "session_tool_child"; state: "spawned" | "exited" | "respawned"; generation: number; pid: number }
 	| { type: "session_abort" }
 	| {
 			type: "resume_compaction_required";
@@ -507,6 +526,8 @@ export type AgentSessionEvent =
 			type: "command_invocation";
 			command: CommandInvocation;
 	  }
+	/** A pending input changed in durable custody (senpi#3549); `changes` are complete projections. */
+	| ({ type: "pending_input_update" } & PendingInputUpdate)
 	| {
 			type: "queue_update";
 			steering: readonly string[];
@@ -766,6 +787,8 @@ export interface AgentSessionConfig {
 	promptSurface?: PromptSurface;
 	/** Browser engine this session's skills drive; omitted means none was chosen. */
 	browserEngine?: BrowserEngine;
+	/** Tool runtime for this session (senpi#3566); absent means `in-process`. */
+	toolRuntime?: ToolRuntimeKind;
 }
 
 type SessionModelEntry = {
@@ -1155,6 +1178,10 @@ export class AgentSession {
 	/** Settles once the queued message_end processing (persistence included) of that exact message has run. */
 	private readonly _messageEndPersistence = new WeakMap<AgentMessage, Promise<void>>();
 	private _isAgentRunActive = false;
+	/** senpi#3650: the core may continue a run after agent_end; the settle must not wait on that continuation. */
+	private readonly _runContinuations = new AgentRunContinuations();
+	/** senpi#3650: the turn that owns extension handler waits started now; the turn deadline releases only its own. */
+	private _handlerTurnScope = 0;
 	private _toolExecutionDepth = 0;
 	private readonly _toolContextDisposers = new Set<() => void>();
 	private _promptStartPending = false;
@@ -1170,6 +1197,8 @@ export class AgentSession {
 	private _triggerTurnAdmissionAbortGeneration: number | undefined;
 	private _engineTurnStarts: EngineTurnStartRecord[] = [];
 	private _engineTurnPauseRecorded = false;
+	// The pause warning is shown once per pause: a stream of refused events would otherwise add one line each (senpi#2537).
+	private _engineTurnPauseNotified = false;
 	private _nextInputId = 0;
 	private _idleWaitPromise: Promise<void> | undefined;
 	private _resolveIdleWait: (() => void) | undefined;
@@ -1187,6 +1216,9 @@ export class AgentSession {
 	private _abortCause: AgentAbortCause | undefined;
 	private _nextQueuedInputOrder = 0;
 	private _nextQueuedId = 0;
+	/** Identified queued input (with a client id) in durable custody; see pending-input-session.ts (senpi#3549). */
+	private readonly _pendingInputs: SessionPendingInputs;
+	private _queueClearRecorded: Promise<void> = Promise.resolve();
 	/** The exact message object queued for each `queuedId`, so removal and edits hit the native queue by identity. */
 	private readonly _queuedMessages = new Map<string, AgentMessage>();
 	/** Recently delivered `queuedId`s (bounded), so a late dequeue answers `already_delivered`, not `not_found`. */
@@ -1309,6 +1341,7 @@ export class AgentSession {
 
 	// Bash execution state
 	private readonly _bashAbortControllers = new Set<AbortController>();
+	private readonly _toolDispatcher: ToolDispatcher;
 	private _pendingBashMessages: BashExecutionMessage[] = [];
 
 	// Extension system
@@ -1330,6 +1363,9 @@ export class AgentSession {
 	private _baseToolDefinitions: Map<string, ToolDefinition> = new Map();
 	private _cwd: string;
 	private _agentDir: string;
+	private readonly _toolChild: SessionToolChild | undefined;
+	/** Settles once dispose() has stopped the tool child and swept what it launched. */
+	private _toolChildClosed: Promise<void> = Promise.resolve();
 	private _extensionRunnerRef?: { current?: ExtensionRunner };
 	private _initialActiveToolNames?: string[];
 	private _defaultToolNames?: Set<string>;
@@ -1420,6 +1456,12 @@ export class AgentSession {
 		this._browserEngine = config.browserEngine;
 		this.agent = config.agent;
 		this.sessionManager = config.sessionManager;
+		this._pendingInputs = new SessionPendingInputs({
+			sessionManager: this.sessionManager,
+			nextQueuedId: () => this._mintQueuedId(),
+			onChange: (update) => this._emit({ type: "pending_input_update", ...update }),
+		});
+		this.agent.queuedInputPort = this._pendingInputs.queuedInputPort();
 		this.settingsManager = config.settingsManager;
 		this._unsubscribeSettingsSource = this.settingsManager.subscribeToSourceSelection((source) => {
 			this._emit({ type: "settings_source_selected", ...source });
@@ -1452,6 +1494,23 @@ export class AgentSession {
 				provider: this.model?.provider,
 				model: this.model?.id,
 			}),
+		});
+		const toolRuntime = config.toolRuntime ?? "in-process";
+		const hostRefusal = toolRuntimeHostRefusal(toolRuntime);
+		if (hostRefusal !== undefined) throw new ToolRuntimeUnsupportedHostError(hostRefusal);
+		this._toolChild =
+			toolRuntime === "child"
+				? new SessionToolChild({
+						dir: join(this._agentDir, "tool-children", this.sessionManager.getSessionId()),
+						cwd: this._cwd,
+						moduleRoots: () => toolChildModuleRoots(this._extensionRunner.getAllRegisteredTools()),
+						onRecord: (record) => this._emit({ type: "session_tool_child", ...record }),
+					})
+				: undefined;
+		this._toolDispatcher = createToolDispatcher({
+			runtime: toolRuntime,
+			notify: (event, data) => this._sessionLogger.info(event, data),
+			...(this._toolChild === undefined ? {} : { childRunner: this._toolChild.runner }),
 		});
 		this._fallbackValidationWarnings = validateFallbackChains(
 			this.settingsManager.getRawFallbackChains(),
@@ -2653,6 +2712,16 @@ export class AgentSession {
 		return this._agentDir;
 	}
 
+	/** Resolves after dispose() once the tool child has exited and its launched groups are swept; awaited by disposers. */
+	whenToolChildClosed(): Promise<void> {
+		return this._toolChildClosed;
+	}
+
+	/** The `list_sessions` row of this session's tool child (senpi#3566); `none` under the in-process runtime. */
+	toolChildRow(): SessionToolChildRow {
+		return this._toolChild?.row() ?? { state: "none" };
+	}
+
 	/**
 	 * Working directory this session resolves settings against — the same value extensions
 	 * receive as `ctx.cwd`, so a host surface (RPC) reads project settings identically.
@@ -2731,9 +2800,14 @@ export class AgentSession {
 		resolve();
 	}
 
-	private async _emitAgentSettled(): Promise<void> {
-		if (this.agent.state.isStreaming) {
-			await this.agent.waitForIdle();
+	private async _emitAgentSettled(agentEnd?: AgentEvent): Promise<void> {
+		if (
+			this.agent.state.isStreaming &&
+			(await this._runContinuations.idleOrContinued(agentEnd, () => this.agent.waitForIdle()))
+		) {
+			// The core continued this run with input queued during agent_end; that continuation settles it.
+			this._abortProvenance.closeAgentEndBoundary();
+			return;
 		}
 		if (!this._isAgentRunActive) {
 			this._abortProvenance.closeAgentEndBoundary();
@@ -2844,6 +2918,7 @@ export class AgentSession {
 		this._isAgentRunActive = true;
 		// A new turn admitted: arm the inactivity lease and the hard max-runtime cap.
 		this._deadlineTracker.arm();
+		this._handlerTurnScope += 1;
 		// A new prompt replaces any retry that compaction before it scheduled.
 		this._failedResponse = undefined;
 		this._recordSelection();
@@ -2929,6 +3004,7 @@ export class AgentSession {
 
 	/** Internal handler for agent events - shared by subscribe and reconnect */
 	private _handleAgentEvent = (event: AgentEvent, signal: AbortSignal): void => {
+		this._runContinuations.observe(event);
 		// Record the calls a tool made through ctx.executeTool() and their usage on its result message,
 		// synchronously so the message carries them before any listener or persistence sees it.
 		if (this._nestedToolCalls) {
@@ -3656,7 +3732,7 @@ export class AgentSession {
 				launchedContinuation = true;
 			}
 			if (!launchedContinuation) {
-				await this._emitAgentSettled();
+				await this._emitAgentSettled(event);
 			} else {
 				this._abortProvenance.closeAgentEndBoundary();
 			}
@@ -4075,6 +4151,11 @@ export class AgentSession {
 			"This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). For newSession, fork, and switchSession, move post-replacement work into withSession and use the ctx passed to withSession. For reload, do not use the old ctx after await ctx.reload().",
 		);
 		this._releaseToolSearchService("session disposed");
+		this._toolChildClosed =
+			this._toolChild
+				?.close()
+				.catch((error: unknown) => this._sessionLogger.warn("tool_child_close_failed", { error: String(error) })) ??
+			Promise.resolve();
 		this._disconnectFromAgent();
 		this._unsubscribeSettingsSource?.();
 		this._unsubscribeSettingsSource = undefined;
@@ -4305,6 +4386,29 @@ export class AgentSession {
 	/** Adapter for the deadline owner interface: end the turn through the normal system abort. */
 	async abortTurnForDeadline(): Promise<void> {
 		await this._abortActiveAgentAndRetry("system");
+		// An abort that joined an open agent_end boundary returns at once; the run is still held until it settles.
+		if (!this.isIdle) await this._waitForIdleAfterAbort();
+	}
+
+	/**
+	 * An abort (Esc, or the turn deadline) that the run does not honour within the grace is held by an extension handler
+	 * no abort signal reaches: release the turn's held handler waits so it settles (senpi#3650).
+	 */
+	private async _waitForIdleAfterAbort(): Promise<void> {
+		const idle = this.waitForIdle();
+		let graceTimer: ReturnType<typeof setTimeout> | undefined;
+		const graceOver = new Promise<true>((resolve) => {
+			graceTimer = setTimeout(() => resolve(true), TURN_DEADLINE_GRACE_MS);
+		});
+		const stillHeld = await Promise.race([idle.then(() => false), graceOver]);
+		clearTimeout(graceTimer);
+		if (stillHeld) this._extensionRunner.releaseHeldHandlers(this._handlerTurnScope);
+		await idle;
+	}
+
+	/** Adapter for the deadline owner interface: stop waiting on extension handlers that hold the turn (senpi#3650). */
+	releaseHeldExtensionHandlers(): number {
+		return this._extensionRunner.releaseHeldHandlers(this._handlerTurnScope);
 	}
 
 	/** Record a deadline stop durably so the goal engine holds off until admitted user input. */
@@ -5803,7 +5907,7 @@ export class AgentSession {
 		images?: ImageContent[],
 		options?: QueuedInputOptions & Pick<PromptOptions, "textBlocks">,
 	): Promise<void> {
-		this._enqueuePreparedInput({ ...options, text, images, mode: "steer" });
+		await this._enqueueQueuedInput({ ...options, text, images, mode: "steer" });
 	}
 
 	/**
@@ -5814,16 +5918,39 @@ export class AgentSession {
 		images?: ImageContent[],
 		options?: QueuedInputOptions & Pick<PromptOptions, "textBlocks">,
 	): Promise<void> {
-		this._enqueuePreparedInput({ ...options, text, images, mode: "followUp" });
+		await this._enqueueQueuedInput({ ...options, text, images, mode: "followUp" });
+	}
+
+	/** Identified input is admitted into durable custody and enqueued in one gated step; other input as before. */
+	private async _enqueueQueuedInput(
+		input: QueuedInputOptions & Omit<PreparedClientInput, "enqueueOrder"> & Pick<PromptOptions, "textBlocks">,
+	): Promise<void> {
+		const clientMessageId = input.clientMessageId;
+		if (clientMessageId === undefined) {
+			this._enqueuePreparedInput(input);
+			return;
+		}
+		await this._pendingInputs.admit(
+			{ clientMessageId, text: input.text, ...(input.images ? { images: input.images } : {}), mode: input.mode },
+			(queuedId) => this._enqueuePreparedInput({ ...input, queuedId }),
+		);
 	}
 
 	/** Restore accepted input without re-running input transforms or changing its enqueue order. */
 	async restoreQueuedInput(input: PreparedClientInput): Promise<void> {
-		this._enqueuePreparedInput(input);
+		const restored =
+			input.clientMessageId === undefined
+				? undefined
+				: await this._pendingInputs.restoreHandle(input.clientMessageId);
+		// The pending-input record is the authority: an input it already retired is not queued again.
+		if (restored === "retired") return;
+		this._enqueuePreparedInput(restored === undefined ? input : { ...input, queuedId: restored.queuedId });
 	}
 
 	private _enqueuePreparedInput(
-		input: QueuedInputOptions & Omit<PreparedClientInput, "enqueueOrder"> & Pick<PromptOptions, "textBlocks">,
+		input: QueuedInputOptions &
+			Omit<PreparedClientInput, "enqueueOrder"> &
+			Pick<PromptOptions, "textBlocks"> & { readonly queuedId?: string },
 	): void {
 		const enqueueOrder = input.enqueueOrder ?? this.reserveQueuedInputOrder();
 		const prepared = {
@@ -5836,7 +5963,7 @@ export class AgentSession {
 		input.onQueuedInput?.(prepared);
 		const queue = input.mode === "steer" ? this._steeringMessages : this._followUpMessages;
 		queue.push(input.text);
-		const queuedId = this._recordQueuedInput(input.text, input.mode, prepared);
+		const queuedId = this._recordQueuedInput(input.text, input.mode, prepared, undefined, input.queuedId);
 		this._sessionLogger.debug("queue_enqueue", {
 			mode: input.mode,
 			count: queue.length,
@@ -6032,6 +6159,7 @@ export class AgentSession {
 	 */
 	private _recordEngineTurnStart(customType: string): void {
 		this._engineTurnPauseRecorded = false;
+		this._engineTurnPauseNotified = false;
 		this._engineTurnStarts.push({ at: Date.now(), toolUsed: false });
 		try {
 			this._emitEntryAppended(this.sessionManager.appendCustomEntry(ENGINE_TURN_START_ENTRY_TYPE, { customType }));
@@ -6065,6 +6193,7 @@ export class AgentSession {
 		if (message.role === "user" || (message.role === "custom" && isUserDirectedTurn(message.customType))) {
 			this._engineTurnStarts = [];
 			this._engineTurnPauseRecorded = false;
+			this._engineTurnPauseNotified = false;
 			return;
 		}
 		const running = this._engineTurnStarts.at(-1);
@@ -6085,7 +6214,7 @@ export class AgentSession {
 	private _stopEngineTurn(customType: string): boolean {
 		if (isUserDirectedTurn(customType)) return false;
 		const stop = engineTurnStop(
-			this.sessionManager.getEntries(),
+			this.sessionManager.reduceHistory(engineTurnHistory),
 			Date.now(),
 			this.settingsManager.getEngineTurnSettings(),
 			this._engineTurnStarts,
@@ -6119,7 +6248,10 @@ export class AgentSession {
 			});
 		}
 		this._extensionRunner.emitBusEvent(ENGINE_TURN_LIMIT_EVENT, details);
-		this._extensionRunner.getUIContext().notify(engineTurnLimitNotice(stop), "warning");
+		if (!this._engineTurnPauseNotified) {
+			this._engineTurnPauseNotified = true;
+			this._extensionRunner.getUIContext().notify(engineTurnLimitNotice(stop), "warning");
+		}
 		return true;
 	}
 
@@ -6264,11 +6396,11 @@ export class AgentSession {
 		mode: QueuedInput["mode"],
 		options?: QueuedInputOptions,
 		message?: AgentMessage,
+		admittedQueuedId?: string,
 	): string {
 		const order = options?.enqueueOrder ?? this.reserveQueuedInputOrder();
 		this._nextQueuedInputOrder = Math.max(this._nextQueuedInputOrder, order);
-		this._nextQueuedId += 1;
-		const queuedId = `q_${this._nextQueuedId}`;
+		const queuedId = admittedQueuedId ?? this._mintQueuedId();
 		this._queuedInputOrder.push({
 			text,
 			mode,
@@ -6279,6 +6411,11 @@ export class AgentSession {
 		});
 		if (message !== undefined) this._queuedMessages.set(queuedId, message);
 		return queuedId;
+	}
+
+	private _mintQueuedId(): string {
+		this._nextQueuedId += 1;
+		return `q_${this._nextQueuedId}`;
 	}
 
 	/** A queued input reached a turn: forget its record and remember its id as delivered. */
@@ -6310,6 +6447,32 @@ export class AgentSession {
 	/** Replaces the text of one queued input in place, keeping its order and identity, and bumps its revision. */
 	editQueuedInput(queuedId: string, text: string, options?: QueuedInputChangeOptions): QueuedInputChange {
 		return this._changeQueuedInput(queuedId, text, options?.expectedRevision);
+	}
+
+	/**
+	 * Removes (`text` undefined) or edits one queued input. An input in durable custody (admitted with a client id)
+	 * changes in its record first and in the native queue in the same gated step; any other input changes as
+	 * `dequeueQueuedInput` / `editQueuedInput` do.
+	 */
+	async changeQueuedInput(
+		queuedId: string,
+		text: string | undefined,
+		options?: QueuedInputChangeOptions & { readonly effectId?: string },
+	): Promise<QueuedInputChange> {
+		const clientMessageId = this._queuedInputOrder.find((input) => input.queuedId === queuedId)?.clientMessageId;
+		const durable =
+			clientMessageId === undefined
+				? undefined
+				: await this._pendingInputs.change(
+						{
+							clientMessageId,
+							text,
+							...(options?.expectedRevision === undefined ? {} : { expectedRevision: options.expectedRevision }),
+							...(options?.effectId === undefined ? {} : { effectId: options.effectId }),
+						},
+						() => this._changeQueuedInput(queuedId, text, undefined),
+					);
+		return durable ?? this._changeQueuedInput(queuedId, text, options?.expectedRevision);
 	}
 
 	// Synchronous from the revision check to the change: nothing else on the session loop can land in between.
@@ -6397,6 +6560,16 @@ export class AgentSession {
 		this._followUpMessages = [];
 		this._queuedInputOrder = [];
 		this._queuedMessages.clear();
+		const recorded = this._pendingInputs.recordCleared(
+			ordered.flatMap((input) => (input.clientMessageId === undefined ? [] : [input.clientMessageId])),
+		);
+		// A caller that acknowledges the clear awaits `recorded` and sees a failure; this logs it when nobody does.
+		recorded.catch((error: unknown) => {
+			this._sessionLogger.warn("pending_input_clear_unrecorded", {
+				error: error instanceof Error ? error.message : String(error),
+			});
+		});
+		this._queueClearRecorded = recorded;
 		this._postCompactionDeferredSteeringMessages = [];
 		this._postCompactionDeferredFollowUpMessages = [];
 		this.agent.clearAllQueues();
@@ -6408,6 +6581,14 @@ export class AgentSession {
 			enumerable: false,
 		});
 		return cleared;
+	}
+
+	/**
+	 * Settles once the last `clearQueue` is recorded in the pending-input journal. `clearQueue` stays synchronous;
+	 * a caller that acknowledges the clear (RPC `clear_queue`) awaits this first so its answer is durable.
+	 */
+	whenQueueClearRecorded(): Promise<void> {
+		return this._queueClearRecorded;
 	}
 
 	/** Number of pending messages (includes both steering and follow-up) */
@@ -6423,6 +6604,11 @@ export class AgentSession {
 	/** Get pending follow-up messages (read-only) */
 	getFollowUpMessages(): readonly string[] {
 		return this._followUpMessages;
+	}
+
+	/** The pending inputs in durable custody, and an explicit outcome for each id the caller already knows. */
+	getPendingInputs(knownClientMessageIds?: readonly string[]): Promise<PendingInputSnapshot> {
+		return this._pendingInputs.snapshot(knownClientMessageIds);
 	}
 
 	getQueuedInputs(): readonly QueuedInput[] {
@@ -6459,6 +6645,15 @@ export class AgentSession {
 		if (hasPendingTriggerTurnAdmission) this._recordUserAbort();
 		if (this._isBeforeSettle) this._abortDuringBeforeSettle = true;
 		await this._abortActiveAgentAndRetry("user");
+		// An Esc that joined an open agent_end boundary returns at once: a boundary handler that holds the run is still
+		// released after the grace (senpi#3650), without making abort() itself wait for it.
+		if (!this.isIdle) {
+			this._waitForIdleAfterAbort().catch((error: unknown) => {
+				this._sessionLogger.warn("abort_release_failed", {
+					error: error instanceof Error ? error.message : String(error),
+				});
+			});
+		}
 		if (!shouldEmitAbort) return;
 		try {
 			await this._emitSessionAbort();
@@ -7630,7 +7825,7 @@ export class AgentSession {
 
 		const abortPromise = (async () => {
 			this.agent.abort();
-			await this.waitForIdle();
+			await this._waitForIdleAfterAbort();
 		})();
 		this._userAbortPromise = abortPromise;
 		try {
@@ -9456,6 +9651,17 @@ export class AgentSession {
 		runner.setToolHookLifecycleObserver((event) => {
 			this._emit(event);
 		});
+		runner.setEventHandlerBudget(
+			() => ({
+				warnMs: this.settingsManager.getExtensionEventHandlerWarnMs(),
+				timeoutMs: this.settingsManager.getExtensionEventHandlerTimeoutMs(),
+			}),
+			(stall) =>
+				reportExtensionHandlerStall(stall, this._sessionLogger, (message, type) =>
+					runner.getUIContext().notify(message, type),
+				),
+			() => this._handlerTurnScope,
+		);
 		runner.bindCommandContext(this._extensionCommandContextActions);
 
 		this._extensionErrorUnsubscriber?.();
@@ -9818,6 +10024,11 @@ export class AgentSession {
 		return this._fallbackValidationWarnings;
 	}
 
+	/** The dispatcher every wrapped tool call and user-bash operation goes through (senpi#3566). */
+	get toolDispatcher(): ToolDispatcher {
+		return this._toolDispatcher;
+	}
+
 	private _isBuiltinExtensionPath(path: string): boolean {
 		return (
 			path.startsWith("<builtin:") || path.startsWith(BUILTIN_PATH_PREFIX) || /[\\/]senpi-codemode[\\/]/u.test(path)
@@ -9907,7 +10118,12 @@ export class AgentSession {
 		);
 		const runner = this._extensionRunner;
 		const createToolContext = (signal: AbortSignal | undefined) => this._createToolContext(signal);
-		const wrappedExtensionTools = wrapRegisteredTools(allCustomTools, runner, createToolContext);
+		const wrappedExtensionTools = wrapRegisteredTools(
+			allCustomTools,
+			runner,
+			createToolContext,
+			this._toolDispatcher,
+		);
 		const wrappedBuiltInTools = wrapRegisteredTools(
 			Array.from(this._baseToolDefinitions.values())
 				.filter((definition) => isAllowedTool(definition.name))
@@ -9919,6 +10135,7 @@ export class AgentSession {
 				})),
 			runner,
 			createToolContext,
+			this._toolDispatcher,
 		);
 
 		const toolRegistry = new Map(wrappedBuiltInTools.map((tool) => [tool.name, tool]));
@@ -11108,7 +11325,7 @@ export class AgentSession {
 			const result = await executeBashWithOperations(
 				resolvedCommand,
 				this.sessionManager.getCwd(),
-				options?.operations ?? createLocalBashOperations({ shellPath }),
+				options?.operations ?? this._toolDispatcher.bashOperations({ shellPath }),
 				{
 					onChunk: (delta) => {
 						const callbackResult = onChunk?.(delta);
@@ -11799,7 +12016,22 @@ export class AgentSession {
 	 * @returns Path to exported file
 	 */
 	async exportToHtml(outputPath?: string, options: { themeName?: string } = {}): Promise<string> {
-		const themeName = [options.themeName, this.settingsManager.getTheme()].find(
+		return await exportSessionToHtml(this.sessionManager, this.state, {
+			...this.htmlExportOptions(options.themeName),
+			outputPath,
+		});
+	}
+
+	/** Render the session to HTML in memory, passing every value through `sanitize` (used by `/share`). */
+	renderToHtml(options: { themeName?: string; sanitize: <T>(value: T) => T }): string {
+		return renderSessionToHtml(this.sessionManager, this.state, {
+			...this.htmlExportOptions(options.themeName),
+			sanitize: options.sanitize,
+		});
+	}
+
+	private htmlExportOptions(requestedTheme: string | undefined): ExportOptions {
+		const themeName = [requestedTheme, this.settingsManager.getTheme()].find(
 			(candidate) => candidate !== undefined && getThemeByName(candidate) !== undefined,
 		);
 
@@ -11809,12 +12041,7 @@ export class AgentSession {
 			theme,
 			cwd: this.sessionManager.getCwd(),
 		});
-
-		return await exportSessionToHtml(this.sessionManager, this.state, {
-			outputPath,
-			themeName,
-			toolRenderer,
-		});
+		return { themeName, toolRenderer };
 	}
 
 	/**

@@ -1,3 +1,220 @@
+## 2026-10-19 - Never signal a child whose spawn failed (senpi#3706)
+
+### What changed
+
+- `packages/coding-agent/src/core/exec.ts`: its stop/timeout/abort path calls `signalSpawnedChild` (`packages/coding-agent/src/utils/child-signal.ts`), which sends nothing to a child without a pid, instead of calling `kill()` on it directly.
+- `packages/coding-agent/src/core/package-manager.ts`: its stop/timeout/abort path calls `signalSpawnedChild` (`packages/coding-agent/src/utils/child-signal.ts`), which sends nothing to a child without a pid, instead of calling `kill()` on it directly.
+
+### Why
+
+On Node before 24.22.0 / 26.10.0 (nodejs/node#65052), `kill()` on a child whose spawn failed (no pid) becomes `kill(0, signal)` and signals the caller's own process group, killing senpi and the rest of the terminal's foreground job.
+
+### Why an extension could not handle it
+
+The affected calls are inside core stop paths; nothing outside them owns those child processes.
+
+### Expected merge conflict zones
+
+The single `kill()` call on each listed path's stop/timeout/abort branch.
+
+## 2026-10-19 - A paused engine warns once, not once per refused event (senpi#2537)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_stopEngineTurn` shows the pause warning only for the first refusal of a pause; the bus event and the `engine-turn-limit` entry are still recorded for every refusal. A new engine turn or a user message re-arms the warning, like `_engineTurnPauseRecorded`.
+
+### Why
+
+A background stream that keeps sending notices while the engine is paused got one `Warning: Paused: ...` line per refused notice: in a 10-minute soak at 2 events per second, about 900 identical lines, each a transcript component that stays mounted (about 200 KB of strings and 1,000 components in a heap-snapshot diff).
+
+### Why an extension could not handle it
+
+The warning is shown by the session's engine-turn bound itself; extensions only receive the bus event.
+
+### Expected merge conflict zones
+
+- LOW: `agent-session.ts`, the `_engineTurnPauseNotified` field next to `_engineTurnPauseRecorded`, its two resets, and the `notify` call at the end of `_stopEngineTurn`.
+
+## 2026-10-19 - A sustained event stream no longer holds a compacted session's whole history (senpi#2537)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: new `reduceHistory(reducer)` (also on `ReadonlySessionManager`) folds the whole history, every branch in append order like `getEntries()`, without keeping a full-history view. The history is read once per load and later calls fold only the entries appended since (`session-history-reduce.ts`). A `historyGeneration` counter, bumped wherever the history is replaced but not on append or mirror trim, keys the memo, and `verbatimFromCount` records how much of the mirror's tail is the history's own tail after a trim (`planLoadedTail` now reports `windowLength`).
+- `packages/coding-agent/src/core/agent-session.ts`: `_stopEngineTurn` reads the engine-turn bound from `reduceHistory(engineTurnHistory)` instead of `getEntries()`.
+
+### Why
+
+On a compacted (trimmed) session, `getEntries()` materializes and memoizes the whole file's history. `_stopEngineTurn` called it for every engine-triggered turn, and the builtin compaction checkpoint and Stop hook called it every turn, so a stream of background events held a full-history view for as long as it kept the session from settling idle: 11.7 MB of the 20 MB a 10-minute, 2-events-per-second soak on a 10,000-entry session grew on main.
+
+### Why an extension could not handle it
+
+The engine-turn bound and the session mirror are session internals; the builtin readers needed a session-manager read that does not build the view.
+
+### Expected merge conflict zones
+
+- LOW: `session-manager.ts`, the `historyGeneration` / `verbatimFromCount` fields after `fullEntryCount`, one line in `_resetToNewSession`, `_completeFileLoad`, `_loadEntries`, `_buildIndex`, `_retainLoadedTail`, `_trimMirrorAfterCompaction` and both `createBranchedSession` branches, `reduceHistory` after `getEntryCount`, and the `ReadonlySessionManager` pick list.
+- LOW: `agent-session.ts`, the first argument of `engineTurnStop` in `_stopEngineTurn` and the `engine-turn-limit.ts` import.
+
+## 2026-10-19 - An abort that joins an open agent_end boundary still releases a held handler (senpi#3650 follow-up)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `abortTurnForDeadline` awaits `_waitForIdleAfterAbort()` when the session is still not idle after `_abortActiveAgentAndRetry`, and `_abortWithProvenance` (Esc) starts it without awaiting. An abort that joined an open `agent_end` boundary returns at once, so a held `agent_before_settle` (or `turn_end`) handler was never released and the session stayed streaming.
+
+### Why
+
+Review of #3655 found Esc and the turn deadline covered a held lifecycle handler but not one held inside the `agent_end` boundary, where the abort takes the boundary-join branch and returns before any grace runs.
+
+### Why an extension could not handle it
+
+The abort path and the host's wait on extension handlers are session internals; no extension can release the host's wait on another extension's boundary handler.
+
+### Expected merge conflict zones
+
+- LOW: `agent-session.ts` `abortTurnForDeadline` and the line after `_abortActiveAgentAndRetry("user")` in `_abortWithProvenance`.
+
+## 2026-10-18 - Session move phase 1 and related core deltas arrive through the base merge (senpi#3631 lineage)
+
+### What changed
+
+- `agent-session.ts`, `agent-session-runtime.ts`, `agent-session-services.ts`, `sdk.ts`: engine export/import with single-owner ownership (session move phase 1) and the surrounding core deltas landed on main and reach this branch through the pure base merge; this branch adds no change of its own to them beyond the tool-child runtime already tracked elsewhere.
+
+### Why
+
+- The changelog gate reads the merge-base diff, which after the base merge includes main's own changes to these files; this entry records that provenance.
+
+### Why an extension could not handle it
+
+- Core session ownership machinery; not extension surface.
+
+### Expected merge conflict zones
+
+- `changes.md` only.
+
+## 2026-10-18 - A session moved to another device refuses writes on the device it left (senpi#3630)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: `_persist` asks a `SessionWriteGuard` (`session-move/write-guard.ts`) before every persisted write. When the file's last ownership entry is a `session_released` with reason `move` or a `session_moved`, any write other than an ownership entry throws `SessionMovedAwayError`, which names the reason and what to do (wait, open it on the other device, or copy it here).
+
+### Why
+
+- `packages/coding-agent/src/core/session-manager.ts`: moving a session between devices (sisyphuslabs/omo-desktop-app#3137) needs exactly one writer per session id; the device that sent the session must not keep appending to its copy, whatever opens the file (TUI, desktop, RPC host).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/session-manager.ts`: every write to a session file goes through this funnel, below extensions and below every mode, so the single-owner rule can only hold here.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/session-manager.ts`, the `writeGuard` field next to `persist` and the first line of `_persist`.
+
+## 2026-10-18 - A hung extension handler cannot freeze the session (senpi#3650)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_applyExtensionBindings` gives every runner the extension handler budget (`extensionEventHandlerWarnMs` / `extensionEventHandlerTimeoutMs`), routes stalls to `reportExtensionHandlerStall`, and tags handler waits with `_handlerTurnScope` (advanced where a prompt arms the turn deadline); `releaseHeldExtensionHandlers()` releases only that turn's waits. `_handleAgentEvent` feeds `AgentRunContinuations`, and `_emitAgentSettled(agentEnd)` no longer waits for the agent to go idle when the core continued the run with input queued during `agent_end`: that continuation's own `agent_end` settles the run (senpi#3351 drain owner).
+- `packages/coding-agent/src/core/agent-session.ts` `_abortActiveAgentAndRetry`: an abort (Esc, or the turn deadline) the run does not honour within `TURN_DEADLINE_GRACE_MS` releases the turn's held handler waits (`_waitForIdleAfterAbort`), so Esc ends a handler-held turn too.
+- `packages/coding-agent/src/core/agent-run-continuation.ts` (new): `AgentRunContinuations`, which proves from emission order (a later `agent_start`) that the core continued a run.
+- `packages/coding-agent/src/core/settings-manager.ts`: the two settings, defaults 60 s (warning) and 20 min (hard cap, above the 15 min summarization budget a blocking compaction in `message_end` may use); `0` disables each.
+- `packages/coding-agent/src/core/session-log.ts`: `extension` and `handlerEvent` join the data-key allowlist, so `extension_handler_stalled` names the extension (basename), the event, the stage (`warn` / `timeout` / `released` / `late_failure`) and, for a late failure, its `error`.
+- `packages/coding-agent/src/core/turn-deadline.ts`: a turn still running one grace after the deadline abort has its turn's held handler waits released and gets one more grace; only a turn still running after that logs `turn_deadline_unsettled`, with the real time since the abort.
+- `packages/coding-agent/src/core/extension-handler-stall-report.ts` (new): logs every stall stage and shows a notice for the warning stage.
+
+### Why
+
+AgentSession persists agent events on one serial queue and awaited every extension handler without a bound. One handler that never settled froze a long-running session for 2 h 12 min: the turn was never written, the session stayed streaming, 25 queued steers were never delivered, nothing logged which handler held it, and the turn deadline could only report the turn unsettled. Review of the first version found that which side drains input queued during `agent_end` depended on microtask timing (two async `agent_end` handlers already deadlocked it on `main`).
+
+### Why an extension could not handle it
+
+The waits are the host's own awaits on extension handlers inside the session's event queue and the run's settle; no extension can bound another extension's handler, release the host's wait on it, or decide which owner continues a run.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-session.ts` `_emitAgentSettled` (the continuation check at the top) and the `agent_end` branch of `_processAgentEvent` that calls it; the start of `_handleAgentEvent`.
+- LOW: `agent-session.ts` `_applyExtensionBindings` (after `setToolHookLifecycleObserver`), the deadline-owner adapters beside `abortTurnForDeadline`, the `_deadlineTracker.arm()` line in `_promptAgent`, the abort promise in `_abortActiveAgentAndRetry`, and the field block beside `_isAgentRunActive`.
+- LOW: `settings-manager.ts` beside the `session_shutdown` handler budget; `session-log.ts` `ALLOWED_DATA_KEY`.
+- `turn-deadline.ts`, `agent-run-continuation.ts` and `extension-handler-stall-report.ts` are fork-only.
+
+## 2026-10-17 - /share redacts the session, previews it and asks before uploading (senpi#3524)
+
+### What changed
+
+- `packages/coding-agent/src/core/export-html/index.ts`: `renderSessionToHtml(sm, state, opts)` renders in memory; `exportSessionToHtml` writes its result. `ExportOptions.sanitize` rewrites the entries before custom tools pre-render them and then the whole session payload.
+- `packages/coding-agent/src/core/agent-session.ts`: `AgentSession.renderToHtml({ themeName, sanitize })`; theme and tool-renderer resolution moved into the private `htmlExportOptions`, shared with `exportToHtml`.
+- `packages/coding-agent/src/core/settings-manager.ts`: `enableSessionShare` (default true; global or project) and `getEnableSessionShare()`.
+- New fork-only `packages/coding-agent/src/core/share/`: `share-redaction.ts` (identity first: home in every separator spelling, account and host names; then private keys, provider/GitHub/Slack/AWS/Google keys, JWTs, bearer/basic headers, URL credentials, cookies, sensitive key=value and JSON fields, emails, non-loopback IPv4; images replaced by a note; every replacement counted), `share-session.ts` (`runShare`: kill switch, gh check, redact, preview, Upload/Review/Cancel, upload, review copy in a private `mkdtemp` removed on every exit), `share-gh.ts` (gist created from stdin, nothing written to disk). `share-projection.ts` leaves tool outputs out by default (tool results, `!` output, extension messages and state, pre-rendered result HTML), `share-redaction-value.ts` walks structured values, `share-sensitive-key.ts` decides from a key's name alone (split across camelCase, snake_case, kebab-case and dots) whether its value is replaced whole: any sensitive word anywhere makes the name sensitive, with no word-level exemptions; only a short list of exact names stays ordinary (`PUBLIC_KEY`, `PUBLIC_KEY_PATH`, `KEY_ID`, `AUTH_MODE`, `AUTH_TYPE`, `MAX_TOKENS`, `MAX_OUTPUT_TOKENS`). AWS-style key ids under other names are therefore redacted too; over-redacting a path or URL under a sensitive name is accepted for a share, and `share-entropy.ts` holds the generic generated-secret detector (base62/base64 runs, splits across newlines, escaped newlines, continuations and string seams).
+
+### Why
+
+- `/share` uploaded the whole session unredacted, with no confirmation, to a secret (unlisted) gist, after writing it to a fixed `os.tmpdir()/session.html`, and pointed users at the third-party `pi.dev` viewer by default. Any key, token, home path or email in a prompt or tool result left the machine in clear text. Regressions: `test/suite/regressions/3524-share-redaction.test.ts`, `test/suite/regressions/3524-share-consent.test.ts`.
+
+### Why an extension could not handle it
+
+- `/share` is a built-in interactive command and the HTML export is core; an extension cannot intercept either before the upload.
+
+### Expected merge conflict zones
+
+- LOW: `exportSessionToHtml` / `renderSessionToHtml` in `export-html/index.ts`; `exportToHtml` in `agent-session.ts`; the settings interface and getter block in `settings-manager.ts`.
+
+## 2026-10-18 - AgentSession keeps identified queued input in durable custody (senpi#3549, P2b)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the session owns a `SessionPendingInputs` (`pending-input-session.ts`) and installs its queue port on the agent, so every queued message is claimed, committed and released through the pending-input store. `steer`/`followUp` with a `clientMessageId` admit the input and enqueue it in one gated step (a repeated identical submit queues nothing; a reused id with another payload throws `ClientMessageIdConflictError`). New `changeQueuedInput(queuedId, text | undefined, options)` edits or removes an identified input in its record first and in the native queue in the same step; `_recordQueuedInput` accepts the admitted queue id so the record and the store share one id. Input without a client id keeps the legacy path, and `dequeueQueuedInput` / `editQueuedInput` are unchanged.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: a queued input was only in memory and in five parallel queue structures; a crash or a concurrent edit could lose it or deliver an old version (desktop #2838).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: the queues, their drain into a turn, and edit/remove are owned by the session runtime, below the extension API.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/core/agent-session.ts`, the constructor (store and port), `_queueSteer` / `_queueFollowUp`, `_enqueuePreparedInput`, `_recordQueuedInput` and the new `changeQueuedInput` above `_changeQueuedInput`.
+
+## 2026-10-18 - WSL detection survives sanitized environments (Refs senpi#3628)
+
+### What changed
+
+- `packages/coding-agent/src/core/keybindings.ts`: `useWindowsKeybindings` takes an optional `procVersionPath` and delegates Linux WSL detection to `isWSL` (`../utils/wsl.ts`: `WSL_DISTRO_NAME`/`WSL_INTEROP`/`WSLENV` plus a `/proc/version` fallback) instead of reading only the first two env markers.
+- `packages/coding-agent/src/core/footer-data-provider.ts`: `isWslEnvironment` delegates to the same `isWSL` helper instead of its own env-only copy.
+
+### Why
+
+- `packages/coding-agent/src/core/keybindings.ts`: on WSL sessions whose launcher environment carries no WSL markers (multiplexer sanitation, sudo), the dequeue chord fell back to `alt+up`, so Alt+Q fired nothing.
+- `packages/coding-agent/src/core/footer-data-provider.ts`: footer git polling for Windows-mounted paths silently stopped under the same sanitized environments.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/keybindings.ts`: default keybinding tables are core module state evaluated before extensions bind.
+- `packages/coding-agent/src/core/footer-data-provider.ts`: the footer provider is core-injected, not extension-owned.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/keybindings.ts`: `useWindowsKeybindings`.
+- `packages/coding-agent/src/core/footer-data-provider.ts`: `isWslEnvironment`.
+
+## 2026-10-18 - Amazon Bedrock's provider default is Claude Opus 5.5
+
+### What changed
+
+- `packages/coding-agent/src/core/model-resolver.ts`: `defaultModelPerProvider` row `amazon-bedrock` is `us.anthropic.claude-opus-5-5` (was `us.anthropic.claude-opus-4-6-v1`).
+
+### Why
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the bundled `amazon-bedrock` catalog lists `us.anthropic.claude-opus-5-5`, but the default was still Opus 4.6, four Opus releases behind the newest Opus that the retry fallback chains and prompt presets already lead with. The default applies only when no model is saved in settings and none is passed on the command line.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the built-in provider default table is core resolver data read before any extension runs.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the `amazon-bedrock` row of `defaultModelPerProvider`.
+
 ## 2026-10-17 - A reopened session keeps only its latest compaction window resident (senpi#3519)
 
 ### What changed
