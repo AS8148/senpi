@@ -81,6 +81,27 @@ The waits are the host's own awaits on extension handlers inside the session's e
 - LOW: `settings-manager.ts` beside the `session_shutdown` handler budget; `session-log.ts` `ALLOWED_DATA_KEY`.
 - `turn-deadline.ts`, `agent-run-continuation.ts` and `extension-handler-stall-report.ts` are fork-only.
 
+## 2026-10-17 - /share redacts the session, previews it and asks before uploading (senpi#3524)
+
+### What changed
+
+- `packages/coding-agent/src/core/export-html/index.ts`: `renderSessionToHtml(sm, state, opts)` renders in memory; `exportSessionToHtml` writes its result. `ExportOptions.sanitize` rewrites the entries before custom tools pre-render them and then the whole session payload.
+- `packages/coding-agent/src/core/agent-session.ts`: `AgentSession.renderToHtml({ themeName, sanitize })`; theme and tool-renderer resolution moved into the private `htmlExportOptions`, shared with `exportToHtml`.
+- `packages/coding-agent/src/core/settings-manager.ts`: `enableSessionShare` (default true; global or project) and `getEnableSessionShare()`.
+- New fork-only `packages/coding-agent/src/core/share/`: `share-redaction.ts` (identity first: home in every separator spelling, account and host names; then private keys, provider/GitHub/Slack/AWS/Google keys, JWTs, bearer/basic headers, URL credentials, cookies, sensitive key=value and JSON fields, emails, non-loopback IPv4; images replaced by a note; every replacement counted), `share-session.ts` (`runShare`: kill switch, gh check, redact, preview, Upload/Review/Cancel, upload, review copy in a private `mkdtemp` removed on every exit), `share-gh.ts` (gist created from stdin, nothing written to disk). `share-projection.ts` leaves tool outputs out by default (tool results, `!` output, extension messages and state, pre-rendered result HTML), `share-redaction-value.ts` walks structured values, `share-sensitive-key.ts` decides from a key's name alone (split across camelCase, snake_case, kebab-case and dots) whether its value is replaced whole: any sensitive word anywhere makes the name sensitive, with no word-level exemptions; only a short list of exact names stays ordinary (`PUBLIC_KEY`, `PUBLIC_KEY_PATH`, `KEY_ID`, `AUTH_MODE`, `AUTH_TYPE`, `MAX_TOKENS`, `MAX_OUTPUT_TOKENS`). AWS-style key ids under other names are therefore redacted too; over-redacting a path or URL under a sensitive name is accepted for a share, and `share-entropy.ts` holds the generic generated-secret detector (base62/base64 runs, splits across newlines, escaped newlines, continuations and string seams).
+
+### Why
+
+- `/share` uploaded the whole session unredacted, with no confirmation, to a secret (unlisted) gist, after writing it to a fixed `os.tmpdir()/session.html`, and pointed users at the third-party `pi.dev` viewer by default. Any key, token, home path or email in a prompt or tool result left the machine in clear text. Regressions: `test/suite/regressions/3524-share-redaction.test.ts`, `test/suite/regressions/3524-share-consent.test.ts`.
+
+### Why an extension could not handle it
+
+- `/share` is a built-in interactive command and the HTML export is core; an extension cannot intercept either before the upload.
+
+### Expected merge conflict zones
+
+- LOW: `exportSessionToHtml` / `renderSessionToHtml` in `export-html/index.ts`; `exportToHtml` in `agent-session.ts`; the settings interface and getter block in `settings-manager.ts`.
+
 ## 2026-10-18 - AgentSession keeps identified queued input in durable custody (senpi#3549, P2b)
 
 ### What changed
