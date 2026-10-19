@@ -205,8 +205,11 @@ export interface RpcConnectionHandler {
 	isShutdownRequested(): boolean;
 	/** Cancel UI requests that can no longer be answered by this connection. */
 	cancelPendingExtensionUiRequests(): void;
-	/** Tear down subscriptions and dispose the runtime. Never calls process.exit. */
-	dispose(): Promise<void>;
+	/**
+	 * Tear down subscriptions and dispose the runtime. Never calls process.exit; `processExit` tells the runtime the
+	 * caller exits right after (senpi#3711).
+	 */
+	dispose(options?: { readonly processExit?: boolean }): Promise<void>;
 }
 
 /** The tool call a dialog is about, as wire fields (absent when the dialog is not a permission request). */
@@ -1917,7 +1920,7 @@ export function createRpcConnectionHandler(
 					eventOutput.enqueueEvent({ type: "subscription_limits", ...limits }),
 				)
 			: () => {};
-	const dispose = async (): Promise<void> => {
+	const dispose = async (disposeOptions: { readonly processExit?: boolean } = {}): Promise<void> => {
 		stopLimitEvents();
 		sessionControl?.dispose();
 		sessionControl = undefined;
@@ -1933,7 +1936,7 @@ export function createRpcConnectionHandler(
 		unsubscribeLoadedSurfaces = undefined;
 		unsubscribeExtensionEvents = undefined;
 		if (options.disposeRuntime !== false) {
-			await runtimeHost.dispose();
+			await runtimeHost.dispose(disposeOptions);
 		}
 	};
 
@@ -1957,9 +1960,9 @@ export function createRpcConnectionHandler(
 			questions.cancelAll();
 			pendingExtensionRequests.cancelAll();
 		},
-		async dispose() {
+		async dispose(disposeOptions) {
 			await ready;
-			await dispose();
+			await dispose(disposeOptions);
 		},
 	};
 }
