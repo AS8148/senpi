@@ -6,8 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { BarrierClock } from "./barrier-clock.ts";
-import { createGatedChildProcess } from "./gated-child-process.ts";
-import { LAUNCH_SHIM_COMMAND_LINE_ENV, TOOL_CHILD_REENTRY_ENV } from "./launch-env-names.ts";
+import { breakawayCommandLine, createGatedChildProcess } from "./gated-child-process.ts";
+import { LAUNCH_SHIM_COMMAND_LINE_ENV, TOOL_CHILD_REENTRY_ENV, withoutInternalEnv } from "./launch-env-names.ts";
 import { WorkerLaunchClient, type WorkerLaunchMessage } from "./worker-launch.ts";
 
 function recordingClient() {
@@ -44,13 +44,7 @@ describe("gated child_process in win32 mode", () => {
 	it("fails typed when a detached launch has no re-entry command for the shim", () => {
 		const { client } = recordingClient();
 		const cp = createGatedChildProcess(realChildProcess, client, "win32", undefined);
-		const saved = process.env[TOOL_CHILD_REENTRY_ENV];
-		delete process.env[TOOL_CHILD_REENTRY_ENV];
-		try {
-			expect(() => cp.spawn("true", [], { detached: true })).toThrow(/^tool_child_breakaway_failed: /);
-		} finally {
-			if (saved !== undefined) process.env[TOOL_CHILD_REENTRY_ENV] = saved;
-		}
+		expect(() => cp.spawn("true", [], { detached: true })).toThrow(/^tool_child_breakaway_failed: /);
 	});
 
 	it("starts a detached launch through the shim, as breakaway, and reports the pid the shim wrote on fd 3", async () => {
@@ -58,15 +52,8 @@ describe("gated child_process in win32 mode", () => {
 		const stubShim = 'require("node:fs").writeSync(3, JSON.stringify({ pid: 4321 }) + "\\n")';
 		const reentry = JSON.stringify({ command: process.execPath, args: ["-e", stubShim] });
 		const cp = createGatedChildProcess(realChildProcess, client, "win32", reentry);
-		const saved = process.env[TOOL_CHILD_REENTRY_ENV];
-		process.env[TOOL_CHILD_REENTRY_ENV] = reentry;
-		try {
-			const shim = cp.spawn("cmd.exe", ["/c", "exit 0"], { detached: true, stdio: "ignore" });
-			await new Promise((resolveExit) => shim.once("exit", resolveExit));
-		} finally {
-			if (saved === undefined) delete process.env[TOOL_CHILD_REENTRY_ENV];
-			else process.env[TOOL_CHILD_REENTRY_ENV] = saved;
-		}
+		const shim = cp.spawn("cmd.exe", ["/c", "exit 0"], { detached: true, stdio: "ignore" });
+		await new Promise((resolveExit) => shim.once("exit", resolveExit));
 		expect(messages.find((message) => message.kind === "launch")).toMatchObject({
 			request: { api: "cp.spawn", containment: "breakaway", lifetime: "detached" },
 		});
@@ -93,7 +80,12 @@ describe("gated child_process in win32 mode", () => {
 				detached: true,
 				shell: true,
 				stdio: "ignore",
-				env: { ...process.env, [TOOL_CHILD_REENTRY_ENV]: reentry, [LAUNCH_SHIM_COMMAND_LINE_ENV]: "stale" },
+				env: {
+					...process.env,
+					ComSpec: "cmd.exe",
+					[TOOL_CHILD_REENTRY_ENV]: reentry,
+					[LAUNCH_SHIM_COMMAND_LINE_ENV]: "stale",
+				},
 			});
 			await new Promise((resolveExit) => shim.once("exit", resolveExit));
 			expect(JSON.parse(await readFile(seen, "utf8"))).toEqual({
@@ -105,6 +97,26 @@ describe("gated child_process in win32 mode", () => {
 			else process.env[TOOL_CHILD_REENTRY_ENV] = saved;
 			await rm(dir, { recursive: true, force: true });
 		}
+	});
+
+	it("builds a detached shell launch's command line by the shell's own convention", () => {
+		// senpi#3590 review MEDIUM: only cmd.exe takes `/d /s /c "<command>"`; any other shell takes `-c <command>`, as Node does.
+		const cases: ReadonlyArray<readonly [string | boolean, NodeJS.ProcessEnv, string]> = [
+			[true, {}, 'cmd.exe /d /s /c "echo hi"'],
+			[true, { ComSpec: "C:\\Windows\\System32\\cmd.exe" }, 'C:\\Windows\\System32\\cmd.exe /d /s /c "echo hi"'],
+			["cmd", {}, 'cmd /d /s /c "echo hi"'],
+			["powershell.exe", {}, 'powershell.exe -c "echo hi"'],
+			["C:\\Program Files\\Git\\bin\\bash.exe", {}, '"C:\\Program Files\\Git\\bin\\bash.exe" -c "echo hi"'],
+		];
+		for (const [shell, env, expected] of cases)
+			expect(breakawayCommandLine("echo", ["hi"], shell, env)).toBe(expected);
+	});
+
+	it("strips an internal variable whatever its case on Windows", () => {
+		// senpi#3590 review LOW: Windows environment names are case-insensitive.
+		const env = { senpi_tool_child_reentry: "{}", Senpi_Internal_Role: "launch-shim", Path: "C:\\bin" };
+		expect(withoutInternalEnv(env, "win32")).toEqual({ Path: "C:\\bin" });
+		expect(withoutInternalEnv(env, "linux")).toEqual(env);
 	});
 
 	it("keeps POSIX launches inherited with no started report", () => {

@@ -149,7 +149,7 @@ function breakawaySpawn(
 		env: {
 			...withoutInternalEnv(options.env ?? process.env),
 			[TOOL_CHILD_ROLE_ENV]: "launch-shim",
-			[LAUNCH_SHIM_COMMAND_LINE_ENV]: breakawayCommandLine(command, args, options.shell),
+			[LAUNCH_SHIM_COMMAND_LINE_ENV]: breakawayCommandLine(command, args, options.shell, options.env ?? process.env),
 		},
 		stdio: [stdio[0] ?? "ignore", stdio[1] ?? "ignore", stdio[2] ?? "ignore", "pipe"],
 		windowsHide: true,
@@ -169,13 +169,21 @@ function breakawaySpawn(
 }
 
 /**
- * The command line the shim starts. With a shell it is `cmd.exe /d /s /c "<command>"` with the command passed through
- * verbatim, as Node does (`windowsVerbatimArguments`): cmd.exe does not understand the C runtime's `\"` escaping.
+ * The command line the shim starts, by Node's own rules for `shell` on Windows: a shell named `cmd` or `cmd.exe` gets
+ * `/d /s /c "<command>"` with the command passed through verbatim (cmd.exe does not understand the C runtime's `\"`
+ * escaping); any other shell gets `-c <command>` with normal quoting. `shell: true` means `%ComSpec%`, else cmd.exe.
  */
-export function breakawayCommandLine(command: string, args: readonly string[], shell: SpawnOptions["shell"]): string {
+export function breakawayCommandLine(
+	command: string,
+	args: readonly string[],
+	shell: SpawnOptions["shell"],
+	env: NodeJS.ProcessEnv = process.env,
+): string {
 	if (!shell) return windowsCommandLine([command, ...args]);
-	const program = typeof shell === "string" ? shell : "cmd.exe";
-	return `${quoteWindowsArgument(program)} /d /s /c "${[command, ...args].join(" ")}"`;
+	const program = typeof shell === "string" ? shell : (env.ComSpec ?? "cmd.exe");
+	const line = [command, ...args].join(" ");
+	if (/^(?:.*\\)?cmd(?:\.exe)?$/i.test(program)) return `${quoteWindowsArgument(program)} /d /s /c "${line}"`;
+	return windowsCommandLine([program, "-c", line]);
 }
 
 function parseReentry(raw: string | undefined): { readonly command: string; readonly args: readonly string[] } {

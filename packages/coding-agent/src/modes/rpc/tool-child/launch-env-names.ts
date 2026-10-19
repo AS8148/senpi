@@ -27,10 +27,16 @@ export const INTERNAL_ENV = [...TOOL_CHILD_INTERNAL_ENV, LAUNCH_SHIM_COMMAND_LIN
  * The one sanitizer for the environment of a command a user (or user code) asked for: none of the internal variables,
  * whatever platform path starts it. A user command that kept one could enter a senpi internal role or re-enter the shim.
  */
-export function withoutInternalEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-	const clean = { ...env };
-	for (const name of INTERNAL_ENV) delete clean[name];
-	return clean;
+export function withoutInternalEnv(
+	env: NodeJS.ProcessEnv,
+	platform: NodeJS.Platform = process.platform,
+): NodeJS.ProcessEnv {
+	// Windows environment names are case-insensitive, so `senpi_tool_child_reentry` is the same variable there.
+	const internal = new Set<string>(
+		platform === "win32" ? INTERNAL_ENV.map((name) => name.toUpperCase()) : INTERNAL_ENV,
+	);
+	const key = (name: string) => (platform === "win32" ? name.toUpperCase() : name);
+	return Object.fromEntries(Object.entries(env).filter(([name]) => !internal.has(key(name))));
 }
 
 export function scrubToolChildEnv(env: NodeJS.ProcessEnv): void {
