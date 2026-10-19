@@ -141,6 +141,18 @@ describe("awaitCiEvidence (senpi#2943)", () => {
 		assert.equal(deps.headSha(), "c2");
 	});
 
+	it("never follows main away from a pinned commit; a cancelled CI run there stops the release", () => {
+		const { deps, calls } = world({
+			heads: ["c1", "c2"],
+			runs: { c1: [supersededFanIn("c1")], c2: [checkRun("c2", "completed", "success")] },
+		});
+		assert.throws(
+			() => awaitCiEvidence({ timeoutMs: 600_000, pollMs: 30_000 }, { ...deps, pinned: true }),
+			/pinned release commit c1.*force_tests/,
+		);
+		assert.deepEqual(calls.merges, []);
+	});
+
 	it("never follows a moved main that does not contain the catalog commit", () => {
 		// main moved to x9, a history that lacks c1 (rewritten or reset), and c1's CI was cancelled.
 		const { deps, calls } = world({
