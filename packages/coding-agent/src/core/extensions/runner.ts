@@ -886,17 +886,37 @@ export class ExtensionRunner {
 		return this.extensions.map(({ path, resolvedPath }) => ({ path, resolvedPath }));
 	}
 
+	readonly #reportedChildModuleReplacements = new Set<string>();
+
+	/**
+	 * Every registered child module by id. Unlike tools, the last extension to register an id wins, in load order; the
+	 * replacement is logged once, so a module that shadows another (a builtin's included) is never silent.
+	 */
+	getAllChildModules(): Map<string, RegisteredChildModule> {
+		const modules = new Map<string, RegisteredChildModule>();
+		for (const ext of this.extensions)
+			for (const [id, entry] of ext.childModules ?? []) {
+				const earlier = modules.get(id);
+				const replacement = `${id}\0${earlier?.sourceInfo.path}\0${entry.sourceInfo.path}`;
+				if (
+					earlier !== undefined &&
+					earlier.sourceInfo.path !== entry.sourceInfo.path &&
+					!this.#reportedChildModuleReplacements.has(replacement)
+				) {
+					this.#reportedChildModuleReplacements.add(replacement);
+					console.warn(
+						`Child module "${id}" from ${entry.sourceInfo.path} replaces the one from ${earlier.sourceInfo.path}`,
+					);
+				}
+				modules.set(id, entry);
+			}
+		return modules;
+	}
+
 	/**
 	 * Get all registered tools from all extensions. The first registration within a source tier
 	 * wins, while a non-builtin extension may override a builtin extension tool.
 	 */
-	/** Every registered child module by id; a later registration of the same id wins, as for tools. */
-	getAllChildModules(): Map<string, RegisteredChildModule> {
-		const modules = new Map<string, RegisteredChildModule>();
-		for (const ext of this.extensions) for (const [id, entry] of ext.childModules ?? []) modules.set(id, entry);
-		return modules;
-	}
-
 	getAllRegisteredTools(): RegisteredTool[] {
 		const toolsByName = new Map<string, RegisteredTool>();
 		for (const ext of this.extensions) {

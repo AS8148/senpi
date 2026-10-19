@@ -4,7 +4,8 @@
 
 - `packages/coding-agent/src/core/extensions/types.ts`: `ChildModuleRegistration`, `RegisteredChildModule`, `OffloadOptions`; `ExtensionAPI.registerChildModule`; optional `ExtensionContext.offload` (optional only so contexts built outside a runner still type-check; every runner-built context has it); `Extension.childModules`; `ExtensionContextActions.offload`.
 - `packages/coding-agent/src/core/extensions/loader.ts`: `registerChildModule` validates a file-backed registration (an inline function or empty field throws `offload_bad_registration`) and records it with the registering extension's source.
-- `packages/coding-agent/src/core/extensions/runner.ts`: `getAllChildModules()` (a later id wins) and the context's `offload`, which delegates to the session's action and fails `offload_unavailable` where no session backs the runner.
+- `packages/coding-agent/src/core/extensions/types.ts` docs: a module's export receives `(args, host)` on both runtimes; `OffloadOptions.deadlineMs` must be finite and above 0 (senpi#3622 review).
+- `packages/coding-agent/src/core/extensions/runner.ts`: `getAllChildModules()` (a later id wins, and a replacement from another extension file is logged once) and the context's `offload`, which delegates to the session's action and fails `offload_unavailable` where no session backs the runner.
 
 ### Why
 

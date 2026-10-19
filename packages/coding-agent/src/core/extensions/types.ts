@@ -937,8 +937,9 @@ export interface ToolChildModule {
 /**
  * A module the session may run on its tool child (`ctx.offload(id, ...)`), registered with `pi.registerChildModule`.
  * File-backed only: `module` is a path (relative to the registering extension's file, or absolute) whose `export`
- * receives `(args, { signal })`. Under `--tool-runtime child` it runs on the session's child; under `in-process` the
- * server imports the same module and runs it directly. `idempotent` lets a job lost to a child exit run once more.
+ * receives `(args, host)` - the same host object (`signal`, `call`, `complete`, `reserved`, `listTools`, `authorize`,
+ * `withFileLock`) on both runtimes. Under `--tool-runtime child` it runs on the session's child; under `in-process` the
+ * server imports the same module and runs it directly, its host calls answered by the session in the same way. `idempotent` lets a job lost to a child exit run once more.
  */
 export interface ChildModuleRegistration {
 	readonly id: string;
@@ -955,7 +956,10 @@ export interface RegisteredChildModule {
 
 export interface OffloadOptions {
 	readonly signal?: AbortSignal;
-	/** Fails the job `tool_child_deadline` after this long; the default is the module job's own deadline. */
+	/**
+	 * Fails the job `tool_child_deadline` after this long, on either runtime; the default is the module job's own
+	 * deadline. Must be a finite number above 0, else `offload` rejects with `offload_bad_options`.
+	 */
 	readonly deadlineMs?: number;
 }
 
