@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import { signalSpawnedChild } from "../../utils/child-signal.ts";
 import type { ShareUploadResult } from "./share-session.ts";
 
 export function checkGhAuth(): "ok" | "missing" | "logged-out" {
@@ -19,7 +20,7 @@ export function uploadSecretGist(html: string, fileName: string, signal: AbortSi
 		});
 		let stdout = "";
 		let stderr = "";
-		const onAbort = () => child.kill();
+		const onAbort = () => signalSpawnedChild(child);
 		signal.addEventListener("abort", onAbort, { once: true });
 		child.stdout.on("data", (data: Buffer) => {
 			stdout += data.toString();
