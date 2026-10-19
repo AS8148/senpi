@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Inside herdr panes, inline images render again when the outer terminal supports the Kitty graphics protocol: image support is settled by a bounded Kitty graphics probe at TUI start instead of environment detection alone, and the `[image: <mime>]` placeholder stays when the probe fails or times out ([#3698](https://github.com/code-yeongyu/senpi/issues/3698)).
+
 ### Removed
 
 ## [2026.10.19] - 2026-10-19
