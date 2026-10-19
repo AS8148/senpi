@@ -14,8 +14,8 @@ export interface BundleFile {
 }
 
 /**
- * Optional extra payloads travel next to the session without changing its shape. Phase 1 defines none; a later
- * whole-folder transfer adds its own kind here, and an importer that does not know a kind refuses the bundle.
+ * Optional extra payloads travel next to the session without changing its shape: `extension-state` carries what
+ * extensions wrote at the move release (senpi#3676). An importer that does not know a kind refuses the bundle.
  */
 export interface MovePayload {
 	readonly kind: string;
@@ -88,6 +88,18 @@ function parseSessionFileName(value: string): string {
 	return value;
 }
 
+/** Payload kinds this version imports; any other kind refuses the bundle. */
+export const KNOWN_PAYLOAD_KINDS: ReadonlySet<string> = new Set(["extension-state"]);
+
+function parsePayload(value: unknown): MovePayload {
+	const payload = value as Partial<MovePayload> | null;
+	if (typeof payload !== "object" || payload === null || !isString(payload.kind) || !Array.isArray(payload.files))
+		throw new MoveBundleInvalidError("a payload is malformed");
+	if (!KNOWN_PAYLOAD_KINDS.has(payload.kind))
+		throw new MoveBundleInvalidError("it carries a payload this version cannot import");
+	return { kind: payload.kind, files: payload.files.map(parseFile) };
+}
+
 export function readManifest(bundleDir: string): MoveManifest {
 	let raw: unknown;
 	try {
@@ -102,8 +114,7 @@ export function readManifest(bundleDir: string): MoveManifest {
 	for (const key of ["moveId", "sessionId", "sessionFileName", "sourceCwd"] as const) {
 		if (!isString(m[key])) throw new MoveBundleInvalidError(`missing ${key}`);
 	}
-	const payloads = Array.isArray(m.payloads) ? m.payloads : [];
-	if (payloads.length > 0) throw new MoveBundleInvalidError("it carries a payload this version cannot import");
+	const payloads = (Array.isArray(m.payloads) ? m.payloads : []).map(parsePayload);
 	const dropped = Array.isArray(m.droppedUserMessages) ? m.droppedUserMessages : [];
 	if (!dropped.every(isString)) throw new MoveBundleInvalidError("malformed queued input");
 	return {
@@ -116,12 +127,12 @@ export function readManifest(bundleDir: string): MoveManifest {
 		session: parseFile(m.session),
 		sidecars: (Array.isArray(m.sidecars) ? m.sidecars : []).map(parseFile),
 		droppedUserMessages: dropped,
-		payloads: [],
+		payloads,
 	};
 }
 
 export function verifyBundle(bundleDir: string, manifest: MoveManifest): void {
-	for (const file of [manifest.session, ...manifest.sidecars]) {
+	for (const file of [manifest.session, ...manifest.sidecars, ...manifest.payloads.flatMap((p) => p.files)]) {
 		let actual: string;
 		try {
 			actual = sha256File(join(bundleDir, file.path));

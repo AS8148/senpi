@@ -22,7 +22,9 @@
  * cannot hand over (`release_unsupported`: a worker isolate owns the runtime, or there is no file).
  */
 import type { AgentSession } from "../../core/agent-session.ts";
-import { SessionMovedAwayError } from "../../core/session-move/ownership.ts";
+import { parseMoveId } from "../../core/session-move/bundle.ts";
+import { prepareOutgoingState } from "../../core/session-move/extension-state.ts";
+import { type MoveId, SessionMovedAwayError } from "../../core/session-move/ownership.ts";
 import { isHandoffBusy } from "./handoff-activity.ts";
 import {
 	RPC_ERROR_ATTACHED,
@@ -120,6 +122,11 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 		// A written session awaits nothing, so its claim stays in the same turn as the request that asked.
 		const manager = first.session.sessionManager;
 		if (!manager.isTranscriptFlushed()) await manager.persistHeaderNow();
+		// A move takes the extensions' out-of-folder state with it; they write it while their runtime is still live.
+		if (command.reason === "move") {
+			const failed = await exportExtensionState(first.session, first.sessionPath, command.moveId);
+			if (failed !== undefined) throw new Error(`${failed.extensionPath} could not write its state for the move: ${failed.error}`);
+		}
 		answer = await claimAndRelease(port, command, interrupted, dropped);
 		return answer;
 	} catch (cause) {
@@ -259,4 +266,19 @@ function refusal(id: string | undefined, code: string, data?: Readonly<Record<st
 		error: code,
 		...(data && { errorCode: code, errorData: data }),
 	};
+}
+
+function exportExtensionState(
+	session: AgentSession,
+	sessionPath: string,
+	moveId: string | undefined,
+): Promise<{ extensionPath: string; error: string } | undefined> {
+	let id: MoveId;
+	try {
+		id = parseMoveId(moveId);
+	} catch {
+		return Promise.resolve(undefined);
+	}
+	const dir = prepareOutgoingState(sessionPath, id);
+	return session.extensionRunner.emitSessionMoveExport({ type: "session_move_export", moveId: id, dir });
 }

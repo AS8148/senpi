@@ -14,6 +14,7 @@ import {
 	SESSION_BUNDLE_PATH,
 	sha256File,
 } from "./bundle.ts";
+import { EXTENSION_STATE_PAYLOAD } from "./extension-state.ts";
 import {
 	headerSessionId,
 	type MoveId,
@@ -30,6 +31,8 @@ export interface ExportSessionForMoveOptions {
 	/** Queued user input the release took out of the session (`dropped.user_messages`), in order. */
 	readonly droppedUserMessages: readonly string[];
 	readonly bundleDir: string;
+	/** What the extensions wrote at the move release (`outgoingStateDir`); bundled as the `extension-state` payload. */
+	readonly extensionStateDir?: string;
 }
 
 /**
@@ -63,6 +66,7 @@ export async function exportSessionForMove(options: ExportSessionForMoveOptions)
 	mkdirSync(join(staging, dirname(SESSION_BUNDLE_PATH)), { recursive: true });
 	copyFileSync(sessionFile, join(staging, SESSION_BUNDLE_PATH));
 	const sidecars = copySidecars(dirname(sessionFile), sessionId, staging);
+	const stateFiles = copyExtensionState(options.extensionStateDir, staging);
 	const manifest: MoveManifest = {
 		format: MOVE_BUNDLE_FORMAT,
 		moveId,
@@ -73,7 +77,7 @@ export async function exportSessionForMove(options: ExportSessionForMoveOptions)
 		session: { path: SESSION_BUNDLE_PATH, sha256: sha256File(join(staging, SESSION_BUNDLE_PATH)) },
 		sidecars,
 		droppedUserMessages: [...options.droppedUserMessages],
-		payloads: [],
+		payloads: stateFiles.length > 0 ? [{ kind: EXTENSION_STATE_PAYLOAD, files: stateFiles }] : [],
 	};
 	writeFileSync(join(staging, MANIFEST_FILE), `${JSON.stringify(manifest, null, 1)}\n`);
 	rmSync(options.bundleDir, { recursive: true, force: true });
@@ -94,6 +98,16 @@ function copySidecars(sessionDir: string, sessionId: string, staging: string): B
 	sources.push(...filesUnder(join(sessionDir, "resident-blobs", sessionId)));
 	return sources.map((source) => {
 		const path = join("files", relative(sessionDir, source));
+		mkdirSync(dirname(join(staging, path)), { recursive: true });
+		copyFileSync(source, join(staging, path));
+		return { path, sha256: sha256File(join(staging, path)) };
+	});
+}
+
+function copyExtensionState(dir: string | undefined, staging: string): BundleFile[] {
+	if (dir === undefined) return [];
+	return filesUnder(dir).map((source) => {
+		const path = join("state", relative(dir, source));
 		mkdirSync(dirname(join(staging, path)), { recursive: true });
 		copyFileSync(source, join(staging, path));
 		return { path, sha256: sha256File(join(staging, path)) };
