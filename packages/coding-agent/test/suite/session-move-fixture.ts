@@ -82,7 +82,11 @@ export function appendUserMessage(file: string, text: string): void {
 	SessionManager.open(file).appendMessage({ role: "user", content: text, timestamp: 3 });
 }
 
-export async function setup(identity: RepositoryIdentity = REPO, moveId: MoveId = MOVE) {
+export async function setup(
+	identity: RepositoryIdentity = REPO,
+	moveId: MoveId = MOVE,
+	options: { readonly ready?: boolean } = {},
+) {
 	const base = root();
 	const cwdA = join(base, "a", "repo");
 	const cwdB = join(base, "b", "repo");
@@ -98,6 +102,7 @@ export async function setup(identity: RepositoryIdentity = REPO, moveId: MoveId 
 		bundleDir,
 	});
 	const ledger = new MoveLedger(join(base, "ledger-b"));
+	if (options.ready !== false) await ledger.prepare(moveId);
 	const readIdentity = async (dir: string) => (dir === cwdB ? identity : REPO);
 	return { base, cwdA, cwdB, source, bundleDir, ledger, readIdentity };
 }
