@@ -388,6 +388,7 @@ import {
 } from "./turn-deadline.ts";
 import { commandShapedName, findUnknownCommand } from "./unknown-command.ts";
 import { addUsageToTotals, combineUsage, createUsageTotals } from "./usage-totals.ts";
+import { userInputSource } from "./user-input-source.ts";
 import { keepsTextBlocksVerbatim, userTextContent } from "./user-text-blocks.ts";
 import {
 	findLatestResponse,
@@ -5496,6 +5497,7 @@ export class AgentSession {
 				content: userContent,
 				timestamp: Date.now(),
 				...clientMessageIdentity(options),
+				...userInputSource(options?.source ?? "interactive"),
 			});
 
 			// Consume next-turn messages transactionally: a final admission rejection
@@ -5924,13 +5926,14 @@ export class AgentSession {
 		input: QueuedInputOptions & Omit<PreparedClientInput, "enqueueOrder"> & Pick<PromptOptions, "textBlocks">,
 	): Promise<void> {
 		const clientMessageId = input.clientMessageId;
+		const sourced = { ...input, source: input.source ?? "interactive" };
 		if (clientMessageId === undefined) {
-			this._enqueuePreparedInput(input);
+			this._enqueuePreparedInput(sourced);
 			return;
 		}
 		await this._pendingInputs.admit(
 			{ clientMessageId, text: input.text, ...(input.images ? { images: input.images } : {}), mode: input.mode },
-			(queuedId) => this._enqueuePreparedInput({ ...input, queuedId }),
+			(queuedId) => this._enqueuePreparedInput({ ...sourced, queuedId }),
 		);
 	}
 
@@ -5975,6 +5978,7 @@ export class AgentSession {
 			content,
 			timestamp: Date.now(),
 			...clientMessageIdentity(input),
+			...userInputSource(input.source),
 		};
 		this._queuedMessages.set(queuedId, message);
 		if (this._promptStartPending && this._skipNextPostCompactionAssistantCheck) {
@@ -6363,9 +6367,9 @@ export class AgentSession {
 			// before prompt() accepted the message must not silently drop it.
 			if (disposition === undefined) {
 				if (options?.deliverAs === "steer") {
-					await this._queueSteer(text, images, { textBlocks });
+					await this._queueSteer(text, images, { textBlocks, source: "extension" });
 				} else {
-					await this._queueFollowUp(text, images, { textBlocks });
+					await this._queueFollowUp(text, images, { textBlocks, source: "extension" });
 				}
 			}
 			throw error;

@@ -88,6 +88,11 @@ interface UserMessage {
   content: string | (TextContent | ImageContent)[];
   timestamp: number;  // Unix ms
 }
+```
+
+A user message the session admitted through `prompt`, `steer` or `followUp` (including an extension's `sendUserMessage`) also carries `inputSource`: `"interactive"`, `"rpc"` or `"extension"`, the same value its `input` event reported. Input restored from durable custody or requeued by a session move ran no `input` event and carries no `inputSource`; treat an absent value as unknown origin, never as typed input.
+
+```typescript
 
 interface AssistantMessage {
   role: "assistant";

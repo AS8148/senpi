@@ -18,6 +18,25 @@ The engine-turn bound and the session mirror are session internals; the builtin 
 - LOW: `session-manager.ts`, the `historyGeneration` / `verbatimFromCount` fields after `fullEntryCount`, one line in `_resetToNewSession`, `_completeFileLoad`, `_loadEntries`, `_buildIndex`, `_retainLoadedTail`, `_trimMirrorAfterCompaction` and both `createBranchedSession` branches, `reduceHistory` after `getEntryCount`, and the `ReadonlySessionManager` pick list.
 - LOW: `agent-session.ts`, the first argument of `engineTurnStop` in `_stopEngineTurn` and the `engine-turn-limit.ts` import.
 
+## 2026-10-19 - A persisted user message records its input source (omo#10378)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the user message `prompt()` builds and the one `_enqueuePreparedInput` builds for queued steer/follow-up input carry `inputSource`, the same `InputSource` (`interactive` / `rpc` / `extension`) the input's `input` event reported (`source ?? "interactive"`). The message object is the one `message_end` persists, so the session entry keeps it. `sendUserMessage`'s fallback enqueue after a rejected `prompt()` now passes `source: "extension"`. Input restored from durable custody (`restoreQueuedInput`) or requeued by a session move ran no `input` event and stays unstamped.
+- `packages/coding-agent/src/core/user-input-source.ts` (new): `userInputSource(source)`.
+
+### Why
+
+An extension that rebuilds per-session trust state when a session is resumed (omo's plan gate, which must count only human-typed requests) can replay the transcript only if each persisted user entry says where the input came from; until now that fact lived only on the transient `input` event.
+
+### Why an extension could not handle it
+
+The user message is built and persisted inside the session; an extension sees the source on the `input` event but cannot attach it to the message that is later written, and a resumed session has only the transcript.
+
+### Expected merge conflict zones
+
+- LOW: `agent-session.ts`, the user-message literal in `prompt()` (after `clientMessageIdentity(options)`), the start of `_enqueueQueuedInput`, the message literal in `_enqueuePreparedInput`, and the two fallback enqueues in `sendUserMessage`'s catch.
+
 ## 2026-10-19 - An abort that joins an open agent_end boundary still releases a held handler (senpi#3650 follow-up)
 
 ### What changed
