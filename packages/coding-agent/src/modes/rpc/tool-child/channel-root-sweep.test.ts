@@ -1,8 +1,8 @@
 // senpi#3685: the short fallback socket root is shared by every listener of a session's tool-child dir. It survives
 // while any listener holds it, is swept when the last one closes, and a sweep that lands between a sibling's claim
-// and its secret write never leaves that sibling's socket or secret in a directory that is not its own.
+// and its secret write never leaves that sibling's socket or secret material in a directory that is not its own.
 import { existsSync } from "node:fs";
-import { lstat, mkdtemp, readdir, rm, rmdir, symlink } from "node:fs/promises";
+import { lstat, mkdtemp, readdir, readFile, rm, rmdir, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -63,7 +63,8 @@ describe.skipIf(process.platform === "win32")("tool-child fallback socket root s
 		const stat = await lstat(socketRoot);
 		expect(stat.isDirectory() && !stat.isSymbolicLink()).toBe(true);
 		expect(stat.mode & 0o077).toBe(0);
-		expect(await readdir(foreign)).toEqual([]);
+		// The taken root cannot be proven ours, so nothing is unlinked through it: the secret is only emptied in place.
+		for (const name of await readdir(foreign)) expect(await readFile(join(foreign, name))).toHaveLength(0);
 		expect((await lstat(root)).isSymbolicLink()).toBe(true);
 		await listener.close();
 		expect(existsSync(socketRoot)).toBe(false);

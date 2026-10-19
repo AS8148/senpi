@@ -1,8 +1,8 @@
 // senpi#3694: nothing is removed through a socket root before it is proven ours, nothing already at the secret's name is
-// ever followed or overwritten, the secret never outlives a failed claim, and a fallback root another user takes during
-// the claim never blocks the start.
+// ever followed or overwritten, no secret material outlives a failed claim, its withdrawal never reaches another
+// directory's file, and a fallback root another user takes during the claim never blocks the start.
 import { existsSync } from "node:fs";
-import { chmod, lstat, mkdtemp, readdir, readFile, rm, rmdir, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, readdir, readFile, rename, rm, rmdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -66,14 +66,15 @@ describe.skipIf(process.platform === "win32")("tool-child socket root proof", ()
 		await listener.close();
 	});
 
-	it("leaves no secret behind when the retry's root is taken too, and refuses the start", async () => {
+	it("leaves no secret material behind when the retry's root is taken too, and refuses the start", async () => {
 		const dir = await deepDir();
 		const root = fallbackSocketRoot(dir);
 		const foreign = await scratch("tcproof-foreign-");
 		cleanups.push(() => rm(root, { recursive: true, force: true }));
 		socketRootWindow.windows = [takeRootAs(foreign), takeRootAs(foreign)];
 		await expect(openChannelListener({ dir, generation: 1 })).rejects.toThrow("socket_dir_unsafe");
-		expect(await readdir(foreign)).toEqual([]);
+		// The taken root cannot be proven ours, so nothing is unlinked through it: the secret is only emptied in place.
+		for (const name of await readdir(foreign)) expect(await readFile(join(foreign, name))).toHaveLength(0);
 	});
 
 	it("starts under a fresh private directory when the secret write into a taken root is denied", async () => {
@@ -110,6 +111,25 @@ describe.skipIf(process.platform === "win32")("tool-child socket root proof", ()
 			cleanups.push(() => rm(dirname(listener.env.SENPI_TOOL_CHILD_CHANNEL), { recursive: true, force: true }));
 			await listener.close();
 		}
+		expect(socketRootWindow.order).toContain("rm-socket");
 		expect(await readdir(victim)).toEqual(["c-1.sock"]);
+	});
+
+	it("never withdraws a secret through a root swapped after the secret was written", async () => {
+		const dir = await deepDir();
+		const root = fallbackSocketRoot(dir);
+		const moved = `${root}-moved`;
+		const victim = await scratch("tcproof-victim-");
+		await writeFile(join(victim, "c-1.sock.secret"), "another session's secret");
+		cleanups.push(() => rm(root, { recursive: true, force: true }));
+		cleanups.push(() => rm(moved, { recursive: true, force: true }));
+		socketRootWindow.onSocketRemoval = async (socketPath) => {
+			if (dirname(socketPath) !== root) return;
+			await rename(root, moved);
+			await symlink(victim, root);
+			throw new Error("claim fails after the secret exists");
+		};
+		await expect(openChannelListener({ dir, generation: 1 })).rejects.toThrow("claim fails after the secret exists");
+		expect(await readFile(join(victim, "c-1.sock.secret"), "utf8")).toBe("another session's secret");
 	});
 });

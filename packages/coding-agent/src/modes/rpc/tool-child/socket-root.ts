@@ -13,7 +13,7 @@ import { chmod, lstat, mkdir, mkdtemp, open, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { MAX_SOCKET_PATH_BYTES } from "../socket-ownership.ts";
 import { socketSecretPath } from "../socket-transport.ts";
-import { writeExclusiveSecret } from "./exclusive-secret.ts";
+import { ExclusiveSecretWriteError, type FileIdentity, writeExclusiveSecret } from "./exclusive-secret.ts";
 
 /**
  * `<dir>/c-<generation>.sock` when it fits `sun_path`; otherwise the same name under a short private directory,
@@ -91,25 +91,29 @@ export interface ListenerFiles {
  * and another user can take the name in that window. The exclusive, no-follow write then either fails (ENOENT, EACCES,
  * EEXIST on a planted entry) or creates a new file in the taken directory; it never follows or truncates what is there.
  * So after the write the root is claimed again and the secret checked to be our own regular file in it, and only then is
- * a stale socket of this generation removed. Any failure withdraws a secret this attempt created (a withdrawal through a
- * swapped root reaches only that fixed file name); a first-attempt failure a taken fallback root explains retries, and
- * the retry's claim refuses that root and moves to a fresh `mkdtemp` directory.
+ * a stale socket of this generation removed. Any failure withdraws a secret this attempt created without ever acting on
+ * another file: its bytes are destroyed through its own handle once that handle is proven to be the file the create made,
+ * and its name is unlinked only through a root proven ours again. A root swapped before the withdrawal therefore never
+ * leads it to another directory's file; the exact limit is that an unprovable root may keep our now-empty file. A
+ * first-attempt failure a taken fallback root explains retries, and the retry's claim refuses that root and moves to a
+ * fresh `mkdtemp` directory.
  */
 export async function claimListenerFiles(dir: string, generation: number): Promise<ListenerFiles> {
 	for (let attempt = 1; ; attempt++) {
 		const logicalPath = await channelSocketPath(dir, generation);
 		const root = dirname(logicalPath);
 		const secretPath = socketSecretPath(logicalPath);
-		let created = false;
+		let created: FileIdentity | undefined;
 		try {
-			const secret = await writeSecret(secretPath, root, dir);
-			created = true;
+			const { secret, identity } = await writeSecret(secretPath, root, dir);
+			created = identity;
 			await proveRoot(root, dir);
 			await proveOwnFile(secretPath, root);
 			await rm(logicalPath, { force: true });
 			return { logicalPath, secretPath, secret };
 		} catch (error) {
-			if (created) await withdraw(secretPath, error);
+			const withdrawn = created ?? (error instanceof ExclusiveSecretWriteError ? error.identity : undefined);
+			if (withdrawn !== undefined) await withdraw({ secretPath, root, dir, created: withdrawn }, error);
 			if (attempt >= 2 || !(root !== dir && foreignRootError(error))) throw error;
 		}
 	}
@@ -120,7 +124,7 @@ export async function claimListenerFiles(dir: string, generation: number): Promi
  * removed only once the root is proven ours and the entry proven our own regular file: a root holding it is non-empty,
  * so no sibling sweep can remove it and no other user can replace it before the write is repeated.
  */
-async function writeSecret(secretPath: string, root: string, dir: string): Promise<Buffer> {
+async function writeSecret(secretPath: string, root: string, dir: string): ReturnType<typeof writeExclusiveSecret> {
 	try {
 		return await writeExclusiveSecret(secretPath);
 	} catch (error) {
@@ -136,11 +140,43 @@ function proveRoot(root: string, dir: string): Promise<void> {
 	return root === dir ? makePrivateDirectory(root) : claimPrivateDirectory(root);
 }
 
-/** Removes the secret this attempt created; a removal that fails is kept on the claim's error as its `cause`. */
-async function withdraw(secretPath: string, error: unknown): Promise<void> {
-	await rm(secretPath, { force: true }).catch((cleanup: unknown) => {
+interface WithdrawTarget {
+	readonly secretPath: string;
+	readonly root: string;
+	readonly dir: string;
+	readonly created: FileIdentity;
+}
+
+/**
+ * Withdraws the secret this attempt created. Its bytes go first, through a handle checked to be that very file, so no
+ * swap of the root can turn the truncation onto another file. Its name goes only through a root proven ours again (then
+ * this user's 0700 directory, where nothing else can swap the entry) and only while the entry is still that file. A
+ * root that cannot be proven keeps the empty file; why is kept on the claim's error as its `cause`.
+ */
+async function withdraw(target: WithdrawTarget, error: unknown): Promise<void> {
+	try {
+		if (!(await emptyCreatedFile(target))) return;
+		await proveRoot(target.root, target.dir);
+		if (!sameFile(await lstat(target.secretPath), target.created)) return;
+		await rm(target.secretPath, { force: true });
+	} catch (cleanup) {
 		if (error instanceof Error && error.cause === undefined) error.cause = cleanup;
-	});
+	}
+}
+
+async function emptyCreatedFile(target: WithdrawTarget): Promise<boolean> {
+	const handle = await open(target.secretPath, constants.O_WRONLY | (constants.O_NOFOLLOW ?? 0));
+	try {
+		if (!sameFile(await handle.stat(), target.created)) return false;
+		await handle.truncate(0);
+		return true;
+	} finally {
+		await handle.close();
+	}
+}
+
+function sameFile(entry: { readonly dev: number; readonly ino: number }, created: FileIdentity): boolean {
+	return entry.dev === created.dev && entry.ino === created.ino;
 }
 
 const FOREIGN_ROOT_CODES = new Set(["EACCES", "EPERM", "ENOENT", "ENOTDIR", "ELOOP"]);
