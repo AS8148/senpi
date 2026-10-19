@@ -241,4 +241,10 @@ describe("credential error taxonomy", () => {
 		expect(limited.kind).toBe("failover");
 		if (limited.kind === "failover") expect(limited.block.reason).toBe("rate_limit");
 	});
+
+	test("fails the request for an account that is not configured instead of rotating to a cooldown (senpi#3672)", () => {
+		// No cooldown brings a missing account back, so the guidance carries no rate-limit or auth cause words.
+		const missing = singleAccountUnavailableGuidance({ name: "retired", configured: false }, undefined);
+		expect(classifyCredentialFailure(new Error(missing)).kind).toBe("fail_request");
+	});
 });

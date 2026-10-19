@@ -15,7 +15,7 @@ import {
 	refreshSlot,
 	type SlotRefresher,
 } from "./accounts.ts";
-import { isBlockedFor, selectAccount } from "./affinity.ts";
+import { isBlockedFor, type PinSource, selectAccount } from "./affinity.ts";
 import { type AuthenticatedAttemptInput, createAttemptMessages, type RetainableAttempt } from "./auth-attempt.ts";
 import { recoverAuthBlockedSlots } from "./auth-block-recovery.ts";
 import { hasRequestOauthToken, mergeRequestAuthEnvironment, stripManagedAuthEnvironment } from "./auth-environment.ts";
@@ -96,6 +96,7 @@ type ManagedPool = {
 	environment: NodeJS.ProcessEnv;
 	lane: Exclude<AnthropicSubscriptionTokenInjection, "ambient">;
 	pinnedAccount?: string;
+	pinSource?: Exclude<PinSource, "cli">;
 	accountOrder?: readonly string[];
 	store: CredentialStore;
 };
@@ -136,6 +137,11 @@ async function managedPool(
 		environment,
 		lane,
 		pinnedAccount: settings.pinnedAccount ?? stored?.pinned,
+		...(settings.pinnedAccount !== undefined
+			? { pinSource: "settings" as const }
+			: stored?.pinned !== undefined
+				? { pinSource: "stored" as const }
+				: {}),
 		...(stored?.order === undefined ? {} : { accountOrder: stored.order }),
 		store,
 	};
@@ -299,6 +305,11 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 			selectAccount(accounts, {
 				sessionId: input.sessionId,
 				pinnedAccount: input.pinnedAccount ?? pool.pinnedAccount,
+				...(input.pinnedAccount !== undefined
+					? { pinSource: "cli" as const }
+					: pool.pinSource === undefined
+						? {}
+						: { pinSource: pool.pinSource }),
 				accountFallback: input.providerSettings.accountFallback,
 				...(pool.accountOrder === undefined ? {} : { accountOrder: pool.accountOrder }),
 				...(input.preferredAccount === undefined ? {} : { preferredAccount: input.preferredAccount }),
