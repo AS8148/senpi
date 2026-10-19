@@ -12,7 +12,7 @@ import { createHarness, getMessageText, type Harness } from "../harness.ts";
 function persistedUserSources(harness: Harness): { text: string; inputSource: unknown }[] {
 	return harness.sessionManager.getEntries().flatMap((entry) => {
 		if (entry.type !== "message" || entry.message.role !== "user") return [];
-		return [{ text: getMessageText(entry.message), inputSource: Reflect.get(entry.message, "inputSource") }];
+		return [{ text: getMessageText(entry.message), inputSource: entry.inputSource }];
 	});
 }
 
@@ -30,6 +30,20 @@ describe("omo#10378 persisted user input source", () => {
 
 		await harness.session.prompt("typed by a person");
 
+		expect(persistedUserSources(harness)).toEqual([{ text: "typed by a person", inputSource: "interactive" }]);
+	});
+
+	it("#given a stamped prompt #when it reaches the provider #then the context carries no inputSource while the entry keeps it", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("ok")]);
+
+		await harness.session.prompt("typed by a person");
+
+		const sent = harness.faux.getCallLog()[0]?.context.messages ?? [];
+		expect(sent.filter((message) => message.role === "user")).toEqual([
+			{ role: "user", content: [{ type: "text", text: "typed by a person" }], timestamp: expect.any(Number) },
+		]);
 		expect(persistedUserSources(harness)).toEqual([{ text: "typed by a person", inputSource: "interactive" }]);
 	});
 

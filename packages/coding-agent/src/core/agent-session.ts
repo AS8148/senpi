@@ -388,7 +388,6 @@ import {
 } from "./turn-deadline.ts";
 import { commandShapedName, findUnknownCommand } from "./unknown-command.ts";
 import { addUsageToTotals, combineUsage, createUsageTotals } from "./usage-totals.ts";
-import { userInputSource } from "./user-input-source.ts";
 import { keepsTextBlocksVerbatim, userTextContent } from "./user-text-blocks.ts";
 import {
 	findLatestResponse,
@@ -1220,6 +1219,11 @@ export class AgentSession {
 	private _queueClearRecorded: Promise<void> = Promise.resolve();
 	/** The exact message object queued for each `queuedId`, so removal and edits hit the native queue by identity. */
 	private readonly _queuedMessages = new Map<string, AgentMessage>();
+	/**
+	 * Input source of each user message this session admitted, written onto its session entry when the
+	 * message is persisted. Kept off the message itself so it can never reach a provider request.
+	 */
+	private readonly _userInputSources = new WeakMap<AgentMessage, InputSource>();
 	/** Recently delivered `queuedId`s (bounded), so a late dequeue answers `already_delivered`, not `not_found`. */
 	private readonly _deliveredQueuedIds = new Set<string>();
 	private _sessionLogger: SessionLogger;
@@ -3482,7 +3486,9 @@ export class AgentSession {
 					event.message.role === "toolResult"
 				) {
 					// Regular LLM message - persist as SessionMessageEntry
-					entryId = this.sessionManager.appendOwnedMessage(event.message);
+					entryId = this.sessionManager.appendOwnedMessage(event.message, {
+						inputSource: this._userInputSources.get(event.message),
+					});
 					this._emitEntryAppended(entryId);
 					this._incrementMessageRevision();
 					this.externalAdmission.observePersisted(event.message);
@@ -5492,13 +5498,14 @@ export class AgentSession {
 			if (currentImages) {
 				userContent.push(...currentImages);
 			}
-			messages.push({
+			const userMessage: AgentMessage = {
 				role: "user",
 				content: userContent,
 				timestamp: Date.now(),
 				...clientMessageIdentity(options),
-				...userInputSource(options?.source ?? "interactive"),
-			});
+			};
+			this._userInputSources.set(userMessage, options?.source ?? "interactive");
+			messages.push(userMessage);
 
 			// Consume next-turn messages transactionally: a final admission rejection
 			// restores them in their original order rather than dropping or duplicating
@@ -5978,8 +5985,8 @@ export class AgentSession {
 			content,
 			timestamp: Date.now(),
 			...clientMessageIdentity(input),
-			...userInputSource(input.source),
 		};
+		if (input.source !== undefined) this._userInputSources.set(message, input.source);
 		this._queuedMessages.set(queuedId, message);
 		if (this._promptStartPending && this._skipNextPostCompactionAssistantCheck) {
 			const deferred =

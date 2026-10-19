@@ -19,23 +19,25 @@ The engine-turn bound and the session mirror are session internals; the builtin 
 - LOW: `agent-session.ts`, the first argument of `engineTurnStop` in `_stopEngineTurn` and the `engine-turn-limit.ts` import.
 
 ## 2026-10-19 - A persisted user message records its input source (omo#10378)
+## 2026-10-19 - A user message's session entry records its input source (omo#10378)
 
 ### What changed
 
-- `packages/coding-agent/src/core/agent-session.ts`: the user message `prompt()` builds and the one `_enqueuePreparedInput` builds for queued steer/follow-up input carry `inputSource`, the same `InputSource` (`interactive` / `rpc` / `extension`) the input's `input` event reported (`source ?? "interactive"`). The message object is the one `message_end` persists, so the session entry keeps it. `sendUserMessage`'s fallback enqueue after a rejected `prompt()` now passes `source: "extension"`. Input restored from durable custody (`restoreQueuedInput`) or requeued by a session move ran no `input` event and stays unstamped.
-- `packages/coding-agent/src/core/user-input-source.ts` (new): `userInputSource(source)`.
+- `packages/coding-agent/src/core/session-manager.ts`: `SessionMessageEntry` declares `inputSource?: InputSource`, and `appendOwnedMessage(message, { inputSource })` writes it onto the entry, never onto the message.
+- `packages/coding-agent/src/core/agent-session.ts`: `_userInputSources`, a WeakMap from each user message the session admits to the `InputSource` its `input` event reported (`source ?? "interactive"`): filled where `prompt()` builds the user message and where `_enqueuePreparedInput` builds a queued steer/follow-up, and read when `message_end` persists that message. `sendUserMessage`'s fallback enqueue after a rejected `prompt()` now passes `source: "extension"`. Input restored from durable custody (`restoreQueuedInput`), requeued by a session move, or edited ran no `input` event and gets no `inputSource`.
 
 ### Why
 
-An extension that rebuilds per-session trust state when a session is resumed (omo's plan gate, which must count only human-typed requests) can replay the transcript only if each persisted user entry says where the input came from; until now that fact lived only on the transient `input` event.
+An extension that rebuilds per-session trust state when a session is resumed (omo's plan gate, which must count only human-typed requests) can replay the transcript only if each persisted user entry says where the input came from. The value is session metadata: carrying it on the message put it into every provider request (review of the first version), so it lives on the entry only.
 
 ### Why an extension could not handle it
 
-The user message is built and persisted inside the session; an extension sees the source on the `input` event but cannot attach it to the message that is later written, and a resumed session has only the transcript.
+The user message is built and persisted inside the session; an extension sees the source on the `input` event but cannot attach it to the entry that is later written, and a resumed session has only the transcript.
 
 ### Expected merge conflict zones
 
-- LOW: `agent-session.ts`, the user-message literal in `prompt()` (after `clientMessageIdentity(options)`), the start of `_enqueueQueuedInput`, the message literal in `_enqueuePreparedInput`, and the two fallback enqueues in `sendUserMessage`'s catch.
+- LOW: `session-manager.ts` `SessionMessageEntry`, `appendOwnedMessage` and `_appendMessage`.
+- LOW: `agent-session.ts`, the `_userInputSources` field beside `_queuedMessages`, the user-message literal in `prompt()`, the start of `_enqueueQueuedInput`, `_enqueuePreparedInput`, the `appendOwnedMessage` call in the `message_end` persistence branch, and the two fallback enqueues in `sendUserMessage`'s catch.
 
 ## 2026-10-19 - An abort that joins an open agent_end boundary still releases a held handler (senpi#3650 follow-up)
 
