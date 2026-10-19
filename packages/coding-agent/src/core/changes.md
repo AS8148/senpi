@@ -18,7 +18,6 @@ The engine-turn bound and the session mirror are session internals; the builtin 
 - LOW: `session-manager.ts`, the `historyGeneration` / `verbatimFromCount` fields after `fullEntryCount`, one line in `_resetToNewSession`, `_completeFileLoad`, `_loadEntries`, `_buildIndex`, `_retainLoadedTail`, `_trimMirrorAfterCompaction` and both `createBranchedSession` branches, `reduceHistory` after `getEntryCount`, and the `ReadonlySessionManager` pick list.
 - LOW: `agent-session.ts`, the first argument of `engineTurnStop` in `_stopEngineTurn` and the `engine-turn-limit.ts` import.
 
-## 2026-10-19 - A persisted user message records its input source (omo#10378)
 ## 2026-10-19 - A user message's session entry records its input source (omo#10378)
 
 ### What changed
