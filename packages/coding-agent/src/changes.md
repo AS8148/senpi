@@ -1,3 +1,21 @@
+## 2026-10-19 - Print mode stops waiting for a silent stdin pipe (senpi#3715)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: the inline `readPipedStdin` (which resolved only on stdin `end` for any non-TTY stdin) is replaced by the fork-only `src/utils/piped-stdin.ts`, called with `hasPromptArgument` (positional messages or `@file` arguments) and `forceRead` (a bare `-`). With a prompt argument, a pipe or socket that delivers no data within `PIPED_STDIN_GRACE_MS` (150 ms) is paused, unref'd and skipped; data inside the window, a regular file, no prompt argument, and `-` keep the read-to-EOF behavior.
+
+### Why
+
+- ssh, CI runners and agent harnesses give children a stdin that is open but never written or closed, so `senpi -p "prompt"` blocked before startup forever at 0% CPU. Regression: `test/suite/regressions/issue-3715-print-stdin-open-pipe.test.ts`.
+
+### Why an extension could not handle it
+
+- stdin is read in `main` before the initial message is built and before print mode starts; no extension hook runs earlier.
+
+### Expected merge conflict zones
+
+- LOW: the `readPipedStdin` call site before `prepareInitialMessage` and the utils import block.
+
 ## 2026-10-19 - Subscription limits are polled before the first turn (senpi#3684)
 
 ### What changed
