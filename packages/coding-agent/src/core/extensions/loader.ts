@@ -21,7 +21,7 @@ import * as _bundledPiTui from "@earendil-works/pi-tui";
 import * as _bundledTypebox from "typebox";
 import * as _bundledTypeboxCompile from "typebox/compile";
 import * as _bundledTypeboxValue from "typebox/value";
-import { CONFIG_DIR_NAME, getAgentDir, isBunBinary, isBundledNode, isBunRuntime } from "../../config.ts";
+import { CONFIG_DIR_NAME, getAgentDir, isBunBinary, isBundledNode, isBunRuntime, VERSION } from "../../config.ts";
 // NOTE: This import works because loader.ts exports are NOT re-exported from index.ts,
 // avoiding a circular dependency. Extensions can import from @code-yeongyu/senpi.
 import * as _bundledPiCodingAgent from "../../index.ts";
@@ -32,7 +32,9 @@ import { execCommand } from "../exec.ts";
 import { RESERVED_MEMORY_REPORT_KEYS } from "../memory-report/memory-report-registry.ts";
 import { readPiManifest } from "../pi-manifest.ts";
 import { unboundSessionControlActions } from "../session-control-actions.ts";
+import { redactForUpload, type UploadRedactionOptions } from "../share/upload-redaction.ts";
 import { createSyntheticSourceInfo, getSyntheticPathSource, isSyntheticPath } from "../source-info.ts";
+import { subscriptionLimits } from "../subscription-limits/limit-store.ts";
 import { time } from "../timings.ts";
 import { type ReadClassifier, registerReadClassifier } from "../tools/read-classifiers.ts";
 import type { ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
@@ -610,6 +612,16 @@ function createExtensionAPI(
 			return readPermissionPreset(sessionManager);
 		},
 
+		getSubscriptionLimits() {
+			assertActive();
+			return subscriptionLimits.snapshot();
+		},
+
+		onSubscriptionLimits(listener) {
+			assertActive();
+			return subscriptionLimits.subscribe(listener);
+		},
+
 		// Action methods - delegate to shared runtime
 		sendMessage(message, options): void {
 			assertActive();
@@ -645,6 +657,13 @@ function createExtensionAPI(
 			assertActive();
 			return execCommand(command, args, options?.cwd ?? cwd, options);
 		},
+
+		redactForUpload(text: string, options?: UploadRedactionOptions) {
+			assertActive();
+			return redactForUpload(text, options);
+		},
+
+		hostVersion: VERSION,
 
 		executeTool(toolName, params, options) {
 			runtime.assertActive();

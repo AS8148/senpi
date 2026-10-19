@@ -1,3 +1,105 @@
+## 2026-10-19 - pi.getSubscriptionLimits() and pi.onSubscriptionLimits() (senpi#3684)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionAPI` gains `getSubscriptionLimits(): readonly AccountLimits[]` and `onSubscriptionLimits(listener): () => void`.
+- `packages/coding-agent/src/core/extensions/loader.ts`: both read the process's `subscriptionLimits` store, the one `get_subscription_limits` serves.
+
+### Why
+
+The OmO TUI side panel polled the usage endpoints itself. With the engine polling, an extension reads the same records the desktop gets, and the second poller goes away.
+
+### Why an extension could not handle it
+
+The store is core state; an extension has no other path to it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: LOW, after `getPermissionPreset()` and the import block.
+- `packages/coding-agent/src/core/extensions/loader.ts`: LOW, after `getPermissionPreset()` in the API object and the import block.
+
+## 2026-10-19 - pi.redactForUpload() and pi.hostVersion (senpi#3674)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionAPI` gains `redactForUpload(text, { extraLiterals? }) -> { text, counts }` and `readonly hostVersion`.
+- `packages/coding-agent/src/core/extensions/loader.ts`: implements both; `redactForUpload` calls `core/share/upload-redaction.ts`, which is the `/share` redactor (`redactShareText`) with this machine's identity, and `hostVersion` is `VERSION`.
+- `packages/coding-agent/src/core/share/share-redaction.ts`: the context takes `extraLiterals`, and the literal pass (which runs last) no longer rewrites placeholders earlier passes wrote, so a literal such as `redacted` or `email` cannot corrupt `<redacted>` or `<email>`.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts`: features that send text off the machine (the OmO in-app bug report, code-yeongyu/oh-my-openagent#10543) need the same redactor `/share` uses; there must be exactly one set of rules, not a copy inside each extension.
+- `packages/coding-agent/src/core/extensions/loader.ts`: the reporting extension also needs the engine version for the report's environment block.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts`: the redactor lives in core (`core/share/`) and is not exported; an extension can only reach it through the API object, and a copied redactor would drift from `/share`.
+- `packages/coding-agent/src/core/extensions/loader.ts`: the API object is built here.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: LOW, the `ExtensionAPI` member list after `exec`.
+- `packages/coding-agent/src/core/extensions/loader.ts`: LOW, the API object after `exec`, plus the config import.
+
+## 2026-10-18 - ToolDefinition placement metadata and dispatcher-routed extension tools (senpi#3566)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ToolDefinition` gains `placement?: ToolPlacement` (`"server" | "child"`, default server; a child-placed tool under `--tool-runtime child` fails with `tool_runtime_unavailable` until the tool child lands, never silently running in-process) and `serverPinned?: boolean` (set by built-in tool factories whose definition captures injected `operations` or a filesystem-policy override; the dispatcher pins such tools to the server even when `placement` is `"child"` and logs one notice per tool).
+- `packages/coding-agent/src/core/extensions/wrapper.ts`: `wrapRegisteredTool`/`wrapRegisteredTools` take an optional `ToolDispatcher` and route execution through `dispatcher.run({ definition, toolCallId, params, signal, onUpdate, ctx })` with the runner-built context; without a dispatcher the call is unchanged. The active-tool diff (`addedToolNames`) still merges after execution in the wrapper.
+
+### Why
+
+The per-session tool dispatcher (senpi#3566) needs every registered tool call - builtin, extension, and SDK - to cross one seam, and extension tools need an opt-in to run in the session's tool child once it exists.
+
+### Why an extension could not handle it
+
+The wrapper adapts extension tools into core `AgentTool`s and the dispatcher is session-owned runtime state.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: the `ToolDefinition` property list around `namespace`/`annotations` and the `execute` signature.
+- `packages/coding-agent/src/core/extensions/wrapper.ts`: `wrapRegisteredTool`'s execute override.
+
+## 2026-10-18 - Extension child_process resolves to a per-process module (senpi#3566)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/bun-extension-importer.ts`: `createBunExtensionImporter(virtualModules, builtinRedirects = {})` resolves a specifier that is an own key of `builtinRedirects` to the mapped id before the builtin check (own keys only: a package named after an `Object.prototype` key such as `constructor` resolves as before, so the default path's empty map changes nothing), in every module the extension graph transpiles (transitive dependencies included) and for `require`.
+- The session's own extension loader does not use the redirect: on the default in-process path every extension gets the real `node:child_process`, unchanged. Only the tool child's module-job worker builds an importer with `CHILD_PROCESS_REDIRECTS` and the gated module.
+
+### Why
+
+The per-session tool child must not start any process before the server has recorded its containment. Bun ignores `syncBuiltinESMExports`, refuses `Bun.plugin` overrides of builtins and never calls `onResolve` for them, so a named `import { spawnSync } from "node:child_process"` in extension code could not be gated any other way.
+
+### Why an extension could not handle it
+
+The rewrite has to happen where the importer resolves every extension module's specifiers, before any extension code runs.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/bun-extension-importer.ts`: the `createBunExtensionImporter` signature and the start of `resolveTarget`.
+
+## 2026-10-18 - ToolDefinition.childModule: a child-placed tool's file-backed body (senpi#3566)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ToolDefinition` gains `childModule?: ToolChildModule` (`{ path, export }`, new exported interface). `path` is absolute or relative to the registering extension file and must stay inside that extension's directory; `export` names a function that receives `{ params, toolCallId }` and returns a structured-cloneable tool result. Under `--tool-runtime child` a `"child"`-placed tool with a `childModule` runs that body as the tool child's `module` job; without one it still reports `tool_runtime_unavailable`. `execute` is unchanged and still runs in-process under the default runtime.
+- `packages/coding-agent/src/core/extensions/wrapper.ts`: `wrapRegisteredTool` passes `sourcePath: registeredTool.sourceInfo.path` to `dispatcher.run`, so a relative `childModule.path` resolves against the extension's directory.
+
+### Why
+
+The tool child cannot load the extension loader (it statically reaches every session writer), so a child-placed tool needs a file reference the child can import on its own. The same `{ modulePath, export, args }` job shape is what `ctx.offload` builds on.
+
+### Why an extension could not handle it
+
+Where a tool runs is decided by the session's dispatcher, and the extension's source path is known only to the loader and the wrapper.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: the `ToolDefinition` property list beside `placement`/`serverPinned`, and the new `ToolChildModule` interface just above `ToolDefinition`.
+- `packages/coding-agent/src/core/extensions/wrapper.ts`: the `dispatcher.run` call in `wrapRegisteredTool`.
+
 ## 2026-10-18 - Agent lifecycle and boundary event handlers run under a host budget (senpi#3650)
 
 ### What changed

@@ -1252,8 +1252,16 @@ For `tool_call`, this state is synchronized through the current assistant messag
 ctx.sessionManager.getEntries()             // All entries
 ctx.sessionManager.getBranch()              // Current branch (from the latest compaction window once the session compacted)
 ctx.sessionManager.getFullBranch()          // Current branch over the whole history, read from the session file
+ctx.sessionManager.reduceHistory(reducer)   // Fold every entry (like getEntries()) without holding the history; see below
 ctx.sessionManager.buildContextEntries()    // Active branch entries with compaction applied
 ctx.sessionManager.getLeafId()              // Current leaf entry ID
+```
+
+A handler that runs every turn and needs only the latest or the since-last of something should use `reduceHistory` instead of scanning `getEntries()`: on a compacted session `getEntries()` reads and keeps the whole history. A reducer is a stable, module-level `{ initial(), add(state, entry) }`; the session reads the history once and folds only the entries appended since. Treat the returned state as read-only, and do not rely on `parentId`: an entry kept across a compaction can carry a rewritten link, as in `getEntries()`. A reducer that throws starts over on the next call.
+
+```typescript
+const latestNote = { initial: () => undefined, add: (latest, entry) => (entry.type === "custom" && entry.customType === "note" ? entry : latest) };
+const note = ctx.sessionManager.reduceHistory(latestNote);
 ```
 
 ### ctx.goalStoreFile
@@ -2271,6 +2279,19 @@ pi.on("tool_call", () => {
 });
 ```
 
+### pi.getSubscriptionLimits()
+
+Every subscription account's latest limit windows, the same records RPC `get_subscription_limits` serves: `{ provider, account, windows, reportedAt, plan?, error? }`. The engine polls each signed-in Claude and ChatGPT subscription account's usage endpoint (interactive and RPC modes) and turns update the same records, so an account's windows are known before its first turn. An account nothing has reported for is absent. `error` says why the last poll failed (for example `auth stale - run /login`); the windows beside it are the last ones reported.
+
+### pi.onSubscriptionLimits(listener)
+
+Calls `listener(limits)` each time an account's limits are reported and returns the unsubscribe. Unsubscribe on `session_shutdown`.
+
+```typescript
+const stop = pi.onSubscriptionLimits((limits) => render(pi.getSubscriptionLimits()));
+pi.on("session_shutdown", () => stop());
+```
+
 ### pi.exec(command, args, options?)
 
 Execute a shell command.
@@ -2279,6 +2300,19 @@ Execute a shell command.
 const result = await pi.exec("git", ["status"], { signal, timeout: 5000 });
 // result.stdout, result.stderr, result.code, result.killed
 ```
+
+### pi.redactForUpload(text, options?)
+
+Redact text before sending it off this machine, with the same rules `/share` uses: this machine's home path, account and host names, credentials, private keys, emails and IP addresses. Pass `extraLiterals` for other identity values you know about (for example a remote host's account name). The result is idempotent.
+
+```typescript
+const { text, counts } = pi.redactForUpload(logText, { extraLiterals: ["build-runner-07"] });
+// counts: { "home path": 1, credential: 2 }
+```
+
+### pi.hostVersion
+
+The running senpi version string.
 
 ### pi.getActiveTools() / pi.getAllTools() / pi.setActiveTools(names)
 

@@ -17,6 +17,23 @@ export function isToolRuntimeKind(value: string): value is ToolRuntimeKind {
 
 const TOOL_RUNTIME_ENV_SUFFIX = "TOOL_RUNTIME";
 
+/**
+ * What the tool child already serves, advertised as `placement:<name>` beside `tool_runtime:child` (senpi#3566): each
+ * later todo appends the placement it lands, so a client (and the QA driver) can tell which work moved.
+ */
+export const TOOL_CHILD_PLACEMENTS = ["launch-barrier"] as const;
+
+export function toolRuntimeCapabilities(runtime: ToolRuntimeKind): string[] {
+	return [
+		toolRuntimeCapability(runtime),
+		...(runtime === "child" ? TOOL_CHILD_PLACEMENTS.map((name) => `placement:${name}`) : []),
+	];
+}
+
+export function isHostOwnedToolRuntimeCapability(capability: string): boolean {
+	return capability.startsWith("tool_runtime:") || capability.startsWith("placement:");
+}
+
 export function toolRuntimeCapability(runtime: ToolRuntimeKind): `tool_runtime:${ToolRuntimeKind}` {
 	return `tool_runtime:${runtime}`;
 }
@@ -30,9 +47,42 @@ export type ToolRuntimeResolution =
  * An env value outside the two kinds is a startup error, the same as an unknown flag value: a typo
  * must never silently select the other runtime.
  */
+export const TOOL_RUNTIME_UNSUPPORTED_HOST = "tool_runtime_unsupported_host";
+
+/**
+ * Hosts the child runtime cannot serve yet. Windows needs its own containment (Job Objects, the breakaway shim), which
+ * lands separately (senpi#3566); until then `child` is refused there, so no half-gated launch path is ever reachable.
+ */
+export function toolRuntimeHostRefusal(
+	runtime: ToolRuntimeKind,
+	platform: NodeJS.Platform = process.platform,
+): string | undefined {
+	if (runtime !== "child" || platform !== "win32") return undefined;
+	return `${TOOL_RUNTIME_UNSUPPORTED_HOST}: --tool-runtime child is not available on Windows yet (senpi#3566); use in-process`;
+}
+
+export class ToolRuntimeUnsupportedHostError extends Error {
+	readonly code = TOOL_RUNTIME_UNSUPPORTED_HOST;
+	constructor(message: string) {
+		super(message);
+		this.name = "ToolRuntimeUnsupportedHostError";
+	}
+}
+
 export function resolveToolRuntime(
 	parsed: { readonly toolRuntime?: ToolRuntimeKind },
 	env: NodeJS.ProcessEnv = process.env,
+	platform: NodeJS.Platform = process.platform,
+): ToolRuntimeResolution {
+	const resolved = resolveRequestedToolRuntime(parsed, env);
+	if (!resolved.ok) return resolved;
+	const refusal = toolRuntimeHostRefusal(resolved.value, platform);
+	return refusal === undefined ? resolved : { ok: false, message: refusal };
+}
+
+function resolveRequestedToolRuntime(
+	parsed: { readonly toolRuntime?: ToolRuntimeKind },
+	env: NodeJS.ProcessEnv,
 ): ToolRuntimeResolution {
 	if (parsed.toolRuntime !== undefined) return { ok: true, value: parsed.toolRuntime };
 	const fromEnv = envValue(TOOL_RUNTIME_ENV_SUFFIX, env);

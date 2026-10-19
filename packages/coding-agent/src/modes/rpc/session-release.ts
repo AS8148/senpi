@@ -22,6 +22,7 @@
  * cannot hand over (`release_unsupported`: a worker isolate owns the runtime, or there is no file).
  */
 import type { AgentSession } from "../../core/agent-session.ts";
+import { isMoveId, isPlainId } from "../../core/session-move/bundle.ts";
 import { SessionMovedAwayError } from "../../core/session-move/ownership.ts";
 import { isHandoffBusy } from "./handoff-activity.ts";
 import {
@@ -92,11 +93,17 @@ interface Releasable {
 }
 
 export async function releaseSession(port: SessionReleasePort, command: ReleaseSessionCommand): Promise<RpcResponse> {
-	const validMove = command.reason === "move" && typeof command.moveId === "string" && command.moveId !== "";
+	// Export and the receiver's ledger accept only a plain move id; a release under any other id could never finish.
+	const validMove = command.reason === "move" && isMoveId(command.moveId);
 	if (command.reason !== "takeover" && !validMove) return refusal(command.id, RPC_ERROR_INVALID_RELEASE_REASON);
 	if (port.draining()) return refusal(command.id, RPC_ERROR_HOST_DRAINING);
 	const first = releasable(port, command, undefined);
 	if (!("session" in first)) return first;
+	// The seal records the session's own id, which the bundle and the receiver use as a folder name: a move of a session
+	// whose id is not a plain id is refused here, before anything is interrupted or sealed (never sanitized).
+	if (command.reason === "move" && !isPlainId(first.session.sessionManager.getSessionId())) {
+		return refusal(command.id, RPC_ERROR_RELEASE_UNSUPPORTED, { detail: "session_id_not_plain" });
+	}
 	const busy = busySignals(port, command.sessionId, first.session);
 	const interrupted = busy.length > 0;
 	if (interrupted && command.interrupt !== true) {
@@ -124,7 +131,10 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 		return answer;
 	} catch (cause) {
 		if (cause instanceof SessionMovedAwayError) {
-			answer = refusal(command.id, cause.code, { detail: cause.message });
+			answer = refusal(command.id, cause.code, {
+				detail: cause.message,
+				...(interrupted ? { interrupted: true, dropped } : {}),
+			});
 			return answer;
 		}
 		answer = refusal(command.id, RPC_ERROR_RELEASE_FAILED, {

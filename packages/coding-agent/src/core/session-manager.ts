@@ -50,6 +50,7 @@ import {
 } from "./session-entry-file.ts";
 import { materializeSessionEntries } from "./session-entry-materializer.ts";
 import { replaceFileAtomically } from "./session-file-replace.ts";
+import { type HistoryReducer, HistoryReductions } from "./session-history-reduce.ts";
 import { planLoadedTail } from "./session-loaded-tail.ts";
 import { SessionWriteGuard } from "./session-move/write-guard.ts";
 import { type ResidentStoreStats, ResidentStringStore } from "./session-resident-store.ts";
@@ -459,6 +460,7 @@ export type ReadonlySessionManager = Pick<
 	| "buildSessionProjection"
 	| "getHeader"
 	| "getEntries"
+	| "reduceHistory"
 	| "getTree"
 	| "getSessionName"
 >;
@@ -1154,6 +1156,17 @@ export class SessionManager {
 	private readonly idsInUse = { has: (id: string): boolean => this.byId.has(id) || this.trimmedIds.has(id) };
 	// Counts loaded/appended entries, including those removed from the resident mirror.
 	private fullEntryCount = 0;
+	// Bumped whenever the history is replaced (not on append or mirror trim); keys `reduceHistory`'s memo.
+	private historyGeneration = 0;
+	// The mirror's last `fullEntryCount - verbatimFromCount` entries are the history's own tail, in order; a trim
+	// leaves entries before them only on disk.
+	private verbatimFromCount = 0;
+	private readonly historyReductions = new HistoryReductions({
+		generation: () => this.historyGeneration,
+		count: () => this.fullEntryCount,
+		appendedSince: (count) => this._appendedSince(count),
+		readAll: () => this._readWholeHistory(),
+	});
 	private compactEntriesCache: { mutation: number; entries: SessionEntry[] } | null = null;
 	/**
 	 * Materialized views of `fileEntries` (`compact`) and, once the mirror is trimmed, of the full
@@ -1368,6 +1381,7 @@ export class SessionManager {
 	/** Indexes the externalized entries; the file is the session's flushed authority from here on. */
 	private _completeFileLoad(loadedHistory: SessionEntry[] | undefined): void {
 		this._buildIndex();
+		this.historyGeneration++;
 		// The entries this load already parsed answer the open-time history readers; the view goes when
 		// the session settles idle, like any full-history view of a trimmed mirror.
 		if (loadedHistory !== undefined) {
@@ -1410,6 +1424,8 @@ export class SessionManager {
 			parentSession: options?.parentSession,
 		};
 		this.fileEntries = [header];
+		this.historyGeneration++;
+		this.verbatimFromCount = 0;
 		this.mirrorTrimmed = false;
 		this.trimmedIds.clear();
 		this.fullEntryCount = 0;
@@ -1456,6 +1472,7 @@ export class SessionManager {
 		// payloads stay out-of-line and every reader materializes through the one path.
 		this.fileEntries = this.fileEntries.map((entry) => this.residentStore.externalize(entry));
 		this._buildIndex();
+		this.historyGeneration++;
 		this.mutationCount++;
 	}
 
@@ -1476,10 +1493,12 @@ export class SessionManager {
 		for (const id of tail.trimmedIds) this.trimmedIds.add(id);
 		this.mirrorTrimmed = true;
 		this.fileEntries = tail.retained;
+		this.verbatimFromCount = history.length - tail.windowLength;
 		return history;
 	}
 
 	private _buildIndex(): void {
+		if (!this.mirrorTrimmed) this.verbatimFromCount = 0;
 		this.byId.clear();
 		this.entryOrdersById.clear();
 		this.messageEntryPositions = new WeakMap();
@@ -2010,6 +2029,9 @@ export class SessionManager {
 		const compactionIndex = this.fileEntries.findIndex((entry) => entry.id === compaction.id);
 		if (firstKeptIndex < 0 || compactionIndex < firstKeptIndex) return;
 
+		const verbatimStart = this.fileEntries.length - (this.fullEntryCount - this.verbatimFromCount);
+		if (firstKeptIndex >= verbatimStart)
+			this.verbatimFromCount = this.fullEntryCount - (compactionIndex + 1 - firstKeptIndex);
 		const header = this.fileEntries.find((entry) => entry.type === "session");
 		const retained = [
 			...this.fileEntries.slice(0, firstKeptIndex).filter((entry) => entry.type !== "message"),
@@ -2452,6 +2474,42 @@ export class SessionManager {
 	}
 
 	/**
+	 * Folds the whole history (every branch, append order, like `getEntries()`) without keeping a full-history view
+	 * (senpi#2537): the history is read once per load, later calls fold only the entries appended since. For per-turn
+	 * readers that need the latest or the since-last of something; see `HistoryReducer` for the reducer contract.
+	 */
+	reduceHistory<S>(reducer: HistoryReducer<S>): S {
+		return this.historyReductions.reduce(reducer);
+	}
+
+	private _appendedSince(count: number): SessionEntry[] | undefined {
+		if (count < this.verbatimFromCount) return undefined;
+		const wanted = this.fullEntryCount - count;
+		const appended: SessionEntry[] = [];
+		let missing = false;
+		for (let index = this.fileEntries.length - 1; index >= 0 && appended.length < wanted; index--) {
+			const entry = this.fileEntries[index]!;
+			if (entry.type === "session") break;
+			appended.push(
+				this.residentStore.materialize(entry, () => {
+					missing = true;
+					return undefined;
+				}),
+			);
+		}
+		return missing || appended.length < wanted ? undefined : appended.reverse();
+	}
+
+	private _readWholeHistory(): readonly SessionEntry[] {
+		if (!this.mirrorTrimmed || !this.sessionFile) return this._getCompactEntries();
+		const held = this._extendView(this.historyView);
+		if (held !== undefined) return held;
+		return this._loadFullHistoryEntries()
+			.filter((entry): entry is SessionEntry => entry.type !== "session")
+			.map((entry) => this.residentStore.materialize(entry));
+	}
+
+	/**
 	 * Release the memoized materialized views. Materialized entries hold the full
 	 * persisted strings, so views kept between turns pin the whole session text
 	 * in memory even while nothing runs. The next read rebuilds them from the
@@ -2792,6 +2850,7 @@ export class SessionManager {
 			this.sessionFile = newSessionFile;
 			this.fileEntries = [header, ...branchedEntries.map((entry) => this.residentStore.externalize(entry))];
 			this._buildIndex();
+			this.historyGeneration++;
 			this.mutationCount++;
 
 			// Use the same rule as _persist(): write now if the branched path already
@@ -2826,6 +2885,7 @@ export class SessionManager {
 		this.fileEntries = [header, ...branchedEntries.map((entry) => this.residentStore.externalize(entry))];
 		this.sessionId = newSessionId;
 		this._buildIndex();
+		this.historyGeneration++;
 		this.mutationCount++;
 		return undefined;
 	}
