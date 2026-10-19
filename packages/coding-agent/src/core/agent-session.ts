@@ -378,6 +378,7 @@ import {
 	type HostCallTarget,
 	type RegisteredHostCallKind,
 } from "./tool-child-host-calls.ts";
+import type { StuckModuleNotice } from "./tool-dispatch/in-process-module.ts";
 import { childModuleRoots, offload } from "./tool-dispatch/offload.ts";
 import { createToolDispatcher, type ToolDispatcher } from "./tool-dispatch/tool-dispatcher.ts";
 import type { BashOperations } from "./tools/bash.ts";
@@ -521,6 +522,11 @@ export type AgentSessionEvent =
 	| { type: "provider_required"; notice: string }
 	/** The session file refused a message of the running turn; the message is not in the transcript. */
 	| { type: "transcript_write_failed"; role: AgentMessage["role"]; errorMessage: string }
+	/**
+	 * An in-process `ctx.offload` module ran past its deadline and grace and cannot be stopped: it keeps its file locks,
+	 * every write waiting on them fails fast, and they are released when it finishes or the session is closed.
+	 */
+	| ({ type: "offload_module_stuck" } & StuckModuleNotice)
 	| {
 			type: "skill_invocation";
 			skills: readonly {
@@ -1374,7 +1380,7 @@ export class AgentSession {
 	private readonly _toolChildHostTargets = new Map<RegisteredHostCallKind, HostCallTarget>();
 	/** The composed filesystem policy the built-in file tools enforce; a tool child's `authorize` asks the same one. */
 	private _filesystemPolicy: FilesystemPolicyChecker | undefined;
-	/** Settles once dispose() has stopped the tool child and swept what it launched. */
+	/** Settles once dispose() has stopped the tool child, swept what it launched, and closed its in-process offload jobs. */
 	private _toolChildClosed: Promise<void> = Promise.resolve();
 	private _extensionRunnerRef?: { current?: ExtensionRunner };
 	private _initialActiveToolNames?: string[];
@@ -1534,6 +1540,15 @@ export class AgentSession {
 			runtime: toolRuntime,
 			notify: (event, data) => this._sessionLogger.info(event, data),
 			hostCalls,
+			onModuleStuck: (notice) => {
+				this._sessionLogger.warn("offload_module_stuck", {
+					modulePath: notice.modulePath,
+					export: notice.export,
+					deadlineMs: notice.deadlineMs,
+					files: notice.files,
+				});
+				this._emit({ type: "offload_module_stuck", ...notice });
+			},
 			...(this._toolChild === undefined ? {} : { childRunner: this._toolChild.runner }),
 		});
 		this._fallbackValidationWarnings = validateFallbackChains(
@@ -4175,11 +4190,16 @@ export class AgentSession {
 			"This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). For newSession, fork, and switchSession, move post-replacement work into withSession and use the ctx passed to withSession. For reload, do not use the old ctx after await ctx.reload().",
 		);
 		this._releaseToolSearchService("session disposed");
-		this._toolChildClosed =
+		// In-process offload jobs are closed with the child: replacement awaits both before the next session runs.
+		const inProcessClosed = this._toolDispatcher
+			.dispose()
+			.catch((error: unknown) => this._sessionLogger.warn("tool_dispatcher_close_failed", { error: String(error) }));
+		const childClosed =
 			this._toolChild
 				?.close()
 				.catch((error: unknown) => this._sessionLogger.warn("tool_child_close_failed", { error: String(error) })) ??
 			Promise.resolve();
+		this._toolChildClosed = Promise.all([inProcessClosed, childClosed]).then(() => undefined);
 		this._disconnectFromAgent();
 		this._unsubscribeSettingsSource?.();
 		this._unsubscribeSettingsSource = undefined;

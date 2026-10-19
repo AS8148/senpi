@@ -16,7 +16,8 @@ import type { ToolRuntimeKind } from "../../cli/tool-runtime.ts";
 import type { HostCallHandler } from "../../modes/rpc/tool-child/host-calls-server.ts";
 import type { ExtensionToolContext, ToolDefinition, ToolPlacement } from "../extensions/types.ts";
 import { type BashOperations, createLocalBashOperations } from "../tools/bash.ts";
-import { OffloadError, runModuleInProcess } from "./offload.ts";
+import { type InProcessRun, runModuleInProcess, type StuckModuleNotice } from "./in-process-module.ts";
+import { OffloadError } from "./offload.ts";
 
 export type { ToolPlacement } from "../extensions/types.ts";
 
@@ -78,6 +79,10 @@ export interface ToolDispatcherOptions {
 	childRunner?: ToolChildRunner;
 	/** The session's host-call handler: an in-process `ctx.offload` module gets the same host the child's worker builds. */
 	hostCalls?: HostCallHandler;
+	/** How long past its deadline an in-process module may run before it is reported stuck (default 10 s). */
+	stuckGraceMs?: number;
+	/** Told when an in-process module is stuck (it keeps its locks; their waiters fail fast). */
+	onModuleStuck?: (notice: StuckModuleNotice) => void;
 }
 
 export interface ToolDispatcher {
@@ -87,7 +92,11 @@ export interface ToolDispatcher {
 	onDispatched(observer: ToolDispatchObserver): () => void;
 	/** Runs a registered child module (`ctx.offload`) where this runtime places it. */
 	offload(job: ToolChildModuleJob, signal: AbortSignal | undefined): Promise<OffloadOutcome>;
+	/** The session is closed or replaced: work this runtime still runs in this process is closed; settles once it let go. */
+	dispose(): Promise<void>;
 }
+
+type InProcessDispatchOptions = Pick<ToolDispatcherOptions, "hostCalls" | "stuckGraceMs" | "onModuleStuck">;
 
 /**
  * Placement of one call: only a definition that opted into `"child"` while the
@@ -110,6 +119,10 @@ abstract class BaseToolDispatcher implements ToolDispatcher {
 	abstract run<TDetails>(call: ToolDispatchCall<TDetails>): Promise<AgentToolResult<TDetails>>;
 
 	abstract bashOperations(options?: { shellPath?: string }): BashOperations;
+
+	dispose(): Promise<void> {
+		return Promise.resolve();
+	}
 
 	abstract offload(job: ToolChildModuleJob, signal: AbortSignal | undefined): Promise<OffloadOutcome>;
 
@@ -151,11 +164,17 @@ abstract class BaseToolDispatcher implements ToolDispatcher {
 
 export class InProcessToolDispatcher extends BaseToolDispatcher {
 	readonly kind: ToolRuntimeKind = "in-process";
-	readonly #hostCalls: HostCallHandler | undefined;
+	readonly #options: InProcessDispatchOptions;
+	readonly #live = new Set<InProcessRun>();
 
-	constructor(notify?: ToolDispatchNotify, hostCalls?: HostCallHandler) {
+	constructor(notify?: ToolDispatchNotify, options: InProcessDispatchOptions = {}) {
 		super(notify);
-		this.#hostCalls = hostCalls;
+		this.#options = options;
+	}
+
+	/** Closes every in-process module run still live; settles once each has released its locks (`InProcessRun.close`). */
+	override async dispose(): Promise<void> {
+		await Promise.all([...this.#live].map((run) => run.close()));
 	}
 
 	run<TDetails>(call: ToolDispatchCall<TDetails>): Promise<AgentToolResult<TDetails>> {
@@ -168,7 +187,12 @@ export class InProcessToolDispatcher extends BaseToolDispatcher {
 
 	async offload(job: ToolChildModuleJob, signal: AbortSignal | undefined): Promise<OffloadOutcome> {
 		return {
-			value: await runModuleInProcess(job, signal, this.#hostCalls),
+			value: await runModuleInProcess(job, signal, {
+				...(this.#options.hostCalls === undefined ? {} : { hostCalls: this.#options.hostCalls }),
+				...(this.#options.stuckGraceMs === undefined ? {} : { stuckGraceMs: this.#options.stuckGraceMs }),
+				...(this.#options.onModuleStuck === undefined ? {} : { onStuck: this.#options.onModuleStuck }),
+				live: this.#live,
+			}),
 			placement: "server",
 			pid: process.pid,
 			generation: 0,
@@ -228,7 +252,7 @@ export class ChildToolDispatcher extends BaseToolDispatcher {
 export function createToolDispatcher(options: ToolDispatcherOptions): ToolDispatcher {
 	return options.runtime === "child"
 		? new ChildToolDispatcher(options.notify, options.childRunner)
-		: new InProcessToolDispatcher(options.notify, options.hostCalls);
+		: new InProcessToolDispatcher(options.notify, options);
 }
 
 function childModuleJob(call: {
