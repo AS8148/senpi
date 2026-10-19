@@ -10,8 +10,7 @@ export type RpcSessionResyncRequired = {
 	readonly closed?: true;
 };
 
-export function isCorrelatedReply(line: string): boolean {
-	const value: unknown = JSON.parse(line);
+export function isCorrelatedReply(value: unknown): boolean {
 	return (
 		typeof value === "object" &&
 		value !== null &&
@@ -83,7 +82,7 @@ export class SocketPeerRecovery {
 		this.pingBuffered = false;
 		const snapshot = this.readSnapshot;
 		this.readSnapshot = undefined;
-		const gap = this.replyLost && reason !== undefined ? [{ type: "resync_required", reason }] : [];
+		const gap = reason === undefined ? [] : [{ type: "resync_required", reason, replyLost: this.replyLost }];
 		this.replyLost = false;
 		return [...gap, ...(snapshot?.() ?? [])];
 	}

@@ -1,6 +1,6 @@
 import { serializeJsonLine } from "./jsonl.ts";
 import { loopBlockedMark, loopBlockedMsSince } from "./loop-blocked-time.ts";
-import { isCorrelatedReply, type ResyncReason, SocketPeerRecovery } from "./socket-peer-recovery.ts";
+import { type ResyncReason, SocketPeerRecovery } from "./socket-peer-recovery.ts";
 
 type SocketSink = {
 	writeRaw(chunk: string): void;
@@ -18,6 +18,7 @@ type QueueEntry = {
 	 */
 	demotedLine?: string;
 	onWritten?: () => void;
+	reply: boolean;
 };
 
 // A handful of image tool results is several MiB of base64 each; four of them
@@ -82,6 +83,7 @@ export class SocketEventSinkActor {
 	private closed = false;
 	private failure?: unknown;
 	private recovery?: SocketPeerRecovery;
+	private recoveryEnabled = false;
 	private readonly stopped = new AbortController();
 
 	private readonly sink: SocketSink;
@@ -102,19 +104,30 @@ export class SocketEventSinkActor {
 	}
 
 	enableRecovery(snapshot: (reason: ResyncReason) => () => readonly object[]): void {
+		this.recoveryEnabled = true;
 		this.recovery ??= new SocketPeerRecovery((line) => this.sink.writeRaw(line), snapshot);
 		this.recovery.acknowledge();
 	}
 
-	enqueue(line: string, key?: string, onWritten?: () => void, demotedLine?: string): void {
+	disableRecovery(): void {
+		this.recoveryEnabled = false;
+		if (!this.recovery?.pending) this.recovery = undefined;
+	}
+
+	enqueue(line: string, key?: string, onWritten?: () => void, demotedLine?: string, reply = false): void {
 		if (this.closed) return;
+		if (this.recovery?.pending && !reply) {
+			onWritten?.();
+			return;
+		}
 		const bytes = Buffer.byteLength(line);
 		if (this.recovery?.pending) {
-			if (isCorrelatedReply(line)) {
-				if (this.queuedBytes + bytes <= this.maxQueueBytes) {
-					this.queue.push({ line, bytes, onWritten });
-					this.queuedBytes += bytes;
-				} else this.recovery.loseReply();
+			if (this.queuedBytes + bytes <= this.maxQueueBytes) {
+				this.queue.push({ line, bytes, onWritten, reply });
+				this.queuedBytes += bytes;
+			} else {
+				this.recovery.loseReply();
+				onWritten?.();
 			}
 			return;
 		}
@@ -137,9 +150,9 @@ export class SocketEventSinkActor {
 			}
 		}
 		if (this.queuedBytes + bytes > this.maxQueueBytes) {
-			if (this.recovery) {
+			if (this.recovery && this.recoveryEnabled) {
 				this.shed("overflow");
-				this.enqueue(line, undefined, onWritten);
+				this.enqueue(line, undefined, onWritten, undefined, reply);
 				void this.drain();
 				return;
 			}
@@ -160,7 +173,7 @@ export class SocketEventSinkActor {
 			this.onFailure(overflow);
 			return;
 		}
-		this.queue.push({ line, bytes, key, demotedLine, onWritten });
+		this.queue.push({ line, bytes, key, demotedLine, onWritten, reply });
 		this.queuedBytes += bytes;
 		void this.drain();
 	}
@@ -191,7 +204,11 @@ export class SocketEventSinkActor {
 
 	private shed(reason: ResyncReason): void {
 		if (this.recovery?.pending) return;
-		const replies = this.queue.filter((entry) => isCorrelatedReply(entry.line));
+		const replies: QueueEntry[] = [];
+		for (const entry of this.queue) {
+			if (entry.reply) replies.push(entry);
+			else entry.onWritten?.();
+		}
 		this.queue.length = 0;
 		for (const reply of replies) this.queue.push(reply);
 		this.queuedBytes = replies.reduce((bytes, entry) => bytes + entry.bytes, 0);
@@ -224,7 +241,7 @@ export class SocketEventSinkActor {
 					timer = setTimeout(onDeadline, Math.min(blockedMs, this.stallMs));
 					return;
 				}
-				if (this.recovery) {
+				if (this.recovery && this.recoveryEnabled) {
 					try {
 						this.shed("stall");
 						this.recovery.ping();
@@ -269,8 +286,9 @@ export class SocketEventSinkActor {
 						await this.waitForDrainOrStall(0);
 						if (this.closed) break;
 						const snapshot = this.recovery.takeSnapshot();
+						if (!this.recoveryEnabled) this.recovery = undefined;
 						for (const record of snapshot) {
-							if (this.closed || this.recovery.pending) break;
+							if (this.closed || this.recovery?.pending) break;
 							const line = serializeJsonLine(record);
 							this.sink.writeRaw(line);
 							await this.waitForDrainOrStall(Buffer.byteLength(line));

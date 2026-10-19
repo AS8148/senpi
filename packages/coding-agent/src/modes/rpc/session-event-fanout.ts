@@ -132,7 +132,7 @@ export class SessionEventFanout {
 				const attached = [...(this.connectionSessions.get(id) ?? [])];
 				return () => this.resyncSnapshot(id, reason, attached);
 			});
-		}
+		} else registered.actor.disableRecovery();
 	}
 
 	clearConnectionCapabilities(id: string): void {

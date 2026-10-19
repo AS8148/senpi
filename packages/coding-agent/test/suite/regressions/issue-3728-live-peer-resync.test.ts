@@ -165,7 +165,7 @@ it("sheds a byte overflow without closing and recovers the latest message", asyn
 		reason: "overflow",
 		message: message("x".repeat(40)),
 	});
-	expect(peer.records.filter((record) => record.type === "resync_required")).toHaveLength(1);
+	expect(peer.records.filter((record) => record.type === "resync_required")).toHaveLength(2);
 	peer.writer.unregisterConnection("peer");
 });
 

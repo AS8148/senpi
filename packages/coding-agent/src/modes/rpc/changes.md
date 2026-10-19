@@ -1,3 +1,25 @@
+## 2026-10-19 - Recover connection-wide gaps and remove shed-path parsing (#3728 review)
+
+### What changed
+
+- `socket-peer-recovery.ts` emits a global gap for every shed, separately identifying lost replies. `socket-event-fanout.ts` retains reply metadata, releases discarded callbacks and permits recovery revocation without forgetting an outstanding gap.
+- `session-event-writer.ts` tags correlated replies before serialization; `session-event-fanout.ts` applies replacement capability lists. No shed or pending-enqueue path parses JSON.
+- `session-extension-ui-requests.ts` retains live dialog frames; `connection-handler.ts` registers them, and `rpc-session-state.ts` / `rpc-types.ts` expose them as `get_state.pendingDialogs`.
+
+### Why
+
+- A connection can observe lifecycle/status traffic without attaching to any session; its missing records still require resubscription and a fresh lifecycle snapshot.
+- Parsing every queued partial on an already-starved host loop is avoidable work. Discarded close notices must release their callback-owned suppression state.
+- Select, confirm, input and editor dialogs are not questions. State recovery needs their pending frames, including removal after resolution, cancellation or timeout.
+
+### Why an extension could not handle it
+
+These files own the bounded socket actor, connection capability policy and native RPC dialog registry below extension event delivery.
+
+### Expected merge conflict zones
+
+`socket-event-fanout.ts` admission and shed; `socket-peer-recovery.ts` gap records; `session-event-writer.ts` enqueue sites; `session-event-fanout.ts` capability replacement; `connection-handler.ts` UI registry binding; `session-extension-ui-requests.ts`, `rpc-session-state.ts` and `rpc-types.ts` pending dialog snapshots.
+
 ## 2026-10-19 - Resynchronize slow live socket peers without reconnecting (#3728)
 
 ### What changed
