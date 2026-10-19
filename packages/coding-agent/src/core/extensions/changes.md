@@ -1,3 +1,46 @@
+## 2026-10-19 - Closing a session closes what its extension code left open (senpi#2292)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/loader.ts`: every callback an extension registers (`pi.on` handlers, tool `execute`, commands, shortcuts, `pi.rpc.handle` handlers) and the factory call itself run through `ownedBy` / `runOwnedBy`, which enter that extension instance's handle ledger for the call's async chain. Tool definitions are stored as a copy whose `execute` is the owned wrapper. Builtin extensions are passed through unchanged.
+- `packages/coding-agent/src/core/extensions/runner.ts`: the constructor registers its extension instances with the handle ledger, and `emitSessionShutdownEvent` calls `reclaimRunnerHandles(runner)` after the `session_shutdown` handlers ran, and also when no extension registered one. A runner the ledger never saw (a test double) reclaims nothing.
+- `packages/coding-agent/src/core/extensions/extension-handle-tracking.ts` (new): process-level hooks on `setTimeout`/`setInterval`/`clear*`, `Bun.serve`, `Bun.listen`, `net.Server.prototype.listen` and `net.Socket.prototype.connect`, installed on first use. A handle is recorded only when an owner is in the async context AND the creating stack frame is that extension's code.
+- `packages/coding-agent/src/core/extensions/extension-handle-ledger.ts` (new): the per-extension ledger, the ownership test (a file extension owns its package directory, or only its entry file when no `package.json` sits beside it, never senpi's own packages; Bun's `senpi-extension:` module frames are decoded to the file; inline factories and builtins, including bundled extensions relabelled builtin after loading, are not tracked), and the reclaim with its per-extension stderr line.
+
+### Why
+
+On the in-process `--listen` host an extension that never stopped a server it opened from a session kept the server and the memory it referenced until the host exited: measured 17 MB and one listening socket per closed session, linear over 30 sessions (senpi#2292). Q chose to have senpi track and close those handles rather than only document the contract.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/loader.ts`: the loader is where extension callbacks are registered; only it can enter the extension's ownership around every call into extension code.
+- `packages/coding-agent/src/core/extensions/runner.ts`: the reclaim must run after every extension's `session_shutdown` handler, on the one teardown path the runner owns; a leaking extension is by definition the one that does not clean up after itself.
+
+### Expected merge conflict zones
+
+- LOW: `loader.ts` `createExtensionAPI` (`on`, `registerTool`, `registerCommand`, `registerShortcut`, `rpc.handle`) and the factory call in `initializeExtension`.
+- LOW: `runner.ts` `emitSessionShutdownEvent` body and one line in the `ExtensionRunner` constructor.
+
+## 2026-10-19 - pi.getSubscriptionLimits() and pi.onSubscriptionLimits() (senpi#3684)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionAPI` gains `getSubscriptionLimits(): readonly AccountLimits[]` and `onSubscriptionLimits(listener): () => void`.
+- `packages/coding-agent/src/core/extensions/loader.ts`: both read the process's `subscriptionLimits` store, the one `get_subscription_limits` serves.
+
+### Why
+
+The OmO TUI side panel polled the usage endpoints itself. With the engine polling, an extension reads the same records the desktop gets, and the second poller goes away.
+
+### Why an extension could not handle it
+
+The store is core state; an extension has no other path to it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: LOW, after `getPermissionPreset()` and the import block.
+- `packages/coding-agent/src/core/extensions/loader.ts`: LOW, after `getPermissionPreset()` in the API object and the import block.
+
 ## 2026-10-19 - pi.redactForUpload() and pi.hostVersion (senpi#3674)
 
 ### What changed

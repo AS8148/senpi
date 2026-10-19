@@ -667,6 +667,23 @@ pi.on("session_shutdown", async (event, ctx) => {
 
 The host budgets each handler separately: a handler still running after `sessionShutdownHandlerWarnMs` (default 2000) logs a warning naming the extension, and at `sessionShutdownHandlerTimeoutMs` (default 10000) senpi aborts that handler's `event.signal`, reports an extension error, and continues teardown with the remaining handlers. Keep shutdown work short, and pass `event.signal` to anything that can block (subprocess waits, network calls, lock acquisition) so it stops when the host gives up on it. Both thresholds are settings; `0` disables either half. See [settings.md](settings.md#shutdown-handler-budget).
 
+After the handlers return, senpi closes anything the extension instance's own code created during the session and still holds open: servers (`Bun.serve`, `Bun.listen`, `node:net` and `node:http` servers), `node:net` client sockets, and `setTimeout`/`setInterval` timers. It logs one line per extension naming what it closed, so a missing teardown shows up in the host's stderr. An extension's own code is its package directory when a `package.json` sits beside its entry file, otherwise the entry file alone; senpi's own packages never count, even when installed inside it. Inline factories passed through the SDK (`extensionFactories`) have no file to tell their code from senpi's, so nothing they open is reclaimed. Stopping your resources here yourself is still the right design; the reclaim is the safety net that keeps a long-lived host from accumulating what closed sessions forgot.
+
+This means a resource opened from a session callback (the factory, `session_start`, a tool, a command, an RPC handler) belongs to that session and ends with it. A server or timer meant to be shared across sessions must be owned by the extension's process-level scope instead: create it at module top level, outside the factory and every callback, so no session owns it.
+
+```typescript
+// Process-level: created once when the module loads, shared by every session, never reclaimed.
+const shared = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+
+export default function (pi: ExtensionAPI) {
+  pi.on("session_start", () => {
+    // Session-level: closed with this session, by you or by senpi.
+    const perSession = setInterval(() => {}, 60_000);
+    pi.on("session_shutdown", () => clearInterval(perSession));
+  });
+}
+```
+
 ### Agent Events
 
 #### before_agent_start
@@ -1257,7 +1274,7 @@ ctx.sessionManager.buildContextEntries()    // Active branch entries with compac
 ctx.sessionManager.getLeafId()              // Current leaf entry ID
 ```
 
-A handler that runs every turn and needs only the latest or the since-last of something should use `reduceHistory` instead of scanning `getEntries()`: on a compacted session `getEntries()` reads and keeps the whole history. A reducer is a stable, module-level `{ initial(), add(state, entry) }`; the session reads the history once and folds only the entries appended since. Treat the returned state as read-only.
+A handler that runs every turn and needs only the latest or the since-last of something should use `reduceHistory` instead of scanning `getEntries()`: on a compacted session `getEntries()` reads and keeps the whole history. A reducer is a stable, module-level `{ initial(), add(state, entry) }`; the session reads the history once and folds only the entries appended since. Treat the returned state as read-only, and do not rely on `parentId`: an entry kept across a compaction can carry a rewritten link, as in `getEntries()`. A reducer that throws starts over on the next call.
 
 ```typescript
 const latestNote = { initial: () => undefined, add: (latest, entry) => (entry.type === "custom" && entry.customType === "note" ? entry : latest) };
@@ -2277,6 +2294,19 @@ pi.on("tool_call", () => {
     // Nothing will prompt for permission in this session.
   }
 });
+```
+
+### pi.getSubscriptionLimits()
+
+Every subscription account's latest limit windows, the same records RPC `get_subscription_limits` serves: `{ provider, account, windows, reportedAt, plan?, error? }`. The engine polls each signed-in Claude and ChatGPT subscription account's usage endpoint (interactive and RPC modes) and turns update the same records, so an account's windows are known before its first turn. An account nothing has reported for is absent. `error` says why the last poll failed (for example `auth stale - run /login`); the windows beside it are the last ones reported.
+
+### pi.onSubscriptionLimits(listener)
+
+Calls `listener(limits)` each time an account's limits are reported and returns the unsubscribe. Unsubscribe on `session_shutdown`.
+
+```typescript
+const stop = pi.onSubscriptionLimits((limits) => render(pi.getSubscriptionLimits()));
+pi.on("session_shutdown", () => stop());
 ```
 
 ### pi.exec(command, args, options?)

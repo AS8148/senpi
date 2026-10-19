@@ -99,6 +99,29 @@ describe("SessionManager.reduceHistory folds the whole history without a full-hi
 		expect(session.reduceHistory(reducer)).toHaveLength(session.getEntryCount());
 	});
 
+	it("never applies an entry twice after a reducer threw partway through new entries", () => {
+		const session = SessionManager.create(dir, dir);
+		let armed = false;
+		const reducer: HistoryReducer<string[]> = {
+			initial: () => [],
+			add: (ids, entry) => {
+				if (armed && entry.type === "custom" && entry.customType === "boom") throw new Error("reducer failed");
+				ids.push(entry.id);
+				return ids;
+			},
+		};
+		turn(session, 1);
+		session.reduceHistory(reducer);
+		turn(session, 2);
+		session.appendCustomEntry("boom");
+
+		armed = true;
+		expect(() => session.reduceHistory(reducer)).toThrow("reducer failed");
+		armed = false;
+
+		expectSameAsEntries(session, reducer);
+	});
+
 	it("starts over when the session is replaced", () => {
 		const session = SessionManager.create(dir, dir);
 		const reducer = idsReducer();
