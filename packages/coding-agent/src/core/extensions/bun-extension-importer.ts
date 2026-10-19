@@ -21,7 +21,7 @@ import {
 	registerExtensionGraph,
 	runtimeModulePath,
 } from "./bun-extension-registry.ts";
-import { hasUseStrictDirective } from "./bun-extension-strict-directive.ts";
+import { hasUseStrictDirective, strictDirectiveModuleSource } from "./bun-extension-strict-directive.ts";
 
 export { bunExtensionImporterStats } from "./bun-extension-registry.ts";
 
@@ -42,8 +42,9 @@ export function createBunExtensionImporter(
 	options: { readonly preparedCache?: { readonly dir: string; readonly release: string } } = {},
 ) {
 	// The key names everything that shapes prepared bytes, so a change to any of it never reads an old entry.
-	// `release` (the senpi version) covers what ships only inside a release, such as the lexer; the function
-	// sources cover an edit to this code between releases.
+	// `release` (the senpi version) covers what changes only with a release, such as the lexer package; the
+	// sources of this importer, the CommonJS rewrite and the whole strict-directive module cover an edit to this
+	// code between releases.
 	const preparedCache =
 		options.preparedCache === undefined
 			? undefined
@@ -56,7 +57,7 @@ export function createBunExtensionImporter(
 					createBunExtensionImporter.toString(),
 					rewriteCommonJsImport.toString(),
 					parseImportClause.toString(),
-					hasUseStrictDirective.toString(),
+					strictDirectiveModuleSource,
 					parse.toString(),
 				]);
 	const sources = new Map<string, ModuleSource>();

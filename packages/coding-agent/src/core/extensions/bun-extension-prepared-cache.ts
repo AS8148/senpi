@@ -50,8 +50,9 @@ function prune(directory: string): void {
 
 /**
  * Disk cache of the importer's transpile + import-rewrite output, so a fresh host skips that work
- * for unchanged sources. `key` names everything outside the source that shapes the output (the
- * importer's own code, the Bun version, the runtime module path); `fingerprint` is the source hash.
+ * for unchanged sources. `keyParts` is everything outside the source that shapes the output, as the
+ * importer passes it (release version, Bun version, runtime module path, extension namespace and the source
+ * of the code that prepares the bytes); `fingerprint` is the source hash.
  * A miss, a corrupt entry and an unwritable directory all mean "prepare it again": the cache only
  * ever saves time, so its I/O failures never reach the extension load.
  */

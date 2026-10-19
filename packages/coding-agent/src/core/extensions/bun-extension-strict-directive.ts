@@ -85,3 +85,16 @@ export function hasUseStrictDirective(source: string): boolean {
 		index = after.index;
 	}
 }
+
+/**
+ * Every function in this module, as source text. The importer keys its prepared-source cache on it, so an edit to
+ * any helper here (not only the exported one) invalidates entries whose CommonJS bodies it shaped.
+ */
+export const strictDirectiveModuleSource = [
+	skipTrivia,
+	stringLiteralEnd,
+	isStringExpressionContinuation,
+	hasUseStrictDirective,
+]
+	.map(String)
+	.join("\n");
