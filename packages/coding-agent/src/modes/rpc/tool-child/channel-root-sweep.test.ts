@@ -6,7 +6,8 @@ import { lstat, mkdtemp, readdir, rm, rmdir, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fallbackSocketRoot, openChannelListener } from "./channel.ts";
+import { openChannelListener } from "./channel.ts";
+import { fallbackSocketRoot } from "./socket-root.ts";
 
 interface SecretHook {
 	beforeSecret: ((secretPath: string) => Promise<void>) | undefined;
