@@ -107,6 +107,12 @@ export async function runModuleInProcess(
 	if (signal?.aborted) onAbort();
 	else signal?.addEventListener("abort", onAbort, { once: true });
 	const calls = inProcessHostCalls(job, cancellation.signal, runtime.hostCalls);
+	// A close in the microtask between the load and here: checked in the same synchronous step that starts the body.
+	if (loading.signal.aborted) {
+		signal?.removeEventListener("abort", onAbort);
+		runtime.live?.delete(registered);
+		throw new OffloadError("offload_session_closed", `${job.modulePath}: the session was closed`);
+	}
 	const run = settleNow(() => target(job.args, calls.host));
 	const bodySettled = run.then(
 		() => undefined,
