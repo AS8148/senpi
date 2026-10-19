@@ -182,6 +182,8 @@ export class PythonKernelTransport {
 			const message = error instanceof Error ? error.message : String(error);
 			this.#stderrTail = `${this.#stderrTail}Python interrupt frame write failed: ${message}\n`.slice(-4_000);
 		}
+		// Only a started kernel reaches here; the guard keeps that invariant local (senpi#3706).
+		if (this.#child.pid === undefined) return;
 		if (process.platform === "win32") this.#child.kill();
 		else this.#child.kill("SIGINT");
 	}
