@@ -62,6 +62,43 @@
 
 - LOW: `packages/coding-agent/src/modes/rpc/host-reservations.ts` `standingOwner` and `claimOwnerIsLive`; `packages/coding-agent/src/modes/rpc/multi-session-host.ts` the `router.dispose()` call in the socket host's `shutdown`.
 
+## 2026-10-18 - Tool-child protocol, one host-call capacity, codec and acknowledged payload refs (senpi#3566)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/tool-child/` (fork-only, new): the wire vocabulary between the server and a session's tool child (`protocol.ts`, boundary check in `protocol-guard.ts`), a length-prefixed binary codec with a 16 MiB frame cap refused before the body is allocated (`codec.ts`), job and host-call admission with the single `hostCallCapacity()` = 264 (8 active + 256 waiting) both sides enforce (`admission.ts`), lossless wake flow control and the per-second `trace` budget (`flow-control.ts`), acknowledged payload references in both directions (`payload-ref.ts`, `payload-ref-paths.ts`, `payload-wire.ts`) and the plain-data `ChildToolContext` (`context.ts`). Nothing is wired into the host yet.
+
+### Why
+
+The per-session tool child (senpi#3566) needs a channel that never drops a job result, proof or tick, refuses frames above its cap instead of buffering them, and moves large payloads by file. A ref's ownership moves to the receiver on `ref_ack`; the writer deletes only on `ref_nack` or generation teardown, never when its own operation settles, so a receiver that opens the file later still finds it.
+
+### Why an extension could not handle it
+
+The channel between the RPC host and its own helper process is host internals; extensions run on top of it.
+
+### Expected merge conflict zones
+
+None: every file is new and fork-only.
+
+## 2026-10-18 - release_session reason move (senpi#3630)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `release_session` accepts `reason: "move"` with `moveId` (required) and `target`.
+- `packages/coding-agent/src/modes/rpc/session-release.ts`: a `move` release records `move_id` and `target` in its `session_released` entry; a `move` without `moveId` is refused with `invalid_release_reason`. After it, the session manager refuses writes to the file (`core/session-move/`).
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: moving a session to another device (sisyphuslabs/omo-desktop-app#3137) starts from the same quiet release a takeover uses; the entry names the move so the file stays read-only here until the receiver answers.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the release command and its bookkeeping entry belong to the RPC host's session lifecycle.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/rpc-types.ts`, the `release_session` command type.
+
 ## 2026-10-18 - get_pending_inputs and pending_input_update (senpi#3549, P2b)
 
 ### What changed

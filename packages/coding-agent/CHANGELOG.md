@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- `get_available_models` reports each model's resolved `serviceTier` and `upstreamModelId`, including a `-fast` alias's pairing declared only in `models.json` or by an extension provider. Clients that verify a child opened on the base model of a requested `-fast` alias no longer refuse it as a substitution ([#3666](https://github.com/code-yeongyu/senpi/issues/3666)).
+
+- Esc or the turn deadline now also release an `agent_before_settle` (or other `agent_end` boundary) handler that never settles: an abort that joined the open boundary used to return before the grace-and-release ran, so the session stayed streaming ([#3650](https://github.com/code-yeongyu/senpi/issues/3650)).
+- The engine can offload tool runs to a per-session child process over a new wire protocol - the protocol layer (framing, single admission, payload refs) lands first (internal preview, fork-only until the offload stack ships) ([#3566](https://github.com/code-yeongyu/senpi/issues/3566)).
+- A session can be exported for a move to another device and imported there under the same id: the device it left keeps a read-only copy and refuses writes to it, the receiver takes ownership in one atomic step, queued input travels with it, and a declined move gives the session back with its queued input. `release_session` accepts `reason: "move"` with a `moveId` ([#3630](https://github.com/code-yeongyu/senpi/issues/3630)).
+
+- An extension handler that never settles on an agent lifecycle or boundary event (`turn_end`, `agent_before_settle`) no longer freezes the session: past `extensionEventHandlerWarnMs` (default 60 s) the session shows which extension and event it is waiting on, at `extensionEventHandlerTimeoutMs` (default 20 min) it stops waiting, persists the turn and delivers queued input, and an Esc or the turn deadline that the run does not honour within 10 s releases such a wait instead of only logging `turn_deadline_unsettled`; every stage, including a failure after the host stopped waiting, is logged as `extension_handler_stalled` in session.log. Input queued while `agent_end` handlers run is delivered once and the session settles however many async `agent_end` handlers run before it ([#3650](https://github.com/code-yeongyu/senpi/issues/3650), [#3351](https://github.com/code-yeongyu/senpi/issues/3351)).
 - RPC `get_pending_inputs` reads the inputs in durable custody with an explicit outcome per known id, and `pending_input_update` publishes each change with its journal cursor; the module is also exported as `@code-yeongyu/senpi/pending-input` ([#3549](https://github.com/code-yeongyu/senpi/issues/3549)).
 - Queued input with a client id is kept in durable custody: it is journaled in the session file before it is queued, delivered only after its consumption is recorded, and edited or removed in its record and the queue together; a repeated identical submit queues it once and a reused id with another payload is refused ([#3549](https://github.com/code-yeongyu/senpi/issues/3549)).
 
@@ -9,12 +16,19 @@
 
 ### Added
 
+- `anthropicSubscriptionProvider.accountFallback: false` keeps managed Claude requests on the selected account instead of automatically switching accounts, including subsequent requests while that account is blocked. Automatic account fallback remains enabled by default and is independent of model fallback ([#3473](https://github.com/code-yeongyu/senpi/pull/3473) by [@Yoonkeee](https://github.com/Yoonkeee)).
+
 ### Changed
 
 ### Fixed
 
 - A session file left claimed by a stopped engine host no longer blocks reopening its thread ([#3652](https://github.com/code-yeongyu/senpi/issues/3652)).
 - On Windows, an engine host killed together with its process tree no longer keeps every later start refused as `host_stalled` once Windows reuses its process id: the host's process identity is now recorded, a host whose identity cannot be read is released once it stopped heartbeating, and the dead host's session lease no longer refuses every reopen as `session_held` once that host's generation ended ([#3658](https://github.com/code-yeongyu/senpi/issues/3658)).
+
+- The mouse wheel scrolls the transcript again while an `ask_user_question` prompt is waiting. The first notch pauses option clicking (the hint says so) and any key turns it back on. The text-selection hint now names the right modifier per terminal, including VS Code on macOS ([#3604](https://github.com/code-yeongyu/senpi/issues/3604)).
+- The /btw panel stays one fixed region while a running eval's expanded output grows above it; the eval rows no longer overwrite the panel or repeat in the scrollback ([#3649](https://github.com/code-yeongyu/senpi/issues/3649))
+
+- Alt+Q restores queued messages on WSL again: Windows keybinding defaults detect WSL through `WSL_DISTRO_NAME`/`WSL_INTEROP`/`WSLENV` or a `/proc/version` fallback when the environment is sanitized, and split-delivery ESC+q reassembly uses the standard 50ms window (100ms on WSL; a lone local Escape now settles up to 40ms later) ([#3628](https://github.com/code-yeongyu/senpi/issues/3628)).
 
 ### Removed
 
