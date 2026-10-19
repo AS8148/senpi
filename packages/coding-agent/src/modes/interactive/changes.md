@@ -1,3 +1,21 @@
+## 2026-10-19 - Interactive quit marks its dispose as a process exit (senpi#3711)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: both `shutdown()` paths call `runtimeHost.dispose({ processExit: true })`, since `process.exit` follows.
+
+### Why
+
+- The total quit budget (senpi#3711) must only cut handlers when the process really exits right after; an RPC host closing one session keeps running, so there a detached handler would keep running while its extension's handles and provider scope are closed.
+
+### Why an extension could not handle it
+
+- Interactive shutdown is host code.
+
+### Expected merge conflict zones
+
+- LOW: `interactive-mode.ts` both `runtimeHost.dispose()` sites in `shutdown`.
+
 ## 2026-10-19 - Never signal a child whose spawn failed (senpi#3706)
 
 ### What changed
