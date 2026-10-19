@@ -106,7 +106,7 @@ process.stdout.write((await importer.import(${JSON.stringify(extension)}, { defa
 		const source = readFileSync(commonJs, "utf8");
 		const signature = "export function parseImportClause(clause: string): ImportClause | undefined {";
 		expect(source).toContain(signature);
-		writeFileSync(commonJs, source.replace(signature, `${signature}\n\tif (clause === \"edited\") return undefined;`));
+		writeFileSync(commonJs, source.replace(signature, `${signature}\n\tif (clause === "edited") return undefined;`));
 		expect(() => load(edited, "refused")).toThrow(/transpiled/);
 	});
 });
