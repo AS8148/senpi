@@ -165,4 +165,58 @@ describe.skipIf(process.platform === "win32")("closing an in-process dispatcher 
 			rmSync(dir, { recursive: true, force: true });
 		}
 	});
+
+	it("never starts the body when dispose() lands in any microtask after the module finished loading", async () => {
+		const dir = realpathSync(mkdtempSync(join(tmpdir(), "offload-tick-")));
+		const violations: number[] = [];
+		try {
+			for (let depth = 0; depth < 12; depth++) {
+				const modulePath = join(dir, `tick-${depth}.mjs`);
+				writeFileSync(
+					modulePath,
+					`const probe = globalThis.__offloadTickProbe;
+await probe.loaded;
+probe.scheduleDispose();
+export function body() {
+	probe.bodyStarted();
+	return "ran";
+}
+`,
+				);
+				let finishLoad: () => void = () => {};
+				const loaded = new Promise<void>((resolveLoaded) => {
+					finishLoad = resolveLoaded;
+				});
+				const dispatcher = createToolDispatcher({ runtime: "in-process" });
+				let disposed = false;
+				const scheduleDispose = () => {
+					let remaining = depth;
+					const step = () => {
+						if (remaining-- > 0) return queueMicrotask(step);
+						disposed = true;
+						void dispatcher.dispose();
+					};
+					queueMicrotask(step);
+				};
+				Reflect.set(globalThis, "__offloadTickProbe", {
+					loaded,
+					scheduleDispose,
+					bodyStarted: () => {
+						if (disposed) violations.push(depth);
+					},
+				});
+				const run = dispatcher.offload({ modulePath, export: "body", args: {} }, undefined);
+				run.catch(() => {});
+				finishLoad();
+				await run.then(
+					() => undefined,
+					() => undefined,
+				);
+			}
+			expect(violations).toEqual([]);
+		} finally {
+			Reflect.deleteProperty(globalThis, "__offloadTickProbe");
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
 });
