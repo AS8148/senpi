@@ -153,6 +153,14 @@ describe("tool cards above the kept main-screen history (#2537)", () => {
 		// And: the reply above the window keeps no rendered lines, while the newest reply still does
 		expect(retainedRenderLines(firstReply)).toBe(0);
 		expect(retainedRenderLines(lastReply)).toBeGreaterThan(0);
+
+		// When: the whole tree is invalidated, as a theme or terminal-capability change does
+		tui.invalidate();
+		tui.renderNow();
+
+		// Then: the card above the window still holds only its shell; the painted last card is rebuilt
+		expect(descendants(first)).toBe(SHELL);
+		expect(descendants(last)).toBeGreaterThan(SHELL);
 		tui.stop();
 
 		// When: the user switches to fullscreen, which shows the whole transcript

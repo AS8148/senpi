@@ -228,14 +228,6 @@ export interface Component {
 	 */
 	getRenderRevision?(): number | undefined;
 
-	/**
-	 * Optional: drop what is kept only to paint (built child components, styled text); the next
-	 * `render` rebuilds it from the component's own state. Called for content that left the kept
-	 * main-screen history, which may never be painted again. Must not change what `render` returns.
-	 * Without it the caller falls back to `invalidate()`.
-	 */
-	releaseRender?(): void;
-
 	dispose?(): void;
 }
 
@@ -871,26 +863,6 @@ export class Container implements Component {
 		this.composite.bump();
 		for (const child of this.children) {
 			child.invalidate?.();
-		}
-	}
-
-	/**
-	 * Releases paint-only state (see {@link Component.releaseRender}). A plain `Container` releases
-	 * each child. A subclass falls back to its own `invalidate()`, which may clear caches this method
-	 * cannot see; a subclass whose only paint state is its children overrides this with
-	 * {@link releaseChildren}.
-	 */
-	releaseRender(): void {
-		if (Object.getPrototypeOf(this) === Container.prototype) this.releaseChildren();
-		else this.invalidate();
-	}
-
-	/** Releases each child, falling back to `invalidate()` for a child without `releaseRender`. */
-	protected releaseChildren(): void {
-		this.composite.bump();
-		for (const child of this.children) {
-			if (child.releaseRender) child.releaseRender();
-			else child.invalidate?.();
 		}
 	}
 

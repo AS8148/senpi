@@ -2934,24 +2934,22 @@ The editor theme is built by the interactive mode itself; extensions cannot inje
 
 - LOW: `getEditorTheme()` in `theme.ts` and the editor theme object in `GrokChrome`.
 
-## 2026-10-19 - Tool cards above the kept history drop their built output (senpi#2537)
+## 2026-10-19 - Tool cards drop their built output when invalidated (senpi#2537)
 
 ### What changed
 
-- `packages/coding-agent/src/modes/interactive/components/tool-execution.ts`: `ToolExecutionComponent.releaseRender()` drops the card's built call and result content and marks it released; `render()` rebuilds it from the card's state (`updateDisplay()`) the next time the card is painted. A running, animating or Grok-presented card is invalidated as before instead.
+- `packages/coding-agent/src/modes/interactive/components/tool-execution.ts`: `ToolExecutionComponent.invalidate()` drops the card's built call and result content and marks it released instead of rebuilding it; `render()` rebuilds it from the card's state (`updateDisplay()`) the next time the card is painted. Grok rows and animating cards still rebuild at once.
 - `packages/coding-agent/src/modes/interactive/components/tool-execution-renderer.ts`: `releaseContent()` detaches the content box, the self-render container and the fallback text and forgets the call and result renderer components. The built-in tool renderers come from one `createAllToolDefinitions(cwd)` per working directory instead of one per card.
-- `packages/coding-agent/src/modes/interactive/components/progressive-transcript-container.ts`: `releaseRenders()` calls a child's `releaseRender()` when it has one, else `invalidate()` as before.
-- `packages/coding-agent/src/modes/interactive/components/exploration-group.ts`: `ExplorationGroup.releaseRender()` releases its member cards; the group computes its own lines on every render.
 - `packages/coding-agent/test/suite/regressions/2537-tool-card-release.test.ts` (new).
 
 ### Why
 
-Children that move above the kept main-screen window were only invalidated, and a tool card's `invalidate()` rebuilds its content at once, so every finished card kept its styled output (and its own copy of all nine tool definitions) for the rest of the session. Heap snapshots of a 10-minute notice-stream soak traced that output through `ExplorationGroup.memberSnapshot -> ToolExecutionComponent -> renderer -> Text` ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)). Fullscreen and every other path that paints the card again rebuild the same lines, so nothing on screen changes.
+A card's `invalidate()` rebuilt its content at once. The transcript invalidates every card that scrolls above the kept main-screen history, and the TUI invalidates the whole tree on a theme or terminal-capability change (the kitty graphics probe resolves once per session), so every finished card kept its styled output, and its own copy of all nine tool definitions, for the rest of the session. Heap snapshots of a 10-minute notice-stream soak traced that output through `ExplorationGroup.memberSnapshot -> ToolExecutionComponent -> renderer -> Text` ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)). Every path that paints the card again rebuilds the same lines, so nothing on screen changes.
 
 ### Why an extension could not handle it
 
-The kept-history window and the tool card's content lifecycle are interactive-mode internals; extensions do not own the transcript's components.
+The tool card's content lifecycle is an interactive-mode internal; extensions do not own the transcript's components.
 
 ### Expected merge conflict zones
 
-- LOW: `render()`, `updateDisplay()` and the field list of `ToolExecutionComponent`; the constructor of `ToolExecutionRenderer`; `releaseRenders()` in `progressive-transcript-container.ts`.
+- LOW: `invalidate()`, `render()`, `updateDisplay()` and the field list of `ToolExecutionComponent`; the constructor of `ToolExecutionRenderer`.

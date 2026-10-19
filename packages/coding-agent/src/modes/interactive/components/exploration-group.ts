@@ -125,11 +125,6 @@ export class ExplorationGroup extends Container {
 		}
 	}
 
-	/** A group's output is computed from its calls and members each render, so releasing its member cards is enough. */
-	override releaseRender(): void {
-		this.releaseChildren();
-	}
-
 	/**
 	 * Settled groups render from their calls, rules and member cards; a pending group animates its
 	 * spinner from the clock, so it renders every frame.

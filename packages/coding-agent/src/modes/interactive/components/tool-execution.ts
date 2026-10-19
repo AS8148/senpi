@@ -40,7 +40,7 @@ export class ToolExecutionComponent extends Container {
 	private argsComplete = false;
 	private result?: ToolExecutionResult;
 	private lastDisplaySignature?: string;
-	/** Built content was dropped by `releaseRender`; the next render rebuilds it. */
+	/** Built content was dropped by `invalidate`; the next render rebuilds it. */
 	private displayReleased = false;
 	private readonly renderCache = new ToolExecutionRenderCache();
 	private readonly animation = new ToolExecutionAnimation({
@@ -172,26 +172,22 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	/**
-	 * A card above the kept history drops its built content (the call and result components and their
-	 * styled output); `render` rebuilds it from the card's state if it is ever painted again (#2537).
-	 * Invalidating instead rebuilt that content at once, so every finished card kept it for the session.
+	 * Drops the built call and result content (and its styled output) instead of rebuilding it here;
+	 * `render` rebuilds it from the card's state the next time the card is painted (#2537). Every card
+	 * in the transcript is invalidated together (theme or terminal-capability changes, and the cards
+	 * that scroll above the kept main-screen history), so an eager rebuild kept every finished card's
+	 * output for the rest of the session. Grok rows and animating cards are rebuilt at once, as before.
 	 */
-	override releaseRender(): void {
-		const renderer = this.renderer;
-		if (renderer === undefined || this.animation.running) {
-			this.invalidate();
-			return;
-		}
-		this.invalidateRenderCache();
-		renderer.releaseContent();
-		this.lastDisplaySignature = undefined;
-		this.displayReleased = true;
-	}
-
 	override invalidate(): void {
 		this.invalidateRenderCache();
 		super.invalidate();
 		this.lastDisplaySignature = undefined;
+		const renderer = this.renderer;
+		if (renderer !== undefined && !this.animation.running) {
+			renderer.releaseContent();
+			this.displayReleased = true;
+			return;
+		}
 		this.updateDisplay();
 	}
 
