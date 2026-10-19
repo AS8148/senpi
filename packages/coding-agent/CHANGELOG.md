@@ -12,6 +12,7 @@
 
 ### Fixed
 
+- With `anthropicSubscriptionProvider.accountFallback: false`, the message for an unusable account now gives a step that works: a `--claude-account` pin says to start a new session with another account, a settings pin names the setting to change, and an account blocked by an authentication error says to log in again instead of waiting for a time that will not fix it ([#3672](https://github.com/code-yeongyu/senpi/issues/3672)).
 - Moving a session is stricter at its edges: `release_session` with `reason: "move"` refuses a `moveId` the rest of the move would reject and a session whose own id is not a plain id, a `session_moved_away` refusal after an interrupt still returns the queued input it took, and export refuses a session whose own id is empty or not a plain id before sealing it ([#3662](https://github.com/code-yeongyu/senpi/issues/3662)).
 
 ### Removed
