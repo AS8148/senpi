@@ -16,6 +16,25 @@ The widget renderer is host code; the extension only passes the choices.
 
 - LOW: `setExtensionWidget`, the string-array branch.
 
+||||||| a671c7dd0
+
+## 2026-10-19 - Interactive quit marks its dispose as a process exit (senpi#3711)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: both `shutdown()` paths call `runtimeHost.dispose({ processExit: true })`, since `process.exit` follows.
+
+### Why
+
+- The total quit budget (senpi#3711) must only cut handlers when the process really exits right after; an RPC host closing one session keeps running, so there a detached handler would keep running while its extension's handles and provider scope are closed.
+
+### Why an extension could not handle it
+
+- Interactive shutdown is host code.
+
+### Expected merge conflict zones
+
+- LOW: `interactive-mode.ts` both `runtimeHost.dispose()` sites in `shutdown`.
 ## 2026-10-19 - Never signal a child whose spawn failed (senpi#3706)
 
 ### What changed
@@ -2218,7 +2237,6 @@ The login command is interactive mode's own command handler; an extension cannot
 - MEDIUM: `interactive-mode.ts` - `createExtensionUIContext` (`question:` entry), the top of `defaultEditor.onSubmit`, `handleHostUiRequest`'s `question` case, `resetExtensionUI`, `setupExtensionShortcuts`' handler head, and the new `showAsyncQuestion`/`refreshAsyncWidget`/`handleAskUserShortcut`/`submitAsyncQuestionComment`/`deliverAsyncAnswer` block after `hideQuestionOverlay`.
 - LOW: `ask-user-async-widget.ts` (new), `interactive-host-runtime.ts` `sendHostUiProgress` next to `setHostUiHandler`, `rpc-client.ts` `sendExtensionUIProgress` next to `sendExtensionUIResponse` and the id-preserving branch in `send`.
 
-
 ## 2026-09-10 - Ask-user question overlay and host `question` bridge
 
 ### What changed
@@ -2256,8 +2274,6 @@ The login command is interactive mode's own command handler; an extension cannot
 ### Expected merge conflict zones
 
 - LOW: `packages/coding-agent/src/modes/interactive/interactive-mode.ts` `showNewVersionNotification`.
-
-
 
 ## 2026-09-10 - A cancelled /login renders as "Login cancelled", not a failure (#1542)
 
@@ -2314,7 +2330,6 @@ The login command is interactive mode's own command handler; an extension cannot
 
 - MEDIUM: `interactive-mode.ts` `showTreeSelector()` — the inline navigation body was extracted into `runTreeNavigation()`.
 - LOW: `tree-selector.ts` `handleInput` chain and `TREE_HELP_ITEMS`.
-
 
 ## 2026-09-09 - Surface required compaction after oversized resume
 
@@ -2726,7 +2741,6 @@ The login command is interactive mode's own command handler; an extension cannot
 - MEDIUM: the chat container construction and the assistant branch of `renderSessionItems` in `packages/coding-agent/src/modes/interactive/interactive-mode.ts`.
 - LOW: the added getters in `packages/coding-agent/src/modes/interactive/components/tool-execution.ts` and `packages/coding-agent/src/modes/interactive/components/assistant-message.ts`, and the spinner helper in `packages/coding-agent/src/modes/interactive/tool-progress.ts`.
 
-
 ## 2026-09-23 — Filter model-only text at the tool-renderer boundary
 
 ### What changed
@@ -2852,7 +2866,6 @@ Theme color roles are interactive-mode assets resolved at startup; an extension 
 
 Upstream edits to `theme/dark.json` or `theme/light.json` color roles at the next sync.
 
-
 ## Deleting a session also deletes its tool images (2026-10-03)
 
 ### What changed
@@ -2969,3 +2982,23 @@ The editor theme is built by the interactive mode itself; extensions cannot inje
 ### Expected merge conflict zones
 
 - LOW: `getEditorTheme()` in `theme.ts` and the editor theme object in `GrokChrome`.
+
+## 2026-10-19 - Tool cards drop their built output when invalidated (senpi#2537)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/tool-execution.ts`: `ToolExecutionComponent.invalidate()` drops the card's built call and result content and marks it released instead of rebuilding it; `render()` rebuilds it from the card's state (`updateDisplay()`) the next time the card is painted. Grok rows and animating cards still rebuild at once. A renderer's own `context.invalidate()` (the renderer constructor's callback) still rebuilds at once and keeps `lastComponent`, so a renderer that caches async-loaded data on its component works as before. On a released card, `setExpanded`, `setShowImages` and `setImageWidthCells` only record the change; `render()` rebuilds it.
+- `packages/coding-agent/src/modes/interactive/components/tool-execution-renderer.ts`: `releaseContent()` detaches the content box, the self-render container and the fallback text and forgets the call and result renderer components. The built-in tool renderers come from one `createAllToolDefinitions(cwd)` per working directory instead of one per card.
+- `packages/coding-agent/test/suite/regressions/2537-tool-card-release.test.ts` (new).
+
+### Why
+
+A card's `invalidate()` rebuilt its content at once. The transcript invalidates every card that scrolls above the kept main-screen history, and the TUI invalidates the whole tree on a theme or terminal-capability change (the kitty graphics probe resolves once per session), so every finished card kept its styled output, and its own copy of all nine tool definitions, for the rest of the session. Heap snapshots of a 10-minute notice-stream soak traced that output through `ExplorationGroup.memberSnapshot -> ToolExecutionComponent -> renderer -> Text` ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)). Every path that paints the card again rebuilds the same lines, so nothing on screen changes.
+
+### Why an extension could not handle it
+
+The tool card's content lifecycle is an interactive-mode internal; extensions do not own the transcript's components.
+
+### Expected merge conflict zones
+
+- LOW: `invalidate()`, `render()`, `updateDisplay()` and the field list of `ToolExecutionComponent`; the constructor of `ToolExecutionRenderer`.

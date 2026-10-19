@@ -17,6 +17,91 @@ The wire record is built by the RPC UI context.
 
 - LOW: `rpc-types.ts` setWidget member; `connection-handler.ts` `setWidget`.
 
+||||||| a671c7dd0
+
+## 2026-10-19 - Keep pending dialogs visible after session replacement (#3728 review)
+
+### What changed
+
+- `connection-handler.ts` registers the live native-dialog registry on every replacement session before extension binding, alongside the question bridge.
+- `rpc-types.ts` documents `RpcSessionState.pendingDialogs`; `docs/rpc.md` lists the field in the state and dialog references.
+
+### Why
+
+The registry previously remained keyed only by the initial session. After replacement, `get_state` incorrectly returned an empty dialog snapshot, causing a recovering client to discard requests that were still open.
+
+### Why an extension could not handle it
+
+The connection handler owns the registry and rebind ordering used by the RPC state projection.
+
+### Expected merge conflict zones
+
+`connection-handler.ts`: `rebindSession` registry registration. `rpc-types.ts`: `RpcSessionState` pending fields.
+
+## 2026-10-19 - Recover connection-wide gaps and remove shed-path parsing (#3728 review)
+
+### What changed
+
+- `socket-peer-recovery.ts` emits a global gap for every shed, separately identifying lost replies. `socket-event-fanout.ts` retains reply metadata, releases discarded callbacks and permits recovery revocation without forgetting an outstanding gap.
+- `session-event-writer.ts` tags correlated replies before serialization; `session-event-fanout.ts` applies replacement capability lists. No shed or pending-enqueue path parses JSON.
+- `session-extension-ui-requests.ts` retains live dialog frames; `connection-handler.ts` registers them, and `rpc-session-state.ts` / `rpc-types.ts` expose them as `get_state.pendingDialogs`.
+
+### Why
+
+- A connection can observe lifecycle/status traffic without attaching to any session; its missing records still require resubscription and a fresh lifecycle snapshot.
+- Parsing every queued partial on an already-starved host loop is avoidable work. Discarded close notices must release their callback-owned suppression state.
+- Select, confirm, input and editor dialogs are not questions. State recovery needs their pending frames, including removal after resolution, cancellation or timeout.
+
+### Why an extension could not handle it
+
+These files own the bounded socket actor, connection capability policy and native RPC dialog registry below extension event delivery.
+
+### Expected merge conflict zones
+
+`socket-event-fanout.ts` admission and shed; `socket-peer-recovery.ts` gap records; `session-event-writer.ts` enqueue sites; `session-event-fanout.ts` capability replacement; `connection-handler.ts` UI registry binding; `session-extension-ui-requests.ts`, `rpc-session-state.ts` and `rpc-types.ts` pending dialog snapshots.
+
+## 2026-10-19 - Resynchronize slow live socket peers without reconnecting (#3728)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/socket-event-fanout.ts` sheds the bounded queue on overflow or stall for opted-in peers, resumes with snapshots before new deltas, and cancels its deadline on unregister. Normal supersession remains lossless.
+- `packages/coding-agent/src/modes/rpc/socket-peer-recovery.ts` owns the `event_resync` capability, typed per-session gap record, one buffered ping and heartbeat verdict.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts` negotiates recovery through existing connection-scoped `set_client_info` and captures each attached session's latest serialized message for replay, respecting media placeholders.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/socket-event-fanout.ts` previously treated a slow reader as dead. A missed liveness heartbeat, not queued bytes or elapsed drain time, now decides that for capable clients.
+- `packages/coding-agent/src/modes/rpc/socket-peer-recovery.ts` keeps liveness separate from the blocked event direction and bounds control notices during an arbitrarily long gap.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts` already owns attachment scope and snapshots; recovery must use those rather than detaching and reopening sessions.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/modes/rpc/socket-event-fanout.ts`, `packages/coding-agent/src/modes/rpc/socket-peer-recovery.ts`, and `packages/coding-agent/src/modes/rpc/session-event-fanout.ts` own the transport below extension delivery. An extension cannot negotiate the connection, shed its queue or decide whether to close its socket.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/modes/rpc/socket-event-fanout.ts`: enqueue and drain deadlines.
+`packages/coding-agent/src/modes/rpc/socket-peer-recovery.ts`: new recovery policy module.
+`packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: capability negotiation and snapshot replay.
+
+## 2026-10-19 - A single-connection RPC process marks its quit as a process exit (senpi#3711)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `dispose({ processExit })` forwards the flag to `runtimeHost.dispose`.
+- `packages/coding-agent/src/modes/rpc/rpc-mode.ts`: shutdown calls `handler.dispose({ processExit: true })` before `process.exit`. The multi-session host's session close (`session-teardown.ts`, `session-binding.ts` with `disposeRuntime: false`) is unchanged and keeps only the per-handler limits.
+
+### Why
+
+- The total quit budget (senpi#3711) must only cut handlers when the process really exits right after; an RPC host closing one session keeps running, so there a detached handler would keep running while its extension's handles and provider scope are closed.
+
+### Why an extension could not handle it
+
+- RPC shutdown and session teardown are host code.
+
+### Expected merge conflict zones
+
+- LOW: `connection-handler.ts` the `ConnectionHandler.dispose` declaration and the `dispose` closure; `rpc-mode.ts` the `createRpcShutdown` callback.
 ## 2026-10-19 - Never signal a child whose spawn failed (senpi#3706)
 
 ### What changed
@@ -3793,7 +3878,6 @@ cannot be connected to at all takes the stop-and-start path.
 
 - LOW: one import block plus one dispatch branch in `src/main.ts`, one new dispatcher in `src/cli/deferred-commands.ts`, and additive export lists in `src/modes/index.ts` / `src/index.ts`. Everything else is new files.
 
-
 ## 2026-09-17 - Name why a session closed or parked, and when the host stalls (#1782)
 
 ### What changed
@@ -6619,7 +6703,6 @@ The launch profile, the capability list and the session environment are assemble
 ### Expected merge conflict zones
 
 The `open_session` branch of `session-command-router.ts` next to `promptSurface`, the capability list in the same file, and the attach blocks in `session-registry-attach.ts` and `worker-session-registry.ts`.
-
 
 ## 2026-10-03 - Tool-result images are persisted and their path reported in the placeholder
 

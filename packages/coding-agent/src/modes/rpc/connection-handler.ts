@@ -137,7 +137,7 @@ import {
 	STEER_WHEN_IDLE_CAPABILITY,
 } from "./rpc-types.ts";
 import { availableModelsData, interruptRunningTurn } from "./session-control-actions-data.ts";
-import { SessionExtensionUiRequests } from "./session-extension-ui-requests.ts";
+import { SessionExtensionUiRequests, sessionDialogRequests } from "./session-extension-ui-requests.ts";
 import { subscribeSessionRecords } from "./session-record-stream.ts";
 
 export { buildRpcSessionState } from "./rpc-session-state.ts";
@@ -205,8 +205,11 @@ export interface RpcConnectionHandler {
 	isShutdownRequested(): boolean;
 	/** Cancel UI requests that can no longer be answered by this connection. */
 	cancelPendingExtensionUiRequests(): void;
-	/** Tear down subscriptions and dispose the runtime. Never calls process.exit. */
-	dispose(): Promise<void>;
+	/**
+	 * Tear down subscriptions and dispose the runtime. Never calls process.exit; `processExit` tells the runtime the
+	 * caller exits right after (senpi#3711).
+	 */
+	dispose(options?: { readonly processExit?: boolean }): Promise<void>;
 }
 
 /** The tool call a dialog is about, as wire fields (absent when the dialog is not a permission request). */
@@ -459,6 +462,7 @@ export function createRpcConnectionHandler(
 
 	// Pending extension UI requests waiting for response
 	const pendingExtensionRequests = new SessionExtensionUiRequests();
+	sessionDialogRequests.set(session, pendingExtensionRequests);
 	const questions = new ConnectionQuestionBridge(output);
 
 	let shutdownRequested = false;
@@ -502,6 +506,7 @@ export function createRpcConnectionHandler(
 			}
 
 			pendingExtensionRequests.set(id, {
+				frame: { type: "extension_ui_request", id, ...request } as RpcExtensionUIRequest,
 				resolve: (response: RpcExtensionUIResponse) => {
 					cleanup();
 					resolve(parseResponse(response));
@@ -659,6 +664,7 @@ export function createRpcConnectionHandler(
 			const id = crypto.randomUUID();
 			return new Promise((resolve, reject) => {
 				pendingExtensionRequests.set(id, {
+					frame: { type: "extension_ui_request", id, method: "editor", title, prefill },
 					resolve: (response: RpcExtensionUIResponse) => {
 						if ("cancelled" in response && response.cancelled) {
 							resolve(undefined);
@@ -761,6 +767,7 @@ export function createRpcConnectionHandler(
 		const replacedSession = session !== runtimeHost.session;
 		session = runtimeHost.session;
 		sessionQuestionBridges.set(session, questions);
+		sessionDialogRequests.set(session, pendingExtensionRequests);
 		// Installed before the bind below: extensions register their control endpoint on session_start.
 		sessionControl?.dispose();
 		sessionControl = new HostSessionControl(
@@ -1920,7 +1927,7 @@ export function createRpcConnectionHandler(
 					eventOutput.enqueueEvent({ type: "subscription_limits", ...limits }),
 				)
 			: () => {};
-	const dispose = async (): Promise<void> => {
+	const dispose = async (disposeOptions: { readonly processExit?: boolean } = {}): Promise<void> => {
 		stopLimitEvents();
 		sessionControl?.dispose();
 		sessionControl = undefined;
@@ -1936,7 +1943,7 @@ export function createRpcConnectionHandler(
 		unsubscribeLoadedSurfaces = undefined;
 		unsubscribeExtensionEvents = undefined;
 		if (options.disposeRuntime !== false) {
-			await runtimeHost.dispose();
+			await runtimeHost.dispose(disposeOptions);
 		}
 	};
 
@@ -1960,9 +1967,9 @@ export function createRpcConnectionHandler(
 			questions.cancelAll();
 			pendingExtensionRequests.cancelAll();
 		},
-		async dispose() {
+		async dispose(disposeOptions) {
 			await ready;
-			await dispose();
+			await dispose(disposeOptions);
 		},
 	};
 }

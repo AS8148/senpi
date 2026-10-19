@@ -1,3 +1,39 @@
+## 2026-10-19 - Release commands that read large output no longer fail with ENOBUFS
+
+### What changed
+
+- `scripts/release.mjs`: `captureCommand` and the CI check-run lookup read command output through `captureOutput` (`scripts/release-capture.mjs`), which raises `execFileSync`'s buffer from the 1 MiB default to 256 MiB.
+
+### Why
+
+- `scripts/release.mjs`: the pinned v2026.10.19-1 release (run 39296257099) passed its forced suite and checks, then died merging main back: `git show origin/main:packages/coding-agent/CHANGELOG.md` failed with `spawnSync git ENOBUFS` because that file is over 1 MiB. Nothing was pushed.
+
+### Why an extension could not handle it
+
+- `scripts/release.mjs`: release orchestration is repository build tooling.
+
+### Expected merge conflict zones
+
+- `scripts/release.mjs`: `captureCommand` and `lookupCiCheckRuns`.
+
+## 2026-10-19 - A release never pushes a regenerated model catalog to main before testing it
+
+### What changed
+
+- `scripts/release.mjs`: when the catalog regeneration changes the catalog, the release commits it on the release only and requires `--force-tests` (the `force_tests` dispatch input); the forced suite and `npm run check` then run on that tree before anything is pushed, and `main` is pushed once, at the end. Without `--force-tests` such a release stops before it commits, tags or pushes. Before, the catalog commit was pushed to `main` first so CI would test it.
+
+### Why
+
+- `scripts/release.mjs`: the v2026.10.19-1 release pushed a regenerated catalog that no longer listed `deepseek/deepseek-r1`, which a test pinned, so `main` failed typecheck for every PR (#3734) before any check of the release had run.
+
+### Why an extension could not handle it
+
+- `scripts/release.mjs`: release orchestration is repository build tooling.
+
+### Expected merge conflict zones
+
+- `scripts/release.mjs`: `secureCiEvidence`.
+
 ## 2026-10-19 - A release can be cut from an exact commit, not only from main at dispatch (senpi#3609)
 
 ### What changed
