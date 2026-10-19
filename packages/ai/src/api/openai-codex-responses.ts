@@ -660,16 +660,17 @@ function getServiceTierCostMultiplier(
 	model: Pick<Model<"openai-codex-responses">, "id" | "upstreamModelId">,
 	serviceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast" | undefined,
 ): number {
+	// This lane spends a ChatGPT plan's included usage, which OpenAI meters at 2.5x Standard for
+	// Fast and 8x for GPT-6 Astra / GPT-6.1 Sol Ultrafast (https://developers.openai.com/codex/pricing).
+	// The 2x / 6x figures are the purchased-credit and API rates; the openai-responses lane keeps those.
 	switch (serviceTier) {
 		case "ultrafast":
-			// OpenAI prices GPT-6 Astra and GPT-6.1 Sol Ultrafast at 6x Standard on every
-			// token class and context tier. Any other model keeps its base rate.
-			return ["gpt-6-astra", "gpt-6.1-sol"].includes(model.upstreamModelId ?? model.id) ? 6 : 1;
+			return ["gpt-6-astra", "gpt-6.1-sol"].includes(model.upstreamModelId ?? model.id) ? 8 : 1;
 		case "flex":
 			return 0.5;
 		case "priority":
 		case "fast":
-			return model.id === "gpt-5.5" ? 2.5 : 2;
+			return 2.5;
 		default:
 			return 1;
 	}

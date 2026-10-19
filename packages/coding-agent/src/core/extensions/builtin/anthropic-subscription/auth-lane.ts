@@ -294,10 +294,12 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 	});
 	yield* runFailover({
 		accounts: pool.accounts,
+		accountFallback: input.providerSettings.accountFallback,
 		selectFn: (accounts) =>
 			selectAccount(accounts, {
 				sessionId: input.sessionId,
 				pinnedAccount: input.pinnedAccount ?? pool.pinnedAccount,
+				accountFallback: input.providerSettings.accountFallback,
 				...(pool.accountOrder === undefined ? {} : { accountOrder: pool.accountOrder }),
 				...(input.preferredAccount === undefined ? {} : { preferredAccount: input.preferredAccount }),
 				now: activeBoundary.now(),
