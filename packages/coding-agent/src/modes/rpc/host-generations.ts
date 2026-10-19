@@ -13,11 +13,12 @@
  * cannot be asked how many sessions it has.
  */
 import { readdir, rm } from "node:fs/promises";
+import { advanceSessionFence } from "../../core/session-write-fence.ts";
 import { processIsLive } from "../../utils/process-identity.ts";
 import { generationPaths, type HostDaemonDirectory, type HostDaemonPaths } from "./host-daemon-paths.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
 import { type HostProcessMetrics, readHostProcessMetrics } from "./host-process-metrics.ts";
-import { claimOwnerIsLive, readSessionPathClaims } from "./host-reservations.ts";
+import { claimOwnerIdentity, readSessionPathClaims, type SessionPathOwner } from "./host-reservations.ts";
 import { hostChildAlive } from "./host-stalled-evidence.ts";
 
 /** One generation that is still running, as the daemon directory and the OS describe it. */
@@ -66,13 +67,30 @@ export async function pruneDeadGenerations(paths: HostDaemonPaths): Promise<Prun
 	const pointerRemoved = pointedAt !== undefined && generations.includes(pointedAt);
 	// The pointer outliving its generation is what makes a client probe a socket nobody serves.
 	if (pointerRemoved) await rm(paths.pointerFile, { force: true }).catch(() => undefined);
+	const ended = new Set(generations);
 	const claims: string[] = [];
 	for (const claim of await readSessionPathClaims(paths.reservationsDir)) {
-		if (await claimOwnerIsLive(claim.owner)) continue;
+		if (!(await claimEnded(claim.owner, ended))) continue;
 		await rm(claim.file, { force: true }).catch(() => undefined);
 		claims.push(claim.owner.sessionPath);
 	}
 	return { generations, claims, pointer: pointerRemoved };
+}
+
+/**
+ * A claim ends with its owner's pid, or with the generation this prune just removed when the owner's identity
+ * cannot be proven (desktop#3157: Windows hands the dead host child's pid to another process, and removing the
+ * generation also removed the heartbeat that would have released the claim). Such an owner might only be frozen,
+ * so its session file is fenced first; a fence that cannot be written keeps the claim.
+ */
+async function claimEnded(owner: SessionPathOwner, ended: ReadonlySet<string>): Promise<boolean> {
+	const identity = await claimOwnerIdentity(owner);
+	if (identity === "gone") return true;
+	if (identity === "proven" || !ended.has(owner.instanceId)) return false;
+	return advanceSessionFence(owner.sessionPath).then(
+		() => true,
+		() => false,
+	);
 }
 
 function memoryOf(metrics: HostProcessMetrics): Pick<HostGenerationRow, "rss_mb" | "host_rss_mb"> {

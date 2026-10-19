@@ -343,7 +343,7 @@ export async function claimOwnerIsLive(owner: SessionPathOwner): Promise<boolean
  * `proven`: the pid runs and its start time matches the claim. `gone`: the pid is dead, or runs with a
  * different start time. `unproven`: the pid runs but no start time was recorded or none can be read.
  */
-async function claimOwnerIdentity(owner: SessionPathOwner): Promise<"proven" | "gone" | "unproven"> {
+export async function claimOwnerIdentity(owner: SessionPathOwner): Promise<"proven" | "gone" | "unproven"> {
 	if (!processIsLive(owner.pid)) return "gone";
 	const recorded = owner.processStartTime === null ? undefined : processStartTimeMs(owner.processStartTime);
 	if (recorded === undefined) {
