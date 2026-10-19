@@ -290,10 +290,23 @@ count the host enforces.
 absent, and `in-process` is the default. Any other value, from either source, is a startup error.
 
 - `in-process` - every tool runs on the host's own event loop, as it always has.
-- `child` - reserved for the per-session tool child (senpi#3566). Selecting it changes nothing yet.
+- `child` - each session gets its own tool child (senpi#3566): a separate process the engine starts by re-entering
+  itself, on the first tool call routed to it, never earlier. No command the child runs starts before the host has
+  recorded the launch. Today only an extension tool with `placement: "child"` and a `childModule` (`{ path, export }`,
+  a file inside that extension's directory) runs there; every other tool still runs on the host.
 
-A multi-session host and a single-session `--mode rpc` process each advertise their choice as exactly one
-`tool_runtime:in-process` or `tool_runtime:child` entry in `get_protocol_info.capabilities`.
+The child's state is visible two ways:
+
+- a `session_tool_child` record `{ state: "spawned" | "exited" | "respawned", generation, pid }` on the session's
+  stream whenever it changes (a dead child is started again, as a new `generation`, by the next job routed to it);
+- `tool_child: { state: "none" | "live" | "exited", generation?, pid? }` on every `list_sessions` row (`none` under
+  `in-process`, and for sessions on the worker runtime).
+
+A multi-session host and a single-session `--mode rpc` process each advertise their choice as one
+`tool_runtime:in-process` or `tool_runtime:child` entry in `get_protocol_info.capabilities`. Under `child` they also
+advertise one `placement:<name>` entry for each part of the tool child that has landed (`placement:launch-barrier`:
+every command a child-run tool starts passes the execution barrier). A job worker cannot start worker threads of its
+own (`tool_child_nested_worker_refused`), so no launch escapes the barrier that way.
 
 ### Host identity (`get_protocol_info`)
 
@@ -760,7 +773,7 @@ which prints the bare socket path).
   `senpi host handoff` command.
 - `status` prints `{ reachable, lifecycle, socket, pid, instanceId, generation, engineVersion, capabilities,
   launchProfile, runtimeBuildId, handover, sessions: { total, interactive, worker, retained, foreign_attached, foreign_retained },
-  zombies, rss_mb, host_rss_mb, open_fds, memory_pressure, env_keys, generations, crashes, shard, session_rows,
+  zombies, rss_mb, host_rss_mb, host_footprint_mb, open_fds, memory_pressure, env_keys, generations, crashes, shard, session_rows,
   claims_live, claims }` and exits 3 when nothing answers - with the same
   field set, so a caller parses one shape and branches on one boolean. The additive `lifecycle` field is
   `"ready"` while an answering supervised host accepts opens, `"stopping"` while it shuts down or drains,
@@ -773,7 +786,10 @@ which prints the bare socket path).
   count from the point of view of a client holding none of those sessions itself. `rss_mb`, `open_fds` and
   `zombies` describe the daemon's whole process tree (supervisor, host, and every tool, kernel and server its
   sessions spawned); `host_rss_mb` is only the supervisor and the host process, the number `ps` shows for those
-  pids (the host's memory sampler judges pressure by the host's footprint instead, see "Memory pressure"). All are `null` where the platform does not publish them
+  pids (the host's memory sampler judges pressure by the host's footprint instead, see "Memory pressure").
+  `host_footprint_mb` is that footprint for the same supervisor and host processes (`phys_footprint` on macOS,
+  `RssAnon` on Linux): unlike RSS it keeps counting compressed and swapped pages, so a host whose RSS reads
+  1.3 GB can hold 14 GB, and it is the number to watch when a host grows. All are `null` where the platform does not publish them
   (`open_fds` is `/proc`-only). `generations` lists every ALIVE generation of
   this daemon as `{ instanceId, generation, pid, engineVersion, rss_mb, host_rss_mb, sessions, current, alive }`, newest
   ordinal last: `rss_mb` is that generation's own process tree, `host_rss_mb` only its supervisor and host processes, and `sessions` counts the session files it
@@ -1570,7 +1586,7 @@ Closing a session on the in-process runtime also closes what that session's exte
 extensions' `session_shutdown` handlers run, senpi closes every server (`Bun.serve`, `Bun.listen`, `node:net` and
 `node:http` servers), `node:net` client socket and timer that an extension's own code created during the session and
 has not released, and writes one stderr line per extension naming what it closed. Memory those handles kept reachable
-is then collectable. Senpi's own builtin extensions are not tracked, and neither is work senpi itself does on an
+is then collectable. Senpi's own builtin extensions and inline SDK factories are not tracked, and neither is work senpi itself does on an
 extension's behalf (a turn the extension started, a UI notification it showed). See
 [extensions.md](extensions.md#session_shutdown) for what this means for an extension that shares one server across
 sessions.

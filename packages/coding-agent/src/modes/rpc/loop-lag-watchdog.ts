@@ -3,7 +3,7 @@ import { ownGenerationDir, writeHeartbeat, writeStallEvidence } from "./host-sta
 import { recordLoopBlockedMs } from "./loop-blocked-time.ts";
 import { loopLagErrorMs } from "./loop-lag-threshold.ts";
 import type { RpcHostStalledEvent } from "./rpc-types.ts";
-import { type SessionAttribution, sessionActivityMark, sessionActivitySince } from "./session-attribution.ts";
+import { describeAttribution, sessionActivityMark, sessionActivitySince } from "./session-attribution.ts";
 
 /** Environment override for the drift that logs a warning, in milliseconds. */
 export const LOOP_LAG_WARN_MS_ENV = "SENPI_RPC_LOOP_LAG_WARN_MS";
@@ -40,11 +40,6 @@ const BYTES_PER_MB = 1024 * 1024;
 
 function describeWindow(processCpuMs: number, heapDeltaMb: number): string {
 	return `cpu=${processCpuMs}ms heap=${heapDeltaMb >= 0 ? "+" : ""}${heapDeltaMb}MB`;
-}
-
-function describeAttribution(attribution: SessionAttribution | undefined): string {
-	if (attribution?.sessionId === undefined && attribution?.tool === undefined) return "no attributed session";
-	return `sessionId=${attribution.sessionId ?? "unknown"}${attribution.tool ? ` tool=${attribution.tool}` : ""}`;
 }
 
 /**

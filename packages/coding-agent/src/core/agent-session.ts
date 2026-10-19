@@ -16,7 +16,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import type {
 	Agent,
@@ -89,8 +89,14 @@ import { isOAuthRefreshUnavailableError } from "@earendil-works/pi-ai/utils/oaut
 import { retryTransientCall } from "@earendil-works/pi-ai/utils/retry";
 import { extract429RetryAfterMs, parseRetryAfterMsMarker } from "@earendil-works/pi-ai/utils/retry-hint";
 import { retryBackoffDelayMs } from "@earendil-works/pi-ai/utils/retry-profile/backoff";
+import { type ToolRuntimeKind, ToolRuntimeUnsupportedHostError, toolRuntimeHostRefusal } from "../cli/tool-runtime.ts";
 import { getAgentDir } from "../config.ts";
 import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
+import {
+	SessionToolChild,
+	type SessionToolChildRow,
+	toolChildModuleRoots,
+} from "../modes/rpc/tool-child/session-child.ts";
 import { stripFrontmatter } from "../utils/frontmatter.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { sleep } from "../utils/sleep.ts";
@@ -163,6 +169,7 @@ import {
 	ENGINE_TURN_LIMIT_EVENT,
 	ENGINE_TURN_START_ENTRY_TYPE,
 	type EngineTurnStartRecord,
+	engineTurnHistory,
 	engineTurnLimitNotice,
 	engineTurnStop,
 	isUserDirectedTurn,
@@ -173,7 +180,12 @@ import {
 	resolveEnvironmentContext,
 } from "./environment-context.ts";
 import { areExperimentalFeaturesEnabled } from "./experimental.ts";
-import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
+import {
+	type ExportOptions,
+	exportSessionToHtml,
+	renderSessionToHtml,
+	type ToolHtmlRenderer,
+} from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
 import { reportExtensionHandlerStall } from "./extension-handler-stall-report.ts";
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./extensions/builtin/anthropic-subscription/account-management.ts";
@@ -360,7 +372,8 @@ import {
 } from "./thinking-levels.ts";
 import { resetTimings, time } from "./timings.ts";
 import { type SessionMessageUpdateEvent, withResolvedToolName } from "./tool-call-display-name.ts";
-import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
+import { createToolDispatcher, type ToolDispatcher } from "./tool-dispatch/tool-dispatcher.ts";
+import type { BashOperations } from "./tools/bash.ts";
 import { composeFilesystemPolicies } from "./tools/filesystem-policy.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
@@ -477,6 +490,8 @@ export type AgentSessionEvent =
 	| SessionMessageUpdateEvent
 	| { type: "agent_settled" }
 	| { type: "agent_idle" }
+	/** The session's tool child changed state (senpi#3566; the minimal record todo 14 extends). */
+	| { type: "session_tool_child"; state: "spawned" | "exited" | "respawned"; generation: number; pid: number }
 	| { type: "session_abort" }
 	| {
 			type: "resume_compaction_required";
@@ -772,6 +787,8 @@ export interface AgentSessionConfig {
 	promptSurface?: PromptSurface;
 	/** Browser engine this session's skills drive; omitted means none was chosen. */
 	browserEngine?: BrowserEngine;
+	/** Tool runtime for this session (senpi#3566); absent means `in-process`. */
+	toolRuntime?: ToolRuntimeKind;
 }
 
 type SessionModelEntry = {
@@ -1322,6 +1339,7 @@ export class AgentSession {
 
 	// Bash execution state
 	private readonly _bashAbortControllers = new Set<AbortController>();
+	private readonly _toolDispatcher: ToolDispatcher;
 	private _pendingBashMessages: BashExecutionMessage[] = [];
 
 	// Extension system
@@ -1343,6 +1361,9 @@ export class AgentSession {
 	private _baseToolDefinitions: Map<string, ToolDefinition> = new Map();
 	private _cwd: string;
 	private _agentDir: string;
+	private readonly _toolChild: SessionToolChild | undefined;
+	/** Settles once dispose() has stopped the tool child and swept what it launched. */
+	private _toolChildClosed: Promise<void> = Promise.resolve();
 	private _extensionRunnerRef?: { current?: ExtensionRunner };
 	private _initialActiveToolNames?: string[];
 	private _defaultToolNames?: Set<string>;
@@ -1471,6 +1492,23 @@ export class AgentSession {
 				provider: this.model?.provider,
 				model: this.model?.id,
 			}),
+		});
+		const toolRuntime = config.toolRuntime ?? "in-process";
+		const hostRefusal = toolRuntimeHostRefusal(toolRuntime);
+		if (hostRefusal !== undefined) throw new ToolRuntimeUnsupportedHostError(hostRefusal);
+		this._toolChild =
+			toolRuntime === "child"
+				? new SessionToolChild({
+						dir: join(this._agentDir, "tool-children", this.sessionManager.getSessionId()),
+						cwd: this._cwd,
+						moduleRoots: () => toolChildModuleRoots(this._extensionRunner.getAllRegisteredTools()),
+						onRecord: (record) => this._emit({ type: "session_tool_child", ...record }),
+					})
+				: undefined;
+		this._toolDispatcher = createToolDispatcher({
+			runtime: toolRuntime,
+			notify: (event, data) => this._sessionLogger.info(event, data),
+			...(this._toolChild === undefined ? {} : { childRunner: this._toolChild.runner }),
 		});
 		this._fallbackValidationWarnings = validateFallbackChains(
 			this.settingsManager.getRawFallbackChains(),
@@ -2670,6 +2708,16 @@ export class AgentSession {
 	/** Resolved agent state directory for this session. */
 	get agentDir(): string {
 		return this._agentDir;
+	}
+
+	/** Resolves after dispose() once the tool child has exited and its launched groups are swept; awaited by disposers. */
+	whenToolChildClosed(): Promise<void> {
+		return this._toolChildClosed;
+	}
+
+	/** The `list_sessions` row of this session's tool child (senpi#3566); `none` under the in-process runtime. */
+	toolChildRow(): SessionToolChildRow {
+		return this._toolChild?.row() ?? { state: "none" };
 	}
 
 	/**
@@ -4101,6 +4149,11 @@ export class AgentSession {
 			"This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). For newSession, fork, and switchSession, move post-replacement work into withSession and use the ctx passed to withSession. For reload, do not use the old ctx after await ctx.reload().",
 		);
 		this._releaseToolSearchService("session disposed");
+		this._toolChildClosed =
+			this._toolChild
+				?.close()
+				.catch((error: unknown) => this._sessionLogger.warn("tool_child_close_failed", { error: String(error) })) ??
+			Promise.resolve();
 		this._disconnectFromAgent();
 		this._unsubscribeSettingsSource?.();
 		this._unsubscribeSettingsSource = undefined;
@@ -6157,7 +6210,7 @@ export class AgentSession {
 	private _stopEngineTurn(customType: string): boolean {
 		if (isUserDirectedTurn(customType)) return false;
 		const stop = engineTurnStop(
-			this.sessionManager.getEntries(),
+			this.sessionManager.reduceHistory(engineTurnHistory),
 			Date.now(),
 			this.settingsManager.getEngineTurnSettings(),
 			this._engineTurnStarts,
@@ -9964,6 +10017,11 @@ export class AgentSession {
 		return this._fallbackValidationWarnings;
 	}
 
+	/** The dispatcher every wrapped tool call and user-bash operation goes through (senpi#3566). */
+	get toolDispatcher(): ToolDispatcher {
+		return this._toolDispatcher;
+	}
+
 	private _isBuiltinExtensionPath(path: string): boolean {
 		return (
 			path.startsWith("<builtin:") || path.startsWith(BUILTIN_PATH_PREFIX) || /[\\/]senpi-codemode[\\/]/u.test(path)
@@ -10053,7 +10111,12 @@ export class AgentSession {
 		);
 		const runner = this._extensionRunner;
 		const createToolContext = (signal: AbortSignal | undefined) => this._createToolContext(signal);
-		const wrappedExtensionTools = wrapRegisteredTools(allCustomTools, runner, createToolContext);
+		const wrappedExtensionTools = wrapRegisteredTools(
+			allCustomTools,
+			runner,
+			createToolContext,
+			this._toolDispatcher,
+		);
 		const wrappedBuiltInTools = wrapRegisteredTools(
 			Array.from(this._baseToolDefinitions.values())
 				.filter((definition) => isAllowedTool(definition.name))
@@ -10065,6 +10128,7 @@ export class AgentSession {
 				})),
 			runner,
 			createToolContext,
+			this._toolDispatcher,
 		);
 
 		const toolRegistry = new Map(wrappedBuiltInTools.map((tool) => [tool.name, tool]));
@@ -11254,7 +11318,7 @@ export class AgentSession {
 			const result = await executeBashWithOperations(
 				resolvedCommand,
 				this.sessionManager.getCwd(),
-				options?.operations ?? createLocalBashOperations({ shellPath }),
+				options?.operations ?? this._toolDispatcher.bashOperations({ shellPath }),
 				{
 					onChunk: (delta) => {
 						const callbackResult = onChunk?.(delta);
@@ -11945,7 +12009,22 @@ export class AgentSession {
 	 * @returns Path to exported file
 	 */
 	async exportToHtml(outputPath?: string, options: { themeName?: string } = {}): Promise<string> {
-		const themeName = [options.themeName, this.settingsManager.getTheme()].find(
+		return await exportSessionToHtml(this.sessionManager, this.state, {
+			...this.htmlExportOptions(options.themeName),
+			outputPath,
+		});
+	}
+
+	/** Render the session to HTML in memory, passing every value through `sanitize` (used by `/share`). */
+	renderToHtml(options: { themeName?: string; sanitize: <T>(value: T) => T }): string {
+		return renderSessionToHtml(this.sessionManager, this.state, {
+			...this.htmlExportOptions(options.themeName),
+			sanitize: options.sanitize,
+		});
+	}
+
+	private htmlExportOptions(requestedTheme: string | undefined): ExportOptions {
+		const themeName = [requestedTheme, this.settingsManager.getTheme()].find(
 			(candidate) => candidate !== undefined && getThemeByName(candidate) !== undefined,
 		);
 
@@ -11955,12 +12034,7 @@ export class AgentSession {
 			theme,
 			cwd: this.sessionManager.getCwd(),
 		});
-
-		return await exportSessionToHtml(this.sessionManager, this.state, {
-			outputPath,
-			themeName,
-			toolRenderer,
-		});
+		return { themeName, toolRenderer };
 	}
 
 	/**

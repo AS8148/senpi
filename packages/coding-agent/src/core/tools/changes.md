@@ -1,5 +1,25 @@
 # core/tools changes
 
+## 2026-10-18 - Tool factories pin injected operations to the server; the wrapper routes through ToolDispatcher (senpi#3566)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/tool-definition-wrapper.ts`: `wrapToolDefinition`/`wrapToolDefinitions` take an optional `ToolDispatcher`; with one and a resolved context, execute goes through `dispatcher.run({ definition, toolCallId, params, signal, onUpdate, ctx })`; otherwise the call is unchanged, keeping upstream's `as ExtensionToolContext` idiom for the factory-less no-context case, so standalone `createBashTool` consumers keep today's behavior.
+- `packages/coding-agent/src/core/tools/read.ts`, `edit.ts`, `write.ts`, `find.ts`, `ls.ts`, `bash.ts`, `grep/index.ts`: each factory sets `serverPinned: true` on its returned definition when the caller injected `operations` or a filesystem-policy override (bash marks injected `operations`; powershell inherits through `createShellToolDefinition`, which always passes explicit operations). Such definitions execute on the session's server process even under `--tool-runtime child` with `placement: "child"`.
+
+### Why
+
+A definition that closes over caller-injected operations or policy cannot run in a tool child, and the dispatcher needs the single wrapper seam for every tool call (senpi#3566).
+
+### Why an extension could not handle it
+
+Core tool factories and the core wrapper are upstream-owned surfaces an extension cannot replace.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/tools/tool-definition-wrapper.ts`: the `wrapToolDefinition` execute.
+- Each factory's returned definition head (the `name` property line).
+
 ## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): extension loader, runner and wrappers
 
 ### What changed
