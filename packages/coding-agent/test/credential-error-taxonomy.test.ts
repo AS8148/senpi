@@ -5,7 +5,10 @@ import {
 	classifyCredentialFailure,
 	rateLimitCooldown,
 } from "../src/core/credential-pool/classify.ts";
-import { allAccountsBlockedGuidance } from "../src/core/extensions/builtin/anthropic-subscription/guidance.ts";
+import {
+	allAccountsBlockedGuidance,
+	singleAccountUnavailableGuidance,
+} from "../src/core/extensions/builtin/anthropic-subscription/guidance.ts";
 
 // 2026-09-30 12:00 in Asia/Seoul, so reset prose resolves to fixed cooldowns.
 // A zoneless reset reads as the host's local time, so its distance, and whether
@@ -224,5 +227,18 @@ describe("credential error taxonomy", () => {
 		const action = classifyCredentialFailure(new Error(allAccountsBlockedGuidance(undefined)));
 		expect(action.kind).toBe("failover");
 		if (action.kind === "failover") expect(action.block.reason).toBe("rate_limit");
+	});
+
+	test("single-account guidance with fallback off keeps the pool guidance verdicts (senpi#3465)", () => {
+		const account = { name: "primary", configured: true };
+		const auth = classifyCredentialFailure(
+			new Error(singleAccountUnavailableGuidance(account, undefined, "auth_error")),
+		);
+		expect(auth).toEqual({ kind: "failover", block: { reason: "auth_error" } });
+		const limited = classifyCredentialFailure(
+			new Error(singleAccountUnavailableGuidance(account, Date.now() + 60_000)),
+		);
+		expect(limited.kind).toBe("failover");
+		if (limited.kind === "failover") expect(limited.block.reason).toBe("rate_limit");
 	});
 });
