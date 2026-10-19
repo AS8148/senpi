@@ -1,8 +1,8 @@
 import { fstatSync } from "node:fs";
 
-// Harnesses (ssh, CI runners, spawn with stdio "pipe") hand children a stdin that is
-// open but never written or closed; a real producer such as `cat file |` writes well inside this.
-export const PIPED_STDIN_GRACE_MS = 150;
+// Harnesses (ssh, CI runners, spawn with stdio "pipe") hand children a stdin that is open but never
+// written or closed. Slow real producers (`curl … |`, `git log |` on a big repo) need well over 150 ms.
+export const PIPED_STDIN_GRACE_MS = 2_000;
 
 export interface PipedStdin {
 	readonly isTTY?: boolean;

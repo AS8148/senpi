@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/main.ts`: the inline `readPipedStdin` (which resolved only on stdin `end` for any non-TTY stdin) is replaced by the fork-only `src/utils/piped-stdin.ts`, called with `hasPromptArgument` (positional messages or `@file` arguments) and `forceRead` (a bare `-`). With a prompt argument, a pipe or socket that delivers no data within `PIPED_STDIN_GRACE_MS` (150 ms) is paused, unref'd and skipped; data inside the window, a regular file, no prompt argument, and `-` keep the read-to-EOF behavior. A skipped stdin prints one stderr line (`PIPED_STDIN_SKIP_HINT`, built with the options in the fork-only `src/cli/piped-stdin-options.ts`) naming `-` as the way to read it.
+- `packages/coding-agent/src/main.ts`: the inline `readPipedStdin` (which resolved only on stdin `end` for any non-TTY stdin) is replaced by the fork-only `src/utils/piped-stdin.ts`, called with `hasPromptArgument` (positional messages or `@file` arguments) and `forceRead` (a bare `-`). With a prompt argument, a pipe or socket that delivers no data within `PIPED_STDIN_GRACE_MS` (2000 ms) is paused, unref'd and skipped; data inside the window, a regular file, no prompt argument, and `-` keep the read-to-EOF behavior. A skipped stdin prints one stderr line (`PIPED_STDIN_SKIP_HINT`, built with the options in the fork-only `src/cli/piped-stdin-options.ts`) naming `-` as the way to read it.
 
 ### Why
 

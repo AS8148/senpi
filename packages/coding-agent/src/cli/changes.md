@@ -6,7 +6,7 @@
 
 ### Why
 
-- Print mode now stops waiting for a silent stdin pipe after 150 ms when a prompt argument is given (senpi#3715); `-` is the explicit way to wait for a slow producer anyway. Regression: `test/suite/regressions/issue-3715-print-stdin-open-pipe.test.ts`.
+- Print mode now stops waiting for a silent stdin pipe after 2 s when a prompt argument is given (senpi#3715); `-` is the explicit way to wait for a slow producer anyway. Regression: `test/suite/regressions/issue-3715-print-stdin-open-pipe.test.ts`.
 
 ### Why an extension could not handle it
 

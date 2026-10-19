@@ -53,6 +53,19 @@ describe("readPipedStdin (#3715)", () => {
 		expect(read).toEqual({ settled: true, value: "first second" });
 	});
 
+	test("a producer whose first byte arrives after 1 s (curl | senpi -p prompt) is read", async () => {
+		const stdin = new PassThrough();
+		const read = track(readPipedStdin({ stdin, hasPromptArgument: true, forceRead: false, isRegularFile: notAFile }));
+
+		await vi.advanceTimersByTimeAsync(1_000);
+		expect(read.settled).toBe(false);
+		stdin.write("downloaded ");
+		await vi.advanceTimersByTimeAsync(10_000);
+		stdin.end("body");
+		await vi.advanceTimersByTimeAsync(0);
+		expect(read).toEqual({ settled: true, value: "downloaded body" });
+	});
+
 	test("piped text with a prompt argument still arrives (cat file | senpi -p prompt)", async () => {
 		const stdin = new PassThrough();
 		const read = track(readPipedStdin({ stdin, hasPromptArgument: true, forceRead: false, isRegularFile: notAFile }));
