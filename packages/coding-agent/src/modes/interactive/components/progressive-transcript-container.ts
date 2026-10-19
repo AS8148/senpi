@@ -268,7 +268,8 @@ export class ProgressiveTranscriptContainer extends Container {
 			this.childRenders.delete(child);
 			this.childHeights.delete(child);
 			this.scrolledLiveRows.delete(child);
-			child.invalidate();
+			if (child.releaseRender) child.releaseRender();
+			else child.invalidate();
 		}
 		// Released rows are cold again: fullscreen warms them in the background before showing them.
 		if (this.warmedFrom !== PENDING_FIRST_PAINT && this.warmedFrom < to) this.warmedFrom = to;

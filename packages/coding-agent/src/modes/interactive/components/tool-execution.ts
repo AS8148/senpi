@@ -40,6 +40,8 @@ export class ToolExecutionComponent extends Container {
 	private argsComplete = false;
 	private result?: ToolExecutionResult;
 	private lastDisplaySignature?: string;
+	/** Built content was dropped by `releaseRender`; the next render rebuilds it. */
+	private displayReleased = false;
 	private readonly renderCache = new ToolExecutionRenderCache();
 	private readonly animation = new ToolExecutionAnimation({
 		invalidate: () => this.invalidateRenderCache(),
@@ -169,6 +171,22 @@ export class ToolExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
+	/**
+	 * A card above the kept history drops its built content (the call and result components and their
+	 * styled output); `render` rebuilds it from the card's state if it is ever painted again (#2537).
+	 * Invalidating instead rebuilt that content at once, so every finished card kept it for the session.
+	 */
+	override releaseRender(): void {
+		if (this.presentation === "grok" || this.animation.running) {
+			this.invalidate();
+			return;
+		}
+		this.invalidateRenderCache();
+		this.renderer!.releaseContent();
+		this.lastDisplaySignature = undefined;
+		this.displayReleased = true;
+	}
+
 	override invalidate(): void {
 		this.invalidateRenderCache();
 		super.invalidate();
@@ -197,6 +215,7 @@ export class ToolExecutionComponent extends Container {
 	override render(width: number): string[] {
 		if (this.presentation === "grok") return super.render(width);
 
+		if (this.displayReleased) this.updateDisplay();
 		const signature = this.createRenderSignature();
 		const cached = this.renderCache.read(width, signature);
 		if (cached) return cached;
@@ -221,6 +240,7 @@ export class ToolExecutionComponent extends Container {
 		const displaySignature = this.createRenderSignature();
 		if (this.lastDisplaySignature === displaySignature) return;
 		this.lastDisplaySignature = displaySignature;
+		this.displayReleased = false;
 		this.invalidateRenderCache();
 		const state = this.createRenderState();
 		if (this.grokRow) {

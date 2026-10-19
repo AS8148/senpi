@@ -1790,3 +1790,21 @@ Row composition, wrapping and the cursor grapheme live inside `Editor.render`; a
 
 - MEDIUM: `Editor.render` around the `renderEditorLine` call and `EditorTheme` in `packages/tui/src/components/editor.ts`.
 - LOW: the `Editor` export block in `packages/tui/src/index.ts`.
+
+## 2026-10-19 - Component.releaseRender (senpi#2537)
+
+### What changed
+
+- `packages/tui/src/tui.ts`: `Component` gains an optional `releaseRender()`: drop what is kept only to paint (built child components, styled text) so the next `render` rebuilds it, without changing what `render` returns. `Container.releaseRender()` releases each child (falling back to `invalidate()` for a child without it).
+
+### Why
+
+A transcript container releases messages that left its kept main-screen history. `invalidate()` alone could not express that: some components rebuild their content inside `invalidate()`, which kept it alive for the whole session ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)).
+
+### Why an extension could not handle it
+
+The `Component` contract and `Container` live in pi-tui; an extension cannot add a lifecycle hook to them.
+
+### Expected merge conflict zones
+
+- LOW: the end of the `Component` interface and `Container.invalidate()` in `packages/tui/src/tui.ts`.
