@@ -53,7 +53,8 @@ export async function execCommand(
 		const killProcess = () => {
 			if (!killed) {
 				killed = true;
-				signalSpawnedChild(proc, "SIGTERM");
+				// A child that never started has nothing to stop, so no escalation is armed for it either.
+				if (!signalSpawnedChild(proc, "SIGTERM") && proc.pid === undefined) return;
 				// Force kill after 5 seconds if SIGTERM doesn't work
 				setTimeout(() => {
 					if (!proc.killed) {

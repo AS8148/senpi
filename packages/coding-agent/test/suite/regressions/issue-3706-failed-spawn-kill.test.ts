@@ -3,6 +3,7 @@
 import { ChildProcess, spawn } from "node:child_process";
 import { once } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { childConnection } from "../../../src/experimental/mini/shared/transport.ts";
 import { signalSpawnedChild } from "../../../src/utils/child-signal.ts";
 
 afterEach(() => {
@@ -19,6 +20,17 @@ describe("signalSpawnedChild", () => {
 		expect(signalSpawnedChild(child, "SIGKILL")).toBe(false);
 		await failed;
 		expect(signalSpawnedChild(child, "SIGKILL")).toBe(false);
+		expect(kill).not.toHaveBeenCalled();
+	});
+
+	it("closing the connection of a worker whose spawn failed sends nothing", async () => {
+		// #3708 review MEDIUM: the mini server's liveness timer closes a connection whose worker never answered.
+		const kill = vi.spyOn(ChildProcess.prototype, "kill").mockImplementation(() => false);
+		const child = spawn("/nonexistent/senpi-3706-worker", [], { stdio: ["pipe", "pipe", "inherit"] });
+		const failed = once(child, "error");
+		const connection = childConnection(child);
+		await failed;
+		connection.close();
 		expect(kill).not.toHaveBeenCalled();
 	});
 
