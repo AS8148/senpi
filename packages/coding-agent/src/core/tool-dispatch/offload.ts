@@ -13,6 +13,7 @@ export type OffloadErrorCode =
 	| "offload_unknown_module"
 	| "offload_bad_registration"
 	| "offload_bad_options"
+	| "offload_session_closed"
 	| "tool_child_deadline"
 	| "tool_runtime_unavailable";
 

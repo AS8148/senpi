@@ -118,11 +118,12 @@ export function inProcessHostCalls(
 		});
 	};
 	const host = createModuleHost(cancelled, async (kind, name, args) => {
+		const value = await answer(kind, name, args);
+		// Only an answered unlock lets go of the file: a refused one leaves it held, and named in a stuck notice.
 		if (kind === "unlock_file") {
 			const lockId = stringOf(args, "lockId");
 			if (lockId !== undefined) held.delete(lockId);
 		}
-		const value = await answer(kind, name, args);
 		if (kind === "lock_file") {
 			const lockId = stringOf(value, "lockId");
 			const path = stringOf(args, "path");

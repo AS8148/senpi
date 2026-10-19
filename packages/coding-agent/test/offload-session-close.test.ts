@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { DefaultResourceLoader } from "../src/core/resource-loader.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
+import { createToolDispatcher } from "../src/core/tool-dispatch/tool-dispatcher.ts";
 import { acquireFileMutationLock } from "../src/core/tools/file-mutation-queue.ts";
 import { createHarness } from "./suite/harness.ts";
 
@@ -106,4 +107,62 @@ describe.skipIf(process.platform === "win32")("closing a session under the in-pr
 			rmSync(dir, { recursive: true, force: true });
 		}
 	}, 60_000);
+});
+
+const SLOW_MODULE = `const probe = globalThis.__offloadSlowLoadProbe;
+probe.loading();
+await probe.loaded;
+export async function body(args, host) {
+	probe.bodyStarted();
+	await host.withFileLock(args.file, async () => {});
+	return "ran";
+}
+`;
+
+describe.skipIf(process.platform === "win32")("closing an in-process dispatcher while a module loads", () => {
+	it("never starts the body, answers no host call, takes no lock, and refuses later offloads", async () => {
+		const dir = realpathSync(mkdtempSync(join(tmpdir(), "offload-load-")));
+		const modulePath = join(dir, "slow.mjs");
+		writeFileSync(modulePath, SLOW_MODULE);
+		const file = join(dir, "target.txt");
+		writeFileSync(file, "");
+		let loading: () => void = () => {};
+		const loadingNow = new Promise<void>((resolveLoading) => {
+			loading = resolveLoading;
+		});
+		let finishLoad: () => void = () => {};
+		const loaded = new Promise<void>((resolveLoaded) => {
+			finishLoad = resolveLoaded;
+		});
+		let bodyStarted = false;
+		Reflect.set(globalThis, "__offloadSlowLoadProbe", { loading, loaded, bodyStarted: () => (bodyStarted = true) });
+		const answered: string[] = [];
+		const dispatcher = createToolDispatcher({
+			runtime: "in-process",
+			hostCalls: async (request) => {
+				answered.push(request.kind);
+				return null;
+			},
+		});
+		try {
+			const run = dispatcher.offload({ modulePath, export: "body", args: { file } }, undefined);
+			run.catch(() => {});
+			await loadingNow;
+			await dispatcher.dispose();
+			await expect(run).rejects.toMatchObject({ code: "offload_session_closed" });
+			finishLoad();
+			for (let turn = 0; turn < 2; turn++) await new Promise((resolveTurn) => setImmediate(resolveTurn));
+			expect(bodyStarted).toBe(false);
+			expect(answered).toEqual([]);
+			const release = await acquireFileMutationLock(file);
+			release();
+			await expect(
+				dispatcher.offload({ modulePath, export: "body", args: { file } }, undefined),
+			).rejects.toMatchObject({ code: "offload_session_closed" });
+		} finally {
+			finishLoad();
+			Reflect.deleteProperty(globalThis, "__offloadSlowLoadProbe");
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
 });

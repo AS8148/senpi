@@ -166,6 +166,7 @@ export class InProcessToolDispatcher extends BaseToolDispatcher {
 	readonly kind: ToolRuntimeKind = "in-process";
 	readonly #options: InProcessDispatchOptions;
 	readonly #live = new Set<InProcessRun>();
+	#disposed = false;
 
 	constructor(notify?: ToolDispatchNotify, options: InProcessDispatchOptions = {}) {
 		super(notify);
@@ -174,6 +175,7 @@ export class InProcessToolDispatcher extends BaseToolDispatcher {
 
 	/** Closes every in-process module run still live; settles once each has released its locks (`InProcessRun.close`). */
 	override async dispose(): Promise<void> {
+		this.#disposed = true;
 		await Promise.all([...this.#live].map((run) => run.close()));
 	}
 
@@ -186,6 +188,7 @@ export class InProcessToolDispatcher extends BaseToolDispatcher {
 	}
 
 	async offload(job: ToolChildModuleJob, signal: AbortSignal | undefined): Promise<OffloadOutcome> {
+		if (this.#disposed) throw new OffloadError("offload_session_closed", `${job.modulePath}: the session was closed`);
 		return {
 			value: await runModuleInProcess(job, signal, {
 				...(this.#options.hostCalls === undefined ? {} : { hostCalls: this.#options.hostCalls }),

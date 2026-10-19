@@ -93,6 +93,7 @@ function registerSlot(filePath: string): Promise<QueueSlot> {
 async function waitTurn(slot: QueueSlot, signal: AbortSignal | undefined): Promise<void> {
 	const { key, currentQueue, release } = slot;
 	let onStuck: ((error: FileLockedByStuckModuleError) => void) | undefined;
+	let onAbort: (() => void) | undefined;
 	const refused = new Promise<Error>((resolveRefused) => {
 		const stuck = stuckHolders.get(key);
 		if (stuck !== undefined) return resolveRefused(stuck);
@@ -106,8 +107,9 @@ async function waitTurn(slot: QueueSlot, signal: AbortSignal | undefined): Promi
 		if (signal === undefined) return;
 		const abortError = () =>
 			signal.reason instanceof Error ? signal.reason : new Error("file mutation lock wait cancelled");
-		if (signal.aborted) resolveRefused(abortError());
-		else signal.addEventListener("abort", () => resolveRefused(abortError()), { once: true });
+		if (signal.aborted) return resolveRefused(abortError());
+		onAbort = () => resolveRefused(abortError());
+		signal.addEventListener("abort", onAbort, { once: true });
 	});
 	try {
 		const outcome = await Promise.race([currentQueue.then(() => undefined), refused]);
@@ -116,6 +118,7 @@ async function waitTurn(slot: QueueSlot, signal: AbortSignal | undefined): Promi
 		void currentQueue.then(release);
 		throw outcome;
 	} finally {
+		if (onAbort !== undefined) signal?.removeEventListener("abort", onAbort);
 		if (onStuck !== undefined) {
 			const waiters = stuckWaiters.get(key);
 			waiters?.delete(onStuck);
