@@ -1,3 +1,22 @@
+## 2026-10-19 - Keep pending dialogs visible after session replacement (#3728 review)
+
+### What changed
+
+- `connection-handler.ts` registers the live native-dialog registry on every replacement session before extension binding, alongside the question bridge.
+- `rpc-types.ts` documents `RpcSessionState.pendingDialogs`; `docs/rpc.md` lists the field in the state and dialog references.
+
+### Why
+
+The registry previously remained keyed only by the initial session. After replacement, `get_state` incorrectly returned an empty dialog snapshot, causing a recovering client to discard requests that were still open.
+
+### Why an extension could not handle it
+
+The connection handler owns the registry and rebind ordering used by the RPC state projection.
+
+### Expected merge conflict zones
+
+`connection-handler.ts`: `rebindSession` registry registration. `rpc-types.ts`: `RpcSessionState` pending fields.
+
 ## 2026-10-19 - Recover connection-wide gaps and remove shed-path parsing (#3728 review)
 
 ### What changed

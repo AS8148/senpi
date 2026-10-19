@@ -764,6 +764,7 @@ export function createRpcConnectionHandler(
 		const replacedSession = session !== runtimeHost.session;
 		session = runtimeHost.session;
 		sessionQuestionBridges.set(session, questions);
+		sessionDialogRequests.set(session, pendingExtensionRequests);
 		// Installed before the bind below: extensions register their control endpoint on session_start.
 		sessionControl?.dispose();
 		sessionControl = new HostSessionControl(
