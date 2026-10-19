@@ -13,12 +13,14 @@ export interface HandoffBriefInput {
 
 const MAX_TEXT_CHARS = 1500;
 const MAX_FILES = 20;
+const MAX_TODOS = 20;
+const MAX_TODO_CHARS = 200;
 const PATH_TOOLS = new Set(["read", "edit", "write", "multiedit", "ls"]);
 const PATCH_FILE_LINE = /^\*\*\* (?:Update|Add|Delete) File: (.+)$/gm;
 
-function trim(text: string): string {
+function trim(text: string, max = MAX_TEXT_CHARS): string {
 	const flat = text.trim();
-	return flat.length > MAX_TEXT_CHARS ? `${flat.slice(0, MAX_TEXT_CHARS)}...` : flat;
+	return flat.length > max ? `${flat.slice(0, max)}...` : flat;
 }
 
 function textOf(content: unknown): string {
@@ -82,9 +84,12 @@ export function buildHandoffBrief(input: HandoffBriefInput): string {
 	const open = getLatestTodoStateFromBranchEntries(input.entries).phases.flatMap((phase) =>
 		phase.tasks
 			.filter((task) => task.status === "in_progress" || task.status === "pending")
-			.map((task) => `- [${STATUS_LABEL[task.status]}] ${phase.name}: ${task.content}`),
+			.map((task) => `- [${STATUS_LABEL[task.status]}] ${phase.name}: ${trim(task.content, MAX_TODO_CHARS)}`),
 	);
-	if (open.length > 0) lines.push("", "Open todos:", ...open);
+	if (open.length > 0) {
+		lines.push("", "Open todos:", ...open.slice(0, MAX_TODOS));
+		if (open.length > MAX_TODOS) lines.push(`- and ${open.length - MAX_TODOS} more`);
+	}
 	const ask = lastText(input.entries, "user");
 	if (ask) lines.push("", "Last request:", ask);
 	const answer = lastText(input.entries, "assistant");

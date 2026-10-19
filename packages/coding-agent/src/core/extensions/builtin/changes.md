@@ -3,6 +3,7 @@
 ### What changed
 
 - `packages/coding-agent/src/core/extensions/builtin/handoff-hint/` (new): after a human-started turn settles, arms a timer for the prompt cache's expiry (last request, warm pings included, plus the model's TTL). When it fires on an idle session at or above `handoffHint.minContextTokens`, below the compaction trigger, with no active goal, and a fresh session would save at least `handoffHint.minSavingUsd` on the next reply (priced from the model's cost card), it sets one `handoff-hint` widget line with two choices: `/handoff` (opens a linked new session whose first entry is a deterministic brief: goal, open todos, last request and answer, touched files, old session path; no model call, no turn) and `/handoff keep` (hides it for the session, persisted as a `handoff-hint` custom entry). Once per threshold crossing; never for `worker` sessions, print/JSON mode, or extension-started turns. Emits `handoff_hint` on the event bus for shown, accepted and dismissed.
+- `handoff-hint/` (review follow-up): a session opened with history arms from its last assistant reply's timestamp, so a resumed session whose cache already expired gets the hint before its first reply; `accepted` is emitted only after `newSession` returns not cancelled (a cancelled switch keeps the hint); `/handoff <other>` notifies instead of starting a session; the brief lists at most 20 open todos, each capped at 200 characters.
 - `packages/coding-agent/src/core/extensions/builtin/index.ts`: registers `handoff-hint` after `cache-keepalive`.
 
 ### Why

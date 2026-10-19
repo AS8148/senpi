@@ -57,6 +57,7 @@ function harness(
 		mode?: string;
 		settings?: object;
 		goal?: "active";
+		cancelSwitch?: boolean;
 	} = {},
 ) {
 	let now = 1_000_000;
@@ -71,6 +72,7 @@ function harness(
 	const events: HandoffHintEvent[] = [];
 	const appended: Array<{ customType: string; data: unknown }> = [];
 	const newSessions: Array<{ parentSession?: string; sent: unknown[] }> = [];
+	const notices: string[] = [];
 	let tokens = options.tokens ?? 500_000;
 	let idle = true;
 	const pi = {
@@ -124,8 +126,10 @@ function harness(
 		ui: {
 			setWidget: (key: string, lines: string[] | undefined, opts: unknown) =>
 				widgets.push({ key, lines, options: opts }),
+			notify: (message: string) => notices.push(message),
 		},
 		newSession: async (opts: { parentSession?: string; withSession?: (next: any) => Promise<void> }) => {
+			if (options.cancelSwitch) return { cancelled: true };
 			const record = { parentSession: opts.parentSession, sent: [] as unknown[] };
 			newSessions.push(record);
 			await opts.withSession?.({ sendMessage: async (message: unknown) => record.sent.push(message) });
@@ -158,6 +162,8 @@ function harness(
 		appended,
 		entries,
 		newSessions,
+		notices,
+		now: () => now,
 		run: (args: string) => commands.get("handoff")!.handler(args, ctx),
 		setTokens: (value: number) => (tokens = value),
 		emitWarmPing: () => pi.events?.emit("cache_warm_ping", {}),
@@ -270,6 +276,47 @@ describe("handoff hint", () => {
 		expect(h.events.map((event) => event.action)).toEqual(["shown", "dismissed"]);
 	});
 
+	it("a resumed session whose cache expired while it was closed shows the hint before the first reply", async () => {
+		const h = harness();
+		h.entries.push(messageEntry({ ...assistant(480_000), timestamp: h.now() - TTL_MS - 60_000 }, "a1"));
+		await h.fire("session_start", { type: "session_start", reason: "resume" });
+		await h.advance(0);
+		expect(h.visible()).toBe(true);
+		expect(h.events.map((event) => event.action)).toEqual(["shown"]);
+	});
+
+	it("a resumed session with a warm cache waits out the rest of the cache lifetime", async () => {
+		const h = harness();
+		h.entries.push(messageEntry({ ...assistant(480_000), timestamp: h.now() - 60_000 }, "a1"));
+		await h.fire("session_start", { type: "session_start", reason: "resume" });
+		await h.advance(TTL_MS - 60_000 - 1000);
+		expect(h.visible()).toBe(false);
+		await h.advance(1000);
+		expect(h.visible()).toBe(true);
+	});
+
+	it("a cancelled switch counts no acceptance and keeps the hint", async () => {
+		const h = harness({ cancelSwitch: true });
+		await h.fire("session_start");
+		await h.humanTurn();
+		await h.advance(TTL_MS);
+		await h.run("");
+		expect(h.events.map((event) => event.action)).toEqual(["shown"]);
+		expect(h.visible()).toBe(true);
+	});
+
+	it("an unknown argument explains the two choices and starts nothing", async () => {
+		const h = harness();
+		await h.fire("session_start");
+		await h.humanTurn();
+		await h.advance(TTL_MS);
+		await h.run("kep");
+		expect(h.newSessions).toHaveLength(0);
+		expect(h.appended).toEqual([]);
+		expect(h.notices).toHaveLength(1);
+		expect(h.visible()).toBe(true);
+	});
+
 	it("Start fresh opens a linked session seeded with the brief and starts no turn", async () => {
 		const h = harness();
 		await h.fire("session_start");
@@ -350,5 +397,31 @@ describe("handoff estimate and brief", () => {
 		expect(brief).toContain("Last request:\nfix the parser");
 		expect(brief).toContain("Last answer:\nParser fixed, test pending.");
 		expect(brief).toContain("- src/lex.ts\n- src/parse.ts");
+	});
+
+	it("caps the open todos so a long list cannot grow the brief without bound", () => {
+		const tasks = Array.from({ length: 30 }, (_, index) => ({
+			content: `task ${index} ${"x".repeat(400)}`,
+			status: "pending",
+		}));
+		const brief = buildHandoffBrief({
+			entries: [
+				{
+					type: "custom",
+					id: "todo",
+					parentId: null,
+					timestamp: "",
+					customType: "senpi.todo-state",
+					data: { schema: "v2", phases: [{ name: "Work", tasks }] },
+				} as SessionEntry,
+			],
+			goal: null,
+			cwd: "/work",
+			contextTokens: 300_000,
+		});
+		const todoLines = brief.split("\n").filter((line) => line.startsWith("- [open] Work: "));
+		expect(todoLines).toHaveLength(20);
+		expect(todoLines.every((line) => line.length <= "- [open] Work: ".length + 203)).toBe(true);
+		expect(brief).toContain("- and 10 more");
 	});
 });

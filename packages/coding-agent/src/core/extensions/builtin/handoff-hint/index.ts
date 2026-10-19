@@ -58,6 +58,14 @@ function promptTokensOfFirstReply(entries: readonly SessionEntry[]): number | un
 	return undefined;
 }
 
+function lastReplyAtMs(entries: readonly SessionEntry[]): number | undefined {
+	for (let index = entries.length - 1; index >= 0; index -= 1) {
+		const entry = entries[index];
+		if (entry?.type === "message" && entry.message.role === "assistant") return entry.message.timestamp;
+	}
+	return undefined;
+}
+
 function wasDismissed(entries: readonly SessionEntry[]): boolean {
 	return entries.some(
 		(entry) =>
@@ -87,9 +95,13 @@ export function createHandoffHintExtension(
 
 		const worker = pi.sessionKind === "worker";
 
-		function emit(action: HandoffHintAction, current: ExtensionContext, estimate: HandoffEstimate): void {
+		function hintEvent(
+			action: HandoffHintAction,
+			current: ExtensionContext,
+			estimate: HandoffEstimate,
+		): HandoffHintEvent {
 			const model = current.model;
-			const event: HandoffHintEvent = {
+			return {
 				action,
 				sessionId: current.sessionManager.getSessionId(),
 				provider: model?.provider ?? "",
@@ -100,7 +112,22 @@ export function createHandoffHintExtension(
 				savingUsd: estimate.savingUsd,
 				subscription: model !== undefined && current.modelRegistry.isUsingOAuth(model),
 			};
-			pi.events?.emit(HANDOFF_HINT_EVENT, event);
+		}
+
+		function emit(action: HandoffHintAction, current: ExtensionContext, estimate: HandoffEstimate): void {
+			pi.events?.emit(HANDOFF_HINT_EVENT, hintEvent(action, current, estimate));
+		}
+
+		function render(current: ExtensionContext, estimate: HandoffEstimate): void {
+			const subscription = current.model !== undefined && current.modelRegistry.isUsingOAuth(current.model);
+			visible = estimate;
+			current.ui.setWidget(HANDOFF_HINT_WIDGET_KEY, [hintText(estimate, subscription)], {
+				placement: "aboveEditor",
+				actions: [
+					{ label: START_FRESH_LABEL, command: `/${HANDOFF_COMMAND}` },
+					{ label: KEEP_GOING_LABEL, command: `/${HANDOFF_COMMAND} keep` },
+				],
+			});
 		}
 
 		function disarm(): void {
@@ -148,16 +175,8 @@ export function createHandoffHintExtension(
 			if (current === undefined || visible !== undefined) return;
 			const estimate = await eligibleEstimate(current);
 			if (estimate === undefined || ctx !== current || !current.isIdle()) return;
-			const subscription = current.model !== undefined && current.modelRegistry.isUsingOAuth(current.model);
-			visible = estimate;
 			shownThisCrossing = true;
-			current.ui.setWidget(HANDOFF_HINT_WIDGET_KEY, [hintText(estimate, subscription)], {
-				placement: "aboveEditor",
-				actions: [
-					{ label: START_FRESH_LABEL, command: `/${HANDOFF_COMMAND}` },
-					{ label: KEEP_GOING_LABEL, command: `/${HANDOFF_COMMAND} keep` },
-				],
-			});
+			render(current, estimate);
 			emit("shown", current, estimate);
 		}
 
@@ -185,9 +204,9 @@ export function createHandoffHintExtension(
 				previousSessionFile: current.sessionManager.getSessionFile(),
 				contextTokens: usage?.tokens ?? estimate?.contextTokens ?? 0,
 			});
+			const accepted = estimate === undefined ? undefined : hintEvent("accepted", current, estimate);
 			hide(current);
-			if (estimate !== undefined) emit("accepted", current, estimate);
-			await current.newSession({
+			const result = await current.newSession({
 				parentSession: current.sessionManager.getSessionFile(),
 				withSession: async (next) => {
 					await next.sendMessage(
@@ -196,13 +215,26 @@ export function createHandoffHintExtension(
 					);
 				},
 			});
+			if (result.cancelled) {
+				if (estimate !== undefined && ctx === current) render(current, estimate);
+				return;
+			}
+			if (accepted !== undefined) pi.events?.emit(HANDOFF_HINT_EVENT, accepted);
 		}
 
 		pi.registerCommand(HANDOFF_COMMAND, {
 			description: "Start a fresh session seeded with a short handoff brief (`/handoff keep` hides the hint)",
 			argumentHint: "[keep]",
 			handler: async (args, current) => {
-				if (args.trim() === "keep") {
+				const argument = args.trim();
+				if (argument !== "" && argument !== "keep") {
+					current.ui.notify(
+						`Unknown /${HANDOFF_COMMAND} argument "${argument}". Use /${HANDOFF_COMMAND} to start fresh or /${HANDOFF_COMMAND} keep to keep going.`,
+						"warning",
+					);
+					return;
+				}
+				if (argument === "keep") {
 					const estimate = visible;
 					dismissed = true;
 					disarm();
@@ -220,9 +252,15 @@ export function createHandoffHintExtension(
 			disarm();
 			visible = undefined;
 			shownThisCrossing = false;
-			humanStartedTurn = false;
-			lastRequestAtMs = undefined;
-			dismissed = wasDismissed(next.sessionManager.getFullBranch());
+			const branch = next.sessionManager.getFullBranch();
+			dismissed = wasDismissed(branch);
+			// A session opened with history (a resume, `--continue`, a reload) belongs to whoever opened it, and its
+			// cache aged from the last reply. Arm from there, so reopening a big session the next day warns before
+			// the first reply pays the cold resend. An unattended driver starts a turn at once, which hides the hint
+			// and marks the next turn extension-owned.
+			lastRequestAtMs = lastReplyAtMs(branch);
+			humanStartedTurn = lastRequestAtMs !== undefined;
+			arm();
 		});
 		pi.on("input", (event) => {
 			humanStartedTurn = event.source !== "extension";
