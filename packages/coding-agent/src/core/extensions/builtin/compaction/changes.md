@@ -1,20 +1,20 @@
-## 2026-10-19 - Run-start checkpoint reads stay on the resident branch (senpi#3110)
+## 2026-10-19 - The compaction checkpoint's agent name is folded, not read from a full-history view (senpi#3110)
 
 ### What changed
 
-- `packages/coding-agent/src/core/extensions/builtin/compaction/checkpoint-state.ts`: `getLatestCheckpoint(ctx)` and `deriveAgentName` (used by `captureAgentCheckpoint`) scan `sessionManager.getBranch()` instead of `getEntries()`.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/checkpoint-state.ts`: `deriveAgentName` (used by `captureAgentCheckpoint`) folds the latest `agentName`/`agent` custom entry with `sessionManager.reduceHistory`, the same way #2537 moved `getLatestCheckpoint`, instead of scanning `getEntries()` twice per entry.
 
 ### Why
 
-`recentCheckpoint` runs in every `before_agent_start`. On a reopened compacted session (#3519 trims the mirror to the latest compaction window), `getEntries()` re-parses the whole transcript file and keeps it parsed as the full-history view until the session settles idle, so a busy task child held about four times its transcript for every run: two reopened transcripts of 182 MB and 100 MB held 911-1,108 MB during runs and 434 MB after they settled. The checkpoint and the agent-meta entries are non-message entries on the current branch, which the trimmed mirror keeps resident.
+Compaction captures the agent's state while a run is active. On a reopened compacted session (#3519 trims the mirror to the latest compaction window), `getEntries()` re-parses the whole transcript file and keeps it as the full-history view until the session settles idle, so each compaction of a busy task child held about four times its transcript. The fold reads the history once per load and keeps only its own state.
 
 ### Why an extension could not handle it
 
-This is the compaction builtin's own read; the fix keeps it on the public `ReadonlySessionManager` API.
+This is the compaction builtin's own read; the fix uses the public `ReadonlySessionManager.reduceHistory`.
 
 ### Expected merge conflict zones
 
-- `checkpoint-state.ts` `deriveAgentName` and the `sessionManager` branch of `getLatestCheckpoint`.
+- `checkpoint-state.ts` `deriveAgentName` and the new `latestAgentName` reducer above it.
 
 ## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
 

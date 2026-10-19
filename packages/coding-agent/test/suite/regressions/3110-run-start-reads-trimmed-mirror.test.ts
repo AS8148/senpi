@@ -4,44 +4,28 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	captureAgentCheckpoint,
-	getLatestCheckpoint,
 	persistCheckpoint,
 } from "../../../src/core/extensions/builtin/compaction/checkpoint-state.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../../src/core/extensions/types.ts";
-import {
-	type FileEntry,
-	loadEntriesFromFile,
-	SessionManager,
-	setSessionEntryLoaderForTesting,
-} from "../../../src/core/session-manager.ts";
+import { SessionManager } from "../../../src/core/session-manager.ts";
 import { assistantMsg, userMsg } from "../../utilities.ts";
 
 const LARGE_TEXT = "x".repeat(256 * 1024);
 
 /**
- * senpi#3110: every run start reads the latest compaction checkpoint. On a reopened, compacted
- * session that read went through `getEntries()`, which re-parsed the whole transcript file and kept
- * it parsed until the session settled idle, so each busy task child pinned roughly four times its
- * transcript for the length of every run. The checkpoint sits on the current branch, which the
- * trimmed mirror already holds.
+ * senpi#3110: compaction captures the agent's name while a run is active. On a reopened, compacted session that
+ * read went through `getEntries()`, which re-parsed the whole transcript file and kept it as a full-history view
+ * until the session settled idle, so a busy task child held roughly four times its transcript while it compacted.
  */
-describe("run-start checkpoint reads on a reopened compacted session (senpi#3110)", () => {
+describe("compaction-time agent name read on a reopened compacted session (senpi#3110)", () => {
 	let dir: string;
-	let fullLoads: number;
-	let restoreLoader: () => void;
 
 	beforeEach(() => {
 		dir = join(tmpdir(), `3110-${Date.now()}-${Math.random().toString(16).slice(2)}`);
 		mkdirSync(dir, { recursive: true });
-		fullLoads = 0;
-		restoreLoader = setSessionEntryLoaderForTesting((file: string): FileEntry[] => {
-			fullLoads++;
-			return loadEntriesFromFile(file);
-		});
 	});
 
 	afterEach(() => {
-		restoreLoader();
 		rmSync(dir, { recursive: true, force: true });
 	});
 
@@ -55,9 +39,7 @@ describe("run-start checkpoint reads on a reopened compacted session (senpi#3110
 		session.appendCompaction("summary", firstKept, 1000);
 		persistCheckpoint(
 			{ activeTools: ["read"], agentName: "worker", timestamp: 42 },
-			{
-				appendEntry: (customType, data) => void session.appendCustomEntry(customType, data),
-			},
+			{ appendEntry: (customType, data) => void session.appendCustomEntry(customType, data) },
 		);
 		session.appendMessage(userMsg("after"));
 		session.appendMessage(assistantMsg("after answer"));
@@ -67,34 +49,17 @@ describe("run-start checkpoint reads on a reopened compacted session (senpi#3110
 		return reopened;
 	}
 
-	function contextOf(sessionManager: SessionManager): ExtensionContext {
-		return { sessionManager, model: undefined } as unknown as ExtensionContext;
-	}
-
-	it("finds the latest checkpoint without re-reading the transcript file", () => {
+	it("names the agent in a new checkpoint without holding the full history", () => {
 		// Given: a reopened compacted session whose open-time history was released at idle.
 		const reopened = reopenedCompactedSession();
-
-		// When: the next run starts and looks up the latest checkpoint.
-		const checkpoint = getLatestCheckpoint(contextOf(reopened));
-
-		// Then: the checkpoint comes from the resident mirror and no full history is parsed or held.
-		expect(checkpoint).toMatchObject({ activeTools: ["read"], agentName: "worker", timestamp: 42 });
-		expect(fullLoads).toBe(0);
-		expect(reopened.holdsMaterializedHistory()).toBe(false);
-	});
-
-	it("names the agent in a new checkpoint without re-reading the transcript file", () => {
-		// Given: the same reopened session, compacting again.
-		const reopened = reopenedCompactedSession();
+		const ctx = { sessionManager: reopened, model: undefined } as unknown as ExtensionContext;
 		const pi = { getActiveTools: () => ["read"], getThinkingLevel: () => "off" } as unknown as ExtensionAPI;
 
 		// When: the compaction captures the agent's state.
-		const captured = captureAgentCheckpoint(pi, contextOf(reopened));
+		const captured = captureAgentCheckpoint(pi, ctx);
 
-		// Then: the agent name comes from the resident branch.
+		// Then: the name is still found, and no full-history view is left held.
 		expect(captured.agentName).toBe("worker");
-		expect(fullLoads).toBe(0);
 		expect(reopened.holdsMaterializedHistory()).toBe(false);
 	});
 });
