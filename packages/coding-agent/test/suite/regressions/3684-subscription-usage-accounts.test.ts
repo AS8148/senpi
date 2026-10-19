@@ -74,8 +74,10 @@ describe("usage poll accounts and payloads (senpi#3684)", () => {
 			"chatgpt-subscription/default": undefined,
 		});
 		expect(refreshed).toEqual([token("refresh-expiring")]);
-		const stored = (await store.read("anthropic-subscription")) as { accounts: { name: string; access: string }[] };
-		expect(stored.accounts.find((slot) => slot.name === "expiring")?.access).toBe(token("renewed"));
+		const stored = await store.read("anthropic-subscription");
+		const slots =
+			stored !== undefined && "accounts" in stored && Array.isArray(stored.accounts) ? stored.accounts : [];
+		expect(slots.find((slot: { name?: string }) => slot.name === "expiring")?.access).toBe(token("renewed"));
 	});
 
 	it("reads Claude's limits[] and legacy shapes, and ChatGPT's windows, onto the turn ids", () => {
