@@ -3,7 +3,12 @@ import { ownGenerationDir, writeHeartbeat, writeStallEvidence } from "./host-sta
 import { recordLoopBlockedMs } from "./loop-blocked-time.ts";
 import { loopLagErrorMs } from "./loop-lag-threshold.ts";
 import type { RpcHostStalledEvent } from "./rpc-types.ts";
-import { describeAttribution, sessionActivityMark, sessionActivitySince } from "./session-attribution.ts";
+import {
+	describeAttribution,
+	onSessionActivityStart,
+	sessionActivityMark,
+	sessionActivitySince,
+} from "./session-attribution.ts";
 
 /** Environment override for the drift that logs a warning, in milliseconds. */
 export const LOOP_LAG_WARN_MS_ENV = "SENPI_RPC_LOOP_LAG_WARN_MS";
@@ -13,9 +18,11 @@ export { DEFAULT_LOOP_LAG_ERROR_MS, LOOP_LAG_ERROR_MS_ENV, loopLagErrorMs } from
 export const LOOP_LAG_TICK_MS = 200;
 /**
  * Measurement interval once no session has done any work for `LOOP_LAG_IDLE_AFTER_MS` (senpi#3738, omo-desktop-app#3359):
- * an idle host has nothing to blame, and a 200 ms tick was its largest source of idle wakeups. A stall is
- * still measured exactly (drift is lateness against the scheduled tick), and the first activity restores
- * the 200 ms window. Never longer than the heartbeat interval, so the heartbeat stays as fresh as before.
+ * an idle host has nothing to blame, and a 200 ms tick was its largest source of idle wakeups. Drift is the
+ * lateness of a tick against its scheduled time, so a stall is only seen when a tick falls due during it: on
+ * this tick a stall can read up to 1 s short. Attributed work therefore restores the 200 ms tick the moment it
+ * starts (`onSessionActivityStart`), before it can block the loop, and a stall it causes is measured to within
+ * 200 ms as before. Never longer than the heartbeat interval, so the heartbeat stays as fresh as before.
  */
 export const LOOP_LAG_IDLE_TICK_MS = 1_000;
 /** How long the host must stay without session activity before the tick slows down. */
@@ -79,6 +86,7 @@ export class LoopLagWatchdog {
 	private intervalMs = LOOP_LAG_TICK_MS;
 	private quietMs = 0;
 	private readonly idleIntervalMs: number;
+	private unsubscribeActivity: (() => void) | undefined;
 	private activityMark = 0;
 	private lastWarnAt: number | undefined;
 	private readonly cpuUsage: () => { readonly user: number; readonly system: number };
@@ -123,6 +131,17 @@ export class LoopLagWatchdog {
 		const cpu = this.cpuUsage();
 		this.cpuMicrosAtTick = cpu.user + cpu.system;
 		this.heapBytesAtTick = this.heapUsed();
+		this.unsubscribeActivity = onSessionActivityStart(() => this.wake());
+		this.schedule();
+	}
+
+	/** Back to the 200 ms tick, from now: attributed work just started and may block the loop next. */
+	private wake(): void {
+		this.quietMs = 0;
+		if (this.timer === undefined || this.intervalMs === LOOP_LAG_TICK_MS) return;
+		clearTimeout(this.timer);
+		this.intervalMs = LOOP_LAG_TICK_MS;
+		this.expectedTickAt = this.now() + LOOP_LAG_TICK_MS;
 		this.schedule();
 	}
 
@@ -136,6 +155,8 @@ export class LoopLagWatchdog {
 	}
 
 	stop(): void {
+		this.unsubscribeActivity?.();
+		this.unsubscribeActivity = undefined;
 		if (this.timer === undefined) return;
 		clearTimeout(this.timer);
 		this.timer = undefined;

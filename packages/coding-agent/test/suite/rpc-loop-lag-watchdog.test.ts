@@ -299,6 +299,38 @@ describe("loop lag watchdog", () => {
 		}
 	}, 20_000);
 
+	it("reports a stall that starts on an idle host within 200 ms of its length (senpi#3738 review)", async () => {
+		vi.useFakeTimers();
+		const logs: string[] = [];
+		let stallEnd = 0;
+		// A blocked loop runs no timer until the stall ends; a tick due during it sees the stall's end time.
+		const watchdog = new LoopLagWatchdog({
+			emit: () => {},
+			log: (message) => logs.push(message),
+			now: () => Math.max(Date.now(), stallEnd),
+			cpuUsage: () => ({ user: 0, system: 0 }),
+			heapUsed: () => 0,
+			env: {},
+		});
+		const spans = createToolAttributionSpans("rpc-idle-stall");
+		try {
+			watchdog.start();
+			await vi.advanceTimersByTimeAsync(LOOP_LAG_IDLE_AFTER_MS + 2 * LOOP_LAG_IDLE_TICK_MS);
+			await vi.advanceTimersToNextTimerAsync();
+			spans.observe({ type: "tool_execution_start", toolCallId: "call-1", toolName: "blocking_tool" });
+			stallEnd = Date.now() + 1_200;
+			await vi.advanceTimersToNextTimerAsync();
+			expect(logs).toHaveLength(1);
+			const drift = Number(/blocked (\d+)ms/.exec(logs[0] ?? "")?.[1]);
+			expect(drift).toBeGreaterThanOrEqual(1_200 - LOOP_LAG_TICK_MS);
+			expect(logs[0]).toContain("blocking_tool");
+		} finally {
+			spans.closeAll();
+			watchdog.stop();
+			vi.useRealTimers();
+		}
+	});
+
 	it("slows to the idle tick while no session works and returns to 200 ms on activity (senpi#3738)", async () => {
 		vi.useFakeTimers();
 		let ticks = 0;
