@@ -3,7 +3,7 @@
  * `core/session-move/`; this file only parses the request, picks this host's folders (the move ledger, the kept
  * outgoing bundles and the session folder for a working directory) and maps refusals to wire codes.
  */
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { getDefaultSessionDir, loadEntriesFromFile } from "../../core/session-manager.ts";
 import { parseMoveId } from "../../core/session-move/bundle.ts";
 import { exportSessionForMove } from "../../core/session-move/export.ts";
@@ -11,6 +11,7 @@ import { finishMove } from "../../core/session-move/finish.ts";
 import { answerMoveStatus, importMovedSession } from "../../core/session-move/import.ts";
 import { MoveLedger, type MoveRecord, type MoveStatus, parseMoveStatus } from "../../core/session-move/move-ledger.ts";
 import { headerSessionId, type MoveId, sessionOwnership } from "../../core/session-move/ownership.ts";
+import { realSessionPath } from "../../core/session-move/session-lock.ts";
 import { normalizePath, resolvePath } from "../../utils/paths.ts";
 import type { RpcResponse } from "./rpc-types.ts";
 import {
@@ -37,8 +38,10 @@ const CORE_CODES: ReadonlySet<string> = new Set([
 	"move_target_occupied",
 	"move_mismatch",
 	"session_moved_away",
-	"session_held",
 ]);
+
+/** Core error codes whose wire name differs. */
+const RENAMED_CODES: Readonly<Record<string, string>> = { ESESSIONHELD: "session_held" };
 
 type Parsed =
 	| { readonly op: "prepare" | "cancel"; readonly moveId: MoveId }
@@ -66,7 +69,8 @@ const text = (value: unknown): value is string => typeof value === "string" && v
 function parse(raw: Record<string, unknown>): Parsed | string {
 	const { op } = raw;
 	if (op === "import") {
-		if (!text(raw.bundleDir) || !text(raw.cwd)) return "import needs bundleDir and cwd.";
+		if (!text(raw.bundleDir) || !text(raw.cwd) || !isAbsolute(raw.bundleDir) || !isAbsolute(raw.cwd))
+			return "import needs bundleDir and cwd as absolute paths.";
 		const from = typeof raw.from === "string" ? raw.from : undefined;
 		if (raw.from !== undefined && from === undefined) return "from must be a string.";
 		return { op, bundleDir: raw.bundleDir, cwd: raw.cwd, from: from ?? "" };
@@ -119,7 +123,9 @@ export async function moveSession(port: MoveSessionPort, command: RpcMoveSession
 		const detail = cause instanceof Error ? cause.message : String(cause);
 		return refusal(
 			command.id,
-			typeof code === "string" && CORE_CODES.has(code) ? code : RPC_ERROR_MOVE_FAILED,
+			typeof code === "string"
+				? (RENAMED_CODES[code] ?? (CORE_CODES.has(code) ? code : RPC_ERROR_MOVE_FAILED))
+				: RPC_ERROR_MOVE_FAILED,
 			detail,
 		);
 	}
@@ -139,8 +145,8 @@ async function run(
 		case "status":
 			return answerMoveStatus(ledger, parsed.moveId, parsed.sessionPath);
 		case "export": {
-			const sessionFile = normalizePath(parsed.sessionPath);
-			if (port.hostedPaths().some((path) => normalizePath(path) === sessionFile))
+			const sessionFile = realSessionPath(parsed.sessionPath);
+			if (openHere(port, sessionFile))
 				return {
 					refuse: RPC_ERROR_SESSION_OPEN_HERE,
 					detail:
@@ -178,10 +184,19 @@ async function run(
 				sessionDir,
 				from: parsed.from,
 			});
-			return { session_id: headerSessionId(loadEntriesFromFile(sessionFile)) ?? "", session_path: sessionFile };
+			const sessionId = headerSessionId(loadEntriesFromFile(sessionFile));
+			if (sessionId === undefined)
+				throw new Error(`The imported session at ${sessionFile} has no id in its header.`);
+			return { session_id: sessionId, session_path: sessionFile };
 		}
 		case "finish": {
-			const sessionFile = normalizePath(parsed.sessionPath);
+			const sessionFile = realSessionPath(parsed.sessionPath);
+			if (openHere(port, sessionFile))
+				return {
+					refuse: RPC_ERROR_SESSION_OPEN_HERE,
+					detail:
+						"This session is open on this host, so its runtime would not see the move end. Close it here, then finish the move.",
+				};
 			await finishMove({
 				sessionFile,
 				bundleDir: outgoing(parsed.moveId),
@@ -192,6 +207,10 @@ async function run(
 			return { ownership: ownership.writable ? "writable" : ownership.state };
 		}
 	}
+}
+
+function openHere(port: MoveSessionPort, sessionFile: string): boolean {
+	return port.hostedPaths().some((path) => realSessionPath(path) === sessionFile);
 }
 
 function answer(id: string | undefined, data: Awaited<ReturnType<typeof run>>): RpcResponse {

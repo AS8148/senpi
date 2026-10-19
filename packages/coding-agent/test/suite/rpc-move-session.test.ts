@@ -3,94 +3,15 @@
  * hosts. Two in-process rigs stand in for two devices (each with its own agent directory, so its own move ledger and
  * session folders), and two git checkouts of one repository stand in for the user's working copies.
  */
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { REPOSITORY_IDENTITY_ENTRY_TYPE } from "../../src/core/repository-identity.ts";
-import { getDefaultSessionDir, SessionManager } from "../../src/core/session-manager.ts";
+import { describe, expect, it } from "vitest";
+import { SessionManager } from "../../src/core/session-manager.ts";
 import { SessionMovedAwayError } from "../../src/core/session-move/ownership.ts";
-import type { RpcCommand } from "../../src/modes/rpc/rpc-types.ts";
 import { opened } from "./rpc-inprocess-host-metrics.ts";
 import { createInProcessRig } from "./rpc-inprocess-host-support.ts";
+import { customTypes, devices, hostAndRelease, move } from "./rpc-move-session-support.ts";
 import { SESSION_ID } from "./session-move-fixture.ts";
-
-const dirs: string[] = [];
-afterEach(() => {
-	for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
-});
-
-const git = (cwd: string, ...args: string[]) =>
-	execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd, encoding: "utf8" }).trim();
-
-type Rig = ReturnType<typeof createInProcessRig>;
-type MoveFields = Record<string, unknown> & { readonly op: string };
-
-async function devices() {
-	const base = realpathSync(mkdtempSync(join(tmpdir(), "senpi-rpc-move-")));
-	dirs.push(base);
-	const repoA = join(base, "a", "repo");
-	mkdirSync(repoA, { recursive: true });
-	git(repoA, "init", "-q");
-	git(repoA, "commit", "-q", "--allow-empty", "-m", "root");
-	const repoB = join(base, "b", "repo");
-	git(base, "clone", "-q", repoA, repoB);
-	const root = git(repoA, "rev-list", "--max-parents=0", "HEAD");
-	const agentA = join(base, "agent-a");
-	const agentB = join(base, "agent-b");
-	const sessionPath = join(getDefaultSessionDir(repoA, agentA), `2026-10-19T00-00-00-000Z_${SESSION_ID}.jsonl`);
-	const lines = [
-		{ type: "session", version: 3, id: SESSION_ID, timestamp: "2026-10-19T00:00:00.000Z", cwd: repoA },
-		{
-			type: "custom",
-			id: "r1",
-			parentId: null,
-			timestamp: "2026-10-19T00:00:00.500Z",
-			customType: REPOSITORY_IDENTITY_ENTRY_TYPE,
-			data: { rootCommits: [root] },
-		},
-		{
-			type: "message",
-			id: "u1",
-			parentId: "r1",
-			timestamp: "2026-10-19T00:00:01.000Z",
-			message: { role: "user", content: "remember 42", timestamp: 1 },
-		},
-	];
-	writeFileSync(sessionPath, `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`);
-	return { base, repoA, repoB, agentA, agentB, sessionPath };
-}
-
-async function move(rig: Rig, fields: MoveFields): Promise<Record<string, unknown>> {
-	const response = await rig.router.handle({ type: "move_session", id: "mv", ...fields } as RpcCommand);
-	await rig.settle();
-	if (response === undefined) throw new Error("move_session answered nothing");
-	return { ...response };
-}
-
-async function hostAndRelease(rig: Rig, cwd: string, sessionPath: string, moveId: string) {
-	const session = opened(await rig.open("conn-a", { cwd, sessionPath, retain_on_disconnect: true }), 0);
-	await rig.drop("conn-a");
-	const released = await rig.router.handle({
-		type: "release_session",
-		id: "rel",
-		sessionId: session.sessionId,
-		reason: "move",
-		moveId,
-		target: "device-b",
-	});
-	await rig.settle();
-	return { session, released };
-}
-
-const customTypes = (file: string) =>
-	readFileSync(file, "utf8")
-		.trim()
-		.split("\n")
-		.map((line) => JSON.parse(line) as { customType?: string })
-		.map((entry) => entry.customType)
-		.filter((type) => type?.startsWith("session_"));
 
 describe("move_session over RPC (senpi#3676)", () => {
 	it("#given two hosts #then ready, release, export, import, status and finish move the session to B under the same id", async () => {

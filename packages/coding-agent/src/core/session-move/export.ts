@@ -21,6 +21,7 @@ import {
 	SessionMovedAwayError,
 	sessionOwnership,
 } from "./ownership.ts";
+import { withSessionMoveLock } from "./session-lock.ts";
 
 export interface ExportSessionForMoveOptions {
 	/** A session no live runtime holds: an RPC host releases it first (`release_session` reason `move`). */
@@ -37,7 +38,11 @@ export interface ExportSessionForMoveOptions {
  * writes) and writes a self-verifying bundle: the session file, its extension sidecars and resident blobs, and a
  * manifest. Running it again for the same move rewrites the same bundle without a second release entry.
  */
-export async function exportSessionForMove(options: ExportSessionForMoveOptions): Promise<MoveManifest> {
+export function exportSessionForMove(options: ExportSessionForMoveOptions): Promise<MoveManifest> {
+	return withSessionMoveLock(options.sessionFile, () => writeMoveBundle(options));
+}
+
+async function writeMoveBundle(options: ExportSessionForMoveOptions): Promise<MoveManifest> {
 	const { sessionFile } = options;
 	const moveId = parseMoveId(options.moveId);
 	const entries = loadEntriesFromFile(sessionFile);

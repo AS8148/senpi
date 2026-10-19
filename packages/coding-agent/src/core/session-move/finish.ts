@@ -4,6 +4,7 @@ import { readManifest } from "./bundle.ts";
 import type { MoveStatus } from "./move-ledger.ts";
 import { headerSessionId, type MoveId, SESSION_MOVED, SESSION_RECLAIMED, sessionOwnership } from "./ownership.ts";
 import { requeueInput } from "./requeue.ts";
+import { withSessionMoveLock } from "./session-lock.ts";
 
 export interface FinishMoveOptions {
 	readonly sessionFile: string;
@@ -32,7 +33,11 @@ export class MoveMismatchError extends Error {
  * is re-queued under ids stable per move, then the bundle goes. While the bundle exists the re-queue runs again on
  * the next call, so a crash between any two steps loses nothing and doubles nothing.
  */
-export async function finishMove(options: FinishMoveOptions): Promise<void> {
+export function finishMove(options: FinishMoveOptions): Promise<void> {
+	return withSessionMoveLock(options.sessionFile, () => settleMove(options));
+}
+
+async function settleMove(options: FinishMoveOptions): Promise<void> {
 	const { sessionFile, bundleDir, moveId, answer } = options;
 	if (existsSync(bundleDir)) {
 		const bundled = readManifest(bundleDir).moveId;
