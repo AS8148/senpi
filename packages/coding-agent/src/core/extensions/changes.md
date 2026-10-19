@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/extensions/bun-extension-importer.ts`: `createBunExtensionImporter(virtualModules, builtinRedirects, { preparedCacheDir })` prepares each module with a generation token in place of the generation, stores the result in a disk cache (`bun-extension-prepared-cache.ts`), and on a later start reuses it after re-resolving every static import edge and re-checking the package `type`; the token is then replaced with the live generation. The strict-directive helpers moved unchanged to `bun-extension-strict-directive.ts`.
+- `packages/coding-agent/src/core/extensions/bun-extension-importer.ts`: `createBunExtensionImporter(virtualModules, builtinRedirects, { preparedCacheDir })` prepares each module with a generation token in place of the generation, stores the result in a disk cache (`bun-extension-prepared-cache.ts`), and on a later start reuses it after re-resolving every static import edge and re-checking the package `type`. The entry key covers the senpi release (passed by the loader), the Bun version, the runtime module path, the extension namespace and the source of every helper that shapes the bytes (importer, CommonJS import rewrite and clause parser, strict-directive check, lexer entry); the token is then replaced with the live generation. The strict-directive helpers moved unchanged to `bun-extension-strict-directive.ts`.
 - `packages/coding-agent/src/core/extensions/loader.ts`: the session loader passes `<agentDir>/cache/extension-modules` as the cache directory. The tool child's module-job importer passes none and behaves as before.
 
 ### Why
