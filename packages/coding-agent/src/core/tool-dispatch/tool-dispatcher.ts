@@ -202,7 +202,7 @@ export class ChildToolDispatcher extends BaseToolDispatcher {
 export function createToolDispatcher(options: ToolDispatcherOptions): ToolDispatcher {
 	return options.runtime === "child"
 		? new ChildToolDispatcher(options.notify, options.childRunner)
-		: new InProcessToolDispatcher();
+		: new InProcessToolDispatcher(options.notify);
 }
 
 function childModuleJob(call: {
