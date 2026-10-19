@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- A Claude subscription (`anthropic-subscription`) reply now records its Anthropic message id as `responseId`. The Claude Agent SDK also writes every turn to `~/.claude/projects`, and usage readers such as the OmO desktop Usage page need that id to count the turn once instead of again as Claude Code usage ([oh-my-openagent#10547](https://github.com/code-yeongyu/oh-my-openagent/issues/10547)).
+
 ### Removed
 
 ## [2026.10.19] - 2026-10-19

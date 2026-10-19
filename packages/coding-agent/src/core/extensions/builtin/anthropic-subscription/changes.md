@@ -1,3 +1,21 @@
+## 2026-10-19 - A reply records its Anthropic message id as responseId (oh-my-openagent#10547)
+
+### What changed
+
+- `stream-events.ts`: `applyStreamEvent` copies `message_start`'s `message.id` to the assistant message's `responseId` when the id is present.
+
+### Why
+
+The Claude Agent SDK persists every turn to `~/.claude/projects`, and senpi's resume path needs that transcript, so the copy stays. The OmO desktop Usage page reads both stores and counted each OmO turn twice, once as OmO and once as Claude Code. The Anthropic message id is the only value both records share; with it on the OmO side, a reader drops the Claude Code copy exactly. `entrypoint: "sdk-ts"` cannot be used instead, because other Agent SDK hosts (the desktop's own Claude Code driver) write it too.
+
+### Why an extension could not handle it
+
+This is the builtin extension's own stream mapping.
+
+### Expected merge conflict zones
+
+`stream-events.ts` `applyStreamEvent`, the `message_start` branch; fork-only file.
+
 ## 2026-10-18 - A compiled build finds Claude Code shipped beside its executable (senpi#3639)
 
 ### What changed

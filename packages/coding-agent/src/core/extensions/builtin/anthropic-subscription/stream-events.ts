@@ -93,6 +93,7 @@ function closeContentBlock(context: StreamEventContext, event: Extract<StreamEve
 
 export function applyStreamEvent(context: StreamEventContext, event: StreamEvent): void {
 	if (event.type === "message_start") {
+		if (event.message.id) context.output.responseId = event.message.id;
 		updateUsage(context.model, context.output, event.message.usage);
 	} else if (event.type === "content_block_start") {
 		startContentBlock(context, event);
