@@ -3,6 +3,7 @@
 ### What changed
 
 - `scripts/release.mjs`: a new `--sha <sha>` option (the `sha` input of `publish-npm.yml`) releases that exact commit. `pinReleaseCommit` in `release-git.mjs` refuses anything but a full 40-character sha, checks that `origin/main` contains it, then checks it out as `main`. The release stamps, commits and tags on that tree; the existing `syncRemoteMainBeforePush` still merges the newer main only after the tag, so later merges never reach the tagged commit. In pinned mode a cancelled CI run on the commit stops the release instead of moving it to main's tip, and a regenerated model catalog is committed on the release only and requires `force_tests`. Without `--sha` nothing changes.
+- `scripts/release-pin.mjs` (review of #3731): the pinned commit must be one of main's own first-parent commits (a merged PR's head is refused); the read-only checks also run in a dry run. When the pinned tree differs from the job's checkout, it is reinstalled and rebuilt before the forced suite. After the tag, `syncPinnedReleaseIntoMain` merges main with `--no-commit` and rebuilds each CHANGELOG.md (`release-pinned-changelog.mjs`): main's [Unreleased] keeps the entries merged after the pinned commit, and the version's section is the tag's own, so main never claims the release shipped them. The sha reaches the workflow shell through `env`.
 
 ### Why
 
@@ -14,7 +15,7 @@
 
 ### Expected merge conflict zones
 
-- `scripts/release.mjs`: `parseArgs`, `secureCiEvidence` and the top of `main()`; the `workflow_dispatch` inputs and the `Run release` step in `publish-npm.yml`.
+- `scripts/release.mjs`: `parseArgs`, `secureCiEvidence`, the top of `main()` and the final sync before the pushes; the `workflow_dispatch` inputs and the `Run release` step in `publish-npm.yml`.
 
 ## 2026-10-16 - A forced release tests its code before stamping the version and changelogs (senpi#3446)
 

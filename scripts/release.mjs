@@ -35,8 +35,10 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
 import { computeNextVersion } from "./calver.mjs";
-import { pinReleaseCommit, syncRemoteMainBeforePush } from "./release-git.mjs";
+import { syncRemoteMainBeforePush } from "./release-git.mjs";
+import { preparePinnedRelease, syncPinnedReleaseIntoMain } from "./release-pin.mjs";
 import {
 	runClaudeCodeModelSupportReport,
 	runGenerateModels,
@@ -44,7 +46,7 @@ import {
 	runInstallLock,
 	runPackageLockRefresh,
 } from "./release-artifacts.mjs";
-import { reAddUnreleasedSections, stampChangelogs } from "./release-changelog.mjs";
+import { CHANGELOGS, reAddUnreleasedSections, stampChangelogs } from "./release-changelog.mjs";
 import {
 	awaitCiEvidence,
 	catalogChangedSinceHead,
@@ -336,21 +338,22 @@ function remoteMain() {
  * A regenerated model catalog is committed and pushed to main on its own first, so CI tests exactly the tree the
  * release ships (the gap behind senpi#2645); then the release waits for that commit's green "Check and test".
  */
-function secureCiEvidence(version, dryRun, forceTests, pinned) {
+function secureCiEvidence(version, dryRun, forceTests, pinnedSha) {
 	runGenerateModels(dryRun, runCommand, log, dryRunLog);
 	runProviderDefaultsCheck(dryRun, runCommand, log, dryRunLog);
 	if (dryRun) {
 		dryRunLog(`if the catalog changed: git commit ${REGENERATED_CATALOG_PATHS.join(" ")} and git push origin main`);
-		const sha = captureCommand("git", ["rev-parse", "HEAD"]).trim();
+		const sha = pinnedSha ?? captureCommand("git", ["rev-parse", "HEAD"]).trim();
 		const plan = planCiEvidence({ sha, checkRuns: lookupCiCheckRuns(sha) });
-		dryRunLog(`test gate (preview, HEAD): ${plan.reason}`);
+		dryRunLog(`test gate (preview, ${pinnedSha ? "pinned commit" : "HEAD"}): ${plan.reason}`);
 		dryRunLog(forceTests ? "no CI wait (--force-tests runs the suite in this job)" : 'wait for the release commit\'s green "Check and test"');
 		return;
 	}
 	if (discardTimestampOnlyCatalogChange(process.cwd())) {
 		log("the regeneration changed only the catalog manifest's generatedAt stamp; keeping HEAD's catalog");
 	}
-	if (catalogChangedSinceHead(process.cwd()) && pinned) {
+	const catalogChanged = catalogChangedSinceHead(process.cwd());
+	if (catalogChanged && pinnedSha) {
 		// A pinned release cannot push a catalog commit to main for CI: main has moved past the pinned commit.
 		if (!forceTests) {
 			throw new Error("the regeneration changed the model catalog of a pinned release; dispatch it with force_tests so the suite runs on that tree");
@@ -358,7 +361,7 @@ function secureCiEvidence(version, dryRun, forceTests, pinned) {
 		log("the regeneration changed the model catalog; committing it on the pinned release only (force_tests runs the suite on it)");
 		runCommand("git", ["add", "--", ...REGENERATED_CATALOG_PATHS]);
 		gitCommit(`chore(ai): regenerate the model catalog for v${version}`, false);
-	} else if (catalogChangedSinceHead(process.cwd())) {
+	} else if (catalogChanged) {
 		log("the regeneration changed the model catalog; committing it to main so CI tests the tree this release ships");
 		runCommand("git", ["add", "--", ...REGENERATED_CATALOG_PATHS]);
 		gitCommit(`chore(ai): regenerate the model catalog for v${version}`, false);
@@ -379,7 +382,7 @@ function secureCiEvidence(version, dryRun, forceTests, pinned) {
 			remoteMain,
 			fastForwardTo: (sha) => runCommand("git", ["merge", "--ff-only", sha]),
 			log,
-			pinned,
+			pinned: pinnedSha !== null,
 		},
 	);
 }
@@ -412,7 +415,11 @@ function main() {
 		process.exit(0);
 	}
 
-	if (args.sha !== null) pinReleaseCommit(args.sha, args.dryRun, runCommand, log, dryRunLog);
+	const capture = (bin, cmdArgs) => captureCommand(bin, cmdArgs);
+	if (args.sha !== null) {
+		const driftPaths = ["packages/ai/src/models.generated.ts", "package-lock.json"];
+		preparePinnedRelease({ sha: args.sha, dryRun: args.dryRun, runCommand, capture, build: () => runBuild(false), driftPaths, log, dryRunLog });
+	}
 	preflight(args.dryRun);
 
 	const version = resolveVersion(args);
@@ -423,7 +430,7 @@ function main() {
 		dryRunLog("preview mode; no files, commits, tags, or npm state will be modified");
 	}
 
-	secureCiEvidence(version, args.dryRun, args.forceTests, args.sha !== null);
+	secureCiEvidence(version, args.dryRun, args.forceTests, args.sha);
 	runForcedTests(args.dryRun, args.forceTests);
 	applyWorkspaceVersions(version, args.dryRun, log, dryRunLog);
 	runSyncVersions(args.dryRun, runCommand, log, dryRunLog);
@@ -443,7 +450,10 @@ function main() {
 	stageChangedFiles(args.dryRun);
 	gitCommit("Add [Unreleased] section for next cycle", args.dryRun);
 
-	syncRemoteMainBeforePush(args.dryRun, runCommand, log, dryRunLog);
+	if (args.sha !== null) {
+		const files = { readFile: (file) => readFileSync(file, "utf-8"), writeFile: (file, text) => writeFileSync(file, text) };
+		syncPinnedReleaseIntoMain({ pinnedSha: args.sha, version, changelogs: CHANGELOGS, dryRun: args.dryRun, runCommand, capture, log, dryRunLog, ...files });
+	} else syncRemoteMainBeforePush(args.dryRun, runCommand, log, dryRunLog);
 	gitPush("main", args.dryRun);
 	gitPush(`v${version}`, args.dryRun);
 

@@ -127,6 +127,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.UPSTREAM_AUTOMATION_TOKEN }}
           SENPI_SKIP_PM_VERIFY: '1'
+          RELEASE_SHA: ${{ inputs.sha }}
         run: |
           test -n "$GH_TOKEN" || {
             echo "::error::UPSTREAM_AUTOMATION_TOKEN is required to push release commits and tags through branch protection."
@@ -140,8 +141,8 @@ jobs:
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             ARGS+=(--dry-run)
           fi
-          if [ -n "${{ inputs.sha }}" ]; then
-            ARGS+=(--sha "${{ inputs.sha }}")
+          if [ -n "$RELEASE_SHA" ]; then
+            ARGS+=(--sha "$RELEASE_SHA")
           fi
           if [ "${{ inputs.force_tests }}" = "true" ]; then
             ARGS+=(--force-tests)
