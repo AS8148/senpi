@@ -47,7 +47,15 @@ const V41_FLASH_MODEL_IDS: ReadonlyArray<readonly [id: string, provider: string]
 	["deepseek/deepseek-v4.1-flash-1017", "openrouter"],
 	["deepseek/deepseek-v4.1-flash-1017", "vercel-ai-gateway"],
 	["deepseek/deepseek-v4.1-flash-1017", "kilo"],
-	["deepseek-ai/DeepSeek-V4.1-Flash-1017", "huggingface"],
+	["deepseek-ai/DeepSeek-V4.1-Flash-1017", "baseten"],
+];
+
+// Catalog rows that ship the 1017 snapshot; each must exist and resolve to the V4.1 preset.
+const SHIPPED_1017_ROWS: ReadonlyArray<readonly [provider: Parameters<typeof getModels>[0], id: string]> = [
+	["openrouter", "deepseek/deepseek-v4.1-flash-1017"],
+	["vercel-ai-gateway", "deepseek/deepseek-v4.1-flash-1017"],
+	["vercel-ai-gateway", "deepseek/deepseek-v4.1-flash-1017-fast"],
+	["baseten", "deepseek-ai/DeepSeek-V4.1-Flash-1017"],
 ];
 
 // The official API retired V4 Flash on 2026-09-10 and serves these names with V4.1 Flash.
@@ -162,20 +170,15 @@ describe("DeepSeek V4.1 Flash prompt preset", () => {
 		expect(misses).toEqual([]);
 	});
 
-	it.each(["openrouter", "vercel-ai-gateway"] as const)(
-		"ships the 1017 snapshot row on %s on the V4.1 preset",
-		(provider) => {
-			// given
-			const model = (getModels(provider) as Model<Api>[]).find(
-				(candidate) => candidate.id === "deepseek/deepseek-v4.1-flash-1017",
-			);
+	it.each(SHIPPED_1017_ROWS)("ships the 1017 snapshot row on %s (%s) on the V4.1 preset", (provider, id) => {
+		// given
+		const model = (getModels(provider) as Model<Api>[]).find((candidate) => candidate.id === id);
 
-			// then
-			expect(model?.reasoning).toBe(true);
-			expect(model?.input).toContain("image");
-			expect(model && resolvePresetName(model, AUTO)).toBe("deepseek-v4-1-flash");
-		},
-	);
+		// then
+		expect(model?.reasoning).toBe(true);
+		expect(model?.input).toContain("image");
+		expect(model && resolvePresetName(model, AUTO)).toBe("deepseek-v4-1-flash");
+	});
 });
 
 describe("DeepSeek V4.1 Flash prompt content", () => {
