@@ -13,7 +13,7 @@ import { chmod, lstat, mkdir, mkdtemp, open, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { MAX_SOCKET_PATH_BYTES } from "../socket-ownership.ts";
 import { socketSecretPath } from "../socket-transport.ts";
-import { ExclusiveSecretWriteError, type FileIdentity, writeExclusiveSecret } from "./exclusive-secret.ts";
+import { type FileIdentity, writeExclusiveSecret } from "./exclusive-secret.ts";
 
 /**
  * `<dir>/c-<generation>.sock` when it fits `sun_path`; otherwise the same name under a short private directory,
@@ -57,10 +57,12 @@ class SocketDirUnsafeError extends Error {
  * without following a symlink and checked through that handle before its mode is tightened, so nothing planted at the
  * path - a symlink or another user's directory - is ever changed or used.
  */
-async function claimPrivateDirectory(root: string): Promise<void> {
-	await mkdir(root, { mode: 0o700 }).catch((error: unknown) => {
-		if (Reflect.get(Object(error), "code") !== "EEXIST") throw error;
-	});
+async function claimPrivateDirectory(root: string, create = true): Promise<void> {
+	if (create) {
+		await mkdir(root, { mode: 0o700 }).catch((error: unknown) => {
+			if (Reflect.get(Object(error), "code") !== "EEXIST") throw error;
+		});
+	}
 	const unsafe = () => new SocketDirUnsafeError(root);
 	const handle = await open(root, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW).catch(() => {
 		throw unsafe();
@@ -105,15 +107,15 @@ export async function claimListenerFiles(dir: string, generation: number): Promi
 		const secretPath = socketSecretPath(logicalPath);
 		let created: FileIdentity | undefined;
 		try {
-			const { secret, identity } = await writeSecret(secretPath, root, dir);
-			created = identity;
+			const secret = await writeSecret(secretPath, root, dir, (identity) => {
+				created = identity;
+			});
 			await proveRoot(root, dir);
 			await proveOwnFile(secretPath, root);
 			await rm(logicalPath, { force: true });
 			return { logicalPath, secretPath, secret };
 		} catch (error) {
-			const withdrawn = created ?? (error instanceof ExclusiveSecretWriteError ? error.identity : undefined);
-			if (withdrawn !== undefined) await withdraw({ secretPath, root, dir, created: withdrawn }, error);
+			if (created !== undefined) await withdraw({ secretPath, root, dir, created });
 			if (attempt >= 2 || !(root !== dir && foreignRootError(error))) throw error;
 		}
 	}
@@ -124,20 +126,25 @@ export async function claimListenerFiles(dir: string, generation: number): Promi
  * removed only once the root is proven ours and the entry proven our own regular file: a root holding it is non-empty,
  * so no sibling sweep can remove it and no other user can replace it before the write is repeated.
  */
-async function writeSecret(secretPath: string, root: string, dir: string): ReturnType<typeof writeExclusiveSecret> {
+async function writeSecret(
+	secretPath: string,
+	root: string,
+	dir: string,
+	onCreated: (identity: FileIdentity) => void,
+): Promise<Buffer> {
 	try {
-		return await writeExclusiveSecret(secretPath);
+		return await writeExclusiveSecret(secretPath, onCreated);
 	} catch (error) {
 		if (Reflect.get(Object(error), "code") !== "EEXIST") throw error;
 		await proveRoot(root, dir);
 		await proveOwnFile(secretPath, root);
 		await rm(secretPath, { force: true });
-		return writeExclusiveSecret(secretPath);
+		return writeExclusiveSecret(secretPath, onCreated);
 	}
 }
 
-function proveRoot(root: string, dir: string): Promise<void> {
-	return root === dir ? makePrivateDirectory(root) : claimPrivateDirectory(root);
+function proveRoot(root: string, dir: string, create = true): Promise<void> {
+	return root === dir ? makePrivateDirectory(root) : claimPrivateDirectory(root, create);
 }
 
 interface WithdrawTarget {
@@ -150,22 +157,45 @@ interface WithdrawTarget {
 /**
  * Withdraws the secret this attempt created. Its bytes go first, through a handle checked to be that very file, so no
  * swap of the root can turn the truncation onto another file. Its name goes only through a root proven ours again (then
- * this user's 0700 directory, where nothing else can swap the entry) and only while the entry is still that file. A
- * root that cannot be proven keeps the empty file; why is kept on the claim's error as its `cause`.
+ * this user's 0700 directory, where nothing else can swap the entry) and only while the entry is still that file. Every
+ * step is bounded: the open never blocks (a FIFO planted at the name fails at once with ENXIO), and re-proving a fallback
+ * root never recreates it. A withdrawal that stops short emits a structured warning naming the path and its state; the
+ * claim's own error is never replaced by it.
  */
-async function withdraw(target: WithdrawTarget, error: unknown): Promise<void> {
+async function withdraw(target: WithdrawTarget): Promise<void> {
 	try {
-		if (!(await emptyCreatedFile(target))) return;
-		await proveRoot(target.root, target.dir);
-		if (!sameFile(await lstat(target.secretPath), target.created)) return;
+		if (!(await emptyCreatedFile(target))) {
+			return warnWithdrawal(
+				target,
+				"foreign",
+				"the entry is not the file this claim created; it was left untouched",
+			);
+		}
+		await proveRoot(target.root, target.dir, false);
+		if (!sameFile(await lstat(target.secretPath), target.created)) {
+			return warnWithdrawal(
+				target,
+				"foreign",
+				"our file was emptied, then replaced by another entry, left untouched",
+			);
+		}
 		await rm(target.secretPath, { force: true });
 	} catch (cleanup) {
-		if (error instanceof Error && error.cause === undefined) error.cause = cleanup;
+		warnWithdrawal(target, "unknown", String(Reflect.get(Object(cleanup), "code") ?? cleanup));
 	}
 }
 
+/** `state`: what is left at the path - `foreign` (another entry, untouched) or `unknown` (the step that failed is named). */
+function warnWithdrawal(target: WithdrawTarget, state: "foreign" | "unknown", reason: string): void {
+	process.emitWarning("tool-child socket secret withdrawal stopped short", {
+		code: "SENPI_TOOL_CHILD_SECRET_WITHDRAWAL",
+		detail: JSON.stringify({ path: target.secretPath, state, reason }),
+	});
+}
+
 async function emptyCreatedFile(target: WithdrawTarget): Promise<boolean> {
-	const handle = await open(target.secretPath, constants.O_WRONLY | (constants.O_NOFOLLOW ?? 0));
+	const flags = constants.O_WRONLY | constants.O_NONBLOCK | (constants.O_NOFOLLOW ?? 0);
+	const handle = await open(target.secretPath, flags);
 	try {
 		if (!sameFile(await handle.stat(), target.created)) return false;
 		await handle.truncate(0);

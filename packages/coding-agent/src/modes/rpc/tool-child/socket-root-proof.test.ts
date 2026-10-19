@@ -1,6 +1,7 @@
 // senpi#3694: nothing is removed through a socket root before it is proven ours, nothing already at the secret's name is
 // ever followed or overwritten, no secret material outlives a failed claim, its withdrawal never reaches another
 // directory's file, and a fallback root another user takes during the claim never blocks the start.
+import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { chmod, lstat, mkdtemp, readdir, readFile, rename, rm, rmdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -114,6 +115,27 @@ describe.skipIf(process.platform === "win32")("tool-child socket root proof", ()
 		expect(socketRootWindow.order).toContain("rm-socket");
 		expect(await readdir(victim)).toEqual(["c-1.sock"]);
 	});
+
+	it("never blocks on a FIFO planted at the secret's name, and warns what it left there", async () => {
+		const dir = await deepDir();
+		const root = fallbackSocketRoot(dir);
+		cleanups.push(() => rm(root, { recursive: true, force: true }));
+		const warn = vi.spyOn(process, "emitWarning").mockImplementation(() => {});
+		cleanups.push(async () => warn.mockRestore());
+		socketRootWindow.onSocketRemoval = async (socketPath) => {
+			if (dirname(socketPath) !== root) return;
+			// Whoever holds the root replaces our secret with a FIFO nobody ever reads, then the claim fails.
+			await rm(`${socketPath}.secret`);
+			execFileSync("mkfifo", [`${socketPath}.secret`]);
+			throw new Error("claim fails after the secret exists");
+		};
+		await expect(openChannelListener({ dir, generation: 1 })).rejects.toThrow("claim fails after the secret exists");
+		const detail = warn.mock.calls
+			.map(([, options]) => options)
+			.filter((options) => Reflect.get(Object(options), "code") === "SENPI_TOOL_CHILD_SECRET_WITHDRAWAL")
+			.map((options) => JSON.parse(String(Reflect.get(Object(options), "detail"))));
+		expect(detail).toEqual([{ path: join(root, "c-1.sock.secret"), state: "unknown", reason: "ENXIO" }]);
+	}, 10_000);
 
 	it("never withdraws a secret through a root swapped after the secret was written", async () => {
 		const dir = await deepDir();
