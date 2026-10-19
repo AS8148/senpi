@@ -173,7 +173,12 @@ import {
 	resolveEnvironmentContext,
 } from "./environment-context.ts";
 import { areExperimentalFeaturesEnabled } from "./experimental.ts";
-import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
+import {
+	type ExportOptions,
+	exportSessionToHtml,
+	renderSessionToHtml,
+	type ToolHtmlRenderer,
+} from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
 import { reportExtensionHandlerStall } from "./extension-handler-stall-report.ts";
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./extensions/builtin/anthropic-subscription/account-management.ts";
@@ -11945,7 +11950,22 @@ export class AgentSession {
 	 * @returns Path to exported file
 	 */
 	async exportToHtml(outputPath?: string, options: { themeName?: string } = {}): Promise<string> {
-		const themeName = [options.themeName, this.settingsManager.getTheme()].find(
+		return await exportSessionToHtml(this.sessionManager, this.state, {
+			...this.htmlExportOptions(options.themeName),
+			outputPath,
+		});
+	}
+
+	/** Render the session to HTML in memory, passing every value through `sanitize` (used by `/share`). */
+	renderToHtml(options: { themeName?: string; sanitize: <T>(value: T) => T }): string {
+		return renderSessionToHtml(this.sessionManager, this.state, {
+			...this.htmlExportOptions(options.themeName),
+			sanitize: options.sanitize,
+		});
+	}
+
+	private htmlExportOptions(requestedTheme: string | undefined): ExportOptions {
+		const themeName = [requestedTheme, this.settingsManager.getTheme()].find(
 			(candidate) => candidate !== undefined && getThemeByName(candidate) !== undefined,
 		);
 
@@ -11955,12 +11975,7 @@ export class AgentSession {
 			theme,
 			cwd: this.sessionManager.getCwd(),
 		});
-
-		return await exportSessionToHtml(this.sessionManager, this.state, {
-			outputPath,
-			themeName,
-			toolRenderer,
-		});
+		return { themeName, toolRenderer };
 	}
 
 	/**

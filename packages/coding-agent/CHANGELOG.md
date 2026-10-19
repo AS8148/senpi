@@ -39,6 +39,8 @@
 
 ### Fixed
 
+- `/share` no longer uploads the raw session. By default it shares only your messages, the replies and the tool calls; tool outputs (file contents, command output, extension messages) are replaced by `[output omitted]` unless you choose "Include tool outputs" in the preview. Everything shared is first redacted: keys, tokens, private keys, auth headers, cookies, emails, IP addresses, your home path, account name and host name (images are left out). The preview shows what will be uploaded and who can read it, and nothing uploads until you choose Upload; "Review the exact file first" writes the exact bytes to a private temporary file that is deleted afterwards, and Cancel uploads nothing. The export no longer goes through a shared temporary file, and there is no default third-party viewer: the gist link is printed unless `PI_SHARE_VIEWER_URL` is set. `PI_DISABLE_SHARE=1` or the `enableSessionShare: false` setting turns `/share` off ([#3524](https://github.com/code-yeongyu/senpi/issues/3524)).
+
 - The mouse wheel scrolls the transcript again while an `ask_user_question` prompt is waiting. The first notch pauses option clicking (the hint says so) and any key turns it back on. The text-selection hint now names the right modifier per terminal, including VS Code on macOS ([#3604](https://github.com/code-yeongyu/senpi/issues/3604)).
 - The /btw panel stays one fixed region while a running eval's expanded output grows above it; the eval rows no longer overwrite the panel or repeat in the scrollback ([#3649](https://github.com/code-yeongyu/senpi/issues/3649))
 
