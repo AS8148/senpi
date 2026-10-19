@@ -1252,8 +1252,16 @@ For `tool_call`, this state is synchronized through the current assistant messag
 ctx.sessionManager.getEntries()             // All entries
 ctx.sessionManager.getBranch()              // Current branch (from the latest compaction window once the session compacted)
 ctx.sessionManager.getFullBranch()          // Current branch over the whole history, read from the session file
+ctx.sessionManager.reduceHistory(reducer)   // Fold every entry (like getEntries()) without holding the history; see below
 ctx.sessionManager.buildContextEntries()    // Active branch entries with compaction applied
 ctx.sessionManager.getLeafId()              // Current leaf entry ID
+```
+
+A handler that runs every turn and needs only the latest or the since-last of something should use `reduceHistory` instead of scanning `getEntries()`: on a compacted session `getEntries()` reads and keeps the whole history. A reducer is a stable, module-level `{ initial(), add(state, entry) }`; the session reads the history once and folds only the entries appended since. Treat the returned state as read-only.
+
+```typescript
+const latestNote = { initial: () => undefined, add: (latest, entry) => (entry.type === "custom" && entry.customType === "note" ? entry : latest) };
+const note = ctx.sessionManager.reduceHistory(latestNote);
 ```
 
 ### ctx.goalStoreFile

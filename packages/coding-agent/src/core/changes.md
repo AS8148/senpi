@@ -1,3 +1,23 @@
+## 2026-10-19 - A sustained event stream no longer holds a compacted session's whole history (senpi#2537)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: new `reduceHistory(reducer)` (also on `ReadonlySessionManager`) folds the whole history, every branch in append order like `getEntries()`, without keeping a full-history view. The history is read once per load and later calls fold only the entries appended since (`session-history-reduce.ts`). A `historyGeneration` counter, bumped wherever the history is replaced but not on append or mirror trim, keys the memo, and `verbatimFromCount` records how much of the mirror's tail is the history's own tail after a trim (`planLoadedTail` now reports `windowLength`).
+- `packages/coding-agent/src/core/agent-session.ts`: `_stopEngineTurn` reads the engine-turn bound from `reduceHistory(engineTurnHistory)` instead of `getEntries()`.
+
+### Why
+
+On a compacted (trimmed) session, `getEntries()` materializes and memoizes the whole file's history. `_stopEngineTurn` called it for every engine-triggered turn, and the builtin compaction checkpoint and Stop hook called it every turn, so a stream of background events held a full-history view for as long as it kept the session from settling idle: 11.7 MB of the 20 MB a 10-minute, 2-events-per-second soak on a 10,000-entry session grew on main.
+
+### Why an extension could not handle it
+
+The engine-turn bound and the session mirror are session internals; the builtin readers needed a session-manager read that does not build the view.
+
+### Expected merge conflict zones
+
+- LOW: `session-manager.ts`, the `historyGeneration` / `verbatimFromCount` fields after `fullEntryCount`, one line in `_resetToNewSession`, `_completeFileLoad`, `_loadEntries`, `_buildIndex`, `_retainLoadedTail`, `_trimMirrorAfterCompaction` and both `createBranchedSession` branches, `reduceHistory` after `getEntryCount`, and the `ReadonlySessionManager` pick list.
+- LOW: `agent-session.ts`, the first argument of `engineTurnStop` in `_stopEngineTurn` and the `engine-turn-limit.ts` import.
+
 ## 2026-10-19 - An abort that joins an open agent_end boundary still releases a held handler (senpi#3650 follow-up)
 
 ### What changed
