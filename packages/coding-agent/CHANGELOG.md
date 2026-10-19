@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- Moving a session is stricter at its edges: `release_session` with `reason: "move"` refuses a `moveId` the rest of the move would reject and a session whose own id is not a plain id, a `session_moved_away` refusal after an interrupt still returns the queued input it took, and export refuses a session whose own id is empty or not a plain id before sealing it ([#3662](https://github.com/code-yeongyu/senpi/issues/3662)).
+
 ### Removed
 
 ## [2026.10.19] - 2026-10-19
