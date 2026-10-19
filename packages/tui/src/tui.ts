@@ -874,8 +874,19 @@ export class Container implements Component {
 		}
 	}
 
-	/** Releases every child's paint-only state (see {@link Component.releaseRender}). */
+	/**
+	 * Releases paint-only state (see {@link Component.releaseRender}). A plain `Container` releases
+	 * each child. A subclass falls back to its own `invalidate()`, which may clear caches this method
+	 * cannot see; a subclass whose only paint state is its children overrides this with
+	 * {@link releaseChildren}.
+	 */
 	releaseRender(): void {
+		if (Object.getPrototypeOf(this) === Container.prototype) this.releaseChildren();
+		else this.invalidate();
+	}
+
+	/** Releases each child, falling back to `invalidate()` for a child without `releaseRender`. */
+	protected releaseChildren(): void {
 		this.composite.bump();
 		for (const child of this.children) {
 			if (child.releaseRender) child.releaseRender();

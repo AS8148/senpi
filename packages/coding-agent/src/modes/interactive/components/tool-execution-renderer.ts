@@ -22,6 +22,7 @@ type RenderContainer = Box | Container;
 /**
  * The built-in renderers, one set per working directory. Each card used to build all nine tool
  * definitions and keep its own copy of one, descriptions included, for the rest of the session (#2537).
+ * Deliberately unbounded: a session renders cards for a handful of working directories at most.
  */
 const builtInDefinitionsByCwd = new Map<string, Record<ToolName, ToolRenderers>>();
 

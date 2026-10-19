@@ -177,12 +177,13 @@ export class ToolExecutionComponent extends Container {
 	 * Invalidating instead rebuilt that content at once, so every finished card kept it for the session.
 	 */
 	override releaseRender(): void {
-		if (this.presentation === "grok" || this.animation.running) {
+		const renderer = this.renderer;
+		if (renderer === undefined || this.animation.running) {
 			this.invalidate();
 			return;
 		}
 		this.invalidateRenderCache();
-		this.renderer!.releaseContent();
+		renderer.releaseContent();
 		this.lastDisplaySignature = undefined;
 		this.displayReleased = true;
 	}

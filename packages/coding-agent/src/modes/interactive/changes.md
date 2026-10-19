@@ -2941,6 +2941,7 @@ The editor theme is built by the interactive mode itself; extensions cannot inje
 - `packages/coding-agent/src/modes/interactive/components/tool-execution.ts`: `ToolExecutionComponent.releaseRender()` drops the card's built call and result content and marks it released; `render()` rebuilds it from the card's state (`updateDisplay()`) the next time the card is painted. A running, animating or Grok-presented card is invalidated as before instead.
 - `packages/coding-agent/src/modes/interactive/components/tool-execution-renderer.ts`: `releaseContent()` detaches the content box, the self-render container and the fallback text and forgets the call and result renderer components. The built-in tool renderers come from one `createAllToolDefinitions(cwd)` per working directory instead of one per card.
 - `packages/coding-agent/src/modes/interactive/components/progressive-transcript-container.ts`: `releaseRenders()` calls a child's `releaseRender()` when it has one, else `invalidate()` as before.
+- `packages/coding-agent/src/modes/interactive/components/exploration-group.ts`: `ExplorationGroup.releaseRender()` releases its member cards; the group computes its own lines on every render.
 - `packages/coding-agent/test/suite/regressions/2537-tool-card-release.test.ts` (new).
 
 ### Why

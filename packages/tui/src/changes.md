@@ -1818,7 +1818,7 @@ Row composition, wrapping and the cursor grapheme live inside `Editor.render`; a
 
 ### What changed
 
-- `packages/tui/src/tui.ts`: `Component` gains an optional `releaseRender()`: drop what is kept only to paint (built child components, styled text) so the next `render` rebuilds it, without changing what `render` returns. `Container.releaseRender()` releases each child (falling back to `invalidate()` for a child without it).
+- `packages/tui/src/tui.ts`: `Component` gains an optional `releaseRender()`: drop what is kept only to paint (built child components, styled text) so the next `render` rebuilds it, without changing what `render` returns. `Container.releaseRender()` releases each child of a plain `Container` (a child without the hook is invalidated); a `Container` subclass falls back to its own `invalidate()`, because that override may clear caches the base class cannot see (`AssistantMessageComponent`'s render cache). `releaseChildren()` is the protected helper a subclass whose only paint state is its children uses to override it.
 
 ### Why
 
