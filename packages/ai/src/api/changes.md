@@ -1,3 +1,21 @@
+## 2026-10-19 - ChatGPT subscription Fast and Ultrafast costs use the included-usage rates (oh-my-openagent#10540)
+
+### What changed
+
+- `packages/ai/src/api/openai-codex-responses.ts`: `getServiceTierCostMultiplier` returns 2.5 for `priority`/`fast` on every model (was 2, or 2.5 for `gpt-5.5` only) and 8 for GPT-6 Astra / GPT-6.1 Sol `ultrafast` (was 6). The `openai-responses.ts` adapter keeps the API rates (2x, 6x).
+
+### Why
+
+- This adapter serves only the ChatGPT subscription lane, which spends the plan's included usage. [OpenAI's Codex pricing page](https://developers.openai.com/codex/pricing) meters Fast at 2.5x Standard and Ultrafast at 8x against included usage; 2x and 6x are the purchased-credit and API rates. A Geeky · Normal run on `gpt-6.1-sol-fast` used about 60% of a weekly limit while the shown cost tracked the lower rate.
+
+### Why an extension could not handle it
+
+- The multiplier is applied inside the adapter after the terminal usage event; an extension never sees the pre-multiplier cost.
+
+### Expected merge conflict zones
+
+- LOW: `getServiceTierCostMultiplier` in `openai-codex-responses.ts`.
+
 ## 2026-10-18 - Anthropic request bodies are gzip-compressed where the endpoint accepts it (senpi#3643)
 
 ### What changed
