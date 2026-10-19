@@ -6,8 +6,8 @@
  * runtime. argv: <serverVersion> <capabilities> <behavior: answer|silent> ... --listen unix://<path>
  */
 import { createServer } from "node:net";
-import { hostChildDrainRequestFile, watchDrainRequest } from "../../src/modes/rpc/host-drain-request.ts";
 import { HOST_GENERATION_ENV, HOST_INSTANCE_ID_ENV } from "../../src/modes/rpc/host-identity-env.ts";
+import { hostChildDrainRequestFile, watchDrainRequest } from "../../src/modes/rpc/host-stop-intent.ts";
 import { armHostWatchdog, readHostWatchdogConfigFromBrandEnv } from "../../src/modes/rpc/host-watchdog.ts";
 import { LoopLagWatchdog } from "../../src/modes/rpc/loop-lag-watchdog.ts";
 
