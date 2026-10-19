@@ -22,7 +22,7 @@
 
 ### Fixed
 
-- A session file left claimed by a stopped engine host no longer blocks reopening its thread ([#3652](https://github.com/code-yeongyu/senpi/issues/3652)).
+- A session file left claimed by a stopped engine host no longer blocks reopening its thread. If that host was only frozen or asleep, it can no longer write to the file once another host has taken it over ([#3652](https://github.com/code-yeongyu/senpi/issues/3652)).
 - On Windows, an engine host killed together with its process tree no longer keeps every later start refused as `host_stalled` once Windows reuses its process id: the host's process identity is now recorded, a host whose identity cannot be read is released once it stopped heartbeating, and the dead host's session lease no longer refuses every reopen as `session_held` once that host's generation ended ([#3658](https://github.com/code-yeongyu/senpi/issues/3658)).
 
 - The mouse wheel scrolls the transcript again while an `ask_user_question` prompt is waiting. The first notch pauses option clicking (the hint says so) and any key turns it back on. The text-selection hint now names the right modifier per terminal, including VS Code on macOS ([#3604](https://github.com/code-yeongyu/senpi/issues/3604)).
