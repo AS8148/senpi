@@ -1,5 +1,27 @@
 # core/tools changes
 
+## 2026-10-19 - Tool-dispatcher review fixes: every call through the dispatcher, exact server pins (senpi#3574)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/tool-definition-wrapper.ts`: with a dispatcher, every call goes through `dispatcher.run`, including the context-less one (the dispatcher's in-process path runs it unchanged); the wrapped tool's details type admits `ToolUnavailableDetails`.
+- `packages/coding-agent/src/core/tools/bash.ts`: `createShellToolDefinition` also pins the tool to the server when the caller injected a `spawnHook`.
+- `packages/coding-agent/src/core/tools/powershell.ts`: drops the pin its own default local operations would set and pins only for caller-injected `operations` or `spawnHook`.
+
+### Why
+
+The #3574 review: a call that skipped the dispatcher was never observed or placed, a `spawnHook` is caller code that must run where the caller is, and PowerShell's default operations are not caller-injected, so they must not pin it.
+
+### Why an extension could not handle it
+
+Tool wrapping and the built-in tool factories are core; an extension cannot route a built-in tool's calls or set its placement.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/tools/tool-definition-wrapper.ts`: the `execute` body of `wrapToolDefinition`.
+- `packages/coding-agent/src/core/tools/bash.ts`: the `serverPinned` spread at the head of `createShellToolDefinition`'s returned definition.
+- `packages/coding-agent/src/core/tools/powershell.ts`: `createPowerShellToolDefinition`'s body.
+
 ## 2026-10-19 - Never signal a child whose spawn failed (senpi#3706)
 
 ### What changed
@@ -23,7 +45,7 @@ The single `kill()` call on each listed path's stop/timeout/abort branch.
 ### What changed
 
 - `packages/coding-agent/src/core/tools/tool-definition-wrapper.ts`: `wrapToolDefinition`/`wrapToolDefinitions` take an optional `ToolDispatcher`; with one and a resolved context, execute goes through `dispatcher.run({ definition, toolCallId, params, signal, onUpdate, ctx })`; otherwise the call is unchanged, keeping upstream's `as ExtensionToolContext` idiom for the factory-less no-context case, so standalone `createBashTool` consumers keep today's behavior.
-- `packages/coding-agent/src/core/tools/read.ts`, `edit.ts`, `write.ts`, `find.ts`, `ls.ts`, `bash.ts`, `grep/index.ts`: each factory sets `serverPinned: true` on its returned definition when the caller injected `operations` or a filesystem-policy override (bash marks injected `operations` or a `spawnHook`; `powershell.ts` drops the pin its own default local operations would set and pins only for caller-injected `operations` or `spawnHook`). Such definitions execute on the session's server process even under `--tool-runtime child` with `placement: "child"`.
+- `packages/coding-agent/src/core/tools/read.ts`, `edit.ts`, `write.ts`, `find.ts`, `ls.ts`, `bash.ts`, `grep/index.ts`: each factory sets `serverPinned: true` on its returned definition when the caller injected `operations` or a filesystem-policy override (bash marks injected `operations`; powershell inherits through `createShellToolDefinition`, which always passes explicit operations). Such definitions execute on the session's server process even under `--tool-runtime child` with `placement: "child"`.
 
 ### Why
 
