@@ -6,6 +6,7 @@
  */
 import { connectChannel, type ToolChildChannel } from "./channel.ts";
 import { ToolChildJobError } from "./entry-error.ts";
+import { WakeAdmission } from "./flow-control.ts";
 import { ChildHostCalls, type HostCallTarget } from "./host-calls-child.ts";
 import { JobUpdates } from "./job-updates.ts";
 import {
@@ -42,6 +43,13 @@ export interface ToolChildJobContext {
 	readonly hostCall: (target: HostCallTarget, options?: { readonly survivesCancel?: boolean }) => Promise<unknown>;
 	/** Streams a partial result to the server in order; waits for credit when too many are unacknowledged. */
 	readonly update: (value: unknown) => Promise<void>;
+	/** This child's generation (the server's count of its spawns). */
+	readonly generation: number;
+	/**
+	 * Tells the server something happened on this child outside any job's lifetime (a background session exited). The
+	 * server hands it to the job definition whose kind is `source`. Never dropped: past the pending budget it waits.
+	 */
+	readonly wake: (source: string, value: unknown) => Promise<void>;
 }
 
 export type ToolChildJobHandler = (args: unknown, context: ToolChildJobContext) => Promise<unknown>;
@@ -85,6 +93,15 @@ export async function runToolChild(options: ToolChildEntryOptions): Promise<void
 					}),
 				};
 	const hostCalls = new ChildHostCalls(channel, refs);
+	const wakes = new WakeAdmission();
+	let wakeSeq = 0;
+	const wake = async (source: string, value: unknown): Promise<void> => {
+		const wakeId = `w${++wakeSeq}`;
+		const bytes = Buffer.byteLength(JSON.stringify(value ?? null));
+		await wakes.send(wakeId, bytes);
+		channel.send({ type: "wake", wakeId, source, bytes, value });
+	};
+	const session = { generation, wake };
 	let readerBlocked = false;
 	let shutdownRequested = false;
 	channel.onMessage((message) => {
@@ -105,7 +122,10 @@ export async function runToolChild(options: ToolChildEntryOptions): Promise<void
 				return;
 			case "job":
 				if (controls.value("EXIT_MID_JOB") === message.kind) exit(1);
-				void runJob(channel, gate, hostCalls, refs, options.handlers, running, streams, message);
+				void runJob(channel, gate, hostCalls, refs, options.handlers, running, streams, message, session);
+				return;
+			case "wake_ack":
+				wakes.ack(message.wakeId);
 				return;
 			case "update_ack":
 				streams.get(message.jobId)?.acked(message.seq);
@@ -159,6 +179,7 @@ async function runJob(
 	running: Map<string, AbortController>,
 	streams: Map<string, JobUpdates>,
 	job: ToolChildMessageOf<"job">,
+	session: Pick<ToolChildJobContext, "generation" | "wake">,
 ): Promise<void> {
 	const refReader = refs?.reader;
 	const handler = handlers[job.kind];
@@ -198,6 +219,8 @@ async function runJob(
 			gate,
 			hostCall,
 			update,
+			generation: session.generation,
+			wake: session.wake,
 		});
 		channel.send({ type: "result", jobId: job.jobId, value: value ?? null });
 	} catch (error) {

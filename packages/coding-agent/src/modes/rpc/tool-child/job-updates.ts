@@ -17,6 +17,8 @@ export class JobUpdates {
 	#acked = 0;
 	#waiters: Array<() => void> = [];
 	#ended = false;
+	/** The previous update's send: updates go out in call order, each packed before it takes its seq. */
+	#tail: Promise<void> = Promise.resolve();
 
 	constructor(options: {
 		readonly jobId: string;
@@ -30,14 +32,21 @@ export class JobUpdates {
 		this.#window = options.window ?? TOOL_CHILD_LIMITS.updatesInFlight;
 	}
 
-	/** Sends the next update once a credit is free; rejects after the job ended. */
-	async update(value: unknown): Promise<void> {
+	/** Sends the next update once a credit is free, after every earlier one; rejects after the job ended. */
+	update(value: unknown): Promise<void> {
+		const sent = this.#tail.then(() => this.#send(value));
+		this.#tail = sent.catch(() => undefined);
+		return sent;
+	}
+
+	async #send(value: unknown): Promise<void> {
 		while (!this.#ended && this.#nextSeq - this.#acked >= this.#window)
 			await new Promise<void>((resolve) => this.#waiters.push(resolve));
 		if (this.#ended) throw new Error(`update after job ${this.#jobId} ended`);
-		const seq = ++this.#nextSeq;
 		const packed =
 			this.#writer === undefined ? { inline: true as const, value } : await packPayload(value, this.#writer);
+		if (this.#ended) throw new Error(`update after job ${this.#jobId} ended`);
+		const seq = ++this.#nextSeq;
 		this.#channel.send(
 			packed.inline
 				? {

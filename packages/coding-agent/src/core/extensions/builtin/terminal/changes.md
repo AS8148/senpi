@@ -2,6 +2,11 @@
 
 ### What changed
 
+- `packages/coding-agent/src/core/extensions/builtin/terminal/extension.ts`: `bash`, `bash_output`, `bash_input`, `bash_resize` and `kill_bash` are registered with `placement: "child"` and a `childJob` (`tools/child-placement.ts`); `monitor` stays on the server. Under `--tool-runtime in-process` both are ignored.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/child-placement.ts` (new): the job each tool runs on the child; a child's session ids carry its generation (`bash_c<gen>_<n>`, via `TerminalManager`'s `idScope`), so `placement` sends a call naming a server session (a monitor's `bash_N`, `mon_*`, `watch_*`, `rpc_*`) to the server, a child id to the child, and `kill_bash` without an id to both; `result` reports a child id from an earlier generation `lost`; the bash job's `wake` hands the child's background start/exit to `onBackgroundStart`/`onBackgroundExit` and `childExited` ends the background sessions of an exited generation with a notice.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/manager.ts`: `TerminalManagerOptions.idScope`, passed to the pty `SessionRegistry`.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/context.ts`, `notify.ts`, `session-bundle.ts`, `extension-state.ts`, `tools/spawn.ts` (`describeExit`): a background exit is read through `TerminalExitView` (`exitResult` + `fullOutput()`), which a live session satisfies and which the server builds from the child's exit summary.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/spawn.ts`: a refused barrier release stops the session it had registered.
 - `packages/coding-agent/src/core/extensions/builtin/terminal/tools/context.ts`: optional `TerminalToolContext.launchBarrier` (`wrap` + `release`).
 - `packages/coding-agent/src/core/extensions/builtin/terminal/tools/spawn.ts`: `spawnCommandSession` starts the command through `launchBarrier.wrap` and awaits `launchBarrier.release` (the server records the started PTY session's group, then the go-line is written) before any stdin-transport command is written. Without a barrier - the in-process path - it spawns exactly as before.
 

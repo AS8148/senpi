@@ -35,6 +35,13 @@ export interface ToolChildStatus {
 	readonly pid: number;
 }
 
+/** A child's `wake`: something happened on it outside any job's lifetime, for the job kind named by `source`. */
+export interface ToolChildWake {
+	readonly source: string;
+	readonly value: unknown;
+	readonly generation: number;
+}
+
 export class ToolChildError extends Error {
 	readonly code: string;
 	constructor(code: string, message: string) {
@@ -57,6 +64,8 @@ export interface ToolChildClientOptions {
 	readonly timers?: SupervisorTimers;
 	/** Serves the child's reverse-bridge calls (tool, completion, reserved, list_tools); unset = every call fails. */
 	readonly onHostCall?: HostCallHandler;
+	/** Receives the child's wakes, in order; each is acknowledged once delivered. */
+	readonly onWake?: (wake: ToolChildWake) => void;
 	/** Observes the child's cancel acknowledgements (tests and status). */
 	readonly onCancelAck?: (jobId: string) => void;
 	/** Read for `SENPI_TOOL_CHILD_DEADLINE_<KIND>_MS` fixture overrides. */
@@ -412,6 +421,13 @@ export class ToolChildClient {
 						p.reject(new ToolChildError(frame.code, frame.type === "job_error" ? frame.message : "refused")),
 					),
 				);
+				return;
+			case "wake":
+				try {
+					this.#options.onWake?.({ source: frame.source, value: frame.value, generation: live.generation });
+				} finally {
+					live.channel.send({ type: "wake_ack", wakeId: frame.wakeId });
+				}
 				return;
 			case "cancel_ack":
 				live.supervisor.cancelAcked(frame.jobId);

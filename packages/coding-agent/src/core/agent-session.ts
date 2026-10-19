@@ -265,6 +265,7 @@ import type {
 	CompactionRejectionCause,
 	FilesystemPolicyChecker,
 	ModelSelectSource,
+	ToolChildJob,
 } from "./extensions/types.ts";
 import { normalizeToolExposure, RUNTIME_EXTENSION_PATH } from "./extensions/types.ts";
 import { createUserActivitySource, emitUserActivity, type UserActivityKind } from "./extensions/user-activity.ts";
@@ -1526,8 +1527,16 @@ export class AgentSession {
 							...toolChildModuleRoots(this._extensionRunner.getAllRegisteredTools()),
 							...childModuleRoots(this._extensionRunner.getAllChildModules()),
 						],
-						onRecord: (record) => this._emit({ type: "session_tool_child", ...record }),
+						onRecord: (record) => {
+							this._emit({ type: "session_tool_child", ...record });
+							if (record.state === "exited")
+								for (const job of this._childJobs()) job.childExited?.(record.generation);
+						},
 						onHostCall: hostCalls,
+						onWake: (wake) => {
+							for (const job of this._childJobs())
+								if (job.kind === wake.source) job.wake?.(wake.value, wake.generation);
+						},
 					})
 				: undefined;
 		this._toolDispatcher = createToolDispatcher({
@@ -4613,6 +4622,13 @@ export class AgentSession {
 	 * `allowLazyActivation` hard stop, then invoke activators in registration order.
 	 * The caller re-resolves the tool from the active registry before execution.
 	 */
+	/** The child jobs the registered tools declare (`ToolDefinition.childJob`): who a child's wake or exit concerns. */
+	private _childJobs(): ToolChildJob[] {
+		return this._extensionRunner
+			.getAllRegisteredTools()
+			.flatMap((tool) => (tool.definition.childJob === undefined ? [] : [tool.definition.childJob]));
+	}
+
 	private _callableToolNames(): string[] {
 		const names = this.agent.state.tools.map((tool) => tool.name);
 		for (const [name, { definition }] of this._toolDefinitions) {

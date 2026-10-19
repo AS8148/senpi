@@ -47,6 +47,16 @@ export function parseUserBashArgs(value: unknown): UserBashJobArgs {
 	};
 }
 
+/** Resolves once the stream has delivered its last chunk (or there is none). */
+function streamClosed(stream: NodeJS.ReadableStream | null | undefined): Promise<void> {
+	if (stream === null || stream === undefined) return Promise.resolve();
+	return new Promise((resolveClosed) => {
+		stream.once("end", () => resolveClosed());
+		stream.once("close", () => resolveClosed());
+		stream.once("error", () => resolveClosed());
+	});
+}
+
 function killGroup(pid: number): void {
 	try {
 		process.kill(-pid, "SIGKILL");
@@ -78,9 +88,19 @@ async function runUserBash(args: UserBashJobArgs, job: ToolChildJobContext): Pro
 		child.stdin?.on("error", () => {});
 		child.stdin?.end(args.command);
 	}
-	const forward = (chunk: Buffer) => void job.update({ data: chunk.toString("base64") } satisfies UserBashUpdate);
+	// Every chunk is sent in order and observed; the result settles only after the last one was sent.
+	let sent = Promise.resolve();
+	let updateFailure: unknown;
+	const forward = (chunk: Buffer) => {
+		sent = sent
+			.then(() => job.update({ data: chunk.toString("base64") } satisfies UserBashUpdate))
+			.catch((error: unknown) => {
+				updateFailure ??= error;
+			});
+	};
 	child.stdout?.on("data", forward);
 	child.stderr?.on("data", forward);
+	const drained = Promise.all([streamClosed(child.stdout), streamClosed(child.stderr)]);
 	const pid = child.pid;
 	const stop = () => {
 		if (pid !== undefined) killGroup(pid);
@@ -89,7 +109,14 @@ async function runUserBash(args: UserBashJobArgs, job: ToolChildJobContext): Pro
 	const timer = args.timeoutSeconds === undefined ? undefined : setTimeout(stop, args.timeoutSeconds * 1000);
 	try {
 		const { exitCode, signal } = await launched.exited;
+		await drained;
+		await sent;
 		if (job.signal.aborted) throw new ToolChildJobError("user_bash_aborted", "aborted");
+		if (updateFailure !== undefined)
+			throw new ToolChildJobError(
+				"user_bash_output_lost",
+				`output could not be sent: ${updateFailure instanceof Error ? updateFailure.message : String(updateFailure)}`,
+			);
 		if (exitCode !== null) return { exitCode };
 		return { exitCode: signal === null ? null : 128 + (osConstants.signals[signal] ?? 0) };
 	} finally {

@@ -4,6 +4,7 @@
  * environment is resolved here, on the server, exactly as the in-process operations resolve it.
  */
 
+import { randomUUID } from "node:crypto";
 import { getShellEnv } from "../../utils/shell.ts";
 import type { BashOperations } from "../tools/bash.ts";
 import type { ToolChildKindRunner } from "./tool-dispatcher.ts";
@@ -39,7 +40,7 @@ export function childBashOperations(runner: ToolChildKindRunner, options?: { she
 					...(timeout === undefined || timeout <= 0 ? {} : { timeoutSeconds: timeout }),
 				},
 				{
-					toolCallId: `user-bash-${Date.now().toString(36)}`,
+					toolCallId: `user-bash-${randomUUID()}`,
 					signal,
 					onUpdate: (update) => {
 						const chunk = chunkOf(update);

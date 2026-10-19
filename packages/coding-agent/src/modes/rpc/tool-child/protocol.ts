@@ -156,7 +156,7 @@ export type ChildToServer =
 			breakaway: boolean;
 	  }
 	| { type: "slot_state"; launchId: string; ackTick: number | null; invokeTick: number | null; invocations: number }
-	| { type: "wake"; wakeId: string; source: string; bytes: number }
+	| { type: "wake"; wakeId: string; source: string; bytes: number; value?: unknown }
 	| { type: "batch"; jobId: string; entries: ParsedEntryMeta[]; done: boolean }
 	/** A running job's partial result, in order (`seq` from 1); large ones by acknowledged reference. */
 	| { type: "update"; jobId: string; seq: number; value?: unknown; valueRef?: PayloadRef }

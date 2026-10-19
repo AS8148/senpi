@@ -89,7 +89,7 @@ const SHAPES = {
 		invokeTick: req("number|null"),
 		invocations: req("number"),
 	},
-	wake: { wakeId: req("string"), source: req("string"), bytes: req("number") },
+	wake: { wakeId: req("string"), source: req("string"), bytes: req("number"), value: opt("json") },
 	batch: { jobId: req("string"), entries: req("entries"), done: req("boolean") },
 	update: { jobId: req("string"), seq: req("number"), value: opt("json"), valueRef: opt("ref") },
 	trace: { atMs: req("number"), event: req("string"), detail: opt("detail") },

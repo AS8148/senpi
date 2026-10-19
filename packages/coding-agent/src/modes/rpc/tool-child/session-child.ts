@@ -12,7 +12,7 @@ import type {
 	ToolChildRunner,
 	ToolChildRunResult,
 } from "../../../core/tool-dispatch/tool-dispatcher.ts";
-import { ToolChildClient, ToolChildError, type ToolChildStatus } from "./client.ts";
+import { ToolChildClient, ToolChildError, type ToolChildStatus, type ToolChildWake } from "./client.ts";
 import type { HostCallHandler } from "./host-calls-server.ts";
 import { CrashLoop, fixtureDeadline } from "./job-policy.ts";
 import type { ToolChildCommand } from "./launch.ts";
@@ -40,6 +40,8 @@ export interface SessionToolChildOptions {
 	readonly command?: ToolChildCommand;
 	/** Serves the child's reverse-bridge calls; the request's `context.toolCallId` names the calling tool call. */
 	readonly onHostCall?: HostCallHandler;
+	/** Receives the child's wakes (`ToolChildWake`); the session hands each to the job definition of its kind. */
+	readonly onWake?: (wake: ToolChildWake) => void;
 	/** The crash loop's clock; tests inject a fake one. */
 	readonly now?: () => number;
 }
@@ -84,6 +86,7 @@ export class SessionToolChild {
 			...(options.command === undefined ? {} : { command: options.command }),
 			onStatus: (status) => this.#onStatus(status),
 			...(options.onHostCall === undefined ? {} : { onHostCall: options.onHostCall }),
+			...(options.onWake === undefined ? {} : { onWake: options.onWake }),
 		});
 	}
 

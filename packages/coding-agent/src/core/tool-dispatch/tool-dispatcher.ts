@@ -211,13 +211,27 @@ export class ChildToolDispatcher extends BaseToolDispatcher {
 		}
 		const childJob = call.definition.childJob;
 		if (childJob !== undefined) {
+			const where = childJob.placement?.(call.params) ?? "child";
+			if (where === "server") return this.runOnServer(call);
 			if (this.#kindRunner === undefined) return Promise.resolve(unavailableToolResult(call.definition.name));
+			if (where === "both") return this.#runOnBoth(this.#kindRunner, childJob, call);
 			return this.#runKind(this.#kindRunner, childJob, call);
 		}
 		const job = childModuleJob(call);
 		if (job === undefined || this.#childRunner === undefined)
 			return Promise.resolve(unavailableToolResult(call.definition.name));
 		return this.#runOnChild(this.#childRunner, job, call);
+	}
+
+	/** The server's body first (its own state), then the child's job; the result carries both contents, the child's details. */
+	async #runOnBoth<TDetails>(
+		runner: ToolChildKindRunner,
+		childJob: ToolChildJob,
+		call: ToolDispatchCall<TDetails>,
+	): Promise<AgentToolResult<TDetails>> {
+		const local = await this.runOnServer(call);
+		const remote = await this.#runKind(runner, childJob, call);
+		return { ...remote, content: [...local.content, ...remote.content] };
 	}
 
 	async #runKind<TDetails>(

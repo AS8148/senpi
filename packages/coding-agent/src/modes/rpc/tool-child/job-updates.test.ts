@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { ToolChildClient } from "./client.ts";
 import { JobUpdates } from "./job-updates.ts";
+import { PayloadRefWriter } from "./payload-ref.ts";
 import { TOOL_CHILD_LIMITS } from "./protocol.ts";
 
 const resolver = pathToFileURL(resolve(import.meta.dirname, "../../../experimental/source-resolver.ts")).href;
@@ -68,6 +69,27 @@ describe.skipIf(process.platform === "win32")("streamed job updates", () => {
 		stream.acked(10);
 		await producing;
 		expect(sent).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+	});
+
+	it("sends unawaited updates in call order with consecutive seqs, a large one packed first included", async () => {
+		const root = await mkdtemp(join(tmpdir(), "tju-order-"));
+		cleanups.push(() => rm(root, { recursive: true, force: true }));
+		const frames: Array<{ seq: number; byRef: boolean }> = [];
+		const stream = new JobUpdates({
+			jobId: "j1",
+			channel: {
+				send: (frame) =>
+					frame.type === "update" ? frames.push({ seq: frame.seq, byRef: frame.valueRef !== undefined }) > 0 : true,
+			},
+			writer: new PayloadRefWriter({ root, generation: 1 }),
+		});
+		const big = stream.update({ big: "x".repeat(TOOL_CHILD_LIMITS.REF_THRESHOLD + 1024) });
+		const small = stream.update({ small: true });
+		await Promise.all([big, small]);
+		expect(frames).toEqual([
+			{ seq: 1, byRef: true },
+			{ seq: 2, byRef: false },
+		]);
 	});
 
 	it("releases a producer waiting for credit when its job ends, with an error rather than a hang", async () => {

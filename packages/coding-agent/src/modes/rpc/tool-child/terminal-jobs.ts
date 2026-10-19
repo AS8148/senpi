@@ -9,11 +9,15 @@ import type { AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import type { Static, TSchema } from "typebox";
 import { Value } from "typebox/value";
 import { TerminalManager } from "../../../core/extensions/builtin/terminal/manager.ts";
+import { NOTICE_TAIL_MAX_CHARS } from "../../../core/extensions/builtin/terminal/notify.ts";
+import { sanitizeTerminalOutput } from "../../../core/extensions/builtin/terminal/output-format.ts";
+import type { TimeoutAction } from "../../../core/extensions/builtin/terminal/settings.ts";
 import { createPtyBashTool } from "../../../core/extensions/builtin/terminal/tools/bash.ts";
 import { createBashInputTool } from "../../../core/extensions/builtin/terminal/tools/bash-input.ts";
 import { createBashOutputTool } from "../../../core/extensions/builtin/terminal/tools/bash-output.ts";
 import { createBashResizeTool } from "../../../core/extensions/builtin/terminal/tools/bash-resize.ts";
 import type {
+	TerminalExitView,
 	TerminalLaunchBarrier,
 	TerminalToolContext,
 } from "../../../core/extensions/builtin/terminal/tools/context.ts";
@@ -24,7 +28,11 @@ import { ToolChildJobError } from "./entry-error.ts";
 /** Inside the PTY: no echo while it waits for the go-line, then the real command keeps the PTY's pid and group. */
 const PTY_GO_SHIM = 'stty -echo 2>/dev/null; IFS= read -r _go || exit 127; stty echo 2>/dev/null; exec "$0" "$@"';
 
-import { TERMINAL_CHILD_JOB_KINDS as TERMINAL_JOB_KINDS } from "../../../core/extensions/builtin/terminal/tools/child-placement.ts";
+import {
+	childTerminalIdScope,
+	TERMINAL_CHILD_JOB_KINDS as TERMINAL_JOB_KINDS,
+	type TerminalBackgroundWake,
+} from "../../../core/extensions/builtin/terminal/tools/child-placement.ts";
 
 export { TERMINAL_JOB_KINDS };
 
@@ -49,6 +57,7 @@ export interface TerminalJobArgs {
 	readonly shellPath?: string;
 	readonly defaultCols: number;
 	readonly defaultRows: number;
+	readonly timeoutAction?: TimeoutAction;
 }
 
 function parseArgs(value: unknown): TerminalJobArgs {
@@ -60,6 +69,7 @@ function parseArgs(value: unknown): TerminalJobArgs {
 	if (typeof cwd !== "string" || typeof toolCallId !== "string" || typeof env !== "object" || env === null)
 		throw new ToolChildJobError("terminal_job_bad_args", "a terminal job needs cwd, toolCallId and env");
 	const shellPath = field("shellPath");
+	const timeoutAction = field("timeoutAction");
 	return {
 		params: field("params"),
 		toolCallId,
@@ -70,6 +80,7 @@ function parseArgs(value: unknown): TerminalJobArgs {
 		...(typeof shellPath === "string" ? { shellPath } : {}),
 		defaultCols: Number(field("defaultCols")) || 0,
 		defaultRows: Number(field("defaultRows")) || 0,
+		...(timeoutAction === "background" || timeoutAction === "kill" ? { timeoutAction } : {}),
 	};
 }
 
@@ -95,12 +106,44 @@ function barrierFor(job: ToolChildJobContext): TerminalLaunchBarrier {
 	};
 }
 
-/** The handlers; `manager` is the child's one terminal manager (shared by every terminal job of this child). */
-export function createTerminalJobHandlers(
-	manager: TerminalManager = new TerminalManager(),
-): Readonly<Record<string, ToolChildJobHandler>> {
+/** The tail a background exit notice shows, sanitized here so the wake carries only what the notice can use. */
+function exitSummary(id: string, runtime: TerminalExitView): TerminalBackgroundWake {
+	const output = sanitizeTerminalOutput(runtime.fullOutput()).trimEnd();
+	const exit = runtime.exitResult;
+	return {
+		event: "background_exit",
+		id,
+		exit:
+			exit === null
+				? null
+				: { exitCode: exit.exitCode, signal: exit.signal, cancelled: exit.cancelled, timedOut: exit.timedOut },
+		output: output.length > NOTICE_TAIL_MAX_CHARS ? output.slice(output.length - NOTICE_TAIL_MAX_CHARS - 1) : output,
+	};
+}
+
+/**
+ * The handlers. The child's one terminal manager (shared by every terminal job of this child) is made on the first job,
+ * its ids scoped by this child's generation so they never collide with the server's or an earlier child's.
+ */
+export function createTerminalJobHandlers(injected?: TerminalManager): Readonly<Record<string, ToolChildJobHandler>> {
+	let manager = injected;
+	const managerFor = (generation: number): TerminalManager => {
+		manager ??= new TerminalManager({ idScope: childTerminalIdScope(generation) });
+		return manager;
+	};
+	const tell = (job: ToolChildJobContext, wake: TerminalBackgroundWake): void => {
+		job.wake(TERMINAL_JOB_KINDS.bash, wake).catch((error: unknown) => {
+			process.stderr.write(
+				`tool-child: terminal ${wake.event} for ${wake.id} not delivered: ${error instanceof Error ? error.message : String(error)}\n`,
+			);
+		});
+	};
 	const contextFor = (args: TerminalJobArgs, job: ToolChildJobContext): TerminalToolContext => ({
-		manager,
+		manager: managerFor(job.generation),
+		...(args.timeoutAction === undefined ? {} : { timeoutAction: args.timeoutAction }),
+		onBackgroundStart: (id, description, startedAtMs) =>
+			tell(job, { event: "background_start", id, description, startedAtMs }),
+		onBackgroundExit: (id, runtime) => tell(job, exitSummary(id, runtime)),
 		cwd: args.cwd,
 		...(args.shellPath === undefined ? {} : { shellPath: args.shellPath }),
 		defaultCols: args.defaultCols,
@@ -115,7 +158,13 @@ export function createTerminalJobHandlers(
 			const tool = create(contextFor(args, job));
 			if (!Value.Check(tool.parameters, args.params))
 				throw new ToolChildJobError("terminal_job_bad_args", "the tool's parameters do not match its schema");
-			const onUpdate: AgentToolUpdateCallback = (update) => void job.update(update);
+			const onUpdate: AgentToolUpdateCallback = (update) => {
+				job.update(update).catch((error: unknown) => {
+					process.stderr.write(
+						`tool-child: ${args.toolCallId} update not sent: ${error instanceof Error ? error.message : String(error)}\n`,
+					);
+				});
+			};
 			return tool.execute(args.toolCallId, args.params, job.signal, onUpdate, { cwd: args.cwd });
 		};
 	return {
