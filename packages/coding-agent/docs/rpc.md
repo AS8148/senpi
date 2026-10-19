@@ -129,6 +129,26 @@ Use `/account <provider> rename <id> <display name...>` or the corresponding `/g
 
 A label is stored NFC-normalized with internal whitespace collapsed, must contain at least one visible character, and may not exceed 32 terminal columns (measured in grapheme clusters, so CJK and emoji count two columns each). Uniqueness within a provider folds case, Unicode compatibility forms, invisible code points, and Cyrillic lookalikes, so two labels that render identically are refused.
 
+## Account order
+
+By default a provider's accounts are picked per session by rendezvous hashing, and a failed account fails over in that hash order. A user order replaces that ranking: requests try the pinned account first, then the first unblocked account in the order, then the accounts the order does not name, in hash order. On the Claude subscription lane, a session keeps the account its conversation already lives on while that account can serve, ahead of the order, so setting an order does not move running conversations.
+
+`get_provider_accounts` lists the accounts the order names first, in that order, then the rest in stored order (the hash ranking is per session, so a listing cannot show it). It reports `ordered: true` while a stored order names at least one listed account. A pinned account serves first wherever it is listed; read its `pinned` flag. Every lane that picks an account honors the order: the generic credential pool, the Claude subscription lane and the Cursor CLI lane.
+
+#### account_order
+
+Set the order, or clear it with `names: null`:
+
+```json
+{"id": "o1", "type": "account_order", "provider": "openai", "names": ["work", "default"]}
+```
+
+```json
+{"id": "o1", "type": "response", "command": "account_order", "success": true}
+```
+
+`names` may name a subset; accounts it leaves out come after it. The command fails without changing anything when a name is not one of the provider's accounts, appears twice, or the list is empty, and when the provider has no stored credential (the order is kept beside the pin in `auth.json`). Removing an account drops it from the order. Success emits `auth_accounts_changed`. Only account names cross RPC, never credential material.
+
 ## Starting RPC Mode
 
 ### RPC client lifecycle
@@ -263,6 +283,30 @@ which lazily spawns one filesystem-watch Worker per session
 measured 0 additional threads per session. Size a daemon from those numbers: it never refuses an `open_session` for
 occupancy, so the ceiling is the machine's memory and its per-process thread and descriptor limits, not a session
 count the host enforces.
+
+### Tool runtime (`--tool-runtime in-process|child`)
+
+`--tool-runtime` selects where a session's heavy tool work runs. `SENPI_TOOL_RUNTIME` is the fallback when the flag is
+absent, and `in-process` is the default. Any other value, from either source, is a startup error.
+
+- `in-process` - every tool runs on the host's own event loop, as it always has.
+- `child` - each session gets its own tool child (senpi#3566): a separate process the engine starts by re-entering
+  itself, on the first tool call routed to it, never earlier. No command the child runs starts before the host has
+  recorded the launch. Today only an extension tool with `placement: "child"` and a `childModule` (`{ path, export }`,
+  a file inside that extension's directory) runs there; every other tool still runs on the host.
+
+The child's state is visible two ways:
+
+- a `session_tool_child` record `{ state: "spawned" | "exited" | "respawned", generation, pid }` on the session's
+  stream whenever it changes (a dead child is started again, as a new `generation`, by the next job routed to it);
+- `tool_child: { state: "none" | "live" | "exited", generation?, pid? }` on every `list_sessions` row (`none` under
+  `in-process`, and for sessions on the worker runtime).
+
+A multi-session host and a single-session `--mode rpc` process each advertise their choice as one
+`tool_runtime:in-process` or `tool_runtime:child` entry in `get_protocol_info.capabilities`. Under `child` they also
+advertise one `placement:<name>` entry for each part of the tool child that has landed (`placement:launch-barrier`:
+every command a child-run tool starts passes the execution barrier). A job worker cannot start worker threads of its
+own (`tool_child_nested_worker_refused`), so no launch escapes the barrier that way.
 
 ### Host identity (`get_protocol_info`)
 
@@ -435,6 +479,10 @@ are what this decision encodes; the other two are what a client must not undo el
   that window, while its process is alive, the ensure fails with `HostEnsureRefusedError { reason: "host_stalled" }`
   and sends no signal, starts no generation beside it and leaves its registration untouched - a stalled host is still
   serving its sessions.
+  When no registration names the endpoint at all, yet something still accepts connections at the public path and did
+  not answer `get_protocol_info`, the ensure fails with `HostEnsureRefusedError { reason: "endpoint_occupied" }` (exit 3)
+  and leaves that process and its entry alone: a start there could only lose the bind and exit without a reason. An
+  entry nobody listens behind is still free and is replaced by the start.
 - **I2 - compatibility is protocol version + capabilities, never semver equality.** An ordinal that cannot be
   compared (a build without git metadata, a host that reports none) is EQUAL, and since a handoff requires
   STRICTLY greater, such a pair attaches instead of upgrading.
@@ -725,7 +773,7 @@ which prints the bare socket path).
   `senpi host handoff` command.
 - `status` prints `{ reachable, lifecycle, socket, pid, instanceId, generation, engineVersion, capabilities,
   launchProfile, runtimeBuildId, handover, sessions: { total, interactive, worker, retained, foreign_attached, foreign_retained },
-  zombies, rss_mb, host_rss_mb, open_fds, memory_pressure, env_keys, generations, crashes, shard, session_rows,
+  zombies, rss_mb, host_rss_mb, host_footprint_mb, open_fds, memory_pressure, env_keys, generations, crashes, shard, session_rows,
   claims_live, claims }` and exits 3 when nothing answers - with the same
   field set, so a caller parses one shape and branches on one boolean. The additive `lifecycle` field is
   `"ready"` while an answering supervised host accepts opens, `"stopping"` while it shuts down or drains,
@@ -738,7 +786,10 @@ which prints the bare socket path).
   count from the point of view of a client holding none of those sessions itself. `rss_mb`, `open_fds` and
   `zombies` describe the daemon's whole process tree (supervisor, host, and every tool, kernel and server its
   sessions spawned); `host_rss_mb` is only the supervisor and the host process, the number `ps` shows for those
-  pids (the host's memory sampler judges pressure by the host's footprint instead, see "Memory pressure"). All are `null` where the platform does not publish them
+  pids (the host's memory sampler judges pressure by the host's footprint instead, see "Memory pressure").
+  `host_footprint_mb` is that footprint for the same supervisor and host processes (`phys_footprint` on macOS,
+  `RssAnon` on Linux): unlike RSS it keeps counting compressed and swapped pages, so a host whose RSS reads
+  1.3 GB can hold 14 GB, and it is the number to watch when a host grows. All are `null` where the platform does not publish them
   (`open_fds` is `/proc`-only). `generations` lists every ALIVE generation of
   this daemon as `{ instanceId, generation, pid, engineVersion, rss_mb, host_rss_mb, sessions, current, alive }`, newest
   ordinal last: `rss_mb` is that generation's own process tree, `host_rss_mb` only its supervisor and host processes, and `sessions` counts the session files it
@@ -1585,7 +1636,9 @@ What the host does enforce are lifecycle windows, and they only ever return memo
   reaches zero attachments and closes the session, host shutdown closes it, and the idle-eviction window above still
   parks it (or the completed-detached-worker rule above parks it sooner) — announced as
   `session_parked { sessionId, sessionPath }`, after which the file reopens by path like any
-  evicted session, and the parked session counts as gone for the empty-host exit below. It is also bounded by the empty-host exit
+  evicted session, and the parked session counts as gone for the empty-host exit below. The park is also recorded
+  for the NEXT generation, which reopens it on startup; the host that parked it never reopens it on its own, so a
+  client reopening the session right after `session_parked` is the only open of that path (senpi#3485). It is also bounded by the empty-host exit
   and the supervisor's idle-exit window below: retention survives a client, not the host. Any attach may turn retention
   on for a live session; no attach turns it off for clients that already rely on it. Omitting the flag is byte-identical
   to the previous behavior — the session is closed with its last connection. Probe `retain_on_disconnect` in
@@ -1627,9 +1680,10 @@ registrant opens no socket and writes no registry directory.
   `endpoint_kind: "tui"`, `owner` and `alive`, probing it for at most 1.5 s. `senpi host gc` reaps a dead one on
   the same evidence as a host. `ensure`, `handoff` and `stop` refuse it with `unsupported_endpoint_kind` (exit 3)
   before connecting, because a terminal endpoint is owned by its terminal process.
-- **Commands.** Anything not listed below is answered `unsupported` as data. No command can prompt, steer, queue a
-  follow-up, open a session or run a command.
-  - `get_protocol_info`: `mode: "tui"`, `capabilities: ["tui_control"]`, `generation: 0`, the endpoint's
+- **Commands.** Anything not listed below is answered `unsupported` as data. No command opens another session or
+  runs a command; input goes through the terminal's admission (`steer`/`follow_up`/`prompt` below), so the
+  user's draft still holds it.
+  - `get_protocol_info`: `mode: "tui"`, `endpoint_kind: "tui"`, `capabilities: ["tui_control", "session_status"]`, `generation: 0`, the endpoint's
     `instanceId`, and `commands`: every command this endpoint accepts. A terminal from before the session
     controls below lists no `commands`.
   - `list_sessions`: exactly one row, `kind: "interactive"`, `surface: "tui"`, `attachments: 1`.
@@ -1641,6 +1695,26 @@ registrant opens no socket and writes no registry directory.
     `state`, `report` (an assistant message's text), `question` (pending question ids) or `completion` (the
     session went idle, with `turn_epoch`). Resubscribing with the last `seq` replays what the 256-record ring
     still holds after it.
+  - `open_session { sessionPath }` (or `{ sessionId }`) naming this terminal's session attaches the connection, as
+    on a host: the answer is `{ sessionId, state, attached: true }`, preceded by the replay of the in-flight
+    message and pending questions, then the session's records (`message_update`, `agent_end`, ...) in the
+    host's projection. A path or id of any other session is refused `terminal_single_session`; a terminal hosts
+    one session. Detaching is closing the connection; neither changes the terminal.
+  - `subscribe_sessions` / `unsubscribe_sessions`: the host's status stream over this one session
+    (`session_status`, `effect_status`, the same `mirror` opt-in for content to a client that never attached).
+    `attachments` counts the terminal plus each attached client; a subscriber, mirrored or not, is not one.
+  - `steer`/`follow_up { message, whenIdle?, clientMessageId?, expected_turn_id? }` and
+    `prompt { message, streamingBehavior? }`: delivered through the terminal's admission
+    (`admitExternalMessage`), so the user's draft holds them, with the host's `whenIdle` choice (`queue`, the
+    default, holds input on an idle session for its next turn; `start` starts one; `prompt` always starts). A
+    steer that names no `expected_turn_id` steers the current turn. The answer's `disposition` is `started` or
+    `queued`; `held_draft` (the user is composing) and `turn_conflict` are refusals with a reason and an action.
+    Unlike a host's input, the message lands as a remote delivery (a `session_control_delivery` entry the
+    terminal renders as "remote message"), not a user message: there are no prompt templates, slash commands or
+    skills, no admission receipt, and a repeated `clientMessageId` answers `duplicate: true`. Frames carrying
+    `images`, `thinkingLevel`, `expandPromptTemplates`, `unknownCommandAsText`, `sessionTitlePrompt` or
+    `enqueueOrder` are refused `unsupported_field`, naming them.
+  - `get_effect_status { effectId, sessionPath? }`: the same effect ledger as a host.
   - `wake { delivery_ids? }`: one drain pass, answered `{ admitted: [{ delivery_id, kind }] }`.
   - `extension_ui_response`: answers only a question this session asked and still waits on
     (`unknown_request` / `question_incomplete` / `invalid_response` otherwise). `uiRequestId` names the
@@ -1777,6 +1851,8 @@ no longer lists it and the handle answers `unknown_session`.
   the entry could not be written the session stays on this host as it was: admission reopened, no
   `session_released` entry on disk or in memory, and a later release can be retried. A teardown that fails
   after it claimed the session leaves it closing.
+
+A release with `reason: "move"` (and a `moveId`) seals the session for a move to another device: its `session_released` entry records `move_id`, `target` and `session_id`, and from then on any write to the file is refused with `session_moved_away` until that same move is reclaimed. A later `takeover` release, or any ownership entry for another move, is refused too. A `move` without a `moveId`, or with one that is not a plain id (a letter or digit first, then letters, digits, `.`, `_` or `-`, at most 128 characters), is refused with `invalid_release_reason`, and a session whose own id is not a plain id is refused with `release_unsupported` (`errorData.detail: "session_id_not_plain"`) before anything is interrupted or sealed. A `session_moved_away` refusal after an `interrupt` carries `interrupted` and `dropped` like any other refusal after one.
 
 ### Host self-observation (event-loop stalls and memory pressure)
 
@@ -1996,7 +2072,7 @@ names a valid preset.
 | `close_session` | `sessionId` | `{}` | Refused with `unknown_session` when the requesting connection never attached to that handle (a close releases the CALLER's attachment, and `list_sessions` publishes every handle). Otherwise aborts active work, awaits agent idle + settled persistence for up to the host grace window (default 10s), then quarantines any worker that has not exited without releasing its path reservation; its response is the LAST record tagged with that handle for the first closer — no events after (test-pinned). An admitted concurrent close joins the same teardown and receives its own successful response; output saturation rejects admission with the bounded close-overflow/resync notice described above. |
 | `list_sessions` | `include_workers?` (default false) | `{ sessions: [{ sessionId, durableSessionId, sessionPath, cwd, name, status, attachments, kind, context? }] }` | Includes `opening`/`closing` entries. Internally quarantined workers remain externally `closing` until exit. `attachments` is the session's live client attachment count; `0` on an `open` row is a retained session with no client attached. Every row carries `kind`. Rows with `kind: "worker"` are omitted unless `include_workers: true`, and `context` is published ONLY on that listing — a default listing carries no `context` at all. |
 | `detach_connection` | - | `{ deferred: string[] }` | Multi-session hosts that advertise `detach_connection`. Meant as the connection's last request: the host releases every session attachment this connection holds and answers only after that, so another connection's next `list_sessions` no longer counts it. `deferred` names the sessions that still count it (see `#### detach_connection`). Closing the socket afterwards releases nothing more. `senpi host session` sends it before closing, bounded at 5 s; on a host without the capability, or after a request timed out or the connection was lost, it relies on the release at socket close. |
-| `release_session` | `sessionId`, `reason: "takeover"`, `interrupt?`, `force?` | `{ released: true, session_path, attachments }` | Hands the session to a runtime outside this host. See "Handing a session over (`release_session`)" below. |
+| `release_session` | `sessionId`, `reason: "takeover" \| "move"`, `moveId?` (required for `move`), `target?`, `interrupt?`, `force?` | `{ released: true, session_path, attachments }` | Hands the session to a runtime outside this host. See "Handing a session over (`release_session`)" below. |
 | `wake` | `sessionId`, `delivery_ids?` | `{ admitted: [{ delivery_id, kind }] }` | Runs the session's registered inbox drain once. See "Waking a host session (`wake`)" below. |
 | `warm` | `cwd?`, `kind?`, `context?` (as on `open_session`; `cwd` MUST be absolute) | `{ state: "warmed" \| "already_warm" \| "unsupported" }` | Loads what the next matching `open_session` needs without opening a session; never listed, never an attachment, idempotent per profile. See "Warming a host" above. Advertised as the `warm` capability by in-process hosts only. |
 | every existing command | + `sessionId` (REQUIRED in multi mode) | unchanged | Routed to that session. |
@@ -2066,7 +2142,7 @@ codes or code prefixes in `error`:
   - **Mid-turn policy:** a turn admitted before the foreign holder appeared finishes and persists its results; subsequent writing RPCs are refused. Read/control requests, including abort, queue clearing, `extension_ui_response` and `extension_ui_progress`, remain available.
   - **Conservative admission:** `new_session`, `fork`, `clone`, and settings or account commands carrying this session's routing handle are also refused while its current file is held. Close the handle and open another session to leave a held file.
   - Holder records are admission evidence, not an exclusive filesystem lock. SessionManager's append API is synchronous and fresh process-identity checks are asynchronous; changing append to asynchronous admission would change the SDK contract and could discard results of already-executed tools.
-- `session_path_in_use` (path held by an opening or quarantined owner; a fully-open current owner is attached instead, an owner whose teardown is already in flight is waited out on the in-process runtime, and a path a live owner has superseded is released rather than held). A path held by ANOTHER GENERATION of the daemon carries `errorData { owner: { instanceId, pid, processStartTime, sessionPath, current }, retry_after_ms: 2000 }`: that generation is still writing the file and is parking it, so the open is a retry, not a failure. Only a claim whose owner serves the socket (`current: true`) or still has a client attached refuses an open at all - a superseded, attachment-less claim is reclaimed instead
+- `session_path_in_use` (path held by an opening or quarantined owner; a fully-open current owner is attached instead, an owner whose teardown is already in flight is waited out on the in-process runtime, and a path a live owner has superseded is released rather than held). A path held by ANOTHER GENERATION of the daemon carries `errorData { owner: { instanceId, pid, processStartTime, sessionPath, current }, retry_after_ms: 2000 }`: that generation is still writing the file and is parking it, so the open is a retry, not a failure. An open that arrives while ANOTHER open of the same path is still taking that cross-generation claim waits for it - bounded by the close grace window - and then attaches to the session that open is building; a claim that does not settle in that window answers `errorData { reason: "claim_in_progress", retry_after_ms: 2000 }`. When the claim it waited on is refused, the next waiting open takes the claim itself and later ones wait on that, so no racing open answers a bare refusal; a path still reserved by a session past its teardown grace answers `errorData { reason: "path_still_held", retry_after_ms: 2000 }` (senpi#3485). Only a claim whose owner serves the socket (`current: true`) or still has a client attached refuses an open at all - a superseded, attachment-less claim is reclaimed instead
 - `session_reservation_limit` (this worker already holds 64 live session paths; the open or session replacement was refused without disturbing the existing session)
 - `missing_session_id` (session-scoped command without `sessionId` in multi mode)
 - `multi_session_disabled` (`open_session` in classic mode)
@@ -2467,6 +2543,25 @@ A `steer` or `follow_up` sent **without** a `clientMessageId` is still recorded 
 
 For both commands, `status` is `removed` / `edited`, or `already_delivered` (the input was already handed to the agent) or `not_found` (no such id in this session); those two also carry `reason` and `action`, and an `effectId` receipt ends `failed` with that outcome. A missing or over-long `queuedId` is refused, and so is an edit whose `text` is empty or longer than `MAX_RPC_MESSAGE_CHARACTERS` (use `dequeue_message` to remove an input). An edited input that has a `clientMessageId` (its own or, for input sent without one, the host's) keeps the edit across a reopen, and a retry of its original send still replays.
 
+**Expected revision** (capability `queued_message_revision`): every entry in `get_state.ordered` and `queue_update.ordered` also carries `revision`, 1 when queued and +1 on every successful edit. Both commands accept an optional `expectedRevision` (a whole number of at least 1). When it is present and the input's current revision is different, the answer is `status: "conflict"` with `currentRevision`, `reason` and `action`, and nothing is changed; the check and the change happen in one step, so no other client's edit or a delivery can land between them. With `effectId` the receipt ends `failed` with outcome `conflict`, and a same-id retry replays that conflict. An input that is gone answers `already_delivered` or `not_found` as above, never `conflict`. An `edited` answer carries the resulting `text` and `revision`. A same-id retry answers with exactly the fields the live call returned (the receipt stores them). Revisions, like `queuedId`, hold only for the session's current lifetime: a reopen restores queued inputs at revision 1 under new ids, so re-read `get_state` after a reopen.
+
+```json
+{"type": "edit_queued_message", "queuedId": "q_4", "text": "use the staging database", "expectedRevision": 1}
+{"type": "response", "command": "edit_queued_message", "success": true, "data": {"queuedId": "q_4", "status": "conflict", "currentRevision": 2, "reason": "conflict", "action": "read the input's current text and revision from get_state or queue_update, then retry with that expectedRevision if the change still applies"}}
+```
+
+#### get_pending_inputs
+
+What the engine holds for every pending input, and the outcome of each id a client sent, read in one consistent step (senpi#3549). `inputs` lists every input still queued, sending or failed, each as a projection: `clientMessageId`, `state` (`queued`, `edited`, `sending`, `failed`), `text`, `requestedMode`, `revision`, `statusCode`, `statusText`, `actions` and `pendingDecoration`. `knownClientMessageIds` (at most 64 non-empty ids of at most 256 characters) asks for an outcome per id: `admitted` with its projection, including `delivered` and `removed`, or `not_admitted`. Absence from `inputs` is never an outcome; read the id's outcome instead.
+
+The answer is consistent through `throughCursor`. To follow changes without a gap, subscribe first, apply the snapshot, then apply only `pending_input_update` events whose `cursor` is later. Each event carries every input one committed change touched, under that change's single `cursor`, with the same `lifetimeId`. A different `lifetimeId` means the session reopened: read the snapshot again.
+
+```json
+{"type": "get_pending_inputs", "knownClientMessageIds": ["c-7"]}
+{"type": "response", "command": "get_pending_inputs", "success": true, "data": {"lifetimeId": "5b0c…", "throughCursor": 4, "inputs": [{"clientMessageId": "c-7", "state": "queued", "text": "also run the tests", "requestedMode": "followUp", "revision": 1, "statusCode": "queued_follow_up", "statusText": "Queued - sent after this turn", "actions": ["edit", "remove", "copy"], "pendingDecoration": true, "supersededVersions": []}], "outcomes": [{"clientMessageId": "c-7", "status": "admitted", "projection": {"clientMessageId": "c-7", "state": "queued"}}]}}
+{"type": "pending_input_update", "lifetimeId": "5b0c…", "cursor": 5, "changes": [{"clientMessageId": "c-7", "state": "sending"}]}
+```
+
 #### clear_queue
 
 Remove queued steering and follow-up messages and return their text.
@@ -2556,9 +2651,13 @@ The `model` field is a full [Model](#model) object or `null`. `pendingModelSwitc
 
 #### get_subscription_limits
 
-Every subscription account's latest limit windows (capability `subscription_limits`): what the provider
-reported with its most recent response for that account. An account nothing has reported for is absent -
-unknown, never 0%. The command only reads and may be sent with `observe: true`.
+Every subscription account's latest limit windows (capability `subscription_limits`). In interactive and
+RPC modes (not print mode or `--offline`) the engine polls each signed-in Claude and ChatGPT subscription
+account's usage endpoint (Claude every 5 minutes, ChatGPT every 2.5, `Retry-After` honoured, one request
+per account per interval across every senpi process on the machine), so an account's windows are known
+before its first turn; responses and the Claude SDK update the same record between polls. An account
+nothing has reported for is absent - unknown, never 0%. The command only reads and may be sent with
+`observe: true`.
 
 ```json
 {"type": "get_subscription_limits"}
@@ -2571,7 +2670,7 @@ stable within the account (`<limit>:<slot>`, for example `codex:primary` or `cla
 (`5h`, `7d`, `7d opus`), the window length in minutes when the provider sent it, `usedPercent` (0-100) and
 `resetsAt` (ISO) when known. ChatGPT subscriptions report them in `x-codex-primary-*`/`x-codex-secondary-*`
 response headers (one family per metered limit); Claude subscriptions in `anthropic-ratelimit-unified-*`
-headers, and through the Claude SDK lane in its `rate_limit_event` messages. A window the latest response did not mention keeps its last value. Every connection also hears a
+headers, and through the Claude SDK lane in its `rate_limit_event` messages. A window the latest response did not mention keeps its last value. A poll answers with the account's whole window set and replaces it. `plan` is the plan the usage endpoint names (ChatGPT), when it names one; `error` says why the last poll failed (`auth stale - run /login`, `rate limited`, `HTTP <status>`, `timed out`, `unreachable`), and the windows beside it are the last ones reported. The next successful report clears it. Every connection also hears a
 `subscription_limits` record (below) when an account's windows change.
 
 #### get_effect_status
@@ -2726,7 +2825,7 @@ List all configured models, refreshing credential availability on each request s
 {"type": "get_available_models"}
 ```
 
-Response contains an array of full [Model](#model) objects with supported thinking levels. Each row also carries `supportsAssistantPrefill`: whether the model accepts a request ending with an assistant message, given the session's current thinking level. It is `false` for every model today, so clients continue an edited answer with `continue_from_leaf`:
+Response contains an array of full [Model](#model) objects with supported thinking levels. A row's `serviceTier` and `upstreamModelId` are the values the session resolves for that model, including ones declared only in `models.json` or by an extension provider, so a `-fast` priority alias names its base model there and a client can tell a child opened on the base model is the alias it asked for. Each row also carries `supportsAssistantPrefill`: whether the model accepts a request ending with an assistant message, given the session's current thinking level. It is `false` for every model today, so clients continue an edited answer with `continue_from_leaf`:
 ```json
 {
   "type": "response",
@@ -3528,6 +3627,17 @@ Response:
 
 `leafId` is the id of the current leaf entry (`null` for an empty session), so a client can tell in one round trip whether the active branch moved. If `since` does not match any entry id, the response is `success: false`.
 
+**Pages.** One answer travels as one line on the connection's event queue, which closes the connection past 64 MiB. Pass `limit` (entries) and/or `maxBytes` (serialized bytes, capped at 48 MiB; 8 MiB when only `limit` is given) to read a long history in pages. A paged answer carries `hasMore`, and `nextSince` (the last entry id it returned) while more entries follow; ask again with `since: nextSince` until `hasMore` is `false`. A page always holds at least one entry, so it always moves forward. Both bounds must be positive integers, otherwise the request fails with `errorCode: "invalid_argument"`.
+
+```json
+{"type": "get_entries", "limit": 500, "maxBytes": 8388608}
+{"type": "get_entries", "limit": 500, "maxBytes": 8388608, "since": "<nextSince>"}
+```
+
+An unpaged request (neither bound) answers exactly as before while the whole history fits in 48 MiB. A longer history is refused with `errorCode: "response_too_large"` instead of an answer that would close the connection; read it in pages.
+
+A single entry larger than 48 MiB cannot travel in any answer, so a read whose next entry is that large (paged or not) is refused with `response_too_large` naming the entry. While a walk has more pages, the host keeps the session's full history in memory for the next page; it lets it go 30 s after the last page request, so a client that stops mid-walk does not pin the history.
+
 #### get_tree
 
 Get the session as a tree of entries. Each node is `{entry, children, label?, labelTimestamp?}`. A well-formed session has a single root; orphaned entries (broken parent chain) also appear as roots.
@@ -4050,7 +4160,7 @@ never write, with `"reason": "session_closed"`, on the same broadcast as every `
 
 `entry_appended` carries the full durable session entry in `entry`. For `entry.type: "custom"`, self-stops use these `entry.customType` values:
 
-- `goal-continuation-stopped`: `entry.data` contains `goalId`, `reason` (`stale`, `repetition`, `cap`, `unattended`, `length-exhausted`, or `context-overflow`), `consecutiveContinuations`, `unattendedContinuations`, and `at`.
+- `goal-continuation-stopped`: `entry.data` contains `goalId`, `reason` (`stale`, `repetition`, `cap`, `no-progress`, `length-exhausted`, or `context-overflow`; older sessions may carry the retired `unattended`), `consecutiveContinuations`, `unattendedContinuations`, `noProgressContinuations`, and `at`.
 - `engine-paused`: `entry.data` contains `reason` (`repetition`, `goal-repeat`, `cap-per-message`, `cap-per-minute`, or `goal-stale`), `at`, and optional `rule`, `customType`, and `count`.
 
 `at` is epoch milliseconds. These records survive session reopen and are available through the session-entry history. A goal stop is historical: accepted user input or `/goal resume` resets the stop, rather than deleting the entry. See [Session File Format](session-format.md#goal-and-engine-self-stop-entries) for the reason mapping and stale measurement-window behavior. Existing limit/rule entries and UI notices are preserved.

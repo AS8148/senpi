@@ -56,6 +56,12 @@ export interface HandoverParkedEntry {
 	readonly sessionContext?: SessionContext;
 	readonly autoTitle?: boolean;
 	readonly retryFallback?: SessionRetryFallbackProfile;
+	/**
+	 * The host instance that wrote the park. Its own reopen watch skips it: the park is for the NEXT
+	 * generation, and a host reopening what it just idle-parked races the client's reopen (senpi#3485).
+	 * Absent on entries an older generation wrote, which every reader treats as a predecessor's park.
+	 */
+	readonly parkedBy?: string;
 }
 
 const recordDir = (daemonDir: string): string => join(daemonDir, "handover-parked");
@@ -79,6 +85,7 @@ function isEntry(value: unknown): value is HandoverParkedEntry {
 		typeof record.retainOnDisconnect === "boolean" &&
 		(record.durableSessionId === undefined || typeof record.durableSessionId === "string") &&
 		(record.cwd === undefined || typeof record.cwd === "string") &&
+		(record.parkedBy === undefined || typeof record.parkedBy === "string") &&
 		(record.thinkingLevel === undefined || typeof record.thinkingLevel === "string") &&
 		(record.permissionPreset === undefined ||
 			(typeof record.permissionPreset === "string" &&

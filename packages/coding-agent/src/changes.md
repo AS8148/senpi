@@ -1,3 +1,95 @@
+## 2026-10-19 - Subscription limits are polled before the first turn (senpi#3684)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: interactive and RPC startup (single-session and the multi-session host) call `startSubscriptionUsagePolling({ agentDir, report })` unless `--offline` is set; print mode never polls. The poller (`src/core/subscription-limits/usage-poller.ts`, fork-only) reads each signed-in Claude and ChatGPT subscription account's usage endpoint into the process's `SubscriptionLimitStore`, sharing one `subscription-usage.json` cache across processes. The newest report wins: a cached poll older than a turn's report never replaces it. A refresh the token endpoint rejects marks the Claude slot `auth_error` (as a turn would), so polling stops asking for that account until `/login`.
+
+### Why
+
+Limits reached hosts only from a turn's response, so a fresh desktop session showed none, while the OmO TUI polled the same endpoints separately: two implementations of one thing.
+
+### Why an extension could not handle it
+
+The store is process-wide and served by the RPC host itself (`get_subscription_limits`); the poll must start with the host process, before any session or extension exists.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: LOW, the import block, the multi-session branch after `initTheme`, and the lines before the `appMode === "rpc"` dispatch.
+
+## 2026-10-18 - The runtime factory threads --tool-runtime into every session it creates (senpi#3566)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `createCliRuntimeFactory` destructures `toolRuntime` from its `CliRuntimeConfiguration` and forwards it to `createAgentSessionFromServices`, so the single-session, interactive, and multi-session paths (which all build sessions through this factory, worker isolates included via their replayed configuration) hand each `AgentSession` its tool runtime instead of re-reading the env.
+
+### Why
+
+The tool dispatcher is per-session state constructed from the once-per-process resolution todo 1 added; a session or worker must never re-derive it.
+
+### Why an extension could not handle it
+
+The runtime factory and the session constructor run before extensions load.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: the `createCliRuntimeFactory` destructure and the `createAgentSessionFromServices` call.
+
+## 2026-10-18 - Every CLI entry becomes the tool-child role first (senpi#3566)
+
+### What changed
+
+- `packages/coding-agent/src/cli.ts` and `packages/coding-agent/src/cli-main.ts`: `import "./internal-role.ts"` directly after the existing `./valid-cwd.ts` guard (which stays the first import).
+- `packages/coding-agent/src/rpc-entry.ts`: the same import as its first statement.
+- `internal-role.ts` (fork-only) does nothing unless `SENPI_INTERNAL_ROLE` is set. With `tool-child` it runs the tool child and never returns; without its channel environment it exits 70 with `tool-child: channel unavailable` before argument parsing.
+
+### Why
+
+A tool child is started by re-entering the engine binary with a role in its environment (DESIGN PART 1). The role has to be decided before version dispatch, argument parsing or the CLI graph, on every published entry.
+
+### Why an extension could not handle it
+
+Extensions load long after argument parsing; the role must win before any of it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/cli.ts`, `packages/coding-agent/src/cli-main.ts`, `packages/coding-agent/src/rpc-entry.ts`: the first import lines.
+
+## 2026-10-17 - /share redacts the session, previews it and asks before uploading (senpi#3524)
+
+### What changed
+
+- `packages/coding-agent/src/config.ts`: `getShareViewerUrl` and the `https://pi.dev/session/` default are replaced by `getShareViewerBase()` (the `SHARE_VIEWER_URL` value or undefined) and `isShareDisabledByEnvironment()` (`<PREFIX>_DISABLE_SHARE`).
+
+### Why
+
+- `/share` uploaded the whole session unredacted, with no confirmation, to a secret (unlisted) gist, after writing it to a fixed `os.tmpdir()/session.html`, and pointed users at the third-party `pi.dev` viewer by default. Any key, token, home path or email in a prompt or tool result left the machine in clear text. Regressions: `test/suite/regressions/3524-share-redaction.test.ts`, `test/suite/regressions/3524-share-consent.test.ts`.
+
+### Why an extension could not handle it
+
+- `/share` is a built-in interactive command and the HTML export is core; an extension cannot intercept either before the upload.
+
+### Expected merge conflict zones
+
+- LOW: the share viewer block in `config.ts`.
+
+## 2026-10-18 - The host resolves and advertises its tool runtime (senpi#3566)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: right after argument parsing, `resolveToolRuntime(parsed)` (flag, then `SENPI_TOOL_RUNTIME`, then `in-process`) runs once; an invalid env value prints `Error: ...` and exits 1, like an invalid flag, except for `--version` and `--help`, which run no tool. `CliRuntimeConfiguration` gains an optional `toolRuntime` (absent means `in-process`), set on both the multi-session and the single-session configuration, `runMultiSessionHost` receives `toolRuntime`, which the router advertises as `tool_runtime:<value>` in `get_protocol_info`, and `runRpcMode(runtime, toolRuntime)` does the same for a single-session RPC process.
+
+### Why
+
+Clients must be able to see which tool runtime a host they attach to uses, and a worker isolate must not re-read the env to learn it.
+
+### Why an extension could not handle it
+
+The host's startup configuration and its protocol answer are assembled in core before extensions load.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: the parse-diagnostics block in `main`, `CliRuntimeConfiguration`, and the `runMultiSessionHost` call.
+
 ## 2026-10-16 - Non-interactive startup reports context size warnings once (senpi#3460)
 
 ### What changed

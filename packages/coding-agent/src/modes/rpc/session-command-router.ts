@@ -1,3 +1,4 @@
+import type { ToolRuntimeKind } from "../../cli/tool-runtime.ts";
 import { VERSION } from "../../config.ts";
 import type { AgentSession } from "../../core/agent-session.ts";
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
@@ -67,7 +68,11 @@ export type RpcBindingFactory = typeof createRpcSessionBinding;
 export type RpcHostSessionDefaults = Pick<
 	RpcSessionLaunchProfile,
 	"cwd" | "permissionPreset" | "creationModel" | "initialThinkingLevel"
-> & { readonly hostContext?: RpcSessionLaunchProfile["sessionContext"] };
+> & {
+	readonly hostContext?: RpcSessionLaunchProfile["sessionContext"];
+	/** The host's `--tool-runtime`; absent means `in-process`. */
+	readonly toolRuntime?: ToolRuntimeKind;
+};
 
 /**
  * Occupancy policy for the shared multi-session host. All fields are opt-in:
@@ -357,6 +362,7 @@ export class SessionCommandRouter {
 		if (command.type === "get_protocol_info") {
 			const capabilities = multiSessionHostCapabilities({
 				warm: this.registry.warm !== undefined,
+				toolRuntime: this.defaults.toolRuntime ?? "in-process",
 				negotiated: this.connectionOptions?.capabilities ?? [],
 			});
 			return {
@@ -621,9 +627,8 @@ export class SessionCommandRouter {
 			retained?.retainOnDisconnect === true &&
 			retained.sessionPath !== undefined
 		) {
-			await recordHandoverParkedSession(
-				this.handoverParkedDir,
-				parkedEntryFromProfile(
+			await recordHandoverParkedSession(this.handoverParkedDir, {
+				...parkedEntryFromProfile(
 					{
 						sessionPath: retained.sessionPath,
 						...(retained.durableSessionId !== undefined ? { durableSessionId: retained.durableSessionId } : {}),
@@ -631,7 +636,8 @@ export class SessionCommandRouter {
 					retained.profile,
 					Object.keys(this.defaults.hostContext ?? {}),
 				),
-			).catch((cause: unknown) => {
+				parkedBy: this.defaults.hostContext?.host_instance ?? hostInstanceId(),
+			}).catch((cause: unknown) => {
 				process.stderr.write(`senpi rpc handover park record ${sessionId} failed: ${String(cause)}\n`);
 			});
 		}

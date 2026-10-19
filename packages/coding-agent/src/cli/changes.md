@@ -1,3 +1,39 @@
+## 2026-10-17 - /share redacts the session, previews it and asks before uploading (senpi#3524)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: the help text says `PI_SHARE_VIEWER_URL` has no default and documents `PI_DISABLE_SHARE`.
+
+### Why
+
+- `/share` uploaded the whole session unredacted, with no confirmation, to a secret (unlisted) gist, after writing it to a fixed `os.tmpdir()/session.html`, and pointed users at the third-party `pi.dev` viewer by default. Any key, token, home path or email in a prompt or tool result left the machine in clear text. Regressions: `test/suite/regressions/3524-share-redaction.test.ts`, `test/suite/regressions/3524-share-consent.test.ts`.
+
+### Why an extension could not handle it
+
+- `/share` is a built-in interactive command and the HTML export is core; an extension cannot intercept either before the upload.
+
+### Expected merge conflict zones
+
+- LOW: the environment-variable list in `args.ts` help.
+
+## 2026-10-18 - --tool-runtime selects where heavy tool work runs (senpi#3566)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: `Args.toolRuntime`, one parse branch for `--tool-runtime <in-process|child>` (an unknown value pushes the parse error "--tool-runtime must be in-process or child" and sets nothing) and one help line. The default and the `SENPI_TOOL_RUNTIME` fallback live in the fork-only `cli/tool-runtime.ts` (`resolveToolRuntime`), not here.
+
+### Why
+
+The per-session tool child (senpi#3566) needs one switch every mode reads. The flag is plumbing only in this step: it changes no execution.
+
+### Why an extension could not handle it
+
+CLI flags that the host process itself reads before any extension loads are parsed in core.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/cli/args.ts`: the `Args` interface beside `sessionRuntime`, the parse switch beside `--session-runtime`, and the help block.
+
 ## 2026-10-15 - senpi host session unload (senpi#3225)
 
 ### What changed

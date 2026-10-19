@@ -1,3 +1,4 @@
+import type { UnavailableAccount } from "./affinity.ts";
 import type { SdkErrorKind } from "./errors.ts";
 import type { ClaudeCodeRun } from "./executable.ts";
 
@@ -43,6 +44,43 @@ export function allAccountsBlockedGuidance(soonestUnblockAt: number | undefined,
 		`  Soonest automatic retry: ${eta}.`,
 		`  /claude-account list  - inspect account states`,
 		`  /login ${PROVIDER}  - add another account`,
+	].join("\n");
+}
+
+const ENABLE_ACCOUNT_FALLBACK =
+	"  Set anthropicSubscriptionProvider.accountFallback: true (or SENPI_CLAUDE_SDK_OAUTH_ACCOUNT_FALLBACK=1) to switch accounts automatically.";
+
+/**
+ * With account fallback off, only one account may serve (senpi#3465), so the pool-wide advice is wrong:
+ * other accounts may be healthy, and adding one does not help because it is never used. Name the account
+ * and the remedies that do work. The cause words ("authentication error", "rate limit") stay, so the outer
+ * credential-pool classifier reads the same verdict as for the pool-wide guidance.
+ */
+export function singleAccountUnavailableGuidance(
+	account: UnavailableAccount,
+	soonestUnblockAt: number | undefined,
+	blockReason?: "auth_error",
+): string {
+	if (!account.configured) {
+		return [
+			`Claude account '${account.name}' for ${PROVIDER} is not configured, and account fallback is off, so no other account is used.`,
+			`  /claude-account list  - see the configured accounts`,
+			`  /claude-account pin <name>  - pin a configured account (or /claude-account unpin)`,
+			"  Start a new session if this session's account was removed.",
+			ENABLE_ACCOUNT_FALLBACK,
+		].join("\n");
+	}
+	const until =
+		soonestUnblockAt !== undefined && Number.isFinite(soonestUnblockAt)
+			? new Date(soonestUnblockAt).toISOString()
+			: undefined;
+	const cause = blockReason === "auth_error" ? "authentication error" : "rate limit";
+	return [
+		`Claude account '${account.name}' for ${PROVIDER} is blocked (${cause})${until === undefined ? "" : ` until ${until}`}, and account fallback is off, so no other account is tried.`,
+		...(until === undefined ? [] : [`  Wait until ${until}, when this account can serve again.`]),
+		...(blockReason === "auth_error" ? [`  /login ${PROVIDER}  - re-authenticate this account`] : []),
+		`  /claude-account pin <name>  - switch to another account`,
+		ENABLE_ACCOUNT_FALLBACK,
 	].join("\n");
 }
 

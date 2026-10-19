@@ -68,6 +68,11 @@ export function resetAuthLaneBoundary(): void {
 	activeBoundary = defaultBoundary;
 }
 
+/** The refresher turns use, so the usage poller renews an expiring account the same way (senpi#3684). */
+export function authLaneRefresher(): SlotRefresher {
+	return activeBoundary.refresher;
+}
+
 export type { AuthenticatedAttemptInput } from "./auth-attempt.ts";
 
 export type AuthenticatedQueryInput = {
@@ -96,6 +101,7 @@ type ManagedPool = {
 	environment: NodeJS.ProcessEnv;
 	lane: Exclude<AnthropicSubscriptionTokenInjection, "ambient">;
 	pinnedAccount?: string;
+	accountOrder?: readonly string[];
 	store: CredentialStore;
 };
 
@@ -130,7 +136,14 @@ async function managedPool(
 	if (lane === "ambient") return undefined;
 	if (accounts.length === 0) throw new Error(NO_MANAGED_ACCOUNTS_ERROR);
 	const stored = credential?.type === "oauth" ? (credential as AnthropicSubscriptionCredential) : undefined;
-	return { accounts, environment, lane, pinnedAccount: settings.pinnedAccount ?? stored?.pinned, store };
+	return {
+		accounts,
+		environment,
+		lane,
+		pinnedAccount: settings.pinnedAccount ?? stored?.pinned,
+		...(stored?.order === undefined ? {} : { accountOrder: stored.order }),
+		store,
+	};
 }
 
 function storedAccounts(credential: Credential | undefined, pool: ManagedPool): AccountSlot[] {
@@ -286,10 +299,13 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 	});
 	yield* runFailover({
 		accounts: pool.accounts,
+		accountFallback: input.providerSettings.accountFallback,
 		selectFn: (accounts) =>
 			selectAccount(accounts, {
 				sessionId: input.sessionId,
 				pinnedAccount: input.pinnedAccount ?? pool.pinnedAccount,
+				accountFallback: input.providerSettings.accountFallback,
+				...(pool.accountOrder === undefined ? {} : { accountOrder: pool.accountOrder }),
 				...(input.preferredAccount === undefined ? {} : { preferredAccount: input.preferredAccount }),
 				now: activeBoundary.now(),
 				...(input.model === undefined ? {} : { model: input.model }),
