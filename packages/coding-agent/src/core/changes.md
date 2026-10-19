@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/settings-manager.ts`: new typed `sessionShutdownQuitBudgetMs` setting (default `DEFAULT_SESSION_SHUTDOWN_QUIT_BUDGET_MS` = 1000, 0 disables) with `getSessionShutdownQuitBudgetMs` / `setSessionShutdownQuitBudgetMs`, validated through `parseTimeoutSetting` like the existing shutdown handler budget.
+- `packages/coding-agent/src/core/settings-manager.ts`: new typed `sessionShutdownQuitBudgetMs` setting (default `DEFAULT_SESSION_SHUTDOWN_QUIT_BUDGET_MS` = 2000, 0 disables; above the OmO memory extension's own 1500 ms shutdown drain) with `getSessionShutdownQuitBudgetMs` / `setSessionShutdownQuitBudgetMs`, validated through `parseTimeoutSetting` like the existing shutdown handler budget.
 
 ### Why
 

@@ -115,8 +115,11 @@ export const DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS = 2_000;
  * hung handler still must not hold quit/reload/new/resume hostage.
  */
 export const DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS = 10_000;
-/** Total wait across every `session_shutdown` handler when the process quits (senpi#3711). */
-export const DEFAULT_SESSION_SHUTDOWN_QUIT_BUDGET_MS = 1_000;
+/**
+ * Total wait across every `session_shutdown` handler when the process quits (senpi#3711). Above the OmO memory
+ * extension's own 1500 ms shutdown drain, whose first step flushes the memory journal.
+ */
+export const DEFAULT_SESSION_SHUTDOWN_QUIT_BUDGET_MS = 2_000;
 /** Warn threshold for one handler of an agent lifecycle event the session awaits before persisting (senpi#3650). */
 export const DEFAULT_EXTENSION_EVENT_HANDLER_WARN_MS = 60_000;
 /**

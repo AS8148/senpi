@@ -70,7 +70,7 @@ function track(emitted: Promise<unknown>): { settled: () => boolean } {
 }
 
 describe("senpi#3711 quit does not wait out a hung shutdown handler", () => {
-	it("exits within the default 1000 ms quit budget and names the handler that overran it", async () => {
+	it("exits within the default 2000 ms quit budget and names the handler that overran it", async () => {
 		const fixture = await hungThenFast({});
 		try {
 			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
@@ -79,16 +79,16 @@ describe("senpi#3711 quit does not wait out a hung shutdown handler", () => {
 				fixture.harness.getExtensionRunner().emit({ type: "session_shutdown", reason: "quit" }),
 			);
 
-			await vi.advanceTimersByTimeAsync(999);
+			await vi.advanceTimersByTimeAsync(1999);
 			expect(emission.settled()).toBe(false);
 			await vi.advanceTimersByTimeAsync(1);
 			expect(emission.settled()).toBe(true);
 
-			// Measured on the host clock the runner reads: the quit waited 1000 ms, not the 10 s per-handler cap.
-			expect(Date.now() - startedAt).toBe(1000);
+			// Measured on the host clock the runner reads: the quit waited 2000 ms, not the 10 s per-handler cap.
+			expect(Date.now() - startedAt).toBe(2000);
 			expect(fixture.ran).toEqual(["hung", "fast"]);
 			expect(fixture.warnings).toEqual([
-				"Extension <inline:hung-ext> session_shutdown handler overran the quit budget after 1000ms; quitting without it.",
+				"Extension <inline:hung-ext> session_shutdown handler overran the quit budget after 2000ms; quitting without it.",
 			]);
 			expect(fixture.errors).toEqual([]);
 		} finally {
@@ -144,9 +144,9 @@ describe("senpi#3711 quit does not wait out a hung shutdown handler", () => {
 					: { type: "session_shutdown", reason };
 			const emission = track(fixture.harness.getExtensionRunner().emit(event));
 
-			await vi.advanceTimersByTimeAsync(1000);
+			await vi.advanceTimersByTimeAsync(2500);
 			expect(emission.settled()).toBe(false);
-			await vi.advanceTimersByTimeAsync(2000);
+			await vi.advanceTimersByTimeAsync(500);
 			expect(emission.settled()).toBe(true);
 		} finally {
 			fixture.harness.cleanup();

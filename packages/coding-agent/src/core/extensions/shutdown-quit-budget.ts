@@ -27,6 +27,7 @@ export class QuitDeadline {
 	budgetFor(base: ExtensionHandlerBudget): QuitHandlerBudget {
 		const remaining = Math.max(1, this.deadline - this.now());
 		if (base.timeoutMs > 0 && base.timeoutMs <= remaining) return { budget: base, endsAtQuitDeadline: false };
-		return { budget: { warnMs: base.warnMs, timeoutMs: remaining }, endsAtQuitDeadline: true };
+		const warnMs = base.warnMs < remaining ? base.warnMs : 0;
+		return { budget: { warnMs, timeoutMs: remaining }, endsAtQuitDeadline: true };
 	}
 }
