@@ -19,7 +19,7 @@ export interface HostGenerationPaths {
 	readonly childPidFile: string;
 	/** Written by whoever is about to signal this generation, BEFORE the signal (host-stop-intent.ts). */
 	readonly stopIntentFile: string;
-	/** Written by whoever asks this generation to drain; read by its supervisor (host-drain-request.ts). */
+	/** Written by whoever asks this generation to drain; read by its supervisor (host-stop-intent.ts). */
 	readonly drainRequestFile: string;
 	/** The supervisor's relay of a drain to its host child. */
 	readonly childDrainRequestFile: string;

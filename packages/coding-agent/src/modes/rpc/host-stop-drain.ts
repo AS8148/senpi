@@ -7,7 +7,7 @@
  *
  * Two channels exist, and the choice is made on evidence, never on platform:
  *
- * - the drain REQUEST file (host-drain-request.ts), used whenever the generation advertises it reads
+ * - the drain REQUEST file (host-stop-intent.ts), used whenever the generation advertises it reads
  *   one AND that advertisement names the very pid just proven. It needs no signal, so it is the only
  *   channel a win32 generation has, and the one every current generation is asked through;
  * - SIGUSR1, kept for a generation from before the request existed, and only where the signal has a
@@ -33,9 +33,9 @@ import {
 	readHostRegistration,
 } from "./host-daemon-registration.ts";
 import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
-import { readDrainWatch, writeDrainRequest } from "./host-drain-request.ts";
 import { provenLegacyOwner } from "./host-legacy.ts";
 import { probeProtocolInfo } from "./host-probe.ts";
+import { readDrainWatch, writeDrainRequest } from "./host-stop-intent.ts";
 
 export interface DrainHostOptions {
 	readonly socket: string;

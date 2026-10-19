@@ -8,8 +8,8 @@ import type { ChildProcess } from "node:child_process";
 import { processIsLive, readProcessStartTime } from "../../utils/process-identity.ts";
 import type { HostStopSender } from "./host-crash-record.ts";
 import type { HostGenerationPaths } from "./host-daemon-paths.ts";
-import { watchDrainRequest, writeDrainRequest, writeDrainWatch } from "./host-drain-request.ts";
 import { DEFAULT_HANDOFF_GRACE_MS, HANDOFF_GRACE_MS_ENV, parseIdleExitMs } from "./host-lifecycle-policy.ts";
+import { watchDrainRequest, writeDrainRequest, writeDrainWatch } from "./host-stop-intent.ts";
 import { type SupersessionPointer, watchForSupersession } from "./host-supersession.ts";
 import { errorMessage, supervisorLog } from "./host-supervisor-log.ts";
 import type { SocketFileIdentity } from "./socket-ownership.ts";
@@ -23,7 +23,7 @@ export class SupervisorDrain {
 	private readonly relay: { readonly file: string; readonly sender: HostStopSender } | undefined;
 
 	/**
-	 * `relay` is the child's drain-request file (host-drain-request.ts): the one way to reach a child
+	 * `relay` is the child's drain-request file (host-stop-intent.ts): the one way to reach a child
 	 * on every platform. Without it the request is the POSIX signal alone.
 	 */
 	constructor(
