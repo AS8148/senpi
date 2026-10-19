@@ -148,7 +148,9 @@ export class ToolChildClient {
 		try {
 			containment = containChild(child, this.#options.containmentHost);
 		} catch (error) {
-			child.kill("SIGKILL");
+			// A spawn that failed has no pid and no process to stop. Node 26 turns `kill()` on such a child into a
+			// signal to the caller's own process group, so it is only sent to a child that really started.
+			if (child.pid !== undefined) child.kill("SIGKILL");
 			await listener.close();
 			throw error instanceof ChildContainmentError ? new ToolChildError(error.code, error.message) : error;
 		}
