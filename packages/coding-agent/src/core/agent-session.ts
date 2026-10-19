@@ -163,6 +163,7 @@ import {
 	ENGINE_TURN_LIMIT_EVENT,
 	ENGINE_TURN_START_ENTRY_TYPE,
 	type EngineTurnStartRecord,
+	engineTurnHistory,
 	engineTurnLimitNotice,
 	engineTurnStop,
 	isUserDirectedTurn,
@@ -6157,7 +6158,7 @@ export class AgentSession {
 	private _stopEngineTurn(customType: string): boolean {
 		if (isUserDirectedTurn(customType)) return false;
 		const stop = engineTurnStop(
-			this.sessionManager.getEntries(),
+			this.sessionManager.reduceHistory(engineTurnHistory),
 			Date.now(),
 			this.settingsManager.getEngineTurnSettings(),
 			this._engineTurnStarts,
