@@ -16,6 +16,10 @@ import { SessionManager } from "../../src/core/session-manager.ts";
 import { createHarness } from "../suite/harness.ts";
 import { writeCompactedTranscript } from "./3519-compacted-transcript.ts";
 
+const runtime = (globalThis as { Bun?: { gc(force: boolean): void } }).Bun;
+if (runtime === undefined) throw new Error("run this benchmark with bun: it needs Bun.gc for a full collection");
+const fullGc = (): void => runtime.gc(true);
+
 const argv = process.argv.slice(2);
 const option = (name: string, fallback: number): number => {
 	const index = argv.indexOf(`--${name}`);
@@ -64,7 +68,7 @@ harness.agent.streamFunction = (model: Model<string>) => {
 type Sample = { readonly turns: number; readonly heapMB: number; readonly holdsHistoryView: boolean };
 const samples: Sample[] = [];
 const sample = (): void => {
-	Bun.gc(true);
+	fullGc();
 	const heapMB = Number((process.memoryUsage().heapUsed / 1e6).toFixed(1));
 	samples.push({ turns, heapMB, holdsHistoryView: sessionManager.holdsMaterializedHistory() });
 };
@@ -85,7 +89,7 @@ harness.session.subscribe((event) => {
 queueNext();
 while (turns < turnsWanted || harness.session.isStreaming) await harness.session.waitForIdle();
 harness.session.releaseSettledSessionMemory();
-Bun.gc(true);
+fullGc();
 const afterIdleMB = Number((process.memoryUsage().heapUsed / 1e6).toFixed(1));
 console.log(JSON.stringify({ megabytes, turns, samples, afterIdleReleaseMB: afterIdleMB }, null, 1));
 harness.cleanup();
