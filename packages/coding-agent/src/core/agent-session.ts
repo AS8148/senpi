@@ -2964,8 +2964,9 @@ export class AgentSession {
 			) {
 				const queuedMessages = Array.isArray(messages) ? messages : [messages];
 				const userMessage = queuedMessages.find((message) => message.role === "user");
+				const source = userMessage === undefined ? undefined : this._userInputSources.get(userMessage);
 				// The caller was already told this input started; it now waits in the queue, so persist
-				// it as queued input before it is enqueued, exactly like the regular queue path.
+				// it as queued input before it is enqueued, exactly like the regular queue path (source included).
 				const prepared =
 					userMessage?.role === "user"
 						? {
@@ -2977,6 +2978,7 @@ export class AgentSession {
 										: userMessage.content.filter((part) => part.type === "image"),
 								mode: "steer" as const,
 								enqueueOrder: this.reserveQueuedInputOrder(),
+								...(source === undefined ? {} : { source }),
 							}
 						: undefined;
 				if (prepared) onQueuedInput?.(prepared);

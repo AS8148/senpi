@@ -105,6 +105,45 @@ describe("omo#10378 persisted user input source", () => {
 		expect(stored.state === "queued" ? stored.prepared.source : undefined).toBe("rpc");
 	});
 
+	it("#given a prompt that loses the start race and is queued as a steer #when it is handed to durable custody #then the prepared record keeps the prompt's source", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("ok")]);
+		const agent = harness.session.agent;
+		const realPrompt = agent.prompt.bind(agent);
+		let raced = false;
+		agent.prompt = ((...args: Parameters<typeof agent.prompt>) => {
+			if (raced) return realPrompt(...args);
+			raced = true;
+			return Promise.reject(
+				new Error(
+					"Agent is already processing a prompt. Use steer() or followUp() to queue messages, or wait for completion.",
+				),
+			);
+		}) as typeof agent.prompt;
+		let handOff: ((input: PreparedClientInput) => void) | undefined;
+		const handedOff = new Promise<PreparedClientInput>((resolve) => {
+			handOff = resolve;
+		});
+		const deadline = new Promise<never>((_, reject) => {
+			setTimeout(
+				() => reject(new Error("waited 10s for the raced prompt's onQueuedInput, never fired")),
+				10_000,
+			).unref();
+		});
+
+		const run = harness.session.prompt("raced rpc prompt", {
+			source: "rpc",
+			onQueuedInput: (input) => handOff?.(input),
+		});
+		const prepared = await Promise.race([handedOff, deadline]);
+		// The stubbed agent never starts the queued steer, so this prompt never settles; only its hand-off is asserted.
+		void run.catch(() => undefined);
+
+		expect(raced).toBe(true);
+		expect({ text: prepared.text, source: prepared.source }).toEqual({ text: "raced rpc prompt", source: "rpc" });
+	});
+
 	it("#given input restored from durable custody #when it is delivered #then a recorded source is kept and a missing one stays unknown", async () => {
 		let releaseTool: (() => void) | undefined;
 		const harness = await createHarness({
