@@ -4331,6 +4331,8 @@ export class AgentSession {
 	/** Adapter for the deadline owner interface: end the turn through the normal system abort. */
 	async abortTurnForDeadline(): Promise<void> {
 		await this._abortActiveAgentAndRetry("system");
+		// An abort that joined an open agent_end boundary returns at once; the run is still held until it settles.
+		if (!this.isIdle) await this._waitForIdleAfterAbort();
 	}
 
 	/**
@@ -6583,6 +6585,15 @@ export class AgentSession {
 		if (hasPendingTriggerTurnAdmission) this._recordUserAbort();
 		if (this._isBeforeSettle) this._abortDuringBeforeSettle = true;
 		await this._abortActiveAgentAndRetry("user");
+		// An Esc that joined an open agent_end boundary returns at once: a boundary handler that holds the run is still
+		// released after the grace (senpi#3650), without making abort() itself wait for it.
+		if (!this.isIdle) {
+			this._waitForIdleAfterAbort().catch((error: unknown) => {
+				this._sessionLogger.warn("abort_release_failed", {
+					error: error instanceof Error ? error.message : String(error),
+				});
+			});
+		}
 		if (!shouldEmitAbort) return;
 		try {
 			await this._emitSessionAbort();
