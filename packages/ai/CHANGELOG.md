@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- ChatGPT subscription costs for the Fast tier are estimated at 2.5x Standard on every model (was 2x), and GPT-6 Astra / GPT-6.1 Sol Ultrafast at 8x (was 6x), the rates OpenAI meters against a plan's included usage ([#3670](https://github.com/code-yeongyu/senpi/pull/3670)).
+
 ### Removed
 
 ## [2026.10.18-1] - 2026-10-18
