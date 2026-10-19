@@ -3,7 +3,7 @@
 ### What changed
 
 - `packages/coding-agent/src/core/extensions/loader.ts`: every callback an extension registers (`pi.on` handlers, tool `execute`, commands, shortcuts, `pi.rpc.handle` handlers) and the factory call itself run through `ownedBy` / `runOwnedBy`, which enter that extension instance's handle ledger for the call's async chain. Tool definitions are stored as a copy whose `execute` is the owned wrapper. Builtin extensions are passed through unchanged.
-- `packages/coding-agent/src/core/extensions/runner.ts`: `emitSessionShutdownEvent` calls the new `ExtensionRunner.reclaimExtensionHandles()` after the `session_shutdown` handlers ran, and also when no extension registered one.
+- `packages/coding-agent/src/core/extensions/runner.ts`: the constructor registers its extension instances with the handle ledger, and `emitSessionShutdownEvent` calls `reclaimRunnerHandles(runner)` after the `session_shutdown` handlers ran, and also when no extension registered one. A runner the ledger never saw (a test double) reclaims nothing.
 - `packages/coding-agent/src/core/extensions/extension-handle-tracking.ts` (new): process-level hooks on `setTimeout`/`setInterval`/`clear*`, `Bun.serve`, `Bun.listen`, `net.Server.prototype.listen` and `net.Socket.prototype.connect`, installed on first use. A handle is recorded only when an owner is in the async context AND the creating stack frame is that extension's code.
 - `packages/coding-agent/src/core/extensions/extension-handle-ledger.ts` (new): the per-extension ledger, the ownership test (a file extension owns code under its own directory; an inline factory owns code outside senpi's `src`/`dist`), and the reclaim with its per-extension stderr line.
 
@@ -19,7 +19,7 @@ On the in-process `--listen` host an extension that never stopped a server it op
 ### Expected merge conflict zones
 
 - LOW: `loader.ts` `createExtensionAPI` (`on`, `registerTool`, `registerCommand`, `registerShortcut`, `rpc.handle`) and the factory call in `initializeExtension`.
-- LOW: `runner.ts` `emitSessionShutdownEvent` body and the new method above `resolveSessionShutdownBudget`.
+- LOW: `runner.ts` `emitSessionShutdownEvent` body and one line in the `ExtensionRunner` constructor.
 
 ## 2026-10-18 - Agent lifecycle and boundary event handlers run under a host budget (senpi#3650)
 

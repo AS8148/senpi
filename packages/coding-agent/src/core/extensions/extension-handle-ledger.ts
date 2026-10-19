@@ -122,6 +122,18 @@ export function ownedBy<This, Args extends unknown[], Result>(
 	};
 }
 
+const runnerExtensions = new WeakMap<object, readonly Extension[]>();
+
+/** Called by `ExtensionRunner`'s constructor: the instances `reclaimRunnerHandles` closes for that runner. */
+export function registerRunnerExtensions(runner: object, extensions: readonly Extension[]): void {
+	runnerExtensions.set(runner, extensions);
+}
+
+/** `reclaimExtensionHandles` for the extension instances of `runner`; a runner never registered has none. */
+export function reclaimRunnerHandles(runner: object): void {
+	reclaimExtensionHandles(runnerExtensions.get(runner) ?? []);
+}
+
 function plural(count: number, noun: string): string {
 	return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }

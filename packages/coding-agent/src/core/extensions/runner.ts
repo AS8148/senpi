@@ -30,7 +30,7 @@ import { goalFilePath } from "./builtin/goal/persistence.ts";
 import { goalStoreRef } from "./builtin/goal/store-ref.ts";
 import { disableServerSearch } from "./builtin/server-search-fallback.ts";
 import { dispatchContextMessages } from "./context-dispatch.ts";
-import { reclaimExtensionHandles } from "./extension-handle-ledger.ts";
+import { reclaimRunnerHandles, registerRunnerExtensions } from "./extension-handle-ledger.ts";
 import {
 	type BudgetedSequence,
 	type ExtensionHandlerBudget,
@@ -375,7 +375,7 @@ export async function emitSessionShutdownEvent(
 ): Promise<boolean> {
 	const emitted = extensionRunner.hasHandlers("session_shutdown");
 	if (emitted) await extensionRunner.emit(event);
-	extensionRunner.reclaimExtensionHandles();
+	reclaimRunnerHandles(extensionRunner);
 	return emitted;
 }
 
@@ -600,6 +600,7 @@ export class ExtensionRunner {
 		eventBus: EventBus = createEventBus(),
 	) {
 		this.extensions = extensions;
+		registerRunnerExtensions(this, extensions);
 		this.runtime = runtime;
 		this.uiContext = noOpUIContext;
 		this.cwd = cwd;
@@ -1756,11 +1757,6 @@ export class ExtensionRunner {
 	 * effect without a reload). A malformed value must never break teardown, so
 	 * an invalid setting is reported and the shipped defaults are used.
 	 */
-	/** Closes what this runner's extension instances left open; see `emitSessionShutdownEvent`. */
-	reclaimExtensionHandles(): void {
-		reclaimExtensionHandles(this.extensions);
-	}
-
 	private resolveSessionShutdownBudget(): ExtensionHandlerBudget {
 		try {
 			const settings = SettingsManager.create(this.cwd, this.getAgentDirFn(), {
