@@ -604,6 +604,7 @@ A goal whose continuation already stopped does not count as waiting: it keeps it
 | `sessionDir` | string | - | Directory where session files are stored. Accepts absolute or relative paths, plus `~`. |
 | `sessionShutdownHandlerWarnMs` | number | `2000` | Warn when a single extension's `session_shutdown` handler has run this long. Set to `0` to disable the warning. |
 | `sessionShutdownHandlerTimeoutMs` | number | `10000` | Hard cap for a single extension's `session_shutdown` handler. Set to `0` to disable the cap. |
+| `sessionShutdownQuitBudgetMs` | number | `1000` | Total time quit waits on all `session_shutdown` handlers together. Set to `0` to disable it. |
 
 ```json
 { "sessionDir": ".senpi/sessions" }
@@ -616,8 +617,10 @@ When multiple sources specify a session directory, precedence is `--session-dir`
 senpi bounds each extension's `session_shutdown` handler so one slow extension cannot hold quit, `/reload`, `/new`, `/resume` or a fork hostage. Past `sessionShutdownHandlerWarnMs` it logs one warning naming the extension; at `sessionShutdownHandlerTimeoutMs` it aborts the `signal` that handler received on the event, reports an extension error, and continues teardown with the next handler. The handler itself is not killed - it keeps running until the process exits - so extensions that persist durable state should observe `event.signal`.
 
 ```json
-{ "sessionShutdownHandlerWarnMs": 2000, "sessionShutdownHandlerTimeoutMs": 10000 }
+{ "sessionShutdownHandlerWarnMs": 2000, "sessionShutdownHandlerTimeoutMs": 10000, "sessionShutdownQuitBudgetMs": 1000 }
 ```
+
+Quit also has a total budget: every handler still starts, in order, but once `sessionShutdownQuitBudgetMs` has passed senpi stops waiting, logs one warning naming the extension that overran it and the elapsed time, and exits. Handlers that start after that point get 1 ms, so their synchronous cleanup still runs. `/reload`, `/new`, `/resume` and forks keep only the per-handler limits.
 
 Only `session_shutdown` is bounded; other extension events (including ask-user and approval dialogs, which may legitimately wait for minutes) are unaffected.
 

@@ -1,3 +1,22 @@
+## 2026-10-19 - One total budget for quit-time session_shutdown handlers (senpi#3711)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: `resolveSessionShutdownBudget` also reads `sessionShutdownQuitBudgetMs`. For `reason: "quit"`, `dispatchEmit` starts one `QuitDeadline` and gives each handler its own cap shortened to what remains of it. A handler cut by that deadline is logged once with `console.warn` (extension path and elapsed ms only) instead of an extension error; the per-handler cap still reports an error as before. Reload, new, resume and fork are unchanged.
+- `packages/coding-agent/src/core/extensions/shutdown-quit-budget.ts` (new): `QuitDeadline`, `SessionShutdownBudget`, `QuitHandlerBudget`.
+
+### Why
+
+- An idle quit took about 10 s (senpi#3711): one handler ran until the 10 s per-handler cap and quit waited on it. Several slow handlers could stack their caps. The process exits right after shutdown, so waiting longer than a short total only delays the exit.
+
+### Why an extension could not handle it
+
+- The runner owns how long the host waits on each `session_shutdown` handler; an extension cannot bound the others.
+
+### Expected merge conflict zones
+
+- MEDIUM: `runner.ts` `resolveSessionShutdownBudget`, `runSessionShutdownHandler` and the `session_shutdown` branch of `dispatchEmit`; the settings and `shutdown-quit-budget.ts` imports.
+
 ## 2026-10-19 - pi.getSubscriptionLimits() and pi.onSubscriptionLimits() (senpi#3684)
 
 ### What changed

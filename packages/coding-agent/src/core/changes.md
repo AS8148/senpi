@@ -1,3 +1,21 @@
+## 2026-10-19 - sessionShutdownQuitBudgetMs setting (senpi#3711)
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts`: new typed `sessionShutdownQuitBudgetMs` setting (default `DEFAULT_SESSION_SHUTDOWN_QUIT_BUDGET_MS` = 1000, 0 disables) with `getSessionShutdownQuitBudgetMs` / `setSessionShutdownQuitBudgetMs`, validated through `parseTimeoutSetting` like the existing shutdown handler budget.
+
+### Why
+
+- Quit waits on all `session_shutdown` handlers together for at most this long (senpi#3711); the per-handler 10 s cap alone let one handler hold an idle quit for 10 s.
+
+### Why an extension could not handle it
+
+- Settings are core state read by the extension runner; an extension cannot add a typed host setting.
+
+### Expected merge conflict zones
+
+- LOW: `settings-manager.ts` beside `DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS`, the `Settings` interface fields after `sessionShutdownHandlerTimeoutMs`, and the methods after `setSessionShutdownHandlerTimeoutMs`.
+
 ## 2026-10-19 - A sustained event stream no longer holds a compacted session's whole history (senpi#2537)
 
 ### What changed
