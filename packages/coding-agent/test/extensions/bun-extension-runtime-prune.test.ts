@@ -29,10 +29,16 @@ afterEach(() => {
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-function installRuntime(root: string, name: string, builtBeforeFix: boolean): string {
+function copyRuntimeSources(root: string, name: string): string {
 	const dir = join(root, name, "extensions");
 	mkdirSync(dir, { recursive: true });
 	for (const file of RUNTIME_FILES) copyFileSync(join(sourceDir, file), join(dir, file));
+	copyFileSync(join(sourceDir, "extension-runtime-module.ts"), join(dir, "extension-runtime-module.ts"));
+	return dir;
+}
+
+function installRuntime(root: string, name: string, builtBeforeFix: boolean): string {
+	const dir = copyRuntimeSources(root, name);
 	if (builtBeforeFix) {
 		const importer = join(dir, "bun-extension-importer.ts");
 		const source = readFileSync(importer, "utf8");
@@ -40,7 +46,6 @@ function installRuntime(root: string, name: string, builtBeforeFix: boolean): st
 		writeFileSync(importer, source.replace(RUNTIME_TAG, ""));
 	}
 	const runtimeModule = join(sourceDir, "extension-runtime-module.ts");
-	copyFileSync(runtimeModule, join(dir, "extension-runtime-module.ts"));
 	const shipped = execFileSync(bun, ["build", runtimeModule, "--no-bundle"], { encoding: "utf8", timeout: 30_000 });
 	writeFileSync(join(dir, "extension-runtime-module.js"), shipped);
 	return dir;
@@ -69,6 +74,42 @@ process.stdout.write(factory());`,
 		{ encoding: "utf8", timeout: 30_000, env: { ...process.env, BUN_RUNTIME_TRANSPILER_CACHE_PATH: cacheDir } },
 	);
 }
+
+// senpi#3716: the prepared-source cache must miss when only the code that prepares the bytes changes. Both runtimes
+// lack the shipped runtime module file, so their runtime-path slot is the same ("virtual") and only the helper differs.
+describe("senpi#3716 a runtime update that changes only the import rewrite never reuses prepared source", () => {
+	it("#given a cache filled by one runtime #when an identical copy and an edited copy load #then only the identical copy hits", () => {
+		const root = mkdtempSync(join(tmpdir(), "senpi-prepared-key-"));
+		roots.push(root);
+		linkRuntimePackages(root);
+		const cacheDir = join(root, "prepared-cache");
+		const extension = join(root, "extension.ts");
+		writeFileSync(extension, 'export default () => "loaded";\n');
+		const load = (runtimeDir: string, transpiling: "allowed" | "refused") =>
+			execFileSync(
+				bun,
+				[
+					"--eval",
+					`${transpiling === "refused" ? 'Bun.Transpiler = class { constructor() { throw new Error("transpiled"); } };' : ""}
+const { createBunExtensionImporter } = await import(${JSON.stringify(join(runtimeDir, "bun-extension-importer.ts"))});
+const importer = createBunExtensionImporter({}, {}, { preparedCache: { dir: ${JSON.stringify(cacheDir)}, release: "same" } });
+process.stdout.write((await importer.import(${JSON.stringify(extension)}, { default: true }))());`,
+				],
+				{ encoding: "utf8", timeout: 30_000, stdio: ["ignore", "pipe", "pipe"] },
+			);
+
+		expect(load(copyRuntimeSources(root, "runtime-a"), "allowed")).toBe("loaded");
+		expect(load(copyRuntimeSources(root, "runtime-a-copy"), "refused")).toBe("loaded");
+
+		const edited = copyRuntimeSources(root, "runtime-b");
+		const commonJs = join(edited, "bun-extension-commonjs.ts");
+		const source = readFileSync(commonJs, "utf8");
+		const signature = "export function parseImportClause(clause: string): ImportClause | undefined {";
+		expect(source).toContain(signature);
+		writeFileSync(commonJs, source.replace(signature, `${signature}\n\tif (clause === \"edited\") return undefined;`));
+		expect(() => load(edited, "refused")).toThrow(/transpiled/);
+	});
+});
 
 describe("senpi#3300 an unchanged extension survives a runtime update that prunes the old runtime", () => {
 	it.each([

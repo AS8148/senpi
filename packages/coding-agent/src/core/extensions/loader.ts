@@ -848,7 +848,7 @@ async function createExtensionModuleImporter(): Promise<ExtensionModuleImporter>
 			VIRTUAL_MODULES,
 			{},
 			{
-				preparedCacheDir: path.join(getAgentDir(), "cache", "extension-modules"),
+				preparedCache: { dir: path.join(getAgentDir(), "cache", "extension-modules"), release: VERSION },
 			},
 		);
 	}

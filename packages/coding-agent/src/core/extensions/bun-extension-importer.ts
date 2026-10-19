@@ -4,7 +4,12 @@ import { createRequire, isBuiltin } from "node:module";
 import { dirname, extname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parse } from "es-module-lexer/js";
-import { isCommonJsFile, isEsmByPackageType, rewriteCommonJsImport } from "./bun-extension-commonjs.ts";
+import {
+	isCommonJsFile,
+	isEsmByPackageType,
+	parseImportClause,
+	rewriteCommonJsImport,
+} from "./bun-extension-commonjs.ts";
 import { ExtensionSourceError } from "./bun-extension-error.ts";
 import { createPreparedSourceCache, type PreparedEdge, type PreparedSource } from "./bun-extension-prepared-cache.ts";
 import {
@@ -34,19 +39,25 @@ declare const Bun: {
 export function createBunExtensionImporter(
 	virtualModules: Readonly<Record<string, Readonly<Record<string, unknown>>>>,
 	builtinRedirects: Readonly<Record<string, string>> = {},
-	options: { readonly preparedCacheDir?: string } = {},
+	options: { readonly preparedCache?: { readonly dir: string; readonly release: string } } = {},
 ) {
-	// The key names the code that shapes prepared bytes, so an importer change never reads an old entry.
+	// The key names everything that shapes prepared bytes, so a change to any of it never reads an old entry.
+	// `release` (the senpi version) covers what ships only inside a release, such as the lexer; the function
+	// sources cover an edit to this code between releases.
 	const preparedCache =
-		options.preparedCacheDir === undefined
+		options.preparedCache === undefined
 			? undefined
-			: createPreparedSourceCache(options.preparedCacheDir, [
-					"1",
+			: createPreparedSourceCache(options.preparedCache.dir, [
+					"2",
+					options.preparedCache.release,
 					process.versions.bun ?? "",
 					runtimeModulePath ?? "virtual",
+					extensionNamespace,
 					createBunExtensionImporter.toString(),
 					rewriteCommonJsImport.toString(),
+					parseImportClause.toString(),
 					hasUseStrictDirective.toString(),
+					parse.toString(),
 				]);
 	const sources = new Map<string, ModuleSource>();
 	const fingerprints = new Map<string, string>();
@@ -214,8 +225,10 @@ export function createBunExtensionImporter(
 			const source = readFileSync(filename, "utf8");
 			const fingerprint = createHash("sha256").update(source).digest("hex");
 			let name = "__senpiExtensionMeta";
-			while (source.includes(name)) name += "_";
-			// Contains `name`, which the source never does, and ":", which encoded filenames never do.
+			while (source.includes(name) || filename.includes(name)) name += "_";
+			// The token is replaced across the prepared bytes. The source and this raw filename (header, sourceURL)
+			// never contain `name`; the only other raw text is the real path of an imported JSON or native file,
+			// which would have to contain `${name}:generation` to collide.
 			const token = `${name}:generation`;
 			const esmByType = extname(filename) === ".js" && isEsmByPackageType(filename);
 			const cached = preparedCache?.read(filename, fingerprint);

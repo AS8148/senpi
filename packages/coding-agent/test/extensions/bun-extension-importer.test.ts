@@ -122,7 +122,7 @@ ${session}`;
 		run(
 			root,
 			cache(`
-const importer = await createBunExtensionImporter({}, {}, { preparedCacheDir: cacheDir });
+const importer = await createBunExtensionImporter({}, {}, { preparedCache: { dir: cacheDir, release: "test" } });
 assert.deepEqual((await importer.import(entry, { default: true }))(), ["helper", "first"]);
 `),
 		);
@@ -130,8 +130,8 @@ assert.deepEqual((await importer.import(entry, { default: true }))(), ["helper",
 			root,
 			cache(`
 Bun.Transpiler = class { constructor() { throw new Error("transpiled despite a valid cache entry"); } };
-const first = await createBunExtensionImporter({}, {}, { preparedCacheDir: cacheDir });
-const second = await createBunExtensionImporter({}, {}, { preparedCacheDir: cacheDir });
+const first = await createBunExtensionImporter({}, {}, { preparedCache: { dir: cacheDir, release: "test" } });
+const second = await createBunExtensionImporter({}, {}, { preparedCache: { dir: cacheDir, release: "test" } });
 const one = await first.import(entry, { default: true });
 const two = await second.import(entry, { default: true });
 // Then: both generations load from the cache, each with its own module graph.
@@ -148,7 +148,7 @@ assert.notEqual(one, two);
 		run(
 			root,
 			cache(`
-const importer = await createBunExtensionImporter({}, {}, { preparedCacheDir: cacheDir });
+const importer = await createBunExtensionImporter({}, {}, { preparedCache: { dir: cacheDir, release: "test" } });
 // Then: the stale entry is not trusted; the edge resolves to the new target.
 assert.deepEqual((await importer.import(entry, { default: true }))(), ["helper", "second"]);
 `),
