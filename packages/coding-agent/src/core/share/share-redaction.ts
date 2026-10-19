@@ -17,6 +17,7 @@ export interface ShareRedactionContext {
 	readonly homeDirectory: string;
 	readonly userName: string;
 	readonly hostName: string;
+	readonly extraLiterals?: readonly string[];
 }
 
 export type ShareRedactionCategory =
@@ -222,6 +223,7 @@ export function redactShareText(text: string, context: ShareRedactionContext, ta
 		[context.hostName, "<host>", "host name"],
 		[shortHost, "<host>", "host name"],
 		[context.userName, "<user>", "user name"],
+		...(context.extraLiterals ?? []).map((value) => [value, "<user>", "user name"] as const),
 	] as const) {
 		const pattern = literalPattern(value);
 		if (!pattern) continue;
