@@ -566,7 +566,9 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 		if (event.reason !== "reload" && closingContext) reloadHandoffs.delete(handoffKey(closingContext));
 		const teardownErrors = watcherTeardownErrors(watcherClosures.splice(0));
 		// Quit never waits on watch-worker teardown: terminate() cannot return while the worker is blocked in a native
-		// call, and the process exits right after shutdown anyway (senpi#3711). The watches are already cancelled.
+		// call (senpi#3711). Nothing needs the join: the watches are cancelled synchronously above, so no late event can
+		// start reload work, and the unref'd worker finishes stopping on its own whether the process exits (CLI quit) or
+		// keeps running (an RPC host closing one session). Late failures still reach the log.
 		if (event.reason === "quit") {
 			void teardownErrors.then((errors) => {
 				for (const error of errors)

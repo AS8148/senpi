@@ -2,12 +2,12 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/extensions/runner.ts`: `resolveSessionShutdownBudget` also reads `sessionShutdownQuitBudgetMs`. For `reason: "quit"`, `dispatchEmit` starts one `QuitDeadline` and gives each handler its own cap shortened to what remains of it. A handler cut by that deadline is logged once with `console.warn` (extension path and elapsed ms only) instead of an extension error; the per-handler cap still reports an error as before. Reload, new, resume and fork are unchanged.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `resolveSessionShutdownBudget` also reads `sessionShutdownQuitBudgetMs`. `emitSessionShutdownEvent` takes `{ processExit }` and, for a quit that ends the process, calls the new `armProcessExitBudget()`, which records the quit request time. For such a quit, `dispatchEmit` starts one `QuitDeadline` from that time and gives each handler its own cap shortened to what remains of it. A handler cut by that deadline is logged once with `console.warn` (extension path and elapsed ms only) instead of an extension error; the per-handler cap still reports an error as before. Reload, new, resume, fork and an RPC host closing one session (a quit that does not exit) are unchanged.
 - `packages/coding-agent/src/core/extensions/shutdown-quit-budget.ts` (new): `QuitDeadline`, `SessionShutdownBudget`, `QuitHandlerBudget`.
 
 ### Why
 
-- An idle quit took about 10 s (senpi#3711): one handler ran until the 10 s per-handler cap and quit waited on it. Several slow handlers could stack their caps. The process exits right after shutdown, so waiting longer than a short total only delays the exit.
+- An idle quit took about 10 s (senpi#3711): one handler ran until the 10 s per-handler cap and quit waited on it. Several slow handlers could stack their caps. When the process exits right after shutdown, waiting longer than a short total only delays the exit. A quit on an RPC host that keeps running is excluded: there a detached handler would keep running while its extension's handles and provider scope are closed.
 
 ### Why an extension could not handle it
 
@@ -15,7 +15,7 @@
 
 ### Expected merge conflict zones
 
-- MEDIUM: `runner.ts` `resolveSessionShutdownBudget`, `runSessionShutdownHandler` and the `session_shutdown` branch of `dispatchEmit`; the settings and `shutdown-quit-budget.ts` imports.
+- MEDIUM: `runner.ts` `emitSessionShutdownEvent`, `armProcessExitBudget`, `resolveSessionShutdownBudget`, `runSessionShutdownHandler` and the `session_shutdown` branch of `dispatchEmit`; the settings and `shutdown-quit-budget.ts` imports.
 
 ## 2026-10-19 - Closing a session closes what its extension code left open (senpi#2292)
 

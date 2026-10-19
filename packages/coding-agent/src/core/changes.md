@@ -1,3 +1,21 @@
+## 2026-10-19 - dispose() says whether the process exits (senpi#3711)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `dispose({ processExit })` forwards the flag to `emitSessionShutdownEvent`, so a quit that ends the process shares the quit budget; the default keeps only the per-handler limits.
+
+### Why
+
+- The total quit budget (senpi#3711) must only cut handlers when the process really exits right after; an RPC host closing one session keeps running, so there a detached handler would keep running while its extension's handles and provider scope are closed.
+
+### Why an extension could not handle it
+
+- Session disposal is core runtime lifecycle; only its callers know whether the process exits.
+
+### Expected merge conflict zones
+
+- LOW: `agent-session-runtime.ts` `dispose()`.
+
 ## 2026-10-19 - sessionShutdownQuitBudgetMs setting (senpi#3711)
 
 ### What changed

@@ -1,3 +1,21 @@
+## 2026-10-19 - Print mode marks its quit as a process exit (senpi#3711)
+
+### What changed
+
+- `packages/coding-agent/src/modes/print-mode.ts`: `disposeRuntime` calls `runtimeHost.dispose({ processExit: true })`.
+
+### Why
+
+- The total quit budget (senpi#3711) must only cut handlers when the process really exits right after; an RPC host closing one session keeps running, so there a detached handler would keep running while its extension's handles and provider scope are closed.
+
+### Why an extension could not handle it
+
+- Print mode's shutdown is host code, not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: `print-mode.ts` `disposeRuntime`.
+
 ## 2026-10-19 - Subscription limits are polled before the first turn (senpi#3684)
 
 ### What changed

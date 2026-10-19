@@ -374,7 +374,9 @@ const UNBOUNDED_HANDLER_BUDGET: ExtensionHandlerBudget = { warnMs: 0, timeoutMs:
 export async function emitSessionShutdownEvent(
 	extensionRunner: ExtensionRunner,
 	event: SessionShutdownEvent,
+	options: { readonly processExit?: boolean } = {},
 ): Promise<boolean> {
+	if (options.processExit && event.reason === "quit") extensionRunner.armProcessExitBudget();
 	const emitted = extensionRunner.hasHandlers("session_shutdown");
 	if (emitted) await extensionRunner.emit(event);
 	reclaimRunnerHandles(extensionRunner);
@@ -505,6 +507,7 @@ export class ExtensionRunner {
 	private handlerStallListener: ((stall: ExtensionHandlerStall) => void) | undefined;
 	private handlerTurnScope: () => number = () => 0;
 	private reportedInvalidHandlerBudget = false;
+	private processExitRequestedAt: number | undefined;
 	private readonly heldHandlerWaits = new HeldHandlerWaits();
 	private getModel: () => Model<any> | undefined = () => undefined;
 	private getServiceTier: () => ServiceTier | undefined = () => undefined;
@@ -1759,6 +1762,14 @@ export class ExtensionRunner {
 	 * effect without a reload). A malformed value must never break teardown, so
 	 * an invalid setting is reported and the shipped defaults are used.
 	 */
+	/**
+	 * The next `quit` emission ends in process exit, so its handlers share the total quit budget (senpi#3711). A quit
+	 * that keeps the process alive (closing one session on an RPC host) keeps only the per-handler limits.
+	 */
+	armProcessExitBudget(): void {
+		this.processExitRequestedAt ??= Date.now();
+	}
+
 	private resolveSessionShutdownBudget(): SessionShutdownBudget {
 		try {
 			const settings = SettingsManager.create(this.cwd, this.getAgentDirFn(), {
@@ -1855,8 +1866,12 @@ export class ExtensionRunner {
 						const shutdownEvent = event as SessionShutdownEvent;
 						if (!shutdownBudget) {
 							shutdownBudget = this.resolveSessionShutdownBudget();
-							if (shutdownEvent.reason === "quit" && shutdownBudget.quitMs > 0) {
-								quitDeadline = new QuitDeadline(shutdownBudget.quitMs, Date.now);
+							if (
+								shutdownEvent.reason === "quit" &&
+								this.processExitRequestedAt !== undefined &&
+								shutdownBudget.quitMs > 0
+							) {
+								quitDeadline = new QuitDeadline(shutdownBudget.quitMs, Date.now, this.processExitRequestedAt);
 							}
 						}
 						await this.runSessionShutdownHandler(

@@ -9,7 +9,7 @@
 
 ### Why
 
-- `terminate()` returns only when the worker's current native call returns, so a worker busy in watch setup held quit until the 10 s handler cap (senpi#3711). On Bun 1.4.3 a worker blocked for 4 s made `await terminate()` take 3918 ms, while `unref()` + `terminate()` + `process.exit` took 132 ms, also with a live recursive FSEvents watch in the worker, so the #1656 exit hang does not recur with watches in the worker.
+- `terminate()` returns only when the worker's current native call returns, so a worker busy in watch setup held quit until the 10 s handler cap (senpi#3711). On Bun 1.4.3 a worker blocked for 4 s made `await terminate()` take 3918 ms, while `unref()` + `terminate()` + `process.exit` took 132 ms, also with a live recursive FSEvents watch in the worker, so the #1656 exit hang does not recur with watches in the worker. On an RPC host that keeps running after closing a session, the watches are already cancelled synchronously and the unref'd worker finishes stopping on its own.
 
 ### Why an extension could not handle it
 

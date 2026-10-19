@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import configReloadExtension from "../../../src/core/extensions/builtin/config-reload/index.ts";
+import { emitSessionShutdownEvent } from "../../../src/core/extensions/runner.ts";
 import { createFsWatchEventSource } from "../../../src/core/extensions/builtin/config-reload/watch-event-source.ts";
 import type { ExtensionAPI, ExtensionError, SessionShutdownEvent } from "../../../src/core/extensions/types.ts";
 import type { Settings } from "../../../src/core/settings-manager.ts";
@@ -61,6 +62,10 @@ async function hungThenFast(settings: Partial<Settings>): Promise<QuitFixture> {
 	return { harness, errors, warnings, ran };
 }
 
+function quitAndExit(harness: Harness): Promise<boolean> {
+	return emitSessionShutdownEvent(harness.getExtensionRunner(), { type: "session_shutdown", reason: "quit" }, { processExit: true });
+}
+
 function track(emitted: Promise<unknown>): { settled: () => boolean } {
 	let done = false;
 	void emitted.then(() => {
@@ -76,7 +81,7 @@ describe("senpi#3711 quit does not wait out a hung shutdown handler", () => {
 			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
 			const startedAt = Date.now();
 			const emission = track(
-				fixture.harness.getExtensionRunner().emit({ type: "session_shutdown", reason: "quit" }),
+				quitAndExit(fixture.harness),
 			);
 
 			await vi.advanceTimersByTimeAsync(1999);
@@ -101,7 +106,7 @@ describe("senpi#3711 quit does not wait out a hung shutdown handler", () => {
 		try {
 			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
 			const emission = track(
-				fixture.harness.getExtensionRunner().emit({ type: "session_shutdown", reason: "quit" }),
+				quitAndExit(fixture.harness),
 			);
 
 			await vi.advanceTimersByTimeAsync(249);
@@ -121,7 +126,7 @@ describe("senpi#3711 quit does not wait out a hung shutdown handler", () => {
 		try {
 			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
 			const emission = track(
-				fixture.harness.getExtensionRunner().emit({ type: "session_shutdown", reason: "quit" }),
+				quitAndExit(fixture.harness),
 			);
 
 			await vi.advanceTimersByTimeAsync(2999);
@@ -129,6 +134,41 @@ describe("senpi#3711 quit does not wait out a hung shutdown handler", () => {
 			await vi.advanceTimersByTimeAsync(1);
 			expect(emission.settled()).toBe(true);
 			expect(fixture.errors.map((error) => error.error)).toEqual(["handler timed out after 3000ms"]);
+		} finally {
+			fixture.harness.cleanup();
+		}
+	});
+
+it("keeps only the per-handler cap for a quit that does not exit the process (an RPC host closing a session)", async () => {
+		const fixture = await hungThenFast({ sessionShutdownHandlerTimeoutMs: 3000 });
+		try {
+			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+			const emission = track(fixture.harness.getExtensionRunner().emit({ type: "session_shutdown", reason: "quit" }));
+
+			await vi.advanceTimersByTimeAsync(2999);
+			expect(emission.settled()).toBe(false);
+			await vi.advanceTimersByTimeAsync(1);
+			expect(emission.settled()).toBe(true);
+			expect(fixture.errors.map((error) => error.error)).toEqual(["handler timed out after 3000ms"]);
+			expect(fixture.warnings.some((line) => line.includes("quit budget"))).toBe(false);
+		} finally {
+			fixture.harness.cleanup();
+		}
+	});
+
+	it("counts the quit budget from the quit request, not from the first handler", async () => {
+		const fixture = await hungThenFast({ sessionShutdownQuitBudgetMs: 1000 });
+		try {
+			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+			const runner = fixture.harness.getExtensionRunner();
+			runner.armProcessExitBudget();
+			await vi.advanceTimersByTimeAsync(400);
+			const emission = track(runner.emit({ type: "session_shutdown", reason: "quit" }));
+
+			await vi.advanceTimersByTimeAsync(599);
+			expect(emission.settled()).toBe(false);
+			await vi.advanceTimersByTimeAsync(1);
+			expect(emission.settled()).toBe(true);
 		} finally {
 			fixture.harness.cleanup();
 		}

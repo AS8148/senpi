@@ -11,7 +11,8 @@ export interface QuitHandlerBudget {
 }
 
 /**
- * One deadline shared by every `session_shutdown` handler of a quit (senpi#3711). Each handler keeps its own cap
+ * One deadline shared by every `session_shutdown` handler of a quit that ends in process exit (senpi#3711),
+ * counted from the quit request. Each handler keeps its own cap
  * and is still started in order; the host only stops waiting once the deadline passes. A handler that starts after
  * the deadline gets 1 ms, so synchronous cleanup still completes and asynchronous work is left running.
  */
@@ -19,9 +20,9 @@ export class QuitDeadline {
 	private readonly deadline: number;
 	private readonly now: () => number;
 
-	constructor(totalMs: number, now: () => number) {
+	constructor(totalMs: number, now: () => number, startedAt: number = now()) {
 		this.now = now;
-		this.deadline = now() + totalMs;
+		this.deadline = startedAt + totalMs;
 	}
 
 	budgetFor(base: ExtensionHandlerBudget): QuitHandlerBudget {
