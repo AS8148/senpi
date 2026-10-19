@@ -1,14 +1,16 @@
 // senpi#3566 todo 4 (review HIGH 3, LOW 1, delta LOW 1): a session directory too deep for sun_path still starts its child
-// (and a symlink planted at its fallback directory is refused untouched), a start
+// (and a symlink planted at its fallback directory is never used or changed, nor does it block the start), a start
 // that fails for any reason never leaves the client "spawning", and an unsubscribed channel listener hears nothing.
+import { ChildProcess } from "node:child_process";
 import { chmod, lstat, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { MAX_SOCKET_PATH_BYTES } from "../socket-ownership.ts";
-import { channelSocketPath, connectChannel, fallbackSocketRoot, openChannelListener } from "./channel.ts";
+import { connectChannel, openChannelListener } from "./channel.ts";
 import { ToolChildClient } from "./client.ts";
+import { channelSocketPath, fallbackSocketRoot } from "./socket-root.ts";
 
 const resolver = pathToFileURL(resolve(import.meta.dirname, "../../../experimental/source-resolver.ts")).href;
 const roleEntry = resolve(import.meta.dirname, "../../../tool-child-main.ts");
@@ -39,7 +41,7 @@ describe.skipIf(process.platform === "win32")("tool child start", () => {
 		expect(await instance.ping()).toBeGreaterThan(0);
 	}, 30_000);
 
-	it("refuses a planted symlink at the fallback directory and never changes what it points to", async () => {
+	it("never uses or changes a symlink planted at the fallback directory, and still starts the child elsewhere", async () => {
 		const base = await scratch("tcs-");
 		const deep = join(base, "z".repeat(60), "w".repeat(60), "tool-children", "0123456789abcdef0123456789abcdef0123");
 		const target = await scratch("tcs-target-");
@@ -47,9 +49,21 @@ describe.skipIf(process.platform === "win32")("tool child start", () => {
 		const root = fallbackSocketRoot(deep);
 		await symlink(target, root);
 		cleanups.push(() => rm(root, { force: true }));
-		await expect(channelSocketPath(deep, 1)).rejects.toThrow("socket_dir_unsafe");
+		const socket = await channelSocketPath(deep, 1);
+		const socketDir = join(socket, "..");
+		cleanups.push(() => rm(socketDir, { recursive: true, force: true }));
+		expect(socketDir.startsWith(`${root}-`)).toBe(true);
+		expect(Buffer.byteLength(socket)).toBeLessThanOrEqual(MAX_SOCKET_PATH_BYTES);
+		const stat = await lstat(socketDir);
+		expect(stat.isDirectory() && !stat.isSymbolicLink()).toBe(true);
+		expect(stat.mode & 0o077).toBe(0);
 		expect((await lstat(target)).mode & 0o777).toBe(0o755);
-	});
+		const instance = new ToolChildClient({ dir: deep, cwd: base, command, env: process.env });
+		cleanups.push(() => instance.close());
+		await instance.start();
+		expect(await instance.ping()).toBeGreaterThan(0);
+		expect((await lstat(target)).mode & 0o777).toBe(0o755);
+	}, 30_000);
 
 	it("fails a start whose command cannot spawn typed, and is not left spawning", async () => {
 		const dir = await scratch("tcs-");
@@ -58,6 +72,16 @@ describe.skipIf(process.platform === "win32")("tool child start", () => {
 			await expect(instance.start()).rejects.toMatchObject({ code: "tool_child_bootstrap_failed" });
 			expect(instance.state).toBe("dead");
 		}
+	}, 30_000);
+
+	it("never signals anything for a child that failed to spawn", async () => {
+		// Node 26 sends `kill()` on a child with no pid to the caller's own process group; the spy keeps it from running.
+		const kill = vi.spyOn(ChildProcess.prototype, "kill").mockImplementation(() => false);
+		cleanups.push(async () => kill.mockRestore());
+		const dir = await scratch("tcs-");
+		const instance = new ToolChildClient({ dir, cwd: dir, command: { command: "/nonexistent/senpi", args: [] } });
+		await expect(instance.start()).rejects.toMatchObject({ code: "tool_child_bootstrap_failed" });
+		expect(kill).not.toHaveBeenCalled();
 	}, 30_000);
 
 	it("fails a start whose listener cannot open typed, and is not left spawning", async () => {

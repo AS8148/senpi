@@ -1,3 +1,62 @@
+## 2026-10-19 - Single-account guidance follows the pin's source and the block's cause (senpi#3672)
+
+### What changed
+
+- `affinity.ts`: `AffinityOptions.pinSource` (`cli` | `settings` | `stored`); with account fallback off, `UnavailableAccount.pinnedBy` records it when the one account is a pin. `auth-lane.ts` passes `cli` for a request pin and `settings` or `stored` from the managed pool; `account-command.ts` passes the source it already computes.
+- `guidance.ts` (`singleAccountUnavailableGuidance`): the switch line depends on the pin's source. A CLI pin says to start a new session with another `--claude-account`; a settings pin names `anthropicSubscriptionProvider.pinnedAccount` (or `SENPI_CLAUDE_SDK_OAUTH_PINNED_ACCOUNT`); a stored pin, the session's own account, or the order head keeps `/claude-account pin`.
+- `guidance.ts`: an auth-blocked account leads with `/login` and calls its time "Next automatic re-check", as the pool-wide guidance does, instead of "Wait until ..., when this account can serve again". A rate-limited account is unchanged.
+- Documented and tested: an account that is not configured carries no cause words, so the credential-pool classifier returns `fail_request` rather than a rate-limit cooldown.
+
+### Why
+
+Review follow-ups to #3473. `/claude-account pin` only writes the stored pin, which a CLI or a settings pin outranks (`resolveClaudeAccountPin`), so that advice did nothing for those users. Waiting never fixes an auth block. A missing account cannot come back on a cooldown, so failing the request is the right verdict; it is now pinned by a test.
+
+### Why an extension could not handle it
+
+This is the builtin extension's own guidance and account selection.
+
+### Expected merge conflict zones
+
+`guidance.ts` `singleAccountUnavailableGuidance`, `affinity.ts` `selectAccount` and `AffinityOptions`, `auth-lane.ts` `managedPool`; fork-only files.
+
+## 2026-10-19 - A reply records its Anthropic message id as responseId (oh-my-openagent#10547)
+
+### What changed
+
+- `stream-events.ts`: `applyStreamEvent` copies `message_start`'s `message.id` to the assistant message's `responseId` when the id is present.
+- `stream.ts`: an SDK `assistant` message sets `responseId` from `message.message.id` when the stream has not set it, so a result-only turn (no stream events) carries it too.
+- Turn identity rule: a senpi assistant message is one Anthropic response (the SDK turn ends at the first `tool_use` through the PreToolUse deny hook; tool-less requests run `maxTurns: 1`). Its `message.id` identifies the turn in both stores, because Claude Code writes the same id as `message.id` on every transcript line of the response. The first id wins on both lanes (`??=` in `applyStreamEvent` and in the `assistant` branch), so they can never record different ids.
+
+### Why
+
+The Claude Agent SDK persists every turn to `~/.claude/projects`, and senpi's resume path needs that transcript, so the copy stays. The OmO desktop Usage page reads both stores and counted each OmO turn twice, once as OmO and once as Claude Code. The Anthropic message id is the only value both records share; with it on the OmO side, a reader drops the Claude Code copy exactly. `entrypoint: "sdk-ts"` cannot be used instead, because other Agent SDK hosts (the desktop's own Claude Code driver) write it too.
+
+### Why an extension could not handle it
+
+This is the builtin extension's own stream mapping.
+
+### Expected merge conflict zones
+
+`stream-events.ts` `applyStreamEvent`, the `message_start` branch; `stream.ts`, the SDK message loop's `assistant` branch. Both fork-only files.
+
+## 2026-10-18 - A compiled build finds Claude Code shipped beside its executable (senpi#3639)
+
+### What changed
+
+- `executable.ts`: `ExecutableDeps.executableDir` (default `dirname(process.execPath)`). When the build is compiled, after the embedded and resolver probes, each platform candidate is also checked under `node_modules` in that directory, and an accepted one is the `bundled` source, so a strictly newer `claude` on PATH still wins (#2033). A build that is not compiled never looks there.
+
+### Why
+
+A compiled build bundles `@anthropic-ai/claude-agent-sdk`, so `import.meta.resolve` of the SDK throws inside the binary and the resolver never reaches a platform package on disk. A distribution that ships Claude Code beside a compiled engine (OmO desktop, sisyphuslabs/omo-desktop-app#3145) had no way to have it found except `CLAUDE_CODE_EXECUTABLE`, which hides a newer user install.
+
+### Why an extension could not handle it
+
+This is the builtin extension's own executable lookup; the resolver order is the contract.
+
+### Expected merge conflict zones
+
+`executable.ts` `acceptBundled` and the `ExecutableDeps` type; fork-only file.
+
 ## 2026-10-16 - A transient failure never rotates or blocks an account (senpi#3466)
 
 ### What changed
@@ -2007,3 +2066,24 @@ This is the builtin's own denial reason, which the deny hook hands to Claude Cod
 
 ### Expected merge conflict zones
 - `tools.ts`: the denial constant and the fingerprint version.
+
+## 2026-10-16 - Opt out of managed account fallback (senpi#3465)
+
+### What changed
+
+- `settings.ts` parses `anthropicSubscriptionProvider.accountFallback` and `SENPI_CLAUDE_SDK_OAUTH_ACCOUNT_FALLBACK`, defaulting to the existing enabled behavior.
+- `affinity.ts` limits selection to the explicit pin, resident account, or the first account of the user's order (senpi#3591) over the deterministic affinity ranking when disabled, including subsequent requests after that account is blocked.
+- `auth-lane.ts` passes the policy to account selection and `failover.ts`, which limits attempts to one account while preserving same-account retries and refresh recovery. `account-command.ts` uses the same selection policy for the displayed affinity pick.
+- `affinity.ts` attaches `unavailableAccount` (`name`, `configured`) to `AllAccountsBlockedError` when fallback is disabled; the error message keeps its machine-read wording. `guidance.ts` adds `singleAccountUnavailableGuidance`, which `stream-guidance.ts` shows for that case: it names the account, says fallback is off, and lists the remedies that work (wait for the reset, `/claude-account pin`, `accountFallback: true`), or, for a pin or resident account that is no longer configured, says so and points at re-pinning or a new session. The cause words stay, so the credential-pool classifier reads the same verdict.
+
+### Why
+
+- Disabling model fallback does not prevent spending another Claude account's allowance. Users need an opt-out without deleting stored credentials.
+
+### Why an extension could not handle it
+
+- This builtin owns the managed account pool and its internal retry loop; an external extension cannot prevent an account switch inside that loop.
+
+### Expected merge conflict zones
+
+- LOW: provider settings parsing, the candidate list in `selectAccount`, and the attempt bound in `runFailover`, plus `AllAccountsBlockedError` construction and the `AllAccountsBlockedError` branch in `withAuthGuidance`.

@@ -6,7 +6,13 @@
  */
 import { connectChannel, type ToolChildChannel } from "./channel.ts";
 import { ChildHostCalls, type HostCallTarget } from "./host-calls-child.ts";
-import { scrubToolChildEnv, TOOL_CHILD_LEDGER_ENV, TOOL_CHILD_REFS_ROOT_ENV } from "./launch-env-names.ts";
+import {
+	rememberToolChildReentry,
+	scrubToolChildEnv,
+	TOOL_CHILD_LEDGER_ENV,
+	TOOL_CHILD_REENTRY_ENV,
+	TOOL_CHILD_REFS_ROOT_ENV,
+} from "./launch-env-names.ts";
 import { LaunchGate } from "./launch-gate.ts";
 import { sweepLedger } from "./orphan-sweep.ts";
 import { PayloadRefReader, PayloadRefWriter } from "./payload-ref.ts";
@@ -58,6 +64,7 @@ export async function runToolChild(options: ToolChildEntryOptions): Promise<void
 	if (controls.enabled("EXIT_ON_START")) exit(1);
 	// Read once; from here no command this child starts may see them (only node:child_process honours a deleted key, so
 	// the gated Bun.spawn passes process.env explicitly).
+	rememberToolChildReentry(env[TOOL_CHILD_REENTRY_ENV]);
 	if (options.env === undefined) scrubToolChildEnv(process.env);
 	const running = new Map<string, AbortController>();
 	const gate = new LaunchGate(channel);
