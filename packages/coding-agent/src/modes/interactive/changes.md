@@ -16,8 +16,6 @@ The widget renderer is host code; the extension only passes the choices.
 
 - LOW: `setExtensionWidget`, the string-array branch.
 
-||||||| a671c7dd0
-
 ## 2026-10-19 - Interactive quit marks its dispose as a process exit (senpi#3711)
 
 ### What changed
@@ -35,6 +33,7 @@ The widget renderer is host code; the extension only passes the choices.
 ### Expected merge conflict zones
 
 - LOW: `interactive-mode.ts` both `runtimeHost.dispose()` sites in `shutdown`.
+
 ## 2026-10-19 - Never signal a child whose spawn failed (senpi#3706)
 
 ### What changed
@@ -2237,6 +2236,7 @@ The login command is interactive mode's own command handler; an extension cannot
 - MEDIUM: `interactive-mode.ts` - `createExtensionUIContext` (`question:` entry), the top of `defaultEditor.onSubmit`, `handleHostUiRequest`'s `question` case, `resetExtensionUI`, `setupExtensionShortcuts`' handler head, and the new `showAsyncQuestion`/`refreshAsyncWidget`/`handleAskUserShortcut`/`submitAsyncQuestionComment`/`deliverAsyncAnswer` block after `hideQuestionOverlay`.
 - LOW: `ask-user-async-widget.ts` (new), `interactive-host-runtime.ts` `sendHostUiProgress` next to `setHostUiHandler`, `rpc-client.ts` `sendExtensionUIProgress` next to `sendExtensionUIResponse` and the id-preserving branch in `send`.
 
+
 ## 2026-09-10 - Ask-user question overlay and host `question` bridge
 
 ### What changed
@@ -2274,6 +2274,8 @@ The login command is interactive mode's own command handler; an extension cannot
 ### Expected merge conflict zones
 
 - LOW: `packages/coding-agent/src/modes/interactive/interactive-mode.ts` `showNewVersionNotification`.
+
+
 
 ## 2026-09-10 - A cancelled /login renders as "Login cancelled", not a failure (#1542)
 
@@ -2330,6 +2332,7 @@ The login command is interactive mode's own command handler; an extension cannot
 
 - MEDIUM: `interactive-mode.ts` `showTreeSelector()` — the inline navigation body was extracted into `runTreeNavigation()`.
 - LOW: `tree-selector.ts` `handleInput` chain and `TREE_HELP_ITEMS`.
+
 
 ## 2026-09-09 - Surface required compaction after oversized resume
 
@@ -2741,6 +2744,7 @@ The login command is interactive mode's own command handler; an extension cannot
 - MEDIUM: the chat container construction and the assistant branch of `renderSessionItems` in `packages/coding-agent/src/modes/interactive/interactive-mode.ts`.
 - LOW: the added getters in `packages/coding-agent/src/modes/interactive/components/tool-execution.ts` and `packages/coding-agent/src/modes/interactive/components/assistant-message.ts`, and the spinner helper in `packages/coding-agent/src/modes/interactive/tool-progress.ts`.
 
+
 ## 2026-09-23 — Filter model-only text at the tool-renderer boundary
 
 ### What changed
@@ -2865,6 +2869,7 @@ Theme color roles are interactive-mode assets resolved at startup; an extension 
 ### Expected merge conflict zones
 
 Upstream edits to `theme/dark.json` or `theme/light.json` color roles at the next sync.
+
 
 ## Deleting a session also deletes its tool images (2026-10-03)
 

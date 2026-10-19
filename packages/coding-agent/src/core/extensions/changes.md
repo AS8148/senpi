@@ -16,8 +16,6 @@ The widget options type is the public extension contract; an extension cannot ad
 
 - LOW: `types.ts` `ExtensionWidgetOptions`, next to `WidgetPlacement`.
 
-||||||| a671c7dd0
-
 ## 2026-10-19 - Quit budget start, stated precisely (senpi#3711 follow-up)
 
 ### What changed
@@ -54,6 +52,7 @@ The widget options type is the public extension contract; an extension cannot ad
 ### Expected merge conflict zones
 
 - MEDIUM: `runner.ts` `emitSessionShutdownEvent`, `armProcessExitBudget`, `resolveSessionShutdownBudget`, `runSessionShutdownHandler` and the `session_shutdown` branch of `dispatchEmit`; the settings and `shutdown-quit-budget.ts` imports.
+
 ## 2026-10-19 - Closing a session closes what its extension code left open (senpi#2292)
 
 ### What changed
@@ -1006,6 +1005,7 @@ Only the host can run the `before_agent_start` chain, and only the host knows th
 
 - The cache block near the top of `loader.ts` and its `loadExtensionsInternal` signature, whenever upstream touches loader caching.
 
+
 ## 2026-09-21 - Read es-module-lexer 3 import records in the Bun extension importer (senpi#1895)
 
 ### What changed
@@ -1197,6 +1197,7 @@ Only the host can run the `before_agent_start` chain, and only the host knows th
 
 - LOW: the head of the "ExtensionAPI Methods" section and the first paragraphs of "Config reload" in `docs/extensions.md`.
 
+
 ## 2026-09-18 - Named imports from CommonJS packages link through the extension graph (senpi#1807)
 
 ### What changed
@@ -1359,6 +1360,7 @@ Only the host can run the `before_agent_start` chain, and only the host knows th
 - `packages/coding-agent/src/core/extensions/runner.ts`: `createContext()` getter list; preserve `assertActive()` and resolved paths.
 - `packages/coding-agent/src/core/extensions/builtin/index.ts`: imports and the registration after `ask-user`; retain other builtin ordering.
 
+
 ## 2026-09-13 - Optional authoritative session goal-store path (senpi#1663)
 
 ### What changed
@@ -1387,6 +1389,8 @@ Only the host can run the `before_agent_start` chain, and only the host knows th
 - `packages/coding-agent/test/sdk-session-manager.test.ts`: SDK-created session paths reach the registered bash tool.
 - `packages/senpi-codemode/test/extension-session-env.test.ts`: runtime creation forwards cwd and the optional goal-store path from the extension context.
 
+
+
 ## 2026-09-13 - Pending-question arrival and blocked bus contracts (senpi#1645)
 
 ### What changed
@@ -1404,6 +1408,7 @@ Only the host can run the `before_agent_start` chain, and only the host knows th
 ### Expected merge conflict zones
 
 - `packages/coding-agent/docs/extensions.md`: lifecycle events section. Implementation details are tracked in `builtin/changes.md` and `modes/interactive/changes.md`.
+
 
 ## 2026-09-13 - `resources_discover` advertises scoped-entry support (senpi#1655)
 
@@ -1631,6 +1636,7 @@ Only the host can run the `before_agent_start` chain, and only the host knows th
 
 - LOW: `ExtensionContext`/`ExtensionContextActions` in `types.ts`, the context getters in `runner.ts`, the `model_select` handler in `builtin/service-tier.ts`.
 
+
 ## 2026-09-04 - UI prompt lifecycle events
 
 ### What changed
@@ -1651,6 +1657,7 @@ Only the host can run the `before_agent_start` chain, and only the host knows th
 
 - MEDIUM: `packages/coding-agent/src/core/extensions/runner.ts` UI-context wrapping and depth tracking; LOW: `packages/coding-agent/src/core/extensions/types.ts` event union and `packages/coding-agent/src/core/extensions/index.ts` export list.
 
+
 ## Expose the extension event bus for session activity signals (2026-08-31)
 
 ### What changed
@@ -1669,6 +1676,7 @@ Only the host can run the `before_agent_start` chain, and only the host knows th
 
 - LOW: the accessor block next to `onRpcEvent` in `runner.ts`.
 
+
 ## Builtin /account command (2026-08-27)
 
 ### What changed
@@ -1686,6 +1694,7 @@ Only the host can run the `before_agent_start` chain, and only the host knows th
 ### Expected merge conflict zones
 
 - LOW: one import + one registration line in `builtin/index.ts`.
+
 
 ## Extension contracts re-diverge from upstream dcd4619 (2026-08-25)
 
@@ -2314,6 +2323,7 @@ was rewritten.
 
 - LOW: `builtin/recommended-models/index.ts` if upstream re-introduces `settings` as an auto-switch path; keep it out of `AUTO_SWITCH_PROVENANCE`.
 
+
 ## 2026-07-31 - Correlated input dispositions
 
 ### What changed and why
@@ -2419,6 +2429,8 @@ Only the session core can consult `session_before_reload` without side effects; 
 - LOW: `runner.ts` `bindCore` context-action copies and the `createContext` getters; keep the `checkReloadVeto` getter beside `requestReload`.
 - LOW: `builtin/config-reload/index.ts` `flushPending`; the veto probe must stay before the `Hot-reloading:` notify and `requestReload` call.
 
+
+
 ## 2026-07-29 - Session-scoped model APIs; headless recommended-model switch no longer persists
 
 ### What changed and why
@@ -2442,6 +2454,8 @@ Only the session core can consult `session_before_reload` without side effects; 
 - LOW: `types.ts` around the Model/Thinking Level API block; retain both session-scoped methods.
 - LOW: `runner.ts` action copy block and `loader.ts` runtime stub/facade lists; keep the session-scoped entries.
 
+
+
 ## 2026-07-29 - Initial model provenance on session_start
 
 ### What changed and why
@@ -2464,6 +2478,8 @@ The extension runs after the core resolver has selected the startup model. Witho
 
 - LOW: `types.ts` around `SessionStartEvent`; retain the optional `initialModelProvenance` field.
 - MEDIUM: `../sdk.ts` startup-model resolution and session-start event assembly; preserve provenance when the SDK resolves the initial model.
+
+
 
 ## 2026-07-28 - Prompt-cache safe-wait budget on ExtensionContext
 
@@ -2493,6 +2509,7 @@ Prompt-cache TTL is decided per provider inside `pi-ai`, and the resolved model 
 ### Migration notes
 
 Hosts that construct `ExtensionContextActions` themselves must supply `getPromptCacheSafeWaitSeconds`; returning `() => undefined` preserves pre-existing behavior exactly.
+
 
 ## 2026-07-28 - session_before_reload (cancellable reload veto)
 
@@ -2576,6 +2593,7 @@ Hosts that construct `ExtensionContextActions` themselves must supply `getPrompt
 ### Expected merge conflict zones
 - LOW: `types.ts` around the AgentEndEvent interface; `builtin/goal/index.ts` event handlers.
 
+
 ## 2026-07-25 - Config-reload skips routine cross-process settings changes
 
 ### What changed
@@ -2633,6 +2651,7 @@ External plugins that re-register synchronously from a `CONFIG_WATCH_REJECTED` l
 
 Builtin look-at extensions need resolved look-at and image settings without accessing the core `SettingsManager` directly.
 
+
 ## 2026-07-21 - Config-reload builtin registration
 
 ### What changed
@@ -2642,6 +2661,7 @@ Builtin look-at extensions need resolved look-at and image settings without acce
 ### Why
 
 The reload-request context seam below lets the builtin reuse the host reload path without making reload a model tool. Keeping MCP last preserves its provider-payload observation ordering.
+
 
 ## 2026-07-21 - Extension reload request seam
 
@@ -2654,6 +2674,7 @@ The reload-request context seam below lets the builtin reuse the host reload pat
 
 Config-reload extensions need to request the existing host reload flow only when available and defer while compaction is active. A resolved interactive request is not proof of reload because the host deliberately warn-drops reloads while streaming or compacting.
 
+
 ## 2026-07-20 - recovery model config is public to provider extensions
 
 ### What changed
@@ -2664,6 +2685,7 @@ Config-reload extensions need to request the existing host reload flow only when
 
 - LOW: `types.ts` `ProviderModelConfig` model metadata fields.
 
+
 ## 2026-07-20 - Model fallback command builtin
 
 - Added the `model-fallback` builtin and `/fallback` command for viewing, creating, removing, enabling, and setting the revert policy for global retry fallback chains.
@@ -2671,6 +2693,7 @@ Config-reload extensions need to request the existing host reload flow only when
 - Registered `--no-model-fallback` and `SENPI_NO_FALLBACK=1` as the per-run fallback escape-hatch inputs.
 - `ExtensionContext.sessionSettings` delegates command writes to the active session's `SettingsManager`, so quick-set changes are immediately visible to the retry controller. Its read-only fallback status accessor powers the menu's live-state view.
 - `--no-model-fallback` and `SENPI_NO_FALLBACK=1` apply a non-persistent `retry.modelFallback=false` override at session bootstrap.
+
 
 ## 2026-07-20 - session_compact `accepted: false` and structured cancel result
 

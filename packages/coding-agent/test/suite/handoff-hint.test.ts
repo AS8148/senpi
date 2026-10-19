@@ -164,7 +164,8 @@ function harness(
 		newSessions,
 		notices,
 		now: () => now,
-		run: (args: string) => commands.get("handoff")!.handler(args, ctx),
+		// Commands get their own context object, as `createCommandContext()` builds one per invocation.
+		run: (args: string) => commands.get("handoff")!.handler(args, { ...ctx }),
 		setTokens: (value: number) => (tokens = value),
 		emitWarmPing: () => pi.events?.emit("cache_warm_ping", {}),
 	};

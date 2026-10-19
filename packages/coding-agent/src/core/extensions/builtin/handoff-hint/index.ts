@@ -205,6 +205,7 @@ export function createHandoffHintExtension(
 				contextTokens: usage?.tokens ?? estimate?.contextTokens ?? 0,
 			});
 			const accepted = estimate === undefined ? undefined : hintEvent("accepted", current, estimate);
+			const sessionId = current.sessionManager.getSessionId();
 			hide(current);
 			const result = await current.newSession({
 				parentSession: current.sessionManager.getSessionFile(),
@@ -216,7 +217,8 @@ export function createHandoffHintExtension(
 				},
 			});
 			if (result.cancelled) {
-				if (estimate !== undefined && ctx === current) render(current, estimate);
+				if (estimate !== undefined && current.sessionManager.getSessionId() === sessionId)
+					render(current, estimate);
 				return;
 			}
 			if (accepted !== undefined) pi.events?.emit(HANDOFF_HINT_EVENT, accepted);

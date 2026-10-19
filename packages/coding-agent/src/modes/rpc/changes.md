@@ -17,8 +17,6 @@ The wire record is built by the RPC UI context.
 
 - LOW: `rpc-types.ts` setWidget member; `connection-handler.ts` `setWidget`.
 
-||||||| a671c7dd0
-
 ## 2026-10-19 - Keep pending dialogs visible after session replacement (#3728 review)
 
 ### What changed
@@ -102,6 +100,7 @@ These files own the bounded socket actor, connection capability policy and nativ
 ### Expected merge conflict zones
 
 - LOW: `connection-handler.ts` the `ConnectionHandler.dispose` declaration and the `dispose` closure; `rpc-mode.ts` the `createRpcShutdown` callback.
+
 ## 2026-10-19 - Never signal a child whose spawn failed (senpi#3706)
 
 ### What changed
@@ -3878,6 +3877,7 @@ cannot be connected to at all takes the stop-and-start path.
 
 - LOW: one import block plus one dispatch branch in `src/main.ts`, one new dispatcher in `src/cli/deferred-commands.ts`, and additive export lists in `src/modes/index.ts` / `src/index.ts`. Everything else is new files.
 
+
 ## 2026-09-17 - Name why a session closed or parked, and when the host stalls (#1782)
 
 ### What changed
@@ -6703,6 +6703,7 @@ The launch profile, the capability list and the session environment are assemble
 ### Expected merge conflict zones
 
 The `open_session` branch of `session-command-router.ts` next to `promptSurface`, the capability list in the same file, and the attach blocks in `session-registry-attach.ts` and `worker-session-registry.ts`.
+
 
 ## 2026-10-03 - Tool-result images are persisted and their path reported in the placeholder
 

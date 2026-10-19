@@ -17,8 +17,6 @@ The handoff hint's switch and thresholds are user settings (defaults: on, 200k t
 
 - LOW: one field in `Settings`, one import line, one interface in `settings-shapes.ts`.
 
-||||||| a671c7dd0
-
 ## 2026-10-19 - dispose() says whether the process exits (senpi#3711)
 
 ### What changed
@@ -54,6 +52,7 @@ The handoff hint's switch and thresholds are user settings (defaults: on, 200k t
 ### Expected merge conflict zones
 
 - LOW: `settings-manager.ts` beside `DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS`, the `Settings` interface fields after `sessionShutdownHandlerTimeoutMs`, and the methods after `setSessionShutdownHandlerTimeoutMs`.
+
 ## 2026-10-19 - Never signal a child whose spawn failed (senpi#3706)
 
 ### What changed
@@ -2037,6 +2036,7 @@ Skill commands are resource-loader entries expanded inside the private `AgentSes
 
 - LOW: the two `streamWithCredentialRotation` calls in `model-runtime.ts`; the rest is fork-only (`credential-pool/`, `credential-accounts.ts`, `retry-fallback/`).
 
+
 ## 2026-10-03 - A stale resume compaction requirement no longer blocks prompts that fit (#2589, #2488)
 
 ### What changed
@@ -3875,6 +3875,7 @@ All of these run inside core credential, settings, session and model-runtime plu
 
 ### What changed
 
+
 ### Why
 
 Today a typed legacy id in `/login` falls through to `showLoginProviderSelector(undefined, providerRef)`, which opens a selector filtered to nothing - it reads as "this provider vanished" rather than "it was renamed". `--provider` would fail later with a generic message. Both now name the new id so the user can retype it. Config read from disk is normalized instead (todo 8) and never hard-errored.
@@ -3884,6 +3885,8 @@ Today a typed legacy id in `/login` falls through to `showLoginProviderSelector(
 CLI parsing and the interactive login command are core surfaces that run before and outside the extension API.
 
 ### Expected merge conflict zones
+
+
 
 ## 2026-09-22 - A caller-chosen session id is written to disk at open (#2010)
 
@@ -4804,6 +4807,8 @@ runtime it registered into is private or shared.
 - `test/suite/terminal-bash-session-env.test.ts`: real foreground/background PTY children, execute-time/fallback contexts, inherited-value clearing.
 - `test/sdk-session-manager.test.ts`: SDK-created session values through the registered bash surface.
 
+
+
 ## 2026-09-13 - Configurable pending-question arrival bell (senpi#1645)
 
 ### What changed
@@ -4840,6 +4845,7 @@ runtime it registered into is private or shared.
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/core/keybindings.ts`: AppKeybindings and KEYBINDINGS question entries.
+
 
 ## 2026-09-13 - Invocation-scoped steering notification (senpi#1637)
 
@@ -5215,6 +5221,7 @@ runtime it registered into is private or shared.
 
 ## Record model switches the session refuses (2026-09-10)
 
+
 ### What changed
 
 - `packages/coding-agent/src/core/agent-session.ts` records every refused model switch before rethrowing. `_assertModelUsableForSwitch()` is the single guard seam: the `_setModel` pre-flight, the post-`model_select` revalidation in `_switchActiveModel`, and both `_cycleFavoriteModel` guards (the sole-alternative case and the pre/post-`model_select` pair) now funnel through it, so each appends a `model_change_rejected` session entry, emits the matching event with the budget projection numbers, and rethrows the original error unchanged. The `_setModel` auth refusal records the same entry with `reason: "auth"`. `_modelSwitchAdmission()` derives the admission from the branch (`hasContextMessages()`) instead of hardcoding `"switch"`, so a refusal only promises the compaction remedy when there is context to compact. `_cycleFavoriteModel` no longer appends its `model_change`, writes the global default, or emits `model_changed`/`service_tier_changed` before the post-`model_select` guard accepts, and its catch restores the previous service tier.
@@ -5589,6 +5596,7 @@ runtime it registered into is private or shared.
 
 - LOW: `resource-loader.ts` around skill path assembly and the former private package-identity helpers.
 
+
 ## 2026-09-07 - Dedupe skills from duplicate copies of one package
 
 ## 2026-09-07 - Overflow recovery outlives the auto-compaction flag; session-scoped toggle (#1422)
@@ -5837,6 +5845,7 @@ runtime it registered into is private or shared.
 
 - LOW: `skills.ts` renderer body and `skills.test.ts` location assertion.
 
+
 ## 2026-09-04 - Route bare "." submissions through a hidden manual-continue directive
 
 ### What changed
@@ -5860,6 +5869,7 @@ runtime it registered into is private or shared.
 - MEDIUM: `packages/coding-agent/src/core/agent-session.ts` — the top of `prompt()`'s `try` block (before the extension input emission), where queue-admission branches frequently change.
 - LOW: `packages/coding-agent/src/core/manual-continue.ts` (new file, no conflicts).
 - LOW: `packages/coding-agent/test/suite/regressions/pre-prompt-compaction-no-continue.test.ts` — the single assertion swap in the "dot retry" case.
+
 
 ## 2026-09-04 - Failed provider turns leave the LLM context on every lane
 
@@ -5910,6 +5920,7 @@ runtime it registered into is private or shared.
 ### Expected merge conflict zones
 
 - LOW: the `model` bookkeeping inside `getSessionContextSettings()` in `session-manager.ts`.
+
 
 ## 2026-09-04 - Gate next-turn compaction on real provider admission
 
@@ -6168,6 +6179,7 @@ runtime it registered into is private or shared.
 
 - LOW: the `activeToolNamesChanged` branch in `setActiveToolsByName()`.
 
+
 ## 2026-08-30 - Drop the classic host-UI no-op stub
 
 - `agent-session.ts`: `_emitEntryAppended` only fires while the session is bound in `rpc`
@@ -6178,6 +6190,7 @@ runtime it registered into is private or shared.
 - `agent-session-prompt.test.ts` binds `mode: "rpc"` before asserting durable prompt entries,
   so the new-behavior test exercises the lane the contract actually covers instead of the
   default print lane.
+
 
 ## 2026-08-30 - Experimental workflow eval-only policy
 
@@ -6927,6 +6940,7 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 
 - `auth-storage.ts` around `acquireLockSyncWithRetry` (line ~95).
 
+
 ## 2026-08-21 - Settings reads are lock-free; writes publish atomically via temp+rename
 
 ### What changed
@@ -6944,6 +6958,7 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 ### Expected merge conflict zones
 
 - `settings-manager.ts` around `withLock` (line ~555) and the `fs` import list (line ~5).
+
 
 ## 2026-08-21 - Settings-lock retry sleeps instead of spinning; retry-fallback canonicalization memoized
 
@@ -6963,6 +6978,7 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 ### Expected merge conflict zones
 
 - `settings-manager.ts` around `acquireLockSyncWithRetry` (line ~527). `retry-fallback/controller.ts` around `nextCandidate`/`hasConfiguredChain` and the new `canonicalChains` private method.
+
 
 ## 2026-08-20 - Resume picker caches exact streaming summaries
 
@@ -7339,6 +7355,7 @@ Conflict zone: `cursor-exec-bridge.ts` `executeTool`, `cursor-exec-bridge-sessio
 - `core/agent-session.ts` `sendCustomMessage` wait condition, and the goal extension `session_start`
   suppressed-load branch in `core/extensions/builtin/goal/index.ts`.
 
+
 ## 2026-08-25 - Harden provider retry watchdog ownership and backoff
 
 ### What changed
@@ -7403,6 +7420,7 @@ Conflict zone: `cursor-exec-bridge.ts` `executeTool`, `cursor-exec-bridge-sessio
 
 - `core/provider-timeout-retry.ts` plan construction, and the retry-bound constants in
   `test/suite/regressions/provider-idle-recovery.test.ts`.
+
 
 ## Queue typed input admitted during auto-compaction (2026-08-18)
 
@@ -10595,6 +10613,8 @@ unrelated fallback bus, silently disconnecting `pi.rpc.emit` on trust-requiring 
   packages/coding-agent/src/core/agent-session.ts and candidate reservation in
   packages/coding-agent/src/core/retry-fallback/controller.ts.
 
+
+
 ## 2026-09-12 - Upstream sync (upstream/main@71dca871) integration repairs
 
 ### What changed
@@ -10918,6 +10938,7 @@ Runtime ownership publication precedes extension attachment.
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/core/agent-session.ts`: `evalHelperCall`, the eval-only suffix sentences (keep grep last), and the `createAllToolDefinitions` options in `_buildRuntime`.
+
 
 ## 2026-10-15 - verify-api-key.ts (desktop #2510)
 
