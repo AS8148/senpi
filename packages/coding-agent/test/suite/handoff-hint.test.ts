@@ -50,7 +50,15 @@ function messageEntry(message: unknown, id: string): SessionEntry {
 
 type Handler = (event: any, ctx: any) => unknown;
 
-function harness(options: { tokens?: number; kind?: "interactive" | "worker"; mode?: string; settings?: object } = {}) {
+function harness(
+	options: {
+		tokens?: number;
+		kind?: "interactive" | "worker";
+		mode?: string;
+		settings?: object;
+		goal?: "active";
+	} = {},
+) {
 	let now = 1_000_000;
 	const handlers = new Map<string, Handler[]>();
 	const commands = new Map<string, { handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> }>();
@@ -93,7 +101,10 @@ function harness(options: { tokens?: number; kind?: "interactive" | "worker"; mo
 			},
 		},
 	} as unknown as ExtensionAPI;
-	createHandoffHintExtension({ now: () => now })(pi);
+	createHandoffHintExtension({
+		now: () => now,
+		readGoal: async () => (options.goal === "active" ? ({ status: "active", objective: "ship it" } as never) : null),
+	})(pi);
 	const ctx = {
 		mode: options.mode ?? "tui",
 		hasUI: true,
@@ -223,6 +234,7 @@ describe("handoff hint", () => {
 			harness({ kind: "worker" }),
 			harness({ mode: "print" }),
 			harness({ settings: { enabled: false } }),
+			harness({ goal: "active" }),
 		];
 		for (const h of cases) {
 			await h.fire("session_start");

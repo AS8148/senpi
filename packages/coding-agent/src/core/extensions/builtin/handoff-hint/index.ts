@@ -5,6 +5,7 @@ import { CACHE_WARM_PING_EVENT } from "../cache-keepalive/index.ts";
 import { baseThresholdRatioForWindow } from "../compaction/policy.ts";
 import { readGoal } from "../goal/store.ts";
 import { goalStoreRef } from "../goal/store-ref.ts";
+import type { Goal } from "../goal/types.ts";
 import { buildHandoffBrief } from "./brief.ts";
 import { estimateHandoff, type HandoffEstimate, hintText } from "./estimate.ts";
 
@@ -66,8 +67,15 @@ function wasDismissed(entries: readonly SessionEntry[]): boolean {
 	);
 }
 
-export function createHandoffHintExtension(dependencies: { readonly now?: () => number } = {}): ExtensionFactory {
+type ActiveGoalReader = (ctx: ExtensionContext) => Promise<Goal | null>;
+
+const readActiveGoal: ActiveGoalReader = (ctx) => readGoal(goalStoreRef(ctx.sessionManager, ctx.cwd)).catch(() => null);
+
+export function createHandoffHintExtension(
+	dependencies: { readonly now?: () => number; readonly readGoal?: ActiveGoalReader } = {},
+): ExtensionFactory {
 	const now = dependencies.now ?? Date.now;
+	const goalOf = dependencies.readGoal ?? readActiveGoal;
 	return (pi: ExtensionAPI) => {
 		let ctx: ExtensionContext | undefined;
 		let timer: ReturnType<typeof setTimeout> | undefined;
@@ -126,7 +134,7 @@ export function createHandoffHintExtension(dependencies: { readonly now?: () => 
 				tokens >= usage.contextWindow * baseThresholdRatioForWindow(usage.contextWindow)
 			)
 				return undefined;
-			const goal = await readGoal(goalStoreRef(current.sessionManager, current.cwd)).catch(() => null);
+			const goal = await goalOf(current);
 			if (goal?.status === "active") return undefined;
 			const fresh = promptTokensOfFirstReply(current.sessionManager.getFullBranch()) ?? tokens;
 			const estimate = estimateHandoff(model, tokens, fresh, now());
@@ -168,7 +176,7 @@ export function createHandoffHintExtension(dependencies: { readonly now?: () => 
 		async function startFresh(current: ExtensionCommandContext): Promise<void> {
 			const estimate = visible;
 			const usage = current.getContextUsage();
-			const goal = await readGoal(goalStoreRef(current.sessionManager, current.cwd)).catch(() => null);
+			const goal = await goalOf(current);
 			const brief = buildHandoffBrief({
 				entries: current.sessionManager.getFullBranch(),
 				goal,
