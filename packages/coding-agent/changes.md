@@ -1,3 +1,55 @@
+## 2026-10-18 - The workspace build never emits test files (senpi#3576)
+
+### What changed
+
+- `tsconfig.build.json` now excludes `**/*.test.ts`: the tool-child runtime is the first code with tests inside `src/`, and the emitted `dist/**/*.test.js` made every CI shard sweep and fail the compiled copies.
+
+### Why
+
+- CI builds the workspace before the test shards and vitest's default exclude does not skip `dist/`, so any test compiled into `dist` runs as a duplicate and fails (its spawned children cannot bootstrap from dist). Main never hit this because no tests lived under `src/` before.
+
+### Why an extension could not handle it
+
+- Build configuration of the package itself; extensions cannot change what tsc emits.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/tsconfig.build.json` (the exclude list) only.
+
+## What changed
+
+`tsconfig.build.json` excludes `**/*.test.ts`. The tool-child runtime is the first code with tests inside `src/`, and the emitted `dist/**/*.test.js` made every CI shard sweep and fail the compiled copies (their spawned children cannot bootstrap from dist), so CI failed all three test shards.
+
+### Why
+
+CI builds the workspace before the test shards, and vitest's default exclude does not skip `dist/`; any test compiled into `dist` is executed as a duplicate and fails. Main never hit this because no tests lived under `src/` before the tool-child runtime added them.
+
+### Why an extension could not handle it
+
+Build configuration of the package itself; extensions cannot change what tsc emits.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/tsconfig.build.json` (the exclude list) only.
+
+## 2026-10-18 - The pending-input module is a public subpath (senpi#3549)
+
+### What changed
+
+- `packages/coding-agent/package.json`: a new `./pending-input` export pointing at `dist/core/pending-input-public.{js,d.ts}`, a re-export-only barrel of the pending-input reducer, projection, types and store.
+
+### Why
+
+- `packages/coding-agent/package.json`: the desktop server and the omo child queue must embed the exact lifecycle module instead of reimplementing it (desktop #2838 plan).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/package.json`: package exports are part of the package manifest.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/package.json`, the `exports` map next to `./prompt-presets`.
+
 ## 2026-10-15 - A removed custom provider stops being served after logout (senpi#3339)
 
 ### What changed

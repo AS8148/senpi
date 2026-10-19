@@ -5,7 +5,12 @@
  * server is the single writer of every session file.
  */
 import { connectChannel, type ToolChildChannel } from "./channel.ts";
-import { scrubToolChildEnv, TOOL_CHILD_LEDGER_ENV } from "./launch-env-names.ts";
+import {
+	rememberToolChildReentry,
+	scrubToolChildEnv,
+	TOOL_CHILD_LEDGER_ENV,
+	TOOL_CHILD_REENTRY_ENV,
+} from "./launch-env-names.ts";
 import { LaunchGate } from "./launch-gate.ts";
 import { sweepLedger } from "./orphan-sweep.ts";
 import type { ToolChildMessageOf } from "./protocol.ts";
@@ -51,6 +56,7 @@ export async function runToolChild(options: ToolChildEntryOptions): Promise<void
 	if (controls.enabled("EXIT_ON_START")) exit(1);
 	// Read once; from here no command this child starts may see them (only node:child_process honours a deleted key, so
 	// the gated Bun.spawn passes process.env explicitly).
+	rememberToolChildReentry(env[TOOL_CHILD_REENTRY_ENV]);
 	if (options.env === undefined) scrubToolChildEnv(process.env);
 	const running = new Map<string, AbortController>();
 	const gate = new LaunchGate(channel);

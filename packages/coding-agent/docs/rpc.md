@@ -129,6 +129,26 @@ Use `/account <provider> rename <id> <display name...>` or the corresponding `/g
 
 A label is stored NFC-normalized with internal whitespace collapsed, must contain at least one visible character, and may not exceed 32 terminal columns (measured in grapheme clusters, so CJK and emoji count two columns each). Uniqueness within a provider folds case, Unicode compatibility forms, invisible code points, and Cyrillic lookalikes, so two labels that render identically are refused.
 
+## Account order
+
+By default a provider's accounts are picked per session by rendezvous hashing, and a failed account fails over in that hash order. A user order replaces that ranking: requests try the pinned account first, then the first unblocked account in the order, then the accounts the order does not name, in hash order. On the Claude subscription lane, a session keeps the account its conversation already lives on while that account can serve, ahead of the order, so setting an order does not move running conversations.
+
+`get_provider_accounts` lists the accounts the order names first, in that order, then the rest in stored order (the hash ranking is per session, so a listing cannot show it). It reports `ordered: true` while a stored order names at least one listed account. A pinned account serves first wherever it is listed; read its `pinned` flag. Every lane that picks an account honors the order: the generic credential pool, the Claude subscription lane and the Cursor CLI lane.
+
+#### account_order
+
+Set the order, or clear it with `names: null`:
+
+```json
+{"id": "o1", "type": "account_order", "provider": "openai", "names": ["work", "default"]}
+```
+
+```json
+{"id": "o1", "type": "response", "command": "account_order", "success": true}
+```
+
+`names` may name a subset; accounts it leaves out come after it. The command fails without changing anything when a name is not one of the provider's accounts, appears twice, or the list is empty, and when the provider has no stored credential (the order is kept beside the pin in `auth.json`). Removing an account drops it from the order. Success emits `auth_accounts_changed`. Only account names cross RPC, never credential material.
+
 ## Starting RPC Mode
 
 ### RPC client lifecycle
@@ -459,6 +479,10 @@ are what this decision encodes; the other two are what a client must not undo el
   that window, while its process is alive, the ensure fails with `HostEnsureRefusedError { reason: "host_stalled" }`
   and sends no signal, starts no generation beside it and leaves its registration untouched - a stalled host is still
   serving its sessions.
+  When no registration names the endpoint at all, yet something still accepts connections at the public path and did
+  not answer `get_protocol_info`, the ensure fails with `HostEnsureRefusedError { reason: "endpoint_occupied" }` (exit 3)
+  and leaves that process and its entry alone: a start there could only lose the bind and exit without a reason. An
+  entry nobody listens behind is still free and is replaced by the start.
 - **I2 - compatibility is protocol version + capabilities, never semver equality.** An ordinal that cannot be
   compared (a build without git metadata, a host that reports none) is EQUAL, and since a handoff requires
   STRICTLY greater, such a pair attaches instead of upgrading.
@@ -472,8 +496,10 @@ are what this decision encodes; the other two are what a client must not undo el
   signal a generation (an ensure, `host stop`, a handoff abandoning its successor, the generation's own supervisor)
   first writes `generations/<instanceId>/stop-intent.json` `{ sender, targetPid, reason, signal, at }` into THAT
   generation's directory, because the target cannot know who is about to stop it; nothing ever reads or removes
-  another generation's intent, and a drain writes none. Caller-lifetime registration is the other
-  explicit cross-writer: only `owner.json`, under the endpoint lock and attach hold described above.
+  another generation's intent, and a drain writes none. The DRAIN REQUEST is the second sanctioned cross-writer:
+  `host stop --drain` writes `generations/<instanceId>/drain-request.json` into the generation it asks (see
+  [Asking a named generation to drain](#asking-a-named-generation-to-drain)). Caller-lifetime registration is the
+  other explicit cross-writer: only `owner.json`, under the endpoint lock and attach hold described above.
 - **I4 - machine-driven work is invisible by default.** A session opened with `kind: "worker"` is omitted from
   `list_sessions` unless the caller passes `include_workers: true`, its `context` is published on that listing only,
   and its `session_closed`/`session_parked` records reach only the connections attached to it. A client that never
@@ -510,9 +536,9 @@ Two guards decide whether a handoff is attempted at all, and both fail closed:
   signals a stranger (I1): it refuses while that host holds a session, and replaces an idle one without
   a signal unless a flat pre-layout-2 record proves it (see "Daemon state directory (layout 2)").
 
-On win32 a named pipe can be neither renamed nor drained: `handoffHost` refuses with `upgrade_unsupported`
-and `decideHostAction` never yields `handoff` there. Upgrades apply after `stopHost({ drain: true })` or an
-idle exit.
+On win32 a named pipe cannot be renamed: `handoffHost` refuses with `upgrade_unsupported` and
+`decideHostAction` never yields `handoff` there. Upgrades apply after `stopHost({ drain: true })` - which
+reaches a win32 generation through its drain request, not a signal - or an idle exit.
 
 `ensureHost` performs a handoff only when asked: `upgrade: "if-engine-differs"` (default `"never"`) makes it
 run `decideHostAction` under policy `upgrade` with the launch profile its own `hostArgs` describe. A refused
@@ -536,6 +562,39 @@ proves only that nobody is serving the name, so it has to be seen on several con
 counts, and a check that cannot answer resets the count rather than adding to it. Either way the outcome is
 the same drain: an unlinked socket name can never accept a connection again, so the generation behind it is
 unreachable no matter why the name went away.
+
+An endpoint with no file identity - a win32 named pipe has no inode to compare - is checked on two POSITIVE
+observations instead: the daemon pointer names another instance, and the public endpoint answers
+`get_protocol_info` (an `observe` read, which never counts as activity) as that same instance. They must agree
+on three consecutive checks; a missing pointer, an unanswered probe, an answer as this generation or as a third
+instance each reset the count. Such an endpoint is never judged absent, and nothing is removed or reclaimed on
+any observation: a confirmed loss only starts the same drain.
+
+#### Asking a named generation to drain
+
+`stopHost({ socket, agentDir, drain: true, instanceId?, waitMs? })` (CLI: `host stop --drain [--instance <id>]
+[--wait-ms <n>]`) asks ONE generation to drain: the one the pointer names, or the one `instanceId` names - how a
+client reaches a superseded generation that still holds its sessions' path claims. The target must be proven
+first, exactly as for any signal: its `generations/<instanceId>/host.pid` names a live process by pid and start
+time, about this endpoint; an unproven or unknown generation is refused `unknown_owner` and sent nothing.
+
+The request needs no signal and is the same on every platform:
+
+1. A supervisor reads drain requests once it is serving and says so in `generations/<instanceId>/drain-watch.json`
+   `{ pid, at }`. The asker uses the request only when that marker names the very pid it just proved.
+2. The asker writes `generations/<instanceId>/drain-request.json` `{ sender, reason, at, nonce }` by rename.
+3. The supervisor polls that file once a second; each new `nonce` is one drain request. It runs the drain
+   described under [Generation handoff](#generation-handoff-handoffhost-probehost-stophost): stop admitting, park each session as it
+   settles, release its claims, exit once nothing is attached. It relays the drain to its host child through
+   `generations/<instanceId>/host-drain-request.json`, which the child polls (on POSIX SIGUSR1 still follows as
+   an immediate wake).
+
+A generation without the marker - one from before the request existed - is drained by SIGUSR1 as before, and only
+on POSIX, when the endpoint advertises `generation_handoff` AND answers as the named instance; otherwise the
+answer is `drain_unsupported`. The answer is `{ action: "drained", pid, instanceId }`; with `waitMs` it also
+carries `exited`, `true` once the generation's process is gone (or its pid names another process) within the
+bound, `false` otherwise - an identity that cannot be read is not an exit. A client that did not wait learns the
+same from `host status --json`: the drained generation leaves `generations` when it exits.
 
 `stopHost({ socket, agentDir, drain?, force? })` ends a generation: `drain: true` is always permitted (it
 ends no work, it only stops the host from taking new work), while a hard stop requires a host that reports
@@ -716,7 +775,7 @@ daemon the same way instead of each re-implementing the decision:
 ```
 senpi host ensure     [--json] [--launch-spec <file>] [--policy upgrade|fallback|never] [--socket <path>]
 senpi host status     [--json] [--include-workers] [--all] [--socket <path>]
-senpi host stop       [--json] [--drain] [--force] [--socket <path>]
+senpi host stop       [--json] [--drain [--instance <id>] [--wait-ms <n>]] [--force] [--socket <path>]
 senpi host handoff    [--json] [--launch-spec <file>] [--socket <path>]
                       [--when idle --operation <id> --if-instance <id> --if-generation <n> --target-build <id>]
 senpi host shard-path --kind <p|i> --owner <id> [--root <dir>] [--json]
@@ -749,7 +808,7 @@ which prints the bare socket path).
   `senpi host handoff` command.
 - `status` prints `{ reachable, lifecycle, socket, pid, instanceId, generation, engineVersion, capabilities,
   launchProfile, runtimeBuildId, handover, sessions: { total, interactive, worker, retained, foreign_attached, foreign_retained },
-  zombies, rss_mb, host_rss_mb, open_fds, memory_pressure, env_keys, generations, crashes, shard, session_rows,
+  zombies, rss_mb, host_rss_mb, host_footprint_mb, open_fds, memory_pressure, env_keys, generations, crashes, shard, session_rows,
   claims_live, claims }` and exits 3 when nothing answers - with the same
   field set, so a caller parses one shape and branches on one boolean. The additive `lifecycle` field is
   `"ready"` while an answering supervised host accepts opens, `"stopping"` while it shuts down or drains,
@@ -762,7 +821,10 @@ which prints the bare socket path).
   count from the point of view of a client holding none of those sessions itself. `rss_mb`, `open_fds` and
   `zombies` describe the daemon's whole process tree (supervisor, host, and every tool, kernel and server its
   sessions spawned); `host_rss_mb` is only the supervisor and the host process, the number `ps` shows for those
-  pids (the host's memory sampler judges pressure by the host's footprint instead, see "Memory pressure"). All are `null` where the platform does not publish them
+  pids (the host's memory sampler judges pressure by the host's footprint instead, see "Memory pressure").
+  `host_footprint_mb` is that footprint for the same supervisor and host processes (`phys_footprint` on macOS,
+  `RssAnon` on Linux): unlike RSS it keeps counting compressed and swapped pages, so a host whose RSS reads
+  1.3 GB can hold 14 GB, and it is the number to watch when a host grows. All are `null` where the platform does not publish them
   (`open_fds` is `/proc`-only). `generations` lists every ALIVE generation of
   this daemon as `{ instanceId, generation, pid, engineVersion, rss_mb, host_rss_mb, sessions, current, alive }`, newest
   ordinal last: `rss_mb` is that generation's own process tree, `host_rss_mb` only its supervisor and host processes, and `sessions` counts the session files it
@@ -883,8 +945,10 @@ which prints the bare socket path).
   one on the same evidence as a host's.
 - `stop` is the I1 carve-out: a plain stop needs a validated pidfile AND `foreign_attached +
   foreign_retained == 0`, or it refuses with exit 3 and prints the counts it refused on; `--force`
-  overrides after printing the same counts; `--drain` (SIGUSR1) is always permitted, because it ends no
-  work.
+  overrides after printing the same counts; `--drain` is always permitted, because it ends no work. It
+  asks through the generation's drain request (SIGUSR1 only for a generation from before it), `--instance <id>`
+  names a generation other than the current one, and `--wait-ms <n>` waits for it to exit and adds `exited` to
+  the answer; both need `--drain`.
 - `handoff` forces a generation handoff from THIS binary. A host that cannot drain and a platform that
   cannot rename answer alike: exit 3 `{ reason: "upgrade_unsupported", detail }`. The handoff runs inside the
   endpoint's ensure lock (the one `ensure` and `gc` take), so an `ensure` arriving while the successor comes up
@@ -1555,6 +1619,15 @@ exists only on the worker runtime described below. On that runtime every session
 runtime; on the in-process runtime each session is a runtime in the host process. Memory depends on a session's
 extensions and contents; neither runtime provides process-fatal OOM containment.
 
+Closing a session on the in-process runtime also closes what that session's extension instances left open. After the
+extensions' `session_shutdown` handlers run, senpi closes every server (`Bun.serve`, `Bun.listen`, `node:net` and
+`node:http` servers), `node:net` client socket and timer that an extension's own code created during the session and
+has not released, and writes one stderr line per extension naming what it closed. Memory those handles kept reachable
+is then collectable. Senpi's own builtin extensions and inline SDK factories are not tracked, and neither is work senpi itself does on an
+extension's behalf (a turn the extension started, a UI notification it showed). See
+[extensions.md](extensions.md#session_shutdown) for what this means for an extension that shares one server across
+sessions.
+
 What the host does enforce are lifecycle windows, and they only ever return memory from work nobody is doing:
 
 - **Idle eviction**: a session with no activity-refreshing command and no session-owned work for
@@ -1825,6 +1898,8 @@ no longer lists it and the handle answers `unknown_session`.
   `session_released` entry on disk or in memory, and a later release can be retried. A teardown that fails
   after it claimed the session leaves it closing.
 
+A release with `reason: "move"` (and a `moveId`) seals the session for a move to another device: its `session_released` entry records `move_id`, `target` and `session_id`, and from then on any write to the file is refused with `session_moved_away` until that same move is reclaimed. A later `takeover` release, or any ownership entry for another move, is refused too. A `move` without a `moveId`, or with one that is not a plain id (a letter or digit first, then letters, digits, `.`, `_` or `-`, at most 128 characters), is refused with `invalid_release_reason`, and a session whose own id is not a plain id is refused with `release_unsupported` (`errorData.detail: "session_id_not_plain"`) before anything is interrupted or sealed. A `session_moved_away` refusal after an `interrupt` carries `interrupted` and `dropped` like any other refusal after one.
+
 ### Host self-observation (event-loop stalls and memory pressure)
 
 Every in-process session shares the host's event loop, so a session that blocks it freezes every other session and the
@@ -2043,7 +2118,7 @@ names a valid preset.
 | `close_session` | `sessionId` | `{}` | Refused with `unknown_session` when the requesting connection never attached to that handle (a close releases the CALLER's attachment, and `list_sessions` publishes every handle). Otherwise aborts active work, awaits agent idle + settled persistence for up to the host grace window (default 10s), then quarantines any worker that has not exited without releasing its path reservation; its response is the LAST record tagged with that handle for the first closer — no events after (test-pinned). An admitted concurrent close joins the same teardown and receives its own successful response; output saturation rejects admission with the bounded close-overflow/resync notice described above. |
 | `list_sessions` | `include_workers?` (default false) | `{ sessions: [{ sessionId, durableSessionId, sessionPath, cwd, name, status, attachments, kind, context? }] }` | Includes `opening`/`closing` entries. Internally quarantined workers remain externally `closing` until exit. `attachments` is the session's live client attachment count; `0` on an `open` row is a retained session with no client attached. Every row carries `kind`. Rows with `kind: "worker"` are omitted unless `include_workers: true`, and `context` is published ONLY on that listing — a default listing carries no `context` at all. |
 | `detach_connection` | - | `{ deferred: string[] }` | Multi-session hosts that advertise `detach_connection`. Meant as the connection's last request: the host releases every session attachment this connection holds and answers only after that, so another connection's next `list_sessions` no longer counts it. `deferred` names the sessions that still count it (see `#### detach_connection`). Closing the socket afterwards releases nothing more. `senpi host session` sends it before closing, bounded at 5 s; on a host without the capability, or after a request timed out or the connection was lost, it relies on the release at socket close. |
-| `release_session` | `sessionId`, `reason: "takeover"`, `interrupt?`, `force?` | `{ released: true, session_path, attachments }` | Hands the session to a runtime outside this host. See "Handing a session over (`release_session`)" below. |
+| `release_session` | `sessionId`, `reason: "takeover" \| "move"`, `moveId?` (required for `move`), `target?`, `interrupt?`, `force?` | `{ released: true, session_path, attachments }` | Hands the session to a runtime outside this host. See "Handing a session over (`release_session`)" below. |
 | `wake` | `sessionId`, `delivery_ids?` | `{ admitted: [{ delivery_id, kind }] }` | Runs the session's registered inbox drain once. See "Waking a host session (`wake`)" below. |
 | `warm` | `cwd?`, `kind?`, `context?` (as on `open_session`; `cwd` MUST be absolute) | `{ state: "warmed" \| "already_warm" \| "unsupported" }` | Loads what the next matching `open_session` needs without opening a session; never listed, never an attachment, idempotent per profile. See "Warming a host" above. Advertised as the `warm` capability by in-process hosts only. |
 | every existing command | + `sessionId` (REQUIRED in multi mode) | unchanged | Routed to that session. |
@@ -2521,6 +2596,18 @@ For both commands, `status` is `removed` / `edited`, or `already_delivered` (the
 {"type": "response", "command": "edit_queued_message", "success": true, "data": {"queuedId": "q_4", "status": "conflict", "currentRevision": 2, "reason": "conflict", "action": "read the input's current text and revision from get_state or queue_update, then retry with that expectedRevision if the change still applies"}}
 ```
 
+#### get_pending_inputs
+
+What the engine holds for every pending input, and the outcome of each id a client sent, read in one consistent step (senpi#3549). `inputs` lists every input still queued, sending or failed, each as a projection: `clientMessageId`, `state` (`queued`, `edited`, `sending`, `failed`), `text`, `requestedMode`, `revision`, `statusCode`, `statusText`, `actions` and `pendingDecoration`. `knownClientMessageIds` (at most 64 non-empty ids of at most 256 characters) asks for an outcome per id: `admitted` with its projection, including `delivered` and `removed`, or `not_admitted`. Absence from `inputs` is never an outcome; read the id's outcome instead.
+
+The answer is consistent through `throughCursor`. To follow changes without a gap, subscribe first, apply the snapshot, then apply only `pending_input_update` events whose `cursor` is later. Each event carries every input one committed change touched, under that change's single `cursor`, with the same `lifetimeId`. A different `lifetimeId` means the session reopened: read the snapshot again.
+
+```json
+{"type": "get_pending_inputs", "knownClientMessageIds": ["c-7"]}
+{"type": "response", "command": "get_pending_inputs", "success": true, "data": {"lifetimeId": "5b0c…", "throughCursor": 4, "inputs": [{"clientMessageId": "c-7", "state": "queued", "text": "also run the tests", "requestedMode": "followUp", "revision": 1, "statusCode": "queued_follow_up", "statusText": "Queued - sent after this turn", "actions": ["edit", "remove", "copy"], "pendingDecoration": true, "supersededVersions": []}], "outcomes": [{"clientMessageId": "c-7", "status": "admitted", "projection": {"clientMessageId": "c-7", "state": "queued"}}]}}
+{"type": "pending_input_update", "lifetimeId": "5b0c…", "cursor": 5, "changes": [{"clientMessageId": "c-7", "state": "sending"}]}
+```
+
 #### clear_queue
 
 Remove queued steering and follow-up messages and return their text.
@@ -2610,9 +2697,13 @@ The `model` field is a full [Model](#model) object or `null`. `pendingModelSwitc
 
 #### get_subscription_limits
 
-Every subscription account's latest limit windows (capability `subscription_limits`): what the provider
-reported with its most recent response for that account. An account nothing has reported for is absent -
-unknown, never 0%. The command only reads and may be sent with `observe: true`.
+Every subscription account's latest limit windows (capability `subscription_limits`). In interactive and
+RPC modes (not print mode or `--offline`) the engine polls each signed-in Claude and ChatGPT subscription
+account's usage endpoint (Claude every 5 minutes, ChatGPT every 2.5, `Retry-After` honoured, one request
+per account per interval across every senpi process on the machine), so an account's windows are known
+before its first turn; responses and the Claude SDK update the same record between polls. An account
+nothing has reported for is absent - unknown, never 0%. The command only reads and may be sent with
+`observe: true`.
 
 ```json
 {"type": "get_subscription_limits"}
@@ -2625,7 +2716,7 @@ stable within the account (`<limit>:<slot>`, for example `codex:primary` or `cla
 (`5h`, `7d`, `7d opus`), the window length in minutes when the provider sent it, `usedPercent` (0-100) and
 `resetsAt` (ISO) when known. ChatGPT subscriptions report them in `x-codex-primary-*`/`x-codex-secondary-*`
 response headers (one family per metered limit); Claude subscriptions in `anthropic-ratelimit-unified-*`
-headers, and through the Claude SDK lane in its `rate_limit_event` messages. A window the latest response did not mention keeps its last value. Every connection also hears a
+headers, and through the Claude SDK lane in its `rate_limit_event` messages. A window the latest response did not mention keeps its last value. A poll answers with the account's whole window set and replaces it. `plan` is the plan the usage endpoint names (ChatGPT), when it names one; `error` says why the last poll failed (`auth stale - run /login`, `rate limited`, `HTTP <status>`, `timed out`, `unreachable`), and the windows beside it are the last ones reported. The next successful report clears it. Every connection also hears a
 `subscription_limits` record (below) when an account's windows change.
 
 #### get_effect_status
@@ -2780,7 +2871,7 @@ List all configured models, refreshing credential availability on each request s
 {"type": "get_available_models"}
 ```
 
-Response contains an array of full [Model](#model) objects with supported thinking levels. Each row also carries `supportsAssistantPrefill`: whether the model accepts a request ending with an assistant message, given the session's current thinking level. It is `false` for every model today, so clients continue an edited answer with `continue_from_leaf`:
+Response contains an array of full [Model](#model) objects with supported thinking levels. A row's `serviceTier` and `upstreamModelId` are the values the session resolves for that model, including ones declared only in `models.json` or by an extension provider, so a `-fast` priority alias names its base model there and a client can tell a child opened on the base model is the alias it asked for. Each row also carries `supportsAssistantPrefill`: whether the model accepts a request ending with an assistant message, given the session's current thinking level. It is `false` for every model today, so clients continue an edited answer with `continue_from_leaf`:
 ```json
 {
   "type": "response",
@@ -3582,6 +3673,17 @@ Response:
 
 `leafId` is the id of the current leaf entry (`null` for an empty session), so a client can tell in one round trip whether the active branch moved. If `since` does not match any entry id, the response is `success: false`.
 
+**Pages.** One answer travels as one line on the connection's event queue, which closes the connection past 64 MiB. Pass `limit` (entries) and/or `maxBytes` (serialized bytes, capped at 48 MiB; 8 MiB when only `limit` is given) to read a long history in pages. A paged answer carries `hasMore`, and `nextSince` (the last entry id it returned) while more entries follow; ask again with `since: nextSince` until `hasMore` is `false`. A page always holds at least one entry, so it always moves forward. Both bounds must be positive integers, otherwise the request fails with `errorCode: "invalid_argument"`.
+
+```json
+{"type": "get_entries", "limit": 500, "maxBytes": 8388608}
+{"type": "get_entries", "limit": 500, "maxBytes": 8388608, "since": "<nextSince>"}
+```
+
+An unpaged request (neither bound) answers exactly as before while the whole history fits in 48 MiB. A longer history is refused with `errorCode: "response_too_large"` instead of an answer that would close the connection; read it in pages.
+
+A single entry larger than 48 MiB cannot travel in any answer, so a read whose next entry is that large (paged or not) is refused with `response_too_large` naming the entry. While a walk has more pages, the host keeps the session's full history in memory for the next page; it lets it go 30 s after the last page request, so a client that stops mid-walk does not pin the history.
+
 #### get_tree
 
 Get the session as a tree of entries. Each node is `{entry, children, label?, labelTimestamp?}`. A well-formed session has a single root; orphaned entries (broken parent chain) also appear as roots.
@@ -4104,7 +4206,7 @@ never write, with `"reason": "session_closed"`, on the same broadcast as every `
 
 `entry_appended` carries the full durable session entry in `entry`. For `entry.type: "custom"`, self-stops use these `entry.customType` values:
 
-- `goal-continuation-stopped`: `entry.data` contains `goalId`, `reason` (`stale`, `repetition`, `cap`, `unattended`, `length-exhausted`, or `context-overflow`), `consecutiveContinuations`, `unattendedContinuations`, and `at`.
+- `goal-continuation-stopped`: `entry.data` contains `goalId`, `reason` (`stale`, `repetition`, `cap`, `no-progress`, `length-exhausted`, or `context-overflow`; older sessions may carry the retired `unattended`), `consecutiveContinuations`, `unattendedContinuations`, `noProgressContinuations`, and `at`.
 - `engine-paused`: `entry.data` contains `reason` (`repetition`, `goal-repeat`, `cap-per-message`, `cap-per-minute`, or `goal-stale`), `at`, and optional `rule`, `customType`, and `count`.
 
 `at` is epoch milliseconds. These records survive session reopen and are available through the session-entry history. A goal stop is historical: accepted user input or `/goal resume` resets the stop, rather than deleting the entry. See [Session File Format](session-format.md#goal-and-engine-self-stop-entries) for the reason mapping and stale measurement-window behavior. Existing limit/rule entries and UI notices are preserved.
