@@ -34,6 +34,7 @@ export type { RpcCommandInvocationEvent } from "./rpc-command-invocation.ts";
 export type { RpcCommandsChangedEvent, RpcSlashCommand } from "./rpc-command-surface.ts";
 
 import type { RpcSubscriptionLimitsEvent } from "./rpc-host-lifecycle-types.ts";
+import type { RpcMoveSessionCommand, RpcMoveSessionResponse } from "./session-move-wire.ts";
 
 export type {
 	RpcHostKernelMemory,
@@ -588,6 +589,7 @@ export type RpcCommand =
 			retryFallback?: SessionRetryFallbackProfile;
 	  }
 	| { id?: string; type: "close_session"; sessionId: string }
+	| RpcMoveSessionCommand
 	| {
 			id?: string;
 			/**
@@ -1326,6 +1328,7 @@ export type RpcResponse =
 			success: true;
 			data: { accounts: RpcProviderAccount[]; ordered: boolean };
 	  }
+	| RpcMoveSessionResponse
 	| { id?: string; type: "response"; command: "account_pin"; success: true }
 	| { id?: string; type: "response"; command: "account_remove"; success: true }
 	| { id?: string; type: "response"; command: "account_order"; success: true }

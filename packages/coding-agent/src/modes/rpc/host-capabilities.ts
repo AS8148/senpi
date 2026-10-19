@@ -28,6 +28,7 @@ import {
 } from "./custom-capability.ts";
 import { EFFECT_LEDGER_CAPABILITY } from "./effect-record.ts";
 import { STEER_WHEN_IDLE_CAPABILITY } from "./rpc-types.ts";
+import { MOVE_SESSION_CAPABILITY } from "./session-move-wire.ts";
 
 /** `unload_session` and `session_parked.reason` (senpi#3225). */
 export const UNLOAD_SESSION_CAPABILITY = "unload_session";
@@ -74,6 +75,8 @@ export function multiSessionHostCapabilities(options: {
 			DETACH_CONNECTION_CAPABILITY,
 			// Only a multi-session host keeps sessions loaded that a client can ask it to free.
 			UNLOAD_SESSION_CAPABILITY,
+			// Only a multi-session host owns a move ledger and the hosted-session list export checks against.
+			MOVE_SESSION_CAPABILITY,
 			SESSION_CONTEXT_CAPABILITY,
 			SESSION_KIND_CAPABILITY,
 			// Only a multi-session host sees every session, so only it can stream their status.

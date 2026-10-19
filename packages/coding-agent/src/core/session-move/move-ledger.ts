@@ -58,6 +58,12 @@ const DECLINE_REASONS: readonly DeclineReason[] = [
 ];
 const FAIL_REASONS: readonly FailReason[] = ["bundle_invalid", "import_failed"];
 
+/** A receiver's answer as it arrives back at the sender; a `ready` record is not an answer. */
+export function parseMoveStatus(value: unknown): MoveStatus | undefined {
+	const record = parseRecord(value);
+	return record?.state === "ready" ? undefined : record;
+}
+
 function parseRecord(value: unknown): MoveRecord | undefined {
 	if (typeof value !== "object" || value === null) return undefined;
 	const { state, reason } = value as { readonly state?: unknown; readonly reason?: unknown };

@@ -40,6 +40,7 @@ import { readDrainVerdicts } from "./session-drain.ts";
 import { drainSessionEffects, installSessionEffectSink } from "./session-effect-status.ts";
 import type { SessionEventWriter } from "./session-event-writer.ts";
 import { dispatchSessionBinding, sessionHeldCheck } from "./session-held.ts";
+import { moveSession } from "./session-move-commands.ts";
 import type { OpenRpcSession, RpcSessionLaunchProfile, RpcSessionRegistry } from "./session-registry.ts";
 import { RpcSessionRegistryError } from "./session-registry.ts";
 import { releaseSession } from "./session-release.ts";
@@ -422,6 +423,15 @@ export class SessionCommandRouter {
 					otherRequestsSettled: (sessionId) => this.otherRequestsSettled(sessionId),
 					pendingPrompts: (sessionId) => this.bindings.get(sessionId)?.pendingPrompts?.() ?? [],
 					tearDown: (sessionId, sessionPath) => this.tearDownReleased(sessionId, sessionPath),
+				},
+				command,
+			);
+		if (command.type === "move_session")
+			return moveSession(
+				{
+					agentDir: this.registry.agentDir,
+					hostedPaths: () =>
+						this.registry.list().flatMap((row) => (row.sessionPath === undefined ? [] : [row.sessionPath])),
 				},
 				command,
 			);
