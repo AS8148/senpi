@@ -119,6 +119,7 @@ function hasUseStrictDirective(source: string): boolean {
 /** A generation owns only source bookkeeping; Bun owns evaluation and cycles. */
 export function createBunExtensionImporter(
 	virtualModules: Readonly<Record<string, Readonly<Record<string, unknown>>>>,
+	builtinRedirects: Readonly<Record<string, string>> = {},
 ) {
 	const sources = new Map<string, ModuleSource>();
 	const fingerprints = new Map<string, string>();
@@ -141,6 +142,9 @@ export function createBunExtensionImporter(
 		/\.[cm]?[jt]sx?$/.test(resolved) ? { id: moduleId(resolved), path: resolved } : { id: resolved };
 	const resolveTarget = (specifier: string, filename: string): { readonly id: string; readonly path?: string } => {
 		assertActive();
+		// Own keys only: a package named after an Object.prototype key ("constructor") is not a redirect.
+		const redirect = Object.hasOwn(builtinRedirects, specifier) ? builtinRedirects[specifier] : undefined;
+		if (redirect !== undefined) return { id: redirect };
 		if (Object.hasOwn(virtualModules, specifier) || isBuiltin(specifier) || specifier.startsWith("bun:"))
 			return { id: specifier };
 		if (specifier.startsWith(`${extensionNamespace}:`)) return { id: specifier };
@@ -287,6 +291,12 @@ export function createBunExtensionImporter(
 				graph.assertActive();
 				return factory.apply(this, args);
 			};
+		},
+		/** The whole module namespace (a tool child's `module` job calls a named export, senpi#3566). */
+		async importNamespace(path: string): Promise<Record<string, unknown>> {
+			assertActive();
+			const { id } = fileTarget(realpathSync(resolve(path)));
+			return import(id);
 		},
 		// Capture identity from the transpiler input, never from a later disk snapshot.
 		compiledSources(): ReadonlyMap<string, string> {
