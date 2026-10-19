@@ -426,9 +426,10 @@ export class ToolChildClient {
 			this.#state = "dead";
 		}
 		this.#options.onStatus?.({ state: "exited", generation: live.generation, pid: live.child.pid ?? -1 });
-		live.ended = Promise.all([live.barrier.teardown(undefined), live.refs.writer.teardown()]).then(() =>
-			live.containment.close(),
-		);
+		// The containment is closed on every exit, a failed teardown included.
+		live.ended = Promise.all([live.barrier.teardown(undefined), live.refs.writer.teardown()])
+			.finally(() => live.containment.close())
+			.then(() => undefined);
 		this.#lastEnded = live.ended;
 	}
 }

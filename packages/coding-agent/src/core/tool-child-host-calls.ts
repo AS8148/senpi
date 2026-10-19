@@ -10,8 +10,12 @@ import type { AgentToolCallOutcome } from "@earendil-works/pi-agent-core";
 import type { HostCallHandler } from "../modes/rpc/tool-child/host-calls-server.ts";
 import type { FilesystemPolicyChecker, FilesystemPolicyDecision, FilesystemPolicyRequest } from "./extensions/types.ts";
 import { acquireFileMutationLock } from "./tools/file-mutation-queue.ts";
+import { canonicalizeFilesystemPath } from "./tools/filesystem-policy.ts";
+import { resolveToCwd } from "./tools/path-utils.ts";
 
 export interface SessionHostCallDeps {
+	/** The session cwd: a child's relative path names the same file the session's own file tools would. */
+	readonly cwd: string;
 	/** Runs `name` as a nested call of `parentToolCallId` through the session's tool pipeline. */
 	readonly executeNested: (
 		parentToolCallId: string,
@@ -57,6 +61,9 @@ export function createSessionHostCallHandler(deps: SessionHostCallDeps): HostCal
 		return true;
 	};
 	return async (request) => {
+		// A call of an ended job never runs (it could still spend tokens); only releasing a lock it holds is allowed.
+		if (request.kind !== "unlock_file" && !request.generation.jobLive())
+			throw new HostCallError("host_call_job_ended", `${request.kind}: the job has ended`);
 		switch (request.kind) {
 			case "tool": {
 				const parent = callingToolCallId(request.context);
@@ -78,15 +85,13 @@ export function createSessionHostCallHandler(deps: SessionHostCallDeps): HostCal
 				return target({ name: request.name, args: request.args, signal: request.signal });
 			}
 			case "authorize": {
-				const policyArgs = policyRequest(request.args);
+				const policyArgs = await policyRequest(request.args, deps.cwd);
 				const policy = deps.filesystemPolicy();
 				return policy === undefined ? ALLOW : policy(policyArgs);
 			}
 			case "lock_file": {
 				const path = stringField(request.args, "path");
-				if (!request.generation.jobLive())
-					throw new HostCallError("host_call_job_ended", `lock on ${path}: the job has ended`);
-				const release = await acquireFileMutationLock(path, request.signal);
+				const release = await acquireFileMutationLock(resolveToCwd(path, deps.cwd), request.signal);
 				// Granted only to a live job: one that ended while it waited never holds the slot.
 				if (!request.generation.jobLive() || request.signal.aborted) {
 					release();
@@ -115,13 +120,14 @@ function stringField(args: unknown, field: string): string {
 
 const OPERATIONS: ReadonlySet<string> = new Set(["read", "enumerate", "write"]);
 
-function policyRequest(args: unknown): FilesystemPolicyRequest {
+/** The server canonicalizes the child's path the way the built-in file tools do; a child-sent canonical path is never trusted. */
+async function policyRequest(args: unknown, cwd: string): Promise<FilesystemPolicyRequest> {
 	const operation = stringField(args, "operation");
 	if (!OPERATIONS.has(operation))
 		throw new HostCallError("host_call_bad_args", `operation must be read, enumerate or write`);
 	return {
 		operation: operation as FilesystemPolicyRequest["operation"],
-		canonicalPath: stringField(args, "canonicalPath"),
+		canonicalPath: await canonicalizeFilesystemPath(resolveToCwd(stringField(args, "path"), cwd)),
 		toolName: stringField(args, "toolName"),
 	};
 }

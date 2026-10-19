@@ -29,6 +29,7 @@ describe.skipIf(process.platform === "win32")("tool child authorization", () => 
 			command: { command: process.execPath, args: ["--import", resolver, roleEntry] },
 			env: { ...process.env, [TOOL_CHILD_MODULE_ROOTS_ENV]: JSON.stringify([extensionDir]) },
 			onHostCall: createSessionHostCallHandler({
+				cwd: process.cwd(),
 				executeNested: () => Promise.reject(new Error("not reached")),
 				callableToolNames: () => [],
 				target: () => undefined,

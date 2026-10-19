@@ -53,15 +53,20 @@ export interface ModuleHost {
 	reserved(name: string, args: unknown): Promise<unknown>;
 	/** The tools callable through `call`. */
 	listTools(): Promise<unknown>;
-	/** The session's filesystem policy decision for one access (never cached; ask before each). */
+	/**
+	 * The session's filesystem policy decision for one access (never cached; ask before each). The server resolves `path`
+	 * against the session cwd and canonicalizes it the way the built-in file tools do.
+	 */
 	authorize(request: {
 		operation: "read" | "enumerate" | "write";
-		canonicalPath: string;
+		path: string;
 		toolName: string;
 	}): Promise<{ allow: true } | { allow: false; reason: string }>;
 	/**
 	 * Runs `fn` holding the file's slot in the session's mutation queue - the same one its own file tools use - and
 	 * releases it once `fn` settles. A cancel does not release it early: the slot passes on only after `fn` is done.
+	 * Inside `fn`, never `call` a session tool that edits or writes the same file: it waits for this very slot and
+	 * the job deadlocks until its deadline.
 	 */
 	withFileLock<T>(path: string, fn: () => Promise<T>): Promise<T>;
 }

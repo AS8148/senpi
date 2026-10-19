@@ -26,6 +26,7 @@ describe("session host-call handler", () => {
 
 	it("refuses a tool call from a job that runs for no tool call", async () => {
 		const handler = createSessionHostCallHandler({
+			cwd: process.cwd(),
 			executeNested: unreachable,
 			callableToolNames: () => [],
 			target: () => undefined,
@@ -38,6 +39,7 @@ describe("session host-call handler", () => {
 
 	it("lists the callable tools", async () => {
 		const handler = createSessionHostCallHandler({
+			cwd: process.cwd(),
 			executeNested: unreachable,
 			callableToolNames: () => ["read", "todo"],
 			target: () => undefined,
@@ -53,6 +55,7 @@ describe("session host-call handler", () => {
 			return { served: call.name };
 		};
 		const handler = createSessionHostCallHandler({
+			cwd: process.cwd(),
 			executeNested: unreachable,
 			callableToolNames: () => [],
 			target: (kind) => (kind === "reserved" ? reserved : undefined),
@@ -76,6 +79,7 @@ afterEach(async () => {
 
 function fileHandler(policy?: FilesystemPolicyChecker) {
 	return createSessionHostCallHandler({
+		cwd: process.cwd(),
 		executeNested: () => Promise.reject(new Error("not reached")),
 		callableToolNames: () => [],
 		target: () => undefined,
@@ -105,24 +109,23 @@ describe("session host-call handler: authorize", () => {
 			asked.push(request);
 			return { allow: false, reason: "blocked by test policy" };
 		});
-		const args = { operation: "write", canonicalPath: "/x/y", toolName: "write" };
+		const args = { operation: "write", path: "/x/y", toolName: "write" };
+		const asks = { operation: "write", canonicalPath: "/x/y", toolName: "write" };
 		expect(await handler(request({ kind: "authorize", args }))).toEqual({
 			allow: false,
 			reason: "blocked by test policy",
 		});
 		expect(await handler(request({ kind: "authorize", args }))).toMatchObject({ allow: false });
-		expect(asked).toEqual([args, args]);
+		expect(asked).toEqual([asks, asks]);
 	});
 
 	it("allows when no policy is registered, and refuses malformed requests typed", async () => {
 		const handler = fileHandler();
 		expect(
-			await handler(
-				request({ kind: "authorize", args: { operation: "read", canonicalPath: "/a", toolName: "read" } }),
-			),
+			await handler(request({ kind: "authorize", args: { operation: "read", path: "/a", toolName: "read" } })),
 		).toEqual({ allow: true });
 		await expect(
-			handler(request({ kind: "authorize", args: { operation: "delete", canonicalPath: "/a", toolName: "x" } })),
+			handler(request({ kind: "authorize", args: { operation: "delete", path: "/a", toolName: "x" } })),
 		).rejects.toMatchObject({ code: "host_call_bad_args" });
 	});
 });
