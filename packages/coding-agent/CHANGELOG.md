@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- `get_available_models` reports each model's resolved `serviceTier` and `upstreamModelId`, including a `-fast` alias's pairing declared only in `models.json` or by an extension provider. Clients that verify a child opened on the base model of a requested `-fast` alias no longer refuse it as a substitution ([#3666](https://github.com/code-yeongyu/senpi/issues/3666)).
+
 - Esc or the turn deadline now also release an `agent_before_settle` (or other `agent_end` boundary) handler that never settles: an abort that joined the open boundary used to return before the grace-and-release ran, so the session stayed streaming ([#3650](https://github.com/code-yeongyu/senpi/issues/3650)).
 - The engine can offload tool runs to a per-session child process over a new wire protocol - the protocol layer (framing, single admission, payload refs) lands first (internal preview, fork-only until the offload stack ships) ([#3566](https://github.com/code-yeongyu/senpi/issues/3566)).
 - A session can be exported for a move to another device and imported there under the same id: the device it left keeps a read-only copy and refuses writes to it, the receiver takes ownership in one atomic step, queued input travels with it, and a declined move gives the session back with its queued input. `release_session` accepts `reason: "move"` with a `moveId` ([#3630](https://github.com/code-yeongyu/senpi/issues/3630)).
@@ -21,6 +23,8 @@
 - `--tool-runtime in-process|child` (env `SENPI_TOOL_RUNTIME`) selects where a session's heavy tool work runs. The default is `in-process` and nothing changes yet; a multi-session host advertises its choice as `tool_runtime:<value>` in `get_protocol_info`. An unknown value is a startup error ([#3566](https://github.com/code-yeongyu/senpi/issues/3566)).
 - `dequeue_message` and `edit_queued_message` accept `expectedRevision`: every queued input carries a `revision` (1 when queued, +1 per edit), and a change based on a stale revision answers `conflict` with `currentRevision` and changes nothing, so two clients editing one queued message can no longer overwrite each other silently. Capability `queued_message_revision` ([#3459](https://github.com/code-yeongyu/senpi/issues/3459)).
 - Terminal control endpoints serve their own session like a host: `open_session` by path attaches with the host's record stream and replay, `subscribe_sessions` runs the status stream (with `mirror`) over that session, and `steer`/`follow_up`/`prompt` are delivered through the terminal's admission (the user's draft holds them) with the host's `whenIdle` choice, as remote deliveries; fields admission cannot carry (`images`, `thinkingLevel`, ...) are refused by name. `admitExternalMessage` gains `whenIdle` (`start` default, `queue`) ([#3229](https://github.com/code-yeongyu/senpi/issues/3229)).
+- `anthropicSubscriptionProvider.accountFallback: false` keeps managed Claude requests on the selected account instead of automatically switching accounts, including subsequent requests while that account is blocked. Automatic account fallback remains enabled by default and is independent of model fallback ([#3473](https://github.com/code-yeongyu/senpi/pull/3473) by [@Yoonkeee](https://github.com/Yoonkeee)).
+
 ### Changed
 
 ### Fixed

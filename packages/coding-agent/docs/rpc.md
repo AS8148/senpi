@@ -2818,7 +2818,7 @@ List all configured models, refreshing credential availability on each request s
 {"type": "get_available_models"}
 ```
 
-Response contains an array of full [Model](#model) objects with supported thinking levels. Each row also carries `supportsAssistantPrefill`: whether the model accepts a request ending with an assistant message, given the session's current thinking level. It is `false` for every model today, so clients continue an edited answer with `continue_from_leaf`:
+Response contains an array of full [Model](#model) objects with supported thinking levels. A row's `serviceTier` and `upstreamModelId` are the values the session resolves for that model, including ones declared only in `models.json` or by an extension provider, so a `-fast` priority alias names its base model there and a client can tell a child opened on the base model is the alias it asked for. Each row also carries `supportsAssistantPrefill`: whether the model accepts a request ending with an assistant message, given the session's current thinking level. It is `false` for every model today, so clients continue an edited answer with `continue_from_leaf`:
 ```json
 {
   "type": "response",
