@@ -34,6 +34,24 @@ The channel between the RPC host and its own helper process is host internals; e
 
 None: every file is new and fork-only.
 
+## 2026-10-19 - release_session move: plain ids and the moved-away refusal keeps dropped input (senpi#3662)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-release.ts`: a `move` release refuses a `moveId` that is not a plain id (`isMoveId`, the `PLAIN_ID` rule export and the receiver's ledger apply) with `invalid_release_reason`, and a session whose own id is not a plain id with `release_unsupported` (`errorData.detail: "session_id_not_plain"`), both before anything is interrupted or sealed. A `session_moved_away` refusal after an interrupt carries `interrupted` and `dropped` like every other refusal after one.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/session-release.ts`: a release under an id no later step accepts sealed the session as moving with no way forward but a local reclaim, and the moved-away refusal lost the user messages the interrupt had taken out of the queues (findings of the #3631 final review).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/session-release.ts`: the checks guard the host's own release command before it seals the file.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/session-release.ts`, the start of `releaseSession` and its `SessionMovedAwayError` catch.
+
 ## 2026-10-18 - release_session reason move (senpi#3630)
 
 ### What changed
