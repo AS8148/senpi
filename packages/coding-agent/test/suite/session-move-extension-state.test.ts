@@ -14,7 +14,7 @@ import { MOVED_STATE_RESTORED, movedStateDir, pendingMovedState } from "../../sr
 import { importMovedSession } from "../../src/core/session-move/import.ts";
 import { SESSION_RELEASED_ENTRY_TYPE } from "../../src/modes/rpc/session-release.ts";
 import { startReleaseHost } from "./rpc-release-host-support.ts";
-import { customTypes, MOVE, setup, writeSession } from "./session-move-fixture.ts";
+import { customTypes, type MOVE, setup, writeSession } from "./session-move-fixture.ts";
 
 function probeExtension(options: { readonly failExport?: boolean } = {}) {
 	const seen: { exportDir?: string; importDir?: string; imported?: string } = {};
@@ -113,7 +113,7 @@ describe("extension state restored on open (senpi#3676)", () => {
 		await using host = await startReleaseHost(probe.extension);
 		host.faux.setResponses([fauxAssistantMessage("seed reply")]);
 		const { sessionPath, sessionId } = await host.open("moved-in");
-		await host.send({ type: "close_session", id: "c", sessionId });
+		expect(await host.release(sessionId)).toMatchObject({ success: true });
 		const id = JSON.parse(readFileSync(sessionPath, "utf8").split("\n")[0] ?? "{}").id as string;
 		const lines = readFileSync(sessionPath, "utf8").trimEnd().split("\n");
 		const last = JSON.parse(lines.at(-1) ?? "{}") as { id: string };
@@ -130,7 +130,10 @@ describe("extension state restored on open (senpi#3676)", () => {
 		mkdirSync(join(pendingDir, "probe"), { recursive: true });
 		writeFileSync(join(pendingDir, "probe", "state.json"), '{"tasks":3}\n');
 
-		expect(await host.attach(sessionPath)).toMatchObject({ success: true });
+		expect(await host.attach(sessionPath)).toMatchObject({
+			success: true,
+			data: { sessionId: expect.not.stringMatching(sessionId) },
+		});
 
 		expect(probe.seen.importDir).toBe(pendingDir);
 		expect(probe.seen.imported).toBe('{"tasks":3}\n');

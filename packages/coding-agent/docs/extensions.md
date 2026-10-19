@@ -667,6 +667,24 @@ pi.on("session_shutdown", async (event, ctx) => {
 
 The host budgets each handler separately: a handler still running after `sessionShutdownHandlerWarnMs` (default 2000) logs a warning naming the extension, and at `sessionShutdownHandlerTimeoutMs` (default 10000) senpi aborts that handler's `event.signal`, reports an extension error, and continues teardown with the remaining handlers. Keep shutdown work short, and pass `event.signal` to anything that can block (subprocess waits, network calls, lock acquisition) so it stops when the host gives up on it. Both thresholds are settings; `0` disables either half. See [settings.md](settings.md#shutdown-handler-budget).
 
+#### session_move_export / session_move_import
+
+Moving a session to another device (`release_session` reason `move`, then RPC `move_session`) carries the session file, its extension sidecars and its resident blobs. State an extension keeps elsewhere (task records, logs, finished child sessions) follows only if the extension hands it over:
+
+```typescript
+pi.on("session_move_export", async (event, ctx) => {
+  // event.moveId - the move
+  // event.dir - an empty folder for this move; write under a subfolder named after your extension
+  // Throwing refuses the move: release_session answers release_failed and nothing is sealed.
+});
+
+pi.on("session_move_import", async (event, ctx) => {
+  // Fired once on the receiving device, right after session_start of the first open after the move.
+  // event.dir - what the sender's extensions wrote; it is removed after every handler ran.
+  // A crash before that delivers it again on the next open, so restoring must be idempotent.
+});
+```
+
 ### Agent Events
 
 #### before_agent_start

@@ -10,6 +10,7 @@ import { getDefaultSessionDir, loadEntriesFromFile, SessionManager } from "../se
 import { rebindSessionFile } from "../session-rebind.ts";
 import { encodedSessionId } from "../session-sidecar-store.ts";
 import { MoveBundleInvalidError, type MoveManifest, readManifest, verifyBundle } from "./bundle.ts";
+import { EXTENSION_STATE_PAYLOAD, movedStateDir } from "./extension-state.ts";
 import { MoveFencedError, type MoveLedger, type MoveStatus } from "./move-ledger.ts";
 import { headerSessionId, type MoveId, SESSION_MOVED_IN, sessionOwnership } from "./ownership.ts";
 import { requeueInput } from "./requeue.ts";
@@ -100,6 +101,8 @@ export async function importMovedSession(
 		const staged = await stage(options.bundleDir, manifest, staging, options.from ?? "");
 		const sessionFile = await options.ledger.commit(manifest.moveId, () => {
 			replacePredecessor(target, manifest.sessionId, sessionDir);
+			// Before the rename: a crash here re-copies on retry, and after it the state is already in place.
+			placeExtensionState(options.bundleDir, manifest, movedStateDir(target, manifest.moveId));
 			return rebindSessionFile(staged, targetCwd, sessionDir);
 		});
 		rmSync(staging, { recursive: true, force: true });
@@ -130,6 +133,19 @@ function replacePredecessor(target: string, sessionId: string, sessionDir: strin
 	}
 	rmSync(join(sessionDir, "resident-blobs", sessionId), { recursive: true, force: true });
 	rmSync(target, { force: true });
+}
+
+function placeExtensionState(bundleDir: string, manifest: MoveManifest, dir: string): void {
+	const files = manifest.payloads
+		.filter((payload) => payload.kind === EXTENSION_STATE_PAYLOAD)
+		.flatMap((p) => p.files);
+	if (files.length === 0) return;
+	rmSync(dir, { recursive: true, force: true });
+	for (const file of files) {
+		const to = join(dir, file.path.replace(/^state\//, ""));
+		mkdirSync(dirname(to), { recursive: true });
+		copyFileSync(join(bundleDir, file.path), to);
+	}
 }
 
 async function stage(bundleDir: string, manifest: MoveManifest, staging: string, from: string): Promise<string> {

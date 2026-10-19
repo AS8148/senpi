@@ -1827,14 +1827,21 @@ export class ExtensionRunner {
 	 * `session_move_export` handlers write the state that must follow a moved session; one that throws means that
 	 * state would be lost, so the first failure is returned (and reported) for the caller to refuse the move.
 	 */
-	async emitSessionMoveExport(event: SessionMoveExportEvent): Promise<{ extensionPath: string; error: string } | undefined> {
+	async emitSessionMoveExport(
+		event: SessionMoveExportEvent,
+	): Promise<{ extensionPath: string; error: string } | undefined> {
 		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, event.type)) {
 			for (const handler of handlers) {
 				try {
 					await handler(event, this.createContext(ext.path));
 				} catch (err) {
 					const error = err instanceof Error ? err.message : String(err);
-					this.emitError({ extensionPath: ext.path, event: event.type, error, stack: err instanceof Error ? err.stack : undefined });
+					this.emitError({
+						extensionPath: ext.path,
+						event: event.type,
+						error,
+						stack: err instanceof Error ? err.stack : undefined,
+					});
 					return { extensionPath: ext.path, error };
 				}
 			}

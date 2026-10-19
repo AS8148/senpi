@@ -1,3 +1,21 @@
+## 2026-10-19 - Extension state follows a moved session (senpi#3676)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: right after `session_start` in the extension binding, `restoreMovedState` (`session-move/extension-state.ts`) hands state a move left for this session to the `session_move_import` handlers once, then records `session_move_state_restored` and removes the folder.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: moving a session to another device (design v7 section 4) must carry state extensions keep outside the session folder; the receiving runtime is the only place that can hand it back to the extensions that own it, and doing it at binding means TUI, desktop and RPC share one path.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: an extension cannot know a session was just moved in, and the hand-back must run once across every extension before the first turn.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/agent-session.ts`, one line after the `session_start` emit in the extension binding, plus one import.
+
 ## 2026-10-19 - An abort that joins an open agent_end boundary still releases a held handler (senpi#3650 follow-up)
 
 ### What changed

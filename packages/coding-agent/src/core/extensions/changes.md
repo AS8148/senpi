@@ -1,3 +1,22 @@
+## 2026-10-19 - session_move_export and session_move_import events (senpi#3676)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `SessionMoveExportEvent { moveId, dir }` and `SessionMoveImportEvent { moveId, dir }` join the session events, with their `on()` overloads.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitSessionMoveExport(event)` runs the export handlers and returns the first failure (also reported), so a `move` release refuses instead of sealing a session whose extension state was lost.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts`: extensions with per-session state outside the session folder need a contract to hand it to a move and get it back on the receiver.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts`: these are new host lifecycle events; only the host knows when a session is sealed for a move or first opened after one.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/types.ts`, the session event union and the `on()` overload list; `runner.ts`, one method before `dispatchEmit` and one type import.
+
 ## 2026-10-18 - Agent lifecycle and boundary event handlers run under a host budget (senpi#3650)
 
 ### What changed

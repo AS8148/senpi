@@ -330,6 +330,7 @@ import {
 	type SessionHeader,
 	SessionManager,
 } from "./session-manager.ts";
+import { restoreMovedState } from "./session-move/extension-state.ts";
 import { generateSessionTitle, sessionTitleRetryPolicy, shouldSkipSessionTitle } from "./session-title-generator.ts";
 import { SessionWorkBarrier } from "./session-work-barrier.ts";
 import {
@@ -9537,6 +9538,9 @@ export class AgentSession {
 			this._applyExtensionBindings(this._extensionRunner);
 			this.syncPromptCacheSafeWaitEnv();
 			await this._extensionRunner.emit(this._sessionStartEvent);
+			await restoreMovedState(this.sessionManager, (moved) =>
+				this._extensionRunner.emit({ type: "session_move_import", ...moved }).then(() => undefined),
+			);
 			this._enforceConfiguredDefaultTools();
 			await this.extendResourcesFromExtensions(this._sessionStartEvent.reason === "reload" ? "reload" : "startup");
 		} finally {

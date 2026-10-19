@@ -125,7 +125,8 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 		// A move takes the extensions' out-of-folder state with it; they write it while their runtime is still live.
 		if (command.reason === "move") {
 			const failed = await exportExtensionState(first.session, first.sessionPath, command.moveId);
-			if (failed !== undefined) throw new Error(`${failed.extensionPath} could not write its state for the move: ${failed.error}`);
+			if (failed !== undefined)
+				throw new Error(`${failed.extensionPath} could not write its state for the move: ${failed.error}`);
 		}
 		answer = await claimAndRelease(port, command, interrupted, dropped);
 		return answer;

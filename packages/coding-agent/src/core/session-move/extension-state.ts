@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { loadEntriesFromFile, SessionManager } from "../session-manager.ts";
+import { loadEntriesFromFile, type SessionManager } from "../session-manager.ts";
 import { parseMoveId } from "./bundle.ts";
 import { type MoveId, SESSION_MOVED_IN } from "./ownership.ts";
 
