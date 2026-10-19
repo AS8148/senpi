@@ -9,6 +9,12 @@ import type { ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { join } from "node:path";
 import { openChannelListener, type ToolChildChannel } from "./channel.ts";
+import {
+	type ChildContainment,
+	ChildContainmentError,
+	type ContainmentHost,
+	containChild,
+} from "./child-containment.ts";
 import { createGenerationBarrier, type GenerationBarrier } from "./client-barrier.ts";
 import { generationLedgerPath } from "./descendants.ts";
 import { TOOL_CHILD_PROTOCOL_VERSION } from "./entry.ts";
@@ -55,6 +61,8 @@ export interface ToolChildClientOptions {
 	readonly onCancelAck?: (jobId: string) => void;
 	/** Read for `SENPI_TOOL_CHILD_DEADLINE_<KIND>_MS` fixture overrides. */
 	readonly policyEnv?: NodeJS.ProcessEnv;
+	/** Tests inject the platform and kernel; production uses this host's. */
+	readonly containmentHost?: ContainmentHost;
 }
 
 interface Pending {
@@ -79,6 +87,7 @@ interface Live {
 	readonly refs: HostCallRefs;
 	/** The child's manifest from its `hello`: the job kinds it runs. */
 	readonly jobKinds: ReadonlySet<string>;
+	readonly containment: ChildContainment;
 	ended?: Promise<void>;
 }
 
@@ -185,6 +194,16 @@ export class ToolChildClient {
 			() => undefined,
 			() => undefined,
 		);
+		let containment: ChildContainment;
+		try {
+			containment = containChild(child, this.#options.containmentHost);
+		} catch (error) {
+			// A spawn that failed has no pid and no process to stop. Node 26 turns `kill()` on such a child into a
+			// signal to the caller's own process group, so it is only sent to a child that really started.
+			if (child.pid !== undefined) child.kill("SIGKILL");
+			await listener.close();
+			throw error instanceof ChildContainmentError ? new ToolChildError(error.code, error.message) : error;
+		}
 		// Marks this generation live while its child runs: another start on the same session never sweeps it.
 		if (child.pid !== undefined) await recordGenerationChild(this.#options.dir, generation, child.pid);
 		let timer: ReturnType<typeof setTimeout> | undefined;
@@ -198,7 +217,8 @@ export class ToolChildClient {
 		clearTimeout(timer);
 		await listener.close();
 		if (outcome === "timeout" || outcome === "exited") {
-			this.#kill(child);
+			containment.kill();
+			containment.close();
 			this.#state = "dead";
 			throw new ToolChildError(
 				"tool_child_bootstrap_failed",
@@ -215,7 +235,8 @@ export class ToolChildClient {
 			message.generation !== generation ||
 			message.protocol !== TOOL_CHILD_PROTOCOL_VERSION
 		) {
-			this.#kill(child);
+			containment.kill();
+			containment.close();
 			this.#state = "dead";
 			throw new ToolChildError("tool_child_bootstrap_failed", "version_mismatch");
 		}
@@ -224,13 +245,11 @@ export class ToolChildClient {
 			dir: this.#options.dir,
 			generation,
 			channel,
+			...(containment.isMember === undefined ? {} : { confirmMember: containment.isMember }),
 			onViolation: (violation) => {
-				const failure = new ToolChildError(
-					"tool_child_barrier_violation",
-					`${violation.launchId}: ${violation.reason}`,
-				);
+				const failure = new ToolChildError(violation.code, `${violation.launchId}: ${violation.reason}`);
 				if (violation.jobId !== undefined) settle({ pending }, violation.jobId, (p) => p.reject(failure));
-				this.#kill(child);
+				containment.kill();
 			},
 		});
 		const supervisor = new JobSupervisor(
@@ -238,8 +257,8 @@ export class ToolChildClient {
 				sendCancel: (jobId) => channel.send({ type: "cancel", jobId }),
 				sendPing: (seq) => channel.send({ type: "ping", seq }),
 				signal: (signal) => {
-					if (signal === "SIGKILL") this.#kill(child);
-					else if (process.platform === "win32") this.#kill(child);
+					// Windows has no graceful group signal: the Job Object is the only tree-wide stop.
+					if (signal === "SIGKILL" || process.platform === "win32") containment.kill();
 					else if (child.pid !== undefined) {
 						try {
 							process.kill(-child.pid, "SIGTERM");
@@ -276,6 +295,7 @@ export class ToolChildClient {
 			hostCalls,
 			refs,
 			jobKinds: new Set(message.jobKinds),
+			containment,
 		};
 		this.#live = live;
 		this.#state = "live";
@@ -365,7 +385,7 @@ export class ToolChildClient {
 			live.exited.then(() => true),
 			delay(this.#options.shutdownMs ?? 2_000).then(() => false),
 		]);
-		if (!graceful) this.#kill(live.child);
+		if (!graceful) live.containment.kill();
 		await live.exited;
 		await live.ended;
 	}
@@ -436,25 +456,16 @@ export class ToolChildClient {
 			pending.reject(failure);
 		}
 		live.channel.close();
-		this.#kill(live.child);
+		live.containment.kill();
 		if (this.#live === live) {
 			this.#live = undefined;
 			this.#state = "dead";
 		}
 		this.#options.onStatus?.({ state: "exited", generation: live.generation, pid: live.child.pid ?? -1 });
-		live.ended = Promise.all([live.barrier.teardown(undefined), live.refs.writer.teardown()]).then(() => undefined);
+		live.ended = Promise.all([live.barrier.teardown(undefined), live.refs.writer.teardown()]).then(() =>
+			live.containment.close(),
+		);
 		this.#lastEnded = live.ended;
-	}
-
-	#kill(child: ChildProcess): void {
-		const pid = child.pid;
-		if (pid === undefined) return;
-		try {
-			if (process.platform === "win32") child.kill("SIGKILL");
-			else process.kill(-pid, "SIGKILL");
-		} catch {
-			// The child's group is already gone.
-		}
 	}
 }
 

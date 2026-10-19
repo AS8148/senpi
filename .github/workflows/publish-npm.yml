@@ -8,6 +8,11 @@ name: Release
         required: false
         type: string
         default: ''
+      sha:
+        description: 'Release this exact commit (full 40-char sha, must be on main) instead of main at dispatch; later merges stay out of the tag. Empty = main.'
+        required: false
+        type: string
+        default: ''
       dry_run:
         description: 'Dry-run preview only (no publish or push)'
         required: false
@@ -72,7 +77,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: '1.4.2'
+          bun-version: '1.4.3'
 
       - name: Assert bun 1.4 toolchain
         run: bash scripts/assert-bun-toolchain.sh
@@ -122,6 +127,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.UPSTREAM_AUTOMATION_TOKEN }}
           SENPI_SKIP_PM_VERIFY: '1'
+          RELEASE_SHA: ${{ inputs.sha }}
         run: |
           test -n "$GH_TOKEN" || {
             echo "::error::UPSTREAM_AUTOMATION_TOKEN is required to push release commits and tags through branch protection."
@@ -134,6 +140,9 @@ jobs:
           fi
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             ARGS+=(--dry-run)
+          fi
+          if [ -n "$RELEASE_SHA" ]; then
+            ARGS+=(--sha "$RELEASE_SHA")
           fi
           if [ "${{ inputs.force_tests }}" = "true" ]; then
             ARGS+=(--force-tests)
@@ -176,5 +185,5 @@ jobs:
             echo "| Dry run | ${{ inputs.dry_run }} |"
             echo "| Force tests | ${{ inputs.force_tests }} |"
             echo "| Version | ${{ inputs.version || 'auto' }} |"
-            echo "| Commit | ${{ github.sha }} |"
+            echo "| Commit | ${{ inputs.sha || github.sha }} |"
           } >> "$GITHUB_STEP_SUMMARY"

@@ -497,6 +497,8 @@ export class SessionEventWriter {
 					account: record.account,
 					windows: record.windows,
 					reportedAt: record.reportedAt,
+					...(record.plan === undefined ? {} : { plan: record.plan }),
+					...(record.error === undefined ? {} : { error: record.error }),
 				};
 				break;
 			default: {
