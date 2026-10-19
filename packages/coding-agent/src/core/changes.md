@@ -36,6 +36,24 @@ The abort path and the host's wait on extension handlers are session internals; 
 
 - LOW: `agent-session.ts` `abortTurnForDeadline` and the line after `_abortActiveAgentAndRetry("user")` in `_abortWithProvenance`.
 
+## 2026-10-18 - Session move phase 1 and related core deltas arrive through the base merge (senpi#3631 lineage)
+
+### What changed
+
+- `agent-session.ts`, `agent-session-runtime.ts`, `agent-session-services.ts`, `sdk.ts`: engine export/import with single-owner ownership (session move phase 1) and the surrounding core deltas landed on main and reach this branch through the pure base merge; this branch adds no change of its own to them beyond the tool-child runtime already tracked elsewhere.
+
+### Why
+
+- The changelog gate reads the merge-base diff, which after the base merge includes main's own changes to these files; this entry records that provenance.
+
+### Why an extension could not handle it
+
+- Core session ownership machinery; not extension surface.
+
+### Expected merge conflict zones
+
+- `changes.md` only.
+
 ## 2026-10-18 - A session moved to another device refuses writes on the device it left (senpi#3630)
 
 ### What changed

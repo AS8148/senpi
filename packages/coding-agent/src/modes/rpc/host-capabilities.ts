@@ -1,4 +1,8 @@
-import { type ToolRuntimeKind, toolRuntimeCapability } from "../../cli/tool-runtime.ts";
+import {
+	isHostOwnedToolRuntimeCapability,
+	type ToolRuntimeKind,
+	toolRuntimeCapabilities,
+} from "../../cli/tool-runtime.ts";
 import {
 	ACCEPT_EDITS_PERMISSION_PRESET_CAPABILITY,
 	AUTO_PERMISSION_PRESET_CAPABILITY,
@@ -95,8 +99,9 @@ export function multiSessionHostCapabilities(options: {
 			AUTO_PERMISSION_PRESET_CAPABILITY,
 			// Only an in-process runtime shares the loop a warm loads into (senpi#2314).
 			...(options.warm ? [WARM_CAPABILITY] : []),
-			toolRuntimeCapability(options.toolRuntime),
-			...options.negotiated,
+			...toolRuntimeCapabilities(options.toolRuntime),
+			// The host alone says where tool work runs; a negotiated copy would make two answers.
+			...options.negotiated.filter((capability) => !isHostOwnedToolRuntimeCapability(capability)),
 		]),
 	];
 }
