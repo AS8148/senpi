@@ -31,6 +31,8 @@ export type MoveRecord = MoveStatus | { readonly state: "ready"; readonly expire
 /** How long a ready move waits for its bundle before it is declined as expired. */
 export const READY_TTL_MS = 10 * 60_000;
 
+const FINAL_STATES: readonly MoveRecord["state"][] = ["accepted", "declined", "failed"];
+
 export interface MoveLedgerOptions {
 	readonly now?: () => number;
 }
@@ -137,12 +139,12 @@ export class MoveLedger {
 
 	/** Cancel, expiry or a refused chunk: only before the bundle was verified and receiving began, never after. */
 	decline(moveId: MoveId, reason: DeclineReason): Promise<MoveRecord> {
-		return this.settle(moveId, { state: "declined", reason }, ["accepted", "receiving"]);
+		return this.settle(moveId, { state: "declined", reason }, ["receiving"]);
 	}
 
 	/** A verified import that could not finish; it may end a receiving move but never an accepted one. */
 	fail(moveId: MoveId, reason: FailReason): Promise<MoveRecord> {
-		return this.settle(moveId, { state: "failed", reason }, ["accepted"]);
+		return this.settle(moveId, { state: "failed", reason }, []);
 	}
 
 	/** Runs the import's commit (the atomic rename) under the move's lock, then records it accepted. */
@@ -158,10 +160,16 @@ export class MoveLedger {
 		});
 	}
 
+	/**
+	 * Records a final answer unless one is already there: once a sender may have heard `accepted`, `declined` or
+	 * `failed`, it never changes. Reads through `current()`, so a ready move whose window passed answers `expired`.
+	 * `keeps` names the open states this transition must also leave alone.
+	 */
 	private settle(moveId: MoveId, next: MoveRecord, keeps: readonly MoveRecord["state"][]): Promise<MoveRecord> {
 		return this.locked(moveId, () => {
-			const record = this.read(moveId);
-			if (record !== undefined && keeps.includes(record.state)) return record;
+			const record = this.current(moveId);
+			if (record !== undefined && (FINAL_STATES.includes(record.state) || keeps.includes(record.state)))
+				return record;
 			this.write(moveId, next);
 			return next;
 		});

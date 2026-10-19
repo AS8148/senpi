@@ -95,6 +95,41 @@ describe("MoveLedger ready state (senpi#3676)", () => {
 		expect(await book.prepare(id("r8"))).toEqual({ state: "receiving" });
 	});
 
+	it("#given a ready move whose window passed #when it is cancelled or failed #then it reports expired and the answer never changes", async () => {
+		const { book, clock } = clockedLedger();
+		await book.prepare(id("r10"));
+		await book.prepare(id("r11"));
+		clock.now += READY_TTL_MS;
+		const expired = { state: "declined", reason: "expired" };
+
+		expect(await book.decline(id("r10"), "cancelled")).toEqual(expired);
+		expect(await book.fail(id("r11"), "bundle_invalid")).toEqual(expired);
+
+		for (const move of [id("r10"), id("r11")]) {
+			expect(await book.answerStatus(move, { movedIn: false })).toEqual(expired);
+			expect(await book.fail(move, "import_failed")).toEqual(expired);
+			expect(await book.decline(move, "repository")).toEqual(expired);
+			expect(await book.answerStatus(move, { movedIn: false })).toEqual(expired);
+		}
+	});
+
+	it("#given a move already answered declined or failed #then a later decline or fail never changes the answer", async () => {
+		const { book } = clockedLedger();
+		const noRecord = { state: "declined", reason: "no_record" };
+		expect(await book.answerStatus(id("r12"), { movedIn: false })).toEqual(noRecord);
+		expect(await book.fail(id("r12"), "bundle_invalid")).toEqual(noRecord);
+		expect(await book.decline(id("r12"), "repository")).toEqual(noRecord);
+		expect(await book.answerStatus(id("r12"), { movedIn: false })).toEqual(noRecord);
+
+		await book.prepare(id("r13"));
+		await book.beginReceive(id("r13"));
+		const failed = { state: "failed", reason: "import_failed" };
+		expect(await book.fail(id("r13"), "import_failed")).toEqual(failed);
+		expect(await book.decline(id("r13"), "cancelled")).toEqual(failed);
+		expect(await book.fail(id("r13"), "bundle_invalid")).toEqual(failed);
+		expect(await book.answerStatus(id("r13"), { movedIn: false })).toEqual(failed);
+	});
+
 	it("#given a ready move #when the device restarts #then the ready record and its window survive on disk", async () => {
 		const { book, clock, dir } = clockedLedger();
 		await book.prepare(id("r9"));
