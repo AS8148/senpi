@@ -1960,9 +1960,9 @@ export function createRpcConnectionHandler(
 			questions.cancelAll();
 			pendingExtensionRequests.cancelAll();
 		},
-		async dispose() {
+		async dispose(disposeOptions) {
 			await ready;
-			await dispose();
+			await dispose(disposeOptions);
 		},
 	};
 }

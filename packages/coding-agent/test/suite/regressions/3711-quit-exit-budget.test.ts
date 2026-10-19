@@ -7,8 +7,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import configReloadExtension from "../../../src/core/extensions/builtin/config-reload/index.ts";
-import { emitSessionShutdownEvent } from "../../../src/core/extensions/runner.ts";
 import { createFsWatchEventSource } from "../../../src/core/extensions/builtin/config-reload/watch-event-source.ts";
+import { emitSessionShutdownEvent } from "../../../src/core/extensions/runner.ts";
 import type { ExtensionAPI, ExtensionError, SessionShutdownEvent } from "../../../src/core/extensions/types.ts";
 import type { Settings } from "../../../src/core/settings-manager.ts";
 import { createHarness, type Harness } from "../harness.ts";
@@ -63,7 +63,11 @@ async function hungThenFast(settings: Partial<Settings>): Promise<QuitFixture> {
 }
 
 function quitAndExit(harness: Harness): Promise<boolean> {
-	return emitSessionShutdownEvent(harness.getExtensionRunner(), { type: "session_shutdown", reason: "quit" }, { processExit: true });
+	return emitSessionShutdownEvent(
+		harness.getExtensionRunner(),
+		{ type: "session_shutdown", reason: "quit" },
+		{ processExit: true },
+	);
 }
 
 function track(emitted: Promise<unknown>): { settled: () => boolean } {
@@ -80,9 +84,7 @@ describe("senpi#3711 quit does not wait out a hung shutdown handler", () => {
 		try {
 			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
 			const startedAt = Date.now();
-			const emission = track(
-				quitAndExit(fixture.harness),
-			);
+			const emission = track(quitAndExit(fixture.harness));
 
 			await vi.advanceTimersByTimeAsync(1999);
 			expect(emission.settled()).toBe(false);
@@ -105,9 +107,7 @@ describe("senpi#3711 quit does not wait out a hung shutdown handler", () => {
 		const fixture = await hungThenFast({ sessionShutdownQuitBudgetMs: 250 });
 		try {
 			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-			const emission = track(
-				quitAndExit(fixture.harness),
-			);
+			const emission = track(quitAndExit(fixture.harness));
 
 			await vi.advanceTimersByTimeAsync(249);
 			expect(emission.settled()).toBe(false);
@@ -125,9 +125,7 @@ describe("senpi#3711 quit does not wait out a hung shutdown handler", () => {
 		const fixture = await hungThenFast({ sessionShutdownQuitBudgetMs: 0, sessionShutdownHandlerTimeoutMs: 3000 });
 		try {
 			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-			const emission = track(
-				quitAndExit(fixture.harness),
-			);
+			const emission = track(quitAndExit(fixture.harness));
 
 			await vi.advanceTimersByTimeAsync(2999);
 			expect(emission.settled()).toBe(false);
@@ -139,11 +137,13 @@ describe("senpi#3711 quit does not wait out a hung shutdown handler", () => {
 		}
 	});
 
-it("keeps only the per-handler cap for a quit that does not exit the process (an RPC host closing a session)", async () => {
+	it("keeps only the per-handler cap for a quit that does not exit the process (an RPC host closing a session)", async () => {
 		const fixture = await hungThenFast({ sessionShutdownHandlerTimeoutMs: 3000 });
 		try {
 			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-			const emission = track(fixture.harness.getExtensionRunner().emit({ type: "session_shutdown", reason: "quit" }));
+			const emission = track(
+				fixture.harness.getExtensionRunner().emit({ type: "session_shutdown", reason: "quit" }),
+			);
 
 			await vi.advanceTimersByTimeAsync(2999);
 			expect(emission.settled()).toBe(false);
