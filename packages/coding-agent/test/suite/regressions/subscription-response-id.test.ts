@@ -98,6 +98,28 @@ describe("anthropic-subscription responseId (oh-my-openagent#10547)", () => {
 		expect(message.content).toEqual([{ type: "text", text: "Hello" }]);
 	});
 
+	it("keeps the first response id when a stream event and an assistant message both carry one", async () => {
+		const [start, ...rest] = textTurn({ id: "msg_01First", usage: { input_tokens: 10, output_tokens: 0 } });
+		overrideSdkBoundary({
+			query: scriptedQuery([
+				start,
+				{
+					type: "assistant",
+					message: { id: "msg_01Later", role: "assistant", content: [] },
+					parent_tool_use_id: null,
+					session_id: "session-1",
+					uuid: "assistant-1",
+				},
+				{ type: "stream_event", event: { type: "message_start", message: { id: "msg_01Third", usage: {} } } },
+				...rest,
+			]),
+		});
+		const stream = streamAnthropicSubscription(model, { messages: [] });
+		for await (const _event of stream) {
+		}
+		expect((await stream.result()).responseId).toBe("msg_01First");
+	});
+
 	it("leaves responseId unset when message_start carries no id", async () => {
 		overrideSdkBoundary({ query: scriptedQuery(textTurn({ usage: { input_tokens: 10, output_tokens: 0 } })) });
 		const stream = streamAnthropicSubscription(model, { messages: [] });

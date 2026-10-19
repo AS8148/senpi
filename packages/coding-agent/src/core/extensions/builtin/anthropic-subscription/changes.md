@@ -4,6 +4,7 @@
 
 - `stream-events.ts`: `applyStreamEvent` copies `message_start`'s `message.id` to the assistant message's `responseId` when the id is present.
 - `stream.ts`: an SDK `assistant` message sets `responseId` from `message.message.id` when the stream has not set it, so a result-only turn (no stream events) carries it too.
+- Turn identity rule: a senpi assistant message is one Anthropic response (the SDK turn ends at the first `tool_use` through the PreToolUse deny hook; tool-less requests run `maxTurns: 1`). Its `message.id` identifies the turn in both stores, because Claude Code writes the same id as `message.id` on every transcript line of the response. The first id wins on both lanes (`??=` in `applyStreamEvent` and in the `assistant` branch), so they can never record different ids.
 
 ### Why
 
