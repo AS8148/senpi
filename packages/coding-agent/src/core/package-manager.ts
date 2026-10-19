@@ -12,6 +12,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
+import { signalSpawnedChild } from "../utils/child-signal.ts";
 import { stripBom } from "../utils/text.ts";
 import { projectAgentsSkillDirs } from "./trust-manager.ts";
 
@@ -2669,7 +2670,7 @@ export class DefaultPackageManager implements PackageManager {
 				typeof options?.timeoutMs === "number"
 					? setTimeout(() => {
 							timedOut = true;
-							child.kill();
+							signalSpawnedChild(child);
 						}, options.timeoutMs)
 					: undefined;
 
