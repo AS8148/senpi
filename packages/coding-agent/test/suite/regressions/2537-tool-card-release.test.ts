@@ -3,6 +3,7 @@ import {
 	type Component,
 	resetMainScreenHistoryLines,
 	type Terminal,
+	Text,
 	type TUI,
 	TuiAltScreen,
 	TuiMainScreen,
@@ -11,6 +12,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { AssistantMessageComponent } from "../../../src/modes/interactive/components/assistant-message.ts";
 import { ExplorationTranscriptContainer } from "../../../src/modes/interactive/components/exploration-transcript-container.ts";
 import { ToolExecutionComponent } from "../../../src/modes/interactive/components/tool-execution.ts";
+import type { ToolRenderers } from "../../../src/modes/interactive/components/tool-execution-types.ts";
 import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
 
 const CARDS = 120 as const;
@@ -177,5 +179,60 @@ describe("tool cards above the kept main-screen history (#2537)", () => {
 		expect(document).toContain(expected);
 		expect(document.indexOf(expected)).toBeLessThan(document.indexOf("run 1"));
 		fullscreen.stop();
+	});
+
+	it("keeps a renderer's own component across its context.invalidate(), so async data it cached shows", async () => {
+		// Given: an extension renderer that loads once, caches the result on its component, then asks for a rerender
+		let loads = 0;
+		const loaded: { resolve: () => void } = { resolve: () => {} };
+		const shown = new Promise<void>((resolve) => {
+			loaded.resolve = resolve;
+		});
+		const toolDefinition: ToolRenderers = {
+			renderCall: (_args, _theme, context) => {
+				const previous = context.lastComponent;
+				if (previous instanceof Text && Reflect.get(previous, "data") !== undefined) return previous;
+				const component = previous instanceof Text ? previous : new Text("loading...", 0, 0);
+				if (Reflect.get(component, "loading") !== true) {
+					Reflect.set(component, "loading", true);
+					loads++;
+					queueMicrotask(() => {
+						Reflect.set(component, "data", "loaded data");
+						component.setText("loaded data");
+						context.invalidate();
+						loaded.resolve();
+					});
+				}
+				return component;
+			},
+		};
+		const card = new ToolExecutionComponent("custom_tool", "custom-1", {}, {}, toolDefinition, fakeUi, process.cwd());
+		card.updateResult({ content: [{ type: "text", text: "done" }], isError: false }, false);
+		card.render(100);
+
+		// When: the async load lands and the renderer invalidates its row
+		await shown;
+
+		// Then: it loaded once and the card shows the data
+		expect(card.render(100).join("\n")).toContain("loaded data");
+		expect(loads).toBe(1);
+	});
+
+	it("stays released when every card is expanded, and paints expanded when shown again", () => {
+		// Given: a finished card whose built output was released
+		const card = finishedBashCard(0);
+		card.render(100);
+		card.invalidate();
+		expect(descendants(card)).toBe(SHELL);
+
+		// When: expand-all reaches it
+		card.setExpanded(true);
+
+		// Then: it still holds only its shell until it is painted, and then paints the expanded output
+		expect(descendants(card)).toBe(SHELL);
+		const expanded = finishedBashCard(1);
+		expanded.setExpanded(true);
+		expect(card.render(100).length).toBe(expanded.render(100).length);
+		expect(descendants(card)).toBeGreaterThan(SHELL);
 	});
 });

@@ -81,8 +81,11 @@ export class ToolExecutionComponent extends Container {
 			this.renderer = new ToolExecutionRenderer(
 				this.identity,
 				initialState,
+				// A renderer asking for a rerender (`context.invalidate()`, e.g. after an async load it cached on its
+				// own component) rebuilds now and keeps that component as `lastComponent`; only invalidation from
+				// the TUI tree releases the content.
 				() => {
-					this.invalidate();
+					this.rebuildNow();
 					this.ui.requestRender();
 				},
 				// Left-clicking a finished tool card toggles it like the expand keybinding does.
@@ -178,6 +181,13 @@ export class ToolExecutionComponent extends Container {
 	 * that scroll above the kept main-screen history), so an eager rebuild kept every finished card's
 	 * output for the rest of the session. Grok rows and animating cards are rebuilt at once, as before.
 	 */
+	private rebuildNow(): void {
+		this.invalidateRenderCache();
+		super.invalidate();
+		this.lastDisplaySignature = undefined;
+		this.updateDisplay();
+	}
+
 	override invalidate(): void {
 		this.invalidateRenderCache();
 		super.invalidate();
@@ -212,7 +222,10 @@ export class ToolExecutionComponent extends Container {
 	override render(width: number): string[] {
 		if (this.presentation === "grok") return super.render(width);
 
-		if (this.displayReleased) this.updateDisplay();
+		if (this.displayReleased) {
+			this.displayReleased = false;
+			this.updateDisplay();
+		}
 		const signature = this.createRenderSignature();
 		const cached = this.renderCache.read(width, signature);
 		if (cached) return cached;
@@ -234,10 +247,15 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	private updateDisplay(): void {
+		// A released card (expand-all, show-images, a new image width) only records the change; `render`
+		// rebuilds it if the card is painted again, so cards far above the kept history stay released.
+		if (this.displayReleased) {
+			this.invalidateRenderCache();
+			return;
+		}
 		const displaySignature = this.createRenderSignature();
 		if (this.lastDisplaySignature === displaySignature) return;
 		this.lastDisplaySignature = displaySignature;
-		this.displayReleased = false;
 		this.invalidateRenderCache();
 		const state = this.createRenderState();
 		if (this.grokRow) {
