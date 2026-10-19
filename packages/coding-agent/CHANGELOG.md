@@ -6,12 +6,14 @@
 
 ### Added
 
+- `senpi host status` reports `host_footprint_mb`, the supervisor's and host's memory footprint beside their RSS; RSS leaves out compressed and swapped pages and can read 1.3 GB for a host holding 14 GB ([#3110](https://github.com/code-yeongyu/senpi/issues/3110)).
 - A device receiving a moved session now takes it only after it said it is ready for that move: a bundle for a move it never readied is refused for good, and a ready move that sees no bundle within 10 minutes, or is cancelled by the sender, is declined so the sender can take its session back. A move already receiving or accepted is never declined by either ([#3676](https://github.com/code-yeongyu/senpi/issues/3676)).
 
 ### Changed
 
 ### Fixed
 
+- A long compacted session no longer re-reads its whole transcript at the start of every run: the compaction checkpoint lookup reads the session's resident branch, so a busy task child stops holding about four times its transcript in memory while it works ([#3110](https://github.com/code-yeongyu/senpi/issues/3110)).
 - Moving a session is stricter at its edges: `release_session` with `reason: "move"` refuses a `moveId` the rest of the move would reject and a session whose own id is not a plain id, a `session_moved_away` refusal after an interrupt still returns the queued input it took, and export refuses a session whose own id is empty or not a plain id before sealing it ([#3662](https://github.com/code-yeongyu/senpi/issues/3662)).
 
 ### Removed

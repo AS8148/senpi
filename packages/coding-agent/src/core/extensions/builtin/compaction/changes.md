@@ -1,3 +1,21 @@
+## 2026-10-19 - Run-start checkpoint reads stay on the resident branch (senpi#3110)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/checkpoint-state.ts`: `getLatestCheckpoint(ctx)` and `deriveAgentName` (used by `captureAgentCheckpoint`) scan `sessionManager.getBranch()` instead of `getEntries()`.
+
+### Why
+
+`recentCheckpoint` runs in every `before_agent_start`. On a reopened compacted session (#3519 trims the mirror to the latest compaction window), `getEntries()` re-parses the whole transcript file and keeps it parsed as the full-history view until the session settles idle, so a busy task child held about four times its transcript for every run: two reopened transcripts of 182 MB and 100 MB held 911-1,108 MB during runs and 434 MB after they settled. The checkpoint and the agent-meta entries are non-message entries on the current branch, which the trimmed mirror keeps resident.
+
+### Why an extension could not handle it
+
+This is the compaction builtin's own read; the fix keeps it on the public `ReadonlySessionManager` API.
+
+### Expected merge conflict zones
+
+- `checkpoint-state.ts` `deriveAgentName` and the `sessionManager` branch of `getLatestCheckpoint`.
+
 ## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
 
 ### What changed

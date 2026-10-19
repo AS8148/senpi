@@ -45,9 +45,19 @@ function isExtensionAPI(value: ExtensionAPI | LegacyCaptureInput): value is Exte
 	return "getActiveTools" in value && "getThinkingLevel" in value;
 }
 
+/**
+ * The current branch, newest last. A reopened compacted session keeps only its kept window plus the
+ * branch's non-message entries resident, so `getBranch()` answers from memory where `getEntries()`
+ * re-parses the whole transcript file and holds it until the session settles idle (senpi#3110).
+ */
+function branchEntries(ctx: ExtensionContext) {
+	return ctx.sessionManager.getBranch();
+}
+
 function deriveAgentName(ctx: ExtensionContext): string | null {
-	for (let index = ctx.sessionManager.getEntries().length - 1; index >= 0; index--) {
-		const entry = ctx.sessionManager.getEntries()[index];
+	const entries = branchEntries(ctx);
+	for (let index = entries.length - 1; index >= 0; index--) {
+		const entry = entries[index];
 		if (entry.type !== "custom") continue;
 		const data = entry.data;
 		if (isRecord(data) && typeof data.agentName === "string") {
@@ -148,7 +158,7 @@ export function getLatestCheckpoint(
 	source: ExtensionContext | LegacyCheckpointSource,
 ): AgentCheckpoint | null | undefined {
 	if ("sessionManager" in source) {
-		const entries = source.sessionManager.getEntries();
+		const entries = branchEntries(source);
 		for (let index = entries.length - 1; index >= 0; index--) {
 			const entry = entries[index];
 			if (entry.type !== "custom" || entry.customType !== CHECKPOINT_CUSTOM_TYPE) continue;
