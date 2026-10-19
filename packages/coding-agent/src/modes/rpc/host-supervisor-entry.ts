@@ -13,12 +13,19 @@
  * before it is scrubbed so the host child inherits the same environment as before. The argv keeps the
  * `--internal-rpc-host-supervisor` sentinel, so tools that recognise a supervisor by its command line
  * still do. Imported (the import-graph probe), it does nothing.
+ *
+ * A supervisor started from a runtime snapshot claims that snapshot with its own pid, as `cli.js` did
+ * for it: it respawns its host child through the snapshot's `cli.js`, so a prune by a later upgrade
+ * must not remove the snapshot while the host child is down between two generations.
  */
 import "../../valid-cwd.ts";
 import { realpathSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { APP_NAME } from "../../config.ts";
 import { brandProfile, scrubBrandFromEnvironment } from "../../core/brand.ts";
+import { readRuntimeSnapshotMarker } from "../../runtime-snapshot/marker.ts";
+import { claimRuntimeSnapshot, withRuntimeLock } from "../../runtime-snapshot/registry.ts";
 import { findInternalSupervisorArgs, parseSupervisorArgs, runHostSupervisor } from "./host-lifecycle.ts";
 import { writeStderrLine } from "./host-supervisor-log.ts";
 
@@ -32,7 +39,20 @@ function isEntryScript(): boolean {
 	}
 }
 
+/** Claims the snapshot this program runs from (`<snapshot>/dist/bundle/host-supervisor.js`), if it is one. */
+function claimOwnRuntimeSnapshot(): void {
+	try {
+		const packageDir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+		if (!readRuntimeSnapshotMarker(packageDir)) return;
+		withRuntimeLock(dirname(packageDir), () => claimRuntimeSnapshot(packageDir, process.pid));
+	} catch {
+		// no-excuse-ok: catch - like cli.js's snapshot step, the claim only adds upgrade resilience;
+		// a read-only or exotic layout must never stop a supervisor from starting.
+	}
+}
+
 if (isEntryScript()) {
+	claimOwnRuntimeSnapshot();
 	process.title = APP_NAME;
 	process.env.PI_CODING_AGENT = "true";
 	process.env.AI_AGENT = APP_NAME;
