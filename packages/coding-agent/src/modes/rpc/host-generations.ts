@@ -61,13 +61,16 @@ export async function pruneDeadGenerations(paths: HostDaemonPaths): Promise<Prun
 		const record = parseJson(await readFileOrUndefined(generationPaths(paths, instanceId).pidFile));
 		if (typeof record?.pid !== "number" || processIsLive(record.pid)) continue;
 		if (await hostChildAlive(generationPaths(paths, instanceId))) continue;
-		await rm(generationPaths(paths, instanceId).dir, { recursive: true, force: true }).catch(() => undefined);
 		generations.push(instanceId);
 	}
+	// Claims end before the directories go: a prune cut short in between must not leave a claim whose generation
+	// (and heartbeat) no longer exists to explain it.
+	const claims = await endClaimsOfEndedGenerations(paths, new Set(generations));
+	for (const instanceId of generations)
+		await rm(generationPaths(paths, instanceId).dir, { recursive: true, force: true }).catch(() => undefined);
 	const pointerRemoved = pointedAt !== undefined && generations.includes(pointedAt);
 	// The pointer outliving its generation is what makes a client probe a socket nobody serves.
 	if (pointerRemoved) await rm(paths.pointerFile, { force: true }).catch(() => undefined);
-	const claims = await endClaimsOfEndedGenerations(paths, new Set(generations));
 	return { generations, claims, pointer: pointerRemoved };
 }
 

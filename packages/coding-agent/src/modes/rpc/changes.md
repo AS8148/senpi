@@ -3,7 +3,7 @@
 ### What changed
 
 - `packages/coding-agent/src/modes/rpc/host-generations.ts`: `pruneDeadGenerations` removes a claim whose owner is `gone` as before, and now also one whose owner identity is `unproven` when the claim belongs to a generation this same prune removed. It advances that session file's write fence (`advanceSessionFence`) first; a fence that cannot be written keeps the claim. A `proven` owner, or an unproven one of a generation that was not pruned, still stands. The claim loop is the exported `endClaimsOfEndedGenerations`.
-- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`: `clearHostRegistration`, which an ensure runs before it starts a replacement host, ends the cleared generation's claims through `endClaimsOfEndedGenerations` before removing its directory.
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`: `clearHostRegistration`, which an ensure runs before it starts a replacement host, ends the cleared generation's claims through `endClaimsOfEndedGenerations` before removing its directory. `pruneDeadGenerations` now also ends the claims before it removes the directories, so a prune cut short in between leaves no claim without its generation.
 - `packages/coding-agent/src/modes/rpc/host-reservations.ts`: `claimOwnerIdentity` is exported for that check.
 
 ### Why

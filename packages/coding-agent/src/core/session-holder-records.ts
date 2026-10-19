@@ -35,6 +35,14 @@ export interface SessionHolderProbes extends LockProbes {
 	readonly holderEnded?: (generation: HolderGeneration) => Promise<boolean>;
 }
 
+async function fenced(fenceSession: (() => Promise<void>) | undefined): Promise<boolean> {
+	if (fenceSession === undefined) return false;
+	return fenceSession().then(
+		() => true,
+		() => false,
+	);
+}
+
 function holderGeneration(parsed: unknown): HolderGeneration {
 	if (typeof parsed !== "object" || parsed === null) return {};
 	return {
@@ -47,7 +55,16 @@ function holderGeneration(parsed: unknown): HolderGeneration {
 	};
 }
 
-export async function liveHolders(dir: string, probes: SessionHolderProbes = {}): Promise<SessionHolder[]> {
+/**
+ * `fenceSession` advances the session file's write fence (senpi#3652). A holder released on `holderEnded` may only be
+ * frozen, so it is released only after the fence moved: if it resumes, its writes are refused. Without a fence, or when
+ * it cannot be written, the holder stands.
+ */
+export async function liveHolders(
+	dir: string,
+	probes: SessionHolderProbes = {},
+	fenceSession?: () => Promise<void>,
+): Promise<SessionHolder[]> {
 	const holders: SessionHolder[] = [];
 	for (const name of await readdir(dir)) {
 		if (!HOLDER_RECORD.test(name)) continue;
@@ -60,7 +77,12 @@ export async function liveHolders(dir: string, probes: SessionHolderProbes = {})
 		// Never publish endpoint labels from a record replaced during the identity probe.
 		const stable = raw !== undefined && raw === before;
 		const parsed: unknown = stable ? JSON.parse(raw) : undefined;
-		if (stable && state.unproven === true && (await probes.holderEnded?.(holderGeneration(parsed))) === true) {
+		if (
+			stable &&
+			state.unproven === true &&
+			(await probes.holderEnded?.(holderGeneration(parsed))) === true &&
+			(await fenced(fenceSession))
+		) {
 			await breakStaleLock(path, raw);
 			continue;
 		}

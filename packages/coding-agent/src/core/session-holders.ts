@@ -29,6 +29,7 @@ import {
 } from "./session-hold-errors.ts";
 import { type HolderGeneration, liveHolders, type SessionHolderProbes } from "./session-holder-records.ts";
 import { encodedSessionId } from "./session-sidecar-store.ts";
+import { advanceSessionFence } from "./session-write-fence.ts";
 
 export {
 	type HolderGeneration,
@@ -211,7 +212,7 @@ export async function liveSessionHolders(
 	probes: SessionHolderProbes = {},
 ): Promise<SessionHolder[]> {
 	try {
-		return await liveHolders(holdersDir(sessionFile, sessionId), probes);
+		return await liveHolders(holdersDir(sessionFile, sessionId), probes, () => advanceSessionFence(sessionFile));
 	} catch (error) {
 		if (errorCode(error) === "ENOENT") return [];
 		throw error;
