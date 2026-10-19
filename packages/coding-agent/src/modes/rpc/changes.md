@@ -1,13 +1,14 @@
-## 2026-10-19 - Pruning a generation also ends its unproven session claims, behind the write fence (senpi#3658)
+## 2026-10-19 - Removing a dead generation also ends its unproven session claims, behind the write fence (senpi#3658)
 
 ### What changed
 
-- `packages/coding-agent/src/modes/rpc/host-generations.ts`: `pruneDeadGenerations` removes a claim whose owner is `gone` as before, and now also one whose owner identity is `unproven` when the claim belongs to a generation this same prune removed. It advances that session file's write fence (`advanceSessionFence`) first; a fence that cannot be written keeps the claim. A `proven` owner, or an unproven one of a generation that was not pruned, still stands.
+- `packages/coding-agent/src/modes/rpc/host-generations.ts`: `pruneDeadGenerations` removes a claim whose owner is `gone` as before, and now also one whose owner identity is `unproven` when the claim belongs to a generation this same prune removed. It advances that session file's write fence (`advanceSessionFence`) first; a fence that cannot be written keeps the claim. A `proven` owner, or an unproven one of a generation that was not pruned, still stands. The claim loop is the exported `endClaimsOfEndedGenerations`.
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`: `clearHostRegistration`, which an ensure runs before it starts a replacement host, ends the cleared generation's claims through `endClaimsOfEndedGenerations` before removing its directory.
 - `packages/coding-agent/src/modes/rpc/host-reservations.ts`: `claimOwnerIdentity` is exported for that check.
 
 ### Why
 
-- `packages/coding-agent/src/modes/rpc/host-generations.ts`: on Windows the dead host child's pid was reused (PING.EXE) and its start time was never recorded. Pruning released the generation because its heartbeat had stopped, and removed its directory, heartbeat included, but kept its claim; with no heartbeat left the claim then stood for as long as the stranger ran, and the new host refused the session as `session_path_in_use` (sisyphuslabs/omo-desktop-app#3157, probe run 39201740304). The claim ends on the same evidence that ended its generation; the fence keeps a merely frozen owner from writing again. Test: `test/suite/regressions/3658-prune-ends-unproven-claims.test.ts`.
+- `packages/coding-agent/src/modes/rpc/host-generations.ts`: on Windows the dead host child's pid was reused (PING.EXE) and its start time was never recorded. Pruning released the generation because its heartbeat had stopped, and removed its directory, heartbeat included, but kept its claim; with no heartbeat left the claim then stood for as long as the stranger ran, and the new host refused the session as `session_path_in_use` (sisyphuslabs/omo-desktop-app#3157, probe run 39201740304). The claim ends on the same evidence that ended its generation; the fence keeps a merely frozen owner from writing again. The ensure that started the replacement host cleared the dead generation through `clearHostRegistration`, which had the same gap (probe run 39204446814). Test: `test/suite/regressions/3658-prune-ends-unproven-claims.test.ts`.
 
 ### Why an extension could not handle it
 
@@ -15,7 +16,7 @@
 
 ### Expected merge conflict zones
 
-- LOW: `packages/coding-agent/src/modes/rpc/host-generations.ts` the claim loop of `pruneDeadGenerations`.
+- LOW: `packages/coding-agent/src/modes/rpc/host-generations.ts` the claim loop of `pruneDeadGenerations`; `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts` `clearHostRegistration`.
 
 ## 2026-10-18 - A session-holder lease whose owner identity cannot be proven no longer blocks once its host generation ended (senpi#3658)
 

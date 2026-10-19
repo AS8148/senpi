@@ -67,14 +67,26 @@ export async function pruneDeadGenerations(paths: HostDaemonPaths): Promise<Prun
 	const pointerRemoved = pointedAt !== undefined && generations.includes(pointedAt);
 	// The pointer outliving its generation is what makes a client probe a socket nobody serves.
 	if (pointerRemoved) await rm(paths.pointerFile, { force: true }).catch(() => undefined);
-	const ended = new Set(generations);
+	const claims = await endClaimsOfEndedGenerations(paths, new Set(generations));
+	return { generations, claims, pointer: pointerRemoved };
+}
+
+/**
+ * Removes every claim whose owner is gone, and every claim of a generation in `ended` (being removed by the caller)
+ * whose owner identity cannot be proven. Returns the session paths released. Every path that removes a generation
+ * directory calls this first, so no generation leaves claims behind that its directory no longer explains.
+ */
+export async function endClaimsOfEndedGenerations(
+	paths: HostDaemonDirectory,
+	ended: ReadonlySet<string>,
+): Promise<string[]> {
 	const claims: string[] = [];
 	for (const claim of await readSessionPathClaims(paths.reservationsDir)) {
 		if (!(await claimEnded(claim.owner, ended))) continue;
 		await rm(claim.file, { force: true }).catch(() => undefined);
 		claims.push(claim.owner.sessionPath);
 	}
-	return { generations, claims, pointer: pointerRemoved };
+	return claims;
 }
 
 /**

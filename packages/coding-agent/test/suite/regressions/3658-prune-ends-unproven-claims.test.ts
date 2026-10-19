@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { readSessionFence, sessionFenceFile } from "../../../src/core/session-write-fence.ts";
 import { createHostDaemonPaths, type HostDaemonPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
+import { clearHostRegistration } from "../../../src/modes/rpc/host-daemon-registration.ts";
 import { pruneDeadGenerations } from "../../../src/modes/rpc/host-generations.ts";
 import { reservationFile } from "../../../src/modes/rpc/host-reservations.ts";
 import { waitForPidGone } from "../../helpers/spawned-host-reaper.ts";
@@ -99,6 +100,22 @@ it("ends an unproven claim together with the generation it prunes, fencing the s
 
 	expect(pruned.generations).toEqual(["dead"]);
 	expect(pruned.claims).toEqual([sessionPath]);
+	expect(existsSync(reservationFile(paths.reservationsDir, sessionPath))).toBe(false);
+	expect(readSessionFence(sessionPath)).not.toBe("");
+});
+
+it("ends the unproven claims of the generation an ensure clears before starting a new host (cycle 3, run 39204446814)", async () => {
+	const { root, paths } = await daemon();
+	const recycled = stranger();
+	const sessionPath = join(root, "held.jsonl");
+	await writeFile(sessionPath, "");
+	await generationWithDeadSupervisorAndRecycledChild(paths, "dead", recycled);
+	await claim(paths, "dead", recycled, sessionPath);
+	await json(paths.pointerFile, { layout: 2, instance_id: "dead", generation_dir: "generations/dead" });
+
+	await clearHostRegistration(paths);
+
+	expect(existsSync(join(paths.generationsDir, "dead"))).toBe(false);
 	expect(existsSync(reservationFile(paths.reservationsDir, sessionPath))).toBe(false);
 	expect(readSessionFence(sessionPath)).not.toBe("");
 });
