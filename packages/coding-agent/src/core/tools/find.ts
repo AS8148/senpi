@@ -4,6 +4,7 @@ import type { TextContent } from "@earendil-works/pi-ai";
 import { spawn } from "child_process";
 import path from "path";
 import { type Static, Type } from "typebox";
+import { signalSpawnedChild } from "../../utils/child-signal.ts";
 import { ensureTool } from "../../utils/tools-manager.ts";
 import type { ExtensionContext, FilesystemPolicyChecker, ToolDefinition } from "../extensions/types.ts";
 import { canonicalizeFilesystemPath } from "./filesystem-policy.ts";
@@ -240,7 +241,7 @@ export function createFindToolDefinition(
 
 						stopChild = () => {
 							if (!child.killed) {
-								child.kill();
+								signalSpawnedChild(child);
 							}
 						};
 

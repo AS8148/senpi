@@ -8,6 +8,11 @@ import { channelEnvPresent, TOOL_CHILD_ROLE_ENV } from "./modes/rpc/tool-child/c
 const role = process.env[TOOL_CHILD_ROLE_ENV];
 
 if (role !== undefined && role !== "") {
+	if (role === "launch-shim") {
+		// Windows only: starts one detached command outside the child's Job Object (senpi#3566).
+		const { runLaunchShimRole } = await import("./modes/rpc/tool-child/launch-shim-role.ts");
+		runLaunchShimRole();
+	}
 	if (role !== "tool-child") {
 		process.stderr.write(`senpi: unknown internal role ${JSON.stringify(role)}\n`);
 		process.exit(70);
