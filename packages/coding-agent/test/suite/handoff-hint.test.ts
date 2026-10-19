@@ -418,6 +418,8 @@ describe("handoff estimate and brief", () => {
 			],
 			goal: null,
 			cwd: "/work",
+			modelLabel: undefined,
+			previousSessionFile: undefined,
 			contextTokens: 300_000,
 		});
 		const todoLines = brief.split("\n").filter((line) => line.startsWith("- [open] Work: "));
