@@ -8,7 +8,7 @@
  */
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { chmod, mkdir, open, rm, rmdir } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, open, rm, rmdir } from "node:fs/promises";
 import { createConnection, createServer, type Socket } from "node:net";
 import { dirname, join } from "node:path";
 import { MAX_SOCKET_PATH_BYTES } from "../socket-ownership.ts";
@@ -110,7 +110,9 @@ export interface ChannelListener {
 /**
  * `<dir>/c-<generation>.sock` when it fits `sun_path`; otherwise the same name under a short private directory,
  * `/tmp/senpi-tc-<sha256(dir)[:12]>/` - never `TMPDIR`, whose macOS default is itself too long. The fallback is
- * predictable, so it is used only when it is a real directory of this user with no group or other access.
+ * predictable, so it is used only when it is a real directory of this user with no group or other access; when
+ * anything else holds that name (another user's directory, a symlink), the socket goes under a fresh `mkdtemp`
+ * directory instead, so a squatter on the predictable name can neither take the channel over nor block the start.
  */
 export async function channelSocketPath(dir: string, generation: number): Promise<string> {
 	const name = `c-${generation}.sock`;
@@ -120,13 +122,26 @@ export async function channelSocketPath(dir: string, generation: number): Promis
 		return primary;
 	}
 	const root = fallbackSocketRoot(dir);
-	await claimPrivateDirectory(root);
-	return join(root, name);
+	const claimed = await claimPrivateDirectory(root).then(
+		() => true,
+		(error: unknown) => {
+			if (error instanceof SocketDirUnsafeError) return false;
+			throw error;
+		},
+	);
+	// `mkdtemp` creates a new 0700 directory with an unpredictable name atomically, so nothing can be planted there.
+	return join(claimed ? root : await mkdtemp(`${root}-`), name);
 }
 
 /** The short private directory a socket falls back to when `<dir>/c-<generation>.sock` does not fit `sun_path`. */
 export function fallbackSocketRoot(dir: string): string {
 	return join("/tmp", `senpi-tc-${createHash("sha256").update(dir).digest("hex").slice(0, 12)}`);
+}
+
+class SocketDirUnsafeError extends Error {
+	constructor(root: string) {
+		super(`socket_dir_unsafe: ${root} is not a private directory of this user`);
+	}
 }
 
 /**
@@ -138,7 +153,7 @@ async function claimPrivateDirectory(root: string): Promise<void> {
 	await mkdir(root, { mode: 0o700 }).catch((error: unknown) => {
 		if (Reflect.get(Object(error), "code") !== "EEXIST") throw error;
 	});
-	const unsafe = () => new Error(`socket_dir_unsafe: ${root} is not a private directory of this user`);
+	const unsafe = () => new SocketDirUnsafeError(root);
 	const handle = await open(root, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW).catch(() => {
 		throw unsafe();
 	});
