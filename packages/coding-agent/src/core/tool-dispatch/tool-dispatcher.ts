@@ -13,6 +13,7 @@
 import { dirname, isAbsolute, resolve } from "node:path";
 import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import type { ToolRuntimeKind } from "../../cli/tool-runtime.ts";
+import type { HostCallHandler } from "../../modes/rpc/tool-child/host-calls-server.ts";
 import type { ExtensionToolContext, ToolChildJob, ToolDefinition, ToolPlacement } from "../extensions/types.ts";
 import { type BashOperations, createLocalBashOperations } from "../tools/bash.ts";
 import { childBashOperations } from "./child-bash-operations.ts";
@@ -88,6 +89,8 @@ export interface ToolDispatcherOptions {
 	notify?: ToolDispatchNotify;
 	childRunner?: ToolChildRunner;
 	childKindRunner?: ToolChildKindRunner;
+	/** The session's host-call handler: an in-process `ctx.offload` module gets the same host the child's worker builds. */
+	hostCalls?: HostCallHandler;
 }
 
 export interface ToolDispatcher {
@@ -161,6 +164,12 @@ abstract class BaseToolDispatcher implements ToolDispatcher {
 
 export class InProcessToolDispatcher extends BaseToolDispatcher {
 	readonly kind: ToolRuntimeKind = "in-process";
+	readonly #hostCalls: HostCallHandler | undefined;
+
+	constructor(notify?: ToolDispatchNotify, hostCalls?: HostCallHandler) {
+		super(notify);
+		this.#hostCalls = hostCalls;
+	}
 
 	run<TDetails>(call: ToolDispatchCall<TDetails>): Promise<AgentToolResult<TDetails>> {
 		return this.runOnServer(call);
@@ -171,7 +180,12 @@ export class InProcessToolDispatcher extends BaseToolDispatcher {
 	}
 
 	async offload(job: ToolChildModuleJob, signal: AbortSignal | undefined): Promise<OffloadOutcome> {
-		return { value: await runModuleInProcess(job, signal), placement: "server", pid: process.pid, generation: 0 };
+		return {
+			value: await runModuleInProcess(job, signal, this.#hostCalls),
+			placement: "server",
+			pid: process.pid,
+			generation: 0,
+		};
 	}
 }
 
@@ -261,7 +275,7 @@ export class ChildToolDispatcher extends BaseToolDispatcher {
 export function createToolDispatcher(options: ToolDispatcherOptions): ToolDispatcher {
 	return options.runtime === "child"
 		? new ChildToolDispatcher(options.notify, options.childRunner, options.childKindRunner)
-		: new InProcessToolDispatcher();
+		: new InProcessToolDispatcher(options.notify, options.hostCalls);
 }
 
 function childModuleJob(call: {
