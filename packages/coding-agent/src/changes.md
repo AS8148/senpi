@@ -1,3 +1,21 @@
+## 2026-10-19 - Subscription limits are polled before the first turn (senpi#3684)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: interactive and RPC startup (single-session and the multi-session host) call `startSubscriptionUsagePolling({ agentDir, report })` unless `--offline` is set; print mode never polls. The poller (`src/core/subscription-limits/usage-poller.ts`, fork-only) reads each signed-in Claude and ChatGPT subscription account's usage endpoint into the process's `SubscriptionLimitStore`, sharing one `subscription-usage.json` cache across processes. The newest report wins: a cached poll older than a turn's report never replaces it. A refresh the token endpoint rejects marks the Claude slot `auth_error` (as a turn would), so polling stops asking for that account until `/login`.
+
+### Why
+
+Limits reached hosts only from a turn's response, so a fresh desktop session showed none, while the OmO TUI polled the same endpoints separately: two implementations of one thing.
+
+### Why an extension could not handle it
+
+The store is process-wide and served by the RPC host itself (`get_subscription_limits`); the poll must start with the host process, before any session or extension exists.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: LOW, the import block, the multi-session branch after `initTheme`, and the lines before the `appMode === "rpc"` dispatch.
+
 ## 2026-10-18 - The runtime factory threads --tool-runtime into every session it creates (senpi#3566)
 
 ### What changed

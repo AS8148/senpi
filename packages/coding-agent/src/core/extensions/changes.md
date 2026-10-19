@@ -1,3 +1,23 @@
+## 2026-10-19 - pi.getSubscriptionLimits() and pi.onSubscriptionLimits() (senpi#3684)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionAPI` gains `getSubscriptionLimits(): readonly AccountLimits[]` and `onSubscriptionLimits(listener): () => void`.
+- `packages/coding-agent/src/core/extensions/loader.ts`: both read the process's `subscriptionLimits` store, the one `get_subscription_limits` serves.
+
+### Why
+
+The OmO TUI side panel polled the usage endpoints itself. With the engine polling, an extension reads the same records the desktop gets, and the second poller goes away.
+
+### Why an extension could not handle it
+
+The store is core state; an extension has no other path to it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: LOW, after `getPermissionPreset()` and the import block.
+- `packages/coding-agent/src/core/extensions/loader.ts`: LOW, after `getPermissionPreset()` in the API object and the import block.
+
 ## 2026-10-19 - pi.redactForUpload() and pi.hostVersion (senpi#3674)
 
 ### What changed

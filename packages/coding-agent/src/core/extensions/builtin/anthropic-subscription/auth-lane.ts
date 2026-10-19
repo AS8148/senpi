@@ -68,6 +68,11 @@ export function resetAuthLaneBoundary(): void {
 	activeBoundary = defaultBoundary;
 }
 
+/** The refresher turns use, so the usage poller renews an expiring account the same way (senpi#3684). */
+export function authLaneRefresher(): SlotRefresher {
+	return activeBoundary.refresher;
+}
+
 export type { AuthenticatedAttemptInput } from "./auth-attempt.ts";
 
 export type AuthenticatedQueryInput = {
