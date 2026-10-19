@@ -34,6 +34,7 @@
 - A long stream of background events (monitors, CI notices) no longer keeps a compacted session's whole history in memory: the engine-turn bound, the compaction checkpoint and the Stop hook read the history without holding it, so memory stays near what a fresh open of the session costs ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)).
 - A Claude subscription (`anthropic-subscription`) reply now records its Anthropic message id as `responseId`. The Claude Agent SDK also writes every turn to `~/.claude/projects`, and usage readers such as the OmO desktop Usage page need that id to count the turn once instead of again as Claude Code usage ([oh-my-openagent#10547](https://github.com/code-yeongyu/oh-my-openagent/issues/10547)).
 - Moving a session is stricter at its edges: `release_session` with `reason: "move"` refuses a `moveId` the rest of the move would reject and a session whose own id is not a plain id, a `session_moved_away` refusal after an interrupt still returns the queued input it took, and export refuses a session whose own id is empty or not a plain id before sealing it ([#3662](https://github.com/code-yeongyu/senpi/issues/3662)).
+- The RPC host no longer fails to start with a bare `listen EINVAL` when the temp directory is long (a nested per-user or per-job `TMPDIR`). Its private internal socket now goes under `/tmp` whenever the path under `TMPDIR` would exceed the 103-byte Unix socket limit, still in its own 0700 directory, and leftover internal directories there are cleaned up the same way ([#3487](https://github.com/code-yeongyu/senpi/issues/3487)).
 
 ### Removed
 
@@ -107,8 +108,6 @@
 - Goals no longer stop after a fixed 150 automatic continuations. They stop only after 60 automatic continuations in a row without progress (no new tool effect, todo change, or new message from a person; re-running the same command, failing commands, and output that differs only in timings or ids are not progress), with a notice that says why and that any message resumes the goal ([oh-my-openagent#10280](https://github.com/code-yeongyu/oh-my-openagent/issues/10280)).
 
 ### Fixed
-
-- The RPC host no longer fails to start with a bare `listen EINVAL` when the temp directory is long (a nested per-user or per-job `TMPDIR`). Its private internal socket now goes under `/tmp` whenever the path under `TMPDIR` would exceed the 103-byte Unix socket limit, still in its own 0700 directory, and leftover internal directories there are cleaned up the same way ([#3487](https://github.com/code-yeongyu/senpi/issues/3487)).
 
 - A host daemon now inherits every credential variable the engine reads, including `CLAUDE_CODE_OAUTH_TOKEN`, `COPILOT_GITHUB_TOKEN`, `HF_TOKEN` and numbered slots such as `OPENAI_API_KEY_2`, so a Claude subscription from the environment works through a host as it does in a direct process (#3531).
 
