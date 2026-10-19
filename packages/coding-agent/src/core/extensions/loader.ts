@@ -34,6 +34,7 @@ import { readPiManifest } from "../pi-manifest.ts";
 import { unboundSessionControlActions } from "../session-control-actions.ts";
 import { redactForUpload, type UploadRedactionOptions } from "../share/upload-redaction.ts";
 import { createSyntheticSourceInfo, getSyntheticPathSource, isSyntheticPath } from "../source-info.ts";
+import { subscriptionLimits } from "../subscription-limits/limit-store.ts";
 import { time } from "../timings.ts";
 import { type ReadClassifier, registerReadClassifier } from "../tools/read-classifiers.ts";
 import type { ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
@@ -609,6 +610,16 @@ function createExtensionAPI(
 				return undefined;
 			}
 			return readPermissionPreset(sessionManager);
+		},
+
+		getSubscriptionLimits() {
+			assertActive();
+			return subscriptionLimits.snapshot();
+		},
+
+		onSubscriptionLimits(listener) {
+			assertActive();
+			return subscriptionLimits.subscribe(listener);
 		},
 
 		// Action methods - delegate to shared runtime

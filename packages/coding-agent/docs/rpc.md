@@ -2688,9 +2688,13 @@ The `model` field is a full [Model](#model) object or `null`. `pendingModelSwitc
 
 #### get_subscription_limits
 
-Every subscription account's latest limit windows (capability `subscription_limits`): what the provider
-reported with its most recent response for that account. An account nothing has reported for is absent -
-unknown, never 0%. The command only reads and may be sent with `observe: true`.
+Every subscription account's latest limit windows (capability `subscription_limits`). In interactive and
+RPC modes (not print mode or `--offline`) the engine polls each signed-in Claude and ChatGPT subscription
+account's usage endpoint (Claude every 5 minutes, ChatGPT every 2.5, `Retry-After` honoured, one request
+per account per interval across every senpi process on the machine), so an account's windows are known
+before its first turn; responses and the Claude SDK update the same record between polls. An account
+nothing has reported for is absent - unknown, never 0%. The command only reads and may be sent with
+`observe: true`.
 
 ```json
 {"type": "get_subscription_limits"}
@@ -2703,7 +2707,7 @@ stable within the account (`<limit>:<slot>`, for example `codex:primary` or `cla
 (`5h`, `7d`, `7d opus`), the window length in minutes when the provider sent it, `usedPercent` (0-100) and
 `resetsAt` (ISO) when known. ChatGPT subscriptions report them in `x-codex-primary-*`/`x-codex-secondary-*`
 response headers (one family per metered limit); Claude subscriptions in `anthropic-ratelimit-unified-*`
-headers, and through the Claude SDK lane in its `rate_limit_event` messages. A window the latest response did not mention keeps its last value. Every connection also hears a
+headers, and through the Claude SDK lane in its `rate_limit_event` messages. A window the latest response did not mention keeps its last value. A poll answers with the account's whole window set and replaces it. `plan` is the plan the usage endpoint names (ChatGPT), when it names one; `error` says why the last poll failed (`auth stale - run /login`, `rate limited`, `HTTP <status>`, `timed out`, `unreachable`), and the windows beside it are the last ones reported. The next successful report clears it. Every connection also hears a
 `subscription_limits` record (below) when an account's windows change.
 
 #### get_effect_status

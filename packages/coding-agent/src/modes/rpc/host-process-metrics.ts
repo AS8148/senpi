@@ -17,7 +17,7 @@
  * asking what a daemon is doing must still get its identity and its sessions.
  */
 import { readdir } from "node:fs/promises";
-import { readProcessFootprint } from "../../core/process-footprint.ts";
+import type { readProcessFootprint as ReadProcessFootprint } from "../../core/process-footprint.ts";
 import { loadProcessTableReader, type ProcessTableReader, type ProcessTableRow } from "./host-process-table.ts";
 
 export interface HostProcessMetrics {
@@ -53,6 +53,18 @@ const UNOBSERVED: HostProcessMetrics = {
 /** Resolved once per platform; `undefined` on runtimes that cannot read the table without spawning. */
 const readers = new Map<string, Promise<ProcessTableReader | undefined>>();
 
+/**
+ * The footprint reader is loaded on the first status read, not imported: this module sits in the lifecycle
+ * supervisor's static graph (host-lifecycle -> ... -> host-generations -> here), and `core/` is outside that
+ * graph's allowlist (test/supervisor-import-graph.test.ts).
+ */
+let footprintReader: Promise<typeof ReadProcessFootprint> | undefined;
+
+function loadFootprintReader(): Promise<typeof ReadProcessFootprint> {
+	footprintReader ??= import("../../core/process-footprint.ts").then((module) => module.readProcessFootprint);
+	return footprintReader;
+}
+
 function tableReader(platform: NodeJS.Platform): Promise<ProcessTableReader | undefined> {
 	const cached = readers.get(platform);
 	if (cached !== undefined) return cached;
@@ -76,7 +88,7 @@ export async function readHostProcessMetrics(
 	return {
 		rss_mb: residentMegabytes(tree),
 		host_rss_mb: residentMegabytes(hostRows),
-		host_footprint_mb: footprintMegabytes(hostRows),
+		host_footprint_mb: footprintMegabytes(hostRows, await loadFootprintReader()),
 		open_fds: platform === "linux" ? await openDescriptors(tree) : null,
 		zombies: tree.filter((row) => row.state.startsWith("Z")).length,
 	};
@@ -86,7 +98,10 @@ function residentMegabytes(rows: readonly ProcessTableRow[]): number {
 	return Math.round(rows.reduce((total, row) => total + row.rssKb, 0) / KILOBYTES_PER_MEGABYTE);
 }
 
-function footprintMegabytes(rows: readonly ProcessTableRow[]): number | null {
+function footprintMegabytes(
+	rows: readonly ProcessTableRow[],
+	readProcessFootprint: typeof ReadProcessFootprint,
+): number | null {
 	let bytes = 0;
 	for (const row of rows) {
 		const reading = readProcessFootprint(row.pid);
