@@ -1,4 +1,4 @@
-import type { UnavailableAccount } from "./affinity.ts";
+import type { PinSource, UnavailableAccount } from "./affinity.ts";
 import type { SdkErrorKind } from "./errors.ts";
 import type { ClaudeCodeRun } from "./executable.ts";
 
@@ -51,10 +51,28 @@ const ENABLE_ACCOUNT_FALLBACK =
 	"  Set anthropicSubscriptionProvider.accountFallback: true (or SENPI_CLAUDE_SDK_OAUTH_ACCOUNT_FALLBACK=1) to switch accounts automatically.";
 
 /**
+ * How to move off a pinned account. `/claude-account pin` only writes the stored pin, which a CLI or a
+ * settings pin outranks (`resolveClaudeAccountPin`), so for those it would change nothing (senpi#3672).
+ */
+function switchAccountLine(pinnedBy: PinSource | undefined): string {
+	switch (pinnedBy) {
+		case "cli":
+			return "  This session was started with --claude-account; start a new session with another --claude-account to switch.";
+		case "settings":
+			return "  The pin comes from anthropicSubscriptionProvider.pinnedAccount (or SENPI_CLAUDE_SDK_OAUTH_PINNED_ACCOUNT); change it there to switch accounts.";
+		case "stored":
+		case undefined:
+			return "  /claude-account pin <name>  - switch to another account";
+	}
+}
+
+/**
  * With account fallback off, only one account may serve (senpi#3465), so the pool-wide advice is wrong:
  * other accounts may be healthy, and adding one does not help because it is never used. Name the account
- * and the remedies that do work. The cause words ("authentication error", "rate limit") stay, so the outer
- * credential-pool classifier reads the same verdict as for the pool-wide guidance.
+ * and the remedies that do work. For a blocked account the cause words ("authentication error", "rate
+ * limit") stay, so the outer credential-pool classifier reads the same verdict as for the pool-wide
+ * guidance. An account that is not configured carries neither on purpose: no cooldown brings it back, so
+ * the classifier fails the request instead of rotating (senpi#3672).
  */
 export function singleAccountUnavailableGuidance(
 	account: UnavailableAccount,
@@ -65,7 +83,9 @@ export function singleAccountUnavailableGuidance(
 		return [
 			`Claude account '${account.name}' for ${PROVIDER} is not configured, and account fallback is off, so no other account is used.`,
 			`  /claude-account list  - see the configured accounts`,
-			`  /claude-account pin <name>  - pin a configured account (or /claude-account unpin)`,
+			account.pinnedBy === "cli" || account.pinnedBy === "settings"
+				? switchAccountLine(account.pinnedBy)
+				: `  /claude-account pin <name>  - pin a configured account (or /claude-account unpin)`,
 			"  Start a new session if this session's account was removed.",
 			ENABLE_ACCOUNT_FALLBACK,
 		].join("\n");
@@ -74,12 +94,20 @@ export function singleAccountUnavailableGuidance(
 		soonestUnblockAt !== undefined && Number.isFinite(soonestUnblockAt)
 			? new Date(soonestUnblockAt).toISOString()
 			: undefined;
-	const cause = blockReason === "auth_error" ? "authentication error" : "rate limit";
+	// An auth block's time is only the next re-check: logging in again is what fixes it, as in the pool-wide guidance.
+	if (blockReason === "auth_error") {
+		return [
+			`Claude account '${account.name}' for ${PROVIDER} is blocked (authentication error), and account fallback is off, so no other account is tried.`,
+			`  /login ${PROVIDER}  - re-authenticate this account`,
+			...(until === undefined ? [] : [`  Next automatic re-check: ${until}.`]),
+			switchAccountLine(account.pinnedBy),
+			ENABLE_ACCOUNT_FALLBACK,
+		].join("\n");
+	}
 	return [
-		`Claude account '${account.name}' for ${PROVIDER} is blocked (${cause})${until === undefined ? "" : ` until ${until}`}, and account fallback is off, so no other account is tried.`,
+		`Claude account '${account.name}' for ${PROVIDER} is blocked (rate limit)${until === undefined ? "" : ` until ${until}`}, and account fallback is off, so no other account is tried.`,
 		...(until === undefined ? [] : [`  Wait until ${until}, when this account can serve again.`]),
-		...(blockReason === "auth_error" ? [`  /login ${PROVIDER}  - re-authenticate this account`] : []),
-		`  /claude-account pin <name>  - switch to another account`,
+		switchAccountLine(account.pinnedBy),
 		ENABLE_ACCOUNT_FALLBACK,
 	].join("\n");
 }

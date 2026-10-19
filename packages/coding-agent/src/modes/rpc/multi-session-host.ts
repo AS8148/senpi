@@ -30,6 +30,7 @@ import { prepareSocketPath } from "./host-lifecycle-proxy.ts";
 import { createZeroSessionTrim, startHostObservers } from "./host-observers.ts";
 import { runAsHostGenerationProcess } from "./host-process-role.ts";
 import { createEndpointReservations } from "./host-reservations.ts";
+import { hostChildDrainRequestFile, watchDrainRequest } from "./host-stop-intent.ts";
 import { armHostWatchdog, readHostWatchdogConfigFromBrandEnv } from "./host-watchdog.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
 import { hostGeneration, hostInstanceId, protocolIdentity } from "./protocol-identity.ts";
@@ -522,6 +523,9 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			: socketEntryReplaced(supervisorPublicSocketPath, supervisorPublicIdentity);
 	registerShutdownSignals(shutdown);
 	if (process.platform !== "win32") process.on("SIGUSR1", drainForHandoff);
+	// The supervisor's signal-free relay, the drain channel every platform shares (#3653).
+	const drainRequestFile = hostChildDrainRequestFile();
+	if (drainRequestFile !== undefined) watchDrainRequest(drainRequestFile, drainForHandoff);
 	// Arm before listen: a supervisor death during the listen transition must
 	// still close the child and clean its private endpoint.
 	const watchdog =
