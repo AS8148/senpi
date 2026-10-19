@@ -92,13 +92,18 @@ const isSenpiCode = (creatorPath: string): boolean =>
 	SENPI_PACKAGE_SEGMENT.test(creatorPath) || isInsideAny(creatorPath, SENPI_ROOTS);
 
 /**
- * What a file extension's own code is: its package directory when the extension is a package (a
- * `package.json` beside its entry), otherwise its entry file alone, so a single-file extension never
- * owns what a neighbour in a shared extensions directory creates. Senpi's code is excluded either way.
+ * What a file extension's own code is: its directory when the extension is a directory extension (a
+ * `package.json` beside its entry, or an `index.*` entry as in `extensions/<name>/index.ts`), otherwise its
+ * entry file alone, so a single-file extension never owns what a neighbour in a shared extensions directory
+ * creates. Senpi's code is excluded either way.
  */
+const INDEX_ENTRY = /^index\.[cm]?[jt]sx?$/;
+
 function ownershipTest(extension: Extension): (creatorPath: string) => boolean {
 	const directory = path.dirname(extension.resolvedPath);
-	const owned = spellings(existsSync(path.join(directory, "package.json")) ? directory : extension.resolvedPath);
+	const isDirectoryExtension =
+		INDEX_ENTRY.test(path.basename(extension.resolvedPath)) || existsSync(path.join(directory, "package.json"));
+	const owned = spellings(isDirectoryExtension ? directory : extension.resolvedPath);
 	return (creatorPath) => isInsideAny(creatorPath, owned) && !isSenpiCode(creatorPath);
 }
 

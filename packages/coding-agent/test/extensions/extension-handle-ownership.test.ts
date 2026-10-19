@@ -159,6 +159,24 @@ describe("extension handle ownership (senpi#2292)", () => {
 		await new Promise<void>((resolve) => opened.server.close(() => resolve()));
 	});
 
+	it("gives a directory extension (index entry, no package.json) what its sibling modules created", async () => {
+		const extensionDir = mkdtempSync(join(tmpdir(), "handle-ownership-dir-"));
+		try {
+			writeFileSync(join(extensionDir, "server.mjs"), FIXTURE_SOURCE);
+			const sibling: FixtureModule = await import(pathToFileURL(join(extensionDir, "server.mjs")).href);
+			const extension = fakeExtension(join(extensionDir, "index.ts"), "local", extensionDir);
+			const opened = runOwnedBy(extension, () => sibling.open());
+			await opened.listening;
+
+			reclaimExtensionHandles([extension]);
+
+			expect(opened.server.listening).toBe(false);
+			expect(String(warn.mock.calls[0]?.[0])).toContain("senpi closed 1 server, 0 sockets, 1 timer");
+		} finally {
+			rmSync(extensionDir, { recursive: true, force: true });
+		}
+	});
+
 	it("does not give a single-file extension what a neighbour in its directory created", async () => {
 		const loose = mkdtempSync(join(tmpdir(), "handle-ownership-loose-"));
 		try {
