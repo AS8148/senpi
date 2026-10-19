@@ -1257,7 +1257,7 @@ ctx.sessionManager.buildContextEntries()    // Active branch entries with compac
 ctx.sessionManager.getLeafId()              // Current leaf entry ID
 ```
 
-A handler that runs every turn and needs only the latest or the since-last of something should use `reduceHistory` instead of scanning `getEntries()`: on a compacted session `getEntries()` reads and keeps the whole history. A reducer is a stable, module-level `{ initial(), add(state, entry) }`; the session reads the history once and folds only the entries appended since. Treat the returned state as read-only.
+A handler that runs every turn and needs only the latest or the since-last of something should use `reduceHistory` instead of scanning `getEntries()`: on a compacted session `getEntries()` reads and keeps the whole history. A reducer is a stable, module-level `{ initial(), add(state, entry) }`; the session reads the history once and folds only the entries appended since. Treat the returned state as read-only, and do not rely on `parentId`: an entry kept across a compaction can carry a rewritten link, as in `getEntries()`. A reducer that throws starts over on the next call.
 
 ```typescript
 const latestNote = { initial: () => undefined, add: (latest, entry) => (entry.type === "custom" && entry.customType === "note" ? entry : latest) };
