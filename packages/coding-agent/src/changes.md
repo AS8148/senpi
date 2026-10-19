@@ -40,7 +40,7 @@ The runtime factory and the session constructor run before extensions load.
 
 ### What changed
 
-- `packages/coding-agent/src/main.ts`: right after argument parsing, `resolveToolRuntime(parsed)` (flag, then `SENPI_TOOL_RUNTIME`, then `in-process`) runs once; an invalid env value prints `Error: ...` and exits 1, like an invalid flag. `CliRuntimeConfiguration` gains an optional `toolRuntime` (absent means `in-process`), set on both the multi-session and the single-session configuration, `runMultiSessionHost` receives `toolRuntime`, which the router advertises as `tool_runtime:<value>` in `get_protocol_info`, and `runRpcMode(runtime, toolRuntime)` does the same for a single-session RPC process.
+- `packages/coding-agent/src/main.ts`: right after argument parsing, `resolveToolRuntime(parsed)` (flag, then `SENPI_TOOL_RUNTIME`, then `in-process`) runs once; an invalid env value prints `Error: ...` and exits 1, like an invalid flag, except for `--version` and `--help`, which run no tool. `CliRuntimeConfiguration` gains an optional `toolRuntime` (absent means `in-process`), set on both the multi-session and the single-session configuration, `runMultiSessionHost` receives `toolRuntime`, which the router advertises as `tool_runtime:<value>` in `get_protocol_info`, and `runRpcMode(runtime, toolRuntime)` does the same for a single-session RPC process.
 
 ### Why
 

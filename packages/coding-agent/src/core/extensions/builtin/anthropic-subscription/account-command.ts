@@ -159,6 +159,8 @@ function showAccounts(
 			affinityPick = selectAccount(accounts, {
 				sessionId: ctx.sessionManager.getSessionId(),
 				pinnedAccount: pinned,
+				accountFallback: settings.accountFallback,
+				...(credential?.order === undefined ? {} : { accountOrder: credential.order }),
 			}).name;
 		} catch (error) {
 			affinityError = error instanceof Error ? error.message : String(error);

@@ -22,6 +22,7 @@
  * cannot hand over (`release_unsupported`: a worker isolate owns the runtime, or there is no file).
  */
 import type { AgentSession } from "../../core/agent-session.ts";
+import { SessionMovedAwayError } from "../../core/session-move/ownership.ts";
 import { isHandoffBusy } from "./handoff-activity.ts";
 import {
 	RPC_ERROR_ATTACHED,
@@ -91,7 +92,8 @@ interface Releasable {
 }
 
 export async function releaseSession(port: SessionReleasePort, command: ReleaseSessionCommand): Promise<RpcResponse> {
-	if (command.reason !== "takeover") return refusal(command.id, RPC_ERROR_INVALID_RELEASE_REASON);
+	const validMove = command.reason === "move" && typeof command.moveId === "string" && command.moveId !== "";
+	if (command.reason !== "takeover" && !validMove) return refusal(command.id, RPC_ERROR_INVALID_RELEASE_REASON);
 	if (port.draining()) return refusal(command.id, RPC_ERROR_HOST_DRAINING);
 	const first = releasable(port, command, undefined);
 	if (!("session" in first)) return first;
@@ -110,6 +112,8 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 			admission.close(RELEASED_ADMISSION_CLOSED);
 			dropped = takeQueuedInput(first.session);
 			await abortAndSettle(port, command.sessionId, first.session);
+			// What the clear retired is on disk before `session_released` seals the file (senpi#3549).
+			await first.session.whenQueueClearRecorded();
 		}
 		// A never-written session gets its file here, before the final check: its `session_released` entry
 		// must reach disk, and a header write that fails is this release's failure, never a stray rejection.
@@ -119,6 +123,10 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 		answer = await claimAndRelease(port, command, interrupted, dropped);
 		return answer;
 	} catch (cause) {
+		if (cause instanceof SessionMovedAwayError) {
+			answer = refusal(command.id, cause.code, { detail: cause.message });
+			return answer;
+		}
 		answer = refusal(command.id, RPC_ERROR_RELEASE_FAILED, {
 			detail: cause instanceof Error ? cause.message : String(cause),
 			...(interrupted ? { interrupted: true, dropped } : {}),
@@ -159,6 +167,13 @@ async function claimAndRelease(
 		// On disk or not at all: a failed write leaves no entry a later append could chain onto.
 		ready.session.sessionManager.appendCustomEntry(SESSION_RELEASED_ENTRY_TYPE, {
 			reason: command.reason,
+			...(command.reason === "move"
+				? {
+						move_id: command.moveId,
+						target: command.target ?? "",
+						session_id: ready.session.sessionManager.getSessionId(),
+					}
+				: {}),
 			interrupted,
 			attachments: ready.attachments,
 			host_instance: port.hostInstance ?? null,

@@ -57,6 +57,25 @@ The wrapper adapts extension tools into core `AgentTool`s and the dispatcher is 
 - `packages/coding-agent/src/core/extensions/types.ts`: the `ToolDefinition` property list around `namespace`/`annotations` and the `execute` signature.
 - `packages/coding-agent/src/core/extensions/wrapper.ts`: `wrapRegisteredTool`'s execute override.
 
+## 2026-10-18 - Agent lifecycle and boundary event handlers run under a host budget (senpi#3650)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: handlers of the agent lifecycle events the session awaits on its event queue (`agent_start`, `agent_end`, `agent_settled`, `turn_start`, `message_start`, `message_update`, `message_end`, `tool_execution_*`) and of the boundary events (`turn_end`, `agent_before_settle` through `emitBoundary`) run under a host budget set with `setEventHandlerBudget(budget, onStall, turnScope)`. The budget is resolved once per emission, before any handler starts; an invalid setting is reported once and the defaults apply, as for `session_shutdown`. Past the warning the stall listener hears it; at the hard cap, or when the turn deadline calls `releaseHeldHandlers(turn)` for the turn that owns the wait, the host reports an extension error (`handler timed out after Nms` / `handler released by the turn deadline`) and moves to the next handler; the handler keeps running detached, its late result is discarded, and a late failure is reported as a stall stage. Lifecycle events and `message_end` dispatch through non-async `dispatchLifecycle` / `emitMessageEnd`, so a timely handler is awaited exactly as before. `session_shutdown` keeps its own budget and messages.
+- `packages/coding-agent/src/core/extensions/handler-budget.ts` (new): `runBudgetedHandler` (the `session_shutdown` path, with the abort signal), `runBudgetedSequence` (walks an emission's handlers with a plain `await` each and resumes after a stopped handler in a new run) and turn-scoped `HeldHandlerWaits`.
+
+### Why
+
+One lifecycle handler that never settled held the session's event queue forever (senpi#3650); only `session_shutdown` was host-bounded, and `turn_end` / `agent_before_settle` handlers hold the same queue.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: the runner is the only place that awaits extension handlers; an extension cannot bound another extension's handler.
+
+### Expected merge conflict zones
+
+- MEDIUM: `runner.ts` `emit` (the lifecycle branch), `emitMessageEnd` and the `emitBoundary` handler loop (both now walk a `runBudgetedSequence`), `runSessionShutdownHandler` (body replaced by `runBudgetedHandler`), the `ExtensionRunner` field block and the methods after `onError`; the `flattenHandlers` / `entryAt` helpers after `snapshotEventHandlers`.
+
 ## 2026-10-16 - ProviderConfig declares ambient api-key auth (senpi#2327)
 
 ### What changed

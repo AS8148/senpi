@@ -1184,11 +1184,12 @@ export async function main(args: string[], options?: MainOptions) {
 		}
 	}
 	const toolRuntimeResolution = resolveToolRuntime(parsed);
-	if (!toolRuntimeResolution.ok) {
+	// --version and --help never run a tool, so a bad tool-runtime env value must not block them.
+	if (!toolRuntimeResolution.ok && !parsed.version && !parsed.help) {
 		console.error(chalk.red(`Error: ${toolRuntimeResolution.message}`));
 		process.exit(1);
 	}
-	const toolRuntime = toolRuntimeResolution.value;
+	const toolRuntime = toolRuntimeResolution.ok ? toolRuntimeResolution.value : "in-process";
 	time("parseArgs");
 
 	if (parsed.version) {

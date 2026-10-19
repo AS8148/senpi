@@ -6,10 +6,37 @@
 
 ### Added
 
+- `AgentOptions.queuedInputPort`: the owner of queued input claims every drain, releases every restore, and commits consumption before any queued message reaches a provider request; a rejected commit keeps it queued ([#3549](https://github.com/code-yeongyu/senpi/issues/3549)).
+
 ### Changed
 
 ### Fixed
 
+### Removed
+
+## [2026.10.18-1] - 2026-10-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.18] - 2026-10-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- A turn you stop with a reason (`abort("user stop")`, or an object with a `message`) shows that reason, capped at 500 characters, not "Request was aborted" ([#3510](https://github.com/code-yeongyu/senpi/issues/3510)).
 - A turn you stop while its context transform or API key lookup is still running ends with your stop, not with "Provider stream start timed out" and advice to raise a timeout setting ([#3481](https://github.com/code-yeongyu/senpi/issues/3481)).
 
 ### Removed
