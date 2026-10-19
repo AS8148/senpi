@@ -1,3 +1,21 @@
+## 2026-10-18 - CI runs the main-screen wheel and ask-user hint tests on Windows (senpi#3604)
+
+### What changed
+
+- `.github/workflows/ci.yml`: a `tui-mouse-windows` job (`TUI mouse wheel and hint (Windows)`, `windows-latest`) runs `packages/tui/test/tui-main-screen-mouse.test.ts` and `packages/coding-agent/test/suite/ask-user-widget-mouse.test.ts` between the OS-temp snapshot and check steps, and is listed in the `Check and test` fan-in.
+
+### Why
+
+- Main-screen mouse tracking is gated on `WT_SESSION` on win32, and the reporter of #3604 was on Windows Terminal. The wheel-yield state machine and the Shift selection hint need a Windows run, which no other job covered.
+
+### Why an extension could not handle it
+
+- CI jobs are repository workflow configuration.
+
+### Expected merge conflict zones
+
+- LOW: the new job block and the `Check and test` `needs` list.
+
 ## 2026-10-17 - CI and release workflows pin Bun 1.4.3
 
 ### What changed

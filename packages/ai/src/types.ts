@@ -1209,6 +1209,12 @@ export interface AnthropicMessagesCompat {
 	 * the payload. Default: true only for the first-party Anthropic endpoint.
 	 */
 	supportsWebSearch?: boolean;
+	/**
+	 * Whether request bodies of 4096+ characters are sent with `Content-Encoding: gzip`. A refused encoding
+	 * (415, a proxy's 400/403, or the origin failing to parse the body) is resent uncompressed once and that
+	 * origin stays uncompressed for the process. Default: true only for the first-party Anthropic endpoint.
+	 */
+	supportsGzipRequestBody?: boolean;
 }
 
 /** Compatibility settings for Amazon Bedrock models. */
