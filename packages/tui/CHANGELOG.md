@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Aborting a path autocompletion whose `fd` failed to start no longer signals the caller's own process group on Node < 24.22 / 26.10 ([#3706](https://github.com/code-yeongyu/senpi/issues/3706)).
+
 ### Removed
 
 ## [2026.10.19] - 2026-10-19
