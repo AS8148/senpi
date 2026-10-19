@@ -1,3 +1,21 @@
+## 2026-10-18 - The runtime factory threads --tool-runtime into every session it creates (senpi#3566)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `createCliRuntimeFactory` destructures `toolRuntime` from its `CliRuntimeConfiguration` and forwards it to `createAgentSessionFromServices`, so the single-session, interactive, and multi-session paths (which all build sessions through this factory, worker isolates included via their replayed configuration) hand each `AgentSession` its tool runtime instead of re-reading the env.
+
+### Why
+
+The tool dispatcher is per-session state constructed from the once-per-process resolution todo 1 added; a session or worker must never re-derive it.
+
+### Why an extension could not handle it
+
+The runtime factory and the session constructor run before extensions load.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: the `createCliRuntimeFactory` destructure and the `createAgentSessionFromServices` call.
+
 ## 2026-10-18 - Every CLI entry becomes the tool-child role first (senpi#3566)
 
 ### What changed
@@ -18,23 +36,23 @@ Extensions load long after argument parsing; the role must win before any of it.
 
 - `packages/coding-agent/src/cli.ts`, `packages/coding-agent/src/cli-main.ts`, `packages/coding-agent/src/rpc-entry.ts`: the first import lines.
 
-## 2026-10-18 - The runtime factory threads --tool-runtime into every session it creates (senpi#3566)
+## 2026-10-17 - /share redacts the session, previews it and asks before uploading (senpi#3524)
 
 ### What changed
 
-- `packages/coding-agent/src/main.ts`: `createCliRuntimeFactory` destructures `toolRuntime` from its `CliRuntimeConfiguration` and forwards it to `createAgentSessionFromServices`, so the single-session, interactive, and multi-session paths (which all build sessions through this factory, worker isolates included via their replayed configuration) hand each `AgentSession` its tool runtime instead of re-reading the env.
+- `packages/coding-agent/src/config.ts`: `getShareViewerUrl` and the `https://pi.dev/session/` default are replaced by `getShareViewerBase()` (the `SHARE_VIEWER_URL` value or undefined) and `isShareDisabledByEnvironment()` (`<PREFIX>_DISABLE_SHARE`).
 
 ### Why
 
-The tool dispatcher is per-session state constructed from the once-per-process resolution todo 1 added; a session or worker must never re-derive it.
+- `/share` uploaded the whole session unredacted, with no confirmation, to a secret (unlisted) gist, after writing it to a fixed `os.tmpdir()/session.html`, and pointed users at the third-party `pi.dev` viewer by default. Any key, token, home path or email in a prompt or tool result left the machine in clear text. Regressions: `test/suite/regressions/3524-share-redaction.test.ts`, `test/suite/regressions/3524-share-consent.test.ts`.
 
 ### Why an extension could not handle it
 
-The runtime factory and the session constructor run before extensions load.
+- `/share` is a built-in interactive command and the HTML export is core; an extension cannot intercept either before the upload.
 
 ### Expected merge conflict zones
 
-- `packages/coding-agent/src/main.ts`: the `createCliRuntimeFactory` destructure and the `createAgentSessionFromServices` call.
+- LOW: the share viewer block in `config.ts`.
 
 ## 2026-10-18 - The host resolves and advertises its tool runtime (senpi#3566)
 
