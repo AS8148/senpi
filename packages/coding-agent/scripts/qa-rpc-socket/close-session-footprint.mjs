@@ -15,7 +15,9 @@
  *   none      - no fixture at all (senpi's own per-session cost)
  *
  * Usage:
- *   bun scripts/qa-rpc-socket/close-session-footprint.mjs [--extension leaky] [--sessions 30] [--every 5] [--mb 16] [--out <file>]
+ *   bun scripts/qa-rpc-socket/close-session-footprint.mjs [--extension leaky] [--sessions 30] [--every 5] [--mb 16] [--out <file>] [--vmmap <file>]
+ *
+ * `--vmmap <file>` (macOS) writes `vmmap -summary` of the host after the last sample.
  *
  * The last stdout line is the JSON report: { config, samples: [{ sessions, footprintMb, rssMb, heapMb, listeners }] }.
  */
@@ -35,6 +37,7 @@ const sessions = Number(flag("--sessions") ?? 30);
 const every = Number(flag("--every") ?? 5);
 const allocMb = Number(flag("--mb") ?? 16);
 const outPath = flag("--out");
+const vmmapPath = flag("--vmmap");
 if (!["leaky", "teardown", "none"].includes(extension)) throw new Error(`unknown --extension ${extension}`);
 
 const scratch = mkdtempSync(join(tmpdir(), "close-footprint-"));
@@ -163,6 +166,8 @@ for (let done = 1; done <= sessions; done++) {
 	await send({ type: "close_session", sessionId });
 	if (done % every === 0 || done === sessions) samples.push(await sample(done));
 }
+
+if (vmmapPath) writeFileSync(vmmapPath, execFileSync("vmmap", ["-summary", String(process.pid)], { encoding: "utf8" }));
 
 const report = {
 	config: { extension, sessions, allocMb, runtime: "in-process", bun: Bun.version, platform: `${process.platform}-${process.arch}` },

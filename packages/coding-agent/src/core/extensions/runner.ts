@@ -30,6 +30,7 @@ import { goalFilePath } from "./builtin/goal/persistence.ts";
 import { goalStoreRef } from "./builtin/goal/store-ref.ts";
 import { disableServerSearch } from "./builtin/server-search-fallback.ts";
 import { dispatchContextMessages } from "./context-dispatch.ts";
+import { reclaimExtensionHandles } from "./extension-handle-ledger.ts";
 import {
 	type BudgetedSequence,
 	type ExtensionHandlerBudget,
@@ -365,16 +366,17 @@ const UNBOUNDED_HANDLER_BUDGET: ExtensionHandlerBudget = { warnMs: 0, timeoutMs:
  *
  * Each handler runs under the host's shutdown budget (see
  * `ExtensionRunner.emit`), so a hung extension cannot hold teardown hostage.
+ * Afterwards senpi closes the servers, sockets and timers an extension instance
+ * still holds open (senpi#2292), with or without handlers.
  */
 export async function emitSessionShutdownEvent(
 	extensionRunner: ExtensionRunner,
 	event: SessionShutdownEvent,
 ): Promise<boolean> {
-	if (extensionRunner.hasHandlers("session_shutdown")) {
-		await extensionRunner.emit(event);
-		return true;
-	}
-	return false;
+	const emitted = extensionRunner.hasHandlers("session_shutdown");
+	if (emitted) await extensionRunner.emit(event);
+	extensionRunner.reclaimExtensionHandles();
+	return emitted;
 }
 
 function snapshotEventHandlers(extensions: Extension[], event: ExtensionEvent["type"]) {
@@ -1754,6 +1756,11 @@ export class ExtensionRunner {
 	 * effect without a reload). A malformed value must never break teardown, so
 	 * an invalid setting is reported and the shipped defaults are used.
 	 */
+	/** Closes what this runner's extension instances left open; see `emitSessionShutdownEvent`. */
+	reclaimExtensionHandles(): void {
+		reclaimExtensionHandles(this.extensions);
+	}
+
 	private resolveSessionShutdownBudget(): ExtensionHandlerBudget {
 		try {
 			const settings = SettingsManager.create(this.cwd, this.getAgentDirFn(), {

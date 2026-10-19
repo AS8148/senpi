@@ -1566,6 +1566,15 @@ exists only on the worker runtime described below. On that runtime every session
 runtime; on the in-process runtime each session is a runtime in the host process. Memory depends on a session's
 extensions and contents; neither runtime provides process-fatal OOM containment.
 
+Closing a session on the in-process runtime also closes what that session's extension instances left open. After the
+extensions' `session_shutdown` handlers run, senpi closes every server (`Bun.serve`, `Bun.listen`, `node:net` and
+`node:http` servers), `node:net` client socket and timer that an extension's own code created during the session and
+has not released, and writes one stderr line per extension naming what it closed. Memory those handles kept reachable
+is then collectable. Senpi's own builtin extensions are not tracked, and neither is work senpi itself does on an
+extension's behalf (a turn the extension started, a UI notification it showed). See
+[extensions.md](extensions.md#session_shutdown) for what this means for an extension that shares one server across
+sessions.
+
 What the host does enforce are lifecycle windows, and they only ever return memory from work nobody is doing:
 
 - **Idle eviction**: a session with no activity-refreshing command and no session-owned work for

@@ -1,3 +1,26 @@
+## 2026-10-19 - Closing a session closes what its extension code left open (senpi#2292)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/loader.ts`: every callback an extension registers (`pi.on` handlers, tool `execute`, commands, shortcuts, `pi.rpc.handle` handlers) and the factory call itself run through `ownedBy` / `runOwnedBy`, which enter that extension instance's handle ledger for the call's async chain. Tool definitions are stored as a copy whose `execute` is the owned wrapper. Builtin extensions are passed through unchanged.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitSessionShutdownEvent` calls the new `ExtensionRunner.reclaimExtensionHandles()` after the `session_shutdown` handlers ran, and also when no extension registered one.
+- `packages/coding-agent/src/core/extensions/extension-handle-tracking.ts` (new): process-level hooks on `setTimeout`/`setInterval`/`clear*`, `Bun.serve`, `Bun.listen`, `net.Server.prototype.listen` and `net.Socket.prototype.connect`, installed on first use. A handle is recorded only when an owner is in the async context AND the creating stack frame is that extension's code.
+- `packages/coding-agent/src/core/extensions/extension-handle-ledger.ts` (new): the per-extension ledger, the ownership test (a file extension owns code under its own directory; an inline factory owns code outside senpi's `src`/`dist`), and the reclaim with its per-extension stderr line.
+
+### Why
+
+On the in-process `--listen` host an extension that never stopped a server it opened from a session kept the server and the memory it referenced until the host exited: measured 17 MB and one listening socket per closed session, linear over 30 sessions (senpi#2292). Q chose to have senpi track and close those handles rather than only document the contract.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/loader.ts`: the loader is where extension callbacks are registered; only it can enter the extension's ownership around every call into extension code.
+- `packages/coding-agent/src/core/extensions/runner.ts`: the reclaim must run after every extension's `session_shutdown` handler, on the one teardown path the runner owns; a leaking extension is by definition the one that does not clean up after itself.
+
+### Expected merge conflict zones
+
+- LOW: `loader.ts` `createExtensionAPI` (`on`, `registerTool`, `registerCommand`, `registerShortcut`, `rpc.handle`) and the factory call in `initializeExtension`.
+- LOW: `runner.ts` `emitSessionShutdownEvent` body and the new method above `resolveSessionShutdownBudget`.
+
 ## 2026-10-18 - Agent lifecycle and boundary event handlers run under a host budget (senpi#3650)
 
 ### What changed

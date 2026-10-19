@@ -12,6 +12,7 @@
 
 ### Fixed
 
+- Closing a session now closes the servers, sockets and timers an extension's own code opened during it and never stopped, after the extension's `session_shutdown` handlers run, and logs one line per extension naming what it closed. On a shared `--listen` host, an extension without teardown kept about 17 MB and a listening socket per closed session until the host exited; 30 closed sessions now leave none ([#2292](https://github.com/code-yeongyu/senpi/issues/2292)).
 - Moving a session is stricter at its edges: `release_session` with `reason: "move"` refuses a `moveId` the rest of the move would reject and a session whose own id is not a plain id, a `session_moved_away` refusal after an interrupt still returns the queued input it took, and export refuses a session whose own id is empty or not a plain id before sealing it ([#3662](https://github.com/code-yeongyu/senpi/issues/3662)).
 
 ### Removed

@@ -667,6 +667,23 @@ pi.on("session_shutdown", async (event, ctx) => {
 
 The host budgets each handler separately: a handler still running after `sessionShutdownHandlerWarnMs` (default 2000) logs a warning naming the extension, and at `sessionShutdownHandlerTimeoutMs` (default 10000) senpi aborts that handler's `event.signal`, reports an extension error, and continues teardown with the remaining handlers. Keep shutdown work short, and pass `event.signal` to anything that can block (subprocess waits, network calls, lock acquisition) so it stops when the host gives up on it. Both thresholds are settings; `0` disables either half. See [settings.md](settings.md#shutdown-handler-budget).
 
+After the handlers return, senpi closes anything the extension instance's own code created during the session and still holds open: servers (`Bun.serve`, `Bun.listen`, `node:net` and `node:http` servers), `node:net` client sockets, and `setTimeout`/`setInterval` timers. It logs one line per extension naming what it closed, so a missing teardown shows up in the host's stderr. Stopping your resources here yourself is still the right design; the reclaim is the safety net that keeps a long-lived host from accumulating what closed sessions forgot.
+
+This means a resource opened from a session callback (the factory, `session_start`, a tool, a command, an RPC handler) belongs to that session and ends with it. A server or timer meant to be shared across sessions must be owned by the extension's process-level scope instead: create it at module top level, outside the factory and every callback, so no session owns it.
+
+```typescript
+// Process-level: created once when the module loads, shared by every session, never reclaimed.
+const shared = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+
+export default function (pi: ExtensionAPI) {
+  pi.on("session_start", () => {
+    // Session-level: closed with this session, by you or by senpi.
+    const perSession = setInterval(() => {}, 60_000);
+    pi.on("session_shutdown", () => clearInterval(perSession));
+  });
+}
+```
+
 ### Agent Events
 
 #### before_agent_start
