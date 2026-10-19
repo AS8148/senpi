@@ -41,7 +41,12 @@ function reply(model: Model<string>, context: TranscriptContext): AssistantMessa
 	return { ...base, content: [{ type: "text", text: "run done" }], stopReason: "stop", timestamp: Date.now() };
 }
 
-async function run(stream: AssistantMessageEventStream, model: Model<string>, context: TranscriptContext, options?: SimpleStreamOptions) {
+async function run(
+	stream: AssistantMessageEventStream,
+	model: Model<string>,
+	context: TranscriptContext,
+	options?: SimpleStreamOptions,
+) {
 	await new Promise((resolve) => setTimeout(resolve, LATENCY_MS));
 	const message = reply(model, context);
 	if (options?.signal?.aborted) {

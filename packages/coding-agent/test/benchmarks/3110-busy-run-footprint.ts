@@ -56,8 +56,26 @@ Object.assign(env, {
 const socket = join(root, "h.sock");
 const host = spawn(
 	process.execPath,
-	[cli, "--mode", "rpc", "--multi-session", "--listen", `unix://${socket}`, "--session-runtime", "in-process", "-e", provider,
-		"--provider", "bench3110", "--model", "m1", "--no-skills", "--no-context-files", "--no-prompt-templates", "--no-themes"],
+	[
+		cli,
+		"--mode",
+		"rpc",
+		"--multi-session",
+		"--listen",
+		`unix://${socket}`,
+		"--session-runtime",
+		"in-process",
+		"-e",
+		provider,
+		"--provider",
+		"bench3110",
+		"--model",
+		"m1",
+		"--no-skills",
+		"--no-context-files",
+		"--no-prompt-templates",
+		"--no-themes",
+	],
 	{ cwd, env, stdio: ["ignore", "ignore", "inherit"] },
 );
 const hostPid = host.pid ?? 0;
@@ -94,7 +112,8 @@ const sampler = setInterval(() => samples.push({ phase, mb: footprintMb() }), 10
 const started = footprintMb();
 const opened = await Promise.all(files.map((sessionPath) => call({ type: "open_session", sessionPath, cwd })));
 const ids = opened.map((reply) => reply.data?.sessionId).filter((id): id is string => typeof id === "string");
-if (ids.length !== files.length) throw new Error(`open failed: ${JSON.stringify(opened.find((reply) => !reply.success))}`);
+if (ids.length !== files.length)
+	throw new Error(`open failed: ${JSON.stringify(opened.find((reply) => !reply.success))}`);
 phase = "run";
 await Promise.all(
 	ids.map(async (sessionId) => {
@@ -112,7 +131,8 @@ phase = "settled";
 await sleep(10_000);
 clearInterval(sampler);
 
-const of = (name: string) => samples.filter((sample) => sample.phase === name && Number.isFinite(sample.mb)).map((s) => s.mb);
+const of = (name: string) =>
+	samples.filter((sample) => sample.phase === name && Number.isFinite(sample.mb)).map((s) => s.mb);
 const median = (list: number[]) => [...list].sort((a, b) => a - b)[Math.floor(list.length / 2)] ?? Number.NaN;
 console.log(
 	JSON.stringify({
