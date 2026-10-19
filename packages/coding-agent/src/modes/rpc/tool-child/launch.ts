@@ -6,8 +6,7 @@ import { runtimeExecArgv } from "../../../utils/runtime-exec-argv.ts";
 import { resolveCliMainPathAsync } from "../host-cli-entry.ts";
 import { TOOL_CHILD_ROLE_ENV } from "./channel.ts";
 import { TOOL_CHILD_GENERATION_ENV } from "./entry.ts";
-import { TOOL_CHILD_LEDGER_ENV } from "./launch-env-names.ts";
-import { TOOL_CHILD_REENTRY_ENV } from "./launch-shim-role.ts";
+import { TOOL_CHILD_LEDGER_ENV, TOOL_CHILD_REENTRY_ENV } from "./launch-env-names.ts";
 
 export interface ToolChildCommand {
 	readonly command: string;

@@ -1,12 +1,14 @@
 /**
  * Starting a command outside the tool child's Job Object (senpi#3566, plan todo 4): the only way an explicit
  * `detached: true` launch on Windows can outlive the child. `CreateProcessW` with `CREATE_BREAKAWAY_FROM_JOB`
- * (allowed because the job sets `JOB_OBJECT_LIMIT_BREAKAWAY_OK`); the command inherits the caller's standard handles.
- * Struct layouts are the x64 ones (`STARTUPINFOW` 104 bytes, `PROCESS_INFORMATION` 24 bytes).
+ * (allowed because the job sets `JOB_OBJECT_LIMIT_BREAKAWAY_OK`); the command inherits the caller's standard handles
+ * and an explicit environment block with every internal variable removed. Struct layouts are the x64 ones
+ * (`STARTUPINFOW` 104 bytes, `PROCESS_INFORMATION` 24 bytes).
  */
-import { windowsCommandLine } from "./windows-command-line.ts";
+import { withoutInternalEnv } from "./launch-env-names.ts";
 
 const CREATE_BREAKAWAY_FROM_JOB = 0x0100_0000;
+const CREATE_UNICODE_ENVIRONMENT = 0x0000_0400;
 const STARTF_USESTDHANDLES = 0x0000_0100;
 const STARTUPINFOW_BYTES = 104;
 const STARTUPINFO_FLAGS_OFFSET = 60;
@@ -17,7 +19,13 @@ const INFINITE = 0xffff_ffff;
 const STD_HANDLES = [-10, -11, -12] as const;
 
 export interface Kernel32Process {
-	CreateProcessW(commandLine: Uint8Array, flags: number, startupInfo: Uint8Array, processInfo: Uint8Array): number;
+	CreateProcessW(
+		commandLine: Uint8Array,
+		flags: number,
+		environment: Uint8Array,
+		startupInfo: Uint8Array,
+		processInfo: Uint8Array,
+	): number;
 	GetStdHandle(which: number): bigint;
 	WaitForSingleObject(handle: bigint, ms: number): number;
 	GetExitCodeProcess(handle: bigint, exitCode: Uint8Array): number;
@@ -39,13 +47,22 @@ function utf16z(text: string): Uint8Array {
 	return new Uint8Array(units.buffer);
 }
 
+/** A `CREATE_UNICODE_ENVIRONMENT` block: `NAME=value\0` entries, sorted by name as Windows expects, then one more `\0`. */
+export function environmentBlock(env: NodeJS.ProcessEnv): Uint8Array {
+	const entries = Object.entries(withoutInternalEnv(env))
+		.filter((entry): entry is [string, string] => entry[1] !== undefined)
+		.sort(([a], [b]) => (a.toUpperCase() < b.toUpperCase() ? -1 : a.toUpperCase() > b.toUpperCase() ? 1 : 0));
+	// An empty block is still two NULs: one for the (absent) last entry, one ending the block.
+	return utf16z(entries.length === 0 ? "\0" : entries.map(([name, value]) => `${name}=${value}\0`).join(""));
+}
+
 export interface BreakawayProcess {
 	readonly pid: number;
 	/** Blocks until the command exits and returns its exit code. */
 	wait(): number;
 }
 
-export function startBreakaway(kernel: Kernel32Process, argv: readonly string[]): BreakawayProcess {
+export function startBreakaway(kernel: Kernel32Process, commandLine: string, env: NodeJS.ProcessEnv): BreakawayProcess {
 	const startupInfo = new Uint8Array(STARTUPINFOW_BYTES);
 	const view = new DataView(startupInfo.buffer);
 	view.setUint32(0, STARTUPINFOW_BYTES, true);
@@ -53,9 +70,8 @@ export function startBreakaway(kernel: Kernel32Process, argv: readonly string[])
 	for (const [index, which] of STD_HANDLES.entries())
 		view.setBigUint64(STARTUPINFO_STD_INPUT_OFFSET + index * 8, kernel.GetStdHandle(which), true);
 	const processInfo = new Uint8Array(PROCESS_INFORMATION_BYTES);
-	if (
-		kernel.CreateProcessW(utf16z(windowsCommandLine(argv)), CREATE_BREAKAWAY_FROM_JOB, startupInfo, processInfo) === 0
-	)
+	const flags = CREATE_BREAKAWAY_FROM_JOB | CREATE_UNICODE_ENVIRONMENT;
+	if (kernel.CreateProcessW(utf16z(commandLine), flags, environmentBlock(env), startupInfo, processInfo) === 0)
 		throw new BreakawayError("CreateProcessW", kernel.GetLastError());
 	const info = new DataView(processInfo.buffer);
 	const process = info.getBigUint64(0, true);
@@ -99,8 +115,22 @@ export function loadKernel32Process(): Kernel32Process | undefined {
 		return fn(...args.map((arg) => (arg instanceof Uint8Array ? ffi.ptr(arg) : arg)));
 	};
 	return {
-		CreateProcessW: (commandLine, flags, startupInfo, processInfo) =>
-			Number(call("CreateProcessW", null, commandLine, null, null, 1, flags, null, null, startupInfo, processInfo)),
+		CreateProcessW: (commandLine, flags, environment, startupInfo, processInfo) =>
+			Number(
+				call(
+					"CreateProcessW",
+					null,
+					commandLine,
+					null,
+					null,
+					1,
+					flags,
+					environment,
+					null,
+					startupInfo,
+					processInfo,
+				),
+			),
 		GetStdHandle: (which) => BigInt(call("GetStdHandle", which) as number | bigint),
 		WaitForSingleObject: (handle, ms) => Number(call("WaitForSingleObject", handle, ms)),
 		GetExitCodeProcess: (handle, exitCode) => Number(call("GetExitCodeProcess", handle, exitCode)),

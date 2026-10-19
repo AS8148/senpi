@@ -4,29 +4,22 @@
  * `command_started{breakaway:true}`, waits, and exits with the command's exit code. The shim itself stays in the job.
  */
 import { writeSync } from "node:fs";
+import { LAUNCH_SHIM_COMMAND_LINE_ENV } from "./launch-env-names.ts";
 import { loadKernel32Process, startBreakaway } from "./windows-breakaway.ts";
 
-export const LAUNCH_SHIM_ARGV_ENV = "SENPI_LAUNCH_SHIM_ARGV";
-/** How to re-enter this engine (set by the server when it starts the tool child); the shim is started the same way. */
-export const TOOL_CHILD_REENTRY_ENV = "SENPI_TOOL_CHILD_REENTRY";
 const PID_FD = 3;
 
-export function parseShimArgv(raw: string | undefined): string[] | undefined {
-	if (raw === undefined || raw === "") return undefined;
-	const parsed: unknown = JSON.parse(raw);
-	return Array.isArray(parsed) && parsed.length > 0 && parsed.every((part) => typeof part === "string")
-		? parsed
-		: undefined;
-}
-
 export function runLaunchShimRole(env: NodeJS.ProcessEnv = process.env): never {
-	const argv = parseShimArgv(env[LAUNCH_SHIM_ARGV_ENV]);
+	const commandLine = env[LAUNCH_SHIM_COMMAND_LINE_ENV];
 	const kernel = loadKernel32Process();
-	if (argv === undefined || kernel === undefined) {
-		process.stderr.write(`launch-shim: ${argv === undefined ? "argv unavailable" : "kernel32 unavailable"}\n`);
+	if (commandLine === undefined || commandLine === "" || kernel === undefined) {
+		process.stderr.write(
+			`launch-shim: ${kernel === undefined ? "kernel32 unavailable" : "command line unavailable"}\n`,
+		);
 		process.exit(70);
 	}
-	const command = startBreakaway(kernel, argv);
+	// startBreakaway hands the command an environment without the shim's own role and command line.
+	const command = startBreakaway(kernel, commandLine, env);
 	writeSync(PID_FD, `${JSON.stringify({ pid: command.pid })}\n`);
 	process.exit(command.wait());
 }

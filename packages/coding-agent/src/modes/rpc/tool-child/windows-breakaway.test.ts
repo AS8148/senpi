@@ -3,14 +3,22 @@
 import { describe, expect, it } from "vitest";
 import { BreakawayError, type Kernel32Process, startBreakaway } from "./windows-breakaway.ts";
 
+function decodeBlock(block: Uint8Array): string[] {
+	return String.fromCharCode(...new Uint16Array(block.buffer))
+		.split("\0")
+		.filter((entry) => entry !== "");
+}
+
 function fakeKernel(created = true) {
 	const calls: string[] = [];
 	let commandLine = "";
 	let startup: DataView | undefined;
 	let flags = 0;
+	let environment: string[] = [];
 	const kernel: Kernel32Process = {
-		CreateProcessW: (line, creationFlags, startupInfo, processInfo) => {
+		CreateProcessW: (line, creationFlags, block, startupInfo, processInfo) => {
 			commandLine = String.fromCharCode(...new Uint16Array(line.buffer)).replace(/\0$/, "");
+			environment = decodeBlock(block);
 			startup = new DataView(startupInfo.buffer.slice(0));
 			flags = creationFlags;
 			if (!created) return 0;
@@ -36,13 +44,13 @@ function fakeKernel(created = true) {
 		},
 		GetLastError: () => 87,
 	};
-	return { kernel, calls, read: () => ({ commandLine, startup, flags }) };
+	return { kernel, calls, read: () => ({ commandLine, startup, flags, environment }) };
 }
 
 describe("startBreakaway", () => {
 	it("passes the breakaway flag, the quoted command line and the x64 STARTUPINFOW with the caller's std handles", () => {
 		const { kernel, read } = fakeKernel();
-		startBreakaway(kernel, ["cmd", "/c", "echo hi"]);
+		startBreakaway(kernel, 'cmd /c "echo hi"', {});
 		const { commandLine, startup, flags } = read();
 		expect(flags & 0x0100_0000).toBe(0x0100_0000);
 		expect(commandLine).toBe('cmd /c "echo hi"');
@@ -53,7 +61,7 @@ describe("startBreakaway", () => {
 
 	it("reads the pid from PROCESS_INFORMATION, closes the thread handle at once and the process handle after the wait", () => {
 		const { kernel, calls } = fakeKernel();
-		const command = startBreakaway(kernel, ["x.exe"]);
+		const command = startBreakaway(kernel, "x.exe", {});
 		expect(command.pid).toBe(5150);
 		expect(calls).toEqual(["close:546"]);
 		expect(command.wait()).toBe(3);
@@ -62,6 +70,21 @@ describe("startBreakaway", () => {
 
 	it("fails typed when CreateProcessW refuses", () => {
 		const { kernel } = fakeKernel(false);
-		expect(() => startBreakaway(kernel, ["x.exe"])).toThrow(BreakawayError);
+		expect(() => startBreakaway(kernel, "x.exe", {})).toThrow(BreakawayError);
+	});
+
+	it("hands the command an explicit environment with every internal variable removed", () => {
+		// senpi#3590 review HIGH 1: with lpEnvironment = null the command inherited the shim's role and command line.
+		const { kernel, read } = fakeKernel();
+		startBreakaway(kernel, "x.exe", {
+			Path: "C:\\bin",
+			SENPI_INTERNAL_ROLE: "launch-shim",
+			SENPI_LAUNCH_SHIM_COMMAND_LINE: "x.exe",
+			SENPI_TOOL_CHILD_REENTRY: "{}",
+			USERNAME: "u",
+		});
+		const { flags, environment } = read();
+		expect(flags & 0x400).toBe(0x400);
+		expect(environment).toEqual(["Path=C:\\bin", "USERNAME=u"]);
 	});
 });

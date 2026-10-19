@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import { ToolChildClient } from "./client.ts";
 import { TOOL_CHILD_MODULE_ROOTS_ENV } from "./module-job.ts";
 import { loadKernel32Process, startBreakaway } from "./windows-breakaway.ts";
+import { windowsCommandLine } from "./windows-command-line.ts";
 
 const kernel = loadKernel32Process();
 const reason = process.platform !== "win32" ? "not win32" : kernel === undefined ? "bun:ffi unavailable" : undefined;
@@ -30,7 +31,7 @@ const HARD_ARGUMENTS = [
 describe.skipIf(reason !== undefined)(`breakaway launch on kernel32${reason ? ` (skipped: ${reason})` : ""}`, () => {
 	it("starts a real command, reports its pid and returns its exit code", () => {
 		if (kernel === undefined) throw new Error("unreachable");
-		const command = startBreakaway(kernel, ["cmd.exe", "/d", "/c", "exit 3"]);
+		const command = startBreakaway(kernel, windowsCommandLine(["cmd.exe", "/d", "/c", "exit 3"]), process.env);
 		expect(command.pid).toBeGreaterThan(0);
 		expect(command.wait()).toBe(3);
 	});
@@ -41,7 +42,11 @@ describe.skipIf(reason !== undefined)(`breakaway launch on kernel32${reason ? ` 
 		try {
 			const out = join(dir, "argv.json");
 			const script = `require("node:fs").writeFileSync(${JSON.stringify(out)}, JSON.stringify(process.argv.slice(-${HARD_ARGUMENTS.length})))`;
-			const command = startBreakaway(kernel, [process.execPath, "-e", script, ...HARD_ARGUMENTS]);
+			const command = startBreakaway(
+				kernel,
+				windowsCommandLine([process.execPath, "-e", script, ...HARD_ARGUMENTS]),
+				process.env,
+			);
 			expect(command.wait()).toBe(0);
 			expect(JSON.parse(await readFile(out, "utf8"))).toEqual(HARD_ARGUMENTS);
 		} finally {

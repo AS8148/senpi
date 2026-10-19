@@ -1,5 +1,9 @@
 /** This generation's ledger path; the child reads it to sweep owned groups when its host disappears. */
 export const TOOL_CHILD_LEDGER_ENV = "SENPI_TOOL_CHILD_LEDGER";
+/** How to re-enter this engine (set by the server when it starts the tool child); the launch shim is started the same way. */
+export const TOOL_CHILD_REENTRY_ENV = "SENPI_TOOL_CHILD_REENTRY";
+/** The Windows command line a `launch-shim` starts outside the tool child's Job Object. */
+export const LAUNCH_SHIM_COMMAND_LINE_ENV = "SENPI_LAUNCH_SHIM_COMMAND_LINE";
 
 /**
  * Every variable the server sets only for the tool child itself. The child scrubs them from its own environment once it
@@ -13,8 +17,33 @@ export const TOOL_CHILD_INTERNAL_ENV = [
 	"SENPI_TOOL_CHILD_GENERATION",
 	TOOL_CHILD_LEDGER_ENV,
 	"SENPI_TOOL_CHILD_MODULE_ROOTS",
+	TOOL_CHILD_REENTRY_ENV,
 ] as const;
 
+/** Every internal variable: the server's, and the ones the tool child sets for its own launch shim. */
+export const INTERNAL_ENV = [...TOOL_CHILD_INTERNAL_ENV, LAUNCH_SHIM_COMMAND_LINE_ENV] as const;
+
+/**
+ * The one sanitizer for the environment of a command a user (or user code) asked for: none of the internal variables,
+ * whatever platform path starts it. A user command that kept one could enter a senpi internal role or re-enter the shim.
+ */
+export function withoutInternalEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+	const clean = { ...env };
+	for (const name of INTERNAL_ENV) delete clean[name];
+	return clean;
+}
+
 export function scrubToolChildEnv(env: NodeJS.ProcessEnv): void {
-	for (const name of TOOL_CHILD_INTERNAL_ENV) delete env[name];
+	for (const name of INTERNAL_ENV) delete env[name];
+}
+
+let reentry: string | undefined;
+
+/** The tool child reads its re-entry command once, before the scrub; job workers get it through their worker data. */
+export function rememberToolChildReentry(raw: string | undefined): void {
+	reentry = raw;
+}
+
+export function toolChildReentry(): string | undefined {
+	return reentry;
 }

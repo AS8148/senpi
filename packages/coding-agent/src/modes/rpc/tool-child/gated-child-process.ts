@@ -12,8 +12,14 @@ import { Socket } from "node:net";
 import { promisify } from "node:util";
 import { TOOL_CHILD_ROLE_ENV } from "./channel.ts";
 import { controlFd, enoentError, goShimScript, shimTarget, withControlPipe } from "./go-shim.ts";
-import { LAUNCH_SHIM_ARGV_ENV, TOOL_CHILD_REENTRY_ENV } from "./launch-shim-role.ts";
+import {
+	LAUNCH_SHIM_COMMAND_LINE_ENV,
+	TOOL_CHILD_REENTRY_ENV,
+	toolChildReentry,
+	withoutInternalEnv,
+} from "./launch-env-names.ts";
 import type { LaunchApi } from "./protocol.ts";
+import { quoteWindowsArgument, windowsCommandLine } from "./windows-command-line.ts";
 import type { WorkerLaunchClient } from "./worker-launch.ts";
 
 type ChildProcessApi = typeof ChildProcessModule;
@@ -123,9 +129,9 @@ function breakawaySpawn(
 	command: string,
 	args: readonly string[],
 	options: SpawnOptions,
+	reentryRaw: string | undefined,
 ): ChildProcess {
-	const reentry = parseReentry(process.env[TOOL_CHILD_REENTRY_ENV]);
-	const argv = options.shell ? ["cmd.exe", "/d", "/s", "/c", [command, ...args].join(" ")] : [command, ...args];
+	const reentry = parseReentry(reentryRaw);
 	const launchId = client.acquire({
 		origin: "kernel",
 		api: "cp.spawn",
@@ -141,9 +147,9 @@ function breakawaySpawn(
 		shell: false,
 		detached: false,
 		env: {
-			...(options.env ?? process.env),
+			...withoutInternalEnv(options.env ?? process.env),
 			[TOOL_CHILD_ROLE_ENV]: "launch-shim",
-			[LAUNCH_SHIM_ARGV_ENV]: JSON.stringify(argv),
+			[LAUNCH_SHIM_COMMAND_LINE_ENV]: breakawayCommandLine(command, args, options.shell),
 		},
 		stdio: [stdio[0] ?? "ignore", stdio[1] ?? "ignore", stdio[2] ?? "ignore", "pipe"],
 		windowsHide: true,
@@ -160,6 +166,16 @@ function breakawaySpawn(
 		});
 	}
 	return trackExit(client, launchId, shim);
+}
+
+/**
+ * The command line the shim starts. With a shell it is `cmd.exe /d /s /c "<command>"` with the command passed through
+ * verbatim, as Node does (`windowsVerbatimArguments`): cmd.exe does not understand the C runtime's `\"` escaping.
+ */
+export function breakawayCommandLine(command: string, args: readonly string[], shell: SpawnOptions["shell"]): string {
+	if (!shell) return windowsCommandLine([command, ...args]);
+	const program = typeof shell === "string" ? shell : "cmd.exe";
+	return `${quoteWindowsArgument(program)} /d /s /c "${[command, ...args].join(" ")}"`;
 }
 
 function parseReentry(raw: string | undefined): { readonly command: string; readonly args: readonly string[] } {
@@ -205,6 +221,7 @@ export function createGatedChildProcess(
 	module: ChildProcessApi,
 	client: WorkerLaunchClient,
 	platform: NodeJS.Platform = process.platform,
+	reentry: string | undefined = toolChildReentry(),
 ): ChildProcessApi {
 	// Captured before anyone patches `module` in place: the gated functions must call the originals, never themselves.
 	const real: ChildProcessApi = {
@@ -227,7 +244,7 @@ export function createGatedChildProcess(
 	): ChildProcess => {
 		const args = isArgList(argsOrOptions) ? argsOrOptions : [];
 		const options: SpawnOptions = (isArgList(argsOrOptions) ? maybeOptions : argsOrOptions) ?? {};
-		if (!posix && options.detached === true) return breakawaySpawn(real, client, command, args, options);
+		if (!posix && options.detached === true) return breakawaySpawn(real, client, command, args, options, reentry);
 		if (posix && options.detached !== false)
 			return ownGroupSpawn(real, client, command, args, options, options.detached === true ? "detached" : "owned");
 		const launchId = client.acquire({
