@@ -11,7 +11,9 @@ const RUNTIME_FILES = [
 	"bun-extension-commonjs.ts",
 	"bun-extension-error.ts",
 	"bun-extension-importer.ts",
+	"bun-extension-prepared-cache.ts",
 	"bun-extension-registry.ts",
+	"bun-extension-strict-directive.ts",
 ];
 // The runtime-path tag the importer appends to its metadata import; a runtime built before senpi#3300 had none.
 const RUNTIME_TAG = / \/\/ runtime \$\{runtimeModulePath === undefined \? "virtual" : encodeURI\(runtimeModulePath\)\}/;

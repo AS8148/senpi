@@ -16,6 +16,8 @@
 
 ### Changed
 
+- A new engine host no longer re-transpiles extensions whose sources have not changed: the importer keeps its prepared module source under `<agent dir>/cache/extension-modules` and reuses it after re-checking every import, so a host starts faster ([#3716](https://github.com/code-yeongyu/senpi/issues/3716))
+
 ### Fixed
 
 - With `anthropicSubscriptionProvider.accountFallback: false`, the message for an unusable account now gives a step that works: a `--claude-account` pin says to start a new session with another account, a settings pin names the setting to change, and an account blocked by an authentication error says to log in again instead of waiting for a time that will not fix it ([#3672](https://github.com/code-yeongyu/senpi/issues/3672)).
