@@ -17,6 +17,7 @@
 
 ### Fixed
 
+- `generate_image` now uses your `openai` provider the way model calls do: a models.json override of its `baseUrl` or key is used (a stored key also goes to an overridden `baseUrl`), `PI_IMAGE_GEN_PROVIDER` still takes precedence over such an override, and a stored key without an override keeps going to api.openai.com. A gateway picked automatically from models.json that has no images endpoint (HTTP 404/405) is skipped and named in the result, and when no configured provider serves images the error lists every provider tried and how to pin one, instead of failing on an arbitrary gateway ([omo#10285](https://github.com/code-yeongyu/oh-my-openagent/issues/10285)).
 - Compacting a long compacted session no longer reads its whole transcript into memory to name the agent in the compaction checkpoint; the name is folded from the history like the checkpoint lookup ([#3110](https://github.com/code-yeongyu/senpi/issues/3110)).
 - `ctx.sessionManager.reduceHistory`: a reducer that throws no longer leaves half-folded state behind; the next call reads the history again from the start instead of applying the same entries twice ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)).
 - A long stream of background events (monitors, CI notices) no longer keeps a compacted session's whole history in memory: the engine-turn bound, the compaction checkpoint and the Stop hook read the history without holding it, so memory stays near what a fresh open of the session costs ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)).
