@@ -1,4 +1,5 @@
 import {
+	HOST_CALL_KINDS,
 	LAUNCH_APIS,
 	LAUNCH_CONTAINMENTS,
 	LAUNCH_LIFETIMES,
@@ -56,7 +57,8 @@ const SHAPES = {
 	host_call: {
 		callId: req("string"),
 		jobId: req("string"),
-		tool: req("string"),
+		kind: req(HOST_CALL_KINDS),
+		name: opt("string"),
 		args: opt("json"),
 		argsRef: opt("ref"),
 	},

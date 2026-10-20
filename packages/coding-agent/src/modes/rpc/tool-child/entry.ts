@@ -5,25 +5,39 @@
  * server is the single writer of every session file.
  */
 import { connectChannel, type ToolChildChannel } from "./channel.ts";
+import { ToolChildJobError } from "./entry-error.ts";
+import { ChildHostCalls, type HostCallTarget } from "./host-calls-child.ts";
 import {
 	rememberToolChildReentry,
 	scrubToolChildEnv,
 	TOOL_CHILD_LEDGER_ENV,
 	TOOL_CHILD_REENTRY_ENV,
+	TOOL_CHILD_REFS_ROOT_ENV,
 } from "./launch-env-names.ts";
 import { LaunchGate } from "./launch-gate.ts";
 import { sweepLedger } from "./orphan-sweep.ts";
-import type { ToolChildMessageOf } from "./protocol.ts";
+import { PayloadRefReader, PayloadRefWriter } from "./payload-ref.ts";
+import { unpackPayload } from "./payload-wire.ts";
+import type { PayloadRef, RefControl, ToolChildMessageOf } from "./protocol.ts";
 import { readTestControls } from "./test-controls.ts";
 
 export const TOOL_CHILD_GENERATION_ENV = "SENPI_TOOL_CHILD_GENERATION";
 export const TOOL_CHILD_PROTOCOL_VERSION = 1;
+
+/** The signal of a host call that outlives its job's cancel. */
+const NEVER_CANCELLED = new AbortController().signal;
 
 export interface ToolChildJobContext {
 	readonly jobId: string;
 	readonly signal: AbortSignal;
 	readonly channel: ToolChildChannel;
 	readonly gate: LaunchGate;
+	/**
+	 * A call to the server for this job (reverse bridge); settles with its reply, refusal or the job's cancel. A call made
+	 * with `survivesCancel` is not settled by the cancel (a lock must be released after the job's writes stop, not when
+	 * the cancel arrives); it still settles by its reply, its refusal or the channel closing.
+	 */
+	readonly hostCall: (target: HostCallTarget, options?: { readonly survivesCancel?: boolean }) => Promise<unknown>;
 }
 
 export type ToolChildJobHandler = (args: unknown, context: ToolChildJobContext) => Promise<unknown>;
@@ -34,14 +48,7 @@ export interface ToolChildEntryOptions {
 	readonly exit?: (code: number) => never;
 }
 
-export class ToolChildJobError extends Error {
-	readonly code: string;
-	constructor(code: string, message: string) {
-		super(message);
-		this.code = code;
-		this.name = "ToolChildJobError";
-	}
-}
+export { ToolChildJobError } from "./entry-error.ts";
 
 export async function runToolChild(options: ToolChildEntryOptions): Promise<void> {
 	const env = { ...(options.env ?? process.env) };
@@ -60,6 +67,19 @@ export async function runToolChild(options: ToolChildEntryOptions): Promise<void
 	if (options.env === undefined) scrubToolChildEnv(process.env);
 	const running = new Map<string, AbortController>();
 	const gate = new LaunchGate(channel);
+	const refsRoot = env[TOOL_CHILD_REFS_ROOT_ENV];
+	const refs =
+		refsRoot === undefined
+			? undefined
+			: {
+					writer: new PayloadRefWriter({ root: refsRoot, generation }),
+					reader: new PayloadRefReader({
+						root: refsRoot,
+						generation,
+						send: (control: RefControl) => channel.send(control),
+					}),
+				};
+	const hostCalls = new ChildHostCalls(channel, refs);
 	let readerBlocked = false;
 	let shutdownRequested = false;
 	channel.onMessage((message) => {
@@ -69,13 +89,18 @@ export async function runToolChild(options: ToolChildEntryOptions): Promise<void
 			Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 30_000);
 		}
 		if (gate.handle(message)) return;
+		if (hostCalls.handle(message)) return;
+		if (message.type === "ref_ack" || message.type === "ref_nack") {
+			void refs?.writer.handle(message);
+			return;
+		}
 		switch (message.type) {
 			case "ping":
 				channel.send({ type: "pong", seq: message.seq });
 				return;
 			case "job":
 				if (controls.value("EXIT_MID_JOB") === message.kind) exit(1);
-				void runJob(channel, gate, options.handlers, running, message);
+				void runJob(channel, gate, hostCalls, refs?.reader, options.handlers, running, message);
 				return;
 			case "cancel":
 				if (controls.enabled("IGNORE_CANCEL")) return;
@@ -94,19 +119,35 @@ export async function runToolChild(options: ToolChildEntryOptions): Promise<void
 		channel.send({ type: "hello", generation, pid: process.pid, protocol: TOOL_CHILD_PROTOCOL_VERSION });
 	if (controls.enabled("STOP_SELF")) process.kill(process.pid, "SIGSTOP");
 	await channel.closed;
+	hostCalls.close();
 	for (const controller of running.values()) controller.abort();
 	if (!shutdownRequested) await orphanedByHost(env);
 	exit(0);
 }
 
+function readJobArgs(ref: PayloadRef, reader: PayloadRefReader | undefined, signal: AbortSignal): Promise<unknown> {
+	if (reader === undefined)
+		return Promise.reject(
+			new ToolChildJobError(
+				"tool_child_refs_unavailable",
+				"a job sent its arguments by reference, but this child reads no references",
+			),
+		);
+	return unpackPayload(ref, reader, signal);
+}
+
 async function runJob(
 	channel: ToolChildChannel,
 	gate: LaunchGate,
+	hostCalls: ChildHostCalls,
+	refReader: PayloadRefReader | undefined,
 	handlers: Readonly<Record<string, ToolChildJobHandler>>,
 	running: Map<string, AbortController>,
 	job: ToolChildMessageOf<"job">,
 ): Promise<void> {
 	const handler = handlers[job.kind];
+	if ((handler === undefined || running.has(job.jobId)) && job.argsRef !== undefined)
+		refReader?.refuse(job.argsRef, "cancelled");
 	if (handler === undefined) {
 		channel.send({
 			type: "job_error",
@@ -123,7 +164,11 @@ async function runJob(
 	const controller = new AbortController();
 	running.set(job.jobId, controller);
 	try {
-		const value = await handler(job.args, { jobId: job.jobId, signal: controller.signal, channel, gate });
+		const hostCall = (target: HostCallTarget, options?: { readonly survivesCancel?: boolean }) =>
+			hostCalls.call(job.jobId, target, options?.survivesCancel === true ? NEVER_CANCELLED : controller.signal);
+		// Large arguments arrive by a server-written reference: acked (now this child's), consumed, deleted.
+		const args = job.argsRef === undefined ? job.args : await readJobArgs(job.argsRef, refReader, controller.signal);
+		const value = await handler(args, { jobId: job.jobId, signal: controller.signal, channel, gate, hostCall });
 		channel.send({ type: "result", jobId: job.jobId, value: value ?? null });
 	} catch (error) {
 		const code =
