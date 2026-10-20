@@ -1,3 +1,22 @@
+## 2026-10-20 - Per-PR change fragments replace direct changes.md and [Unreleased] edits (senpi#3610)
+
+### What changed
+
+- `scripts/release.mjs`: calls `compileFragments` (from `scripts/sync-changes-fragments.mjs`) right before `stampChangelogs`, so fragments merged since the last scheduled compile land in the release; `stageChangedFiles` already stages their deletion (`git ls-files -d`).
+- `scripts/changes-fragments.mjs`, `scripts/changes-fragments-gate.mjs`, `scripts/sync-changes-fragments.mjs`, `scripts/check-pr-changelog-facts.mjs` (new, fork-only): fragment parsing and compile planning, gate facts, the `compile` / `from-diff` CLI, and the PR fact collection moved out of `check-pr-changelog.mjs`. `check-pr-changelog.mjs` counts a fragment's CHANGELOG block as that package's entry and its tracker blocks as coverage; once the base carries `changes/unreleased/README.md`, a PR that adds to an existing tracker or an `[Unreleased]` section fails. `audit-changes-md.mjs` counts entries still waiting in fragments. `.github/workflows/changes-compile.yml` compiles hourly.
+
+### Why
+
+- Every PR wrote to the same top lines of the same trackers and `[Unreleased]` sections, so each merge into `main` made the other open PRs conflict there, and a release cut could strand a bullet in a released section (senpi#3123).
+
+### Why an extension could not handle it
+
+- The release script and the PR gate are repository tooling, not runtime behavior.
+
+### Expected merge conflict zones
+
+- LOW: the `stampChangelogs` call site in `scripts/release.mjs`.
+
 ## 2026-10-19 - The bundle ships the RPC host supervisor as its own program (senpi#3743)
 
 ### What changed
