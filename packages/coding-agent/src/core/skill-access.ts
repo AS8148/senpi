@@ -1,5 +1,15 @@
 import { createHash } from "node:crypto";
-import { closeSync, constants, existsSync, fstatSync, openSync, readFileSync, realpathSync, statSync } from "node:fs";
+import {
+	closeSync,
+	constants,
+	existsSync,
+	fstatSync,
+	lstatSync,
+	openSync,
+	readFileSync,
+	realpathSync,
+	statSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import type { ResourceDiagnostic } from "./diagnostics.ts";
@@ -105,16 +115,26 @@ export function authorizeSkillPath(
 export function readSkillFileChecked(path: string, provenance?: SkillProvenance, allowed?: SkillAllowedSet): string {
 	if (provenance === undefined || provenance.kind === "user") return readFileSync(path, "utf8");
 	const canonical = authorizeSkillPath(path, provenance, allowed);
+	// Pin the authorized file's identity without following links, then require the opened descriptor to be
+	// that same file. Windows has no O_NOFOLLOW, and a post-open stat follows a swapped-in link to the same
+	// target as the descriptor, so only a pre-open identity catches a swap there (senpi#3796).
+	let expected: ReturnType<typeof lstatSync>;
 	let descriptor: number;
 	try {
+		expected = lstatSync(canonical);
+		if (!expected.isFile()) throw new BlockedSkillLinkError(path, canonical);
 		descriptor = openSync(canonical, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
 	} catch {
 		throw new BlockedSkillLinkError(path, canonical);
 	}
 	try {
 		const opened = fstatSync(descriptor);
-		const current = statSync(canonical);
-		if (!opened.isFile() || opened.dev !== current.dev || opened.ino !== current.ino) {
+		if (
+			!opened.isFile() ||
+			opened.dev !== expected.dev ||
+			opened.ino !== expected.ino ||
+			lstatSync(canonical).isSymbolicLink()
+		) {
 			throw new BlockedSkillLinkError(path, canonical);
 		}
 		return readFileSync(descriptor, "utf8");
