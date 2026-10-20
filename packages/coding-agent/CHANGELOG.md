@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- When another process's engine host holds the shared socket and stops answering, `host ensure` now says which one: the refusal names its pid, engine version, launch profile and the process that started it, in the error and in the `--json` payload's `holder` ([omo-desktop-app#3561](https://github.com/sisyphuslabs/omo-desktop-app/issues/3561)).
+
 - The `coding-agent` package passes its lint check again: a no-op `String.raw` in the reserved-keywords list was removed (no behavior change).
 - A session file left claimed by a stopped engine host no longer blocks reopening its thread. If that host was only frozen or asleep, it can no longer write to the file once another host has taken it over ([#3652](https://github.com/code-yeongyu/senpi/issues/3652)).
 - On Windows, an engine host killed together with its process tree no longer keeps every later start refused as `host_stalled` once Windows reuses its process id: the host's process identity is now recorded, a host whose identity cannot be read is released once it stopped heartbeating, the dead host's session lease no longer refuses every reopen as `session_held` once that host's generation ended, and its session claim ends with that generation instead of refusing every reopen as `session_path_in_use` ([#3658](https://github.com/code-yeongyu/senpi/issues/3658)).
