@@ -21,8 +21,10 @@
 
 import { createHostDaemonPaths, generationPaths } from "./host-daemon-paths.ts";
 import { provenOwner, readHostRegistration, releaseGeneration } from "./host-daemon-registration.ts";
+import { acquireHostEnsureLock } from "./host-ensure-lock.ts";
 import { probeProtocolInfo, probeSessionCount } from "./host-probe.ts";
 import { type DrainHostResult, drainHost } from "./host-stop-drain.ts";
+import { type HostStopGeneration, matchesStopGeneration } from "./host-stop-generation.ts";
 import { writeStopIntent } from "./host-stop-intent.ts";
 
 export interface StopHostOptions {
@@ -39,12 +41,17 @@ export interface StopHostOptions {
 	readonly timeoutMs?: number;
 	/** Refuse unless the host answers both reads: a caller that judged it idle must not stop it unseen. */
 	readonly requireAnswer?: boolean;
+	/** Refuse rather than signal a generation other than the one the operator confirmed. */
+	readonly expectedGeneration?: HostStopGeneration;
 }
 
 export type StopHostResult =
 	| DrainHostResult
 	| { readonly action: "stopped"; readonly pid: number }
-	| { readonly action: "refuse"; readonly reason: "unknown_owner" | "drain_unsupported" | "sessions_live" };
+	| {
+			readonly action: "refuse";
+			readonly reason: "unknown_owner" | "drain_unsupported" | "sessions_live" | "stale_generation";
+	  };
 
 /**
  * Ends a running generation. `drain` is always permitted - it ends no work, it only stops the
@@ -52,10 +59,28 @@ export type StopHostResult =
  * operator never silently kills another client's sessions.
  */
 export async function stopHost(options: StopHostOptions): Promise<StopHostResult> {
+	// GC already holds this lock and uses an unqualified stop. Conditional operator stops acquire it
+	// here so ensure/handoff cannot publish a different generation between the check and signal.
+	if (options.expectedGeneration === undefined) return stopHostLocked(options);
+	const release = await acquireHostEnsureLock(options.socket, 30_000);
+	try {
+		return await stopHostLocked(options);
+	} finally {
+		await release();
+	}
+}
+
+async function stopHostLocked(options: StopHostOptions): Promise<StopHostResult> {
 	const paths = createHostDaemonPaths({
 		socket: options.socket,
 		...(options.agentDir ? { agentDir: options.agentDir } : {}),
 	});
+	if (
+		options.expectedGeneration !== undefined &&
+		!matchesStopGeneration(await readHostRegistration(paths), options.expectedGeneration)
+	) {
+		return { action: "refuse", reason: "stale_generation" };
+	}
 	if (options.drain === true) {
 		return drainHost(paths, {
 			socket: options.socket,
@@ -76,6 +101,13 @@ export async function stopHost(options: StopHostOptions): Promise<StopHostResult
 	}
 	if (options.requireAnswer === true && (host === undefined || sessions === undefined)) {
 		return { action: "refuse", reason: "sessions_live" };
+	}
+	if (options.expectedGeneration !== undefined) {
+		const current = await readHostRegistration(paths);
+		if (!matchesStopGeneration(current, options.expectedGeneration)) {
+			return { action: "refuse", reason: "stale_generation" };
+		}
+		if (!(await provenOwner(current, options.socket))) return { action: "refuse", reason: "unknown_owner" };
 	}
 	await writeStopIntent(generationPaths(paths, owner.instanceId), {
 		sender: { pid: process.pid, kind: "stop" },

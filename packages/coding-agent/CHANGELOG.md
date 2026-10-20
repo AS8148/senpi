@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- A confirmed host stop can now name the exact generation, pid and process start time with `--expected-generation`; if the holder changed, the engine refuses without signalling it ([omo-desktop-app#3561](https://github.com/sisyphuslabs/omo-desktop-app/issues/3561)).
+
 - When another process's engine host holds the shared socket and stops answering, `host ensure` now says which one: the refusal names its pid, engine version, launch profile and the process that started it, in the error and in the `--json` payload's `holder` ([omo-desktop-app#3561](https://github.com/sisyphuslabs/omo-desktop-app/issues/3561)).
 
 - The `coding-agent` package passes its lint check again: a no-op `String.raw` in the reserved-keywords list was removed (no behavior change).

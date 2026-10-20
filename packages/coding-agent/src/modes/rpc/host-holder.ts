@@ -15,6 +15,7 @@ export interface HostHolder {
 	readonly pid: number;
 	readonly instanceId: string;
 	readonly generation: number;
+	readonly processStartTime: string | null;
 	/** The engine build the generation recorded at start; `null` for a record that predates the field. */
 	readonly engineVersion: string | null;
 	/** The launch profile the generation was started with; `null` when it recorded none. */

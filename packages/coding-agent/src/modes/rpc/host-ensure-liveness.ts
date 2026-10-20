@@ -58,6 +58,7 @@ export async function readHostHolder(paths: HostDaemonPaths, registered: Registe
 		pid: registered.record.pid,
 		instanceId: registered.instanceId,
 		generation: registered.generation,
+		processStartTime: registered.record.processStartTime,
 		engineVersion: typeof record.engineVersion === "string" ? record.engineVersion : null,
 		launchProfileId: typeof record.launchProfileId === "string" ? record.launchProfileId : null,
 		writerPid: registered.writer?.pid ?? null,

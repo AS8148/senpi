@@ -46,6 +46,7 @@ import { probeProtocolInfo } from "./host-probe.ts";
 import { readHostStatus, readSessionCounts } from "./host-status.ts";
 import { readAllHostStatus } from "./host-status-all.ts";
 import { stopHost } from "./host-stop.ts";
+import type { HostStopGeneration } from "./host-stop-generation.ts";
 
 export {
 	HOST_EXIT_ERROR,
@@ -83,6 +84,7 @@ export type HostRequest =
 			readonly target: HostTarget;
 			readonly drain: boolean;
 			readonly force: boolean;
+			readonly expectedGeneration?: HostStopGeneration;
 			/** With `drain`: the generation to drain, by instance id (senpi#3653). */
 			readonly instanceId?: string;
 			/** With `drain`: wait up to this long for that generation to exit. */
@@ -227,6 +229,7 @@ async function stopOutcome(request: Extract<HostRequest, { action: "stop" }>): P
 		agentDir: target.agentDir,
 		drain,
 		force,
+		...(request.expectedGeneration !== undefined && { expectedGeneration: request.expectedGeneration }),
 		...(instanceId !== undefined && { instanceId }),
 		...(waitMs !== undefined && { waitMs }),
 	});

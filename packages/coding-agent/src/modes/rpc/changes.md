@@ -7025,3 +7025,24 @@ Capability advertisement is core RPC.
 ### Expected merge conflict zones
 
 The classic capability list in `connection-handler.ts`.
+## 2026-10-20 - A stop targets only the confirmed registration (omo-desktop-app#3561)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-stop-generation.ts`: the expected instance id, generation, pid and process start time, CLI decoding and registration comparison.
+- `packages/coding-agent/src/modes/rpc/host-stop.ts`: conditional stops take the endpoint ensure lock, compare before probes and again before writing an intent, and refuse `stale_generation` without signalling on mismatch.
+- `packages/coding-agent/src/modes/rpc/host-runner.ts`: forwards the expected generation to the common stop implementation.
+- `packages/coding-agent/src/modes/rpc/host-status.ts`: reports the registered process start time for confirmation; `packages/coding-agent/src/modes/rpc/host-status-all.ts` reports null for an unaddressable endpoint.
+- `packages/coding-agent/src/modes/rpc/host-holder.ts` and `packages/coding-agent/src/modes/rpc/host-ensure-liveness.ts`: holder evidence includes the recorded process start time.
+
+### Why
+
+- Checking only a pid before invoking an unqualified stop could terminate a newer, unconfirmed generation.
+
+### Why an extension could not handle it
+
+- The lifecycle lock and signal authority belong to the engine.
+
+### Expected merge conflict zones
+
+- LOW: stop options, status identity, runner stop request.

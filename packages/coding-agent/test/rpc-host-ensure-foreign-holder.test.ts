@@ -111,6 +111,7 @@ async function startSilentCliHost(qa: Qa) {
 			pid,
 			instanceId,
 			generation: CLI_GENERATION,
+			processStartTime: record.processStartTime,
 			engineVersion: CLI_ENGINE,
 			launchProfileId: CLI_PROFILE,
 			writerPid,
