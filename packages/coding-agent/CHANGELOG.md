@@ -2,6 +2,82 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+### Added
+
+- When a session of 200k tokens or more has sat idle past its model's prompt-cache lifetime and a fresh session would save at least $1 on the next reply, one line above the editor says what the next reply would cost and what a fresh session would cost, with two choices: `/handoff` starts a new session linked to this one and seeded with a short brief built from the session's state (goal, open todos, last request and answer, touched files), and `/handoff keep` hides the line for the rest of the session. It never interrupts a turn or switches on its own, and never shows for task children, print/JSON runs, turns an extension started, or while a goal is active. Settings: `handoffHint.enabled`, `handoffHint.minContextTokens`, `handoffHint.minSavingUsd`. Extension widgets can carry choices (`setWidget(..., { actions })`), forwarded over RPC as `widgetActions` ([#3230](https://github.com/code-yeongyu/senpi/issues/3230)).
+
+### Changed
+
+### Fixed
+
+- Each mounted message no longer keeps its own copy of the markdown theme, and a tool card above the kept history no longer keeps a second copy of its result in its renderer: about 640 bytes per message and 2 KB per tool card for the rest of the session ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)).
+- A bundled install's RPC host supervisor now starts from its own small program instead of the whole CLI, so each supervisor stays near the size of its own code. The desktop runs one per open thread ([#3743](https://github.com/code-yeongyu/senpi/issues/3743)).
+- A queued message with several text blocks, such as an async question answered with a comment or typed words, now leaves the queue when it is delivered. It used to reach the model but stay listed as `Steering:` above the editor (and in queue counts and RPC queue snapshots) for the rest of the session ([#3588](https://github.com/code-yeongyu/senpi/issues/3588)).
+
+### Removed
+
+## [2026.10.19-2] - 2026-10-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The shipped Claude fallback chains no longer step down to `claude-opus-4-8` or `claude-opus-4-6`: Fable falls back to Opus 5.5, then Opus 5; Opus 5.5 falls back to Opus 5 ([#3727](https://github.com/code-yeongyu/senpi/issues/3727)).
+
+### Fixed
+
+- An idle RPC host no longer checks for exited children, a pending trim or a drain request every second: the reaper looks every 5 s while the host has no children, the trim runs only after a session count change, and a drain request (host and supervisor) is read when it lands ([#3747](https://github.com/code-yeongyu/senpi/issues/3747)).
+- Socket clients advertising `event_resync` recover from an event-queue overflow or stall on the same connection: buffered events are shed, current message snapshots are sent, and only a missed liveness heartbeat closes the peer. Recovery preserves still-open extension dialogs after replacing a session. Clients without the capability retain the existing disconnect behavior ([#3728](https://github.com/code-yeongyu/senpi/issues/3728)).
+- An `invalid_request_error` 400 from Anthropic itself (not a gateway) caused by the request's own shape (for example an unpaired `web_search` server block) no longer switches the session to another model. It retries once on the same model without web search replay data, notes that in the transcript, and otherwise ends with one error saying what to do. Set `SENPI_DEBUG_REQUEST_SHAPE=<file>` to log each Anthropic request's block skeleton without content, including requests the API rejects ([#3727](https://github.com/code-yeongyu/senpi/issues/3727)).
+- Quitting no longer takes up to 10 s when an extension is slow to shut down. A quit that exits senpi now waits at most `sessionShutdownQuitBudgetMs` (default 2000) on all `session_shutdown` handlers together, counted from when senpi starts running them, then exits and logs which extension overran it and for how long; set it to `0` to keep only the per-handler limits. The config watcher no longer holds quit while its watch thread finishes stopping ([#3711](https://github.com/code-yeongyu/senpi/issues/3711)).
+- Under `--tool-runtime child`, starting a session's tool child no longer removes anything through a short socket directory in `/tmp` before it is proven to be this user's private directory, and its secret is created as a new file that never follows or overwrites anything already at that name. On every failure the secret written there is destroyed, and it is unlinked only through a directory proven ours again, so a directory swapped in the meantime never leads the cleanup to another file; another local user holding that directory's name no longer blocks the start ([#3694](https://github.com/code-yeongyu/senpi/issues/3694)).
+- A finished tool card no longer keeps its rendered output once it is invalidated (it scrolled above the kept main-screen history, or the theme or terminal capabilities changed); it is rebuilt from the card when it is painted again, and cards share one set of built-in tool definitions. A renderer that asks for a rerender (`context.invalidate()`) still gets its own component back as `lastComponent`, and an edit card keeps the diff its renderer stores in `context.state`. In a 10-minute notice-stream soak that output was about 5 KB per tool-using turn ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)).
+- `senpi -p "prompt"` no longer hangs before startup when stdin is a pipe or socket that is never written or closed, as ssh, CI runners and agent harnesses provide. With a prompt argument, such a stdin is skipped when no data arrives within 2 seconds; a pipe that sends data in time (`cat file | senpi -p "summarize"`), a regular file, and stdin as the only prompt source are still read to EOF. When stdin is skipped, one stderr line says so and that `-` reads it. A bare `-` argument forces the read ([#3715](https://github.com/code-yeongyu/senpi/issues/3715)).
+- The RPC host no longer fails to start with a bare `listen EINVAL` when the temp directory is long (a nested per-user or per-job `TMPDIR`). Its private internal socket now goes under `/tmp` whenever the path under `TMPDIR` would exceed the 103-byte Unix socket limit, still in its own 0700 directory, and leftover internal directories there are cleaned up the same way ([#3487](https://github.com/code-yeongyu/senpi/issues/3487)).
+
+### Removed
+
+## [2026.10.19-1] - 2026-10-19
+
+### Breaking Changes
+
+- Closing a session now closes what an extension's own code left open after its `session_shutdown` handlers ran (see Fixed). An extension that opens a server, socket or timer once and shares it across sessions must open it at module scope, outside any handler, or it is closed when the first session closes ([#2292](https://github.com/code-yeongyu/senpi/issues/2292)).
+
+### Added
+
+- `--tool-runtime child` now runs on Windows hosts with `bun:ffi`: the tool child and every command it launches are held in a Windows Job Object before the child says hello, so closing the session ends them all. Windows without `bun:ffi` still refuses it with `tool_runtime_unsupported_host` ([#3566](https://github.com/code-yeongyu/senpi/issues/3566)).
+- `senpi host status` reports `host_footprint_mb`, the supervisor's and host's memory footprint beside their RSS; RSS leaves out compressed and swapped pages and can read 1.3 GB for a host holding 14 GB ([#3110](https://github.com/code-yeongyu/senpi/issues/3110)).
+- Under `--tool-runtime child`, each session can start its own tool child: a separate process the engine re-enters through an internal role. No command in it starts before the server has recorded the launch. A `"child"`-placed extension tool with a `childModule` (`{ path, export }`, a file inside the extension's directory) runs there, and its `pid` differs from the server's. A child-placed tool without one, or one under the default `in-process` runtime, behaves as before.
+- Extensions can redact text before sending it off the machine with `pi.redactForUpload(text, { extraLiterals })`, which returns `{ text, counts }` from the same redactor `/share` uses (so a feature like an in-app bug report does not need its own rules), and can read the host version as `pi.hostVersion`. Extra literals never rewrite a placeholder an earlier pass already wrote ([#3674](https://github.com/code-yeongyu/senpi/issues/3674)).
+- A device receiving a moved session now takes it only after it said it is ready for that move: a bundle for a move it never readied is refused for good, and a ready move that sees no bundle within 10 minutes, or is cancelled by the sender, is declined so the sender can take its session back. A move already receiving or accepted is never declined by either ([#3676](https://github.com/code-yeongyu/senpi/issues/3676)).
+- Extensions can fold a session's whole history without holding it in memory: `ctx.sessionManager.reduceHistory({ initial, add })` reads the history once and folds only new entries after that ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)).
+- `senpi host stop --drain` reaches a generation without signals on every platform, including win32, and `--instance <id>` drains a named (superseded) generation with `--wait-ms <n>` reporting whether it `exited`; a superseded win32 generation now drains itself once the pointer and the endpoint both name its successor ([#3653](https://github.com/code-yeongyu/senpi/issues/3653)).
+- Subscription limits are known before an account's first turn: in interactive and RPC modes the engine polls each signed-in Claude (every 5 min) and ChatGPT (every 2.5 min) subscription account's usage, so `get_subscription_limits` and the `subscription_limits` record carry its windows on a fresh session. Turns keep updating the same record, the newest reading wins, one machine-wide cache keeps several senpi processes to one request per account per interval, and a failed poll keeps the last windows and reports why in a new optional `error` field (with `plan` beside it). A login the token endpoint already rejected shows `auth stale - run /login` and is not polled again. Extensions read the same store through `pi.getSubscriptionLimits()` and `pi.onSubscriptionLimits()` ([#3684](https://github.com/code-yeongyu/senpi/issues/3684)).
+
+### Changed
+
+### Fixed
+
+- A timeout, abort or stop of a command that never started (missing binary, missing cwd) no longer SIGKILLs senpi and everything else in the terminal's foreground job on Node before 24.22 / 26.10, where `kill()` on a child without a pid signals the caller's own process group ([#3706](https://github.com/code-yeongyu/senpi/issues/3706)).
+- While the agent is paused for starting too many turns on its own, a stream of incoming notices no longer adds a `Paused: ...` warning for every notice: the warning shows once per pause ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)).
+- Closing a session now closes the servers, sockets and timers an extension's own code opened during it and never stopped, after the extension's `session_shutdown` handlers run, and logs one line per extension naming what it closed. On a shared `--listen` host, an extension without teardown kept about 17 MB and a listening socket per closed session until the host exited; 30 closed sessions now leave none ([#2292](https://github.com/code-yeongyu/senpi/issues/2292)).
+- The RPC host supervisor no longer loads the protocol-info parser and build-id reader it pulled in with the win32 named drain; its startup graph is back inside its module budget ([#3653](https://github.com/code-yeongyu/senpi/issues/3653)).
+- With `anthropicSubscriptionProvider.accountFallback: false`, the message for an unusable account now gives a step that works: a `--claude-account` pin says to start a new session with another account, a settings pin names the setting to change, and an account blocked by an authentication error says to log in again instead of waiting for a time that will not fix it ([#3672](https://github.com/code-yeongyu/senpi/issues/3672)).
+- `generate_image` now uses your `openai` provider the way model calls do: a models.json override of its `baseUrl` or key is used (a stored key also goes to an overridden `baseUrl`), `PI_IMAGE_GEN_PROVIDER` still takes precedence over such an override, and a stored key without an override keeps going to api.openai.com. A gateway picked automatically from models.json that has no images endpoint (HTTP 404/405) is skipped and named in the result, and when no configured provider serves images the error lists every provider tried and how to pin one, instead of failing on an arbitrary gateway ([omo#10285](https://github.com/code-yeongyu/oh-my-openagent/issues/10285)).
+- Compacting a long compacted session no longer reads its whole transcript into memory to name the agent in the compaction checkpoint; the name is folded from the history like the checkpoint lookup ([#3110](https://github.com/code-yeongyu/senpi/issues/3110)).
+- `ctx.sessionManager.reduceHistory`: a reducer that throws no longer leaves half-folded state behind; the next call reads the history again from the start instead of applying the same entries twice ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)).
+- A long stream of background events (monitors, CI notices) no longer keeps a compacted session's whole history in memory: the engine-turn bound, the compaction checkpoint and the Stop hook read the history without holding it, so memory stays near what a fresh open of the session costs ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)).
+- A Claude subscription (`anthropic-subscription`) reply now records its Anthropic message id as `responseId`. The Claude Agent SDK also writes every turn to `~/.claude/projects`, and usage readers such as the OmO desktop Usage page need that id to count the turn once instead of again as Claude Code usage ([oh-my-openagent#10547](https://github.com/code-yeongyu/oh-my-openagent/issues/10547)).
+- Moving a session is stricter at its edges: `release_session` with `reason: "move"` refuses a `moveId` the rest of the move would reject and a session whose own id is not a plain id, a `session_moved_away` refusal after an interrupt still returns the queued input it took, and export refuses a session whose own id is empty or not a plain id before sealing it ([#3662](https://github.com/code-yeongyu/senpi/issues/3662)).
+
+### Removed
+
+## [2026.10.19] - 2026-10-19
+
 - `get_available_models` reports each model's resolved `serviceTier` and `upstreamModelId`, including a `-fast` alias's pairing declared only in `models.json` or by an extension provider. Clients that verify a child opened on the base model of a requested `-fast` alias no longer refuse it as a substitution ([#3666](https://github.com/code-yeongyu/senpi/issues/3666)).
 
 - Esc or the turn deadline now also release an `agent_before_settle` (or other `agent_end` boundary) handler that never settles: an abort that joined the open boundary used to return before the grace-and-release ran, so the session stayed streaming ([#3650](https://github.com/code-yeongyu/senpi/issues/3650)).
@@ -22,12 +98,12 @@
 
 ### Fixed
 
+- `/share` no longer uploads the raw session. By default it shares only your messages, the replies and the tool calls; tool outputs (file contents, command output, extension messages) are replaced by `[output omitted]` unless you choose "Include tool outputs" in the preview. Everything shared is first redacted: keys, tokens, private keys, auth headers, cookies, emails, IP addresses, your home path, account name and host name (images are left out). The preview shows what will be uploaded and who can read it, and nothing uploads until you choose Upload; "Review the exact file first" writes the exact bytes to a private temporary file that is deleted afterwards, and Cancel uploads nothing. The export no longer goes through a shared temporary file, and there is no default third-party viewer: the gist link is printed unless `PI_SHARE_VIEWER_URL` is set. `PI_DISABLE_SHARE=1` or the `enableSessionShare: false` setting turns `/share` off ([#3524](https://github.com/code-yeongyu/senpi/issues/3524)).
+
 - The mouse wheel scrolls the transcript again while an `ask_user_question` prompt is waiting. The first notch pauses option clicking (the hint says so) and any key turns it back on. The text-selection hint now names the right modifier per terminal, including VS Code on macOS ([#3604](https://github.com/code-yeongyu/senpi/issues/3604)).
 - The /btw panel stays one fixed region while a running eval's expanded output grows above it; the eval rows no longer overwrite the panel or repeat in the scrollback ([#3649](https://github.com/code-yeongyu/senpi/issues/3649))
 
 - Alt+Q restores queued messages on WSL again: Windows keybinding defaults detect WSL through `WSL_DISTRO_NAME`/`WSL_INTEROP`/`WSLENV` or a `/proc/version` fallback when the environment is sanitized, and split-delivery ESC+q reassembly uses the standard 50ms window (100ms on WSL; a lone local Escape now settles up to 40ms later) ([#3628](https://github.com/code-yeongyu/senpi/issues/3628)).
-
-- A queued message with several text blocks, such as an async question answered with a comment or typed words, now leaves the queue when it is delivered. It used to reach the model but stay listed as `Steering:` above the editor (and in queue counts and RPC queue snapshots) for the rest of the session ([#3588](https://github.com/code-yeongyu/senpi/issues/3588)).
 
 ### Removed
 

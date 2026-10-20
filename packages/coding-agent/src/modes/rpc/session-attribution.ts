@@ -15,7 +15,11 @@ export interface SessionAttribution {
 	readonly sessionId?: string;
 	/** Tool currently executing for that session. */
 	readonly tool?: string;
+	/** Kind of non-tool job holding the loop (senpi#3566): a hook, the event fanout, a parse, a prepare, a spool. */
+	readonly job?: JobKind;
 }
+
+export type JobKind = `hook:${string}` | "fanout" | "session.parse" | "compaction.prepare" | "history.spool";
 
 const attributionStore = new AsyncLocalStorage<SessionAttribution>();
 
@@ -73,9 +77,11 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
  */
 export function openSessionAttributionSpan(attribution: SessionAttribution): () => void {
 	const ambient = attributionStore.getStore();
+	const sessionId = attribution.sessionId ?? ambient?.sessionId;
 	const merged: SessionAttribution = {
-		sessionId: attribution.sessionId ?? ambient?.sessionId,
-		tool: attribution.tool,
+		...(sessionId !== undefined ? { sessionId } : {}),
+		...(attribution.tool !== undefined ? { tool: attribution.tool } : {}),
+		...(attribution.job !== undefined ? { job: attribution.job } : {}),
 	};
 	const mark = ++sequence;
 	openActivities.set(mark, merged);
@@ -83,6 +89,28 @@ export function openSessionAttributionSpan(attribution: SessionAttribution): () 
 		if (!openActivities.delete(mark)) return;
 		lastFinished = { sequence: ++sequence, attribution: merged };
 	};
+}
+
+/** A job-kind span that inherits the ambient session; it stays blamable until the disposer runs. */
+export function openJobSpan(job: JobKind): () => void {
+	const ambient = attributionStore.getStore();
+	return openSessionAttributionSpan({ sessionId: ambient?.sessionId, job });
+}
+
+/** Run `task` as a job of `job`'s kind, attributed for its whole lifetime like a routed command. */
+export function runWithJob<T>(job: JobKind, task: () => T): T {
+	const ambient = attributionStore.getStore();
+	return runWithSessionAttribution({ ...(ambient?.sessionId ? { sessionId: ambient.sessionId } : {}), job }, task);
+}
+
+/** One stall line's attribution clause: `sessionId=<id>[ tool=<name>][ job=<kind>]`. */
+export function describeAttribution(attribution: SessionAttribution | undefined): string {
+	if (attribution?.sessionId === undefined && attribution?.tool === undefined && attribution?.job === undefined) {
+		return "no attributed session";
+	}
+	const tool = attribution.tool ? ` tool=${attribution.tool}` : "";
+	const job = attribution.job ? ` job=${attribution.job}` : "";
+	return `sessionId=${attribution.sessionId ?? "unknown"}${tool}${job}`;
 }
 
 /** Current activity counter; the watchdog samples it once per tick. */

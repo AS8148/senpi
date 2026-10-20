@@ -11,6 +11,7 @@ import {
 	MOVE_BUNDLE_FORMAT,
 	type MoveManifest,
 	parseMoveId,
+	parsePlainId,
 	SESSION_BUNDLE_PATH,
 	sha256File,
 } from "./bundle.ts";
@@ -41,7 +42,8 @@ export async function exportSessionForMove(options: ExportSessionForMoveOptions)
 	const { sessionFile } = options;
 	const moveId = parseMoveId(options.moveId);
 	const entries = loadEntriesFromFile(sessionFile);
-	const sessionId = headerSessionId(entries) ?? "";
+	// The id names the resident-blob folder copied below and must be one the receiver accepts: check it before sealing.
+	const sessionId = parsePlainId(headerSessionId(entries), "session id");
 	// A live runtime could still write the transcript, its sidecars or its resident blobs after the seal.
 	const holders = await liveSessionHolders(sessionFile, sessionId);
 	if (holders.length > 0) throw new SessionHeldError(sessionFile, holders);
