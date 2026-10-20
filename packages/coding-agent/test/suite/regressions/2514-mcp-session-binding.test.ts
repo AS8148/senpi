@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ENV_AGENT_DIR } from "../../../src/config.ts";
 import { getMcpCatalogCachePath } from "../../../src/core/extensions/builtin/mcp/catalog-cache.ts";
 import mcpExtension from "../../../src/core/extensions/builtin/mcp/index.ts";
+import { getProjectMcpAuthority } from "../../../src/core/extensions/builtin/mcp/project-skill-policy.ts";
 import { getMcpService, resetMcpServiceForTests } from "../../../src/core/extensions/builtin/mcp/service.ts";
 import { parseSkillMcpDeclarations, type SkillLike } from "../../../src/core/extensions/builtin/mcp/skills.ts";
 import { MCP_STARTUP_TIMEOUT_ENV } from "../../../src/core/extensions/builtin/mcp/startup-race.ts";
@@ -703,7 +704,11 @@ describe("senpi#2986: a session's skill servers follow its own trust, env and ag
 		// session's env, and the servers' credentials resolve in its agent dir, never the trusted peer's.
 		const service = getMcpService();
 		expect(warnings).toEqual([expect.stringContaining("trust the project")]);
-		expect(service.getAuthTarget("fxp")?.config.env).toEqual({ SENPI_2986_SECRET: SECRET_EXPR });
+		// Project servers materialize their child env at spawn (senpi#3796); the declared value stays literal there.
+		const projectConfig = service.getAuthTarget("fxp")?.config;
+		const projectEnv = projectConfig === undefined ? undefined : getProjectMcpAuthority(projectConfig)?.initial.env;
+		expect(projectEnv).toMatchObject({ SENPI_2986_SECRET: SECRET_EXPR });
+		expect(Object.values(projectEnv ?? {})).not.toContain("alpha-secret");
 		expect(service.getAuthTarget("fxu")?.config.env).toEqual({ SENPI_2986_SECRET: "alpha-secret" });
 		expect(service.getAuthTarget("fxu")).toMatchObject({
 			agentDir: root.agentDir,
