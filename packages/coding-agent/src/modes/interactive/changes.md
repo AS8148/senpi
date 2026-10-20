@@ -2995,6 +2995,13 @@ The tool card's content lifecycle is an interactive-mode internal; extensions do
 ### What changed
 
 - `packages/coding-agent/src/modes/interactive/theme/theme.ts`: new internal `sharedMarkdownTheme()` returns one frozen object per active `Theme`, and the built-in message components use it instead of building their own; it is rebuilt when the theme switches, because Markdown's render cache keys on the theme object's identity. The public `getMarkdownTheme()` still returns a new object per call, so an extension can customize its copy.
+- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts`: takes its default markdown theme from `sharedMarkdownTheme()`.
+- `packages/coding-agent/src/modes/interactive/components/branch-summary-message.ts`: takes its default markdown theme from `sharedMarkdownTheme()`.
+- `packages/coding-agent/src/modes/interactive/components/compaction-summary-message.ts`: takes its default markdown theme from `sharedMarkdownTheme()`.
+- `packages/coding-agent/src/modes/interactive/components/custom-message.ts`: takes its default markdown theme from `sharedMarkdownTheme()`.
+- `packages/coding-agent/src/modes/interactive/components/remote-delivery-message.ts`: takes its default markdown theme from `sharedMarkdownTheme()`.
+- `packages/coding-agent/src/modes/interactive/components/skill-invocation-message.ts`: takes its default markdown theme from `sharedMarkdownTheme()`.
+- `packages/coding-agent/src/modes/interactive/components/user-message.ts`: takes its default markdown theme from `sharedMarkdownTheme()`.
 - `packages/coding-agent/src/modes/interactive/components/tool-execution-renderer.ts`: `releaseContent()` also drops the renderer's last render state (it held a filtered copy of the result); `update()` sets a fresh one before the card is painted again.
 - `packages/coding-agent/test/suite/regressions/2537-message-component-state.test.ts` (new).
 
@@ -3008,4 +3015,4 @@ The shared markdown theme and the tool card's renderer are interactive-mode inte
 
 ### Expected merge conflict zones
 
-- LOW: `sharedMarkdownTheme()` in `theme.ts`; `releaseContent()` in `tool-execution-renderer.ts`.
+- LOW: `sharedMarkdownTheme()` in `theme.ts`; the theme imports and default arguments of the seven message components; `releaseContent()` in `tool-execution-renderer.ts`.
