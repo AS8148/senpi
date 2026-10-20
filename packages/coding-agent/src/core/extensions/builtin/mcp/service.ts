@@ -162,8 +162,11 @@ export class McpService {
 			// the catalog cache write past this point, and it must land in the
 			// directory this attach resolved, never wherever the environment
 			// points when the write finally runs.
-			const sessionOptions: McpSessionOptions =
-				options.agentDir === undefined ? { ...options, agentDir: getAgentDir() } : options;
+			const sessionOptions: McpSessionOptions = {
+				...options,
+				agentDir: options.agentDir ?? getAgentDir(),
+				projectTrusted: options.projectTrusted ?? ctx.isProjectTrusted(),
+			};
 			const config = loadMcpConfig({
 				agentDir: sessionOptions.agentDir,
 				cwd: ctx.cwd,
@@ -171,6 +174,20 @@ export class McpService {
 				projectTrusted: sessionOptions.projectTrusted ?? ctx.isProjectTrusted(),
 			});
 			mergeExtensionMcpServers(config, ctx.getRegisteredMcpServers?.() ?? []);
+			const previous = _pi === undefined ? undefined : this.#bindings.get(_pi);
+			if (
+				previous !== undefined &&
+				previous.sessionId === ctx.sessionManager?.getSessionId?.() &&
+				previous.options.agentDir === sessionOptions.agentDir &&
+				previous.options.env === sessionOptions.env &&
+				previous.options.projectTrusted === sessionOptions.projectTrusted
+			) {
+				// Administrative reattaches do not unload this session's skills.
+				// Dropping them here can dispose a peer's in-flight reconnect.
+				for (const [name, server] of Object.entries(previous.config.servers)) {
+					if (server.source === "skill") config.servers[name] ??= server;
+				}
+			}
 			const owner: McpConfigOwner = { config, options: sessionOptions, context: ctx };
 			const binding = _pi === undefined ? undefined : this.#bind(_pi, owner);
 			const current = this.#effectiveConfig(config);

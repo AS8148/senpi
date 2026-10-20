@@ -1,3 +1,21 @@
+## 2026-10-20 - Retain same-session skill servers during MCP administrative reattach (senpi#3796)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts` retains skill-resolved servers when the same live session reattaches with the same agent directory, explicit environment and trust decision. Newly loaded system or extension declarations still win name collisions. The effective trust decision is captured in the binding's options.
+
+### Why
+
+The reconnect command reattaches after renewing its server. Rebuilding config without the session's skill declarations disposed every skill transport, including a peer project's pending policy resolution, which then reported that its materialization was invalidated. Skill registrations last for their declaring session; an administrative reattach is not an unload.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/extensions/builtin/mcp/service.ts` owns the session binding and config reconciliation that dispose unwanted connections. Grant observers and generation invalidation remain authoritative, and changed session identity, trust, environment or agent directory do not inherit these registrations.
+
+### Expected merge conflict zones
+
+Session option capture and config reconciliation in `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`, especially the load/merge/bind sequence in `attachSession`.
+
 ## 2026-10-20 - Scope project skill MCP environment grants to declarations (senpi#3796)
 
 ### What changed
