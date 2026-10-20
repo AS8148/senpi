@@ -20,6 +20,10 @@ export type { ToolPlacement } from "../extensions/types.ts";
 
 export const TOOL_RUNTIME_UNAVAILABLE = "tool_runtime_unavailable";
 
+export interface ToolUnavailableDetails {
+	readonly code: typeof TOOL_RUNTIME_UNAVAILABLE;
+}
+
 export interface ToolDispatchedInfo {
 	readonly toolCallId: string;
 	readonly placement: ToolPlacement;
@@ -68,7 +72,9 @@ export interface ToolDispatcherOptions {
 
 export interface ToolDispatcher {
 	readonly kind: ToolRuntimeKind;
-	run<TDetails = unknown>(call: ToolDispatchCall<TDetails>): Promise<AgentToolResult<TDetails>>;
+	run<TDetails = unknown>(
+		call: ToolDispatchCall<TDetails>,
+	): Promise<AgentToolResult<TDetails | ToolUnavailableDetails>>;
 	bashOperations(options?: { shellPath?: string }): BashOperations;
 	onDispatched(observer: ToolDispatchObserver): () => void;
 }
@@ -91,7 +97,9 @@ export function resolveToolPlacement(
 abstract class BaseToolDispatcher implements ToolDispatcher {
 	abstract readonly kind: ToolRuntimeKind;
 
-	abstract run<TDetails>(call: ToolDispatchCall<TDetails>): Promise<AgentToolResult<TDetails>>;
+	abstract run<TDetails>(
+		call: ToolDispatchCall<TDetails>,
+	): Promise<AgentToolResult<TDetails | ToolUnavailableDetails>>;
 
 	abstract bashOperations(options?: { shellPath?: string }): BashOperations;
 
@@ -115,7 +123,7 @@ abstract class BaseToolDispatcher implements ToolDispatcher {
 		if (placement === "server" && this.kind === "child" && definition.placement === "child") {
 			if (!this.pinNotified.has(definition.name)) {
 				this.pinNotified.add(definition.name);
-				this.notifySink?.("tool_placement_pinned", { kind: definition.name, reason: "server_pinned" });
+				this.notifySink?.("tool_placement_pinned", { tool: definition.name, reason: "server_pinned" });
 			}
 		}
 		return placement;
@@ -127,7 +135,16 @@ abstract class BaseToolDispatcher implements ToolDispatcher {
 	}
 
 	protected emitDispatched(info: ToolDispatchedInfo): void {
-		for (const observer of [...this.observers]) observer(info);
+		for (const observer of [...this.observers]) {
+			try {
+				observer(info);
+			} catch (error) {
+				// An observer is diagnostics only: its failure must never become the tool call's failure.
+				this.notifySink?.("tool_dispatch_observer_failed", {
+					message: error instanceof Error ? error.message : String(error),
+				});
+			}
+		}
 	}
 }
 
@@ -157,7 +174,7 @@ export class ChildToolDispatcher extends BaseToolDispatcher {
 		this.#childRunner = childRunner;
 	}
 
-	run<TDetails>(call: ToolDispatchCall<TDetails>): Promise<AgentToolResult<TDetails>> {
+	run<TDetails>(call: ToolDispatchCall<TDetails>): Promise<AgentToolResult<TDetails | ToolUnavailableDetails>> {
 		if (this.placementFor(call.definition) === "server") {
 			return this.runOnServer(call);
 		}
@@ -187,7 +204,7 @@ export class ChildToolDispatcher extends BaseToolDispatcher {
 export function createToolDispatcher(options: ToolDispatcherOptions): ToolDispatcher {
 	return options.runtime === "child"
 		? new ChildToolDispatcher(options.notify, options.childRunner)
-		: new InProcessToolDispatcher();
+		: new InProcessToolDispatcher(options.notify);
 }
 
 function childModuleJob(call: {
@@ -208,7 +225,7 @@ function isToolResult<TDetails>(value: unknown): value is AgentToolResult<TDetai
 	return typeof value === "object" && value !== null && Array.isArray(Reflect.get(value, "content"));
 }
 
-export function unavailableToolResult(toolName: string): AgentToolResult<any> {
+export function unavailableToolResult(toolName: string): AgentToolResult<ToolUnavailableDetails> {
 	return {
 		content: [
 			{
