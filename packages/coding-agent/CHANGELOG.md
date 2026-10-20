@@ -14,6 +14,7 @@
 
 - Each mounted message no longer keeps its own copy of the markdown theme, and a tool card above the kept history no longer keeps a second copy of its result in its renderer: about 640 bytes per message and 2 KB per tool card for the rest of the session ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)).
 - A bundled install's RPC host supervisor now starts from its own small program instead of the whole CLI, so each supervisor stays near the size of its own code. The desktop runs one per open thread ([#3743](https://github.com/code-yeongyu/senpi/issues/3743)).
+- With several accounts for one provider, a usage limit no longer keeps failing turns after the limit is gone: an account is blocked until the reset the provider named instead of a backoff that grew past it, a successful answer clears its failure history, and when every account is still cooling the turn is sent through the one due back first, so a usage reset redeemed early is picked up on the next turn without a restart. A quota failure line now says when it resets ([#3771](https://github.com/code-yeongyu/senpi/issues/3771)).
 
 ### Removed
 
