@@ -1,3 +1,66 @@
+## 2026-10-18 - An unreadable holder start time is reported as unproven (senpi#3658)
+
+### What changed
+
+- `lease-file.ts`: `reclaimLockState` still returns `held` for a live pid whose start time cannot be read now, but marks it `unproven: true`. A readable start time is compared as before.
+
+### Why
+
+- An unreadable start time cannot tell the holder from a process wearing its reused pid. The session-holder reader (`core/session-holders.ts`) may then reclaim the record on positive evidence that the holder's host generation ended; without that evidence it stays held (#1609). Windows run: sisyphuslabs/omo-desktop-app#3157, https://github.com/sisyphuslabs/omo-desktop-app/actions/runs/39166325038.
+
+### Why an extension could not handle it
+
+- The lease primitives are this builtin's own.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `reclaimLockState`.
+
+## 2026-10-18 - Terminal launches can pass the tool child's execution barrier (senpi#3566 todo 9)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/extension.ts`: `bash`, `bash_output`, `bash_input`, `bash_resize` and `kill_bash` are registered with `placement: "child"` and a `childJob` (`tools/child-placement.ts`); `monitor` stays on the server. Under `--tool-runtime in-process` both are ignored.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/child-placement.ts` (new): the job each tool runs on the child; a child's session ids carry its generation (`bash_c<gen>_<n>`, via `TerminalManager`'s `idScope`), so `placement` sends a call naming a server session (a monitor's `bash_N`, `mon_*`, `watch_*`, `rpc_*`) to the server, a child id to the child, and `kill_bash` without an id to both; `result` reports a child id from an earlier generation `lost`; the bash job's `wake` hands the child's background start/exit to `onBackgroundStart`/`onBackgroundExit` and `childExited` ends the background sessions of an exited generation with a notice.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/manager.ts`: `TerminalManagerOptions.idScope`, passed to the pty `SessionRegistry`.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/context.ts`, `notify.ts`, `session-bundle.ts`, `extension-state.ts`, `tools/spawn.ts` (`describeExit`): a background exit is read through `TerminalExitView` (`exitResult` + `fullOutput()`), which a live session satisfies and which the server builds from the child's exit summary.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/spawn.ts`: a refused barrier release stops the session it had registered.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/context.ts`: optional `TerminalToolContext.launchBarrier` (`wrap` + `release`).
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/spawn.ts`: `spawnCommandSession` starts the command through `launchBarrier.wrap` and awaits `launchBarrier.release` (the server records the started PTY session's group, then the go-line is written) before any stdin-transport command is written. Without a barrier - the in-process path - it spawns exactly as before.
+
+### Why
+
+On the session's tool child every launch must pass the execution barrier, PTY launches included; the terminal bodies run there unchanged, so the hook sits at their one spawn point.
+
+### Why an extension could not handle it
+
+The spawn point is inside the terminal extension's own tool bodies, which the tool child reuses.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/context.ts`: the end of `TerminalToolContext` and the new `TerminalLaunchBarrier`.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/spawn.ts`: the `manager.create` call and the lines after it.
+
+## 2026-10-17 - Human-input command monitors (oh-my-openagent#10280)
+
+### What changed
+
+- `tools/monitor-schema.ts` / `tools/monitor.ts`: command monitors accept `human_input: true` for watches whose output lines are messages a person wrote (a chat or inbox bridge); the file and rpc branches refuse it.
+- `command-monitor-source.ts` tags that watch's output lines `humanInput: true` (`monitor-types.ts`); restore notices and exit summaries stay untagged. `monitor-notify.ts` sets `humanInput: true` on the matching `details.monitors` entry, and the custom type plus `isHumanInputMonitorNotification` live in the shared `monitor-state-event.ts` seam the goal builtin reads.
+- `terminal-manifest*.ts` / `durable-command.ts`: the flag persists on the manifest entry and a restored watch keeps it.
+
+### Why
+
+- Goal continuation must count a person's words as new input even when they arrive through a monitor, while machine status must not reset its no-progress guard. Only the agent that arms the watch knows which kind it is.
+
+### Why an extension could not handle it
+
+- The notification payload and the durable monitor record are owned by this builtin.
+
+### Expected merge conflict zones
+
+- LOW: the monitor schema, `#consume` in `command-monitor-source.ts`, `#monitorDetails` in `monitor-notify.ts`, the manifest field lists.
+
 ## 2026-10-13 - Session workers share the host process start instant (senpi#3255)
 
 ### What changed

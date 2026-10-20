@@ -10,6 +10,7 @@ import { APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, ENV_SESSION_DIR } from "../co
 import type { ExtensionFlag } from "../core/extensions/types.ts";
 import type { TuiMode } from "../core/settings-manager.ts";
 import { isGrokNeoEnabled } from "./grok-neo-gate.ts";
+import { isToolRuntimeKind, type ToolRuntimeKind } from "./tool-runtime.ts";
 
 export type Mode = "text" | "json" | "rpc";
 
@@ -68,8 +69,12 @@ export interface Args {
 	listen?: string;
 	/** Explicit session runtime for a multi-session host; `resolveSessionRuntime` owns the default. */
 	sessionRuntime?: SessionRuntimeKind;
+	/** Explicit tool runtime; `resolveToolRuntime` owns the default and the env fallback. */
+	toolRuntime?: ToolRuntimeKind;
 	messages: string[];
 	fileArgs: string[];
+	/** A bare `-` argument: read stdin to EOF even when a prompt argument is given. */
+	readStdin?: boolean;
 	/** Unknown flags (potentially extension flags) - map of flag name to value */
 	unknownFlags: Map<string, boolean | string>;
 	diagnostics: Array<{ type: "warning" | "error"; message: string }>;
@@ -302,6 +307,11 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 			if (value !== undefined && !value.startsWith("--")) i++;
 			if (value !== undefined && isSessionRuntimeKind(value)) result.sessionRuntime = value;
 			else result.diagnostics.push({ type: "error", message: "--session-runtime must be in-process or worker" });
+		} else if (arg === "--tool-runtime") {
+			const value = args[i + 1];
+			if (value !== undefined && !value.startsWith("--")) i++;
+			if (value !== undefined && isToolRuntimeKind(value)) result.toolRuntime = value;
+			else result.diagnostics.push({ type: "error", message: "--tool-runtime must be in-process or child" });
 		} else if (arg === "--listen" && result.mode === "rpc") {
 			const value = args[i + 1];
 			if (value === undefined || value.startsWith("--")) {
@@ -327,6 +337,8 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 					result.unknownFlags.set(flagName, true);
 				}
 			}
+		} else if (arg === "-") {
+			result.readStdin = true;
 		} else if (arg.startsWith("-") && !arg.startsWith("--")) {
 			result.diagnostics.push({ type: "error", message: `Unknown option: ${arg}` });
 		} else if (!arg.startsWith("-")) {
@@ -391,6 +403,7 @@ ${chalk.bold("Options:")}
   --append-system-prompt <text>  Append text or file contents to the system prompt (can be used multiple times)
   --mode <mode>                  Output mode: text (default), json, or rpc
   --print, -p                    Non-interactive mode: process prompt and exit
+  -                              Wait for stdin to close and prepend it to the prompt (a silent stdin pipe is otherwise skipped after 2 s when a prompt argument is given)
   --continue, -c                 Continue previous session
   --resume, -r                   Select a session to resume
   --session <path|id>            Use specific session file or partial UUID
@@ -430,6 +443,7 @@ ${chalk.bold("Options:")}
 ${grokNeoOptionsText}  --multi-session               Serve multiple routed RPC sessions
   --listen <address>            RPC listener: stdio://, unix://, unix:///path, or a socket path
   --session-runtime <kind>      Multi-session host runtime: in-process (socket default) or worker
+  --tool-runtime <kind>         Where heavy tool work runs: in-process (default) or child
   --auto-title-sessions         Auto-generate session titles outside interactive mode (deprecated for hosts; prefer open_session.auto_title)
   --help, -h                     Show this help
   --version, -v                  Show version number
@@ -554,7 +568,8 @@ ${chalk.bold("Environment Variables:")}
   PI_RULES_MAX_RULE_CHARS          - Per-rule formatted payload character cap (default: 12000)
   PI_RULES_MAX_RESULT_CHARS        - Complete static/dynamic block character cap (default: 40000)
   PI_TELEMETRY                     - Override install telemetry when set to 1/true/yes or 0/false/no
-  PI_SHARE_VIEWER_URL              - Base URL for /share command (default: https://pi.dev/session/)
+  PI_SHARE_VIEWER_URL              - Opt-in viewer base URL for /share (default: none, gist link only)
+  PI_DISABLE_SHARE                 - Set to 1 to turn /share off
 
 ${chalk.bold("Built-in Tool Names:")}
   read       - Read file contents

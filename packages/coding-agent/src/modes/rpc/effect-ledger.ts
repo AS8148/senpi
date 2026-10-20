@@ -1,5 +1,6 @@
 import type { AgentSession } from "../../core/agent-session.ts";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
+import { CLIENT_ADMISSION_ENTRY, clientAdmissionRecordSchema } from "./client-admission-record.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
 import { effectCrashPoint } from "./effect-crash-point.ts";
 import { contextBudgetOutcome, EFFECT_OUTCOMES, modelSwitchErrorOutcome } from "./effect-outcome-copy.ts";
@@ -12,13 +13,50 @@ import {
 	type EffectStatus,
 	effectFingerprint,
 	isTerminalEffectState,
+	type QueuedChangeAnswer,
 	RPC_EFFECT_ENTRY,
 	type RpcEffectRecord,
 	rpcEffectRecordSchema,
 } from "./effect-record.ts";
 import { projectAdmission, projectEffect } from "./effect-status.ts";
+import { noteSessionEffect } from "./session-effect-status.ts";
 
 const ledgers = new WeakMap<AgentSession, EffectLedger>();
+
+const latestCache = new WeakMap<
+	AgentSession,
+	{ readonly entries: number; readonly latest: EffectStatus | undefined }
+>();
+
+/**
+ * The session's most recent effect receipt, read from the transcript tail WITHOUT opening a ledger:
+ * answering a status subscriber must never seal a stale receipt or restore queued input as a side effect.
+ */
+export function latestSessionEffect(session: AgentSession): EffectStatus | undefined {
+	const entries = session.sessionManager.getEntries();
+	const cached = latestCache.get(session);
+	if (cached?.entries === entries.length) return cached.latest;
+	let latest: EffectStatus | undefined;
+	for (let index = entries.length - 1; index >= 0; index--) {
+		const entry = entries[index];
+		if (entry?.type !== "custom") continue;
+		if (entry.customType === RPC_EFFECT_ENTRY) {
+			const parsed = rpcEffectRecordSchema.safeParse(entry.data);
+			if (parsed.success) {
+				latest = projectEffect(parsed.data);
+				break;
+			}
+		} else if (entry.customType === CLIENT_ADMISSION_ENTRY) {
+			const parsed = clientAdmissionRecordSchema.safeParse(entry.data);
+			if (parsed.success) {
+				latest = projectAdmission(parsed.data);
+				break;
+			}
+		}
+	}
+	latestCache.set(session, { entries: entries.length, latest });
+	return latest;
+}
 
 export type EffectBegin = { readonly replay: EffectStatus } | { readonly record: RpcEffectRecord };
 
@@ -134,6 +172,13 @@ export class EffectLedger {
 				case "dequeue":
 					this.transition(record.effectId, "failed", { outcome: EFFECT_OUTCOMES.dequeueInterruptedByReopen });
 					break;
+				case "edit_queued":
+					this.transition(record.effectId, "failed", { outcome: EFFECT_OUTCOMES.editQueuedInterruptedByReopen });
+					break;
+				default: {
+					const unsealed: never = record.kind;
+					throw new Error(`no reopen seal for effect kind ${unsealed}`);
+				}
 			}
 		}
 	}
@@ -169,7 +214,11 @@ export class EffectLedger {
 	transition(
 		effectId: string,
 		state: EffectState,
-		patch: { readonly disposition?: string; readonly outcome?: EffectOutcome } = {},
+		patch: {
+			readonly disposition?: string;
+			readonly outcome?: EffectOutcome;
+			readonly answer?: QueuedChangeAnswer;
+		} = {},
 	): EffectStatus {
 		const current = this.records.get(effectId);
 		if (!current) throw new Error(`No effect ${effectId} in session ${this.durableSessionId}`);
@@ -195,6 +244,7 @@ export class EffectLedger {
 		effectCrashPoint("before", record.kind, record.state);
 		this.session.sessionManager.appendCustomEntry(RPC_EFFECT_ENTRY, record);
 		this.records.set(record.effectId, record);
+		noteSessionEffect(this.session, projectEffect(record));
 		effectCrashPoint("after", record.kind, record.state);
 	}
 }

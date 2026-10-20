@@ -17,6 +17,7 @@ import type {
 } from "@earendil-works/pi-ai/compat";
 import { registerFauxProvider, streamSimple } from "@earendil-works/pi-ai/compat";
 import { makeTempDir, onTempCleanup } from "../../../../scripts/vitest-temp.ts";
+import type { ToolRuntimeKind } from "../../src/cli/tool-runtime.ts";
 import { AgentSession, type AgentSessionEvent } from "../../src/core/agent-session.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import type { ExtensionRunner, ExtensionUIContext } from "../../src/core/extensions/index.ts";
@@ -113,6 +114,8 @@ export interface HarnessOptions {
 	models?: FauxModelDefinition[];
 	api?: string;
 	provider?: string;
+	/** Forwarded to the faux provider so a stream can be held open deterministically. */
+	fauxStreamOptions?: { tokensPerSecond?: number };
 	settings?: Partial<Settings>;
 	systemPrompt?: string;
 	tools?: AgentTool[];
@@ -141,6 +144,8 @@ export interface HarnessOptions {
 	evalOnlyToolNames?: string[];
 	/** Send the senpi#2093 environment-context message. Off by default so transcript-pinning tests stay exact. */
 	environmentContext?: boolean;
+	/** Headers every faux response reports through `onResponse`. */
+	fauxResponseHeaders?: Record<string, string>;
 	/** Build a sibling session on another harness's faux provider, agent dir, and model registry. */
 	siblingOf?: Harness;
 	/** With `siblingOf`: build a fresh model runtime instead of sharing it, as `/new` does in the CLI. */
@@ -149,6 +154,8 @@ export interface HarnessOptions {
 	sessionManager?: SessionManager;
 	/** Working directory tools and extensions see as `ctx.cwd`. Default: the harness temp dir. */
 	cwd?: string;
+	/** Tool runtime for the session (senpi#3566); absent means `in-process`. */
+	toolRuntime?: ToolRuntimeKind;
 }
 
 export interface Harness {
@@ -187,6 +194,8 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 			api: options.api,
 			provider: options.provider,
 			models: options.models,
+			tokensPerSecond: options.fauxStreamOptions?.tokensPerSecond,
+			...(options.fauxResponseHeaders === undefined ? {} : { responseHeaders: options.fauxResponseHeaders }),
 		});
 	if (!sibling) fauxProvider.setResponses([]);
 	const model = fauxProvider.getModel();
@@ -316,6 +325,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		fallbackWallNow: options.fallbackWallNow,
 		retryRandom: options.retryRandom ?? (() => 0.5),
 		environmentContext: options.environmentContext ?? false,
+		...(options.toolRuntime !== undefined ? { toolRuntime: options.toolRuntime } : {}),
 	});
 
 	const events: AgentSessionEvent[] = [];

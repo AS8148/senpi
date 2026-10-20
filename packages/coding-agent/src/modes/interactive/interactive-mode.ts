@@ -55,7 +55,7 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import chalk from "chalk";
-import { spawn, spawnSync } from "child_process";
+import { spawn } from "child_process";
 import {
 	APP_COMMAND,
 	APP_NAME,
@@ -68,7 +68,8 @@ import {
 	getAuthPath,
 	getDebugLogPath,
 	getDocsPath,
-	getShareViewerUrl,
+	getShareViewerBase,
+	isShareDisabledByEnvironment,
 } from "../../config.ts";
 import {
 	type AgentSession,
@@ -79,7 +80,8 @@ import {
 } from "../../core/agent-session.ts";
 import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.ts";
 import { formatNoModelsAvailableMessage } from "../../core/auth-guidance.ts";
-import { isApiKeyLoginProvider } from "../../core/auth-providers.ts";
+import { isApiKeyLoginProvider, loginRowStatus } from "../../core/auth-providers.ts";
+import { markModeCrashHandler } from "../../core/bootstrap-crash-listeners.ts";
 import { envValue } from "../../core/brand.ts";
 import {
 	CACHE_TTL_MS,
@@ -130,14 +132,19 @@ import {
 	type ScopedModel,
 } from "../../core/model-resolver.ts";
 import { CredentialSynchronizationError } from "../../core/model-runtime.ts";
+import { formatProviderFailure } from "../../core/provider-failure.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { usageLimitCause } from "../../core/retry-fallback/usage-limit.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
 import { createSessionLogger, type SessionLogger } from "../../core/session-log.ts";
 import { type SessionEntry, SessionManager, sessionEntryToContextMessages } from "../../core/session-manager.ts";
 import type { FullscreenExitOutput, QuietStartup, TuiMode } from "../../core/settings-manager.ts";
+import { checkGhAuth, uploadSecretGist } from "../../core/share/share-gh.ts";
+import { currentShareRedactionContext } from "../../core/share/share-redaction.ts";
+import { runShare, type ShareUploadResult } from "../../core/share/share-session.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
+import { containStaleExtensionError } from "../../core/stale-extension-containment.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
 import { formatThinkingClampWarning } from "../../core/thinking-levels.ts";
 import { formatTimings, resetTimings, time } from "../../core/timings.ts";
@@ -152,6 +159,7 @@ import {
 	isRecoverableInspectorVmImportError,
 } from "../../inspector-policy.ts";
 import { getNewEntries, normalizeChangelogLinks, parseChangelog } from "../../utils/changelog.ts";
+import { signalSpawnedChild } from "../../utils/child-signal.ts";
 import { copyToClipboard, readClipboardFilePaths, readClipboardText } from "../../utils/clipboard.ts";
 import { readClipboardImage } from "../../utils/clipboard-image.ts";
 import { parseGitUrl } from "../../utils/git.ts";
@@ -203,6 +211,7 @@ import { formatKeyText, keyDisplayText, keyHint, keyText, rawKeyHint } from "./c
 import { LoadedResourceSection } from "./components/loaded-resource-section.ts";
 import { LoginDialogComponent } from "./components/login-dialog.ts";
 import { createMermaidMarkdownTransformer } from "./components/mermaid.ts";
+import { createMessagePathLinkTransformer } from "./components/message-path-links.ts";
 import {
 	type FavoriteModelIds,
 	getModelFullId,
@@ -901,6 +910,11 @@ type AsyncQuestionState = {
 	finish: (response: QuestionResponse) => void;
 };
 
+const SHARE_UPLOAD = "Upload";
+const SHARE_REVIEW = "Review the exact file first";
+const SHARE_EXCLUDE = "Leave tool outputs out";
+const SHARE_CANCEL = "Cancel";
+
 export class InteractiveMode {
 	private static confirmsRefusedUnknownCommand(host: InteractiveMode, text: string): boolean {
 		const confirmed = host.refusedUnknownCommandText === text;
@@ -1045,6 +1059,7 @@ export class InteractiveMode {
 		getMode: () => this.settingsManager.getMermaidRenderingMode(),
 		theme,
 	});
+	private readonly messagePathLinkTransformer = createMessagePathLinkTransformer(() => this.sessionManager.getCwd());
 
 	// Skill commands: command name -> skill file path
 	private skillCommands = new Map<string, string>();
@@ -1987,7 +2002,7 @@ export class InteractiveMode {
 				});
 				let stdout = "";
 				const timer = setTimeout(() => {
-					proc.kill();
+					signalSpawnedChild(proc);
 					resolve(undefined);
 				}, 2000);
 
@@ -2625,13 +2640,17 @@ export class InteractiveMode {
 		}
 
 		if (showDiagnostics) {
-			const addDiagnosticNotice = (title: string, diagnostics: readonly ResourceDiagnostic[]): void => {
+			const addDiagnosticNotice = (
+				title: string,
+				diagnostics: readonly ResourceDiagnostic[],
+				why = "Conflicting or invalid loaded resources were found.",
+			): void => {
 				this.loadedResourcesContainer.addChild(
 					buildNoticeBox(
 						{
 							title,
 							tone: "warning",
-							why: "Conflicting or invalid loaded resources were found.",
+							why,
 							extra: this.formatDiagnostics(diagnostics, sourceInfos),
 						},
 						{ expanded: this.toolOutputExpanded },
@@ -2641,7 +2660,19 @@ export class InteractiveMode {
 				this.loadedResourcesContainer.addChild(new Spacer(1));
 			};
 
-			const skillDiagnostics = skillsResult.diagnostics;
+			const contextDiagnostics = [
+				...(this.session.resourceLoader.getAgentsFiles().diagnostics ?? []),
+				...skillsResult.diagnostics.filter((diagnostic) => diagnostic.category === "size-limit"),
+			];
+			if (contextDiagnostics.length > 0) {
+				addDiagnosticNotice(
+					"Context size limits",
+					contextDiagnostics,
+					"Context files or skill catalogs were limited to keep requests bounded.",
+				);
+			}
+
+			const skillDiagnostics = skillsResult.diagnostics.filter((diagnostic) => diagnostic.category !== "size-limit");
 			if (skillDiagnostics.length > 0) {
 				addDiagnosticNotice("Skill conflicts", skillDiagnostics);
 			}
@@ -2913,7 +2944,11 @@ export class InteractiveMode {
 	}
 
 	private getMarkdownTransformers(): MarkdownTransformer[] {
-		return [this.mermaidMarkdownTransformer, ...this.session.extensionRunner.getMarkdownTransformers()];
+		return [
+			this.mermaidMarkdownTransformer,
+			this.messagePathLinkTransformer,
+			...this.session.extensionRunner.getMarkdownTransformers(),
+		];
 	}
 
 	/**
@@ -3394,8 +3429,16 @@ export class InteractiveMode {
 		if (Array.isArray(content)) {
 			// Wrap string array in a Container with Text components
 			const container = new Container();
-			for (const line of content.slice(0, InteractiveMode.MAX_WIDGET_LINES)) {
-				container.addChild(new Text(line, 1, 0));
+			const shown = content.slice(0, InteractiveMode.MAX_WIDGET_LINES);
+			const actions = options?.actions ?? [];
+			for (const [index, line] of shown.entries()) {
+				if (index === shown.length - 1 && actions.length > 0) {
+					// The TUI cannot click, so each choice names the command that runs it, on the widget's last line.
+					const choices = actions.map((action) => `${action.label}: ${action.command}`).join(" · ");
+					container.addChild(new ThemedText(() => `${line}  ${theme.fg("muted", choices)}`, 1, 0));
+				} else {
+					container.addChild(new Text(line, 1, 0));
+				}
 			}
 			if (content.length > InteractiveMode.MAX_WIDGET_LINES) {
 				container.addChild(new ThemedText(() => theme.fg("muted", "... (widget truncated)"), 1, 0));
@@ -5463,6 +5506,7 @@ export class InteractiveMode {
 				}
 				this.detachAssistantTextSegments();
 				this.clearPendingTools();
+				if (event.failure !== undefined && !event.willRetry) this.showError(formatProviderFailure(event.failure));
 
 				this.ui.requestRender();
 				break;
@@ -5482,6 +5526,10 @@ export class InteractiveMode {
 
 			case "continuation_error":
 				this.showError(sanitizeTerminalLabel(event.errorMessage));
+				break;
+
+			case "offload_module_stuck":
+				this.showWarning(sanitizeTerminalLabel(event.notice));
 				break;
 
 			case "transcript_write_failed": {
@@ -6646,7 +6694,7 @@ export class InteractiveMode {
 			// which the stdout/stderr error handler turns into emergencyTerminalExit;
 			// the render loop is already idle, so this cannot hot-spin (see #4144).
 			await this.sessionControlHost?.disposeActive();
-			await this.runtimeHost.dispose();
+			await this.runtimeHost.dispose({ processExit: true });
 			this.themeController.disableAutoSync();
 			await this.ui.terminal.drainInput(1000);
 			this.stop();
@@ -6664,7 +6712,7 @@ export class InteractiveMode {
 		this.stop({ restoreStderr: false });
 		try {
 			await this.sessionControlHost?.disposeActive();
-			await this.runtimeHost.dispose();
+			await this.runtimeHost.dispose({ processExit: true });
 		} finally {
 			restoreInteractiveStderr();
 		}
@@ -6720,6 +6768,7 @@ export class InteractiveMode {
 			this.showWarning(INSPECTOR_VM_IMPORT_WARNING);
 			return;
 		}
+		if (containStaleExtensionError(error, origin)) return;
 		this.isShuttingDown = true;
 		try {
 			this.unregisterSignalHandlers();
@@ -6833,9 +6882,11 @@ export class InteractiveMode {
 		// in pi) leaves the terminal in raw mode with no cursor.
 		const uncaughtExceptionHandler = (error: Error, origin: "uncaughtException" | "unhandledRejection") =>
 			this.uncaughtCrash(error, origin);
+		markModeCrashHandler(uncaughtExceptionHandler);
 		process.prependListener("uncaughtException", uncaughtExceptionHandler);
 		this.signalCleanupHandlers.push(() => process.off("uncaughtException", uncaughtExceptionHandler));
 		const unhandledRejectionHandler = (reason: unknown) => this.unhandledRejection(reason);
+		markModeCrashHandler(unhandledRejectionHandler);
 		process.prependListener("unhandledRejection", unhandledRejectionHandler);
 		this.signalCleanupHandlers.push(() => process.off("unhandledRejection", unhandledRejectionHandler));
 
@@ -8825,20 +8876,13 @@ export class InteractiveMode {
 	private getLoginProviderOptions(authType?: "oauth" | "api_key"): AuthSelectorProvider[] {
 		const options: AuthSelectorProvider[] = [];
 		for (const provider of this.session.modelRuntime.getProviders()) {
-			const authStatus = this.session.modelRuntime.getProviderAuthStatus(provider.id);
-			const status = authStatus.configured
-				? {
-						type: this.session.modelRuntime.isUsingOAuth(provider.id) ? ("oauth" as const) : ("api_key" as const),
-						source: authStatus.label ?? authStatus.source,
-					}
-				: undefined;
 			if ((!authType || authType === "oauth") && provider.auth.oauth) {
 				options.push({
 					id: provider.id,
 					name: provider.name,
 					authType: "oauth",
 					method: provider.auth.oauth,
-					status,
+					status: loginRowStatus(this.session.modelRegistry, provider, "oauth"),
 				});
 			}
 			if ((!authType || authType === "api_key") && provider.auth.apiKey) {
@@ -8847,7 +8891,7 @@ export class InteractiveMode {
 					name: provider.name,
 					authType: "api_key",
 					method: provider.auth.apiKey,
-					status,
+					status: loginRowStatus(this.session.modelRegistry, provider, "api_key"),
 				});
 			}
 		}
@@ -9595,102 +9639,74 @@ export class InteractiveMode {
 	}
 
 	private async handleShareCommand(): Promise<void> {
-		// Check if gh is available and logged in
-		try {
-			const authResult = spawnSync("gh", ["auth", "status"], {
-				encoding: "utf-8",
-			});
-			if (authResult.status !== 0) {
+		const outcome = await runShare({
+			disabledReason: () =>
+				isShareDisabledByEnvironment()
+					? "Sharing is turned off on this machine (DISABLE_SHARE)."
+					: this.settingsManager.getEnableSessionShare()
+						? undefined
+						: "Sharing is turned off in settings (enableSessionShare: false).",
+			checkGh: checkGhAuth,
+			render: (sanitize) => this.session.renderToHtml({ themeName: theme.name, sanitize }),
+			context: currentShareRedactionContext(),
+			ask: async (preview, { omittedOutputs, includesOutputs }) => {
+				const include = `Include tool outputs (${omittedOutputs})`;
+				const toggle = includesOutputs ? [SHARE_EXCLUDE] : omittedOutputs > 0 ? [include] : [];
+				const options = [SHARE_UPLOAD, ...toggle, SHARE_REVIEW, SHARE_CANCEL];
+				const choice = await this.showExtensionSelector(preview, options);
+				if (choice === SHARE_UPLOAD) return "upload";
+				if (choice === include) return "include-outputs";
+				if (choice === SHARE_EXCLUDE) return "exclude-outputs";
+				return choice === SHARE_REVIEW ? "review" : "cancel";
+			},
+			showReviewCopy: (reviewPath) =>
+				this.showStatus(`Exact file to be uploaded: ${reviewPath}\nIt is deleted when this share finishes.`),
+			upload: (html) => this.uploadShareWithLoader(html),
+			viewerBase: getShareViewerBase(),
+		});
+		switch (outcome.kind) {
+			case "disabled":
+				this.showError(outcome.reason);
+				return;
+			case "gh-missing":
+				this.showError("GitHub CLI (gh) is not installed. Install it from https://cli.github.com/");
+				return;
+			case "gh-logged-out":
 				this.showError("GitHub CLI is not logged in. Run 'gh auth login' first.");
 				return;
-			}
-		} catch {
-			this.showError("GitHub CLI (gh) is not installed. Install it from https://cli.github.com/");
-			return;
+			case "export-failed":
+				this.showError(`Failed to export session: ${outcome.message}`);
+				return;
+			case "cancelled":
+				this.showStatus("Share cancelled; nothing was uploaded");
+				return;
+			case "upload-failed":
+				this.showError(`Failed to create gist: ${outcome.message}`);
+				return;
+			case "shared":
+				this.showStatus(
+					outcome.viewerUrl === undefined
+						? `Gist: ${outcome.gistUrl}`
+						: `Share URL: ${outcome.viewerUrl}\nGist: ${outcome.gistUrl}`,
+				);
+				return;
 		}
+	}
 
-		// Export to a temp file
-		const tmpFile = path.join(os.tmpdir(), "session.html");
-		try {
-			await this.session.exportToHtml(tmpFile, { themeName: theme.name });
-		} catch (error: unknown) {
-			this.showError(`Failed to export session: ${error instanceof Error ? error.message : "Unknown error"}`);
-			return;
-		}
-
-		// Show cancellable loader, replacing the editor
+	private async uploadShareWithLoader(html: string): Promise<ShareUploadResult> {
 		const loader = new BorderedLoader(this.ui, theme, "Creating gist...");
 		this.editorContainer.clear();
 		this.editorContainer.addChild(loader);
 		this.ui.setFocus(loader);
 		this.ui.requestRender();
-
-		const restoreEditor = () => {
+		try {
+			return await uploadSecretGist(html, `${APP_NAME}-session.html`, loader.signal);
+		} finally {
 			loader.dispose();
 			this.editorContainer.clear();
 			this.editorContainer.addChild(this.editor);
 			this.ui.setFocus(this.editor);
-			try {
-				fs.unlinkSync(tmpFile);
-			} catch {
-				// Ignore cleanup errors
-			}
-		};
-
-		// Create a secret gist asynchronously
-		let proc: ReturnType<typeof spawn> | null = null;
-
-		loader.onAbort = () => {
-			proc?.kill();
-			restoreEditor();
-			this.showStatus("Share cancelled");
-		};
-
-		try {
-			const result = await new Promise<{
-				stdout: string;
-				stderr: string;
-				code: number | null;
-			}>((resolve) => {
-				proc = spawn("gh", ["gist", "create", "--public=false", tmpFile]);
-				let stdout = "";
-				let stderr = "";
-				proc.stdout?.on("data", (data) => {
-					stdout += data.toString();
-				});
-				proc.stderr?.on("data", (data) => {
-					stderr += data.toString();
-				});
-				proc.on("close", (code) => resolve({ stdout, stderr, code }));
-			});
-
-			if (loader.signal.aborted) return;
-
-			restoreEditor();
-
-			if (result.code !== 0) {
-				const errorMsg = result.stderr?.trim() || "Unknown error";
-				this.showError(`Failed to create gist: ${errorMsg}`);
-				return;
-			}
-
-			// Extract gist ID from the URL returned by gh
-			// gh returns something like: https://gist.github.com/username/GIST_ID
-			const gistUrl = result.stdout?.trim();
-			const gistId = gistUrl?.split("/").pop();
-			if (!gistId) {
-				this.showError("Failed to parse gist ID from gh output");
-				return;
-			}
-
-			// Create the preview URL
-			const previewUrl = getShareViewerUrl(gistId);
-			this.showStatus(`Share URL: ${previewUrl}\nGist: ${gistUrl}`);
-		} catch (error: unknown) {
-			if (!loader.signal.aborted) {
-				restoreEditor();
-				this.showError(`Failed to create gist: ${error instanceof Error ? error.message : "Unknown error"}`);
-			}
+			this.ui.requestRender();
 		}
 	}
 
