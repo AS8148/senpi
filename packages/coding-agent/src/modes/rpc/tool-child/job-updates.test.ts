@@ -79,7 +79,9 @@ describe.skipIf(process.platform === "win32")("streamed job updates", () => {
 			jobId: "j1",
 			channel: {
 				send: (frame) =>
-					frame.type === "update" ? frames.push({ seq: frame.seq, byRef: frame.valueRef !== undefined }) > 0 : true,
+					frame.type === "update"
+						? frames.push({ seq: frame.seq, byRef: frame.valueRef !== undefined }) > 0
+						: true,
 			},
 			writer: new PayloadRefWriter({ root, generation: 1 }),
 		});
