@@ -11158,3 +11158,21 @@ Fallback eligibility and the agent_end retry decision are owned by `AgentSession
 
 - `agent-session.ts`: the retry-state fields, the `transformContext` wrapper in `_installAgentNextTurnRefresh`, the start of the agent_end retry block, and `_isHardErrorFallbackEligible`.
 - `retry-fallback/settings.ts`: `DEFAULT_FALLBACK_CHAINS`.
+
+## 2026-10-20 - Footer data carries the subagent tree cost (senpi#2471)
+
+### What changed
+
+- `packages/coding-agent/src/core/footer-data-provider.ts`: `getSubagentCost()` / `setSubagentCost()` (a negative or non-finite figure clears it), cleared with the extension statuses; `ReadonlyFooterDataProvider` exposes `getSubagentCost` as an optional member.
+
+### Why
+
+- A session that fans out to subagents showed only its own spend in the footer, so it looked far cheaper than it was. The extension that runs the subagents (omo's task engine) knows the tree's spend; the footer needs a typed way to receive it and show it as `$0.380 (+1.270)` (oh-my-pi parity).
+
+### Why an extension could not handle it
+
+- The built-in footer's cost segment and the `ExtensionUIContext` contract are core; `setStatus` can only add a separate status line, not place a figure inside the cost segment.
+
+### Expected merge conflict zones
+
+- LOW: `footer-data-provider.ts` field list, `clearExtensionStatuses`, and the `ReadonlyFooterDataProvider` pick.

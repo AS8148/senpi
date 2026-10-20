@@ -6,6 +6,7 @@
 
 ### Added
 
+- The footer's cost shows what the session's subagents spent next to the session's own cost, as `$0.380 (+1.270)`, so a session that fans out no longer looks cheaper than it is. The figure comes from the extension that runs the subagents through the new `ctx.ui.setSubagentCost(costUsd)`; RPC forwards it as a `setSubagentCost` UI request ([#2471](https://github.com/code-yeongyu/senpi/issues/2471)).
 - When a session of 200k tokens or more has sat idle past its model's prompt-cache lifetime and a fresh session would save at least $1 on the next reply, one line above the editor says what the next reply would cost and what a fresh session would cost, with two choices: `/handoff` starts a new session linked to this one and seeded with a short brief built from the session's state (goal, open todos, last request and answer, touched files), and `/handoff keep` hides the line for the rest of the session. It never interrupts a turn or switches on its own, and never shows for task children, print/JSON runs, turns an extension started, or while a goal is active. Settings: `handoffHint.enabled`, `handoffHint.minContextTokens`, `handoffHint.minSavingUsd`. Extension widgets can carry choices (`setWidget(..., { actions })`), forwarded over RPC as `widgetActions` ([#3230](https://github.com/code-yeongyu/senpi/issues/3230)).
 
 ### Changed

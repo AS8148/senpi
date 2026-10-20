@@ -7003,3 +7003,22 @@ Capability advertisement is core RPC.
 ### Expected merge conflict zones
 
 The classic capability list in `connection-handler.ts`.
+
+## 2026-10-20 - RPC forwards the subagent tree cost (senpi#2471)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `setSubagentCost` emits a fire-and-forget `extension_ui_request` with `method: "setSubagentCost"` and `costUsd` (negative or non-finite sent as undefined).
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RpcExtensionUIRequest` gains the `setSubagentCost` variant.
+
+### Why
+
+- A session that fans out to subagents showed only its own spend in the footer, so it looked far cheaper than it was. The extension that runs the subagents (omo's task engine) knows the tree's spend; the footer needs a typed way to receive it and show it as `$0.380 (+1.270)` (oh-my-pi parity).
+
+### Why an extension could not handle it
+
+- RPC clients render their own footer; the request must cross the wire like `setStatus` does, which only the RPC UI context can emit.
+
+### Expected merge conflict zones
+
+- LOW: `rpc-types.ts` `RpcExtensionUIRequest` union next to `setStatus`.
