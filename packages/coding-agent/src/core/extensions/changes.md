@@ -16,6 +16,24 @@ The widget options type is the public extension contract; an extension cannot ad
 
 - LOW: `types.ts` `ExtensionWidgetOptions`, next to `WidgetPlacement`.
 
+## 2026-10-19 - A tool's job on the tool child: per-call placement, wakes and child exits (senpi#3740)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ToolDefinition.childJob` (`ToolChildJob`: the built-in job `kind`, its `args`, an optional `result` rewrite with the generation it ran on, `placement(params)` - `server`, `child` or `both` per call - `wake(value, generation)` for what the child reports later, and `childExited(generation)`).
+
+### Why
+
+The terminal tools run on the session's tool child, but a call naming a server-owned session (a monitor) must stay on the server, and the child's background sessions report their exit after the job that started them ended.
+
+### Why an extension could not handle it
+
+Placement and the tool child's channel are owned by the session's dispatcher; a tool can only declare them on its definition.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ToolChildJob` before `ToolChildModule`, and `childJob` on `ToolDefinition`.
+
 ## 2026-10-18 - registerChildModule and ctx.offload (senpi#3566 todo 8)
 
 ### What changed

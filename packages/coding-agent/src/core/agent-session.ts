@@ -265,6 +265,7 @@ import type {
 	CompactionRejectionCause,
 	FilesystemPolicyChecker,
 	ModelSelectSource,
+	ToolChildJob,
 } from "./extensions/types.ts";
 import { normalizeToolExposure, RUNTIME_EXTENSION_PATH } from "./extensions/types.ts";
 import { createUserActivitySource, emitUserActivity, type UserActivityKind } from "./extensions/user-activity.ts";
@@ -1539,8 +1540,16 @@ export class AgentSession {
 							...toolChildModuleRoots(this._extensionRunner.getAllRegisteredTools()),
 							...childModuleRoots(this._extensionRunner.getAllChildModules()),
 						],
-						onRecord: (record) => this._emit({ type: "session_tool_child", ...record }),
+						onRecord: (record) => {
+							this._emit({ type: "session_tool_child", ...record });
+							if (record.state === "exited")
+								for (const job of this._childJobs()) job.childExited?.(record.generation);
+						},
 						onHostCall: hostCalls,
+						onWake: (wake) => {
+							for (const job of this._childJobs())
+								if (job.kind === wake.source) job.wake?.(wake.value, wake.generation);
+						},
 					})
 				: undefined;
 		this._toolDispatcher = createToolDispatcher({
@@ -1556,7 +1565,9 @@ export class AgentSession {
 				});
 				this._emit({ type: "offload_module_stuck", ...notice });
 			},
-			...(this._toolChild === undefined ? {} : { childRunner: this._toolChild.runner }),
+			...(this._toolChild === undefined
+				? {}
+				: { childRunner: this._toolChild.runner, childKindRunner: this._toolChild.kindRunner }),
 		});
 		this._fallbackValidationWarnings = validateFallbackChains(
 			this.settingsManager.getRawFallbackChains(),
@@ -4654,6 +4665,13 @@ export class AgentSession {
 	 * `allowLazyActivation` hard stop, then invoke activators in registration order.
 	 * The caller re-resolves the tool from the active registry before execution.
 	 */
+	/** The child jobs the registered tools declare (`ToolDefinition.childJob`): who a child's wake or exit concerns. */
+	private _childJobs(): ToolChildJob[] {
+		return this._extensionRunner
+			.getAllRegisteredTools()
+			.flatMap((tool) => (tool.definition.childJob === undefined ? [] : [tool.definition.childJob]));
+	}
+
 	private _callableToolNames(): string[] {
 		const names = this.agent.state.tools.map((tool) => tool.name);
 		for (const [name, { definition }] of this._toolDefinitions) {
@@ -10314,7 +10332,14 @@ export class AgentSession {
 				)
 			: createAllToolDefinitions(this._cwd, {
 					read: { autoResizeImages, filesystemPolicy },
-					bash: { commandPrefix: shellCommandPrefix, shellPath },
+					// The core bash tool's process work goes through the dispatcher's operations: the same
+					// local operations under in-process, and the tool child's user.bash job under child
+					// (senpi#3566 todo 9), while truncation and rendering stay on the server.
+					bash: {
+						commandPrefix: shellCommandPrefix,
+						shellPath,
+						operations: this._toolDispatcher.bashOperations({ shellPath }),
+					},
 					write: { filesystemPolicy },
 					edit: { filesystemPolicy },
 					grep: { filesystemPolicy },

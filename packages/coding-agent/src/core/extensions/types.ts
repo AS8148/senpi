@@ -941,6 +941,25 @@ export type ToolPlacement = "server" | "child";
  * Tool definition for registerTool().
  */
 /** A tool body loaded from a file on the session's tool child (senpi#3566). */
+export interface ToolChildJob {
+	readonly kind: string;
+	args(params: unknown, toolCallId: string, ctx: ExtensionToolContext): unknown;
+	/**
+	 * Sees the job's result with the child generation it ran on, and may replace it: state that lives on the child (a
+	 * PTY session) is gone once that generation exits, which only the server can tell apart from "never existed".
+	 */
+	result?(params: unknown, value: AgentToolResult<unknown>, generation: number): AgentToolResult<unknown>;
+	/**
+	 * Where one call runs. State the server owns (a monitor's session) is reached on the server, the child's own on the
+	 * child; `both` runs the server's body, then the child's job, and joins their content. Unset: always the child.
+	 */
+	placement?(params: unknown): "server" | "child" | "both";
+	/** Receives what a job of this kind reported later from the child (`wake`), with the generation it came from. */
+	wake?(value: unknown, generation: number): void;
+	/** Told when a child generation exited: state that lived on it is gone. */
+	childExited?(generation: number): void;
+}
+
 export interface ToolChildModule {
 	readonly path: string;
 	readonly export: string;
@@ -1080,6 +1099,11 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	 * child-placed tool reports `tool_runtime_unavailable` under `--tool-runtime child`; `execute` still runs in-process.
 	 */
 	childModule?: ToolChildModule;
+	/**
+	 * A child-placed tool whose body is a tool-child job kind (built-in tools that keep state on the child, such as the
+	 * terminal's PTY sessions) instead of a `childModule`: `args` builds the job's arguments on the server from the call.
+	 */
+	childJob?: ToolChildJob;
 	/** Set by built-in tool factories that capture injected operations or a policy override; such a definition always executes on the session's server process, even when {@link ToolDefinition.placement} is `"child"`, and the dispatcher logs one notice per tool when it pins one. */
 	serverPinned?: boolean;
 

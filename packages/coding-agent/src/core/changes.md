@@ -17,6 +17,24 @@ The handoff hint's switch and thresholds are user settings (defaults: on, 200k t
 
 - LOW: one field in `Settings`, one import line, one interface in `settings-shapes.ts`.
 
+## 2026-10-19 - The session hands its tool child's wakes and exits to the jobs that run there (senpi#3740)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the tool child's `onWake` hands each wake to the registered tool whose `childJob.kind` is its source (`ToolChildJob.wake`), and an `exited` record tells every `childJob.childExited`; the tool dispatcher also gets the child's `kindRunner`, and user bash (`executeBash`) uses the dispatcher's `bashOperations`, so under `--tool-runtime child` it runs on the child.
+
+### Why
+
+A terminal background session on the tool child outlives the job that started it; its exit must still reach the session as the completion notice, and an exited child takes its sessions with it.
+
+### Why an extension could not handle it
+
+Only the session owns its tool child and the registered tools' definitions together.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the `SessionToolChild` options (`onRecord`, `onWake`), the `createToolDispatcher` options, and `_childJobs` beside `_callableToolNames`.
+
 ## 2026-10-18 - ctx.offload runs registered child modules through the session's dispatcher (senpi#3566 todo 8)
 
 ### What changed
