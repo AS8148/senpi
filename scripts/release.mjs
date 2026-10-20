@@ -48,6 +48,7 @@ import {
 	runPackageLockRefresh,
 } from "./release-artifacts.mjs";
 import { CHANGELOGS, reAddUnreleasedSections, stampChangelogs } from "./release-changelog.mjs";
+import { compileFragments } from "./sync-changes-fragments.mjs";
 import {
 	awaitCiEvidence,
 	catalogChangedSinceHead,
@@ -428,6 +429,8 @@ function main() {
 	runPackageLockRefresh(args.dryRun, runCommand, log, dryRunLog);
 	runClaudeCodeModelSupportReport(args.dryRun, runCommand, log, dryRunLog);
 	runInstallLock(args.dryRun, runCommand, log, dryRunLog);
+	// Fragments merged since the last scheduled compile land in this release (senpi#3610).
+	compileFragments({ dryRun: args.dryRun, log });
 	stampChangelogs(version, date, args.dryRun, capturedChangelogSubsections, log, dryRunLog);
 	runCheck(args.dryRun);
 	runClean(args.dryRun);

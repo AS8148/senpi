@@ -52,6 +52,6 @@ Attribution:
 ## Rules
 
 - Before adding entries, read the full `[Unreleased]` section to see which subsections already exist.
-- New entries ALWAYS go under `## [Unreleased]`.
+- New entries ALWAYS go under `## [Unreleased]`. In a pull request, write them as a `CHANGELOG.md` block in `changes/unreleased/<pr>.md` instead of editing the file (senpi#3610); the compile job places them under `## [Unreleased]`.
 - Append to existing subsections (e.g. `### Fixed`); do not create duplicates.
 - NEVER modify already-released version sections. Each version section is immutable once released.

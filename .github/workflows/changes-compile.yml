@@ -1,0 +1,63 @@
+name: Changes compile
+
+# Per-PR change fragments (senpi#3610): PRs never edit an existing changes.md or a package CHANGELOG.md
+# [Unreleased] section; each adds changes/unreleased/<pr>.md. This job writes the merged fragments into
+# their logs and deletes them in one commit on main, so the logs stay current for agents and upstream syncs
+# and no two PRs touch the same file. scripts/release.mjs also compiles before it stamps.
+on:
+  schedule:
+    # Hourly, off minute zero.
+    - cron: '41 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: changes-compile
+  cancel-in-progress: false
+
+jobs:
+  compile:
+    name: Compile change fragments
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+
+      - name: Compile and push
+        env:
+          # Pushing to main goes through branch protection, as the release does.
+          GH_TOKEN: ${{ secrets.UPSTREAM_AUTOMATION_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$GH_TOKEN" || { echo "::error::UPSTREAM_AUTOMATION_TOKEN is required to push to main."; exit 1; }
+          git config user.name "senpi-release-bot"
+          git config user.email "actions@github.com"
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          # A merge can land between fetch and push; fragments and logs are disjoint from every PR's
+          # files, so compiling again on the new main is always clean.
+          for attempt in 1 2 3; do
+            git fetch --no-tags "$remote" main
+            git reset --hard FETCH_HEAD
+            node scripts/sync-changes-fragments.mjs compile
+            if git diff --quiet; then
+              echo "No fragments to compile."
+              exit 0
+            fi
+            git add -A -- changes '*changes.md' '*CHANGELOG.md'
+            git commit -q -m "chore(changes): compile change fragments into their logs"
+            if git push "$remote" HEAD:main; then exit 0; fi
+            echo "main moved; compiling again (attempt ${attempt})"
+          done
+          echo "::error::could not push the compiled logs after 3 attempts"
+          exit 1
