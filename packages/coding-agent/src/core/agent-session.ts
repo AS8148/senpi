@@ -2895,6 +2895,9 @@ export class AgentSession {
 			return;
 		}
 		this._isAgentRunActive = false;
+		// The run is over, so the turn a barrier was armed for is too. agent_end keeps it across an
+		// expected retry; a retry that is cancelled or declined settles here without another agent_end.
+		this._toolBarrier.clear();
 		// Before the settle and idle edges: the drain they wake may redeliver what this run's file refused.
 		this.externalAdmission.observeRunSettled();
 		let deferredActions: DeferredAgentSettledAction[] = [];

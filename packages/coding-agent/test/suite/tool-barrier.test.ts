@@ -200,6 +200,26 @@ describe("session tool barrier", () => {
 		expect(ran).toEqual(["mutate"]);
 	});
 
+	// senpi#3722 review MEDIUM: a retry that never runs again must not leave the barrier armed for later turns.
+	it("clears the barrier when a pending retry is cancelled during its backoff", async () => {
+		const harness = await createHarness({
+			settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 60_000 } },
+			extensionFactories: [barrierTools([])],
+		});
+		harnesses.push(harness);
+		await harness.session.bindExtensions({});
+		harness.session.subscribe((event) => {
+			if (event.type === "auto_retry_start") harness.session.abortRetry();
+		});
+		harness.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" })]);
+
+		await harness.session.prompt("go", { toolBarrier: BARRIER });
+		await harness.session.waitForIdle();
+
+		expect(harness.eventsOfType("auto_retry_end").map((event) => event.finalError)).toEqual(["Retry cancelled"]);
+		expect(harness.session.releaseToolBarrier(BARRIER.id)).toBe(false);
+	});
+
 	it("rejects a malformed barrier before the prompt is accepted", async () => {
 		const harness = await setup([]);
 		await expect(harness.session.prompt("go", { toolBarrier: { id: "", deadlineMs: 10 } })).rejects.toThrow(/id/);
