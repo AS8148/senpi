@@ -435,10 +435,14 @@ export class McpService {
 								options: binding.options,
 								ui: () => this.getMcpElicitationUi(),
 								notice: (identity, names) => {
+									// An untrusted project keeps the skill's references literal (senpi#2345); keep that fix in
+									// the one notice instead of a generic withheld line (senpi#3796).
 									const message =
 										names.length === 0
 											? ""
-											: `Project MCP server ${name} (skill ${decl.skillName}) withheld ${names.length} environment name(s): ${names.join(", ")}.`;
+											: projectTrusted
+												? `Project MCP server ${name} (skill ${decl.skillName}) withheld ${names.length} environment name(s): ${names.join(", ")}.`
+												: `Skill '${decl.skillName}' MCP server '${name}': ${names.map((variable) => `\${${variable}}`).join(", ")} stays literal because the skill comes from an untrusted project; trust the project or move the server into your own mcp.json to expand it.`;
 									binding.pi.events?.emit("security_notice", {
 										category: "mcp-env-withheld",
 										path: identity,
