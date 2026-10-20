@@ -2026,7 +2026,9 @@ Upstream manifest edits at the next sync.
   - Added: `deepseek-v4.1-flash-1017` on `alibaba-token-plan`, `qwen-token-plan`, `cloudflare-workers-ai` and `cloudflare-ai-gateway`; Venice `mercury-3`.
   - Lower `maxTokens`: Together `Qwen/Qwen3.6-Plus` 500000 -> 65536 and `Qwen/Qwen3.7-Max` 500000 -> 131072; Vercel AI Gateway `deepseek/deepseek-v4.1-flash` 1048576 -> 32768; OpenRouter `qwen/qwen3.5-397b-a17b` and `qwen/qwen3.8-27b` 235929 -> 65536, `deepseek/deepseek-chat` 16384 -> 16000, `z-ai/glm-5` 131072 -> 128000.
   - Thinking levels: Cloudflare Workers AI `@cf/google/gemma-4-26b-a4b-it` loses its map (no `off: "none"`), and `@cf/nvidia/nemotron-3-120b-a12b` drops `medium`.
-  - Prices: `moonshotai-cn` non-K3 rows and `minimax-cn` take the day's currency-converted models.dev prices.
+  - Prices: `moonshotai-cn` non-K3 rows take the day's currency-converted models.dev prices. OpenGateway `deepseek/deepseek-v4.1-flash-ultrafast` input rises 0.03 -> 0.15 and `z-ai/glm-5.3-flash-ultrafast` 0.015 -> 0.105 per 1M tokens. Mistral `ministral-3b-latest` 0.04 -> 0.1, `ministral-8b-latest` 0.1 -> 0.15 and `voxtral-small-latest` output 0.3 -> 0.4. About a dozen OpenRouter rows move with upstream, and OpenRouter `cloudflare/clef` goes 0.042 -> 0.24 with context 16384 -> 65536.
+  - Lower context windows: OpenRouter `deepseek/deepseek-chat` 163840 -> 128000 and `z-ai/glm-5` 202752 -> 198000.
+  - Compat: Amazon Bedrock `gpt-5.6-sol` and `gpt-5.6-terra` rows in the `us` and `in` regions gain `supportsStrictMode`.
 
 ### Why
 
