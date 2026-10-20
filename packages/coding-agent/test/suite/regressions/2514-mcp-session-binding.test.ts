@@ -230,6 +230,13 @@ describe("senpi#2514: each session binds its own view of the shared MCP service"
 
 			// When: a real builtin-only loader loads before SDK session creation, outside a provider scope.
 			let registered = Promise.withResolvers<void>();
+			// #3796: exercise the real loader with the ownership-relevant builtins.
+			// Cold-compiling unrelated bundled extensions can exhaust this test's
+			// deadline before the child ever attaches to MCP.
+			writeFileSync(
+				join(root.agentDir, "settings.json"),
+				JSON.stringify({ enabledBuiltinExtensions: ["tool-search", "mcp"] }),
+			);
 			const settingsManager = SettingsManager.create(root.cwd, root.agentDir);
 			const childLoader = new DefaultResourceLoader({
 				cwd: root.cwd,
