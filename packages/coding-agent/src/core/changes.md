@@ -1,3 +1,21 @@
+## 2026-10-19 - A session file taken over from a presumed-done generation fences out its old writer (senpi#3652)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: every write funnel (`_persist`, `_writeHeaderAsync`, `_rewriteFile`) asks `SessionWriteFence.assertOwned` before writing; opening a persisted file records its fence token (`core/session-write-fence.ts`, fork-only, new). When the token on disk changed since the open, the write throws `SessionFencedError` and so does every later write of that manager to that file.
+
+### Why
+
+- `packages/coding-agent/src/core/session-manager.ts`: an RPC host may take a session file over from a generation it only presumes done (its heartbeat stopped; senpi#3652). A frozen event loop or a sleeping machine stops the heartbeat too, and that generation would resume writing the same file: two writers. The takeover advances the fence first, so the old writer's next write is refused and the file stays as the new owner keeps it. Test: `test/suite/regressions/3652-takeover-write-fence.test.ts`.
+
+### Why an extension could not handle it
+
+- The write funnel of the session file is core persistence; extensions write through it, not around it.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/session-manager.ts` the `writeFence` field, `_beginSessionFile`, and the first lines of `_persist`, `_writeHeaderAsync` and `_rewriteFile`.
+
 ## 2026-10-19 - Suggest a fresh session with a handoff when a large session's cache has expired (senpi#3230)
 
 ### What changed
