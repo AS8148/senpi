@@ -100,4 +100,41 @@ describe.skipIf(process.platform === "win32")("createInternalSocketPath with a l
 
 		expect(internalHostDirRoots()).toHaveLength(1);
 	});
+
+	it("keeps the short /tmp name when a long TMPDIR resolves to /tmp", async () => {
+		const parent = mkdtempSync(join("/tmp", `s3487ll-${"l".repeat(100)}-`));
+		created.push(parent);
+		const link = join(parent, "tmp-link");
+		symlinkSync("/tmp", link);
+		vi.stubEnv("TMPDIR", link);
+
+		const internal = await createInternalSocketPath(link, process.platform);
+		if (internal.dir) created.push(internal.dir);
+
+		expect(internalHostDirRoots()).toEqual(["/tmp"]);
+		expect(internal.dir?.startsWith("/tmp/senpi-rpc-host-internal-")).toBe(true);
+		expect(Buffer.byteLength(internal.socket)).toBeLessThanOrEqual(MAX_SOCKET_PATH_BYTES);
+	});
+
+	it("still reaps a dead owner's hop where the platform has no user id", async () => {
+		const leftover = mkdtempSync(join("/tmp", "senpi-rpc-host-internal-3487n"));
+		created.push(leftover);
+		writeFileSync(
+			join(leftover, ".owner"),
+			JSON.stringify({
+				pid: 2_147_483_000,
+				processStartTime: "2000-01-01T00:00:00Z",
+				createdAt: Date.now() - 120_000,
+			}),
+		);
+		const getuid = process.getuid;
+		Object.defineProperty(process, "getuid", { value: undefined, configurable: true, writable: true });
+		try {
+			await reapOrphanedInternalHostDirs();
+		} finally {
+			Object.defineProperty(process, "getuid", { value: getuid, configurable: true, writable: true });
+		}
+
+		expect(existsSync(leftover)).toBe(false);
+	});
 });
