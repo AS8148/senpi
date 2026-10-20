@@ -51,6 +51,8 @@ export interface ToolChildModuleJob {
 	readonly modulePath: string;
 	readonly export: string;
 	readonly args: unknown;
+	/** A lost job is retried once on a fresh child only when this is true. */
+	readonly idempotent?: boolean;
 }
 
 export interface ToolChildRunResult {
