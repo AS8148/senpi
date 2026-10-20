@@ -17,6 +17,46 @@ The wire record is built by the RPC UI context.
 
 - LOW: `rpc-types.ts` setWidget member; `connection-handler.ts` `setWidget`.
 
+## 2026-10-19 - A bundled supervisor loads only the supervisor graph (senpi#3743)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-supervisor-entry.ts` (new): the supervisor program for bundled installs. It runs the part of the CLI preamble a supervisor relied on (cwd guard, process title, agent markers, silenced warnings, brand read and then scrubbed, in that order) and calls `runHostSupervisor` with the argv after `--internal-rpc-host-supervisor`. Started from a runtime snapshot (its marker beside `dist/bundle/`), it first claims that snapshot with its own pid under the runtime lock, as `cli.js`'s `prepareRuntimeSnapshot` did for the supervisor: the supervisor respawns its host child through the snapshot's `cli.js`, so a prune by a later upgrade must not remove the snapshot while the host child is down.
+- `scripts/build-coding-agent-bundle.mjs`: emits that module self-contained as `dist/bundle/host-supervisor.js` beside `cli.js`, and counts it in the runtime manifest.
+- `packages/coding-agent/src/modes/rpc/host-launch.ts`: `defaultHostLaunch` starts `host-supervisor.js` when the bundle beside the declared CLI entry has one, keeping the sentinel and `--socket` in argv; a bundle without it keeps the CLI route.
+
+### Why
+
+A bundled supervisor reached its route only after `main()` evaluated its whole static graph, which stayed resident: 69-71 MB per supervisor against 8.5 MB for the supervisor graph alone, and the desktop runs one supervisor per thread host (omo-desktop-app#3359).
+
+### Why an extension could not handle it
+
+The supervisor launch is RPC host internals that run before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: `defaultHostLaunch` in `packages/coding-agent/src/modes/rpc/host-launch.ts`; the bundle build's entry list and manifest call in `scripts/build-coding-agent-bundle.mjs`.
+
+## 2026-10-19 - An idle host stops ticking every second; its supervisor reads drain requests when they land (senpi#3747)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/child-reaper.ts`: `startHostChildReaper` schedules through `scheduleChildReaper`, which ticks every `CHILD_REAPER_IDLE_TICK_MS` (5 s) while the last pass saw no direct children (`ChildReaper.childCount`) and every second while it saw some.
+- `packages/coding-agent/src/modes/rpc/host-zero-session-trim.ts`: the trimmer keeps a timer only while a trim is owed (a collection to report, a drop waiting for its spacing, a zero not yet answered); `observe` arms it, so a host whose session count holds still runs no timer. `check` keeps its decisions unchanged.
+- `packages/coding-agent/src/modes/rpc/host-stop-intent.ts`: `watchDrainRequest` watches the request file's directory and reads the file when it changes, with a `DRAIN_REQUEST_WATCHED_POLL_MS` (5 s) backup poll; when the directory cannot be watched, or the watch errors, it polls every `DRAIN_REQUEST_POLL_MS` (1 s) as before. `pollMs` still overrides the poll interval.
+
+### Why
+
+One host and one supervisor run per desktop thread (omo-desktop-app#3359). After senpi#3738 an idle host still woke 4 times a second and its supervisor 3 times a second for checks that had nothing to do: no children, an unchanged session count, no drain request. The supervisor's idle/owner ticker stays at 1 s: it also carries the owner-gone exit (#3045: exit two seconds after the owner dies), which a slower tick would delay.
+
+### Why an extension could not handle it
+
+These timers are RPC host and supervisor internals armed before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: `startHostChildReaper` in `packages/coding-agent/src/modes/rpc/child-reaper.ts`; `start`/`stop`/`observe`/`check` in `packages/coding-agent/src/modes/rpc/host-zero-session-trim.ts`; `watchDrainRequest` in `packages/coding-agent/src/modes/rpc/host-stop-intent.ts`.
+
 ## 2026-10-19 - Keep pending dialogs visible after session replacement (#3728 review)
 
 ### What changed
