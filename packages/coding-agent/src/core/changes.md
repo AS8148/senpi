@@ -36,6 +36,173 @@
 
 - LOW: `packages/coding-agent/src/core/session-manager.ts` the `writeFence` field, `_beginSessionFile`, and the first lines of `_persist`, `_writeHeaderAsync` and `_rewriteFile`.
 
+## 2026-10-19 - Suggest a fresh session with a handoff when a large session's cache has expired (senpi#3230)
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-shapes.ts`: new `HandoffHintSettings` (`enabled`, `minContextTokens`, `minSavingUsd`).
+- `packages/coding-agent/src/core/settings-manager.ts`: `Settings.handoffHint`.
+
+### Why
+
+The handoff hint's switch and thresholds are user settings (defaults: on, 200k tokens, $1 saving).
+
+### Why an extension could not handle it
+
+`Settings` is the typed settings contract the extension reads through `pi.getSettings()`.
+
+### Expected merge conflict zones
+
+- LOW: one field in `Settings`, one import line, one interface in `settings-shapes.ts`.
+
+## 2026-10-19 - The session hands its tool child's wakes and exits to the jobs that run there (senpi#3740)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the tool child's `onWake` hands each wake to the registered tool whose `childJob.kind` is its source (`ToolChildJob.wake`), and an `exited` record tells every `childJob.childExited`; the tool dispatcher also gets the child's `kindRunner`, and user bash (`executeBash`) uses the dispatcher's `bashOperations`, so under `--tool-runtime child` it runs on the child.
+
+### Why
+
+A terminal background session on the tool child outlives the job that started it; its exit must still reach the session as the completion notice, and an exited child takes its sessions with it.
+
+### Why an extension could not handle it
+
+Only the session owns its tool child and the registered tools' definitions together.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the `SessionToolChild` options (`onRecord`, `onWake`), the `createToolDispatcher` options, and `_childJobs` beside `_callableToolNames`.
+
+## 2026-10-18 - ctx.offload runs registered child modules through the session's dispatcher (senpi#3566 todo 8)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the extension context actions gain `offload(id, args, options)`, which resolves the id among the runner's registered child modules and hands the `module` job to the session's tool dispatcher (`tool-dispatch/offload.ts`); the tool child's module roots now include registered child-module files as well as child-placed tools' modules. On `dispose()` (close or replacement) the session closes its in-process offload jobs with the tool child: a run still loading its module never starts its body (it is registered before the import, and the import wait is abandoned), and any later `offload` fails `offload_session_closed`; each running module is cancelled, every further host call is refused `host_call_session_closed`, and its locks are released when its body settles (at once if it is stuck, else after the grace, with a notice that the module is still running and its locks were released); `whenToolChildClosed()` - which replacement awaits - settles only then. The session builds its host-call handler once and gives it to both the tool child (`onHostCall`) and `createToolDispatcher` (`hostCalls`), so an in-process module's host calls are answered exactly like the child's reverse bridge.
+- `packages/coding-agent/src/core/tool-dispatch/offload.ts`, `tool-dispatcher.ts`: the in-process path runs the export with `(args, host)` - the same `createModuleHost` object the child's worker builds (`modes/rpc/tool-child/module-host.ts`), its calls sent to that handler - and fails `tool_child_deadline` when `deadlineMs` passes - the module is cancelled and refused new host calls, but its job, and every file lock it still holds, ends only when its body settles, so no second writer interleaves with a write still running; its calls go through the child's per-job `HostCallAdmission`, the cancel reaches every call but the lock calls, and calls still running are signalled when the job ends; in-process modules get the child's deadline (the caller's, at most `OFFLOAD_MAX_MS`), and one still running a grace (`stuckGraceMs`, 10 s) past it is reported stuck: its locks stay held, every waiter on them fails `file_locked_by_stuck_module`, and the session emits `offload_module_stuck` naming the module and the files; `offload` rejects a `deadlineMs` that is not a finite number above 0 with `offload_bad_options` (senpi#3622 review).
+
+### Why
+
+Extensions need to run their own CPU-bound or blocking work off the host's event loop without a third execution path; the dispatcher already chooses the child (`--tool-runtime child`) or this process (`in-process`).
+
+### Why an extension could not handle it
+
+The context actions and the tool child's module roots are built inside the session; an extension cannot reach the dispatcher or grant its module to the child.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the `offload` entry beside `getModel` in the context actions, the `moduleRoots` provider of the tool child, the shared `hostCalls` handler and `onModuleStuck` before `this._toolChild`, the `offload_module_stuck` event in `AgentSessionEvent`, and the dispatcher close beside the tool child's in `dispose()`.
+
+## 2026-10-18 - A session answers its tool child's host calls (senpi#3566 todo 7)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: under `--tool-runtime child` the session hands its tool child a host-call handler (`createSessionHostCallHandler`, `tool-child-host-calls.ts`). A child-run body's `tool` call runs through `_executeNestedToolCall` (hooks once, as `ctx.executeTool`), `list_tools` names the callable tools, `completion`/`reserved` reach targets registered with `registerToolChildHostTarget`, `authorize` asks the same composed filesystem policy the built-in file tools enforce, on a path the server resolves against the session cwd and canonicalizes like those tools (a child-sent canonical path is never trusted), `lock_file` keys on the same session-cwd path, and a call of an ended job is refused (kept in `_filesystemPolicy` when the tools are rebuilt), and `lock_file`/`unlock_file` hold a file's slot in the shared mutation queue. On the default in-process path none of this is constructed.
+
+### Why
+
+Tool bodies placed in the child still need the session's tools, model, policy and file serialization; those stay on the server (the plan's Must NOT: no policy or model calls in the child), so the child asks over the reverse bridge.
+
+### Why an extension could not handle it
+
+The tool pipeline, the composed filesystem policy and the tool child's construction are session internals; no extension hook reaches them.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the tool-child construction in the runtime setup (its `onHostCall` deps), the `_filesystemPolicy` assignment beside `composeFilesystemPolicies`, and the fields beside `_toolChildHostTargets`.
+
+## 2026-10-19 - dispose() says whether the process exits (senpi#3711)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `dispose({ processExit })` forwards the flag to `emitSessionShutdownEvent`, so a quit that ends the process shares the quit budget; the default keeps only the per-handler limits.
+
+### Why
+
+- The total quit budget (senpi#3711) must only cut handlers when the process really exits right after; an RPC host closing one session keeps running, so there a detached handler would keep running while its extension's handles and provider scope are closed.
+
+### Why an extension could not handle it
+
+- Session disposal is core runtime lifecycle; only its callers know whether the process exits.
+
+### Expected merge conflict zones
+
+- LOW: `agent-session-runtime.ts` `dispose()`.
+
+## 2026-10-19 - sessionShutdownQuitBudgetMs setting (senpi#3711)
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts`: new typed `sessionShutdownQuitBudgetMs` setting (default `DEFAULT_SESSION_SHUTDOWN_QUIT_BUDGET_MS` = 2000, 0 disables; above the OmO memory extension's own 1500 ms shutdown drain) with `getSessionShutdownQuitBudgetMs` / `setSessionShutdownQuitBudgetMs`, validated through `parseTimeoutSetting` like the existing shutdown handler budget.
+
+### Why
+
+- Quit waits on all `session_shutdown` handlers together for at most this long (senpi#3711); the per-handler 10 s cap alone let one handler hold an idle quit for 10 s.
+
+### Why an extension could not handle it
+
+- Settings are core state read by the extension runner; an extension cannot add a typed host setting.
+
+### Expected merge conflict zones
+
+- LOW: `settings-manager.ts` beside `DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS`, the `Settings` interface fields after `sessionShutdownHandlerTimeoutMs`, and the methods after `setSessionShutdownHandlerTimeoutMs`.
+
+## 2026-10-19 - Never signal a child whose spawn failed (senpi#3706)
+
+### What changed
+
+- `packages/coding-agent/src/core/exec.ts`: its stop/timeout/abort path calls `signalSpawnedChild` (`packages/coding-agent/src/utils/child-signal.ts`), which sends nothing to a child without a pid, instead of calling `kill()` on it directly.
+- `packages/coding-agent/src/core/package-manager.ts`: its stop/timeout/abort path calls `signalSpawnedChild` (`packages/coding-agent/src/utils/child-signal.ts`), which sends nothing to a child without a pid, instead of calling `kill()` on it directly.
+
+### Why
+
+On Node before 24.22.0 / 26.10.0 (nodejs/node#65052), `kill()` on a child whose spawn failed (no pid) becomes `kill(0, signal)` and signals the caller's own process group, killing senpi and the rest of the terminal's foreground job.
+
+### Why an extension could not handle it
+
+The affected calls are inside core stop paths; nothing outside them owns those child processes.
+
+### Expected merge conflict zones
+
+The single `kill()` call on each listed path's stop/timeout/abort branch.
+
+## 2026-10-19 - A paused engine warns once, not once per refused event (senpi#2537)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_stopEngineTurn` shows the pause warning only for the first refusal of a pause; the bus event and the `engine-turn-limit` entry are still recorded for every refusal. A new engine turn or a user message re-arms the warning, like `_engineTurnPauseRecorded`.
+
+### Why
+
+A background stream that keeps sending notices while the engine is paused got one `Warning: Paused: ...` line per refused notice: in a 10-minute soak at 2 events per second, about 900 identical lines, each a transcript component that stays mounted (about 200 KB of strings and 1,000 components in a heap-snapshot diff).
+
+### Why an extension could not handle it
+
+The warning is shown by the session's engine-turn bound itself; extensions only receive the bus event.
+
+### Expected merge conflict zones
+
+- LOW: `agent-session.ts`, the `_engineTurnPauseNotified` field next to `_engineTurnPauseRecorded`, its two resets, and the `notify` call at the end of `_stopEngineTurn`.
+
+## 2026-10-19 - A sustained event stream no longer holds a compacted session's whole history (senpi#2537)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: new `reduceHistory(reducer)` (also on `ReadonlySessionManager`) folds the whole history, every branch in append order like `getEntries()`, without keeping a full-history view. The history is read once per load and later calls fold only the entries appended since (`session-history-reduce.ts`). A `historyGeneration` counter, bumped wherever the history is replaced but not on append or mirror trim, keys the memo, and `verbatimFromCount` records how much of the mirror's tail is the history's own tail after a trim (`planLoadedTail` now reports `windowLength`).
+- `packages/coding-agent/src/core/agent-session.ts`: `_stopEngineTurn` reads the engine-turn bound from `reduceHistory(engineTurnHistory)` instead of `getEntries()`.
+
+### Why
+
+On a compacted (trimmed) session, `getEntries()` materializes and memoizes the whole file's history. `_stopEngineTurn` called it for every engine-triggered turn, and the builtin compaction checkpoint and Stop hook called it every turn, so a stream of background events held a full-history view for as long as it kept the session from settling idle: 11.7 MB of the 20 MB a 10-minute, 2-events-per-second soak on a 10,000-entry session grew on main.
+
+### Why an extension could not handle it
+
+The engine-turn bound and the session mirror are session internals; the builtin readers needed a session-manager read that does not build the view.
+
+### Expected merge conflict zones
+
+- LOW: `session-manager.ts`, the `historyGeneration` / `verbatimFromCount` fields after `fullEntryCount`, one line in `_resetToNewSession`, `_completeFileLoad`, `_loadEntries`, `_buildIndex`, `_retainLoadedTail`, `_trimMirrorAfterCompaction` and both `createBranchedSession` branches, `reduceHistory` after `getEntryCount`, and the `ReadonlySessionManager` pick list.
+- LOW: `agent-session.ts`, the first argument of `engineTurnStop` in `_stopEngineTurn` and the `engine-turn-limit.ts` import.
+
 ## 2026-10-19 - An abort that joins an open agent_end boundary still releases a held handler (senpi#3650 follow-up)
 
 ### What changed
@@ -53,6 +220,24 @@ The abort path and the host's wait on extension handlers are session internals; 
 ### Expected merge conflict zones
 
 - LOW: `agent-session.ts` `abortTurnForDeadline` and the line after `_abortActiveAgentAndRetry("user")` in `_abortWithProvenance`.
+
+## 2026-10-18 - Session move phase 1 and related core deltas arrive through the base merge (senpi#3631 lineage)
+
+### What changed
+
+- `agent-session.ts`, `agent-session-runtime.ts`, `agent-session-services.ts`, `sdk.ts`: engine export/import with single-owner ownership (session move phase 1) and the surrounding core deltas landed on main and reach this branch through the pure base merge; this branch adds no change of its own to them beyond the tool-child runtime already tracked elsewhere.
+
+### Why
+
+- The changelog gate reads the merge-base diff, which after the base merge includes main's own changes to these files; this entry records that provenance.
+
+### Why an extension could not handle it
+
+- Core session ownership machinery; not extension surface.
+
+### Expected merge conflict zones
+
+- `changes.md` only.
 
 ## 2026-10-18 - A session moved to another device refuses writes on the device it left (senpi#3630)
 
@@ -98,6 +283,27 @@ The waits are the host's own awaits on extension handlers inside the session's e
 - LOW: `agent-session.ts` `_applyExtensionBindings` (after `setToolHookLifecycleObserver`), the deadline-owner adapters beside `abortTurnForDeadline`, the `_deadlineTracker.arm()` line in `_promptAgent`, the abort promise in `_abortActiveAgentAndRetry`, and the field block beside `_isAgentRunActive`.
 - LOW: `settings-manager.ts` beside the `session_shutdown` handler budget; `session-log.ts` `ALLOWED_DATA_KEY`.
 - `turn-deadline.ts`, `agent-run-continuation.ts` and `extension-handler-stall-report.ts` are fork-only.
+
+## 2026-10-17 - /share redacts the session, previews it and asks before uploading (senpi#3524)
+
+### What changed
+
+- `packages/coding-agent/src/core/export-html/index.ts`: `renderSessionToHtml(sm, state, opts)` renders in memory; `exportSessionToHtml` writes its result. `ExportOptions.sanitize` rewrites the entries before custom tools pre-render them and then the whole session payload.
+- `packages/coding-agent/src/core/agent-session.ts`: `AgentSession.renderToHtml({ themeName, sanitize })`; theme and tool-renderer resolution moved into the private `htmlExportOptions`, shared with `exportToHtml`.
+- `packages/coding-agent/src/core/settings-manager.ts`: `enableSessionShare` (default true; global or project) and `getEnableSessionShare()`.
+- New fork-only `packages/coding-agent/src/core/share/`: `share-redaction.ts` (identity first: home in every separator spelling, account and host names; then private keys, provider/GitHub/Slack/AWS/Google keys, JWTs, bearer/basic headers, URL credentials, cookies, sensitive key=value and JSON fields, emails, non-loopback IPv4; images replaced by a note; every replacement counted), `share-session.ts` (`runShare`: kill switch, gh check, redact, preview, Upload/Review/Cancel, upload, review copy in a private `mkdtemp` removed on every exit), `share-gh.ts` (gist created from stdin, nothing written to disk). `share-projection.ts` leaves tool outputs out by default (tool results, `!` output, extension messages and state, pre-rendered result HTML), `share-redaction-value.ts` walks structured values, `share-sensitive-key.ts` decides from a key's name alone (split across camelCase, snake_case, kebab-case and dots) whether its value is replaced whole: any sensitive word anywhere makes the name sensitive, with no word-level exemptions; only a short list of exact names stays ordinary (`PUBLIC_KEY`, `PUBLIC_KEY_PATH`, `KEY_ID`, `AUTH_MODE`, `AUTH_TYPE`, `MAX_TOKENS`, `MAX_OUTPUT_TOKENS`). AWS-style key ids under other names are therefore redacted too; over-redacting a path or URL under a sensitive name is accepted for a share, and `share-entropy.ts` holds the generic generated-secret detector (base62/base64 runs, splits across newlines, escaped newlines, continuations and string seams).
+
+### Why
+
+- `/share` uploaded the whole session unredacted, with no confirmation, to a secret (unlisted) gist, after writing it to a fixed `os.tmpdir()/session.html`, and pointed users at the third-party `pi.dev` viewer by default. Any key, token, home path or email in a prompt or tool result left the machine in clear text. Regressions: `test/suite/regressions/3524-share-redaction.test.ts`, `test/suite/regressions/3524-share-consent.test.ts`.
+
+### Why an extension could not handle it
+
+- `/share` is a built-in interactive command and the HTML export is core; an extension cannot intercept either before the upload.
+
+### Expected merge conflict zones
+
+- LOW: `exportSessionToHtml` / `renderSessionToHtml` in `export-html/index.ts`; `exportToHtml` in `agent-session.ts`; the settings interface and getter block in `settings-manager.ts`.
 
 ## 2026-10-18 - AgentSession keeps identified queued input in durable custody (senpi#3549, P2b)
 
@@ -10911,3 +11117,24 @@ Context files and the skills section are assembled by core before extensions see
 - `resource-loader.ts`: the import block and the `loadProjectContextFiles` call in `reload`.
 - `skills.ts`: the area where `formatSkillsForPrompt` used to live.
 - `settings-manager.ts`: the `Settings` interface beside `compaction`.
+
+## 2026-10-19 - A request-shape 400 recovers on the same model; Claude chains drop pre-5 Opus (senpi#3727)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/settings.ts`: `DEFAULT_FALLBACK_CHAINS` keeps only current-generation Opus rungs: `claude-fable-5-1` and `claude-fable-5` step to `claude-opus-5-5:max`, then `claude-opus-5:max`; `claude-opus-5-5` steps to `claude-opus-5:max`. `claude-opus-4-8` and `claude-opus-4-6` are gone from every shipped chain.
+- `packages/coding-agent/src/core/retry-fallback/request-shape.ts` (new): `isAnthropicRequestShapeRejection` (an `invalid_request_error` from the `anthropic` provider itself, not a gateway on the same wire, not billing, not context overflow), `stripProviderNativeReplay` (removes assistant `providerNative` blocks at or before a cutoff, never user text or client tool pairs) and `RequestShapeRecovery` (one recovery per failing streak; any other outcome, and a give-up, ends the streak so a later prompt gets its own recovery).
+- `packages/coding-agent/src/core/agent-session.ts`: on such a 400 the session never enters the hard-error fallback or the transient retry path. It records a `request-shape-recovery` custom entry, logs `request_shape_recovery`, and retries once on the same model with provider-native replay stripped from the history before the failure (applied in `transformContext`, so it covers every later request of the session). A second rejection ends the retry with one `auto_retry_end` whose `finalError` names the action to take. A `blocked` outcome from the recovery retry (pre-retry compaction refused) blocks the queued continuation like any other blocked retry. `_isHardErrorFallbackEligible` excludes request-shape rejections.
+
+### Why
+
+A long Opus 5.5 session got Anthropic 400s for an unpaired `web_search` server block. Each 400 was treated as a hard error and walked the shipped chain down to `claude-opus-4-8`. Another model cannot fix our request shape; it only worked by accident because cross-model replay drops the provider-native blocks.
+
+### Why an extension could not handle it
+
+Fallback eligibility and the agent_end retry decision are owned by `AgentSession`; an extension sees the error only after the controller already switched models.
+
+### Expected merge conflict zones
+
+- `agent-session.ts`: the retry-state fields, the `transformContext` wrapper in `_installAgentNextTurnRefresh`, the start of the agent_end retry block, and `_isHardErrorFallbackEligible`.
+- `retry-fallback/settings.ts`: `DEFAULT_FALLBACK_CHAINS`.

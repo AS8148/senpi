@@ -1,3 +1,44 @@
+## 2026-10-19 - Never signal a child whose spawn failed (senpi#3706)
+
+### What changed
+
+- `packages/tui/src/autocomplete.ts`: its stop/timeout/abort path signals the child only when it has a pid, instead of calling `kill()` on it directly.
+
+### Why
+
+On Node before 24.22.0 / 26.10.0 (nodejs/node#65052), `kill()` on a child whose spawn failed (no pid) becomes `kill(0, signal)` and signals the caller's own process group, killing senpi and the rest of the terminal's foreground job.
+
+### Why an extension could not handle it
+
+The affected calls are inside core stop paths; nothing outside them owns those child processes.
+
+### Expected merge conflict zones
+
+The single `kill()` call on each listed path's stop/timeout/abort branch.
+
+## 2026-10-19 - herdr Kitty graphics probe (senpi#3698)
+
+### What changed
+
+- `packages/tui/src/terminal-capabilities.ts`: `TerminalCapabilities` gains an optional `imageProbe: "kitty"` set only while image support is still unknown and a runtime probe can settle it.
+- `packages/tui/src/terminal-image.ts`: detection recognizes herdr panes (`TERM_PROGRAM=herdr` / `HERDR_ENV=1`) — images stay off until probed, `imageProbe` is set, and the probe answer is latched process-wide (`setProbedImageProtocol`) so focus-event cache resets re-detect to the same result. Explicit `PI_IMAGE_PROTOCOL` / capability overrides strip the flag and keep precedence.
+- `packages/tui/src/tui.ts`: `TuiBase.start()` writes a 1x1 RGBA Kitty graphics query when the flag is set; `handleTerminalInput` consumes the matching APC reply. OK enables kitty (plus the `CSI 16 t` cell-size query and a repaint); an error, a reply for another id, or silence within 500 ms keeps the text fallback, so graphics sequences are never emitted blind. `stop()` drops a pending probe without resolving the latch.
+- `packages/tui/src/kitty-graphics-probe.ts` (fork-only): query builder, response classifier, timeout constant.
+
+### Why
+
+herdr panes set no environment variable identifying the outer terminal, so env-only detection disabled images inside herdr even when the outer terminal renders Kitty graphics (tool images fell back to `[image: <mime>]`); enabling kitty unconditionally instead leaks raw escape sequences when the outer terminal cannot render them (herdrdev/herdr#5295).
+
+### Why an extension could not handle it
+
+The probe is terminal I/O inside `TuiBase.start()` / `handleTerminalInput()` plus capability detection state in `terminal-image.ts`, both below any extension hook.
+
+### Expected merge conflict zones
+
+- MEDIUM: `detectCapabilitiesFromEnvironment` and the override merge in `packages/tui/src/terminal-image.ts`.
+- LOW: `TuiBase.start()`/`stop()` and the `handleTerminalInput()` consume hooks in `packages/tui/src/tui.ts`; the `TerminalCapabilities` interface in `packages/tui/src/terminal-capabilities.ts`.
+
+
 ## 2026-10-18 - Main-screen hands the wheel back to the terminal while a mouse lease is held (senpi#3604)
 
 ### What changed

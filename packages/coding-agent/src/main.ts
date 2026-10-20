@@ -45,6 +45,7 @@ import { writeHelpFlagsCache } from "./cli/help-flags-cache.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
 import { isModelsDiscoverCommand, runModelsDiscoverCommand } from "./cli/models-command.ts";
+import { pipedStdinOptions } from "./cli/piped-stdin-options.ts";
 import { exitAfterOutput, printThenExit } from "./cli/print-then-exit.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import { prepareSessionOpening } from "./cli/session-opening.ts";
@@ -107,6 +108,7 @@ import { assertValidSessionId, SessionManager } from "./core/session-manager.ts"
 import { classifySessionRepository, readSessionCwd, rebindSessionFile } from "./core/session-rebind.ts";
 import { collectSettingsDiagnosticsWithContext } from "./core/settings-diagnostics.ts";
 import { SettingsManager } from "./core/settings-manager.ts";
+import { startSubscriptionUsagePolling } from "./core/subscription-limits/usage-poller.ts";
 import { type ClampedThinkingSelection, formatThinkingClampWarning } from "./core/thinking-levels.ts";
 import { printTimings, recordTiming, resetTimings, time } from "./core/timings.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
@@ -121,32 +123,10 @@ import { AUTO_TITLE_SESSIONS_CAPABILITY, parseClientCapabilities } from "./modes
 import type { PreparableRuntimeFactory, PrepareRuntimeOptions } from "./modes/rpc/host-warm.ts";
 import { dispatchInternalSupervisor } from "./modes/rpc/supervisor-route.ts";
 import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
+import { readPipedStdin } from "./utils/piped-stdin.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
 
 const EXTENSION_LOAD_FAILURE_HINT = `Hint: Start without extensions using "${APP_NAME} -ne".`;
-
-/**
- * Read all content from piped stdin.
- * Returns undefined if stdin is a TTY (interactive terminal).
- */
-async function readPipedStdin(): Promise<string | undefined> {
-	// If stdin is a TTY, we're running interactively - don't read stdin
-	if (process.stdin.isTTY) {
-		return undefined;
-	}
-
-	return new Promise((resolve) => {
-		let data = "";
-		process.stdin.setEncoding("utf8");
-		process.stdin.on("data", (chunk) => {
-			data += chunk;
-		});
-		process.stdin.on("end", () => {
-			resolve(data.trim() || undefined);
-		});
-		process.stdin.resume();
-	});
-}
 
 function collectAuthDiagnostics(authStorage: AuthStorage, context: string): AgentSessionRuntimeDiagnostic[] {
 	return authStorage.drainErrors().map((error) => ({
@@ -848,7 +828,7 @@ export function createCliRuntimeFactory(
 		modelRuntime?: ModelRuntime;
 	} = {},
 ): PreparableRuntimeFactory {
-	const { parsed, cwd, agentDir, appMode } = configuration;
+	const { parsed, cwd, agentDir, appMode, toolRuntime } = configuration;
 	const extensionFactories = local.extensionFactories ?? builtInExtensions;
 	const startupSettingsManager = local.startupSettingsManager ?? SettingsManager.create(cwd, agentDir);
 	const startupLoadingIndicator =
@@ -1077,6 +1057,7 @@ export function createCliRuntimeFactory(
 			),
 			promptSurface: launchProfile?.promptSurface,
 			browserEngine: launchProfile?.browserEngine,
+			...(toolRuntime !== undefined ? { toolRuntime } : {}),
 		});
 		markSwitch("createSession");
 		const cliThinkingOverride = runtimeParsed.thinking !== undefined || cliThinkingFromModel;
@@ -1346,6 +1327,9 @@ export async function main(args: string[], options?: MainOptions) {
 		// otherwise theme-touching extensions fail with "Theme not initialized. Call
 		// initTheme() first." (senpi#1894).
 		initTheme(startupSettingsManager.getTheme(), false);
+		if (!offlineMode) {
+			startSubscriptionUsagePolling({ agentDir, report: (message) => void process.stderr.write(`${message}\n`) });
+		}
 		printTimings();
 		await runMultiSessionHost({
 			agentDir,
@@ -1468,7 +1452,7 @@ export async function main(args: string[], options?: MainOptions) {
 	// Read piped stdin content (if any) - skip for RPC mode which uses stdin for JSON-RPC
 	let stdinContent: string | undefined;
 	if (appMode !== "rpc") {
-		stdinContent = await readPipedStdin();
+		stdinContent = await readPipedStdin(pipedStdinOptions(parsed, process.stderr));
 		if (stdinContent !== undefined && appMode === "interactive") {
 			appMode = "print";
 		}
@@ -1548,6 +1532,15 @@ export async function main(args: string[], options?: MainOptions) {
 	const stopChildReaper = await startHostChildReaper(
 		appMode === "interactive" ? () => {} : (message) => void process.stderr.write(`${message}\n`),
 	);
+
+	// Subscription limits are known before the first turn (senpi#3684); one-shot print runs never poll.
+	if (!offlineMode && (appMode === "rpc" || appMode === "interactive")) {
+		startSubscriptionUsagePolling({
+			agentDir,
+			// The TUI owns stderr in interactive mode, as with the child reaper below.
+			report: appMode === "interactive" ? () => {} : (message) => void process.stderr.write(`${message}\n`),
+		});
+	}
 
 	if (appMode === "rpc") {
 		const { runRpcMode } = await import("./modes/rpc/rpc-mode.ts");

@@ -1,3 +1,21 @@
+## 2026-10-19 - The compaction checkpoint's agent name is folded, not read from a full-history view (senpi#3110)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/checkpoint-state.ts`: `deriveAgentName` (used by `captureAgentCheckpoint`) folds the latest `agentName`/`agent` custom entry with `sessionManager.reduceHistory`, the same way #2537 moved `getLatestCheckpoint`, instead of scanning `getEntries()` twice per entry.
+
+### Why
+
+Compaction captures the agent's state while a run is active. On a reopened compacted session (#3519 trims the mirror to the latest compaction window), `getEntries()` re-parses the whole transcript file and keeps it as the full-history view until the session settles idle, so each compaction of a busy task child held about four times its transcript. The fold reads the history once per load and keeps only its own state.
+
+### Why an extension could not handle it
+
+This is the compaction builtin's own read; the fix uses the public `ReadonlySessionManager.reduceHistory`.
+
+### Expected merge conflict zones
+
+- `checkpoint-state.ts` `deriveAgentName` and the new `latestAgentName` reducer above it.
+
 ## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
 
 ### What changed
