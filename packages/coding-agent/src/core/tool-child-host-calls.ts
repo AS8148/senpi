@@ -9,7 +9,7 @@
 import type { AgentToolCallOutcome } from "@earendil-works/pi-agent-core";
 import type { HostCallHandler } from "../modes/rpc/tool-child/host-calls-server.ts";
 import type { FilesystemPolicyChecker, FilesystemPolicyDecision, FilesystemPolicyRequest } from "./extensions/types.ts";
-import { acquireFileMutationLock } from "./tools/file-mutation-queue.ts";
+import { acquireFileMutationLock, type FileMutationLock } from "./tools/file-mutation-queue.ts";
 import { canonicalizeFilesystemPath } from "./tools/filesystem-policy.ts";
 import { resolveToCwd } from "./tools/path-utils.ts";
 
@@ -51,7 +51,7 @@ export class HostCallError extends Error {
 const ALLOW: FilesystemPolicyDecision = { allow: true };
 
 export function createSessionHostCallHandler(deps: SessionHostCallDeps): HostCallHandler {
-	const locks = new Map<string, () => void>();
+	const locks = new Map<string, FileMutationLock>();
 	let nextLock = 0;
 	const releaseLock = (lockId: string): boolean => {
 		const release = locks.get(lockId);
@@ -100,6 +100,9 @@ export function createSessionHostCallHandler(deps: SessionHostCallDeps): HostCal
 				const lockId = `L${++nextLock}`;
 				locks.set(lockId, release);
 				void request.generation.exited.then(() => releaseLock(lockId));
+				void request.generation.stuck?.then((holder) => {
+					if (locks.get(lockId) === release) release.markStuck(holder);
+				});
 				return { lockId };
 			}
 			case "unlock_file": {

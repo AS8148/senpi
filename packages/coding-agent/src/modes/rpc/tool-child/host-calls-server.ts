@@ -35,6 +35,12 @@ export interface HostCallGeneration {
 	readonly exited: Promise<void>;
 	/** Whether the calling job is still live (the server has not settled it). */
 	readonly jobLive: () => boolean;
+	/**
+	 * Settles, with the holder's name, if the calling job becomes stuck: it outlived its deadline and grace and nothing
+	 * can stop it (an in-process module). Its locks stay held, and every waiter on them fails fast. A child job never
+	 * gets stuck - its process is killed - so this is unset there.
+	 */
+	readonly stuck?: Promise<string>;
 }
 
 /** The generation facts ServerHostCalls hands each request. */

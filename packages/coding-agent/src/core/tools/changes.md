@@ -1,5 +1,23 @@
 # core/tools changes
 
+## 2026-10-19 - A stuck lock holder fails its waiters fast (senpi#3622)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/file-mutation-queue.ts`: `acquireFileMutationLock` resolves with a `FileMutationLock` - the release, plus `markStuck(holder)`. A stuck mark keeps the slot held and fails every waiter on that file (queued or later, through `acquireFileMutationLock` or `withFileMutationQueue`) with `FileLockedByStuckModuleError` (`file_locked_by_stuck_module`), passing each refused waiter's queued slot on as an abort does; the release clears the mark. Both entry points now share one registration and one wait.
+
+### Why
+
+An in-process `ctx.offload` module that outlives its deadline cannot be stopped, so its lock must stay held (a release could interleave a second writer with its write); without the mark, the session's own edit and write tools would wait on that file forever.
+
+### Why an extension could not handle it
+
+The queue and its waiters are module-private to this file; only it can refuse a waiter that is already queued.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/tools/file-mutation-queue.ts`: the bodies of `acquireFileMutationLock` and `withFileMutationQueue`, now over the shared `registerSlot` / `waitTurn`.
+
 ## 2026-10-18 - The file mutation queue can be held across a call (senpi#3566 todo 7)
 
 ### What changed

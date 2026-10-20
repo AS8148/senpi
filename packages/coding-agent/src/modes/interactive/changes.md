@@ -1,3 +1,21 @@
+## 2026-10-19 - A stuck offload module is shown as a warning (senpi#3622)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the `offload_module_stuck` session event is shown with `showWarning`, its notice naming the module, the files whose locks it holds, and the `--tool-runtime child` alternative.
+
+### Why
+
+A module stuck in this process holds its locks until it finishes or the session closes, and writes to those files fail meanwhile; the user must be told why and what to do.
+
+### Why an extension could not handle it
+
+The event switch of the interactive mode is core; an extension sees session events but cannot add a warning line to the interactive transcript for a core event.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the new `case` before `transcript_write_failed` in the session event switch.
+
 ## 2026-10-19 - Interactive quit marks its dispose as a process exit (senpi#3711)
 
 ### What changed

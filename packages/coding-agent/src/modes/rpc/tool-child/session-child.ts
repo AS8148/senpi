@@ -104,7 +104,7 @@ export class SessionToolChild {
 		await this.#ensureLive();
 		const generation = this.#client.generation;
 		const pid = this.#client.pid ?? -1;
-		const deadlineMs = fixtureDeadline(job.export, this.#options.env ?? process.env);
+		const deadlineMs = job.deadlineMs ?? fixtureDeadline(job.export, this.#options.env ?? process.env);
 		const value = await this.#client.run(MODULE_JOB_KIND, job, signal, {
 			idempotent: job.idempotent === true,
 			hostContext: { toolCallId: callingToolCallId(job.args) },
