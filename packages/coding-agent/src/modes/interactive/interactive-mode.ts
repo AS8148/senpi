@@ -3435,8 +3435,16 @@ export class InteractiveMode {
 		if (Array.isArray(content)) {
 			// Wrap string array in a Container with Text components
 			const container = new Container();
-			for (const line of content.slice(0, InteractiveMode.MAX_WIDGET_LINES)) {
-				container.addChild(new Text(line, 1, 0));
+			const shown = content.slice(0, InteractiveMode.MAX_WIDGET_LINES);
+			const actions = options?.actions ?? [];
+			for (const [index, line] of shown.entries()) {
+				if (index === shown.length - 1 && actions.length > 0) {
+					// The TUI cannot click, so each choice names the command that runs it, on the widget's last line.
+					const choices = actions.map((action) => `${action.label}: ${action.command}`).join(" · ");
+					container.addChild(new ThemedText(() => `${line}  ${theme.fg("muted", choices)}`, 1, 0));
+				} else {
+					container.addChild(new Text(line, 1, 0));
+				}
 			}
 			if (content.length > InteractiveMode.MAX_WIDGET_LINES) {
 				container.addChild(new ThemedText(() => theme.fg("muted", "... (widget truncated)"), 1, 0));
@@ -5526,6 +5534,10 @@ export class InteractiveMode {
 				this.showError(sanitizeTerminalLabel(event.errorMessage));
 				break;
 
+			case "offload_module_stuck":
+				this.showWarning(sanitizeTerminalLabel(event.notice));
+				break;
+
 			case "transcript_write_failed": {
 				if (this.transcriptWriteNoticeShown) break;
 				this.transcriptWriteNoticeShown = true;
@@ -6688,7 +6700,7 @@ export class InteractiveMode {
 			// which the stdout/stderr error handler turns into emergencyTerminalExit;
 			// the render loop is already idle, so this cannot hot-spin (see #4144).
 			await this.sessionControlHost?.disposeActive();
-			await this.runtimeHost.dispose();
+			await this.runtimeHost.dispose({ processExit: true });
 			this.themeController.disableAutoSync();
 			await this.ui.terminal.drainInput(1000);
 			this.stop();
@@ -6706,7 +6718,7 @@ export class InteractiveMode {
 		this.stop({ restoreStderr: false });
 		try {
 			await this.sessionControlHost?.disposeActive();
-			await this.runtimeHost.dispose();
+			await this.runtimeHost.dispose({ processExit: true });
 		} finally {
 			restoreInteractiveStderr();
 		}
