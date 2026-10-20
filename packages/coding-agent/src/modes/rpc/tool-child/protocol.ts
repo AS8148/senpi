@@ -51,6 +51,18 @@ export type LaunchApi = (typeof LAUNCH_APIS)[number];
 export const REF_NACK_REASONS = ["cancelled", "corrupt", "missing", "budget", "foreign"] as const;
 export type RefNackReason = (typeof REF_NACK_REASONS)[number];
 
+/** What a reverse call reaches on the server (DESIGN PART 1): a tool by `name`, the model, a reserved tool, the tool list. */
+export const HOST_CALL_KINDS = [
+	"tool",
+	"completion",
+	"reserved",
+	"list_tools",
+	"authorize",
+	"lock_file",
+	"unlock_file",
+] as const;
+export type HostCallKind = (typeof HOST_CALL_KINDS)[number];
+
 /** A payload moved through a file in the channel generation's directory. The receiver derives the path itself. */
 export interface PayloadRef {
 	refId: string;
@@ -102,11 +114,20 @@ export type ChildToServer =
 	| { type: "hello"; generation: number; pid: number; protocol: number }
 	| { type: "heartbeat"; seq: number }
 	| { type: "pong"; seq: number }
+	| { type: "cancel_ack"; jobId: string }
 	| { type: "result"; jobId: string; value: unknown }
 	| { type: "result_ref"; jobId: string; ref: PayloadRef }
 	| { type: "job_error"; jobId: string; code: string; message: string }
 	| { type: "job_refused"; jobId: string; code: string }
-	| { type: "host_call"; callId: string; jobId: string; tool: string; args?: unknown; argsRef?: PayloadRef }
+	| {
+			type: "host_call";
+			callId: string;
+			jobId: string;
+			kind: HostCallKind;
+			name?: string;
+			args?: unknown;
+			argsRef?: PayloadRef;
+	  }
 	| {
 			type: "launch";
 			launchId: string;

@@ -18,6 +18,26 @@ Both timers are RPC host internals armed before any extension loads.
 
 - LOW: `packages/coding-agent/src/modes/rpc/host-watchdog.ts` `armHostWatchdog`, `watchFdForEof`, `watchPpid`; `packages/coding-agent/src/modes/rpc/loop-lag-watchdog.ts` `start`, `stop`, `tick` and the constants block.
 
+## 2026-10-19 - A bundled supervisor loads only the supervisor graph (senpi#3743)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-supervisor-entry.ts` (new): the supervisor program for bundled installs. It runs the part of the CLI preamble a supervisor relied on (cwd guard, process title, agent markers, silenced warnings, brand read and then scrubbed, in that order) and calls `runHostSupervisor` with the argv after `--internal-rpc-host-supervisor`. Started from a runtime snapshot (its marker beside `dist/bundle/`), it first claims that snapshot with its own pid under the runtime lock, as `cli.js`'s `prepareRuntimeSnapshot` did for the supervisor: the supervisor respawns its host child through the snapshot's `cli.js`, so a prune by a later upgrade must not remove the snapshot while the host child is down.
+- `scripts/build-coding-agent-bundle.mjs`: emits that module self-contained as `dist/bundle/host-supervisor.js` beside `cli.js`, and counts it in the runtime manifest.
+- `packages/coding-agent/src/modes/rpc/host-launch.ts`: `defaultHostLaunch` starts `host-supervisor.js` when the bundle beside the declared CLI entry has one, keeping the sentinel and `--socket` in argv; a bundle without it keeps the CLI route.
+
+### Why
+
+A bundled supervisor reached its route only after `main()` evaluated its whole static graph, which stayed resident: 69-71 MB per supervisor against 8.5 MB for the supervisor graph alone, and the desktop runs one supervisor per thread host (omo-desktop-app#3359).
+
+### Why an extension could not handle it
+
+The supervisor launch is RPC host internals that run before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: `defaultHostLaunch` in `packages/coding-agent/src/modes/rpc/host-launch.ts`; the bundle build's entry list and manifest call in `scripts/build-coding-agent-bundle.mjs`.
+
 ## 2026-10-19 - An idle host stops ticking every second; its supervisor reads drain requests when they land (senpi#3747)
 
 ### What changed
