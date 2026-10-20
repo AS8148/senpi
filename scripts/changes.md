@@ -1,3 +1,39 @@
+## 2026-10-19 - The bundle ships the RPC host supervisor as its own program (senpi#3743)
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs`: a third esbuild pass emits `packages/coding-agent/dist/modes/rpc/host-supervisor-entry.js` self-contained (splitting off) as `dist/bundle/host-supervisor.js` beside `cli.js`; its metafile joins the external-import check, the runtime manifest hash and the size summary.
+
+### Why
+
+- `scripts/build-coding-agent-bundle.mjs`: a bundled supervisor started through `cli.js` kept the whole CLI graph resident (69-71 MB per supervisor against 8.5 MB for its own graph), and the desktop runs one per thread host (omo-desktop-app#3359).
+
+### Why an extension could not handle it
+
+- `scripts/build-coding-agent-bundle.mjs`: the bundle layout is repository build tooling.
+
+### Expected merge conflict zones
+
+- `scripts/build-coding-agent-bundle.mjs`: the input check list and the end of `buildBundle`.
+
+## 2026-10-19 - Release commands that read large output no longer fail with ENOBUFS
+
+### What changed
+
+- `scripts/release.mjs`: `captureCommand` and the CI check-run lookup read command output through `captureOutput` (`scripts/release-capture.mjs`), which raises `execFileSync`'s buffer from the 1 MiB default to 256 MiB.
+
+### Why
+
+- `scripts/release.mjs`: the pinned v2026.10.19-1 release (run 39296257099) passed its forced suite and checks, then died merging main back: `git show origin/main:packages/coding-agent/CHANGELOG.md` failed with `spawnSync git ENOBUFS` because that file is over 1 MiB. Nothing was pushed.
+
+### Why an extension could not handle it
+
+- `scripts/release.mjs`: release orchestration is repository build tooling.
+
+### Expected merge conflict zones
+
+- `scripts/release.mjs`: `captureCommand` and `lookupCiCheckRuns`.
+
 ## 2026-10-19 - A release never pushes a regenerated model catalog to main before testing it
 
 ### What changed

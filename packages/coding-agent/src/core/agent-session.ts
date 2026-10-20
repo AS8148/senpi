@@ -263,6 +263,7 @@ import type {
 	ApplyCompactionResult,
 	CompactionReason,
 	CompactionRejectionCause,
+	FilesystemPolicyChecker,
 	ModelSelectSource,
 } from "./extensions/types.ts";
 import { normalizeToolExposure, RUNTIME_EXTENSION_PATH } from "./extensions/types.ts";
@@ -324,6 +325,12 @@ import {
 import { createFallbackLogger } from "./retry-fallback/log.ts";
 import { ProbeBackScheduler } from "./retry-fallback/probe-scheduler.ts";
 import {
+	REQUEST_SHAPE_FAILURE_TEXT,
+	REQUEST_SHAPE_RECOVERY_ENTRY_TYPE,
+	REQUEST_SHAPE_RECOVERY_NOTE,
+	RequestShapeRecovery,
+} from "./retry-fallback/request-shape.ts";
+import {
 	AccountUsageLimitError,
 	describeUsageLimitEntry,
 	describeUsageLimitMessage,
@@ -372,6 +379,11 @@ import {
 } from "./thinking-levels.ts";
 import { resetTimings, time } from "./timings.ts";
 import { type SessionMessageUpdateEvent, withResolvedToolName } from "./tool-call-display-name.ts";
+import {
+	createSessionHostCallHandler,
+	type HostCallTarget,
+	type RegisteredHostCallKind,
+} from "./tool-child-host-calls.ts";
 import { createToolDispatcher, type ToolDispatcher } from "./tool-dispatch/tool-dispatcher.ts";
 import type { BashOperations } from "./tools/bash.ts";
 import { composeFilesystemPolicies } from "./tools/filesystem-policy.ts";
@@ -1307,6 +1319,7 @@ export class AgentSession {
 	// Retry state
 	private _retryAbortController: AbortController | undefined = undefined;
 	private _retryAttempt = 0;
+	private readonly _requestShapeRecovery = new RequestShapeRecovery();
 	/**
 	 * Failed response that the next request repeats, set by auto-retry and overflow recovery. The
 	 * retry is routed with it as `failed`, since the context no longer contains it.
@@ -1364,6 +1377,9 @@ export class AgentSession {
 	private _cwd: string;
 	private _agentDir: string;
 	private readonly _toolChild: SessionToolChild | undefined;
+	private readonly _toolChildHostTargets = new Map<RegisteredHostCallKind, HostCallTarget>();
+	/** The composed filesystem policy the built-in file tools enforce; a tool child's `authorize` asks the same one. */
+	private _filesystemPolicy: FilesystemPolicyChecker | undefined;
 	/** Settles once dispose() has stopped the tool child and swept what it launched. */
 	private _toolChildClosed: Promise<void> = Promise.resolve();
 	private _extensionRunnerRef?: { current?: ExtensionRunner };
@@ -1505,6 +1521,14 @@ export class AgentSession {
 						cwd: this._cwd,
 						moduleRoots: () => toolChildModuleRoots(this._extensionRunner.getAllRegisteredTools()),
 						onRecord: (record) => this._emit({ type: "session_tool_child", ...record }),
+						onHostCall: createSessionHostCallHandler({
+							cwd: this._cwd,
+							executeNested: (parentToolCallId, name, args, signal) =>
+								this._executeNestedToolCall(parentToolCallId, name, args, { signal }),
+							callableToolNames: () => this._callableToolNames(),
+							target: (kind) => this._toolChildHostTargets.get(kind),
+							filesystemPolicy: () => this._filesystemPolicy,
+						}),
 					})
 				: undefined;
 		this._toolDispatcher = createToolDispatcher({
@@ -2178,7 +2202,9 @@ export class AgentSession {
 			// The idle path tokenizes agent.state.messages in place; every provider
 			// request re-hydrates here so tokens can never reach a model.
 			this.sessionManager.getResidentStore().materializeInPlace(messages);
-			const transformed = previousTransformContext ? await previousTransformContext(messages, signal) : messages;
+			const transformed = this._requestShapeRecovery.apply(
+				previousTransformContext ? await previousTransformContext(messages, signal) : messages,
+			);
 			const model = this.model;
 			if (model?.provider !== "cursor" && model?.provider !== "cursor-cli-oauth") return transformed;
 			this._applyObservedCursorContextWindow(model);
@@ -3571,8 +3597,22 @@ export class AgentSession {
 			const retryAfterRequiredCompaction =
 				requiredAutoCompaction !== undefined && this._isRequiredCompactionError(msg);
 
+			const requestShape = this._requestShapeRecovery.decide(msg, this.model?.contextWindow ?? 0);
+			if (requestShape === "not-request-shape") this._requestShapeRecovery.endStreak();
+			if (
+				requestShape !== "not-request-shape" &&
+				!userAbortSuppressedQueuedContinuation &&
+				this.settingsManager.getRetrySettings().enabled
+			) {
+				const requestShapeOutcome = await this._handleRequestShapeRejection(msg, requestShape);
+				if (requestShapeOutcome === "continued") {
+					this._abortProvenance.closeAgentEndBoundary();
+					return;
+				}
+				retryContinuationBlocked ||= requestShapeOutcome === "blocked";
+			}
 			// Retry transient failures normally and eligible hard errors only through a fallback.
-			const retryableError = this._isRetryableError(msg);
+			const retryableError = requestShape === "not-request-shape" && this._isRetryableError(msg);
 			const hardErrorFallbackEligible = this._isHardErrorFallbackEligible(msg);
 			const cursorZeroTokenRe = isCursorZeroTokenResourceExhausted(msg);
 			const cursorQuotaRe = isCursorQuotaResourceExhausted(msg, this.model?.contextWindow ?? 0);
@@ -4467,6 +4507,17 @@ export class AgentSession {
 	 */
 	resolveToolCallName(requested: string): string {
 		return resolveToolNameAlias(requested, this._callableToolNames()) ?? requested;
+	}
+
+	/**
+	 * Serves the tool child's `completion` or `reserved` calls on the server (codemode registers its completion handler and
+	 * `runReservedTool`, which hold `evalHandleHost`). Returns the unregister function; a later registration replaces it.
+	 */
+	registerToolChildHostTarget(kind: RegisteredHostCallKind, target: HostCallTarget): () => void {
+		this._toolChildHostTargets.set(kind, target);
+		return () => {
+			if (this._toolChildHostTargets.get(kind) === target) this._toolChildHostTargets.delete(kind);
+		};
 	}
 
 	async executeTool<TDetails = unknown>(
@@ -10224,6 +10275,7 @@ export class AgentSession {
 		const filesystemPolicy = composeFilesystemPolicies(
 			extensionsResult.extensions.flatMap((extension) => extension.filesystemPolicies ?? []),
 		);
+		this._filesystemPolicy = filesystemPolicy;
 		const baseToolDefinitions = this._baseToolsOverride
 			? Object.fromEntries(
 					Object.entries(this._baseToolsOverride).map(([name, tool]) => [
@@ -10562,11 +10614,43 @@ export class AgentSession {
 			!this._isClaudeSdkSameModelRemintError(message) &&
 			message.stopReason === "error" &&
 			!isContextOverflow(message, this.model?.contextWindow ?? 0) &&
+			this._requestShapeRecovery.decide(message, this.model?.contextWindow ?? 0) === "not-request-shape" &&
 			!this._isCursorPayloadOverflow(message) &&
 			!isCursorZeroTokenResourceExhausted(message) &&
 			!isClassifierRefusal(message) &&
 			!message.content.some((content) => content.type === "toolCall") &&
 			this._retryFallback.canTryFallback()
+		);
+	}
+
+	/** Same-model recovery for a request-shape 400: never a model switch (senpi#3727). */
+	private async _handleRequestShapeRejection(
+		message: AssistantMessage,
+		decision: "recover" | "give-up",
+	): Promise<"continued" | "blocked" | "not-handled" | "cancelled"> {
+		if (decision === "give-up") {
+			this._requestShapeRecovery.endStreak();
+			this._emit({
+				type: "auto_retry_end",
+				success: false,
+				attempt: Math.max(1, this._retryAttempt),
+				finalError: REQUEST_SHAPE_FAILURE_TEXT,
+			});
+			this._retryAttempt = 0;
+			return "not-handled";
+		}
+		this._requestShapeRecovery.begin(message.timestamp);
+		this._emitEntryAppended(
+			this.sessionManager.appendCustomEntry(REQUEST_SHAPE_RECOVERY_ENTRY_TYPE, {
+				note: REQUEST_SHAPE_RECOVERY_NOTE,
+				model: message.model,
+			}),
+		);
+		this._sessionLogger.info("request_shape_recovery", { provider: message.provider, model: message.model });
+		this._retryAttempt = 0;
+		return await this._handleRetryableError(
+			{ ...message, errorMessage: REQUEST_SHAPE_RECOVERY_NOTE },
+			{ sameModelRemint: true },
 		);
 	}
 
