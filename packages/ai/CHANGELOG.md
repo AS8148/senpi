@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- Claude usage-limit failures retain the reset time from spent five-hour and weekly windows, so goal recovery can wait until the account is usable again ([#3825](https://github.com/code-yeongyu/senpi/issues/3825)).
 - A ChatGPT subscription failure now carries a `providerDiagnostic` in every shape the backend reports it (an HTTP error, an in-stream `error` event, a `response.failed` event): a usage limit is `quota` and a rate limit `rate_limit`, each with the new optional `resetsAt` (epoch ms) when the backend names the reset, and an unrecognized failure keeps the provider's own lowercase error type as its `code` instead of reading "no code" ([#3771](https://github.com/code-yeongyu/senpi/issues/3771)).
 
 ### Removed
