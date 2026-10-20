@@ -48,7 +48,7 @@ import { envValue } from "./brand.ts";
 import { isStdoutTakenOver } from "./output-guard.ts";
 import { readPiManifest } from "./pi-manifest.ts";
 import type { PackageSource, SettingsManager } from "./settings-manager.ts";
-import { type SkillProvenance, skillProjectRoot } from "./skill-access.ts";
+import { insideSkillRoot, type SkillProvenance, skillProjectRoot } from "./skill-access.ts";
 import { collectAutoSkillEntries, collectSkillEntries } from "./skill-discovery.ts";
 import { BUILTIN_PATH_PREFIX, type SourceScope } from "./source-info.ts";
 
@@ -2555,12 +2555,26 @@ export class DefaultPackageManager implements PackageManager {
 		metadata: PathMetadata,
 		kind: "project-auto" | "project-selected",
 	): PathMetadata {
+		const repositoryRoot = skillProjectRoot(this.cwd);
+		// Outside a git repository, ancestor `.agents/skills` roots above cwd are auto-discovered too;
+		// each is contained by the directory that owns it, so its own files load while links out of it
+		// are still refused (senpi#3796).
+		const spelled = resolve(root);
+		const owner = dirname(dirname(spelled));
+		const ancestorSkillsDir =
+			basename(spelled) === "skills" &&
+			[".agents", ".senpi", ".pi"].includes(basename(dirname(spelled))) &&
+			insideSkillRoot(resolve(this.cwd), owner);
+		const projectRoot =
+			kind === "project-auto" && ancestorSkillsDir && !insideSkillRoot(spelled, repositoryRoot)
+				? owner
+				: repositoryRoot;
 		return {
 			...metadata,
 			skillProvenance: {
 				kind: metadata.scope === "project" ? kind : "user",
 				selectedRoot: root,
-				projectRoot: skillProjectRoot(this.cwd),
+				projectRoot,
 			},
 		};
 	}
