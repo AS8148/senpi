@@ -1,3 +1,167 @@
+## 2026-10-19 - Removing a dead generation also ends its unproven session claims, behind the write fence (senpi#3658)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-generations.ts`: `pruneDeadGenerations` removes a claim whose owner is `gone` as before, and now also one whose owner identity is `unproven` when the claim belongs to a generation this same prune removed. It advances that session file's write fence (`advanceSessionFence`) first; a fence that cannot be written keeps the claim. A `proven` owner, or an unproven one of a generation that was not pruned, still stands. The claim loop is the exported `endClaimsOfEndedGenerations`. The fence module is loaded on first use there, so the lifecycle supervisor (which imports `host-generations.ts`) keeps it out of its startup graph (`test/supervisor-import-graph.test.ts`).
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`: `clearHostRegistration`, which an ensure runs before it starts a replacement host, ends the cleared generation's claims through `endClaimsOfEndedGenerations` before removing its directory. `pruneDeadGenerations` now also ends the claims before it removes the directories, so a prune cut short in between leaves no claim without its generation.
+- `packages/coding-agent/src/modes/rpc/host-reservations.ts`: `claimOwnerIdentity` is exported for that check.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/host-generations.ts`: on Windows the dead host child's pid was reused (PING.EXE) and its start time was never recorded. Pruning released the generation because its heartbeat had stopped, and removed its directory, heartbeat included, but kept its claim; with no heartbeat left the claim then stood for as long as the stranger ran, and the new host refused the session as `session_path_in_use` (sisyphuslabs/omo-desktop-app#3157, probe run 39201740304). The claim ends on the same evidence that ended its generation; the fence keeps a merely frozen owner from writing again. The ensure that started the replacement host cleared the dead generation through `clearHostRegistration`, which had the same gap (probe run 39204446814). Test: `test/suite/regressions/3658-prune-ends-unproven-claims.test.ts`.
+
+### Why an extension could not handle it
+
+- Generation pruning and session claims are RPC host internals with no extension hook.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/host-generations.ts` the claim loop of `pruneDeadGenerations`; `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts` `clearHostRegistration`.
+
+## 2026-10-18 - A session-holder lease whose owner identity cannot be proven no longer blocks once its host generation ended (senpi#3658)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-stalled-evidence.ts`: new `holderGenerationEnded({ host_instance, host_daemon_dir })`. It is true when that generation's heartbeat stopped (`generationHeartbeatStopped`), or when the named daemon directory holds `endpoint.json` and the generation's directory is gone (a daemon removes it only after its child was judged not alive by the same rule). A lease without `host_daemon_dir` is read against this host's own daemon by heartbeat only. A fresh heartbeat, no heartbeat file, this host's own generation, an unsafe instance id or a relative directory never end.
+- `packages/coding-agent/src/modes/rpc/session-held.ts`: the admission check passes `holderEnded: holderGenerationEnded` to `foreignSessionHolders`.
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: `open_session` adds `host_daemon_dir` (the supervised host's `SENPI_RPC_HOST_DAEMON_DIR`) to the holder endpoint. It is written into the holder record only; `session_held` errorData still names `pid`, `cwd`, `host_socket`, `host_instance`.
+- Core (fork-only): `core/extensions/builtin/terminal/lease-file.ts` `reclaimLockState` marks a live pid whose start time is unreadable `held` + `unproven`; `core/session-holders.ts` `liveHolders` reclaims such a record (only while it is unchanged) when `probes.holderEnded` says its generation ended; `core/session-hold-errors.ts` adds the optional `host_daemon_dir` to `SessionHolderEndpoint`; `core/foreign-session-holders.ts` takes the widened probes.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/host-stalled-evidence.ts`, `session-held.ts`, `session-command-router.ts`: with the two layers below, `host ensure` started a new host 122.5 s after a Windows tree kill, but every `open_session` on it was refused `session_held` naming the dead child's pid, which `PING.EXE` now wore (sisyphuslabs/omo-desktop-app#3157, run https://github.com/sisyphuslabs/omo-desktop-app/actions/runs/39166325038). The holder record's own start time is always numeric (computed in-process), so a refusal 134-180 s after the kill means the observed start time was unreadable, and `reclaimLockState` kept an unreadable holder `held` forever. The supervised host on win32 publishes no `host_socket`, so the lease needs its daemon directory to prove which daemon released it. Tests: `test/suite/regressions/3658-holder-lease-unprovable-owner.test.ts`, `3658-holder-generation-ended.test.ts`.
+
+### Why an extension could not handle it
+
+- Session-holder leases and RPC admission are core/RPC host internals with no extension hook.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `reclaimLockState` in `lease-file.ts`; `liveHolders` in `session-holders.ts`; the `holderEndpoint` literal in `session-command-router.ts`; the `foreignSessionHolders` probes in `session-held.ts`.
+
+## 2026-10-18 - The host child's start time is recorded on Windows, and an unreadable one is released once its heartbeat stopped (senpi#3658)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-scratch.ts`: `recordChildPid(file, pid, running)` writes `{ pid, processStartTime: null }` at once, then reads the child's start time the way `host-ensure-start.ts` reads the supervisor's - `waitForStartTime` (10 s of 1 s probes), then one unhurried 15 s read - and rewrites the record with it. An identity read after `running()` turned false is dropped.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: passes `running` from the spawned `ChildProcess` (`exitCode`/`signalCode` still null).
+- `packages/coding-agent/src/modes/rpc/host-stalled-evidence.ts`: new `generationHeartbeatStopped(generation)` (heartbeat older than `stallRefusalWindowMs`); `hostChildAlive` returns `false` for a live pid whose start time is unreadable (recorded or observed) once that holds. A fresh heartbeat or no heartbeat file still preserves.
+- `packages/coding-agent/src/modes/rpc/host-reservations.ts`: the #3652 `heartbeatStopped` delegates to `generationHeartbeatStopped`, so claims and generations share one rule.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-scratch.ts`, `host-lifecycle.ts`: one 1 s `Get-CimInstance` probe right after spawn recorded `processStartTime: null` for every host child on a Windows runner, while the supervisor's record (bounded wait + unhurried read, #1355) had one.
+- `packages/coding-agent/src/modes/rpc/host-stalled-evidence.ts`: with no comparable start time, `hostChildAlive` preserved the generation unconditionally; once Windows reused the killed child's pid, `ensureHost` refused `host_stalled` for as long as the unrelated process lived (sisyphuslabs/omo-desktop-app#3157). The heartbeat is positive evidence: a live host whose probe is merely slow keeps writing it (#1609). Tests: `test/suite/regressions/3658-host-child-start-time.test.ts`, `3054-supervisor-child-exit.test.ts`.
+- `packages/coding-agent/src/modes/rpc/host-reservations.ts`: one heartbeat rule, not two.
+
+### Why an extension could not handle it
+
+- Host child identity and generation liveness are RPC host internals with no extension hook.
+
+### Expected merge conflict zones
+
+- LOW: `recordChildPid` in `host-lifecycle-scratch.ts` and its call in `host-lifecycle.ts`; the tail of `hostChildAlive` in `host-stalled-evidence.ts`; `heartbeatStopped` in `host-reservations.ts`.
+
+## 2026-10-18 - A superseded claim whose owner identity cannot be proven needs a live heartbeat (senpi#3652)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-reservations.ts`: `standingOwner` classifies the claim owner as `proven`, `gone` or `unproven` (`claimOwnerIdentity`; `claimOwnerIsLive` is that verdict `!== "gone"`, unchanged for gc, status and pruning). A claim from a generation the pointer no longer names whose identity is `unproven` (no start time recorded, or none readable now) is reclaimed once that generation's `host-alive.json` heartbeat is older than the stall-refusal window (`stallRefusalWindowMs`, 120 s by default). A fresh heartbeat, no heartbeat file at all, and the current generation all still stand. Before such a takeover, `claim` advances the session file's write fence (`advanceSessionFence`), so the presumed-done owner cannot write the file again if it was only frozen or asleep; a fence that cannot be written leaves the claim standing. The fence module is loaded on first use there, so the lifecycle supervisor (which imports this module) keeps it, and its synchronous fence read, out of its startup graph (`test/supervisor-import-graph.test.ts`).
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: on win32 the socket host's shutdown waits at most `WINDOWS_SHUTDOWN_DISPOSE_BOUND_MS` (10 s) for `router.dispose()`, then detaches its connections and exits as before.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/host-reservations.ts`: on Windows a terminated generation leaves its claim behind, the OS reuses its pid, and the 1 s CIM start-time probe often cannot read a start time. The claim then stood as `current: false, attached: true` for as long as the unrelated process lived, so the session file could never be opened again (sisyphuslabs/omo-desktop-app#3157). The heartbeat is the positive evidence the loop-lag watchdog already writes; a heartbeat older than the window is the same "died without cleaning up" verdict `hostLoopStalled` reaches. That verdict can be wrong for a host whose loop froze or whose machine slept, so the fence makes a second writer impossible rather than unlikely. Tests: `test/suite/regressions/3652-unproven-claim-owner-heartbeat.test.ts`, `test/suite/regressions/3652-takeover-write-fence.test.ts`.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: a TerminateProcess'd supervisor runs no stop, its watchdog removes the pointer at once, and until the connections detach the host's claims read `attached: true`, so one wedged close held every session it served.
+
+### Why an extension could not handle it
+
+- Cross-generation claims and host shutdown are RPC host internals with no extension hook.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/host-reservations.ts` `standingOwner` and `claimOwnerIsLive`; `packages/coding-agent/src/modes/rpc/multi-session-host.ts` the `router.dispose()` call in the socket host's `shutdown`.
+
+## 2026-10-19 - Suggest a fresh session with a handoff when a large session's cache has expired (senpi#3230)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `setWidget` `extension_ui_request` gains optional `widgetActions: { label, command }[]`.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `setWidget` forwards `options.actions` as `widgetActions` when the widget has lines and at least one choice.
+
+### Why
+
+The desktop renders the handoff hint's choices as buttons from the same `setWidget` record the TUI renders, and sends the chosen `command` as an ordinary prompt.
+
+### Why an extension could not handle it
+
+The wire record is built by the RPC UI context.
+
+### Expected merge conflict zones
+
+- LOW: `rpc-types.ts` setWidget member; `connection-handler.ts` `setWidget`.
+
+## 2026-10-17 - The internal host socket fits sun_path under a long TMPDIR (senpi#3487)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-scratch.ts`: `createInternalSocketPath` picks the hop's root with `internalHostDirRoots()` (the OS temp directory, then `/tmp`), using the first root where `<root>/senpi-rpc-host-internal-<8>/host.sock` fits `MAX_SOCKET_PATH_BYTES` (103); if neither fits it throws `internal_socket_path_too_long` with the path and the next step (a shorter TMPDIR). The directory stays non-recursive and 0700. `INTERNAL_HOST_DIR_PREFIX` and `internalHostDirRoots` are exported for the reaper.
+- `packages/coding-agent/src/modes/rpc/host-internal-dir-reaper.ts`: `reapOrphanedInternalHostDirs` scans every root from `internalHostDirRoots()`, so a dead owner's hop in the `/tmp` fallback is collected under the same rules (older than 60 s, only `.owner`, owner provably dead).
+- Tests: `packages/coding-agent/test/suite/regressions/3487-rpc-internal-socket-long-tmpdir.test.ts` (new): a 116-char TMPDIR yields a socket of at most 103 bytes in a 0700 directory that a real server binds (RED: 159 bytes); a short TMPDIR is still used; a dead owner's leftover hop under `/tmp` is reaped while TMPDIR is long (RED without the reaper change).
+
+### Why
+
+- The hop was always `join(tmpdir(), ...)`, although its comment promised it stays short regardless; a long TMPDIR made the host child die with `listen EINVAL` before answering `get_protocol_info`. `resolveTuiSocket` already falls back the same way for the TUI socket.
+
+### Why an extension could not handle it
+
+- The internal hop is created by the host supervisor before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/host-lifecycle-scratch.ts`, the non-win32 branch of `createInternalSocketPath`.
+- LOW: `packages/coding-agent/src/modes/rpc/host-internal-dir-reaper.ts`, the top of `reapOrphanedInternalHostDirs`.
+
+## 2026-10-19 - A bundled supervisor loads only the supervisor graph (senpi#3743)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-supervisor-entry.ts` (new): the supervisor program for bundled installs. It runs the part of the CLI preamble a supervisor relied on (cwd guard, process title, agent markers, silenced warnings, brand read and then scrubbed, in that order) and calls `runHostSupervisor` with the argv after `--internal-rpc-host-supervisor`. Started from a runtime snapshot (its marker beside `dist/bundle/`), it first claims that snapshot with its own pid under the runtime lock, as `cli.js`'s `prepareRuntimeSnapshot` did for the supervisor: the supervisor respawns its host child through the snapshot's `cli.js`, so a prune by a later upgrade must not remove the snapshot while the host child is down.
+- `scripts/build-coding-agent-bundle.mjs`: emits that module self-contained as `dist/bundle/host-supervisor.js` beside `cli.js`, and counts it in the runtime manifest.
+- `packages/coding-agent/src/modes/rpc/host-launch.ts`: `defaultHostLaunch` starts `host-supervisor.js` when the bundle beside the declared CLI entry has one, keeping the sentinel and `--socket` in argv; a bundle without it keeps the CLI route.
+
+### Why
+
+A bundled supervisor reached its route only after `main()` evaluated its whole static graph, which stayed resident: 69-71 MB per supervisor against 8.5 MB for the supervisor graph alone, and the desktop runs one supervisor per thread host (omo-desktop-app#3359).
+
+### Why an extension could not handle it
+
+The supervisor launch is RPC host internals that run before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: `defaultHostLaunch` in `packages/coding-agent/src/modes/rpc/host-launch.ts`; the bundle build's entry list and manifest call in `scripts/build-coding-agent-bundle.mjs`.
+
+## 2026-10-19 - An idle host stops ticking every second; its supervisor reads drain requests when they land (senpi#3747)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/child-reaper.ts`: `startHostChildReaper` schedules through `scheduleChildReaper`, which ticks every `CHILD_REAPER_IDLE_TICK_MS` (5 s) while the last pass saw no direct children (`ChildReaper.childCount`) and every second while it saw some.
+- `packages/coding-agent/src/modes/rpc/host-zero-session-trim.ts`: the trimmer keeps a timer only while a trim is owed (a collection to report, a drop waiting for its spacing, a zero not yet answered); `observe` arms it, so a host whose session count holds still runs no timer. `check` keeps its decisions unchanged.
+- `packages/coding-agent/src/modes/rpc/host-stop-intent.ts`: `watchDrainRequest` watches the request file's directory and reads the file when it changes, with a `DRAIN_REQUEST_WATCHED_POLL_MS` (5 s) backup poll; when the directory cannot be watched, or the watch errors, it polls every `DRAIN_REQUEST_POLL_MS` (1 s) as before. `pollMs` still overrides the poll interval.
+
+### Why
+
+One host and one supervisor run per desktop thread (omo-desktop-app#3359). After senpi#3738 an idle host still woke 4 times a second and its supervisor 3 times a second for checks that had nothing to do: no children, an unchanged session count, no drain request. The supervisor's idle/owner ticker stays at 1 s: it also carries the owner-gone exit (#3045: exit two seconds after the owner dies), which a slower tick would delay.
+
+### Why an extension could not handle it
+
+These timers are RPC host and supervisor internals armed before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: `startHostChildReaper` in `packages/coding-agent/src/modes/rpc/child-reaper.ts`; `start`/`stop`/`observe`/`check` in `packages/coding-agent/src/modes/rpc/host-zero-session-trim.ts`; `watchDrainRequest` in `packages/coding-agent/src/modes/rpc/host-stop-intent.ts`.
+
 ## 2026-10-19 - Keep pending dialogs visible after session replacement (#3728 review)
 
 ### What changed

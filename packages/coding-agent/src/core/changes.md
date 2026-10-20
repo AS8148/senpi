@@ -1,3 +1,135 @@
+## 2026-10-18 - A multi-block queued input leaves the queue when it starts (senpi#3588, senpi#3768)
+
+### What changed
+
+- `packages/coding-agent/src/core/user-text-blocks.ts`: new `joinUserTextBlocks(blocks)` (the newline join `userTextContent` already enforced, now its single definition) and `userMessageText(content)`, the one key a queued user message is tracked by.
+- `packages/coding-agent/src/core/agent-session.ts`: enqueue and dequeue both read that key. `sendUserMessage` joins its text blocks with `joinUserTextBlocks`; the `message_start` match that removes a started user message from `_steeringMessages` / `_followUpMessages` and the queued-input order reads `userMessageText(content)` instead of `contentText(content, "")`; a started prompt that a competing run displaced into the steer queue is recorded by `userMessageText` too (the private `_extractUserMessageText` is gone).
+
+### Why
+
+- Since senpi#2920 a later ask-user answer keeps its frame and the user's words in separate text blocks, and `userTextContent` keeps blocks only while their newline join equals the text. The queue records that text; the old match joined with no separator, so a multi-block steer or follow-up reached the model but stayed queued for the rest of the session (the TUI kept showing `Steering: [Answer to question <id>]`; `pendingMessageCount`, `getQueuedInputs()` and RPC queue snapshots counted it). One shared key keeps the two sides from drifting again: `userMessageText(userTextContent(text, blocks)) === text`.
+- Regressions: `test/suite/regressions/issue-3588-multi-block-queued-input-leaves-queue.test.ts` (extension steer, extension follow-up, identified steer with `clientMessageId`, displaced started prompt) and `test/suite/regressions/issue-3768-ask-user-answer-leaves-steer-queue.test.ts` (the real `ask_user_question` tool answered with a comment and with typed words during a busy run; steering, pending count, queued inputs, the last `queue_update` and the RPC state all empty; plus the key invariant).
+
+### Why an extension could not handle it
+
+- Queue bookkeeping for delivered input lives in the session's event handler.
+
+### Expected merge conflict zones
+
+- LOW: the `user-text-blocks.ts` import, the `message_start` match, the displaced-prompt `text`, and the `sendUserMessage` join in `agent-session.ts`.
+
+## 2026-10-19 - Releasing an ended holder's lease fences out its writer first (senpi#3658)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-holder-records.ts`: `liveHolders` takes a `fenceSession` callback; a holder whose pid is alive but unprovable and whose generation ended (`holderEnded`) is released only after the callback advanced the session file's write fence. Without the callback, or when it fails, the holder stands.
+- `packages/coding-agent/src/core/session-holders.ts`: `liveSessionHolders` passes `advanceSessionFence(sessionFile)` as that callback.
+
+### Why
+
+- `packages/coding-agent/src/core/session-holder-records.ts`: `holderEnded` judges a generation over on heartbeat age alone, and a frozen loop or a sleeping machine stops the heartbeat too. Holder leases are shared by every endpoint, so a host on another endpoint could release the lease and open the file without ever meeting the frozen host's reservation claim; the frozen host would then resume writing. The fence refuses its writes (#3659 review). Test: `test/suite/regressions/3658-holder-release-fences-writer.test.ts`.
+- `packages/coding-agent/src/core/session-holders.ts`: the session file is known only here.
+
+### Why an extension could not handle it
+
+- Session holder leases and the session write funnel are core persistence.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/session-holder-records.ts` the `holderEnded` branch of `liveHolders`; `packages/coding-agent/src/core/session-holders.ts` `liveSessionHolders`.
+
+## 2026-10-19 - A session file taken over from a presumed-done generation fences out its old writer (senpi#3652)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: every write funnel (`_persist`, `_writeHeaderAsync`, `_rewriteFile`) asks `SessionWriteFence.assertOwned` before writing; opening a persisted file records its fence token (`core/session-write-fence.ts`, fork-only, new). When the token on disk changed since the open, the write throws `SessionFencedError` and so does every later write of that manager to that file.
+
+### Why
+
+- `packages/coding-agent/src/core/session-manager.ts`: an RPC host may take a session file over from a generation it only presumes done (its heartbeat stopped; senpi#3652). A frozen event loop or a sleeping machine stops the heartbeat too, and that generation would resume writing the same file: two writers. The takeover advances the fence first, so the old writer's next write is refused and the file stays as the new owner keeps it. Test: `test/suite/regressions/3652-takeover-write-fence.test.ts`.
+
+### Why an extension could not handle it
+
+- The write funnel of the session file is core persistence; extensions write through it, not around it.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/session-manager.ts` the `writeFence` field, `_beginSessionFile`, and the first lines of `_persist`, `_writeHeaderAsync` and `_rewriteFile`.
+
+## 2026-10-19 - Suggest a fresh session with a handoff when a large session's cache has expired (senpi#3230)
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-shapes.ts`: new `HandoffHintSettings` (`enabled`, `minContextTokens`, `minSavingUsd`).
+- `packages/coding-agent/src/core/settings-manager.ts`: `Settings.handoffHint`.
+
+### Why
+
+The handoff hint's switch and thresholds are user settings (defaults: on, 200k tokens, $1 saving).
+
+### Why an extension could not handle it
+
+`Settings` is the typed settings contract the extension reads through `pi.getSettings()`.
+
+### Expected merge conflict zones
+
+- LOW: one field in `Settings`, one import line, one interface in `settings-shapes.ts`.
+
+## 2026-10-19 - The session hands its tool child's wakes and exits to the jobs that run there (senpi#3740)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the tool child's `onWake` hands each wake to the registered tool whose `childJob.kind` is its source (`ToolChildJob.wake`), and an `exited` record tells every `childJob.childExited`; the tool dispatcher also gets the child's `kindRunner`, and user bash (`executeBash`) uses the dispatcher's `bashOperations`, so under `--tool-runtime child` it runs on the child.
+
+### Why
+
+A terminal background session on the tool child outlives the job that started it; its exit must still reach the session as the completion notice, and an exited child takes its sessions with it.
+
+### Why an extension could not handle it
+
+Only the session owns its tool child and the registered tools' definitions together.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the `SessionToolChild` options (`onRecord`, `onWake`), the `createToolDispatcher` options, and `_childJobs` beside `_callableToolNames`.
+
+## 2026-10-18 - ctx.offload runs registered child modules through the session's dispatcher (senpi#3566 todo 8)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the extension context actions gain `offload(id, args, options)`, which resolves the id among the runner's registered child modules and hands the `module` job to the session's tool dispatcher (`tool-dispatch/offload.ts`); the tool child's module roots now include registered child-module files as well as child-placed tools' modules. On `dispose()` (close or replacement) the session closes its in-process offload jobs with the tool child: a run still loading its module never starts its body (it is registered before the import, and the import wait is abandoned), and any later `offload` fails `offload_session_closed`; each running module is cancelled, every further host call is refused `host_call_session_closed`, and its locks are released when its body settles (at once if it is stuck, else after the grace, with a notice that the module is still running and its locks were released); `whenToolChildClosed()` - which replacement awaits - settles only then. The session builds its host-call handler once and gives it to both the tool child (`onHostCall`) and `createToolDispatcher` (`hostCalls`), so an in-process module's host calls are answered exactly like the child's reverse bridge.
+- `packages/coding-agent/src/core/tool-dispatch/offload.ts`, `tool-dispatcher.ts`: the in-process path runs the export with `(args, host)` - the same `createModuleHost` object the child's worker builds (`modes/rpc/tool-child/module-host.ts`), its calls sent to that handler - and fails `tool_child_deadline` when `deadlineMs` passes - the module is cancelled and refused new host calls, but its job, and every file lock it still holds, ends only when its body settles, so no second writer interleaves with a write still running; its calls go through the child's per-job `HostCallAdmission`, the cancel reaches every call but the lock calls, and calls still running are signalled when the job ends; in-process modules get the child's deadline (the caller's, at most `OFFLOAD_MAX_MS`), and one still running a grace (`stuckGraceMs`, 10 s) past it is reported stuck: its locks stay held, every waiter on them fails `file_locked_by_stuck_module`, and the session emits `offload_module_stuck` naming the module and the files; `offload` rejects a `deadlineMs` that is not a finite number above 0 with `offload_bad_options` (senpi#3622 review).
+
+### Why
+
+Extensions need to run their own CPU-bound or blocking work off the host's event loop without a third execution path; the dispatcher already chooses the child (`--tool-runtime child`) or this process (`in-process`).
+
+### Why an extension could not handle it
+
+The context actions and the tool child's module roots are built inside the session; an extension cannot reach the dispatcher or grant its module to the child.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the `offload` entry beside `getModel` in the context actions, the `moduleRoots` provider of the tool child, the shared `hostCalls` handler and `onModuleStuck` before `this._toolChild`, the `offload_module_stuck` event in `AgentSessionEvent`, and the dispatcher close beside the tool child's in `dispose()`.
+
+## 2026-10-18 - A session answers its tool child's host calls (senpi#3566 todo 7)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: under `--tool-runtime child` the session hands its tool child a host-call handler (`createSessionHostCallHandler`, `tool-child-host-calls.ts`). A child-run body's `tool` call runs through `_executeNestedToolCall` (hooks once, as `ctx.executeTool`), `list_tools` names the callable tools, `completion`/`reserved` reach targets registered with `registerToolChildHostTarget`, `authorize` asks the same composed filesystem policy the built-in file tools enforce, on a path the server resolves against the session cwd and canonicalizes like those tools (a child-sent canonical path is never trusted), `lock_file` keys on the same session-cwd path, and a call of an ended job is refused (kept in `_filesystemPolicy` when the tools are rebuilt), and `lock_file`/`unlock_file` hold a file's slot in the shared mutation queue. On the default in-process path none of this is constructed.
+
+### Why
+
+Tool bodies placed in the child still need the session's tools, model, policy and file serialization; those stay on the server (the plan's Must NOT: no policy or model calls in the child), so the child asks over the reverse bridge.
+
+### Why an extension could not handle it
+
+The tool pipeline, the composed filesystem policy and the tool child's construction are session internals; no extension hook reaches them.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the tool-child construction in the runtime setup (its `onHostCall` deps), the `_filesystemPolicy` assignment beside `composeFilesystemPolicies`, and the fields beside `_toolChildHostTargets`.
+
 ## 2026-10-19 - dispose() says whether the process exits (senpi#3711)
 
 ### What changed
