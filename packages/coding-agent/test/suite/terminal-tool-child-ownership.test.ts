@@ -68,7 +68,8 @@ describe.skipIf(process.platform === "win32")("terminal session ownership under 
 			extensionFactories: [notices.terminalExtension()],
 		});
 		try {
-			await harness.session.bindExtensions({});
+			// The completion notice only wakes an interactive session (print/json never do).
+			await harness.session.bindExtensions({ mode: "rpc" });
 			const watched = await harness.session.executeTool("monitor", {
 				description: "server-side watch",
 				command: "echo server-out; sleep 600",
