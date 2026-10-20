@@ -3027,6 +3027,26 @@ Response:
 }
 ```
 
+#### get_model_thinking_level
+
+The thinking level one model runs at in this session, without switching to it. For the active model it is the current level; for any other model it is the level `set_model` would restore (see `thinkingLevelSource` under [get_state](#get_state) for the order). A client shows a model's effort with it before the user sends anything, instead of keeping its own per-model copy. The command only reads and does not count as session activity.
+
+```json
+{"type": "get_model_thinking_level", "provider": "openai", "modelId": "<model>"}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "get_model_thinking_level",
+  "success": true,
+  "data": {"level": "high", "source": "session", "availableLevels": ["off", "low", "medium", "high"]}
+}
+```
+
+An unknown model answers `success: false` with `errorCode: "model_not_found"`; a missing `provider` or `modelId` answers `errorCode: "invalid_argument"`.
+
 ### Fast mode
 
 #### set_fast_mode

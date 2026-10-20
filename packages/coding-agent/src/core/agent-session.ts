@@ -4311,6 +4311,23 @@ export class AgentSession {
 		return this._sessionThinkingMemory.levels();
 	}
 
+	/**
+	 * The level `model` runs at in this session: the current one for the active model, otherwise the
+	 * level a switch to it would restore. Nothing is applied (senpi#3819).
+	 */
+	getThinkingLevelForModel(model: Model<Api>): {
+		level: ThinkingLevel;
+		source: ThinkingLevelSource;
+		availableLevels: ThinkingLevel[];
+	} {
+		const availableLevels = getSupportedThinkingLevels(model) as ThinkingLevel[];
+		if (this.model && modelsAreEqual(this.model, model)) {
+			return { level: this.thinkingLevel, source: this._thinkingLevelSource, availableLevels };
+		}
+		const { level, source } = this._getThinkingForModelSwitch(model);
+		return { level, source, availableLevels };
+	}
+
 	/** An explicit thinking request clamped while this session was created (senpi#2395). */
 	get startupThinkingClamp(): ThinkingClampNotice | undefined {
 		return this._startupThinkingClamp;

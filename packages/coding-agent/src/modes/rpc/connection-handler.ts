@@ -133,6 +133,7 @@ import {
 	RPC_ERROR_INVALID_ARGUMENT,
 	RPC_ERROR_INVALID_EVAL_CELL_REQUEST,
 	RPC_ERROR_MEDIA_NOT_FOUND,
+	RPC_ERROR_MODEL_NOT_FOUND,
 	RPC_ERROR_RESPONSE_TOO_LARGE,
 	STEER_WHEN_IDLE_CAPABILITY,
 } from "./rpc-types.ts";
@@ -1230,6 +1231,28 @@ export function createRpcConnectionHandler(
 				return success(id, "get_available_thinking_levels", {
 					levels: session.getAvailableThinkingLevels(),
 				});
+
+			case "get_model_thinking_level": {
+				if (typeof command.provider !== "string" || typeof command.modelId !== "string") {
+					return error(
+						id,
+						"get_model_thinking_level",
+						"get_model_thinking_level requires 'provider' and 'modelId'.",
+						RPC_ERROR_INVALID_ARGUMENT,
+					);
+				}
+				const models = await session.modelRegistry.getAvailable();
+				const model = models.find((m) => m.provider === command.provider && m.id === command.modelId);
+				if (!model) {
+					return error(
+						id,
+						"get_model_thinking_level",
+						`Model not found: ${command.provider}/${command.modelId}`,
+						RPC_ERROR_MODEL_NOT_FOUND,
+					);
+				}
+				return success(id, "get_model_thinking_level", session.getThinkingLevelForModel(model));
+			}
 
 			// =================================================================
 			// Fast mode

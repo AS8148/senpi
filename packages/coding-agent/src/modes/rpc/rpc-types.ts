@@ -164,6 +164,7 @@ type RpcSessionCommand =
 	| { id?: string; type: "set_thinking_level"; level: ThinkingLevel; scope?: "turn"; effectId?: string }
 	| { id?: string; type: "cycle_thinking_level" }
 	| { id?: string; type: "get_available_thinking_levels" }
+	| { id?: string; type: "get_model_thinking_level"; provider: string; modelId: string }
 
 	// Fast mode (ChatGPT Subscription priority service tier)
 	| { id?: string; type: "set_fast_mode"; enabled: boolean }
@@ -1157,6 +1158,13 @@ export type RpcResponse =
 			command: "get_available_thinking_levels";
 			success: true;
 			data: { levels: ThinkingLevel[] };
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "get_model_thinking_level";
+			success: true;
+			data: { level: ThinkingLevel; source: ThinkingLevelSource; availableLevels: ThinkingLevel[] };
 	  }
 
 	// Fast mode
