@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { AssistantMessage, AssistantMessageEvent } from "@earendil-works/pi-ai";
 import type { PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { COOLDOWN_BASE_MS } from "../../../src/core/credential-pool/classify.ts";
 import { listRotationSlots, streamWithCredentialRotation } from "../../../src/core/credential-pool/rotation-stream.ts";
 import { CredentialSlotRepository } from "../../../src/core/credential-pool/state-store.ts";
 import { describeProviderFailure } from "../../../src/core/provider-failure.ts";
@@ -161,6 +162,28 @@ describe("a stale usage-limit block does not keep failing turns (#3771)", () => 
 		const recovered = (await repository.listSlots(PROVIDER, "stored")).a;
 		expect(recovered?.blockedUntil).toBeUndefined();
 		expect(recovered?.failureCount).toBeUndefined();
+	});
+
+	test("a usage limit naming a reset already past keeps the default cooldown, never zero", async () => {
+		const clock = { now: NOW };
+		const repository = new CredentialSlotRepository(statePath);
+		const pastReset = Math.floor((NOW - 3_600_000) / 1000);
+		const limit = new Error(
+			`Codex error: {"type":"usage_limit_reached","message":"The usage limit has been reached","resets_at":${pastReset}}`,
+		);
+
+		await drain(
+			streamWithCredentialRotation({
+				sources: sources(repository, clock, "a"),
+				affinityKey: "session-3771",
+				runAttempt: (slot) => {
+					if (slot.name === "a") throw limit;
+					return succeed();
+				},
+			}),
+		);
+
+		expect((await repository.listSlots(PROVIDER, "stored")).a?.blockedUntil).toBe(NOW + COOLDOWN_BASE_MS);
 	});
 
 	test("the turn's failure names the quota and when it resets instead of 'no code'", () => {
