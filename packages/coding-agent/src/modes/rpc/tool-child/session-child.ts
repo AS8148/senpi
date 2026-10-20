@@ -7,11 +7,12 @@
 import { dirname, isAbsolute, resolve } from "node:path";
 import type { RegisteredTool } from "../../../core/extensions/types.ts";
 import type {
+	ToolChildKindRunner,
 	ToolChildModuleJob,
 	ToolChildRunner,
 	ToolChildRunResult,
 } from "../../../core/tool-dispatch/tool-dispatcher.ts";
-import { ToolChildClient, ToolChildError, type ToolChildStatus } from "./client.ts";
+import { ToolChildClient, ToolChildError, type ToolChildStatus, type ToolChildWake } from "./client.ts";
 import type { HostCallHandler } from "./host-calls-server.ts";
 import { CrashLoop, fixtureDeadline } from "./job-policy.ts";
 import type { ToolChildCommand } from "./launch.ts";
@@ -39,6 +40,8 @@ export interface SessionToolChildOptions {
 	readonly command?: ToolChildCommand;
 	/** Serves the child's reverse-bridge calls; the request's `context.toolCallId` names the calling tool call. */
 	readonly onHostCall?: HostCallHandler;
+	/** Receives the child's wakes (`ToolChildWake`); the session hands each to the job definition of its kind. */
+	readonly onWake?: (wake: ToolChildWake) => void;
 	/** The crash loop's clock; tests inject a fake one. */
 	readonly now?: () => number;
 }
@@ -83,6 +86,7 @@ export class SessionToolChild {
 			...(options.command === undefined ? {} : { command: options.command }),
 			onStatus: (status) => this.#onStatus(status),
 			...(options.onHostCall === undefined ? {} : { onHostCall: options.onHostCall }),
+			...(options.onWake === undefined ? {} : { onWake: options.onWake }),
 		});
 	}
 
@@ -100,11 +104,26 @@ export class SessionToolChild {
 		}
 	};
 
+	/**
+	 * Runs a job of a built-in kind (`ToolDefinition.childJob`, e.g. `terminal.bash`) on this session's child, streaming
+	 * its updates to `onUpdate`. Never retried: such a job's state (a PTY session) does not survive a child exit.
+	 */
+	readonly kindRunner: ToolChildKindRunner = async (kind, args, call) => {
+		await this.#ensureLive();
+		const generation = this.#client.generation;
+		const pid = this.#client.pid ?? -1;
+		const value = await this.#client.run(kind, args, call.signal, {
+			hostContext: { toolCallId: call.toolCallId },
+			...(call.onUpdate === undefined ? {} : { onUpdate: call.onUpdate }),
+		});
+		return { value, pid, generation };
+	};
+
 	async #runOnce(job: ToolChildModuleJob, signal: AbortSignal | undefined): Promise<ToolChildRunResult> {
 		await this.#ensureLive();
 		const generation = this.#client.generation;
 		const pid = this.#client.pid ?? -1;
-		const deadlineMs = fixtureDeadline(job.export, this.#options.env ?? process.env);
+		const deadlineMs = job.deadlineMs ?? fixtureDeadline(job.export, this.#options.env ?? process.env);
 		const value = await this.#client.run(MODULE_JOB_KIND, job, signal, {
 			idempotent: job.idempotent === true,
 			hostContext: { toolCallId: callingToolCallId(job.args) },

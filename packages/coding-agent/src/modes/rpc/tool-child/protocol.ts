@@ -15,6 +15,8 @@ export const TOOL_CHILD_LIMITS = {
 	jobs: 32,
 	/** Wake notifications awaiting `wake_ack`, by count and by summed size; the next one waits (never dropped). */
 	wakePending: 64,
+	/** A job's streamed updates awaiting `update_ack`; the job's next `update()` waits for credit (never dropped). */
+	updatesInFlight: 64,
 	wakePendingBytes: 1 * MIB,
 	HOST_CALL_ACTIVE: 8,
 	HOST_CALL_WAITING: 256,
@@ -45,6 +47,7 @@ export const LAUNCH_APIS = [
 	"cp.spawn",
 	"cp.spawnSync",
 	"cp.execFileSync",
+	"pty.spawn",
 ] as const;
 export type LaunchApi = (typeof LAUNCH_APIS)[number];
 
@@ -108,10 +111,13 @@ export type ServerToChild =
 	| { type: "wake_ack"; wakeId: string }
 	| { type: "slot_query"; launchId: string }
 	| { type: "ping"; seq: number }
+	/** The server delivered the job's update `seq` (one credit back to the child). */
+	| { type: "update_ack"; jobId: string; seq: number }
 	| { type: "shutdown" };
 
 export type ChildToServer =
-	| { type: "hello"; generation: number; pid: number; protocol: number }
+	/** `jobKinds`: the job kinds this child runs (its manifest); a job of any other kind is refused before it is sent. */
+	| { type: "hello"; generation: number; pid: number; protocol: number; jobKinds: string[] }
 	| { type: "heartbeat"; seq: number }
 	| { type: "pong"; seq: number }
 	| { type: "cancel_ack"; jobId: string }
@@ -150,8 +156,10 @@ export type ChildToServer =
 			breakaway: boolean;
 	  }
 	| { type: "slot_state"; launchId: string; ackTick: number | null; invokeTick: number | null; invocations: number }
-	| { type: "wake"; wakeId: string; source: string; bytes: number }
+	| { type: "wake"; wakeId: string; source: string; bytes: number; value?: unknown }
 	| { type: "batch"; jobId: string; entries: ParsedEntryMeta[]; done: boolean }
+	/** A running job's partial result, in order (`seq` from 1); large ones by acknowledged reference. */
+	| { type: "update"; jobId: string; seq: number; value?: unknown; valueRef?: PayloadRef }
 	| { type: "trace"; atMs: number; event: string; detail?: TraceDetail };
 
 /** Either side acknowledges or refuses a ref the other side wrote. */
