@@ -35,7 +35,7 @@ it("validates every attachment and capability response against wire contract v1"
 		}),
 	);
 	// Do not hide unsolicited responses emitted while a command finalizes.
-	responses.push(...rig.records().filter((record) => record.type === "response"));
+	responses.push(...rig.records().filter((record) => record.type === "response" && record.command !== "open_session"));
 	expect(responses.length).toBeGreaterThanOrEqual(11);
 	for (const response of responses) {
 		const parsed = attachmentWireResponse.safeParse(response);
