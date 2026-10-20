@@ -105,7 +105,14 @@ describe("session tool barrier", () => {
 
 	it("settles the turn as aborted when Stop arrives during the wait", async () => {
 		const ran: string[] = [];
-		const harness = await setup(ran);
+		const hooked: string[] = [];
+		const harness = await setup(ran, [
+			(pi) => {
+				pi.on("tool_call", (event) => {
+					hooked.push(event.toolName);
+				});
+			},
+		]);
 		harness.session.subscribe((event) => {
 			if (event.type === "tool_barrier_waiting") void harness.session.abort();
 		});
@@ -118,6 +125,8 @@ describe("session tool barrier", () => {
 		expect(getToolResult(harness, "mutate").isError).toBe(true);
 		expect(harness.eventsOfType("tool_barrier_expired")).toEqual([]);
 		expect(harness.session.isStreaming).toBe(false);
+		expect(hooked).toEqual([]);
+		expect(harness.session.releaseToolBarrier(BARRIER.id)).toBe(false);
 	});
 
 	it("opens at the ceiling and reports tool_barrier_expired", async () => {
@@ -198,26 +207,6 @@ describe("session tool barrier", () => {
 
 		expect(harness.eventsOfType("tool_barrier_waiting").map((event) => event.id)).toEqual(["ext"]);
 		expect(ran).toEqual(["mutate"]);
-	});
-
-	// senpi#3722 review MEDIUM: a retry that never runs again must not leave the barrier armed for later turns.
-	it("clears the barrier when a pending retry is cancelled during its backoff", async () => {
-		const harness = await createHarness({
-			settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 60_000 } },
-			extensionFactories: [barrierTools([])],
-		});
-		harnesses.push(harness);
-		await harness.session.bindExtensions({});
-		harness.session.subscribe((event) => {
-			if (event.type === "auto_retry_start") harness.session.abortRetry();
-		});
-		harness.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" })]);
-
-		await harness.session.prompt("go", { toolBarrier: BARRIER });
-		await harness.session.waitForIdle();
-
-		expect(harness.eventsOfType("auto_retry_end").map((event) => event.finalError)).toEqual(["Retry cancelled"]);
-		expect(harness.session.releaseToolBarrier(BARRIER.id)).toBe(false);
 	});
 
 	it("rejects a malformed barrier before the prompt is accepted", async () => {

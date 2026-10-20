@@ -1999,7 +1999,9 @@ export class AgentSession {
 		if (options.waitForEventQueue !== false) {
 			await this._agentEventQueue;
 		}
-		await this._waitForToolBarrier(toolCall, options.signal ?? this.agent.signal);
+		const signal = options.signal ?? this.agent.signal;
+		// A call released by Stop never runs: do not ask its hooks (a permission prompt) about it.
+		if ((await this._waitForToolBarrier(toolCall, signal)) && signal?.aborted) return undefined;
 
 		const runner = this._extensionRunner;
 		if (!runner.hasHandlers("tool_call")) {
@@ -10334,12 +10336,14 @@ export class AgentSession {
 		return this._toolBarrier.release(id);
 	}
 
-	private async _waitForToolBarrier(toolCall: AgentToolCall, signal: AbortSignal | undefined): Promise<void> {
-		if (this._toolDefinitions.get(toolCall.name)?.definition.workspaceEffect === "read") return;
+	/** Hold a workspace-changing call while a tool barrier is armed; true when it waited. */
+	private async _waitForToolBarrier(toolCall: AgentToolCall, signal: AbortSignal | undefined): Promise<boolean> {
+		if (this._toolDefinitions.get(toolCall.name)?.definition.workspaceEffect === "read") return false;
 		const wait = this._toolBarrier.wait(signal);
-		if (!wait) return;
+		if (!wait) return false;
 		this._emit({ type: "tool_barrier_waiting", id: wait.id, toolCallId: toolCall.id, toolName: toolCall.name });
 		await wait.done;
+		return true;
 	}
 
 	/** Normalized exposure of a registered tool (C-EX-1); a name without a definition is `direct`. */
