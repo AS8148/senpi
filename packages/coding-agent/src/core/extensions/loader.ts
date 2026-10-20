@@ -36,12 +36,14 @@ import { redactForUpload, type UploadRedactionOptions } from "../share/upload-re
 import { createSyntheticSourceInfo, getSyntheticPathSource, isSyntheticPath } from "../source-info.ts";
 import { subscriptionLimits } from "../subscription-limits/limit-store.ts";
 import { time } from "../timings.ts";
+import { validateChildModuleRegistration } from "../tool-dispatch/offload.ts";
 import { type ReadClassifier, registerReadClassifier } from "../tools/read-classifiers.ts";
 import type { ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
 import { validateMcpServerDeclaration } from "./builtin/mcp/config-schema.ts";
 import { readPermissionPreset } from "./builtin/permission-system/preset-registry.ts";
 import type { PermissionPresetName } from "./builtin/permission-system/types.ts";
 import type { EvalHandleHost } from "./eval-handle-host.ts";
+import { ownedBy, runOwnedBy } from "./extension-handle-ledger.ts";
 import { recordExtensionLoadKey } from "./extension-load-key.ts";
 import {
 	cachedExtensionFactory,
@@ -53,6 +55,7 @@ import { StaleExtensionContextError } from "./stale-context-error.ts";
 import type {
 	AppendEntryOptions,
 	BeforeAgentStartHandlerOptions,
+	ChildModuleRegistration,
 	ContextHandlerOptions,
 	EntryRenderer,
 	EntryRendererOptions,
@@ -70,6 +73,7 @@ import type {
 	MessageRenderer,
 	PendingProviderRegistration,
 	ProviderConfig,
+	RegisteredChildModule,
 	RegisteredCommand,
 	RegisteredMcpServerDeclaration,
 	SessionContext,
@@ -421,7 +425,7 @@ function createExtensionAPI(
 			options?: BeforeAgentStartHandlerOptions & ContextHandlerOptions,
 		): () => void {
 			assertActive();
-			const registeredHandler: HandlerFn = (...args) => handler(...args);
+			const registeredHandler: HandlerFn = ownedBy(extension, (...args: unknown[]) => handler(...args));
 			const list = extension.handlers.get(event) ?? [];
 			list.push(registeredHandler);
 			extension.handlers.set(event, list);
@@ -455,7 +459,9 @@ function createExtensionAPI(
 				);
 			}
 			extension.tools.set(tool.name, {
-				definition: tool,
+				definition: Object.assign(Object.create(Object.getPrototypeOf(tool)), tool, {
+					execute: ownedBy(extension, tool.execute),
+				}),
 				sourceInfo: extension.sourceInfo,
 			});
 			runtime.refreshTools();
@@ -485,6 +491,14 @@ function createExtensionAPI(
 			runtime.registerRemovedToolHint(name, hint);
 		},
 
+		registerChildModule(registration: ChildModuleRegistration): void {
+			runtime.assertActive();
+			validateChildModuleRegistration(registration);
+			const modules = extension.childModules ?? new Map<string, RegisteredChildModule>();
+			modules.set(registration.id, { registration: { ...registration }, sourceInfo: extension.sourceInfo });
+			extension.childModules = modules;
+		},
+
 		registerFilesystemPolicy(policy: FilesystemPolicy): void {
 			runtime.assertActive();
 			const policies = extension.filesystemPolicies ?? [];
@@ -506,6 +520,7 @@ function createExtensionAPI(
 				name,
 				sourceInfo: extension.sourceInfo,
 				...options,
+				handler: ownedBy(extension, options.handler),
 			});
 		},
 
@@ -517,7 +532,12 @@ function createExtensionAPI(
 			},
 		): void {
 			assertActive();
-			extension.shortcuts.set(shortcut, { shortcut, extensionPath: extension.path, ...options });
+			extension.shortcuts.set(shortcut, {
+				shortcut,
+				extensionPath: extension.path,
+				...options,
+				handler: ownedBy(extension, options.handler),
+			});
 		},
 
 		registerFlag(
@@ -781,7 +801,7 @@ function createExtensionAPI(
 				if (handlers.has(normalizedName)) {
 					throw new Error(`RPC extension request handler already registered: ${normalizedName}`);
 				}
-				handlers.set(normalizedName, handler);
+				handlers.set(normalizedName, ownedBy(extension, handler));
 				extension.rpcHandlers = handlers;
 			},
 		},
@@ -920,7 +940,7 @@ async function initializeExtension(
 	const extension = createExtension(extensionPath, resolvedPath, cwd);
 	const load = createExtensionAPI(extension, runtime, cwd, eventBus, session);
 	try {
-		await factory(load.api);
+		await runOwnedBy(extension, () => factory(load.api));
 		load.commit();
 		if (usesNativeBunImports) {
 			const factories = runtimeFactories.get(runtime) ?? new Set<ExtensionFactory>();

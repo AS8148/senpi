@@ -263,7 +263,9 @@ import type {
 	ApplyCompactionResult,
 	CompactionReason,
 	CompactionRejectionCause,
+	FilesystemPolicyChecker,
 	ModelSelectSource,
+	ToolChildJob,
 } from "./extensions/types.ts";
 import { normalizeToolExposure, RUNTIME_EXTENSION_PATH } from "./extensions/types.ts";
 import { createUserActivitySource, emitUserActivity, type UserActivityKind } from "./extensions/user-activity.ts";
@@ -324,6 +326,12 @@ import {
 import { createFallbackLogger } from "./retry-fallback/log.ts";
 import { ProbeBackScheduler } from "./retry-fallback/probe-scheduler.ts";
 import {
+	REQUEST_SHAPE_FAILURE_TEXT,
+	REQUEST_SHAPE_RECOVERY_ENTRY_TYPE,
+	REQUEST_SHAPE_RECOVERY_NOTE,
+	RequestShapeRecovery,
+} from "./retry-fallback/request-shape.ts";
+import {
 	AccountUsageLimitError,
 	describeUsageLimitEntry,
 	describeUsageLimitMessage,
@@ -372,6 +380,13 @@ import {
 } from "./thinking-levels.ts";
 import { resetTimings, time } from "./timings.ts";
 import { type SessionMessageUpdateEvent, withResolvedToolName } from "./tool-call-display-name.ts";
+import {
+	createSessionHostCallHandler,
+	type HostCallTarget,
+	type RegisteredHostCallKind,
+} from "./tool-child-host-calls.ts";
+import type { StuckModuleNotice } from "./tool-dispatch/in-process-module.ts";
+import { childModuleRoots, offload } from "./tool-dispatch/offload.ts";
 import { createToolDispatcher, type ToolDispatcher } from "./tool-dispatch/tool-dispatcher.ts";
 import type { BashOperations } from "./tools/bash.ts";
 import { composeFilesystemPolicies } from "./tools/filesystem-policy.ts";
@@ -514,6 +529,11 @@ export type AgentSessionEvent =
 	| { type: "provider_required"; notice: string }
 	/** The session file refused a message of the running turn; the message is not in the transcript. */
 	| { type: "transcript_write_failed"; role: AgentMessage["role"]; errorMessage: string }
+	/**
+	 * An in-process `ctx.offload` module ran past its deadline and grace and cannot be stopped: it keeps its file locks,
+	 * every write waiting on them fails fast, and they are released when it finishes or the session is closed.
+	 */
+	| ({ type: "offload_module_stuck" } & StuckModuleNotice)
 	| {
 			type: "skill_invocation";
 			skills: readonly {
@@ -1197,6 +1217,8 @@ export class AgentSession {
 	private _triggerTurnAdmissionAbortGeneration: number | undefined;
 	private _engineTurnStarts: EngineTurnStartRecord[] = [];
 	private _engineTurnPauseRecorded = false;
+	// The pause warning is shown once per pause: a stream of refused events would otherwise add one line each (senpi#2537).
+	private _engineTurnPauseNotified = false;
 	private _nextInputId = 0;
 	private _idleWaitPromise: Promise<void> | undefined;
 	private _resolveIdleWait: (() => void) | undefined;
@@ -1305,6 +1327,7 @@ export class AgentSession {
 	// Retry state
 	private _retryAbortController: AbortController | undefined = undefined;
 	private _retryAttempt = 0;
+	private readonly _requestShapeRecovery = new RequestShapeRecovery();
 	/**
 	 * Failed response that the next request repeats, set by auto-retry and overflow recovery. The
 	 * retry is routed with it as `failed`, since the context no longer contains it.
@@ -1362,7 +1385,10 @@ export class AgentSession {
 	private _cwd: string;
 	private _agentDir: string;
 	private readonly _toolChild: SessionToolChild | undefined;
-	/** Settles once dispose() has stopped the tool child and swept what it launched. */
+	private readonly _toolChildHostTargets = new Map<RegisteredHostCallKind, HostCallTarget>();
+	/** The composed filesystem policy the built-in file tools enforce; a tool child's `authorize` asks the same one. */
+	private _filesystemPolicy: FilesystemPolicyChecker | undefined;
+	/** Settles once dispose() has stopped the tool child, swept what it launched, and closed its in-process offload jobs. */
 	private _toolChildClosed: Promise<void> = Promise.resolve();
 	private _extensionRunnerRef?: { current?: ExtensionRunner };
 	private _initialActiveToolNames?: string[];
@@ -1496,19 +1522,52 @@ export class AgentSession {
 		const toolRuntime = config.toolRuntime ?? "in-process";
 		const hostRefusal = toolRuntimeHostRefusal(toolRuntime);
 		if (hostRefusal !== undefined) throw new ToolRuntimeUnsupportedHostError(hostRefusal);
+		// One host-call handler for both runtimes: the child's reverse bridge and an in-process ctx.offload module.
+		const hostCalls = createSessionHostCallHandler({
+			cwd: this._cwd,
+			executeNested: (parentToolCallId, name, args, signal) =>
+				this._executeNestedToolCall(parentToolCallId, name, args, { signal }),
+			callableToolNames: () => this._callableToolNames(),
+			target: (kind) => this._toolChildHostTargets.get(kind),
+			filesystemPolicy: () => this._filesystemPolicy,
+		});
 		this._toolChild =
 			toolRuntime === "child"
 				? new SessionToolChild({
 						dir: join(this._agentDir, "tool-children", this.sessionManager.getSessionId()),
 						cwd: this._cwd,
-						moduleRoots: () => toolChildModuleRoots(this._extensionRunner.getAllRegisteredTools()),
-						onRecord: (record) => this._emit({ type: "session_tool_child", ...record }),
+						moduleRoots: () => [
+							...toolChildModuleRoots(this._extensionRunner.getAllRegisteredTools()),
+							...childModuleRoots(this._extensionRunner.getAllChildModules()),
+						],
+						onRecord: (record) => {
+							this._emit({ type: "session_tool_child", ...record });
+							if (record.state === "exited")
+								for (const job of this._childJobs()) job.childExited?.(record.generation);
+						},
+						onHostCall: hostCalls,
+						onWake: (wake) => {
+							for (const job of this._childJobs())
+								if (job.kind === wake.source) job.wake?.(wake.value, wake.generation);
+						},
 					})
 				: undefined;
 		this._toolDispatcher = createToolDispatcher({
 			runtime: toolRuntime,
 			notify: (event, data) => this._sessionLogger.info(event, data),
-			...(this._toolChild === undefined ? {} : { childRunner: this._toolChild.runner }),
+			hostCalls,
+			onModuleStuck: (notice) => {
+				this._sessionLogger.warn("offload_module_stuck", {
+					modulePath: notice.modulePath,
+					export: notice.export,
+					deadlineMs: notice.deadlineMs,
+					files: notice.files,
+				});
+				this._emit({ type: "offload_module_stuck", ...notice });
+			},
+			...(this._toolChild === undefined
+				? {}
+				: { childRunner: this._toolChild.runner, childKindRunner: this._toolChild.kindRunner }),
 		});
 		this._fallbackValidationWarnings = validateFallbackChains(
 			this.settingsManager.getRawFallbackChains(),
@@ -2176,7 +2235,9 @@ export class AgentSession {
 			// The idle path tokenizes agent.state.messages in place; every provider
 			// request re-hydrates here so tokens can never reach a model.
 			this.sessionManager.getResidentStore().materializeInPlace(messages);
-			const transformed = previousTransformContext ? await previousTransformContext(messages, signal) : messages;
+			const transformed = this._requestShapeRecovery.apply(
+				previousTransformContext ? await previousTransformContext(messages, signal) : messages,
+			);
 			const model = this.model;
 			if (model?.provider !== "cursor" && model?.provider !== "cursor-cli-oauth") return transformed;
 			this._applyObservedCursorContextWindow(model);
@@ -3569,8 +3630,22 @@ export class AgentSession {
 			const retryAfterRequiredCompaction =
 				requiredAutoCompaction !== undefined && this._isRequiredCompactionError(msg);
 
+			const requestShape = this._requestShapeRecovery.decide(msg, this.model?.contextWindow ?? 0);
+			if (requestShape === "not-request-shape") this._requestShapeRecovery.endStreak();
+			if (
+				requestShape !== "not-request-shape" &&
+				!userAbortSuppressedQueuedContinuation &&
+				this.settingsManager.getRetrySettings().enabled
+			) {
+				const requestShapeOutcome = await this._handleRequestShapeRejection(msg, requestShape);
+				if (requestShapeOutcome === "continued") {
+					this._abortProvenance.closeAgentEndBoundary();
+					return;
+				}
+				retryContinuationBlocked ||= requestShapeOutcome === "blocked";
+			}
 			// Retry transient failures normally and eligible hard errors only through a fallback.
-			const retryableError = this._isRetryableError(msg);
+			const retryableError = requestShape === "not-request-shape" && this._isRetryableError(msg);
 			const hardErrorFallbackEligible = this._isHardErrorFallbackEligible(msg);
 			const cursorZeroTokenRe = isCursorZeroTokenResourceExhausted(msg);
 			const cursorQuotaRe = isCursorQuotaResourceExhausted(msg, this.model?.contextWindow ?? 0);
@@ -4149,11 +4224,16 @@ export class AgentSession {
 			"This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). For newSession, fork, and switchSession, move post-replacement work into withSession and use the ctx passed to withSession. For reload, do not use the old ctx after await ctx.reload().",
 		);
 		this._releaseToolSearchService("session disposed");
-		this._toolChildClosed =
+		// In-process offload jobs are closed with the child: replacement awaits both before the next session runs.
+		const inProcessClosed = this._toolDispatcher
+			.dispose()
+			.catch((error: unknown) => this._sessionLogger.warn("tool_dispatcher_close_failed", { error: String(error) }));
+		const childClosed =
 			this._toolChild
 				?.close()
 				.catch((error: unknown) => this._sessionLogger.warn("tool_child_close_failed", { error: String(error) })) ??
 			Promise.resolve();
+		this._toolChildClosed = Promise.all([inProcessClosed, childClosed]).then(() => undefined);
 		this._disconnectFromAgent();
 		this._unsubscribeSettingsSource?.();
 		this._unsubscribeSettingsSource = undefined;
@@ -4467,6 +4547,17 @@ export class AgentSession {
 		return resolveToolNameAlias(requested, this._callableToolNames()) ?? requested;
 	}
 
+	/**
+	 * Serves the tool child's `completion` or `reserved` calls on the server (codemode registers its completion handler and
+	 * `runReservedTool`, which hold `evalHandleHost`). Returns the unregister function; a later registration replaces it.
+	 */
+	registerToolChildHostTarget(kind: RegisteredHostCallKind, target: HostCallTarget): () => void {
+		this._toolChildHostTargets.set(kind, target);
+		return () => {
+			if (this._toolChildHostTargets.get(kind) === target) this._toolChildHostTargets.delete(kind);
+		};
+	}
+
 	async executeTool<TDetails = unknown>(
 		toolName: string,
 		params: unknown,
@@ -4574,6 +4665,13 @@ export class AgentSession {
 	 * `allowLazyActivation` hard stop, then invoke activators in registration order.
 	 * The caller re-resolves the tool from the active registry before execution.
 	 */
+	/** The child jobs the registered tools declare (`ToolDefinition.childJob`): who a child's wake or exit concerns. */
+	private _childJobs(): ToolChildJob[] {
+		return this._extensionRunner
+			.getAllRegisteredTools()
+			.flatMap((tool) => (tool.definition.childJob === undefined ? [] : [tool.definition.childJob]));
+	}
+
 	private _callableToolNames(): string[] {
 		const names = this.agent.state.tools.map((tool) => tool.name);
 		for (const [name, { definition }] of this._toolDefinitions) {
@@ -6157,6 +6255,7 @@ export class AgentSession {
 	 */
 	private _recordEngineTurnStart(customType: string): void {
 		this._engineTurnPauseRecorded = false;
+		this._engineTurnPauseNotified = false;
 		this._engineTurnStarts.push({ at: Date.now(), toolUsed: false });
 		try {
 			this._emitEntryAppended(this.sessionManager.appendCustomEntry(ENGINE_TURN_START_ENTRY_TYPE, { customType }));
@@ -6190,6 +6289,7 @@ export class AgentSession {
 		if (message.role === "user" || (message.role === "custom" && isUserDirectedTurn(message.customType))) {
 			this._engineTurnStarts = [];
 			this._engineTurnPauseRecorded = false;
+			this._engineTurnPauseNotified = false;
 			return;
 		}
 		const running = this._engineTurnStarts.at(-1);
@@ -6244,7 +6344,10 @@ export class AgentSession {
 			});
 		}
 		this._extensionRunner.emitBusEvent(ENGINE_TURN_LIMIT_EVENT, details);
-		this._extensionRunner.getUIContext().notify(engineTurnLimitNotice(stop), "warning");
+		if (!this._engineTurnPauseNotified) {
+			this._engineTurnPauseNotified = true;
+			this._extensionRunner.getUIContext().notify(engineTurnLimitNotice(stop), "warning");
+		}
 		return true;
 	}
 
@@ -9812,6 +9915,8 @@ export class AgentSession {
 				}),
 			},
 			{
+				offload: (id, args, options) =>
+					offload(this._toolDispatcher, this._extensionRunner.getAllChildModules(), id, args, options),
 				getModel: () => this.model,
 				getServiceTier: () => this.serviceTier,
 				getEffectiveServiceTier: () => this.effectiveServiceTier,
@@ -10217,6 +10322,7 @@ export class AgentSession {
 		const filesystemPolicy = composeFilesystemPolicies(
 			extensionsResult.extensions.flatMap((extension) => extension.filesystemPolicies ?? []),
 		);
+		this._filesystemPolicy = filesystemPolicy;
 		const baseToolDefinitions = this._baseToolsOverride
 			? Object.fromEntries(
 					Object.entries(this._baseToolsOverride).map(([name, tool]) => [
@@ -10226,7 +10332,14 @@ export class AgentSession {
 				)
 			: createAllToolDefinitions(this._cwd, {
 					read: { autoResizeImages, filesystemPolicy },
-					bash: { commandPrefix: shellCommandPrefix, shellPath },
+					// The core bash tool's process work goes through the dispatcher's operations: the same
+					// local operations under in-process, and the tool child's user.bash job under child
+					// (senpi#3566 todo 9), while truncation and rendering stay on the server.
+					bash: {
+						commandPrefix: shellCommandPrefix,
+						shellPath,
+						operations: this._toolDispatcher.bashOperations({ shellPath }),
+					},
 					write: { filesystemPolicy },
 					edit: { filesystemPolicy },
 					grep: { filesystemPolicy },
@@ -10555,11 +10668,43 @@ export class AgentSession {
 			!this._isClaudeSdkSameModelRemintError(message) &&
 			message.stopReason === "error" &&
 			!isContextOverflow(message, this.model?.contextWindow ?? 0) &&
+			this._requestShapeRecovery.decide(message, this.model?.contextWindow ?? 0) === "not-request-shape" &&
 			!this._isCursorPayloadOverflow(message) &&
 			!isCursorZeroTokenResourceExhausted(message) &&
 			!isClassifierRefusal(message) &&
 			!message.content.some((content) => content.type === "toolCall") &&
 			this._retryFallback.canTryFallback()
+		);
+	}
+
+	/** Same-model recovery for a request-shape 400: never a model switch (senpi#3727). */
+	private async _handleRequestShapeRejection(
+		message: AssistantMessage,
+		decision: "recover" | "give-up",
+	): Promise<"continued" | "blocked" | "not-handled" | "cancelled"> {
+		if (decision === "give-up") {
+			this._requestShapeRecovery.endStreak();
+			this._emit({
+				type: "auto_retry_end",
+				success: false,
+				attempt: Math.max(1, this._retryAttempt),
+				finalError: REQUEST_SHAPE_FAILURE_TEXT,
+			});
+			this._retryAttempt = 0;
+			return "not-handled";
+		}
+		this._requestShapeRecovery.begin(message.timestamp);
+		this._emitEntryAppended(
+			this.sessionManager.appendCustomEntry(REQUEST_SHAPE_RECOVERY_ENTRY_TYPE, {
+				note: REQUEST_SHAPE_RECOVERY_NOTE,
+				model: message.model,
+			}),
+		);
+		this._sessionLogger.info("request_shape_recovery", { provider: message.provider, model: message.model });
+		this._retryAttempt = 0;
+		return await this._handleRetryableError(
+			{ ...message, errorMessage: REQUEST_SHAPE_RECOVERY_NOTE },
+			{ sameModelRemint: true },
 		);
 	}
 

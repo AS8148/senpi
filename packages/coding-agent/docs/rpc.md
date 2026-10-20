@@ -194,6 +194,67 @@ Rebranded distributions read the equivalent variable under their configured envi
 `extension_events` opts the client into generic extension-owned event records; clients that omit it
 retain the previous wire stream unchanged.
 
+#### event_resync
+
+A socket client may advertise `event_resync` in its connection-scoped `set_client_info`.
+This opts that connection into same-connection recovery instead of an event-queue overflow
+or stall disconnect. An old client that omits the capability keeps the legacy `overflow`
+record and disconnect behavior. Ordinary supersession remains lossless in both modes.
+A later `set_client_info` replaces the capability list: omitting `event_resync` revokes
+recovery for future pressure. An already pending gap is still reported when the socket
+drains; the legacy stall policy applies if it does not drain.
+
+The host immediately sends `{"type":"rpc_ping"}`. The client answers by sending
+`set_client_info` without a request id, repeating its complete capability list, and repeats
+that heartbeat every 10 seconds until the socket closes. The existing connection-scoped
+handler acknowledges liveness; no session command or session attachment is needed.
+Each id-less heartbeat produces the id-less response
+`{"type":"response","command":"set_client_info","success":true}`; clients consume it
+as a heartbeat acknowledgement, not as a response to an outstanding request.
+Heartbeat pulses travel in the opposite direction from event traffic, so a blocked event
+reader can still prove it is alive. The host retains at most one buffered ping during a gap.
+An event stall still starts at 30 seconds of host loop-served time, but it sheds the queue
+rather than closing. A subsequent served budget without a heartbeat closes the peer.
+The host's loop-blocked-time credit also applies to that liveness deadline.
+
+On overflow or stall, the host drops buffered events and stops accumulating new events until
+transport drain. Correlated replies that fit within the queue's byte bound are retained and
+sent first; a reply that cannot fit has an unknown outcome. Every gap sends an untagged
+connection-level marker, including when the connection has no attached sessions. Its
+`replyLost` flag says whether a correlated reply was discarded. It then sends a snapshot for every affected
+session attached to that connection:
+
+```json
+{"type":"resync_required","reason":"stall","replyLost":false}
+{"type":"resync_required","reason":"stall","sessionId":"rpc-1","message":{"role":"assistant","content":[{"type":"text","text":"The complete partial reply"}]}}
+```
+
+`reason` is `stall` or `overflow`. A session's `message` is the complete current in-progress
+message, or `null` when none exists. If a handle was detached during the gap, its record also
+has `"closed":true`; retire that handle through the normal session-close path without closing
+the socket. The affected handle set is remembered when shedding begins, so losing a close
+event cannot silently leave a client attached to a nonexistent handle.
+Only the handle set is frozen at shed start. Message snapshots are read at drain time,
+in the same synchronous step that reopens admission, and delivered before subsequent
+deltas. They replace the client's partial-message
+baseline; they are not text to append a second time. Media placeholders still apply.
+
+Every untagged marker requires connection-wide reconciliation: unsubscribe the previous
+`subscribe_sessions` subscription and subscribe again, replacing the status snapshot and
+restarting its sequence at zero; re-read `list_sessions` and lifecycle state; and re-read
+each live session's `get_state.pendingDialogs` to restore pending select, confirm, input
+and editor requests. These dialogs are distinct from `pendingQuestions`. Discard obsolete
+status sequence expectations and dialogs absent from the authoritative state.
+
+If `replyLost` is true (or absent on an earlier host), outstanding requests may have lost
+their answers: settle them as **outcome unknown**, not success, and never automatically
+replay a mutation. When it is false, keep outstanding requests intact. Keep the socket,
+its epoch and its session handles. For each tagged marker, refresh that session with
+`get_state` and the existing paginated `get_entries` path, reconcile pending questions and
+run state, and replace its streaming preview from `message`. A read-only request may be
+retried. A closed-handle snapshot retires that session, not the connection.
+Another overflow during recovery produces another gap and a newer snapshot.
+
 #### media_placeholders
 
 A client that advertises `media_placeholders` in `set_client_info` tells the host it does not want
@@ -305,7 +366,12 @@ The child's state is visible two ways:
 A multi-session host and a single-session `--mode rpc` process each advertise their choice as one
 `tool_runtime:in-process` or `tool_runtime:child` entry in `get_protocol_info.capabilities`. Under `child` they also
 advertise one `placement:<name>` entry for each part of the tool child that has landed (`placement:launch-barrier`:
-every command a child-run tool starts passes the execution barrier). A job worker cannot start worker threads of its
+every command a child-run tool starts passes the execution barrier; `placement:job-policy`: per-kind deadlines,
+liveness and the cancel ladder; `placement:hostcall`: a child-run tool body reaches the session over the reverse
+bridge - `tool`, `completion`, `reserved`, `list_tools`, `authorize` and drain-before-release `lock_file`/`unlock_file`,
+with large arguments and replies carried by acknowledged references). Both runtimes also advertise `offload_api`: an extension's
+`ctx.offload` / `pi.registerChildModule` are available, running on the tool child under `child`
+(`placement:offload`) and in the host process under `in-process`. A job worker cannot start worker threads of its
 own (`tool_child_nested_worker_refused`), so no launch escapes the barrier that way.
 
 ### Host identity (`get_protocol_info`)
@@ -496,8 +562,10 @@ are what this decision encodes; the other two are what a client must not undo el
   signal a generation (an ensure, `host stop`, a handoff abandoning its successor, the generation's own supervisor)
   first writes `generations/<instanceId>/stop-intent.json` `{ sender, targetPid, reason, signal, at }` into THAT
   generation's directory, because the target cannot know who is about to stop it; nothing ever reads or removes
-  another generation's intent, and a drain writes none. Caller-lifetime registration is the other
-  explicit cross-writer: only `owner.json`, under the endpoint lock and attach hold described above.
+  another generation's intent, and a drain writes none. The DRAIN REQUEST is the second sanctioned cross-writer:
+  `host stop --drain` writes `generations/<instanceId>/drain-request.json` into the generation it asks (see
+  [Asking a named generation to drain](#asking-a-named-generation-to-drain)). Caller-lifetime registration is the
+  other explicit cross-writer: only `owner.json`, under the endpoint lock and attach hold described above.
 - **I4 - machine-driven work is invisible by default.** A session opened with `kind: "worker"` is omitted from
   `list_sessions` unless the caller passes `include_workers: true`, its `context` is published on that listing only,
   and its `session_closed`/`session_parked` records reach only the connections attached to it. A client that never
@@ -534,9 +602,9 @@ Two guards decide whether a handoff is attempted at all, and both fail closed:
   signals a stranger (I1): it refuses while that host holds a session, and replaces an idle one without
   a signal unless a flat pre-layout-2 record proves it (see "Daemon state directory (layout 2)").
 
-On win32 a named pipe can be neither renamed nor drained: `handoffHost` refuses with `upgrade_unsupported`
-and `decideHostAction` never yields `handoff` there. Upgrades apply after `stopHost({ drain: true })` or an
-idle exit.
+On win32 a named pipe cannot be renamed: `handoffHost` refuses with `upgrade_unsupported` and
+`decideHostAction` never yields `handoff` there. Upgrades apply after `stopHost({ drain: true })` - which
+reaches a win32 generation through its drain request, not a signal - or an idle exit.
 
 `ensureHost` performs a handoff only when asked: `upgrade: "if-engine-differs"` (default `"never"`) makes it
 run `decideHostAction` under policy `upgrade` with the launch profile its own `hostArgs` describe. A refused
@@ -560,6 +628,39 @@ proves only that nobody is serving the name, so it has to be seen on several con
 counts, and a check that cannot answer resets the count rather than adding to it. Either way the outcome is
 the same drain: an unlinked socket name can never accept a connection again, so the generation behind it is
 unreachable no matter why the name went away.
+
+An endpoint with no file identity - a win32 named pipe has no inode to compare - is checked on two POSITIVE
+observations instead: the daemon pointer names another instance, and the public endpoint answers
+`get_protocol_info` (an `observe` read, which never counts as activity) as that same instance. They must agree
+on three consecutive checks; a missing pointer, an unanswered probe, an answer as this generation or as a third
+instance each reset the count. Such an endpoint is never judged absent, and nothing is removed or reclaimed on
+any observation: a confirmed loss only starts the same drain.
+
+#### Asking a named generation to drain
+
+`stopHost({ socket, agentDir, drain: true, instanceId?, waitMs? })` (CLI: `host stop --drain [--instance <id>]
+[--wait-ms <n>]`) asks ONE generation to drain: the one the pointer names, or the one `instanceId` names - how a
+client reaches a superseded generation that still holds its sessions' path claims. The target must be proven
+first, exactly as for any signal: its `generations/<instanceId>/host.pid` names a live process by pid and start
+time, about this endpoint; an unproven or unknown generation is refused `unknown_owner` and sent nothing.
+
+The request needs no signal and is the same on every platform:
+
+1. A supervisor reads drain requests once it is serving and says so in `generations/<instanceId>/drain-watch.json`
+   `{ pid, at }`. The asker uses the request only when that marker names the very pid it just proved.
+2. The asker writes `generations/<instanceId>/drain-request.json` `{ sender, reason, at, nonce }` by rename.
+3. The supervisor polls that file once a second; each new `nonce` is one drain request. It runs the drain
+   described under [Generation handoff](#generation-handoff-handoffhost-probehost-stophost): stop admitting, park each session as it
+   settles, release its claims, exit once nothing is attached. It relays the drain to its host child through
+   `generations/<instanceId>/host-drain-request.json`, which the child polls (on POSIX SIGUSR1 still follows as
+   an immediate wake).
+
+A generation without the marker - one from before the request existed - is drained by SIGUSR1 as before, and only
+on POSIX, when the endpoint advertises `generation_handoff` AND answers as the named instance; otherwise the
+answer is `drain_unsupported`. The answer is `{ action: "drained", pid, instanceId }`; with `waitMs` it also
+carries `exited`, `true` once the generation's process is gone (or its pid names another process) within the
+bound, `false` otherwise - an identity that cannot be read is not an exit. A client that did not wait learns the
+same from `host status --json`: the drained generation leaves `generations` when it exits.
 
 `stopHost({ socket, agentDir, drain?, force? })` ends a generation: `drain: true` is always permitted (it
 ends no work, it only stops the host from taking new work), while a hard stop requires a host that reports
@@ -740,7 +841,7 @@ daemon the same way instead of each re-implementing the decision:
 ```
 senpi host ensure     [--json] [--launch-spec <file>] [--policy upgrade|fallback|never] [--socket <path>]
 senpi host status     [--json] [--include-workers] [--all] [--socket <path>]
-senpi host stop       [--json] [--drain] [--force] [--socket <path>]
+senpi host stop       [--json] [--drain [--instance <id>] [--wait-ms <n>]] [--force] [--socket <path>]
 senpi host handoff    [--json] [--launch-spec <file>] [--socket <path>]
                       [--when idle --operation <id> --if-instance <id> --if-generation <n> --target-build <id>]
 senpi host shard-path --kind <p|i> --owner <id> [--root <dir>] [--json]
@@ -910,8 +1011,10 @@ which prints the bare socket path).
   one on the same evidence as a host's.
 - `stop` is the I1 carve-out: a plain stop needs a validated pidfile AND `foreign_attached +
   foreign_retained == 0`, or it refuses with exit 3 and prints the counts it refused on; `--force`
-  overrides after printing the same counts; `--drain` (SIGUSR1) is always permitted, because it ends no
-  work.
+  overrides after printing the same counts; `--drain` is always permitted, because it ends no work. It
+  asks through the generation's drain request (SIGUSR1 only for a generation from before it), `--instance <id>`
+  names a generation other than the current one, and `--wait-ms <n>` waits for it to exit and adds `exited` to
+  the answer; both need `--drain`.
 - `handoff` forces a generation handoff from THIS binary. A host that cannot drain and a platform that
   cannot rename answer alike: exit 3 `{ reason: "upgrade_unsupported", detail }`. The handoff runs inside the
   endpoint's ensure lock (the one `ensure` and `gc` take), so an `ensure` arriving while the successor comes up
@@ -1582,6 +1685,15 @@ exists only on the worker runtime described below. On that runtime every session
 runtime; on the in-process runtime each session is a runtime in the host process. Memory depends on a session's
 extensions and contents; neither runtime provides process-fatal OOM containment.
 
+Closing a session on the in-process runtime also closes what that session's extension instances left open. After the
+extensions' `session_shutdown` handlers run, senpi closes every server (`Bun.serve`, `Bun.listen`, `node:net` and
+`node:http` servers), `node:net` client socket and timer that an extension's own code created during the session and
+has not released, and writes one stderr line per extension naming what it closed. Memory those handles kept reachable
+is then collectable. Senpi's own builtin extensions and inline SDK factories are not tracked, and neither is work senpi itself does on an
+extension's behalf (a turn the extension started, a UI notification it showed). See
+[extensions.md](extensions.md#session_shutdown) for what this means for an extension that shares one server across
+sessions.
+
 What the host does enforce are lifecycle windows, and they only ever return memory from work nobody is doing:
 
 - **Idle eviction**: a session with no activity-refreshing command and no session-owned work for
@@ -2002,7 +2114,8 @@ socket host, credit returns as soon as every destination of that session has ACC
 queue (64 MiB per connection), not when the peer's kernel has drained it: a client that is merely busy cannot withhold
 the producing worker's credit. On the shared stdio lane credit still waits for stdout backpressure. A five-second credit
 failure closes that session visibly (`session_error` followed by `session_closed`), rather than retaining an
-unbounded queue. Socket queues keep their independent overflow/disconnect behavior: a connection whose queue would
+unbounded queue. Socket clients advertising `event_resync` use the same-connection recovery described above.
+Other socket queues keep their independent overflow/disconnect behavior: a connection whose queue would
 exceed 64 MiB is cut immediately, and a peer that has not accepted a single pending write within 30 seconds
 (`DEFAULT_STALL_MS`) is cut as a dead peer. That budget is a transport liveness bound and is deliberately independent
 of the 5-second worker control deadline — a busy client is not a dead one. A cut connection receives one `overflow`
@@ -2012,8 +2125,8 @@ that notice, and everything already written to it, before EOF. A peer that is st
 its socket destroyed. A cut peer must reconnect and resynchronize, while the session keeps running and its other
 destinations keep receiving output. A failed or cut connection never withholds a session's credit and never fails the
 host writer; only the stdio lane can. Because credit no longer paces a session against its slowest reader, a
-session that outruns a peer fills that peer's 64 MiB queue instead of slowing down, and that peer is then cut on
-overflow. The default stdio
+session that outruns a peer fills that peer's 64 MiB queue instead of slowing down, and that peer then resynchronizes
+or, without `event_resync`, is cut on overflow. The default stdio
 queue is bounded at 64 MiB or 4096 records, with reserved terminal-failure records and one control-overflow notice.
 Close admission counts both queued output and pending close replies (including their serialized bytes) before
 releasing an attachment or waiting for teardown. An admitted first closer reserves its lifecycle and terminal reply;
@@ -2638,12 +2751,15 @@ Response:
     "sessionName": "my-feature-work",
     "autoCompactionEnabled": true,
     "messageCount": 5,
-    "pendingMessageCount": 0
+    "pendingMessageCount": 0,
+    "pendingDialogs": []
   }
 }
 ```
 
 The `model` field is a full [Model](#model) object or `null`. `pendingModelSwitch` is always present: `null` means no held switch, while an object with `provider` and `id` identifies a switch that applies after the next compaction. The `sessionName` field is the display name set via `set_session_name`, or omitted if not set.
+
+`pendingDialogs` contains the live `extension_ui_request` frames for select, confirm, input and editor dialogs, or `[]` when none await an answer. Still-open dialogs remain listed after session replacement; resolved, cancelled and timed-out requests are removed. Use these frames to reconcile dialogs during event recovery, separately from `pendingQuestions`.
 
 `serviceTier` is the tier a request would carry right now (`"auto"`, `"flex"`, or `"priority"`), omitted when no tier applies. `fastMode` is `true` when the active model is served at the priority ("fast") tier — either because fast mode is on for this session or because the model selection itself pins `priority`. The two never disagree: whenever `fastMode` is `true`, `serviceTier` is `"priority"`.
 
@@ -4730,6 +4846,8 @@ Set or clear a widget (block of text lines) displayed above or below the editor.
 
 Send `widgetLines: undefined` (or omit it) to clear the widget. The `widgetPlacement` field is `"aboveEditor"` (default) or `"belowEditor"`. Only string-array widgets are sent; a component factory needs a terminal to render into and produces no record.
 
+A widget may carry `widgetActions`, a list of `{ "label", "command" }` choices (for example the handoff hint's `{ "label": "Start fresh with a handoff", "command": "/handoff" }`). A client that renders a choice as a button sends its `command` text as an ordinary `prompt` when the user picks it, so the choice runs the same command handler the terminal user types. The field is omitted when the widget has no choices and on a clear.
+
 #### setTitle
 
 Set the terminal window/tab title. Fire-and-forget.
@@ -4837,6 +4955,8 @@ continues to skip cancellation. A reload that preserves a pending question does 
 a terminal outcome while detached is published once through the next bound extension runner.
 
 `RpcSessionState.pendingQuestions` (returned by `open_session` and `get_state`) lists any questions still waiting for an answer. Connections that attach after the question was asked receive the pending record immediately.
+
+`RpcSessionState.pendingDialogs` lists the still-open select, confirm, input and editor request frames, including requests that remain live across `new_session`, `switch_session`, `fork`, `clone` and `import_jsonl`. The array is empty once all dialogs are resolved, cancelled or timed out. Clients recovering from a gap can restore these dialogs and remove dialogs absent from this authoritative snapshot.
 
 Clients without the `question` capability get a sequential fallback: one `select` per question (options plus "Other (type an answer)"), then one `input` for a comment. The result maps back to the same `QuestionResponse`.
 

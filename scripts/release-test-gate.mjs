@@ -133,6 +133,12 @@ export function awaitCiEvidence({ timeoutMs, pollMs }, deps) {
 		deps.log(`test gate: ${plan.reason}`);
 		if (plan.action === "reuse") return sha;
 		if (plan.action === "stop") throw new Error(`CI failed on ${sha.slice(0, 12)}: ${plan.reason}; fix main before releasing`);
+		if (plan.action === "superseded" && deps.pinned) {
+			// A pinned release (--sha) never moves to a newer main commit: that would ship code the dispatch did not ask for.
+			throw new Error(
+				`CI for the pinned release commit ${sha.slice(0, 12)} did not finish (${plan.reason}); rerun its CI or dispatch with force_tests`,
+			);
+		}
 		if (plan.action === "superseded") {
 			// A newer main push cancels this commit's CI. The release then moves onto that newer commit, so the
 			// commit it tags is always one whose own CI is green. It never tags on top of a main that dropped it.
