@@ -14,8 +14,9 @@ import { dirname, isAbsolute, resolve } from "node:path";
 import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import type { ToolRuntimeKind } from "../../cli/tool-runtime.ts";
 import type { HostCallHandler } from "../../modes/rpc/tool-child/host-calls-server.ts";
-import type { ExtensionToolContext, ToolDefinition, ToolPlacement } from "../extensions/types.ts";
+import type { ExtensionToolContext, ToolChildJob, ToolDefinition, ToolPlacement } from "../extensions/types.ts";
 import { type BashOperations, createLocalBashOperations } from "../tools/bash.ts";
+import { childBashOperations } from "./child-bash-operations.ts";
 import { type InProcessRun, runModuleInProcess, type StuckModuleNotice } from "./in-process-module.ts";
 import { OffloadError } from "./offload.ts";
 
@@ -74,6 +75,17 @@ export interface ToolChildRunResult {
 	readonly generation: number;
 }
 
+/** Runs a job of a built-in kind on the session's tool child (`ToolDefinition.childJob`), streaming its updates. */
+export type ToolChildKindRunner = (
+	kind: string,
+	args: unknown,
+	call: {
+		readonly toolCallId: string;
+		readonly signal: AbortSignal | undefined;
+		readonly onUpdate?: (value: unknown) => void;
+	},
+) => Promise<ToolChildRunResult>;
+
 /** Runs a `module` job on the session's tool child, starting the child on first use. */
 export type ToolChildRunner = (job: ToolChildModuleJob, signal: AbortSignal | undefined) => Promise<ToolChildRunResult>;
 
@@ -81,6 +93,7 @@ export interface ToolDispatcherOptions {
 	runtime: ToolRuntimeKind;
 	notify?: ToolDispatchNotify;
 	childRunner?: ToolChildRunner;
+	childKindRunner?: ToolChildKindRunner;
 	/** The session's host-call handler: an in-process `ctx.offload` module gets the same host the child's worker builds. */
 	hostCalls?: HostCallHandler;
 	/** How long past its deadline an in-process module may run before it is reported stuck (default 10 s). */
@@ -228,20 +241,67 @@ export class InProcessToolDispatcher extends BaseToolDispatcher {
 export class ChildToolDispatcher extends BaseToolDispatcher {
 	readonly kind: ToolRuntimeKind = "child";
 	readonly #childRunner: ToolChildRunner | undefined;
+	readonly #kindRunner: ToolChildKindRunner | undefined;
 
-	constructor(notify?: ToolDispatchNotify, childRunner?: ToolChildRunner) {
+	constructor(notify?: ToolDispatchNotify, childRunner?: ToolChildRunner, kindRunner?: ToolChildKindRunner) {
 		super(notify);
 		this.#childRunner = childRunner;
+		this.#kindRunner = kindRunner;
 	}
 
 	run<TDetails>(call: ToolDispatchCall<TDetails>): Promise<AgentToolResult<TDetails | ToolUnavailableDetails>> {
 		if (this.placementFor(call.definition) === "server") {
 			return this.runOnServer(call);
 		}
+		const childJob = call.definition.childJob;
+		if (childJob !== undefined) {
+			const where = childJob.placement?.(call.params) ?? "child";
+			if (where === "server") return this.runOnServer(call);
+			if (this.#kindRunner === undefined) return Promise.resolve(unavailableToolResult(call.definition.name));
+			if (where === "both") return this.#runOnBoth(this.#kindRunner, childJob, call);
+			return this.#runKind(this.#kindRunner, childJob, call);
+		}
 		const job = childModuleJob(call);
 		if (job === undefined || this.#childRunner === undefined)
 			return Promise.resolve(unavailableToolResult(call.definition.name));
 		return this.#runOnChild(this.#childRunner, job, call);
+	}
+
+	/** The server's body first (its own state), then the child's job; the result carries both contents, the child's details. */
+	async #runOnBoth<TDetails>(
+		runner: ToolChildKindRunner,
+		childJob: ToolChildJob,
+		call: ToolDispatchCall<TDetails>,
+	): Promise<AgentToolResult<TDetails>> {
+		const local = await this.runOnServer(call);
+		const remote = await this.#runKind(runner, childJob, call);
+		return { ...remote, content: [...local.content, ...remote.content] };
+	}
+
+	async #runKind<TDetails>(
+		runner: ToolChildKindRunner,
+		childJob: ToolChildJob,
+		call: ToolDispatchCall<TDetails>,
+	): Promise<AgentToolResult<TDetails>> {
+		const onUpdate = call.onUpdate;
+		const kind = childJob.kind;
+		const args = childJob.args(call.params, call.toolCallId, call.ctx);
+		const { value, pid, generation } = await runner(kind, args, {
+			toolCallId: call.toolCallId,
+			signal: call.signal,
+			...(onUpdate === undefined
+				? {}
+				: {
+						onUpdate: (update: unknown) => {
+							if (isToolResult<TDetails>(update)) onUpdate(update);
+						},
+					}),
+		});
+		this.emitDispatched({ toolCallId: call.toolCallId, placement: "child", pid, generation });
+		if (!isToolResult<TDetails>(value))
+			throw new Error(`tool_child_invalid_result: ${kind} must return { content: [...] }`);
+		if (childJob.result === undefined) return value;
+		return childJob.result(call.params, value, generation) as AgentToolResult<TDetails>;
 	}
 
 	async #runOnChild<TDetails>(
@@ -256,8 +316,9 @@ export class ChildToolDispatcher extends BaseToolDispatcher {
 		return value;
 	}
 
-	bashOperations(): BashOperations {
-		return unavailableBashOperations();
+	bashOperations(options?: { shellPath?: string }): BashOperations {
+		if (this.#kindRunner === undefined) return unavailableBashOperations();
+		return childBashOperations(this.#kindRunner, options);
 	}
 
 	/** Always on the session's child, started on demand; never in-process (no fallback). */
@@ -271,7 +332,7 @@ export class ChildToolDispatcher extends BaseToolDispatcher {
 
 export function createToolDispatcher(options: ToolDispatcherOptions): ToolDispatcher {
 	return options.runtime === "child"
-		? new ChildToolDispatcher(options.notify, options.childRunner)
+		? new ChildToolDispatcher(options.notify, options.childRunner, options.childKindRunner)
 		: new InProcessToolDispatcher(options.notify, options);
 }
 
