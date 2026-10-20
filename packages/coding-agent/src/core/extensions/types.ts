@@ -156,10 +156,22 @@ export interface ExtensionUIDialogOptions {
 /** Placement for extension widgets. */
 export type WidgetPlacement = "aboveEditor" | "belowEditor";
 
+/**
+ * A choice offered next to a string-array widget. `command` is ordinary slash-command text: the TUI shows it
+ * next to the label for the user to type, and an RPC client that renders a button sends it as a normal prompt,
+ * so every host runs the same command handler.
+ */
+export interface ExtensionWidgetAction {
+	label: string;
+	command: string;
+}
+
 /** Options for extension widgets. */
 export interface ExtensionWidgetOptions {
 	/** Where the widget is rendered. Defaults to "aboveEditor". */
 	placement?: WidgetPlacement;
+	/** Choices shown with a string-array widget (ignored for component factories). */
+	actions?: readonly ExtensionWidgetAction[];
 }
 
 /** Raw terminal input listener for extensions. */
