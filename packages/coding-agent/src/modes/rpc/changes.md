@@ -1,3 +1,22 @@
+## 2026-10-20 - `get_state` reports where the thinking level came from and the session's per-model levels (senpi#3819)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RpcSessionState` gains optional `thinkingLevelSource` and `sessionModelThinkingLevels`.
+- `packages/coding-agent/src/modes/rpc/rpc-session-state.ts`: `buildRpcSessionState` fills both from the session.
+
+### Why
+
+- Clients (the desktop's effort control, sisyphuslabs/omo-desktop-app#3598) must read the per-model restore from the engine instead of keeping their own copy.
+
+### Why an extension could not handle it
+
+- `get_state` is the RPC wire projection of the session.
+
+### Expected merge conflict zones
+
+- LOW: the `RpcSessionState` thinking fields and the matching lines in `buildRpcSessionState`.
+
 ## 2026-10-19 - Removing a dead generation also ends its unproven session claims, behind the write fence (senpi#3658)
 
 ### What changed

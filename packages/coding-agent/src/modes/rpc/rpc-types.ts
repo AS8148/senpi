@@ -22,6 +22,7 @@ import type { ContextUsage, SessionControlAdmission, SessionKind } from "../../c
 import type { ResolvedMessagePath } from "../../core/message-path-resolution.ts";
 import type { PendingInputSnapshot, PendingInputUpdate } from "../../core/pending-input-session.ts";
 import type { SessionEntry, SessionMessageEntry, SessionTreeNode, UsageTotals } from "../../core/session-manager.ts";
+import type { ThinkingLevelSource } from "../../core/session-thinking-memory.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import type { ApiKeyVerification } from "../../core/verify-api-key.ts";
 import type { ClientMessageAdmission } from "./client-admission-record.ts";
@@ -801,6 +802,16 @@ export interface RpcSessionState {
 	 * from "high is simply the effective level" without it.
 	 */
 	thinkingSelection?: ThinkingSelection;
+	/**
+	 * Where `thinkingLevel` came from (senpi#3819): a direct request, this session's or the global
+	 * last level for the model, a default, a fallback, or a clamp. Absent on older hosts.
+	 */
+	thinkingLevelSource?: ThinkingLevelSource;
+	/**
+	 * This session's last thinking level per model, keyed `provider/id` (senpi#3819). A model switch
+	 * restores from it, so clients read it instead of keeping a copy. Absent on older hosts.
+	 */
+	sessionModelThinkingLevels?: Record<string, ThinkingLevel>;
 	/**
 	 * Abort owner of the most recent aborted turn, or the in-flight one while it is
 	 * still settling. Retained after settle: the live session getter is transient, so a

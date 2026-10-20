@@ -350,6 +350,7 @@ import {
 	type SessionHeader,
 	SessionManager,
 } from "./session-manager.ts";
+import { SessionThinkingMemory, type ThinkingLevelSource } from "./session-thinking-memory.ts";
 import { generateSessionTitle, sessionTitleRetryPolicy, shouldSkipSessionTitle } from "./session-title-generator.ts";
 import { SessionWorkBarrier } from "./session-work-barrier.ts";
 import {
@@ -809,6 +810,8 @@ export interface AgentSessionConfig {
 	browserEngine?: BrowserEngine;
 	/** Tool runtime for this session (senpi#3566); absent means `in-process`. */
 	toolRuntime?: ToolRuntimeKind;
+	/** Where the startup thinking level came from (senpi#3819); absent means `default`. */
+	initialThinkingLevelSource?: ThinkingLevelSource;
 }
 
 type SessionModelEntry = {
@@ -1464,6 +1467,8 @@ export class AgentSession {
 	private readonly _startupThinkingClamp: ThinkingClampNotice | undefined;
 	/** Last manual preference for unremembered models, kept in the session rather than startup config. */
 	private _lastManualThinkingLevel: ThinkingLevel | undefined;
+	private _thinkingLevelSource: ThinkingLevelSource;
+	private readonly _sessionThinkingMemory: SessionThinkingMemory;
 	// Widened with the upstream BuildSystemPromptOptions user-override fields so
 	// extensions (prompt-preset) can see CLI/SDK custom prompts via
 	// before_agent_start/model_select systemPromptOptions and ctx.getSystemPromptOptions().
@@ -1480,6 +1485,8 @@ export class AgentSession {
 		this._browserEngine = config.browserEngine;
 		this.agent = config.agent;
 		this.sessionManager = config.sessionManager;
+		this._sessionThinkingMemory = new SessionThinkingMemory(config.sessionManager);
+		this._thinkingLevelSource = config.initialThinkingLevelSource ?? "default";
 		this._pendingInputs = new SessionPendingInputs({
 			sessionManager: this.sessionManager,
 			nextQueuedId: () => this._mintQueuedId(),
@@ -4292,6 +4299,16 @@ export class AgentSession {
 	/** Explicit selector provenance, absent for SDK-defaulted effective levels. */
 	get thinkingSelection(): ThinkingSelection | undefined {
 		return this.agent.state.thinkingSelection;
+	}
+
+	/** Where the thinking level in force came from (senpi#3819). */
+	get thinkingLevelSource(): ThinkingLevelSource {
+		return this._thinkingLevelSource;
+	}
+
+	/** This session's last thinking level per model, keyed `provider/id` (senpi#3819). */
+	getSessionModelThinkingLevels(): Record<string, ThinkingLevel> {
+		return this._sessionThinkingMemory.levels();
 	}
 
 	/** An explicit thinking request clamped while this session was created (senpi#2395). */
@@ -7259,7 +7276,7 @@ export class AgentSession {
 		) {
 			this._invalidateCompactionForModelSelection();
 		}
-		const thinking = this._getThinkingForModelSwitch(model, opts.ephemeralThinkingLevel);
+		const thinking = this._getThinkingForModelSwitch(model, opts.ephemeralThinkingLevel, undefined, true);
 		const liveContextTokens = this._getDownswitchLiveContextTokens(model);
 		// Snapshot before any mutation: the baseline reset below used to run first, so the
 		// "previous" value captured the already-cleared one and a refused switch restored
@@ -7275,6 +7292,7 @@ export class AgentSession {
 		const previousFastMode = this.isFastModeActive();
 		const previousThinkingLevel = this.agent.state.thinkingLevel;
 		const previousThinkingSelection = this.agent.state.thinkingSelection;
+		const previousThinkingLevelSource = this._thinkingLevelSource;
 		this.agent.abortServerSideFallback =
 			this.settingsManager.getAbortServerSideFallback() && this._retryFallback.hasConfiguredChain();
 		this._currentServiceTier = this._resolveServiceTier(model, scopedMatch?.serviceTier);
@@ -7284,6 +7302,7 @@ export class AgentSession {
 		} else {
 			this._setThinkingLevel(thinking.level, false, thinking.selection, opts.origin);
 		}
+		this._thinkingLevelSource = thinking.source;
 
 		this._emitHighReasoningWarningIfNeeded();
 		const previousSystemPrompt = this.agent.state.systemPrompt;
@@ -7300,6 +7319,7 @@ export class AgentSession {
 				this.agent.state.systemPrompt = previousSystemPrompt;
 				this.agent.state.thinkingLevel = previousThinkingLevel;
 				this.agent.state.thinkingSelection = previousThinkingSelection;
+				this._thinkingLevelSource = previousThinkingLevelSource;
 				this.agent.state.reasoningBaseline = previousReasoningBaseline;
 				this.agent.abortServerSideFallback = previousAbortServerSideFallback;
 				this._currentServiceTier = previousTier;
@@ -7354,6 +7374,7 @@ export class AgentSession {
 			this.agent.state.systemPrompt = previousSystemPrompt;
 			this.agent.state.thinkingLevel = previousThinkingLevel;
 			this.agent.state.thinkingSelection = previousThinkingSelection;
+			this._thinkingLevelSource = previousThinkingLevelSource;
 			this.agent.state.reasoningBaseline = previousReasoningBaseline;
 			this.agent.abortServerSideFallback = previousAbortServerSideFallback;
 			this._currentServiceTier = previousTier;
@@ -7494,6 +7515,7 @@ export class AgentSession {
 
 		// Apply thinking level and provenance from the favorite projection or remembered preference.
 		this._setThinkingLevel(thinking.level, false, thinking.selection, cycle.origin);
+		this._thinkingLevelSource = thinking.source;
 
 		const previousSystemPrompt = this.agent.state.systemPrompt;
 		try {
@@ -7585,6 +7607,7 @@ export class AgentSession {
 	 */
 	setThinkingLevel(level: ThinkingLevel, origin?: ModelChangeOrigin): void {
 		this._setThinkingLevel(level, true, { level, source: "explicit" }, origin, true);
+		this._thinkingLevelSource = this.thinkingLevel === level ? "explicit" : "clamped";
 	}
 
 	/**
@@ -7593,6 +7616,7 @@ export class AgentSession {
 	 */
 	setSessionThinkingLevel(level: ThinkingLevel, origin?: ModelChangeOrigin): void {
 		this._setThinkingLevel(level, false, { level, source: "explicit" }, origin, true);
+		this._thinkingLevelSource = this.thinkingLevel === level ? "explicit" : "clamped";
 	}
 
 	private _setThinkingLevel(
@@ -7635,7 +7659,7 @@ export class AgentSession {
 		}
 
 		if (isChanging || selectionChanged) {
-			this.sessionManager.appendThinkingLevelChange(effectiveLevel, effectiveSelection, trigger);
+			this.sessionManager.appendThinkingLevelChange(effectiveLevel, effectiveSelection, trigger, this.model);
 			const model = this.model;
 			if (isChanging && model !== undefined && supportsConfigurationUpdate(model)) {
 				this.agent.state.reasoningBaseline ??= previousLevel;
@@ -7652,7 +7676,7 @@ export class AgentSession {
 			this._emitThinkingClampWarningIfNeeded();
 		} else if (stampNoOpEffect && trigger?.effectId !== undefined) {
 			// A no-op RPC effect still needs proof it applied if the process dies before its receipt.
-			this.sessionManager.appendThinkingLevelChange(effectiveLevel, effectiveSelection, trigger);
+			this.sessionManager.appendThinkingLevelChange(effectiveLevel, effectiveSelection, trigger, this.model);
 		}
 	}
 
@@ -7731,38 +7755,45 @@ export class AgentSession {
 		return !!this.model?.reasoning;
 	}
 
+	/**
+	 * The level a model switch lands on (senpi#3819): a fallback's ephemeral level, else this session's
+	 * last level for the model, else a favorite's `:level`, else the model's global last-used level,
+	 * else the model's own default, else the configured default - clamped to what the model supports.
+	 */
 	private _getThinkingForModelSwitch(
 		model: Model<Api>,
 		explicitLevel?: ThinkingLevel,
 		explicitSelection?: ThinkingSelection,
-	): { level: ThinkingLevel; selection?: ThinkingSelection } {
-		let requestedLevel = explicitLevel;
-		let selection = explicitSelection;
-		if (requestedLevel !== undefined && !selection) selection = { level: requestedLevel, source: "explicit" };
-		if (requestedLevel === undefined) {
-			const remembered = this.settingsManager.getModelThinkingLevel(model.provider, model.id);
-			if (remembered !== undefined) {
-				requestedLevel = remembered;
-				selection = { level: remembered, source: "explicit" };
-			}
-		}
-		// senpi#2196: the model's own default outranks the global last-used level and carries no provenance.
-		requestedLevel ??= model.defaultThinkingLevel;
-		let fromGlobalDefault = false;
-		if (requestedLevel === undefined) {
-			const configuredDefault = this._lastManualThinkingLevel ?? this.settingsManager.getDefaultThinkingLevel();
-			if (configuredDefault !== undefined) {
-				requestedLevel = configuredDefault;
-				selection = { level: configuredDefault, source: "explicit" };
-				fromGlobalDefault = true;
-			}
-		}
-		requestedLevel ??= DEFAULT_THINKING_LEVEL;
-		const level = this._clampThinkingLevel(requestedLevel, getSupportedThinkingLevels(model) as ThinkingLevel[]);
+		ephemeral = false,
+	): { level: ThinkingLevel; selection?: ThinkingSelection; source: ThinkingLevelSource } {
+		const candidates: ReadonlyArray<readonly [ThinkingLevel | undefined, ThinkingLevelSource]> =
+			ephemeral && explicitLevel !== undefined
+				? [[explicitLevel, "fallback"]]
+				: [
+						[this._sessionThinkingMemory.levelFor(model), "session"],
+						[explicitLevel, "explicit"],
+						[this.settingsManager.getModelThinkingLevel(model.provider, model.id), "global"],
+						// senpi#2196: the model's own default outranks the configured default and carries no provenance.
+						[model.defaultThinkingLevel, "model-default"],
+						[this._lastManualThinkingLevel ?? this.settingsManager.getDefaultThinkingLevel(), "default"],
+					];
+		const found = candidates.find(([candidate]) => candidate !== undefined);
+		const requested = found?.[0] ?? DEFAULT_THINKING_LEVEL;
+		const foundSource = found?.[1] ?? "default";
+		const selection: ThinkingSelection | undefined =
+			found === undefined || foundSource === "model-default"
+				? undefined
+				: foundSource === "explicit" && explicitSelection
+					? explicitSelection
+					: { level: requested, source: "explicit" };
+		const fromGlobalDefault = found !== undefined && foundSource === "default";
+		const level = this._clampThinkingLevel(requested, getSupportedThinkingLevels(model) as ThinkingLevel[]);
+		const requestClamped = level !== requested && foundSource !== "default" && foundSource !== "fallback";
 		return {
 			level,
 			// senpi#2395: the global default is a default, not a request, so its clamp records and warns nothing.
-			selection: clampThinkingSelection(selection, fromGlobalDefault ? level : requestedLevel, level, model),
+			selection: clampThinkingSelection(selection, fromGlobalDefault ? level : requested, level, model),
+			source: requestClamped ? "clamped" : foundSource,
 		};
 	}
 
