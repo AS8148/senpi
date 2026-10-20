@@ -12,6 +12,7 @@
 
 - Each mounted message no longer keeps its own copy of the markdown theme, and a tool card above the kept history no longer keeps a second copy of its result in its renderer: about 640 bytes per message and 2 KB per tool card for the rest of the session ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)).
 - A bundled install's RPC host supervisor now starts from its own small program instead of the whole CLI, so each supervisor stays near the size of its own code. The desktop runs one per open thread ([#3743](https://github.com/code-yeongyu/senpi/issues/3743)).
+- The RPC host's cleanup of leftover internal socket directories under `/tmp` now only removes the current user's directories, scans a `TMPDIR` that is `/tmp` once, and a socket path that fits nowhere names every location it tried ([#3487](https://github.com/code-yeongyu/senpi/issues/3487)).
 
 ### Removed
 
