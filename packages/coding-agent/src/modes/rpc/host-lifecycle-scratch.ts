@@ -22,8 +22,10 @@ const SHORT_TEMP_ROOT = "/tmp";
  */
 export function internalHostDirRoots(): readonly string[] {
 	const primary = tmpdir();
-	// One directory under two names (a TMPDIR symlinked to /tmp, macOS /private/tmp) is one root.
-	return canonicalPath(primary) === canonicalPath(SHORT_TEMP_ROOT) ? [primary] : [primary, SHORT_TEMP_ROOT];
+	// One directory under two names (a TMPDIR symlinked to /tmp, macOS /private/tmp) is one root, kept
+	// under its shorter name: the long name is the one that can overflow sun_path.
+	if (canonicalPath(primary) !== canonicalPath(SHORT_TEMP_ROOT)) return [primary, SHORT_TEMP_ROOT];
+	return [Buffer.byteLength(primary) < Buffer.byteLength(SHORT_TEMP_ROOT) ? primary : SHORT_TEMP_ROOT];
 }
 
 function canonicalPath(path: string): string {
