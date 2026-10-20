@@ -14,6 +14,15 @@ import {
 	revoke,
 } from "../../../src/core/extensions/builtin/mcp/env-grants-store.ts";
 
+// node:fs exports are not spy-able in ESM; route watch through a pass-through mock instead.
+const mocks = vi.hoisted(() => ({ fsWatch: vi.fn(), realWatch: undefined as unknown as typeof fs.watch }));
+vi.mock("node:fs", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:fs")>();
+	mocks.realWatch = actual.watch;
+	mocks.fsWatch.mockImplementation(actual.watch);
+	return { ...actual, watch: mocks.fsWatch };
+});
+
 let root: string;
 let stop: (() => void) | undefined;
 const label = { project: "/synthetic/project", skill: "carrier", server: "probe" };
@@ -26,6 +35,7 @@ afterEach(() => {
 	stop?.();
 	stop = undefined;
 	vi.restoreAllMocks();
+	mocks.fsWatch.mockImplementation(mocks.realWatch);
 	vi.useRealTimers();
 	fs.rmSync(root, { recursive: true, force: true });
 });
@@ -119,10 +129,9 @@ it("watches creation and atomic replacements from before the store exists", asyn
 });
 
 it("polls latest state and conservatively invalidates skipped revoke/regrant and recreation", async () => {
-	const realWatch = fs.watch;
 	// Real watcher, deliberately no change listener: model a filesystem that
 	// loses watch notifications. The production five-second fallback must work.
-	vi.spyOn(fs, "watch").mockImplementation((filename) => realWatch(filename, { persistent: false }));
+	mocks.fsWatch.mockImplementation((filename: fs.PathLike) => mocks.realWatch(filename, { persistent: false }));
 	vi.useFakeTimers();
 	const path = resolveGrantsStorePath(root);
 	await addGrant(path, identity, label, ["ODD_DSN"]);
