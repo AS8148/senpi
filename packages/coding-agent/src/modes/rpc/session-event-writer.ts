@@ -592,7 +592,11 @@ export class SessionEventWriter {
 		});
 	}
 
-	sealLifecycle(sessionId: string, lifecycle: RpcSessionParkedEvent | RpcSessionClosedEvent, attachedOnly = false): void {
+	sealLifecycle(
+		sessionId: string,
+		lifecycle: RpcSessionParkedEvent | RpcSessionClosedEvent,
+		attachedOnly = false,
+	): void {
 		if (!this.settleBeforeSeal(sessionId)) return;
 		this.sealedSessions.add(sessionId);
 		this.fanout.forgetSession(sessionId);
