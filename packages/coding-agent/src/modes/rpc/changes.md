@@ -1,14 +1,34 @@
+## 2026-10-20 - The internal-hop reaper stays inside this user's directories (senpi#3487 follow-up)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-internal-dir-reaper.ts`: `reapOrphanedInternalHostDirs` only removes leftover hop directories owned by the current user, so a shared `/tmp` root never touches another user's hop.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-scratch.ts`: `internalHostDirRoots()` deduplicates roots by realpath (a `TMPDIR` that is `/tmp`, or a symlink to it, is one root), and `internal_socket_path_too_long` names every candidate path it tried.
+- Tests: `packages/coding-agent/test/suite/regressions/3487-rpc-internal-socket-long-tmpdir.test.ts` adds a case where another user's hop is skipped and one where a `TMPDIR` of `/tmp` is scanned once; the long-TMPDIR cases use unique `mkdtemp` roots.
+
+### Why
+
+- Review notes on #3502: with `/tmp` as a fallback root, the reaper could see other users' hop directories, the same root could be scanned twice, and the too-long error named only one path.
+
+### Why an extension could not handle it
+
+- The internal hop is created and reaped by the host supervisor before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/host-internal-dir-reaper.ts`, the ownership check in `reapOrphanedInternalHostDirs`.
+
 ## 2026-10-17 - The internal host socket fits sun_path under a long TMPDIR (senpi#3487)
 
 ### What changed
 
 - `packages/coding-agent/src/modes/rpc/host-lifecycle-scratch.ts`: `createInternalSocketPath` picks the hop's root with `internalHostDirRoots()` (the OS temp directory, then `/tmp`), using the first root where `<root>/senpi-rpc-host-internal-<8>/host.sock` fits `MAX_SOCKET_PATH_BYTES` (103); if neither fits it throws `internal_socket_path_too_long` with the path and the next step (a shorter TMPDIR). The directory stays non-recursive and 0700. `INTERNAL_HOST_DIR_PREFIX` and `internalHostDirRoots` are exported for the reaper.
 - `packages/coding-agent/src/modes/rpc/host-internal-dir-reaper.ts`: `reapOrphanedInternalHostDirs` scans every root from `internalHostDirRoots()`, so a dead owner's hop in the `/tmp` fallback is collected under the same rules (older than 60 s, only `.owner`, owner provably dead).
-- Tests: `packages/coding-agent/test/suite/regressions/3487-rpc-internal-socket-long-tmpdir.test.ts` (new): a TMPDIR of about 120 characters (a unique `mkdtemp` root) yields a socket of at most 103 bytes in a 0700 directory that a real server binds (RED: 166 bytes); a short TMPDIR is still used; a dead owner's leftover hop under `/tmp` is reaped while TMPDIR is long (RED without the reaper change).
+- Tests: `packages/coding-agent/test/suite/regressions/3487-rpc-internal-socket-long-tmpdir.test.ts` (new): a 116-char TMPDIR yields a socket of at most 103 bytes in a 0700 directory that a real server binds (RED: 159 bytes); a short TMPDIR is still used; a dead owner's leftover hop under `/tmp` is reaped while TMPDIR is long (RED without the reaper change).
 
 ### Why
 
-- The hop was always `join(tmpdir(), ...)`, although its comment promised it stays short regardless; a long TMPDIR made the host child die with `listen EINVAL` and the supervisor exit (the supervisor answers `get_protocol_info` itself, so that probe alone did not show it). `resolveTuiSocket` already falls back the same way for the TUI socket.
+- The hop was always `join(tmpdir(), ...)`, although its comment promised it stays short regardless; a long TMPDIR made the host child die with `listen EINVAL` before answering `get_protocol_info`. `resolveTuiSocket` already falls back the same way for the TUI socket.
 
 ### Why an extension could not handle it
 
