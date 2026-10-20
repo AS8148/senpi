@@ -44,8 +44,10 @@ export function buildRpcSessionState(session: AgentSession, lastAbortSource?: Ag
 			: null,
 		thinkingLevel: session.thinkingLevel,
 		...(session.thinkingSelection ? { thinkingSelection: session.thinkingSelection } : {}),
-		thinkingLevelSource: session.thinkingLevelSource,
-		sessionModelThinkingLevels: session.getSessionModelThinkingLevels(),
+		...(session.thinkingLevelSource === undefined ? {} : { thinkingLevelSource: session.thinkingLevelSource }),
+		...(typeof session.getSessionModelThinkingLevels === "function"
+			? { sessionModelThinkingLevels: session.getSessionModelThinkingLevels() }
+			: {}),
 		...(lastAbortSource ? { lastAbortSource } : {}),
 		...(lastProviderDiagnostic ? { lastProviderDiagnostic } : {}),
 		serviceTier: session.effectiveServiceTier,
