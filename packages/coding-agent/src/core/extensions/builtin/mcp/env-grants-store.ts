@@ -66,7 +66,7 @@ interface StoreState {
 	readonly valid: boolean;
 }
 const empty = (): GrantSnapshot => ({ version: 1, generation: 0, grants: {} });
-const namePattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const namePattern = /^[^=\0]+$/;
 const digestPattern = /^[a-f0-9]{64}$/;
 
 export function resolveGrantsStorePath(configDir?: string): string {
