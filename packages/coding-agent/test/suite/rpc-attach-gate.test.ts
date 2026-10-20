@@ -51,7 +51,7 @@ describe.each(["in-process", "worker"] as const)("attachment gate (%s)", (sessio
 			});
 			expect(await stranger.request({ type: "set_session_context", sessionId, context: {} })).toMatchObject({
 				success: false,
-				error: "session_not_attached",
+				errorCode: "session_not_attached",
 			});
 			expect(host.stderrText()).not.toContain("(refused from the next release)");
 		} finally {
