@@ -36,6 +36,8 @@ export const LOOP_LAG_WARN_INTERVAL_MS = 10_000;
  * fifth stale without a disk write on every 200 ms tick.
  */
 const HEARTBEAT_THRESHOLD_FRACTION = 5;
+/** A beat counts as due this much before a full interval, so timer and clock rounding never skips one. */
+const HEARTBEAT_EARLY_TOLERANCE_MS = LOOP_LAG_TICK_MS / 2;
 
 export interface LoopLagWatchdogOptions {
 	/** Delivers one `host_stalled` lifecycle record to every connection. */
@@ -218,7 +220,10 @@ export class LoopLagWatchdog {
 	 */
 	private beat(now: number): void {
 		if (!this.ownsEvidenceDir() || this.evidenceDir === undefined || this.heartbeatInFlight) return;
-		if (this.lastHeartbeatAt !== undefined && now - this.lastHeartbeatAt < this.heartbeatIntervalMs) return;
+		// The early tolerance matters on the 1 s idle tick: a tick that reads a millisecond short of the interval would
+		// otherwise skip its beat and leave the heartbeat two intervals stale (senpi#3738).
+		const due = this.heartbeatIntervalMs - HEARTBEAT_EARLY_TOLERANCE_MS;
+		if (this.lastHeartbeatAt !== undefined && now - this.lastHeartbeatAt < due) return;
 		this.lastHeartbeatAt = now;
 		this.heartbeatInFlight = true;
 		void this.writeHeartbeat(this.evidenceDir, new Date(now).toISOString())
