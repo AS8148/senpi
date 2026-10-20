@@ -33,21 +33,33 @@ it("refuses attached_elsewhere, including an attach begun concurrently before re
 	const reclaim = rig.send("caller", { id: "reclaim", type: "reclaim_session", ...ref });
 	expect(await attach).toMatchObject({ success: true });
 	expect(await reclaim).toMatchObject({
-		success: false, error: "attached_elsewhere", errorData: { attachments: 1 },
+		success: false,
+		error: "attached_elsewhere",
+		errorData: { attachments: 1 },
 	});
-	expect(await rig.list()).toContainEqual(expect.objectContaining({ sessionId: ref.sessionId, attachments: 2, status: "open" }));
+	expect(await rig.list()).toContainEqual(
+		expect.objectContaining({ sessionId: ref.sessionId, attachments: 2, status: "open" }),
+	);
 });
 
-it.each(["durableSessionId", "expectedHostInstance"] as const)("refuses a mismatching or missing %s without touching the session", async (field) => {
-	await using rig = await attachmentRig();
-	const ref = await rig.session();
-	for (const value of ["stale", undefined]) {
-		expect(await rig.send("caller", {
-			id: `mismatch-${value}`, type: "reclaim_session", ...ref, [field]: value,
-		})).toMatchObject({ success: false, error: "session_identity_mismatch" });
-	}
-	expect(await rig.list()).toContainEqual(expect.objectContaining({ attachments: 1, status: "open" }));
-});
+it.each(["durableSessionId", "expectedHostInstance"] as const)(
+	"refuses a mismatching or missing %s without touching the session",
+	async (field) => {
+		await using rig = await attachmentRig();
+		const ref = await rig.session();
+		for (const value of ["stale", undefined]) {
+			expect(
+				await rig.send("caller", {
+					id: `mismatch-${value}`,
+					type: "reclaim_session",
+					...ref,
+					[field]: value,
+				}),
+			).toMatchObject({ success: false, error: "session_identity_mismatch" });
+		}
+		expect(await rig.list()).toContainEqual(expect.objectContaining({ attachments: 1, status: "open" }));
+	},
+);
 
 it.each(["opening", "closing"] as const)("refuses a %s target without claiming its holds", async (state) => {
 	await using rig = await attachmentRig();
@@ -57,7 +69,8 @@ it.each(["opening", "closing"] as const)("refuses a %s target without claiming i
 	entry.state = state;
 	try {
 		expect(await rig.send("caller", { id: "busy", type: "reclaim_session", ...ref })).toMatchObject({
-			success: false, error: "session_busy_lifecycle",
+			success: false,
+			error: "session_busy_lifecycle",
 		});
 		expect(entry.attachments).toBe(1);
 	} finally {
@@ -70,33 +83,40 @@ it("never opens or resumes a vanished path", async () => {
 	const ref = await rig.session();
 	await rig.close("caller", ref.sessionId);
 	expect(await rig.send("caller", { id: "gone", type: "reclaim_session", ...ref })).toMatchObject({
-		success: false, error: "unknown_session",
+		success: false,
+		error: "unknown_session",
 	});
 	expect(await rig.list()).toEqual([]);
 });
 
-it.each(["in-process", "worker"] as const)("reclaims zero, one and several holds through a real %s socket", async (sessionRuntime) => {
-	const host = await startWorkerHost(undefined, { socket: true, sessionRuntime });
-	try {
-		const caller = await host.connect();
-		const protocol = await caller.request({ type: "get_protocol_info" });
-		for (const holds of [0, 1, 3]) {
-			const opened = await caller.request({ type: "open_session", cwd: host.cwd, retain_on_disconnect: true });
-			expect(opened.success).toBe(true);
-			const ref = {
-				sessionId: opened.data?.sessionId,
-				sessionPath: opened.data?.state?.sessionFile,
-				durableSessionId: opened.data?.state?.sessionId,
-				expectedHostInstance: protocol.data?.instanceId,
-			};
-			for (let index = 1; index < holds; index++)
-				expect(await caller.request({ type: "attach_session", ...ref })).toMatchObject({ success: true });
-			if (holds === 0)
-				expect(await caller.request({ type: "release_attachment", sessionId: ref.sessionId })).toMatchObject({ success: true });
-			expect(await caller.request({ type: "reclaim_session", ...ref })).toMatchObject({ success: true });
-			expect((await caller.request({ type: "list_sessions" })).data?.sessions).toEqual([]);
+it.each(["in-process", "worker"] as const)(
+	"reclaims zero, one and several holds through a real %s socket",
+	async (sessionRuntime) => {
+		const host = await startWorkerHost(undefined, { socket: true, sessionRuntime });
+		try {
+			const caller = await host.connect();
+			const protocol = await caller.request({ type: "get_protocol_info" });
+			for (const holds of [0, 1, 3]) {
+				const opened = await caller.request({ type: "open_session", cwd: host.cwd, retain_on_disconnect: true });
+				expect(opened.success).toBe(true);
+				const ref = {
+					sessionId: opened.data?.sessionId,
+					sessionPath: opened.data?.state?.sessionFile,
+					durableSessionId: opened.data?.state?.sessionId,
+					expectedHostInstance: protocol.data?.instanceId,
+				};
+				for (let index = 1; index < holds; index++)
+					expect(await caller.request({ type: "attach_session", ...ref })).toMatchObject({ success: true });
+				if (holds === 0)
+					expect(await caller.request({ type: "release_attachment", sessionId: ref.sessionId })).toMatchObject({
+						success: true,
+					});
+				expect(await caller.request({ type: "reclaim_session", ...ref })).toMatchObject({ success: true });
+				expect((await caller.request({ type: "list_sessions" })).data?.sessions).toEqual([]);
+			}
+		} finally {
+			await host.dispose();
 		}
-	} finally {
-		await host.dispose();
-	}
-}, 90_000);
+	},
+	90_000,
+);

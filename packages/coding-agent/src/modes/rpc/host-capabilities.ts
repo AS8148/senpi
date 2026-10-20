@@ -56,6 +56,10 @@ export function multiSessionHostCapabilities(options: {
 		...new Set([
 			"multi_session",
 			"expected_host_instance",
+			"attach_session",
+			"release_attachment",
+			"release_caller_aware",
+			"reclaim_session",
 			AUTO_TITLE_SESSIONS_CAPABILITY,
 			MEDIA_PLACEHOLDERS_CAPABILITY,
 			DURABLE_CLIENT_MESSAGE_ID_CAPABILITY,

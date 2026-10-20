@@ -8,7 +8,9 @@ vi.mock("node:worker_threads", async (importOriginal) => {
 		...actual,
 		Worker: class extends EventEmitter {
 			postMessage(): void {}
-			terminate(): Promise<number> { return Promise.resolve(0); }
+			terminate(): Promise<number> {
+				return Promise.resolve(0);
+			}
 		},
 	};
 });
@@ -23,9 +25,13 @@ it("defers the last worker release after the original owner drops mid-turn", asy
 	await host.open("temporary", { cwd: host.cwd, sessionPath: row.sessionPath });
 	await host.client(row.sessionId).activity({ busy: true, streaming: true });
 	await host.drop("owner");
-	const release = await host.writer.withConnection("temporary", () => host.router.handle({
-		id: "release", type: "release_attachment", sessionId: row.sessionId,
-	}));
+	const release = await host.writer.withConnection("temporary", () =>
+		host.router.handle({
+			id: "release",
+			type: "release_attachment",
+			sessionId: row.sessionId,
+		}),
+	);
 	expect(release).toMatchObject({ success: true });
 	expect(host.posted.filter(({ message }) => message.type === "close")).toEqual([]);
 	await host.client(row.sessionId).output({ type: "agent_settled" });

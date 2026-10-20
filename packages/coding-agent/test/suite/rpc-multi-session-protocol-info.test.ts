@@ -24,6 +24,10 @@ describe("multi-session RPC protocol info", () => {
 				capabilities: [
 					"multi_session",
 					"expected_host_instance",
+					"attach_session",
+					"release_attachment",
+					"release_caller_aware",
+					"reclaim_session",
 					"auto_title_sessions",
 					"media_placeholders",
 					"durable_client_message_id",

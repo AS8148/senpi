@@ -8,15 +8,20 @@ it("releases one caller hold on one session and keeps the remaining event stream
 	await using rig = await attachmentRig();
 	const ref = await rig.session(3);
 	const other = opened(await rig.open("caller", { cwd: rig.dir }), 1);
-	expect(await rig.send("caller", { id: "release", type: "release_attachment", sessionId: ref.sessionId })).toMatchObject({
+	expect(
+		await rig.send("caller", { id: "release", type: "release_attachment", sessionId: ref.sessionId }),
+	).toMatchObject({
 		success: true,
 	});
 	expect(await rig.list()).toEqual([
 		expect.objectContaining({ sessionId: ref.sessionId, attachments: 2 }),
 		expect.objectContaining({ sessionId: other.sessionId, attachments: 1 }),
 	]);
-	expect(await rig.send("stranger", { id: "no-hold", type: "release_attachment", sessionId: ref.sessionId })).toMatchObject({
-		success: false, error: "session_not_attached",
+	expect(
+		await rig.send("stranger", { id: "no-hold", type: "release_attachment", sessionId: ref.sessionId }),
+	).toMatchObject({
+		success: false,
+		error: "session_not_attached",
 	});
 	await rig.close("caller", ref.sessionId);
 	expect(await rig.list()).toContainEqual(expect.objectContaining({ sessionId: ref.sessionId, attachments: 1 }));
@@ -33,7 +38,9 @@ it("lets a non-retained in-process turn survive owner disconnect followed by tem
 	const listeners = new Set<(event: AgentSessionEvent) => void>();
 	const subscribe = vi.spyOn(entry.runtime.session, "subscribe").mockImplementation((listener) => {
 		listeners.add(listener);
-		return () => { listeners.delete(listener); };
+		return () => {
+			listeners.delete(listener);
+		};
 	});
 	try {
 		turn.start();

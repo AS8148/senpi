@@ -7003,3 +7003,29 @@ Capability advertisement is core RPC.
 ### Expected merge conflict zones
 
 The classic capability list in `connection-handler.ts`.
+## 2026-10-20 - Fenced live attachments and session mutation admission (senpi#3795, design v7 section 3)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: keeps the public router API and delegates state, routing, opening, occupancy, attachment ownership, and close/finalization to responsibility-specific `session-router-*.ts` modules. `session-attachment-gate.ts` checks socket ownership before every session mutation, including pre-binding lifecycle commands and worker dispatch. Grace serves and logs each violation once; `SENPI_RPC_REQUIRE_ATTACH=1` refuses with `session_not_attached`.
+- `packages/coding-agent/src/modes/rpc/session-attachment-commands.ts`, `session-live-attachment.ts`, `session-registry.ts`, `session-registry-open.ts`, `worker-session-registry.ts`, and `worker-session-open.ts`: live-only identity-fenced attach; one-hold disconnect-safe release; synchronous reclaim admission, attachment, and claim of all caller holds before teardown. Both registry open implementations are extracted without changing open/resume behavior.
+- `packages/coding-agent/src/modes/rpc/session-release.ts` and `session-router-routing.ts`: release counts every caller hold out of the other-attachment refusal while force still authorizes releasing other connections.
+- `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: advertises `attach_session`, `release_attachment`, `release_caller_aware`, and `reclaim_session`.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: remains the public export surface; command, response, state, error, question, result, protocol-info, effect-answer, and event definitions move to responsibility-specific `rpc-*-types.ts` modules. `attachment-types.ts` adds the three command/response shapes without altering existing wire fields.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`, `session-release.ts`, `session-registry.ts`, `worker-session-registry.ts`, and `host-capabilities.ts`: knowledge of a listed routing id must not authorize mutation; transient attach must not reopen a vanished target or change its launch profile; temporary release must not abort another client's turn; recovery must claim all caller holds atomically and refuse other clients before aborting.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: exposes the new contracts while keeping the public import path stable. The router, registries, protocol definitions, and socket tests are split by responsibility to keep changed code modules under 250 pure LOC.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`, `session-release.ts`, `session-registry.ts`, `worker-session-registry.ts`, `host-capabilities.ts`, and `rpc-types.ts`: connection identity, attachment refcounts, lifecycle claims, capability advertisement, and protocol types belong to the host below extensions.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: extracted router responsibilities and public wrapper; preserve the gate ahead of lifecycle and binding routing.
+- `packages/coding-agent/src/modes/rpc/session-release.ts`: `SessionReleasePort.otherAttachments` and the final releasable check.
+- `packages/coding-agent/src/modes/rpc/session-registry.ts`, `worker-session-registry.ts`: live-only attach and extracted open implementations.
+- `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: the four attachment capability strings.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: public re-exports; preserve existing names and field shapes in the extracted definitions.

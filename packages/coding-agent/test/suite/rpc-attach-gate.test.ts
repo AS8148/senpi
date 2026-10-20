@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { waitForStderr } from "../helpers/rpc-socket-host-support.ts";
 import { startWorkerHost } from "./rpc-worker-host-support.ts";
 
 // senpi#3795: admission is enforced at the real socket boundary in both runtimes.
@@ -27,6 +28,7 @@ describe.each(["in-process", "worker"] as const)("attachment gate (%s)", (sessio
 				{ type: "export_html", outputPath: `${host.scratch}/export.html` },
 				{ type: "unload_session" },
 				{ type: "set_client_info", capabilities: [] },
+				{ type: "future_session_mutation" },
 			];
 			for (const mutation of mutations) {
 				expect(await stranger.request({ ...mutation, sessionId }), mutation.type).toMatchObject({
@@ -34,7 +36,8 @@ describe.each(["in-process", "worker"] as const)("attachment gate (%s)", (sessio
 					errorCode: "session_not_attached",
 					errorData: {
 						reason: expect.any(String),
-						action: "attach first with attach_session { sessionId, durableSessionId } or open_session { sessionPath }",
+						action:
+							"attach first with attach_session { sessionId, durableSessionId } or open_session { sessionPath }",
 					},
 				});
 			}
@@ -65,11 +68,18 @@ describe.each(["in-process", "worker"] as const)("attachment gate (%s)", (sessio
 			const sessionId = opened.data?.sessionId;
 			expect(opened.success).toBe(true);
 			for (const type of ["append_user_message", "abort"]) {
+				const logged = waitForStderr(
+					host.child,
+					`senpi rpc host: ${type} on ${sessionId} from a connection not attached to it (refused from the next release)`,
+				);
 				expect(await stranger.request({ type, sessionId, content: "grace" })).toMatchObject({ success: true });
+				await logged;
 			}
-			// The response is after stderr.write in the host's command path.
 			await stranger.request({ type: "get_state", sessionId });
-			const violations = host.stderrText().split("\n").filter((line) => line.includes("(refused from the next release)"));
+			const violations = host
+				.stderrText()
+				.split("\n")
+				.filter((line) => line.includes("(refused from the next release)"));
 			expect(violations).toEqual([
 				`senpi rpc host: append_user_message on ${sessionId} from a connection not attached to it (refused from the next release)`,
 				`senpi rpc host: abort on ${sessionId} from a connection not attached to it (refused from the next release)`,
