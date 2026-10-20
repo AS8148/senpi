@@ -2,9 +2,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import type { AgentSessionRuntime } from "../../../src/core/agent-session-runtime.ts";
 import { getMcpGrantPresentation, selectMcpGrant } from "../../../src/core/mcp-grant-presentations.ts";
-import {
-	createRpcConnectionHandler, type RpcConnectionHandler,
-} from "../../../src/modes/rpc/connection-handler.ts";
+import { createRpcConnectionHandler, type RpcConnectionHandler } from "../../../src/modes/rpc/connection-handler.ts";
 import type { RpcExtensionUIRequest } from "../../../src/modes/rpc/rpc-types.ts";
 import { SessionEventWriter } from "../../../src/modes/rpc/session-event-writer.ts";
 import { createHarness, type Harness } from "../harness.ts";
@@ -49,27 +47,38 @@ async function setup(): Promise<Harness> {
 	connect("question-only", ["question"]);
 	connect("grant-client", ["grant_select"]);
 	const runtime = {
-		session: harness.session, newSession: async () => ({ cancelled: true }),
-		switchSession: async () => ({ cancelled: true }), fork: async () => ({ cancelled: true, selectedText: "" }),
-		dispose: async () => {}, setRebindSession: () => {},
+		session: harness.session,
+		newSession: async () => ({ cancelled: true }),
+		switchSession: async () => ({ cancelled: true }),
+		fork: async () => ({ cancelled: true, selectedText: "" }),
+		dispose: async () => {},
+		setRebindSession: () => {},
 	} as unknown as AgentSessionRuntime;
 	const activeWriter = writer;
-	handler = createRpcConnectionHandler(runtime, {
-		writeRaw: (chunk) => {
-			for (const line of chunk.split("\n").filter(Boolean)) activeWriter.enqueue(routing, JSON.parse(line));
+	handler = createRpcConnectionHandler(
+		runtime,
+		{
+			writeRaw: (chunk) => {
+				for (const line of chunk.split("\n").filter(Boolean)) activeWriter.enqueue(routing, JSON.parse(line));
+			},
+			waitForBackpressure: async () => {},
 		},
-		waitForBackpressure: async () => {},
-	}, {
-		sessionId: routing, disposeRuntime: false,
-		capabilities: ["question"],
-		bindSecurityPresentation: (session, ui) =>
-			activeWriter.bindSecurityPresentations(routing, session.sessionId, session.securityNotices, ui),
-		clientInfo: {
-			connectionId: () => activeWriter.currentConnection(),
-			setCapabilities: (id, capabilities) => { if (id) activeWriter.setConnectionCapabilities(id, capabilities); },
-			hasCapability: (id, capability) => activeWriter.getConnectionCapabilities(id)?.includes(capability) === true,
+		{
+			sessionId: routing,
+			disposeRuntime: false,
+			capabilities: ["question"],
+			bindSecurityPresentation: (session, ui) =>
+				activeWriter.bindSecurityPresentations(routing, session.sessionId, session.securityNotices, ui),
+			clientInfo: {
+				connectionId: () => activeWriter.currentConnection(),
+				setCapabilities: (id, capabilities) => {
+					if (id) activeWriter.setConnectionCapabilities(id, capabilities);
+				},
+				hasCapability: (id, capability) =>
+					activeWriter.getConnectionCapabilities(id)?.includes(capability) === true,
+			},
 		},
-	});
+	);
 	await handler.ready;
 	return harness;
 }
@@ -77,7 +86,11 @@ async function setup(): Promise<Harness> {
 function nextSelect(): Promise<Extract<RpcExtensionUIRequest, { method: "select" }>> {
 	return new Promise((resolve, reject) => {
 		const timer = setTimeout(() => reject(new Error("grant select did not arrive")), 10_000);
-		selected = (frame) => { selected = undefined; clearTimeout(timer); resolve(frame); };
+		selected = (frame) => {
+			selected = undefined;
+			clearTimeout(timer);
+			resolve(frame);
+		};
 	});
 }
 
@@ -105,19 +118,38 @@ it("targets only grant_select and rejects another connection's answer", async ()
 	const frame = await delivered;
 	expect(frames.get("question-only")?.some((record) => record.method === "select")).toBe(false);
 	let settled = false;
-	void decision.then(() => { settled = true; });
-	await writer?.withConnection("question-only", () => handler?.handleInputLine(JSON.stringify({
-		type: "extension_ui_response", id: frame.id, value: "Grant and save permanently",
-	})));
+	void decision.then(() => {
+		settled = true;
+	});
+	await writer?.withConnection("question-only", () =>
+		handler?.handleInputLine(
+			JSON.stringify({
+				type: "extension_ui_response",
+				id: frame.id,
+				value: "Grant and save permanently",
+			}),
+		),
+	);
 	expect(settled).toBe(false);
 	// A normal capability heartbeat must not cancel the outstanding decision.
-	await writer?.withConnection("grant-client", () => handler?.handleInputLine(JSON.stringify({
-		type: "set_client_info", capabilities: ["grant_select"],
-	})));
+	await writer?.withConnection("grant-client", () =>
+		handler?.handleInputLine(
+			JSON.stringify({
+				type: "set_client_info",
+				capabilities: ["grant_select"],
+			}),
+		),
+	);
 	expect(settled).toBe(false);
-	await writer?.withConnection("grant-client", () => handler?.handleInputLine(JSON.stringify({
-		type: "extension_ui_response", id: frame.id, value: "Grant and save permanently",
-	})));
+	await writer?.withConnection("grant-client", () =>
+		handler?.handleInputLine(
+			JSON.stringify({
+				type: "extension_ui_response",
+				id: frame.id,
+				value: "Grant and save permanently",
+			}),
+		),
+	);
 	expect(await decision).toBe(true);
 });
 

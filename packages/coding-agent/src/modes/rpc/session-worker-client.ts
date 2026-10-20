@@ -4,6 +4,7 @@ import { isBunBinary } from "../../config.ts";
 import type { BrowserEngine } from "../../core/browser-engine.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import { ownProcessStartedAtMs } from "../../core/extensions/builtin/terminal/process-identity.ts";
+import { isSecurityNoticeState } from "../../core/security-notices.ts";
 import { createWebViewBroker } from "../../core/webview/webview-broker.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import type { RpcConnectionOptions } from "./connection-handler.ts";
@@ -16,10 +17,8 @@ import type {
 	SessionWriteGrant,
 	WorkerSnapshot,
 } from "./session-worker-protocol.ts";
-
 import { SessionWorkerRequests, type WorkerRequestInput } from "./session-worker-requests.ts";
 import { acknowledge, acknowledgeGrant } from "./session-worker-signals.ts";
-import { isSecurityNoticeState } from "../../core/security-notices.ts";
 
 /** Lifecycle hooks the owning registry installs on every worker it allocates. */
 export interface SessionWorkerCallbacks {
@@ -147,9 +146,14 @@ export class SessionWorkerClient {
 		});
 		return {
 			handle: async (command) => {
-				if ("type" in command && command.type === "extension_ui_response" && "id" in command &&
+				if (
+					"type" in command &&
+					command.type === "extension_ui_response" &&
+					"id" in command &&
 					typeof command.id === "string" &&
-					writer.acceptWorkerGrantResponse(sessionId, command.id, writer.currentConnection()) === false) return;
+					writer.acceptWorkerGrantResponse(sessionId, command.id, writer.currentConnection()) === false
+				)
+					return;
 				await this.request({ type: "command", command, connection: writer.currentConnection() });
 			},
 			cancelPendingExtensionUiRequests: () => this.post({ type: "cancel_ui" }),
@@ -254,8 +258,12 @@ export class SessionWorkerClient {
 						state: { ...this.snapshot.state, isStreaming: message.activity.streaming },
 					};
 				const record = message.record;
-				if ("type" in record && record.type === "security_grant_settled" &&
-					"id" in record && typeof record.id === "string") {
+				if (
+					"type" in record &&
+					record.type === "security_grant_settled" &&
+					"id" in record &&
+					typeof record.id === "string"
+				) {
 					writer.settleGrantDialog(sessionId, record.id);
 					acknowledge(message.signal, true);
 					return;
@@ -271,13 +279,28 @@ export class SessionWorkerClient {
 					return;
 				}
 				let outputConnection = message.connection;
-				if ("type" in record && record.type === "extension_ui_request" && "method" in record &&
-					record.method === "select" && "grantSelect" in record && record.grantSelect === true &&
-					"id" in record && typeof record.id === "string") {
+				if (
+					"type" in record &&
+					record.type === "extension_ui_request" &&
+					"method" in record &&
+					record.method === "select" &&
+					"grantSelect" in record &&
+					record.grantSelect === true &&
+					"id" in record &&
+					typeof record.id === "string"
+				) {
 					const id = record.id;
-					const target = writer.routeWorkerGrant(sessionId, id, message.connection,
-						this.options.capabilities ?? [], () => this.post({ type: "cancel_grant", id }));
-					if (!target.accepted) { acknowledge(message.signal, true); return; }
+					const target = writer.routeWorkerGrant(
+						sessionId,
+						id,
+						message.connection,
+						this.options.capabilities ?? [],
+						() => this.post({ type: "cancel_grant", id }),
+					);
+					if (!target.accepted) {
+						acknowledge(message.signal, true);
+						return;
+					}
 					outputConnection = target.connection;
 				}
 				const enqueue = () => {
@@ -303,7 +326,8 @@ export class SessionWorkerClient {
 				return;
 			}
 			case "capabilities":
-				if (message.connection === undefined) this.options = { ...this.options, capabilities: message.capabilities };
+				if (message.connection === undefined)
+					this.options = { ...this.options, capabilities: message.capabilities };
 				this.options.clientInfo?.setCapabilities(message.connection, message.capabilities);
 				acknowledge(message.signal, true);
 				return;

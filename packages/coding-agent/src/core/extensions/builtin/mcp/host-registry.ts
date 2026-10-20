@@ -1,8 +1,8 @@
 import type { ServerConnection } from "./connection.ts";
-import { SharedMcpConnection, type SharedMcpOptions } from "./shared-connection.ts";
-import { sharedMcpKey } from "./sharing-policy.ts";
 import { observe } from "./env-grants-store.ts";
 import { effectiveGrantNames, type ProjectMcpAuthority } from "./project-skill-policy.ts";
+import { SharedMcpConnection, type SharedMcpOptions } from "./shared-connection.ts";
+import { sharedMcpKey } from "./sharing-policy.ts";
 
 export { shareable } from "./sharing-policy.ts";
 
@@ -62,9 +62,10 @@ export class HostMcpRegistry {
 	}
 	*#projectConnections(): IterableIterator<ServerConnection> {
 		for (const shared of this.#shared.values()) if (shared.connection.projectPolicy) yield shared.connection;
-		for (const entries of this.#entries.values()) for (const entry of entries) {
-			if (entry.connection.projectPolicy) yield entry.connection;
-		}
+		for (const entries of this.#entries.values())
+			for (const entry of entries) {
+				if (entry.connection.projectPolicy) yield entry.connection;
+			}
 	}
 	#watchProjectPolicy(policy: ProjectMcpAuthority | undefined): void {
 		if (policy === undefined || this.#grantObservers.has(policy.storePath)) return;
@@ -73,8 +74,12 @@ export class HostMcpRegistry {
 			for (const connection of this.#projectConnections()) {
 				const authority = connection.projectPolicy;
 				if (authority === undefined || authority.storePath !== policy.storePath) continue;
-				if (conservative || JSON.stringify(connection.startedGrantNames) !==
-					JSON.stringify(effectiveGrantNames(snapshot, authority.identity))) identities.add(authority.identity);
+				if (
+					conservative ||
+					JSON.stringify(connection.startedGrantNames) !==
+						JSON.stringify(effectiveGrantNames(snapshot, authority.identity))
+				)
+					identities.add(authority.identity);
 			}
 			for (const identity of identities) {
 				void this.invalidateIdentity(identity).catch(() => {
@@ -94,9 +99,10 @@ export class HostMcpRegistry {
 		for (const shared of this.#shared.values()) {
 			if (shared.connection.declarationIdentity === digest) pending.push(shared.invalidate());
 		}
-		for (const entries of this.#entries.values()) for (const entry of entries) {
-			if (entry.connection.declarationIdentity === digest) pending.push(entry.connection.bumpGeneration());
-		}
+		for (const entries of this.#entries.values())
+			for (const entry of entries) {
+				if (entry.connection.declarationIdentity === digest) pending.push(entry.connection.bumpGeneration());
+			}
 		await Promise.all(pending);
 	}
 

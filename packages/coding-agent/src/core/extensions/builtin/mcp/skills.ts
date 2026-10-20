@@ -16,8 +16,14 @@
 import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parseFrontmatter } from "../../../../utils/frontmatter.ts";
+import {
+	authorizeSkillPath,
+	BlockedSkillLinkError,
+	readSkillFileChecked,
+	type SkillAllowedSet,
+	type SkillProvenance,
+} from "../../../skill-access.ts";
 import type { SourceScope } from "../../../source-info.ts";
-import { authorizeSkillPath, BlockedSkillLinkError, readSkillFileChecked, type SkillAllowedSet, type SkillProvenance } from "../../../skill-access.ts";
 import type { RawConfig } from "./config-schema.ts";
 
 type RawServer = NonNullable<RawConfig["mcpServers"]>[string];
@@ -123,32 +129,39 @@ function readSkillServers(skill: SkillLike): SkillServers {
 
 function readSkillServersFromDisk(skill: SkillLike): SkillServers {
 	const sidecarPath = join(skill.baseDir, "mcp.json");
-	const project = skill.provenance === undefined ? skill.sourceInfo?.scope === "project" : skill.provenance.kind !== "user";
+	const project =
+		skill.provenance === undefined ? skill.sourceInfo?.scope === "project" : skill.provenance.kind !== "user";
 	if (existsSync(sidecarPath)) {
 		try {
 			const parsed: unknown = JSON.parse(readSkillFileChecked(sidecarPath, skill.provenance, skill.allowedSet));
 			return { declared: unwrapServerMap(parsed), sourcePath: sidecarPath };
 		} catch (error) {
-			if (error instanceof BlockedSkillLinkError) return { declared: {}, sourcePath: sidecarPath, warning: error.message };
+			if (error instanceof BlockedSkillLinkError)
+				return { declared: {}, sourcePath: sidecarPath, warning: error.message };
 			return {
 				declared: {},
 				sourcePath: sidecarPath,
-				warning: project ? `Skill '${skill.name}': invalid mcp.json sidecar skipped; the skill itself still loads.` :
-					`Skill '${skill.name}': invalid mcp.json sidecar skipped (${error instanceof Error ? error.message : String(error)}); the skill itself still loads.`,
+				warning: project
+					? `Skill '${skill.name}': invalid mcp.json sidecar skipped; the skill itself still loads.`
+					: `Skill '${skill.name}': invalid mcp.json sidecar skipped (${error instanceof Error ? error.message : String(error)}); the skill itself still loads.`,
 			};
 		}
 	}
 	try {
-		const { frontmatter } = parseFrontmatter<{ mcp?: unknown }>(readSkillFileChecked(skill.filePath, skill.provenance, skill.allowedSet));
+		const { frontmatter } = parseFrontmatter<{ mcp?: unknown }>(
+			readSkillFileChecked(skill.filePath, skill.provenance, skill.allowedSet),
+		);
 		if (frontmatter.mcp === undefined) return { declared: {}, sourcePath: skill.filePath };
 		return { declared: unwrapServerMap(frontmatter.mcp), sourcePath: skill.filePath };
 	} catch (error) {
-		if (error instanceof BlockedSkillLinkError) return { declared: {}, sourcePath: skill.filePath, warning: error.message };
+		if (error instanceof BlockedSkillLinkError)
+			return { declared: {}, sourcePath: skill.filePath, warning: error.message };
 		return {
 			declared: {},
 			sourcePath: skill.filePath,
-			warning: project ? `Skill '${skill.name}': unreadable frontmatter mcp block skipped; the skill itself still loads.` :
-				`Skill '${skill.name}': unreadable frontmatter mcp block skipped (${error instanceof Error ? error.message : String(error)}); the skill itself still loads.`,
+			warning: project
+				? `Skill '${skill.name}': unreadable frontmatter mcp block skipped; the skill itself still loads.`
+				: `Skill '${skill.name}': unreadable frontmatter mcp block skipped (${error instanceof Error ? error.message : String(error)}); the skill itself still loads.`,
 		};
 	}
 }

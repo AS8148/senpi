@@ -3,33 +3,80 @@ import type { McpServerDeclaration } from "./config-schema.ts";
 
 /** Shared F4 fixture contract: finite names, never an LC_* or proxy wildcard. */
 export const PROJECT_MCP_SAFE_BASE_NAMES = [
-	"PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "TMPDIR", "TMP", "TEMP", "TZ",
-	"XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "LANG", "LANGUAGE", "LC_ALL",
-	"LC_CTYPE", "LC_COLLATE", "LC_MESSAGES", "LC_MONETARY", "LC_NUMERIC", "LC_TIME",
-	"LC_ADDRESS", "LC_IDENTIFICATION", "LC_MEASUREMENT", "LC_NAME", "LC_PAPER", "LC_TELEPHONE",
-	"APPDATA", "LOCALAPPDATA", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "USERNAME", "SYSTEMROOT",
-	"SYSTEMDRIVE", "WINDIR", "COMSPEC", "PATHEXT", "PROGRAMFILES", "PROCESSOR_ARCHITECTURE",
-	"NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE",
+	"PATH",
+	"HOME",
+	"USER",
+	"LOGNAME",
+	"SHELL",
+	"TERM",
+	"TMPDIR",
+	"TMP",
+	"TEMP",
+	"TZ",
+	"XDG_CONFIG_HOME",
+	"XDG_DATA_HOME",
+	"XDG_CACHE_HOME",
+	"LANG",
+	"LANGUAGE",
+	"LC_ALL",
+	"LC_CTYPE",
+	"LC_COLLATE",
+	"LC_MESSAGES",
+	"LC_MONETARY",
+	"LC_NUMERIC",
+	"LC_TIME",
+	"LC_ADDRESS",
+	"LC_IDENTIFICATION",
+	"LC_MEASUREMENT",
+	"LC_NAME",
+	"LC_PAPER",
+	"LC_TELEPHONE",
+	"APPDATA",
+	"LOCALAPPDATA",
+	"USERPROFILE",
+	"HOMEDRIVE",
+	"HOMEPATH",
+	"USERNAME",
+	"SYSTEMROOT",
+	"SYSTEMDRIVE",
+	"WINDIR",
+	"COMSPEC",
+	"PATHEXT",
+	"PROGRAMFILES",
+	"PROCESSOR_ARCHITECTURE",
+	"NODE_EXTRA_CA_CERTS",
+	"SSL_CERT_FILE",
+	"SSL_CERT_DIR",
+	"REQUESTS_CA_BUNDLE",
 ] as const;
 type Environment = Readonly<Record<string, string | undefined>>;
 const reference = /\$\{([A-Za-z_][A-Za-z0-9_]*)(:-([^}]*))?\}/g;
 const inheritedExclusion = /^(?:npm|yarn|pnpm)[_-]/i;
 
-export function lookupProjectEnv(env: Environment, name: string, windows = process.platform === "win32"): string | undefined {
+export function lookupProjectEnv(
+	env: Environment,
+	name: string,
+	windows = process.platform === "win32",
+): string | undefined {
 	if (!windows) return env[name];
 	const upper = name.toUpperCase();
 	if (env[upper] !== undefined) return env[upper];
 	return Object.entries(env).find(([key]) => key.toUpperCase() === upper)?.[1];
 }
-export function mergeProjectEnv(layers: readonly Environment[], windows = process.platform === "win32"): Record<string, string> {
+export function mergeProjectEnv(
+	layers: readonly Environment[],
+	windows = process.platform === "win32",
+): Record<string, string> {
 	const result: Record<string, string> = {};
-	for (const layer of layers) for (const [key, value] of Object.entries(layer)) {
-		if (value === undefined) continue;
-		if (windows) for (const existing of Object.keys(result)) {
-			if (existing.toUpperCase() === key.toUpperCase()) delete result[existing];
+	for (const layer of layers)
+		for (const [key, value] of Object.entries(layer)) {
+			if (value === undefined) continue;
+			if (windows)
+				for (const existing of Object.keys(result)) {
+					if (existing.toUpperCase() === key.toUpperCase()) delete result[existing];
+				}
+			result[key] = value;
 		}
-		result[key] = value;
-	}
 	return result;
 }
 function inherited(ambient: Environment, names: readonly string[]): Record<string, string> {
@@ -43,16 +90,23 @@ function inherited(ambient: Environment, names: readonly string[]): Record<strin
 }
 /** Pure policy calculation; only `withheld` is allowed into diagnostics/logs. */
 export function projectMcpEnvironment(
-	raw: McpServerDeclaration, trusted: boolean, granted: readonly string[],
-	explicit: Environment | undefined = undefined, ambient: Environment = process.env,
+	raw: McpServerDeclaration,
+	trusted: boolean,
+	granted: readonly string[],
+	explicit: Environment | undefined = undefined,
+	ambient: Environment = process.env,
 ): { declaration: McpServerDeclaration; env: Record<string, string>; withheld: string[] } {
 	const remote = (raw.type ?? (raw.url ? "http" : "stdio")) !== "stdio";
 	const env = mergeProjectEnv([
-		inherited(ambient, PROJECT_MCP_SAFE_BASE_NAMES), inherited(ambient, granted), explicit ?? {},
+		inherited(ambient, PROJECT_MCP_SAFE_BASE_NAMES),
+		inherited(ambient, granted),
+		explicit ?? {},
 	]);
 	const withheld = new Set<string>();
-	const grantedName = (name: string) => granted.some((entry) =>
-		process.platform === "win32" ? entry.toUpperCase() === name.toUpperCase() : entry === name);
+	const grantedName = (name: string) =>
+		granted.some((entry) =>
+			process.platform === "win32" ? entry.toUpperCase() === name.toUpperCase() : entry === name,
+		);
 	const expand = (value: string, field: string): string => {
 		if (!remote && trusted && (value.trimStart().startsWith("!") || value.includes("$("))) {
 			interpolateValue(value, `mcp.${field}`, {});
@@ -61,7 +115,7 @@ export function projectMcpEnvironment(
 			if ((!remote && trusted) || grantedName(name)) {
 				const expanded = interpolateValue(whole, `mcp.${field}`, {
 					[name]: grantedName(name)
-						? lookupProjectEnv(explicit ?? {}, name) ?? lookupProjectEnv(ambient, name)
+						? (lookupProjectEnv(explicit ?? {}, name) ?? lookupProjectEnv(ambient, name))
 						: lookupProjectEnv(explicit ?? ambient, name),
 				});
 				if (typeof expanded !== "string") throw new TypeError("Invalid MCP interpolation");
@@ -93,7 +147,8 @@ export function projectMcpEnvironment(
 		if (raw.oauth.clientMetadataUrl !== undefined) {
 			declaration.oauth.clientMetadataUrl = expand(raw.oauth.clientMetadataUrl, "oauth.clientMetadataUrl");
 		}
-		if (raw.oauth.scopes !== undefined) declaration.oauth.scopes = raw.oauth.scopes.map((scope) => expand(scope, "oauth.scopes"));
+		if (raw.oauth.scopes !== undefined)
+			declaration.oauth.scopes = raw.oauth.scopes.map((scope) => expand(scope, "oauth.scopes"));
 	}
 	const sendsBearer = raw.auth === "bearer" || (raw.auth === undefined && raw.bearerTokenEnv !== undefined);
 	if (remote && sendsBearer && raw.bearerTokenEnv !== undefined && !grantedName(raw.bearerTokenEnv)) {

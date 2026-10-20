@@ -95,10 +95,14 @@ export async function createRpcSessionBinding(
 			grantDialogSettled: (id) => writer.settleGrantDialog(sessionId, id),
 			bindSecurityPresentation: (session, ui) =>
 				writer.bindSecurityPresentations(sessionId, session.sessionId, session.securityNotices, ui),
-			clientInfo: options.clientInfo === undefined ? undefined : {
-				...options.clientInfo,
-				hasCapability: (connection, capability) => writer.getConnectionCapabilities(connection)?.includes(capability) === true,
-			},
+			clientInfo:
+				options.clientInfo === undefined
+					? undefined
+					: {
+							...options.clientInfo,
+							hasCapability: (connection, capability) =>
+								writer.getConnectionCapabilities(connection)?.includes(capability) === true,
+						},
 		});
 	});
 	await handler.ready;

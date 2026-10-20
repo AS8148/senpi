@@ -14,7 +14,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -277,6 +277,7 @@ import {
 	MANUAL_CONTINUE_CUSTOM_TYPE,
 	MANUAL_CONTINUE_DIRECTIVE,
 } from "./manual-continue.ts";
+import { clearMcpGrantPresentations } from "./mcp-grant-presentations.ts";
 import { registerMemoryReportSession } from "./memory-report/memory-report-registry.ts";
 import {
 	type BashExecutionMessage,
@@ -338,6 +339,7 @@ import {
 	usageLimitScope,
 } from "./retry-fallback/usage-limit.ts";
 import { validateFallbackChains } from "./retry-fallback/validate.ts";
+import { SecurityNoticeSnapshot } from "./security-notices.ts";
 import { isSessionBusySnapshot, type SessionActivitySnapshot, WakeSourceTracker } from "./session-activity.ts";
 import { type ControlEndpointHost, createSessionControlActions } from "./session-control-actions.ts";
 import { computeSessionFailureReport, type SessionFailureReport } from "./session-failure-report.ts";
@@ -358,6 +360,7 @@ import {
 	type SettingsManager,
 	type SettingsSourceSelection,
 } from "./settings-manager.ts";
+import { BlockedSkillLinkError, readSkillFileChecked } from "./skill-access.ts";
 import {
 	formatSkillInvocationPrompt,
 	parseSkillInvocationTokens,
@@ -367,9 +370,6 @@ import {
 	type SkillInvocationToken,
 } from "./skill-invocation.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
-import { BlockedSkillLinkError, readSkillFileChecked } from "./skill-access.ts";
-import { SecurityNoticeSnapshot } from "./security-notices.ts";
-import { clearMcpGrantPresentations } from "./mcp-grant-presentations.ts";
 import { BUILTIN_SLASH_COMMANDS } from "./slash-commands.ts";
 import { BUILTIN_PATH_PREFIX, createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import {
@@ -1508,8 +1508,9 @@ export class AgentSession {
 		this._favoriteModels = config.favoriteModels ?? [];
 		this._resourceLoader = config.resourceLoader;
 		this.securityNotices.setResources(this._resourceLoader.getSkills().diagnostics);
-		this._unsubscribeSecurityNotices = this._resourceLoader.onExtensionEvent?.("security_notice",
-			(value) => this.securityNotices.accept(value));
+		this._unsubscribeSecurityNotices = this._resourceLoader.onExtensionEvent?.("security_notice", (value) =>
+			this.securityNotices.accept(value),
+		);
 		this._customTools = config.customTools ?? [];
 		this._cwd = config.cwd;
 		const modelRuntime = config.modelRuntime ?? config.modelRegistry?.modelRuntime;

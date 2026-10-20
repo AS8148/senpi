@@ -24,6 +24,7 @@ import { cleanupMcpOutputArtifacts, McpOutputArtifacts } from "./guard/output-gu
 import { HostMcpRegistry } from "./host-registry.ts";
 import { refreshMcpInstructionsForSession } from "./instructions.ts";
 import { createMcpLogger } from "./log.ts";
+import { prepareProjectSkillServer } from "./project-skill-policy.ts";
 import { reconnectMcpNow } from "./reconnect.ts";
 import type { McpResourceServer } from "./resources.ts";
 import { createMcpSessionConnection, disposeEntryConnection } from "./service-connection.ts";
@@ -48,7 +49,6 @@ import type {
 	McpWireTool,
 } from "./service-types.ts";
 import { resolveSkillMcpServer } from "./skill-server.ts";
-import { prepareProjectSkillServer } from "./project-skill-policy.ts";
 import type { SkillServerRegistration } from "./skills.ts";
 import {
 	MCP_ATTACH_SETTLE_TIMEOUT_MS,
@@ -62,8 +62,10 @@ import { safeTimer } from "./wrap.ts";
 type ListedTool = Awaited<ReturnType<Client["listTools"]>>["tools"][number];
 type ListedResource = Awaited<ReturnType<Client["listResources"]>>["resources"][number];
 type ListedResourceTemplate = Awaited<ReturnType<Client["listResourceTemplates"]>>["resourceTemplates"][number];
-type McpElicitationUi = Pick<ExtensionUIContext, "input" | "select" | "confirm"> & Partial<Pick<ExtensionUIContext, "notify">>;
-type McpToolRegistrar = Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool"> & Partial<Pick<ExtensionAPI, "events">>;
+type McpElicitationUi = Pick<ExtensionUIContext, "input" | "select" | "confirm"> &
+	Partial<Pick<ExtensionUIContext, "notify">>;
+type McpToolRegistrar = Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool"> &
+	Partial<Pick<ExtensionAPI, "events">>;
 
 /**
  * One live session's binding to the service (#2514): the session's own extension API and
@@ -423,28 +425,46 @@ export class McpService {
 				continue;
 			}
 			const project = decl.provenance === undefined ? decl.scope === "project" : decl.provenance.kind !== "user";
-			const result = project ? {
-				server: await prepareProjectSkillServer(name, decl, {
-					context: binding.context, options: binding.options, ui: () => this.getMcpElicitationUi(),
-					notice: (identity, names) => {
-						const message = names.length === 0 ? "" :
-							`Project MCP server ${name} (skill ${decl.skillName}) withheld ${names.length} environment name(s): ${names.join(", ")}.`;
-						binding.pi.events?.emit("security_notice", {
-							category: "mcp-env-withheld", path: identity, message, remove: names.length === 0,
-						});
-						if (names.length === 0) { policyWarnings.delete(identity); return; }
-						if (!this.#skillServerWarnings.has(message)) {
-							this.#skillServerWarnings.add(message);
-							policyWarnings.set(identity, message);
-							createMcpLogger("skills").warn(message);
-						}
-					},
-				}, existing),
-				warning: undefined,
-			} : resolveSkillMcpServer(name, decl.raw, decl.sourcePath, {
-				env: binding.options.env, skillName: decl.skillName,
-				trusted: decl.scope === "project" || decl.scope === undefined ? projectTrusted : true,
-			});
+			const result = project
+				? {
+						server: await prepareProjectSkillServer(
+							name,
+							decl,
+							{
+								context: binding.context,
+								options: binding.options,
+								ui: () => this.getMcpElicitationUi(),
+								notice: (identity, names) => {
+									const message =
+										names.length === 0
+											? ""
+											: `Project MCP server ${name} (skill ${decl.skillName}) withheld ${names.length} environment name(s): ${names.join(", ")}.`;
+									binding.pi.events?.emit("security_notice", {
+										category: "mcp-env-withheld",
+										path: identity,
+										message,
+										remove: names.length === 0,
+									});
+									if (names.length === 0) {
+										policyWarnings.delete(identity);
+										return;
+									}
+									if (!this.#skillServerWarnings.has(message)) {
+										this.#skillServerWarnings.add(message);
+										policyWarnings.set(identity, message);
+										createMcpLogger("skills").warn(message);
+									}
+								},
+							},
+							existing,
+						),
+						warning: undefined,
+					}
+				: resolveSkillMcpServer(name, decl.raw, decl.sourcePath, {
+						env: binding.options.env,
+						skillName: decl.skillName,
+						trusted: decl.scope === "project" || decl.scope === undefined ? projectTrusted : true,
+					});
 			const { server: resolved, warning } = result;
 			if (warning !== undefined && !this.#skillServerWarnings.has(warning)) {
 				this.#skillServerWarnings.add(warning);

@@ -51,18 +51,22 @@ export class SharedMcpConnection {
 		};
 		this.connection = new ServerConnection({
 			...options,
-			projectPolicy: options.projectPolicy === undefined ? undefined : {
-				...options.projectPolicy,
-				resolve: (signal, allowDecision) => {
-					// Pool identity guarantees equal authority, but the original
-					// presentation may have closed while another lease remains.
-					const active = [...this.#calls.keys(), ...this.leases]
-						.find((lease) => lease.options.projectPolicy !== undefined);
-					const policy = active?.options.projectPolicy ?? options.projectPolicy;
-					if (policy === undefined) throw new Error("Project MCP policy unavailable");
-					return policy.resolve(signal, allowDecision);
-				},
-			},
+			projectPolicy:
+				options.projectPolicy === undefined
+					? undefined
+					: {
+							...options.projectPolicy,
+							resolve: (signal, allowDecision) => {
+								// Pool identity guarantees equal authority, but the original
+								// presentation may have closed while another lease remains.
+								const active = [...this.#calls.keys(), ...this.leases].find(
+									(lease) => lease.options.projectPolicy !== undefined,
+								);
+								const policy = active?.options.projectPolicy ?? options.projectPolicy;
+								if (policy === undefined) throw new Error("Project MCP policy unavailable");
+								return policy.resolve(signal, allowDecision);
+							},
+						},
 			logger,
 			elicitationUiProvider: () => {
 				// SDK server requests carry no originating tool-call id.

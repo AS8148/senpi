@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { SessionKind } from "../../core/extensions/types.ts";
+import type { ExtensionUIContext, SessionKind } from "../../core/extensions/types.ts";
+import type { SecurityNoticeSnapshot, SecurityNoticeState } from "../../core/security-notices.ts";
 import { MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
 import { serializeJsonLine } from "./jsonl.ts";
 import { type MediaPersister, omitInlineMedia } from "./media-placeholders.ts";
@@ -10,6 +11,7 @@ import type {
 	RpcSessionClosedReason,
 	RpcSessionParkedEvent,
 } from "./rpc-types.ts";
+import { RpcSecurityPresentations } from "./security-presentations.ts";
 import { SessionEventFanout, type SessionEventWriterConnection } from "./session-event-fanout.ts";
 import { SessionOpenTurns } from "./session-open-turns.ts";
 import { causeOfRecord, type SessionStatusActor, terminalOfLifecycle } from "./session-status.ts";
@@ -18,9 +20,6 @@ import { SessionStatusStream } from "./session-status-stream.ts";
 import { SurfaceDigestDedupe } from "./session-surface-dedupe.ts";
 import type { SocketEventSinkActor } from "./socket-event-fanout.ts";
 import { isCorrelatedReply } from "./socket-peer-recovery.ts";
-import type { ExtensionUIContext } from "../../core/extensions/types.ts";
-import type { SecurityNoticeSnapshot, SecurityNoticeState } from "../../core/security-notices.ts";
-import { RpcSecurityPresentations } from "./security-presentations.ts";
 
 export type { SessionEventWriterConnection } from "./session-event-fanout.ts";
 
@@ -107,8 +106,11 @@ export class SessionEventWriter {
 	private readonly queues = new Map<string, RecordQueue>();
 	private readonly fanout = new SessionEventFanout();
 	private readonly connectionContext = new AsyncLocalStorage<string>();
-	private readonly securityPresentations = new RpcSecurityPresentations(this.fanout,
-		(id, task) => this.withConnection(id, task), () => this.requestFlush());
+	private readonly securityPresentations = new RpcSecurityPresentations(
+		this.fanout,
+		(id, task) => this.withConnection(id, task),
+		() => this.requestFlush(),
+	);
 	readonly workerSecurityBridge: boolean = false;
 	private readonly controlQueue: RecordQueue = { latestByKey: new Map(), ready: false };
 	private readonly readyQueues: RecordQueue[] = [];
@@ -231,7 +233,10 @@ export class SessionEventWriter {
 		this.securityPresentations.capabilitiesChanged(id);
 	}
 	bindSecurityPresentations(
-		sessionId: string, durableId: string, notices: SecurityNoticeSnapshot, ui: ExtensionUIContext,
+		sessionId: string,
+		durableId: string,
+		notices: SecurityNoticeSnapshot,
+		ui: ExtensionUIContext,
 	): (() => void) | undefined {
 		if (this.fanout.isEmpty()) return undefined;
 		return this.securityPresentations.bind(sessionId, durableId, notices, ui.select);
@@ -240,8 +245,11 @@ export class SessionEventWriter {
 		this.securityPresentations.acceptSnapshot(sessionId, snapshot);
 	}
 	routeWorkerGrant(
-		sessionId: string, requestId: string, preferred: string | undefined,
-		capabilities: readonly string[], cancel: () => void,
+		sessionId: string,
+		requestId: string,
+		preferred: string | undefined,
+		capabilities: readonly string[],
+		cancel: () => void,
 	): { readonly accepted: boolean; readonly connection?: string } {
 		return this.securityPresentations.routeWorkerGrant(sessionId, requestId, preferred, capabilities, cancel);
 	}

@@ -74,13 +74,22 @@ async function materializeStdio(
 	client: Client,
 ): Promise<McpMaterializedTransport> {
 	const { getDefaultEnvironment, StdioClientTransport } = await loadMcpSdkStdioTransport();
-	const create = (current: McpStdioTransportSpec) => new StdioClientTransport({
-		args: current.args, command: current.command, cwd: current.cwd,
-		env: { ...(current.projectPolicy ? {} : getDefaultEnvironment()), ...current.env, ...oauthAccessTokenEnv(current.authProvider) },
-		stderr: "pipe",
-	});
-	const transport = spec.projectPolicy && spec.resolveBeforeStart !== undefined
-		? new ProjectStdioTransport(spec.resolveBeforeStart, create) : create(spec);
+	const create = (current: McpStdioTransportSpec) =>
+		new StdioClientTransport({
+			args: current.args,
+			command: current.command,
+			cwd: current.cwd,
+			env: {
+				...(current.projectPolicy ? {} : getDefaultEnvironment()),
+				...current.env,
+				...oauthAccessTokenEnv(current.authProvider),
+			},
+			stderr: "pipe",
+		});
+	const transport =
+		spec.projectPolicy && spec.resolveBeforeStart !== undefined
+			? new ProjectStdioTransport(spec.resolveBeforeStart, create)
+			: create(spec);
 	trackStdioStart(transport, options.onStart);
 	pipeStderr(transport, options.logger, options.sink);
 	dropNullNextCursor(transport);

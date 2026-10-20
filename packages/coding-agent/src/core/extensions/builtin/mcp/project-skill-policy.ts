@@ -4,7 +4,14 @@ import { getMcpGrantPresentation, selectMcpGrant } from "../../../mcp-grant-pres
 import { skillProjectRoot } from "../../../skill-access.ts";
 import { hashConfig, normalizeServer } from "./config.ts";
 import type { McpServerConfig, ResolvedMcpServer } from "./config-schema.ts";
-import { addGrant, declarationDigest, type DeclarationIdentity, type GrantSnapshot, read, resolveGrantsStorePath } from "./env-grants-store.ts";
+import {
+	addGrant,
+	type DeclarationIdentity,
+	declarationDigest,
+	type GrantSnapshot,
+	read,
+	resolveGrantsStorePath,
+} from "./env-grants-store.ts";
 import { ConnectError } from "./errors.ts";
 import { projectMcpEnvironment } from "./project-env.ts";
 import type { McpSessionContext, McpSessionOptions } from "./service-types.ts";
@@ -26,26 +33,36 @@ export interface ProjectMcpAuthority {
 }
 const policies = new WeakMap<McpServerConfig, ProjectMcpAuthority>();
 const decisions = new Map<string, Promise<void>>();
-export const getProjectMcpAuthority = (config: McpServerConfig): ProjectMcpAuthority | undefined => policies.get(config);
+export const getProjectMcpAuthority = (config: McpServerConfig): ProjectMcpAuthority | undefined =>
+	policies.get(config);
 export function effectiveGrantNames(snapshot: GrantSnapshot, identity: string): readonly string[] {
 	return snapshot.grants[identity]?.names ?? [];
 }
 interface PolicyOwner {
 	readonly context: McpSessionContext;
 	readonly options: McpSessionOptions;
-	readonly ui: () => { select: Parameters<typeof selectMcpGrant>[0]; notify?: (message: string, kind: "info" | "error") => void } | undefined;
+	readonly ui: () =>
+		| { select: Parameters<typeof selectMcpGrant>[0]; notify?: (message: string, kind: "info" | "error") => void }
+		| undefined;
 	readonly notice: (identity: string, names: readonly string[]) => void;
 }
 function currentRegistration(name: string, declaration: SkillServerRegistration): SkillServerRegistration {
 	if (declaration.skillPath === undefined) return declaration;
-	const current = parseSkillMcpDeclarations([{
-		name: declaration.skillName, filePath: declaration.skillPath, baseDir: dirname(declaration.skillPath),
-		provenance: declaration.provenance, allowedSet: declaration.allowedSet,
-		sourceInfo: declaration.scope === undefined ? undefined : { scope: declaration.scope },
-	}]).servers.get(name);
+	const current = parseSkillMcpDeclarations([
+		{
+			name: declaration.skillName,
+			filePath: declaration.skillPath,
+			baseDir: dirname(declaration.skillPath),
+			provenance: declaration.provenance,
+			allowedSet: declaration.allowedSet,
+			sourceInfo: declaration.scope === undefined ? undefined : { scope: declaration.scope },
+		},
+	]).servers.get(name);
 	if (current !== undefined) return current;
 	throw new ConnectError("Project MCP declaration is no longer available; reload its skills", {
-		serverName: name, phase: "create", retriable: true,
+		serverName: name,
+		phase: "create",
+		retriable: true,
 	});
 }
 function identityFor(name: string, declaration: SkillServerRegistration, cwd: string): string {
@@ -53,28 +70,45 @@ function identityFor(name: string, declaration: SkillServerRegistration, cwd: st
 		sourcePath: realpathSync.native(declaration.sourcePath),
 		sourceKind: basename(declaration.sourcePath) === "mcp.json" ? "sidecar" : "frontmatter",
 		projectRoot: realpathSync.native(declaration.provenance?.projectRoot ?? skillProjectRoot(cwd)),
-		serverName: name, raw: declaration.raw, cwdBase: realpathSync.native(cwd),
+		serverName: name,
+		raw: declaration.raw,
+		cwdBase: realpathSync.native(cwd),
 	} satisfies DeclarationIdentity);
 }
 export async function prepareProjectSkillServer(
-	name: string, original: SkillServerRegistration, owner: PolicyOwner, existing?: ResolvedMcpServer,
+	name: string,
+	original: SkillServerRegistration,
+	owner: PolicyOwner,
+	existing?: ResolvedMcpServer,
 ): Promise<ResolvedMcpServer> {
 	const storePath = resolveGrantsStorePath(owner.options.agentDir);
 	const trusted = owner.options.projectTrusted ?? owner.context.isProjectTrusted();
 	let declaration = currentRegistration(name, original);
 	let identity = identityFor(name, declaration, owner.context.cwd);
 	const previous = existing?.config === undefined ? undefined : policies.get(existing.config);
-	const provenanceDigest = declarationDigest({ provenance: declaration.provenance, allowedSet: declaration.allowedSet?.digest });
-	if (previous?.identity === identity && previous.storePath === storePath &&
-		previous.provenanceDigest === provenanceDigest && existing !== undefined) {
+	const provenanceDigest = declarationDigest({
+		provenance: declaration.provenance,
+		allowedSet: declaration.allowedSet?.digest,
+	});
+	if (
+		previous?.identity === identity &&
+		previous.storePath === storePath &&
+		previous.provenanceDigest === provenanceDigest &&
+		existing !== undefined
+	) {
 		const snapshot = await read(storePath);
-		owner.notice(identity, projectMcpEnvironment(declaration.raw, trusted,
-			effectiveGrantNames(snapshot, identity), owner.options.env).withheld);
+		owner.notice(
+			identity,
+			projectMcpEnvironment(declaration.raw, trusted, effectiveGrantNames(snapshot, identity), owner.options.env)
+				.withheld,
+		);
 		return existing;
 	}
 	const project = declaration.provenance?.projectRoot ?? skillProjectRoot(owner.context.cwd);
-	const select = () => owner.context.mode === "tui" ? owner.ui()?.select
-		: getMcpGrantPresentation(owner.context.sessionManager?.getSessionId?.());
+	const select = () =>
+		owner.context.mode === "tui"
+			? owner.ui()?.select
+			: getMcpGrantPresentation(owner.context.sessionManager?.getSessionId?.());
 	const calculate = (raw: SkillServerRegistration["raw"], names: readonly string[]) =>
 		projectMcpEnvironment(raw, trusted, names, owner.options.env);
 	const decide = async (current: SkillServerRegistration, digest: string, signal?: AbortSignal) => {
@@ -86,8 +120,11 @@ export async function prepareProjectSkillServer(
 				const { withheld } = calculate(current.raw, effectiveGrantNames(snapshot, digest));
 				if (withheld.length === 0 || signal?.aborted) return;
 				owner.notice(digest, withheld);
-				const granted = await selectMcpGrant(select(),
-					`Project MCP server ${name} (skill ${current.skillName}) wants: ${withheld.join(", ")}`, signal);
+				const granted = await selectMcpGrant(
+					select(),
+					`Project MCP server ${name} (skill ${current.skillName}) wants: ${withheld.join(", ")}`,
+					signal,
+				);
 				if (!granted || signal?.aborted) return;
 				const latest = currentRegistration(name, current);
 				if (identityFor(name, latest, owner.context.cwd) !== digest) return;
@@ -95,11 +132,20 @@ export async function prepareProjectSkillServer(
 					await addGrant(storePath, digest, { project, skill: current.skillName, server: name }, withheld);
 					owner.ui()?.notify?.(`Saved MCP environment grant for ${name}: ${withheld.join(", ")}`, "info");
 				} catch {
-					owner.ui()?.notify?.(`Could not save MCP environment grant for ${name}; starting without ${withheld.join(", ")}`, "error");
+					owner
+						.ui()
+						?.notify?.(
+							`Could not save MCP environment grant for ${name}; starting without ${withheld.join(", ")}`,
+							"error",
+						);
 				}
 			})();
 			decisions.set(key, pending);
-			void pending.finally(() => { if (decisions.get(key) === pending) decisions.delete(key); }).catch(() => {});
+			void pending
+				.finally(() => {
+					if (decisions.get(key) === pending) decisions.delete(key);
+				})
+				.catch(() => {});
 		}
 		await pending;
 	};
@@ -124,15 +170,22 @@ export async function prepareProjectSkillServer(
 	const initial = materialize(names);
 	let first = true;
 	const authority: ProjectMcpAuthority = {
-		identity, storePath, initial,
-		provenanceDigest: declarationDigest({ provenance: declaration.provenance, allowedSet: declaration.allowedSet?.digest }),
+		identity,
+		storePath,
+		initial,
+		provenanceDigest: declarationDigest({
+			provenance: declaration.provenance,
+			allowedSet: declaration.allowedSet?.digest,
+		}),
 		policyDigest: declarationDigest({ names, generation: snapshot.generation }),
 		resolve: async (signal, allowDecision = true) => {
 			signal.throwIfAborted();
 			const latest = currentRegistration(name, declaration);
 			if (identityFor(name, latest, owner.context.cwd) !== identity) {
 				throw new ConnectError("Project MCP declaration changed; reload its skills", {
-					serverName: name, phase: "create", retriable: true,
+					serverName: name,
+					phase: "create",
+					retriable: true,
 				});
 			}
 			if (allowDecision) {
@@ -144,7 +197,9 @@ export async function prepareProjectSkillServer(
 			signal.throwIfAborted();
 			if (identityFor(name, currentRegistration(name, declaration), owner.context.cwd) !== identity) {
 				throw new ConnectError("Project MCP declaration changed; reload its skills", {
-					serverName: name, phase: "create", retriable: true,
+					serverName: name,
+					phase: "create",
+					retriable: true,
 				});
 			}
 			return materialize(effectiveGrantNames(current, identity));
@@ -152,9 +207,17 @@ export async function prepareProjectSkillServer(
 	};
 	policies.set(initial.config, authority);
 	return {
-		name, source: "skill", sourcePath: declaration.sourcePath, config: initial.config,
-		configHash: declarationDigest({ config: hashConfig(initial.config), identity,
-			policy: authority.policyDigest, provenance: authority.provenanceDigest }),
-		state: initial.config.enabled ? "enabled" : "disabled", transport: initial.config.type,
+		name,
+		source: "skill",
+		sourcePath: declaration.sourcePath,
+		config: initial.config,
+		configHash: declarationDigest({
+			config: hashConfig(initial.config),
+			identity,
+			policy: authority.policyDigest,
+			provenance: authority.provenanceDigest,
+		}),
+		state: initial.config.enabled ? "enabled" : "disabled",
+		transport: initial.config.type,
 	};
 }

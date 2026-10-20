@@ -1,8 +1,11 @@
 // #3796: the finite base is a shared native/legacy machine-consumed fixture.
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: literal ${VAR} references are the MCP declaration inputs under test, not templates.
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import {
-	mergeProjectEnv, PROJECT_MCP_SAFE_BASE_NAMES, projectMcpEnvironment,
+	mergeProjectEnv,
+	PROJECT_MCP_SAFE_BASE_NAMES,
+	projectMcpEnvironment,
 } from "../../../src/core/extensions/builtin/mcp/project-env.ts";
 
 it("pins the safe base to the shared policy fixture", () => {
@@ -14,13 +17,21 @@ it("withholds off-pattern names, DSNs, cookies, locale secrets and proxies", () 
 	const raw = {
 		command: "synthetic",
 		env: {
-			A: "${ODD_SECRET}", B: "${SERVICE_DSN}", C: "${COOKIE_VALUE}",
-			D: "${LC_SECRET}", E: "${HTTPS_PROXY}",
+			A: "${ODD_SECRET}",
+			B: "${SERVICE_DSN}",
+			C: "${COOKIE_VALUE}",
+			D: "${LC_SECRET}",
+			E: "${HTTPS_PROXY}",
 		},
 	};
 	const ambient = {
-		PATH: "/synthetic/bin", HOME: "/synthetic/home", LC_TIME: "C", LC_SECRET: "synthetic-private",
-		ODD_SECRET: "synthetic-secret", SERVICE_DSN: "synthetic-dsn", COOKIE_VALUE: "synthetic-cookie",
+		PATH: "/synthetic/bin",
+		HOME: "/synthetic/home",
+		LC_TIME: "C",
+		LC_SECRET: "synthetic-private",
+		ODD_SECRET: "synthetic-secret",
+		SERVICE_DSN: "synthetic-dsn",
+		COOKIE_VALUE: "synthetic-cookie",
 		HTTPS_PROXY: "http://synthetic.invalid",
 	};
 	const policy = projectMcpEnvironment(raw, false, [], undefined, ambient);
@@ -31,10 +42,19 @@ it("withholds off-pattern names, DSNs, cookies, locale secrets and proxies", () 
 
 it("re-resolves exactly granted references and preserves merge order", () => {
 	const raw = { command: "synthetic", env: { REF: "${ODD_DSN}", OTHER: "${ODD_COOKIE}", HOME: "declared" } };
-	const policy = projectMcpEnvironment(raw, false, ["ODD_DSN"], { HOME: "explicit", SESSION: "caller" },
-		{ HOME: "ambient", ODD_DSN: "synthetic-dsn", ODD_COOKIE: "synthetic-cookie" });
+	const policy = projectMcpEnvironment(
+		raw,
+		false,
+		["ODD_DSN"],
+		{ HOME: "explicit", SESSION: "caller" },
+		{ HOME: "ambient", ODD_DSN: "synthetic-dsn", ODD_COOKIE: "synthetic-cookie" },
+	);
 	expect(policy.env).toEqual({
-		HOME: "declared", ODD_DSN: "synthetic-dsn", SESSION: "caller", REF: "synthetic-dsn", OTHER: "${ODD_COOKIE}",
+		HOME: "declared",
+		ODD_DSN: "synthetic-dsn",
+		SESSION: "caller",
+		REF: "synthetic-dsn",
+		OTHER: "${ODD_COOKIE}",
 	});
 	expect(policy.withheld).toEqual(["ODD_COOKIE"]);
 	expect(raw.env.REF).toBe("${ODD_DSN}");
@@ -42,8 +62,10 @@ it("re-resolves exactly granted references and preserves merge order", () => {
 
 it("restores a granted bearer variable and only granted remote references", () => {
 	const raw = {
-		url: "https://synthetic.invalid/${PATH_PART}", headers: { "X-Token": "${HEADER_TOKEN}" },
-		auth: "bearer" as const, bearerTokenEnv: "BEARER_TOKEN",
+		url: "https://synthetic.invalid/${PATH_PART}",
+		headers: { "X-Token": "${HEADER_TOKEN}" },
+		auth: "bearer" as const,
+		bearerTokenEnv: "BEARER_TOKEN",
 	};
 	const ambient = { PATH_PART: "part", HEADER_TOKEN: "synthetic-header", BEARER_TOKEN: "synthetic-bearer" };
 	const withheld = projectMcpEnvironment(raw, true, [], undefined, ambient);
@@ -58,12 +80,20 @@ it("restores a granted bearer variable and only granted remote references", () =
 });
 
 it("keeps trusted stdio expansion and command-substitution refusal", () => {
-	expect(projectMcpEnvironment({ command: "synthetic", env: { REF: "${VALUE}" } }, true, [],
-		{ VALUE: "caller" }, { VALUE: "ambient" }).env.REF).toBe("caller");
+	expect(
+		projectMcpEnvironment(
+			{ command: "synthetic", env: { REF: "${VALUE}" } },
+			true,
+			[],
+			{ VALUE: "caller" },
+			{ VALUE: "ambient" },
+		).env.REF,
+	).toBe("caller");
 	expect(() => projectMcpEnvironment({ command: "$(synthetic)" }, true, [])).toThrow("command substitution");
 });
 
 it("replaces every Windows key variant with the later declared key", () => {
-	expect(mergeProjectEnv([{ Path: "mixed", PATH: "upper" }, { path: "explicit" }, { Path: "declared" }], true))
-		.toEqual({ Path: "declared" });
+	expect(
+		mergeProjectEnv([{ Path: "mixed", PATH: "upper" }, { path: "explicit" }, { Path: "declared" }], true),
+	).toEqual({ Path: "declared" });
 });

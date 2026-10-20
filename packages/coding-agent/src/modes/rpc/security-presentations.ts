@@ -24,16 +24,25 @@ export class RpcSecurityPresentations {
 	private readonly fanout: SessionEventFanout;
 	private readonly inConnection: <T>(id: string, task: () => T) => T;
 	private readonly flush: () => void;
-	constructor(
-		fanout: SessionEventFanout,
-		inConnection: <T>(id: string, task: () => T) => T,
-		flush: () => void,
-	) { this.fanout = fanout; this.inConnection = inConnection; this.flush = flush; }
-	bind(sessionId: string, durableId: string, notices: SecurityNoticeSnapshot, select: ExtensionUIContext["select"]): () => void {
+	constructor(fanout: SessionEventFanout, inConnection: <T>(id: string, task: () => T) => T, flush: () => void) {
+		this.fanout = fanout;
+		this.inConnection = inConnection;
+		this.flush = flush;
+	}
+	bind(
+		sessionId: string,
+		durableId: string,
+		notices: SecurityNoticeSnapshot,
+		select: ExtensionUIContext["select"],
+	): () => void {
 		const previous = this.#sessions.get(sessionId);
 		this.#stop(previous);
 		const state: PresentationState = {
-			durableId, select, snapshot: notices.snapshot, registrations: new Map(), grants: new Map(),
+			durableId,
+			select,
+			snapshot: notices.snapshot,
+			registrations: new Map(),
+			grants: new Map(),
 			replayed: previous?.durableId === durableId ? previous.replayed : new Map(),
 		};
 		this.#sessions.set(sessionId, state);
@@ -86,17 +95,31 @@ export class RpcSecurityPresentations {
 		}
 	}
 	routeWorkerGrant(
-		sessionId: string, requestId: string, preferred: string | undefined,
-		fallbackCapabilities: readonly string[], cancel: () => void,
+		sessionId: string,
+		requestId: string,
+		preferred: string | undefined,
+		fallbackCapabilities: readonly string[],
+		cancel: () => void,
 	): { readonly accepted: boolean; readonly connection?: string } {
 		const attached = this.fanout.attachedConnections(sessionId);
-		const connection = attached.includes(preferred ?? "") && this.fanout.connectionHas(preferred, "grant_select")
-			? preferred : attached.find((id) => this.fanout.connectionHas(id, "grant_select"));
-		const accepted = connection !== undefined || (this.fanout.isEmpty() && fallbackCapabilities.includes("grant_select"));
-		if (!accepted) { cancel(); return { accepted: false }; }
+		const connection =
+			attached.includes(preferred ?? "") && this.fanout.connectionHas(preferred, "grant_select")
+				? preferred
+				: attached.find((id) => this.fanout.connectionHas(id, "grant_select"));
+		const accepted =
+			connection !== undefined || (this.fanout.isEmpty() && fallbackCapabilities.includes("grant_select"));
+		if (!accepted) {
+			cancel();
+			return { accepted: false };
+		}
 		let state = this.#sessions.get(sessionId);
 		if (state === undefined) {
-			state = { snapshot: { generation: 0, notices: [] }, registrations: new Map(), grants: new Map(), replayed: new Map() };
+			state = {
+				snapshot: { generation: 0, notices: [] },
+				registrations: new Map(),
+				grants: new Map(),
+				replayed: new Map(),
+			};
 			this.#sessions.set(sessionId, state);
 		}
 		state.grants.set(requestId, { connection, cancel });
@@ -106,8 +129,11 @@ export class RpcSecurityPresentations {
 		const state = this.#sessions.get(sessionId);
 		const pending = state?.grants.get(requestId);
 		if (pending === undefined) return undefined;
-		if (pending.connection !== connection ||
-			(connection !== undefined && !this.fanout.connectionHas(connection, "grant_select"))) return false;
+		if (
+			pending.connection !== connection ||
+			(connection !== undefined && !this.fanout.connectionHas(connection, "grant_select"))
+		)
+			return false;
 		state?.grants.delete(requestId);
 		return true;
 	}
@@ -124,11 +150,19 @@ export class RpcSecurityPresentations {
 	}
 	#register(id: string, state: PresentationState): void {
 		const capable = this.fanout.connectionHas(id, "grant_select");
-		if (!capable) { state.registrations.get(id)?.(); state.registrations.delete(id); return; }
+		if (!capable) {
+			state.registrations.get(id)?.();
+			state.registrations.delete(id);
+			return;
+		}
 		if (state.registrations.has(id) || state.select === undefined || state.durableId === undefined) return;
 		const select = state.select;
-		state.registrations.set(id, attachMcpGrantPresentation(state.durableId,
-			(title, choices, opts) => this.inConnection(id, () => select(title, choices, opts))));
+		state.registrations.set(
+			id,
+			attachMcpGrantPresentation(state.durableId, (title, choices, opts) =>
+				this.inConnection(id, () => select(title, choices, opts)),
+			),
+		);
 	}
 	#replay(sessionId: string, id: string, snapshot: SecurityNoticeState): void {
 		const target = this.fanout.get(id);
@@ -137,17 +171,25 @@ export class RpcSecurityPresentations {
 		const revision = JSON.stringify(snapshot);
 		if (state?.replayed.get(id) === revision) return;
 		state?.replayed.set(id, revision);
-		for (const notice of snapshot.notices) target.actor.enqueue(serializeJsonLine({
-			type: "extension_ui_request", id: crypto.randomUUID(), sessionId,
-			method: "notify", notifyType: "warning", message: notice.message,
-		}));
+		for (const notice of snapshot.notices)
+			target.actor.enqueue(
+				serializeJsonLine({
+					type: "extension_ui_request",
+					id: crypto.randomUUID(),
+					sessionId,
+					method: "notify",
+					notifyType: "warning",
+					message: notice.message,
+				}),
+			);
 		this.flush();
 	}
 	#cancelFor(state: PresentationState, id: string): void {
-		for (const [requestId, pending] of state.grants) if (pending.connection === id) {
-			state.grants.delete(requestId);
-			pending.cancel();
-		}
+		for (const [requestId, pending] of state.grants)
+			if (pending.connection === id) {
+				state.grants.delete(requestId);
+				pending.cancel();
+			}
 	}
 	#stop(state: PresentationState | undefined): void {
 		state?.stop?.();

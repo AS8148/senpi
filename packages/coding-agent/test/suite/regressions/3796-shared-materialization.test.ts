@@ -15,8 +15,10 @@ it("separates identical transports by authority and aborts pending shared materi
 	const release = Promise.withResolvers<void>();
 	const config = normalizeServer({ command: "synthetic-command" });
 	const authority: ProjectMcpAuthority = {
-		identity: "synthetic-authority-a", storePath: join(root, "mcp-env-grants.json"),
-		policyDigest: "synthetic-policy", provenanceDigest: "synthetic-provenance",
+		identity: "synthetic-authority-a",
+		storePath: join(root, "mcp-env-grants.json"),
+		policyDigest: "synthetic-policy",
+		provenanceDigest: "synthetic-provenance",
 		initial: { config, env: {}, grantedNames: [] },
 		resolve: async () => {
 			entered.resolve();
@@ -25,14 +27,22 @@ it("separates identical transports by authority and aborts pending shared materi
 		},
 	};
 	const base = {
-		agentDir: root, serverName: "probe", config, configHash: "synthetic-config",
+		agentDir: root,
+		serverName: "probe",
+		config,
+		configHash: "synthetic-config",
 		logger: createMcpLogger("probe", { logDir: root }),
 	};
 	const first = registry.attachShared("first", {}, { ...base, projectPolicy: authority });
 	const same = registry.attachShared("same", {}, { ...base, projectPolicy: authority });
-	const other = registry.attachShared("other", {}, {
-		...base, projectPolicy: { ...authority, identity: "synthetic-authority-b" },
-	});
+	const other = registry.attachShared(
+		"other",
+		{},
+		{
+			...base,
+			projectPolicy: { ...authority, identity: "synthetic-authority-b" },
+		},
+	);
 	try {
 		expect(registry.size()).toBe(2);
 		const pending = first.connect();

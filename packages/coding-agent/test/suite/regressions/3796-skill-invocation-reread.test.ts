@@ -35,10 +35,12 @@ it("does not feed an escaped replacement to the provider on skill invocation", a
 		unlinkSync(path);
 		symlinkSync(outside, path);
 		let submitted = "";
-		harness.setResponses([(context) => {
-			submitted = context.messages.map(getMessageText).join("\n");
-			return fauxAssistantMessage("ok");
-		}]);
+		harness.setResponses([
+			(context) => {
+				submitted = context.messages.map(getMessageText).join("\n");
+				return fauxAssistantMessage("ok");
+			},
+		]);
 		await harness.session.prompt("please use $skill:carrier");
 		expect(submitted).not.toContain("SYNTHETIC_OUTSIDE_BODY");
 	} finally {

@@ -4,7 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
-	addGrant, declarationDigest, type GrantObservation, list, observe, read, resolveGrantsStorePath, revoke,
+	addGrant,
+	declarationDigest,
+	type GrantObservation,
+	list,
+	observe,
+	read,
+	resolveGrantsStorePath,
+	revoke,
 } from "../../../src/core/extensions/builtin/mcp/env-grants-store.ts";
 
 let root: string;
@@ -12,7 +19,9 @@ let stop: (() => void) | undefined;
 const label = { project: "/synthetic/project", skill: "carrier", server: "probe" };
 const identity = declarationDigest({ command: "synthetic-probe" });
 
-beforeEach(() => { root = fs.mkdtempSync(join(tmpdir(), "senpi-3796-store-")); });
+beforeEach(() => {
+	root = fs.mkdtempSync(join(tmpdir(), "senpi-3796-store-"));
+});
 afterEach(() => {
 	stop?.();
 	stop = undefined;
@@ -23,15 +32,19 @@ afterEach(() => {
 
 function observationStream() {
 	const events: GrantObservation[] = [];
-	const waiters = new Set<{ predicate: (event: GrantObservation) => boolean; resolve: (event: GrantObservation) => void }>();
+	const waiters = new Set<{
+		predicate: (event: GrantObservation) => boolean;
+		resolve: (event: GrantObservation) => void;
+	}>();
 	return {
 		events,
 		listener(event: GrantObservation) {
 			events.push(event);
-			for (const waiter of waiters) if (waiter.predicate(event)) {
-				waiters.delete(waiter);
-				waiter.resolve(event);
-			}
+			for (const waiter of waiters)
+				if (waiter.predicate(event)) {
+					waiters.delete(waiter);
+					waiter.resolve(event);
+				}
 		},
 		next(predicate: (event: GrantObservation) => boolean): Promise<GrantObservation> {
 			return new Promise((resolve, reject) => {
@@ -39,7 +52,13 @@ function observationStream() {
 					waiters.delete(waiter);
 					reject(new Error("Expected grant observation did not arrive"));
 				}, 10_000);
-				const waiter = { predicate, resolve: (event: GrantObservation) => { clearTimeout(timer); resolve(event); } };
+				const waiter = {
+					predicate,
+					resolve: (event: GrantObservation) => {
+						clearTimeout(timer);
+						resolve(event);
+					},
+				};
 				waiters.add(waiter);
 			});
 		},
@@ -53,10 +72,7 @@ it("resolves under the caller's configured engine directory", () => {
 it("merges concurrent atomic writers and revokes only the selected identity", async () => {
 	const path = resolveGrantsStorePath(root);
 	const second = declarationDigest({ command: "synthetic-second" });
-	await Promise.all([
-		addGrant(path, identity, label, ["ODD_DSN"]),
-		addGrant(path, second, label, ["ODD_COOKIE"]),
-	]);
+	await Promise.all([addGrant(path, identity, label, ["ODD_DSN"]), addGrant(path, second, label, ["ODD_COOKIE"])]);
 	const snapshot = await read(path);
 	expect(snapshot.generation).toBe(2);
 	expect(snapshot.grants[identity]?.names).toEqual(["ODD_DSN"]);

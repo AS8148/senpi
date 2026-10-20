@@ -41,21 +41,24 @@ async function load(skills?: string[]) {
 	return loader;
 }
 
-it.each(["folder", "file", "nested"] as const)("blocks a project %s escape at the real resource loader", async (kind) => {
-	const outside = join(root, "outside");
-	markdown(join(outside, "SKILL.md"), "escape");
-	const selected = join(cwd, ".senpi", "skills");
-	mkdirSync(selected, { recursive: true });
-	if (kind === "folder") symlinkSync(outside, join(selected, "escape"));
-	if (kind === "file") symlinkSync(join(outside, "SKILL.md"), join(selected, "escape.md"));
-	if (kind === "nested") {
-		mkdirSync(join(selected, "nested"));
-		symlinkSync(outside, join(selected, "nested", "escape"));
-	}
-	const result = (await load()).getSkills();
-	expect(result.skills.map((skill) => skill.name)).not.toContain("escape");
-	expect(result.diagnostics).toContainEqual(expect.objectContaining({ category: "skill-link-blocked" }));
-});
+it.each(["folder", "file", "nested"] as const)(
+	"blocks a project %s escape at the real resource loader",
+	async (kind) => {
+		const outside = join(root, "outside");
+		markdown(join(outside, "SKILL.md"), "escape");
+		const selected = join(cwd, ".senpi", "skills");
+		mkdirSync(selected, { recursive: true });
+		if (kind === "folder") symlinkSync(outside, join(selected, "escape"));
+		if (kind === "file") symlinkSync(join(outside, "SKILL.md"), join(selected, "escape.md"));
+		if (kind === "nested") {
+			mkdirSync(join(selected, "nested"));
+			symlinkSync(outside, join(selected, "nested", "escape"));
+		}
+		const result = (await load()).getSkills();
+		expect(result.skills.map((skill) => skill.name)).not.toContain("escape");
+		expect(result.diagnostics).toContainEqual(expect.objectContaining({ category: "skill-link-blocked" }));
+	},
+);
 
 it("keeps deeper user-root links and project links into their reached folders", async () => {
 	const target = join(root, "outside");

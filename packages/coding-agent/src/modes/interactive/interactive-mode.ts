@@ -80,7 +80,6 @@ import {
 } from "../../core/agent-session.ts";
 import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.ts";
 import { formatNoModelsAvailableMessage } from "../../core/auth-guidance.ts";
-import { attachMcpGrantPresentation } from "../../core/mcp-grant-presentations.ts";
 import { isApiKeyLoginProvider, loginRowStatus } from "../../core/auth-providers.ts";
 import { markModeCrashHandler } from "../../core/bootstrap-crash-listeners.ts";
 import { envValue } from "../../core/brand.ts";
@@ -121,6 +120,7 @@ import { buildHighReasoningWarning } from "../../core/high-reasoning-warning.ts"
 import { configureHttpDispatcher, formatHttpIdleTimeoutMs } from "../../core/http-dispatcher.ts";
 import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.ts";
 import { isManualContinueSubmission } from "../../core/manual-continue.ts";
+import { attachMcpGrantPresentation } from "../../core/mcp-grant-presentations.ts";
 import { createCompactionSummaryMessage, createCustomMessage } from "../../core/messages.ts";
 import type { ModelChangeOrigin } from "../../core/model-change-origin.ts";
 import {
@@ -2679,8 +2679,9 @@ export class InteractiveMode {
 				);
 			}
 
-			const skillDiagnostics = skillsResult.diagnostics.filter((diagnostic) =>
-				diagnostic.category !== "size-limit" && diagnostic.category !== "skill-link-blocked");
+			const skillDiagnostics = skillsResult.diagnostics.filter(
+				(diagnostic) => diagnostic.category !== "size-limit" && diagnostic.category !== "skill-link-blocked",
+			);
 			if (skillDiagnostics.length > 0) {
 				addDiagnosticNotice("Skill conflicts", skillDiagnostics);
 			}
@@ -2727,8 +2728,9 @@ export class InteractiveMode {
 		this.session.setControlEndpointHost?.(this.sessionControlHost);
 		const uiContext = this.createExtensionUIContext();
 		this.detachMcpGrantPresentation?.();
-		this.detachMcpGrantPresentation = attachMcpGrantPresentation(this.session.sessionId,
-			(title, choices, opts) => uiContext.select(title, choices, opts));
+		this.detachMcpGrantPresentation = attachMcpGrantPresentation(this.session.sessionId, (title, choices, opts) =>
+			uiContext.select(title, choices, opts),
+		);
 		this.unsubscribeSecurityNotices?.();
 		this.unsubscribeSecurityNotices = this.session.securityNotices?.subscribe((snapshot) => {
 			for (const notice of snapshot.notices) uiContext.notify(notice.message, "warning");

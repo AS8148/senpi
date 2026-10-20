@@ -1,6 +1,10 @@
 // #3796: shared machine-consumed native/legacy declaration identity fixture.
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: literal ${VAR} references are the MCP declaration inputs under test, not templates.
 import { expect, it } from "vitest";
-import { declarationDigest, type DeclarationIdentity } from "../../../src/core/extensions/builtin/mcp/env-grants-store.ts";
+import {
+	type DeclarationIdentity,
+	declarationDigest,
+} from "../../../src/core/extensions/builtin/mcp/env-grants-store.ts";
 
 const identity = {
 	sourcePath: "/fixture/project/skills/a/mcp.json",
@@ -19,11 +23,18 @@ const identity = {
 
 it("hashes the agreed canonical identity record with SHA-256", () => {
 	expect(declarationDigest(identity)).toBe("a82aa53bdc6ae462ccbe72166353100b4dbf4fc6d07dfea01d12dc9c1f8f3c63");
-	expect(declarationDigest({
-		...identity,
-		raw: { env: { NODE_OPTIONS: "--no-warnings", TOKEN: "${TOKEN}" }, cwd: "./work",
-			args: ["--serve"], command: "tool", type: "stdio" },
-	})).toBe(declarationDigest(identity));
+	expect(
+		declarationDigest({
+			...identity,
+			raw: {
+				env: { NODE_OPTIONS: "--no-warnings", TOKEN: "${TOKEN}" },
+				cwd: "./work",
+				args: ["--serve"],
+				command: "tool",
+				type: "stdio",
+			},
+		}),
+	).toBe(declarationDigest(identity));
 });
 
 it.each([

@@ -1,4 +1,5 @@
 // #3796: exercise the service's real stdio transport, not an env-builder mock.
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: literal ${VAR} references are the MCP declaration inputs under test, not templates.
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -28,12 +29,14 @@ it("offers one permanent grant before spawn and restores only its referenced nam
 		`await import(${JSON.stringify(fixture)});`,
 	].join("");
 	const decisions: string[][] = [];
-	service.setMcpElicitationUiProvider(() => createTestUiContext({
-		select: async (_title, options) => {
-			decisions.push(options);
-			return "Grant and save permanently";
-		},
-	}));
+	service.setMcpElicitationUiProvider(() =>
+		createTestUiContext({
+			select: async (_title, options) => {
+				decisions.push(options);
+				return "Grant and save permanently";
+			},
+		}),
+	);
 	const pi = fakePi();
 	await service.attachSession(
 		{ type: "session_start", reason: "startup" },
@@ -43,16 +46,18 @@ it("offers one permanent grant before spawn and restores only its referenced nam
 	);
 	const sourcePath = join(root, "SKILL.md");
 	writeFileSync(sourcePath, "---\nname: carrier\ndescription: test\n---\n");
-	const declaration = new Map([["probe", {
-		raw: { command: process.execPath, args: ["-e", script], env: { REF: "${ODD_DSN}" } },
-		scope: "project" as const,
-		skillName: "carrier",
-		sourcePath,
-	}]]);
-	await Promise.all([
-		service.attachSkillMcpServers(declaration, pi),
-		service.attachSkillMcpServers(declaration, pi),
+	const declaration = new Map([
+		[
+			"probe",
+			{
+				raw: { command: process.execPath, args: ["-e", script], env: { REF: "${ODD_DSN}" } },
+				scope: "project" as const,
+				skillName: "carrier",
+				sourcePath,
+			},
+		],
 	]);
+	await Promise.all([service.attachSkillMcpServers(declaration, pi), service.attachSkillMcpServers(declaration, pi)]);
 	const connection = service.getConnection("probe");
 	if (!connection) throw new Error("missing project connection");
 	await connection.connect();
@@ -91,17 +96,27 @@ it("passes finite project base and explicit env while withholding ungranted refe
 	);
 	const sourcePath = join(root, "SKILL.md");
 	writeFileSync(sourcePath, "---\nname: carrier\ndescription: test\n---\n");
-	const warnings = await service.attachSkillMcpServers(new Map([["probe", {
-		raw: { command: process.execPath, args: ["-e", script], env: { REF: "${ODD_DSN}" } },
-		scope: "project" as const,
-		skillName: "carrier",
-		sourcePath,
-	}]]), pi);
+	const warnings = await service.attachSkillMcpServers(
+		new Map([
+			[
+				"probe",
+				{
+					raw: { command: process.execPath, args: ["-e", script], env: { REF: "${ODD_DSN}" } },
+					scope: "project" as const,
+					skillName: "carrier",
+					sourcePath,
+				},
+			],
+		]),
+		pi,
+	);
 	const connection = service.getConnection("probe");
 	if (!connection) throw new Error("missing project connection");
 	await connection.connect();
 	expect(JSON.parse(readFileSync(receipt, "utf8"))).toEqual({
-		base: "/synthetic/data", reference: "${ODD_DSN}", explicit: "synthetic-caller",
+		base: "/synthetic/data",
+		reference: "${ODD_DSN}",
+		explicit: "synthetic-caller",
 	});
 	expect(warnings.join("\n")).toContain("ODD_DSN");
 	expect(warnings.join("\n")).not.toContain("synthetic-dsn");

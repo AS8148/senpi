@@ -1,5 +1,5 @@
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "fs";
 import { homedir } from "node:os";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "fs";
 import ignore from "ignore";
 import { basename, dirname, join, relative, resolve, sep } from "path";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
@@ -7,8 +7,14 @@ import { parseFrontmatter } from "../utils/frontmatter.ts";
 import { canonicalizePath, resolvePath } from "../utils/paths.ts";
 import type { ResourceDiagnostic } from "./diagnostics.ts";
 import {
-	authorizeSkillPath, BlockedSkillLinkError, buildSkillAllowedSet, insideSkillRoot,
-	readSkillFileChecked, type SkillAllowedSet, type SkillProvenance, skillProjectRoot,
+	authorizeSkillPath,
+	BlockedSkillLinkError,
+	buildSkillAllowedSet,
+	insideSkillRoot,
+	readSkillFileChecked,
+	type SkillAllowedSet,
+	type SkillProvenance,
+	skillProjectRoot,
 } from "./skill-access.ts";
 import { readSkillMarkdownSource, shouldSkipSkillWalkDirectoryName } from "./skill-discovery.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
@@ -286,7 +292,16 @@ function loadSkillsFromDirInternal(
 			}
 
 			if (isDirectory) {
-				const subResult = loadSkillsFromDirInternal(fullPath, source, false, ig, root, provenance, allowedSet, descendants);
+				const subResult = loadSkillsFromDirInternal(
+					fullPath,
+					source,
+					false,
+					ig,
+					root,
+					provenance,
+					allowedSet,
+					descendants,
+				);
 				skills.push(...subResult.skills);
 				diagnostics.push(...subResult.diagnostics);
 				continue;
@@ -318,8 +333,10 @@ function loadSkillFromFile(
 
 	let rawContent: string;
 	try {
-		rawContent = provenance === undefined || provenance.kind === "user"
-			? readSkillMarkdownSource(filePath) : readSkillFileChecked(filePath, provenance, allowedSet);
+		rawContent =
+			provenance === undefined || provenance.kind === "user"
+				? readSkillMarkdownSource(filePath)
+				: readSkillFileChecked(filePath, provenance, allowedSet);
 	} catch (error) {
 		if (error instanceof BlockedSkillLinkError) return { skill: null, diagnostics: [error.diagnostic] };
 		const message = error instanceof Error ? error.message : "failed to read skill file";
@@ -414,13 +431,18 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 	const projectRoot = skillProjectRoot(resolvedCwd);
 	const projectSkillsPath = resolve(resolvedCwd, CONFIG_DIR_NAME, "skills");
 	const allowedSet = buildSkillAllowedSet([
-		join(resolvedAgentDir, "skills"), join(homedir(), ".agents", "skills"),
+		join(resolvedAgentDir, "skills"),
+		join(homedir(), ".agents", "skills"),
 		...(options.userSkillRoots ?? []),
-		...skillPaths.map((path) => resolvePath(path, resolvedCwd, { trim: true })).filter((path) => {
-			const provenance = options.provenanceByPath?.get(path);
-			return provenance?.kind === "user" || (provenance === undefined &&
-				(includeDefaults || !insideSkillRoot(path, projectSkillsPath)));
-		}),
+		...skillPaths
+			.map((path) => resolvePath(path, resolvedCwd, { trim: true }))
+			.filter((path) => {
+				const provenance = options.provenanceByPath?.get(path);
+				return (
+					provenance?.kind === "user" ||
+					(provenance === undefined && (includeDefaults || !insideSkillRoot(path, projectSkillsPath)))
+				);
+			}),
 	]);
 
 	const skillMap = new Map<string, Skill>();
@@ -461,10 +483,28 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 
 	if (includeDefaults) {
 		const userRoot = join(resolvedAgentDir, "skills");
-		addSkills(loadSkillsFromDirInternal(userRoot, "user", true, undefined, undefined,
-			{ kind: "user", selectedRoot: userRoot }, allowedSet));
-		addSkills(loadSkillsFromDirInternal(projectSkillsPath, "project", true, undefined, undefined,
-			{ kind: "project-auto", selectedRoot: projectSkillsPath, projectRoot }, allowedSet));
+		addSkills(
+			loadSkillsFromDirInternal(
+				userRoot,
+				"user",
+				true,
+				undefined,
+				undefined,
+				{ kind: "user", selectedRoot: userRoot },
+				allowedSet,
+			),
+		);
+		addSkills(
+			loadSkillsFromDirInternal(
+				projectSkillsPath,
+				"project",
+				true,
+				undefined,
+				undefined,
+				{ kind: "project-auto", selectedRoot: projectSkillsPath, projectRoot },
+				allowedSet,
+			),
+		);
 	}
 
 	const userSkillsDir = join(resolvedAgentDir, "skills");
@@ -498,11 +538,14 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 			const stats = statSync(resolvedPath);
 			const source = getSource(resolvedPath);
 			const provenance = options.provenanceByPath?.get(resolvedPath) ?? {
-				kind: source === "project" ? "project-auto" as const : "user" as const,
-				selectedRoot: resolvedPath, projectRoot,
+				kind: source === "project" ? ("project-auto" as const) : ("user" as const),
+				selectedRoot: resolvedPath,
+				projectRoot,
 			};
 			if (stats.isDirectory()) {
-				addSkills(loadSkillsFromDirInternal(resolvedPath, source, true, undefined, undefined, provenance, allowedSet));
+				addSkills(
+					loadSkillsFromDirInternal(resolvedPath, source, true, undefined, undefined, provenance, allowedSet),
+				);
 			} else if (stats.isFile() && resolvedPath.endsWith(".md")) {
 				const result = loadSkillFromFile(resolvedPath, source, provenance, allowedSet);
 				if (result.skill) {

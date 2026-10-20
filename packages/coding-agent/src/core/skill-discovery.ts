@@ -1,7 +1,22 @@
-import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, realpathSync, statSync } from "node:fs";
+import {
+	closeSync,
+	existsSync,
+	fstatSync,
+	openSync,
+	readdirSync,
+	readFileSync,
+	readSync,
+	realpathSync,
+	statSync,
+} from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import ignore from "ignore";
-import { authorizeSkillPath, BlockedSkillLinkError, type SkillAllowedSet, type SkillProvenance } from "./skill-access.ts";
+import {
+	authorizeSkillPath,
+	BlockedSkillLinkError,
+	type SkillAllowedSet,
+	type SkillProvenance,
+} from "./skill-access.ts";
 
 /** Bytes read before falling back to the rest of SKILL.md when the closing --- is absent. */
 export const SKILL_FRONTMATTER_PREFIX_BYTES = 8192;

@@ -54,8 +54,13 @@ it("replays a blocked-link warning to two clients and a late attach", async () =
 		});
 		handlers.push(handler);
 		await handler.ready;
-		const records = chunks.join("").split("\n").filter(Boolean).map((line) => JSON.parse(line));
-		expect(records.filter((record) => record.method === "notify" && record.notifyType === "warning"))
-			.toContainEqual(expect.objectContaining({ message: expect.stringContaining("Blocked skill link") }));
+		const records = chunks
+			.join("")
+			.split("\n")
+			.filter(Boolean)
+			.map((line) => JSON.parse(line));
+		expect(records.filter((record) => record.method === "notify" && record.notifyType === "warning")).toContainEqual(
+			expect.objectContaining({ message: expect.stringContaining("Blocked skill link") }),
+		);
 	}
 });

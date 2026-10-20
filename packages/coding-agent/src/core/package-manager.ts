@@ -48,8 +48,8 @@ import { envValue } from "./brand.ts";
 import { isStdoutTakenOver } from "./output-guard.ts";
 import { readPiManifest } from "./pi-manifest.ts";
 import type { PackageSource, SettingsManager } from "./settings-manager.ts";
-import { collectAutoSkillEntries, collectSkillEntries } from "./skill-discovery.ts";
 import { type SkillProvenance, skillProjectRoot } from "./skill-access.ts";
+import { collectAutoSkillEntries, collectSkillEntries } from "./skill-discovery.ts";
 import { BUILTIN_PATH_PREFIX, type SourceScope } from "./source-info.ts";
 
 const NETWORK_TIMEOUT_MS = 10000;
@@ -2278,7 +2278,12 @@ export class DefaultPackageManager implements PackageManager {
 		}
 	}
 
-	private collectFilesFromManifestEntries(entries: string[], root: string, resourceType: ResourceType, provenance?: SkillProvenance): string[] {
+	private collectFilesFromManifestEntries(
+		entries: string[],
+		root: string,
+		resourceType: ResourceType,
+		provenance?: SkillProvenance,
+	): string[] {
 		const sourceEntries = entries.filter((entry) => !isOverridePattern(entry));
 		const resolved = sourceEntries.flatMap((entry) => {
 			if (!hasGlobPattern(entry)) {
@@ -2304,7 +2309,8 @@ export class DefaultPackageManager implements PackageManager {
 		const resolvedPlain = plain.map((p) => this.resolvePathFromBase(p, baseDir));
 		const metadataByFile = new Map<string, PathMetadata>();
 		const allFiles = resolvedPlain.flatMap((path) => {
-			const selected = resourceType === "skills" ? this.selectSkillRoot(path, metadata, "project-selected") : metadata;
+			const selected =
+				resourceType === "skills" ? this.selectSkillRoot(path, metadata, "project-selected") : metadata;
 			const files = this.collectFilesFromPaths([path], resourceType, selected.skillProvenance);
 			for (const file of files) metadataByFile.set(file, selected);
 			return files;
@@ -2393,10 +2399,21 @@ export class DefaultPackageManager implements PackageManager {
 				this.addResource(target, path, metadata, enabled);
 			}
 		};
-		const addSkills = (root: string, mode: "pi" | "agents", metadata: PathMetadata, overrides: string[], base: string) => {
+		const addSkills = (
+			root: string,
+			mode: "pi" | "agents",
+			metadata: PathMetadata,
+			overrides: string[],
+			base: string,
+		) => {
 			const selected = this.selectSkillRoot(root, metadata, "project-auto");
-			addResources("skills", collectAutoSkillEntries(root, mode, { provenance: selected.skillProvenance }),
-				selected, overrides, base);
+			addResources(
+				"skills",
+				collectAutoSkillEntries(root, mode, { provenance: selected.skillProvenance }),
+				selected,
+				overrides,
+				base,
+			);
 		};
 
 		if (projectTrusted) {
@@ -2410,12 +2427,7 @@ export class DefaultPackageManager implements PackageManager {
 			);
 
 			// Project skills from .pi/
-			addSkills(
-				projectDirs.skills, "pi",
-				projectMetadata,
-				projectOverrides.skills,
-				projectBaseDir,
-			);
+			addSkills(projectDirs.skills, "pi", projectMetadata, projectOverrides.skills, projectBaseDir);
 		}
 
 		// Project skills from .agents/ (each with its own baseDir)
@@ -2425,12 +2437,7 @@ export class DefaultPackageManager implements PackageManager {
 				...projectMetadata,
 				baseDir: agentsBaseDir,
 			};
-			addSkills(
-				agentsSkillsDir, "agents",
-				agentsMetadata,
-				projectOverrides.skills,
-				agentsBaseDir,
-			);
+			addSkills(agentsSkillsDir, "agents", agentsMetadata, projectOverrides.skills, agentsBaseDir);
 		}
 
 		if (projectTrusted) {
@@ -2471,7 +2478,8 @@ export class DefaultPackageManager implements PackageManager {
 				legacyProjectBaseDir,
 			);
 			addSkills(
-				legacyProjectDirs.skills, "pi",
+				legacyProjectDirs.skills,
+				"pi",
 				legacyProjectMetadata,
 				projectOverrides.skills,
 				legacyProjectBaseDir,
@@ -2509,12 +2517,7 @@ export class DefaultPackageManager implements PackageManager {
 		);
 
 		// User skills from ~/.pi/agent/
-		addSkills(
-			userDirs.skills, "pi",
-			userMetadata,
-			userOverrides.skills,
-			globalBaseDir,
-		);
+		addSkills(userDirs.skills, "pi", userMetadata, userOverrides.skills, globalBaseDir);
 
 		// User skills from ~/.agents/ (with its own baseDir)
 		const userAgentsBaseDir = dirname(userAgentsSkillsDir);
@@ -2522,12 +2525,7 @@ export class DefaultPackageManager implements PackageManager {
 			...userMetadata,
 			baseDir: userAgentsBaseDir,
 		};
-		addSkills(
-			userAgentsSkillsDir, "agents",
-			userAgentsMetadata,
-			userOverrides.skills,
-			userAgentsBaseDir,
-		);
+		addSkills(userAgentsSkillsDir, "agents", userAgentsMetadata, userOverrides.skills, userAgentsBaseDir);
 
 		addResources(
 			"prompts",
@@ -2552,11 +2550,19 @@ export class DefaultPackageManager implements PackageManager {
 		);
 	}
 
-	private selectSkillRoot(root: string, metadata: PathMetadata, kind: "project-auto" | "project-selected"): PathMetadata {
-		return { ...metadata, skillProvenance: {
-			kind: metadata.scope === "project" ? kind : "user",
-			selectedRoot: root, projectRoot: skillProjectRoot(this.cwd),
-		} };
+	private selectSkillRoot(
+		root: string,
+		metadata: PathMetadata,
+		kind: "project-auto" | "project-selected",
+	): PathMetadata {
+		return {
+			...metadata,
+			skillProvenance: {
+				kind: metadata.scope === "project" ? kind : "user",
+				selectedRoot: root,
+				projectRoot: skillProjectRoot(this.cwd),
+			},
+		};
 	}
 
 	private collectFilesFromPaths(paths: string[], resourceType: ResourceType, provenance?: SkillProvenance): string[] {
@@ -2641,8 +2647,9 @@ export class DefaultPackageManager implements PackageManager {
 		};
 
 		return {
-			skillRoots: [...accumulator.skills.values()].filter((entry) => entry.enabled)
-				.flatMap((entry) => entry.metadata.skillProvenance === undefined ? [] : [entry.metadata.skillProvenance]),
+			skillRoots: [...accumulator.skills.values()]
+				.filter((entry) => entry.enabled)
+				.flatMap((entry) => (entry.metadata.skillProvenance === undefined ? [] : [entry.metadata.skillProvenance])),
 			extensions: mapToResolved(accumulator.extensions),
 			skills: mapToResolved(accumulator.skills),
 			prompts: mapToResolved(accumulator.prompts),

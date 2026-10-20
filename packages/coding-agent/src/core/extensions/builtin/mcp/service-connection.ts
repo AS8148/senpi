@@ -7,11 +7,11 @@ import { markMcpConnectionNeedsAuth } from "./health.ts";
 import { type HostMcpRegistry, shareable } from "./host-registry.ts";
 import { configureMcpConnectionLifecycle, disposeMcpConnectionLifecycle } from "./idle.ts";
 import { createMcpLogger } from "./log.ts";
+import { getProjectMcpAuthority } from "./project-skill-policy.ts";
 import { configureMcpReconnect, disposeMcpReconnect } from "./reconnect.ts";
 import type { McpConnectionEntry, McpSessionOptions } from "./service-types.ts";
 import { SharedMcpLease } from "./shared-lease.ts";
 import { connectAndRefreshMcpCatalog } from "./startup-race.ts";
-import { getProjectMcpAuthority } from "./project-skill-policy.ts";
 
 interface SessionConnectionOptions {
 	readonly registry: HostMcpRegistry;

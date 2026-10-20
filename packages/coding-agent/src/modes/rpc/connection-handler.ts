@@ -60,6 +60,7 @@ import type {
 	WorkingIndicatorOptions,
 } from "../../core/extensions/index.ts";
 import { ExtensionRpcRequestNotFoundError } from "../../core/extensions/runner.ts";
+import { attachMcpGrantPresentation } from "../../core/mcp-grant-presentations.ts";
 import { describeUsageLimitEntry, describeUsageLimitMessage } from "../../core/retry-fallback/usage-limit.ts";
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { storedKeyHint, verifyApiKey } from "../../core/verify-api-key.ts";
@@ -68,7 +69,6 @@ import { DURABLE_CLIENT_MESSAGE_ID_CAPABILITY } from "./client-admission-record.
 import { ClientAdmissions } from "./client-admissions.ts";
 import { handleClientInput } from "./client-input-handler.ts";
 import { ConnectionQuestionBridge, degradeQuestion, sessionQuestionBridges } from "./connection-question-bridge.ts";
-import { attachMcpGrantPresentation } from "../../core/mcp-grant-presentations.ts";
 import {
 	AUTH_KEY_VERIFY_CAPABILITY,
 	AUTO_TITLE_SESSIONS_CAPABILITY,
@@ -171,7 +171,10 @@ export interface RpcConnectionOptions {
 		connectionId: () => string | undefined;
 		hasCapability?: (connectionId: string, capability: string) => boolean;
 	};
-	bindSecurityPresentation?: (session: AgentSessionRuntime["session"], ui: ExtensionUIContext) => (() => void) | undefined;
+	bindSecurityPresentation?: (
+		session: AgentSessionRuntime["session"],
+		ui: ExtensionUIContext,
+	) => (() => void) | undefined;
 	/** A worker's internal bridge is gated by its host's actual socket capabilities. */
 	workerSecurityBridge?: boolean;
 	grantDialogSettled?: (id: string) => void;
@@ -530,10 +533,23 @@ export function createRpcConnectionHandler(
 		});
 	}
 	const selectGrantDialog: ExtensionUIContext["select"] = (title, choices, opts) =>
-		createDialogPromise(opts, undefined, {
-			method: "select", title, options: choices, timeout: opts?.timeout, grantSelect: true,
-		}, (response) => "cancelled" in response && response.cancelled ? undefined :
-			"value" in response ? response.value : undefined);
+		createDialogPromise(
+			opts,
+			undefined,
+			{
+				method: "select",
+				title,
+				options: choices,
+				timeout: opts?.timeout,
+				grantSelect: true,
+			},
+			(response) =>
+				"cancelled" in response && response.cancelled
+					? undefined
+					: "value" in response
+						? response.value
+						: undefined,
+		);
 
 	/**
 	 * Create an extension UI context that uses the RPC protocol.
@@ -789,8 +805,10 @@ export function createRpcConnectionHandler(
 		const signal = grantPresentationAbort.signal;
 		detachGrantPresentation = attachMcpGrantPresentation(session.sessionId, (title, choices, opts) =>
 			selectGrantDialog(title, choices, {
-				...opts, signal: opts?.signal === undefined ? signal : AbortSignal.any([opts.signal, signal]),
-			}));
+				...opts,
+				signal: opts?.signal === undefined ? signal : AbortSignal.any([opts.signal, signal]),
+			}),
+		);
 	};
 	const rebindSession = async (deferRefresh = false): Promise<void> => {
 		unsubscribeSecurityNotices?.();
@@ -799,16 +817,23 @@ export function createRpcConnectionHandler(
 		const replacedSession = session !== runtimeHost.session;
 		session = runtimeHost.session;
 		const hostedSecurity = options.bindSecurityPresentation?.(session, {
-			...createExtensionUIContext(), select: selectGrantDialog,
+			...createExtensionUIContext(),
+			select: selectGrantDialog,
 		});
 		securityBoundByHost = hostedSecurity !== undefined;
 		refreshGrantPresentation();
-		unsubscribeSecurityNotices = hostedSecurity ?? session.securityNotices?.subscribe((snapshot) => {
-			for (const notice of snapshot.notices) output({
-				type: "extension_ui_request", id: crypto.randomUUID(), method: "notify",
-				notifyType: "warning", message: notice.message,
+		unsubscribeSecurityNotices =
+			hostedSecurity ??
+			session.securityNotices?.subscribe((snapshot) => {
+				for (const notice of snapshot.notices)
+					output({
+						type: "extension_ui_request",
+						id: crypto.randomUUID(),
+						method: "notify",
+						notifyType: "warning",
+						message: notice.message,
+					});
 			});
-		});
 		sessionQuestionBridges.set(session, questions);
 		sessionDialogRequests.set(session, pendingExtensionRequests);
 		// Installed before the bind below: extensions register their control endpoint on session_start.
@@ -1216,8 +1241,10 @@ export function createRpcConnectionHandler(
 					clientCapabilities = command.capabilities;
 					options.clientInfo.setCapabilities(options.clientInfo.connectionId(), command.capabilities);
 				} else if (command.capabilities !== undefined) {
-					clientCapabilities = [...(clientCapabilities ?? []).filter((capability) => capability !== "grant_select"),
-						...(command.capabilities.includes("grant_select") ? ["grant_select"] : [])];
+					clientCapabilities = [
+						...(clientCapabilities ?? []).filter((capability) => capability !== "grant_select"),
+						...(command.capabilities.includes("grant_select") ? ["grant_select"] : []),
+					];
 				}
 				if (wasGrantCapable !== (clientCapabilities?.includes("grant_select") === true)) refreshGrantPresentation();
 				return success(id, "set_client_info");
@@ -1929,10 +1956,17 @@ export function createRpcConnectionHandler(
 			"type" in parsed &&
 			parsed.type === "extension_ui_response"
 		) {
-			if (!options.workerSecurityBridge && "id" in parsed && typeof parsed.id === "string" && grantRequests.has(parsed.id)) {
+			if (
+				!options.workerSecurityBridge &&
+				"id" in parsed &&
+				typeof parsed.id === "string" &&
+				grantRequests.has(parsed.id)
+			) {
 				const sender = options.clientInfo?.connectionId();
-				const capable = sender === undefined ? clientCapabilities?.includes("grant_select") === true :
-					options.clientInfo?.hasCapability?.(sender, "grant_select") === true;
+				const capable =
+					sender === undefined
+						? clientCapabilities?.includes("grant_select") === true
+						: options.clientInfo?.hasCapability?.(sender, "grant_select") === true;
 				if (grantRequests.get(parsed.id) !== sender || !capable) return;
 			}
 			const reply = settleExtensionUiResponse(parsed as RpcExtensionUIResponse, {

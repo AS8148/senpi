@@ -1,8 +1,7 @@
-import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import type { McpOAuthProvider } from "./auth/oauth-provider.ts";
-import { resolveServerAuth } from "./auth/context.ts";
 import { dirname } from "node:path";
-import type { ProjectMcpMaterialization } from "./project-skill-policy.ts";
+import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { resolveServerAuth } from "./auth/context.ts";
+import type { McpOAuthProvider } from "./auth/oauth-provider.ts";
 import type {
 	ServerConnectionListener,
 	ServerConnectionOptions,
@@ -16,6 +15,7 @@ import type { McpLogger } from "./log.ts";
 import { subscribeMcpServerLogging } from "./logging.ts";
 import { isMcpNeedsAuthError } from "./needs-auth.ts";
 import { subscribeMcpListChanged } from "./notifications.ts";
+import type { ProjectMcpMaterialization } from "./project-skill-policy.ts";
 import { subscribeMcpResourceUpdated } from "./resources.ts";
 import {
 	connectMcpTransport,
@@ -67,9 +67,15 @@ export class ServerConnection {
 	get state(): ServerConnectionState {
 		return this.#state;
 	}
-	get declarationIdentity(): string | undefined { return this.#projectPolicy?.identity; }
-	get projectPolicy(): ServerConnectionOptions["projectPolicy"] { return this.#projectPolicy; }
-	get startedGrantNames(): readonly string[] { return this.#startedGrantNames; }
+	get declarationIdentity(): string | undefined {
+		return this.#projectPolicy?.identity;
+	}
+	get projectPolicy(): ServerConnectionOptions["projectPolicy"] {
+		return this.#projectPolicy;
+	}
+	get startedGrantNames(): readonly string[] {
+		return this.#startedGrantNames;
+	}
 	get lastError(): Error | undefined {
 		return this.#lastError;
 	}
@@ -116,8 +122,11 @@ export class ServerConnection {
 		let attempt: Promise<Client>;
 		if (this.#projectPolicy !== undefined) attempt = this.#openProjectConnection(generation);
 		else {
-			try { attempt = this.#openConnection(this.#createTransportConnection(), generation); }
-			catch (error) { return Promise.reject(error); }
+			try {
+				attempt = this.#openConnection(this.#createTransportConnection(), generation);
+			} catch (error) {
+				return Promise.reject(error);
+			}
 		}
 		this.#pendingConnect = attempt.finally(() => {
 			if (this.#pendingConnect !== undefined && generation === this.#generation) this.#pendingConnect = undefined;
@@ -229,26 +238,35 @@ export class ServerConnection {
 
 	#createTransportConnection(resolved?: ProjectMcpMaterialization): McpTransportConnection {
 		const projectAbort = this.#policyAbort;
-		const authProvider = resolved === undefined ? this.#authProvider : resolveServerAuth({
-			agentDir: this.#projectPolicy === undefined ? undefined : dirname(this.#projectPolicy.storePath),
-			config: resolved.config, env: resolved.env, logger: this.#logger, serverName: this.serverName,
-		}).provider;
+		const authProvider =
+			resolved === undefined
+				? this.#authProvider
+				: resolveServerAuth({
+						agentDir: this.#projectPolicy === undefined ? undefined : dirname(this.#projectPolicy.storePath),
+						config: resolved.config,
+						env: resolved.env,
+						logger: this.#logger,
+						serverName: this.serverName,
+					}).provider;
 		return createMcpTransport({
 			authProvider,
 			config: resolved?.config ?? this.#config,
 			env: resolved?.env ?? this.#env,
 			projectPolicy: resolved !== undefined,
-			resolveProjectPolicy: resolved === undefined ? undefined : async () => {
-				const policy = this.#projectPolicy;
-				const abort = projectAbort;
-				if (policy === undefined || abort === undefined) {
-					throw this.#connectError("Project MCP policy is no longer available", "create", true);
-				}
-				const current = await policy.resolve(abort.signal, false);
-				abort.signal.throwIfAborted();
-				this.#startedGrantNames = current.grantedNames;
-				return current;
-			},
+			resolveProjectPolicy:
+				resolved === undefined
+					? undefined
+					: async () => {
+							const policy = this.#projectPolicy;
+							const abort = projectAbort;
+							if (policy === undefined || abort === undefined) {
+								throw this.#connectError("Project MCP policy is no longer available", "create", true);
+							}
+							const current = await policy.resolve(abort.signal, false);
+							abort.signal.throwIfAborted();
+							this.#startedGrantNames = current.grantedNames;
+							return current;
+						},
 			elicitationUiProvider: this.#elicitationUiProvider,
 			logger: this.#logger,
 			serverName: this.serverName,

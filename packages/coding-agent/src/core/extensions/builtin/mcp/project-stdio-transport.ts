@@ -19,17 +19,24 @@ export class ProjectStdioTransport implements Transport {
 	readonly #create: (spec: McpStdioTransportSpec) => StdioClientTransport;
 	#current: StdioClientTransport | undefined;
 	#epoch = 0;
-	constructor(resolve: () => Promise<McpStdioTransportSpec>, create: (spec: McpStdioTransportSpec) => StdioClientTransport) {
+	constructor(
+		resolve: () => Promise<McpStdioTransportSpec>,
+		create: (spec: McpStdioTransportSpec) => StdioClientTransport,
+	) {
 		this.#resolve = resolve;
 		this.#create = create;
 	}
-	get pid(): number | null { return this.#current?.pid ?? null; }
+	get pid(): number | null {
+		return this.#current?.pid ?? null;
+	}
 	async start(): Promise<void> {
 		const epoch = this.#epoch;
 		const spec = await this.#resolve();
-		if (epoch !== this.#epoch) throw new ConnectError("Project MCP spawn was invalidated; retry", {
-			phase: "create", retriable: true,
-		});
+		if (epoch !== this.#epoch)
+			throw new ConnectError("Project MCP spawn was invalidated; retry", {
+				phase: "create",
+				retriable: true,
+			});
 		const transport = this.#create(spec);
 		this.#current = transport;
 		transport.onmessage = (message, extra) => this.onmessage?.(message, extra);
@@ -43,9 +50,11 @@ export class ProjectStdioTransport implements Transport {
 		}
 	}
 	async send(message: JSONRPCMessage, options?: TransportSendOptions): Promise<void> {
-		if (this.#current === undefined) throw new ConnectError("Project MCP transport has not started", {
-			phase: "send", retriable: true,
-		});
+		if (this.#current === undefined)
+			throw new ConnectError("Project MCP transport has not started", {
+				phase: "send",
+				retriable: true,
+			});
 		await this.#current.send(message, options);
 	}
 	async close(): Promise<void> {

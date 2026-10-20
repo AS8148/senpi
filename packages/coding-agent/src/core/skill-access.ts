@@ -36,17 +36,25 @@ export function buildSkillAllowedSet(sources: readonly string[]): SkillAllowedSe
 	for (const source of sources) {
 		try {
 			const canonical = realpathSync.native(source);
-			if (statSync(canonical).isFile()) { files.add(canonical); continue; }
+			if (statSync(canonical).isFile()) {
+				files.add(canonical);
+				continue;
+			}
 			collectSkillEntries(source, "pi", undefined, undefined, {
 				onDirectory: (path) => roots.add(realpathSync.native(path)),
 			});
-		} catch { /* An unavailable user root confers no project authority. */ }
+		} catch {
+			/* An unavailable user root confers no project authority. */
+		}
 	}
 	const allowedRoots = [...roots].sort();
 	const allowedFiles = [...files].sort();
 	return {
-		roots: allowedRoots, files: allowedFiles,
-		digest: createHash("sha256").update(JSON.stringify([allowedRoots, allowedFiles])).digest("hex"),
+		roots: allowedRoots,
+		files: allowedFiles,
+		digest: createHash("sha256")
+			.update(JSON.stringify([allowedRoots, allowedFiles]))
+			.digest("hex"),
 	};
 }
 export class BlockedSkillLinkError extends Error {
@@ -56,14 +64,18 @@ export class BlockedSkillLinkError extends Error {
 			const home = homedir();
 			return insideSkillRoot(value, home) ? `~${value.slice(home.length)}` : value;
 		};
-		super(`Blocked skill link outside the project: ${display(path)} -> ${display(target)}. Add the target folder to your user skills settings to allow it.`);
+		super(
+			`Blocked skill link outside the project: ${display(path)} -> ${display(target)}. Add the target folder to your user skills settings to allow it.`,
+		);
 		this.name = "BlockedSkillLinkError";
 		this.diagnostic = { type: "warning", category: "skill-link-blocked", path, message: this.message };
 	}
 }
 export function authorizeSkillPath(
-	path: string, provenance: SkillProvenance | undefined,
-	allowed: SkillAllowedSet = EMPTY_SKILL_ALLOWED_SET, directory = false,
+	path: string,
+	provenance: SkillProvenance | undefined,
+	allowed: SkillAllowedSet = EMPTY_SKILL_ALLOWED_SET,
+	directory = false,
 ): string {
 	if (provenance === undefined || provenance.kind === "user") return path;
 	let canonical: string;
@@ -74,9 +86,15 @@ export function authorizeSkillPath(
 			...(provenance.kind === "project-selected" ? [realpathSync.native(provenance.selectedRoot)] : []),
 			...allowed.roots,
 		];
-		if (roots.some((root) => insideSkillRoot(canonical, root)) || allowed.files.includes(canonical) ||
-			(directory && allowed.files.some((file) => insideSkillRoot(file, canonical)))) return canonical;
-	} catch { throw new BlockedSkillLinkError(path, "unresolvable target"); }
+		if (
+			roots.some((root) => insideSkillRoot(canonical, root)) ||
+			allowed.files.includes(canonical) ||
+			(directory && allowed.files.some((file) => insideSkillRoot(file, canonical)))
+		)
+			return canonical;
+	} catch {
+		throw new BlockedSkillLinkError(path, "unresolvable target");
+	}
 	throw new BlockedSkillLinkError(path, canonical);
 }
 /**
@@ -84,14 +102,15 @@ export function authorizeSkillPath(
  * some concurrent swaps, not ancestor replacement after canonicalization.
  * The guarantee is for the design's unchanged-filesystem threat model.
  */
-export function readSkillFileChecked(
-	path: string, provenance?: SkillProvenance, allowed?: SkillAllowedSet,
-): string {
+export function readSkillFileChecked(path: string, provenance?: SkillProvenance, allowed?: SkillAllowedSet): string {
 	if (provenance === undefined || provenance.kind === "user") return readFileSync(path, "utf8");
 	const canonical = authorizeSkillPath(path, provenance, allowed);
 	let descriptor: number;
-	try { descriptor = openSync(canonical, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)); }
-	catch { throw new BlockedSkillLinkError(path, canonical); }
+	try {
+		descriptor = openSync(canonical, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+	} catch {
+		throw new BlockedSkillLinkError(path, canonical);
+	}
 	try {
 		const opened = fstatSync(descriptor);
 		const current = statSync(canonical);
@@ -99,5 +118,7 @@ export function readSkillFileChecked(
 			throw new BlockedSkillLinkError(path, canonical);
 		}
 		return readFileSync(descriptor, "utf8");
-	} finally { closeSync(descriptor); }
+	} finally {
+		closeSync(descriptor);
+	}
 }

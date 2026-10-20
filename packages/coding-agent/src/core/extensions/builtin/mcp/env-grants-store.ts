@@ -70,21 +70,35 @@ const namePattern = /^[^=\0]+$/;
 const digestPattern = /^[a-f0-9]{64}$/;
 
 export function resolveGrantsStorePath(configDir?: string): string {
-	return join(resolve(configDir ?? join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "omo")),
-		"mcp-env-grants.json");
+	return join(
+		resolve(configDir ?? join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "omo")),
+		"mcp-env-grants.json",
+	);
 }
 function record(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function parse(value: unknown): GrantSnapshot | undefined {
-	if (!record(value) || value.version !== 1 || !Number.isSafeInteger(value.generation) ||
-		typeof value.generation !== "number" || value.generation < 0 || !record(value.grants)) return;
+	if (
+		!record(value) ||
+		value.version !== 1 ||
+		!Number.isSafeInteger(value.generation) ||
+		typeof value.generation !== "number" ||
+		value.generation < 0 ||
+		!record(value.grants)
+	)
+		return;
 	const grants: Record<string, Grant> = {};
 	for (const [digest, entry] of Object.entries(value.grants)) {
 		if (!digestPattern.test(digest) || !record(entry) || !record(entry.label) || !Array.isArray(entry.names)) return;
 		const { project, skill, server } = entry.label;
-		if (typeof project !== "string" || typeof skill !== "string" || typeof server !== "string" ||
-			!entry.names.every((name): name is string => typeof name === "string" && namePattern.test(name))) return;
+		if (
+			typeof project !== "string" ||
+			typeof skill !== "string" ||
+			typeof server !== "string" ||
+			!entry.names.every((name): name is string => typeof name === "string" && namePattern.test(name))
+		)
+			return;
 		grants[digest] = { label: { project, skill, server }, names: [...new Set(entry.names)].sort() };
 	}
 	return { version: 1, generation: value.generation, grants };
@@ -96,7 +110,9 @@ async function state(path: string): Promise<StoreState> {
 			const info = await file.stat();
 			const snapshot = parse(JSON.parse(await file.readFile("utf8")));
 			return { snapshot: snapshot ?? empty(), inode: `${info.dev}:${info.ino}`, valid: snapshot !== undefined };
-		} finally { await file.close(); }
+		} finally {
+			await file.close();
+		}
 	} catch {
 		// Missing, corrupt, or unreadable grants never authorize a name.
 		return { snapshot: empty(), inode: undefined, valid: false };
@@ -107,8 +123,12 @@ export async function read(path = resolveGrantsStorePath()): Promise<GrantSnapsh
 }
 function canonical(value: unknown): string {
 	if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
-	if (record(value)) return `{${Object.keys(value).filter((key) => value[key] !== undefined).sort()
-		.map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`;
+	if (record(value))
+		return `{${Object.keys(value)
+			.filter((key) => value[key] !== undefined)
+			.sort()
+			.map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`)
+			.join(",")}}`;
 	return JSON.stringify(value) ?? "null";
 }
 export function declarationDigest(identity: unknown): string {
@@ -117,7 +137,8 @@ export function declarationDigest(identity: unknown): string {
 async function update(path: string, mutate: (grants: Record<string, Grant>) => void): Promise<GrantSnapshot> {
 	await mkdir(dirname(path), { recursive: true, mode: 0o700 });
 	const release = await lockfile.lock(path, {
-		realpath: false, stale: 30_000,
+		realpath: false,
+		stale: 30_000,
 		retries: { retries: 100, factor: 1.2, minTimeout: 20, maxTimeout: 200 },
 	});
 	const temporary = join(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`);
@@ -128,20 +149,36 @@ async function update(path: string, mutate: (grants: Record<string, Grant>) => v
 		const next: GrantSnapshot = { version: 1, generation: previous.generation + 1, grants };
 		if (!Number.isSafeInteger(next.generation)) throw new RangeError("MCP grant generation exhausted");
 		const file = await open(temporary, "wx", 0o600);
-		try { await file.writeFile(`${JSON.stringify(next)}\n`); await file.sync(); }
-		finally { await file.close(); }
+		try {
+			await file.writeFile(`${JSON.stringify(next)}\n`);
+			await file.sync();
+		} finally {
+			await file.close();
+		}
 		await rename(temporary, path);
 		if (process.platform !== "win32") {
 			const directory = await open(dirname(path), "r");
-			try { await directory.sync(); } finally { await directory.close(); }
+			try {
+				await directory.sync();
+			} finally {
+				await directory.close();
+			}
 		}
 		return next;
 	} finally {
-		try { await rm(temporary, { force: true }); }
-		finally { await release(); }
+		try {
+			await rm(temporary, { force: true });
+		} finally {
+			await release();
+		}
 	}
 }
-export function addGrant(path: string, digest: string, label: GrantLabel, names: readonly string[]): Promise<GrantSnapshot> {
+export function addGrant(
+	path: string,
+	digest: string,
+	label: GrantLabel,
+	names: readonly string[],
+): Promise<GrantSnapshot> {
 	if (!digestPattern.test(digest) || names.some((name) => !namePattern.test(name))) {
 		return Promise.reject(new TypeError("Invalid MCP grant identity or variable name"));
 	}
@@ -159,7 +196,8 @@ export function revoke(path: string, digest: string, names?: readonly string[]):
 	});
 }
 export async function list(path = resolveGrantsStorePath()): Promise<readonly (Grant & { readonly digest: string })[]> {
-	return Object.entries((await read(path)).grants).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
+	return Object.entries((await read(path)).grants)
+		.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
 		.map(([digest, grant]) => ({ digest, ...grant }));
 }
 export async function observe(path: string, listener: (event: GrantObservation) => void): Promise<() => void> {
@@ -171,8 +209,11 @@ export async function observe(path: string, listener: (event: GrantObservation) 
 	const arm = async () => {
 		let directory = dirname(path);
 		for (;;) {
-			try { if ((await stat(directory)).isDirectory()) break; }
-			catch { /* Watch the closest existing ancestor until the config directory appears. */ }
+			try {
+				if ((await stat(directory)).isDirectory()) break;
+			} catch {
+				/* Watch the closest existing ancestor until the config directory appears. */
+			}
 			const parent = dirname(directory);
 			if (parent === directory) break;
 			directory = parent;
@@ -182,28 +223,44 @@ export async function observe(path: string, listener: (event: GrantObservation) 
 		watchedDirectory = directory;
 		try {
 			watcher = watch(directory, { persistent: false }, () => enqueue());
-			watcher.on("error", () => { watcher?.close(); watcher = undefined; });
-		} catch { watcher = undefined; } // The mandatory poll also covers unavailable fs.watch.
+			watcher.on("error", () => {
+				watcher?.close();
+				watcher = undefined;
+			});
+		} catch {
+			watcher = undefined;
+		} // The mandatory poll also covers unavailable fs.watch.
 	};
 	const reconcile = async () => {
 		if (closed) return;
 		await arm();
 		const current = await state(path);
 		if (closed) return;
-		if (current.valid === previous.valid && current.inode === previous.inode &&
-			declarationDigest(current.snapshot) === declarationDigest(previous.snapshot)) return;
-		const conservative = !current.valid ||
+		if (
+			current.valid === previous.valid &&
+			current.inode === previous.inode &&
+			declarationDigest(current.snapshot) === declarationDigest(previous.snapshot)
+		)
+			return;
+		const conservative =
+			!current.valid ||
 			current.snapshot.generation > previous.snapshot.generation + 1 ||
 			current.snapshot.generation < previous.snapshot.generation ||
 			(current.inode !== previous.inode && current.snapshot.generation <= previous.snapshot.generation);
 		previous = current;
 		listener({ snapshot: current.snapshot, conservative });
 	};
-	const enqueue = () => { queue = queue.then(reconcile, reconcile); };
+	const enqueue = () => {
+		queue = queue.then(reconcile, reconcile);
+	};
 	await arm();
 	listener({ snapshot: previous.snapshot, conservative: false });
 	await reconcile(); // Covers creation/replacement between the initial read and watch registration.
 	const timer = setInterval(enqueue, 5_000);
 	timer.unref();
-	return () => { closed = true; watcher?.close(); clearInterval(timer); };
+	return () => {
+		closed = true;
+		watcher?.close();
+		clearInterval(timer);
+	};
 }
