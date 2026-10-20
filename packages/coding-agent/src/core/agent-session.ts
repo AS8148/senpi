@@ -2000,8 +2000,11 @@ export class AgentSession {
 			await this._agentEventQueue;
 		}
 		const signal = options.signal ?? this.agent.signal;
-		// A call released by Stop never runs: do not ask its hooks (a permission prompt) about it.
-		if ((await this._waitForToolBarrier(toolCall, signal)) && signal?.aborted) return undefined;
+		// A call released by Stop never runs: block it without asking its hooks (a permission prompt) about it.
+		// Callers such as executeTool only honor an explicit block, so returning nothing here would let it run.
+		if ((await this._waitForToolBarrier(toolCall, signal)) && signal?.aborted) {
+			return { block: true, reason: "Operation aborted" };
+		}
 
 		const runner = this._extensionRunner;
 		if (!runner.hasHandlers("tool_call")) {

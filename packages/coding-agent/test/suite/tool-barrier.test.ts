@@ -129,6 +129,46 @@ describe("session tool barrier", () => {
 		expect(harness.session.releaseToolBarrier(BARRIER.id)).toBe(false);
 	});
 
+	it("blocks a nested executeTool call that Stop released, even when its tool_call hook would deny it", async () => {
+		const ran: string[] = [];
+		const hooked: string[] = [];
+		const harness = await setup(ran, [
+			(pi) => {
+				pi.on("tool_call", (event) => {
+					hooked.push(event.toolName);
+					if (event.toolName === "mutate") return { block: true, reason: "denied" };
+					return undefined;
+				});
+				pi.registerTool({
+					name: "outer",
+					label: "outer",
+					description: "Reads, then asks for a write.",
+					parameters: Type.Object({}),
+					workspaceEffect: "read",
+					execute: async () => {
+						try {
+							await pi.executeTool("mutate", {});
+							ran.push("outer-ok");
+						} catch (error) {
+							ran.push(`outer-err:${error instanceof Error ? error.message : String(error)}`);
+						}
+						return { content: [{ type: "text", text: "outer" }], details: {} };
+					},
+				});
+			},
+		]);
+		harness.session.subscribe((event) => {
+			if (event.type === "tool_barrier_waiting") void harness.session.abort();
+		});
+		harness.setResponses([fauxAssistantMessage([fauxToolCall("outer", {})], { stopReason: "toolUse" })]);
+
+		await harness.session.prompt("go", { toolBarrier: BARRIER });
+		await harness.session.waitForIdle();
+
+		expect(ran).not.toContain("mutate");
+		expect(ran).not.toContain("outer-ok");
+	});
+
 	it("opens at the ceiling and reports tool_barrier_expired", async () => {
 		const ran: string[] = [];
 		const harness = await setup(ran);
