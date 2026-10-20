@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { attachmentRig } from "./rpc-attachment-support.ts";
+import { opened } from "./rpc-inprocess-host-metrics.ts";
 import { startWorkerHost } from "./rpc-worker-host-support.ts";
 
 // senpi#3795: reclaim is one synchronous attach-and-claim, never an abort followed by a racy close.
@@ -87,6 +88,46 @@ it("never opens or resumes a vanished path", async () => {
 		error: "unknown_session",
 	});
 	expect(await rig.list()).toEqual([]);
+});
+
+it("reclaims for client A without an extra response or ending client B's live session", async () => {
+	await using rig = await attachmentRig();
+	const ref = await rig.session();
+	const other = opened(await rig.open("client-b", { cwd: rig.dir }), 1);
+	const otherSessionId = other.sessionId;
+	const beforeA = rig.recordsFor("caller").length;
+	const beforeB = rig.recordsFor("client-b").length;
+	const response = await rig.send("caller", { id: "reclaim-a", type: "reclaim_session", ...ref });
+	expect(response).toMatchObject({ id: "reclaim-a", command: "reclaim_session", success: true });
+	expect(rig.recordsFor("caller").slice(beforeA).filter((record) => record.type === "response")).toEqual([]);
+	expect(
+		rig.recordsFor("client-b").slice(beforeB).filter((record) =>
+			record.type === "session_closed" || record.type === "session_parked" ||
+			(record.type === "response" && record.command === "close_session")),
+	).toEqual([]);
+	expect(await rig.list()).toEqual([
+		expect.objectContaining({ sessionId: otherSessionId, status: "open", attachments: 1 }),
+	]);
+	expect(await rig.close("client-b", otherSessionId)).toMatchObject({ success: true });
+});
+
+it("reports lifecycle busy before identity for an opening entry without a runtime", async () => {
+	await using rig = await attachmentRig();
+	const ref = await rig.session();
+	const entry = rig.registry.peek(ref.sessionId);
+	if (!entry) throw new Error("Missing entry");
+	entry.state = "opening";
+	const runtime = entry.runtime;
+	entry.runtime = undefined;
+	try {
+		expect(await rig.send("caller", {
+			id: "opening", type: "reclaim_session", ...ref, durableSessionId: "not-published",
+		})).toMatchObject({ success: false, errorCode: "session_busy_lifecycle" });
+		expect(entry.attachments).toBe(1);
+	} finally {
+		entry.state = "open";
+		entry.runtime = runtime;
+	}
 });
 
 it.each(["in-process", "worker"] as const)(

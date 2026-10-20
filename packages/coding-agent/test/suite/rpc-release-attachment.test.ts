@@ -12,6 +12,7 @@ it("releases one caller hold on one session and keeps the remaining event stream
 		await rig.send("caller", { id: "release", type: "release_attachment", sessionId: ref.sessionId }),
 	).toMatchObject({
 		success: true,
+		data: { deferred: false },
 	});
 	expect(await rig.list()).toEqual([
 		expect.objectContaining({ sessionId: ref.sessionId, attachments: 2 }),
@@ -47,6 +48,7 @@ it("lets a non-retained in-process turn survive owner disconnect followed by tem
 		await rig.drop("owner");
 		expect(await rig.send("temporary", { id: "release", type: "release_attachment", sessionId })).toMatchObject({
 			success: true,
+			data: { deferred: true },
 		});
 		expect(turn.aborted).toBe(false);
 		expect(entry.state).toBe("open");
@@ -59,4 +61,14 @@ it("lets a non-retained in-process turn survive owner disconnect followed by tem
 	} finally {
 		subscribe.mockRestore();
 	}
+});
+
+it("returns deferred false while the host drain owns physical release", async () => {
+	await using rig = await attachmentRig();
+	const ref = await rig.session();
+	rig.router.beginDrain();
+	expect(await rig.send("caller", {
+		id: "draining", type: "release_attachment", sessionId: ref.sessionId,
+	})).toMatchObject({ success: true, data: { deferred: false } });
+	expect(rig.registry.peek(ref.sessionId)?.attachments).toBe(1);
 });

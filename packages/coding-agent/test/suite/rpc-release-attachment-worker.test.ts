@@ -32,7 +32,7 @@ it("defers the last worker release after the original owner drops mid-turn", asy
 			sessionId: row.sessionId,
 		}),
 	);
-	expect(release).toMatchObject({ success: true });
+	expect(release).toMatchObject({ success: true, data: { deferred: true } });
 	expect(host.posted.filter(({ message }) => message.type === "close")).toEqual([]);
 	await host.client(row.sessionId).output({ type: "agent_settled" });
 	await host.client(row.sessionId).activity({ busy: false, streaming: false }, true);

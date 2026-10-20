@@ -49,7 +49,7 @@ describe.each(["in-process", "worker"] as const)("attachment gate (%s)", (sessio
 				success: false,
 				error: "unknown_session",
 			});
-			expect(await stranger.request({ type: "set_session_context", sessionId, context: {} })).toMatchObject({
+			expect(await stranger.request({ type: "set_session_context", sessionId, patch: {} })).toMatchObject({
 				success: false,
 				errorCode: "session_not_attached",
 			});

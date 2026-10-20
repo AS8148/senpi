@@ -34,7 +34,7 @@ it.each(["in-process", "worker"] as const)(
 			).toMatchObject({ success: false, error: "session_identity_mismatch" });
 			expect(await caller.request({ type: "attach_session", sessionId, durableSessionId })).toMatchObject({
 				success: true,
-				data: { sessionId },
+				data: { sessionId, attached: true },
 			});
 			expect((await caller.request({ type: "list_sessions" })).data?.sessions).toEqual([
 				expect.objectContaining({ sessionId, attachments: 2 }),
