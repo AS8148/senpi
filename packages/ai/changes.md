@@ -2015,3 +2015,21 @@ Upstream manifest edits at the next sync.
 ### Expected merge conflict zones
 
 - LOW: the Kimi K3 cost constants when upstream reprices Kimi models.
+
+## 2026-10-20 - Kimi K3 always bills at the official price on Moonshot endpoints
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: the Moonshot variant loop gives `kimi-k3` the official `KIMI_K3_COST` on `moonshotai` and `moonshotai-cn` instead of preferring the models.dev cost. Other Moonshot models keep the models.dev cost. The catalog was regenerated with `--strict` (every provider), which also carries today's upstream drift: grok-4.3 and grok-4.5 gain the `xhigh` effort models.dev now documents, and Mistral drops 3 deprecated rows.
+
+### Why
+
+- models.dev now lists `moonshotai-cn`'s Kimi K3 at a currency-converted price (2.9879 / 14.9395 / 0.2988 / 2.9879 per 1M) that moves daily. The release job regenerates the catalog live, so the converted price broke the official-price test and failed the 2026.10.20-1 release.
+
+### Why an extension could not handle it
+
+- Built-in model prices are catalog data generated in this package; nothing at runtime can correct them.
+
+### Expected merge conflict zones
+
+- LOW: the Moonshot variant `cost` block when upstream changes how Moonshot prices are sourced.
