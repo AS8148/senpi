@@ -20,13 +20,13 @@ export class SessionCommandRouter {
 		return handle(this.context, command);
 	}
 	beginDrain(): void {
-		return beginDrain(this.context);
+		beginDrain(this.context);
 	}
 	setMemoryPressure(pressure: boolean): void {
 		this.context.memoryPressure = pressure;
 	}
 	sweepIdleSessions(): void {
-		return sweepIdleSessions(this.context);
+		sweepIdleSessions(this.context);
 	}
 	dispose(): Promise<void> {
 		return dispose(this.context);

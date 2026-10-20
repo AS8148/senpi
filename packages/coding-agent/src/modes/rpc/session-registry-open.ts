@@ -12,7 +12,6 @@ import {
 	type PendingClaims,
 	settleClosingReservation,
 	settlePendingClaim,
-	syncRuntimeMetadata,
 	takeCrossGenerationClaim,
 } from "./session-registry-claims.ts";
 import { resolveMovedProfile } from "./session-registry-moved-path.ts";

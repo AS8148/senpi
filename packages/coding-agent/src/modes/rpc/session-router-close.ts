@@ -5,7 +5,6 @@ import { RPC_ERROR_UNKNOWN_SESSION } from "./rpc-types.ts";
 
 import type { RpcSessionBinding } from "./session-binding.ts";
 
-import { releaseSession } from "./session-release.ts";
 import { forgetSessionOwnership, releaseOwnerAttachment } from "./session-router-attachments.ts";
 import type { RouterContext } from "./session-router-context.ts";
 import { code, error } from "./session-router-errors.ts";
