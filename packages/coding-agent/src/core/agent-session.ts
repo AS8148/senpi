@@ -263,6 +263,7 @@ import type {
 	ApplyCompactionResult,
 	CompactionReason,
 	CompactionRejectionCause,
+	FilesystemPolicyChecker,
 	ModelSelectSource,
 } from "./extensions/types.ts";
 import { normalizeToolExposure, RUNTIME_EXTENSION_PATH } from "./extensions/types.ts";
@@ -378,6 +379,11 @@ import {
 } from "./thinking-levels.ts";
 import { resetTimings, time } from "./timings.ts";
 import { type SessionMessageUpdateEvent, withResolvedToolName } from "./tool-call-display-name.ts";
+import {
+	createSessionHostCallHandler,
+	type HostCallTarget,
+	type RegisteredHostCallKind,
+} from "./tool-child-host-calls.ts";
 import { createToolDispatcher, type ToolDispatcher } from "./tool-dispatch/tool-dispatcher.ts";
 import type { BashOperations } from "./tools/bash.ts";
 import { composeFilesystemPolicies } from "./tools/filesystem-policy.ts";
@@ -1371,6 +1377,9 @@ export class AgentSession {
 	private _cwd: string;
 	private _agentDir: string;
 	private readonly _toolChild: SessionToolChild | undefined;
+	private readonly _toolChildHostTargets = new Map<RegisteredHostCallKind, HostCallTarget>();
+	/** The composed filesystem policy the built-in file tools enforce; a tool child's `authorize` asks the same one. */
+	private _filesystemPolicy: FilesystemPolicyChecker | undefined;
 	/** Settles once dispose() has stopped the tool child and swept what it launched. */
 	private _toolChildClosed: Promise<void> = Promise.resolve();
 	private _extensionRunnerRef?: { current?: ExtensionRunner };
@@ -1512,6 +1521,14 @@ export class AgentSession {
 						cwd: this._cwd,
 						moduleRoots: () => toolChildModuleRoots(this._extensionRunner.getAllRegisteredTools()),
 						onRecord: (record) => this._emit({ type: "session_tool_child", ...record }),
+						onHostCall: createSessionHostCallHandler({
+							cwd: this._cwd,
+							executeNested: (parentToolCallId, name, args, signal) =>
+								this._executeNestedToolCall(parentToolCallId, name, args, { signal }),
+							callableToolNames: () => this._callableToolNames(),
+							target: (kind) => this._toolChildHostTargets.get(kind),
+							filesystemPolicy: () => this._filesystemPolicy,
+						}),
 					})
 				: undefined;
 		this._toolDispatcher = createToolDispatcher({
@@ -4490,6 +4507,17 @@ export class AgentSession {
 	 */
 	resolveToolCallName(requested: string): string {
 		return resolveToolNameAlias(requested, this._callableToolNames()) ?? requested;
+	}
+
+	/**
+	 * Serves the tool child's `completion` or `reserved` calls on the server (codemode registers its completion handler and
+	 * `runReservedTool`, which hold `evalHandleHost`). Returns the unregister function; a later registration replaces it.
+	 */
+	registerToolChildHostTarget(kind: RegisteredHostCallKind, target: HostCallTarget): () => void {
+		this._toolChildHostTargets.set(kind, target);
+		return () => {
+			if (this._toolChildHostTargets.get(kind) === target) this._toolChildHostTargets.delete(kind);
+		};
 	}
 
 	async executeTool<TDetails = unknown>(
@@ -10247,6 +10275,7 @@ export class AgentSession {
 		const filesystemPolicy = composeFilesystemPolicies(
 			extensionsResult.extensions.flatMap((extension) => extension.filesystemPolicies ?? []),
 		);
+		this._filesystemPolicy = filesystemPolicy;
 		const baseToolDefinitions = this._baseToolsOverride
 			? Object.fromEntries(
 					Object.entries(this._baseToolsOverride).map(([name, tool]) => [

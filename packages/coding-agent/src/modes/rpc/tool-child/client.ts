@@ -7,6 +7,7 @@
  */
 import type { ChildProcess } from "node:child_process";
 import { once } from "node:events";
+import { join } from "node:path";
 import { openChannelListener, type ToolChildChannel } from "./channel.ts";
 import {
 	type ChildContainment,
@@ -17,11 +18,13 @@ import {
 import { createGenerationBarrier, type GenerationBarrier } from "./client-barrier.ts";
 import { generationLedgerPath } from "./descendants.ts";
 import { TOOL_CHILD_PROTOCOL_VERSION } from "./entry.ts";
+import { type HostCallHandler, type HostCallRefs, ServerHostCalls } from "./host-calls-server.ts";
 import { policyFor } from "./job-policy.ts";
 import { JobSupervisor, type SupervisorTimers } from "./job-supervisor.ts";
 import { spawnToolChild, type ToolChildCommand, toolChildCommand } from "./launch.ts";
 import { recordGenerationChild, sweepStaleGenerations } from "./orphan-sweep.ts";
-import type { ToolChildMessage } from "./protocol.ts";
+import { PayloadRefReader, PayloadRefWriter } from "./payload-ref.ts";
+import { TOOL_CHILD_LIMITS, type ToolChildMessage } from "./protocol.ts";
 
 export type ToolChildState = "none" | "spawning" | "live" | "retiring" | "dead";
 
@@ -51,6 +54,8 @@ export interface ToolChildClientOptions {
 	readonly onStatus?: (status: ToolChildStatus) => void;
 	/** Tests inject a fake clock for the job supervisor. */
 	readonly timers?: SupervisorTimers;
+	/** Serves the child's reverse-bridge calls (tool, completion, reserved, list_tools); unset = every call fails. */
+	readonly onHostCall?: HostCallHandler;
 	/** Observes the child's cancel acknowledgements (tests and status). */
 	readonly onCancelAck?: (jobId: string) => void;
 	/** Read for `SENPI_TOOL_CHILD_DEADLINE_<KIND>_MS` fixture overrides. */
@@ -73,14 +78,37 @@ interface Live {
 	readonly pongs: Map<number, () => void>;
 	readonly barrier: GenerationBarrier;
 	readonly supervisor: JobSupervisor;
+	readonly hostCalls: ServerHostCalls;
+	readonly refs: HostCallRefs;
 	readonly containment: ChildContainment;
 	ended?: Promise<void>;
+}
+
+/**
+ * Sends a job: inline at or below the reference threshold, otherwise by a server-written reference the child acks and
+ * then owns. A job settled (cancelled) while its reference was written never reaches the child, and its reference is
+ * released at once.
+ */
+function sendJob(live: Live, jobId: string, kind: string, args: unknown, failed: (error: unknown) => void): void {
+	const json = args === undefined ? undefined : JSON.stringify(args);
+	if (json === undefined || Buffer.byteLength(json, "utf8") <= TOOL_CHILD_LIMITS.REF_THRESHOLD) {
+		live.channel.send({ type: "job", jobId, kind, args });
+		return;
+	}
+	live.refs.writer.create(Buffer.from(json, "utf8")).then((ref) => {
+		if (live.pending.has(jobId)) live.channel.send({ type: "job", jobId, kind, argsRef: ref });
+		else void live.refs.writer.handle({ type: "ref_nack", refId: ref.refId, reason: "cancelled" });
+	}, failed);
 }
 
 export class ToolChildClient {
 	#state: ToolChildState = "none";
 	#generation = 0;
 	#nextJob = 0;
+	readonly #hostContexts = new Map<string, unknown>();
+	get #refsRoot(): string {
+		return join(this.#options.dir, "refs");
+	}
 	#nextPing = 0;
 	#live: Live | undefined;
 	#lastEnded: Promise<void> = Promise.resolve();
@@ -142,6 +170,7 @@ export class ToolChildClient {
 			env: typeof this.#options.env === "function" ? this.#options.env() : (this.#options.env ?? process.env),
 			command: this.#options.command ?? (await toolChildCommand()),
 			cwd: this.#options.cwd,
+			refsRoot: this.#refsRoot,
 			ledgerPath: generationLedgerPath(this.#options.dir, generation),
 		});
 		let spawnError: Error | undefined;
@@ -229,6 +258,19 @@ export class ToolChildClient {
 			},
 			this.#options.timers,
 		);
+		const onHostCall = this.#options.onHostCall;
+		const refs: HostCallRefs = {
+			writer: new PayloadRefWriter({ root: this.#refsRoot, generation }),
+			reader: new PayloadRefReader({ root: this.#refsRoot, generation, send: (control) => channel.send(control) }),
+		};
+		const hostCalls = new ServerHostCalls(
+			channel,
+			onHostCall ??
+				((request) => Promise.reject(new Error(`no host-call handler for ${request.name ?? request.kind}`))),
+			(jobId) => this.#hostContexts.get(jobId),
+			refs,
+			{ exited, jobLive: (jobId) => pending.has(jobId) },
+		);
 		const live: Live = {
 			generation,
 			child,
@@ -238,6 +280,8 @@ export class ToolChildClient {
 			pongs: new Map(),
 			barrier,
 			supervisor,
+			hostCalls,
+			refs,
 			containment,
 		};
 		this.#live = live;
@@ -251,7 +295,7 @@ export class ToolChildClient {
 		kind: string,
 		args: unknown,
 		signal?: AbortSignal,
-		options: { readonly idempotent?: boolean; readonly deadlineMs?: number } = {},
+		options: { readonly idempotent?: boolean; readonly deadlineMs?: number; readonly hostContext?: unknown } = {},
 	): Promise<unknown> {
 		const live = this.#live;
 		if (this.#state !== "live" || live === undefined)
@@ -259,10 +303,13 @@ export class ToolChildClient {
 		const jobId = `j${++this.#nextJob}`;
 		if (signal?.aborted === true)
 			return Promise.reject(new ToolChildError("tool_child_cancelled", "cancelled before it started"));
+		if (options.hostContext !== undefined) this.#hostContexts.set(jobId, options.hostContext);
 		const policy = policyFor(kind, { ...options, env: this.#options.policyEnv ?? process.env });
 		return new Promise((resolve, reject) => {
 			const done = (finish: () => void) => () => {
 				live.supervisor.settle(jobId);
+				live.hostCalls.endJob(jobId);
+				this.#hostContexts.delete(jobId);
 				finish();
 			};
 			live.pending.set(jobId, {
@@ -275,7 +322,16 @@ export class ToolChildClient {
 				userText: policy.userText,
 				...(signal === undefined ? {} : { signal }),
 			});
-			live.channel.send({ type: "job", jobId, kind, args });
+			sendJob(live, jobId, kind, args, (error) =>
+				settle(live, jobId, (pending) =>
+					pending.reject(
+						new ToolChildError(
+							"tool_child_args_unwritable",
+							error instanceof Error ? error.message : String(error),
+						),
+					),
+				),
+			);
 		});
 	}
 
@@ -310,6 +366,11 @@ export class ToolChildClient {
 	#onFrame(live: Live, frame: ToolChildMessage): void {
 		if (this.#live !== live) return;
 		if (live.barrier.handle(frame)) return;
+		if (live.hostCalls.handle(frame)) return;
+		if (frame.type === "ref_ack" || frame.type === "ref_nack") {
+			void live.refs.writer.handle(frame);
+			return;
+		}
 		switch (frame.type) {
 			case "result":
 				settle(live, frame.jobId, (p) => p.resolve(frame.value));
@@ -350,7 +411,10 @@ export class ToolChildClient {
 			this.#state = "dead";
 		}
 		this.#options.onStatus?.({ state: "exited", generation: live.generation, pid: live.child.pid ?? -1 });
-		live.ended = live.barrier.teardown(undefined).then(() => live.containment.close());
+		// The containment is closed on every exit, a failed teardown included.
+		live.ended = Promise.all([live.barrier.teardown(undefined), live.refs.writer.teardown()])
+			.finally(() => live.containment.close())
+			.then(() => undefined);
 		this.#lastEnded = live.ended;
 	}
 }
