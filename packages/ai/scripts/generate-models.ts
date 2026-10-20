@@ -670,7 +670,27 @@ const XAI_BUILTIN_EXCLUDED_MODEL_IDS = new Set([
 // Documented per-model xAI reasoning specifications. Grok 4.6 exposes low/medium/high/xhigh;
 // the fixed-reasoning Grok 4.20 variant exposes only `high`. Models without an entry fall back
 // to `applyThinkingLevelMetadata()`'s "no verified effort options" defaults.
+// Grok 4.3 and 4.5 are pinned here rather than taken from models.dev: xAI's reasoning guide documents `xhigh` only on
+// grok-4.6 and later (grok-4.5 treats it as `high`), so neither model offers `xhigh` until xAI's API is verified to accept it.
 const XAI_THINKING_LEVEL_MAPS: Record<string, NonNullable<Model<"openai-responses">["thinkingLevelMap"]>> = {
+	"grok-4.3": {
+		off: "none",
+		minimal: null,
+		low: "low",
+		medium: "medium",
+		high: "high",
+		xhigh: null,
+		max: null,
+	},
+	"grok-4.5": {
+		off: null,
+		minimal: null,
+		low: "low",
+		medium: "medium",
+		high: "high",
+		xhigh: null,
+		max: null,
+	},
 	"grok-4.6": {
 		off: null,
 		minimal: null,
@@ -740,6 +760,20 @@ const modelsDevReasoningOptions = new Map<string, ModelsDevReasoningOption[]>();
 
 function getModelKey(model: Pick<Model<Api>, "provider" | "id">): string {
 	return `${model.provider}:${model.id}`;
+}
+
+// OpenGateway enriches `x-ai/<id>` from models.dev too: drop the efforts the xAI pin rejects so both routes agree.
+function withXaiThinkingPin<T extends { reasoning_options?: ModelsDevReasoningOption[] }>(id: string, source: T): T {
+	const pin = XAI_THINKING_LEVEL_MAPS[id.replace(/^x-ai\//, "")];
+	if (!pin || source.reasoning_options === undefined) return source;
+	const allowed = (value: string | null): boolean =>
+		value === null || value === "default" || (value === "none" ? pin.off !== null : pin[value as keyof typeof pin] != null);
+	return {
+		...source,
+		reasoning_options: source.reasoning_options.map((option) =>
+			option.type === "effort" ? { ...option, values: option.values.filter(allowed) } : option,
+		),
+	};
 }
 
 function recordModelsDevReasoningOptions(provider: string, id: string, sourceModel: ModelsDevModel): void {
@@ -2452,7 +2486,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 				});
-				recordModelsDevReasoningOptions("xai", modelId, m);
+				if (!thinkingLevelMap) recordModelsDevReasoningOptions("xai", modelId, m);
 			}
 		}
 
@@ -3362,7 +3396,7 @@ async function generateModels() {
 	const aiGatewayCatalog = await fetchAiGatewayModels();
 	const radiusModels = await fetchRadiusModels();
 	const openGatewayModels = await fetchOpenGatewayModels(
-		(id, source) => recordModelsDevReasoningOptions("opengateway", id, source),
+		(id, source) => recordModelsDevReasoningOptions("opengateway", id, withXaiThinkingPin(id, source)),
 		{ strict: generatorOptions.strict },
 	);
 

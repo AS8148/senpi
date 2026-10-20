@@ -8,12 +8,14 @@
 
 ### Changed
 
+- The bundled model catalog is refreshed: `deepseek-v4.1-flash-1017` appears on the Alibaba and Qwen token plans and Cloudflare, Venice adds `mercury-3`, several models report lower maximum output tokens (Together Qwen3.6-Plus and Qwen3.7-Max, Vercel AI Gateway DeepSeek V4.1 Flash, OpenRouter Qwen3.5 397B, Qwen3.8 27B, DeepSeek Chat and GLM-5), and Cloudflare Workers AI Gemma 4 26B and Nemotron 3 120B change their thinking levels ([#3806](https://github.com/code-yeongyu/senpi/pull/3806)).
 ### Fixed
 
-- Kimi K3 on the Moonshot China endpoint bills at the official price again ($3 / $15 per 1M tokens), and Grok 4.3 and Grok 4.5 offer the `xhigh` reasoning effort ([#3806](https://github.com/code-yeongyu/senpi/pull/3806)).
 - A ChatGPT subscription failure now carries a `providerDiagnostic` in every shape the backend reports it (an HTTP error, an in-stream `error` event, a `response.failed` event): a usage limit is `quota` and a rate limit `rate_limit`, each with the new optional `resetsAt` (epoch ms) when the backend names the reset, and an unrecognized failure keeps the provider's own lowercase error type as its `code` instead of reading "no code" ([#3771](https://github.com/code-yeongyu/senpi/issues/3771)).
 
 ### Removed
+
+- Mistral `open-mistral-7b`, `open-mixtral-8x22b` and `open-mixtral-8x7b` (deprecated upstream) and Venice `zai-org-glm-4.7-flash` leave the bundled catalog ([#3806](https://github.com/code-yeongyu/senpi/pull/3806)).
 
 ## [2026.10.19-2] - 2026-10-20
 

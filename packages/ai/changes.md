@@ -2016,20 +2016,26 @@ Upstream manifest edits at the next sync.
 
 - LOW: the Kimi K3 cost constants when upstream reprices Kimi models.
 
-## 2026-10-20 - Kimi K3 always bills at the official price on Moonshot endpoints
+## 2026-10-20 - Pin Kimi K3 pricing and Grok 4.3/4.5 efforts against live catalog drift
 
 ### What changed
 
-- `packages/ai/scripts/generate-models.ts`: the Moonshot variant loop gives `kimi-k3` the official `KIMI_K3_COST` on `moonshotai` and `moonshotai-cn` instead of preferring the models.dev cost. Other Moonshot models keep the models.dev cost. The catalog was regenerated with `--strict` (every provider), which also carries today's upstream drift: grok-4.3 and grok-4.5 gain the `xhigh` effort models.dev now documents, and Mistral drops 3 deprecated rows.
+- `packages/ai/scripts/generate-models.ts`: the Moonshot variant loop gives `kimi-k3` the official `KIMI_K3_COST` on `moonshotai` and `moonshotai-cn` instead of preferring the models.dev cost; other Moonshot rows keep the models.dev cost. `XAI_THINKING_LEVEL_MAPS` gains explicit `grok-4.3` (`off: "none"`, low/medium/high) and `grok-4.5` (low/medium/high) entries without `xhigh`; models.dev reasoning options are no longer recorded for xAI models with a pin, and `withXaiThinkingPin` drops the same efforts from OpenGateway's `x-ai/<id>` enrichment.
+- The catalog was regenerated with `--strict` (every provider). Besides the pins, it carries this upstream drift:
+  - Removed: Mistral `open-mistral-7b`, `open-mixtral-8x22b`, `open-mixtral-8x7b` (deprecated upstream) and Venice `zai-org-glm-4.7-flash`.
+  - Added: `deepseek-v4.1-flash-1017` on `alibaba-token-plan`, `qwen-token-plan`, `cloudflare-workers-ai` and `cloudflare-ai-gateway`; Venice `mercury-3`.
+  - Lower `maxTokens`: Together `Qwen/Qwen3.6-Plus` 500000 -> 65536 and `Qwen/Qwen3.7-Max` 500000 -> 131072; Vercel AI Gateway `deepseek/deepseek-v4.1-flash` 1048576 -> 32768; OpenRouter `qwen/qwen3.5-397b-a17b` and `qwen/qwen3.8-27b` 235929 -> 65536, `deepseek/deepseek-chat` 16384 -> 16000, `z-ai/glm-5` 131072 -> 128000.
+  - Thinking levels: Cloudflare Workers AI `@cf/google/gemma-4-26b-a4b-it` loses its map (no `off: "none"`), and `@cf/nvidia/nemotron-3-120b-a12b` drops `medium`.
+  - Prices: `moonshotai-cn` non-K3 rows and `minimax-cn` take the day's currency-converted models.dev prices.
 
 ### Why
 
-- models.dev now lists `moonshotai-cn`'s Kimi K3 at a currency-converted price (2.9879 / 14.9395 / 0.2988 / 2.9879 per 1M) that moves daily. The release job regenerates the catalog live, so the converted price broke the official-price test and failed the 2026.10.20-1 release.
+- The release job regenerates the catalog live. models.dev now lists `moonshotai-cn` Kimi K3 at a converted price that moves daily, and lists `xhigh` for Grok 4.3 and 4.5, while xAI's reasoning guide documents `xhigh` only on grok-4.6 and later (grok-4.5 treats it as `high`). Both broke tests and failed the 2026.10.20-1 release; capabilities now come from the explicit pins, not from models.dev alone.
 
 ### Why an extension could not handle it
 
-- Built-in model prices are catalog data generated in this package; nothing at runtime can correct them.
+- Built-in model prices and reasoning efforts are catalog data generated in this package; nothing at runtime can correct them.
 
 ### Expected merge conflict zones
 
-- LOW: the Moonshot variant `cost` block when upstream changes how Moonshot prices are sourced.
+- LOW: the Moonshot variant `cost` block and `XAI_THINKING_LEVEL_MAPS` when upstream changes how Moonshot prices or xAI efforts are sourced.
