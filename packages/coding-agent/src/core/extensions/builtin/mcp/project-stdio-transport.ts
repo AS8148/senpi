@@ -39,7 +39,7 @@ export class ProjectStdioTransport implements Transport {
 			});
 		const transport = this.#create(spec);
 		this.#current = transport;
-		transport.onmessage = (message, extra) => this.onmessage?.(message, extra);
+		transport.onmessage = (message: JSONRPCMessage) => this.onmessage?.(message);
 		transport.onclose = () => this.onclose?.();
 		transport.onerror = (error) => this.onerror?.(error);
 		transport.stderr?.pipe(this.stderr, { end: false });
