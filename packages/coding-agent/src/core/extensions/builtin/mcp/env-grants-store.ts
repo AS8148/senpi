@@ -32,6 +32,7 @@ import { type FSWatcher, watch } from "node:fs";
 import { mkdir, open, rename, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import lockfile from "proper-lockfile";
 
 export interface GrantLabel {
@@ -155,7 +156,22 @@ async function update(path: string, mutate: (grants: Record<string, Grant>) => v
 		} finally {
 			await file.close();
 		}
-		await rename(temporary, path);
+		for (let attempt = 0; ; attempt++) {
+			try {
+				await rename(temporary, path);
+				break;
+			} catch (error) {
+				// Windows readers (including antivirus) can temporarily deny replacement.
+				if (
+					process.platform !== "win32" ||
+					!record(error) ||
+					!["EPERM", "EACCES", "EBUSY"].includes(String(error.code)) ||
+					attempt >= 5
+				)
+					throw error;
+				await delay(50 * 2 ** attempt);
+			}
+		}
 		if (process.platform !== "win32") {
 			const directory = await open(dirname(path), "r");
 			try {

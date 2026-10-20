@@ -15,7 +15,23 @@ import {
 } from "../../../src/core/extensions/builtin/mcp/env-grants-store.ts";
 
 // node:fs exports are not spy-able in ESM; route watch through a pass-through mock instead.
-const mocks = vi.hoisted(() => ({ fsWatch: vi.fn(), realWatch: undefined as unknown as typeof fs.watch }));
+const mocks = vi.hoisted(() => ({
+	fsWatch: vi.fn(),
+	rename: vi.fn(),
+	delay: vi.fn(),
+	realWatch: undefined as unknown as typeof fs.watch,
+	realRename: undefined as unknown as typeof import("node:fs/promises").rename,
+}));
+vi.mock("node:fs/promises", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:fs/promises")>();
+	mocks.realRename = actual.rename;
+	mocks.rename.mockImplementation(actual.rename);
+	return { ...actual, rename: mocks.rename };
+});
+vi.mock("node:timers/promises", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:timers/promises")>();
+	return { ...actual, setTimeout: mocks.delay };
+});
 vi.mock("node:fs", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("node:fs")>();
 	mocks.realWatch = actual.watch;
@@ -27,11 +43,15 @@ let root: string;
 let stop: (() => void) | undefined;
 const label = { project: "/synthetic/project", skill: "carrier", server: "probe" };
 const identity = declarationDigest({ command: "synthetic-probe" });
+const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
 
 beforeEach(() => {
+	mocks.rename.mockReset().mockImplementation(mocks.realRename);
+	mocks.delay.mockReset().mockResolvedValue(undefined);
 	root = fs.mkdtempSync(join(tmpdir(), "senpi-3796-store-"));
 });
 afterEach(() => {
+	Object.defineProperty(process, "platform", platform);
 	stop?.();
 	stop = undefined;
 	vi.restoreAllMocks();
@@ -111,6 +131,56 @@ it("fails closed and leaves no grant or temporary lock after a failed rename", a
 	expect((await read(path)).grants).toEqual({});
 	expect(fs.readdirSync(root)).toEqual(["mcp-env-grants.json"]);
 });
+
+for (const code of ["EPERM", "EACCES", "EBUSY"]) {
+	it(`retries a Windows ${code} replace without repeating the grant mutation`, async () => {
+		const path = resolveGrantsStorePath(root);
+		await addGrant(path, identity, label, ["OLD"]);
+		Object.defineProperty(process, "platform", { value: "win32" });
+		const error = Object.assign(new Error("synthetic open handle"), { code });
+		mocks.rename.mockClear().mockRejectedValueOnce(error).mockRejectedValueOnce(error);
+		const snapshot = await addGrant(path, identity, label, ["NEW"]);
+		expect(mocks.rename).toHaveBeenCalledTimes(3);
+		expect(mocks.delay.mock.calls.map(([ms]) => ms)).toEqual([50, 100]);
+		expect(snapshot.generation).toBe(2);
+		expect((await read(path)).grants[identity]?.names).toEqual(["NEW", "OLD"]);
+		expect(fs.readdirSync(root)).toEqual(["mcp-env-grants.json"]);
+	});
+}
+
+it("bounds Windows replace retries, preserves the old store and releases the lock", async () => {
+	const path = resolveGrantsStorePath(root);
+	await addGrant(path, identity, label, ["OLD"]);
+	Object.defineProperty(process, "platform", { value: "win32" });
+	const error = Object.assign(new Error("synthetic open handle"), { code: "EPERM" });
+	mocks.rename.mockClear().mockRejectedValue(error);
+	await expect(addGrant(path, identity, label, ["NEW"])).rejects.toBe(error);
+	expect(mocks.rename).toHaveBeenCalledTimes(6);
+	expect(mocks.delay.mock.calls.map(([ms]) => ms)).toEqual([50, 100, 200, 400, 800]);
+	expect((await read(path)).generation).toBe(1);
+	expect((await read(path)).grants[identity]?.names).toEqual(["OLD"]);
+	expect(fs.readdirSync(root)).toEqual(["mcp-env-grants.json"]);
+	mocks.rename.mockImplementation(mocks.realRename);
+	await addGrant(path, identity, label, ["AFTER"]);
+	expect((await read(path)).generation).toBe(2);
+});
+
+for (const [os, code] of [
+	["linux", "EPERM"],
+	["linux", "EACCES"],
+	["linux", "EBUSY"],
+	["win32", "ENOENT"],
+]) {
+	it(`does not retry ${code} on ${os}`, async () => {
+		Object.defineProperty(process, "platform", { value: os });
+		const error = Object.assign(new Error("synthetic rename failure"), { code });
+		mocks.rename.mockRejectedValue(error);
+		await expect(addGrant(resolveGrantsStorePath(root), identity, label, ["NEW"])).rejects.toBe(error);
+		expect(mocks.rename).toHaveBeenCalledTimes(1);
+		expect(mocks.delay).not.toHaveBeenCalled();
+		expect(fs.readdirSync(root)).toEqual([]);
+	});
+}
 
 it("watches creation and atomic replacements from before the store exists", async () => {
 	const path = resolveGrantsStorePath(join(root, "not-created-yet"));
