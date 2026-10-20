@@ -17,6 +17,25 @@ The handoff hint's switch and thresholds are user settings (defaults: on, 200k t
 
 - LOW: one field in `Settings`, one import line, one interface in `settings-shapes.ts`.
 
+## 2026-10-18 - ctx.offload runs registered child modules through the session's dispatcher (senpi#3566 todo 8)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the extension context actions gain `offload(id, args, options)`, which resolves the id among the runner's registered child modules and hands the `module` job to the session's tool dispatcher (`tool-dispatch/offload.ts`); the tool child's module roots now include registered child-module files as well as child-placed tools' modules. On `dispose()` (close or replacement) the session closes its in-process offload jobs with the tool child: a run still loading its module never starts its body (it is registered before the import, and the import wait is abandoned), and any later `offload` fails `offload_session_closed`; each running module is cancelled, every further host call is refused `host_call_session_closed`, and its locks are released when its body settles (at once if it is stuck, else after the grace, with a notice that the module is still running and its locks were released); `whenToolChildClosed()` - which replacement awaits - settles only then. The session builds its host-call handler once and gives it to both the tool child (`onHostCall`) and `createToolDispatcher` (`hostCalls`), so an in-process module's host calls are answered exactly like the child's reverse bridge.
+- `packages/coding-agent/src/core/tool-dispatch/offload.ts`, `tool-dispatcher.ts`: the in-process path runs the export with `(args, host)` - the same `createModuleHost` object the child's worker builds (`modes/rpc/tool-child/module-host.ts`), its calls sent to that handler - and fails `tool_child_deadline` when `deadlineMs` passes - the module is cancelled and refused new host calls, but its job, and every file lock it still holds, ends only when its body settles, so no second writer interleaves with a write still running; its calls go through the child's per-job `HostCallAdmission`, the cancel reaches every call but the lock calls, and calls still running are signalled when the job ends; in-process modules get the child's deadline (the caller's, at most `OFFLOAD_MAX_MS`), and one still running a grace (`stuckGraceMs`, 10 s) past it is reported stuck: its locks stay held, every waiter on them fails `file_locked_by_stuck_module`, and the session emits `offload_module_stuck` naming the module and the files; `offload` rejects a `deadlineMs` that is not a finite number above 0 with `offload_bad_options` (senpi#3622 review).
+
+### Why
+
+Extensions need to run their own CPU-bound or blocking work off the host's event loop without a third execution path; the dispatcher already chooses the child (`--tool-runtime child`) or this process (`in-process`).
+
+### Why an extension could not handle it
+
+The context actions and the tool child's module roots are built inside the session; an extension cannot reach the dispatcher or grant its module to the child.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the `offload` entry beside `getModel` in the context actions, the `moduleRoots` provider of the tool child, the shared `hostCalls` handler and `onModuleStuck` before `this._toolChild`, the `offload_module_stuck` event in `AgentSessionEvent`, and the dispatcher close beside the tool child's in `dispose()`.
+
 ## 2026-10-18 - A session answers its tool child's host calls (senpi#3566 todo 7)
 
 ### What changed

@@ -52,7 +52,7 @@ const SAMPLES: ToolChildMessage[] = [
 			{ id: "e2", parentId: "e1", lineOffset: 121, lineBytes: 4096, lineDelta: -3500 },
 		],
 	},
-	{ type: "hello", generation: 3, pid: 99, protocol: 1 },
+	{ type: "hello", generation: 3, pid: 99, protocol: 2, jobKinds: ["module"] },
 	{ type: "hello_ack", generation: 3 },
 	{ type: "heartbeat", seq: 7 },
 	{ type: "job", jobId: "j1", kind: "read", args: { path: "a\nb.txt" } },

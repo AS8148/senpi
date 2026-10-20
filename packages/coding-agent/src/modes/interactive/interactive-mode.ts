@@ -5534,6 +5534,10 @@ export class InteractiveMode {
 				this.showError(sanitizeTerminalLabel(event.errorMessage));
 				break;
 
+			case "offload_module_stuck":
+				this.showWarning(sanitizeTerminalLabel(event.notice));
+				break;
+
 			case "transcript_write_failed": {
 				if (this.transcriptWriteNoticeShown) break;
 				this.transcriptWriteNoticeShown = true;

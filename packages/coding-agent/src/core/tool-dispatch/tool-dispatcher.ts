@@ -13,8 +13,11 @@
 import { dirname, isAbsolute, resolve } from "node:path";
 import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import type { ToolRuntimeKind } from "../../cli/tool-runtime.ts";
+import type { HostCallHandler } from "../../modes/rpc/tool-child/host-calls-server.ts";
 import type { ExtensionToolContext, ToolDefinition, ToolPlacement } from "../extensions/types.ts";
 import { type BashOperations, createLocalBashOperations } from "../tools/bash.ts";
+import { type InProcessRun, runModuleInProcess, type StuckModuleNotice } from "./in-process-module.ts";
+import { OffloadError } from "./offload.ts";
 
 export type { ToolPlacement } from "../extensions/types.ts";
 
@@ -53,6 +56,16 @@ export interface ToolChildModuleJob {
 	readonly args: unknown;
 	/** A lost job is retried once on a fresh child only when this is true. */
 	readonly idempotent?: boolean;
+	/** Overrides the job's default deadline (`ctx.offload`'s `deadlineMs`). */
+	readonly deadlineMs?: number;
+}
+
+/** Where an offloaded module ran, and what it returned. */
+export interface OffloadOutcome {
+	readonly value: unknown;
+	readonly placement: ToolPlacement;
+	readonly pid: number;
+	readonly generation: number;
 }
 
 export interface ToolChildRunResult {
@@ -68,6 +81,12 @@ export interface ToolDispatcherOptions {
 	runtime: ToolRuntimeKind;
 	notify?: ToolDispatchNotify;
 	childRunner?: ToolChildRunner;
+	/** The session's host-call handler: an in-process `ctx.offload` module gets the same host the child's worker builds. */
+	hostCalls?: HostCallHandler;
+	/** How long past its deadline an in-process module may run before it is reported stuck (default 10 s). */
+	stuckGraceMs?: number;
+	/** Told when an in-process module is stuck (it keeps its locks; their waiters fail fast). */
+	onModuleStuck?: (notice: StuckModuleNotice) => void;
 }
 
 export interface ToolDispatcher {
@@ -77,7 +96,13 @@ export interface ToolDispatcher {
 	): Promise<AgentToolResult<TDetails | ToolUnavailableDetails>>;
 	bashOperations(options?: { shellPath?: string }): BashOperations;
 	onDispatched(observer: ToolDispatchObserver): () => void;
+	/** Runs a registered child module (`ctx.offload`) where this runtime places it. */
+	offload(job: ToolChildModuleJob, signal: AbortSignal | undefined): Promise<OffloadOutcome>;
+	/** The session is closed or replaced: work this runtime still runs in this process is closed; settles once it let go. */
+	dispose(): Promise<void>;
 }
+
+type InProcessDispatchOptions = Pick<ToolDispatcherOptions, "hostCalls" | "stuckGraceMs" | "onModuleStuck">;
 
 /**
  * Placement of one call: only a definition that opted into `"child"` while the
@@ -102,6 +127,12 @@ abstract class BaseToolDispatcher implements ToolDispatcher {
 	): Promise<AgentToolResult<TDetails | ToolUnavailableDetails>>;
 
 	abstract bashOperations(options?: { shellPath?: string }): BashOperations;
+
+	dispose(): Promise<void> {
+		return Promise.resolve();
+	}
+
+	abstract offload(job: ToolChildModuleJob, signal: AbortSignal | undefined): Promise<OffloadOutcome>;
 
 	private readonly observers = new Set<ToolDispatchObserver>();
 	private readonly pinNotified = new Set<string>();
@@ -150,6 +181,20 @@ abstract class BaseToolDispatcher implements ToolDispatcher {
 
 export class InProcessToolDispatcher extends BaseToolDispatcher {
 	readonly kind: ToolRuntimeKind = "in-process";
+	readonly #options: InProcessDispatchOptions;
+	readonly #live = new Set<InProcessRun>();
+	#disposed = false;
+
+	constructor(notify?: ToolDispatchNotify, options: InProcessDispatchOptions = {}) {
+		super(notify);
+		this.#options = options;
+	}
+
+	/** Closes every in-process module run still live; settles once each has released its locks (`InProcessRun.close`). */
+	override async dispose(): Promise<void> {
+		this.#disposed = true;
+		await Promise.all([...this.#live].map((run) => run.close()));
+	}
 
 	run<TDetails>(call: ToolDispatchCall<TDetails>): Promise<AgentToolResult<TDetails>> {
 		return this.runOnServer(call);
@@ -157,6 +202,21 @@ export class InProcessToolDispatcher extends BaseToolDispatcher {
 
 	bashOperations(options?: { shellPath?: string }): BashOperations {
 		return createLocalBashOperations(options);
+	}
+
+	async offload(job: ToolChildModuleJob, signal: AbortSignal | undefined): Promise<OffloadOutcome> {
+		if (this.#disposed) throw new OffloadError("offload_session_closed", `${job.modulePath}: the session was closed`);
+		return {
+			value: await runModuleInProcess(job, signal, {
+				...(this.#options.hostCalls === undefined ? {} : { hostCalls: this.#options.hostCalls }),
+				...(this.#options.stuckGraceMs === undefined ? {} : { stuckGraceMs: this.#options.stuckGraceMs }),
+				...(this.#options.onModuleStuck === undefined ? {} : { onStuck: this.#options.onModuleStuck }),
+				live: this.#live,
+			}),
+			placement: "server",
+			pid: process.pid,
+			generation: 0,
+		};
 	}
 }
 
@@ -199,12 +259,20 @@ export class ChildToolDispatcher extends BaseToolDispatcher {
 	bashOperations(): BashOperations {
 		return unavailableBashOperations();
 	}
+
+	/** Always on the session's child, started on demand; never in-process (no fallback). */
+	async offload(job: ToolChildModuleJob, signal: AbortSignal | undefined): Promise<OffloadOutcome> {
+		if (this.#childRunner === undefined)
+			throw new OffloadError("tool_runtime_unavailable", "this session has no tool child to run the module on");
+		const { value, pid, generation } = await this.#childRunner(job, signal);
+		return { value, placement: "child", pid, generation };
+	}
 }
 
 export function createToolDispatcher(options: ToolDispatcherOptions): ToolDispatcher {
 	return options.runtime === "child"
 		? new ChildToolDispatcher(options.notify, options.childRunner)
-		: new InProcessToolDispatcher(options.notify);
+		: new InProcessToolDispatcher(options.notify, options);
 }
 
 function childModuleJob(call: {

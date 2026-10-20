@@ -75,7 +75,8 @@ export const KIND_POLICIES: Readonly<Record<string, KindPolicy>> = {
 	"eval.cell": { backstopMs: () => undefined, idempotent: false, userText: "The cell was stopped." },
 };
 
-const OFFLOAD_MAX_MS = 300_000;
+/** The longest a `module` / `offload.*` job may run, on the child and in-process alike. */
+export const OFFLOAD_MAX_MS = 300_000;
 const MODULE_KIND = "module";
 
 /** The policy for one job: the table, `offload.<id>` / `module` (caller value, max 300 s), or a `qa.*` fixture kind. */
