@@ -60,11 +60,13 @@ export const attachmentWireResponse = z.union([
 		"get_protocol_info",
 		z
 			.object({
-				capabilities: z.array(z.string()).refine((names) =>
-					["attach_session", "release_attachment", "release_caller_aware", "reclaim_session"].every((name) =>
-						names.includes(name),
+				capabilities: z
+					.array(z.string())
+					.refine((names) =>
+						["attach_session", "release_attachment", "release_caller_aware", "reclaim_session"].every((name) =>
+							names.includes(name),
+						),
 					),
-				),
 				auth: auth.optional(),
 			})
 			.passthrough()

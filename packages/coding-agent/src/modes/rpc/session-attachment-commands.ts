@@ -52,7 +52,7 @@ export function attachSession(
 			type: "response",
 			command: command.type,
 			success: true,
-			data: { sessionId: command.sessionId, durableSessionId: command.durableSessionId },
+			data: { sessionId: command.sessionId, attached: true },
 		};
 	} catch (cause) {
 		return error(command.id, command.type, code(cause), detail(cause) ?? {});
@@ -68,8 +68,8 @@ export async function releaseAttachment(
 		return error(command.id, command.type, "session_not_attached", {});
 	releaseOwnerAttachment(host, owner, command.sessionId);
 	// The drain owns every outstanding physical hold until its park; never preempt it.
-	if (!host.draining) await releaseDisconnectAttachment(host, command.sessionId);
-	return { id: command.id, type: "response", command: command.type, success: true, data: { released: true } };
+	const deferred = !host.draining && (await releaseDisconnectAttachment(host, command.sessionId));
+	return { id: command.id, type: "response", command: command.type, success: true, data: { deferred } };
 }
 
 export async function reclaimSession(
@@ -84,13 +84,13 @@ export async function reclaimSession(
 		.find((candidate) => candidate.sessionPath !== undefined && canonicalSessionPath(candidate.sessionPath) === key);
 	const entry = row && host.registry.peek(row.sessionId);
 	if (!row || !entry) return error(command.id, command.type, "unknown_session", {});
+	if (entry.state !== "open" || !host.bindings.has(row.sessionId))
+		return error(command.id, command.type, "session_busy_lifecycle", {});
 	if (
 		typeof command.expectedHostInstance !== "string" ||
 		!identityMatches(host, entry, command.durableSessionId, command.expectedHostInstance)
 	)
 		return error(command.id, command.type, "session_identity_mismatch", {});
-	if (entry.state !== "open" || !host.bindings.has(row.sessionId))
-		return error(command.id, command.type, "session_busy_lifecycle", {});
 	const owner = host.writer.currentConnection();
 	if (owner === undefined) return error(command.id, command.type, "session_not_attached", {});
 	const own = host.sessionsByConnection.get(owner)?.get(row.sessionId) ?? 0;
@@ -107,15 +107,10 @@ export async function reclaimSession(
 		const binding = host.bindings.get(row.sessionId);
 		binding?.cancelPendingExtensionUiRequests?.();
 		await finalizeClose(host, row.sessionId, binding, () =>
-			host.writer.closeSession(
+			host.writer.sealLifecycle(
 				row.sessionId,
-				{
-					type: "response",
-					command: "close_session",
-					success: true,
-					data: {},
-				},
-				"client_close",
+				{ type: "session_closed", sessionId: row.sessionId, reason: "client_close" },
+				true,
 			),
 		);
 	}

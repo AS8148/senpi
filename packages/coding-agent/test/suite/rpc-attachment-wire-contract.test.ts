@@ -8,11 +8,18 @@ it("validates every attachment and capability response against wire contract v1"
 	const responses: unknown[] = [];
 	responses.push(await rig.send("caller", { id: "protocol", type: "get_protocol_info" }));
 	responses.push(await rig.send("other", { id: "unknown", type: "attach_session", ...ref, sessionId: "gone" }));
-	responses.push(await rig.send("other", { id: "identity", type: "attach_session", ...ref, durableSessionId: "stale" }));
+	responses.push(
+		await rig.send("other", { id: "identity", type: "attach_session", ...ref, durableSessionId: "stale" }),
+	);
 	responses.push(await rig.send("other", { id: "attach", type: "attach_session", ...ref }));
 	responses.push(await rig.send("caller", { id: "foreign", type: "reclaim_session", ...ref }));
 	responses.push(
-		await rig.send("caller", { id: "foreign-release", type: "release_session", sessionId: ref.sessionId, reason: "takeover" }),
+		await rig.send("caller", {
+			id: "foreign-release",
+			type: "release_session",
+			sessionId: ref.sessionId,
+			reason: "takeover",
+		}),
 	);
 	responses.push(await rig.send("other", { id: "release", type: "release_attachment", sessionId: ref.sessionId }));
 	responses.push(await rig.send("other", { id: "no-hold", type: "release_attachment", sessionId: ref.sessionId }));
@@ -20,7 +27,12 @@ it("validates every attachment and capability response against wire contract v1"
 	responses.push(await rig.send("caller", { id: "gone", type: "reclaim_session", ...ref }));
 	const release = await rig.session();
 	responses.push(
-		await rig.send("caller", { id: "handoff", type: "release_session", sessionId: release.sessionId, reason: "takeover" }),
+		await rig.send("caller", {
+			id: "handoff",
+			type: "release_session",
+			sessionId: release.sessionId,
+			reason: "takeover",
+		}),
 	);
 	// Do not hide unsolicited responses emitted while a command finalizes.
 	responses.push(...rig.records().filter((record) => record.type === "response"));

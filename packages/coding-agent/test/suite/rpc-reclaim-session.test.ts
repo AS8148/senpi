@@ -99,11 +99,22 @@ it("reclaims for client A without an extra response or ending client B's live se
 	const beforeB = rig.recordsFor("client-b").length;
 	const response = await rig.send("caller", { id: "reclaim-a", type: "reclaim_session", ...ref });
 	expect(response).toMatchObject({ id: "reclaim-a", command: "reclaim_session", success: true });
-	expect(rig.recordsFor("caller").slice(beforeA).filter((record) => record.type === "response")).toEqual([]);
 	expect(
-		rig.recordsFor("client-b").slice(beforeB).filter((record) =>
-			record.type === "session_closed" || record.type === "session_parked" ||
-			(record.type === "response" && record.command === "close_session")),
+		rig
+			.recordsFor("caller")
+			.slice(beforeA)
+			.filter((record) => record.type === "response"),
+	).toEqual([]);
+	expect(
+		rig
+			.recordsFor("client-b")
+			.slice(beforeB)
+			.filter(
+				(record) =>
+					record.type === "session_closed" ||
+					record.type === "session_parked" ||
+					(record.type === "response" && record.command === "close_session"),
+			),
 	).toEqual([]);
 	expect(await rig.list()).toEqual([
 		expect.objectContaining({ sessionId: otherSessionId, status: "open", attachments: 1 }),
@@ -120,9 +131,14 @@ it("reports lifecycle busy before identity for an opening entry without a runtim
 	const runtime = entry.runtime;
 	entry.runtime = undefined;
 	try {
-		expect(await rig.send("caller", {
-			id: "opening", type: "reclaim_session", ...ref, durableSessionId: "not-published",
-		})).toMatchObject({ success: false, errorCode: "session_busy_lifecycle" });
+		expect(
+			await rig.send("caller", {
+				id: "opening",
+				type: "reclaim_session",
+				...ref,
+				durableSessionId: "not-published",
+			}),
+		).toMatchObject({ success: false, errorCode: "session_busy_lifecycle" });
 		expect(entry.attachments).toBe(1);
 	} finally {
 		entry.state = "open";

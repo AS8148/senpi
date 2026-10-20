@@ -67,8 +67,12 @@ it("returns deferred false while the host drain owns physical release", async ()
 	await using rig = await attachmentRig();
 	const ref = await rig.session();
 	rig.router.beginDrain();
-	expect(await rig.send("caller", {
-		id: "draining", type: "release_attachment", sessionId: ref.sessionId,
-	})).toMatchObject({ success: true, data: { deferred: false } });
+	expect(
+		await rig.send("caller", {
+			id: "draining",
+			type: "release_attachment",
+			sessionId: ref.sessionId,
+		}),
+	).toMatchObject({ success: true, data: { deferred: false } });
 	expect(rig.registry.peek(ref.sessionId)?.attachments).toBe(1);
 });

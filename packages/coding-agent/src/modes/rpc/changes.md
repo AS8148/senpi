@@ -7029,3 +7029,22 @@ The classic capability list in `connection-handler.ts`.
 - `packages/coding-agent/src/modes/rpc/session-registry.ts`, `worker-session-registry.ts`: live-only attach and extracted open implementations.
 - `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: the four attachment capability strings.
 - `packages/coding-agent/src/modes/rpc/rpc-types.ts`: public re-exports; preserve existing names and field shapes in the extracted definitions.
+## 2026-10-21 - Attachment replies follow wire contract v1 and reclaim emits no close reply (senpi#3795)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/attachment-types.ts` and `packages/coding-agent/src/modes/rpc/session-attachment-commands.ts`: `attach_session` returns `{ sessionId, attached: true }`; `release_attachment` returns the computed `{ deferred }`, false during drain. Reclaim checks lifecycle before identity and seals without an unsolicited `close_session` response.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: exposes the existing lifecycle-only seal with attachment-scoped delivery for reclaim. Other clients keep their sessions and receive no reclaim close/end frame.
+- `packages/coding-agent/src/modes/rpc/session-router-attachments.ts`: `close_session` stops the caller's event fanout only on its last hold, so a connection with repeated holds retains its stream until the final release.
+
+### Why
+
+- The binding wire contract is shared with downstream clients. The previous success payloads diverged, and reclaim answered a close the caller never requested.
+
+### Why an extension could not handle it
+
+- Wire responses, lifecycle sealing and per-connection attachment counts are host-owned protocol operations.
+
+### Expected merge conflict zones
+
+- Attachment success types, `releaseAttachment` / `reclaimSession`, lifecycle-only sealing, and last-hold fanout accounting.

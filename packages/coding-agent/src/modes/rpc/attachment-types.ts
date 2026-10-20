@@ -22,14 +22,14 @@ export type RpcAttachmentResponse =
 			readonly type: "response";
 			readonly command: "attach_session";
 			readonly success: true;
-			readonly data: { readonly sessionId: string; readonly durableSessionId: string };
+			readonly data: { readonly sessionId: string; readonly attached: true };
 	  }
 	| {
 			readonly id?: string;
 			readonly type: "response";
 			readonly command: "release_attachment";
 			readonly success: true;
-			readonly data: { readonly released: true };
+			readonly data: { readonly deferred: boolean };
 	  }
 	| {
 			readonly id?: string;

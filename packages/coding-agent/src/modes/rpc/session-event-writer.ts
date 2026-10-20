@@ -565,7 +565,7 @@ export class SessionEventWriter {
 	 * no close response to answer.
 	 */
 	parkSession(sessionId: string, sessionPath: string, reason: "idle" | "unloaded"): void {
-		this.sealWithLifecycle(sessionId, { type: "session_parked", sessionId, sessionPath, reason });
+		this.sealLifecycle(sessionId, { type: "session_parked", sessionId, sessionPath, reason });
 	}
 
 	/**
@@ -575,7 +575,7 @@ export class SessionEventWriter {
 	 * the `release_session` response, so there is no close response either.
 	 */
 	releaseSession(sessionId: string, sessionPath: string): void {
-		this.sealWithLifecycle(sessionId, { type: "session_closed", sessionId, reason: "released", sessionPath });
+		this.sealLifecycle(sessionId, { type: "session_closed", sessionId, reason: "released", sessionPath });
 	}
 
 	/**
@@ -584,7 +584,7 @@ export class SessionEventWriter {
 	 * response is owed to anyone.
 	 */
 	sealRolledBackOpen(sessionId: string, sessionPath: string | undefined): void {
-		this.sealWithLifecycle(sessionId, {
+		this.sealLifecycle(sessionId, {
 			type: "session_closed",
 			sessionId,
 			reason: "error",
@@ -592,13 +592,13 @@ export class SessionEventWriter {
 		});
 	}
 
-	private sealWithLifecycle(sessionId: string, lifecycle: RpcSessionParkedEvent | RpcSessionClosedEvent): void {
+	sealLifecycle(sessionId: string, lifecycle: RpcSessionParkedEvent | RpcSessionClosedEvent, attachedOnly = false): void {
 		if (!this.settleBeforeSeal(sessionId)) return;
 		this.sealedSessions.add(sessionId);
 		this.fanout.forgetSession(sessionId);
 		this.mediaPersisters.delete(sessionId);
 		if (this.fanout.isEmpty()) this.appendSessionRecord(sessionId, lifecycle);
-		else if (this.workerSessions.has(sessionId))
+		else if (attachedOnly || this.workerSessions.has(sessionId))
 			this.fanout.deliverToSession(sessionId, serializeJsonLine(lifecycle));
 		else this.fanout.broadcast(serializeJsonLine(lifecycle));
 		this.sealStatus(sessionId, lifecycle);
