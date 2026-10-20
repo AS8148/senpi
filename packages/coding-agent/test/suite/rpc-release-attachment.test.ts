@@ -66,6 +66,9 @@ it("lets a non-retained in-process turn survive owner disconnect followed by tem
 it("returns deferred false while the host drain owns physical release", async () => {
 	await using rig = await attachmentRig();
 	const ref = await rig.session();
+	const turn = rig.turns.get(ref.sessionPath);
+	if (!turn) throw new Error("Missing turn");
+	turn.start();
 	rig.router.beginDrain();
 	expect(
 		await rig.send("caller", {
@@ -75,4 +78,6 @@ it("returns deferred false while the host drain owns physical release", async ()
 		}),
 	).toMatchObject({ success: true, data: { deferred: false } });
 	expect(rig.registry.peek(ref.sessionId)?.attachments).toBe(1);
+	expect(turn.aborted).toBe(false);
+	turn.finish();
 });
