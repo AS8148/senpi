@@ -496,6 +496,8 @@ describe("RPC Unix-socket multi-connection host", () => {
 			});
 			const sessionId = openedSessionId(opened);
 
+			// Grace release still serves legacy callers, but records every unattached mutation (#3795).
+			const grace = waitForStderr(child, `senpi rpc host: prompt on ${sessionId} from a connection not attached to it (refused from the next release)`);
 			const settledA = a.peer.waitFor((value) => value.type === "agent_settled" && value.sessionId === sessionId);
 			await expect(
 				b.peer.request({
@@ -506,6 +508,7 @@ describe("RPC Unix-socket multi-connection host", () => {
 				}),
 			).resolves.toMatchObject({ success: true, sessionId });
 			await settledA;
+			await grace;
 			expect(b.peer.messages.some((value) => value.type === "agent_settled" && value.sessionId === sessionId)).toBe(
 				false,
 			);
