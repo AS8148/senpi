@@ -2994,7 +2994,7 @@ The tool card's content lifecycle is an interactive-mode internal; extensions do
 
 ### What changed
 
-- `packages/coding-agent/src/modes/interactive/theme/theme.ts`: `getMarkdownTheme()` returns one object per active `Theme` instead of a new object per call; it is rebuilt when the theme switches, because Markdown's render cache keys on the theme object's identity.
+- `packages/coding-agent/src/modes/interactive/theme/theme.ts`: new internal `sharedMarkdownTheme()` returns one frozen object per active `Theme`, and the built-in message components use it instead of building their own; it is rebuilt when the theme switches, because Markdown's render cache keys on the theme object's identity. The public `getMarkdownTheme()` still returns a new object per call, so an extension can customize its copy.
 - `packages/coding-agent/src/modes/interactive/components/tool-execution-renderer.ts`: `releaseContent()` also drops the renderer's last render state (it held a filtered copy of the result); `update()` sets a fresh one before the card is painted again.
 - `packages/coding-agent/test/suite/regressions/2537-message-component-state.test.ts` (new).
 
@@ -3004,8 +3004,8 @@ Heap snapshots of the tool-turn soak in [#2537](https://github.com/code-yeongyu/
 
 ### Why an extension could not handle it
 
-The markdown theme factory and the tool card's renderer are interactive-mode internals.
+The shared markdown theme and the tool card's renderer are interactive-mode internals; the public `getMarkdownTheme()` is unchanged.
 
 ### Expected merge conflict zones
 
-- LOW: `getMarkdownTheme()` in `theme.ts`; `releaseContent()` in `tool-execution-renderer.ts`.
+- LOW: `sharedMarkdownTheme()` in `theme.ts`; `releaseContent()` in `tool-execution-renderer.ts`.

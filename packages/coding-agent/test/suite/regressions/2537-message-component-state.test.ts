@@ -3,7 +3,7 @@ import type { TUI } from "@earendil-works/pi-tui";
 import { beforeEach, describe, expect, it } from "vitest";
 import { AssistantMessageComponent } from "../../../src/modes/interactive/components/assistant-message.ts";
 import { ToolExecutionComponent } from "../../../src/modes/interactive/components/tool-execution.ts";
-import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
+import { getMarkdownTheme, initTheme } from "../../../src/modes/interactive/theme/theme.ts";
 
 const fakeUi = { requestRender: () => {} } as TUI;
 
@@ -46,6 +46,18 @@ describe("per-message component state (#2537)", () => {
 
 		// Then: they share one markdown theme instead of each keeping a copy
 		expect(Reflect.get(first, "markdownTheme")).toBe(Reflect.get(second, "markdownTheme"));
+	});
+
+	it("still gives an extension its own markdown theme to customize", () => {
+		// Given: an extension takes the public markdown theme and customizes it
+		const custom = getMarkdownTheme();
+		custom.codeBlockIndent = "    ";
+
+		// Then: the change sticks on its copy and does not reach anyone else's theme
+		expect(custom.codeBlockIndent).toBe("    ");
+		expect(getMarkdownTheme()).not.toBe(custom);
+		expect(getMarkdownTheme().codeBlockIndent).not.toBe("    ");
+		expect(Reflect.get(new AssistantMessageComponent(reply("x")), "markdownTheme")).not.toBe(custom);
 	});
 
 	it("paints a message mounted after a theme switch in the new theme, even for text rendered before", () => {
