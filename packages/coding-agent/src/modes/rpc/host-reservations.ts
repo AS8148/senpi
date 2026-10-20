@@ -22,7 +22,6 @@
 import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { advanceSessionFence } from "../../core/session-write-fence.ts";
 import {
 	processIsLive,
 	processStartTimeMs,
@@ -208,13 +207,21 @@ export function createSessionPathReservations(options: {
 				if (verdict.kind === "stands") return verdict.owner;
 				const fenced =
 					verdict.kind === "released" ||
-					(await advanceSessionFence(sessionPath).then(
-						() => true,
-						(cause: unknown) => {
-							report(`session file ${sessionPath} could not be fenced for a takeover (${errorMessage(cause)})`);
-							return false;
-						},
-					));
+					// Documented lazy boundary (AGENTS.md: inline dynamic imports only at documented lazy boundaries): the
+					// lifecycle supervisor imports this module, and the fence module (whose writers read it synchronously)
+					// must stay out of the supervisor's startup graph (test/supervisor-import-graph.test.ts). Only a takeover
+					// of an unprovable claim reaches it.
+					(await import("../../core/session-write-fence.ts")
+						.then(({ advanceSessionFence }) => advanceSessionFence(sessionPath))
+						.then(
+							() => true,
+							(cause: unknown) => {
+								report(
+									`session file ${sessionPath} could not be fenced for a takeover (${errorMessage(cause)})`,
+								);
+								return false;
+							},
+						));
 				if (!fenced) return { ...existing, current: false };
 			}
 			try {

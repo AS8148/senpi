@@ -13,7 +13,6 @@
  * cannot be asked how many sessions it has.
  */
 import { readdir, rm } from "node:fs/promises";
-import { advanceSessionFence } from "../../core/session-write-fence.ts";
 import { processIsLive } from "../../utils/process-identity.ts";
 import { generationPaths, type HostDaemonDirectory, type HostDaemonPaths } from "./host-daemon-paths.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
@@ -102,10 +101,15 @@ async function claimEnded(owner: SessionPathOwner, ended: ReadonlySet<string>): 
 	const identity = await claimOwnerIdentity(owner);
 	if (identity === "gone") return true;
 	if (identity === "proven" || !ended.has(owner.instanceId)) return false;
-	return advanceSessionFence(owner.sessionPath).then(
-		() => true,
-		() => false,
-	);
+	// Documented lazy boundary (AGENTS.md: inline dynamic imports only at documented lazy boundaries): the lifecycle
+	// supervisor imports this module, and the fence module (whose writers read it synchronously) must stay out of its
+	// startup graph (test/supervisor-import-graph.test.ts).
+	return import("../../core/session-write-fence.ts")
+		.then(({ advanceSessionFence }) => advanceSessionFence(owner.sessionPath))
+		.then(
+			() => true,
+			() => false,
+		);
 }
 
 function memoryOf(metrics: HostProcessMetrics): Pick<HostGenerationRow, "rss_mb" | "host_rss_mb"> {
