@@ -80,6 +80,7 @@ import {
 } from "../../core/agent-session.ts";
 import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.ts";
 import { formatNoModelsAvailableMessage } from "../../core/auth-guidance.ts";
+import { attachMcpGrantPresentation } from "../../core/mcp-grant-presentations.ts";
 import { isApiKeyLoginProvider, loginRowStatus } from "../../core/auth-providers.ts";
 import { markModeCrashHandler } from "../../core/bootstrap-crash-listeners.ts";
 import { envValue } from "../../core/brand.ts";
@@ -2678,7 +2679,8 @@ export class InteractiveMode {
 				);
 			}
 
-			const skillDiagnostics = skillsResult.diagnostics.filter((diagnostic) => diagnostic.category !== "size-limit");
+			const skillDiagnostics = skillsResult.diagnostics.filter((diagnostic) =>
+				diagnostic.category !== "size-limit" && diagnostic.category !== "skill-link-blocked");
 			if (skillDiagnostics.length > 0) {
 				addDiagnosticNotice("Skill conflicts", skillDiagnostics);
 			}
@@ -2718,10 +2720,19 @@ export class InteractiveMode {
 	/**
 	 * Initialize the extension system with TUI-based UI context.
 	 */
+	private unsubscribeSecurityNotices?: () => void;
+	private detachMcpGrantPresentation?: () => void;
 	private async bindCurrentSessionExtensions(): Promise<void> {
 		await this.sessionControlHost?.disposeActive();
 		this.session.setControlEndpointHost?.(this.sessionControlHost);
 		const uiContext = this.createExtensionUIContext();
+		this.detachMcpGrantPresentation?.();
+		this.detachMcpGrantPresentation = attachMcpGrantPresentation(this.session.sessionId,
+			(title, choices, opts) => uiContext.select(title, choices, opts));
+		this.unsubscribeSecurityNotices?.();
+		this.unsubscribeSecurityNotices = this.session.securityNotices?.subscribe((snapshot) => {
+			for (const notice of snapshot.notices) uiContext.notify(notice.message, "warning");
+		});
 		await this.session.bindExtensions({
 			uiContext,
 			mode: "tui",

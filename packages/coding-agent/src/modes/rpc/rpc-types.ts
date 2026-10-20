@@ -1434,6 +1434,8 @@ export type RpcExtensionUIRequest =
 			type: "extension_ui_request";
 			id: string;
 			method: "select";
+			/** Permanent MCP env grant; only a grant_select presentation may answer. */
+			grantSelect?: boolean;
 			title: string;
 			options: string[];
 			timeout?: number;

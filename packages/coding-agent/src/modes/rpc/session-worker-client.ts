@@ -19,6 +19,7 @@ import type {
 
 import { SessionWorkerRequests, type WorkerRequestInput } from "./session-worker-requests.ts";
 import { acknowledge, acknowledgeGrant } from "./session-worker-signals.ts";
+import { isSecurityNoticeState } from "../../core/security-notices.ts";
 
 /** Lifecycle hooks the owning registry installs on every worker it allocates. */
 export interface SessionWorkerCallbacks {
@@ -146,6 +147,9 @@ export class SessionWorkerClient {
 		});
 		return {
 			handle: async (command) => {
+				if ("type" in command && command.type === "extension_ui_response" && "id" in command &&
+					typeof command.id === "string" &&
+					writer.acceptWorkerGrantResponse(sessionId, command.id, writer.currentConnection()) === false) return;
 				await this.request({ type: "command", command, connection: writer.currentConnection() });
 			},
 			cancelPendingExtensionUiRequests: () => this.post({ type: "cancel_ui" }),
@@ -249,6 +253,33 @@ export class SessionWorkerClient {
 						...message.activity,
 						state: { ...this.snapshot.state, isStreaming: message.activity.streaming },
 					};
+				const record = message.record;
+				if ("type" in record && record.type === "security_grant_settled" &&
+					"id" in record && typeof record.id === "string") {
+					writer.settleGrantDialog(sessionId, record.id);
+					acknowledge(message.signal, true);
+					return;
+				}
+				if ("type" in record && record.type === "security_notice_snapshot") {
+					if (!("snapshot" in record) || !isSecurityNoticeState(record.snapshot)) {
+						acknowledge(message.signal, false);
+						this.fail("invalid_security_notice_snapshot");
+						return;
+					}
+					writer.acceptWorkerSecuritySnapshot(sessionId, record.snapshot);
+					acknowledge(message.signal, true);
+					return;
+				}
+				let outputConnection = message.connection;
+				if ("type" in record && record.type === "extension_ui_request" && "method" in record &&
+					record.method === "select" && "grantSelect" in record && record.grantSelect === true &&
+					"id" in record && typeof record.id === "string") {
+					const id = record.id;
+					const target = writer.routeWorkerGrant(sessionId, id, message.connection,
+						this.options.capabilities ?? [], () => this.post({ type: "cancel_grant", id }));
+					if (!target.accepted) { acknowledge(message.signal, true); return; }
+					outputConnection = target.connection;
+				}
 				const enqueue = () => {
 					if (!writer.enqueue(sessionId, message.record)) {
 						acknowledge(message.signal, false);
@@ -260,7 +291,7 @@ export class SessionWorkerClient {
 				const consumed = Promise.resolve(
 					message.snapshot ? this.callbacks.reconcile(message.snapshot.liveSessionPaths) : undefined,
 				).then(() =>
-					message.connection === undefined ? enqueue() : writer.withConnection(message.connection, enqueue),
+					outputConnection === undefined ? enqueue() : writer.withConnection(outputConnection, enqueue),
 				);
 				void consumed.then(
 					() => acknowledge(message.signal, true),
@@ -272,6 +303,7 @@ export class SessionWorkerClient {
 				return;
 			}
 			case "capabilities":
+				if (message.connection === undefined) this.options = { ...this.options, capabilities: message.capabilities };
 				this.options.clientInfo?.setCapabilities(message.connection, message.capabilities);
 				acknowledge(message.signal, true);
 				return;

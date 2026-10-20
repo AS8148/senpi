@@ -367,6 +367,9 @@ import {
 	type SkillInvocationToken,
 } from "./skill-invocation.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
+import { BlockedSkillLinkError, readSkillFileChecked } from "./skill-access.ts";
+import { SecurityNoticeSnapshot } from "./security-notices.ts";
+import { clearMcpGrantPresentations } from "./mcp-grant-presentations.ts";
 import { BUILTIN_SLASH_COMMANDS } from "./slash-commands.ts";
 import { BUILTIN_PATH_PREFIX, createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import {
@@ -1184,6 +1187,8 @@ export class AgentSession {
 
 	// Event subscription state
 	private _unsubscribeAgent?: () => void;
+	readonly securityNotices = new SecurityNoticeSnapshot();
+	private _unsubscribeSecurityNotices?: () => void;
 	private _unsubscribeSettingsSource?: () => void;
 	private _unregisterMemoryReport: () => void = () => {};
 	private _eventListeners: AgentSessionEventListener[] = [];
@@ -1502,6 +1507,9 @@ export class AgentSession {
 		this._scopedModels = config.scopedModels ?? [];
 		this._favoriteModels = config.favoriteModels ?? [];
 		this._resourceLoader = config.resourceLoader;
+		this.securityNotices.setResources(this._resourceLoader.getSkills().diagnostics);
+		this._unsubscribeSecurityNotices = this._resourceLoader.onExtensionEvent?.("security_notice",
+			(value) => this.securityNotices.accept(value));
 		this._customTools = config.customTools ?? [];
 		this._cwd = config.cwd;
 		const modelRuntime = config.modelRuntime ?? config.modelRegistry?.modelRuntime;
@@ -4203,6 +4211,9 @@ export class AgentSession {
 	 */
 	dispose(): void {
 		this._disposed = true;
+		this._unsubscribeSecurityNotices?.();
+		this.securityNotices.dispose();
+		clearMcpGrantPresentations(this.sessionId);
 		this._deadlineTracker.disarm();
 		for (const dispose of this._toolContextDisposers) dispose();
 		try {
@@ -5799,7 +5810,7 @@ export class AgentSession {
 			removedTokens.push(token);
 
 			try {
-				const content = readFileSync(skill.filePath, "utf-8");
+				const content = readSkillFileChecked(skill.filePath, skill.provenance, skill.allowedSet);
 				const body = stripFrontmatter(content).trim();
 				skillBlocks.push({
 					name: skill.name,
@@ -5814,6 +5825,9 @@ export class AgentSession {
 					syntax: token.syntax,
 				});
 			} catch (err) {
+				if (err instanceof BlockedSkillLinkError) {
+					this.securityNotices.add({ category: "skill-link-blocked", message: err.message, path: skill.filePath });
+				}
 				this._extensionRunner.emitError({
 					extensionPath: skill.filePath,
 					event: "skill_expansion",
@@ -9736,6 +9750,7 @@ export class AgentSession {
 		};
 
 		this._resourceLoader.extendResources(extensionPaths);
+		this.securityNotices.setResources(this._resourceLoader.getSkills().diagnostics);
 		if (skillPaths.length > 0 || promptPaths.length > 0 || themePaths.length > 0) {
 			this._baseSystemPrompt = this._rebuildSystemPrompt(this._toolDeclarationNames(this.getActiveToolNames()));
 			this.agent.state.systemPrompt = this._baseSystemPrompt;
@@ -10503,6 +10518,7 @@ export class AgentSession {
 			await this._resourceLoader.reload({ settingsAlreadyReloadedFor: this.settingsManager });
 		}
 		time("resources", "reload");
+		this.securityNotices.setResources(this._resourceLoader.getSkills().diagnostics);
 		try {
 			this._buildRuntime({
 				activeToolNames: requestedActiveToolNamesBeforeRebuild,

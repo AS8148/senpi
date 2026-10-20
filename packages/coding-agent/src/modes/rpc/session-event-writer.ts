@@ -18,6 +18,9 @@ import { SessionStatusStream } from "./session-status-stream.ts";
 import { SurfaceDigestDedupe } from "./session-surface-dedupe.ts";
 import type { SocketEventSinkActor } from "./socket-event-fanout.ts";
 import { isCorrelatedReply } from "./socket-peer-recovery.ts";
+import type { ExtensionUIContext } from "../../core/extensions/types.ts";
+import type { SecurityNoticeSnapshot, SecurityNoticeState } from "../../core/security-notices.ts";
+import { RpcSecurityPresentations } from "./security-presentations.ts";
 
 export type { SessionEventWriterConnection } from "./session-event-fanout.ts";
 
@@ -104,6 +107,9 @@ export class SessionEventWriter {
 	private readonly queues = new Map<string, RecordQueue>();
 	private readonly fanout = new SessionEventFanout();
 	private readonly connectionContext = new AsyncLocalStorage<string>();
+	private readonly securityPresentations = new RpcSecurityPresentations(this.fanout,
+		(id, task) => this.withConnection(id, task), () => this.requestFlush());
+	readonly workerSecurityBridge: boolean = false;
 	private readonly controlQueue: RecordQueue = { latestByKey: new Map(), ready: false };
 	private readonly readyQueues: RecordQueue[] = [];
 	private readonly sealedSessions = new Set<string>();
@@ -158,6 +164,7 @@ export class SessionEventWriter {
 		waitOrSchedule?: BackpressureWaiter | FlushScheduler,
 		scheduleFlush?: FlushScheduler,
 	) {
+		this.fanout.onConnectionClosed = (id) => this.securityPresentations.dropConnection(id);
 		this.writeRaw = writeRaw;
 		if (waitOrSchedule && scheduleFlush === undefined && waitOrSchedule.length > 0) {
 			this.scheduleFlush = waitOrSchedule as FlushScheduler;
@@ -194,6 +201,7 @@ export class SessionEventWriter {
 	}
 
 	unregisterConnection(id: string): void {
+		this.securityPresentations.dropConnection(id);
 		this.fanout.unregisterConnection(id);
 		this.status.dropConnection(id);
 		this.surfaceDedupe.dropConnection(id);
@@ -201,10 +209,12 @@ export class SessionEventWriter {
 
 	attachConnectionToSession(id: string, sessionId: string): void {
 		this.fanout.attachConnectionToSession(id, sessionId);
+		if (this.hasConnection(id)) this.securityPresentations.attach(id, sessionId);
 	}
 
 	detachConnectionFromSession(id: string, sessionId: string): void {
 		this.fanout.detachConnectionFromSession(id, sessionId);
+		this.securityPresentations.detach(id, sessionId);
 	}
 
 	hasConnection(id: string): boolean {
@@ -213,10 +223,33 @@ export class SessionEventWriter {
 
 	setConnectionCapabilities(id: string, capabilities: readonly string[]): void {
 		this.fanout.setConnectionCapabilities(id, capabilities);
+		this.securityPresentations.capabilitiesChanged(id);
 	}
 
 	clearConnectionCapabilities(id: string): void {
 		this.fanout.clearConnectionCapabilities(id);
+		this.securityPresentations.capabilitiesChanged(id);
+	}
+	bindSecurityPresentations(
+		sessionId: string, durableId: string, notices: SecurityNoticeSnapshot, ui: ExtensionUIContext,
+	): (() => void) | undefined {
+		if (this.fanout.isEmpty()) return undefined;
+		return this.securityPresentations.bind(sessionId, durableId, notices, ui.select);
+	}
+	acceptWorkerSecuritySnapshot(sessionId: string, snapshot: SecurityNoticeState): void {
+		this.securityPresentations.acceptSnapshot(sessionId, snapshot);
+	}
+	routeWorkerGrant(
+		sessionId: string, requestId: string, preferred: string | undefined,
+		capabilities: readonly string[], cancel: () => void,
+	): { readonly accepted: boolean; readonly connection?: string } {
+		return this.securityPresentations.routeWorkerGrant(sessionId, requestId, preferred, capabilities, cancel);
+	}
+	acceptWorkerGrantResponse(sessionId: string, id: string, connection: string | undefined): boolean | undefined {
+		return this.securityPresentations.acceptWorkerResponse(sessionId, id, connection);
+	}
+	settleGrantDialog(sessionId: string, id: string): void {
+		this.securityPresentations.settleGrant(sessionId, id);
 	}
 
 	hasRegisteredConnectionCapabilities(id: string): boolean {
@@ -523,6 +556,7 @@ export class SessionEventWriter {
 	closeSession(sessionId: string, response: object, reason?: RpcSessionClosedReason, sessionPath?: string): void {
 		if (!this.settleBeforeSeal(sessionId)) return;
 		this.sealedSessions.add(sessionId);
+		this.securityPresentations.dropSession(sessionId);
 		this.fanout.forgetSession(sessionId);
 		this.mediaPersisters.delete(sessionId);
 		const targetId = this.connectionContext.getStore();
@@ -595,6 +629,7 @@ export class SessionEventWriter {
 	private sealWithLifecycle(sessionId: string, lifecycle: RpcSessionParkedEvent | RpcSessionClosedEvent): void {
 		if (!this.settleBeforeSeal(sessionId)) return;
 		this.sealedSessions.add(sessionId);
+		this.securityPresentations.dropSession(sessionId);
 		this.fanout.forgetSession(sessionId);
 		this.mediaPersisters.delete(sessionId);
 		if (this.fanout.isEmpty()) this.appendSessionRecord(sessionId, lifecycle);

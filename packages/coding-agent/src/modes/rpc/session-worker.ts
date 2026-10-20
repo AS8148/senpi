@@ -4,6 +4,9 @@ import { parentPort, workerData } from "node:worker_threads";
 import { runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import { isBunBinary } from "../../config.ts";
 import { WAKE_SOURCE_STATE_EVENT } from "../../core/extensions/builtin/monitor-state-event.ts";
+import type { ExtensionUIContext } from "../../core/extensions/types.ts";
+import { attachMcpGrantPresentation } from "../../core/mcp-grant-presentations.ts";
+import type { SecurityNoticeSnapshot } from "../../core/security-notices.ts";
 import { takeOverStdout } from "../../core/output-guard.ts";
 import { getDefaultSessionDir } from "../../core/session-manager.ts";
 import { liveSessionWritePaths } from "../../core/session-write-reservation.ts";
@@ -48,8 +51,21 @@ const { exchange, installWriteReservation } = createWorkerCredit(send, failWorke
 installWriteReservation(canonicalSessionPath);
 
 class WorkerEventWriter extends SessionEventWriter {
+	override readonly workerSecurityBridge = true;
 	constructor() {
 		super(() => {});
+	}
+	override bindSecurityPresentations(
+		sessionId: string, durableId: string, notices: SecurityNoticeSnapshot, ui: ExtensionUIContext,
+	): () => void {
+		const detach = attachMcpGrantPresentation(durableId, ui.select);
+		const stop = notices.subscribe((snapshot) => {
+			this.enqueue(sessionId, { type: "security_notice_snapshot", snapshot });
+		});
+		return () => { detach(); stop(); };
+	}
+	override settleGrantDialog(sessionId: string, id: string): void {
+		this.enqueue(sessionId, { type: "security_grant_settled", id });
 	}
 	override publishLoadedSurfacesChanged(_sessionId: string, previous: string | undefined, digest: string): void {
 		// The isolate never emits the event itself: the host owns the per-(connection, session)
@@ -196,6 +212,10 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			subscribeSession();
 			publishSnapshot();
 			send({ type: "result", request: message.request });
+			return;
+		}
+		case "cancel_grant": {
+			await binding?.handle({ type: "extension_ui_response", id: message.id, cancelled: true });
 			return;
 		}
 		case "command": {
