@@ -1,3 +1,22 @@
+## 2026-10-19 - Suggest a fresh session with a handoff when a large session's cache has expired (senpi#3230)
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-shapes.ts`: new `HandoffHintSettings` (`enabled`, `minContextTokens`, `minSavingUsd`).
+- `packages/coding-agent/src/core/settings-manager.ts`: `Settings.handoffHint`.
+
+### Why
+
+The handoff hint's switch and thresholds are user settings (defaults: on, 200k tokens, $1 saving).
+
+### Why an extension could not handle it
+
+`Settings` is the typed settings contract the extension reads through `pi.getSettings()`.
+
+### Expected merge conflict zones
+
+- LOW: one field in `Settings`, one import line, one interface in `settings-shapes.ts`.
+
 ## 2026-10-19 - The session hands its tool child's wakes and exits to the jobs that run there (senpi#3740)
 
 ### What changed

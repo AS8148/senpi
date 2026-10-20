@@ -1,3 +1,22 @@
+## 2026-10-19 - Suggest a fresh session with a handoff when a large session's cache has expired (senpi#3230)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `setWidget` `extension_ui_request` gains optional `widgetActions: { label, command }[]`.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `setWidget` forwards `options.actions` as `widgetActions` when the widget has lines and at least one choice.
+
+### Why
+
+The desktop renders the handoff hint's choices as buttons from the same `setWidget` record the TUI renders, and sends the chosen `command` as an ordinary prompt.
+
+### Why an extension could not handle it
+
+The wire record is built by the RPC UI context.
+
+### Expected merge conflict zones
+
+- LOW: `rpc-types.ts` setWidget member; `connection-handler.ts` `setWidget`.
+
 ## 2026-10-17 - The internal host socket fits sun_path under a long TMPDIR (senpi#3487)
 
 ### What changed
