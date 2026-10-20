@@ -215,27 +215,6 @@ attach and each changed generation. A late attachment receives the same
 reasons; another presentation cannot consume them on its behalf. This also
 applies when the shared host runs the session in a worker.
 
-#### grant_select
-
-Advertise `grant_select` in the connection's `set_client_info` (or the client
-capabilities environment variable for classic stdio RPC) only when the client
-renders `extension_ui_request` with `method:"select"` and returns the selected
-option through `extension_ui_response`. The unrelated `question` capability
-does not authorize these dialogs.
-
-Project skill MCP environment decisions are select requests with
-`grantSelect:true` and `timeout:120000`. Only the selected capable connection
-may answer. Only **Grant and save permanently** persists the names for that
-declaration; **Start without them**, cancellation, disconnect and timeout save
-nothing. A client that never answers reaches the deadline and the server starts
-filtered. A headless or question-only client receives no grant dialog.
-
-Sessions retain skill-link and withheld-environment warnings. Every attached
-RPC connection receives the current snapshot as warning `notify` requests on
-attach and each changed generation. A late attachment receives the same
-reasons; another presentation cannot consume them on its behalf. This also
-applies when the shared host runs the session in a worker.
-
 #### event_resync
 
 A socket client may advertise `event_resync` in its connection-scoped `set_client_info`.
