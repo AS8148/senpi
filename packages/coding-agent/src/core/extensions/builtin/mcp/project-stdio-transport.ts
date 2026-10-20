@@ -49,13 +49,14 @@ export class ProjectStdioTransport implements Transport {
 			throw new ConnectError("Project MCP spawn was invalidated; retry", { phase: "create", retriable: true });
 		}
 	}
-	async send(message: JSONRPCMessage, options?: TransportSendOptions): Promise<void> {
+	async send(message: JSONRPCMessage, _options?: TransportSendOptions): Promise<void> {
 		if (this.#current === undefined)
 			throw new ConnectError("Project MCP transport has not started", {
 				phase: "send",
 				retriable: true,
 			});
-		await this.#current.send(message, options);
+		// The stdio SDK transport takes only the message; send options are an HTTP concern.
+		await this.#current.send(message);
 	}
 	async close(): Promise<void> {
 		this.#epoch++;
