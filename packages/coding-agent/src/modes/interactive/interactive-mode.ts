@@ -5526,6 +5526,10 @@ export class InteractiveMode {
 				this.showError(sanitizeTerminalLabel(event.errorMessage));
 				break;
 
+			case "offload_module_stuck":
+				this.showWarning(sanitizeTerminalLabel(event.notice));
+				break;
+
 			case "transcript_write_failed": {
 				if (this.transcriptWriteNoticeShown) break;
 				this.transcriptWriteNoticeShown = true;
@@ -6688,7 +6692,7 @@ export class InteractiveMode {
 			// which the stdout/stderr error handler turns into emergencyTerminalExit;
 			// the render loop is already idle, so this cannot hot-spin (see #4144).
 			await this.sessionControlHost?.disposeActive();
-			await this.runtimeHost.dispose();
+			await this.runtimeHost.dispose({ processExit: true });
 			this.themeController.disableAutoSync();
 			await this.ui.terminal.drainInput(1000);
 			this.stop();
@@ -6706,7 +6710,7 @@ export class InteractiveMode {
 		this.stop({ restoreStderr: false });
 		try {
 			await this.sessionControlHost?.disposeActive();
-			await this.runtimeHost.dispose();
+			await this.runtimeHost.dispose({ processExit: true });
 		} finally {
 			restoreInteractiveStderr();
 		}
