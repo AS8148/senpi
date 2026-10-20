@@ -36,8 +36,7 @@ import {
 	hostDaemonDirectoryPaths,
 } from "./host-daemon-paths.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
-import { stallRefusalWindowMs } from "./host-stalled-evidence.ts";
-import { ageOf, readJsonObject } from "./host-state-json.ts";
+import { generationHeartbeatStopped } from "./host-stalled-evidence.ts";
 import { logUnknownHostIdentity } from "./host-supervisor-log.ts";
 
 /** How long a client should wait before retrying a path another generation still holds. */
@@ -208,9 +207,10 @@ export function createSessionPathReservations(options: {
 				if (verdict.kind === "stands") return verdict.owner;
 				const fenced =
 					verdict.kind === "released" ||
-					// Loaded on first use: the lifecycle supervisor imports this module, and the fence module (whose writers
-					// read it synchronously) must stay out of the supervisor's startup graph
-					// (test/supervisor-import-graph.test.ts). Only a takeover of an unprovable claim reaches it.
+					// Documented lazy boundary (AGENTS.md: inline dynamic imports only at documented lazy boundaries): the
+					// lifecycle supervisor imports this module, and the fence module (whose writers read it synchronously)
+					// must stay out of the supervisor's startup graph (test/supervisor-import-graph.test.ts). Only a takeover
+					// of an unprovable claim reaches it.
 					(await import("../../core/session-write-fence.ts")
 						.then(({ advanceSessionFence }) => advanceSessionFence(sessionPath))
 						.then(
@@ -308,9 +308,7 @@ type ClaimVerdict =
 async function heartbeatStopped(paths: HostDaemonDirectory, instanceId: string): Promise<boolean> {
 	// A claim file is untrusted input: an instance id that is not a plain directory name names no generation.
 	if (instanceId === "" || instanceId === "." || instanceId === ".." || /[\\/]/.test(instanceId)) return false;
-	const heartbeat = await readJsonObject(generationPaths(paths, instanceId).aliveFile);
-	const age = ageOf(heartbeat?.at, Date.now());
-	return age !== undefined && age >= stallRefusalWindowMs();
+	return generationHeartbeatStopped(generationPaths(paths, instanceId));
 }
 
 /** The generation the pointer names, or nothing when no pointer describes this endpoint. */
@@ -352,7 +350,7 @@ export async function claimOwnerIsLive(owner: SessionPathOwner): Promise<boolean
  * `proven`: the pid runs and its start time matches the claim. `gone`: the pid is dead, or runs with a
  * different start time. `unproven`: the pid runs but no start time was recorded or none can be read.
  */
-async function claimOwnerIdentity(owner: SessionPathOwner): Promise<"proven" | "gone" | "unproven"> {
+export async function claimOwnerIdentity(owner: SessionPathOwner): Promise<"proven" | "gone" | "unproven"> {
 	if (!processIsLive(owner.pid)) return "gone";
 	const recorded = owner.processStartTime === null ? undefined : processStartTimeMs(owner.processStartTime);
 	if (recorded === undefined) {
