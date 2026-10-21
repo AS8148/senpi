@@ -121,6 +121,25 @@ it("a running child holds the goal as waiting, and its completion wakes the pare
 	expect(h.faux.state.callCount).toBe(3);
 }, 20_000);
 
+it("a turn the core will retry reports continuing via retry and records no stall", async () => {
+	const { h, probe } = await livenessHarness({ retry: { enabled: true, maxRetries: 2, baseDelayMs: 1 } });
+	h.setResponses([
+		fauxAssistantMessage("", { stopReason: "error", errorMessage: "429 rate_limit_error: slow down" }),
+		fauxAssistantMessage("Here is the summary."),
+	]);
+
+	await h.session.prompt("summarize the open issues");
+	expect(await probe.verdictAt(2, 10_000)).toEqual({ kind: "done" });
+
+	expect(probe.verdicts).toEqual([{ kind: "continuing", via: "retry" }, { kind: "done" }]);
+	expect(h.faux.state.callCount).toBe(2);
+	expect(
+		h.sessionManager
+			.getEntries()
+			.filter((entry) => entry.type === "custom" && entry.customType === TURN_END_LIVENESS_ENTRY_TYPE),
+	).toEqual([]);
+}, 20_000);
+
 it("a turn that ends on a provider error records a durable stall with the reset time", async () => {
 	const { h, probe } = await livenessHarness({ retry: { enabled: false } });
 	const reset = "2099-01-01T00:00:00.000Z";

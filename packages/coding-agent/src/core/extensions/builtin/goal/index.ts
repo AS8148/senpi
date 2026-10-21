@@ -39,6 +39,7 @@ import {
 	classifyTurnEnd,
 	evaluateTurnEndLiveness,
 	type OpenWork,
+	repeatsLastStall,
 	TURN_END_LIVENESS_ENTRY_TYPE,
 	TURN_END_LIVENESS_EVENT,
 	type WakeExpectation,
@@ -431,6 +432,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 			isChildSession: ctx.sessionManager.getHeader?.()?.parentSession !== undefined,
 			mode: ctx.mode,
 			endedBy: classifyTurnEnd(event),
+			willRetry: event.willRetry === true,
 			deadlineStop,
 			goalStopped: goal?.status === "paused" || goal?.status === "blocked",
 			openWork,
@@ -446,11 +448,12 @@ export default function goalExtension(pi: ExtensionAPI): void {
 			sessionId: ctx.sessionManager.getSessionId(),
 			verdict,
 		});
-		if (verdict.kind !== "stalled") return;
+		if (verdict.kind !== "stalled" || repeatsLastStall(ctx.sessionManager.getBranch(), verdict)) return;
+		const logger = createSessionLogger(ctx.agentDir);
 		try {
 			pi.appendEntry(TURN_END_LIVENESS_ENTRY_TYPE, { verdict, openWork });
 		} catch (error) {
-			createSessionLogger(ctx.agentDir).warn("goal_continuation_record_write_failed", {
+			logger.warn("goal_continuation_record_write_failed", {
 				kind: TURN_END_LIVENESS_ENTRY_TYPE,
 				error: error instanceof Error ? error.message : String(error),
 			});

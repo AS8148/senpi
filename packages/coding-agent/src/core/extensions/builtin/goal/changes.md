@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `turn-end-liveness.ts` (new): pure `evaluateTurnEndLiveness` returns `continuing | held | waiting | done | stalled` from what the goal lane and the todo-owed backstop just did, plus `classifyTurnEnd` over the existing terminal-error helpers. Order: a queued continuation is reported first, then the reasons nothing may continue on its own (user abort, child session, print/json, deadline stop, paused/blocked goal), then live re-entry sources, then `stalled` vs `done`. An errored turn is never `done`.
+- `turn-end-liveness.ts` (new): pure `evaluateTurnEndLiveness` returns `continuing | held | waiting | done | stalled` from what the goal lane and the todo-owed backstop just did, plus `classifyTurnEnd` over the existing terminal-error helpers. Order: a turn the core retries (`willRetry`) or a queued continuation is `continuing`; a print/json run is `held`; any live re-entry source is `waiting` (it outranks the remaining held reasons: user abort, child session, deadline stop, paused/blocked goal); then `stalled` vs `done`. An errored turn is never `done`. A stall identical to the last recorded one since the last user message is not written again.
 - `index.ts`: the `agent_end` tail builds the input after both lanes ran, publishes `turn_end_liveness` through `publishGoalContinuationEvent` (bus + RPC), and appends a `turn-end-liveness` entry only for `stalled`.
 - `monitor-continuation.ts`: read-only `scheduledContinuation()` and `hasStagedRecovery()` getters. No scheduling change.
 - `todo-owed-backstop.ts`: `afterAgentEnd` returns its outcome (`delivered | capped | <suppression>`); `calledAskUser` is exported. No behavior change.

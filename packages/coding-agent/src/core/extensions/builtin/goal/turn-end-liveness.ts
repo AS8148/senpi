@@ -1,6 +1,7 @@
 // Turn-end liveness (#3863): names what happens after a turn end from the outcomes the goal lane and the
 // todo-owed backstop produced. It never starts or suppresses a turn.
 
+import type { SessionEntry } from "../../../session-manager.ts";
 import type { AgentEndEvent, ExtensionMode } from "../../types.ts";
 import { didAgentEndCleanly } from "./continuation.ts";
 import type { DelayedContinuationKind } from "./monitor-continuation-types.ts";
@@ -29,6 +30,8 @@ export interface TurnEndLivenessInput {
 	readonly isChildSession: boolean;
 	readonly mode: ExtensionMode;
 	readonly endedBy: TurnEndKind;
+	/** The core will retry or fall back after this end (`AgentEndEvent.willRetry`). */
+	readonly willRetry: boolean;
 	/** A turn-deadline stop is never auto-continued; it waits for user input. */
 	readonly deadlineStop: boolean;
 	/** Paused or blocked goal: it waits for a person by design. */
@@ -48,7 +51,7 @@ export type HeldReason = "user-abort" | "child-session" | "non-interactive" | "d
 export type StalledReason = "budget" | "provider-error" | "no-wake";
 
 export type TurnEndLivenessVerdict =
-	| { readonly kind: "continuing"; readonly via: "goal" | "todo-backstop" }
+	| { readonly kind: "continuing"; readonly via: "retry" | "goal" | "todo-backstop" }
 	| { readonly kind: "held"; readonly reason: HeldReason }
 	| { readonly kind: "waiting"; readonly on: readonly WakeExpectation[] }
 	| { readonly kind: "done" }
@@ -65,15 +68,18 @@ export function classifyTurnEnd(event: AgentEndEvent): TurnEndKind {
 }
 
 /**
- * Order matters: a continuation that was actually queued is reported first, so the verdict never denies what
- * the lanes did; then the reasons nothing may continue on its own; then the sources that will re-enter; and only
- * then stalled versus done. An errored turn left its request unfinished, so it is never `done`.
+ * Order matters. A turn the core retries, or a continuation a lane queued, is reported first, so the verdict never
+ * denies what happens next. A print/json run exits, so nothing re-enters it. Any live re-entry source then wins over
+ * the remaining held reasons, which only name why nothing will continue on its own. An errored turn left its request
+ * unfinished, so it is never `done`.
  */
 export function evaluateTurnEndLiveness(input: TurnEndLivenessInput): TurnEndLivenessVerdict {
+	if (input.willRetry) return { kind: "continuing", via: "retry" };
 	if (input.continuationQueued !== undefined) return { kind: "continuing", via: input.continuationQueued };
+	if (NON_INTERACTIVE_MODES.has(input.mode)) return { kind: "held", reason: "non-interactive" };
+	if (input.expectations.length > 0) return { kind: "waiting", on: input.expectations };
 	const held = heldReason(input);
 	if (held !== undefined) return { kind: "held", reason: held };
-	if (input.expectations.length > 0) return { kind: "waiting", on: input.expectations };
 	if (input.endedBy === "provider-error" || input.endedBy === "policy-rejection") {
 		return input.providerRetryAtMs === undefined
 			? { kind: "stalled", reason: "provider-error" }
@@ -86,8 +92,22 @@ export function evaluateTurnEndLiveness(input: TurnEndLivenessInput): TurnEndLiv
 function heldReason(input: TurnEndLivenessInput): HeldReason | undefined {
 	if (input.endedBy === "user-abort") return "user-abort";
 	if (input.isChildSession) return "child-session";
-	if (NON_INTERACTIVE_MODES.has(input.mode)) return "non-interactive";
 	if (input.deadlineStop) return "deadline-stop";
 	if (input.goalStopped) return "goal-stopped";
 	return undefined;
+}
+
+/** True when the branch already records this stall since the last user message, so it is not written again. */
+export function repeatsLastStall(
+	branch: readonly SessionEntry[],
+	verdict: Extract<TurnEndLivenessVerdict, { kind: "stalled" }>,
+): boolean {
+	for (let index = branch.length - 1; index >= 0; index--) {
+		const entry = branch[index];
+		if (entry?.type === "message" && entry.message.role === "user") return false;
+		if (entry?.type !== "custom" || entry.customType !== TURN_END_LIVENESS_ENTRY_TYPE) continue;
+		const recorded = (entry.data as { verdict?: { reason?: unknown } } | undefined)?.verdict?.reason;
+		return recorded === verdict.reason;
+	}
+	return false;
 }
