@@ -12,12 +12,12 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { HostEnsureRefusedError } from "../src/modes/rpc/host-decision.ts";
-import { createHostDaemonPaths, ensureHost } from "../src/modes/rpc/host-ensure.ts";
-import { DEFAULT_HOST_LAUNCH_SPEC } from "../src/modes/rpc/host-launch-spec.ts";
-import { HOST_EXIT_REFUSED, runHostRequest } from "../src/modes/rpc/host-runner.ts";
-import { processIsLive, readProcessStartTime } from "../src/utils/process-identity.ts";
-import { killAndWait, reapProcessesUnder } from "./helpers/spawned-host-reaper.ts";
+import { HostEnsureRefusedError } from "../../src/modes/rpc/host-decision.ts";
+import { createHostDaemonPaths, ensureHost } from "../../src/modes/rpc/host-ensure.ts";
+import { DEFAULT_HOST_LAUNCH_SPEC } from "../../src/modes/rpc/host-launch-spec.ts";
+import { HOST_EXIT_REFUSED, runHostRequest } from "../../src/modes/rpc/host-runner.ts";
+import { processIsLive, readProcessStartTime } from "../../src/utils/process-identity.ts";
+import { killAndWait, reapProcessesUnder } from "../helpers/spawned-host-reaper.ts";
 
 const CLI_ENGINE = "2026.10.16";
 const CLI_PROFILE = "cli-profile-with-agent-mode-extensions";

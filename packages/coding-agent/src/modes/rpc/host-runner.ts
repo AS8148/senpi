@@ -45,7 +45,7 @@ import {
 import { probeProtocolInfo } from "./host-probe.ts";
 import { readHostStatus, readSessionCounts } from "./host-status.ts";
 import { readAllHostStatus } from "./host-status-all.ts";
-import { stopHost } from "./host-stop.ts";
+import { staleStopGeneration, stopHost } from "./host-stop.ts";
 import type { HostStopGeneration } from "./host-stop-generation.ts";
 
 export {
@@ -218,6 +218,10 @@ function shardPathOutcome(kind: ShardKind, owner: string, root: string): HostOut
  */
 async function stopOutcome(request: Extract<HostRequest, { action: "stop" }>): Promise<HostOutcome> {
 	const { target, drain, force, instanceId, waitMs } = request;
+	if (request.expectedGeneration !== undefined) {
+		const stale = await staleStopGeneration(target.socket, target.agentDir, request.expectedGeneration);
+		if (stale !== undefined) return refusal("refuse", undefined, { reason: stale.reason, socket: target.socket });
+	}
 	const host = await probeProtocolInfo(target.socket, PROBE_TIMEOUT_MS);
 	const sessions = await readSessionCounts(target.socket, true);
 	const occupied = sessions.foreign_attached + sessions.foreign_retained > 0;

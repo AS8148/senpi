@@ -207,7 +207,7 @@ export function parseHostArgs(args: readonly string[]): ParsedHostArgs | string 
 		} else if (flag === "--expected-generation" && subcommand === "stop" && value !== undefined) {
 			expectedGeneration = parseHostStopGeneration(value);
 			if (expectedGeneration === undefined)
-				return "Error: --expected-generation needs instanceId, generation, pid and processStartTime.";
+				return "Error: --expected-generation needs instanceId, generation, pid and processStartTime (null where the platform records none).";
 			index++;
 		} else if (flag === "--instance" && subcommand === "stop" && value !== undefined) {
 			instanceId = value;

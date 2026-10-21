@@ -10,7 +10,7 @@
 
 ### Why
 
-- A host another client registered on the socket (a terminal `omo` session's CLI host, a second app copy, a dev build) that accepts but does not answer makes every ensure refuse `foreign_writer`. The refusal carried only its reason, so no client could say who was in the way; the desktop told the user to restart, which cannot help (omo-desktop-app#3561). Regression: `test/rpc-host-ensure-foreign-holder.test.ts`.
+- A host another client registered on the socket (a terminal `omo` session's CLI host, a second app copy, a dev build) that accepts but does not answer makes every ensure refuse `foreign_writer`. The refusal carried only its reason, so no client could say who was in the way; the desktop told the user to restart, which cannot help (omo-desktop-app#3561). Regression: `test/suite/rpc-host-ensure-foreign-holder.test.ts`.
 
 ### Why an extension could not handle it
 
@@ -7092,7 +7092,8 @@ The classic capability list in `connection-handler.ts`.
 
 - `packages/coding-agent/src/modes/rpc/host-stop-generation.ts`: the expected instance id, generation, pid and process start time, CLI decoding and registration comparison.
 - `packages/coding-agent/src/modes/rpc/host-stop.ts`: conditional stops take the endpoint ensure lock, compare before probes and again before writing an intent, and refuse `stale_generation` without signalling on mismatch.
-- `packages/coding-agent/src/modes/rpc/host-runner.ts`: forwards the expected generation to the common stop implementation.
+- `packages/coding-agent/src/modes/rpc/host-runner.ts`: forwards the expected generation to the common stop implementation, and refuses a binding the endpoint no longer matches (`stale_generation` / `unknown_owner`) before the `sessions_live` census.
+- `packages/coding-agent/src/modes/rpc/host-stop.ts` (review fold): a bound stop signals only the RECHECKED expected generation's pid and instance, never a registration read that was not compared; `stopHost` throws on `drain` + `expectedGeneration`, as the CLI already refused. `compareStopGeneration` (`host-stop-generation.ts`) returns `proven` | `bound_without_start_time` | `stale` | `unprovable`: a null start time is `unknown_owner`, except that where the platform records none (`host-stop-start-time.ts`, Windows) a confirmation and registration that are both null bind pid + instance id + generation. `--expected-generation` accepts `processStartTime: null`. Regression: `test/suite/host-stop-generation-identity.test.ts`.
 - `packages/coding-agent/src/modes/rpc/host-status.ts`: reports the registered process start time for confirmation; `packages/coding-agent/src/modes/rpc/host-status-all.ts` reports null for an unaddressable endpoint.
 - `packages/coding-agent/src/modes/rpc/host-holder.ts` and `packages/coding-agent/src/modes/rpc/host-ensure-liveness.ts`: holder evidence includes the recorded process start time.
 
