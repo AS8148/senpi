@@ -117,7 +117,13 @@ it("resume_session releases held sources through the real RPC command handler", 
 		);
 		expect(h.faux.state.callCount).toBe(0);
 		h.setResponses([fauxAssistantMessage([fauxText("resumed")])]);
+		const settled = Promise.withResolvers<void>();
+		const unsubscribe = h.session.subscribe((event) => {
+			if (event.type === "agent_idle" && h.faux.state.callCount === 1) settled.resolve();
+		});
 		await handler.handleInputLine(JSON.stringify({ id: "resume", type: "resume_session" }));
+		await settled.promise;
+		unsubscribe();
 		const records = chunks
 			.join("")
 			.split("\n")

@@ -109,9 +109,12 @@ async function reopenOne(
 	heldPolls?: Map<string, number>,
 	holder?: ReopenHolder,
 ): Promise<void> {
-	const taskStatus = entry.sessionContext?.task_status;
+	const taskStatus =
+		entry.contextOverlay && Object.hasOwn(entry.contextOverlay, "task_status")
+			? entry.contextOverlay.task_status
+			: entry.sessionContext?.task_status;
 	if (
-		taskStatus !== undefined &&
+		typeof taskStatus === "string" &&
 		["completed", "cancelled", "error", "failed", "lost", "interrupted"].includes(taskStatus)
 	) {
 		await clearHandoverParkedSession(daemonDir, entry.sessionPath);
