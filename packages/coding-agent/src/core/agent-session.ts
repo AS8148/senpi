@@ -274,6 +274,7 @@ import { normalizeToolExposure, RUNTIME_EXTENSION_PATH } from "./extensions/type
 import { createUserActivitySource, emitUserActivity, type UserActivityKind } from "./extensions/user-activity.ts";
 import { deliveryIdOf, ExternalAdmission } from "./external-admission.ts";
 import { shouldWarnHighReasoning } from "./high-reasoning-warning.ts";
+import { customTurnOrigin, type InputOrigin, inputOriginOf } from "./input-origin.ts";
 import { LazyToolActivation } from "./lazy-tool-activation.ts";
 import {
 	isManualContinueSubmission,
@@ -2982,12 +2983,20 @@ export class AgentSession {
 		this.releaseSettledSessionMemory();
 		this._deadlineTracker.disarm();
 		this._emit({ type: "agent_idle" });
+		// An input release admitted into a turn that was already streaming completes here, once the run settles.
+		await this._engineTurnInput.finish((sources) => this._extensionRunner.emitHeldWakesReleased(sources));
 	}
 
 	private async _promptAgent(
 		messages: AgentMessage | AgentMessage[],
-		deferredTurnClaim?: DeferredTurnClaim,
-		onQueuedInput?: (input: PreparedClientInput) => void,
+		{
+			deferredTurnClaim,
+			onQueuedInput,
+		}: {
+			readonly inputOrigin: InputOrigin;
+			readonly deferredTurnClaim?: DeferredTurnClaim;
+			readonly onQueuedInput?: (input: PreparedClientInput) => void;
+		},
 	): Promise<void> {
 		deferredTurnClaim?.resolve("started");
 		if (!this._isAgentRunActive) this.externalAdmission.beginTurn();
@@ -5149,16 +5158,15 @@ export class AgentSession {
 			command: this._isExtensionCommandText(text, options),
 			submittedByCommand: options?.source === "extension",
 		});
+		const origin = inputOriginOf(options?.source);
+		let ownsRelease = false;
+		let disposed = false;
 		try {
-			if (options?.source !== "extension") {
-				emitUserActivity(this, "prompt");
-				this._deadlineTracker.clearHold();
-				this._engineTurnInput.begin();
-				this._engineResumeWindow = false;
-			}
+			ownsRelease = origin === "person" && this._beginPersonInput();
 			await this._prompt(text, {
 				...options,
 				promptDisposition: (disposition) => {
+					disposed = true;
 					hold.accepted();
 					if (disposition === "started" || disposition === "queued")
 						this._engineTurnInput.admit(disposition === "queued", (message) => this.agent.steer(message));
@@ -5168,8 +5176,18 @@ export class AgentSession {
 			if (this.isIdle)
 				await this._engineTurnInput.finish((sources) => this._extensionRunner.emitHeldWakesReleased(sources));
 		} finally {
+			// An input that opened the release and ended with no disposition (thrown, cancelled) gives it back.
+			if (ownsRelease && !disposed) this._engineTurnInput.abandon();
 			hold.end();
 		}
+	}
+
+	/** A person's input (prompt, steer, follow-up, answer) attends the session and releases what it holds. */
+	private _beginPersonInput(): boolean {
+		emitUserActivity(this, "prompt");
+		this._deadlineTracker.clearHold();
+		this._engineResumeWindow = false;
+		return this._engineTurnInput.begin();
 	}
 
 	private _isExtensionCommandText(text: string, options?: PromptOptions): boolean {
@@ -5660,7 +5678,10 @@ export class AgentSession {
 		if (options?.thinkingLevel !== undefined) {
 			this.setSessionThinkingLevel(options.thinkingLevel);
 		}
-		await this._promptAgent(messages, undefined, options?.onQueuedInput);
+		await this._promptAgent(messages, {
+			inputOrigin: inputOriginOf(options?.source),
+			onQueuedInput: options?.onQueuedInput,
+		});
 		await this.waitForRetry();
 		await this.waitForIdle();
 		if (options?.onSessionWorkReady) {
@@ -5863,16 +5884,12 @@ export class AgentSession {
 		behavior: "steer" | "followUp",
 		options?: QueuedInputOptions,
 	): Promise<QueuedInputDisposition> {
-		if (options?.source !== "extension" && this._engineTurnHold.held) {
+		const origin = inputOriginOf(options?.source);
+		if (origin === "person" && this._engineTurnHold.held) {
 			await this.prompt(text, { ...options, images, streamingBehavior: behavior });
 			return "queued";
 		}
-		if (options?.source !== "extension") {
-			emitUserActivity(this, "prompt");
-			this._deadlineTracker.clearHold();
-			this._engineTurnInput.begin();
-			this._engineResumeWindow = false;
-		}
+		if (origin === "person") this._beginPersonInput();
 		// Check for extension commands (cannot be queued)
 		if (text.startsWith("/")) {
 			this._throwIfExtensionCommand(text);
@@ -6276,8 +6293,9 @@ export class AgentSession {
 					this._triggerTurnAdmissionAbortGeneration = undefined;
 				}
 				if (releasedWake && !releasedWake()) return;
-				if (!isUserDirectedTurn(message.customType)) this._recordEngineTurnStart(message.customType);
-				await this._promptAgent(messages, deferredTurnClaim);
+				const inputOrigin = customTurnOrigin(message.customType);
+				if (inputOrigin === "engine") this._recordEngineTurnStart(message.customType);
+				await this._promptAgent(messages, { inputOrigin, deferredTurnClaim });
 			} else if (this.isStreaming) {
 				this._pendingCustomMessages.push(appMessage);
 			} else {

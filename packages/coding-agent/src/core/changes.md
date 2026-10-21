@@ -1,3 +1,23 @@
+## 2026-10-21 - An input release finishes when its run settles, and returns on every refused exit (senpi#3853)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: an input release admitted into a turn that was already streaming finishes once the run settles idle (`_emitAgentIdleAfterDeferredTurns`), and a person's input that opened the release but ended with no disposition at all (refused before acceptance, thrown, cancelled) gives its release back in `prompt()`'s `finally`; only the input that opened the release may give it back, and a handled command keeps its release for the follow-on input it dispatches.
+- `packages/coding-agent/src/core/engine-turn-input.ts`, `packages/coding-agent/src/core/engine-turn-hold.ts`: `begin()` reports whether this input opened the release; `abandon()` / `abandonRelease()` lower the release barrier, clear the goal deferral and restore the released holds unless held wakes were already delivered.
+- `packages/coding-agent/src/core/input-origin.ts`, `packages/coding-agent/src/core/agent-session.ts`: one `InputOrigin` (`person` | `extension` | `engine`) classified at the entry point (prompt, steer and follow-up by input source; turn-triggering custom messages by type) replaces the scattered `source !== "extension"` checks of this PR, and `_promptAgent` takes an options object carrying it.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`, `packages/coding-agent/src/core/engine-turn-input.ts`, `packages/coding-agent/src/core/engine-turn-hold.ts`: a steer or follow-up into a streaming turn released the hold but never finished it, so the goal stayed deferred while the session reported `paused=false`. An input that failed before admission left the release barrier set, so `resume_session` became a silent no-op.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`, `packages/coding-agent/src/core/engine-turn-input.ts`, `packages/coding-agent/src/core/engine-turn-hold.ts`: run settlement and prompt admission are core lifecycle points.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/agent-session.ts`, the end of `_emitAgentIdleAfterDeferredTurns`, the `finally` of `prompt()`, `_queueUserInput`'s person check, and the `_promptAgent` signature and its two callers.
+
 ## 2026-10-21 - Release held wakes once without changing attended turns (senpi#3853)
 
 ### What changed
