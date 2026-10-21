@@ -1,8 +1,7 @@
 import { lazyStream } from "./api/lazy.ts";
 import { defaultProviderAuthContext as defaultAuthContext } from "./auth/context.ts";
 import { InMemoryCredentialStore } from "./auth/credential-store.ts";
-import { assertLoginKeyPresent } from "./auth/pool/login-key-guard.ts";
-import { appendLoginSlot, removeSlot } from "./auth/pool/slots.ts";
+import { appendLoginSlot, assertLoginKeyPresent, removeSlot } from "./auth/pool/slots.ts";
 import { resolveRefreshCredential } from "./auth/refresh-credential.ts";
 import {
 	type AuthResolutionOverrides,

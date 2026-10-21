@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- RPC `login_api_key` without a usable key returns an error and stores nothing, and a test run that resolves the real agent directory now fails with `RealAgentDirInTestError` instead of writing there ([#3867](https://github.com/code-yeongyu/senpi/issues/3867)).
 - An idle RPC host (one open session, no work) no longer wakes about eleven times a second. While its supervisor pipe is watched, the supervisor pid is checked every 5 s instead of every 250 ms, and the event-loop stall probe ticks once a second after 2 s without session work, going back to 200 ms as soon as a session works. This cuts the idle CPU of every thread host the desktop keeps open ([#3738](https://github.com/code-yeongyu/senpi/issues/3738)).
 ### Removed
 

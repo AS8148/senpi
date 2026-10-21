@@ -1,8 +1,13 @@
 import { describe, expect, test } from "vitest";
 import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
 import { envApiKeyAuth } from "../src/auth/helpers.ts";
-import { EmptyApiKeyError } from "../src/auth/pool/login-key-guard.ts";
-import { appendLoginSlot, type Credential, listSlots, type PooledCredential } from "../src/auth/pool/slots.ts";
+import {
+	appendLoginSlot,
+	type Credential,
+	EmptyApiKeyError,
+	listSlots,
+	type PooledCredential,
+} from "../src/auth/pool/slots.ts";
 import type { AuthInteraction } from "../src/auth/types.ts";
 import { createModels, createProvider, type Provider } from "../src/models.ts";
 

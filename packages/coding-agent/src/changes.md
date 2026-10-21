@@ -1,3 +1,21 @@
+## 2026-10-21 - Test runs refuse the real agent directory (senpi#3867)
+
+### What changed
+
+- `packages/coding-agent/src/config.ts`: `getAgentDir()` passes the resolved directory to `assertAgentDirAllowedInTests` (fork-only `src/real-agent-dir-guard.ts`). Under a test runner (`VITEST` set, or `NODE_ENV=test` as `bun test` sets it), a directory inside the real account home's `.senpi`, `.omo`, `.pi` or active brand config dir throws `RealAgentDirInTestError`. The real home comes from the account database, not `$HOME`. `SENPI_TEST_USE_REAL_AGENT_DIR=1` opts out, as it already does for the quarantine.
+
+### Why
+
+- senpi#3867: a test run without the Vitest quarantine setup (for example `bun test <file>` from inside an agent session that exports `OMO_CODING_AGENT_DIR`) resolved the user's real agent dir and left faux pool state in `credential-pool-state.json`. Regression: `test/real-agent-dir-guard.test.ts`.
+
+### Why an extension could not handle it
+
+- `getAgentDir()` is the core path resolver every store reads; the guard has to sit where the path is produced.
+
+### Expected merge conflict zones
+
+- LOW: the body of `getAgentDir()` and the import block in `packages/coding-agent/src/config.ts`.
+
 ## 2026-10-19 - Print mode stops waiting for a silent stdin pipe (senpi#3715)
 
 ### What changed

@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- An API-key login with an empty or missing key is refused with `EmptyApiKeyError` instead of saving an unusable `login-N` account ([#3867](https://github.com/code-yeongyu/senpi/issues/3867)).
+
 ### Removed
 
 ## [2026.10.20-1] - 2026-10-20

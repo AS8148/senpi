@@ -1,3 +1,21 @@
+## 2026-10-21 - Logins refuse a blank API key (senpi#3867)
+
+### What changed
+
+- `packages/ai/src/models.ts`: `Models.login` checks the credential a provider's login returned with `assertLoginKeyPresent` (fork-only `src/auth/pool/slots.ts`) before it touches the store. An API-key credential whose `key` field is blank, whitespace or `undefined` throws `EmptyApiKeyError` and nothing is written. `appendLoginSlot` in the same file runs the same check, so `AuthStorage.set` and RPC `login_api_key` are covered too. Env-only logins that carry no `key` field (Bedrock profile or credential chain, Vertex ADC) still save.
+
+### Why
+
+- senpi#3867: an empty key was appended as a keyless `login-2` account that nothing could use. Regression: `test/login-empty-api-key.test.ts`.
+
+### Why an extension could not handle it
+
+- `Models.login` owns the write; an extension cannot veto a credential before the store mutation.
+
+### Expected merge conflict zones
+
+- LOW: the import block and the line after `raceWithAbortSignal(loginOperation, signal)` in `Models.login`.
+
 ## 2026-10-18 - AnthropicMessagesCompat.supportsGzipRequestBody (senpi#3643)
 
 ### What changed
