@@ -1,5 +1,72 @@
 # RPC Mode
 
+## Unattended opens and Resume
+
+`open_session` accepts optional `"attended": false` (other supplied values are
+rejected with `invalid_launch_profile`). A host handover reopen always sets it;
+CLI commands reopening parked paths, including `host session state`, `read`,
+and `wait`, also set it. Engine-originated wakes make zero provider calls while
+held. Attaching a client does not release the hold.
+
+Real prompt, steer, follow-up, or question input releases it. The user's message
+starts one turn with the latest coalesced non-goal context before that message;
+the goal revalidates and may continue afterwards. An explicit Resume instead is:
+
+```json
+{"id":"resume","type":"resume_session","sessionId":"rpc-1"}
+```
+
+```json
+{"id":"resume","type":"response","command":"resume_session","success":true}
+```
+
+It runs at most one turn per held source, sequentially through `agent_end`,
+regardless of follow-up queue mode, with the current goal last. Held counts and
+latest payloads survive another restart. Each wake has a persisted `session-notice`
+entry (`noticeId`, `producer`, `pauseSeq`, `at`, source payload, `heldCount`,
+`text`, and `action: "resume_session"`). Delivery coalesces
+by source; it never drains a backlog. `session-notices-consumed` acknowledges custody
+after the delivering turn settles. `session-hold` entries record hold additions,
+releases, and the local resume transaction. Resume records its request and
+delivery-pending phase before provider admission; notice custody is retained if
+admission is refused or the run is aborted.
+Acknowledgements list only the notice IDs present in the delivered snapshot.
+Wakes arriving during input or Resume delivery remain in custody and restore
+the hold for the next release; they are not discarded or drained without a bound.
+A refused released wake stays solely in notice custody, not also in the native
+steering or follow-up queue.
+
+`get_state` and `open_session.state` include:
+
+```typescript
+paused: boolean;
+pausedNoticeCount: number;
+holds: { kind: "unattended"; key: string; since: string; data?: unknown; sourceCounts: Record<string, number> }[];
+```
+
+`since` is an ISO timestamp. This is the shared engine hold ledger; this release
+keys each record by `key` (defaulting to its kind) and preserves opaque `data`
+through a restart. Persisted additions carry `key`/`data`, and release entries list `keys`. It
+implements only `unattended`. Consumers must distinguish kinds rather than infer
+them from the notification text. A first hold emits `session_paused` with `kind`,
+`pauseSeq`, `at`, `noticeCount`, and `persisted`. Releasing emits
+`session_resumed { cause: "input" | "resume_session", pauseSeq, at }`.
+The ordinary extension UI `notify` event shows the paused count and Resume
+instruction too. Attachment lifecycle extension events remain distinct from
+these engine pause events: attachment never releases any ledger hold.
+
+`open_session.context.task_status` is the task owner's lifecycle label.
+Handover parks with `completed`, `cancelled`, `error`, `failed`, `lost`, or
+`interrupted` are removed with a stderr diagnostic instead of being reopened.
+Other context keys remain opaque.
+
+Automatic turn admission is also bounded independently of the hold. On resume,
+`engineTurns.maxPerResumeWindow` defaults to 8, counting engine starts in loaded
+history since the last real input. A real input ends that resume window. The
+normal `engineTurns.maxPerUserInput` default stays 150. Queued streaming and
+compaction triggers are counted too; a limit emits the existing engine-paused
+notice and record. Setting either cap to 0 disables that particular cap.
+
 When the last client disconnects from a retained in-process session, extensions receive
 `session_parked`; the first reattachment to that still-open session emits
 `session_resumed`. File-monitor polling and prompt-cache keepalive pause between these

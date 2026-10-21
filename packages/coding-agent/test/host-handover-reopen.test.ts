@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHostDaemonPaths } from "../src/modes/rpc/host-daemon-paths.ts";
 import { readHandoverParkedSessions, recordHandoverParkedSession } from "../src/modes/rpc/host-handover-parked.ts";
 import { reopenHandoverParkedSessions } from "../src/modes/rpc/host-handover-reopen.ts";
@@ -12,6 +12,25 @@ const dirs: string[] = [];
 afterEach(async () => {
 	for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true });
 });
+
+// senpi#3853: terminal task records are never turned back into active writers.
+it.each(["completed", "cancelled", "error", "failed", "lost", "interrupted"])(
+	"drops a %s task park without invoking the opener",
+	async (task_status) => {
+		const { agentDir, socket, daemonDir } = await parkedRig();
+		const [park] = await readHandoverParkedSessions(daemonDir);
+		await recordHandoverParkedSession(daemonDir, { ...park!, sessionContext: { task_status } });
+		const open = vi.fn(async () => {});
+		let passes = 0;
+		// The test observes one pass, not the watch's production timing policy.
+		await reopenHandoverParkedSessions(open, agentDir, socket, {
+			hostInstance: "successor",
+			shouldReopen: () => passes++ === 0,
+		});
+		expect(open).not.toHaveBeenCalled();
+		expect(await readHandoverParkedSessions(daemonDir)).toEqual([]);
+	},
+);
 
 async function parkedRig() {
 	const agentDir = mkdtempSync(join(tmpdir(), "hhr-"));

@@ -809,7 +809,7 @@ export class SessionCommandRouter {
 	 * the failure response otherwise, exactly as an open does.
 	 */
 	reopenParked(entry: HandoverParkedEntry): Promise<RpcResponse | undefined> {
-		return this.open(parkedOpenCommand(entry), undefined, { reply: false, defaults: false });
+		return this.open({ ...parkedOpenCommand(entry), attended: false }, undefined, { reply: false, defaults: false });
 	}
 
 	private async open(
@@ -844,6 +844,12 @@ export class SessionCommandRouter {
 		// registry, the runtime and the extensions downstream receive values already
 		// proven to satisfy every documented cap.
 		const kindError = sessionKindError(command.kind);
+		if (command.attended !== undefined && command.attended !== false)
+			return error(
+				command.id,
+				"open_session",
+				`${RPC_ERROR_INVALID_LAUNCH_PROFILE}: attended must be false or omitted`,
+			);
 		if (kindError) return error(command.id, "open_session", `${RPC_ERROR_INVALID_SESSION_KIND}: ${kindError}`);
 		const contextError = sessionContextError(command.context);
 		if (contextError)
@@ -875,6 +881,7 @@ export class SessionCommandRouter {
 			opened = await this.registry.openSession(
 				{
 					cwd: command.cwd ?? this.defaults.cwd,
+					...(command.attended === false ? { attended: false as const } : {}),
 					sessionPath: command.sessionPath,
 					holderEndpoint: {
 						host_instance: instanceId,

@@ -25,6 +25,8 @@ const BROADCAST_LIFECYCLE_RECORDS = new Set([
 	"agent_idle",
 	"session_opened",
 	"session_closed",
+	"session_paused",
+	"session_resumed",
 ]);
 
 type RegisteredConnection = {

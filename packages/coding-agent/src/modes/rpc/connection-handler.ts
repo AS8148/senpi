@@ -1056,6 +1056,12 @@ export function createRpcConnectionHandler(
 				}
 			}
 
+			case "resume_session": {
+				turnRequested = true;
+				await session.resumeSession();
+				return success(id, "resume_session");
+			}
+
 			case "send_custom_message": {
 				// A context message that asks for no turn does not block a launch-time chain, like an extension's.
 				if (command.triggerTurn === true) turnRequested = true;
