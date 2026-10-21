@@ -19,6 +19,7 @@ import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts"
 import type { ResolvedMessagePath } from "../../core/message-path-resolution.ts";
 import { MissingSessionCwdError } from "../../core/session-cwd.ts";
 import { unknownCommandErrorFromWire } from "../../core/unknown-command.ts";
+import { signalSpawnedChild } from "../../utils/child-signal.ts";
 import { DETACH_CONNECTION_CAPABILITY } from "./custom-capability.ts";
 import { ORIGIN_HOST_INSTANCE_FIELD, originHostInstance } from "./host-observe-request.ts";
 
@@ -185,6 +186,8 @@ export type RpcAbortOptions = Omit<Extract<RpcCommand, { type: "abort" }>, "type
 export type RpcAbortAnswer = Extract<RpcResponse, { command: "abort"; success: true }>["data"];
 /** `get_effect_status`: the receipt, or proof the whole transcript holds none. */
 export type RpcEffectStatusAnswer = Extract<RpcResponse, { command: "get_effect_status"; success: true }>["data"];
+/** `get_pending_inputs`: pending inputs in durable custody, and an outcome for each known id. */
+export type RpcPendingInputsAnswer = Extract<RpcResponse, { command: "get_pending_inputs"; success: true }>["data"];
 
 export class RpcClientOpenInFlightError extends Error {
 	readonly code = "open_session_in_flight" as const;
@@ -391,12 +394,12 @@ export class RpcClient {
 
 		this.stopReadingStdout?.();
 		this.stopReadingStdout = null;
-		this.process.kill("SIGTERM");
+		signalSpawnedChild(this.process, "SIGTERM");
 
 		// Wait for process to exit
 		await new Promise<void>((resolve) => {
 			const timeout = setTimeout(() => {
-				this.process?.kill("SIGKILL");
+				if (this.process) signalSpawnedChild(this.process, "SIGKILL");
 				resolve();
 			}, 1000);
 
@@ -742,6 +745,18 @@ export class RpcClient {
 			...(options.sessionPath === undefined ? {} : { sessionPath: options.sessionPath }),
 		};
 		return this.getData<RpcEffectStatusAnswer>(await this.send(command, options.sessionPath === undefined));
+	}
+
+	/**
+	 * The pending inputs in durable custody (queued, sending, failed) and an explicit outcome for each id in
+	 * `knownClientMessageIds` (at most 64), consistent through `throughCursor`.
+	 */
+	async getPendingInputs(knownClientMessageIds?: readonly string[]): Promise<RpcPendingInputsAnswer> {
+		const command = {
+			type: "get_pending_inputs" as const,
+			...(knownClientMessageIds === undefined ? {} : { knownClientMessageIds: [...knownClientMessageIds] }),
+		};
+		return this.getData<RpcPendingInputsAnswer>(await this.send(command));
 	}
 
 	/** Abort with host refusals and transport loss surfaced to machine callers. */

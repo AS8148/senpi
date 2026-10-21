@@ -16,6 +16,134 @@ Session creation and `--session` resolution run in core before any extension is 
 
 - `main.ts`: `resolveSessionPath` and its import line.
 
+## 2026-10-19 - Print mode stops waiting for a silent stdin pipe (senpi#3715)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: the inline `readPipedStdin` (which resolved only on stdin `end` for any non-TTY stdin) is replaced by the fork-only `src/utils/piped-stdin.ts`, called with `hasPromptArgument` (positional messages or `@file` arguments) and `forceRead` (a bare `-`). With a prompt argument, a pipe or socket that delivers no data within `PIPED_STDIN_GRACE_MS` (2000 ms) is paused, unref'd and skipped; data inside the window, a regular file, no prompt argument, and `-` keep the read-to-EOF behavior. A skipped stdin prints one stderr line (`PIPED_STDIN_SKIP_HINT`, built with the options in the fork-only `src/cli/piped-stdin-options.ts`) naming `-` as the way to read it.
+
+### Why
+
+- ssh, CI runners and agent harnesses give children a stdin that is open but never written or closed, so `senpi -p "prompt"` blocked before startup forever at 0% CPU. Regression: `test/suite/regressions/issue-3715-print-stdin-open-pipe.test.ts`.
+
+### Why an extension could not handle it
+
+- stdin is read in `main` before the initial message is built and before print mode starts; no extension hook runs earlier.
+
+### Expected merge conflict zones
+
+- LOW: the `readPipedStdin` call site before `prepareInitialMessage` and the utils import block.
+
+## 2026-10-19 - Print mode marks its quit as a process exit (senpi#3711)
+
+### What changed
+
+- `packages/coding-agent/src/modes/print-mode.ts`: `disposeRuntime` calls `runtimeHost.dispose({ processExit: true })`.
+
+### Why
+
+- The total quit budget (senpi#3711) must only cut handlers when the process really exits right after; an RPC host closing one session keeps running, so there a detached handler would keep running while its extension's handles and provider scope are closed.
+
+### Why an extension could not handle it
+
+- Print mode's shutdown is host code, not an extension surface.
+
+### Expected merge conflict zones
+
+- LOW: `print-mode.ts` `disposeRuntime`.
+
+## 2026-10-19 - Never signal a child whose spawn failed (senpi#3706)
+
+### What changed
+
+- `packages/coding-agent/src/experimental/session-worker-manager.ts`: its stop/timeout/abort path calls `signalSpawnedChild` (`packages/coding-agent/src/utils/child-signal.ts`), which sends nothing to a child without a pid, instead of calling `kill()` on it directly.
+
+### Why
+
+On Node before 24.22.0 / 26.10.0 (nodejs/node#65052), `kill()` on a child whose spawn failed (no pid) becomes `kill(0, signal)` and signals the caller's own process group, killing senpi and the rest of the terminal's foreground job.
+
+### Why an extension could not handle it
+
+The affected calls are inside core stop paths; nothing outside them owns those child processes.
+
+### Expected merge conflict zones
+
+The single `kill()` call on each listed path's stop/timeout/abort branch.
+
+## 2026-10-19 - Subscription limits are polled before the first turn (senpi#3684)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: interactive and RPC startup (single-session and the multi-session host) call `startSubscriptionUsagePolling({ agentDir, report })` unless `--offline` is set; print mode never polls. The poller (`src/core/subscription-limits/usage-poller.ts`, fork-only) reads each signed-in Claude and ChatGPT subscription account's usage endpoint into the process's `SubscriptionLimitStore`, sharing one `subscription-usage.json` cache across processes. The newest report wins: a cached poll older than a turn's report never replaces it. A refresh the token endpoint rejects marks the Claude slot `auth_error` (as a turn would), so polling stops asking for that account until `/login`.
+
+### Why
+
+Limits reached hosts only from a turn's response, so a fresh desktop session showed none, while the OmO TUI polled the same endpoints separately: two implementations of one thing.
+
+### Why an extension could not handle it
+
+The store is process-wide and served by the RPC host itself (`get_subscription_limits`); the poll must start with the host process, before any session or extension exists.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: LOW, the import block, the multi-session branch after `initTheme`, and the lines before the `appMode === "rpc"` dispatch.
+
+## 2026-10-18 - The runtime factory threads --tool-runtime into every session it creates (senpi#3566)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `createCliRuntimeFactory` destructures `toolRuntime` from its `CliRuntimeConfiguration` and forwards it to `createAgentSessionFromServices`, so the single-session, interactive, and multi-session paths (which all build sessions through this factory, worker isolates included via their replayed configuration) hand each `AgentSession` its tool runtime instead of re-reading the env.
+
+### Why
+
+The tool dispatcher is per-session state constructed from the once-per-process resolution todo 1 added; a session or worker must never re-derive it.
+
+### Why an extension could not handle it
+
+The runtime factory and the session constructor run before extensions load.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: the `createCliRuntimeFactory` destructure and the `createAgentSessionFromServices` call.
+
+## 2026-10-18 - Every CLI entry becomes the tool-child role first (senpi#3566)
+
+### What changed
+
+- `packages/coding-agent/src/cli.ts` and `packages/coding-agent/src/cli-main.ts`: `import "./internal-role.ts"` directly after the existing `./valid-cwd.ts` guard (which stays the first import).
+- `packages/coding-agent/src/rpc-entry.ts`: the same import as its first statement.
+- `internal-role.ts` (fork-only) does nothing unless `SENPI_INTERNAL_ROLE` is set. With `tool-child` it runs the tool child and never returns; without its channel environment it exits 70 with `tool-child: channel unavailable` before argument parsing.
+
+### Why
+
+A tool child is started by re-entering the engine binary with a role in its environment (DESIGN PART 1). The role has to be decided before version dispatch, argument parsing or the CLI graph, on every published entry.
+
+### Why an extension could not handle it
+
+Extensions load long after argument parsing; the role must win before any of it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/cli.ts`, `packages/coding-agent/src/cli-main.ts`, `packages/coding-agent/src/rpc-entry.ts`: the first import lines.
+
+## 2026-10-17 - /share redacts the session, previews it and asks before uploading (senpi#3524)
+
+### What changed
+
+- `packages/coding-agent/src/config.ts`: `getShareViewerUrl` and the `https://pi.dev/session/` default are replaced by `getShareViewerBase()` (the `SHARE_VIEWER_URL` value or undefined) and `isShareDisabledByEnvironment()` (`<PREFIX>_DISABLE_SHARE`).
+
+### Why
+
+- `/share` uploaded the whole session unredacted, with no confirmation, to a secret (unlisted) gist, after writing it to a fixed `os.tmpdir()/session.html`, and pointed users at the third-party `pi.dev` viewer by default. Any key, token, home path or email in a prompt or tool result left the machine in clear text. Regressions: `test/suite/regressions/3524-share-redaction.test.ts`, `test/suite/regressions/3524-share-consent.test.ts`.
+
+### Why an extension could not handle it
+
+- `/share` is a built-in interactive command and the HTML export is core; an extension cannot intercept either before the upload.
+
+### Expected merge conflict zones
+
+- LOW: the share viewer block in `config.ts`.
+
 ## 2026-10-18 - The host resolves and advertises its tool runtime (senpi#3566)
 
 ### What changed
