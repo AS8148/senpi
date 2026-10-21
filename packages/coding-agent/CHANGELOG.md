@@ -8,6 +8,7 @@
 
 ### Changed
 
+- An RPC client that declares `interactive_user` in `set_client_info` keeps that role for the life of its connection: a later `set_client_info` that adds or drops it is refused with `connection_role_fixed`, so the heartbeat must repeat the same capability list. The role marks a person's client and is what may Stop or release a pause in senpi#3811 ([#3811](https://github.com/code-yeongyu/senpi/issues/3811)).
 - A new engine host no longer re-transpiles extensions whose sources have not changed: the importer keeps its prepared module source under `<agent dir>/cache/extension-modules` and reuses it after re-checking every import, so a host starts faster ([#3716](https://github.com/code-yeongyu/senpi/issues/3716))
 - The bundled Claude Agent SDK is updated to 0.3.306 (from 0.3.296), so the Anthropic subscription lane runs Claude Code 2.1.306 and the models it knows ([#3854](https://github.com/code-yeongyu/senpi/issues/3854)).
 
