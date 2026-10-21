@@ -49,6 +49,7 @@ export function combineUsage(first: Usage, second: Usage): Usage {
 			cacheWrite: first.cost.cacheWrite + second.cost.cacheWrite,
 			total: first.cost.total + second.cost.total,
 		},
+		...(first.costUnknown || second.costUnknown ? { costUnknown: true } : {}),
 	};
 }
 

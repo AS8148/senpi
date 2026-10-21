@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- A `models.json` `models[]` entry that repeats a built-in model without `cost` keeps the built-in price instead of billing at $0, and a custom model with no price anywhere reports its cost as unknown (no `$` amount) instead of $0; `hideFreeModels` no longer hides such a model ([#3844](https://github.com/code-yeongyu/senpi/issues/3844)).
+
 ### Removed
 
 ## [2026.10.20-1] - 2026-10-20

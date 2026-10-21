@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- `calculateCost` reports `Usage.costUnknown` for a model whose `ModelCost.unknown` is set instead of a $0 cost ([#3844](https://github.com/code-yeongyu/senpi/issues/3844)).
+
 ### Removed
 
 ## [2026.10.20-1] - 2026-10-20
