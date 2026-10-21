@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Api, calculateCost, type Model, type Usage } from "@earendil-works/pi-ai";
+import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import { afterEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../../../src/core/auth-storage.ts";
 import { createModelRegistry, getModelRuntime } from "../../model-runtime-test-utils.ts";
@@ -31,12 +32,15 @@ function usage(input: number, output: number): Usage {
 	};
 }
 
+// Any priced zai catalog model: the test is about inheriting whatever price the built-in entry has (senpi#1955).
+const PRICED_ZAI_ID = getBuiltinModels("zai").find((model) => model.cost.output > 0)?.id ?? "";
+
 async function catalogModel(): Promise<Model<Api>> {
 	const model = getModelRuntime(await createModelRegistry(AuthStorage.inMemory(), undefined)).getModel(
 		"zai",
-		"glm-5.3",
+		PRICED_ZAI_ID,
 	);
-	if (model === undefined) throw new Error("zai/glm-5.3 is missing from the built-in catalog");
+	if (model === undefined) throw new Error("the built-in zai catalog has no priced model");
 	return model;
 }
 
@@ -44,10 +48,10 @@ describe("models.json model prices (senpi#3844)", () => {
 	it("#given a models[] entry that repeats a built-in model without cost #when it is composed #then it keeps the built-in price", async () => {
 		// given
 		const catalog = await catalogModel();
-		const runtime = await runtimeWith({ zai: { models: [{ id: "glm-5.3", name: "GLM-5.3 (mine)" }] } });
+		const runtime = await runtimeWith({ zai: { models: [{ id: PRICED_ZAI_ID, name: "GLM-5.3 (mine)" }] } });
 
 		// when
-		const model = runtime.getModel("zai", "glm-5.3");
+		const model = runtime.getModel("zai", PRICED_ZAI_ID);
 
 		// then: the entry still applies (name), and the price is the catalog's, not zero
 		expect(catalog.cost.output).toBeGreaterThan(0);
@@ -58,11 +62,11 @@ describe("models.json model prices (senpi#3844)", () => {
 	it("#given a models[] entry that repeats a built-in model with its own cost #when it is composed #then the entry's price wins", async () => {
 		// given
 		const runtime = await runtimeWith({
-			zai: { models: [{ id: "glm-5.3", cost: { input: 2, output: 9, cacheRead: 0.5, cacheWrite: 0 } }] },
+			zai: { models: [{ id: PRICED_ZAI_ID, cost: { input: 2, output: 9, cacheRead: 0.5, cacheWrite: 0 } }] },
 		});
 
 		// when
-		const model = runtime.getModel("zai", "glm-5.3");
+		const model = runtime.getModel("zai", PRICED_ZAI_ID);
 
 		// then
 		expect(model?.cost).toEqual({ input: 2, output: 9, cacheRead: 0.5, cacheWrite: 0 });
