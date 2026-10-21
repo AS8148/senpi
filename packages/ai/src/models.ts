@@ -1,6 +1,7 @@
 import { lazyStream } from "./api/lazy.ts";
 import { defaultProviderAuthContext as defaultAuthContext } from "./auth/context.ts";
 import { InMemoryCredentialStore } from "./auth/credential-store.ts";
+import { assertLoginKeyPresent } from "./auth/pool/login-key-guard.ts";
 import { appendLoginSlot, removeSlot } from "./auth/pool/slots.ts";
 import { resolveRefreshCredential } from "./auth/refresh-credential.ts";
 import {
@@ -784,6 +785,7 @@ class ModelsImpl implements MutableModels {
 		const { onAccountCommitted, ...providerInteraction } = interaction;
 		const loginOperation: Promise<Credential> = method.login({ ...providerInteraction, signal }, options);
 		const credential = await raceWithAbortSignal(loginOperation, signal);
+		assertLoginKeyPresent(credential);
 		let committedName: string | undefined;
 		let committedOrigin: "generated" | "provider" | undefined;
 		let mutationStarted = false;

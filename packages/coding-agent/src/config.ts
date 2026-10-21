@@ -5,6 +5,7 @@ import { fileURLToPath } from "url";
 import { createBunLauncherRepairCommand } from "./bun-global-launcher.ts";
 import { type BrandProfile, brandProfile, envValue } from "./core/brand.ts";
 import { findNearestParentConfigDir } from "./nearest-parent-config.ts";
+import { assertAgentDirAllowedInTests } from "./real-agent-dir-guard.ts";
 import { resolveInstallPath } from "./runtime-snapshot/marker.ts";
 import { spawnProcessSync } from "./utils/child-process.ts";
 import { normalizePath } from "./utils/paths.ts";
@@ -639,7 +640,9 @@ export function resolveAgentDir(cwd: string, homeDir: string, envDir?: string): 
 
 /** Get the agent config directory (e.g., ~/.senpi/agent/) */
 export function getAgentDir(): string {
-	return resolveAgentDir(process.cwd(), homedir(), envValue("CODING_AGENT_DIR"));
+	const agentDir = resolveAgentDir(process.cwd(), homedir(), envValue("CODING_AGENT_DIR"));
+	assertAgentDirAllowedInTests(agentDir, CONFIG_DIR_NAME);
+	return agentDir;
 }
 
 /**

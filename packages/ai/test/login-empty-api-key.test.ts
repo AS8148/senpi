@@ -1,0 +1,72 @@
+import { describe, expect, test } from "vitest";
+import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
+import { envApiKeyAuth } from "../src/auth/helpers.ts";
+import { EmptyApiKeyError } from "../src/auth/pool/login-key-guard.ts";
+import { appendLoginSlot, type Credential, listSlots, type PooledCredential } from "../src/auth/pool/slots.ts";
+import type { AuthInteraction } from "../src/auth/types.ts";
+import { createModels, createProvider, type Provider } from "../src/models.ts";
+
+// #3867: a keyless `login-2` slot reached auth.json because nothing refused a blank key.
+
+function pooledApiKey(): PooledCredential {
+	return {
+		type: "api_key",
+		key: "primary-key",
+		accounts: [{ name: "default", key: "primary-key", source: "login" }],
+	};
+}
+
+const blankKeys: ReadonlyArray<[string, Credential]> = [
+	["an empty key", { type: "api_key", key: "" }],
+	["a whitespace key", { type: "api_key", key: "   " }],
+	["a key field without a value", { type: "api_key", key: undefined }],
+];
+
+describe("appendLoginSlot refuses a blank API key", () => {
+	test.each(blankKeys)("refuses %s appended to an existing pool", (_label, credential) => {
+		expect(() => appendLoginSlot(pooledApiKey(), credential)).toThrow(EmptyApiKeyError);
+	});
+
+	test.each(blankKeys)("refuses %s as the first credential", (_label, credential) => {
+		expect(() => appendLoginSlot(undefined, credential)).toThrow(EmptyApiKeyError);
+	});
+
+	test("still saves env-only API-key logins that carry no key field", () => {
+		const profile: Credential = { type: "api_key", env: { AWS_PROFILE: "work" } };
+		const chain: Credential = { type: "api_key" };
+
+		expect(appendLoginSlot(undefined, profile)).toBe(profile);
+		expect(listSlots(appendLoginSlot(pooledApiKey(), chain) as PooledCredential).map((slot) => slot.name)).toEqual([
+			"default",
+			"login-2",
+		]);
+	});
+});
+
+describe("Models.login refuses a blank API key", () => {
+	const provider: Provider = createProvider({
+		id: "blankkey",
+		name: "Blank Key",
+		baseUrl: "https://blankkey.example/v1",
+		auth: { apiKey: envApiKeyAuth("Blank Key API key", ["BLANKKEY_API_KEY"]) },
+		models: [],
+		api: "openai-responses" as never,
+	});
+
+	function submit(value: string): AuthInteraction {
+		return { signal: AbortSignal.timeout(5_000), prompt: async () => value, notify: () => {} };
+	}
+
+	test("an empty prompt answer throws EmptyApiKeyError and writes nothing", async () => {
+		const store = new InMemoryCredentialStore();
+		await store.modify("blankkey", async () => pooledApiKey());
+		const models = createModels({ credentials: store });
+		models.setProvider(provider);
+
+		await expect(models.login("blankkey", "api_key", submit(""))).rejects.toBeInstanceOf(EmptyApiKeyError);
+
+		expect(listSlots((await store.read("blankkey")) as PooledCredential).map((slot) => slot.name)).toEqual([
+			"default",
+		]);
+	});
+});

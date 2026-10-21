@@ -1,6 +1,7 @@
 import { LEGACY_PROVIDER_IDS } from "../../legacy-provider-ids.ts";
 import type { ProviderEnv } from "../../types.ts";
 import type { Credential } from "../types.ts";
+import { assertLoginKeyPresent } from "./login-key-guard.ts";
 
 export type { Credential };
 
@@ -369,6 +370,7 @@ export function appendLoginSlot(
 	flat: Credential,
 	onAllocated?: (name: string, origin: "generated" | "provider") => void,
 ): Credential {
+	assertLoginKeyPresent(flat);
 	const provided = providedSlots(flat);
 	if (provided) {
 		// Provider-owned envelopes identify an addition by immutable ID, never by
