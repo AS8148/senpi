@@ -8,6 +8,7 @@
 
 ### Changed
 
+- A new engine host no longer re-transpiles extensions whose sources have not changed: the importer keeps its prepared module source under `<agent dir>/cache/extension-modules` and reuses it after re-checking every import, so a host starts faster ([#3716](https://github.com/code-yeongyu/senpi/issues/3716))
 - The bundled Claude Agent SDK is updated to 0.3.306 (from 0.3.296), so the Anthropic subscription lane runs Claude Code 2.1.306 and the models it knows ([#3854](https://github.com/code-yeongyu/senpi/issues/3854)).
 
 ### Fixed
@@ -79,8 +80,6 @@
 - Subscription limits are known before an account's first turn: in interactive and RPC modes the engine polls each signed-in Claude (every 5 min) and ChatGPT (every 2.5 min) subscription account's usage, so `get_subscription_limits` and the `subscription_limits` record carry its windows on a fresh session. Turns keep updating the same record, the newest reading wins, one machine-wide cache keeps several senpi processes to one request per account per interval, and a failed poll keeps the last windows and reports why in a new optional `error` field (with `plan` beside it). A login the token endpoint already rejected shows `auth stale - run /login` and is not polled again. Extensions read the same store through `pi.getSubscriptionLimits()` and `pi.onSubscriptionLimits()` ([#3684](https://github.com/code-yeongyu/senpi/issues/3684)).
 
 ### Changed
-
-- A new engine host no longer re-transpiles extensions whose sources have not changed: the importer keeps its prepared module source under `<agent dir>/cache/extension-modules` and reuses it after re-checking every import, so a host starts faster ([#3716](https://github.com/code-yeongyu/senpi/issues/3716))
 
 ### Fixed
 
