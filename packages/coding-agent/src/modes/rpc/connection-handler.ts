@@ -926,9 +926,12 @@ export function createRpcConnectionHandler(
 		const settled = new AbortController();
 		const loginSignal = AbortSignal.any([controller.signal, settled.signal]);
 		activeLogins.set(provider, controller);
+		const authStorage = session.modelRegistry.authStorage;
+		// A replacement left by an earlier login is not this login's; drop it so it is never reported here.
+		authStorage.takeReplacement(provider);
 
 		try {
-			await session.modelRegistry.authStorage.login(provider as OAuthProviderId, {
+			await authStorage.login(provider as OAuthProviderId, {
 				onAuth: (info) => {
 					outputEvent({ type: "auth_login_url", provider, url: info.url });
 				},
@@ -941,7 +944,9 @@ export function createRpcConnectionHandler(
 			});
 			session.modelRegistry.refresh();
 			if (provider === ANTHROPIC_SUBSCRIPTION_PROVIDER_ID) emitProviderAccountsChanged(provider);
-			outputEvent({ type: "auth_login_end", provider, success: true });
+			// The client shows what this login replaced and where the previous credential is (senpi#3486).
+			const replacement = authStorage.takeReplacement(provider);
+			outputEvent({ type: "auth_login_end", provider, success: true, ...replacement });
 		} catch (loginError: unknown) {
 			const message = loginError instanceof Error ? loginError.message : String(loginError);
 			outputEvent({ type: "auth_login_end", provider, success: false, error: message });

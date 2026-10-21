@@ -7044,3 +7044,21 @@ The classic capability list in `connection-handler.ts`.
 
 - `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the `login_api_key` case.
 - `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `login_api_key` response member.
+
+## 2026-10-21 - auth_login_end says what an OAuth login replaced (#3486)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `startLogin` drops any replacement left by an earlier login before it starts, and a successful `auth_login_end` carries `replaced` and `backupPath` when this login replaced the provider's credential of the other kind, taken once through `takeReplacement`.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: an OAuth login over a stored API key replaced the key and backed it up, but the RPC client was never told, and the record stayed in memory; the TUI and `login_api_key` already reported it (#3486 review, MEDIUM).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts` owns the RPC login flow and its events.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the start and the success branch of `startLogin`.

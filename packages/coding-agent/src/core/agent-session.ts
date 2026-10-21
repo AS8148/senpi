@@ -107,6 +107,7 @@ import { AgentRunContinuations } from "./agent-run-continuation.ts";
 import { AgentSettledDelivery, type DeferredAgentSettledAction, DeferredTurnClaim } from "./agent-settled-delivery.ts";
 import { resolveAssistantUsageScope } from "./assistant-usage-scope.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
+import type { CredentialReplacement } from "./auth-storage.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import { envValue } from "./brand.ts";
 import type { BrowserEngine } from "./browser-engine.ts";
@@ -692,6 +693,10 @@ export type AgentSessionEvent =
 			provider: string;
 			success: boolean;
 			error?: string;
+			/** A successful login that replaced a credential of the other kind names it (senpi#3486). */
+			replaced?: CredentialReplacement["replaced"];
+			/** Where the replaced credential was backed up, when it was. */
+			backupPath?: string;
 	  }
 	| {
 			type: "summarization_retry_scheduled";

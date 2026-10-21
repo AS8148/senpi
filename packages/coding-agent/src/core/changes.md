@@ -11198,3 +11198,21 @@ Fallback eligibility and the agent_end retry decision are owned by `AgentSession
 
 - `agent-session.ts`: the retry-state fields, the `transformContext` wrapper in `_installAgentNextTurnRefresh`, the start of the agent_end retry block, and `_isHardErrorFallbackEligible`.
 - `retry-fallback/settings.ts`: `DEFAULT_FALLBACK_CHAINS`.
+
+## 2026-10-21 - The auth_login_end event can name a replaced credential (#3486)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the `auth_login_end` member of the session event union gains optional `replaced` (the `CredentialReplacement` kind) and `backupPath`.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: RPC clients must learn when an OAuth login replaced a stored API key and where its backup is (#3486 review).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts` owns the session event types the RPC writer emits.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the `auth_login_end` member of the event union and the `auth-storage.ts` type import.
