@@ -2047,12 +2047,12 @@ Upstream manifest edits at the next sync.
 
 ### What changed
 
-- `packages/ai/scripts/generate-models.ts`: the six provider loops that skipped a models.dev row with `status: "deprecated"` (baseten, together, venice, opencode/opencode-go, github-copilot, and the xiaomi family) now record it with `markDeprecatedUpstream` and keep it; a post-pass (`applyDeprecatedUpstreamMetadata`) sets `deprecated: true` on those catalog rows. A row that models.dev no longer lists still disappears. The catalog was regenerated with `--strict`.
+- `packages/ai/scripts/generate-models.ts`: the six provider loops that skipped a models.dev row with `status: "deprecated"` (baseten, together, venice, opencode/opencode-go, github-copilot, and the xiaomi family) keep it when the previous generated catalog (the committed `src/providers/data`) already shipped it (`keepDeprecatedUpstream`), and skip it as before otherwise; a post-pass (`applyDeprecatedUpstreamMetadata`) sets `deprecated: true` on the kept rows. A row that models.dev no longer lists still disappears, and a deprecated row the catalog never shipped is not added. The catalog was regenerated with `--strict`.
 - `packages/ai/src/model.ts`: `Model` gains the optional `deprecated` flag.
 
 ### Why
 
-- models.dev marks a model deprecated while the provider still serves it. Dropping those rows removed working models (GitHub Copilot Claude Opus 4.7, GPT-5.5, GPT-5.4; Baseten Kimi K2.x) from users mid-release and broke the 2026.10.21-1 release run's live catalog regeneration. Keeping them labeled lets the UI mark them and fallback prefer current models.
+- models.dev marks a model deprecated while the provider still serves it. Dropping those rows removed working models (GitHub Copilot Claude Opus 4.7, GPT-5.5, GPT-5.4; Baseten Kimi K2.x) from users mid-release and broke the 2026.10.21-1 release run's live catalog regeneration. Keeping them labeled lets the UI mark them and fallback prefer current models; not re-adding long-dropped deprecated rows keeps the pickers clean.
 
 ### Why an extension could not handle it
 

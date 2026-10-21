@@ -776,11 +776,31 @@ function withXaiThinkingPin<T extends { reasoning_options?: ModelsDevReasoningOp
 	};
 }
 
-// models.dev marks a model `deprecated` while the provider still serves it. Such rows stay in the catalog,
-// labeled `deprecated: true`, so a user on one keeps a working model; only rows gone from models.dev drop out.
+// models.dev marks a model `deprecated` while the provider still serves it. A deprecated row the previous
+// generated catalog already shipped stays, labeled `deprecated: true`, so nobody loses a working model; a
+// deprecated row the catalog did not ship is skipped as before, and a row gone from models.dev drops out.
 const deprecatedUpstreamModels = new Set<string>();
-function markDeprecatedUpstream(provider: string, modelId: string): void {
-	deprecatedUpstreamModels.add(`${provider}:${modelId}`);
+const previouslyShippedModels = readPreviouslyShippedModelKeys();
+function readPreviouslyShippedModelKeys(): Set<string> {
+	const keys = new Set<string>();
+	const dataDir = join(packageRoot, "src/providers/data");
+	if (!existsSync(dataDir)) return keys;
+	for (const file of readdirSync(dataDir)) {
+		if (!file.endsWith(".json") || file === MODEL_DATA_MANIFEST_FILE) continue;
+		const groups = JSON.parse(readFileSync(join(dataDir, file), "utf8")) as Record<string, Record<string, { id?: unknown; provider?: unknown }>>;
+		for (const rows of Object.values(groups)) {
+			for (const row of Object.values(rows)) {
+				if (typeof row.id === "string" && typeof row.provider === "string") keys.add(`${row.provider}:${row.id}`);
+			}
+		}
+	}
+	return keys;
+}
+function keepDeprecatedUpstream(provider: string, modelId: string): boolean {
+	const key = `${provider}:${modelId}`;
+	if (!previouslyShippedModels.has(key)) return false;
+	deprecatedUpstreamModels.add(key);
+	return true;
 }
 function applyDeprecatedUpstreamMetadata(model: Model<Api>): void {
 	if (deprecatedUpstreamModels.has(`${model.provider}:${model.id}`)) model.deprecated = true;
@@ -1985,7 +2005,7 @@ function processBasetenModels(provider: ModelsDevProvider | undefined): Model<Ap
 	const models: Model<Api>[] = [];
 
 	for (const [modelId, model] of Object.entries(provider.models)) {
-		if (model.status === "deprecated") markDeprecatedUpstream("baseten", modelId);
+		if (model.status === "deprecated" && !keepDeprecatedUpstream("baseten", modelId)) continue;
 
 		const reasoning = model.reasoning === true;
 		const reasoningOptions = model.reasoning_options ?? [];
@@ -2687,7 +2707,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(togetherProvider.models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
-				if (m.status === "deprecated") markDeprecatedUpstream("together", modelId);
+				if (m.status === "deprecated" && !keepDeprecatedUpstream("together", modelId)) continue;
 
 				const reasoning = m.reasoning === true;
 				const thinkingLevelMap = getTogetherThinkingLevelMap(modelId, reasoning);
@@ -2721,7 +2741,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(data.venice.models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
-				if (m.status === "deprecated") markDeprecatedUpstream("venice", modelId);
+				if (m.status === "deprecated" && !keepDeprecatedUpstream("venice", modelId)) continue;
 
 				models.push({
 					id: modelId,
@@ -2764,7 +2784,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(data[variant.key].models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
-				if (m.status === "deprecated") markDeprecatedUpstream(variant.provider, modelId);
+				if (m.status === "deprecated" && !keepDeprecatedUpstream(variant.provider, modelId)) continue;
 
 				const npm = m.provider?.npm;
 				let api: Api;
@@ -2867,7 +2887,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(data["github-copilot"].models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
-				if (m.status === "deprecated") markDeprecatedUpstream("github-copilot", modelId);
+				if (m.status === "deprecated" && !keepDeprecatedUpstream("github-copilot", modelId)) continue;
 
 				// Claude 4.x and 5.x models route to Anthropic Messages API
 				const isCopilotClaude = /^claude-(haiku|sonnet|opus|fable)-[45]([.\-]|$)/.test(modelId);
@@ -3101,7 +3121,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(providerModels)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
-				if (m.status === "deprecated") markDeprecatedUpstream(provider, modelId);
+				if (m.status === "deprecated" && !keepDeprecatedUpstream(provider, modelId)) continue;
 
 				models.push({
 					id: modelId,
