@@ -65,7 +65,10 @@ describe("the built CLI under a user's test-looking environment (#3867)", () => 
 				"-e",
 				`const m = await import(${JSON.stringify(builtConfig)}); process.stdout.write(m.getAgentDir());`,
 			],
-			{ env: { PATH: process.env.PATH, HOME: realHome, USERPROFILE: realHome, ...runTempEnv, ...userTestEnv }, encoding: "utf8" },
+			{
+				env: { PATH: process.env.PATH, HOME: realHome, USERPROFILE: realHome, ...runTempEnv, ...userTestEnv },
+				encoding: "utf8",
+			},
 		);
 
 		expect(probe.stderr).not.toContain("RealAgentDirInTestError");
