@@ -32,8 +32,14 @@ export const HOST_PUBLIC_SOCKET_ENV = "SENPI_RPC_HOST_PUBLIC_SOCKET";
 /** Fallback binding when no inherited fd is available: poll this pid. */
 export const HOST_WATCH_PPID_ENV = "SENPI_RPC_HOST_WATCH_PPID";
 export const HOST_WATCH_PSTART_ENV = "SENPI_RPC_HOST_WATCH_PSTART";
-/** Poll cadence for the ppid fallback. */
+/** Poll cadence for the recorded-supervisor poll when it is the only binding. */
 export const HOST_WATCH_PPID_INTERVAL_MS = 250;
+/**
+ * Poll cadence for the ppid check while the inherited pipe is armed (senpi#3738). EOF on the pipe is
+ * the primary signal and arrives from kqueue/epoll at once; the ppid check then only backs it up, so
+ * an idle host does not wake four times a second for a signal the pipe already delivers.
+ */
+export const HOST_WATCH_PPID_BACKUP_INTERVAL_MS = 5_000;
 export const HOST_CLEANUP_PATHS_ENV = "SENPI_RPC_HOST_CLEANUP_PATHS";
 
 export interface HostWatchdogConfig {
@@ -157,11 +163,30 @@ export function armHostWatchdog(
 		stopped = true;
 		for (const stop of disarmers.splice(0)) stop();
 	};
-	let polling = false;
+	const ppid = config.ppid;
+	let stopPpid: (() => void) | undefined;
+	let ppidIntervalMs: number | undefined;
+	const armPpid = (intervalMs: number): void => {
+		if (stopped || ppid === undefined || ppidIntervalMs === intervalMs) return;
+		stopPpid?.();
+		ppidIntervalMs = intervalMs;
+		stopPpid = watchPpid(ppid, config.processStartTime, fire, intervalMs);
+	};
+	disarmers.push(() => stopPpid?.());
+	// The poll runs only when the stdin lifetime reader is absent or failed. While a legacy inherited
+	// pipe is armed it merely backs that pipe up (senpi#3738); a pipe that cannot be read (never
+	// inherited, or failed later) leaves the poll as the only binding, so it goes back to the fast cadence.
+	let pollWanted = false;
+	let pipeLive = false;
+	if (config.fd !== undefined) {
+		pipeLive = watchFdForEof(config.fd, fire, disarmers, () => {
+			pipeLive = false;
+			if (pollWanted) armPpid(HOST_WATCH_PPID_INTERVAL_MS);
+		});
+	}
 	const fallback = (): void => {
-		if (stopped || polling || config.ppid === undefined) return;
-		polling = true;
-		disarmers.push(watchPpid(config.ppid, config.processStartTime, fire));
+		pollWanted = true;
+		armPpid(pipeLive ? HOST_WATCH_PPID_BACKUP_INTERVAL_MS : HOST_WATCH_PPID_INTERVAL_MS);
 	};
 	if (config.lifetimeFd !== undefined) {
 		try {
@@ -170,7 +195,6 @@ export function armHostWatchdog(
 			fallback();
 		}
 	} else fallback();
-	if (config.fd !== undefined) disarmers.push(watchFdForEof(config.fd, fire));
 	return disarm;
 }
 
@@ -187,7 +211,12 @@ export function armHostWatchdog(
  * handoff) would hang in exit until something killed it. With a socket the same EOF arrives from
  * kqueue/epoll and nothing holds the exit.
  */
-function watchFdForEof(fd: number, fire: (reason: string) => void): () => void {
+function watchFdForEof(
+	fd: number,
+	fire: (reason: string) => void,
+	disarmers: Array<() => void>,
+	onUnavailable: () => void,
+): boolean {
 	let stream: Socket;
 	let streamFailed = false;
 	let fired = false;
@@ -200,7 +229,7 @@ function watchFdForEof(fd: number, fire: (reason: string) => void): () => void {
 		// The watchdog owns this inherited read end; destroying the socket releases it.
 		stream = new Socket({ fd, readable: true, writable: false });
 	} catch {
-		return () => {};
+		return false;
 	}
 	stream.resume();
 	const onEnd = (): void => fireOnce(`supervisor pipe fd ${fd} closed`);
@@ -209,18 +238,20 @@ function watchFdForEof(fd: number, fire: (reason: string) => void): () => void {
 	};
 	const onError = (): void => {
 		streamFailed = true;
+		onUnavailable();
 	};
 	stream.once("end", onEnd);
 	// Win32 pipe teardown may report close without end; POSIX invalid-fd close is
 	// not supervisor death and remains inert.
 	if (process.platform === "win32") stream.once("close", onClose);
 	stream.once("error", onError);
-	return () => {
+	disarmers.push(() => {
 		stream.off("end", onEnd);
 		stream.off("close", onClose);
 		stream.off("error", onError);
 		stream.destroy();
-	};
+	});
+	return true;
 }
 
 /**
@@ -231,6 +262,7 @@ function watchPpid(
 	supervisorPid: number,
 	recordedStart: string | undefined,
 	fire: (reason: string) => void,
+	intervalMs: number,
 ): () => void {
 	// Tests and embedders may bind the watchdog to this process itself; that
 	// is a valid live binding rather than evidence of supervisor loss.
@@ -258,7 +290,7 @@ function watchPpid(
 				probing = false;
 			}
 		})();
-	}, HOST_WATCH_PPID_INTERVAL_MS);
+	}, intervalMs);
 	timer.unref?.();
 	return () => {
 		stopped = true;
