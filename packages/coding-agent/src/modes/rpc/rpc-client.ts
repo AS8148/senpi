@@ -534,6 +534,18 @@ export class RpcClient {
 		return this.getData<RpcUnloadAnswer>(await this.send({ ...options, type: "unload_session", sessionId }, false));
 	}
 
+	/**
+	 * Patch the context the attached session publishes (`set_session_context`); `null` deletes a key.
+	 * Rejects with {@link RpcCommandError} carrying the host's code (`session_not_attached`, `invalid_session_context`).
+	 */
+	async setSessionContext(
+		patch: Record<string, string | number | boolean | null>,
+		sessionId = this.sessionId,
+	): Promise<void> {
+		if (!sessionId) throw new Error("set_session_context needs a session");
+		this.getData(await this.send({ type: "set_session_context", sessionId, patch }, false));
+	}
+
 	async closeSession(sessionId = this.sessionId): Promise<void> {
 		if (!sessionId) return;
 		try {
