@@ -10,14 +10,25 @@
 
 ### Changed
 
+### Fixed
+
+- An API-key login with an empty or missing key is refused with `EmptyApiKeyError` instead of saving an unusable `login-N` account. Providers that work without a key, or fall back to an ambient key, set `apiKey.keyOptional` and keep accepting a blank key; Kimi does, so a blank-key login that only picks the region for `KIMI_API_KEY` still works ([#3867](https://github.com/code-yeongyu/senpi/issues/3867)).
+### Removed
+
+## [2026.10.21-1] - 2026-10-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
 - Models that models.dev marks deprecated stay available and are labeled `deprecated` instead of disappearing from the bundled catalog: GitHub Copilot Claude Opus 4.7, GPT-5.5 and GPT-5.4, Baseten's Kimi K2 models and others keep working. A model models.dev no longer lists is still removed, and models the catalog had already dropped are not brought back.
 - The advertised Claude Code fingerprint floor that Anthropic OAuth requests declare follows the bundled Claude Agent SDK to Claude Code 2.1.306 ([#3854](https://github.com/code-yeongyu/senpi/issues/3854)).
 
 - The bundled model catalog is refreshed from models.dev and the providers' model listings (`amazon-bedrock`, `huggingface`, `opencode`, `opengateway`, `openrouter`, `venice`).
 
 ### Fixed
-
-- An API-key login with an empty or missing key is refused with `EmptyApiKeyError` instead of saving an unusable `login-N` account. Providers that work without a key, or fall back to an ambient key, set `apiKey.keyOptional` and keep accepting a blank key; Kimi does, so a blank-key login that only picks the region for `KIMI_API_KEY` still works ([#3867](https://github.com/code-yeongyu/senpi/issues/3867)).
 
 ### Removed
 
