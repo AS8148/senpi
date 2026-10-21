@@ -3,7 +3,7 @@
 ### What changed
 
 - `packages/coding-agent/src/core/pending-input-journal.ts`: `fsJournalDurability` syncs the session file through an `r+` handle (a directory still through `r`, skipped on win32) and takes an injectable `JournalFileOpener`. `PendingInputAppendUncertainError` names the session file and the OS error, and says it is a local file error.
-- `packages/coding-agent/src/core/agent-session.ts`: `_isRetryableError` and `_isHardErrorFallbackEligible` return false for an assistant message with `failureSource: "local"`.
+- `packages/coding-agent/src/core/agent-session.ts`: a new `_isLocalFailure(message)` reads the typed `failureSource: "local"` mark. `_isRetryableError`, `_isHardErrorFallbackEligible`, and the `agent_end` health branch that calls `_retryFallback.noteHealthFailure` all skip a local failure, so it never retries, walks the fallback chain, or marks a model unhealthy. The check reads the typed mark, never the message text: the text carries the OS error, and `EDQUOT: disk quota exceeded` matched `isHealthExhaustionFailure` (#3868 review).
 
 ### Why
 
@@ -17,7 +17,7 @@
 
 ### Expected merge conflict zones
 
-- LOW: the first guard of `_isRetryableError` and the predicate list of `_isHardErrorFallbackEligible` in `agent-session.ts`.
+- LOW: the first guard of `_isRetryableError`, the predicate list of `_isHardErrorFallbackEligible`, the `noteHealthFailure` condition at the top of the `agent_end` retry block, and the new `_isLocalFailure` beside `_isCursorPayloadOverflow` in `agent-session.ts`.
 
 ## 2026-10-18 - A multi-block queued input leaves the queue when it starts (senpi#3588, senpi#3768)
 
