@@ -1206,7 +1206,6 @@ export class AgentSession {
 	private readonly _messageEndPersistence = new WeakMap<AgentMessage, Promise<void>>();
 	private _isAgentRunActive = false;
 	private _promptsInFlight = 0;
-	private _personAnswerPending = false;
 	/** senpi#3650: the core may continue a run after agent_end; the settle must not wait on that continuation. */
 	private readonly _runContinuations = new AgentRunContinuations();
 	/** senpi#3650: the turn that owns extension handler waits started now; the turn deadline releases only its own. */
@@ -9980,7 +9979,7 @@ export class AgentSession {
 					if (this._agentSettledDelivery.defer(send)) return;
 					send();
 				},
-				sendUserMessage: (content, options) => {
+				sendUserMessage: (content, options, inputOrigin: InputOrigin = "extension") => {
 					const reportError = (err: unknown) => {
 						if (err instanceof ModelNotReadyError) {
 							this._noticeProviderRequired(err.message);
@@ -9992,9 +9991,6 @@ export class AgentSession {
 							error: err instanceof Error ? err.message : String(err),
 						});
 					};
-					// A person's answer is classified when it is delivered, not by the phase it later runs in.
-					const inputOrigin: InputOrigin = this._personAnswerPending ? "person" : "extension";
-					this._personAnswerPending = false;
 					// sendUserMessage always triggers a turn; register a settlement-deferred
 					// turn claim so agent_idle is not emitted before its deferred agent_start.
 					if (
@@ -10068,10 +10064,8 @@ export class AgentSession {
 				questionInput: () => {
 					this._engineTurnInput.begin();
 					this._engineResumeWindow = false;
-					this._personAnswerPending = true;
 					// The answer's follow-on (if any) enters prompt() synchronously after this; settle once it has.
 					queueMicrotask(() => {
-						this._personAnswerPending = false;
 						this._settleInputRelease()?.catch((error: unknown) => {
 							this._sessionLogger.warn("input_release_settle_failed", {
 								error: error instanceof Error ? error.message : String(error),

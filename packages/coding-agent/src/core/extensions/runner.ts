@@ -2,6 +2,7 @@
  * Extension runner - executes extensions and manages their lifecycle.
  */
 
+import type { InputOrigin } from "../input-origin.ts";
 import { basename } from "node:path";
 import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
 import type { Api, ImageContent, Model, Provider, ProviderHeaders } from "@earendil-works/pi-ai";
@@ -520,6 +521,7 @@ export class ExtensionRunner {
 	private engineTurnsHeldFn: () => boolean = () => false;
 	private noteHeldWakeFn: (source: string) => void = () => {};
 	private questionInput: ExtensionContextActions["questionInput"];
+	private personAnswerPending = false;
 	private isProjectTrustedFn: () => boolean = () => true;
 	private getSignalFn: () => AbortSignal | undefined = () => undefined;
 	private waitForIdleFn: () => Promise<void> = async () => {};
@@ -637,8 +639,12 @@ export class ExtensionRunner {
 			if (options?.triggerTurn === true) this.sessionStartTurns.admit(() => actions.sendMessage(message, options));
 			else actions.sendMessage(message, options);
 		};
-		this.runtime.sendUserMessage = (content, options) =>
-			this.sessionStartTurns.admit(() => actions.sendUserMessage(content, options));
+		this.runtime.sendUserMessage = (content, options) => {
+			// Captured at admission: a deferred answer keeps the origin it was delivered with.
+			const inputOrigin: InputOrigin = this.personAnswerPending ? "person" : "extension";
+			this.personAnswerPending = false;
+			this.sessionStartTurns.admit(() => actions.sendUserMessage(content, options, inputOrigin));
+		};
 		this.runtime.appendEntry = actions.appendEntry;
 		this.runtime.setSessionName = actions.setSessionName;
 		this.runtime.getSessionName = actions.getSessionName;
@@ -1648,6 +1654,11 @@ export class ExtensionRunner {
 		if (this.questionInput) {
 			bindQuestionInput(context, () => {
 				runner.assertActive();
+				// The answer's own sendUserMessage follows synchronously and takes this token at admission.
+				runner.personAnswerPending = true;
+				queueMicrotask(() => {
+					runner.personAnswerPending = false;
+				});
 				runner.questionInput?.();
 			});
 		}

@@ -13,6 +13,7 @@
 
 ### Fixed
 
+- An answer to a question that arrives while a session is starting up now counts as your input, so it releases held background work like any other answer ([#3917](https://github.com/code-yeongyu/senpi/issues/3917)).
 - Reopening an unattended session no longer spends quota on goals or background events until you send input or choose Resume. Held events survive restart and are released once; ordinary attended sessions keep receiving every event, and completed tasks are not reopened after a host restart ([#3853](https://github.com/code-yeongyu/senpi/issues/3853)).
 - `--session <id>`, `--session-id <id>` and the resume picker's search find a session by the id its file name carries (`<timestamp>_<id>.jsonl`, the id a resume hint prints) even when the header records another id, and opening a not-yet-existing session file adopts the file-name id, so a second process opening a just-minted path no longer writes a different id into the header (code-yeongyu/oh-my-openagent#7471).
 - On Windows, input sent while a turn was running no longer gets stuck. Every save of a queued input failed with `EPERM` (the session file was flushed through a read-only handle), and each reopen replayed the input and failed again. The same failure was also taken for a model error, so the session ran through its whole fallback chain in under a second and stayed on the last model. A local file or journal error now shows as a local error naming the file, and the session keeps its model ([#3866](https://github.com/code-yeongyu/senpi/issues/3866)).
