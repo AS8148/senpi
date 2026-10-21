@@ -1,5 +1,12 @@
 import { createSessionLogger } from "../../../session-log.ts";
-import type { AgentEndEvent, ExtensionAPI, ExtensionContext } from "../../types.ts";
+import type {
+	AgentEndEvent,
+	ExtensionAPI,
+	ExtensionContext,
+	InputDispositionEvent,
+	InputEvent,
+	InputSource,
+} from "../../types.ts";
 import { lastAssistantText } from "./lifecycle-helpers.ts";
 import type { MonitorAwareGoalContinuation } from "./monitor-continuation.ts";
 import { providerRetryAt } from "./provider-retry.ts";
@@ -24,10 +31,46 @@ export interface TurnEndLivenessState {
 	readonly todoOutcome: TodoOwedOutcome | undefined;
 	readonly deadlineStop: boolean;
 	readonly continuationPending: boolean;
+	/** The user (not an extension) queued a steer or follow-up that has not been delivered yet. */
+	readonly userInputQueued: boolean;
 	readonly monitor: Pick<
 		MonitorAwareGoalContinuation,
 		"liveWakeSources" | "scheduledContinuation" | "hasStagedRecovery"
 	>;
+}
+
+/**
+ * Counts steers and follow-ups a person queued and not yet delivered: a TUI input (source `interactive`) whose
+ * disposition is `queued`. Extension messages are never counted, and neither is RPC input, which cannot yet be
+ * told apart from automation (senpi#3873 adds the `interactive_user` role and `onHumanInputAdmitted`; a
+ * follow-up reads that). Each delivered user message lowers the count, so it errs toward held.
+ */
+export class QueuedUserInputTracker {
+	#sources = new Map<string, InputSource>();
+	#queued = 0;
+
+	onInput(event: Pick<InputEvent, "inputId" | "source">): void {
+		this.#sources.set(event.inputId, event.source);
+	}
+
+	onDisposition(event: Pick<InputDispositionEvent, "inputId" | "disposition">): void {
+		const source = this.#sources.get(event.inputId);
+		this.#sources.delete(event.inputId);
+		if (event.disposition === "queued" && source === "interactive") this.#queued += 1;
+	}
+
+	onUserMessageDelivered(): void {
+		if (this.#queued > 0) this.#queued -= 1;
+	}
+
+	reset(): void {
+		this.#sources.clear();
+		this.#queued = 0;
+	}
+
+	get queued(): boolean {
+		return this.#queued > 0;
+	}
 }
 
 /** senpi#3860's hold ledger, when the engine exposes it: true while every engine-originated wake is held. */
@@ -55,7 +98,9 @@ export function collectTurnEndLivenessInput(
 	const timer = monitor.scheduledContinuation();
 	if (timer !== undefined) expectations.push({ kind: "armed-timer", timer });
 	if (monitor.hasStagedRecovery()) expectations.push({ kind: "recovery-staged" });
-	if (ctx.hasPendingMessages()) expectations.push({ kind: "pending-messages" });
+	if (ctx.hasPendingMessages()) {
+		expectations.push(state.userInputQueued ? { kind: "user-input-queued" } : { kind: "pending-messages" });
+	}
 	if (calledAskUser(event.messages) || endsWithQuestion(lastAssistantText(event.messages))) {
 		expectations.push({ kind: "question-to-user" });
 	}

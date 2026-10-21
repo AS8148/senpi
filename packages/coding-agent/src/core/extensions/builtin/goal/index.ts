@@ -28,7 +28,7 @@ import { goalStoreRef as buildGoalStoreRef } from "./store-ref.ts";
 import { staleGoalTodoReminder, todoResultAddsOpenTasks } from "./todo-gate.ts";
 import { TodoOwedBackstop } from "./todo-owed-backstop.ts";
 import { registerGoalTools } from "./tool-registration.ts";
-import { reportTurnEndLiveness } from "./turn-end-liveness-report.ts";
+import { QueuedUserInputTracker, reportTurnEndLiveness } from "./turn-end-liveness-report.ts";
 import { TurnUsageTracker } from "./turn-usage.ts";
 import type { Goal, GoalAccountingMode, GoalStoreRef } from "./types.ts";
 import { updateGoalUi } from "./ui.ts";
@@ -67,6 +67,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	);
 	registerGoalFireNowRequest(pi, () => monitorContinuation.fireNow());
 	const todoOwedBackstop = new TodoOwedBackstop(pi);
+	const queuedUserInput = new QueuedUserInputTracker();
 	const directInputLifecycle = new GoalDirectInputLifecycle({
 		monitor: monitorContinuation,
 		goalStoreRef,
@@ -144,6 +145,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	pi.on("session_start", async (event, ctx) => {
 		ctx.ui.setStatus("todo-waiting", undefined);
 		activeContext = ctx;
+		queuedUserInput.reset();
 		monitorContinuation.start(ctx);
 		directInputLifecycle.reset();
 		todoOwedBackstop.resetChain();
@@ -208,10 +210,12 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("input", async (event, ctx) => {
+		queuedUserInput.onInput(event);
 		await directInputLifecycle.onInput(event, ctx);
 	});
 
 	pi.on("input_disposition", async (event, ctx) => {
+		queuedUserInput.onDisposition(event);
 		await directInputLifecycle.onDisposition(event, ctx);
 	});
 
@@ -249,6 +253,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("message_start", async (event, ctx) => {
+		if (event.message.role === "user") queuedUserInput.onUserMessageDelivered();
 		if (event.message.role !== "custom" || event.message.customType !== MANUAL_CONTINUE_CUSTOM_TYPE) return;
 		const ref = goalStoreRef(ctx);
 		const goal = await readGoal(ref);
@@ -305,6 +310,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 			todoOutcome,
 			deadlineStop,
 			continuationPending,
+			userInputQueued: queuedUserInput.queued,
 			monitor: monitorContinuation,
 		});
 	});

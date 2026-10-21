@@ -11,7 +11,10 @@ import {
 	type TurnEndLivenessVerdict,
 	type WakeExpectation,
 } from "../../src/core/extensions/builtin/goal/turn-end-liveness.ts";
-import { collectTurnEndLivenessInput } from "../../src/core/extensions/builtin/goal/turn-end-liveness-report.ts";
+import {
+	collectTurnEndLivenessInput,
+	QueuedUserInputTracker,
+} from "../../src/core/extensions/builtin/goal/turn-end-liveness-report.ts";
 import type { AgentEndEvent, ExtensionContext, ExtensionMode } from "../../src/core/extensions/types.ts";
 import type { SessionEntry } from "../../src/core/session-manager.ts";
 
@@ -38,7 +41,8 @@ const MONITOR: WakeExpectation = { kind: "wake-source", source: "terminal-monito
 const GOAL_TIMER: WakeExpectation = { kind: "armed-timer", timer: "monitor" };
 const RECOVERY: WakeExpectation = { kind: "recovery-staged" };
 const QUESTION: WakeExpectation = { kind: "question-to-user" };
-const QUEUED: WakeExpectation = { kind: "pending-messages" };
+const QUEUED: WakeExpectation = { kind: "user-input-queued" };
+const ENGINE_QUEUED: WakeExpectation = { kind: "pending-messages" };
 
 /** One representative input per row of TURN_END_RULES, with the verdict that row must produce. */
 const ROWS: ReadonlyArray<readonly [string, string, Partial<TurnEndLivenessInput>, TurnEndLivenessVerdict]> = [
@@ -91,10 +95,16 @@ const ROWS: ReadonlyArray<readonly [string, string, Partial<TurnEndLivenessInput
 		{ kind: "waiting", on: [QUEUED, CHILD], heldBy: "unattended" },
 	],
 	[
-		"continuation-queued",
-		"a queued goal continuation under a hold the user's queued message releases",
-		{ ledgerHold: "session_hold", continuationQueued: "goal", expectations: [QUEUED] },
-		{ kind: "continuing", via: "goal" },
+		"ledger-hold",
+		"a Stop hook or loop tick queued under a hold stays held: it is not the user's input",
+		{ ledgerHold: "unattended", expectations: [ENGINE_QUEUED, CHILD] },
+		{ kind: "held", reason: "unattended" },
+	],
+	[
+		"wake",
+		"an extension's queued message with no hold still starts a turn",
+		{ expectations: [ENGINE_QUEUED] },
+		{ kind: "waiting", on: [ENGINE_QUEUED] },
 	],
 	[
 		"continuation-queued",
@@ -256,7 +266,14 @@ describe("TURN_END_RULES invariants over every stop x hold x open work x wake x 
 		{ kind: "active-goal", goalId: "g" },
 		{ kind: "open-todos", count: 1 },
 	];
-	const wakes: ReadonlyArray<readonly WakeExpectation[]> = [[], [CHILD], [GOAL_TIMER], [QUESTION], [QUEUED]];
+	const wakes: ReadonlyArray<readonly WakeExpectation[]> = [
+		[],
+		[CHILD],
+		[GOAL_TIMER],
+		[QUESTION],
+		[QUEUED],
+		[ENGINE_QUEUED],
+	];
 	const starts: ReadonlyArray<Partial<TurnEndLivenessInput>> = [
 		{},
 		{ willRetry: true },
@@ -409,7 +426,14 @@ describe("collectTurnEndLivenessInput reads the hold ledger (#3863, senpi#3860)"
 			sessionManager: { getBranch: () => [], getHeader: () => undefined, getSessionId: () => "s" },
 			...extra,
 		}) as unknown as ExtensionContext;
-	const state = { goal: null, todoOutcome: undefined, deadlineStop: false, continuationPending: false, monitor };
+	const state = {
+		goal: null,
+		todoOutcome: undefined,
+		deadlineStop: false,
+		continuationPending: false,
+		userInputQueued: false,
+		monitor,
+	};
 
 	it.each([
 		["an engine without the ledger", {}, undefined],
@@ -419,5 +443,61 @@ describe("collectTurnEndLivenessInput reads the hold ledger (#3863, senpi#3860)"
 		const collected = collectTurnEndLivenessInput(ctxWith(extra), event, state);
 		expect(collected.ledgerHold).toBe(ledgerHold);
 		expect(evaluateTurnEndLiveness(collected).kind).toBe(ledgerHold === undefined ? "waiting" : "held");
+	});
+});
+
+describe("QueuedUserInputTracker and the queued-message wake (#3863, review round 5)", () => {
+	it.each([
+		["an extension (Stop hook, loop tick, ask-user timeout)", "extension", false],
+		["an RPC client, which may be automation until #3873's human role", "rpc", false],
+		["a person at the TUI", "interactive", true],
+	] as const)("counts a queued input from %s as human: %s", (_label, source, human) => {
+		const tracker = new QueuedUserInputTracker();
+		tracker.onInput({ inputId: "q", source });
+		tracker.onDisposition({ inputId: "q", disposition: "queued" });
+		expect(tracker.queued).toBe(human);
+	});
+
+	it("does not count a human input that started a turn instead of queueing", () => {
+		const tracker = new QueuedUserInputTracker();
+		tracker.onInput({ inputId: "s", source: "interactive" });
+		tracker.onDisposition({ inputId: "s", disposition: "started" });
+		expect(tracker.queued).toBe(false);
+	});
+
+	it("clears once the queued user message is delivered", () => {
+		const tracker = new QueuedUserInputTracker();
+		tracker.onInput({ inputId: "a", source: "interactive" });
+		tracker.onDisposition({ inputId: "a", disposition: "queued" });
+		tracker.onUserMessageDelivered();
+		expect(tracker.queued).toBe(false);
+	});
+
+	it.each([
+		[true, "user-input-queued"],
+		[false, "pending-messages"],
+	] as const)("maps a pending queue with userInputQueued=%s to %s", (userInputQueued, kind) => {
+		const ctx = {
+			mode: "tui",
+			hasPendingMessages: () => true,
+			sessionManager: { getBranch: () => [], getHeader: () => undefined, getSessionId: () => "s" },
+		} as unknown as ExtensionContext;
+		const collected = collectTurnEndLivenessInput(
+			ctx,
+			{ type: "agent_end", messages: [fauxAssistantMessage("done")], willRetry: false },
+			{
+				goal: null,
+				todoOutcome: undefined,
+				deadlineStop: false,
+				continuationPending: false,
+				userInputQueued,
+				monitor: {
+					liveWakeSources: () => [],
+					scheduledContinuation: () => undefined,
+					hasStagedRecovery: () => false,
+				},
+			},
+		);
+		expect(collected.expectations).toEqual([{ kind }]);
 	});
 });

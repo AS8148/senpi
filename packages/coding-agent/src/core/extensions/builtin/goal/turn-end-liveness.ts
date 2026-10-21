@@ -26,6 +26,7 @@ export type WakeExpectation =
 	| { readonly kind: "armed-timer"; readonly timer: DelayedContinuationKind }
 	| { readonly kind: "recovery-staged" }
 	| { readonly kind: "pending-messages" }
+	| { readonly kind: "user-input-queued" }
 	| { readonly kind: "question-to-user" };
 
 export type OpenWork =
@@ -111,9 +112,12 @@ export function effectiveWakes(input: TurnEndLivenessInput): readonly WakeExpect
 	);
 }
 
-/** A message the user queued (steer or follow-up) is input, and input releases every hold (senpi#3860). */
+/**
+ * A steer or follow-up the user queued is input, and input releases every hold (senpi#3860). Messages an
+ * extension queued (a Stop hook, a loop tick, an ask-user timeout) are `pending-messages` and stay held.
+ */
 function hasQueuedUserInput(input: TurnEndLivenessInput): boolean {
-	return input.expectations.some((expectation) => expectation.kind === "pending-messages");
+	return input.expectations.some((expectation) => expectation.kind === "user-input-queued");
 }
 
 function heldReason(input: TurnEndLivenessInput): HeldReason | undefined {
@@ -138,8 +142,8 @@ export interface TurnEndRule {
 /**
  * The whole decision, as one ordered table: the first matching row decides. Every input matches a row (the last
  * row has no condition). A retry is part of the run in flight; an active hold-ledger kind then holds every
- * engine-originated wake (child, monitor, goal) until input or resume_session, unless the user's own queued
- * message is that input; then a queued continuation; a run
+ * engine-originated wake (child, monitor, goal, an extension's queued message) until input or resume_session,
+ * unless the user's own queued message is that input; then a queued continuation; a run
  * that exits; a wake that will deliver a turn (with the stop reason, when one applies, as `heldBy`); a stop that
  * waits for a person; open work that nothing will bring back; and a completed turn with nothing open.
  */
