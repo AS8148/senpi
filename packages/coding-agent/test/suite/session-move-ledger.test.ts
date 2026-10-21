@@ -26,6 +26,7 @@ describe("MoveLedger fence", () => {
 
 	it("#given a receive in progress #when the sender asks #then it hears receiving and nothing is declined", async () => {
 		const book = ledger();
+		await book.prepare(id("m2"));
 		await book.beginReceive(id("m2"));
 		expect(await book.answerStatus(id("m2"), { movedIn: false })).toEqual({ state: "receiving" });
 		await book.commit(id("m2"), () => undefined);
@@ -34,6 +35,7 @@ describe("MoveLedger fence", () => {
 
 	it("#given an accepted move whose session was later deleted #when the sender asks #then it still hears accepted", async () => {
 		const book = ledger();
+		await book.prepare(id("m3"));
 		await book.beginReceive(id("m3"));
 		await book.commit(id("m3"), () => undefined);
 		expect(await book.answerStatus(id("m3"), { movedIn: false })).toEqual({ state: "accepted" });
@@ -41,6 +43,7 @@ describe("MoveLedger fence", () => {
 
 	it("#given an accepted move #when a cancel or expiry arrives #then it never turns into a decline", async () => {
 		const book = ledger();
+		await book.prepare(id("m4"));
 		await book.beginReceive(id("m4"));
 		await book.commit(id("m4"), () => undefined);
 		expect(await book.decline(id("m4"), "cancelled")).toEqual({ state: "accepted" });
@@ -48,6 +51,7 @@ describe("MoveLedger fence", () => {
 
 	it("#given a commit whose rename throws #then nothing is recorded as accepted", async () => {
 		const book = ledger();
+		await book.prepare(id("m5"));
 		await book.beginReceive(id("m5"));
 		await expect(
 			book.commit(id("m5"), () => {

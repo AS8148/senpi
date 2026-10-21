@@ -1,5 +1,41 @@
 # changes
 
+## 2026-10-19 - Never signal a child whose spawn failed (senpi#3706)
+
+### What changed
+
+- `packages/coding-agent/src/utils/clipboard-command.ts`: its stop/timeout/abort path calls `signalSpawnedChild` (`packages/coding-agent/src/utils/child-signal.ts`), which sends nothing to a child without a pid, instead of calling `kill()` on it directly.
+
+### Why
+
+On Node before 24.22.0 / 26.10.0 (nodejs/node#65052), `kill()` on a child whose spawn failed (no pid) becomes `kill(0, signal)` and signals the caller's own process group, killing senpi and the rest of the terminal's foreground job.
+
+### Why an extension could not handle it
+
+The affected calls are inside core stop paths; nothing outside them owns those child processes.
+
+### Expected merge conflict zones
+
+The single `kill()` call on each listed path's stop/timeout/abort branch.
+
+## 2026-10-18 - `isWSL` recognizes `WSL_INTEROP` and injectable kernel-version paths (Refs senpi#3628)
+
+### What changed
+
+- `packages/coding-agent/src/utils/wsl.ts`: `isWSL` also accepts `WSL_INTEROP` as an env marker and takes an optional `procVersionPath` (default `/proc/version`) so callers and tests can pin the kernel-version file.
+
+### Why
+
+- `packages/coding-agent/src/utils/wsl.ts`: WSL sessions launched with a sanitized environment set `WSL_INTEROP` but not the two markers the helper read, and keybinding defaults could not test the `/proc/version` fallback without a fixture path.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/utils/wsl.ts`: clipboard interop and keybinding defaults call this leaf helper directly; extensions have no earlier hook.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/utils/wsl.ts`: the marker list and the optional parameter.
+
 ## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
 
 ### What changed

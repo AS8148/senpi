@@ -1,3 +1,75 @@
+## 2026-10-19 - Suggest a fresh session with a handoff when a large session's cache has expired (senpi#3230)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `setExtensionWidget` renders a string-array widget's `actions` on its last line as muted `label: command` pairs.
+
+### Why
+
+The terminal cannot click, so each choice names the command that runs it (the handoff hint's `/handoff` and `/handoff keep`).
+
+### Why an extension could not handle it
+
+The widget renderer is host code; the extension only passes the choices.
+
+### Expected merge conflict zones
+
+- LOW: `setExtensionWidget`, the string-array branch.
+
+## 2026-10-19 - A stuck offload module is shown as a warning (senpi#3622)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the `offload_module_stuck` session event is shown with `showWarning`, its notice naming the module, the files whose locks it holds, and the `--tool-runtime child` alternative.
+
+### Why
+
+A module stuck in this process holds its locks until it finishes or the session closes, and writes to those files fail meanwhile; the user must be told why and what to do.
+
+### Why an extension could not handle it
+
+The event switch of the interactive mode is core; an extension sees session events but cannot add a warning line to the interactive transcript for a core event.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the new `case` before `transcript_write_failed` in the session event switch.
+
+## 2026-10-19 - Interactive quit marks its dispose as a process exit (senpi#3711)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: both `shutdown()` paths call `runtimeHost.dispose({ processExit: true })`, since `process.exit` follows.
+
+### Why
+
+- The total quit budget (senpi#3711) must only cut handlers when the process really exits right after; an RPC host closing one session keeps running, so there a detached handler would keep running while its extension's handles and provider scope are closed.
+
+### Why an extension could not handle it
+
+- Interactive shutdown is host code.
+
+### Expected merge conflict zones
+
+- LOW: `interactive-mode.ts` both `runtimeHost.dispose()` sites in `shutdown`.
+
+## 2026-10-19 - Never signal a child whose spawn failed (senpi#3706)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: its stop/timeout/abort path calls `signalSpawnedChild` (`packages/coding-agent/src/utils/child-signal.ts`), which sends nothing to a child without a pid, instead of calling `kill()` on it directly.
+
+### Why
+
+On Node before 24.22.0 / 26.10.0 (nodejs/node#65052), `kill()` on a child whose spawn failed (no pid) becomes `kill(0, signal)` and signals the caller's own process group, killing senpi and the rest of the terminal's foreground job.
+
+### Why an extension could not handle it
+
+The affected calls are inside core stop paths; nothing outside them owns those child processes.
+
+### Expected merge conflict zones
+
+The single `kill()` call on each listed path's stop/timeout/abort branch.
+
 ## 2026-10-18 - The pending-question mouse hint follows the live capture state and names the right selection modifier (senpi#3604)
 
 ### What changed
@@ -16,6 +88,24 @@
 ### Expected merge conflict zones
 
 - LOW: the hint block in `render` and the new `selectionBypassHint` export.
+
+## 2026-10-17 - /share redacts the session, previews it and asks before uploading (senpi#3524)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `handleShareCommand` runs `runShare` (`core/share/share-session.ts`) and maps its outcome to status/error lines; the cancellable gist loader moved to `uploadShareWithLoader`. The preview dialog offers Upload, Review the exact file first, and Cancel; cancel says nothing was uploaded. The unused `spawnSync` import is gone.
+
+### Why
+
+- `/share` uploaded the whole session unredacted, with no confirmation, to a secret (unlisted) gist, after writing it to a fixed `os.tmpdir()/session.html`, and pointed users at the third-party `pi.dev` viewer by default. Any key, token, home path or email in a prompt or tool result left the machine in clear text. Regressions: `test/suite/regressions/3524-share-redaction.test.ts`, `test/suite/regressions/3524-share-consent.test.ts`.
+
+### Why an extension could not handle it
+
+- `/share` is a built-in interactive command and the HTML export is core; an extension cannot intercept either before the upload.
+
+### Expected merge conflict zones
+
+- MEDIUM: `handleShareCommand` in `interactive-mode.ts` (rewritten); the `config.ts` import block.
 
 ## 2026-10-18 - The footer names the account the user order serves (senpi#3591)
 
@@ -2915,3 +3005,50 @@ The editor theme is built by the interactive mode itself; extensions cannot inje
 ### Expected merge conflict zones
 
 - LOW: `getEditorTheme()` in `theme.ts` and the editor theme object in `GrokChrome`.
+
+## 2026-10-19 - Tool cards drop their built output when invalidated (senpi#2537)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/tool-execution.ts`: `ToolExecutionComponent.invalidate()` drops the card's built call and result content and marks it released instead of rebuilding it; `render()` rebuilds it from the card's state (`updateDisplay()`) the next time the card is painted. Grok rows and animating cards still rebuild at once. A renderer's own `context.invalidate()` (the renderer constructor's callback) still rebuilds at once and keeps `lastComponent`, so a renderer that caches async-loaded data on its component works as before. On a released card, `setExpanded`, `setShowImages` and `setImageWidthCells` only record the change; `render()` rebuilds it.
+- `packages/coding-agent/src/modes/interactive/components/tool-execution-renderer.ts`: `releaseContent()` detaches the content box, the self-render container and the fallback text and forgets the call and result renderer components. The built-in tool renderers come from one `createAllToolDefinitions(cwd)` per working directory instead of one per card.
+- `packages/coding-agent/test/suite/regressions/2537-tool-card-release.test.ts` (new).
+
+### Why
+
+A card's `invalidate()` rebuilt its content at once. The transcript invalidates every card that scrolls above the kept main-screen history, and the TUI invalidates the whole tree on a theme or terminal-capability change (the kitty graphics probe resolves once per session), so every finished card kept its styled output, and its own copy of all nine tool definitions, for the rest of the session. Heap snapshots of a 10-minute notice-stream soak traced that output through `ExplorationGroup.memberSnapshot -> ToolExecutionComponent -> renderer -> Text` ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)). Every path that paints the card again rebuilds the same lines, so nothing on screen changes.
+
+### Why an extension could not handle it
+
+The tool card's content lifecycle is an interactive-mode internal; extensions do not own the transcript's components.
+
+### Expected merge conflict zones
+
+- LOW: `invalidate()`, `render()`, `updateDisplay()` and the field list of `ToolExecutionComponent`; the constructor of `ToolExecutionRenderer`.
+
+## 2026-10-20 - Message components keep less per-message state (senpi#2537)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/theme/theme.ts`: new internal `sharedMarkdownTheme()` returns one frozen object per active `Theme`, and the built-in message components use it instead of building their own; it is rebuilt when the theme switches, because Markdown's render cache keys on the theme object's identity. The public `getMarkdownTheme()` still returns a new object per call, so an extension can customize its copy.
+- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts`: takes its default markdown theme from `sharedMarkdownTheme()`.
+- `packages/coding-agent/src/modes/interactive/components/branch-summary-message.ts`: takes its default markdown theme from `sharedMarkdownTheme()`.
+- `packages/coding-agent/src/modes/interactive/components/compaction-summary-message.ts`: takes its default markdown theme from `sharedMarkdownTheme()`.
+- `packages/coding-agent/src/modes/interactive/components/custom-message.ts`: takes its default markdown theme from `sharedMarkdownTheme()`.
+- `packages/coding-agent/src/modes/interactive/components/remote-delivery-message.ts`: takes its default markdown theme from `sharedMarkdownTheme()`.
+- `packages/coding-agent/src/modes/interactive/components/skill-invocation-message.ts`: takes its default markdown theme from `sharedMarkdownTheme()`.
+- `packages/coding-agent/src/modes/interactive/components/user-message.ts`: takes its default markdown theme from `sharedMarkdownTheme()`.
+- `packages/coding-agent/src/modes/interactive/components/tool-execution-renderer.ts`: `releaseContent()` also drops the renderer's last render state (it held a filtered copy of the result); `update()` sets a fresh one before the card is painted again.
+- `packages/coding-agent/test/suite/regressions/2537-message-component-state.test.ts` (new).
+
+### Why
+
+Heap snapshots of the tool-turn soak in [#2537](https://github.com/code-yeongyu/senpi/issues/2537) attribute 11.5 KB per turn to mounted transcript components. Two parts of that were per-message duplicates: every message component (assistant, user, custom, skill, summaries) built its own markdown theme object (about 640 bytes each), and every released tool card's renderer kept a second, filtered copy of its result (about 2.1 KB each).
+
+### Why an extension could not handle it
+
+The shared markdown theme and the tool card's renderer are interactive-mode internals; the public `getMarkdownTheme()` is unchanged.
+
+### Expected merge conflict zones
+
+- LOW: `sharedMarkdownTheme()` in `theme.ts`; the theme imports and default arguments of the seven message components; `releaseContent()` in `tool-execution-renderer.ts`.

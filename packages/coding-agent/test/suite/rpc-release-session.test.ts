@@ -4,7 +4,7 @@
  * opens standalone exactly as `senpi --session <path>` opens it; every refusal leaves the host owning
  * the session unchanged.
  */
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -97,6 +97,51 @@ describe("release_session", () => {
 		expect(reply).toMatchObject({ success: false, error: "invalid_release_reason" });
 		expect((await rig.list()).map((row) => row.sessionId)).toContain(sessionId);
 	});
+	it("#given reason move with a move id that is not a plain id #then the release is refused and nothing seals the file (senpi#3662)", async () => {
+		const dir = await rigDir();
+		await using rig = createInProcessRig(dir);
+		const { sessionId, sessionPath } = await openExchange(rig, dir, "bad-move-id");
+		await rig.drop("conn-a");
+
+		for (const moveId of ["../x", "..", ".", "a/b", "a\\b", "x".repeat(200)]) {
+			const reply = await release(rig, sessionId, { reason: "move", moveId, target: "laptop" });
+			expect(reply).toMatchObject({ success: false, error: "invalid_release_reason" });
+		}
+
+		expect((await rig.list()).map((row) => row.sessionId)).toContain(sessionId);
+		expect(
+			standaloneEntries(sessionPath).some(
+				(entry) => entry.type === "custom" && entry.customType === SESSION_RELEASED_ENTRY_TYPE,
+			),
+		).toBe(false);
+	});
+
+	it("#given a session whose own id is not a plain id #when it is released for a move #then the release is refused and nothing seals the file (senpi#3662)", async () => {
+		const dir = await rigDir();
+		await using rig = createInProcessRig(dir);
+		const sessionPath = join(dir, "crafted.jsonl");
+		const header = {
+			type: "session",
+			version: 3,
+			id: "a".repeat(129),
+			timestamp: "2026-10-19T00:00:00.000Z",
+			cwd: dir,
+		};
+		await writeFile(sessionPath, `${JSON.stringify(header)}\n`);
+		const session = opened(await rig.open("conn-a", { cwd: dir, sessionPath, retain_on_disconnect: true }), 0);
+		await rig.drop("conn-a");
+
+		const reply = await release(rig, session.sessionId, { reason: "move", moveId: "move-8", target: "laptop" });
+
+		expect(reply).toMatchObject({ success: false, error: "release_unsupported" });
+		expect((await rig.list()).map((row) => row.sessionId)).toContain(session.sessionId);
+		expect(
+			standaloneEntries(sessionPath).some(
+				(entry) => entry.type === "custom" && entry.customType === SESSION_RELEASED_ENTRY_TYPE,
+			),
+		).toBe(false);
+	});
+
 	it("hands an idle, detached session over: the host drops it and its file opens standalone", async () => {
 		// Given: a retained session with one exchange, whose only client detached.
 		const dir = await rigDir();
