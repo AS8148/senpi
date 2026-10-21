@@ -111,7 +111,13 @@ export function effectiveWakes(input: TurnEndLivenessInput): readonly WakeExpect
 	);
 }
 
+/** A message the user queued (steer or follow-up) is input, and input releases every hold (senpi#3860). */
+function hasQueuedUserInput(input: TurnEndLivenessInput): boolean {
+	return input.expectations.some((expectation) => expectation.kind === "pending-messages");
+}
+
 function heldReason(input: TurnEndLivenessInput): HeldReason | undefined {
+	if (input.ledgerHold !== undefined) return input.ledgerHold;
 	if (input.deadlineStop) return "deadline-stop";
 	if (input.endedBy === "user-abort") return "user-abort";
 	if (input.isChildSession) return "child-session";
@@ -132,7 +138,8 @@ export interface TurnEndRule {
 /**
  * The whole decision, as one ordered table: the first matching row decides. Every input matches a row (the last
  * row has no condition). A retry is part of the run in flight; an active hold-ledger kind then holds every
- * engine-originated wake (child, monitor, goal) until input or resume_session; then a queued continuation; a run
+ * engine-originated wake (child, monitor, goal) until input or resume_session, unless the user's own queued
+ * message is that input; then a queued continuation; a run
  * that exits; a wake that will deliver a turn (with the stop reason, when one applies, as `heldBy`); a stop that
  * waits for a person; open work that nothing will bring back; and a completed turn with nothing open.
  */
@@ -140,7 +147,7 @@ export const TURN_END_RULES: readonly TurnEndRule[] = [
 	{ id: "retry", when: (i) => i.willRetry, verdict: () => ({ kind: "continuing", via: "retry" }) },
 	{
 		id: "ledger-hold",
-		when: (i) => i.ledgerHold !== undefined,
+		when: (i) => i.ledgerHold !== undefined && !hasQueuedUserInput(i),
 		verdict: (i) => ({ kind: "held", reason: i.ledgerHold ?? "unattended" }),
 	},
 	{

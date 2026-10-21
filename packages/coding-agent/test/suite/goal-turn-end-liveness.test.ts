@@ -80,9 +80,21 @@ const ROWS: ReadonlyArray<readonly [string, string, Partial<TurnEndLivenessInput
 	],
 	[
 		"ledger-hold",
-		"an inherited hold in a child session",
-		{ ledgerHold: "inherited_hold", isChildSession: true, expectations: [QUEUED] },
+		"an inherited hold in a child session with a running child",
+		{ ledgerHold: "inherited_hold", isChildSession: true, expectations: [CHILD] },
 		{ kind: "held", reason: "inherited_hold" },
+	],
+	[
+		"wake",
+		"the user's own queued message releases an active hold",
+		{ ledgerHold: "unattended", expectations: [QUEUED, CHILD] },
+		{ kind: "waiting", on: [QUEUED, CHILD], heldBy: "unattended" },
+	],
+	[
+		"continuation-queued",
+		"a queued goal continuation under a hold the user's queued message releases",
+		{ ledgerHold: "session_hold", continuationQueued: "goal", expectations: [QUEUED] },
+		{ kind: "continuing", via: "goal" },
 	],
 	[
 		"continuation-queued",
@@ -272,16 +284,21 @@ describe("TURN_END_RULES invariants over every stop x hold x open work x wake x 
 		}
 	});
 
-	it("holds every engine wake while the hold ledger is active, unless the run in flight retries", () => {
+	it("holds every engine wake while the hold ledger is active, unless the run in flight retries or the user queued input", () => {
 		for (const case_ of cases) {
 			if (case_.ledgerHold === undefined || case_.willRetry) continue;
+			if (case_.expectations.includes(QUEUED)) {
+				expect(evaluateTurnEndLiveness(case_).kind).not.toBe("held");
+				continue;
+			}
 			expect(evaluateTurnEndLiveness(case_)).toEqual({ kind: "held", reason: case_.ledgerHold });
 		}
 	});
 
 	it("reports continuing exactly when a turn will start from a retry or a queued continuation", () => {
 		for (const case_ of cases) {
-			const starting = case_.willRetry || (case_.continuationQueued !== undefined && case_.ledgerHold === undefined);
+			const released = case_.ledgerHold === undefined || case_.expectations.includes(QUEUED);
+			const starting = case_.willRetry || (case_.continuationQueued !== undefined && released);
 			expect(evaluateTurnEndLiveness(case_).kind === "continuing").toBe(starting);
 		}
 	});
