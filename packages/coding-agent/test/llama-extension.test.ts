@@ -11,8 +11,8 @@ import {
 } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { createEventBus } from "../src/core/event-bus.ts";
-import { composeApiKeyAuth } from "../src/core/provider-api-key-auth.ts";
 import { createExtensionRuntime, loadExtensionFromFactory } from "../src/core/extensions/loader.ts";
+import { composeApiKeyAuth } from "../src/core/provider-api-key-auth.ts";
 import { LlamaClient, type LlamaProgress, normalizeLlamaServerUrl } from "../src/extensions/llama/client.ts";
 import { findHuggingFaceToken, HuggingFaceClient } from "../src/extensions/llama/huggingface.ts";
 import llamaExtension from "../src/extensions/llama/index.ts";

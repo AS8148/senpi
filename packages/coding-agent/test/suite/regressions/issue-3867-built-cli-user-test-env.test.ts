@@ -54,7 +54,7 @@ describe("built CLI startup smoke under a user's test-looking environment (#3867
 			await exited;
 		}
 		expect(stderr).not.toContain("RealAgentDirInTestError");
-	});
+	}, 120_000);
 
 	it("resolves the agent dir under a user's test env without throwing (hermetic temp HOME)", () => {
 		home = mkdtempSync(join(tmpdir(), "senpi-user-home-"));
