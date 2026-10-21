@@ -13,6 +13,7 @@
 
 ### Fixed
 
+- A busy persistent command monitor is no longer muted after 200 matched lines a day. It wakes the session at most 12 times an hour on average (setting `terminal.monitorWakesPerHour`, or `wakes_per_hour` on the monitor, which survives a restart); lines that arrive in between are delivered together in the next wake, and lines beyond one wake's size are written to a per-monitor file that the wake names, so no line is lost. Only a real flood is paused: more than 120 matched lines a minute for 5 minutes in a row (`terminal.monitorRunawayLinesPerMinute`, `terminal.monitorRunawayMinutes`) pauses the monitor with a notice that says how to resume it ([#3889](https://github.com/code-yeongyu/senpi/issues/3889)).
 - An idle RPC host (one open session, no work) no longer wakes about eleven times a second. While its supervisor pipe is watched, the supervisor pid is checked every 5 s instead of every 250 ms, and the event-loop stall probe ticks once a second after 2 s without session work, going back to 200 ms as soon as a session works. This cuts the idle CPU of every thread host the desktop keeps open ([#3738](https://github.com/code-yeongyu/senpi/issues/3738)).
 ### Removed
 

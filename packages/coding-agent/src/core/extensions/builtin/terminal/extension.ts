@@ -13,6 +13,7 @@ import {
 } from "./extension-state.ts";
 import { currentLeaseToken, releaseTerminalLease, retireLeaseToken } from "./manifest-lease.ts";
 import { MonitorNotifier } from "./monitor-notify.ts";
+import { appendMonitorOverflow } from "./monitor-overflow-file.ts";
 import { terminalStateDir } from "./monitor-state-dir.ts";
 import { MONITOR_STATUS_KEY } from "./monitor-status.ts";
 import { MonitorStatusTicker } from "./monitor-status-ticker.ts";
@@ -31,6 +32,23 @@ import { createBashResizeTool } from "./tools/bash-resize.ts";
 import { TERMINAL_CHILD_JOB_KINDS, terminalChildJob } from "./tools/child-placement.ts";
 import { createKillBashTool } from "./tools/kill-bash.ts";
 import { bindTerminalManifestWriter, createMonitorTool } from "./tools/monitor.ts";
+
+/** Only paced (persistent command) watches of a session with a durable state dir get an overflow file. */
+function spillMonitorOverflow(state: TerminalExtensionState, id: string, lines: readonly string[]): string | undefined {
+	const terminalDir = terminalStateDir(state.ctx);
+	const monitorId = state.bundle?.manager.monitorIdOf(id);
+	if (terminalDir === undefined || monitorId === undefined || state.bundle?.monitors.wakePacing(id) === undefined)
+		return undefined;
+	try {
+		return appendMonitorOverflow(terminalDir, monitorId, lines);
+	} catch (error) {
+		state.ctx?.ui?.notify?.(
+			`Could not write the overflow file of ${monitorId}: ${error instanceof Error ? error.message : String(error)}`,
+			"warning",
+		);
+		return undefined;
+	}
+}
 
 function shouldStepAside(ctx: ExtensionContext | undefined): boolean {
 	return isAnthropicBashEnabled() && ctx?.model?.api === "anthropic-messages";
@@ -124,6 +142,11 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 			getMode: () => state.settings.notify,
 			getSettings: () => state.settings.monitor,
 			pauseMonitors: (ids) => state.bundle?.monitors.pause(ids) ?? [],
+			wakesPerHour: (id) => {
+				const pacing = state.bundle?.monitors.wakePacing(id);
+				return pacing === undefined ? undefined : (pacing.wakesPerHour ?? state.settings.monitor.wakesPerHour);
+			},
+			spillOverflow: (id, lines) => spillMonitorOverflow(state, id, lines),
 		});
 		const sessionKey = sessionKeyOf(ctx);
 		if (event.reason === "reload") {
@@ -138,6 +161,7 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 			state.bundle = createBundle(state);
 		}
 		state.bundle ??= createBundle(state);
+		state.bundle.monitors.setRunawayGuard(state.settings.monitorRunaway);
 		state.bundle.bind(bundleSinks(pi, state));
 		const holdsLease = sessionKey !== undefined && currentLeaseToken(encodedSessionId(sessionKey)) !== undefined;
 		if (event.reason === "reload" && holdsLease) {
