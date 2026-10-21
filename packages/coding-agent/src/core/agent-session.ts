@@ -10582,6 +10582,8 @@ export class AgentSession {
 	private _isRetryableError(message: AssistantMessage): boolean {
 		// Providers mark post-delta failures to prevent replaying visible text/tool calls.
 		if (message.errorMessage?.startsWith(TURN_RETRY_SUPPRESSION_PREFIX)) return false;
+		// A local failure (journal, session file) is not the model's: retrying or switching models cannot fix it (senpi#3866).
+		if (message.failureSource === "local") return false;
 
 		// Context overflow is handled by compaction, not retry.
 		if (isContextOverflow(message, (this._modelForMessage(message) ?? this.model)?.contextWindow ?? 0)) return false;
@@ -10655,6 +10657,7 @@ export class AgentSession {
 	private _isHardErrorFallbackEligible(message: AssistantMessage): boolean {
 		return (
 			!message.errorMessage?.startsWith(TURN_RETRY_SUPPRESSION_PREFIX) &&
+			message.failureSource !== "local" &&
 			!this._isClaudeSdkAuthMissError(message) &&
 			!this._isClaudeSdkSameModelRemintError(message) &&
 			message.stopReason === "error" &&

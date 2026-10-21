@@ -1,3 +1,24 @@
+## 2026-10-21 - Pending input syncs on Windows; a local failure never walks the fallback chain (senpi#3866)
+
+### What changed
+
+- `packages/coding-agent/src/core/pending-input-journal.ts`: `fsJournalDurability` syncs the session file through an `r+` handle (a directory still through `r`, skipped on win32) and takes an injectable `JournalFileOpener`. `PendingInputAppendUncertainError` names the session file and the OS error, and says it is a local file error.
+- `packages/coding-agent/src/core/agent-session.ts`: `_isRetryableError` and `_isHardErrorFallbackEligible` return false for an assistant message with `failureSource: "local"`.
+
+### Why
+
+- On Windows `FlushFileBuffers` needs a handle with write access, so the fsync on the read-only handle failed with EPERM on every pending-input transition, and queued input got stuck and replayed on each reopen (omo#10781).
+- The failure was then classified as a model hard error and the session walked its whole fallback chain in under a second, ending on the last model. A local failure cannot be fixed by another model.
+- Regressions: `test/suite/pending-input-journal.test.ts` (a simulated win32 opener whose read-only fsync rejects with EPERM) and `test/suite/regressions/3866-local-failure-keeps-model.test.ts`.
+
+### Why an extension could not handle it
+
+- The journal's durability and the session's retry classification are core session internals.
+
+### Expected merge conflict zones
+
+- LOW: the first guard of `_isRetryableError` and the predicate list of `_isHardErrorFallbackEligible` in `agent-session.ts`.
+
 ## 2026-10-18 - A multi-block queued input leaves the queue when it starts (senpi#3588, senpi#3768)
 
 ### What changed
