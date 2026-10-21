@@ -2977,6 +2977,7 @@ export class AgentSession {
 		messages: AgentMessage | AgentMessage[],
 		deferredTurnClaim?: DeferredTurnClaim,
 		onQueuedInput?: (input: PreparedClientInput) => void,
+		personInput = false,
 	): Promise<void> {
 		deferredTurnClaim?.resolve("started");
 		if (!this._isAgentRunActive) this.externalAdmission.beginTurn();
@@ -3045,7 +3046,8 @@ export class AgentSession {
 				for (const message of queuedMessages) this.agent.steer(message);
 				if (prepared) {
 					this._steeringMessages.push(prepared.text);
-					this._recordQueuedInput(prepared.text, "steer", prepared, userMessage);
+					const queuedId = this._recordQueuedInput(prepared.text, "steer", prepared, userMessage);
+					if (personInput) this._personQueuedIds.add(queuedId);
 					this._emitQueueUpdate();
 				}
 				return;
@@ -5641,7 +5643,12 @@ export class AgentSession {
 		if (options?.thinkingLevel !== undefined) {
 			this.setSessionThinkingLevel(options.thinkingLevel);
 		}
-		await this._promptAgent(messages, undefined, options?.onQueuedInput);
+		await this._promptAgent(
+			messages,
+			undefined,
+			options?.onQueuedInput,
+			options?.humanOrigin === true || (options?.source ?? "interactive") !== "extension",
+		);
 		await this.waitForRetry();
 		await this.waitForIdle();
 		if (options?.onSessionWorkReady) {

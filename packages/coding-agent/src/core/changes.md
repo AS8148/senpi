@@ -11163,7 +11163,7 @@ Fallback eligibility and the agent_end retry decision are owned by `AgentSession
 
 ### What changed
 
-- `packages/coding-agent/src/core/agent-session.ts`: every queued input is tagged when it is enqueued. A TUI submit, an RPC client `prompt`/`steer`/`follow_up`, or an extension send marked `humanOrigin` (an answered question) is a person's. Any other extension or engine send is not. `hasQueuedPersonInput` answers from the ids still in `_queuedInputOrder`, so an input that was delivered, dequeued or cleared (Esc) no longer counts. It is exposed to extensions through `hasQueuedPersonInput` on the context actions. `sendUserMessage` and `QueuedInputOptions`/`PromptOptions` take `humanOrigin`.
+- `packages/coding-agent/src/core/agent-session.ts`: every queued input is tagged when it is enqueued. A TUI submit, an RPC client `prompt`/`steer`/`follow_up`, or an extension send marked `humanOrigin` (an answered question) is a person's. Any other extension or engine send is not. A started prompt that a competing run displaces into the steer queue is tagged the same way, from its caller's source (`_promptAgent`'s `personInput`). `hasQueuedPersonInput` answers from the ids still in `_queuedInputOrder`, so an input that was delivered, dequeued or cleared (Esc) no longer counts. It is exposed to extensions through `hasQueuedPersonInput` on the context actions. `sendUserMessage` and `QueuedInputOptions`/`PromptOptions` take `humanOrigin`.
 
 ### Why
 
@@ -11175,4 +11175,4 @@ The queue, its removal paths (`dequeueQueuedInput`, `editQueuedInput`, `clearQue
 
 ### Expected merge conflict zones
 
-- `agent-session.ts`: the queue fields near `_followUpMessages`, `_enqueuePreparedInput`, `pendingMessageCount`, the `sendUserMessage` options and its fallback enqueue, and the context actions beside `hasPendingMessages`.
+- `agent-session.ts`: the queue fields near `_followUpMessages`, `_enqueuePreparedInput`, the displaced-prompt branch of `_promptAgent` and its `prompt` call site, `pendingMessageCount`, the `sendUserMessage` options and its fallback enqueue, and the context actions beside `hasPendingMessages`.
