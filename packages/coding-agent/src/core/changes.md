@@ -1,3 +1,22 @@
+## 2026-10-21 - Extract provider request authentication without behavior changes (senpi#3858)
+
+### What changed
+
+- `packages/coding-agent/src/core/provider-request-auth.ts`: moved `rawModelHeaders`, `resolveConfiguredModelHeaders`, `resolveCompatibilityRequestHeaders`, and `configuredRequestAuthStatus` with their function bodies unchanged.
+- `packages/coding-agent/src/core/provider-composer.ts`: re-exports the same public functions; unrelated provider composition remains in place.
+
+### Why
+
+- Isolates the request-authentication unit that needs reference support, keeping the move reviewable independently of later behavior changes.
+
+### Why an extension could not handle it
+
+- This is an internal source organization change to provider composition.
+
+### Expected merge conflict zones
+
+- LOW: the moved function definitions and imports/exports in `packages/coding-agent/src/core/provider-composer.ts`.
+
 ## 2026-10-21 - Resolve typed configuration references at their value boundary (senpi#3858)
 
 ### What changed
