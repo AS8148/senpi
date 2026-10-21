@@ -10,11 +10,14 @@ const realHome = userInfo().homedir;
 const underTest = { SENPI_TEST_AGENT_DIR_GUARD: "1" };
 
 describe("assertAgentDirAllowedInTests", () => {
-	test.each([".senpi", ".omo", ".pi"])("throws for the real home's %s agent dir in a guarded senpi test run", (brandDir) => {
-		expect(() => assertAgentDirAllowedInTests(join(realHome, brandDir, "agent"), ".senpi", underTest)).toThrow(
-			RealAgentDirInTestError,
-		);
-	});
+	test.each([".senpi", ".omo", ".pi"])(
+		"throws for the real home's %s agent dir in a guarded senpi test run",
+		(brandDir) => {
+			expect(() => assertAgentDirAllowedInTests(join(realHome, brandDir, "agent"), ".senpi", underTest)).toThrow(
+				RealAgentDirInTestError,
+			);
+		},
+	);
 
 	test("throws for the active brand's flat config dir and anything below it", () => {
 		expect(() => assertAgentDirAllowedInTests(join(realHome, ".acme"), ".acme", underTest)).toThrow(

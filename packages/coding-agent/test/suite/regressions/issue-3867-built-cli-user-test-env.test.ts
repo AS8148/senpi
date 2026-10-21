@@ -59,7 +59,11 @@ describe("the built CLI under a user's test-looking environment (#3867)", () => 
 		const realHome = userInfo().homedir;
 		const probe = spawnSync(
 			process.execPath,
-			["--input-type=module", "-e", `const m = await import(${JSON.stringify(builtConfig)}); process.stdout.write(m.getAgentDir());`],
+			[
+				"--input-type=module",
+				"-e",
+				`const m = await import(${JSON.stringify(builtConfig)}); process.stdout.write(m.getAgentDir());`,
+			],
 			{ env: { PATH: process.env.PATH, HOME: realHome, USERPROFILE: realHome, ...userTestEnv }, encoding: "utf8" },
 		);
 
