@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Switching a long conversation to a model with a smaller context window while the current model is at its usage limit now applies the switch at the next message. Before, the conversation was reduced to fit, but the switch was still refused with "cannot switch ... Compact the session, then revalidate and retry the model switch" ([#3828](https://github.com/code-yeongyu/senpi/issues/3828)).
+
 ### Removed
 
 ## [2026.10.20-1] - 2026-10-20
