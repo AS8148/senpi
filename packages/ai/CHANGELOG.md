@@ -8,6 +8,8 @@
 
 ### Changed
 
+- The advertised Claude Code fingerprint floor that Anthropic OAuth requests declare follows the bundled Claude Agent SDK to Claude Code 2.1.306 ([#3854](https://github.com/code-yeongyu/senpi/issues/3854)).
+
 - The bundled model catalog is refreshed from models.dev and the providers' model listings (`amazon-bedrock`, `huggingface`, `opencode`, `opengateway`, `openrouter`, `venice`).
 
 ### Fixed
