@@ -1,3 +1,59 @@
+## 2026-10-20 - chatgpt-subscription failures carry a classified providerDiagnostic (senpi#3771)
+
+### What changed
+
+- `packages/ai/src/api/openai-codex-responses.ts`: the HTTP refusal, the in-stream `error` event and the `response.failed` event attach a diagnostic from `codexHttpProviderDiagnostic` / `codexEventProviderDiagnostic` to the error they throw, and the outer `catch` copies `readProviderDiagnostic(error) ?? transportProviderDiagnosticFromError(error)` onto `output.providerDiagnostic` for `stopReason: "error"`. `response.failed` uses `describeChatGptUsageLimitEvent` on its nested `response.error` like the `error` branch does.
+- `packages/ai/src/api/openai-codex-responses/provider-diagnostic.ts` (fork-only): reads `error.code`/`error.type`, the inline or HTTP status, and `resets_at`/`resets_in_seconds`. A recognized code classifies (`usage_limit_reached`, `usage_not_included` -> `quota`; `rate_limit_exceeded` -> `rate_limit`) with `resetsAt`; otherwise a classifying status, then a safe lowercase error type (or the event type) as the code of an `unknown` diagnostic.
+
+### Why
+
+The adapter never minted a diagnostic, so every ChatGPT-subscription failure, a usage limit included, read "could not be classified (chatgpt-subscription, no code)".
+
+### Why an extension could not handle it
+
+The diagnostic rides the provider's thrown error inside the adapter, before any extension sees the failure.
+
+### Expected merge conflict zones
+
+- LOW: the HTTP `throw` in the retry loop, the outer `catch` of `stream()`, and the `error` / `response.failed` branches of `mapCodexEvents` in `openai-codex-responses.ts`.
+
+## 2026-10-19 - ChatGPT subscription Fast and Ultrafast costs use the included-usage rates (oh-my-openagent#10540)
+
+### What changed
+
+- `packages/ai/src/api/openai-codex-responses.ts`: `getServiceTierCostMultiplier` returns 2.5 for `priority`/`fast` on every model (was 2, or 2.5 for `gpt-5.5` only) and 8 for GPT-6 Astra / GPT-6.1 Sol `ultrafast` (was 6). The `openai-responses.ts` adapter keeps the API rates (2x, 6x).
+
+### Why
+
+- This adapter serves only the ChatGPT subscription lane, which spends the plan's included usage. [OpenAI's Codex pricing page](https://developers.openai.com/codex/pricing) meters Fast at 2.5x Standard and Ultrafast at 8x against included usage; 2x and 6x are the purchased-credit and API rates. A Geeky · Normal run on `gpt-6.1-sol-fast` used about 60% of a weekly limit while the shown cost tracked the lower rate.
+
+### Why an extension could not handle it
+
+- The multiplier is applied inside the adapter after the terminal usage event; an extension never sees the pre-multiplier cost.
+
+### Expected merge conflict zones
+
+- LOW: `getServiceTierCostMultiplier` in `openai-codex-responses.ts`.
+
+## 2026-10-18 - Anthropic request bodies are gzip-compressed where the endpoint accepts it (senpi#3643)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `createClient` receives `withGzipRequestBodies(options.fetch)` when `getAnthropicCompat(model).supportsGzipRequestBody` is true, so the SDK's fetch sends 4096+ character bodies with `Content-Encoding: gzip`.
+- `packages/ai/src/api/warm-prompt-cache.ts`: the Anthropic prewarm client wraps its fetch the same way.
+
+### Why
+
+- Claude Code 2.1.302 gzips first-party request bodies; long sessions re-upload 0.5-8 MB of JSON per turn, which gzip shrinks 2.2x at the median (measured in senpi#3643).
+
+### Why an extension could not handle it
+
+- The SDK client and its fetch are built inside the adapter; an extension can supply `options.fetch` per call but cannot apply a per-model compat default to every request and to the prewarm.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/api/anthropic-messages.ts` import block and the `createClient(...)` call in `openClient`; `packages/ai/src/api/warm-prompt-cache.ts` import block and the `new Anthropic({ fetch })` line.
+
 ## 2026-10-14 - Shared Vertex ADC resolution for Model Garden open models
 
 ### What changed
@@ -330,3 +386,41 @@ Transport selection and the fallback cooldown live inside the provider adapter, 
 
 - MEDIUM: the WebSocket `catch` block in `stream()` of `openai-codex-responses.ts` (upstream calls a two-argument `recordWebSocketFailure` that adds the session to a permanent fallback set).
 - LOW: `fallback-state.ts` has no upstream counterpart.
+
+## 2026-10-18 - ChatGPT usage-limit refusals name the limit and the next step (senpi#3615)
+
+### What changed
+
+- `packages/ai/src/api/openai-codex-responses.ts`: `parseErrorResponse` takes the response headers and delegates the usage-limit wording to `describeChatGptUsageLimitResponse`; the in-stream `error` event branch uses `describeChatGptUsageLimitEvent` for a `usage_limit_reached`/`usage_not_included` event before falling back to the `Codex error:` text.
+- `packages/ai/src/api/chatgpt-usage-limit.ts` (fork-only): reads `x-codex-rate-limit-reached-type` and `x-codex-credits-has-credits` next to the body's `plan_type` and `resets_at`, and states the workspace-credits, spend-cap, has-credits or plan case plus the ways to keep going. Codex's free-form `x-codex-promo-message` is left out: a model name in it would make the fallback layer scope the limit to one model. Its closing sentence starts with `ACCOUNT_LIMIT_NEXT_STEP_LEAD` from `utils/provider-failure-description.ts`, whose account-limit projection keeps any message carrying that lead as written (retry marker stripped) instead of replacing it with the generic switch-provider sentence (seen in CLI QA: the projection hid the new text). The dependency runs api -> utils so the `./utils/*` and `./models` entry graphs stay within budget.
+
+### Why
+
+Every refusal read "You have hit your ChatGPT usage limit (<plan> plan)." whether the account had credits ChatGPT did not apply, the workspace ran out of credits, or a spend cap was hit, and it never said what to do. Codex CLI reads the same headers (`codex-rs/protocol/src/error.rs`). It sends no credit opt-in flag, so the wording is the part we can match.
+
+### Why an extension could not handle it
+
+The error text is built inside the provider adapter from the raw response before any extension sees the failure, and the headers are gone by then.
+
+### Expected merge conflict zones
+
+- LOW: `parseErrorResponse` in `openai-codex-responses.ts` (signature gains `headers`) and the `type === "error"` branch of `mapCodexEvents`.
+
+## 2026-10-19 - Debug-flagged request skeleton log for every Anthropic request (senpi#3727)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-request-shape-log.ts` (new): when `SENPI_DEBUG_REQUEST_SHAPE` names a file, each request appends one JSON line with the time, provider, model and, per message index, the role plus each block's type and `id` / `tool_use_id`. No text, input, thinking or result content is written; the file is created with mode 0600.
+- `packages/ai/src/api/anthropic-messages.ts`: `createRequest`'s `send` logs the exact params of every attempt (after every sanitizer) before calling the client, because the SDK throws on a non-2xx and the rejected attempt is the one to rebuild. Main turns, side requests (compaction, titles, summaries) and the forced-tool-choice / unsigned-thinking / expired-search retries are all covered.
+
+### Why
+
+A 400 named `messages.1` while the reconstructed main-turn payload had the pair at `messages.8`; without the sent shape the failing request cannot be rebuilt.
+
+### Why an extension could not handle it
+
+`before_provider_request` runs before the provider's own sanitizers rewrite the payload, so an extension would log a different shape than the one sent, and side requests bypass it.
+
+### Expected merge conflict zones
+
+- `anthropic-messages.ts`: the import block and the end of `createRequest`.

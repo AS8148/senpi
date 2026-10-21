@@ -6,6 +6,7 @@ import type {
 	ResponseInput,
 	ResponseStreamEvent,
 } from "openai/resources/responses/responses.js";
+import { readProviderDiagnostic } from "../provider-diagnostic.ts";
 import { getWireIdentity } from "../wire-identity.ts";
 
 type ProcessWithOsBuiltinModule = typeof process & {
@@ -47,10 +48,13 @@ import { formatProviderError, normalizeProviderError } from "../utils/error-body
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
+import { attachProviderDiagnostic } from "../utils/provider-diagnostic-carrier.ts";
+import { transportProviderDiagnosticFromError } from "../utils/provider-diagnostic-sources.ts";
 import { appendRetryAfterMsMarker, extract429RetryAfterMs } from "../utils/retry-hint.ts";
 import { getSystemMessageText } from "../utils/text.ts";
 import { getDeclaredTools, getInitialSystemMessage, normalizeContext, resolveTranscript } from "../utils/transcript.ts";
 import { uuidv7 } from "../utils/uuid.ts";
+import { describeChatGptUsageLimitEvent, describeChatGptUsageLimitResponse } from "./chatgpt-usage-limit.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import {
 	type ChatGptSubscriptionWebSocketDebugStats,
@@ -62,6 +66,10 @@ import {
 	recordWebSocketSseFallback,
 	recordWebSocketSuccess,
 } from "./openai-codex-responses/fallback-state.ts";
+import {
+	codexEventProviderDiagnostic,
+	codexHttpProviderDiagnostic,
+} from "./openai-codex-responses/provider-diagnostic.ts";
 import { buildCodexReasoning, type CodexReasoningSummaryInput } from "./openai-codex-responses/reasoning.ts";
 import { applyChatGptSubscriptionCacheAffinityHeaders, clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import {
@@ -468,7 +476,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 						status: response.status,
 						statusText: response.statusText,
 					});
-					const info = await parseErrorResponse(fakeResponse);
+					const info = await parseErrorResponse(fakeResponse, response.headers);
 					let errorMessage = info.friendlyMessage || info.message;
 					if (response.status === 429) {
 						const hintMs = extract429RetryAfterMs({
@@ -480,7 +488,10 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 							errorMessage = appendRetryAfterMsMarker(errorMessage, hintMs);
 						}
 					}
-					throw new Error(errorMessage);
+					throw attachProviderDiagnostic(
+						new Error(errorMessage),
+						codexHttpProviderDiagnostic(response.status, errorText),
+					);
 				} catch (error) {
 					if (error instanceof Error) {
 						if (error.name === "AbortError" || error.message === "Request was aborted") {
@@ -531,6 +542,11 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = formatProviderError(normalizeProviderError(error));
+			const providerDiagnostic =
+				output.stopReason === "error"
+					? (readProviderDiagnostic(error) ?? transportProviderDiagnosticFromError(error))
+					: undefined;
+			if (providerDiagnostic !== undefined) output.providerDiagnostic = providerDiagnostic;
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
@@ -659,16 +675,17 @@ function getServiceTierCostMultiplier(
 	model: Pick<Model<"openai-codex-responses">, "id" | "upstreamModelId">,
 	serviceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | "ultrafast" | undefined,
 ): number {
+	// This lane spends a ChatGPT plan's included usage, which OpenAI meters at 2.5x Standard for
+	// Fast and 8x for GPT-6 Astra / GPT-6.1 Sol Ultrafast (https://developers.openai.com/codex/pricing).
+	// The 2x / 6x figures are the purchased-credit and API rates; the openai-responses lane keeps those.
 	switch (serviceTier) {
 		case "ultrafast":
-			// OpenAI prices GPT-6 Astra and GPT-6.1 Sol Ultrafast at 6x Standard on every
-			// token class and context tier. Any other model keeps its base rate.
-			return ["gpt-6-astra", "gpt-6.1-sol"].includes(model.upstreamModelId ?? model.id) ? 6 : 1;
+			return ["gpt-6-astra", "gpt-6.1-sol"].includes(model.upstreamModelId ?? model.id) ? 8 : 1;
 		case "flex":
 			return 0.5;
 		case "priority":
 		case "fast":
-			return model.id === "gpt-5.5" ? 2.5 : 2;
+			return 2.5;
 		default:
 			return 1;
 	}
@@ -847,26 +864,32 @@ async function* mapCodexEvents(
 		if (type === "error") {
 			const code = getCodexEventErrorCode(event);
 			const message = getCodexEventErrorMessage(event);
-			let errorText = `Codex error: ${message || code || JSON.stringify(event)}`;
+			let errorText =
+				describeChatGptUsageLimitEvent(event) ?? `Codex error: ${message || code || JSON.stringify(event)}`;
 			const hintMs = extract429RetryAfterMs({ bodyText: JSON.stringify(event) });
 			if (hintMs !== undefined) {
 				errorText = appendRetryAfterMsMarker(errorText, hintMs);
 			}
-			throw new CodexApiError(errorText, {
-				code: code || undefined,
-				payload: event,
-			});
+			throw attachProviderDiagnostic(
+				new CodexApiError(errorText, { code: code || undefined, payload: event }),
+				codexEventProviderDiagnostic(event),
+			);
 		}
 
 		if (type === "response.failed") {
 			const code = getCodexEventErrorCode(event);
 			const message = getCodexEventErrorMessage(event);
-			let errorText = message || "Codex response failed";
+			let errorText =
+				describeChatGptUsageLimitEvent({ ...event, error: getCodexEventError(event) }) ??
+				(message || "Codex response failed");
 			const hintMs = extract429RetryAfterMs({ bodyText: JSON.stringify(event) });
 			if (hintMs !== undefined) {
 				errorText = appendRetryAfterMsMarker(errorText, hintMs);
 			}
-			throw new CodexApiError(errorText, { code, payload: event });
+			throw attachProviderDiagnostic(
+				new CodexApiError(errorText, { code, payload: event }),
+				codexEventProviderDiagnostic(event),
+			);
 		}
 
 		if (type === "response.done" || type === "response.completed" || type === "response.incomplete") {
@@ -1691,26 +1714,19 @@ async function processWebSocketStream(
 // Error Handling
 // ============================================================================
 
-async function parseErrorResponse(response: Response): Promise<{ message: string; friendlyMessage?: string }> {
+async function parseErrorResponse(
+	response: Response,
+	headers: Headers,
+): Promise<{ message: string; friendlyMessage?: string }> {
 	const raw = await response.text();
 	let message = raw || response.statusText || "Request failed";
 	let friendlyMessage: string | undefined;
 
 	try {
-		const parsed = JSON.parse(raw) as {
-			error?: { code?: string; type?: string; message?: string; plan_type?: string; resets_at?: number };
-		};
-		const err = parsed?.error;
+		const parsed: unknown = JSON.parse(raw);
+		friendlyMessage = describeChatGptUsageLimitResponse(response.status, parsed, headers);
+		const err = (parsed as { error?: { message?: string } } | null)?.error;
 		if (err) {
-			const code = err.code || err.type || "";
-			if (/usage_limit_reached|usage_not_included|rate_limit_exceeded/i.test(code) || response.status === 429) {
-				const plan = err.plan_type ? ` (${err.plan_type.toLowerCase()} plan)` : "";
-				const mins = err.resets_at
-					? Math.max(0, Math.round((err.resets_at * 1000 - Date.now()) / 60000))
-					: undefined;
-				const when = mins !== undefined ? ` Try again in ~${mins} min.` : "";
-				friendlyMessage = `You have hit your ChatGPT usage limit${plan}.${when}`.trim();
-			}
 			message = err.message || friendlyMessage || message;
 		}
 	} catch {}

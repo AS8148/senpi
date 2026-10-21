@@ -8,9 +8,88 @@
 
 ### Changed
 
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`amazon-bedrock`, `huggingface`, `opencode`, `opengateway`, `openrouter`, `venice`).
+
 ### Fixed
 
 - `appendLoginSlot` replaces a credential of the other kind instead of adding an unusable slot; new `auth/pool/kinds` helpers classify slots and report the unused kinds of a mixed credential ([#3448](https://github.com/code-yeongyu/senpi/issues/3448))
+
+### Removed
+
+## [2026.10.20-1] - 2026-10-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- OpenGateway's DeepSeek V4.1 Flash Ultrafast now costs about 5x more per input token ($0.03 -> $0.15 per 1M) and GLM-5.3 Flash Ultrafast about 7x more ($0.015 -> $0.105), following the gateway's prices; OpenRouter DeepSeek Chat and GLM-5 have smaller context windows (128,000 and 198,000 tokens); Mistral Ministral 3B, Ministral 8B and Voxtral Small and about a dozen OpenRouter models follow upstream prices ([#3806](https://github.com/code-yeongyu/senpi/pull/3806)).
+- The bundled model catalog is refreshed: `deepseek-v4.1-flash-1017` appears on the Alibaba and Qwen token plans and Cloudflare, Venice adds `mercury-3`, several models report lower maximum output tokens (Together Qwen3.6-Plus and Qwen3.7-Max, Vercel AI Gateway DeepSeek V4.1 Flash, OpenRouter Qwen3.5 397B, Qwen3.8 27B, DeepSeek Chat and GLM-5), Cloudflare Workers AI Gemma 4 26B and Nemotron 3 120B change their thinking levels, and Amazon Bedrock GPT-5.6 Sol and Terra support strict tool schemas in the US and India regions ([#3806](https://github.com/code-yeongyu/senpi/pull/3806)).
+
+### Fixed
+
+- A ChatGPT subscription failure now carries a `providerDiagnostic` in every shape the backend reports it (an HTTP error, an in-stream `error` event, a `response.failed` event): a usage limit is `quota` and a rate limit `rate_limit`, each with the new optional `resetsAt` (epoch ms) when the backend names the reset, and an unrecognized failure keeps the provider's own lowercase error type as its `code` instead of reading "no code" ([#3771](https://github.com/code-yeongyu/senpi/issues/3771)).
+
+### Removed
+
+- Mistral `open-mistral-7b`, `open-mixtral-8x22b` and `open-mixtral-8x7b` (deprecated upstream) and Venice `zai-org-glm-4.7-flash` leave the bundled catalog ([#3806](https://github.com/code-yeongyu/senpi/pull/3806)).
+
+## [2026.10.19-2] - 2026-10-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.19-1] - 2026-10-19
+
+### Breaking Changes
+
+### Added
+
+- Image generation results (`AssistantImages`) carry `providerDiagnostic` on failure, with the HTTP status and category, like assistant messages ([omo#10285](https://github.com/code-yeongyu/oh-my-openagent/issues/10285)).
+
+### Changed
+
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`openrouter`).
+
+### Fixed
+
+### Removed
+
+## [2026.10.19] - 2026-10-19
+
+### Breaking Changes
+
+### Added
+
+- Anthropic requests of 4096+ characters to `api.anthropic.com` are sent gzip-compressed, as Claude Code does; `compat.supportsGzipRequestBody` turns it on or off per model, and an endpoint that refuses the encoding gets the same request uncompressed once and stays uncompressed. A custom `fetch` (or a test stub of the global fetch) for `api.anthropic.com` now receives those bodies as gzip bytes with `Content-Encoding: gzip` instead of a JSON string; set `compat.supportsGzipRequestBody: false` to keep the old behavior ([#3643](https://github.com/code-yeongyu/senpi/issues/3643)).
+
+### Changed
+
+### Fixed
+
+- ChatGPT subscription costs for the Fast tier are estimated at 2.5x Standard on every model (was 2x), and GPT-6 Astra / GPT-6.1 Sol Ultrafast at 8x (was 6x), the rates OpenAI meters against a plan's included usage ([#3670](https://github.com/code-yeongyu/senpi/pull/3670)).
+
+### Removed
+
+## [2026.10.18-1] - 2026-10-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- ChatGPT browser login no longer dead-ends on "State mismatch." when another session or an earlier attempt still holds the callback port: a new login asks the old listener to let go (as Codex CLI does), falls back to port 1457, always closes its own listener, and says plainly when the address has to be pasted. Reported by 채완 ([#3623](https://github.com/code-yeongyu/senpi/issues/3623)).
 
 ### Removed
 
@@ -28,6 +107,8 @@
 - The bundled model catalog is refreshed from models.dev and the providers' model listings (`opengateway`, `openrouter`).
 
 ### Fixed
+
+- ChatGPT sign-in: a refusal past the plan's usage limit now says which limit applies (an account whose credits ChatGPT did not apply, workspace credits used up, a spend cap, or the plan limit) and how to keep going, from the `x-codex-*` headers Codex reads. Reported by 요즘잘자쿨오모냥이 ([#3615](https://github.com/code-yeongyu/senpi/issues/3615)).
 
 ### Removed
 

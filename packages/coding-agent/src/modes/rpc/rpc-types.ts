@@ -20,6 +20,7 @@ import type { EngineOrdinal } from "../../core/engine-build-identity.ts";
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
 import type { ContextUsage, SessionControlAdmission, SessionKind } from "../../core/extensions/types.ts";
 import type { ResolvedMessagePath } from "../../core/message-path-resolution.ts";
+import type { PendingInputSnapshot, PendingInputUpdate } from "../../core/pending-input-session.ts";
 import type { SessionEntry, SessionMessageEntry, SessionTreeNode, UsageTotals } from "../../core/session-manager.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import type { ApiKeyVerification } from "../../core/verify-api-key.ts";
@@ -144,6 +145,12 @@ type RpcSessionCommand =
 	 * whole file before answering `found: false`. For inputs `effectId` is the `clientMessageId`.
 	 */
 	| { id?: string; type: "get_effect_status"; effectId: string; sessionPath?: string }
+	/**
+	 * The pending inputs in durable custody (queued, sending, failed) and an explicit outcome for each listed id,
+	 * consistent through `throughCursor` (senpi#3549). Subscribe to `pending_input_update` first, then apply this
+	 * snapshot and only updates after its cursor. At most 64 ids.
+	 */
+	| { id?: string; type: "get_pending_inputs"; knownClientMessageIds?: string[] }
 
 	// Model
 	| { id?: string; type: "set_model"; provider: string; modelId: string; effectId?: string }
@@ -593,7 +600,10 @@ export type RpcCommand =
 			 */
 			type: "release_session";
 			sessionId: string;
-			reason: "takeover";
+			/** `move` seals the file for a move to another device (`moveId` required); writes are refused here after. */
+			reason: "takeover" | "move";
+			moveId?: string;
+			target?: string;
 			interrupt?: boolean;
 			force?: boolean;
 	  }
@@ -833,6 +843,8 @@ export interface RpcSessionState {
 	isBashRunning: boolean;
 	/** Open question prompts awaiting an answer. Absent when none are pending. */
 	pendingQuestions?: RpcQuestionUiRequest[];
+	/** Live select, confirm, input and editor request frames, including across session replacements; [] when none. */
+	pendingDialogs?: RpcExtensionUIRequest[];
 }
 
 // ============================================================================
@@ -981,6 +993,8 @@ export type RpcResponse =
 					attachments: number;
 					/** Milliseconds since the session's idle window was last refreshed. */
 					idleMs?: number;
+					/** The session's tool child (senpi#3566): `none` until its first job, then `live` or `exited`. */
+					tool_child?: { state: "none" | "live" | "exited"; generation?: number; pid?: number };
 				}>;
 			};
 	  }
@@ -1096,6 +1110,7 @@ export type RpcResponse =
 			success: true;
 			data: { found: true; effect: EffectStatus } | { found: false; searched: "complete" };
 	  }
+	| { id?: string; type: "response"; command: "get_pending_inputs"; success: true; data: PendingInputSnapshot }
 	| { id?: string; type: "response"; command: "set_favorite_models"; success: true }
 	| { id?: string; type: "response"; command: "set_scoped_models"; success: true }
 	| {
@@ -1466,6 +1481,8 @@ export type RpcExtensionUIRequest =
 			widgetKey: string;
 			widgetLines: string[] | undefined;
 			widgetPlacement?: "aboveEditor" | "belowEditor";
+			/** Choices offered with the widget; a client sends `command` as a normal prompt when one is picked. */
+			widgetActions?: { label: string; command: string }[];
 	  }
 	| { type: "extension_ui_request"; id: string; method: "setTitle"; title: string }
 	| { type: "extension_ui_request"; id: string; method: "set_editor_text"; text: string }
@@ -1549,6 +1566,9 @@ export interface RpcHighReasoningWarningEvent {
 	provider: string;
 	thinkingLevel: ThinkingLevel;
 }
+
+/** A pending input in durable custody changed; `changes` are complete projections, in cursor order. */
+export type RpcPendingInputUpdateEvent = { type: "pending_input_update" } & PendingInputUpdate;
 
 /** Emitted after explicit skill tokens are expanded for a user-authored request. */
 export interface RpcSkillInvocationEvent {
