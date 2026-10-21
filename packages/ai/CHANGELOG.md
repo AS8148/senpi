@@ -12,7 +12,7 @@
 
 ### Fixed
 
-- An API-key login with an empty or missing key is refused with `EmptyApiKeyError` instead of saving an unusable `login-N` account ([#3867](https://github.com/code-yeongyu/senpi/issues/3867)).
+- An API-key login with an empty or missing key is refused with `EmptyApiKeyError` instead of saving an unusable `login-N` account. Providers that work without a key set `apiKey.keyOptional` and keep accepting a blank key ([#3867](https://github.com/code-yeongyu/senpi/issues/3867)).
 
 ### Removed
 

@@ -356,6 +356,14 @@ export class EmptyApiKeyError extends Error {
 	}
 }
 
+/** Drops a blank or missing `key` from an API-key credential; used only for providers that declare `keyOptional`. */
+export function withoutBlankKey(credential: Credential): Credential {
+	if (credential.type !== "api_key" || !Object.hasOwn(credential, "key")) return credential;
+	if (typeof credential.key === "string" && credential.key.trim() !== "") return credential;
+	const { key: _blank, ...rest } = credential;
+	return rest;
+}
+
 /**
  * Throws `EmptyApiKeyError` when an API-key credential names a `key` that is not a non-empty
  * string. Env-only logins (AWS profile or credential chain, Vertex ADC) omit the field and pass.

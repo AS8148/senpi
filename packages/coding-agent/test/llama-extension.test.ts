@@ -1,7 +1,14 @@
 import { once } from "node:events";
 import { createServer, type RequestListener, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import type { AuthContext, AuthPrompt, ModelsPublication, ModelsStoreEntry } from "@earendil-works/pi-ai";
+import {
+	type AuthContext,
+	type AuthPrompt,
+	createModels,
+	InMemoryCredentialStore,
+	type ModelsPublication,
+	type ModelsStoreEntry,
+} from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { createEventBus } from "../src/core/event-bus.ts";
 import { createExtensionRuntime, loadExtensionFromFactory } from "../src/core/extensions/loader.ts";
@@ -441,6 +448,25 @@ describe("llama.cpp extension", () => {
 			env: { LLAMA_BASE_URL: url },
 			source: "stored credential",
 		});
+	});
+
+	it("logs in through Models.login with no API key and stores only the server URL (#3869)", async () => {
+		const { provider } = createLlamaProvider();
+		const { url } = await listen((_request, response) => json(response, { data: [] }));
+		const store = new InMemoryCredentialStore();
+		const models = createModels({ credentials: store });
+		models.setProvider(provider);
+		const answers = [url, ""];
+
+		await models.login(LLAMA_PROVIDER_ID, "api_key", {
+			signal: AbortSignal.timeout(5_000),
+			prompt: async (_prompt: AuthPrompt) => answers.shift()!,
+			notify: () => {},
+		});
+
+		const stored = await store.read(LLAMA_PROVIDER_ID);
+		expect(stored).toEqual({ type: "api_key", env: { LLAMA_BASE_URL: url } });
+		expect(Object.hasOwn(stored ?? {}, "key")).toBe(false);
 	});
 
 	it("searches Hugging Face and reads quantizations plus access requirements", async () => {

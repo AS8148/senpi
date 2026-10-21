@@ -191,6 +191,12 @@ export interface ApiKeyAuth {
 	/** Ambient compatibility adapter that must not outrank a stored OAuth credential. */
 	ambientOnly?: boolean;
 
+	/**
+	 * The provider works without a key (a local server such as llama.cpp), so a login may leave it blank.
+	 * Without this flag `Models.login` refuses a blank or missing key with `EmptyApiKeyError` (#3867).
+	 */
+	keyOptional?: boolean;
+
 	/** Interactive setup (prompt for key/provider env). Absent = ambient-only. */
 	login?(interaction: ProviderAuthInteraction): Promise<ApiKeyCredential>;
 

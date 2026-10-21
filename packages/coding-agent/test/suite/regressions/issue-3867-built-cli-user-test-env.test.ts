@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir, userInfo } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
@@ -56,8 +56,8 @@ describe("the built CLI under a user's test-looking environment (#3867)", () => 
 		expect(stderr).not.toContain("RealAgentDirInTestError");
 	});
 
-	it("resolves the real account home's agent dir without throwing (resolution only, nothing written)", () => {
-		const realHome = userInfo().homedir;
+	it("resolves the agent dir under a user's test env without throwing (hermetic temp HOME)", () => {
+		home = mkdtempSync(join(tmpdir(), "senpi-user-home-"));
 		const probe = spawnSync(
 			process.execPath,
 			[
@@ -66,13 +66,14 @@ describe("the built CLI under a user's test-looking environment (#3867)", () => 
 				`const m = await import(${JSON.stringify(builtConfig)}); process.stdout.write(m.getAgentDir());`,
 			],
 			{
-				env: { PATH: process.env.PATH, HOME: realHome, USERPROFILE: realHome, ...runTempEnv, ...userTestEnv },
+				cwd: home,
+				env: { PATH: process.env.PATH, HOME: home, USERPROFILE: home, ...runTempEnv, ...userTestEnv },
 				encoding: "utf8",
 			},
 		);
 
 		expect(probe.stderr).not.toContain("RealAgentDirInTestError");
 		expect(probe.status).toBe(0);
-		expect(probe.stdout.startsWith(realHome)).toBe(true);
+		expect(probe.stdout).toBe(join(home, ".senpi", "agent"));
 	});
 });

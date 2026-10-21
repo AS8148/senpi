@@ -1,6 +1,6 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 import { quarantineAgentDirEnv } from "./scripts/test-agent-dir.mjs";
@@ -10,7 +10,7 @@ import { quarantineAgentDirEnv } from "./scripts/test-agent-dir.mjs";
 const inheritedAgentDirs = Object.entries(process.env).filter(([key]) => key.endsWith("_CODING_AGENT_DIR"));
 const alreadyQuarantined =
 	process.env.SENPI_TEST_AGENT_DIR_GUARD === "1" &&
-	inheritedAgentDirs.every(([, dir]) => dir?.startsWith(tmpdir()) === true);
+	inheritedAgentDirs.every(([, dir]) => dir?.startsWith(tmpdir() + sep) === true);
 if (!alreadyQuarantined) {
 	const agentRoot = mkdtempSync(join(tmpdir(), "senpi-vitest-agent-"));
 	process.once("exit", () => rmSync(agentRoot, { recursive: true, force: true }));

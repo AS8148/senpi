@@ -62,6 +62,29 @@ describe("Models.login refuses a blank API key", () => {
 		return { signal: AbortSignal.timeout(5_000), prompt: async () => value, notify: () => {} };
 	}
 
+	test("a keyed provider whose login returns key: undefined is refused", async () => {
+		const keyed: Provider = createProvider({
+			id: "keyed",
+			name: "Keyed",
+			baseUrl: "https://keyed.example/v1",
+			auth: {
+				apiKey: {
+					name: "Keyed API key",
+					login: async () => ({ type: "api_key", key: undefined }),
+					resolve: async () => undefined,
+				},
+			},
+			models: [],
+			api: "openai-responses" as never,
+		});
+		const store = new InMemoryCredentialStore();
+		const models = createModels({ credentials: store });
+		models.setProvider(keyed);
+
+		await expect(models.login("keyed", "api_key", submit(""))).rejects.toBeInstanceOf(EmptyApiKeyError);
+		expect(await store.read("keyed")).toBeUndefined();
+	});
+
 	test("an empty prompt answer throws EmptyApiKeyError and writes nothing", async () => {
 		const store = new InMemoryCredentialStore();
 		await store.modify("blankkey", async () => pooledApiKey());
@@ -73,5 +96,36 @@ describe("Models.login refuses a blank API key", () => {
 		expect(listSlots((await store.read("blankkey")) as PooledCredential).map((slot) => slot.name)).toEqual([
 			"default",
 		]);
+	});
+
+	test("a provider that declares keyOptional saves a blank-key login without a key field", async () => {
+		const optionalKey: Provider = createProvider({
+			id: "optionalkey",
+			name: "Optional Key",
+			baseUrl: "http://127.0.0.1:8080/v1",
+			auth: {
+				apiKey: {
+					name: "Optional Key API key",
+					keyOptional: true,
+					login: async () => ({
+						type: "api_key",
+						key: undefined,
+						env: { OPTIONAL_BASE_URL: "http://127.0.0.1:8080" },
+					}),
+					resolve: async () => undefined,
+				},
+			},
+			models: [],
+			api: "openai-completions" as never,
+		});
+		const store = new InMemoryCredentialStore();
+		const models = createModels({ credentials: store });
+		models.setProvider(optionalKey);
+
+		await models.login("optionalkey", "api_key", submit(""));
+
+		const stored = await store.read("optionalkey");
+		expect(stored).toEqual({ type: "api_key", env: { OPTIONAL_BASE_URL: "http://127.0.0.1:8080" } });
+		expect(Object.hasOwn(stored ?? {}, "key")).toBe(false);
 	});
 });

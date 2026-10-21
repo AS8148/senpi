@@ -1,8 +1,9 @@
-## 2026-10-21 - Logins refuse a blank API key (senpi#3867)
+## 2026-10-21 - Logins refuse a blank API key unless the provider declares it optional (senpi#3867)
 
 ### What changed
 
-- `packages/ai/src/models.ts`: `Models.login` checks the credential a provider's login returned with `assertLoginKeyPresent` (fork-only `src/auth/pool/slots.ts`) before it touches the store. An API-key credential whose `key` field is blank, whitespace or `undefined` throws `EmptyApiKeyError` and nothing is written. `appendLoginSlot` in the same file runs the same check, so `AuthStorage.set` and RPC `login_api_key` are covered too. Env-only logins that carry no `key` field (Bedrock profile or credential chain, Vertex ADC) still save.
+- `packages/ai/src/auth/types.ts`: `ApiKeyAuth` gains optional `keyOptional`, which a provider sets when it works without a key (a local server such as llama.cpp).
+- `packages/ai/src/models.ts`: `Models.login` passes the provider's login result through `withoutBlankKey` when `keyOptional` is set, so a blank or `undefined` key is dropped and the URL/env-only credential is saved. Then `assertLoginKeyPresent` (fork-only `src/auth/pool/slots.ts`) throws `EmptyApiKeyError` for any remaining blank, whitespace or `undefined` key, before the store is touched. `appendLoginSlot` in the same file runs the same check, so `AuthStorage.set` and RPC `login_api_key` stay strict. Env-only logins that carry no `key` field (Bedrock profile or credential chain, Vertex ADC) still save.
 
 ### Why
 
