@@ -1,5 +1,8 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
+import { SocketEventSinkActor } from "../../src/modes/rpc/socket-event-fanout.ts";
+import { EVENT_RESYNC_CAPABILITY } from "../../src/modes/rpc/socket-peer-recovery.ts";
 import { attachmentRig } from "./rpc-attachment-support.ts";
+import { attachmentWireResponse } from "./rpc-attachment-wire-schema.ts";
 import { opened } from "./rpc-inprocess-host-metrics.ts";
 import { startWorkerHost } from "./rpc-worker-host-support.ts";
 
@@ -143,6 +146,66 @@ it("reports lifecycle busy before identity for an opening entry without a runtim
 	} finally {
 		entry.state = "open";
 		entry.runtime = runtime;
+	}
+});
+
+it.each(["drain", "shutdown"] as const)("refuses reclaim during %s before admission", async (phase) => {
+	await using rig = await attachmentRig();
+	const ref = await rig.session(0);
+	const entry = rig.registry.peek(ref.sessionId);
+	const turn = rig.turns.get(ref.sessionPath);
+	if (!entry || !turn) throw new Error("Missing live session");
+	turn.start();
+	if (phase === "shutdown") rig.teardown.hold();
+	const shutdown = phase === "shutdown" ? rig.router.dispose() : undefined;
+	if (phase === "drain") rig.router.beginDrain();
+	const before = { state: entry.state, attachments: entry.attachments };
+	try {
+		const response = await rig.send("recovery", {
+			id: "draining-reclaim",
+			type: "reclaim_session",
+			sessionPath: ref.sessionPath,
+			durableSessionId: ref.durableSessionId,
+			expectedHostInstance: ref.expectedHostInstance,
+		});
+		expect(response).toMatchObject({ success: false, errorCode: "host_draining" });
+		expect(attachmentWireResponse.safeParse(response).success).toBe(true);
+		expect(entry).toMatchObject(before);
+		expect(
+			await rig.send("recovery", {
+				id: "no-recovery-hold",
+				type: "release_attachment",
+				sessionId: ref.sessionId,
+			}),
+		).toMatchObject({ success: false, errorCode: "session_not_attached" });
+		if (phase === "drain") expect(turn.aborted).toBe(false);
+	} finally {
+		turn.finish();
+		rig.teardown.release();
+		await shutdown;
+	}
+});
+
+it("removes a reclaimed session from the caller's resync attached list", async () => {
+	await using rig = await attachmentRig();
+	const ref = await rig.session();
+	const recovery = vi.spyOn(SocketEventSinkActor.prototype, "enableRecovery");
+	try {
+		await rig.send("caller", {
+			id: "resync",
+			type: "set_client_info",
+			width: 80,
+			capabilities: [EVENT_RESYNC_CAPABILITY],
+		});
+		const snapshot = recovery.mock.calls[0]?.[0];
+		if (!snapshot) throw new Error("Missing recovery snapshot");
+		expect(snapshot("overflow")()).toContainEqual(expect.objectContaining({ sessionId: ref.sessionId }));
+		expect(await rig.send("caller", { id: "reclaim", type: "reclaim_session", ...ref })).toMatchObject({
+			success: true,
+		});
+		expect(snapshot("overflow")()).toEqual([]);
+	} finally {
+		recovery.mockRestore();
 	}
 });
 

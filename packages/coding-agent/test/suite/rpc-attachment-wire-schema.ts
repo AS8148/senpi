@@ -30,6 +30,7 @@ export const attachmentWireResponse = z.union([
 	refusal("release_attachment", ["session_not_attached"]),
 	success("reclaim_session", z.strictObject({ reclaimed: z.literal(true), sessionId: z.string() })),
 	refusal("reclaim_session", [
+		"host_draining",
 		"unknown_session",
 		"session_identity_mismatch",
 		"session_busy_lifecycle",
