@@ -8,7 +8,7 @@ import {
 	TURN_DEADLINE_ENTRY_TYPE,
 } from "../../../turn-deadline.ts";
 import { noticeEntryRenderer } from "../../notice/index.ts";
-import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
+import type { AgentEndEvent, ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { continueGoalAfterAgentEnd } from "./agent-end-continuation.ts";
 import { GOAL_CACHE_WARMUP_ENTRY_TYPE } from "./cache-warm.ts";
 import { isSameGoalCacheWarmCard, renderGoalCacheWarmupEntry } from "./cache-warm-renderer.ts";
@@ -17,17 +17,31 @@ import { GOAL_CONTINUATION_CAP } from "./continuation.ts";
 import { GoalDirectInputLifecycle } from "./direct-input-lifecycle.ts";
 import { GoalElapsedTicker } from "./elapsed-ticker.ts";
 import { formatGoalForTool, goalStatusLabel } from "./format.ts";
-import { GOAL_STALE_STOP_NOTICE, isResumeOfStoppedGoal, queueGoalContinuation } from "./lifecycle-helpers.ts";
+import {
+	GOAL_STALE_STOP_NOTICE,
+	isResumeOfStoppedGoal,
+	lastAssistantText,
+	queueGoalContinuation,
+} from "./lifecycle-helpers.ts";
 import { GOAL_CONTINUATION_SCHEDULED_EVENT, MonitorAwareGoalContinuation } from "./monitor-continuation.ts";
+import { providerRetryAt } from "./provider-retry.ts";
 import { reengageGoalAfterReload } from "./reload-reengagement.ts";
-import { registerGoalFireNowRequest } from "./rpc-wait-surface.ts";
+import { publishGoalContinuationEvent, registerGoalFireNowRequest } from "./rpc-wait-surface.ts";
 import { isStaleExtensionContextError } from "./stale-context.ts";
 import { accountGoalUsage, migrateLegacyGoal, readGoal, updateGoal } from "./store.ts";
 import { GOAL_STORE_CHANGED_EVENT, isGoalStoreChangedEvent } from "./store-changed-event.ts";
 import { goalStoreRef as buildGoalStoreRef } from "./store-ref.ts";
-import { staleGoalTodoReminder, todoResultAddsOpenTasks } from "./todo-gate.ts";
-import { TodoOwedBackstop } from "./todo-owed-backstop.ts";
+import { openTodoTaskContents, staleGoalTodoReminder, todoResultAddsOpenTasks } from "./todo-gate.ts";
+import { calledAskUser, endsWithQuestion, TodoOwedBackstop, type TodoOwedOutcome } from "./todo-owed-backstop.ts";
 import { registerGoalTools } from "./tool-registration.ts";
+import {
+	classifyTurnEnd,
+	evaluateTurnEndLiveness,
+	type OpenWork,
+	TURN_END_LIVENESS_ENTRY_TYPE,
+	TURN_END_LIVENESS_EVENT,
+	type WakeExpectation,
+} from "./turn-end-liveness.ts";
 import { TurnUsageTracker } from "./turn-usage.ts";
 import type { Goal, GoalAccountingMode, GoalStoreRef } from "./types.ts";
 import { updateGoalUi } from "./ui.ts";
@@ -48,6 +62,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	let blockedThisTurnGoalId: string | null = null;
 	let completedThisTurnGoalId: string | null = null;
 	let continuationPending = false;
+	let sessionAttended = true;
 	let activeContext: ExtensionContext | undefined;
 	const turnUsage = new TurnUsageTracker();
 	// No stale-ctx swallow here: GoalWaitTicker retires itself on a stale render
@@ -143,6 +158,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	pi.on("session_start", async (event, ctx) => {
 		ctx.ui.setStatus("todo-waiting", undefined);
 		activeContext = ctx;
+		sessionAttended = !("attended" in event) || event.attended !== false;
 		monitorContinuation.start(ctx);
 		directInputLifecycle.reset();
 		todoOwedBackstop.resetChain();
@@ -288,16 +304,18 @@ export default function goalExtension(pi: ExtensionAPI): void {
 			goal = continuationGoal;
 			syncContinuationGoal(ctx, goal);
 		}
-		if (deadlineStopPendingSinceLastTurn(ctx.sessionManager.getBranch()) === undefined) {
-			todoOwedBackstop.afterAgentEnd({
-				ctx,
-				event,
-				goal,
-				continuationPending,
-				hasActiveWakeSources: monitorContinuation.hasActiveWakeSources(),
-				wakeSourceNames: monitorContinuation.liveWakeSources(),
-			});
-		}
+		const deadlineStop = deadlineStopPendingSinceLastTurn(ctx.sessionManager.getBranch()) !== undefined;
+		const todoOutcome = deadlineStop
+			? undefined
+			: todoOwedBackstop.afterAgentEnd({
+					ctx,
+					event,
+					goal,
+					continuationPending,
+					hasActiveWakeSources: monitorContinuation.hasActiveWakeSources(),
+					wakeSourceNames: monitorContinuation.liveWakeSources(),
+				});
+		reportTurnEndLiveness(ctx, event, goal, todoOutcome, deadlineStop);
 	});
 
 	pi.on("agent_settled", async (_event, ctx) => {
@@ -384,6 +402,53 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		}
 		if (continuedGoal === goal) return;
 		syncContinuationGoal(ctx, continuedGoal);
+	}
+
+	function reportTurnEndLiveness(
+		ctx: ExtensionContext,
+		event: AgentEndEvent,
+		goal: Goal | null,
+		todoOutcome: TodoOwedOutcome | undefined,
+		deadlineStop: boolean,
+	): void {
+		const openTodos = openTodoTaskContents(ctx.sessionManager.getBranch()).length;
+		const openWork: OpenWork =
+			goal?.status === "active"
+				? { kind: "active-goal", goalId: goal.id }
+				: openTodos > 0
+					? { kind: "open-todos", count: openTodos }
+					: { kind: "none" };
+		const expectations: WakeExpectation[] = monitorContinuation
+			.liveWakeSources()
+			.map((source) => ({ kind: "wake-source", source }));
+		const timer = monitorContinuation.scheduledContinuation();
+		if (timer !== undefined) expectations.push({ kind: "armed-timer", timer });
+		if (monitorContinuation.hasStagedRecovery()) expectations.push({ kind: "recovery-staged" });
+		if (ctx.hasPendingMessages()) expectations.push({ kind: "pending-messages" });
+		if (calledAskUser(event.messages) || endsWithQuestion(lastAssistantText(event.messages))) {
+			expectations.push({ kind: "question-to-user" });
+		}
+		const verdict = evaluateTurnEndLiveness({
+			attended: sessionAttended,
+			isChildSession: ctx.sessionManager.getHeader?.()?.parentSession !== undefined,
+			mode: ctx.mode,
+			endedBy: classifyTurnEnd(event),
+			deadlineStop,
+			goalStopped: goal?.status === "paused" || goal?.status === "blocked",
+			openWork,
+			continuationQueued: continuationPending ? "goal" : todoOutcome === "delivered" ? "todo-backstop" : undefined,
+			expectations,
+			budgetSpent:
+				(goal?.status === "active" && goal.continuationStoppedAt !== undefined) ||
+				todoOutcome === "capped" ||
+				todoOutcome === "cap",
+			providerRetryAtMs: providerRetryAt(event.messages, Date.now()),
+		});
+		publishGoalContinuationEvent(pi, TURN_END_LIVENESS_EVENT, {
+			sessionId: ctx.sessionManager.getSessionId(),
+			verdict,
+		});
+		if (verdict.kind === "stalled") pi.appendEntry(TURN_END_LIVENESS_ENTRY_TYPE, { verdict, openWork });
 	}
 
 	function beginAgentGoalAccounting(goal: Goal): void {

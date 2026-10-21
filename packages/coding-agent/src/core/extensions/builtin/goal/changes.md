@@ -1,3 +1,24 @@
+## 2026-10-21 - Turn-end liveness verdict (#3863)
+
+### What changed
+
+- `turn-end-liveness.ts` (new): pure `evaluateTurnEndLiveness` returns `continuing | held | waiting | done | stalled` from what the goal lane and the todo-owed backstop just did, plus `classifyTurnEnd` over the existing terminal-error helpers. Order: a queued continuation is reported first, then the reasons nothing may continue on its own (unattended start, user abort, child session, print/json, deadline stop, paused/blocked goal), then live re-entry sources, then `stalled` vs `done`. An errored turn is never `done`.
+- `index.ts`: `session_start` records `attended` (absent means attended; the field comes from #3853/#3860). The `agent_end` tail builds the input after both lanes ran, publishes `turn_end_liveness` through `publishGoalContinuationEvent` (bus + RPC), and appends a `turn-end-liveness` entry only for `stalled`.
+- `monitor-continuation.ts`: read-only `scheduledContinuation()` and `hasStagedRecovery()` getters. No scheduling change.
+- `todo-owed-backstop.ts`: `afterAgentEnd` returns its outcome (`delivered | capped | <suppression>`); `calledAskUser` is exported. No behavior change.
+
+### Why
+
+- Both lanes already decided whether something would re-enter the session, but only privately. RPC clients, the desktop app and pane watchdogs could not tell a healthy wait from a stall, and a no-goal turn that ended on a usage limit left no resume point. The verdict adds no budget and starts or suppresses nothing; the existing caps (8 consecutive, 60 without progress, 2 todo nudges per chain) stay the only bounds.
+
+### Design credit
+
+The idea of a turn-end liveness check is inspired by dinobot by roach (github.com/dinobot-labs/dinobot, PolyForm Noncommercial 1.0.0). No dinobot code, tests or prompt text were used; this is an independent implementation for senpi's goal and wake-source architecture.
+
+### Expected merge conflict zones
+
+- LOW: the `agent_end` tail and `session_start` head in `index.ts`; the `afterAgentEnd` return statements in `todo-owed-backstop.ts`.
+
 ## 2026-10-17 - No fixed auto-continue cap; a no-progress guard instead (oh-my-openagent#10280)
 
 ### What changed
