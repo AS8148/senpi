@@ -6,6 +6,8 @@
 
 ### Added
 
+- Shared configuration-value schemas and runtime validation recognize exact `$file`, `$env`, and flat `$concat` objects, with named errors for malformed references ([#3858](https://github.com/code-yeongyu/senpi/issues/3858)).
+
 ### Changed
 
 - The bundled model catalog is refreshed from models.dev and the providers' model listings (`amazon-bedrock`, `huggingface`, `opencode`, `opengateway`, `openrouter`, `venice`).

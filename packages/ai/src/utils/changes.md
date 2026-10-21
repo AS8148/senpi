@@ -1,3 +1,21 @@
+## 2026-10-21 - Shared configuration reference object grammar (senpi#3858)
+
+### What changed
+
+- `packages/ai/src/utils/config-reference.ts`: exact single-key `$file`, `$env`, and flat `$concat` schemas and runtime unions; named `ConfigReferenceError` and a validator for explicitly declared string-value slots.
+
+### Why
+
+- Auth, model configuration, and MCP must agree on which objects are references without interpreting opaque JSON or changing legacy strings.
+
+### Why an extension could not handle it
+
+- The credential pool and configuration loaders validate these values before extension processing.
+
+### Expected merge conflict zones
+
+- LOW: new standalone shared contract.
+
 ## 2026-10-18 - Anthropic compat gains supportsGzipRequestBody (senpi#3643)
 
 ### What changed
