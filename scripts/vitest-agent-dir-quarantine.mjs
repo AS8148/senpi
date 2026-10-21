@@ -13,7 +13,7 @@ export function quarantineVitestAgentDir(env = process.env) {
 	const inheritedAgentDirs = Object.entries(env).filter(([key]) => key.endsWith("_CODING_AGENT_DIR"));
 	const alreadyQuarantined =
 		env.SENPI_TEST_AGENT_DIR_GUARD === "1" && inheritedAgentDirs.every(([, dir]) => dir?.startsWith(tmpdir() + sep) === true);
-	if (alreadyQuarantined) return;
+	if (alreadyQuarantined || env.SENPI_TEST_USE_REAL_AGENT_DIR === "1") return;
 	const agentRoot = mkdtempSync(join(tmpdir(), "senpi-vitest-agent-"));
 	process.once("exit", () => rmSync(agentRoot, { recursive: true, force: true }));
 	const quarantined = quarantineAgentDirEnv(env, agentRoot);

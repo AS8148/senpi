@@ -51,6 +51,8 @@ describe("getAgentDir in a guarded senpi test run", () => {
 	});
 
 	test("throws instead of returning the real agent dir an inherited env points at", () => {
+		vi.stubEnv("SENPI_TEST_AGENT_DIR_GUARD", "1");
+		vi.stubEnv("SENPI_TEST_USE_REAL_AGENT_DIR", "");
 		vi.stubEnv("SENPI_CODING_AGENT_DIR", join(realHome, ".omo", "agent"));
 
 		expect(() => getAgentDir()).toThrow(RealAgentDirInTestError);
