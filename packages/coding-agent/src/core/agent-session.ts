@@ -6703,7 +6703,6 @@ export class AgentSession {
 		return this._queueClearRecorded;
 	}
 
-	/** Number of pending messages (includes both steering and follow-up) */
 	/**
 	 * Whether a person's input is waiting in the queue: a TUI submit, an RPC client prompt/steer/follow_up or an
 	 * answered question, tagged when it was enqueued. Decided from the entries actually queued now, so an input
@@ -6716,6 +6715,7 @@ export class AgentSession {
 		return this._personQueuedIds.size > 0;
 	}
 
+	/** Number of pending messages (includes both steering and follow-up) */
 	get pendingMessageCount(): number {
 		return this._steeringMessages.length + this._followUpMessages.length;
 	}
