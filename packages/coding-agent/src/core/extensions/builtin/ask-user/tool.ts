@@ -72,12 +72,9 @@ export function deliverAnswer(
 ): void {
 	if (response.status === "cancelled") return;
 	const content = formatUserMessage(response, request.requestId, request.questions, request.required === true);
-	const answeredByPerson = response.status === "answered" || response.status === "comment-submitted";
-	if (answeredByPerson) releaseQuestionInput(ctx);
-	pi.sendUserMessage(content, {
-		deliverAs: ctx.isIdle() ? "followUp" : "steer",
-		...(answeredByPerson ? { inputOrigin: "person" as const } : {}),
-	});
+	const options = { deliverAs: ctx.isIdle() ? ("followUp" as const) : ("steer" as const) };
+	if (response.status === "answered" || response.status === "comment-submitted") releaseQuestionInput(ctx);
+	pi.sendUserMessage(content, options);
 	void emitAskUserNotification(pi, ctx, request, response, variant);
 }
 function emitWake(pi: Pick<ExtensionAPI, "events">, sessionId: string) {

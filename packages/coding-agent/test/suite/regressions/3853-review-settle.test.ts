@@ -2,7 +2,7 @@ import { afterEach, expect, it } from "vitest";
 import type { ExtensionAPI } from "../../../src/core/extensions/types.ts";
 import { MANUAL_CONTINUE_CUSTOM_TYPE } from "../../../src/core/manual-continue.ts";
 import { releaseQuestionInput } from "../../../src/core/question-input.ts";
-import type { Harness } from "../harness.ts";
+import { getUserTexts, type Harness } from "../harness.ts";
 import { heldHarness, wake } from "./3853-review-support.ts";
 
 const harnesses: Harness[] = [];
@@ -166,4 +166,35 @@ it("gives the release back when an answer arrives with no follow-on", async () =
 	expect(h.session.paused).toBe(true);
 	expect(released).toEqual([]);
 	await expectResumeDelivers(h, released);
+});
+
+// senpi#3853 review r4: an answer delivered while agent_settled handlers run is deferred past that window.
+// Its origin is captured at delivery, so it still starts a person's turn instead of a held engine wake.
+it("starts a turn for an answer delivered while agent_settled handlers run", async () => {
+	let answered = false;
+	const { h, released } = await heldWithInput((pi) =>
+		pi.on("agent_settled", async (_event, ctx) => {
+			if (answered) return;
+			answered = true;
+			releaseQuestionInput(ctx);
+			pi.sendUserMessage("my answer", { deliverAs: "followUp" });
+			await Promise.resolve();
+		}),
+	);
+	await h.session.sendCustomMessage(wake, { triggerTurn: true });
+	const answerSettled = Promise.withResolvers<void>();
+	let answerStarted = false;
+	h.session.subscribe((event) => {
+		if (event.type === "message_start" && event.message.role === "user") answerStarted = true;
+		if (answerStarted && event.type === "agent_idle") answerSettled.resolve();
+	});
+	await h.session.sendCustomMessage(
+		{ customType: MANUAL_CONTINUE_CUSTOM_TYPE, content: "continue", display: false },
+		{ triggerTurn: true },
+	);
+	await answerSettled.promise;
+	await h.session.waitForIdle();
+	expect(getUserTexts(h)).toContain("my answer");
+	expect(released).toContain("goal");
+	expect(h.session.paused).toBe(false);
 });

@@ -2,9 +2,13 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
-import { createHarness, type Harness } from "../harness.ts";
+import type { ExtensionAPI } from "../../../src/core/extensions/types.ts";
+import { releaseQuestionInput } from "../../../src/core/question-input.ts";
+import { createHarness, type Harness, type HarnessOptions } from "../harness.ts";
 
-async function heldTurn(): Promise<{ harness: Harness; release: () => void; done: Promise<void> }> {
+async function heldTurn(
+	extensionFactories: HarnessOptions["extensionFactories"] = [],
+): Promise<{ harness: Harness; release: () => void; done: Promise<void> }> {
 	const gate = Promise.withResolvers<void>();
 	const wait: AgentTool = {
 		name: "wait",
@@ -16,7 +20,7 @@ async function heldTurn(): Promise<{ harness: Harness; release: () => void; done
 			return { content: [{ type: "text", text: "released" }], details: {} };
 		},
 	};
-	const harness = await createHarness({ tools: [wait] });
+	const harness = await createHarness({ tools: [wait], extensionFactories });
 	harness.setResponses([
 		fauxAssistantMessage([fauxToolCall("wait", {})], { stopReason: "toolUse" }),
 		fauxAssistantMessage("after queue"),
@@ -95,11 +99,23 @@ describe("queued person input is decided from the entries queued now (senpi#3863
 		await done;
 	});
 
-	it("an answered question delivered through the extension API is a person's input, whatever the event order", async () => {
-		const { harness, release, done } = await heldTurn();
+	it("an answered question delivered through the extension API is a person's input", async () => {
+		let api: ExtensionAPI | undefined;
+		const { harness, release, done } = await heldTurn([
+			(pi) => {
+				api = pi;
+			},
+		]);
 		harnesses.push(harness);
 
-		await harness.session.sendUserMessage("my answer", { deliverAs: "followUp", inputOrigin: "person" });
+		const queued = Promise.withResolvers<void>();
+		harness.session.subscribe((event) => {
+			if (event.type === "queue_update" && event.followUp.length > 0) queued.resolve();
+		});
+
+		releaseQuestionInput(harness.session.extensionRunner.createContext());
+		api?.sendUserMessage("my answer", { deliverAs: "followUp" });
+		await queued.promise;
 
 		expect(harness.session.hasQueuedPersonInput).toBe(true);
 		release();

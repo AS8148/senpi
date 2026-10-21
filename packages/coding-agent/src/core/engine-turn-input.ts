@@ -12,6 +12,10 @@ export class EngineTurnInput {
 		this.hold = hold;
 	}
 
+	get hasPending(): boolean {
+		return this.pending !== undefined;
+	}
+
 	begin(): void {
 		this.hold.attend();
 		if (this.hold.releasing || this.pending || !this.hold.held) return;
