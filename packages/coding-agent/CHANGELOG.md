@@ -6,6 +6,8 @@
 
 ### Added
 
+- Claude Fable 5.5 (and Claude Mythos 5.5) use the tuned Fable prompt preset, join the Fable default retry-fallback chain, and pass the Claude Code subscription model check ([#3893](https://github.com/code-yeongyu/senpi/issues/3893), [#3897](https://github.com/code-yeongyu/senpi/pull/3897)).
+
 ### Changed
 
 - A new engine host no longer re-transpiles extensions whose sources have not changed: the importer keeps its prepared module source under `<agent dir>/cache/extension-modules` and reuses it after re-checking every import, so a host starts faster ([#3716](https://github.com/code-yeongyu/senpi/issues/3716))

@@ -6,6 +6,8 @@
 
 ### Added
 
+- Claude Fable 5.5 is known to the model-catalog generator, so the catalog refresh after its release lists it with the pricing, limits and status models.dev publishes ([#3893](https://github.com/code-yeongyu/senpi/issues/3893), [#3897](https://github.com/code-yeongyu/senpi/pull/3897)).
+
 ### Changed
 
 - The advertised Claude Code fingerprint floor that Anthropic OAuth requests declare follows the bundled Claude Agent SDK to Claude Code 2.1.306 ([#3854](https://github.com/code-yeongyu/senpi/issues/3854)).
