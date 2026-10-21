@@ -1641,9 +1641,9 @@ export class ExtensionRunner {
 			},
 		};
 		if (this.questionInput) {
-			bindQuestionInput(context, (content, options) => {
+			bindQuestionInput(context, () => {
 				runner.assertActive();
-				runner.questionInput?.(content, options);
+				runner.questionInput?.();
 			});
 		}
 		return context;

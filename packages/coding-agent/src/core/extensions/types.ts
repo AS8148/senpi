@@ -3225,7 +3225,7 @@ export interface ExtensionContextActions {
 	engineTurnsHeld?: () => boolean;
 	noteHeldWake?: (source: string) => void;
 	/** Internal delivery for a human-settled builtin question, never exposed on ExtensionAPI. */
-	questionInput?: SendUserMessageHandler;
+	questionInput?: () => void;
 	isProjectTrusted: () => boolean;
 	getSignal: () => AbortSignal | undefined;
 	abort: (source?: "user" | "system") => void;

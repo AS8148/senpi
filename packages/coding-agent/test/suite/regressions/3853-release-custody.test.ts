@@ -14,7 +14,7 @@ it.each([
 	["senpi-monitor:event", "resume"],
 	["senpi-codemode:notification", "input"],
 	["senpi-monitor:event", "input"],
-])("retains a %s wake arriving during %s delivery for the next release", async (customType, releaseKind) => {
+])("delivers a late %s wake according to attendance during %s release", async (customType, releaseKind) => {
 	const entered = Promise.withResolvers<void>();
 	const release = Promise.withResolvers<void>();
 	const h = await createHarness({
@@ -56,10 +56,12 @@ it.each([
 		await resumed;
 	}
 	expect(h.faux.state.callCount).toBe(2);
-	expect(h.session.paused).toBe(true);
-	expect(h.session.pausedNoticeCount).toBe(1);
-	await h.session.resumeSession();
-	expect(h.faux.state.callCount).toBe(3);
+	expect(h.session.paused).toBe(releaseKind === "resume");
+	expect(h.session.pausedNoticeCount).toBe(releaseKind === "resume" ? 1 : 0);
+	if (releaseKind === "resume") {
+		await h.session.resumeSession();
+		expect(h.faux.state.callCount).toBe(3);
+	}
 	expect(h.session.pausedNoticeCount).toBe(0);
 	expect(h.session.messages.filter((m) => m.role === "custom" && m.content === "original")).toHaveLength(1);
 	expect(

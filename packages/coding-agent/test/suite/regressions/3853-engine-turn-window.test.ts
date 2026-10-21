@@ -14,8 +14,8 @@ const starts = (h: Harness) =>
 const limits = (h: Harness) =>
 	h.sessionManager.getEntries().filter((entry) => entry.type === "custom" && entry.customType === "engine-turn-limit");
 
-// senpi#3853: queued triggers must count before they can escape through a different turn path.
-it("counts every engine trigger admitted while streaming and stops at the resume cap", async () => {
+// senpi#3853: only admitted new turns count, never wakes steered into existing work.
+it("does not count attended streaming wakes as new engine turns", async () => {
 	const entered = Promise.withResolvers<void>();
 	const release = Promise.withResolvers<void>();
 	const h = await createHarness({
@@ -51,13 +51,12 @@ it("counts every engine trigger admitted while streaming and stops at the resume
 		release.resolve();
 		await firstTurn;
 	}
-	expect(starts(h)).toHaveLength(8);
-	expect(limits(h)).toHaveLength(2);
-	// Native background queues coalesce the seven accepted notices, but admission counted all seven.
+	expect(starts(h)).toHaveLength(1);
+	expect(limits(h)).toHaveLength(0);
 	expect(h.faux.state.callCount).toBe(3);
 });
 
-it("counts triggers arriving during a pending compaction admission, even when it is rejected", async () => {
+it("does not count queued wakes during a rejected compaction as new turns", async () => {
 	const entered = Promise.withResolvers<void>();
 	const release = Promise.withResolvers<void>();
 	const h = await createHarness({
@@ -83,8 +82,8 @@ it("counts triggers arriving during a pending compaction admission, even when it
 	await entered.promise;
 	release.resolve();
 	await Promise.all([compaction, ...triggers]);
-	expect(starts(h)).toHaveLength(8);
-	expect(limits(h)).toHaveLength(2);
+	expect(starts(h)).toHaveLength(1);
+	expect(limits(h)).toHaveLength(0);
 	expect(h.faux.state.callCount).toBe(1);
 	expect(h.agent.hasQueuedMessages()).toBe(true);
 });
@@ -100,10 +99,12 @@ it("includes loaded history in the eight-turn resume cap and resets only on real
 	const b = await createHarness({
 		siblingOf: a,
 		sessionManager: SessionManager.open(file),
-		sessionStartEvent: { type: "session_start", reason: "resume" },
+		sessionStartEvent: { type: "session_start", reason: "resume", attended: false },
 		settings: { engineTurns: { maxToolFreePerMinute: 0 } },
 	});
 	harnesses.push(b);
+	await b.session.bindExtensions({ mode: "rpc", shutdownHandler: () => {} });
+	await b.session.resumeSession();
 	b.setResponses(Array.from({ length: 30 }, () => fauxAssistantMessage([fauxText("progress")])));
 	const before = b.faux.state.callCount;
 	for (let i = 0; i < 10; i++) await b.session.sendCustomMessage(wake, { triggerTurn: true });

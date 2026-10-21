@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
-import { EngineTurnHold, type SessionHoldEvent } from "../src/core/engine-turn-hold.ts";
-import { SessionManager } from "../src/core/session-manager.ts";
+import { EngineTurnHold, type SessionHoldEvent } from "../../../src/core/engine-turn-hold.ts";
+import { SessionManager } from "../../../src/core/session-manager.ts";
 
 // senpi#3853/#3811: dropping one independently keyed hold must not open admission.
 it("releases only named keys and emits resumed only when the last hold goes", () => {

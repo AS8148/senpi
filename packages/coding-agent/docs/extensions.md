@@ -471,6 +471,8 @@ Fired when a session is started, loaded, or reloaded.
 real user input or explicit Resume, not attachment. `ctx.engineTurnsHeld()` reads
 that gate. A source that charges or renders before sending must check it first
 and call `ctx.noteHeldWake("goal")` (or its own source key) instead of charging.
+Source-only notices are consumed on release and reported through
+`held_wakes_released`; they never require a model payload to clear the hold.
 
 #### held_wakes_released
 

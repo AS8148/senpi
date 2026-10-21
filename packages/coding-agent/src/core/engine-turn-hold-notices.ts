@@ -17,9 +17,15 @@ interface HeldNotice {
 export class EngineTurnHoldNotices {
 	private wakes: Record<string, HeldWake> = Object.create(null);
 	private readonly append: (type: string, data: unknown) => void;
+	private readonly warn: (error: unknown) => void;
 
-	constructor(entries: readonly SessionEntry[], append: (type: string, data: unknown) => void) {
+	constructor(
+		entries: readonly SessionEntry[],
+		append: (type: string, data: unknown) => void,
+		warn: (error: unknown) => void,
+	) {
 		this.append = append;
+		this.warn = warn;
 		for (const entry of entries) {
 			if (entry.type !== "custom") continue;
 			if (entry.customType === "session-notice") {
@@ -42,8 +48,10 @@ export class EngineTurnHoldNotices {
 		return Object.values(this.sources).reduce((sum, count) => sum + count, 0);
 	}
 
-	noticeText(count = this.noticeCount): string {
-		return `Goal paused while no one was here: ${count} automatic wakes held. Resume or send a message to continue.`;
+	noticeText(count = this.noticeCount, source?: string): string {
+		const sources = [...new Set([...Object.keys(this.wakes), ...(source ? [source] : [])])];
+		const labels = sources.map((key) => (["goal", "monitor", "codemode"].includes(key) ? key : `other (${key})`));
+		return `Paused while no one was here (${labels.join(", ") || "other"}): ${count} automatic wakes held. Resume or send a message to continue.`;
 	}
 
 	note(source: string, pauseSeq: number, message?: CustomMessage): void {
@@ -53,12 +61,17 @@ export class EngineTurnHoldNotices {
 			pauseSeq,
 			at: new Date().toISOString(),
 			heldCount: this.noticeCount + 1,
-			text: this.noticeText(this.noticeCount + 1),
+			text: this.noticeText(this.noticeCount + 1, source),
 			action: "resume_session",
 			...(source !== "goal" && message ? { message } : {}),
 		};
-		this.append("session-notice", data);
-		this.remember(data);
+		try {
+			this.append("session-notice", data);
+		} catch (error) {
+			this.warn(error);
+		} finally {
+			this.remember(data);
+		}
 	}
 
 	messages(): Array<{ source: string; noticeIds: readonly string[]; message: CustomMessage }> {
@@ -84,15 +97,23 @@ export class EngineTurnHoldNotices {
 		});
 	}
 
-	consume(source: string, pauseSeq: number, deliveredIds?: readonly string[]): void {
+	/** The single held -> released transition. Append before removal; failure retains custody. */
+	consume(source: string, pauseSeq: number, deliveredIds?: readonly string[]): boolean {
 		const wake = this.wakes[source];
-		if (!wake) return;
+		if (!wake) return false;
 		const delivered = new Set(deliveredIds ?? wake.noticeIds);
 		const noticeIds = wake.noticeIds.filter((id) => delivered.has(id));
-		if (noticeIds.length === 0) return;
-		this.append("session-notices-consumed", { noticeIds, inputIds: [], pauseSeq });
+		if (noticeIds.length === 0) return false;
+		this.append("session-notices-consumed", { noticeIds, pauseSeq });
 		wake.noticeIds = wake.noticeIds.filter((id) => !delivered.has(id));
 		if (wake.noticeIds.length === 0) delete this.wakes[source];
+		return true;
+	}
+
+	consumeNotices(pauseSeq: number): void {
+		for (const [source, wake] of Object.entries(this.wakes)) {
+			if (!wake.message) this.consume(source, pauseSeq);
+		}
 	}
 
 	private remember(notice: HeldNotice): void {

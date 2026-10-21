@@ -7,24 +7,23 @@ export class EngineTurnRelease {
 
 	resume(
 		hold: EngineTurnHold,
-		sendThroughAgentEnd: (message: CustomMessage) => Promise<boolean>,
+		sendThroughAgentEnd: (message: CustomMessage, admit: () => boolean) => Promise<boolean>,
 		releaseSources: (sources: Record<string, number>) => Promise<void>,
 	): Promise<void> {
 		if (this.running) return this.running;
-		if (!hold.held) return Promise.resolve();
+		if (!hold.held || hold.releasing) return Promise.resolve();
 		const sources = hold.releaseAll("resume_session");
 		const generation = hold.generation;
 		const run = async () => {
 			for (const { source, noticeIds, message } of hold.messages()) {
 				if (hold.generation !== generation) return;
 				// sendCustomMessage resolves only after the run's agent_end handlers settle.
-				const delivered = await sendThroughAgentEnd(message);
+				const delivered = await sendThroughAgentEnd(message, () => hold.consume(source, noticeIds));
 				if (hold.generation !== generation) return;
 				if (!delivered) {
 					hold.rejectInput();
 					return;
 				}
-				hold.consume(source, noticeIds);
 			}
 			if (hold.generation !== generation) return;
 			const remaining = hold.finish();

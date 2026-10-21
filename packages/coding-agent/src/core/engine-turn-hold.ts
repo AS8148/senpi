@@ -1,5 +1,6 @@
 import { EngineTurnHoldNotices } from "./engine-turn-hold-notices.ts";
 import type { CustomMessage } from "./messages.ts";
+import type { HistoryReducer } from "./session-history-reduce.ts";
 import type { SessionEntry } from "./session-manager.ts";
 
 export type HoldKind = "unattended";
@@ -16,14 +17,20 @@ export type SessionHoldEvent =
 	| { type: "session_resumed"; pauseSeq: number; cause: HoldReleaseCause; at: string };
 type HoldEntry =
 	| { op: "add"; kind: HoldKind; key: string; data?: unknown; pauseSeq: number; at: string }
-	| { op: "release"; keys: string[]; observedSeq: number; cause: HoldReleaseCause; at: string }
-	| {
-			op: "resume";
-			resumeId: string;
-			pauseSeq: number;
-			phase: "requested" | "delivery_pending" | "settled";
-			at: string;
-	  };
+	| { op: "release"; keys: string[]; observedSeq: number; cause: HoldReleaseCause; at: string };
+
+/** Scan only ledger entries without materializing a compacted session's transcript. */
+export const engineTurnHoldHistory: HistoryReducer<SessionEntry[]> = {
+	initial: () => [],
+	add: (entries, entry) => {
+		if (
+			entry.type === "custom" &&
+			["session-hold", "session-notice", "session-notices-consumed"].includes(entry.customType)
+		)
+			entries.push(entry);
+		return entries;
+	},
+};
 
 export function engineWakeSource(customType: string): string {
 	if (customType === "goal-continuation") return "goal";
@@ -37,12 +44,11 @@ export class EngineTurnHold {
 	private records = new Map<string, SessionHold>();
 	private readonly notices: EngineTurnHoldNotices;
 	private pauseSeq = 0;
-	private resumeId: string | undefined;
 	private released: SessionHold[] = [];
 	private releaseBarrier = false;
-	goalDeferred = false;
-	generation = 0;
-	private readonly unattended: boolean;
+	private goalDeferred = false;
+	private generationValue = 0;
+	private attended: boolean;
 	private readonly append: (type: string, data: unknown) => void;
 	private readonly notify: (message: string) => void;
 	private readonly emit: (event: SessionHoldEvent) => void;
@@ -54,11 +60,11 @@ export class EngineTurnHold {
 		notify: (message: string) => void,
 		emit: (event: SessionHoldEvent) => void,
 	) {
-		this.unattended = unattended;
+		this.attended = !unattended;
 		this.append = append;
 		this.notify = notify;
 		this.emit = emit;
-		this.notices = new EngineTurnHoldNotices(entries, append);
+		this.notices = new EngineTurnHoldNotices(entries, append, (error) => this.writeFailed(error));
 		for (const entry of entries) {
 			if (entry.type !== "custom" || entry.customType !== "session-hold") continue;
 			const data = entry.data as HoldEntry;
@@ -89,6 +95,22 @@ export class EngineTurnHold {
 		return this.isHeld() || this.releaseBarrier;
 	}
 
+	get generation(): number {
+		return this.generationValue;
+	}
+
+	get releasing(): boolean {
+		return this.releaseBarrier;
+	}
+
+	invalidate(): void {
+		this.generationValue++;
+	}
+
+	attend(): void {
+		this.attended = true;
+	}
+
 	get holds(): SessionHold[] {
 		return [...this.records.values()].map((hold) => ({ ...hold, sourceCounts: this.sources }));
 	}
@@ -107,7 +129,7 @@ export class EngineTurnHold {
 	}
 
 	start(): void {
-		if (this.unattended) this.addHold("unattended");
+		if (!this.attended) this.addHold("unattended");
 		if (this.isHeld() && this.noticeCount > 0) this.showNotice();
 	}
 
@@ -129,6 +151,8 @@ export class EngineTurnHold {
 				at,
 			} satisfies HoldEntry);
 			persisted = true;
+		} catch (error) {
+			this.writeFailed(error);
 		} finally {
 			if (!wasHeld)
 				this.emit({
@@ -159,12 +183,12 @@ export class EngineTurnHold {
 	}
 
 	holdsSource(source: string): boolean {
-		return this.awaitingInput || (source === "goal" && this.goalDeferred);
+		return this.isHeld() || (!this.attended && this.releaseBarrier) || (source === "goal" && this.goalDeferred);
 	}
 
 	note(source: string, message?: CustomMessage): void {
 		this.notices.note(source, this.pauseSeq, message);
-		this.showNotice();
+		if (!this.attended) this.showNotice();
 	}
 
 	messages(): ReturnType<EngineTurnHoldNotices["messages"]> {
@@ -173,41 +197,37 @@ export class EngineTurnHold {
 
 	releaseAll(cause: HoldReleaseCause): Record<string, number> {
 		const sources = this.sources;
-		if (!this.awaitingInput) return sources;
-		this.generation++;
+		if (this.releaseBarrier || !this.isHeld()) return {};
+		this.generationValue++;
 		if (this.isHeld()) this.released = this.holds;
-		this.resumeId = crypto.randomUUID();
-		this.recordResume("requested");
 		this.releaseBarrier = true;
 		this.goalDeferred = (sources.goal ?? 0) > 0;
 		this.release([...this.records.keys()], cause);
-		this.recordResume("delivery_pending");
 		return sources;
 	}
 
 	rejectInput(): void {
 		this.releaseBarrier = false;
 		this.goalDeferred = false;
-		for (const { kind, key, data } of this.released) this.addHold(kind, { key, data });
+		if (!this.attended) for (const { kind, key, data } of this.released) this.addHold(kind, { key, data });
 	}
 
-	consume(source: string, deliveredIds?: readonly string[]): void {
-		this.notices.consume(source, this.pauseSeq, deliveredIds);
+	consume(source: string, deliveredIds?: readonly string[]): boolean {
+		return this.notices.consume(source, this.pauseSeq, deliveredIds);
 	}
 
 	finish(): Record<string, number> {
 		const sources = this.sources;
+		this.notices.consumeNotices(this.pauseSeq);
 		// Wakes arriving after the delivery snapshot still belong to the ledger.
 		// Re-arm the hold rather than draining an unbounded stream in this release.
-		if (Object.keys(sources).some((source) => source !== "goal")) {
+		if (this.messages().length > 0) {
 			this.rejectInput();
 			return sources;
 		}
 		this.consume("goal");
 		this.goalDeferred = false;
 		this.releaseBarrier = false;
-		if (this.resumeId) this.recordResume("settled");
-		this.resumeId = undefined;
 		this.released = [];
 		return sources;
 	}
@@ -216,13 +236,7 @@ export class EngineTurnHold {
 		this.notify(this.notices.noticeText());
 	}
 
-	private recordResume(phase: Extract<HoldEntry, { op: "resume" }>["phase"]): void {
-		this.append("session-hold", {
-			op: "resume",
-			resumeId: this.resumeId!,
-			pauseSeq: this.pauseSeq,
-			phase,
-			at: new Date().toISOString(),
-		} satisfies HoldEntry);
+	private writeFailed(error: unknown): void {
+		console.warn("session_hold_write_failed", error instanceof Error ? error.message : String(error));
 	}
 }
