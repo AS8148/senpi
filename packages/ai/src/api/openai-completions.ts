@@ -2037,7 +2037,9 @@ function parseChunkUsage(
 		output: outputTokens,
 		cacheRead: cacheReadTokens,
 		cacheWrite: cacheWriteTokens,
-		reasoning: rawUsage.completion_tokens_details?.reasoning_tokens || 0,
+		...(rawUsage.completion_tokens_details?.reasoning_tokens === undefined
+			? {}
+			: { reasoning: rawUsage.completion_tokens_details.reasoning_tokens }),
 		totalTokens: input + outputTokens + cacheReadTokens + cacheWriteTokens,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 	};

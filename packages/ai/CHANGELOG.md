@@ -16,6 +16,8 @@
 
 ### Fixed
 
+- OpenAI (Completions and Responses) and Google (Gemini API and Vertex) leave `usage.reasoning` unset when the provider reports no reasoning count, instead of reporting 0, as the `Usage` contract documents ([#3879](https://github.com/code-yeongyu/senpi/issues/3879)).
+
 ### Removed
 
 ## [2026.10.20-1] - 2026-10-20

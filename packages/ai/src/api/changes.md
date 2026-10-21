@@ -1,3 +1,33 @@
+## 2026-10-21 - usage.reasoning is left unset when the provider reports no reasoning count (senpi#3879)
+
+### What changed
+
+- `packages/ai/src/api/openai-completions.ts`: `usage.reasoning` is set only when the provider sent a reasoning count (OpenAI `completion_tokens_details.reasoning_tokens` / `output_tokens_details.reasoning_tokens`, Google `thoughtsTokenCount`); a reported 0 stays 0. It used to be `|| 0`.
+- `packages/ai/src/api/openai-responses-shared.ts`: `usage.reasoning` is set only when the provider sent a reasoning count (OpenAI `completion_tokens_details.reasoning_tokens` / `output_tokens_details.reasoning_tokens`, Google `thoughtsTokenCount`); a reported 0 stays 0. It used to be `|| 0`.
+- `packages/ai/src/api/google-generative-ai.ts`: `usage.reasoning` is set only when the provider sent a reasoning count (OpenAI `completion_tokens_details.reasoning_tokens` / `output_tokens_details.reasoning_tokens`, Google `thoughtsTokenCount`); a reported 0 stays 0. It used to be `|| 0`.
+- `packages/ai/src/api/google-vertex.ts`: `usage.reasoning` is set only when the provider sent a reasoning count (OpenAI `completion_tokens_details.reasoning_tokens` / `output_tokens_details.reasoning_tokens`, Google `thoughtsTokenCount`); a reported 0 stays 0. It used to be `|| 0`.
+
+### Why
+
+- `packages/ai/src/api/openai-completions.ts`: `Usage.reasoning` is documented as "left undefined by providers that don't" expose a breakdown, but these adapters zero-filled it, so a client could not tell a reported zero from no data and showed "Reasoning 0" for providers that never report it (desktop #3729 review).
+- `packages/ai/src/api/openai-responses-shared.ts`: `Usage.reasoning` is documented as "left undefined by providers that don't" expose a breakdown, but these adapters zero-filled it, so a client could not tell a reported zero from no data and showed "Reasoning 0" for providers that never report it (desktop #3729 review).
+- `packages/ai/src/api/google-generative-ai.ts`: `Usage.reasoning` is documented as "left undefined by providers that don't" expose a breakdown, but these adapters zero-filled it, so a client could not tell a reported zero from no data and showed "Reasoning 0" for providers that never report it (desktop #3729 review).
+- `packages/ai/src/api/google-vertex.ts`: `Usage.reasoning` is documented as "left undefined by providers that don't" expose a breakdown, but these adapters zero-filled it, so a client could not tell a reported zero from no data and showed "Reasoning 0" for providers that never report it (desktop #3729 review).
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/openai-completions.ts`: usage parsing happens inside the adapter's stream before any extension sees the message.
+- `packages/ai/src/api/openai-responses-shared.ts`: usage parsing happens inside the adapter's stream before any extension sees the message.
+- `packages/ai/src/api/google-generative-ai.ts`: usage parsing happens inside the adapter's stream before any extension sees the message.
+- `packages/ai/src/api/google-vertex.ts`: usage parsing happens inside the adapter's stream before any extension sees the message.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/api/openai-completions.ts`, the `reasoning` line of the usage object.
+- LOW: `packages/ai/src/api/openai-responses-shared.ts`, the `reasoning` line of the usage object.
+- LOW: `packages/ai/src/api/google-generative-ai.ts`, the `reasoning` line of the usage object.
+- LOW: `packages/ai/src/api/google-vertex.ts`, the `reasoning` line of the usage object.
+
 ## 2026-10-20 - chatgpt-subscription failures carry a classified providerDiagnostic (senpi#3771)
 
 ### What changed

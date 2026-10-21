@@ -118,3 +118,26 @@ describe("openai-responses cache_creation_tokens usage", () => {
 		expect(parsed.input).toBe(70);
 	});
 });
+
+describe("openai-responses reasoning usage (senpi#3879)", () => {
+	it("leaves usage.reasoning unset when output_tokens_details is absent", async () => {
+		const usage = await parseUsage({
+			input_tokens: 10,
+			output_tokens: 5,
+			total_tokens: 15,
+			input_tokens_details: {},
+		});
+		expect(usage.reasoning).toBeUndefined();
+	});
+
+	it("keeps a reported zero reasoning count as 0", async () => {
+		const usage = await parseUsage({
+			input_tokens: 10,
+			output_tokens: 5,
+			total_tokens: 15,
+			input_tokens_details: {},
+			output_tokens_details: { reasoning_tokens: 0 },
+		});
+		expect(usage.reasoning).toBe(0);
+	});
+});
