@@ -3,7 +3,10 @@
 ### What changed
 
 - `packages/coding-agent/src/core/provider-composer.ts`: `modelFromJson` takes the price of the built-in model the entry replaces (same provider, same id) when the entry omits `cost`; with no such model and no `cost`, the model gets `UNKNOWN_COST` (zero placeholder rates plus `unknown: true`) instead of all zeros. Only an exact id match lends its price: the fallback model `findModelDefaults` picks for `api`/`baseUrl` never does. `hideFreeModels` no longer hides a model whose price is unknown.
-- `packages/coding-agent/src/core/usage-totals.ts`: `combineUsage` keeps `costUnknown` when either side carries it.
+- `packages/coding-agent/src/core/usage-totals.ts`: `combineUsage` keeps `costUnknown` when either side carries it; `UsageTotals.costUnknown` is set by `addUsageToTotals` when any summed turn is unpriced.
+- `packages/coding-agent/src/core/session-manager.ts`: the running `UsageTotals` gains optional `costUnknown`, set in `_accumulateUsage` when an assistant turn's usage carries it.
+- `packages/coding-agent/src/core/agent-session.ts`: `SessionStats` gains optional `costUnknown` (so RPC `get_session_stats` reports a partial total as partial); `getSessionStats` copies it from the usage totals.
+- `packages/coding-agent/src/core/provider-composer.ts` (review fold): a local `ollama` model without `cost` is a real 0 (`FREE_COST`), and a `modelOverrides` `cost` on an unknown-priced model keeps `unknown` until it sets all four rates (`setsEveryRate`).
 
 ### Why
 

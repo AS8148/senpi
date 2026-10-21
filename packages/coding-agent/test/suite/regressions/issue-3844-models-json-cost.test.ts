@@ -5,6 +5,8 @@ import { type Api, calculateCost, type Model, type Usage } from "@earendil-works
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import { afterEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../../../src/core/auth-storage.ts";
+import { SessionManager } from "../../../src/core/session-manager.ts";
+import { addUsageToTotals, combineUsage, createUsageTotals } from "../../../src/core/usage-totals.ts";
 import { createModelRegistry, getModelRuntime } from "../../model-runtime-test-utils.ts";
 
 let tempDir: string | undefined;
@@ -152,5 +154,74 @@ describe("models.json model prices (senpi#3844)", () => {
 		// then
 		expect(model?.baseUrl).toBe(catalog.baseUrl);
 		expect(model?.cost.unknown).toBe(true);
+	});
+
+	it("#given usage sums that include one unpriced turn #when they are combined or totaled #then the result carries costUnknown", () => {
+		// given
+		const priced = { ...usage(10, 5), cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.5 } };
+		const unpriced: Usage = { ...usage(10, 5), costUnknown: true };
+		const totals = createUsageTotals();
+		const sessionManager = SessionManager.inMemory();
+
+		// when
+		addUsageToTotals(totals, priced);
+		addUsageToTotals(totals, unpriced);
+		for (const turn of [priced, unpriced])
+			sessionManager.appendMessage({
+				role: "assistant",
+				api: "openai-completions",
+				provider: "my-gateway",
+				model: "house-model",
+				content: [{ type: "text", text: "ok" }],
+				usage: turn,
+				stopReason: "stop",
+				timestamp: 1,
+			});
+
+		// then
+		expect(combineUsage(priced, unpriced).costUnknown).toBe(true);
+		expect(combineUsage(priced, priced).costUnknown).toBeUndefined();
+		expect(totals).toMatchObject({ cost: 0.5, costUnknown: true });
+		expect(sessionManager.getUsageTotals()).toMatchObject({ cost: 0.5, costUnknown: true });
+	});
+
+	it("#given a local ollama model with no cost #when it is composed #then its price is a real $0, not unknown", async () => {
+		// given
+		const runtime = await runtimeWith({
+			ollama: { baseUrl: "http://127.0.0.1:11434/v1", api: "openai-completions", models: [{ id: "local-llm" }] },
+		});
+
+		// when
+		const model = runtime.getModel("ollama", "local-llm");
+
+		// then
+		expect(model?.cost).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+	});
+
+	it("#given an unknown-priced model #when modelOverrides sets only some rates #then the price stays unknown until all four are set", async () => {
+		// given
+		const gateway = {
+			baseUrl: "https://example.invalid/v1",
+			api: "openai-completions",
+			models: [{ id: "house-model" }],
+		};
+		const partial = await runtimeWith({
+			"my-gateway": { ...gateway, modelOverrides: { "house-model": { cost: { output: 5 } } } },
+		});
+		const full = await runtimeWith({
+			"my-gateway": {
+				...gateway,
+				modelOverrides: { "house-model": { cost: { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 0 } } },
+			},
+		});
+
+		// when
+		const partialModel = partial.getModel("my-gateway", "house-model");
+		const fullModel = full.getModel("my-gateway", "house-model");
+
+		// then
+		expect(partialModel?.cost.unknown).toBe(true);
+		expect(fullModel?.cost.unknown).toBeUndefined();
+		expect(fullModel?.cost.output).toBe(5);
 	});
 });

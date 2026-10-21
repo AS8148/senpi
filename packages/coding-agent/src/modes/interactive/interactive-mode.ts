@@ -9847,7 +9847,7 @@ export class InteractiveMode {
 
 			if (stats.cost > 0 || cacheWaste.missedTokens > 0) {
 				info += `\n${theme.bold("Cost")}\n`;
-				info += `${theme.fg("dim", "Total:")} $${stats.cost.toFixed(3)}`;
+				info += `${theme.fg("dim", "Total:")} $${stats.cost.toFixed(3)}${stats.costUnknown ? theme.fg("dim", " + unpriced turns") : ""}`;
 				// A single entry repeats the total, unless it names a model other than the selected one.
 				if (usageBreakdown.length > 1 || usageBreakdown[0]?.key !== selectedModelKey) {
 					for (const entry of usageBreakdown) {

@@ -8,6 +8,8 @@ export interface UsageTotals {
 	cacheRead: number;
 	cacheWrite: number;
 	cost: number;
+	/** Some summed turn had no known price, so `cost` is a lower bound (senpi#3844). */
+	costUnknown?: true;
 }
 
 export function createUsageTotals(): UsageTotals {
@@ -26,6 +28,7 @@ export function addUsageToTotals(totals: UsageTotals, usage: Usage): void {
 	totals.cacheRead += usage.cacheRead;
 	totals.cacheWrite += usage.cacheWrite;
 	totals.cost += usage.cost.total;
+	if (usage.costUnknown) totals.costUnknown = true;
 }
 
 /** Sum of two usages, keeping the optional token splits when either side reports them. */

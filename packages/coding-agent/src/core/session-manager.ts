@@ -165,6 +165,8 @@ export interface UsageTotals {
 	cacheRead: number;
 	cacheWrite: number;
 	cost: number;
+	/** Some summed turn had no known price, so `cost` is a lower bound (senpi#3844). */
+	costUnknown?: true;
 	latestCacheHitRate: number | undefined;
 }
 
@@ -1808,6 +1810,7 @@ export class SessionManager {
 		this.usageTotals.cacheRead += usage.cacheRead;
 		this.usageTotals.cacheWrite += usage.cacheWrite;
 		this.usageTotals.cost += usage.cost?.total ?? 0;
+		if (usage.costUnknown) this.usageTotals.costUnknown = true;
 		const latestPromptTokens = usage.input + usage.cacheRead + usage.cacheWrite;
 		this.usageTotals.latestCacheHitRate =
 			latestPromptTokens > 0 ? (usage.cacheRead / latestPromptTokens) * 100 : undefined;

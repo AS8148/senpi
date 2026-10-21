@@ -191,7 +191,7 @@ export class FooterComponent implements Component {
 			? state.model.provider === "kimi-coding" || this.session.modelRuntime.isUsingSubscription(state.model.provider)
 			: false;
 		if (totalCost || usingSubscription) {
-			const costStr = `$${totalCost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`;
+			const costStr = `$${totalCost.toFixed(3)}${usageTotals.costUnknown ? "+?" : ""}${usingSubscription ? " (sub)" : ""}`;
 			middle.push({ plain: costStr, colored: theme.fg("success", costStr) });
 		}
 
