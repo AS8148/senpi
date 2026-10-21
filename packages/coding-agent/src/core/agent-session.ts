@@ -3612,6 +3612,7 @@ export class AgentSession {
 			// whether or not the chain has a candidate left.
 			if (
 				msg.stopReason === "error" &&
+				!this._isLocalFailure(msg) &&
 				(isHealthExhaustionFailure(msg.errorMessage) || usageLimitScope(msg.errorMessage) === "account") &&
 				this.model
 			) {
@@ -10582,6 +10583,7 @@ export class AgentSession {
 	private _isRetryableError(message: AssistantMessage): boolean {
 		// Providers mark post-delta failures to prevent replaying visible text/tool calls.
 		if (message.errorMessage?.startsWith(TURN_RETRY_SUPPRESSION_PREFIX)) return false;
+		if (this._isLocalFailure(message)) return false;
 
 		// Context overflow is handled by compaction, not retry.
 		if (isContextOverflow(message, (this._modelForMessage(message) ?? this.model)?.contextWindow ?? 0)) return false;
@@ -10594,6 +10596,16 @@ export class AgentSession {
 		}
 
 		return isRetryableAssistantError(message);
+	}
+
+	/**
+	 * A failure the agent marked local (the session's journal or file, senpi#3866). The mark is typed and set by
+	 * where the error came from, never read from its text: the text carries the OS error, which can read like a
+	 * provider quota (EDQUOT). No model produced it, so it never retries, walks the fallback chain, or marks a
+	 * model unhealthy.
+	 */
+	private _isLocalFailure(message: AssistantMessage): boolean {
+		return message.failureSource === "local";
 	}
 
 	private _isCursorPayloadOverflow(message: AssistantMessage): boolean {
@@ -10655,6 +10667,7 @@ export class AgentSession {
 	private _isHardErrorFallbackEligible(message: AssistantMessage): boolean {
 		return (
 			!message.errorMessage?.startsWith(TURN_RETRY_SUPPRESSION_PREFIX) &&
+			!this._isLocalFailure(message) &&
 			!this._isClaudeSdkAuthMissError(message) &&
 			!this._isClaudeSdkSameModelRemintError(message) &&
 			message.stopReason === "error" &&
