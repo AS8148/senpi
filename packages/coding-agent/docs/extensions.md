@@ -495,6 +495,13 @@ opaque metadata. Multiple keys of one kind remain independent records.
 does not release any. Persisted `session-hold` additions carry `key` and `data`,
 and release entries carry `keys`. Restart restores both identity and metadata.
 
+`getHold(key)` returns the current keyed record, or `undefined`.
+`release(keys, cause)` releases only the named keys and emits `session_resumed`
+only when the final active record goes. `releaseAll(cause)` delegates to that
+operation. The cause union remains `"input" | "resume_session"`.
+`engine-turn-hold-notices.ts` owns notice persistence, coalescing, counts, and
+consumption; the ledger delegates to that one custody path.
+
 ```typescript
 pi.on("session_start", async (event, ctx) => {
   // event.reason - "startup" | "reload" | "new" | "resume" | "fork"

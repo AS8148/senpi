@@ -1,3 +1,4 @@
+import { EngineTurnHoldNotices } from "./engine-turn-hold-notices.ts";
 import type { CustomMessage } from "./messages.ts";
 import type { SessionEntry } from "./session-manager.ts";
 
@@ -13,7 +14,6 @@ export interface SessionHold {
 export type SessionHoldEvent =
 	| { type: "session_paused"; pauseSeq: number; kind: HoldKind; at: string; noticeCount: number; persisted: boolean }
 	| { type: "session_resumed"; pauseSeq: number; cause: HoldReleaseCause; at: string };
-type HeldWake = { noticeIds: string[]; message?: CustomMessage };
 type HoldEntry =
 	| { op: "add"; kind: HoldKind; key: string; data?: unknown; pauseSeq: number; at: string }
 	| { op: "release"; keys: string[]; observedSeq: number; cause: HoldReleaseCause; at: string }
@@ -24,7 +24,6 @@ type HoldEntry =
 			phase: "requested" | "delivery_pending" | "settled";
 			at: string;
 	  };
-type HeldNotice = { noticeId: string; producer: string; pauseSeq: number; message?: CustomMessage };
 
 export function engineWakeSource(customType: string): string {
 	if (customType === "goal-continuation") return "goal";
@@ -33,13 +32,14 @@ export function engineWakeSource(customType: string): string {
 	return customType;
 }
 
-/** One session-scoped hold ledger and notice custody point, independent of the transcript leaf. */
+/** One session-scoped hold ledger, independent of the transcript leaf. */
 export class EngineTurnHold {
 	private records = new Map<string, SessionHold>();
-	private wakes: Record<string, HeldWake> = Object.create(null);
+	private readonly notices: EngineTurnHoldNotices;
 	private pauseSeq = 0;
 	private resumeId: string | undefined;
 	private released: SessionHold[] = [];
+	private releaseBarrier = false;
 	goalDeferred = false;
 	generation = 0;
 	private readonly unattended: boolean;
@@ -58,30 +58,21 @@ export class EngineTurnHold {
 		this.append = append;
 		this.notify = notify;
 		this.emit = emit;
+		this.notices = new EngineTurnHoldNotices(entries, append);
 		for (const entry of entries) {
-			if (entry.type !== "custom") continue;
-			if (entry.customType === "session-hold") {
-				const data = entry.data as HoldEntry;
-				if (data.op === "add") {
-					this.pauseSeq = Math.max(this.pauseSeq, data.pauseSeq);
-					this.records.set(data.key, {
-						kind: data.kind,
-						key: data.key,
-						since: data.at,
-						data: data.data,
-						sourceCounts: {},
-					});
-				} else if (data.op === "release") {
-					for (const key of data.keys) this.records.delete(key);
-				}
-			} else if (entry.customType === "session-notice") {
-				this.remember(entry.data as HeldNotice);
-			} else if (entry.customType === "session-notices-consumed") {
-				const ids = new Set((entry.data as { noticeIds: string[] }).noticeIds);
-				for (const [source, wake] of Object.entries(this.wakes)) {
-					wake.noticeIds = wake.noticeIds.filter((id) => !ids.has(id));
-					if (wake.noticeIds.length === 0) delete this.wakes[source];
-				}
+			if (entry.type !== "custom" || entry.customType !== "session-hold") continue;
+			const data = entry.data as HoldEntry;
+			if (data.op === "add") {
+				this.pauseSeq = Math.max(this.pauseSeq, data.pauseSeq);
+				this.records.set(data.key, {
+					kind: data.kind,
+					key: data.key,
+					since: data.at,
+					data: data.data,
+					sourceCounts: {},
+				});
+			} else if (data.op === "release") {
+				for (const key of data.keys) this.records.delete(key);
 			}
 		}
 	}
@@ -94,16 +85,25 @@ export class EngineTurnHold {
 		return this.isHeld();
 	}
 
+	get awaitingInput(): boolean {
+		return this.isHeld() || this.releaseBarrier;
+	}
+
 	get holds(): SessionHold[] {
 		return [...this.records.values()].map((hold) => ({ ...hold, sourceCounts: this.sources }));
 	}
 
+	getHold(key: string): SessionHold | undefined {
+		const hold = this.records.get(key);
+		return hold ? { ...hold, sourceCounts: this.sources } : undefined;
+	}
+
 	get sources(): Record<string, number> {
-		return Object.fromEntries(Object.entries(this.wakes).map(([source, wake]) => [source, wake.noticeIds.length]));
+		return this.notices.sources;
 	}
 
 	get noticeCount(): number {
-		return Object.values(this.sources).reduce((sum, count) => sum + count, 0);
+		return this.notices.noticeCount;
 	}
 
 	start(): void {
@@ -143,98 +143,71 @@ export class EngineTurnHold {
 		}
 	}
 
-	holdsSource(source: string): boolean {
-		return this.isHeld() || (source === "goal" && this.goalDeferred);
-	}
-
-	note(source: string, message?: CustomMessage): void {
-		const data: HeldNotice = {
-			noticeId: crypto.randomUUID(),
-			producer: source,
-			pauseSeq: this.pauseSeq,
-			...(source !== "goal" && message ? { message } : {}),
-		};
-		this.append("session-notice", data);
-		this.remember(data);
-		this.showNotice();
-	}
-
-	messages(): Array<{ source: string; message: CustomMessage }> {
-		return Object.entries(this.wakes).flatMap(([source, wake]) => {
-			if (source === "goal" || !wake.message) return [];
-			const message = wake.message;
-			if (source !== "monitor") return [{ source, message }];
-			const prefix = `${wake.noticeIds.length} automatic monitor wakes held. Latest event:\n`;
-			return [
-				{
-					source,
-					message: {
-						...message,
-						content:
-							typeof message.content === "string"
-								? prefix + message.content
-								: [{ type: "text" as const, text: prefix }, ...message.content],
-					},
-				},
-			];
-		});
-	}
-
-	releaseAll(cause: HoldReleaseCause): Record<string, number> {
-		const sources = this.sources;
-		if (!this.isHeld()) return sources;
-		this.generation++;
-		this.released = this.holds;
-		this.resumeId = crypto.randomUUID();
-		this.recordResume("requested");
+	release(keys: string[], cause: HoldReleaseCause): void {
+		const present = [...new Set(keys)].filter((key) => this.records.has(key));
+		if (present.length === 0) return;
 		const at = new Date().toISOString();
 		this.append("session-hold", {
 			op: "release",
-			keys: [...this.records.keys()],
+			keys: present,
 			observedSeq: this.pauseSeq,
 			cause,
 			at,
 		} satisfies HoldEntry);
-		this.records.clear();
+		for (const key of present) this.records.delete(key);
+		if (!this.isHeld()) this.emit({ type: "session_resumed", pauseSeq: this.pauseSeq, cause, at });
+	}
+
+	holdsSource(source: string): boolean {
+		return this.awaitingInput || (source === "goal" && this.goalDeferred);
+	}
+
+	note(source: string, message?: CustomMessage): void {
+		this.notices.note(source, this.pauseSeq, message);
+		this.showNotice();
+	}
+
+	messages(): Array<{ source: string; message: CustomMessage }> {
+		return this.notices.messages();
+	}
+
+	releaseAll(cause: HoldReleaseCause): Record<string, number> {
+		const sources = this.sources;
+		if (!this.awaitingInput) return sources;
+		this.generation++;
+		if (this.isHeld()) this.released = this.holds;
+		this.resumeId = crypto.randomUUID();
+		this.recordResume("requested");
+		this.releaseBarrier = cause === "resume_session";
 		this.goalDeferred = (sources.goal ?? 0) > 0;
-		this.emit({ type: "session_resumed", pauseSeq: this.pauseSeq, cause, at });
+		this.release([...this.records.keys()], cause);
 		this.recordResume("delivery_pending");
 		return sources;
 	}
 
 	rejectInput(): void {
+		this.releaseBarrier = false;
 		this.goalDeferred = false;
 		for (const { kind, key, data } of this.released) this.addHold(kind, { key, data });
 	}
 
 	consume(source: string): void {
-		const wake = this.wakes[source];
-		if (!wake) return;
-		this.append("session-notices-consumed", { noticeIds: wake.noticeIds, inputIds: [], pauseSeq: this.pauseSeq });
-		delete this.wakes[source];
+		this.notices.consume(source, this.pauseSeq);
 	}
 
 	finish(): Record<string, number> {
 		const sources = this.sources;
 		for (const source of Object.keys(sources)) this.consume(source);
 		this.goalDeferred = false;
+		this.releaseBarrier = false;
 		if (this.resumeId) this.recordResume("settled");
 		this.resumeId = undefined;
 		this.released = [];
 		return sources;
 	}
 
-	private remember(notice: HeldNotice): void {
-		const wake = this.wakes[notice.producer] ?? { noticeIds: [] };
-		wake.noticeIds.push(notice.noticeId);
-		if (notice.message) wake.message = notice.message;
-		this.wakes[notice.producer] = wake;
-	}
-
 	private showNotice(): void {
-		this.notify(
-			`Goal paused while no one was here: ${this.noticeCount} automatic wakes held. Resume or send a message to continue.`,
-		);
+		this.notify(this.notices.noticeText());
 	}
 
 	private recordResume(phase: Extract<HoldEntry, { op: "resume" }>["phase"]): void {

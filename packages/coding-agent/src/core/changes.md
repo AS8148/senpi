@@ -1,3 +1,21 @@
+## 2026-10-21 - Separate notice custody and support selective keyed release (senpi#3853)
+
+### What changed
+
+`packages/coding-agent/src/core/engine-turn-hold.ts` adds `getHold(key)` and `release(keys, cause)`, with `releaseAll` delegating to it and a resumed event only after the last record goes. `packages/coding-agent/src/core/engine-turn-hold-notices.ts` owns persisted notice IDs, latest-per-source payloads, counts, monitor coalescing, and consumption. Hold kinds and release causes are unchanged.
+
+### Why
+
+`packages/coding-agent/src/core/engine-turn-hold.ts` and `packages/coding-agent/src/core/engine-turn-hold-notices.ts`: #3811 needs to drop one keyed hold without releasing the others; the custody extraction keeps both modules below 250 pure lines.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/engine-turn-hold.ts` and `packages/coding-agent/src/core/engine-turn-hold-notices.ts`: shared session admission and durable custody are engine-owned.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/engine-turn-hold.ts` and `packages/coding-agent/src/core/engine-turn-hold-notices.ts`: ledger lookup/release and notice delegation. Release entries retain `{ op, keys, observedSeq, cause, at }`; per-key metadata is preserved.
+
 ## 2026-10-21 - Keep the hold ledger constructor erasable (senpi#3853)
 
 ### What changed
