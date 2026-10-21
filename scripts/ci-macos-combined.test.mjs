@@ -101,3 +101,8 @@ test("suite conditions survive earlier failures but refuse failed installs, snap
 		assert.equal(run.status, result === "success" ? 0 : 1, run.stdout + run.stderr);
 	}
 });
+
+test("the WebView executed check runs only after a passing WebView suite, as on base", () => {
+	const check = combined.steps.find((step) => step.name === "Require the WebView suites to have executed");
+	assert.equal(check.if, "${{ !cancelled() && steps.webview.outcome == 'success' }}");
+});

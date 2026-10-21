@@ -1382,7 +1382,7 @@ jobs:
         run: cat "$RUNNER_TEMP/webview-readiness.log" 2>/dev/null || echo "no readiness log"
 
       - name: Require the WebView suites to have executed
-        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.webview_test_temp_snapshot.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.webview.outcome == 'success' }}
         shell: bash
         run: |
           node -e '
