@@ -2,7 +2,6 @@
  * Extension runner - executes extensions and manages their lifecycle.
  */
 
-import type { InputOrigin } from "../input-origin.ts";
 import { basename } from "node:path";
 import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
 import type { Api, ImageContent, Model, Provider, ProviderHeaders } from "@earendil-works/pi-ai";
@@ -13,6 +12,7 @@ import { stripAnsi } from "../../utils/ansi.ts";
 import type { ResourceDiagnostic } from "../diagnostics.ts";
 import type { DiscoveredResourceEntry } from "../discovered-resource-scope.ts";
 import { createEventBus, type EventBus, EXTENSION_RPC_EVENT_CHANNEL, type ExtensionRpcEvent } from "../event-bus.ts";
+import type { InputOrigin } from "../input-origin.ts";
 import type { KeybindingsConfig } from "../keybindings.ts";
 import type { NamedMemoryReporter } from "../memory-report/memory-report-registry.ts";
 import type { ModelRegistry } from "../model-registry.ts";
