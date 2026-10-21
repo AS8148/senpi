@@ -2061,3 +2061,22 @@ Upstream manifest edits at the next sync.
 ### Expected merge conflict zones
 
 - LOW: the deprecated-status checks in the provider loops of `generate-models.ts` when upstream adds or reshapes provider loops.
+
+## 2026-10-21 - Correction: what the deprecated label does today, and the drift the refresh carries
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: no code change; this entry corrects the 2026-10-21 "Upstream-deprecated models stay in the catalog, labeled" entry above. Its "Why" says the label lets the UI mark deprecated models and lets fallback prefer current models; nothing reads `Model.deprecated` yet (tracked in #3895). What the change does today: a model models.dev marks deprecated stays in the catalog, labeled `deprecated: true`, instead of disappearing, so it keeps working.
+- The same catalog refresh also takes models.dev's current thinking levels and compat for existing models, not only prices and limits (for example Baseten Nemotron 3 Ultra's `off` value becomes `none`, and Baseten DeepSeek-V4-Pro's supported levels change).
+
+### Why
+
+- Tracker entries are append-only, and release notes state only what ships; this keeps the record accurate without rewriting the earlier entry.
+
+### Why an extension could not handle it
+
+- Same as the entry above: the bundled catalog is generated in this package.
+
+### Expected merge conflict zones
+
+- None beyond the entry above.
