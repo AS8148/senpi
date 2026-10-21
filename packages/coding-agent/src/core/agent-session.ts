@@ -271,7 +271,7 @@ import { normalizeToolExposure, RUNTIME_EXTENSION_PATH } from "./extensions/type
 import { createUserActivitySource, emitUserActivity, type UserActivityKind } from "./extensions/user-activity.ts";
 import { deliveryIdOf, ExternalAdmission } from "./external-admission.ts";
 import { shouldWarnHighReasoning } from "./high-reasoning-warning.ts";
-import { type InputOrigin, inputOriginOf } from "./input-origin.ts";
+import { customTurnOrigin, type InputOrigin, inputOriginOf } from "./input-origin.ts";
 import { LazyToolActivation } from "./lazy-tool-activation.ts";
 import {
 	isManualContinueSubmission,
@@ -6256,7 +6256,7 @@ export class AgentSession {
 				if (!isUserDirectedTurn(message.customType)) this._recordEngineTurnStart(message.customType);
 				await this._promptAgent(messages, {
 					...(deferredTurnClaim ? { deferredTurnClaim } : {}),
-					inputOrigin: "engine",
+					inputOrigin: customTurnOrigin(message.customType),
 				});
 			} else if (this.isStreaming) {
 				this._pendingCustomMessages.push(appMessage);
