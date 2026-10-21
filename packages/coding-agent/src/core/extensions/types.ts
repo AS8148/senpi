@@ -8,6 +8,7 @@
  * - Interact with the user via UI primitives
  */
 
+import type { InputOrigin } from "../input-origin.ts";
 import type { UploadRedaction, UploadRedactionOptions } from "../share/upload-redaction.ts";
 import type { ContextEvent } from "./context-event.ts";
 
@@ -799,7 +800,7 @@ export interface ReplacedSessionContext extends ExtensionCommandContext {
 
 	sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
-		options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean; humanOrigin?: boolean },
+		options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean; inputOrigin?: InputOrigin },
 	): Promise<void>;
 }
 
@@ -2570,7 +2571,7 @@ export interface ExtensionAPI {
 	 */
 	sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
-		options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean; humanOrigin?: boolean },
+		options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean; inputOrigin?: InputOrigin },
 	): void;
 
 	/** Append a custom entry to the session for state persistence (not sent to LLM). */

@@ -99,7 +99,7 @@ describe("queued person input is decided from the entries queued now (senpi#3863
 		const { harness, release, done } = await heldTurn();
 		harnesses.push(harness);
 
-		await harness.session.sendUserMessage("my answer", { deliverAs: "followUp", humanOrigin: true });
+		await harness.session.sendUserMessage("my answer", { deliverAs: "followUp", inputOrigin: "person" });
 
 		expect(harness.session.hasQueuedPersonInput).toBe(true);
 		release();

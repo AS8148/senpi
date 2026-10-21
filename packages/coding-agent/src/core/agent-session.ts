@@ -271,6 +271,7 @@ import { normalizeToolExposure, RUNTIME_EXTENSION_PATH } from "./extensions/type
 import { createUserActivitySource, emitUserActivity, type UserActivityKind } from "./extensions/user-activity.ts";
 import { deliveryIdOf, ExternalAdmission } from "./external-admission.ts";
 import { shouldWarnHighReasoning } from "./high-reasoning-warning.ts";
+import { type InputOrigin, inputOriginOf } from "./input-origin.ts";
 import { LazyToolActivation } from "./lazy-tool-activation.ts";
 import {
 	isManualContinueSubmission,
@@ -1034,6 +1035,20 @@ export type ClearedQueue = {
 };
 
 /** Options accepted by the queued-input entry points `steer()` and `followUp()`. */
+/** How `_promptAgent` starts a run; `inputOrigin` tags a prompt a competing run displaces into the steer queue. */
+interface PromptAgentOptions {
+	readonly deferredTurnClaim?: DeferredTurnClaim;
+	readonly onQueuedInput?: (input: PreparedClientInput) => void;
+	readonly inputOrigin?: InputOrigin;
+}
+
+/** An explicit origin (a person's answer sent through the extension API) wins over the one its source implies. */
+function originOf(
+	options: { readonly source?: InputSource; readonly inputOrigin?: InputOrigin } | undefined,
+): InputOrigin {
+	return options?.inputOrigin ?? inputOriginOf(options?.source);
+}
+
 export interface QueuedInputOptions extends ClientMessageIdentity {
 	/**
 	 * Recovery-ordered enqueue position. A reconnecting client replays its pending
@@ -1042,8 +1057,8 @@ export interface QueuedInputOptions extends ClientMessageIdentity {
 	enqueueOrder?: number;
 	/** Input provenance reported to `input` extension handlers; defaults to "interactive". */
 	source?: InputSource;
-	/** A person's input that arrives through the extension API (an answered question); see `hasQueuedPersonInput`. */
-	humanOrigin?: boolean;
+	/** Who the input came from; defaults from `source` (see `originOf`). */
+	inputOrigin?: InputOrigin;
 	/** Persist the prepared queue record before publishing or enqueuing it. */
 	onQueuedInput?: (input: PreparedClientInput) => void;
 }
@@ -1063,8 +1078,8 @@ export interface PromptOptions extends ClientMessageIdentity {
 	thinkingLevel?: ThinkingLevel;
 	/** Source of input for extension input event handlers. Defaults to "interactive". */
 	source?: InputSource;
-	/** A person's input that arrives through the extension API (an answered question); see `hasQueuedPersonInput`. */
-	humanOrigin?: boolean;
+	/** Who the input came from; defaults from `source` (see `originOf`). */
+	inputOrigin?: InputOrigin;
 	/**
 	 * Send command-shaped text that no command handles to the model as plain text. Without it, such
 	 * interactive or RPC input is rejected with `UnknownCommandError`.
@@ -2975,10 +2990,9 @@ export class AgentSession {
 
 	private async _promptAgent(
 		messages: AgentMessage | AgentMessage[],
-		deferredTurnClaim?: DeferredTurnClaim,
-		onQueuedInput?: (input: PreparedClientInput) => void,
-		personInput = false,
+		options: PromptAgentOptions = {},
 	): Promise<void> {
+		const { deferredTurnClaim, onQueuedInput, inputOrigin = "engine" } = options;
 		deferredTurnClaim?.resolve("started");
 		if (!this._isAgentRunActive) this.externalAdmission.beginTurn();
 		this._isAgentRunActive = true;
@@ -3047,7 +3061,7 @@ export class AgentSession {
 				if (prepared) {
 					this._steeringMessages.push(prepared.text);
 					const queuedId = this._recordQueuedInput(prepared.text, "steer", prepared, userMessage);
-					if (personInput) this._personQueuedIds.add(queuedId);
+					if (inputOrigin === "person") this._personQueuedIds.add(queuedId);
 					this._emitQueueUpdate();
 				}
 				return;
@@ -5643,12 +5657,10 @@ export class AgentSession {
 		if (options?.thinkingLevel !== undefined) {
 			this.setSessionThinkingLevel(options.thinkingLevel);
 		}
-		await this._promptAgent(
-			messages,
-			undefined,
-			options?.onQueuedInput,
-			options?.humanOrigin === true || (options?.source ?? "interactive") !== "extension",
-		);
+		await this._promptAgent(messages, {
+			...(options?.onQueuedInput ? { onQueuedInput: options.onQueuedInput } : {}),
+			inputOrigin: originOf(options),
+		});
 		await this.waitForRetry();
 		await this.waitForIdle();
 		if (options?.onSessionWorkReady) {
@@ -6064,8 +6076,7 @@ export class AgentSession {
 		const queue = input.mode === "steer" ? this._steeringMessages : this._followUpMessages;
 		queue.push(input.text);
 		const queuedId = this._recordQueuedInput(input.text, input.mode, prepared, undefined, input.queuedId);
-		if (input.humanOrigin === true || (input.source ?? "interactive") !== "extension")
-			this._personQueuedIds.add(queuedId);
+		if (originOf(input) === "person") this._personQueuedIds.add(queuedId);
 		this._sessionLogger.debug("queue_enqueue", {
 			mode: input.mode,
 			count: queue.length,
@@ -6243,7 +6254,10 @@ export class AgentSession {
 					this._triggerTurnAdmissionAbortGeneration = undefined;
 				}
 				if (!isUserDirectedTurn(message.customType)) this._recordEngineTurnStart(message.customType);
-				await this._promptAgent(messages, deferredTurnClaim);
+				await this._promptAgent(messages, {
+					...(deferredTurnClaim ? { deferredTurnClaim } : {}),
+					inputOrigin: "engine",
+				});
 			} else if (this.isStreaming) {
 				this._pendingCustomMessages.push(appMessage);
 			} else {
@@ -6400,7 +6414,7 @@ export class AgentSession {
 		options?: {
 			deliverAs?: "steer" | "followUp";
 			expandPromptTemplates?: boolean;
-			humanOrigin?: boolean;
+			inputOrigin?: InputOrigin;
 		},
 		deferredTurnClaim?: DeferredTurnClaim,
 	): Promise<void> {
@@ -6455,7 +6469,7 @@ export class AgentSession {
 				images,
 				textBlocks,
 				source: "extension",
-				...(options?.humanOrigin === true ? { humanOrigin: true } : {}),
+				...(options?.inputOrigin ? { inputOrigin: options.inputOrigin } : {}),
 				promptDisposition: (nextDisposition) => {
 					disposition = nextDisposition;
 					if (nextDisposition === "started") deferredTurnClaim?.resolve("started");
@@ -6477,13 +6491,13 @@ export class AgentSession {
 					await this._queueSteer(text, images, {
 						textBlocks,
 						source: "extension",
-						humanOrigin: options?.humanOrigin,
+						...(options?.inputOrigin ? { inputOrigin: options.inputOrigin } : {}),
 					});
 				} else {
 					await this._queueFollowUp(text, images, {
 						textBlocks,
 						source: "extension",
-						humanOrigin: options?.humanOrigin,
+						...(options?.inputOrigin ? { inputOrigin: options.inputOrigin } : {}),
 					});
 				}
 			}

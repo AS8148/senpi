@@ -73,7 +73,7 @@ export function deliverAnswer(
 	const answeredByPerson = response.status === "answered" || response.status === "comment-submitted";
 	pi.sendUserMessage(formatUserMessage(response, request.requestId, request.questions, request.required === true), {
 		deliverAs: ctx.isIdle() ? "followUp" : "steer",
-		...(answeredByPerson ? { humanOrigin: true } : {}),
+		...(answeredByPerson ? { inputOrigin: "person" as const } : {}),
 	});
 	void emitAskUserNotification(pi, ctx, request, response, variant);
 }
