@@ -1,72 +1,61 @@
-#![cfg(unix)]
-
-use super::{PtySession, PtySessionOptions};
-use std::process::Command;
-use std::sync::{mpsc, Arc, Mutex};
+use crate::session_input::{PtyInput, MAX_PENDING_INPUT_BYTES};
+use std::io::Write;
+use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
-const PAYLOAD_LINES: usize = 16_384;
-const PAYLOAD_BYTES: usize = PAYLOAD_LINES * 64;
-
-fn payload() -> Vec<u8> {
-    format!("{}\n", "x".repeat(63)).repeat(PAYLOAD_LINES).into_bytes()
+struct GatedWriter {
+    release: Receiver<()>,
 }
 
-fn force_kill(pid: u32) {
-    let _ = Command::new("kill").arg("-9").arg(pid.to_string()).status();
-}
+impl Write for GatedWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let _ = self.release.recv();
+        Ok(buf.len())
+    }
 
-#[test]
-fn write_returns_while_the_child_is_not_reading_its_input() {
-    let session = PtySession::start(PtySessionOptions::new("sleep").arg("30"), |_| {}).unwrap();
-    let pid = session.pid().unwrap();
-    let (returned_tx, returned_rx) = mpsc::channel();
-    let writer = std::thread::spawn(move || {
-        let mut session = session;
-        let result = session.write(&payload());
-        returned_tx.send(()).unwrap();
-        (session, result)
-    });
-
-    let returned = returned_rx.recv_timeout(Duration::from_secs(5)).is_ok();
-    force_kill(pid);
-    let (mut session, result) = writer.join().unwrap();
-
-    assert!(
-        returned,
-        "PtySession::write blocked its caller while the child was not reading input"
-    );
-    result.unwrap();
-    session.wait().unwrap();
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 #[test]
-fn queued_input_reaches_the_child_once_it_starts_reading() {
-    let output = Arc::new(Mutex::new(Vec::new()));
-    let seen = Arc::clone(&output);
-    let mut session = PtySession::start(
-        PtySessionOptions::new("sh")
-            .arg("-c")
-            .arg(format!("stty -echo; sleep 1; head -c {PAYLOAD_BYTES} | wc -c")),
-        move |chunk| seen.lock().unwrap().extend_from_slice(chunk),
-    )
-    .unwrap();
+fn send_after_close_reports_a_closed_session() {
+    let input = PtyInput::new(Box::new(Vec::new()));
+    input.close();
 
-    session.write(&payload()).unwrap();
-    let exit = session.wait().unwrap();
-
-    assert_eq!(exit.exit_code, Some(0));
-    let text = String::from_utf8_lossy(&output.lock().unwrap()).into_owned();
-    let count = text.split_whitespace().last().unwrap_or_default().to_string();
-    assert_eq!(count, PAYLOAD_BYTES.to_string(), "child output: {text:?}");
-}
-
-#[test]
-fn write_after_exit_reports_a_closed_session() {
-    let mut session = PtySession::start(PtySessionOptions::new("true"), |_| {}).unwrap();
-    session.wait().unwrap();
-
-    let error = session.write(b"late\n").unwrap_err();
+    let error = input.send(b"late\n").unwrap_err();
 
     assert_eq!(error.to_string(), "pty session is closed");
+}
+
+#[test]
+fn send_refuses_input_beyond_the_backlog_cap_while_the_writer_is_stalled() {
+    let (release_tx, release_rx) = mpsc::channel();
+    let input = PtyInput::new(Box::new(GatedWriter { release: release_rx }));
+
+    input.send(&vec![b'x'; MAX_PENDING_INPUT_BYTES]).unwrap();
+    let refused = input.send(b"y").unwrap_err();
+
+    assert!(
+        refused.to_string().starts_with("pty input backlog is full"),
+        "unexpected error: {refused}"
+    );
+    drop(release_tx);
+    input.close();
+}
+
+#[test]
+fn closed_input_never_waits_for_a_stalled_writer() {
+    let (release_tx, release_rx) = mpsc::channel();
+    let input = PtyInput::new(Box::new(GatedWriter { release: release_rx }));
+    input.send(b"queued").unwrap();
+    let (closed_tx, closed_rx) = mpsc::channel();
+
+    std::thread::spawn(move || {
+        input.close();
+        let _ = closed_tx.send(());
+    });
+
+    assert!(closed_rx.recv_timeout(Duration::from_secs(5)).is_ok());
+    drop(release_tx);
 }

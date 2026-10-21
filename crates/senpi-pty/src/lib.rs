@@ -177,6 +177,8 @@ pub fn senpi_pty_abi_sentinel() -> String {
 }
 
 #[cfg(test)]
+mod session_input_pty_tests;
+#[cfg(test)]
 mod session_input_tests;
 #[cfg(test)]
 mod session_tests;

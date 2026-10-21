@@ -1,12 +1,16 @@
-import { setTimeout as delay } from "node:timers/promises";
 import { nativePty } from "../../native/index.js";
 
 if (nativePty.native === null) {
 	throw new Error("native PTY fixture requires a host prebuild");
 }
 
-let writeReturned = false;
+const CHUNKS_AFTER_WRITE = 20;
+let written = false;
 let chunksAfterWrite = 0;
+let markFlowing;
+const flowing = new Promise((resolve) => {
+	markFlowing = resolve;
+});
 const session = nativePty.native.startPtySession(
 	{
 		command: "sh",
@@ -15,16 +19,24 @@ const session = nativePty.native.startPtySession(
 		rows: 24,
 	},
 	() => {
-		if (writeReturned) chunksAfterWrite += 1;
+		if (!written) return;
+		chunksAfterWrite += 1;
+		if (chunksAfterWrite === CHUNKS_AFTER_WRITE) markFlowing(true);
 	},
 );
 
 session.write(`${"x".repeat(63)}\n`.repeat(16_384));
-writeReturned = true;
+written = true;
 
-const deadline = Date.now() + 5_000;
-while (chunksAfterWrite < 20 && Date.now() < deadline) await delay(10);
+let deadline;
+const outputFlowedAfterWrite = await Promise.race([
+	flowing,
+	new Promise((resolve) => {
+		deadline = setTimeout(() => resolve(false), 5_000);
+	}),
+]);
+clearTimeout(deadline);
 session.kill("SIGKILL");
 await session.waitExit();
 
-process.stdout.write(`${JSON.stringify({ writeReturned, outputFlowedAfterWrite: chunksAfterWrite >= 20 })}\n`);
+process.stdout.write(`${JSON.stringify({ outputFlowedAfterWrite })}\n`);

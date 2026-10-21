@@ -48,7 +48,7 @@ describe.skipIf(!hasDarwinArm64Prebuild)("native callback lifecycle", () => {
 
 		expect(result.signal).toBeNull();
 		expect(result.status).toBe(0);
-		expect(JSON.parse(result.stdout)).toEqual({ writeReturned: true, outputFlowedAfterWrite: true });
+		expect(JSON.parse(result.stdout)).toEqual({ outputFlowedAfterWrite: true });
 	}, 15_000);
 
 	it("surfaces a JavaScript data callback failure", () => {
