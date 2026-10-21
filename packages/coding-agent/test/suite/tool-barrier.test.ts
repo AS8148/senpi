@@ -167,6 +167,10 @@ describe("session tool barrier", () => {
 
 		expect(ran).not.toContain("mutate");
 		expect(ran).not.toContain("outer-ok");
+		// The Stop is what refused the call, not the denying hook: the hook saw only the read-only outer call
+		// (#3722 review), and the nested call reports the abort rather than the hook's denial.
+		expect(hooked).toEqual(["outer"]);
+		expect(ran).toEqual(["outer-err:Operation aborted"]);
 	});
 
 	it("opens at the ceiling and reports tool_barrier_expired", async () => {
