@@ -1678,11 +1678,13 @@ export function createRpcConnectionHandler(
 
 			case "record_user_activity": {
 				// `prompt` activity is emitted by prompt admission itself; a client may only report a draft.
-				if (command.kind !== "draft") {
+				// Read as unknown: the wire value is unchecked, whatever the declared command type says.
+				const kind: unknown = command.kind;
+				if (kind !== "draft") {
 					return error(
 						id,
 						"record_user_activity",
-						`Unsupported activity kind: ${String(command.kind)}`,
+						`Unsupported activity kind: ${String(kind)}`,
 						RPC_ERROR_INVALID_ARGUMENT,
 					);
 				}
