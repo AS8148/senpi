@@ -1,3 +1,21 @@
+## 2026-10-21 - Acknowledge only delivered held wakes (senpi#3853)
+
+### What changed
+
+`packages/coding-agent/src/core/engine-turn-hold-notices.ts` snapshots notice IDs with each coalesced message and acknowledges only those IDs. `packages/coding-agent/src/core/engine-turn-hold.ts` keeps input and explicit-resume delivery gated, restores the hold for undelivered arrivals, and releases the goal only after non-goal custody is empty. `packages/coding-agent/src/core/engine-turn-release.ts` acknowledges each delivered snapshot after its turn settles. `packages/coding-agent/src/core/agent-session.ts` applies the same acknowledgement to input context and never also queues a released wake whose admission failed.
+
+### Why
+
+`packages/coding-agent/src/core/engine-turn-hold-notices.ts`, `packages/coding-agent/src/core/engine-turn-hold.ts`, `packages/coding-agent/src/core/engine-turn-release.ts`, and `packages/coding-agent/src/core/agent-session.ts`: a source-wide acknowledgement discarded newer wakes that arrived during a release. Failed final admission also gave one wake both notice custody and native queue custody.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/engine-turn-hold-notices.ts`, `packages/coding-agent/src/core/engine-turn-hold.ts`, `packages/coding-agent/src/core/engine-turn-release.ts`, and `packages/coding-agent/src/core/agent-session.ts`: the core owns delivery snapshots, provider admission, and the persisted acknowledgement boundary.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/engine-turn-hold-notices.ts`: messages and consume. `packages/coding-agent/src/core/engine-turn-hold.ts`: releaseAll, consume, and finish. `packages/coding-agent/src/core/engine-turn-release.ts`: sequential delivery settlement. `packages/coding-agent/src/core/agent-session.ts`: prompt settlement and sendCustomMessage admission recovery.
+
 ## 2026-10-21 - Separate notice custody and support selective keyed release (senpi#3853)
 
 ### What changed
@@ -33,6 +51,24 @@
 ### Expected merge conflict zones
 
 `packages/coding-agent/src/core/engine-turn-hold.ts`: dependency field declarations and constructor initialization.
+
+## 2026-10-21 - Bound every automatic trigger in a resume window (senpi#3853)
+
+### What changed
+
+`packages/coding-agent/src/core/agent-session.ts`, `packages/coding-agent/src/core/engine-turn-limit.ts`, and `packages/coding-agent/src/core/settings-manager.ts`: every admitted automatic trigger, including streaming and pending-compaction queues, passes the cap and records its start. Resumed sessions apply `engineTurns.maxPerResumeWindow` (default 8) to persisted turns since the last real input. The per-input default remains 150. Refusal uses the existing limit and engine-paused records.
+
+### Why
+
+`packages/coding-agent/src/core/agent-session.ts`, `packages/coding-agent/src/core/engine-turn-limit.ts`, and `packages/coding-agent/src/core/settings-manager.ts`: queued continuations bypassed the idle-path bound, and reopening a session needs a smaller guard that includes loaded history until real input arrives.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/agent-session.ts`, `packages/coding-agent/src/core/engine-turn-limit.ts`, and `packages/coding-agent/src/core/settings-manager.ts`: the native queue admissions and persisted engine start accounting are core-owned.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/agent-session.ts`, `packages/coding-agent/src/core/engine-turn-limit.ts`, and `packages/coding-agent/src/core/settings-manager.ts`: sendCustomMessage queue branches, input reset, stop/admit helpers, EngineTurnLimits, and getEngineTurnSettings.
 
 ## 2026-10-21 - Key shared holds independently of their kind (senpi#3853)
 

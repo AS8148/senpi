@@ -501,6 +501,9 @@ only when the final active record goes. `releaseAll(cause)` delegates to that
 operation. The cause union remains `"input" | "resume_session"`.
 `engine-turn-hold-notices.ts` owns notice persistence, coalescing, counts, and
 consumption; the ledger delegates to that one custody path.
+Each delivered snapshot acknowledges its own notice IDs. New wakes arriving
+during delivery stay held for the next release, including newer wakes from the
+same source. The goal-release event waits until that non-goal custody is empty.
 
 ```typescript
 pi.on("session_start", async (event, ctx) => {

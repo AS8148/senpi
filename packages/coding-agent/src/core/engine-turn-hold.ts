@@ -167,7 +167,7 @@ export class EngineTurnHold {
 		this.showNotice();
 	}
 
-	messages(): Array<{ source: string; message: CustomMessage }> {
+	messages(): ReturnType<EngineTurnHoldNotices["messages"]> {
 		return this.notices.messages();
 	}
 
@@ -178,7 +178,7 @@ export class EngineTurnHold {
 		if (this.isHeld()) this.released = this.holds;
 		this.resumeId = crypto.randomUUID();
 		this.recordResume("requested");
-		this.releaseBarrier = cause === "resume_session";
+		this.releaseBarrier = true;
 		this.goalDeferred = (sources.goal ?? 0) > 0;
 		this.release([...this.records.keys()], cause);
 		this.recordResume("delivery_pending");
@@ -191,13 +191,19 @@ export class EngineTurnHold {
 		for (const { kind, key, data } of this.released) this.addHold(kind, { key, data });
 	}
 
-	consume(source: string): void {
-		this.notices.consume(source, this.pauseSeq);
+	consume(source: string, deliveredIds?: readonly string[]): void {
+		this.notices.consume(source, this.pauseSeq, deliveredIds);
 	}
 
 	finish(): Record<string, number> {
 		const sources = this.sources;
-		for (const source of Object.keys(sources)) this.consume(source);
+		// Wakes arriving after the delivery snapshot still belong to the ledger.
+		// Re-arm the hold rather than draining an unbounded stream in this release.
+		if (Object.keys(sources).some((source) => source !== "goal")) {
+			this.rejectInput();
+			return sources;
+		}
+		this.consume("goal");
 		this.goalDeferred = false;
 		this.releaseBarrier = false;
 		if (this.resumeId) this.recordResume("settled");

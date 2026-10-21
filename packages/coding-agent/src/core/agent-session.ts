@@ -1219,6 +1219,7 @@ export class AgentSession {
 	/** User-abort generation at the start of an idle trigger turn's awaited admission hooks. */
 	private _triggerTurnAdmissionAbortGeneration: number | undefined;
 	private _engineTurnStarts: EngineTurnStartRecord[] = [];
+	private _engineResumeWindow: boolean;
 	private readonly _engineTurnHold: EngineTurnHold;
 	private readonly _engineTurnRelease = new EngineTurnRelease();
 	private _heldInputMessages: CustomMessage[] = [];
@@ -1656,6 +1657,7 @@ export class AgentSession {
 			type: "session_start",
 			reason: "startup",
 		};
+		this._engineResumeWindow = this._sessionStartEvent.reason === "resume";
 		this._engineTurnHold = new EngineTurnHold(
 			this.sessionManager.getEntries(),
 			this._sessionStartEvent.attended === false,
@@ -5146,32 +5148,39 @@ export class AgentSession {
 			submittedByCommand: options?.source === "extension",
 		});
 		let releasedSources: Record<string, number> | undefined;
+		let heldWakes: ReturnType<EngineTurnHold["messages"]> = [];
+		let inputStarted = false;
 		const abortGeneration = this._userAbortGeneration;
 		try {
 			if (options?.source !== "extension") {
 				emitUserActivity(this, "prompt");
 				this._deadlineTracker.clearHold();
-				if (this._engineTurnHold.held) {
-					this._heldInputMessages.push(...this._engineTurnHold.messages().map(({ message }) => message));
+				if (this._engineTurnHold.awaitingInput) {
+					heldWakes = this._engineTurnHold.messages();
+					this._heldInputMessages.push(...heldWakes.map(({ message }) => message));
 				}
 			}
 			await this._prompt(text, {
 				...options,
 				promptDisposition: (disposition) => {
 					hold.accepted();
-					if (options?.source !== "extension" && this._engineTurnHold.held) {
+					inputStarted = disposition === "started";
+					if (options?.source !== "extension" && this._engineTurnHold.awaitingInput) {
 						releasedSources = this._engineTurnHold.releaseAll("input");
 					}
 					options?.promptDisposition?.(disposition);
 				},
 			});
 			if (releasedSources) {
-				if (abortGeneration !== this._userAbortGeneration) {
+				if (abortGeneration !== this._userAbortGeneration || (!inputStarted && heldWakes.length > 0)) {
+					this._heldInputMessages = [];
 					this._engineTurnHold.rejectInput();
 					return;
 				}
+				for (const { source, noticeIds } of heldWakes) this._engineTurnHold.consume(source, noticeIds);
 				const remaining = this._engineTurnHold.finish();
-				await this._extensionRunner.emitHeldWakesReleased({ ...releasedSources, ...remaining });
+				if (!this._engineTurnHold.held)
+					await this._extensionRunner.emitHeldWakesReleased({ ...releasedSources, ...remaining });
 			}
 		} catch (error) {
 			this._heldInputMessages = [];
@@ -5876,7 +5885,7 @@ export class AgentSession {
 		behavior: "steer" | "followUp",
 		options?: QueuedInputOptions,
 	): Promise<QueuedInputDisposition> {
-		if (options?.source !== "extension" && this._engineTurnHold.held) {
+		if (options?.source !== "extension" && this._engineTurnHold.awaitingInput) {
 			await this.prompt(text, { ...options, images, streamingBehavior: behavior });
 			return "queued";
 		}
@@ -6215,6 +6224,10 @@ export class AgentSession {
 			if (options?.deliverAs === "nextTurn") {
 				this._pendingNextTurnMessages.push(appMessage);
 			} else if (this.isStreaming && options?.triggerTurn !== false) {
+				if (!this._admitEngineTrigger(message.customType)) {
+					if (!releasedWake) this._recordRefusedEngineTurnMessage(appMessage);
+					return;
+				}
 				deferredTurnClaim?.resolve("delegated");
 				if (options?.deliverAs === "followUp") {
 					this.agent.followUp(appMessage);
@@ -6228,6 +6241,10 @@ export class AgentSession {
 						this._compactionLifecycle.state.generation === activeCompactionGeneration &&
 						this._compactionLifecycle.state.status !== "completed"))
 			) {
+				if (!this._admitEngineTrigger(message.customType)) {
+					if (!releasedWake) this._recordRefusedEngineTurnMessage(appMessage);
+					return;
+				}
 				deferredTurnClaim?.resolve("delegated");
 				if (options?.deliverAs === "followUp") {
 					this.agent.followUp(appMessage);
@@ -6235,12 +6252,18 @@ export class AgentSession {
 					this.agent.steer(appMessage);
 				}
 			} else if (options?.triggerTurn && this._stopEngineTurn(message.customType)) {
-				this._recordRefusedEngineTurnMessage(appMessage);
+				if (!releasedWake) this._recordRefusedEngineTurnMessage(appMessage);
 			} else if (options?.triggerTurn) {
 				finishSessionWork ??= this._sessionWorkBarrier.begin();
 				const environmentContext = this._pendingEnvironmentContextMessage();
 				const messages: AgentMessage[] = environmentContext ? [environmentContext, appMessage] : [appMessage];
 				const queueTriggerForLater = (): void => {
+					// A released wake stays in notice custody until agent_end acknowledges it.
+					if (releasedWake) return;
+					if (!this._admitEngineTrigger(message.customType)) {
+						if (!releasedWake) this._recordRefusedEngineTurnMessage(appMessage);
+						return;
+					}
 					if (options.deliverAs === "followUp") {
 						this.agent.followUp(appMessage);
 					} else {
@@ -6282,7 +6305,10 @@ export class AgentSession {
 				} finally {
 					this._triggerTurnAdmissionAbortGeneration = undefined;
 				}
-				if (!isUserDirectedTurn(message.customType)) this._recordEngineTurnStart(message.customType);
+				if (!this._admitEngineTrigger(message.customType)) {
+					if (!releasedWake) this._recordRefusedEngineTurnMessage(appMessage);
+					return;
+				}
 				await this._promptAgent(messages, deferredTurnClaim);
 			} else if (this.isStreaming) {
 				this._pendingCustomMessages.push(appMessage);
@@ -6301,9 +6327,16 @@ export class AgentSession {
 			this._engineTurnHold,
 			async (message) => {
 				const generation = this._userAbortGeneration;
-				await this.sendCustomMessage(message, { triggerTurn: true }, undefined, true);
+				const claim = new DeferredTurnClaim();
+				await this.sendCustomMessage(message, { triggerTurn: true }, claim, true);
+				if ((await claim.disposition) !== "started") return false;
 				await this.waitForIdle();
-				if (generation !== this._userAbortGeneration) this._engineTurnHold.generation++;
+				if (generation !== this._userAbortGeneration) {
+					this._engineTurnHold.generation++;
+					this._engineTurnHold.rejectInput();
+					return false;
+				}
+				return true;
 			},
 			(sources) => this._extensionRunner.emitHeldWakesReleased(sources),
 		);
@@ -6360,6 +6393,7 @@ export class AgentSession {
 	private _observeEngineTurnMessage(message: AgentMessage): void {
 		if (message.role === "user" || (message.role === "custom" && isUserDirectedTurn(message.customType))) {
 			this._engineTurnStarts = [];
+			this._engineResumeWindow = false;
 			this._engineTurnPauseRecorded = false;
 			this._engineTurnPauseNotified = false;
 			return;
@@ -6384,7 +6418,12 @@ export class AgentSession {
 		const stop = engineTurnStop(
 			this.sessionManager.reduceHistory(engineTurnHistory),
 			Date.now(),
-			this.settingsManager.getEngineTurnSettings(),
+			{
+				...this.settingsManager.getEngineTurnSettings(),
+				maxPerResumeWindow: this._engineResumeWindow
+					? this.settingsManager.getEngineTurnSettings().maxPerResumeWindow
+					: 0,
+			},
 			this._engineTurnStarts,
 		);
 		if (stop === null) return false;
@@ -6394,9 +6433,14 @@ export class AgentSession {
 			try {
 				this._emitEntryAppended(
 					this.sessionManager.appendCustomEntry(ENGINE_PAUSED_ENTRY_TYPE, {
-						reason: stop.reason === "per-user-input" ? "cap-per-message" : "cap-per-minute",
+						reason:
+							stop.reason === "resume-window"
+								? "cap-per-resume-window"
+								: stop.reason === "per-user-input"
+									? "cap-per-message"
+									: "cap-per-minute",
 						customType,
-						count: stop.reason === "per-user-input" ? stop.sinceUserInput : stop.toolFreeInWindow,
+						count: stop.reason !== "tool-free-rate" ? stop.sinceUserInput : stop.toolFreeInWindow,
 						at: details.at,
 					}),
 				);
@@ -6420,6 +6464,13 @@ export class AgentSession {
 			this._engineTurnPauseNotified = true;
 			this._extensionRunner.getUIContext().notify(engineTurnLimitNotice(stop), "warning");
 		}
+		return true;
+	}
+
+	private _admitEngineTrigger(customType: string): boolean {
+		if (isUserDirectedTurn(customType)) return true;
+		if (this._stopEngineTurn(customType)) return false;
+		this._recordEngineTurnStart(customType);
 		return true;
 	}
 
@@ -6470,7 +6521,7 @@ export class AgentSession {
 		deferredTurnClaim?: DeferredTurnClaim,
 		humanQuestionInput = false,
 	): Promise<void> {
-		if (!humanQuestionInput && this._engineTurnHold.held) {
+		if (!humanQuestionInput && this._engineTurnHold.awaitingInput) {
 			await this.sendCustomMessage(
 				{ customType: "extension-user-message", content, display: true },
 				{ triggerTurn: true, deliverAs: options?.deliverAs },
@@ -10004,7 +10055,7 @@ export class AgentSession {
 				getEffectiveServiceTier: () => this.effectiveServiceTier,
 				getScopedModels: () => this._scopedModels,
 				isIdle: () => this.isIdle,
-				engineTurnsHeld: () => this._engineTurnHold.held || this._engineTurnHold.goalDeferred,
+				engineTurnsHeld: () => this._engineTurnHold.holdsSource("goal"),
 				noteHeldWake: (source) => this._engineTurnHold.note(source),
 				questionInput: (content, options) => {
 					void this.sendUserMessage(content, options, undefined, true).catch((error: unknown) => {

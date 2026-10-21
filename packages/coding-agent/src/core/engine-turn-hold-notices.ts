@@ -61,15 +61,17 @@ export class EngineTurnHoldNotices {
 		this.remember(data);
 	}
 
-	messages(): Array<{ source: string; message: CustomMessage }> {
+	messages(): Array<{ source: string; noticeIds: readonly string[]; message: CustomMessage }> {
 		return Object.entries(this.wakes).flatMap(([source, wake]) => {
 			if (source === "goal" || !wake.message) return [];
 			const message = wake.message;
-			if (source !== "monitor") return [{ source, message }];
+			const noticeIds = [...wake.noticeIds];
+			if (source !== "monitor") return [{ source, noticeIds, message }];
 			const prefix = `${wake.noticeIds.length} automatic monitor wakes held. Latest event:\n`;
 			return [
 				{
 					source,
+					noticeIds,
 					message: {
 						...message,
 						content:
@@ -82,11 +84,15 @@ export class EngineTurnHoldNotices {
 		});
 	}
 
-	consume(source: string, pauseSeq: number): void {
+	consume(source: string, pauseSeq: number, deliveredIds?: readonly string[]): void {
 		const wake = this.wakes[source];
 		if (!wake) return;
-		this.append("session-notices-consumed", { noticeIds: wake.noticeIds, inputIds: [], pauseSeq });
-		delete this.wakes[source];
+		const delivered = new Set(deliveredIds ?? wake.noticeIds);
+		const noticeIds = wake.noticeIds.filter((id) => delivered.has(id));
+		if (noticeIds.length === 0) return;
+		this.append("session-notices-consumed", { noticeIds, inputIds: [], pauseSeq });
+		wake.noticeIds = wake.noticeIds.filter((id) => !delivered.has(id));
+		if (wake.noticeIds.length === 0) delete this.wakes[source];
 	}
 
 	private remember(notice: HeldNotice): void {

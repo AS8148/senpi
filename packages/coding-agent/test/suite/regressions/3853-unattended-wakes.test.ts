@@ -57,6 +57,10 @@ it("releases coalesced wakes only after real input", async () => {
 it("ten wakes from two sources stay held on attach, then Resume runs one turn per source even in all mode", async () => {
 	const h = await unattended();
 	h.agent.followUpMode = "all";
+	const pausedAtStart: boolean[] = [];
+	h.session.subscribe((event) => {
+		if (event.type === "agent_start") pausedAtStart.push(h.session.paused);
+	});
 	for (let i = 0; i < 5; i++) {
 		for (const source of ["senpi-monitor:event", "senpi-codemode:notification"]) {
 			await h.session.sendCustomMessage(
@@ -80,9 +84,29 @@ it("ten wakes from two sources stay held on attach, then Resume runs one turn pe
 	await h.session.resumeSession();
 	expect(h.faux.state.callCount).toBe(2);
 	expect(h.events.filter((event) => event.type === "agent_start")).toHaveLength(2);
+	expect(pausedAtStart).toEqual([false, false]);
+	expect(h.events.some((event) => event.type === "session_resumed" && event.cause === "resume_session")).toBe(true);
 	const monitor = h.session.messages.filter((m) => m.role === "custom" && m.customType === "senpi-monitor:event");
 	expect(monitor).toHaveLength(1);
 	expect(monitor[0]).toMatchObject({ content: "5 automatic monitor wakes held. Latest event:\nlatest 4" });
+});
+
+it("keeps notice custody when the resume-window cap refuses delivery", async () => {
+	const h = await unattended();
+	for (let i = 0; i < 8; i++) {
+		h.sessionManager.appendCustomEntry("engine-turn-start", { customType: "senpi-monitor:event", at: Date.now() });
+	}
+	await h.session.sendCustomMessage(
+		{ customType: "senpi-codemode:notification", content: "retain this completion", display: false },
+		{ triggerTurn: true },
+	);
+	await h.session.resumeSession();
+	expect(h.faux.state.callCount).toBe(0);
+	expect(h.session.paused).toBe(true);
+	expect(h.session.pausedNoticeCount).toBe(1);
+	expect(
+		h.session.messages.filter((m) => m.role === "custom" && m.customType === "senpi-codemode:notification"),
+	).toEqual([]);
 });
 
 it("retains the held wake count after a second unattended reopen", async () => {
