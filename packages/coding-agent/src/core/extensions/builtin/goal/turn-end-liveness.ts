@@ -11,7 +11,13 @@ export const TURN_END_LIVENESS_EVENT = "turn_end_liveness";
 /** Durable entry appended only for a `stalled` verdict: the session's last readable resume point. */
 export const TURN_END_LIVENESS_ENTRY_TYPE = "turn-end-liveness";
 
-export type TurnEndKind = "clean" | "user-abort" | "system-abort" | "provider-error" | "policy-rejection";
+export type TurnEndKind =
+	| "clean"
+	| "user-abort"
+	| "system-abort"
+	| "provider-abort"
+	| "provider-error"
+	| "policy-rejection";
 
 /** Something that will re-enter the session by itself. */
 export type WakeExpectation =
@@ -48,20 +54,26 @@ export interface TurnEndLivenessInput {
 
 export type HeldReason = "user-abort" | "child-session" | "non-interactive" | "deadline-stop" | "goal-stopped";
 
-export type StalledReason = "budget" | "provider-error" | "no-wake";
+export type StalledReason = "budget" | "provider-error" | "aborted" | "no-wake";
 
 export type TurnEndLivenessVerdict =
 	| { readonly kind: "continuing"; readonly via: "retry" | "goal" | "todo-backstop" }
 	| { readonly kind: "held"; readonly reason: HeldReason }
 	| { readonly kind: "waiting"; readonly on: readonly WakeExpectation[] }
 	| { readonly kind: "done" }
-	| { readonly kind: "stalled"; readonly reason: StalledReason; readonly retryAtMs?: number };
+	| {
+			readonly kind: "stalled";
+			readonly reason: StalledReason;
+			readonly retryAtMs?: number;
+			readonly abortSource?: "system" | "provider";
+	  };
 
 const NON_INTERACTIVE_MODES: ReadonlySet<ExtensionMode> = new Set(["print", "json"]);
 
 export function classifyTurnEnd(event: AgentEndEvent): TurnEndKind {
 	if (event.aborted === true && event.abortSource === "user") return "user-abort";
 	if (event.aborted === true && event.abortSource === "system") return "system-abort";
+	if (event.abortSource === "provider") return "provider-abort";
 	if (didTerminalPolicyRejectionEndTurn(event)) return "policy-rejection";
 	if (didTerminalProviderErrorEndTurn(event)) return "provider-error";
 	return didAgentEndCleanly(event.messages) ? "clean" : "provider-error";
@@ -71,7 +83,7 @@ export function classifyTurnEnd(event: AgentEndEvent): TurnEndKind {
  * Order matters. A turn the core retries, or a continuation a lane queued, is reported first, so the verdict never
  * denies what happens next. A print/json run exits, so nothing re-enters it. Any live re-entry source then wins over
  * the remaining held reasons, which only name why nothing will continue on its own. An errored turn left its request
- * unfinished, so it is never `done`.
+ * unfinished and a system or provider abort cut it short, so neither is ever `done`.
  */
 export function evaluateTurnEndLiveness(input: TurnEndLivenessInput): TurnEndLivenessVerdict {
 	if (input.willRetry) return { kind: "continuing", via: "retry" };
@@ -85,6 +97,8 @@ export function evaluateTurnEndLiveness(input: TurnEndLivenessInput): TurnEndLiv
 			? { kind: "stalled", reason: "provider-error" }
 			: { kind: "stalled", reason: "provider-error", retryAtMs: input.providerRetryAtMs };
 	}
+	if (input.endedBy === "system-abort") return { kind: "stalled", reason: "aborted", abortSource: "system" };
+	if (input.endedBy === "provider-abort") return { kind: "stalled", reason: "aborted", abortSource: "provider" };
 	if (input.openWork.kind === "none") return { kind: "done" };
 	return { kind: "stalled", reason: input.budgetSpent ? "budget" : "no-wake" };
 }
@@ -97,7 +111,7 @@ function heldReason(input: TurnEndLivenessInput): HeldReason | undefined {
 	return undefined;
 }
 
-/** True when the branch already records this stall since the last user message, so it is not written again. */
+/** True when the branch already records this exact stall (reason, reset time, abort source) since the last user message. */
 export function repeatsLastStall(
 	branch: readonly SessionEntry[],
 	verdict: Extract<TurnEndLivenessVerdict, { kind: "stalled" }>,
@@ -106,8 +120,12 @@ export function repeatsLastStall(
 		const entry = branch[index];
 		if (entry?.type === "message" && entry.message.role === "user") return false;
 		if (entry?.type !== "custom" || entry.customType !== TURN_END_LIVENESS_ENTRY_TYPE) continue;
-		const recorded = (entry.data as { verdict?: { reason?: unknown } } | undefined)?.verdict?.reason;
-		return recorded === verdict.reason;
+		const recorded = (entry.data as { verdict?: Record<string, unknown> } | undefined)?.verdict;
+		return (
+			recorded?.reason === verdict.reason &&
+			recorded.retryAtMs === verdict.retryAtMs &&
+			recorded.abortSource === verdict.abortSource
+		);
 	}
 	return false;
 }

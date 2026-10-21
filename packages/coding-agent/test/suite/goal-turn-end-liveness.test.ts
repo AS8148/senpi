@@ -129,6 +129,24 @@ describe("evaluateTurnEndLiveness (#3863)", () => {
 		).toEqual({ kind: "held", reason: "non-interactive" });
 	});
 
+	it.each([
+		["system", "system-abort"],
+		["provider", "provider-abort"],
+	] as const)("never reports a %s abort as done: it is stalled with the abort source", (abortSource, endedBy) => {
+		expect(evaluateTurnEndLiveness(input({ endedBy, openWork: { kind: "none" } }))).toEqual({
+			kind: "stalled",
+			reason: "aborted",
+			abortSource,
+		});
+	});
+
+	it("holds a system abort the turn deadline caused instead of calling it stalled", () => {
+		expect(evaluateTurnEndLiveness(input({ endedBy: "system-abort", deadlineStop: true }))).toEqual({
+			kind: "held",
+			reason: "deadline-stop",
+		});
+	});
+
 	it("reports a provider error with a staged recovery as waiting on it", () => {
 		expect(
 			evaluateTurnEndLiveness(input({ endedBy: "provider-error", expectations: [{ kind: "recovery-staged" }] })),
@@ -148,6 +166,11 @@ describe("classifyTurnEnd (#3863)", () => {
 		["clean", end({})],
 		["user-abort", end({ aborted: true, abortSource: "user" })],
 		["system-abort", end({ aborted: true, abortSource: "system" })],
+		["provider-abort", end({ aborted: true, abortSource: "provider" })],
+		[
+			"provider-abort",
+			end({ abortSource: "provider", messages: [fauxAssistantMessage("", { stopReason: "aborted" })] }),
+		],
 		["provider-error", end({ messages: [fauxAssistantMessage("", { stopReason: "error", errorMessage: "529" })] })],
 	] as const)("classifies %s", (kind, event) => {
 		expect(classifyTurnEnd(event)).toBe(kind);
@@ -175,6 +198,20 @@ describe("repeatsLastStall (#3863)", () => {
 
 	it("skips a stall identical to the last one since the last user message", () => {
 		expect(repeatsLastStall([stall("no-wake")], verdict)).toBe(true);
+	});
+
+	it("records a provider stall again when its reset time moved", () => {
+		const reset = (retryAtMs: number): SessionEntry =>
+			({
+				...stall("provider-error"),
+				data: { verdict: { kind: "stalled", reason: "provider-error", retryAtMs }, openWork: { kind: "none" } },
+			}) as SessionEntry;
+		expect(repeatsLastStall([reset(1_000)], { kind: "stalled", reason: "provider-error", retryAtMs: 2_000 })).toBe(
+			false,
+		);
+		expect(repeatsLastStall([reset(1_000)], { kind: "stalled", reason: "provider-error", retryAtMs: 1_000 })).toBe(
+			true,
+		);
 	});
 
 	it("records again after a user message or a different stall", () => {
