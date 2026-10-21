@@ -1,3 +1,21 @@
+## 2026-10-21 - Session context excludes cumulative SDK billing (omo#10792)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the context memoization fingerprint includes the request measurement, including the distinction between unknown and legacy usage.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: cumulative SDK usage inflated the footer, RPC context fields, extension context thresholds, and compaction. A measurement-only update must also invalidate cached context.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: core owns the memoized context value used by TUI, RPC, stats, and extension automation. Rewriting billing counters in an extension would break usage totals.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/agent-session.ts`, `messageFingerprint`.
+
 ## 2026-10-21 - An input release finishes when its run settles, and returns on every refused exit (senpi#3853)
 
 ### What changed

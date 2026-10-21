@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- Harness compaction uses request-level context when a provider reports cumulative billing for multiple internal requests ([omo#10792](https://github.com/code-yeongyu/oh-my-openagent/issues/10792)).
+
 ### Removed
 
 ## [2026.10.21-1] - 2026-10-21

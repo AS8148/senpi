@@ -1,3 +1,21 @@
+## 2026-10-21 - Reduction anchors use request context (omo#10792)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction-lifecycle.ts`: anchors use an explicit request measurement rather than cumulative billing. Unknown measurements do not establish an anchor; legacy usage keeps its prompt-only calculation.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction-lifecycle.ts`: an inflated anchor can trigger false context pressure after later projection. The request snapshot's input preserves the prompt-only anchor without subtracting cumulative output or double-counting output in later growth.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction-lifecycle.ts`: this is the builtin's own reduction bookkeeping.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction-lifecycle.ts`, the `message_end` usage anchor.
+
 ## 2026-10-19 - The compaction checkpoint's agent name is folded, not read from a full-history view (senpi#3110)
 
 ### What changed

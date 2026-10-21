@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- Context estimation and overflow checks can use the latest request's context separately from cumulative billed usage, preventing internal SDK requests from inflating context pressure ([omo#10792](https://github.com/code-yeongyu/oh-my-openagent/issues/10792)).
+
 ### Removed
 
 ## [2026.10.21-1] - 2026-10-21
