@@ -8,6 +8,7 @@
 
 ### Changed
 
+- Models that models.dev marks deprecated stay available and are labeled `deprecated` instead of disappearing from the bundled catalog: GitHub Copilot Claude Opus 4.7, GPT-5.5 and GPT-5.4, Baseten's Kimi K2 models and others keep working, and earlier-deprecated models some providers still serve are listed again with the label. A model models.dev no longer lists is still removed.
 - The advertised Claude Code fingerprint floor that Anthropic OAuth requests declare follows the bundled Claude Agent SDK to Claude Code 2.1.306 ([#3854](https://github.com/code-yeongyu/senpi/issues/3854)).
 
 - The bundled model catalog is refreshed from models.dev and the providers' model listings (`amazon-bedrock`, `huggingface`, `opencode`, `opengateway`, `openrouter`, `venice`).

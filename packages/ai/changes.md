@@ -2042,3 +2042,22 @@ Upstream manifest edits at the next sync.
 ### Expected merge conflict zones
 
 - LOW: the Moonshot variant `cost` block and `XAI_THINKING_LEVEL_MAPS` when upstream changes how Moonshot prices or xAI efforts are sourced.
+
+## 2026-10-21 - Upstream-deprecated models stay in the catalog, labeled
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: the six provider loops that skipped a models.dev row with `status: "deprecated"` (baseten, together, venice, opencode/opencode-go, github-copilot, and the xiaomi family) now record it with `markDeprecatedUpstream` and keep it; a post-pass (`applyDeprecatedUpstreamMetadata`) sets `deprecated: true` on those catalog rows. A row that models.dev no longer lists still disappears. The catalog was regenerated with `--strict`.
+- `packages/ai/src/model.ts`: `Model` gains the optional `deprecated` flag.
+
+### Why
+
+- models.dev marks a model deprecated while the provider still serves it. Dropping those rows removed working models (GitHub Copilot Claude Opus 4.7, GPT-5.5, GPT-5.4; Baseten Kimi K2.x) from users mid-release and broke the 2026.10.21-1 release run's live catalog regeneration. Keeping them labeled lets the UI mark them and fallback prefer current models.
+
+### Why an extension could not handle it
+
+- The built-in catalog is generated in this package; nothing at runtime can restore rows the generator dropped.
+
+### Expected merge conflict zones
+
+- LOW: the deprecated-status checks in the provider loops of `generate-models.ts` when upstream adds or reshapes provider loops.

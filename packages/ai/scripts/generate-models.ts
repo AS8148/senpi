@@ -776,6 +776,16 @@ function withXaiThinkingPin<T extends { reasoning_options?: ModelsDevReasoningOp
 	};
 }
 
+// models.dev marks a model `deprecated` while the provider still serves it. Such rows stay in the catalog,
+// labeled `deprecated: true`, so a user on one keeps a working model; only rows gone from models.dev drop out.
+const deprecatedUpstreamModels = new Set<string>();
+function markDeprecatedUpstream(provider: string, modelId: string): void {
+	deprecatedUpstreamModels.add(`${provider}:${modelId}`);
+}
+function applyDeprecatedUpstreamMetadata(model: Model<Api>): void {
+	if (deprecatedUpstreamModels.has(`${model.provider}:${model.id}`)) model.deprecated = true;
+}
+
 function recordModelsDevReasoningOptions(provider: string, id: string, sourceModel: ModelsDevModel): void {
 	if (sourceModel.reasoning_options !== undefined) {
 		modelsDevReasoningOptions.set(`${provider}:${id}`, sourceModel.reasoning_options);
@@ -1975,7 +1985,7 @@ function processBasetenModels(provider: ModelsDevProvider | undefined): Model<Ap
 	const models: Model<Api>[] = [];
 
 	for (const [modelId, model] of Object.entries(provider.models)) {
-		if (model.status === "deprecated") continue;
+		if (model.status === "deprecated") markDeprecatedUpstream("baseten", modelId);
 
 		const reasoning = model.reasoning === true;
 		const reasoningOptions = model.reasoning_options ?? [];
@@ -2677,7 +2687,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(togetherProvider.models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
-				if (m.status === "deprecated") continue;
+				if (m.status === "deprecated") markDeprecatedUpstream("together", modelId);
 
 				const reasoning = m.reasoning === true;
 				const thinkingLevelMap = getTogetherThinkingLevelMap(modelId, reasoning);
@@ -2711,7 +2721,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(data.venice.models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
-				if (m.status === "deprecated") continue;
+				if (m.status === "deprecated") markDeprecatedUpstream("venice", modelId);
 
 				models.push({
 					id: modelId,
@@ -2754,7 +2764,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(data[variant.key].models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
-				if (m.status === "deprecated") continue;
+				if (m.status === "deprecated") markDeprecatedUpstream(variant.provider, modelId);
 
 				const npm = m.provider?.npm;
 				let api: Api;
@@ -2857,7 +2867,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(data["github-copilot"].models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
-				if (m.status === "deprecated") continue;
+				if (m.status === "deprecated") markDeprecatedUpstream("github-copilot", modelId);
 
 				// Claude 4.x and 5.x models route to Anthropic Messages API
 				const isCopilotClaude = /^claude-(haiku|sonnet|opus|fable)-[45]([.\-]|$)/.test(modelId);
@@ -3091,7 +3101,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(providerModels)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
-				if (m.status === "deprecated") continue;
+				if (m.status === "deprecated") markDeprecatedUpstream(provider, modelId);
 
 				models.push({
 					id: modelId,
@@ -4294,6 +4304,7 @@ async function generateModels() {
 	allModels.push(...azureOpenAiModels);
 
 	for (const model of allModels) {
+		applyDeprecatedUpstreamMetadata(model);
 		applyOpenAiInputCap(model);
 		applyOpenAICompletionsCompatMetadata(model);
 		applyAnthropicMessagesCompatMetadata(model);
