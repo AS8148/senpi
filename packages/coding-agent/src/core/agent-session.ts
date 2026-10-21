@@ -1038,14 +1038,17 @@ export type ClearedQueue = {
 	readonly ordered: readonly QueuedInput[];
 };
 
-/** Options accepted by the queued-input entry points `steer()` and `followUp()`. */
-/** An explicit origin (a person's answer sent through the extension API) wins over the one its source implies. */
+/**
+ * The origin a queued input is tagged with: an explicit origin (a person's answer sent through the extension API) wins
+ * over the one its source implies. Hold release keeps reading `inputOriginOf(source)`; see `prompt()`.
+ */
 function originOf(
 	options: { readonly source?: InputSource; readonly inputOrigin?: InputOrigin } | undefined,
 ): InputOrigin {
 	return options?.inputOrigin ?? inputOriginOf(options?.source);
 }
 
+/** Options accepted by the queued-input entry points `steer()` and `followUp()`. */
 export interface QueuedInputOptions extends ClientMessageIdentity {
 	/**
 	 * Recovery-ordered enqueue position. A reconnecting client replays its pending
@@ -5174,6 +5177,8 @@ export class AgentSession {
 			command: this._isExtensionCommandText(text, options),
 			submittedByCommand: options?.source === "extension",
 		});
+		// Hold release keys on the entry point alone (senpi#3860): an extension cannot assert a person's origin to
+		// release a hold. A person's answer releases through `releaseQuestionInput`; `originOf` only tags the queue.
 		const origin = inputOriginOf(options?.source);
 		let ownsRelease = false;
 		let disposed = false;

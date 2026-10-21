@@ -117,4 +117,44 @@ describe("queued person input is decided from the entries queued now (senpi#3863
 
 		expect(harness.session.hasQueuedPersonInput).toBe(false);
 	});
+	it.each([
+		["a person's prompt", {}, true],
+		["an extension's prompt", { source: "extension" as const }, false],
+	])("tags %s that a competing run displaced into the steer queue: %s", async (_label, origin, person) => {
+		const release = Promise.withResolvers<void>();
+		const competingEntered = Promise.withResolvers<void>();
+		let competing: Promise<void> | undefined;
+		const harness: Harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("before_agent_start", async () => {
+						competing ??= harness.agent.prompt({ role: "user", content: "competing", timestamp: Date.now() });
+						await competingEntered.promise;
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("competing answered"), fauxAssistantMessage("displaced answered")]);
+		const stream = harness.agent.streamFunction;
+		harness.agent.streamFunction = async (model, context, options) => {
+			competingEntered.resolve();
+			await release.promise;
+			return stream(model, context, options);
+		};
+		const displacedQueued = Promise.withResolvers<void>();
+		harness.session.subscribe((event) => {
+			if (event.type === "queue_update" && event.steering.length > 0) displacedQueued.resolve();
+		});
+
+		const displaced = harness.session.prompt("displaced", origin);
+		await displacedQueued.promise;
+
+		expect(harness.session.hasQueuedPersonInput).toBe(person);
+		release.resolve();
+		await displaced;
+		await competing;
+		await harness.session.waitForSettledSessionWork();
+		expect(harness.session.hasQueuedPersonInput).toBe(false);
+	});
 });
