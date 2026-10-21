@@ -39,7 +39,9 @@ test("shared setup preserves the toolchain pins and installs and builds once", (
 	assert.equal(install.run, "npm ci --ignore-scripts\nnpm run build\n");
 	assert.equal(combined.steps.filter((step) => step.run?.includes("npm ci")).length, 1);
 	assert.equal(combined.steps.filter((step) => step.run?.includes("npm run build")).length, 1);
-	assert.equal(combined["timeout-minutes"], originals.reduce((sum, name) => sum + jobs[name]["timeout-minutes"], 15));
+	// A hung part may hold the scarce macOS runner only for its own old cap; the job cap is the sum of the
+	// part caps plus setup margin, so no single hang can stretch the job beyond that.
+	assert.equal(combined["timeout-minutes"], originals.reduce((sum, name) => sum + jobs[name]["timeout-minutes"], 10));
 });
 
 test("all original commands and execution guards remain with WebView last", () => {
@@ -47,6 +49,7 @@ test("all original commands and execution guards remain with WebView last", () =
 		["process", "rpc", "terminal_pty", "terminal_extension", "inspector", "webview"]);
 	for (const name of originals) {
 		const original = jobs[name];
+		let partBudget = 0;
 		for (const step of original.steps.filter((candidate) =>
 			/run-tests\.mjs|npm run test/.test(candidate.run ?? ""))) {
 			const replacement = suites.find((candidate) => candidate.name === step.name);
@@ -54,9 +57,11 @@ test("all original commands and execution guards remain with WebView last", () =
 			assert.equal(replacement.run, step.run, step.name);
 			assert.equal(replacement["working-directory"], step["working-directory"], step.name);
 			assert.deepEqual(replacement.env, step.env, step.name);
-			assert.equal(replacement["timeout-minutes"], original["timeout-minutes"], step.name);
+			assert.ok(replacement["timeout-minutes"] > 0, step.name);
+			partBudget += replacement["timeout-minutes"];
 			assert.equal(replacement["continue-on-error"], undefined, step.name);
 		}
+		assert.equal(partBudget, original["timeout-minutes"], `${name} suite steps share its old job cap`);
 		for (const step of original.steps.filter((candidate) =>
 			/Require the .*executed|orphaned kernel|readiness log|exit-event compiler/.test(candidate.name))) {
 			assert.ok(combined.steps.some((candidate) => candidate.name === step.name && candidate.run === step.run), step.name);

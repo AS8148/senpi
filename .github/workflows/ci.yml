@@ -1174,7 +1174,9 @@ jobs:
     name: macOS combined
     runs-on: macos-latest
     # Former job budgets: 20 + 20 + 15 + 30 + 20 minutes, plus 15 for shared setup.
-    timeout-minutes: 120
+    # Each part keeps its old job cap as step timeouts (the terminal part's two steps share its 30),
+    # so one hung part fails only itself; the job cap is the sum of part caps plus setup margin.
+    timeout-minutes: 115
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1295,13 +1297,13 @@ jobs:
       - name: PTY package tests
         if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.terminal_test_temp_snapshot.outcome == 'success' }}
         id: terminal_pty
-        timeout-minutes: 30
+        timeout-minutes: 15
         run: npm run test --workspace @earendil-works/pi-pty
 
       - name: Terminal extension + shell resolution tests
         if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.terminal_test_temp_snapshot.outcome == 'success' }}
         id: terminal_extension
-        timeout-minutes: 30
+        timeout-minutes: 15
         shell: bash
         run: node ../../scripts/run-tests.mjs vitest run test/suite/terminal-extension.test.ts test/suite/terminal-settings-notify.test.ts test/suite/shell-config-kind.test.ts test/suite/regressions/issue-1229-win-fswatch-noncanonical-abort.test.ts
         working-directory: packages/coding-agent
