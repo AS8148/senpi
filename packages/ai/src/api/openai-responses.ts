@@ -50,7 +50,7 @@ import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { withGitHubCopilotFailureNote } from "./github-copilot-errors.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { resolveOpenAIClientAuth } from "./openai-client-auth.ts";
-import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
+import { deriveOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import {
 	applyAllowedToolsChoice,
 	hasRefusedAllowedToolsChoice,
@@ -654,11 +654,7 @@ function buildParams(
 		model: model.id,
 		input: messages,
 		stream: true,
-		prompt_cache_key:
-			cacheRetention === "none" ||
-			(isNativeEndpoint && (compat.supportsExplicitPromptCacheMode || model.cost.cacheWrite > 0))
-				? undefined
-				: clampOpenAIPromptCacheKey(options?.sessionId),
+		prompt_cache_key: cacheRetention === "none" ? undefined : deriveOpenAIPromptCacheKey(model.id, context),
 		prompt_cache_retention: getPromptCacheRetention(compat, cacheRetention),
 		prompt_cache_options: withPromptCacheComparison(
 			getPromptCacheOptions(compat, cacheRetention),

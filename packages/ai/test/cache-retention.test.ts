@@ -500,13 +500,13 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 		});
 
 		it.each([
-			["gpt-4o-mini", "24h", undefined, "session-2"],
-			["gpt-6-astra", undefined, { ttl: "30m" }, undefined],
-			["gpt-6-sol", undefined, { ttl: "30m" }, undefined],
-			["gpt-6-luna", undefined, { ttl: "30m" }, undefined],
+			["gpt-4o-mini", "24h", undefined],
+			["gpt-6-astra", undefined, { ttl: "30m" }],
+			["gpt-6-sol", undefined, { ttl: "30m" }],
+			["gpt-6-luna", undefined, { ttl: "30m" }],
 		] as const)(
 			"should use the supported long cache field for %s",
-			async (modelId, retention, cacheOptions, cacheKey) => {
+			async (modelId, retention, cacheOptions) => {
 				const model = getModel("openai", modelId);
 				let capturedPayload: OpenAIResponsesCachePayload | undefined;
 
@@ -529,7 +529,8 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 					// Expected to fail
 				}
 
-				expect(capturedPayload?.prompt_cache_key).toBe(cacheKey);
+				expect(capturedPayload?.prompt_cache_key).toEqual(expect.stringMatching(/^.{1,64}$/));
+				expect(capturedPayload?.prompt_cache_key).not.toBe("session-2");
 				expect(capturedPayload?.prompt_cache_retention).toBe(retention);
 				expect(capturedPayload?.prompt_cache_options).toEqual(cacheOptions);
 			},
@@ -558,7 +559,7 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 			}
 
 			expect(capturedPayload).toMatchObject({
-				prompt_cache_key: "model-default-session",
+				prompt_cache_key: expect.stringMatching(/^.{1,64}$/),
 				prompt_cache_retention: "24h",
 			});
 		});
