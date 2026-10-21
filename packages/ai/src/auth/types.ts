@@ -192,8 +192,10 @@ export interface ApiKeyAuth {
 	ambientOnly?: boolean;
 
 	/**
-	 * The provider works without a key (a local server such as llama.cpp), so a login may leave it blank.
-	 * Without this flag `Models.login` refuses a blank or missing key with `EmptyApiKeyError` (#3867).
+	 * A login may leave the key blank: the provider needs none (a local server such as llama.cpp) or its
+	 * `resolve` falls back to an ambient key while the login stores other env (Kimi's region + KIMI_API_KEY).
+	 * `Models.login` then drops the blank key; without this flag it refuses one with `EmptyApiKeyError` (#3867).
+	 * Only `Models.login` reads it: `AuthStorage.set` and RPC `login_api_key` always require a key.
 	 */
 	keyOptional?: boolean;
 

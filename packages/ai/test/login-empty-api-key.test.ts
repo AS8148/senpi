@@ -10,6 +10,7 @@ import {
 } from "../src/auth/pool/slots.ts";
 import type { AuthInteraction } from "../src/auth/types.ts";
 import { createModels, createProvider, type Provider } from "../src/models.ts";
+import { kimiCodingProvider } from "../src/providers/kimi-coding.ts";
 
 // #3867: a keyless `login-2` slot reached auth.json because nothing refused a blank key.
 
@@ -45,6 +46,35 @@ describe("appendLoginSlot refuses a blank API key", () => {
 			"default",
 			"login-2",
 		]);
+	});
+});
+
+describe("Kimi keeps its blank-key login that picks a region for KIMI_API_KEY (#3869 review)", () => {
+	test("a global-region login with a blank key stores the region and resolves through KIMI_API_KEY", async () => {
+		const provider = kimiCodingProvider();
+		const store = new InMemoryCredentialStore();
+		const models = createModels({ credentials: store });
+		models.setProvider(provider);
+		const answers = ["global", ""];
+
+		await models.login(provider.id, "api_key", {
+			signal: AbortSignal.timeout(5_000),
+			prompt: async () => answers.shift() ?? "",
+			notify: () => {},
+		});
+
+		const stored = await store.read(provider.id);
+		expect(stored?.type).toBe("api_key");
+		expect(Object.hasOwn(stored ?? {}, "key")).toBe(false);
+		const resolved = await provider.auth.apiKey?.resolve({
+			ctx: {
+				env: async (name) => (name === "KIMI_API_KEY" ? "sk-kimi-env" : undefined),
+				fileExists: async () => false,
+			},
+			credential: stored?.type === "api_key" ? stored : undefined,
+			signal: AbortSignal.timeout(5_000),
+		});
+		expect(resolved?.auth).toMatchObject({ apiKey: "sk-kimi-env", baseUrl: "https://api.kimi.ai/coding" });
 	});
 });
 
