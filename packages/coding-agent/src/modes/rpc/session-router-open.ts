@@ -73,14 +73,22 @@ export function openWithBarrier(
  * the failure response otherwise, exactly as an open does.
  */
 export function reopenParked(host: RouterContext, entry: HandoverParkedEntry): Promise<RpcResponse | undefined> {
-	return open(host, parkedOpenCommand(entry), undefined, { reply: false, defaults: false });
+	return open(host, { ...parkedOpenCommand(entry), attended: false }, undefined, {
+		reply: false,
+		defaults: false,
+		contextOverlay: entry.contextOverlay,
+	});
 }
 
 export async function open(
 	host: RouterContext,
 	command: Extract<RpcCommand, { type: "open_session" }>,
 	owner?: string,
-	options?: { readonly reply?: boolean; readonly defaults?: boolean },
+	options?: {
+		readonly reply?: boolean;
+		readonly defaults?: boolean;
+		readonly contextOverlay?: HandoverParkedEntry["contextOverlay"];
+	},
 ): Promise<RpcResponse | undefined> {
 	const profile = validatedOpenProfile(host, command, options);
 	if ("type" in profile) return profile;
@@ -100,6 +108,7 @@ export async function open(
 		);
 		const openedSession = opened;
 		const entry = host.registry.getForCommand(openedSession.sessionId, "open_session");
+		if (!opened.attached && options?.contextOverlay !== undefined) entry.contextOverlay = options.contextOverlay;
 		const state = entry.worker?.snapshot?.state;
 		// The runtime has now published its own lease. Recheck before attaching or replying,
 		// so an opener racing the initial lookup is rolled back rather than admitted.

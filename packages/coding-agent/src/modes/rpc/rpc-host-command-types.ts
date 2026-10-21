@@ -25,6 +25,8 @@ export type RpcCommand =
 	| {
 			id?: string;
 			type: "open_session";
+			/** An observational/unattended open; attaching never releases an existing hold. */
+			attended?: false;
 			/**
 			 * Attach only to an existing session on this host generation. Requires
 			 * `expected_host_instance`; mismatch returns `owner_changed`, a released

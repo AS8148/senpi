@@ -54,6 +54,8 @@ export function validatedOpenProfile(
 	// registry, the runtime and the extensions downstream receive values already
 	// proven to satisfy every documented cap.
 	const kindError = sessionKindError(command.kind);
+	if (command.attended !== undefined && command.attended !== false)
+		return error(command.id, "open_session", `${RPC_ERROR_INVALID_LAUNCH_PROFILE}: attended must be false or omitted`);
 	if (kindError) return error(command.id, "open_session", `${RPC_ERROR_INVALID_SESSION_KIND}: ${kindError}`);
 	const contextError = sessionContextError(command.context);
 	if (contextError) return error(command.id, "open_session", `${RPC_ERROR_INVALID_SESSION_CONTEXT}: ${contextError}`);
@@ -77,6 +79,7 @@ export function validatedOpenProfile(
 		return error(command.id, "open_session", `${RPC_ERROR_INVALID_LAUNCH_PROFILE}: ${retryFallbackError}`);
 	return {
 		cwd: command.cwd ?? host.defaults.cwd,
+		...(command.attended === false ? { attended: false as const } : {}),
 		sessionPath: command.sessionPath,
 		holderEndpoint: {
 			host_instance: instanceId,

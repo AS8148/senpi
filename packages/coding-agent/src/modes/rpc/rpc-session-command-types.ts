@@ -40,6 +40,7 @@ export type RpcSessionCommand =
 			deliverAs?: "steer" | "followUp" | "nextTurn";
 	  }
 	| { id?: string; type: "continue_from_leaf" }
+	| { id?: string; type: "resume_session" }
 	| { id?: string; type: "append_user_message"; content: unknown }
 	| { id?: string; type: "append_session_entry"; entry: SessionEntry }
 	| ({

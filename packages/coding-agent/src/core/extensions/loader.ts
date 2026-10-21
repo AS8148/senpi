@@ -864,7 +864,13 @@ const importNodeOnlyApi = (specifier: string): Promise<typeof import("jiti/stati
 async function createExtensionModuleImporter(): Promise<ExtensionModuleImporter> {
 	if (usesNativeBunImports) {
 		const { createBunExtensionImporter } = await import("./bun-extension-importer.ts");
-		return createBunExtensionImporter(VIRTUAL_MODULES);
+		return createBunExtensionImporter(
+			VIRTUAL_MODULES,
+			{},
+			{
+				preparedCache: { dir: path.join(getAgentDir(), "cache", "extension-modules"), release: VERSION },
+			},
+		);
 	}
 	const { createJiti } = await importNodeOnlyApi("jiti/static");
 	return createJiti(import.meta.url, {

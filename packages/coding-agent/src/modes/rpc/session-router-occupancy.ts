@@ -147,6 +147,7 @@ export async function evictIdleSession(
 			...parkedEntryFromProfile(
 				{
 					sessionPath: retained.sessionPath,
+					contextOverlay: retained.contextOverlay,
 					...(retained.durableSessionId !== undefined ? { durableSessionId: retained.durableSessionId } : {}),
 				},
 				retained.profile,

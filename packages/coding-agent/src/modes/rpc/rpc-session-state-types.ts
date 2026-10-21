@@ -99,6 +99,9 @@ export interface RpcSessionModelEntry {
 }
 
 export interface RpcSessionState {
+	paused: boolean;
+	pausedNoticeCount: number;
+	holds: { kind: "unattended"; key: string; since: string; data?: unknown; sourceCounts: Record<string, number> }[];
 	model?: Model<any>;
 	/**
 	 * Model switch held until the next compaction, or `null` when no switch is held.

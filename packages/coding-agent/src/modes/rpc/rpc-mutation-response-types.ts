@@ -109,6 +109,7 @@ export type RpcMutationResponse =
 			data: { model: Model<any>; thinkingLevel: ThinkingLevel; isScoped: boolean } | null;
 	  }
 	| { id?: string; type: "response"; command: "continue_from_leaf"; success: true }
+	| { id?: string; type: "response"; command: "resume_session"; success: true }
 	| { id?: string; type: "response"; command: "set_thinking_level"; success: true; data?: RpcEffectAnswer }
 	| {
 			id?: string;
