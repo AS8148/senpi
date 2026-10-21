@@ -35,3 +35,32 @@ describe("control-token-leak and tool arguments (omo#10789)", () => {
 		expect(fired).toBe(true);
 	});
 });
+
+describe("control-token-leak and ordinary markup in prose (omo#10789)", () => {
+	const feed = (text: string, source: "text" | "thinking"): boolean => {
+		const watch = watcher();
+		let fired = false;
+		for (let i = 0; i < text.length; i += 5) {
+			const outcome = watch.handleDelta(source, `${source}:1`, text.slice(i, i + 5), 1);
+			if (outcome.resolution !== null) fired = true;
+		}
+		return fired;
+	};
+
+	it("does not fire on consecutive HTML closing tags in assistant prose", () => {
+		const closers = "</div>".repeat(4);
+		expect(feed(`The page ends with ${closers} and then the body closes.`, "text")).toBe(false);
+	});
+
+	it("does not fire on a long run of nested closing tags in thinking", () => {
+		expect(feed(`nested markup: ${"</section>".repeat(10)}`, "thinking")).toBe(false);
+	});
+
+	it("still fires on a leaked tokenizer special token in prose", () => {
+		expect(feed(`answer: ${"</s>".repeat(6)}`, "text")).toBe(true);
+	});
+
+	it("still fires on a leaked turn marker regardless of case", () => {
+		expect(feed(`done ${"<END_OF_TURN>".repeat(6)}`, "text")).toBe(true);
+	});
+});

@@ -1,3 +1,16 @@
+## 2026-10-21 — Angle-bracket leak candidates are tokenizer special tokens only (omo#10789)
+
+### What changed
+- `detectors/token-grammar.ts`: an angle-bracket (`sgml` family) candidate is emitted only when its name is a known tokenizer special token (`SGML_CONTROL_TOKEN_NAMES`: `s`, `pad`, `unk`, `mask`, `bos`, `eos`, `sep`, `cls`, `eot`, `eom`, `endoftext`, `think`, `start_of_turn`, `end_of_turn`, `start_of_image`, `end_of_image`, `im_start`, `im_end`, `tool_call`, `tool_response`; case-insensitive, with or without the closing slash). Any other `<name>`/`</name>` is markup: the parser rejects it as text, which also breaks a run.
+- The `ctrl` (`<|...|>`) and `bracket` (`[UPPER]`) families are unchanged.
+
+### Why
+- Runs of HTML/XML closing tags (`</div>` four times in a row) in assistant prose, thinking, code samples and tool arguments latched the guard. It surfaced "Degeneration guard: control-token leakage" and resampled the turn. That happened even to this PR's own automated reviewer while it was discussing the diff (omo#10789).
+
+### Tests
+- `test/ttsr/detector-control-leak-tool-source.test.ts`: closing-tag runs in prose and thinking stay silent (RED 2 failed before), while leaked `</s>` and `<END_OF_TURN>` runs still fire.
+- Contract change in two existing tests that pinned the old behavior: `detector-control-leak-negatives.test.ts` B-N10 (`<div>` x8 now stays silent; a `</s>` x8 case was added and fires) and `detector-control-leak-grammar.test.ts` (an arbitrary 16-character name is silent; the longest known name fires).
+
 ## 2026-10-21 — The control-token-leak guard no longer watches tool arguments (omo#10789)
 
 ### What changed
