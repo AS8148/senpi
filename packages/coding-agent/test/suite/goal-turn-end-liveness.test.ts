@@ -6,7 +6,6 @@ import {
 
 function input(overrides: Partial<TurnEndLivenessInput> = {}): TurnEndLivenessInput {
 	return {
-		attended: true,
 		isChildSession: false,
 		mode: "tui",
 		endedBy: "clean",
@@ -79,7 +78,6 @@ describe("evaluateTurnEndLiveness (#3863)", () => {
 	});
 
 	it.each([
-		["unattended", { attended: false }],
 		["user-abort", { endedBy: "user-abort" }],
 		["child-session", { isChildSession: true }],
 		["non-interactive", { mode: "print" }],
@@ -88,14 +86,6 @@ describe("evaluateTurnEndLiveness (#3863)", () => {
 		["goal-stopped", { goalStopped: true }],
 	] as const)("holds (%s) open work that nothing re-enters", (reason, overrides) => {
 		expect(evaluateTurnEndLiveness(input(overrides))).toEqual({ kind: "held", reason });
-	});
-
-	it("holds an unattended session even while its wake sources are live", () => {
-		expect(
-			evaluateTurnEndLiveness(
-				input({ attended: false, expectations: [{ kind: "wake-source", source: "terminal-monitors" }] }),
-			),
-		).toEqual({ kind: "held", reason: "unattended" });
 	});
 
 	it("never reports a continuation that a lane queued as held", () => {

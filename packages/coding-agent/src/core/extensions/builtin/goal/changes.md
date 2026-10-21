@@ -2,14 +2,18 @@
 
 ### What changed
 
-- `turn-end-liveness.ts` (new): pure `evaluateTurnEndLiveness` returns `continuing | held | waiting | done | stalled` from what the goal lane and the todo-owed backstop just did, plus `classifyTurnEnd` over the existing terminal-error helpers. Order: a queued continuation is reported first, then the reasons nothing may continue on its own (unattended start, user abort, child session, print/json, deadline stop, paused/blocked goal), then live re-entry sources, then `stalled` vs `done`. An errored turn is never `done`.
-- `index.ts`: `session_start` records `attended` (absent means attended; the field comes from #3853/#3860). The `agent_end` tail builds the input after both lanes ran, publishes `turn_end_liveness` through `publishGoalContinuationEvent` (bus + RPC), and appends a `turn-end-liveness` entry only for `stalled`.
+- `turn-end-liveness.ts` (new): pure `evaluateTurnEndLiveness` returns `continuing | held | waiting | done | stalled` from what the goal lane and the todo-owed backstop just did, plus `classifyTurnEnd` over the existing terminal-error helpers. Order: a queued continuation is reported first, then the reasons nothing may continue on its own (user abort, child session, print/json, deadline stop, paused/blocked goal), then live re-entry sources, then `stalled` vs `done`. An errored turn is never `done`.
+- `index.ts`: the `agent_end` tail builds the input after both lanes ran, publishes `turn_end_liveness` through `publishGoalContinuationEvent` (bus + RPC), and appends a `turn-end-liveness` entry only for `stalled`.
 - `monitor-continuation.ts`: read-only `scheduledContinuation()` and `hasStagedRecovery()` getters. No scheduling change.
 - `todo-owed-backstop.ts`: `afterAgentEnd` returns its outcome (`delivered | capped | <suppression>`); `calledAskUser` is exported. No behavior change.
 
 ### Why
 
 - Both lanes already decided whether something would re-enter the session, but only privately. RPC clients, the desktop app and pane watchdogs could not tell a healthy wait from a stall, and a no-goal turn that ended on a usage limit left no resume point. The verdict adds no budget and starts or suppresses nothing; the existing caps (8 consecutive, 60 without progress, 2 todo nudges per chain) stay the only bounds.
+
+### Follow-up
+
+- An unattended (held) session is not reported yet: once senpi#3860 lands, the verdict reads its hold ledger (`ctx.engineTurnsHeld()`) and reports `held{unattended}`. A start-time snapshot would go stale when input or Resume releases the hold, and it would be a second notion of the same state.
 
 ### Design credit
 

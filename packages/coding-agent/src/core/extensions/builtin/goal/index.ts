@@ -62,7 +62,6 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	let blockedThisTurnGoalId: string | null = null;
 	let completedThisTurnGoalId: string | null = null;
 	let continuationPending = false;
-	let sessionAttended = true;
 	let activeContext: ExtensionContext | undefined;
 	const turnUsage = new TurnUsageTracker();
 	// No stale-ctx swallow here: GoalWaitTicker retires itself on a stale render
@@ -158,7 +157,6 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	pi.on("session_start", async (event, ctx) => {
 		ctx.ui.setStatus("todo-waiting", undefined);
 		activeContext = ctx;
-		sessionAttended = !("attended" in event) || event.attended !== false;
 		monitorContinuation.start(ctx);
 		directInputLifecycle.reset();
 		todoOwedBackstop.resetChain();
@@ -429,7 +427,6 @@ export default function goalExtension(pi: ExtensionAPI): void {
 			expectations.push({ kind: "question-to-user" });
 		}
 		const verdict = evaluateTurnEndLiveness({
-			attended: sessionAttended,
 			isChildSession: ctx.sessionManager.getHeader?.()?.parentSession !== undefined,
 			mode: ctx.mode,
 			endedBy: classifyTurnEnd(event),

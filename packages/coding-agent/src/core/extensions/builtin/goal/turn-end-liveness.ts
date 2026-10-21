@@ -26,8 +26,6 @@ export type OpenWork =
 	| { readonly kind: "none" };
 
 export interface TurnEndLivenessInput {
-	/** False when the session started with no client attached (senpi#3853); such a session is never continued. */
-	readonly attended: boolean;
 	readonly isChildSession: boolean;
 	readonly mode: ExtensionMode;
 	readonly endedBy: TurnEndKind;
@@ -45,13 +43,7 @@ export interface TurnEndLivenessInput {
 	readonly providerRetryAtMs: number | undefined;
 }
 
-export type HeldReason =
-	| "unattended"
-	| "user-abort"
-	| "child-session"
-	| "non-interactive"
-	| "deadline-stop"
-	| "goal-stopped";
+export type HeldReason = "user-abort" | "child-session" | "non-interactive" | "deadline-stop" | "goal-stopped";
 
 export type StalledReason = "budget" | "provider-error" | "no-wake";
 
@@ -92,7 +84,6 @@ export function evaluateTurnEndLiveness(input: TurnEndLivenessInput): TurnEndLiv
 }
 
 function heldReason(input: TurnEndLivenessInput): HeldReason | undefined {
-	if (!input.attended) return "unattended";
 	if (input.endedBy === "user-abort") return "user-abort";
 	if (input.isChildSession) return "child-session";
 	if (NON_INTERACTIVE_MODES.has(input.mode)) return "non-interactive";
