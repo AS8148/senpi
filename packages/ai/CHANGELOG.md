@@ -6,6 +6,8 @@
 
 ### Added
 
+- `AssistantMessage.timing` (`AssistantMessageTiming`): optional response timing stamped by the agent loop ([#3879](https://github.com/code-yeongyu/senpi/issues/3879)).
+
 ### Changed
 
 - The advertised Claude Code fingerprint floor that Anthropic OAuth requests declare follows the bundled Claude Agent SDK to Claude Code 2.1.306 ([#3854](https://github.com/code-yeongyu/senpi/issues/3854)).

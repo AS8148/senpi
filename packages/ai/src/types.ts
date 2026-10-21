@@ -712,6 +712,26 @@ export interface ConfigurationUpdateMessage {
 	timestamp: number;
 }
 
+/**
+ * When the agent loop asked for a response and when it streamed, as Unix timestamps in milliseconds (senpi#3879).
+ * Stamped by the agent loop on the final message, so it is persisted with the session.
+ */
+export interface AssistantMessageTiming {
+	/** Just before the provider request was issued. */
+	requestedAt: number;
+	/** First streamed text, thinking or tool-call delta. Absent when nothing streamed. */
+	firstTokenAt?: number;
+	/** Last streamed text, thinking or tool-call delta. Absent when nothing streamed. */
+	lastTokenAt?: number;
+	/** When the response settled: done, error or abort. */
+	endedAt: number;
+	/**
+	 * Streamed generation time in milliseconds, by the TPS notice's rule (senpi#3393): first delta to last delta,
+	 * or from the response's start when it reasoned before its first delta. Absent when nothing streamed.
+	 */
+	generationMs?: number;
+}
+
 export interface AssistantMessage {
 	role: "assistant";
 	content: (TextContent | ThinkingContent | ToolCall | ProviderNativeContent)[];
@@ -744,6 +764,8 @@ export interface AssistantMessage {
 	 * Preserved for debugging and does not currently affect agent control flow.
 	 */
 	endTurn?: boolean;
+	/** Response timing stamped by the agent loop. Absent on older messages and on messages built outside the loop. */
+	timing?: AssistantMessageTiming;
 	timestamp: number; // Unix timestamp in milliseconds
 }
 

@@ -6,6 +6,8 @@
 
 ### Added
 
+- Every assistant response the agent loop streams carries `timing`: when the request was issued, its first and last streamed token, when it ended, and its streamed generation time. It is saved with the session, so time to first token and a reply's generation rate can be shown after a reload and by RPC clients ([#3879](https://github.com/code-yeongyu/senpi/issues/3879)).
+
 ### Changed
 
 ### Fixed
