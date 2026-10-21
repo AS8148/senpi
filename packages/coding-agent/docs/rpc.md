@@ -2223,17 +2223,25 @@ An unattached caller cannot release another connection's hold.
 
 Send `reclaim_session { sessionPath, durableSessionId, expectedHostInstance }` when recovering a known
 leftover on this host. Both identities are required; neither is inferred from the path.
-Before any await, the host resolves the live path, checks both identities and lifecycle state, refuses
+Before admission, a draining or shutting-down host refuses with `host_draining`. Otherwise, before any
+await, the host resolves the live path, checks lifecycle state before both identities, refuses
 other connections, records a visible attachment for the caller, then claims ALL that caller's holds
 (including the newly recorded one) and marks the entry closing. It then aborts and performs normal
 finalization. Zero-attachment retained sessions and leftovers with one or several caller holds are
 supported in both runtimes.
 
-Refusals change nothing: `unknown_session` for an unheld path, `session_identity_mismatch` for missing
-or different identities, `session_busy_lifecycle` for opening/closing targets, and `attached_elsewhere`
+Lifecycle precedes identity because an opening entry may not have published its runtime identity yet.
+An entry that is both busy and identity-mismatched therefore returns `session_busy_lifecycle`.
+
+Refusals change nothing: `host_draining` while draining or shutting down, `unknown_session` for an
+unheld path, `session_identity_mismatch` for missing or different identities,
+`session_busy_lifecycle` for opening/closing targets, and `attached_elsewhere`
 with `errorData.attachments` counting other holds. An attach that wins the synchronous admission race
 causes `attached_elsewhere`; an attach after the claim cannot join the closing entry. Reclaim never opens
 or resumes an absent path.
+
+A disconnected owner's deferred physical hold still counts as `attached_elsewhere` until its active
+turn settles, even though that owner no longer has a live connection. Settlement releases that hold.
 
 ### Attachment admission
 
@@ -2250,8 +2258,9 @@ and `check_reload_veto`.
 Host discovery/control remains available: `get_protocol_info`, `list_sessions`, `subscribe_sessions`,
 `unsubscribe_sessions`, `get_subscription_limits`, `warm`, `detach_connection`, `attach_session`,
 `reclaim_session`, and `set_client_info` without `sessionId`. `get_effect_status` is a read with
-either a routing id or a transcript path. Open and attachment lifecycle commands apply their own
-admission rules. `export_html` and `export_jsonl` write files and therefore require attachment.
+either a routing id or a transcript path. `open_session` is exempt from this gate because its own
+admission creates the caller's attachment. Attachment lifecycle commands apply their own admission
+rules. `export_html` and `export_jsonl` write files and therefore require attachment.
 Every other session-scoped command is gated by default, including abort, wake, release/unload,
 message injection, settings/account changes, and extension UI responses/progress.
 

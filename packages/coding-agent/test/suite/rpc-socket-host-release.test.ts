@@ -1,7 +1,12 @@
-import { join } from "node:path";
+import { existsSync } from "node:fs";
+import { watch } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { createHostDaemonPaths } from "../../src/modes/rpc/host-daemon-paths.ts";
+import { reservationFile } from "../../src/modes/rpc/host-reservations.ts";
+import { canonicalSessionPath } from "../../src/modes/rpc/session-path-key.ts";
 import { startFakeModelServer } from "../helpers/rpc-fake-model.ts";
 import { MOCK_MODEL, MOCK_PROVIDER, writeRpcModelsJson } from "../helpers/rpc-hermetic.ts";
 import type { RecordValue } from "../helpers/rpc-jsonl-peer.ts";
@@ -40,9 +45,18 @@ describe("RPC Unix-socket multi-connection host", () => {
 			// close_session ever arrives. The host must still release what this
 			// connection held, otherwise the path stays reserved by a runtime whose
 			// client is gone and every later resume of it is wrong.
+			const paths = createHostDaemonPaths({ socket: qa.socketPath, agentDir: qa.agentDir });
+			const claim = reservationFile(paths.reservationsDir, canonicalSessionPath(sessionPath));
+			expect(existsSync(claim)).toBe(true);
+			const released = (async () => {
+				for await (const event of watch(dirname(claim), { signal: AbortSignal.timeout(15_000) })) {
+					if (event.filename === basename(claim) && !existsSync(claim)) return;
+				}
+				throw new Error("Reservation watcher ended before release");
+			})();
 			first.peer.close();
 			first.socket.destroy();
-			await new Promise((resolve) => setTimeout(resolve, 500));
+			await released;
 		} finally {
 			first.socket.destroy();
 		}

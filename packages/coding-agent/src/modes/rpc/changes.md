@@ -7003,6 +7003,7 @@ Capability advertisement is core RPC.
 ### Expected merge conflict zones
 
 The classic capability list in `connection-handler.ts`.
+
 ## 2026-10-20 - Fenced live attachments and session mutation admission (senpi#3795, design v7 section 3)
 
 ### What changed
@@ -7016,7 +7017,7 @@ The classic capability list in `connection-handler.ts`.
 ### Why
 
 - `packages/coding-agent/src/modes/rpc/session-command-router.ts`, `session-release.ts`, `session-registry.ts`, `worker-session-registry.ts`, and `host-capabilities.ts`: knowledge of a listed routing id must not authorize mutation; transient attach must not reopen a vanished target or change its launch profile; temporary release must not abort another client's turn; recovery must claim all caller holds atomically and refuse other clients before aborting.
-- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: exposes the new contracts while keeping the public import path stable. The router, registries, protocol definitions, and socket tests are split by responsibility to keep changed code modules under 250 pure LOC.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: exposes the new contracts while keeping the public import path stable. The router, registries, protocol definitions, and socket tests are split by responsibility; the pre-existing oversized event writer is retained.
 
 ### Why an extension could not handle it
 
@@ -7029,11 +7030,12 @@ The classic capability list in `connection-handler.ts`.
 - `packages/coding-agent/src/modes/rpc/session-registry.ts`, `worker-session-registry.ts`: live-only attach and extracted open implementations.
 - `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: the four attachment capability strings.
 - `packages/coding-agent/src/modes/rpc/rpc-types.ts`: public re-exports; preserve existing names and field shapes in the extracted definitions.
+
 ## 2026-10-21 - Attachment replies follow wire contract v1 and reclaim emits no close reply (senpi#3795)
 
 ### What changed
 
-- `packages/coding-agent/src/modes/rpc/attachment-types.ts` and `packages/coding-agent/src/modes/rpc/session-attachment-commands.ts`: `attach_session` returns `{ sessionId, attached: true }`; `release_attachment` returns the computed `{ deferred }`, false during drain. Reclaim checks lifecycle before identity and seals without an unsolicited `close_session` response.
+- `packages/coding-agent/src/modes/rpc/attachment-types.ts` and `packages/coding-agent/src/modes/rpc/session-attachment-commands.ts`: `attach_session` returns `{ sessionId, attached: true }`; `release_attachment` returns the computed `{ deferred }`, false during drain. Reclaim refuses draining or shutting-down hosts with `host_draining` before admission, checks lifecycle before identity, seals without an unsolicited `close_session` response, and removes the caller's fanout attachment after sealing.
 - `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: exposes the existing lifecycle-only seal with attachment-scoped delivery for reclaim. Other clients keep their sessions and receive no reclaim close/end frame.
 - `packages/coding-agent/src/modes/rpc/session-router-attachments.ts`: `close_session` stops the caller's event fanout only on its last hold, so a connection with repeated holds retains its stream until the final release.
 

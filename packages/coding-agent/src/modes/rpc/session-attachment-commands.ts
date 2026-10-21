@@ -76,6 +76,7 @@ export async function reclaimSession(
 	host: RouterContext,
 	command: Extract<RpcAttachmentCommand, { type: "reclaim_session" }>,
 ): Promise<RpcResponse> {
+	if (host.draining || host.drainExitRequested) return error(command.id, command.type, "host_draining", {});
 	if (typeof command.sessionPath !== "string" || command.sessionPath.length === 0)
 		return error(command.id, command.type, "unknown_session", {});
 	const key = canonicalSessionPath(command.sessionPath);
@@ -114,6 +115,7 @@ export async function reclaimSession(
 			),
 		);
 	}
+	host.writer.detachConnectionFromSession(owner, row.sessionId);
 	host.writer.forgetSession(row.sessionId);
 	return {
 		id: command.id,

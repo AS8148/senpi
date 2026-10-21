@@ -7,6 +7,7 @@
 ### Added
 
 - Shared RPC hosts support live-only `attach_session`, one-hold `release_attachment`, and atomic `reclaim_session`. Attachments are fenced by durable session identity, and temporary releases let active turns finish ([#3795](https://github.com/code-yeongyu/senpi/issues/3795)).
+
 ### Changed
 
 - Socket-host session mutations now require attachment. This release serves legacy unattached mutations with a deprecation line; `SENPI_RPC_REQUIRE_ATTACH=1` enforces immediately. `release_session` excludes the caller's own holds when checking for other attached clients ([#3795](https://github.com/code-yeongyu/senpi/issues/3795)).
