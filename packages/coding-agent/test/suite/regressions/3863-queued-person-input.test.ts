@@ -113,8 +113,9 @@ describe("queued person input is decided from the entries queued now (senpi#3863
 			if (event.type === "queue_update" && event.followUp.length > 0) queued.resolve();
 		});
 
+		if (api === undefined) throw new Error("the extension factory did not run");
 		releaseQuestionInput(harness.session.extensionRunner.createContext());
-		api?.sendUserMessage("my answer", { deliverAs: "followUp" });
+		api.sendUserMessage("my answer", { deliverAs: "followUp" });
 		await queued.promise;
 
 		expect(harness.session.hasQueuedPersonInput).toBe(true);
@@ -133,6 +134,7 @@ describe("queued person input is decided from the entries queued now (senpi#3863
 
 		expect(harness.session.hasQueuedPersonInput).toBe(false);
 	});
+
 	it.each([
 		["a person's prompt", {}, true],
 		["an extension's prompt", { source: "extension" as const }, false],
