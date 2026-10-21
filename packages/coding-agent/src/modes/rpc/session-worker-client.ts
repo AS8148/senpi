@@ -64,7 +64,7 @@ export class SessionWorkerClient {
 	private writer?: SessionEventWriter;
 	private sessionId?: string;
 	private requestClose?: () => void;
-	private options: Pick<RpcConnectionOptions, "capabilities" | "clientInfo"> = {};
+	private options: Pick<RpcConnectionOptions, "capabilities" | "clientInfo" | "connectionRoles"> = {};
 	private readonly listeners = new Set<() => void>();
 	private cancelUiPending = false;
 	private terminalFailure?: string;
@@ -132,7 +132,7 @@ export class SessionWorkerClient {
 		sessionId: string,
 		writer: SessionEventWriter,
 		requestClose: () => void,
-		options: Pick<RpcConnectionOptions, "capabilities" | "clientInfo">,
+		options: Pick<RpcConnectionOptions, "capabilities" | "clientInfo" | "connectionRoles">,
 	): Promise<RpcSessionBinding> {
 		this.sessionId = sessionId;
 		this.writer = writer;
@@ -143,10 +143,17 @@ export class SessionWorkerClient {
 			sessionId,
 			capabilities: options.capabilities ?? [],
 			connection: writer.currentConnection(),
+			roles: options.connectionRoles?.rolesOf(writer.currentConnection()),
 		});
 		return {
 			handle: async (command) => {
-				await this.request({ type: "command", command, connection: writer.currentConnection() });
+				const connection = writer.currentConnection();
+				await this.request({
+					type: "command",
+					command,
+					connection,
+					roles: options.connectionRoles?.rolesOf(connection),
+				});
 			},
 			cancelPendingExtensionUiRequests: () => this.post({ type: "cancel_ui" }),
 			dispose: async () => {
@@ -272,6 +279,8 @@ export class SessionWorkerClient {
 				return;
 			}
 			case "capabilities":
+				if (message.connection !== undefined)
+					this.options.connectionRoles?.declare(message.connection, message.capabilities);
 				this.options.clientInfo?.setCapabilities(message.connection, message.capabilities);
 				acknowledge(message.signal, true);
 				return;

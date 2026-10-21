@@ -6,6 +6,7 @@
 - `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the `set_client_info` case declares through the shared registry for the current connection (a single-connection process keeps its own); the handler no longer seeds the role from `options.capabilities`.
 - `packages/coding-agent/src/modes/rpc/session-command-router.ts`: owns the host's one `ConnectionRoles`, passes it to every session binding, declares on the connection-level `set_client_info` path, and releases the role when the connection goes.
 - `packages/coding-agent/src/modes/rpc/custom-capability.ts`: exports `INTERACTIVE_USER_CAPABILITY`, documented as authority only.
+- `packages/coding-agent/src/modes/rpc/session-worker-client.ts`, `session-worker-protocol.ts`, `session-worker.ts`, `session-binding.ts`: the worker runtime sends each connection's declared roles with `bind` and `command`; the isolate adopts them into its own registry, and a declaration made inside the isolate is reported back to the host's registry.
 
 ### Why
 

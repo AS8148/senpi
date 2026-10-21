@@ -26,6 +26,16 @@ export class ConnectionRoles {
 		return true;
 	}
 
+	/** The roles this connection explicitly declared, or undefined while it has declared none. */
+	rolesOf(connectionId: string | undefined): readonly string[] | undefined {
+		return connectionId === undefined ? undefined : this.declared.get(connectionId);
+	}
+
+	/** Takes a declaration made elsewhere (the host, for a worker isolate) unless this connection already declared. */
+	adopt(connectionId: string, roles: readonly string[]): void {
+		if (!this.declared.has(connectionId)) this.declared.set(connectionId, [...roles]);
+	}
+
 	has(connectionId: string | undefined, role: string): boolean {
 		return connectionId !== undefined && (this.declared.get(connectionId)?.includes(role) ?? false);
 	}
