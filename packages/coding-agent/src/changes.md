@@ -2,11 +2,11 @@
 
 ### What changed
 
-- `packages/coding-agent/src/config.ts`: `getAgentDir()` passes the resolved directory to the new `assertAgentDirAllowedInTests` in the same file; it lives here rather than in a new module so the RPC supervisor's import graph stays at its 55-module ceiling. Under a test runner (`VITEST` set, or `NODE_ENV=test` as `bun test` sets it), a directory inside the real account home's `.senpi`, `.omo`, `.pi` or active brand config dir throws `RealAgentDirInTestError`. The real home comes from the account database, not `$HOME`. `SENPI_TEST_USE_REAL_AGENT_DIR=1` opts out, as it already does for the quarantine.
+- `packages/coding-agent/src/config.ts`: `getAgentDir()` passes the resolved directory to the new `assertAgentDirAllowedInTests` in the same file; it lives here rather than in a new module so the RPC supervisor's import graph stays at its 55-module ceiling. In a senpi test run (`SENPI_TEST_AGENT_DIR_GUARD=1`, set only by senpi's own test harness and never inferred from `VITEST` or `NODE_ENV`, so a user's own test suite that runs the CLI is unaffected), a directory inside the real account home's `.senpi`, `.omo`, `.pi` or active brand config dir throws `RealAgentDirInTestError`. The real home comes from the account database, not `$HOME`. `SENPI_TEST_USE_REAL_AGENT_DIR=1` opts out, as it already does for the quarantine.
 
 ### Why
 
-- senpi#3867: a test run without the Vitest quarantine setup (for example `bun test <file>` from inside an agent session that exports `OMO_CODING_AGENT_DIR`) resolved the user's real agent dir and left faux pool state in `credential-pool-state.json`. Regression: `test/real-agent-dir-guard.test.ts`.
+- senpi#3867: a test run without the Vitest quarantine setup (for example `bun test <file>` from inside an agent session that exports `OMO_CODING_AGENT_DIR`) resolved the user's real agent dir and left faux pool state in `credential-pool-state.json`. Regressions: `test/suite/regressions/issue-3867-real-agent-dir-guard.test.ts` and `issue-3867-built-cli-user-test-env.test.ts` (the built CLI starts under `NODE_ENV=test`/`VITEST` with no senpi marker).
 
 ### Why an extension could not handle it
 

@@ -1,16 +1,16 @@
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { assertAgentDirAllowedInTests, getAgentDir, RealAgentDirInTestError } from "../src/config.ts";
+import { assertAgentDirAllowedInTests, getAgentDir, RealAgentDirInTestError } from "../../../src/config.ts";
 
 // #3867: a run without the quarantine setup resolved the real agent dir and left faux pool state there.
 // Every case below only resolves a path; nothing is written.
 
 const realHome = userInfo().homedir;
-const underTest = { VITEST: "true" };
+const underTest = { SENPI_TEST_AGENT_DIR_GUARD: "1" };
 
 describe("assertAgentDirAllowedInTests", () => {
-	test.each([".senpi", ".omo", ".pi"])("throws for the real home's %s agent dir under a test runner", (brandDir) => {
+	test.each([".senpi", ".omo", ".pi"])("throws for the real home's %s agent dir in a guarded senpi test run", (brandDir) => {
 		expect(() => assertAgentDirAllowedInTests(join(realHome, brandDir, "agent"), ".senpi", underTest)).toThrow(
 			RealAgentDirInTestError,
 		);
@@ -25,10 +25,10 @@ describe("assertAgentDirAllowedInTests", () => {
 		);
 	});
 
-	test("treats bun test (NODE_ENV=test) as a test runner", () => {
-		expect(() =>
-			assertAgentDirAllowedInTests(join(realHome, ".omo", "agent"), ".senpi", { NODE_ENV: "test" }),
-		).toThrow(RealAgentDirInTestError);
+	test("never fires for a user's own process that merely looks like a test run", () => {
+		const real = join(realHome, ".senpi", "agent");
+		expect(() => assertAgentDirAllowedInTests(real, ".senpi", { NODE_ENV: "test" })).not.toThrow();
+		expect(() => assertAgentDirAllowedInTests(real, ".senpi", { VITEST: "true" })).not.toThrow();
 	});
 
 	test("allows temp dirs, look-alike siblings, the explicit opt-in, and non-test processes", () => {
@@ -42,7 +42,7 @@ describe("assertAgentDirAllowedInTests", () => {
 	});
 });
 
-describe("getAgentDir under a test runner", () => {
+describe("getAgentDir in a guarded senpi test run", () => {
 	afterEach(() => {
 		vi.unstubAllEnvs();
 	});

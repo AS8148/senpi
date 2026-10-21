@@ -17,7 +17,7 @@ test("quarantineAgentDirEnv replaces every inherited agent-dir lane with the run
 
 		const next = quarantineAgentDirEnv(inherited, root);
 
-		assert.deepEqual(next, { UNRELATED: "keep", SENPI_CODING_AGENT_DIR: join(root, "agent") });
+		assert.deepEqual(next, { UNRELATED: "keep", SENPI_CODING_AGENT_DIR: join(root, "agent"), SENPI_TEST_AGENT_DIR_GUARD: "1" });
 		assert.ok(existsSync(join(root, "agent")));
 		assert.equal(inherited.OMO_CODING_AGENT_DIR, "/home/user/.omo/agent");
 	} finally {

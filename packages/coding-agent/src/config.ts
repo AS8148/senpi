@@ -654,8 +654,9 @@ export class RealAgentDirInTestError extends Error {
 	}
 }
 
-function isTestRun(env: NodeJS.ProcessEnv): boolean {
-	return env.VITEST !== undefined || env.NODE_ENV === "test";
+/** Set only by senpi's own test harness (scripts/test-agent-dir.mjs), never inferred from VITEST or NODE_ENV. */
+function isGuardedTestRun(env: NodeJS.ProcessEnv): boolean {
+	return env.SENPI_TEST_AGENT_DIR_GUARD === "1";
 }
 
 function realHomeDir(): string | undefined {
@@ -667,7 +668,7 @@ function realHomeDir(): string | undefined {
 }
 
 /**
- * Throws `RealAgentDirInTestError` when a test run (Vitest or `bun test`) resolves an agent
+ * Throws `RealAgentDirInTestError` when a senpi test run (`SENPI_TEST_AGENT_DIR_GUARD=1`) resolves an agent
  * directory inside the real user's brand config directory. The real home comes from the account
  * database, not `$HOME`, so a test that redirects `$HOME` to a temp dir still resolves freely.
  */
@@ -676,7 +677,7 @@ export function assertAgentDirAllowedInTests(
 	activeConfigDirName: string,
 	env: NodeJS.ProcessEnv = process.env,
 ): void {
-	if (!isTestRun(env) || env.SENPI_TEST_USE_REAL_AGENT_DIR === "1") return;
+	if (!isGuardedTestRun(env) || env.SENPI_TEST_USE_REAL_AGENT_DIR === "1") return;
 	const home = realHomeDir();
 	if (!home) return;
 	const target = resolve(agentDir);
