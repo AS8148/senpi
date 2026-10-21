@@ -40,9 +40,15 @@ export class StreamWatcher {
 	): WatchOutcome {
 		const track = this.#trackFor(source, streamKey);
 		const detectorCtx: DetectorContext = { source, streamKey, generation };
-		const leakMatch = this.#disabledBuiltin.has(CONTROL_LEAK_RULE_NAME)
-			? null
-			: this.#leakDetector.checkDelta(track.leak, delta, detectorCtx);
+		// A tool call's arguments are structured data the tool validates (JSON for show_html_page, a
+		// patch for apply_patch, ...), not model prose where a leaked chat-control token means
+		// anything. Running the control-token-leak guard there aborted ordinary payloads: 4+
+		// consecutive closing tags like </div></div></div></div> in an HTML argument latched it
+		// (omo#10789). The guard watches assistant text and thinking, never tool arguments.
+		const leakMatch =
+			source === "tool" || this.#disabledBuiltin.has(CONTROL_LEAK_RULE_NAME)
+				? null
+				: this.#leakDetector.checkDelta(track.leak, delta, detectorCtx);
 		const collapseMatch = this.#disabledBuiltin.has(COLLAPSE_RULE_NAME)
 			? null
 			: collapseDetector.checkDelta(track.collapse, delta, detectorCtx);

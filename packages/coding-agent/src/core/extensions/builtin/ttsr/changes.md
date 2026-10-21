@@ -1,3 +1,17 @@
+## 2026-10-21 — The control-token-leak guard no longer watches tool arguments (omo#10789)
+
+### What changed
+- `watch.ts` `StreamWatcher.handleDelta` skips the control-token-leak detector for `source: "tool"` deltas. Assistant text and thinking are still watched exactly as before. The collapse detector and TTSR rules are unchanged for every source.
+
+### Why
+- A tool call's arguments are structured data the tool validates, not model prose where a leaked chat-control token means anything. `show_html_page`'s `html` argument streams as tool deltas, and four or more consecutive closing tags (`</div></div></div></div>`, the `sgml` family at `RUN_THRESHOLD_NORMAL = 4`) latched the guard. It surfaced "Degeneration guard: control-token leakage" and resampled the turn, so large pages could not be shown (omo#10789).
+
+### Test
+- `test/ttsr/detector-control-leak-tool-source.test.ts`: an HTML tool argument with four consecutive closing tags does not fire (RED before the change). A genuine `</s>` run in assistant text still fires.
+
+### Paths
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/watch.ts`
+
 # TTSR Fork Tracker
 
 ## 2026-10-09 - A failed engine pause write preserves the TTSR stop announcement (senpi#3014)
