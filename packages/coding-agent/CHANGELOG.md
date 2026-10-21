@@ -10,7 +10,7 @@
 
 ### Fixed
 
-- `--session <id>` finds a session by the id its file name carries (`<timestamp>_<id>.jsonl`, the id a resume hint prints) even when the header records another id, and opening a not-yet-existing session file adopts the file-name id (code-yeongyu/oh-my-openagent#7471).
+- `--session <id>`, `--session-id <id>` and the resume picker's search find a session by the id its file name carries (`<timestamp>_<id>.jsonl`, the id a resume hint prints) even when the header records another id, and opening a not-yet-existing session file adopts the file-name id, so a second process opening a just-minted path no longer writes a different id into the header (code-yeongyu/oh-my-openagent#7471).
 - An idle RPC host (one open session, no work) no longer wakes about eleven times a second. While its supervisor pipe is watched, the supervisor pid is checked every 5 s instead of every 250 ms, and the event-loop stall probe ticks once a second after 2 s without session work, going back to 200 ms as soon as a session works. This cuts the idle CPU of every thread host the desktop keeps open ([#3738](https://github.com/code-yeongyu/senpi/issues/3738)).
 ### Removed
 

@@ -2,11 +2,11 @@
 
 ### What changed
 
-- `packages/coding-agent/src/main.ts`: `resolveSessionPath` matches the header id first, then the id the file name carries, then an id prefix, for both the project and the global listing.
+- `packages/coding-agent/src/main.ts`: `resolveSessionPath` matches the header id first, then the id the file name carries, then an id prefix, for both the project and the global listing. `findLocalSessionByExactId` (`--session-id`) also matches the id the file name carries, so it opens that session instead of creating a second file under the same id.
 
 ### Why
 
-A session file named `<timestamp>_<id>.jsonl` whose header carried a different id could not be opened with `--session <id>`, though the file name (and the resume hint printed from it) named that id.
+A session file named `<timestamp>_<id>.jsonl` whose header carried a different id could not be opened with `--session <id>`, though the file name (and the resume hint printed from it) named that id; `--session-id <id>` then created a second session under the same id.
 
 ### Why an extension could not handle it
 
@@ -14,7 +14,7 @@ Session creation and `--session` resolution run in core before any extension is 
 
 ### Expected merge conflict zones
 
-- `main.ts`: `resolveSessionPath` and its import line.
+- `main.ts`: `resolveSessionPath`, `findLocalSessionByExactId` and the import line.
 
 ## 2026-10-19 - Print mode stops waiting for a silent stdin pipe (senpi#3715)
 

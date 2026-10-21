@@ -332,7 +332,10 @@ async function findLocalSessionByExactId(
 	sessionDir?: string,
 ): Promise<{ type: "local"; path: string } | undefined> {
 	const localSessions = sessionDir ? await SessionManager.listAll(sessionDir) : await SessionManager.list(cwd);
-	const localMatch = localSessions.find((s) => s.id === sessionId);
+	// The id a file name carries counts too: a session named after it must not get a second file under that id.
+	const localMatch =
+		localSessions.find((s) => s.id === sessionId) ??
+		localSessions.find((s) => sessionFileNameId(s.path) === sessionId);
 	return localMatch ? { type: "local", path: localMatch.path } : undefined;
 }
 
