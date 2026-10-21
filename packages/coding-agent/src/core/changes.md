@@ -2,9 +2,8 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/agent-session.ts`: an input release admitted into a turn that was already streaming finishes once the run settles idle (`_emitAgentIdleAfterDeferredTurns`), and a person's input that opened the release but ended with no disposition at all (refused before acceptance, thrown, cancelled) gives its release back in `prompt()`'s `finally`; only the input that opened the release may give it back, and a handled command keeps its release for the follow-on input it dispatches.
-- `packages/coding-agent/src/core/engine-turn-input.ts`, `packages/coding-agent/src/core/engine-turn-hold.ts`: `begin()` reports whether this input opened the release; `abandon()` / `abandonRelease()` lower the release barrier, clear the goal deferral and restore the released holds unless held wakes were already delivered.
-- `packages/coding-agent/src/core/input-origin.ts`, `packages/coding-agent/src/core/agent-session.ts`: one `InputOrigin` (`person` | `extension` | `engine`) classified at the entry point (prompt, steer and follow-up by input source; turn-triggering custom messages by type) replaces the scattered `source !== "extension"` checks of this PR, and `_promptAgent` takes an options object carrying it.
+- `packages/coding-agent/src/core/agent-session.ts`, `packages/coding-agent/src/core/engine-turn-input.ts`: every input release settles at ONE point, `_settleInputRelease()`, once nothing can still admit it (no prompt in flight, since a command's follow-on enters `prompt()` synchronously, and no run active). It runs from every `prompt()` `finally`, from run settlement (`_emitAgentIdleAfterDeferredTurns`), and after an answer is dispatched (`questionInput`). A release some input admitted finishes; one no input admitted (handled, no-op command, thrown, cancelled, refused, an answer without a follow-on) is given back through `EngineTurnHold.abandonRelease()`, which lowers the barrier, clears the goal deferral and restores the released holds.
+- `packages/coding-agent/src/core/input-origin.ts`, `packages/coding-agent/src/core/agent-session.ts`: one `InputOrigin` (`person` | `extension` | `engine`) classified at the entry point (prompt, steer and follow-up by input source; turn-triggering custom messages by type, including the hold gate) replaces the scattered `source !== "extension"` checks of this PR, and `_promptAgent` takes an options object carrying it.
 
 ### Why
 
@@ -16,7 +15,7 @@
 
 ### Expected merge conflict zones
 
-- LOW: `packages/coding-agent/src/core/agent-session.ts`, the end of `_emitAgentIdleAfterDeferredTurns`, the `finally` of `prompt()`, `_queueUserInput`'s person check, and the `_promptAgent` signature and its two callers.
+- LOW: `packages/coding-agent/src/core/agent-session.ts`, the end of `_emitAgentIdleAfterDeferredTurns`, the `finally` of `prompt()`, `questionInput`, the custom-message hold gate, `_queueUserInput`'s person check, and the `_promptAgent` signature and its two callers.
 
 ## 2026-10-21 - Release held wakes once without changing attended turns (senpi#3853)
 

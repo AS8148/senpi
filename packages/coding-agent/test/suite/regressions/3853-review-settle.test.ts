@@ -1,6 +1,7 @@
 import { afterEach, expect, it } from "vitest";
 import type { ExtensionAPI } from "../../../src/core/extensions/types.ts";
 import { MANUAL_CONTINUE_CUSTOM_TYPE } from "../../../src/core/manual-continue.ts";
+import { releaseQuestionInput } from "../../../src/core/question-input.ts";
 import type { Harness } from "../harness.ts";
 import { heldHarness, wake } from "./3853-review-support.ts";
 
@@ -116,6 +117,51 @@ it("gives the release back when the input is aborted before admission", async ()
 	await expect(h.session.prompt("aborted", { signal: controller.signal })).rejects.toThrow(
 		"Prompt cancelled before acceptance",
 	);
+	expect(h.faux.state.callCount).toBe(0);
+	expect(h.session.paused).toBe(true);
+	expect(released).toEqual([]);
+	await expectResumeDelivers(h, released);
+});
+
+// senpi#3853 review r3: a person's input that ends "handled" with no follow-on (a no-op command, an input
+// hook that consumes it) or an answer delivered without a follow-on must settle too: the release is given
+// back, so the session stays paused and Resume delivers. Reviewer repro: goal + one held codemode wake.
+it.each([
+	[
+		"a no-op command",
+		"/noop",
+		(pi: ExtensionAPI) => pi.registerCommand("noop", { description: "No-op", handler: async () => {} }),
+	],
+	[
+		"an input hook that handles it",
+		"handled elsewhere",
+		(pi: ExtensionAPI) => pi.on("input", () => ({ action: "handled" })),
+	],
+] as const)("gives the release back when %s ends the input with no follow-on", async (_name, text, install) => {
+	const { h, released } = await heldWithInput(install);
+	await h.session.sendCustomMessage(wake, { triggerTurn: true });
+	await h.session.prompt(text);
+	expect(h.faux.state.callCount).toBe(0);
+	expect(h.session.paused).toBe(true);
+	expect(released).toEqual([]);
+	await expectResumeDelivers(h, released);
+});
+
+it("gives a goal-only release back when a no-op command ends the input", async () => {
+	const { h, released } = await heldWithInput((pi) =>
+		pi.registerCommand("noop", { description: "No-op", handler: async () => {} }),
+	);
+	await h.session.prompt("/noop");
+	expect(h.session.paused).toBe(true);
+	expect(released).toEqual([]);
+	await expectResumeDelivers(h, released);
+});
+
+it("gives the release back when an answer arrives with no follow-on", async () => {
+	const { h, released } = await heldWithInput();
+	await h.session.sendCustomMessage(wake, { triggerTurn: true });
+	releaseQuestionInput(h.session.extensionRunner.createContext());
+	await new Promise<void>((resolve) => queueMicrotask(resolve));
 	expect(h.faux.state.callCount).toBe(0);
 	expect(h.session.paused).toBe(true);
 	expect(released).toEqual([]);
