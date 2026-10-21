@@ -1,3 +1,21 @@
+## 2026-10-21 - llama.cpp declares its API key optional (senpi#3869)
+
+### What changed
+
+- `packages/coding-agent/src/extensions/llama/provider.ts`: the llama.cpp `apiKey` auth sets `keyOptional: true`, so `Models.login` keeps a login whose optional key prompt was left blank.
+
+### Why
+
+- senpi#3867 made `Models.login` refuse blank keys; a keyless local llama-server is a valid setup. Regression: `test/llama-extension.test.ts` ("logs in through Models.login with no API key").
+
+### Why an extension could not handle it
+
+- This is the in-tree llama extension declaring its own auth metadata.
+
+### Expected merge conflict zones
+
+- LOW: the `apiKey` object in `createLlamaProvider`.
+
 ## 2026-10-21 - Test runs refuse the real agent directory (senpi#3867)
 
 ### What changed
