@@ -1,5 +1,23 @@
 # changes — senpi-monorepo root
 
+## 2026-10-21 - Quarantine the agent dir for every test process (senpi#3867)
+
+### What changed
+
+- `vitest.base.ts`: at config load, a Vitest run that `scripts/run-tests.mjs` did not already quarantine gets a temp `SENPI_CODING_AGENT_DIR` under `tmpdir()` from the fork-only `scripts/test-agent-dir.mjs`. Every inherited `*_CODING_AGENT_DIR` lane is dropped first, and the dir is removed on exit. `scripts/run-tests.mjs` applies the same helper to each run's owned temp root. `SENPI_TEST_USE_REAL_AGENT_DIR=1` keeps the inherited env.
+
+### Why
+
+- senpi#3867: `getAgentDir()` now throws under a test runner when it resolves the real agent dir. Kernels, compiled binaries and other children that tests spawn inherited no quarantined dir, so they resolved, and could write, the real one. Setting it before Vitest forks makes every worker and grandchild inherit the temp dir.
+
+### Why an extension could not handle it
+
+- Test-process environment is fixed before any agent code or extension loads.
+
+### Expected merge conflict zones
+
+- The import block and the module-level block above `workspaceSourcePaths` in `vitest.base.ts`.
+
 ## 2026-10-17 - Pin TypeScript type roots to the repository (senpi#3482)
 
 ### What changed
