@@ -717,7 +717,11 @@ export interface ConfigurationUpdateMessage {
  * Stamped by the agent loop on the final message, so it is persisted with the session.
  */
 export interface AssistantMessageTiming {
-	/** Just before the provider request was issued. */
+	/**
+	 * Just before the stream function was called. A stream function that throws or never starts still gets it, so it
+	 * marks the attempt, not proof that a request reached the provider. An empty-response recovery retry keeps the
+	 * first attempt's value, so time to first token then spans the retries.
+	 */
 	requestedAt: number;
 	/** First streamed text, thinking or tool-call delta. Absent when nothing streamed. */
 	firstTokenAt?: number;
@@ -727,7 +731,8 @@ export interface AssistantMessageTiming {
 	endedAt: number;
 	/**
 	 * Streamed generation time in milliseconds, by the TPS notice's rule (senpi#3393): first delta to last delta,
-	 * or from the response's start when it reasoned before its first delta. Absent when nothing streamed.
+	 * or from the response's start when it reasoned before its first delta. Absent when nothing streamed. Stamped on
+	 * aborted and failed responses too: a consumer computing a rate skips those, as the TPS notice does.
 	 */
 	generationMs?: number;
 }
