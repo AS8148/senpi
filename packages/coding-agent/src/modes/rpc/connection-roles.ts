@@ -12,6 +12,14 @@ export const CONNECTION_ROLE_CAPABILITIES: readonly string[] = [INTERACTIVE_USER
 /** The one connection of a single-session `--mode rpc` process. */
 export const SOLE_CONNECTION = "sole-connection";
 
+/**
+ * The key a connection's roles are kept under. A stdio host (and a worker isolate serving it) reads lines
+ * with no connection id; its one client is the sole connection, so the role is still declared once and fixed.
+ */
+export function roleConnection(connectionId: string | undefined): string {
+	return connectionId ?? SOLE_CONNECTION;
+}
+
 export const CONNECTION_ROLE_FIXED = "connection_role_fixed: interactive_user cannot change after it is declared";
 
 export class ConnectionRoles {
@@ -42,5 +50,10 @@ export class ConnectionRoles {
 
 	release(connectionId: string): void {
 		this.declared.delete(connectionId);
+	}
+
+	/** Forgets every connection, for a worker isolate whose session ends. */
+	clear(): void {
+		this.declared.clear();
 	}
 }

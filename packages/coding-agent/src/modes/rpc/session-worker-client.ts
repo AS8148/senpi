@@ -7,6 +7,7 @@ import { ownProcessStartedAtMs } from "../../core/extensions/builtin/terminal/pr
 import { createWebViewBroker } from "../../core/webview/webview-broker.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import type { RpcConnectionOptions } from "./connection-handler.ts";
+import { roleConnection } from "./connection-roles.ts";
 import type { RpcSessionBinding } from "./session-binding.ts";
 import type { SessionEventWriter } from "./session-event-writer.ts";
 import type { RpcSessionLaunchProfile } from "./session-registry.ts";
@@ -143,7 +144,7 @@ export class SessionWorkerClient {
 			sessionId,
 			capabilities: options.capabilities ?? [],
 			connection: writer.currentConnection(),
-			roles: options.connectionRoles?.rolesOf(writer.currentConnection()),
+			roles: options.connectionRoles?.rolesOf(roleConnection(writer.currentConnection())),
 		});
 		return {
 			handle: async (command) => {
@@ -152,7 +153,7 @@ export class SessionWorkerClient {
 					type: "command",
 					command,
 					connection,
-					roles: options.connectionRoles?.rolesOf(connection),
+					roles: options.connectionRoles?.rolesOf(roleConnection(connection)),
 				});
 			},
 			cancelPendingExtensionUiRequests: () => this.post({ type: "cancel_ui" }),
@@ -279,8 +280,13 @@ export class SessionWorkerClient {
 				return;
 			}
 			case "capabilities":
-				if (message.connection !== undefined)
-					this.options.connectionRoles?.declare(message.connection, message.capabilities);
+				// The isolate already refused a changed role; a refusal here means the two registries drifted.
+				if (
+					this.options.connectionRoles?.declare(roleConnection(message.connection), message.capabilities) === false
+				)
+					process.stderr.write(
+						`senpi rpc worker role drift: connection ${roleConnection(message.connection)} declared a changed role\n`,
+					);
 				this.options.clientInfo?.setCapabilities(message.connection, message.capabilities);
 				acknowledge(message.signal, true);
 				return;
