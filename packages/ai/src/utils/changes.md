@@ -3,7 +3,7 @@
 ### What changed
 
 - `packages/ai/src/utils/estimate.ts`: `calculateContextTokens` prefers `Usage.contextUsage`; an explicit unknown measurement returns zero so transcript estimation supplies context.
-- `packages/ai/src/utils/overflow.ts`: token-based overflow detection uses request context when present rather than cumulative billed tokens. Error-message classification remains independent.
+- `packages/ai/src/utils/overflow.ts`: token-based overflow detection uses request context when present rather than cumulative billed tokens. Error-message classification remains independent. `isRecoverableLength` reads request output when it is measured and falls back to the message output when request context is absent or unknown (`null`), so result-only length stops keep their previous recovery.
 
 ### Why
 

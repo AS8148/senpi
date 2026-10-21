@@ -400,6 +400,12 @@ describe("isContextOverflow", () => {
 		expect(isRecoverableLength(message, 1_024)).toBe(expected);
 	});
 
+	it("falls back to message output for a result-only length stop with unknown context usage", () => {
+		const message = createLengthStopMessage({ input: 2_000, cacheRead: 0, output: 16 });
+		Object.assign(message.usage, { contextUsage: null });
+		expect(isRecoverableLength(message, 1_024)).toBe(true);
+	});
+
 	it("treats zero-output length stops as recoverable without context metadata", () => {
 		const message = createLengthStopMessage({ input: 100, cacheRead: 0, output: 0 });
 		expect(isRecoverableLength(message, 128000)).toBe(true);

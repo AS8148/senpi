@@ -223,8 +223,9 @@ export function isContextOverflow(message: AssistantMessage, contextWindow?: num
  * limit before any context-based clamping.
  */
 export function isRecoverableLength(message: AssistantMessage, desiredMaxOutput: number): boolean {
-	const output = message.usage.contextUsage === undefined ? message.usage.output : message.usage.contextUsage?.output;
-	return message.stopReason === "length" && desiredMaxOutput > 0 && output !== undefined && output < desiredMaxOutput;
+	// Unknown request context (`null`, e.g. a result-only subscription stop) falls back to the message output.
+	const output = message.usage.contextUsage?.output ?? message.usage.output;
+	return message.stopReason === "length" && desiredMaxOutput > 0 && output < desiredMaxOutput;
 }
 
 /**
