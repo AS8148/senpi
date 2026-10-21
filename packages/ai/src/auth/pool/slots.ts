@@ -356,10 +356,15 @@ export class EmptyApiKeyError extends Error {
 	}
 }
 
+/** True when an API-key credential names a `key` that is blank, whitespace or not a string. */
+function hasBlankKey(credential: Credential): boolean {
+	if (credential.type !== "api_key" || !Object.hasOwn(credential, "key")) return false;
+	return typeof credential.key !== "string" || credential.key.trim() === "";
+}
+
 /** Drops a blank or missing `key` from an API-key credential; used only for providers that declare `keyOptional`. */
 export function withoutBlankKey(credential: Credential): Credential {
-	if (credential.type !== "api_key" || !Object.hasOwn(credential, "key")) return credential;
-	if (typeof credential.key === "string" && credential.key.trim() !== "") return credential;
+	if (credential.type !== "api_key" || !hasBlankKey(credential)) return credential;
 	const { key: _blank, ...rest } = credential;
 	return rest;
 }
@@ -369,9 +374,7 @@ export function withoutBlankKey(credential: Credential): Credential {
  * string. Env-only logins (AWS profile or credential chain, Vertex ADC) omit the field and pass.
  */
 export function assertLoginKeyPresent(credential: Credential): void {
-	if (credential.type !== "api_key" || !Object.hasOwn(credential, "key")) return;
-	if (typeof credential.key === "string" && credential.key.trim() !== "") return;
-	throw new EmptyApiKeyError();
+	if (hasBlankKey(credential)) throw new EmptyApiKeyError();
 }
 
 /**

@@ -1,23 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
-import { quarantineAgentDirEnv } from "./scripts/test-agent-dir.mjs";
-
-// A Vitest started without scripts/run-tests.mjs (the codemode gate) still quarantines the agent dir
-// before forking workers, so every worker and the kernels they spawn inherit it (senpi#3867).
-const inheritedAgentDirs = Object.entries(process.env).filter(([key]) => key.endsWith("_CODING_AGENT_DIR"));
-const alreadyQuarantined =
-	process.env.SENPI_TEST_AGENT_DIR_GUARD === "1" &&
-	inheritedAgentDirs.every(([, dir]) => dir?.startsWith(tmpdir() + sep) === true);
-if (!alreadyQuarantined) {
-	const agentRoot = mkdtempSync(join(tmpdir(), "senpi-vitest-agent-"));
-	process.once("exit", () => rmSync(agentRoot, { recursive: true, force: true }));
-	const quarantined = quarantineAgentDirEnv(process.env, agentRoot);
-	for (const key of Object.keys(process.env)) if (!(key in quarantined)) delete process.env[key];
-	Object.assign(process.env, quarantined);
-}
 
 export const workspaceSourcePaths = {
 	chordIndex: fileURLToPath(new URL("./packages/chord/src/index.ts", import.meta.url)),

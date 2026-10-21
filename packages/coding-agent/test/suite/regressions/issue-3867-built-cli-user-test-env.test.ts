@@ -9,14 +9,14 @@ import { assertWorkspaceBuildPrerequisite } from "../../support/workspace-build-
 
 assertWorkspaceBuildPrerequisite(import.meta.url);
 
-// senpi#3869 review: the agent-dir guard must stay inert for a user's own process, even one that
-// looks like a test run (NODE_ENV=test from Jest/bun test, VITEST from a Vitest worker).
+// Startup smoke for the built CLI under a user's test-looking env (senpi#3869 review). The guard's arming
+// contract (no throw for NODE_ENV=test / VITEST without the senpi marker) is owned by issue-3867-real-agent-dir-guard.test.ts.
 const builtCli = fileURLToPath(new URL("../../../dist/cli.js", import.meta.url));
 const builtConfig = fileURLToPath(new URL("../../../dist/config.js", import.meta.url));
 const userTestEnv = { NODE_ENV: "test", VITEST: "true", PI_OFFLINE: "1", PI_SKIP_RUNTIME_NOTICE: "1" };
 const runTempEnv = { TMPDIR: process.env.TMPDIR, TEMP: process.env.TEMP, TMP: process.env.TMP };
 
-describe("the built CLI under a user's test-looking environment (#3867)", () => {
+describe("built CLI startup smoke under a user's test-looking environment (#3867)", () => {
 	let home: string | undefined;
 
 	afterEach(() => {

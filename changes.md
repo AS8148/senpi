@@ -4,11 +4,11 @@
 
 ### What changed
 
-- `vitest.base.ts`: at config load, a Vitest run that `scripts/run-tests.mjs` did not already quarantine gets a temp `SENPI_CODING_AGENT_DIR` under `tmpdir()` from the fork-only `scripts/test-agent-dir.mjs`. Every inherited `*_CODING_AGENT_DIR` lane is dropped first, `SENPI_TEST_AGENT_DIR_GUARD=1` arms the guard for that process tree, and the dir is removed on exit. The block is skipped only when the marker is already set and every inherited `*_CODING_AGENT_DIR` points under `tmpdir()`. `scripts/run-tests.mjs` applies the same helper to each run's owned temp root. `SENPI_TEST_USE_REAL_AGENT_DIR=1` keeps the inherited env.
+- `packages/coding-agent/vitest.config.ts`, `packages/senpi-codemode/vitest.config.ts`: each calls `quarantineVitestAgentDir()` (fork-only `scripts/vitest-agent-dir-quarantine.mjs`) before its config is built. A Vitest run that `scripts/run-tests.mjs` did not already quarantine (the codemode gate calls Vitest directly) gets a temp `SENPI_CODING_AGENT_DIR` under `tmpdir()`. Every inherited `*_CODING_AGENT_DIR` lane is dropped, `SENPI_TEST_AGENT_DIR_GUARD=1` arms the guard for that process tree, and the dir is removed on exit. `scripts/run-tests.mjs` applies the same helper (fork-only `scripts/test-agent-dir.mjs`) to each run's owned temp root. The shared `vitest.base.ts` is untouched, because the evals configs import it and must read the real agent dir.
 
 ### Why
 
-- senpi#3867: `getAgentDir()` now throws in a senpi test run when it resolves the real agent dir. Kernels, compiled binaries and other children that tests spawn inherited no quarantined dir, so they resolved, and could write, the real one. Setting it before Vitest forks makes every worker and grandchild inherit the temp dir.
+- senpi#3867: `getAgentDir()` throws in a senpi test run when it resolves the real agent dir. Kernels, compiled binaries and other children that tests spawn inherited no quarantined dir, so they resolved, and could write, the real one.
 
 ### Why an extension could not handle it
 
@@ -16,7 +16,7 @@
 
 ### Expected merge conflict zones
 
-- The import block and the module-level block above `workspaceSourcePaths` in `vitest.base.ts`.
+- The import block and the line before `export default mergeConfig(` in both `vitest.config.ts` files.
 
 ## 2026-10-17 - Pin TypeScript type roots to the repository (senpi#3482)
 
