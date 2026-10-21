@@ -19,13 +19,15 @@
  * error to a caller that asked for exactly that outcome.
  */
 
-import { createHostDaemonPaths, generationPaths } from "./host-daemon-paths.ts";
+import { createHostDaemonPaths, generationPaths, sameEndpoint } from "./host-daemon-paths.ts";
 import { provenOwner, readHostRegistration, releaseGeneration } from "./host-daemon-registration.ts";
 import { acquireHostEnsureLock } from "./host-ensure-lock.ts";
 import { probeProtocolInfo, probeSessionCount } from "./host-probe.ts";
+import type { HostProtocolInfo } from "./host-protocol-info.ts";
 import { type DrainHostResult, drainHost } from "./host-stop-drain.ts";
 import { compareStopGeneration, type HostStopGeneration } from "./host-stop-generation.ts";
 import { writeStopIntent } from "./host-stop-intent.ts";
+import { startedBeforeRegistration } from "./host-stop-start-time.ts";
 
 export interface StopHostOptions {
 	readonly socket: string;
@@ -104,7 +106,7 @@ async function stopHostLocked(options: StopHostOptions): Promise<StopHostResult>
 	if (options.requireAnswer === true && (host === undefined || sessions === undefined)) {
 		return { action: "refuse", reason: "sessions_live" };
 	}
-	const target = expected === undefined ? owner : await recheckedTarget(paths, options.socket, expected);
+	const target = expected === undefined ? owner : await recheckedTarget(paths, options.socket, expected, host);
 	if (target === undefined) return { action: "refuse", reason: "unknown_owner" };
 	if ("action" in target) return target;
 	await writeStopIntent(generationPaths(paths, target.instanceId), {
@@ -150,12 +152,23 @@ async function recheckedTarget(
 	paths: ReturnType<typeof createHostDaemonPaths>,
 	socket: string,
 	expected: HostStopGeneration,
+	host: HostProtocolInfo | undefined,
 ): Promise<StopRefusal | { readonly pid: number; readonly instanceId: string } | undefined> {
 	const current = await readHostRegistration(paths);
 	const match = compareStopGeneration(current, expected);
 	const refusal = generationRefusal(match);
 	if (refusal !== undefined) return refusal;
 	if (match === "proven" && !(await provenOwner(current, socket))) return undefined;
+	if (match === "bound_without_start_time") {
+		// No start time was recorded (Windows), so prove the same process another way before signalling: this
+		// endpoint, a live process that started before it wrote this registration (a later start is a reused pid),
+		// and, when the host answered, the confirmed instance.
+		if (current?.socket !== undefined && !sameEndpoint(current.socket, socket)) return undefined;
+		if (!(await startedBeforeRegistration(expected.pid, generationPaths(paths, expected.instanceId).pidFile)))
+			return undefined;
+		if (host?.instanceId !== undefined && host.instanceId !== expected.instanceId)
+			return { action: "refuse", reason: "stale_generation" };
+	}
 	return { pid: expected.pid, instanceId: expected.instanceId };
 }
 

@@ -17,6 +17,8 @@ const probes = vi.hoisted(() => ({
 	counts: vi.fn(),
 	unreadable: vi.fn(),
 	beforeRead: [] as Array<() => Promise<void>>,
+	/** Simulated Windows CIM answer for the stop-time probe: a FILETIME string, "gone", or unset (real probe). */
+	liveStart: undefined as string | undefined,
 }));
 vi.mock("../../src/modes/rpc/host-daemon-registration.ts", async (importOriginal) => {
 	const real = await importOriginal<typeof import("../../src/modes/rpc/host-daemon-registration.ts")>();
@@ -28,7 +30,21 @@ vi.mock("../../src/modes/rpc/host-daemon-registration.ts", async (importOriginal
 		},
 	};
 });
-vi.mock("../../src/modes/rpc/host-stop-start-time.ts", () => ({ processStartTimeIsUnreadable: probes.unreadable }));
+vi.mock("../../src/modes/rpc/host-stop-start-time.ts", async (importOriginal) => ({
+	...(await importOriginal<typeof import("../../src/modes/rpc/host-stop-start-time.ts")>()),
+	processStartTimeIsUnreadable: probes.unreadable,
+}));
+vi.mock("../../src/utils/process-identity.ts", async (importOriginal) => {
+	const real = await importOriginal<typeof import("../../src/utils/process-identity.ts")>();
+	return {
+		...real,
+		readProcessStartTime: (...args: Parameters<typeof real.readProcessStartTime>) => {
+			if (probes.liveStart === "gone") return Promise.resolve(undefined);
+			if (probes.liveStart !== undefined) return Promise.resolve(probes.liveStart);
+			return real.readProcessStartTime(...args);
+		},
+	};
+});
 vi.mock("../../src/modes/rpc/host-probe.ts", async (importOriginal) => ({
 	...(await importOriginal<typeof import("../../src/modes/rpc/host-probe.ts")>()),
 	probeProtocolInfo: probes.protocol,
@@ -50,6 +66,7 @@ beforeEach(async () => {
 	probes.counts.mockReset().mockResolvedValue(IDLE);
 	probes.unreadable.mockReset().mockReturnValue(false);
 	probes.beforeRead.length = 0;
+	probes.liveStart = undefined;
 });
 const children: ChildProcess[] = [];
 afterEach(async () => {
@@ -87,6 +104,7 @@ async function fixture(recorded: string | null) {
 describe("binding a stop when the process start time is unreadable", () => {
 	it("on Windows binds pid + instance + generation and signals exactly the confirmed pid", async () => {
 		probes.unreadable.mockReturnValue(true);
+		probes.liveStart = windowsFileTime(Date.now() - 60_000);
 		const qa = await fixture(null);
 		expect(
 			await stopHost({ socket: qa.socket, agentDir: root, force: true, expectedGeneration: qa.expected(null) }),
@@ -96,6 +114,38 @@ describe("binding a stop when the process start time is unreadable", () => {
 			targetPid: process.pid,
 			reason: "operator_stop",
 		});
+	});
+
+	it("on Windows refuses a reused pid: the live process started after the registration was written", async () => {
+		probes.unreadable.mockReturnValue(true);
+		const qa = await fixture(null);
+		probes.liveStart = windowsFileTime(Date.now() + 60_000);
+		expect(
+			await stopHost({ socket: qa.socket, agentDir: root, force: true, expectedGeneration: qa.expected(null) }),
+		).toEqual({ action: "refuse", reason: "unknown_owner" });
+		expect(qa.signals()).toEqual([]);
+		expect(await qa.intent()).toBeUndefined();
+	});
+
+	it("on Windows refuses a confirmed pid whose process is gone", async () => {
+		probes.unreadable.mockReturnValue(true);
+		const qa = await fixture(null);
+		probes.liveStart = "gone";
+		expect(
+			await stopHost({ socket: qa.socket, agentDir: root, force: true, expectedGeneration: qa.expected(null) }),
+		).toEqual({ action: "refuse", reason: "unknown_owner" });
+		expect(qa.signals()).toEqual([]);
+	});
+
+	it("on Windows refuses when the answering host is another instance", async () => {
+		probes.unreadable.mockReturnValue(true);
+		probes.liveStart = windowsFileTime(Date.now() - 60_000);
+		const qa = await fixture(null);
+		probes.protocol.mockResolvedValue({ instanceId: "successor" });
+		expect(
+			await stopHost({ socket: qa.socket, agentDir: root, force: true, expectedGeneration: qa.expected(null) }),
+		).toEqual({ action: "refuse", reason: "stale_generation" });
+		expect(qa.signals()).toEqual([]);
 	});
 
 	it("off Windows refuses an unprovable identity as unknown_owner, not stale_generation", async () => {
@@ -201,7 +251,12 @@ describe("the signal target of a generation-bound stop", () => {
 			force: true,
 			expectedGeneration: qa.expected(start),
 		});
-		expect(qa.signals().filter(([pid]) => pid === stranger.pid)).toEqual([]);
-		expect(result).not.toEqual({ action: "stopped", pid: stranger.pid });
+		expect(qa.signals()).toEqual([]);
+		expect(result).toEqual({ action: "refuse", reason: "stale_generation" });
 	});
 });
+
+/** A Windows CIM `CreationDate.ToFileTimeUtc()` value for `ms`. */
+function windowsFileTime(ms: number): string {
+	return (BigInt(Math.trunc(ms)) * 10_000n + 116_444_736_000_000_000n).toString();
+}
