@@ -1,3 +1,4 @@
+import { releaseQuestionInput } from "../../../question-input.ts";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../../types.ts";
 import { WAKE_SOURCE_STATE_EVENT, type WakeSourceStateEvent } from "../monitor-state-event.ts";
 import { TOOL_NAMES } from "./family.ts";
@@ -70,8 +71,10 @@ export function deliverAnswer(
 	variant: "codex" | "claude",
 ): void {
 	if (response.status === "cancelled") return;
+	const content = formatUserMessage(response, request.requestId, request.questions, request.required === true);
 	const answeredByPerson = response.status === "answered" || response.status === "comment-submitted";
-	pi.sendUserMessage(formatUserMessage(response, request.requestId, request.questions, request.required === true), {
+	if (answeredByPerson) releaseQuestionInput(ctx);
+	pi.sendUserMessage(content, {
 		deliverAs: ctx.isIdle() ? "followUp" : "steer",
 		...(answeredByPerson ? { inputOrigin: "person" as const } : {}),
 	});

@@ -164,6 +164,8 @@ import {
 	userTextEquals,
 } from "./edited-user-message.ts";
 import { ENGINE_PAUSED_ENTRY_TYPE, enginePauseSinceLastTurn, settledRepetitiveTurnPause } from "./engine-paused.ts";
+import { EngineTurnHold, engineTurnHoldHistory, engineWakeSource, type SessionHoldEvent } from "./engine-turn-hold.ts";
+import { EngineTurnInput } from "./engine-turn-input.ts";
 import {
 	ENGINE_TURN_LIMIT_ENTRY_TYPE,
 	ENGINE_TURN_LIMIT_EVENT,
@@ -174,6 +176,7 @@ import {
 	engineTurnStop,
 	isUserDirectedTurn,
 } from "./engine-turn-limit.ts";
+import { EngineTurnRelease } from "./engine-turn-release.ts";
 import {
 	type EnvironmentContext,
 	environmentContextMessageIfChanged,
@@ -509,6 +512,7 @@ export type AgentSessionEvent =
 	/** The session's tool child changed state (senpi#3566; the minimal record todo 14 extends). */
 	| { type: "session_tool_child"; state: "spawned" | "exited" | "respawned"; generation: number; pid: number }
 	| { type: "session_abort" }
+	| SessionHoldEvent
 	| {
 			type: "resume_compaction_required";
 			projection: ModelUsabilityBudgetProjection;
@@ -1035,13 +1039,6 @@ export type ClearedQueue = {
 };
 
 /** Options accepted by the queued-input entry points `steer()` and `followUp()`. */
-/** How `_promptAgent` starts a run; `inputOrigin` tags a prompt a competing run displaces into the steer queue. */
-interface PromptAgentOptions {
-	readonly deferredTurnClaim?: DeferredTurnClaim;
-	readonly onQueuedInput?: (input: PreparedClientInput) => void;
-	readonly inputOrigin?: InputOrigin;
-}
-
 /** An explicit origin (a person's answer sent through the extension API) wins over the one its source implies. */
 function originOf(
 	options: { readonly source?: InputSource; readonly inputOrigin?: InputOrigin } | undefined,
@@ -1235,6 +1232,10 @@ export class AgentSession {
 	/** User-abort generation at the start of an idle trigger turn's awaited admission hooks. */
 	private _triggerTurnAdmissionAbortGeneration: number | undefined;
 	private _engineTurnStarts: EngineTurnStartRecord[] = [];
+	private _engineResumeWindow: boolean;
+	private readonly _engineTurnHold: EngineTurnHold;
+	private readonly _engineTurnRelease = new EngineTurnRelease();
+	private readonly _engineTurnInput: EngineTurnInput;
 	private _engineTurnPauseRecorded = false;
 	// The pause warning is shown once per pause: a stream of refused events would otherwise add one line each (senpi#2537).
 	private _engineTurnPauseNotified = false;
@@ -1671,6 +1672,15 @@ export class AgentSession {
 			type: "session_start",
 			reason: "startup",
 		};
+		this._engineResumeWindow = this._sessionStartEvent.attended === false;
+		this._engineTurnHold = new EngineTurnHold(
+			this.sessionManager.reduceHistory(engineTurnHoldHistory),
+			this._sessionStartEvent.attended === false,
+			(type, data) => this._emitEntryAppended(this.sessionManager.appendCustomEntry(type, data)),
+			(message) => this._extensionRunner.getUIContext().notify(message, "info"),
+			(event) => this._emit(event),
+		);
+		this._engineTurnInput = new EngineTurnInput(this._engineTurnHold);
 		this._autoTitleSessions = config.autoTitleSessions ?? false;
 
 		const initialModel = this.agent.state.model;
@@ -2986,13 +2996,22 @@ export class AgentSession {
 		this.releaseSettledSessionMemory();
 		this._deadlineTracker.disarm();
 		this._emit({ type: "agent_idle" });
+		// An input release admitted into a turn that was already streaming completes here, once the run settles.
+		await this._engineTurnInput.finish((sources) => this._extensionRunner.emitHeldWakesReleased(sources));
 	}
 
 	private async _promptAgent(
 		messages: AgentMessage | AgentMessage[],
-		options: PromptAgentOptions = {},
+		{
+			inputOrigin,
+			deferredTurnClaim,
+			onQueuedInput,
+		}: {
+			readonly inputOrigin: InputOrigin;
+			readonly deferredTurnClaim?: DeferredTurnClaim;
+			readonly onQueuedInput?: (input: PreparedClientInput) => void;
+		},
 	): Promise<void> {
-		const { deferredTurnClaim, onQueuedInput, inputOrigin = "engine" } = options;
 		deferredTurnClaim?.resolve("started");
 		if (!this._isAgentRunActive) this.externalAdmission.beginTurn();
 		this._isAgentRunActive = true;
@@ -3634,6 +3653,7 @@ export class AgentSession {
 			// whether or not the chain has a candidate left.
 			if (
 				msg.stopReason === "error" &&
+				!this._isLocalFailure(msg) &&
 				(isHealthExhaustionFailure(msg.errorMessage) || usageLimitScope(msg.errorMessage) === "account") &&
 				this.model
 			) {
@@ -4216,6 +4236,7 @@ export class AgentSession {
 	 */
 	dispose(): void {
 		this._disposed = true;
+		this._engineTurnHold.invalidate();
 		this._deadlineTracker.disarm();
 		for (const dispose of this._toolContextDisposers) dispose();
 		try {
@@ -5153,21 +5174,36 @@ export class AgentSession {
 			command: this._isExtensionCommandText(text, options),
 			submittedByCommand: options?.source === "extension",
 		});
+		const origin = inputOriginOf(options?.source);
+		let ownsRelease = false;
+		let disposed = false;
 		try {
-			if (options?.source !== "extension") {
-				emitUserActivity(this, "prompt");
-				this._deadlineTracker.clearHold();
-			}
+			ownsRelease = origin === "person" && this._beginPersonInput();
 			await this._prompt(text, {
 				...options,
 				promptDisposition: (disposition) => {
+					disposed = true;
 					hold.accepted();
+					if (disposition === "started" || disposition === "queued")
+						this._engineTurnInput.admit(disposition === "queued", (message) => this.agent.steer(message));
 					options?.promptDisposition?.(disposition);
 				},
 			});
+			if (this.isIdle)
+				await this._engineTurnInput.finish((sources) => this._extensionRunner.emitHeldWakesReleased(sources));
 		} finally {
+			// An input that opened the release and ended with no disposition (thrown, cancelled) gives it back.
+			if (ownsRelease && !disposed) this._engineTurnInput.abandon();
 			hold.end();
 		}
+	}
+
+	/** A person's input (prompt, steer, follow-up, answer) attends the session and releases what it holds. */
+	private _beginPersonInput(): boolean {
+		emitUserActivity(this, "prompt");
+		this._deadlineTracker.clearHold();
+		this._engineResumeWindow = false;
+		return this._engineTurnInput.begin();
 	}
 
 	private _isExtensionCommandText(text: string, options?: PromptOptions): boolean {
@@ -5598,6 +5634,7 @@ export class AgentSession {
 			if (environmentContext) messages.push(environmentContext);
 
 			// Add user message
+			messages.push(...this._engineTurnInput.messages());
 			const userContent: (TextContent | ImageContent)[] = userTextContent(expandedText, options?.textBlocks);
 			if (currentImages) {
 				userContent.push(...currentImages);
@@ -5658,8 +5695,8 @@ export class AgentSession {
 			this.setSessionThinkingLevel(options.thinkingLevel);
 		}
 		await this._promptAgent(messages, {
-			...(options?.onQueuedInput ? { onQueuedInput: options.onQueuedInput } : {}),
 			inputOrigin: originOf(options),
+			onQueuedInput: options?.onQueuedInput,
 		});
 		await this.waitForRetry();
 		await this.waitForIdle();
@@ -5863,10 +5900,12 @@ export class AgentSession {
 		behavior: "steer" | "followUp",
 		options?: QueuedInputOptions,
 	): Promise<QueuedInputDisposition> {
-		if (options?.source !== "extension") {
-			emitUserActivity(this, "prompt");
-			this._deadlineTracker.clearHold();
+		const origin = inputOriginOf(options?.source);
+		if (origin === "person" && this._engineTurnHold.held) {
+			await this.prompt(text, { ...options, images, streamingBehavior: behavior });
+			return "queued";
 		}
+		if (origin === "person") this._beginPersonInput();
 		// Check for extension commands (cannot be queued)
 		if (text.startsWith("/")) {
 			this._throwIfExtensionCommand(text);
@@ -6152,6 +6191,7 @@ export class AgentSession {
 			deliverAs?: "steer" | "followUp" | "nextTurn";
 		},
 		deferredTurnClaim?: DeferredTurnClaim,
+		releasedWake?: () => boolean,
 	): Promise<void> {
 		const userAbortGeneration = this._userAbortGeneration;
 		const appMessage = {
@@ -6163,6 +6203,18 @@ export class AgentSession {
 			details: message.details,
 			timestamp: Date.now(),
 		} satisfies CustomMessage<T>;
+		if (
+			!releasedWake &&
+			!isUserDirectedTurn(message.customType) &&
+			options?.deliverAs !== "nextTurn" &&
+			options?.triggerTurn !== false &&
+			(this.isStreaming || options?.triggerTurn === true) &&
+			this._engineTurnHold.holdsSource(engineWakeSource(message.customType))
+		) {
+			this._engineTurnHold.note(engineWakeSource(message.customType), appMessage);
+			deferredTurnClaim?.resolve("finished-without-start");
+			return;
+		}
 		const waitForExistingSessionWork =
 			options?.triggerTurn === true &&
 			options.deliverAs !== "nextTurn" &&
@@ -6186,6 +6238,7 @@ export class AgentSession {
 			if (options?.deliverAs === "nextTurn") {
 				this._pendingNextTurnMessages.push(appMessage);
 			} else if (this.isStreaming && options?.triggerTurn !== false) {
+				if (releasedWake) return;
 				deferredTurnClaim?.resolve("delegated");
 				if (options?.deliverAs === "followUp") {
 					this.agent.followUp(appMessage);
@@ -6199,6 +6252,7 @@ export class AgentSession {
 						this._compactionLifecycle.state.generation === activeCompactionGeneration &&
 						this._compactionLifecycle.state.status !== "completed"))
 			) {
+				if (releasedWake) return;
 				deferredTurnClaim?.resolve("delegated");
 				if (options?.deliverAs === "followUp") {
 					this.agent.followUp(appMessage);
@@ -6206,12 +6260,14 @@ export class AgentSession {
 					this.agent.steer(appMessage);
 				}
 			} else if (options?.triggerTurn && this._stopEngineTurn(message.customType)) {
-				this._recordRefusedEngineTurnMessage(appMessage);
+				if (!releasedWake) this._recordRefusedEngineTurnMessage(appMessage);
 			} else if (options?.triggerTurn) {
 				finishSessionWork ??= this._sessionWorkBarrier.begin();
 				const environmentContext = this._pendingEnvironmentContextMessage();
 				const messages: AgentMessage[] = environmentContext ? [environmentContext, appMessage] : [appMessage];
 				const queueTriggerForLater = (): void => {
+					// A released wake stays in notice custody until final admission claims it.
+					if (releasedWake) return;
 					if (options.deliverAs === "followUp") {
 						this.agent.followUp(appMessage);
 					} else {
@@ -6253,11 +6309,10 @@ export class AgentSession {
 				} finally {
 					this._triggerTurnAdmissionAbortGeneration = undefined;
 				}
-				if (!isUserDirectedTurn(message.customType)) this._recordEngineTurnStart(message.customType);
-				await this._promptAgent(messages, {
-					...(deferredTurnClaim ? { deferredTurnClaim } : {}),
-					inputOrigin: customTurnOrigin(message.customType),
-				});
+				if (releasedWake && !releasedWake()) return;
+				const inputOrigin = customTurnOrigin(message.customType);
+				if (inputOrigin === "engine") this._recordEngineTurnStart(message.customType);
+				await this._promptAgent(messages, { inputOrigin, deferredTurnClaim });
 			} else if (this.isStreaming) {
 				this._pendingCustomMessages.push(appMessage);
 			} else {
@@ -6267,6 +6322,40 @@ export class AgentSession {
 			deferredTurnClaim?.resolve("finished-without-start");
 			finishSessionWork?.();
 		}
+	}
+
+	/** Explicit user Resume; attachment alone must never call this. */
+	resumeSession(): Promise<void> {
+		return this._engineTurnRelease.resume(
+			this._engineTurnHold,
+			async (message, admit) => {
+				const generation = this._userAbortGeneration;
+				await this.waitForIdle();
+				const claim = new DeferredTurnClaim();
+				await this.sendCustomMessage(message, { triggerTurn: true }, claim, admit);
+				if ((await claim.disposition) !== "started") return false;
+				await this.waitForIdle();
+				if (generation !== this._userAbortGeneration) {
+					this._engineTurnHold.invalidate();
+					this._engineTurnHold.rejectInput();
+					return false;
+				}
+				return true;
+			},
+			(sources) => this._extensionRunner.emitHeldWakesReleased(sources),
+		);
+	}
+
+	get paused(): boolean {
+		return this._engineTurnHold.isHeld();
+	}
+
+	get pausedNoticeCount(): number {
+		return this._engineTurnHold.noticeCount;
+	}
+
+	get holds() {
+		return this._engineTurnHold.holds;
 	}
 
 	/**
@@ -6308,6 +6397,7 @@ export class AgentSession {
 	private _observeEngineTurnMessage(message: AgentMessage): void {
 		if (message.role === "user" || (message.role === "custom" && isUserDirectedTurn(message.customType))) {
 			this._engineTurnStarts = [];
+			this._engineResumeWindow = false;
 			this._engineTurnPauseRecorded = false;
 			this._engineTurnPauseNotified = false;
 			return;
@@ -6332,7 +6422,12 @@ export class AgentSession {
 		const stop = engineTurnStop(
 			this.sessionManager.reduceHistory(engineTurnHistory),
 			Date.now(),
-			this.settingsManager.getEngineTurnSettings(),
+			{
+				...this.settingsManager.getEngineTurnSettings(),
+				maxPerResumeWindow: this._engineResumeWindow
+					? this.settingsManager.getEngineTurnSettings().maxPerResumeWindow
+					: 0,
+			},
 			this._engineTurnStarts,
 		);
 		if (stop === null) return false;
@@ -6342,9 +6437,14 @@ export class AgentSession {
 			try {
 				this._emitEntryAppended(
 					this.sessionManager.appendCustomEntry(ENGINE_PAUSED_ENTRY_TYPE, {
-						reason: stop.reason === "per-user-input" ? "cap-per-message" : "cap-per-minute",
+						reason:
+							stop.reason === "resume-window"
+								? "cap-per-resume-window"
+								: stop.reason === "per-user-input"
+									? "cap-per-message"
+									: "cap-per-minute",
 						customType,
-						count: stop.reason === "per-user-input" ? stop.sinceUserInput : stop.toolFreeInWindow,
+						count: stop.reason !== "tool-free-rate" ? stop.sinceUserInput : stop.toolFreeInWindow,
 						at: details.at,
 					}),
 				);
@@ -6418,6 +6518,14 @@ export class AgentSession {
 		},
 		deferredTurnClaim?: DeferredTurnClaim,
 	): Promise<void> {
+		if (this._engineTurnHold.held) {
+			await this.sendCustomMessage(
+				{ customType: "extension-user-message", content, display: true },
+				{ triggerTurn: true, deliverAs: options?.deliverAs },
+				deferredTurnClaim,
+			);
+			return;
+		}
 		const bindingPromptReadiness = this._extensionBindingPromptReadiness;
 		let resolveBindingPromptReadiness: (() => void) | undefined;
 		if (bindingPromptReadiness) {
@@ -9733,6 +9841,7 @@ export class AgentSession {
 			}
 
 			this._applyExtensionBindings(this._extensionRunner);
+			this._engineTurnHold.start();
 			this.syncPromptCacheSafeWaitEnv();
 			await this._extensionRunner.emit(this._sessionStartEvent);
 			this._enforceConfiguredDefaultTools();
@@ -9964,6 +10073,12 @@ export class AgentSession {
 				getEffectiveServiceTier: () => this.effectiveServiceTier,
 				getScopedModels: () => this._scopedModels,
 				isIdle: () => this.isIdle,
+				engineTurnsHeld: () => this._engineTurnHold.holdsSource("goal"),
+				noteHeldWake: (source) => this._engineTurnHold.note(source),
+				questionInput: () => {
+					this._engineTurnInput.begin();
+					this._engineResumeWindow = false;
+				},
 				getAgentDir: () => this._agentDir,
 				isProjectTrusted: () => this.settingsManager.isProjectTrusted(),
 				getSignal: () => this._extensionEventSignal ?? this.agent.signal,
@@ -10634,6 +10749,7 @@ export class AgentSession {
 	private _isRetryableError(message: AssistantMessage): boolean {
 		// Providers mark post-delta failures to prevent replaying visible text/tool calls.
 		if (message.errorMessage?.startsWith(TURN_RETRY_SUPPRESSION_PREFIX)) return false;
+		if (this._isLocalFailure(message)) return false;
 
 		// Context overflow is handled by compaction, not retry.
 		if (isContextOverflow(message, (this._modelForMessage(message) ?? this.model)?.contextWindow ?? 0)) return false;
@@ -10646,6 +10762,16 @@ export class AgentSession {
 		}
 
 		return isRetryableAssistantError(message);
+	}
+
+	/**
+	 * A failure the agent marked local (the session's journal or file, senpi#3866). The mark is typed and set by
+	 * where the error came from, never read from its text: the text carries the OS error, which can read like a
+	 * provider quota (EDQUOT). No model produced it, so it never retries, walks the fallback chain, or marks a
+	 * model unhealthy.
+	 */
+	private _isLocalFailure(message: AssistantMessage): boolean {
+		return message.failureSource === "local";
 	}
 
 	private _isCursorPayloadOverflow(message: AssistantMessage): boolean {
@@ -10707,6 +10833,7 @@ export class AgentSession {
 	private _isHardErrorFallbackEligible(message: AssistantMessage): boolean {
 		return (
 			!message.errorMessage?.startsWith(TURN_RETRY_SUPPRESSION_PREFIX) &&
+			!this._isLocalFailure(message) &&
 			!this._isClaudeSdkAuthMissError(message) &&
 			!this._isClaudeSdkSameModelRemintError(message) &&
 			message.stopReason === "error" &&
