@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote.ts`: compact endpoint requests derive the same versioned prefix key as Responses providers. Stream payload rewrites preserve the provider's key. The request retains a separate session id for transport routing.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote.ts`: compact endpoint requests derive their key with the same versioned prefix function as Responses providers (from the system prompt alone, since the compact body sends no tools, so the value differs from the parent request's key but stays stable between compactions). Stream payload rewrites preserve the provider's key. The request retains a separate session id for transport routing.
 
 ### Why
 

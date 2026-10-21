@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `loader.ts` sorts directory entries by name before discovering extension entrypoints. Explicit configured path and package-manifest order remain intact.
+- `packages/coding-agent/src/core/extensions/loader.ts` sorts directory entries by name before discovering extension entrypoints. Explicit configured path and package-manifest order remain intact.
 
 ### Why
 
@@ -14,7 +14,7 @@
 
 ### Expected merge conflict zones
 
-- LOW: `discoverExtensionsInDir`, immediately after the directory read.
+- `packages/coding-agent/src/core/extensions/loader.ts`: LOW, `discoverExtensionsInDir`, immediately after the directory read.
 
 ## 2026-10-21 - Preserve human-answer delivery while releasing holds (senpi#3853)
 

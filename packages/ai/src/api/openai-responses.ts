@@ -322,7 +322,12 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 			params = sanitizeUnsupportedNativeTools(params, compat);
 			params = applyAllowedToolsChoice(params, normalizedContext, context.activeToolNames, compat);
 			if (hasRefusedAllowedToolsChoice(model)) params = restrictToAllowedTools(params);
-			const limitedTools = limitGitHubCopilotTools(model.provider, params.tools, params.tool_choice);
+			const limitedTools = limitGitHubCopilotTools(
+				model.provider,
+				params.tools,
+				params.tool_choice,
+				getDeclaredTools(normalizedContext.messages).map((tool) => tool.name),
+			);
 			if (limitedTools.omittedCount > 0) {
 				params = { ...params, tools: limitedTools.tools };
 				recordGitHubCopilotToolLimit(output, limitedTools.omittedCount);
@@ -531,7 +536,12 @@ export async function warmOpenAIResponsesPromptCache(
 	const nextParams = await resolved.onPayload?.(params, model);
 	if (nextParams !== undefined) params = nextParams as MutableResponsesPayload;
 	params = sanitizeUnsupportedNativeTools(params, compat);
-	const limitedTools = limitGitHubCopilotTools(model.provider, params.tools, params.tool_choice);
+	const limitedTools = limitGitHubCopilotTools(
+		model.provider,
+		params.tools,
+		params.tool_choice,
+		getDeclaredTools(prefix.messages).map((tool) => tool.name),
+	);
 	if (limitedTools.omittedCount > 0) params = { ...params, tools: limitedTools.tools };
 	const body = {
 		...params,
