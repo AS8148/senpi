@@ -108,12 +108,18 @@ describe("reference value contract", () => {
 		expect(JSON.stringify(warning.mock.calls)).not.toContain(SECRET);
 	});
 
-	it.each(["{file:literal}", "{{env:literal}", '{"$file":"literal"}', "$" + "{file:literal}", "plain"])(
+	it.each(["{file:literal}", "{{env:literal}", "$" + "{file:literal}", "plain"])(
 		"preserves existing literal bytes %s",
 		async (value) => {
 			expect(await resolveConfigValue(value)).toBe(value);
 		},
 	);
+
+	it("preserves legacy interpolation inside a JSON-looking string", async () => {
+		expect(await resolveConfigValue('{"$file":"literal"}', { file: "legacy-name" })).toBe(
+			'{"legacy-name":"literal"}',
+		);
+	});
 
 	it("preserves distinct core and MCP missing-variable behavior", async () => {
 		vi.stubEnv("ABSENT_LEGACY_3858", undefined);

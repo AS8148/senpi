@@ -5,9 +5,15 @@ import { loadMcpConfig, resolveExtensionMcpServer } from "../../src/core/extensi
 import { resolveSkillMcpServer } from "../../src/core/extensions/builtin/mcp/skill-server.ts";
 import { referenceRoot } from "../suite/regressions/3858-reference-support.ts";
 
+vi.mock("node:fs/promises", async (importOriginal) => {
+	const original = await importOriginal<typeof import("node:fs/promises")>();
+	return { ...original, open: vi.fn(original.open) };
+});
+
 describe("reference source admission (#3858)", () => {
 	let files: ReturnType<typeof referenceRoot>;
 	beforeEach(() => {
+		vi.clearAllMocks();
 		files = referenceRoot();
 	});
 	afterEach(() => {

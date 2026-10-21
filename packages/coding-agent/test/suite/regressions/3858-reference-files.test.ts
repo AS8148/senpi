@@ -5,10 +5,16 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { referenceRoot, resolveReference, SECRET } from "./3858-reference-support.ts";
 
+vi.mock("node:fs/promises", async (importOriginal) => {
+	const original = await importOriginal<typeof import("node:fs/promises")>();
+	return { ...original, open: vi.fn(original.open), lstat: vi.fn(original.lstat) };
+});
+
 // #3858: same-handle validation, bounded reads, and POSIX path authority.
 describe("reference file contract", () => {
 	let files: ReturnType<typeof referenceRoot>;
 	beforeEach(() => {
+		vi.clearAllMocks();
 		files = referenceRoot();
 	});
 	afterEach(() => {
