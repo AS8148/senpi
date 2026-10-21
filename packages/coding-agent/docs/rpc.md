@@ -1,5 +1,21 @@
 # RPC Mode
 
+### Recovery after shared output overflow
+
+The unattached shared output lane is bounded to 4096 records / 64 MiB. Overflow
+seals the routing handle; its retained runtime may still be open, but its lost
+output cannot be replayed. Reattaching with `open_session` is refused with
+`error: "session_output_overflow"`, `errorCode: "session_output_overflow"` and
+`errorData: { sessionId, sessionPath, action: "unload_and_reopen" }`. Session
+commands on that still-open handle return the same error code and action rather
+than silently dropping their replies.
+
+Recover using `unload_session { sessionId }`, then `open_session { sessionPath }`
+to obtain a fresh handle. Unload keeps its ordinary active-work, child-task and
+other-client protections: inspect a refused unload's reason/action rather than
+automatically forcing it. The overflow seal and capacity limits remain in force
+until the old runtime is disposed.
+
 When the last client disconnects from a retained in-process session, extensions receive
 `session_parked`; the first reattachment to that still-open session emits
 `session_resumed`. File-monitor polling and prompt-cache keepalive pause between these

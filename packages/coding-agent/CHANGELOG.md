@@ -13,6 +13,7 @@
 
 ### Fixed
 
+- An RPC session whose unattached output queue overflowed now refuses reattachment with a typed `session_output_overflow` error instead of silently dropping replies. Clients can unload the retained runtime and reopen its transcript. Queue capacity accounting no longer walks every retained event on each enqueue, avoiding quadratic stalls during synchronous bursts ([#3913](https://github.com/code-yeongyu/senpi/issues/3913)).
 - On Windows, input sent while a turn was running no longer gets stuck. Every save of a queued input failed with `EPERM` (the session file was flushed through a read-only handle), and each reopen replayed the input and failed again. The same failure was also taken for a model error, so the session ran through its whole fallback chain in under a second and stayed on the last model. A local file or journal error now shows as a local error naming the file, and the session keeps its model ([#3866](https://github.com/code-yeongyu/senpi/issues/3866)).
 - An idle RPC host (one open session, no work) no longer wakes about eleven times a second. While its supervisor pipe is watched, the supervisor pid is checked every 5 s instead of every 250 ms, and the event-loop stall probe ticks once a second after 2 s without session work, going back to 200 ms as soon as a session works. This cuts the idle CPU of every thread host the desktop keeps open ([#3738](https://github.com/code-yeongyu/senpi/issues/3738)).
 ### Removed

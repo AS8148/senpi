@@ -501,6 +501,11 @@ export class SessionCommandRouter {
 			return answerEffectFromTranscript(command.id, command.sessionPath, command.effectId);
 		if (!command.sessionId) return error(command.id, command.type, RPC_ERROR_MISSING_SESSION_ID);
 		const sessionId = command.sessionId;
+		if (this.writer.isSessionSealed(sessionId) && this.registry.peek(sessionId)?.state === "open")
+			return error(command.id, command.type, "session_output_overflow", {
+				sessionId,
+				action: "unload_and_reopen",
+			});
 		if (command.type === "set_session_context") return this.setSessionContext(command);
 		try {
 			const entry = this.registry.getForCommand(sessionId, command.type);
@@ -906,6 +911,17 @@ export class SessionCommandRouter {
 				},
 			);
 			const openedSession = opened;
+			if (this.writer.isSessionSealed(openedSession.sessionId)) {
+				// Lost output cannot be replayed. Undo only this attachment; keep the runtime and
+				// seal intact until an explicit unload safely parks it for a fresh open by path.
+				await this.releaseOwnedSession(openedSession.sessionId);
+				opened = undefined;
+				return error(command.id, "open_session", "session_output_overflow", {
+					sessionId: openedSession.sessionId,
+					sessionPath: openedSession.sessionPath,
+					action: "unload_and_reopen",
+				});
+			}
 			const entry = this.registry.getForCommand(openedSession.sessionId, "open_session");
 			const state = entry.worker?.snapshot?.state;
 			// The runtime has now published its own lease. Recheck before attaching or replying,
