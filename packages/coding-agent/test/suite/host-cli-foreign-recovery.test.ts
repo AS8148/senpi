@@ -6,6 +6,7 @@ import { afterEach, expect, it } from "vitest";
 import { createHostDaemonPaths, generationPaths } from "../../src/modes/rpc/host-daemon-paths.ts";
 import { readHostRegistration } from "../../src/modes/rpc/host-daemon-registration.ts";
 import { processIsLive } from "../../src/utils/process-identity.ts";
+import { waitForPidGone } from "../helpers/spawned-host-reaper.ts";
 import { hostCliSandbox, onlyJsonLine, runHostCli, sweepHostCliSandboxes } from "./host-cli-support.ts";
 
 afterEach(sweepHostCliSandboxes, 120_000);
@@ -94,8 +95,9 @@ it.skipIf(process.platform === "win32")(
 			} finally {
 				ended.close();
 			}
-			expect(processIsLive(expected.pid)).toBe(false);
-			expect(processIsLive(child.pid)).toBe(false);
+			// The generation's records go before its processes are reaped; wait for each exit, bounded.
+			expect(await waitForPidGone(expected.pid, 30_000)).toBe(true);
+			expect(await waitForPidGone(child.pid, 30_000)).toBe(true);
 			const successor = await cli(["ensure"]);
 			expect(successor.exitCode).toBe(0);
 			const current = onlyJsonLine(successor);
