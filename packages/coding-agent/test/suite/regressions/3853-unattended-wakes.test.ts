@@ -72,6 +72,7 @@ it("ten wakes from two sources stay held on attach, then Resume runs one turn pe
 	expect(h.session.holds).toEqual([
 		{
 			kind: "unattended",
+			key: "unattended",
 			since: expect.any(String),
 			sourceCounts: { monitor: 5, codemode: 5 },
 		},
@@ -105,6 +106,15 @@ it("retains the held wake count after a second unattended reopen", async () => {
 			{ customType: "senpi-codemode:notification", content: `completion ${i}`, display: false },
 			{ triggerTurn: true },
 		);
+	const since = new Date().toISOString();
+	b.sessionManager.appendCustomEntry("session-hold", {
+		op: "add",
+		kind: "unattended",
+		key: "unattended:park",
+		data: { origin: "handover" },
+		pauseSeq: 2,
+		at: since,
+	});
 	b.session.dispose();
 	const c = await createHarness({
 		siblingOf: a,
@@ -122,6 +132,28 @@ it("retains the held wake count after a second unattended reopen", async () => {
 	).toHaveLength(3);
 	c.setResponses([fauxAssistantMessage([fauxText("resumed")])]);
 	expect(c.session.pausedNoticeCount).toBe(3);
+	expect(c.session.holds).toEqual(
+		expect.arrayContaining([
+			{
+				kind: "unattended",
+				key: "unattended:park",
+				since,
+				data: { origin: "handover" },
+				sourceCounts: { codemode: 3 },
+			},
+		]),
+	);
 	await c.session.resumeSession();
 	expect(c.faux.state.callCount - before).toBe(1);
+	expect(c.session.holds).toEqual([]);
+	expect(
+		c.sessionManager
+			.getEntries()
+			.findLast(
+				(entry) =>
+					entry.type === "custom" &&
+					entry.customType === "session-hold" &&
+					(entry.data as { op?: string }).op === "release",
+			),
+	).toMatchObject({ data: { keys: ["unattended", "unattended:park"] } });
 });

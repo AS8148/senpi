@@ -5,7 +5,9 @@ export type HoldKind = "unattended";
 export type HoldReleaseCause = "input" | "resume_session";
 export interface SessionHold {
 	kind: HoldKind;
+	key: string;
 	since: string;
+	data?: unknown;
 	sourceCounts: Record<string, number>;
 }
 export type SessionHoldEvent =
@@ -13,8 +15,8 @@ export type SessionHoldEvent =
 	| { type: "session_resumed"; pauseSeq: number; cause: HoldReleaseCause; at: string };
 type HeldWake = { noticeIds: string[]; message?: CustomMessage };
 type HoldEntry =
-	| { op: "add"; kind: HoldKind; pauseSeq: number; at: string }
-	| { op: "release"; kinds: HoldKind[]; observedSeq: number; cause: HoldReleaseCause; at: string }
+	| { op: "add"; kind: HoldKind; key: string; data?: unknown; pauseSeq: number; at: string }
+	| { op: "release"; keys: string[]; observedSeq: number; cause: HoldReleaseCause; at: string }
 	| {
 			op: "resume";
 			resumeId: string;
@@ -33,7 +35,7 @@ export function engineWakeSource(customType: string): string {
 
 /** One session-scoped hold ledger and notice custody point, independent of the transcript leaf. */
 export class EngineTurnHold {
-	private records = new Map<HoldKind, SessionHold>();
+	private records = new Map<string, SessionHold>();
 	private wakes: Record<string, HeldWake> = Object.create(null);
 	private pauseSeq = 0;
 	private resumeId: string | undefined;
@@ -54,9 +56,15 @@ export class EngineTurnHold {
 				const data = entry.data as HoldEntry;
 				if (data.op === "add") {
 					this.pauseSeq = Math.max(this.pauseSeq, data.pauseSeq);
-					this.records.set(data.kind, { kind: data.kind, since: data.at, sourceCounts: {} });
+					this.records.set(data.key, {
+						kind: data.kind,
+						key: data.key,
+						since: data.at,
+						data: data.data,
+						sourceCounts: {},
+					});
 				} else if (data.op === "release") {
-					for (const kind of data.kinds) this.records.delete(kind);
+					for (const key of data.keys) this.records.delete(key);
 				}
 			} else if (entry.customType === "session-notice") {
 				this.remember(entry.data as HeldNotice);
@@ -95,15 +103,23 @@ export class EngineTurnHold {
 		if (this.isHeld() && this.noticeCount > 0) this.showNotice();
 	}
 
-	addHold(kind: HoldKind): void {
-		if (this.records.has(kind)) return;
+	addHold(kind: HoldKind, opts?: { key?: string; data?: unknown }): void {
+		const key = opts?.key ?? kind;
+		if (this.records.has(key)) return;
 		const wasHeld = this.isHeld();
 		const at = new Date().toISOString();
 		this.pauseSeq++;
-		this.records.set(kind, { kind, since: at, sourceCounts: {} });
+		this.records.set(key, { kind, key, since: at, data: opts?.data, sourceCounts: {} });
 		let persisted = false;
 		try {
-			this.append("session-hold", { op: "add", kind, pauseSeq: this.pauseSeq, at } satisfies HoldEntry);
+			this.append("session-hold", {
+				op: "add",
+				kind,
+				key,
+				data: opts?.data,
+				pauseSeq: this.pauseSeq,
+				at,
+			} satisfies HoldEntry);
 			persisted = true;
 		} finally {
 			if (!wasHeld)
@@ -166,7 +182,7 @@ export class EngineTurnHold {
 		const at = new Date().toISOString();
 		this.append("session-hold", {
 			op: "release",
-			kinds: [...this.records.keys()],
+			keys: [...this.records.keys()],
 			observedSeq: this.pauseSeq,
 			cause,
 			at,
@@ -180,7 +196,7 @@ export class EngineTurnHold {
 
 	rejectInput(): void {
 		this.goalDeferred = false;
-		for (const { kind } of this.released) this.addHold(kind);
+		for (const { kind, key, data } of this.released) this.addHold(kind, { key, data });
 	}
 
 	consume(source: string): void {

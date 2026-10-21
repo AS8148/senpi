@@ -1,3 +1,21 @@
+## 2026-10-21 - Key shared holds independently of their kind (senpi#3853)
+
+### What changed
+
+`packages/coding-agent/src/core/engine-turn-hold.ts`: `SessionHold` carries `key` and opaque `data`; `addHold(kind, opts)` defaults the key to the kind. Add entries persist `key`/`data`, release entries list `keys`, and reconstruction preserves both.
+
+### Why
+
+`packages/coding-agent/src/core/engine-turn-hold.ts`: the shared #3811 ledger needs multiple independent holds of a kind without reshaping this contract. Only unattended holds ship here.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/engine-turn-hold.ts`: session-wide admission and restart custody belong to the engine.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/engine-turn-hold.ts`: hold types, map identity, persistence reconstruction, add/release, and failed-input restoration.
+
 ## 2026-10-21 - Unattended sessions hold automatic wakes in a durable ledger (senpi#3853)
 
 ### What changed

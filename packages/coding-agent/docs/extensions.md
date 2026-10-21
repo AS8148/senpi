@@ -487,6 +487,14 @@ The core backstop groups `goal-continuation` as `goal`, `senpi-monitor:*` as
 key. It persists counts and only the latest payload per source. A monitor release
 includes the held count and latest event text.
 
+The shared internal ledger exposes `SessionHold { kind, key, since, data?,
+sourceCounts }`. Only `kind: "unattended"` is implemented here.
+`addHold(kind, { key?, data? })` defaults the identity key to the kind and preserves
+opaque metadata. Multiple keys of one kind remain independent records.
+`releaseAll("input" | "resume_session")` releases every current key; attachment
+does not release any. Persisted `session-hold` additions carry `key` and `data`,
+and release entries carry `keys`. Restart restores both identity and metadata.
+
 ```typescript
 pi.on("session_start", async (event, ctx) => {
   // event.reason - "startup" | "reload" | "new" | "resume" | "fork"
