@@ -40,10 +40,11 @@ export interface TurnEndLivenessState {
 }
 
 /**
- * Counts steers and follow-ups a person queued and not yet delivered: a TUI input (source `interactive`) whose
- * disposition is `queued`. Extension messages are never counted, and neither is RPC input, which cannot yet be
- * told apart from automation (senpi#3873 adds the `interactive_user` role and `onHumanInputAdmitted`; a
- * follow-up reads that). Each delivered user message lowers the count, so it errs toward held.
+ * Counts messages a person queued and that have not been delivered yet, classified by entry point, not transport:
+ * a TUI submit (source `interactive`) or an RPC client command (`prompt`/`steer`/`follow_up`, source `rpc`,
+ * which is how desktop input arrives) whose disposition is `queued`, and a question the person answered. Anything
+ * an extension or the engine sends (source `extension`: Stop hook, loop tick, a timed-out question) is never
+ * counted. Each delivered user message lowers the count, so the tracker errs toward held.
  */
 export class QueuedUserInputTracker {
 	#sources = new Map<string, InputSource>();
@@ -56,7 +57,12 @@ export class QueuedUserInputTracker {
 	onDisposition(event: Pick<InputDispositionEvent, "inputId" | "disposition">): void {
 		const source = this.#sources.get(event.inputId);
 		this.#sources.delete(event.inputId);
-		if (event.disposition === "queued" && source === "interactive") this.#queued += 1;
+		if (event.disposition === "queued" && (source === "interactive" || source === "rpc")) this.#queued += 1;
+	}
+
+	/** A person answered (or commented on) a pending question; the answer is delivered as an extension message. */
+	onQuestionSettled(status: string): void {
+		if (status === "answered" || status === "comment-submitted") this.#queued += 1;
 	}
 
 	onUserMessageDelivered(): void {

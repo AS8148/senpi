@@ -449,13 +449,65 @@ describe("collectTurnEndLivenessInput reads the hold ledger (#3863, senpi#3860)"
 describe("QueuedUserInputTracker and the queued-message wake (#3863, review round 5)", () => {
 	it.each([
 		["an extension (Stop hook, loop tick, ask-user timeout)", "extension", false],
-		["an RPC client, which may be automation until #3873's human role", "rpc", false],
+		["a desktop or RPC client command (prompt / steer / follow_up)", "rpc", true],
 		["a person at the TUI", "interactive", true],
 	] as const)("counts a queued input from %s as human: %s", (_label, source, human) => {
 		const tracker = new QueuedUserInputTracker();
 		tracker.onInput({ inputId: "q", source });
 		tracker.onDisposition({ inputId: "q", disposition: "queued" });
 		expect(tracker.queued).toBe(human);
+	});
+
+	it.each([
+		["answered", true],
+		["comment-submitted", true],
+		["timed_out", false],
+		["cancelled", false],
+	] as const)("counts a question settled as %s as a person's input: %s", (status, human) => {
+		const tracker = new QueuedUserInputTracker();
+		tracker.onQuestionSettled(status);
+		expect(tracker.queued).toBe(human);
+	});
+
+	it.each([
+		[
+			"a desktop steer queued over RPC releases the hold",
+			"rpc",
+			{ kind: "waiting", on: [{ kind: "user-input-queued" }], heldBy: "unattended" },
+		],
+		[
+			"a TUI follow-up releases the hold",
+			"interactive",
+			{ kind: "waiting", on: [{ kind: "user-input-queued" }], heldBy: "unattended" },
+		],
+		["an extension-queued message stays held", "extension", { kind: "held", reason: "unattended" }],
+	] as const)("end to end through tracker, collector and table: %s", (_label, source, verdict) => {
+		const tracker = new QueuedUserInputTracker();
+		tracker.onInput({ inputId: "q", source });
+		tracker.onDisposition({ inputId: "q", disposition: "queued" });
+		const ctx = {
+			mode: "tui",
+			hasPendingMessages: () => true,
+			engineTurnsHeld: (): boolean => true,
+			sessionManager: { getBranch: () => [], getHeader: () => undefined, getSessionId: () => "s" },
+		} as unknown as ExtensionContext;
+		const collected = collectTurnEndLivenessInput(
+			ctx,
+			{ type: "agent_end", messages: [fauxAssistantMessage("done")], willRetry: false },
+			{
+				goal: null,
+				todoOutcome: undefined,
+				deadlineStop: false,
+				continuationPending: false,
+				userInputQueued: tracker.queued,
+				monitor: {
+					liveWakeSources: () => [],
+					scheduledContinuation: () => undefined,
+					hasStagedRecovery: () => false,
+				},
+			},
+		);
+		expect(evaluateTurnEndLiveness(collected)).toEqual(verdict);
 	});
 
 	it("does not count a human input that started a turn instead of queueing", () => {

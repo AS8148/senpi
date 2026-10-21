@@ -9,6 +9,7 @@ import {
 } from "../../../turn-deadline.ts";
 import { noticeEntryRenderer } from "../../notice/index.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
+import { ASK_USER_SETTLED_EVENT } from "../ask-user/notify.ts";
 import { continueGoalAfterAgentEnd } from "./agent-end-continuation.ts";
 import { GOAL_CACHE_WARMUP_ENTRY_TYPE } from "./cache-warm.ts";
 import { isSameGoalCacheWarmCard, renderGoalCacheWarmupEntry } from "./cache-warm-renderer.ts";
@@ -68,6 +69,10 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	registerGoalFireNowRequest(pi, () => monitorContinuation.fireNow());
 	const todoOwedBackstop = new TodoOwedBackstop(pi);
 	const queuedUserInput = new QueuedUserInputTracker();
+	pi.events?.on(ASK_USER_SETTLED_EVENT, (data) => {
+		const status = (data as { response?: { status?: unknown } } | undefined)?.response?.status;
+		if (typeof status === "string") queuedUserInput.onQuestionSettled(status);
+	});
 	const directInputLifecycle = new GoalDirectInputLifecycle({
 		monitor: monitorContinuation,
 		goalStoreRef,
