@@ -9851,7 +9851,7 @@ export class InteractiveMode {
 				// A single entry repeats the total, unless it names a model other than the selected one.
 				if (usageBreakdown.length > 1 || usageBreakdown[0]?.key !== selectedModelKey) {
 					for (const entry of usageBreakdown) {
-						info += `\n  ${theme.fg("dim", `${entry.key}:`)} $${entry.cost.toFixed(3)} ${theme.fg("dim", `(${formatTokens(entry.tokens)} tokens)`)}`;
+						info += `\n  ${theme.fg("dim", `${entry.key}:`)} $${entry.cost.toFixed(3)}${entry.costUnknown ? theme.fg("dim", " + unpriced turns") : ""} ${theme.fg("dim", `(${formatTokens(entry.tokens)} tokens)`)}`;
 					}
 				}
 				if (cacheWaste.missedTokens > 0) {

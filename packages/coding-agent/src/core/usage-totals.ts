@@ -59,6 +59,8 @@ export function combineUsage(first: Usage, second: Usage): Usage {
 export interface UsageCostBreakdownEntry {
 	key: string;
 	cost: number;
+	/** Some of this row's turns had no known price (senpi#3844). */
+	costUnknown?: true;
 	tokens: number;
 }
 
@@ -98,6 +100,7 @@ export function getUsageCostBreakdown(entries: SessionEntry[]): UsageCostBreakdo
 	return Array.from(totalsByKey, ([key, totals]) => ({
 		key,
 		cost: totals.cost,
+		...(totals.costUnknown ? { costUnknown: true as const } : {}),
 		tokens: totals.input + totals.output + totals.cacheRead + totals.cacheWrite,
 	}))
 		.filter((entry) => entry.cost > 0 || entry.tokens > 0)

@@ -6,7 +6,12 @@ import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import { afterEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../../../src/core/auth-storage.ts";
 import { SessionManager } from "../../../src/core/session-manager.ts";
-import { addUsageToTotals, combineUsage, createUsageTotals } from "../../../src/core/usage-totals.ts";
+import {
+	addUsageToTotals,
+	combineUsage,
+	createUsageTotals,
+	getUsageCostBreakdown,
+} from "../../../src/core/usage-totals.ts";
 import { createModelRegistry, getModelRuntime } from "../../model-runtime-test-utils.ts";
 
 let tempDir: string | undefined;
@@ -223,5 +228,30 @@ describe("models.json model prices (senpi#3844)", () => {
 		expect(partialModel?.cost.unknown).toBe(true);
 		expect(fullModel?.cost.unknown).toBeUndefined();
 		expect(fullModel?.cost.output).toBe(5);
+	});
+
+	it("#given one model's turns include an unpriced one #when the per-model breakdown is built #then that row carries costUnknown", () => {
+		// given
+		const sessionManager = SessionManager.inMemory();
+		for (const turn of [
+			{ ...usage(10, 5), cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.5 } },
+			{ ...usage(10, 5), costUnknown: true as const },
+		])
+			sessionManager.appendMessage({
+				role: "assistant",
+				api: "openai-completions",
+				provider: "my-gateway",
+				model: "house-model",
+				content: [{ type: "text", text: "ok" }],
+				usage: turn,
+				stopReason: "stop",
+				timestamp: 1,
+			});
+
+		// when
+		const rows = getUsageCostBreakdown(sessionManager.getEntries());
+
+		// then
+		expect(rows).toEqual([{ key: "my-gateway/house-model", cost: 0.5, costUnknown: true, tokens: 30 }]);
 	});
 });

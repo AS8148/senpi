@@ -3,7 +3,7 @@
 ### What changed
 
 - `packages/coding-agent/src/modes/interactive/components/footer.ts`: the session cost reads `$X+?` when `UsageTotals.costUnknown` is set.
-- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the `/session` cost total appends `+ unpriced turns` when `SessionStats.costUnknown` is set.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the `/session` cost total, and each per-model breakdown row, appends `+ unpriced turns` when `SessionStats.costUnknown` (or the row's `costUnknown`) is set.
 
 ### Why
 
