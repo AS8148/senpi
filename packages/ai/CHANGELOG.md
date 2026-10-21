@@ -6,6 +6,8 @@
 
 ### Added
 
+- `AssistantMessage.failureSource?: "local"` marks a failure raised by local code rather than a provider, so retry and model fallback can skip it ([#3866](https://github.com/code-yeongyu/senpi/issues/3866)).
+
 ### Changed
 
 ### Fixed
