@@ -1,3 +1,23 @@
+## 2026-10-21 - Launch-gated Fable 5.5 executable floor (senpi#3893)
+
+### What changed
+
+- `executable-model-support.ts`: reads the optional launch model's Claude Code floor from the one `FABLE55_LAUNCH` block. The floor stays unset until observed; no version is guessed.
+- The real-binary regression includes the launch chain key once `released` is flipped. Before release the key only recovers explicit selections and is not a promoted default. Every existing promoted model and every recovery rung remains checked.
+- Existing family-wide adaptive/xhigh markers in `options.ts` already cover Fable/Mythos 5.5; the usage-credit classifier is not a per-version allowlist. Focused tests verify the new model remains a non-retryable entitlement rather than an account-wide rate limit. The broader classification design in #3752 remains separate.
+
+### Why
+
+- Prepare launch support without falsely declaring that today's Claude Code supports an unreleased model.
+
+### Why an extension could not handle it
+
+- This builtin owns its executable support evidence and subscription request policy.
+
+### Expected merge conflict zones
+
+- `executable-model-support.ts`: imports and the optional floor entry.
+
 ## 2026-10-20 - Native-1M models are requested by their plain id; only legacy ids use the [1m] opt-in (senpi#3801)
 
 ### What changed

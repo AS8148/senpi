@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { FABLE55_LAUNCH } from "@earendil-works/pi-ai/utils/fable55-launch";
 import { describe, expect, it } from "vitest";
 import {
 	binaryEmbedsTokens,
@@ -26,7 +27,11 @@ function promotedClaudeModels(): Map<string, string[]> {
 	};
 	for (const [id] of RECOMMENDED_DEFAULT_MODELS) add(id, "RECOMMENDED_DEFAULT_MODELS (recommended-models/index.ts)");
 	for (const [key, rungs] of Object.entries(DEFAULT_FALLBACK_CHAINS)) {
-		add(key, "DEFAULT_FALLBACK_CHAINS key (retry-fallback/settings.ts)");
+		// An unreleased chain key is recovery for an explicit selection, not a promotion.
+		// On the launch flip it must pass the same real-binary proof as every other key.
+		if (key !== FABLE55_LAUNCH.modelId || FABLE55_LAUNCH.released) {
+			add(key, "DEFAULT_FALLBACK_CHAINS key (retry-fallback/settings.ts)");
+		}
 		for (const rung of rungs) add(rung, "DEFAULT_FALLBACK_CHAINS rung (retry-fallback/settings.ts)");
 	}
 	const anthropicDefault = defaultModelPerProvider.anthropic;
