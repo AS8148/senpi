@@ -14,6 +14,7 @@ assertWorkspaceBuildPrerequisite(import.meta.url);
 const builtCli = fileURLToPath(new URL("../../../dist/cli.js", import.meta.url));
 const builtConfig = fileURLToPath(new URL("../../../dist/config.js", import.meta.url));
 const userTestEnv = { NODE_ENV: "test", VITEST: "true", PI_OFFLINE: "1", PI_SKIP_RUNTIME_NOTICE: "1" };
+const runTempEnv = { TMPDIR: process.env.TMPDIR, TEMP: process.env.TEMP, TMP: process.env.TMP };
 
 describe("the built CLI under a user's test-looking environment (#3867)", () => {
 	let home: string | undefined;
@@ -28,7 +29,7 @@ describe("the built CLI under a user's test-looking environment (#3867)", () => 
 		mkdirSync(join(home, ".senpi", "agent"), { recursive: true });
 		const child = spawn(process.execPath, [builtCli, "--mode", "rpc", "--no-session"], {
 			cwd: home,
-			env: { PATH: process.env.PATH, HOME: home, USERPROFILE: home, ...userTestEnv },
+			env: { PATH: process.env.PATH, HOME: home, USERPROFILE: home, ...runTempEnv, ...userTestEnv },
 			stdio: ["pipe", "pipe", "pipe"],
 		});
 		let stderr = "";
@@ -64,7 +65,7 @@ describe("the built CLI under a user's test-looking environment (#3867)", () => 
 				"-e",
 				`const m = await import(${JSON.stringify(builtConfig)}); process.stdout.write(m.getAgentDir());`,
 			],
-			{ env: { PATH: process.env.PATH, HOME: realHome, USERPROFILE: realHome, ...userTestEnv }, encoding: "utf8" },
+			{ env: { PATH: process.env.PATH, HOME: realHome, USERPROFILE: realHome, ...runTempEnv, ...userTestEnv }, encoding: "utf8" },
 		);
 
 		expect(probe.stderr).not.toContain("RealAgentDirInTestError");
