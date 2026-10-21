@@ -1,5 +1,6 @@
 import { MANUAL_CONTINUE_CUSTOM_TYPE } from "../../../manual-continue.ts";
 import { GOAL_CONTINUATION_MESSAGE_TYPE } from "../../../messages.ts";
+import { createSessionLogger } from "../../../session-log.ts";
 import type { SessionEntry } from "../../../session-manager.ts";
 import {
 	buildDeadlineStopNotice,
@@ -445,7 +446,15 @@ export default function goalExtension(pi: ExtensionAPI): void {
 			sessionId: ctx.sessionManager.getSessionId(),
 			verdict,
 		});
-		if (verdict.kind === "stalled") pi.appendEntry(TURN_END_LIVENESS_ENTRY_TYPE, { verdict, openWork });
+		if (verdict.kind !== "stalled") return;
+		try {
+			pi.appendEntry(TURN_END_LIVENESS_ENTRY_TYPE, { verdict, openWork });
+		} catch (error) {
+			createSessionLogger(ctx.agentDir).warn("goal_continuation_record_write_failed", {
+				kind: TURN_END_LIVENESS_ENTRY_TYPE,
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
 	}
 
 	function beginAgentGoalAccounting(goal: Goal): void {
