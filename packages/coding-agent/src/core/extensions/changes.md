@@ -117,6 +117,26 @@ On the in-process `--listen` host an extension that never stopped a server it op
 - LOW: `loader.ts` `createExtensionAPI` (`on`, `registerTool`, `registerCommand`, `registerShortcut`, `rpc.handle`) and the factory call in `initializeExtension`.
 - LOW: `runner.ts` `emitSessionShutdownEvent` body and one line in the `ExtensionRunner` constructor.
 
+## 2026-10-19 - Extension importer reuses prepared module source across host starts (senpi#3716)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/bun-extension-importer.ts`: `createBunExtensionImporter(virtualModules, builtinRedirects, { preparedCache: { dir, release } })` prepares each module with a generation token in place of the generation, stores the result in a disk cache (`bun-extension-prepared-cache.ts`), and on a later start reuses it after re-resolving every static import edge and re-checking the package `type`. The entry key covers the senpi release (passed by the loader), the Bun version, the runtime module path, the extension namespace and the source of the code that shapes the bytes (the importer, the CommonJS import rewrite and clause parser, the whole strict-directive module via `strictDirectiveModuleSource`, the lexer entry); the lexer package itself changes only with a release, which `release` covers; the token is then replaced with the live generation. The strict-directive helpers moved unchanged to `bun-extension-strict-directive.ts`.
+- `packages/coding-agent/src/core/extensions/loader.ts`: the session loader passes `preparedCache: { dir: <agentDir>/cache/extension-modules, release: VERSION }`. The tool child's module-job importer passes none and behaves as before.
+
+### Why
+
+Every new host transpiled and rewrote the whole extension graph again (about 700 modules for the OmO plugin, 2.6 MB in its two largest files). A desktop thread starts its own host, so this sat on the path from "New thread" to the first model request.
+
+### Why an extension could not handle it
+
+The importer is the core loader that evaluates extensions; an extension cannot change how itself is loaded.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/bun-extension-importer.ts`: fork-only file; the `load()` body and the new `prepare` closure.
+- `packages/coding-agent/src/core/extensions/loader.ts`: LOW, the `createBunExtensionImporter(...)` call in `createExtensionModuleImporter`.
+
 ## 2026-10-19 - pi.getSubscriptionLimits() and pi.onSubscriptionLimits() (senpi#3684)
 
 ### What changed

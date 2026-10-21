@@ -6,14 +6,33 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+- An idle RPC host (one open session, no work) no longer wakes about eleven times a second. While its supervisor pipe is watched, the supervisor pid is checked every 5 s instead of every 250 ms, and the event-loop stall probe ticks once a second after 2 s without session work, going back to 200 ms as soon as a session works. This cuts the idle CPU of every thread host the desktop keeps open ([#3738](https://github.com/code-yeongyu/senpi/issues/3738)).
+### Removed
+
+## [2026.10.20-1] - 2026-10-20
+
+### Breaking Changes
+
+### Added
+
 - When a session of 200k tokens or more has sat idle past its model's prompt-cache lifetime and a fresh session would save at least $1 on the next reply, one line above the editor says what the next reply would cost and what a fresh session would cost, with two choices: `/handoff` starts a new session linked to this one and seeded with a short brief built from the session's state (goal, open todos, last request and answer, touched files), and `/handoff keep` hides the line for the rest of the session. It never interrupts a turn or switches on its own, and never shows for task children, print/JSON runs, turns an extension started, or while a goal is active. Settings: `handoffHint.enabled`, `handoffHint.minContextTokens`, `handoffHint.minSavingUsd`. Extension widgets can carry choices (`setWidget(..., { actions })`), forwarded over RPC as `widgetActions` ([#3230](https://github.com/code-yeongyu/senpi/issues/3230)).
 
 ### Changed
 
 ### Fixed
 
+- Claude subscription sessions on current models (Fable 5, Sonnet 5, Haiku 5.5, Opus 4.7 and later) use their native 1M window again, without asking for extra usage. A refusal recorded by an earlier version no longer caps them, and only the older long-context models (Opus 4.6, Sonnet 4.6) still need extra usage for 1M ([#3801](https://github.com/code-yeongyu/senpi/issues/3801)).
+- The `coding-agent` package passes its lint check again: a no-op `String.raw` in the reserved-keywords list was removed (no behavior change).
+- A session file left claimed by a stopped engine host no longer blocks reopening its thread. If that host was only frozen or asleep, it can no longer write to the file once another host has taken it over ([#3652](https://github.com/code-yeongyu/senpi/issues/3652)).
+- On Windows, an engine host killed together with its process tree no longer keeps every later start refused as `host_stalled` once Windows reuses its process id: the host's process identity is now recorded, a host whose identity cannot be read is released once it stopped heartbeating, the dead host's session lease no longer refuses every reopen as `session_held` once that host's generation ended, and its session claim ends with that generation instead of refusing every reopen as `session_path_in_use` ([#3658](https://github.com/code-yeongyu/senpi/issues/3658)).
 - Each mounted message no longer keeps its own copy of the markdown theme, and a tool card above the kept history no longer keeps a second copy of its result in its renderer: about 640 bytes per message and 2 KB per tool card for the rest of the session ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)).
 - A bundled install's RPC host supervisor now starts from its own small program instead of the whole CLI, so each supervisor stays near the size of its own code. The desktop runs one per open thread ([#3743](https://github.com/code-yeongyu/senpi/issues/3743)).
+- A queued message with several text blocks, such as an async question answered with a comment or typed words, now leaves the queue when it is delivered. It used to reach the model but stay listed as `Steering:` above the editor (and in queue counts and RPC queue snapshots) for the rest of the session ([#3588](https://github.com/code-yeongyu/senpi/issues/3588)).
+- With several accounts for one provider, a usage limit no longer keeps failing turns after the limit is gone: an account is blocked until the reset the provider named instead of a backoff that grew past it, a successful answer clears its failure history, and when every account is still cooling the turn is sent through the one due back first, so a usage reset redeemed early is picked up on the next turn without a restart. A quota failure line now says when it resets ([#3771](https://github.com/code-yeongyu/senpi/issues/3771)).
 
 ### Removed
 
@@ -58,6 +77,8 @@
 - Subscription limits are known before an account's first turn: in interactive and RPC modes the engine polls each signed-in Claude (every 5 min) and ChatGPT (every 2.5 min) subscription account's usage, so `get_subscription_limits` and the `subscription_limits` record carry its windows on a fresh session. Turns keep updating the same record, the newest reading wins, one machine-wide cache keeps several senpi processes to one request per account per interval, and a failed poll keeps the last windows and reports why in a new optional `error` field (with `plan` beside it). A login the token endpoint already rejected shows `auth stale - run /login` and is not polled again. Extensions read the same store through `pi.getSubscriptionLimits()` and `pi.onSubscriptionLimits()` ([#3684](https://github.com/code-yeongyu/senpi/issues/3684)).
 
 ### Changed
+
+- A new engine host no longer re-transpiles extensions whose sources have not changed: the importer keeps its prepared module source under `<agent dir>/cache/extension-modules` and reuses it after re-checking every import, so a host starts faster ([#3716](https://github.com/code-yeongyu/senpi/issues/3716))
 
 ### Fixed
 
