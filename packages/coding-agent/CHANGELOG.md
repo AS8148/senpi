@@ -6,6 +6,8 @@
 
 ### Added
 
+- Configuration-value resolution supports typed file, environment, and concatenation references with source authority checks and bounded, validated file reads; reference output remains literal rather than entering command or environment interpolation again ([#3858](https://github.com/code-yeongyu/senpi/issues/3858)).
+
 ### Changed
 
 ### Fixed

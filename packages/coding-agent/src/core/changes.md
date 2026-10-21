@@ -1,3 +1,25 @@
+## 2026-10-21 - Resolve typed configuration references at their value boundary (senpi#3858)
+
+### What changed
+
+- `packages/coding-agent/src/core/config-reference-resolver.ts`: per-value origin metadata, authority preflight, and opaque file/env/concat resolution.
+- `packages/coding-agent/src/core/config-reference-file.ts`: root-down original and symlink-target validation, no-follow/nonblocking open, descriptor identity checks, bounded 64 KiB reads, fatal UTF-8 decoding, and named errors.
+- `packages/coding-agent/src/core/config-reference-env.ts`: one variable-name-only warning for reference-looking environment contents or an unset legacy variable.
+- `packages/coding-agent/src/core/resolve-config-value.ts`: all three resolver entry points dispatch object references without sending their output through legacy parsing; legacy string results remain unchanged.
+
+### Why
+
+- A configuration reference must read fresh credentials at use time without treating those bytes as commands, recursively expanding them, or reading through an untrusted filesystem entry.
+
+### Why an extension could not handle it
+
+- Credential and transport configuration are resolved inside the core loaders and request paths.
+
+### Expected merge conflict zones
+
+- MEDIUM: the resolver signatures and legacy environment lookup in `packages/coding-agent/src/core/resolve-config-value.ts`.
+- LOW: the three new reference modules.
+
 ## 2026-10-18 - A multi-block queued input leaves the queue when it starts (senpi#3588, senpi#3768)
 
 ### What changed

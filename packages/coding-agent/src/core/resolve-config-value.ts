@@ -3,6 +3,9 @@
  * Used by auth-storage.ts and model-registry.ts.
  */
 
+import type { ConfigValue } from "@earendil-works/pi-ai/utils/config-reference";
+import { warnMissingConfigEnvironment, warnOpaqueConfigEnvironment } from "./config-reference-env.ts";
+import { type ConfigReferenceContext, resolveConfigReference } from "./config-reference-resolver.ts";
 import { runConfigCommand } from "./resolve-config-command.ts";
 
 // Cache for shell command results (persists for process lifetime). The in-flight
@@ -88,7 +91,9 @@ function parseConfigValueReference(config: string): ConfigValueReference {
 }
 
 function resolveEnvConfigValue(name: string, env?: Record<string, string>): string | undefined {
-	return env?.[name] || process.env[name] || undefined;
+	const value = env?.[name] || process.env[name] || undefined;
+	warnOpaqueConfigEnvironment(name, value);
+	return value;
 }
 
 function getTemplateEnvVarNames(parts: TemplatePart[]): string[] {
@@ -108,7 +113,10 @@ function resolveTemplate(parts: TemplatePart[], env?: Record<string, string>): s
 			continue;
 		}
 		const envValue = resolveEnvConfigValue(part.name, env);
-		if (envValue === undefined) return undefined;
+		if (envValue === undefined) {
+			warnMissingConfigEnvironment(part.name);
+			return undefined;
+		}
 		resolved += envValue;
 	}
 	return resolved;
@@ -144,7 +152,12 @@ export function isConfigValueConfigured(config: string, env?: Record<string, str
  * - In non-command values, "$$" escapes a literal "$" and "$!" escapes a literal "!"
  * - Otherwise treats the value as a literal
  */
-export function resolveConfigValue(config: string, env?: Record<string, string>): Promise<string | undefined> {
+export function resolveConfigValue(
+	config: ConfigValue,
+	env?: Record<string, string>,
+	context?: ConfigReferenceContext,
+): Promise<string | undefined> {
+	if (typeof config !== "string") return resolveConfigReference(config, context, env);
 	const reference = parseConfigValueReference(config);
 	if (reference.type === "command") {
 		// Credentials can carry a per-session environment. Those commands must not
@@ -166,7 +179,12 @@ function executeCommand(commandConfig: string): Promise<string | undefined> {
 /**
  * Resolve all header values using the same resolution logic as API keys.
  */
-export function resolveConfigValueUncached(config: string, env?: Record<string, string>): Promise<string | undefined> {
+export function resolveConfigValueUncached(
+	config: ConfigValue,
+	env?: Record<string, string>,
+	context?: ConfigReferenceContext,
+): Promise<string | undefined> {
+	if (typeof config !== "string") return resolveConfigReference(config, context, env);
 	const reference = parseConfigValueReference(config);
 	if (reference.type === "command") {
 		return runConfigCommand(reference.config, env);
@@ -175,11 +193,13 @@ export function resolveConfigValueUncached(config: string, env?: Record<string, 
 }
 
 export async function resolveConfigValueOrThrow(
-	config: string,
+	config: ConfigValue,
 	description: string,
 	env?: Record<string, string>,
+	context?: ConfigReferenceContext,
 ): Promise<string> {
-	const resolvedValue = await resolveConfigValueUncached(config, env);
+	if (typeof config !== "string") return resolveConfigReference(config, context, env);
+	const resolvedValue = await resolveConfigValueUncached(config, env, context);
 	if (resolvedValue !== undefined) {
 		return resolvedValue;
 	}

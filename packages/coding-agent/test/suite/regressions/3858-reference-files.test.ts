@@ -18,6 +18,7 @@ describe("reference file contract", () => {
 		files = referenceRoot();
 	});
 	afterEach(() => {
+		vi.resetAllMocks();
 		vi.restoreAllMocks();
 		files.close();
 	});
@@ -101,7 +102,7 @@ describe("reference file contract", () => {
 	it.skipIf(process.platform === "win32")("rejects a changed target inode before reading", async () => {
 		const path = files.file("target");
 		const replacement = files.file("replacement", "forbidden-replacement");
-		const open = fs.open;
+		const { open } = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
 		vi.spyOn(fs, "open").mockImplementation(async (target, flags, mode) => {
 			if (target === path) await fs.rename(replacement, path);
 			return open(target, flags, mode);
@@ -113,7 +114,7 @@ describe("reference file contract", () => {
 
 	it.skipIf(process.platform === "win32")("rejects foreign ownership before reading file bytes", async () => {
 		const path = files.file("foreign");
-		const lstat = fs.lstat;
+		const { lstat } = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
 		vi.spyOn(fs, "lstat").mockImplementation(async (...args: Parameters<typeof fs.lstat>) => {
 			const result = await Reflect.apply(lstat, fs, args);
 			if (args[0] === path) Object.defineProperty(result, "uid", { value: 2_147_000_000 });
