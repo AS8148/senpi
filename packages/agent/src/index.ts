@@ -40,7 +40,6 @@ export {
 } from "@earendil-works/pi-telemetry";
 export * from "./agent.ts";
 export * from "./agent-loop.ts";
-export * from "./response-timing.ts";
 export { EMPTY_TOOL_USE_DEMOTION_DIAGNOSTIC, ProviderRetryWatchdogAbortError } from "./assistant-terminal-state.ts";
 export * from "./harness/agent-harness.ts";
 export {
@@ -152,6 +151,7 @@ export * from "./harness/utils/segmented-read-view.ts";
 export * from "./harness/utils/shell-output.ts";
 export * from "./harness/utils/truncate.ts";
 export * from "./proxy.ts";
+export * from "./response-timing.ts";
 export * from "./search/index.ts";
 export { setDefaultStreamFn } from "./stream-fn.ts";
 export { prepareToolArguments } from "./tool-arguments.ts";

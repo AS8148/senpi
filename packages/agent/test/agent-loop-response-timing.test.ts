@@ -380,11 +380,10 @@ describe("agent loop response timing (senpi#3879)", () => {
 		);
 		for await (const _event of loop) {
 		}
-		const reply = (await loop.result()).find(
-			(message): message is AssistantMessage => message.role === "assistant",
-		);
+		const reply = (await loop.result()).find((message): message is AssistantMessage => message.role === "assistant");
 
-		expect(reply?.stopReason).toBe("stop");
+		// Finalized as a stop (not an idle-timeout error), then promoted because it carries tool calls.
+		expect(reply?.stopReason).toBe("toolUse");
 		expect(reply?.timing).toMatchObject({ requestedAt: 0, firstTokenAt: 40, lastTokenAt: 40 });
 	});
 });
