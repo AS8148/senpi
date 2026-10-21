@@ -157,7 +157,8 @@ describe("GitHub Copilot tool limit", () => {
 			}).result(),
 		);
 
-		expect(wireToolNames(payload).at(-1)).toBe("tool_129");
+		expect(wireToolNames(payload)).toHaveLength(COPILOT_TOOL_LIMIT);
+		expect(wireToolNames(payload)).toContain("tool_129");
 	});
 
 	it("keeps a forced Anthropic tool from beyond the first 128", async () => {
