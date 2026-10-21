@@ -1,12 +1,5 @@
 import { createSessionLogger } from "../../../session-log.ts";
-import type {
-	AgentEndEvent,
-	ExtensionAPI,
-	ExtensionContext,
-	InputDispositionEvent,
-	InputEvent,
-	InputSource,
-} from "../../types.ts";
+import type { AgentEndEvent, ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { lastAssistantText } from "./lifecycle-helpers.ts";
 import type { MonitorAwareGoalContinuation } from "./monitor-continuation.ts";
 import { providerRetryAt } from "./provider-retry.ts";
@@ -31,52 +24,15 @@ export interface TurnEndLivenessState {
 	readonly todoOutcome: TodoOwedOutcome | undefined;
 	readonly deadlineStop: boolean;
 	readonly continuationPending: boolean;
-	/** The user (not an extension) queued a steer or follow-up that has not been delivered yet. */
-	readonly userInputQueued: boolean;
 	readonly monitor: Pick<
 		MonitorAwareGoalContinuation,
 		"liveWakeSources" | "scheduledContinuation" | "hasStagedRecovery"
 	>;
 }
 
-/**
- * Counts messages a person queued and that have not been delivered yet, classified by entry point, not transport:
- * a TUI submit (source `interactive`) or an RPC client command (`prompt`/`steer`/`follow_up`, source `rpc`,
- * which is how desktop input arrives) whose disposition is `queued`, and a question the person answered. Anything
- * an extension or the engine sends (source `extension`: Stop hook, loop tick, a timed-out question) is never
- * counted. Each delivered user message lowers the count, so the tracker errs toward held.
- */
-export class QueuedUserInputTracker {
-	#sources = new Map<string, InputSource>();
-	#queued = 0;
-
-	onInput(event: Pick<InputEvent, "inputId" | "source">): void {
-		this.#sources.set(event.inputId, event.source);
-	}
-
-	onDisposition(event: Pick<InputDispositionEvent, "inputId" | "disposition">): void {
-		const source = this.#sources.get(event.inputId);
-		this.#sources.delete(event.inputId);
-		if (event.disposition === "queued" && (source === "interactive" || source === "rpc")) this.#queued += 1;
-	}
-
-	/** A person answered (or commented on) a pending question; the answer is delivered as an extension message. */
-	onQuestionSettled(status: string): void {
-		if (status === "answered" || status === "comment-submitted") this.#queued += 1;
-	}
-
-	onUserMessageDelivered(): void {
-		if (this.#queued > 0) this.#queued -= 1;
-	}
-
-	reset(): void {
-		this.#sources.clear();
-		this.#queued = 0;
-	}
-
-	get queued(): boolean {
-		return this.#queued > 0;
-	}
+/** A person's input is among the entries queued now (tagged by source when it was enqueued). */
+function personInputQueued(ctx: ExtensionContext): boolean {
+	return ctx.hasQueuedPersonInput?.() === true;
 }
 
 /** senpi#3860's hold ledger, when the engine exposes it: true while every engine-originated wake is held. */
@@ -105,7 +61,7 @@ export function collectTurnEndLivenessInput(
 	if (timer !== undefined) expectations.push({ kind: "armed-timer", timer });
 	if (monitor.hasStagedRecovery()) expectations.push({ kind: "recovery-staged" });
 	if (ctx.hasPendingMessages()) {
-		expectations.push(state.userInputQueued ? { kind: "user-input-queued" } : { kind: "pending-messages" });
+		expectations.push(personInputQueued(ctx) ? { kind: "user-input-queued" } : { kind: "pending-messages" });
 	}
 	if (calledAskUser(event.messages) || endsWithQuestion(lastAssistantText(event.messages))) {
 		expectations.push({ kind: "question-to-user" });

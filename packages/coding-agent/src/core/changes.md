@@ -11158,3 +11158,21 @@ Fallback eligibility and the agent_end retry decision are owned by `AgentSession
 
 - `agent-session.ts`: the retry-state fields, the `transformContext` wrapper in `_installAgentNextTurnRefresh`, the start of the agent_end retry block, and `_isHardErrorFallbackEligible`.
 - `retry-fallback/settings.ts`: `DEFAULT_FALLBACK_CHAINS`.
+
+## 2026-10-21 - Queued input is tagged as a person's when it is enqueued (senpi#3863)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: every queued input is tagged when it is enqueued. A TUI submit, an RPC client `prompt`/`steer`/`follow_up`, or an extension send marked `humanOrigin` (an answered question) is a person's. Any other extension or engine send is not. `hasQueuedPersonInput` answers from the ids still in `_queuedInputOrder`, so an input that was delivered, dequeued or cleared (Esc) no longer counts. It is exposed to extensions through `hasQueuedPersonInput` on the context actions. `sendUserMessage` and `QueuedInputOptions`/`PromptOptions` take `humanOrigin`.
+
+### Why
+
+The goal extension's turn-end liveness verdict (senpi#3863) must release a senpi#3860 hold only for a person's queued input. The pending queue also holds Stop-hook, loop-tick and timed-out-question messages, and those must stay held, or the idle drain comes back. A counter in the extension drifted whenever a queued message was removed unsent.
+
+### Why an extension could not handle it
+
+The queue, its removal paths (`dequeueQueuedInput`, `editQueuedInput`, `clearQueue`) and the source of each enqueue are private to `AgentSession`. An extension sees inputs only through events and cannot see removals.
+
+### Expected merge conflict zones
+
+- `agent-session.ts`: the queue fields near `_followUpMessages`, `_enqueuePreparedInput`, `pendingMessageCount`, the `sendUserMessage` options and its fallback enqueue, and the context actions beside `hasPendingMessages`.

@@ -11,10 +11,7 @@ import {
 	type TurnEndLivenessVerdict,
 	type WakeExpectation,
 } from "../../src/core/extensions/builtin/goal/turn-end-liveness.ts";
-import {
-	collectTurnEndLivenessInput,
-	QueuedUserInputTracker,
-} from "../../src/core/extensions/builtin/goal/turn-end-liveness-report.ts";
+import { collectTurnEndLivenessInput } from "../../src/core/extensions/builtin/goal/turn-end-liveness-report.ts";
 import type { AgentEndEvent, ExtensionContext, ExtensionMode } from "../../src/core/extensions/types.ts";
 import type { SessionEntry } from "../../src/core/session-manager.ts";
 
@@ -431,7 +428,6 @@ describe("collectTurnEndLivenessInput reads the hold ledger (#3863, senpi#3860)"
 		todoOutcome: undefined,
 		deadlineStop: false,
 		continuationPending: false,
-		userInputQueued: false,
 		monitor,
 	};
 
@@ -446,110 +442,44 @@ describe("collectTurnEndLivenessInput reads the hold ledger (#3863, senpi#3860)"
 	});
 });
 
-describe("QueuedUserInputTracker and the queued-message wake (#3863, review round 5)", () => {
-	it.each([
-		["an extension (Stop hook, loop tick, ask-user timeout)", "extension", false],
-		["a desktop or RPC client command (prompt / steer / follow_up)", "rpc", true],
-		["a person at the TUI", "interactive", true],
-	] as const)("counts a queued input from %s as human: %s", (_label, source, human) => {
-		const tracker = new QueuedUserInputTracker();
-		tracker.onInput({ inputId: "q", source });
-		tracker.onDisposition({ inputId: "q", disposition: "queued" });
-		expect(tracker.queued).toBe(human);
-	});
+describe("the queued-message wake follows the session's per-entry origin tag (#3863)", () => {
+	const endOfTurn: AgentEndEvent = { type: "agent_end", messages: [fauxAssistantMessage("done")], willRetry: false };
+	const state = {
+		goal: null,
+		todoOutcome: undefined,
+		deadlineStop: false,
+		continuationPending: false,
+		monitor: { liveWakeSources: () => [], scheduledContinuation: () => undefined, hasStagedRecovery: () => false },
+	};
+	const ctxWith = (personQueued: boolean | undefined, held: boolean): ExtensionContext =>
+		({
+			mode: "tui",
+			hasPendingMessages: () => true,
+			...(personQueued === undefined ? {} : { hasQueuedPersonInput: (): boolean => personQueued }),
+			...(held ? { engineTurnsHeld: (): boolean => true } : {}),
+			sessionManager: { getBranch: () => [], getHeader: () => undefined, getSessionId: () => "s" },
+		}) as unknown as ExtensionContext;
 
 	it.each([
-		["answered", true],
-		["comment-submitted", true],
-		["timed_out", false],
-		["cancelled", false],
-	] as const)("counts a question settled as %s as a person's input: %s", (status, human) => {
-		const tracker = new QueuedUserInputTracker();
-		tracker.onQuestionSettled(status);
-		expect(tracker.queued).toBe(human);
+		["a person's queued input", true, "user-input-queued"],
+		["only extension or engine messages", false, "pending-messages"],
+		["an engine without the per-entry tag", undefined, "pending-messages"],
+	] as const)("maps a pending queue holding %s to %s", (_label, personQueued, kind) => {
+		expect(collectTurnEndLivenessInput(ctxWith(personQueued, false), endOfTurn, state).expectations).toEqual([
+			{ kind },
+		]);
 	});
 
 	it.each([
 		[
-			"a desktop steer queued over RPC releases the hold",
-			"rpc",
+			"a person's queued input releases the hold",
+			true,
 			{ kind: "waiting", on: [{ kind: "user-input-queued" }], heldBy: "unattended" },
 		],
-		[
-			"a TUI follow-up releases the hold",
-			"interactive",
-			{ kind: "waiting", on: [{ kind: "user-input-queued" }], heldBy: "unattended" },
-		],
-		["an extension-queued message stays held", "extension", { kind: "held", reason: "unattended" }],
-	] as const)("end to end through tracker, collector and table: %s", (_label, source, verdict) => {
-		const tracker = new QueuedUserInputTracker();
-		tracker.onInput({ inputId: "q", source });
-		tracker.onDisposition({ inputId: "q", disposition: "queued" });
-		const ctx = {
-			mode: "tui",
-			hasPendingMessages: () => true,
-			engineTurnsHeld: (): boolean => true,
-			sessionManager: { getBranch: () => [], getHeader: () => undefined, getSessionId: () => "s" },
-		} as unknown as ExtensionContext;
-		const collected = collectTurnEndLivenessInput(
-			ctx,
-			{ type: "agent_end", messages: [fauxAssistantMessage("done")], willRetry: false },
-			{
-				goal: null,
-				todoOutcome: undefined,
-				deadlineStop: false,
-				continuationPending: false,
-				userInputQueued: tracker.queued,
-				monitor: {
-					liveWakeSources: () => [],
-					scheduledContinuation: () => undefined,
-					hasStagedRecovery: () => false,
-				},
-			},
-		);
-		expect(evaluateTurnEndLiveness(collected)).toEqual(verdict);
-	});
-
-	it("does not count a human input that started a turn instead of queueing", () => {
-		const tracker = new QueuedUserInputTracker();
-		tracker.onInput({ inputId: "s", source: "interactive" });
-		tracker.onDisposition({ inputId: "s", disposition: "started" });
-		expect(tracker.queued).toBe(false);
-	});
-
-	it("clears once the queued user message is delivered", () => {
-		const tracker = new QueuedUserInputTracker();
-		tracker.onInput({ inputId: "a", source: "interactive" });
-		tracker.onDisposition({ inputId: "a", disposition: "queued" });
-		tracker.onUserMessageDelivered();
-		expect(tracker.queued).toBe(false);
-	});
-
-	it.each([
-		[true, "user-input-queued"],
-		[false, "pending-messages"],
-	] as const)("maps a pending queue with userInputQueued=%s to %s", (userInputQueued, kind) => {
-		const ctx = {
-			mode: "tui",
-			hasPendingMessages: () => true,
-			sessionManager: { getBranch: () => [], getHeader: () => undefined, getSessionId: () => "s" },
-		} as unknown as ExtensionContext;
-		const collected = collectTurnEndLivenessInput(
-			ctx,
-			{ type: "agent_end", messages: [fauxAssistantMessage("done")], willRetry: false },
-			{
-				goal: null,
-				todoOutcome: undefined,
-				deadlineStop: false,
-				continuationPending: false,
-				userInputQueued,
-				monitor: {
-					liveWakeSources: () => [],
-					scheduledContinuation: () => undefined,
-					hasStagedRecovery: () => false,
-				},
-			},
-		);
-		expect(collected.expectations).toEqual([{ kind }]);
+		["an extension-queued message stays held", false, { kind: "held", reason: "unattended" }],
+	] as const)("under an active hold, %s", (_label, personQueued, verdict) => {
+		expect(
+			evaluateTurnEndLiveness(collectTurnEndLivenessInput(ctxWith(personQueued, true), endOfTurn, state)),
+		).toEqual(verdict);
 	});
 });

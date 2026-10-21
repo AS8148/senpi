@@ -1042,6 +1042,8 @@ export interface QueuedInputOptions extends ClientMessageIdentity {
 	enqueueOrder?: number;
 	/** Input provenance reported to `input` extension handlers; defaults to "interactive". */
 	source?: InputSource;
+	/** A person's input that arrives through the extension API (an answered question); see `hasQueuedPersonInput`. */
+	humanOrigin?: boolean;
 	/** Persist the prepared queue record before publishing or enqueuing it. */
 	onQueuedInput?: (input: PreparedClientInput) => void;
 }
@@ -1061,6 +1063,8 @@ export interface PromptOptions extends ClientMessageIdentity {
 	thinkingLevel?: ThinkingLevel;
 	/** Source of input for extension input event handlers. Defaults to "interactive". */
 	source?: InputSource;
+	/** A person's input that arrives through the extension API (an answered question); see `hasQueuedPersonInput`. */
+	humanOrigin?: boolean;
 	/**
 	 * Send command-shaped text that no command handles to the model as plain text. Without it, such
 	 * interactive or RPC input is rejected with `UnknownCommandError`.
@@ -1230,6 +1234,8 @@ export class AgentSession {
 	private _steeringMessages: string[] = [];
 	/** Tracks pending follow-up messages for UI display. Removed when delivered. */
 	private _followUpMessages: string[] = [];
+	/** Queued-input ids a person enqueued (see `hasQueuedPersonInput`); stale ids are pruned on read. */
+	private readonly _personQueuedIds = new Set<string>();
 	/** Recovery-only order across both native queue modes and TUI compaction ownership. */
 	private _queuedInputOrder: QueuedInput[] = [];
 	/** The cause of the abort in flight, reported on the `agent_end` it produces. */
@@ -6051,6 +6057,8 @@ export class AgentSession {
 		const queue = input.mode === "steer" ? this._steeringMessages : this._followUpMessages;
 		queue.push(input.text);
 		const queuedId = this._recordQueuedInput(input.text, input.mode, prepared, undefined, input.queuedId);
+		if (input.humanOrigin === true || (input.source ?? "interactive") !== "extension")
+			this._personQueuedIds.add(queuedId);
 		this._sessionLogger.debug("queue_enqueue", {
 			mode: input.mode,
 			count: queue.length,
@@ -6385,6 +6393,7 @@ export class AgentSession {
 		options?: {
 			deliverAs?: "steer" | "followUp";
 			expandPromptTemplates?: boolean;
+			humanOrigin?: boolean;
 		},
 		deferredTurnClaim?: DeferredTurnClaim,
 	): Promise<void> {
@@ -6439,6 +6448,7 @@ export class AgentSession {
 				images,
 				textBlocks,
 				source: "extension",
+				...(options?.humanOrigin === true ? { humanOrigin: true } : {}),
 				promptDisposition: (nextDisposition) => {
 					disposition = nextDisposition;
 					if (nextDisposition === "started") deferredTurnClaim?.resolve("started");
@@ -6457,9 +6467,17 @@ export class AgentSession {
 			// before prompt() accepted the message must not silently drop it.
 			if (disposition === undefined) {
 				if (options?.deliverAs === "steer") {
-					await this._queueSteer(text, images, { textBlocks });
+					await this._queueSteer(text, images, {
+						textBlocks,
+						source: "extension",
+						humanOrigin: options?.humanOrigin,
+					});
 				} else {
-					await this._queueFollowUp(text, images, { textBlocks });
+					await this._queueFollowUp(text, images, {
+						textBlocks,
+						source: "extension",
+						humanOrigin: options?.humanOrigin,
+					});
 				}
 			}
 			throw error;
@@ -6679,6 +6697,18 @@ export class AgentSession {
 	}
 
 	/** Number of pending messages (includes both steering and follow-up) */
+	/**
+	 * Whether a person's input is waiting in the queue: a TUI submit, an RPC client prompt/steer/follow_up or an
+	 * answered question, tagged when it was enqueued. Decided from the entries actually queued now, so an input
+	 * that was delivered, dequeued or cleared no longer counts. Extension and engine sends are never a person's.
+	 */
+	get hasQueuedPersonInput(): boolean {
+		for (const id of this._personQueuedIds) {
+			if (!this._queuedInputOrder.some((input) => input.queuedId === id)) this._personQueuedIds.delete(id);
+		}
+		return this._personQueuedIds.size > 0;
+	}
+
 	get pendingMessageCount(): number {
 		return this._steeringMessages.length + this._followUpMessages.length;
 	}
@@ -9922,6 +9952,7 @@ export class AgentSession {
 					void this.abort();
 				},
 				hasPendingMessages: () => this.pendingMessageCount > 0,
+				hasQueuedPersonInput: () => this.hasQueuedPersonInput,
 				isCompacting: () => this.isCompacting,
 				checkReloadVeto: () => this.checkReloadVeto(),
 				shutdown: () => {
