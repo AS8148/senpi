@@ -1,8 +1,7 @@
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { getAgentDir } from "../src/config.ts";
-import { assertAgentDirAllowedInTests, RealAgentDirInTestError } from "../src/real-agent-dir-guard.ts";
+import { assertAgentDirAllowedInTests, getAgentDir, RealAgentDirInTestError } from "../src/config.ts";
 
 // #3867: a run without the quarantine setup resolved the real agent dir and left faux pool state there.
 // Every case below only resolves a path; nothing is written.

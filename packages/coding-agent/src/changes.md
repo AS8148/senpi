@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/config.ts`: `getAgentDir()` passes the resolved directory to `assertAgentDirAllowedInTests` (fork-only `src/real-agent-dir-guard.ts`). Under a test runner (`VITEST` set, or `NODE_ENV=test` as `bun test` sets it), a directory inside the real account home's `.senpi`, `.omo`, `.pi` or active brand config dir throws `RealAgentDirInTestError`. The real home comes from the account database, not `$HOME`. `SENPI_TEST_USE_REAL_AGENT_DIR=1` opts out, as it already does for the quarantine.
+- `packages/coding-agent/src/config.ts`: `getAgentDir()` passes the resolved directory to the new `assertAgentDirAllowedInTests` in the same file; it lives here rather than in a new module so the RPC supervisor's import graph stays at its 55-module ceiling. Under a test runner (`VITEST` set, or `NODE_ENV=test` as `bun test` sets it), a directory inside the real account home's `.senpi`, `.omo`, `.pi` or active brand config dir throws `RealAgentDirInTestError`. The real home comes from the account database, not `$HOME`. `SENPI_TEST_USE_REAL_AGENT_DIR=1` opts out, as it already does for the quarantine.
 
 ### Why
 
