@@ -63,6 +63,7 @@ fn write_returns_while_the_child_stops_reading_and_delivers_everything_later() {
     )
     .unwrap();
     gated_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    let pid = session.pid().unwrap();
 
     let (returned_tx, returned_rx) = mpsc::channel();
     let writer = std::thread::spawn(move || {
@@ -73,9 +74,17 @@ fn write_returns_while_the_child_stops_reading_and_delivers_everything_later() {
         (session, result)
     });
     let returned_while_gated = returned_rx.recv_timeout(Duration::from_secs(5)).is_ok();
-    fifo.release();
-    let (mut session, result) = writer.join().unwrap();
-    let exit = session.wait().unwrap();
+    let (finished_tx, finished_rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        fifo.release();
+        let (mut session, result) = writer.join().unwrap();
+        let _ = finished_tx.send((result, session.wait()));
+    });
+    let Ok((result, exit)) = finished_rx.recv_timeout(Duration::from_secs(30)) else {
+        let _ = Command::new("kill").arg("-9").arg(pid.to_string()).status();
+        panic!("the gated child did not receive all queued input and exit within 30 s");
+    };
+    let exit = exit.unwrap();
 
     assert!(
         returned_while_gated,
