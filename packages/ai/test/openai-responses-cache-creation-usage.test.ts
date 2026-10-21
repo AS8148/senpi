@@ -130,6 +130,28 @@ describe("openai-responses reasoning usage (senpi#3879)", () => {
 		expect(usage.reasoning).toBeUndefined();
 	});
 
+	it("leaves usage.reasoning unset when the reasoning count is null", async () => {
+		const usage = await parseUsage({
+			input_tokens: 10,
+			output_tokens: 5,
+			total_tokens: 15,
+			input_tokens_details: {},
+			output_tokens_details: { reasoning_tokens: null as unknown as number },
+		});
+		expect(usage).not.toHaveProperty("reasoning");
+	});
+
+	it("leaves usage.reasoning unset when the reasoning count is not a finite number", async () => {
+		const usage = await parseUsage({
+			input_tokens: 10,
+			output_tokens: 5,
+			total_tokens: 15,
+			input_tokens_details: {},
+			output_tokens_details: { reasoning_tokens: Number.NaN },
+		});
+		expect(usage).not.toHaveProperty("reasoning");
+	});
+
 	it("keeps a reported zero reasoning count as 0", async () => {
 		const usage = await parseUsage({
 			input_tokens: 10,

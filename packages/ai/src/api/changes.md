@@ -2,10 +2,10 @@
 
 ### What changed
 
-- `packages/ai/src/api/openai-completions.ts`: `usage.reasoning` is set only when the provider sent a reasoning count (OpenAI `completion_tokens_details.reasoning_tokens` / `output_tokens_details.reasoning_tokens`, Google `thoughtsTokenCount`); a reported 0 stays 0. It used to be `|| 0`.
-- `packages/ai/src/api/openai-responses-shared.ts`: `usage.reasoning` is set only when the provider sent a reasoning count (OpenAI `completion_tokens_details.reasoning_tokens` / `output_tokens_details.reasoning_tokens`, Google `thoughtsTokenCount`); a reported 0 stays 0. It used to be `|| 0`.
-- `packages/ai/src/api/google-generative-ai.ts`: `usage.reasoning` is set only when the provider sent a reasoning count (OpenAI `completion_tokens_details.reasoning_tokens` / `output_tokens_details.reasoning_tokens`, Google `thoughtsTokenCount`); a reported 0 stays 0. It used to be `|| 0`.
-- `packages/ai/src/api/google-vertex.ts`: `usage.reasoning` is set only when the provider sent a reasoning count (OpenAI `completion_tokens_details.reasoning_tokens` / `output_tokens_details.reasoning_tokens`, Google `thoughtsTokenCount`); a reported 0 stays 0. It used to be `|| 0`.
+- `packages/ai/src/api/openai-completions.ts`: `usage.reasoning` is set only when `completion_tokens_details.reasoning_tokens` is a finite number (through `utils/reported-count.ts` `reportedCount`); absent, `null` or non-finite leaves it unset, and a reported 0 stays 0. It used to be `|| 0`.
+- `packages/ai/src/api/openai-responses-shared.ts`: `usage.reasoning` is set only when `output_tokens_details.reasoning_tokens` is a finite number (through `utils/reported-count.ts` `reportedCount`); absent, `null` or non-finite leaves it unset, and a reported 0 stays 0. It used to be `|| 0`.
+- `packages/ai/src/api/google-generative-ai.ts`: `usage.reasoning` is set only when `usageMetadata.thoughtsTokenCount` is a finite number (through `utils/reported-count.ts` `reportedCount`); absent, `null` or non-finite leaves it unset, and a reported 0 stays 0. It used to be `|| 0`.
+- `packages/ai/src/api/google-vertex.ts`: `usage.reasoning` is set only when `usageMetadata.thoughtsTokenCount` is a finite number (through `utils/reported-count.ts` `reportedCount`); absent, `null` or non-finite leaves it unset, and a reported 0 stays 0. It used to be `|| 0`.
 
 ### Why
 

@@ -3,8 +3,8 @@
 ### What changed
 
 - `packages/agent/src/agent-loop.ts`: `streamAssistantResponse` marks the request just before the stream function is called, feeds the provider's `start` and streamed delta events to a timing recorder, and stamps `timing` on the final message on every terminal path (the former `propagateThinkingTiming` is now `stampTiming`, which also stamps the thinking blocks as before). A failure before the request was issued gets no timing.
-- `packages/agent/src/response-timing.ts` (fork-only): the recorder, plus the exported `reasonedBeforeFirstDelta` / `STREAMED_DELTA_TYPES` rule that the TPS notice (`builtin/tps.ts`) also uses, so both measure one window.
-- `packages/agent/src/index.ts`: re-exports `response-timing.ts`. Wall-clock fields use `Date.now()`; `generationMs` uses the monotonic clock and the TPS notice's window (first delta to last delta, or from the response start when it reasoned before its first delta, senpi#3393).
+- `packages/agent/src/response-timing.ts` (fork-only): the recorder, plus the exported `reasonedBeforeFirstDelta` / `STREAMED_DELTA_TYPES` rule that the TPS notice (`builtin/tps.ts`) also uses, so both measure one window. Wall-clock fields use `Date.now()`; `generationMs` uses the monotonic clock and the TPS notice's window (first delta to last delta, or from the response start when it reasoned before its first delta, senpi#3393).
+- `packages/agent/src/index.ts`: re-exports `response-timing.ts`.
 
 ### Why
 
