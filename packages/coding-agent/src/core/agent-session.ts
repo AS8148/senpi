@@ -1217,6 +1217,7 @@ export class AgentSession {
 	/** Settles once the queued message_end processing (persistence included) of that exact message has run. */
 	private readonly _messageEndPersistence = new WeakMap<AgentMessage, Promise<void>>();
 	private _isAgentRunActive = false;
+	private _promptsInFlight = 0;
 	/** senpi#3650: the core may continue a run after agent_end; the settle must not wait on that continuation. */
 	private readonly _runContinuations = new AgentRunContinuations();
 	/** senpi#3650: the turn that owns extension handler waits started now; the turn deadline releases only its own. */
@@ -2999,8 +3000,8 @@ export class AgentSession {
 		this.releaseSettledSessionMemory();
 		this._deadlineTracker.disarm();
 		this._emit({ type: "agent_idle" });
-		// An input release admitted into a turn that was already streaming completes here, once the run settles.
-		await this._engineTurnInput.finish((sources) => this._extensionRunner.emitHeldWakesReleased(sources));
+		// An input release admitted into a turn that was already streaming settles here, once the run settles.
+		await this._settleInputRelease();
 	}
 
 	private async _promptAgent(
@@ -5177,38 +5178,46 @@ export class AgentSession {
 			command: this._isExtensionCommandText(text, options),
 			submittedByCommand: options?.source === "extension",
 		});
-		// Hold release keys on the entry point alone (senpi#3860): an extension cannot assert a person's origin to
-		// release a hold. A person's answer releases through `releaseQuestionInput`; `originOf` only tags the queue.
-		const origin = inputOriginOf(options?.source);
-		let ownsRelease = false;
-		let disposed = false;
+		this._promptsInFlight++;
 		try {
-			ownsRelease = origin === "person" && this._beginPersonInput();
+			// Hold release keys on the entry point alone (senpi#3860): an extension cannot assert a person's origin to
+			// release a hold. A person's answer releases through `releaseQuestionInput`; `originOf` only tags the queue.
+			if (inputOriginOf(options?.source) === "person") this._beginPersonInput();
 			await this._prompt(text, {
 				...options,
 				promptDisposition: (disposition) => {
-					disposed = true;
 					hold.accepted();
 					if (disposition === "started" || disposition === "queued")
 						this._engineTurnInput.admit(disposition === "queued", (message) => this.agent.steer(message));
 					options?.promptDisposition?.(disposition);
 				},
 			});
-			if (this.isIdle)
-				await this._engineTurnInput.finish((sources) => this._extensionRunner.emitHeldWakesReleased(sources));
 		} finally {
-			// An input that opened the release and ended with no disposition (thrown, cancelled) gives it back.
-			if (ownsRelease && !disposed) this._engineTurnInput.abandon();
-			hold.end();
+			this._promptsInFlight--;
+			try {
+				await this._settleInputRelease();
+			} finally {
+				hold.end();
+			}
 		}
 	}
 
 	/** A person's input (prompt, steer, follow-up, answer) attends the session and releases what it holds. */
-	private _beginPersonInput(): boolean {
+	private _beginPersonInput(): void {
 		emitUserActivity(this, "prompt");
 		this._deadlineTracker.clearHold();
 		this._engineResumeWindow = false;
-		return this._engineTurnInput.begin();
+		this._engineTurnInput.begin();
+	}
+
+	/**
+	 * Every input release settles here, once nothing could still admit it: no prompt in flight (a
+	 * command's follow-on reaches `prompt()` synchronously) and no run active. Called from every
+	 * prompt's `finally`, from run settlement, and after an answer is dispatched.
+	 */
+	private async _settleInputRelease(): Promise<void> {
+		if (this._promptsInFlight > 0 || this._isAgentRunActive || !this.isIdle) return;
+		await this._engineTurnInput.settle((sources) => this._extensionRunner.emitHeldWakesReleased(sources));
 	}
 
 	private _isExtensionCommandText(text: string, options?: PromptOptions): boolean {
@@ -6210,7 +6219,7 @@ export class AgentSession {
 		} satisfies CustomMessage<T>;
 		if (
 			!releasedWake &&
-			!isUserDirectedTurn(message.customType) &&
+			customTurnOrigin(message.customType) === "engine" &&
 			options?.deliverAs !== "nextTurn" &&
 			options?.triggerTurn !== false &&
 			(this.isStreaming || options?.triggerTurn === true) &&
@@ -10083,6 +10092,14 @@ export class AgentSession {
 				questionInput: () => {
 					this._engineTurnInput.begin();
 					this._engineResumeWindow = false;
+					// The answer's follow-on (if any) enters prompt() synchronously after this; settle once it has.
+					queueMicrotask(() => {
+						this._settleInputRelease().catch((error: unknown) => {
+							this._sessionLogger.warn("input_release_settle_failed", {
+								error: error instanceof Error ? error.message : String(error),
+							});
+						});
+					});
 				},
 				getAgentDir: () => this._agentDir,
 				isProjectTrusted: () => this.settingsManager.isProjectTrusted(),
