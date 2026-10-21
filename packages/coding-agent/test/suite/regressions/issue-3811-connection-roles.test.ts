@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { ConnectionRoles } from "../../../src/modes/rpc/connection-roles.ts";
+import { ConnectionRoles, SOLE_CONNECTION } from "../../../src/modes/rpc/connection-roles.ts";
 import { INTERACTIVE_USER_CAPABILITY } from "../../../src/modes/rpc/custom-capability.ts";
 import type { RpcResponse } from "../../../src/modes/rpc/rpc-types.ts";
 import { SessionCommandRouter } from "../../../src/modes/rpc/session-command-router.ts";
@@ -93,6 +93,49 @@ describe("senpi#3811 connection roles", () => {
 		expect(plain.success).toBe(true);
 		expect(flip).toMatchObject({ success: false, error: expect.stringContaining("connection_role_fixed") });
 		expect(fresh.success).toBe(true);
+	});
+
+	it("fixes the role of a stdio client, whose lines carry no connection id, and lets the reader see it", async () => {
+		const host = await fixture();
+		const roles = new ConnectionRoles();
+		const binding = host.bind({
+			connectionRoles: roles,
+			clientInfo: { connectionId: () => undefined, setCapabilities: () => {} },
+		});
+
+		const declared = (await binding.send({
+			type: "set_client_info",
+			capabilities: [INTERACTIVE_USER_CAPABILITY],
+		})) as Answer;
+		const dropped = (await binding.send({ type: "set_client_info", capabilities: [] })) as Answer;
+
+		expect(declared.success).toBe(true);
+		expect(dropped).toMatchObject({ success: false, error: expect.stringContaining("connection_role_fixed") });
+		expect(roles.has(SOLE_CONNECTION, INTERACTIVE_USER_CAPABILITY)).toBe(true);
+	});
+
+	it("fixes the role on a stdio host's connection-level set_client_info", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "senpi-3811-roles-stdio-"));
+		directories.push(dir);
+		const writer = new SessionEventWriter(() => {});
+		const registry = new RpcSessionRegistry({
+			agentDir: dir,
+			createRuntime: async () => {
+				throw new Error("no session is opened in this test");
+			},
+		});
+		const router = new SessionCommandRouter(registry, writer, { cwd: dir }, async () => ({
+			handle: async () => {},
+			dispose: async () => {},
+		}));
+		const declare = (capabilities: string[]) =>
+			router.handle({ type: "set_client_info", width: 120, capabilities }) as Promise<RpcResponse>;
+
+		const declared = (await declare([INTERACTIVE_USER_CAPABILITY])) as Answer;
+		const dropped = (await declare([])) as Answer;
+
+		expect(declared.success).toBe(true);
+		expect(dropped).toMatchObject({ success: false, error: expect.stringContaining("connection_role_fixed") });
 	});
 
 	it("lets a worker isolate adopt the host's declaration without overriding one made inside the isolate", () => {
