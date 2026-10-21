@@ -1254,6 +1254,11 @@ export interface SessionStartEvent {
 	initialModelProvenance?: InitialModelProvenance;
 	/** Previously active session file. Present for "new", "resume", and "fork". */
 	previousSessionFile?: string;
+	/**
+	 * `false` when no client is attached to this start (a host reopening a parked session). Engine-originated
+	 * turns are then held until a client attaches or sends input (senpi#3853). Absent means attended.
+	 */
+	attended?: boolean;
 }
 
 /** Fired when the current session metadata changes. */

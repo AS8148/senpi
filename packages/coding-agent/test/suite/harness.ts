@@ -156,6 +156,7 @@ export interface HarnessOptions {
 	cwd?: string;
 	/** Tool runtime for the session (senpi#3566); absent means `in-process`. */
 	toolRuntime?: ToolRuntimeKind;
+	sessionStartEvent?: import("../../src/core/extensions/types.ts").SessionStartEvent;
 }
 
 export interface Harness {
@@ -326,6 +327,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		retryRandom: options.retryRandom ?? (() => 0.5),
 		environmentContext: options.environmentContext ?? false,
 		...(options.toolRuntime !== undefined ? { toolRuntime: options.toolRuntime } : {}),
+		...(options.sessionStartEvent !== undefined ? { sessionStartEvent: options.sessionStartEvent } : {}),
 	});
 
 	const events: AgentSessionEvent[] = [];
