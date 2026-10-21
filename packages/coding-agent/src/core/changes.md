@@ -1,3 +1,21 @@
+## 2026-10-21 - Keep the hold ledger constructor erasable (senpi#3853)
+
+### What changed
+
+`packages/coding-agent/src/core/engine-turn-hold.ts`: declares the four constructor dependencies as plain fields and assigns them in the constructor.
+
+### Why
+
+`packages/coding-agent/src/core/engine-turn-hold.ts`: constructor parameter properties are rejected by the repository's `erasableSyntaxOnly` TypeScript setting (TS1294).
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/engine-turn-hold.ts`: this is a syntax correction in the core ledger, with no runtime contract change.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/engine-turn-hold.ts`: dependency field declarations and constructor initialization.
+
 ## 2026-10-21 - Key shared holds independently of their kind (senpi#3853)
 
 ### What changed

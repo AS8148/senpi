@@ -42,14 +42,22 @@ export class EngineTurnHold {
 	private released: SessionHold[] = [];
 	goalDeferred = false;
 	generation = 0;
+	private readonly unattended: boolean;
+	private readonly append: (type: string, data: unknown) => void;
+	private readonly notify: (message: string) => void;
+	private readonly emit: (event: SessionHoldEvent) => void;
 
 	constructor(
 		entries: readonly SessionEntry[],
-		private readonly unattended: boolean,
-		private readonly append: (type: string, data: unknown) => void,
-		private readonly notify: (message: string) => void,
-		private readonly emit: (event: SessionHoldEvent) => void,
+		unattended: boolean,
+		append: (type: string, data: unknown) => void,
+		notify: (message: string) => void,
+		emit: (event: SessionHoldEvent) => void,
 	) {
+		this.unattended = unattended;
+		this.append = append;
+		this.notify = notify;
+		this.emit = emit;
 		for (const entry of entries) {
 			if (entry.type !== "custom") continue;
 			if (entry.customType === "session-hold") {
