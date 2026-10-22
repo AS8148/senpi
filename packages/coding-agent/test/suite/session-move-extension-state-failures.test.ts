@@ -11,7 +11,6 @@ import { ExtensionRunner } from "../../src/core/extensions/runner.ts";
 import type { ExtensionFactory } from "../../src/core/extensions/types.ts";
 import {
 	MOVED_STATE_RESTORED,
-	movedStateDir,
 	outgoingStateDir,
 	pendingMovedState,
 } from "../../src/core/session-move/extension-state.ts";
@@ -20,40 +19,13 @@ import { DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS } from "../../src/core/sett
 import { SESSION_RELEASED_ENTRY_TYPE } from "../../src/modes/rpc/session-release.ts";
 import { gatewayFixture } from "./rpc-release-gateway-fixture.ts";
 import { heldTurn, nextEvent, startReleaseHost } from "./rpc-release-host-support.ts";
+import { deferred, moveIn } from "./session-move-extension-state-support.ts";
 import { customTypes } from "./session-move-fixture.ts";
 
 afterEach(() => {
 	vi.useRealTimers();
 	vi.restoreAllMocks();
 });
-
-function deferred(): { readonly promise: Promise<void>; readonly resolve: () => void } {
-	let resolve = (): void => undefined;
-	const promise = new Promise<void>((settle) => {
-		resolve = settle;
-	});
-	return { promise, resolve };
-}
-
-/** Appends a `session_moved_in` for `moveId` to a released session and leaves its state pending next to it. */
-function moveIn(sessionPath: string, moveId: string): string {
-	const lines = readFileSync(sessionPath, "utf8").trimEnd().split("\n");
-	const id = JSON.parse(lines[0] ?? "{}").id;
-	const last = JSON.parse(lines.at(-1) ?? "{}").id;
-	const movedIn = {
-		type: "custom",
-		id: `mv-in-${moveId}`,
-		parentId: last,
-		timestamp: "2026-10-19T00:00:00.000Z",
-		customType: "session_moved_in",
-		data: { move_id: moveId, session_id: id, from: "device-a" },
-	};
-	writeFileSync(sessionPath, `${[...lines, JSON.stringify(movedIn)].join("\n")}\n`);
-	const pendingDir = movedStateDir(sessionPath, moveId as MoveId);
-	mkdirSync(join(pendingDir, "probe"), { recursive: true });
-	writeFileSync(join(pendingDir, "probe", "state.json"), '{"tasks":3}\n');
-	return pendingDir;
-}
 
 describe("a failing session_move_import handler (senpi#3681 review)", () => {
 	it("#given an import handler that throws #when the moved-in session opens #then the state stays pending, the failure is reported, and the next open delivers it again", async () => {
