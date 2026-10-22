@@ -20,7 +20,7 @@
 
 ### What changed
 
-- `scripts/biome/model-type-comparison.grit`: removed. The same check runs as the oxlint JS plugin `scripts/oxlint/model-type-comparison.ts` (`senpi/model-type-comparison`); on one corpus it reports all 9 sites the Grit pattern reports, plus 2 the Grit pattern missed.
+- `scripts/biome/model-type-comparison.grit`: removed. The same check runs as the oxlint JS plugin `scripts/oxlint/model-type-comparison.ts` (`senpi/model-type-comparison`); it reports exactly the shapes the Grit pattern reports. The pattern itself moves to `scripts/oxlint/parity/model-type-comparison.grit`, kept only so `node scripts/oxlint-biome-parity.mjs --update` can regenerate Biome's verdicts; `scripts/oxlint-biome-parity.test.mjs` fails when any ported rule (this one, `biome-port/no-implicit-any-let` or `biome-port/no-string-case-mismatch`) flags different corpus lines than Biome 2.5.14.
 
 ### Why
 
