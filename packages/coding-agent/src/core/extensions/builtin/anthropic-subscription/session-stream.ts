@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type { Api, Context, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { type AuthenticatedAttemptInput, queryWithAuthLane } from "./auth-lane.ts";
 import { coldSeedCalibration, coldSeedOverflow, estimateColdSeedTokens } from "./cold-seed-budget.ts";
@@ -6,6 +5,7 @@ import { buildPromptBlocks } from "./prompt-bridge.ts";
 import { dedupeUltraworkBlocks, serializedPayloadBytes } from "./prompt-directive-dedupe.ts";
 import type { SDKMessage, SDKUserMessage } from "./sdk-boundary.ts";
 import { getSdkBoundary } from "./sdk-boundary.ts";
+import { seatDigest } from "./seat-digest.ts";
 import { reattachRecoveringCheckpoint } from "./session-checkpoint-recovery.ts";
 import { type ContinuityDecision, decideNativeContinuity } from "./session-continuity.ts";
 import {
@@ -81,11 +81,6 @@ function entrySnapshot(entry: AnthropicSubscriptionSessionEntry, hashes: readonl
 		taintedReason: entry.taintedReason,
 		credentialDigest: entry.credentialDigest,
 	};
-}
-
-/** A stable 8-hex digest of an account slot name, so logs can attribute seats without naming them. */
-function seatDigest(accountName: string): string {
-	return createHash("sha256").update(accountName).digest("hex").slice(0, 8);
 }
 
 async function createResidentAttempt(
