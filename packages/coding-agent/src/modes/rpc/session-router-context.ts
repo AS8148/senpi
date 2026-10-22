@@ -11,6 +11,7 @@ import { drainSessionEffects, installSessionEffectSink } from "./session-effect-
 import type { SessionEventWriter } from "./session-event-writer.ts";
 
 import type { RpcSessionRegistry } from "./session-registry.ts";
+import { tearDownReleased } from "./session-router-close.ts";
 import { routingIdOf } from "./session-router-errors.ts";
 import { sweepIdleSessions } from "./session-router-occupancy.ts";
 import type { RpcHostSessionDefaults, RpcSessionIdlePolicy } from "./session-router-types.ts";
@@ -86,6 +87,10 @@ export class RouterContext {
 
 	/** Halves the idle window while the host reports memory pressure; never refuses work. */
 	memoryPressure = false;
+
+	/** The release_session teardown; the router installs its own member here, so it owns the step. */
+	releaseTeardown = (sessionId: string, sessionPath: string): Promise<boolean> =>
+		tearDownReleased(this, sessionId, sessionPath);
 
 	/** Live kernel view the host injects; absent until start, and a session with no kernel reads zeros. */
 	hostMemoryView:

@@ -1,7 +1,7 @@
 import type { HandoverParkedEntry } from "./host-handover-parked.ts";
 import type { RpcCommand, RpcHostKernelMemory, RpcResponse } from "./rpc-types.ts";
 import { releaseConnection } from "./session-router-attachments.ts";
-import { dispose } from "./session-router-close.ts";
+import { dispose, tearDownReleased } from "./session-router-close.ts";
 import { RouterContext } from "./session-router-context.ts";
 import { beginDrain, sweepIdleSessions } from "./session-router-occupancy.ts";
 import { reopenParked } from "./session-router-open.ts";
@@ -12,6 +12,11 @@ export class SessionCommandRouter {
 	private readonly context: RouterContext;
 	constructor(...args: ConstructorParameters<typeof RouterContext>) {
 		this.context = new RouterContext(...args);
+		this.context.releaseTeardown = (sessionId, sessionPath) => this.tearDownReleased(sessionId, sessionPath);
+	}
+	/** The release_session park teardown. Routed through this member, as before the split (senpi#3681). */
+	private tearDownReleased(sessionId: string, sessionPath: string): Promise<boolean> {
+		return tearDownReleased(this.context, sessionId, sessionPath);
 	}
 	get sessionCount(): number {
 		return this.context.registry.size;

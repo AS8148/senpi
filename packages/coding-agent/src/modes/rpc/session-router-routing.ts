@@ -20,7 +20,7 @@ import { dispatchSessionBinding } from "./session-held.ts";
 import { moveSession } from "./session-move-commands.ts";
 import { releaseSession } from "./session-release.ts";
 import { releaseConnection } from "./session-router-attachments.ts";
-import { close, tearDownReleased, tearDownUnloaded } from "./session-router-close.ts";
+import { close, tearDownUnloaded } from "./session-router-close.ts";
 import type { RouterContext } from "./session-router-context.ts";
 import { code, detail, error } from "./session-router-errors.ts";
 import { acknowledgePrompt, otherRequestsSettled, sessionMemory } from "./session-router-observation.ts";
@@ -141,7 +141,7 @@ export async function dispatch(
 				otherRequests: (sessionId) => Math.max(0, (host.activeRequests.get(sessionId) ?? 1) - 1),
 				otherRequestsSettled: (sessionId) => otherRequestsSettled(host, sessionId),
 				pendingPrompts: (sessionId) => host.bindings.get(sessionId)?.pendingPrompts?.() ?? [],
-				tearDown: (sessionId, sessionPath) => tearDownReleased(host, sessionId, sessionPath),
+				tearDown: (sessionId, sessionPath) => host.releaseTeardown(sessionId, sessionPath),
 			},
 			command,
 		);
