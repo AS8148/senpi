@@ -1,3 +1,18 @@
+## 2026-10-22 - Stable-prefix cache checkpoints for context reduction (senpi#3242)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `AssistantMessage` gains optional `promptCacheBreakpoint?: true`, a request-only hint that the history up to and including the message is a stable prefix.
+- `packages/ai/src/api/anthropic-messages.ts`: `convertMessages` puts `cache_control` on the last `text`/`tool_use` block of a hinted assistant message (never on a thinking block). Up to two hints are honoured when the system block holds a checkpoint (OAuth identity or a system prompt); the second takes the tools checkpoint's slot, since the system checkpoint already covers the tools before it. Otherwise only the oldest hint is honoured. A hinted request drops the preceding tool-loop checkpoint, whose entry the final checkpoint's 20-block lookback already reaches, so a request never exceeds four breakpoints.
+
+### Why
+
+- Context reduction re-reduces an older prefix at every frontier step. Anthropic finds earlier cache entries only within about 20 blocks before a breakpoint, and the breakpoints sat at the end of the conversation, so a step's request read only the system prefix and re-wrote everything after it: 400K-780K tokens per step on 1M windows in the reports. A breakpoint at the last message the frontier leaves unchanged lets the next step read that prefix.
+
+### Why an extension could not handle it
+
+- Breakpoint placement is the Anthropic adapter's own request construction; the hint has to travel on the message the adapter converts.
+
 ## 2026-10-21 - AssistantMessage.failureSource (senpi#3866)
 
 ### What changed

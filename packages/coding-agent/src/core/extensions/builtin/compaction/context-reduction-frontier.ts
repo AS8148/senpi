@@ -30,6 +30,26 @@ export function projectedReductionTokens(
 	return Math.max(estimate, state.anchorTokens + estimateTotalTokens(unreducedMessages.slice(state.anchorCount)));
 }
 
+/**
+ * Marks the last assistant message before each cut: everything up to it is the reduced prefix, which
+ * stays byte-identical until the next frontier step, so a provider with explicit cache breakpoints
+ * keeps that prefix cached. On a step both the old cut (read) and the new cut (written for the next
+ * step) are marked (senpi#3242). Copies, never mutates, the messages it marks.
+ */
+function withStablePrefixCheckpoints(messages: AgentMessage[], cuts: readonly number[]): AgentMessage[] {
+	let marked: AgentMessage[] | undefined;
+	for (const cut of cuts) {
+		for (let index = Math.min(cut, messages.length) - 1; index >= 0; index--) {
+			const message = (marked ?? messages)[index];
+			if (message.role !== "assistant") continue;
+			marked ??= [...messages];
+			marked[index] = { ...message, promptCacheBreakpoint: true };
+			break;
+		}
+	}
+	return marked ?? messages;
+}
+
 /** Reduce an immutable prefix; a ceiling step must buy an entire hysteresis band. */
 export function reduceContextWithFrontier(
 	messages: AgentMessage[],
@@ -62,7 +82,10 @@ export function reduceContextWithFrontier(
 				...BUILTIN_CONTEXT_REDUCTION_OPTIONS.shrinkAssistant,
 				protectRecentTokens: 0,
 			},
-			clearToolResults: BUILTIN_CONTEXT_REDUCTION_OPTIONS.clearToolResults,
+			clearToolResults: BUILTIN_CONTEXT_REDUCTION_OPTIONS.clearToolResults && {
+				...BUILTIN_CONTEXT_REDUCTION_OPTIONS.clearToolResults,
+				keepRecent: 0,
+			},
 		}).messages,
 		...messages.slice(cut),
 	];
@@ -81,10 +104,10 @@ export function reduceContextWithFrontier(
 	)
 		return messages;
 	state.engaged = true;
-	if (state.compactionRequired) return reduced;
+	if (state.compactionRequired) return withStablePrefixCheckpoints(reduced, [state.cutIndex]);
 	const tailTokens = estimateTotalTokens(input.unreducedMessages.slice(state.cutIndex));
 	if (wasEngaged && !ceilingPressure && tailTokens <= input.contextWindow * (input.blockBudgetRatio ?? 0.1)) {
-		return reduced;
+		return withStablePrefixCheckpoints(reduced, [state.cutIndex]);
 	}
 
 	// Take the whole available block, stopping before the protected recent tail.
@@ -97,7 +120,7 @@ export function reduceContextWithFrontier(
 	if (cut <= state.cutIndex) {
 		if (!wasEngaged) state.engaged = false;
 		else if (ceilingPressure) state.compactionRequired = true;
-		return reduced;
+		return withStablePrefixCheckpoints(reduced, [state.cutIndex]);
 	}
 	if (
 		ceilingPressure &&
@@ -105,7 +128,7 @@ export function reduceContextWithFrontier(
 	) {
 		if (!wasEngaged) state.engaged = false;
 		else state.compactionRequired = true;
-		return reduced;
+		return withStablePrefixCheckpoints(reduced, [state.cutIndex]);
 	}
 	const candidate = reducePrefix(cut);
 	const savings = estimateTotalTokens(reduced) - estimateTotalTokens(candidate);
@@ -114,10 +137,11 @@ export function reduceContextWithFrontier(
 	const candidateProjected = Math.max(estimateTotalTokens(candidate) + input.overheadTokens, projected - savings);
 	if (savings < input.contextWindow * 0.02 || (ceilingPressure && candidateProjected > input.ceilingTokens * 0.85)) {
 		if (ceilingPressure) state.compactionRequired = true;
-		return reduced;
+		return withStablePrefixCheckpoints(reduced, [state.cutIndex]);
 	}
+	const previousCut = state.cutIndex;
 	state.cutIndex = cut;
 	state.prefixHash = fingerprint(cut);
 	clearReductionAnchor(state);
-	return candidate;
+	return withStablePrefixCheckpoints(candidate, [previousCut, cut]);
 }

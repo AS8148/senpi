@@ -6,6 +6,7 @@
 
 ### Added
 
+- `AssistantMessage.promptCacheBreakpoint?: true` marks the end of a stable prefix; the Anthropic adapter keeps a cache checkpoint there, so context reduction no longer re-writes the cached conversation at every step ([#3242](https://github.com/code-yeongyu/senpi/issues/3242)).
 - `AssistantMessage.failureSource?: "local"` marks a failure raised by local code rather than a provider, so retry and model fallback can skip it ([#3866](https://github.com/code-yeongyu/senpi/issues/3866)).
 
 ### Changed
