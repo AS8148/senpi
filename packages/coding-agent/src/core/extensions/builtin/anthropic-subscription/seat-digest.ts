@@ -10,8 +10,10 @@ const saltsByAgentDir = new Map<string, Buffer>();
 
 /**
  * Removes a salt file of the wrong length (truncated or written by something else) so the next create
- * replaces it. Only the file that was read is removed: if another process has already replaced it, the
- * inode differs and the new salt is kept.
+ * replaces it. A file another process has already replaced (a different inode) is kept. The check and
+ * the unlink are not one atomic step, so two processes that both start against a damaged file can, in a
+ * narrow window, end with different salts until the next restart; digests are diagnostics, so that only
+ * costs a mismatch, never secrecy.
  */
 function removeDamagedSalt(path: string, damagedInode: number): boolean {
 	try {
@@ -43,8 +45,9 @@ function readOrCreateSalt(path: string): Buffer | undefined {
 		try {
 			linkSync(staged, path);
 		} catch (error) {
-			// A filesystem without hard links: create the final name directly. A racing reader can then see
-			// it half-written, which the length check above repairs on the next start.
+			// A filesystem without hard links: create the final name directly. A process starting at the same
+			// moment can see it half-written and replace it, so concurrent first starts there may diverge until
+			// the next restart; later starts converge on the stored salt.
 			if (!NO_HARD_LINKS.has((error as NodeJS.ErrnoException).code ?? "")) throw error;
 			writeFileSync(path, salt, { flag: "wx", mode: 0o600 });
 		}
