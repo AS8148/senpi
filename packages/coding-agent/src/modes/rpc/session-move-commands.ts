@@ -12,6 +12,7 @@ import { finishMove } from "../../core/session-move/finish.ts";
 import { answerMoveStatus, importMovedSession } from "../../core/session-move/import.ts";
 import { MoveLedger, type MoveRecord, type MoveStatus, parseMoveStatus } from "../../core/session-move/move-ledger.ts";
 import { headerSessionId, type MoveId, sessionOwnership } from "../../core/session-move/ownership.ts";
+import { revokeImportedMove } from "../../core/session-move/revoke.ts";
 import { realSessionPath } from "../../core/session-move/session-lock.ts";
 import { normalizePath, resolvePath } from "../../utils/paths.ts";
 import type { RpcResponse } from "./rpc-types.ts";
@@ -55,7 +56,8 @@ type Parsed =
 			readonly dropped: readonly string[];
 	  }
 	| { readonly op: "import"; readonly bundleDir: string; readonly cwd: string; readonly from: string }
-	| { readonly op: "finish"; readonly sessionPath: string; readonly moveId: MoveId; readonly answer: MoveStatus };
+	| { readonly op: "finish"; readonly sessionPath: string; readonly moveId: MoveId; readonly answer: MoveStatus }
+	| { readonly op: "revoke"; readonly sessionPath: string; readonly moveId: MoveId };
 
 function plainMoveId(value: unknown): MoveId | undefined {
 	try {
@@ -102,8 +104,11 @@ function parse(raw: Record<string, unknown>): Parsed | string {
 				return "finish needs sessionPath and the receiver's answer from status (receiving, accepted, declined or failed).";
 			return { op, sessionPath: raw.sessionPath, moveId: id, answer };
 		}
+		case "revoke":
+			if (!text(raw.sessionPath)) return "revoke needs sessionPath, the copy this host imported for the move.";
+			return { op, sessionPath: raw.sessionPath, moveId: id };
 		default:
-			return 'op must be one of "prepare", "cancel", "status", "export", "import" or "finish".';
+			return 'op must be one of "prepare", "cancel", "status", "export", "import", "finish" or "revoke".';
 	}
 }
 
@@ -203,10 +208,28 @@ async function run(
 						"This session is open on this host, so its runtime would not see the move end. Close it here, then finish the move.",
 					),
 			});
-			const ownership = sessionOwnership(loadEntriesFromFile(sessionFile));
-			return { ownership: ownership.writable ? "writable" : ownership.state };
+			return ownershipOf(sessionFile);
+		}
+		case "revoke": {
+			const sessionFile = realSessionPath(parsed.sessionPath);
+			await revokeImportedMove({
+				sessionFile,
+				moveId: parsed.moveId,
+				guard: () =>
+					refuseOpenHere(
+						port,
+						sessionFile,
+						"This session is open on this host, so its runtime would not see the revoke. Close it here, then revoke the move.",
+					),
+			});
+			return ownershipOf(sessionFile);
 		}
 	}
+}
+
+function ownershipOf(sessionFile: string): { readonly ownership: "writable" | "moving" | "moved" } {
+	const ownership = sessionOwnership(loadEntriesFromFile(sessionFile));
+	return { ownership: ownership.writable ? "writable" : ownership.state };
 }
 
 class MoveRefusal extends Error {

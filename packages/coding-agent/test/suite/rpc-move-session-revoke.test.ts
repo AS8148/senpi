@@ -42,7 +42,7 @@ describe("move_session revoke (senpi#4003)", () => {
 			command: "move_session",
 			data: { ownership: "moved" },
 		});
-		expect(customTypes(onB)).toEqual(["session_moved_in", "session_moved"]);
+		expect(customTypes(onB)).toEqual(["session_released", "session_moved_in", "session_moved"]);
 		expect(lastEntry(onB).data).toMatchObject({
 			move_id: "move-r1",
 			session_id: SESSION_ID,
@@ -114,7 +114,7 @@ describe("move_session revoke (senpi#4003)", () => {
 		otherGeneration.release();
 
 		expect(refused).toMatchObject({ success: false, error: "session_held" });
-		expect(customTypes(onB)).toEqual(["session_moved_in"]);
+		expect(customTypes(onB)).toEqual(["session_released", "session_moved_in"]);
 	});
 
 	it("#given the copy opens here while revoke waits for the move lock #then revoke refuses session_open_here", async () => {
@@ -137,7 +137,7 @@ describe("move_session revoke (senpi#4003)", () => {
 		await blocker;
 
 		expect(await revoking).toMatchObject({ success: false, error: "session_open_here" });
-		expect(customTypes(onB)).toEqual(["session_moved_in"]);
+		expect(customTypes(onB)).toEqual(["session_released", "session_moved_in"]);
 	});
 
 	it("#then the capability a client detects revoke by is move_session_revoke", () => {
