@@ -42,19 +42,25 @@ describe("a released shared lease no longer speaks for the shared connection (se
 		["markDegraded", (lease: SharedMcpLease, error: Error) => lease.markDegraded(error)],
 		["markSuspended", (lease: SharedMcpLease, error: Error) => lease.markSuspended(error)],
 		["markNeedsAuth", (lease: SharedMcpLease, error: Error) => lease.markNeedsAuth(error)],
-		["markNeedsClientRegistration", (lease: SharedMcpLease, error: Error) => lease.markNeedsClientRegistration(error)],
-	] as const)("#given two sessions sharing a connection #when the released lease reports a late failure via %s #then the surviving session's connection stays connected", async (_name, report) => {
-		// given
-		const { first, released, surviving } = await twoSessionsSharingOneConnection();
-		expect(surviving.state).toBe("connected");
-		await first.dispose("quit");
-		expect(released.state).toBe("disabled");
+		[
+			"markNeedsClientRegistration",
+			(lease: SharedMcpLease, error: Error) => lease.markNeedsClientRegistration(error),
+		],
+	] as const)(
+		"#given two sessions sharing a connection #when the released lease reports a late failure via %s #then the surviving session's connection stays connected",
+		async (_name, report) => {
+			// given
+			const { first, released, surviving } = await twoSessionsSharingOneConnection();
+			expect(surviving.state).toBe("connected");
+			await first.dispose("quit");
+			expect(released.state).toBe("disabled");
 
-		// when: a failure from an attempt the release superseded lands late, through the released lease
-		report(released, new Error("late failure from a superseded attempt"));
+			// when: a failure from an attempt the release superseded lands late, through the released lease
+			report(released, new Error("late failure from a superseded attempt"));
 
-		// then
-		expect(surviving.state).toBe("connected");
-		expect(surviving.lastError).toBeUndefined();
-	});
+			// then
+			expect(surviving.state).toBe("connected");
+			expect(surviving.lastError).toBeUndefined();
+		},
+	);
 });
