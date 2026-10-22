@@ -431,6 +431,24 @@ A client has to see whether a session's tool child exists and which generation a
 - `host-process-metrics.ts` `readHostProcessMetrics` return shape and `UNOBSERVED`.
 - `host-status.ts` `HostStatusReport` and `UNOBSERVED_METRICS`.
 
+## 2026-10-19 - A queued input's durable admission record keeps its input source (omo#10378)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/client-admission-record.ts`: `preparedInputSchema` accepts an optional `source` (`interactive` / `rpc` / `extension`), so the `prepared` copy of a queued input keeps the source `AgentSession` gave it and a host restart restores the input with that source. A record written before the field parses as before and restores with no source.
+
+### Why
+
+The session entry of a user message records its input source for extensions that replay a resumed session with live trust (omo's plan gate). Without the field the schema stripped the source, so a typed follow-up restored after a host restart lost it.
+
+### Why an extension could not handle it
+
+The admission record is the host's own durable queue; no extension writes or reads it.
+
+### Expected merge conflict zones
+
+- LOW: `client-admission-record.ts` `preparedInputSchema`.
+
 ## 2026-10-18 - Tool-child protocol, one host-call capacity, codec and acknowledged payload refs (senpi#3566)
 
 ### What changed

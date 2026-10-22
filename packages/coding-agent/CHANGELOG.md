@@ -6,6 +6,8 @@
 
 ### Added
 
+- A user message's session entry now records where its input came from: `inputSource` on the `message` entry is `interactive`, `rpc` or `extension`, the same value its `input` event reported, so an extension can replay a resumed session's transcript with the same trust it applied live. It is stored on the entry only and never sent to a provider. Queued input restored after a host restart keeps its source; input requeued by a session move, edited input, and records from before this change carry no `inputSource` ([code-yeongyu/oh-my-openagent#10378](https://github.com/code-yeongyu/oh-my-openagent/issues/10378)).
+
 ### Changed
 
 ### Fixed
@@ -14,6 +16,7 @@
 
 - When another process's engine host holds the shared socket and stops answering, `host ensure` now says which one: the refusal names its pid, engine version, launch profile and the process that started it, in the error and in the `--json` payload's `holder` ([omo-desktop-app#3561](https://github.com/sisyphuslabs/omo-desktop-app/issues/3561)).
 
+- An answer to a question that arrives while a session is starting up now counts as your input, so it releases held background work like any other answer ([#3917](https://github.com/code-yeongyu/senpi/issues/3917)).
 - Responses prompt-cache keys now follow the stable prefix across sessions and task children, including remote compaction. Session routing stays separate from cache affinity ([omo#10775](https://github.com/code-yeongyu/oh-my-openagent/issues/10775)).
 - Discovered extension handlers register in filename order rather than filesystem enumeration order, keeping their prompt contributions reproducible ([omo#10775](https://github.com/code-yeongyu/oh-my-openagent/issues/10775)).
 - Reopening an unattended session no longer spends quota on goals or background events until you send input or choose Resume. Held events survive restart and are released once; ordinary attended sessions keep receiving every event, and completed tasks are not reopened after a host restart ([#3853](https://github.com/code-yeongyu/senpi/issues/3853)).

@@ -1,3 +1,21 @@
+## 2026-10-21 - The session's sendUserMessage action receives the answer's origin from the runner (senpi#3917)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the `sendUserMessage` action takes the `inputOrigin` the runner captured at admission. The session-held `_personAnswerPending` token is removed.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: a session-level token could be cleared or consumed before a deferred answer ran.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: the action implementations are core.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/agent-session.ts`, the `sendUserMessage` action and `questionInput` in the extension binding.
+
 ## 2026-10-21 - An input release finishes when its run settles, and returns on every refused exit (senpi#3853)
 
 ### What changed
@@ -409,6 +427,27 @@ The engine-turn bound and the session mirror are session internals; the builtin 
 
 - LOW: `session-manager.ts`, the `historyGeneration` / `verbatimFromCount` fields after `fullEntryCount`, one line in `_resetToNewSession`, `_completeFileLoad`, `_loadEntries`, `_buildIndex`, `_retainLoadedTail`, `_trimMirrorAfterCompaction` and both `createBranchedSession` branches, `reduceHistory` after `getEntryCount`, and the `ReadonlySessionManager` pick list.
 - LOW: `agent-session.ts`, the first argument of `engineTurnStop` in `_stopEngineTurn` and the `engine-turn-limit.ts` import.
+
+## 2026-10-19 - A user message's session entry records its input source (omo#10378)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: `SessionMessageEntry` declares `inputSource?: InputSource`, and `appendOwnedMessage(message, { inputSource })` writes it onto the entry, never onto the message.
+- `packages/coding-agent/src/core/agent-session.ts`: `_userInputSources`, a WeakMap from each user message the session admits to the `InputSource` its `input` event reported (`source ?? "interactive"`): filled where `prompt()` builds the user message and where `_enqueuePreparedInput` builds a queued steer/follow-up, and read when `message_end` persists that message. `sendUserMessage`'s fallback enqueue after a rejected `prompt()` now passes `source: "extension"`. The prepared record handed to durable custody (`onQueuedInput`) carries the same `source`, both on the regular queue path (`_enqueuePreparedInput`) and in `_promptAgent` when a prompt loses the start race and is queued as a steer, so `restoreQueuedInput` re-stamps restored input with its real source. Only restored input whose record has no source (written before this change), input requeued by a session move, and edited input get no `inputSource`; it is never defaulted at restore, because that would give unknown or extension-originated input a trusted source.
+- `packages/coding-agent/src/core/client-message-identity.ts`: `PreparedClientInput.source?: InputSource`.
+
+### Why
+
+An extension that rebuilds per-session trust state when a session is resumed (omo's plan gate, which must count only human-typed requests) can replay the transcript only if each persisted user entry says where the input came from. The value is session metadata: carrying it on the message put it into every provider request (review of the first version), so it lives on the entry only.
+
+### Why an extension could not handle it
+
+The user message is built and persisted inside the session; an extension sees the source on the `input` event but cannot attach it to the entry that is later written, and a resumed session has only the transcript.
+
+### Expected merge conflict zones
+
+- LOW: `session-manager.ts` `SessionMessageEntry`, `appendOwnedMessage` and `_appendMessage`.
+- LOW: `agent-session.ts`, the `_userInputSources` field beside `_queuedMessages`, the user-message literal in `prompt()`, the start of `_enqueueQueuedInput`, `_enqueuePreparedInput`, the `appendOwnedMessage` call in the `message_end` persistence branch, the `prepared` literals in `_enqueuePreparedInput` and in `_promptAgent`'s start-race catch, and the two fallback enqueues in `sendUserMessage`'s catch.
 
 ## 2026-10-19 - An abort that joins an open agent_end boundary still releases a held handler (senpi#3650 follow-up)
 
