@@ -7091,6 +7091,27 @@ The classic capability list in `connection-handler.ts`.
 - `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: the four attachment capability strings.
 - `packages/coding-agent/src/modes/rpc/rpc-types.ts`: public re-exports; preserve existing names and field shapes in the extracted definitions.
 
+## 2026-10-22 - Unattended opens are not write attachments at the attach gate (senpi#3795, senpi#3853)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-router-unattended.ts`, `packages/coding-agent/src/modes/rpc/session-router-context.ts`, `packages/coding-agent/src/modes/rpc/session-router-open.ts`: an `open_session { attended: false }` hold is counted per connection beside its attachment count.
+- `packages/coding-agent/src/modes/rpc/session-attachment-gate.ts`: a connection passes the gate only with a hold that is not unattended. `resume_session` stays outside the read allow-list, so it requires that write attachment.
+- `packages/coding-agent/src/modes/rpc/session-router-attachments.ts`, `packages/coding-agent/src/modes/rpc/session-attachment-commands.ts`: releasing one hold gives back an unattended one first; disconnect, host-owned close and reclaim drop the unattended counts with the holds.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`, `packages/coding-agent/src/modes/rpc/host-session-ref.ts`, `packages/coding-agent/src/modes/rpc/host-session-runner.ts`: `senpi host session` reopens a parked session unattended and then `attach_session`s before prompt, steer, abort, model or unload, when the host advertises `attach_session`.
+
+### Why
+
+- An unattended open observes a held session without releasing its holds. Letting it pass the gate would let an observer resume or mutate the session, which the hold and the gate both exist to prevent.
+
+### Why an extension could not handle it
+
+- Connection holds and the attach gate are host routing state.
+
+### Expected merge conflict zones
+
+- Per-connection hold accounting in the router, the gate predicate, and the CLI's parked reopen.
+
 ## 2026-10-21 - Attachment replies follow wire contract v1 and reclaim emits no close reply (senpi#3795)
 
 ### What changed

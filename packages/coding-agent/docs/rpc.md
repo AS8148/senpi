@@ -2342,6 +2342,13 @@ admission creates the caller's attachment. Attachment lifecycle commands apply t
 rules. `export_html` and `export_jsonl` write files and therefore require attachment.
 Every other session-scoped command is gated by default, including abort, wake, release/unload,
 message injection, settings/account changes, and extension UI responses/progress.
+`resume_session` is gated too: it releases the session's engine holds and starts the held turns.
+An `open_session { "attended": false }` admits the connection for reads and counts toward its holds,
+which its own `close_session` or disconnect gives back, but it is not a write attachment: the
+connection must still `attach_session` (or open attended) before a gated command. Closing one hold
+gives back an unattended one first, so it never ends the same connection's write attachment.
+`senpi host session` attaches this way after reopening a parked session for prompt, steer, abort,
+model, or unload.
 
 This release **serves** each new violation and writes exactly one stderr line per violation:
 

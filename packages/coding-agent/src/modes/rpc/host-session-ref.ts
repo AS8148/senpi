@@ -98,3 +98,25 @@ function parked(info: Transcript): ResolvedSessionRef {
 function samePath(left: string, right: string): boolean {
 	return canonicalSessionPath(left) === canonicalSessionPath(right);
 }
+
+const WRITING_ACTIONS: ReadonlySet<string> = new Set(["prompt", "steer", "abort", "model", "unload"]);
+
+/**
+ * Opens a resolved session on this short-lived client. A parked one resumes from its transcript, stays
+ * retained past the client, and reopens unattended so its engine holds stay; an unattended open grants
+ * no write attachment, so a writing action attaches explicitly (senpi#3795).
+ */
+export async function reopenSessionRef(
+	client: RpcClient,
+	found: Extract<ResolvedSessionRef, { kind: "live" | "parked" }>,
+	action: string,
+): Promise<{ readonly sessionId: string; readonly durableSessionId: string | undefined }> {
+	if (found.kind === "live") {
+		const { sessionId } = await client.openSession({ sessionPath: found.row.sessionPath, cwd: found.row.cwd });
+		return { sessionId, durableSessionId: found.row.durableSessionId };
+	}
+	const { sessionPath, cwd, durableSessionId } = found;
+	const { sessionId } = await client.openSession({ sessionPath, cwd, retain_on_disconnect: true, attended: false });
+	if (WRITING_ACTIONS.has(action)) await client.attachSession(sessionId, durableSessionId);
+	return { sessionId, durableSessionId };
+}

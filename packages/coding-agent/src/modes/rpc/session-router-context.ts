@@ -22,6 +22,9 @@ export class RouterContext {
 	/** Session handles opened by each connection, with one count per attachment. */
 	readonly sessionsByConnection = new Map<string, Map<string, number>>();
 
+	/** The part of those counts taken by `attended: false` opens: holds that grant no write attachment. */
+	readonly unattendedByConnection = new Map<string, Map<string, number>>();
+
 	/** Opens currently awaiting runtime/binding setup, keyed by connection. */
 	readonly opensByConnection = new Map<string, Set<Promise<void>>>();
 

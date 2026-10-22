@@ -55,7 +55,11 @@ export function validatedOpenProfile(
 	// proven to satisfy every documented cap.
 	const kindError = sessionKindError(command.kind);
 	if (command.attended !== undefined && command.attended !== false)
-		return error(command.id, "open_session", `${RPC_ERROR_INVALID_LAUNCH_PROFILE}: attended must be false or omitted`);
+		return error(
+			command.id,
+			"open_session",
+			`${RPC_ERROR_INVALID_LAUNCH_PROFILE}: attended must be false or omitted`,
+		);
 	if (kindError) return error(command.id, "open_session", `${RPC_ERROR_INVALID_SESSION_KIND}: ${kindError}`);
 	const contextError = sessionContextError(command.context);
 	if (contextError) return error(command.id, "open_session", `${RPC_ERROR_INVALID_SESSION_CONTEXT}: ${contextError}`);

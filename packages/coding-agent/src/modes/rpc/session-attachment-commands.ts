@@ -8,6 +8,7 @@ import { recordAttachment, releaseDisconnectAttachment, releaseOwnerAttachment }
 import { claimClose, finalizeClose } from "./session-router-close.ts";
 import type { RouterContext } from "./session-router-context.ts";
 import { code, detail, error } from "./session-router-errors.ts";
+import { forgetUnattended } from "./session-router-unattended.ts";
 
 function identityMatches(
 	host: RouterContext,
@@ -101,6 +102,7 @@ export async function reclaimSession(
 	attach(host, owner, row.sessionId);
 	const claim = claimClose(host, row.sessionId, { drainAttachments: true });
 	host.sessionsByConnection.get(owner)?.delete(row.sessionId);
+	forgetUnattended(host, owner, row.sessionId);
 	if (host.sessionsByConnection.get(owner)?.size === 0) host.sessionsByConnection.delete(owner);
 	if (host.handoverParkedDir !== undefined && entry.sessionPath !== undefined)
 		await clearHandoverParkedSession(host.handoverParkedDir, entry.sessionPath).catch(() => {});

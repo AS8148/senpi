@@ -103,9 +103,9 @@ describe.each(["in-process", "worker"] as const)("attachment gate and unattended
 				await owner.request({ type: "open_session", cwd: host.cwd, sessionPath, attended: false }),
 			).toMatchObject({ success: true });
 			expect(await owner.request({ type: "close_session", sessionId })).toMatchObject({ success: true });
-			expect(await owner.request({ type: "append_user_message", sessionId, content: "still attached" })).toMatchObject(
-				{ success: true },
-			);
+			expect(
+				await owner.request({ type: "append_user_message", sessionId, content: "still attached" }),
+			).toMatchObject({ success: true });
 			expect(await owner.request({ type: "resume_session", sessionId })).toMatchObject({ success: true });
 		} finally {
 			await host.dispose();

@@ -568,6 +568,14 @@ export class RpcClient {
 		return { deferred };
 	}
 
+	/** Write-attaches this connection; a host without `attach_session` has no attach gate, so `"unsupported"`. */
+	async attachSession(sessionId: string, durableSessionId: string): Promise<"attached" | "unsupported"> {
+		const info = this.getData<{ capabilities?: unknown }>(await this.send({ type: "get_protocol_info" }, false));
+		if (!Array.isArray(info.capabilities) || !info.capabilities.includes("attach_session")) return "unsupported";
+		this.getData(await this.send({ type: "attach_session", sessionId, durableSessionId }, false));
+		return "attached";
+	}
+
 	async listSessions(options?: { observe?: boolean; include_workers?: boolean }): Promise<
 		Array<{
 			sessionId: string;
