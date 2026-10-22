@@ -38,6 +38,7 @@ describe.skipIf(process.platform === "win32")("authenticated internal connection
 		const root = mkdtempSync("/tmp/rpc-hop-wire-");
 		roots.push(root);
 		const path = join(root, "host.sock");
+		const proofChecked = Promise.withResolvers<{ actual: unknown; expected: string }>();
 		const server = createServer((socket) => {
 			sockets.push(socket);
 			attachJsonlLineReader(socket, (line) => {
@@ -64,10 +65,9 @@ describe.skipIf(process.platform === "win32")("authenticated internal connection
 						})}\n`,
 					);
 					socket.once("data", (data) => {
-						const auth = JSON.parse(String(data));
-						expect(auth).toMatchObject({
-							type: "authenticate",
-							client_proof: createHmac("sha256", key)
+						proofChecked.resolve({
+							actual: JSON.parse(String(data)),
+							expected: createHmac("sha256", key)
 								.update(`senpi-rpc-client\ninternal\n${nonce}\n${frame.auth.client_nonce}`)
 								.digest("hex"),
 						});
@@ -82,6 +82,79 @@ describe.skipIf(process.platform === "win32")("authenticated internal connection
 		const stream = await connectInternalConnection(peer(path), key);
 		sockets.push(stream);
 		expect(stream.destroyed).toBe(false);
+		const { actual, expected } = await proofChecked.promise;
+		expect(actual).toMatchObject({ type: "authenticate", client_proof: expected });
+	});
+
+	// Wire contract frame 5: a missing or malformed first-frame nonce, or any command before authentication,
+	// is answered auth_required naming that command, then closed. A wrong proof stays auth_failed.
+	async function rawExchange(send: (write: (frame: object) => void, responses: Record<string, unknown>[]) => void) {
+		const root = mkdtempSync("/tmp/rpc-hop-frame5-");
+		roots.push(root);
+		const path = join(root, "host.sock");
+		await listen(
+			createServer((socket) => {
+				sockets.push(socket);
+				void acceptInternalConnection(socket, key).catch(() => {});
+			}),
+			path,
+		);
+		const client = peer(path);
+		const responses: Record<string, unknown>[] = [];
+		const closed = once(client, "close");
+		attachJsonlLineReader(client, (line) => {
+			responses.push(JSON.parse(line));
+			send((frame) => client.write(`${JSON.stringify(frame)}\n`), responses);
+		});
+		await once(client, "connect");
+		send((frame) => client.write(`${JSON.stringify(frame)}\n`), responses);
+		await closed;
+		return responses;
+	}
+	const authRequired = (id: string, command: string) => ({
+		id,
+		type: "response",
+		command,
+		success: false,
+		error: "auth_required",
+		errorCode: "auth_required",
+	});
+
+	it.each([
+		["no", undefined],
+		["a malformed", { client_nonce: "zz" }],
+	])("answers a first frame with %s client nonce auth_required, then closes", async (_label, auth) => {
+		const responses = await rawExchange((write, received) => {
+			if (received.length === 0) write({ id: "p", type: "get_protocol_info", ...(auth ? { auth } : {}) });
+		});
+		expect(responses).toEqual([authRequired("p", "get_protocol_info")]);
+	});
+
+	it("answers a command sent before authenticate auth_required naming it, then closes", async () => {
+		const responses = await rawExchange((write, received) => {
+			if (received.length === 0)
+				write({ id: "p", type: "get_protocol_info", auth: { client_nonce: "0a".repeat(32) } });
+			else if (received.length === 1) write({ id: "x", type: "list_sessions" });
+		});
+		expect(responses).toHaveLength(2);
+		expect(responses[1]).toEqual(authRequired("x", "list_sessions"));
+	});
+
+	it("keeps a wrong proof auth_failed, then closes", async () => {
+		const responses = await rawExchange((write, received) => {
+			if (received.length === 0)
+				write({ id: "p", type: "get_protocol_info", auth: { client_nonce: "0a".repeat(32) } });
+			else if (received.length === 1) write({ id: "a", type: "authenticate", client_proof: "00".repeat(32) });
+		});
+		expect(responses).toHaveLength(2);
+		expect(responses[1]).toEqual({
+			id: "a",
+			type: "response",
+			command: "authenticate",
+			success: false,
+			error: "auth_failed",
+			errorCode: "auth_failed",
+		});
 	});
 
 	it("rejects a listener that cannot prove the internal key", async () => {

@@ -3,16 +3,18 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const probe = vi.hoisted(() => ({ identity: undefined as string | undefined, fail: false, calls: 0 }));
 vi.mock("../../src/utils/process-identity.ts", async (original) => ({
 	...(await original<typeof import("../../src/utils/process-identity.ts")>()),
-	readProcessStartTime: async () => {
+	observeProcessStartMs: async () => {
 		probe.calls++;
 		if (probe.fail) throw new Error("identity unavailable");
-		return probe.identity;
+		return probe.identity === undefined ? undefined : Date.parse(probe.identity);
 	},
 }));
 
 import { armHostWatchdog, readHostWatchdogConfig } from "../../src/modes/rpc/host-watchdog.ts";
 
 const start = "Tue Oct 20 10:00:00 2026";
+// The identity check is rare (senpi#3816 review); this window covers its slowest cadence.
+const IDENTITY_WINDOW_MS = 61_000;
 afterEach(() => {
 	vi.restoreAllMocks();
 	vi.useRealTimers();
@@ -46,7 +48,7 @@ describe("recorded supervisor lifetime", () => {
 			const fired = vi.fn();
 			const stop = armHostWatchdog({ ppid: 4242, processStartTime: start }, fired);
 			try {
-				await vi.advanceTimersByTimeAsync(1000);
+				await vi.advanceTimersByTimeAsync(IDENTITY_WINDOW_MS);
 				expect(fired).not.toHaveBeenCalled();
 			} finally {
 				stop();
@@ -64,7 +66,7 @@ describe("recorded supervisor lifetime", () => {
 		const fired = vi.fn();
 		const stop = armHostWatchdog({ ppid: 4242, processStartTime: start }, fired);
 		try {
-			await vi.advanceTimersByTimeAsync(1000);
+			await vi.advanceTimersByTimeAsync(IDENTITY_WINDOW_MS);
 			expect(fired).toHaveBeenCalledTimes(1);
 		} finally {
 			stop();
