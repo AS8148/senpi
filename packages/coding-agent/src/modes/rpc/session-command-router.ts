@@ -5,6 +5,7 @@ import { subscriptionLimits } from "../../core/subscription-limits/limit-store.t
 import { detachConnection } from "./connection-detach.ts";
 import { buildRpcSessionState } from "./connection-handler.ts";
 import { CONNECTION_ROLE_FIXED, ConnectionRoles, roleConnection } from "./connection-roles.ts";
+import { SESSION_RELOCATION_CAPABILITY } from "./custom-capability.ts";
 import { answerEffectFromTranscript } from "./effect-commands.ts";
 import { latestSessionEffect } from "./effect-ledger.ts";
 import { multiSessionHostCapabilities } from "./host-capabilities.ts";
@@ -751,6 +752,20 @@ export class SessionCommandRouter {
 		return true;
 	}
 
+	/**
+	 * The connection that offers to continue this session on another computer: the earliest-attached one that
+	 * advertised `session_relocation` in its own `set_client_info` (docs/rpc.md). Only it is asked and only it may answer.
+	 */
+	private relocationConnection(sessionId: string): string | undefined {
+		for (const [connection, owned] of this.sessionsByConnection)
+			if (
+				owned.has(sessionId) &&
+				this.writer.getConnectionCapabilities(connection)?.includes(SESSION_RELOCATION_CAPABILITY)
+			)
+				return connection;
+		return undefined;
+	}
+
 	/** Attachments of the session other than `caller`'s own: an unload or release never counts its requester. */
 	private otherAttachments(sessionId: string, caller: string | undefined): number {
 		const attachments = Math.max(0, this.registry.peek(sessionId)?.attachments ?? 0);
@@ -1012,6 +1027,8 @@ export class SessionCommandRouter {
 									}
 								},
 								connectionId: () => this.writer.currentConnection(),
+								relocationConnection: () => this.relocationConnection(openedSession.sessionId),
+								deliverTo: (connection, deliver) => this.writer.withConnection(connection, deliver),
 							},
 						},
 					),

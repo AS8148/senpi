@@ -1,8 +1,8 @@
 /**
- * `session_relocation` (docs/rpc.md "Continuing a session on another computer"): the session asks the client that
- * offers relocation with `host_request`, the client answers with `host_response`, and an accepted move is announced
- * with `relocation_due` once the run that asked for it settles. The engine never interrupts that run and never moves
- * anything itself: the host runs the existing `release_session` reason `move` and `move_session` steps.
+ * `session_relocation` (docs/rpc.md "Continuing a session on another computer"): the session asks the connection that
+ * offers relocation with `host_request`, only that connection's `host_response` counts, and an accepted move is
+ * announced to it with `relocation_due` once the run that asked for it settles. The engine never interrupts that run and
+ * never moves anything itself: the host runs the existing `release_session` reason `move` and `move_session` steps.
  */
 import type { AgentSession } from "../../core/agent-session.ts";
 import { isPlainId } from "../../core/session-move/bundle.ts";
@@ -16,21 +16,26 @@ import {
 	type SessionRelocationHost,
 } from "../../core/session-relocation.ts";
 import type { RpcHostRequest, RpcHostResponse, RpcRelocationDueEvent } from "./rpc-types.ts";
+import type { HostResponseOutcome, RelocationChannel } from "./session-relocation-channel.ts";
 
 /** Longest the session waits for the host's answer before refusing the request itself. */
 export const HOST_ANSWER_TIMEOUT_MS = 60_000;
 
 type Answer = { readonly data: unknown } | RelocationRefused;
-type Scheduled = { readonly moveId: string; readonly target: string; readonly reason: string };
+type Pending = { readonly connection: string; readonly finish: (answer: Answer) => void };
+type Scheduled = {
+	readonly moveId: string;
+	readonly target: string;
+	readonly reason: string;
+	readonly connection: string;
+};
+type HostAsk = { method: "list_relocation_targets" } | { method: "relocate_session"; target: string; reason: string };
 
 export interface RpcSessionRelocationDeps {
-	readonly session: Pick<AgentSession, "sessionFile" | "subscribe" | "isStreaming">;
+	readonly session: Pick<AgentSession, "sessionFile" | "subscribe" | "isStreaming" | "currentAbortSource">;
 	/** `prompt` calls not yet returned; `release_session` counts them as a running turn (`busy: ["prompt"]`). */
 	readonly pendingPrompts: () => readonly Promise<unknown>[];
-	/** Whether the client bound to this session advertised `session_relocation`. */
-	readonly offered: () => boolean;
-	readonly output: (record: object) => void;
-	readonly outputEvent: (record: object) => void;
+	readonly channel: RelocationChannel;
 }
 
 const refused = (reason: string, detail: string): RelocationRefused => ({ status: "refused", reason, detail });
@@ -50,7 +55,7 @@ function parseTarget(value: unknown): RelocationTarget | undefined {
 
 export class RpcSessionRelocation implements SessionRelocationHost {
 	private readonly deps: RpcSessionRelocationDeps;
-	private readonly pending = new Map<string, (answer: Answer) => void>();
+	private readonly pending = new Map<string, Pending>();
 	private readonly unsubscribe: () => void;
 	private scheduled: Scheduled | undefined;
 	private requesting = false;
@@ -58,13 +63,16 @@ export class RpcSessionRelocation implements SessionRelocationHost {
 	constructor(deps: RpcSessionRelocationDeps) {
 		this.deps = deps;
 		this.unsubscribe = deps.session.subscribe((event) => {
+			// A run the user stopped takes its scheduled move with it: the user chose to stay here.
+			if (event.type === "agent_end" && deps.session.currentAbortSource === "user") this.scheduled = undefined;
 			if (event.type === "agent_settled" && this.scheduled !== undefined) void this.announceWhenReleasable();
 		});
 	}
 
 	async targets(signal?: AbortSignal): Promise<RelocationTargetsResult> {
-		if (!this.deps.offered()) return RELOCATION_NOT_OFFERED;
-		const answer = await this.ask({ method: "list_relocation_targets" }, signal);
+		const connection = this.deps.channel.offerer();
+		if (connection === undefined) return RELOCATION_NOT_OFFERED;
+		const answer = await this.ask({ method: "list_relocation_targets" }, connection, signal);
 		if ("status" in answer) return answer;
 		const raw = record(answer.data)?.targets;
 		const targets = Array.isArray(raw) ? raw.map(parseTarget) : undefined;
@@ -74,7 +82,8 @@ export class RpcSessionRelocation implements SessionRelocationHost {
 	}
 
 	async request(request: RelocationRequest, signal?: AbortSignal): Promise<RelocationRequestResult> {
-		if (!this.deps.offered()) return RELOCATION_NOT_OFFERED;
+		const connection = this.deps.channel.offerer();
+		if (connection === undefined) return RELOCATION_NOT_OFFERED;
 		if (this.deps.session.sessionFile === undefined)
 			return { status: "unavailable", reason: "not_releasable", detail: "this session is not saved to a file" };
 		if (this.scheduled !== undefined || this.requesting)
@@ -84,34 +93,34 @@ export class RpcSessionRelocation implements SessionRelocationHost {
 			);
 		this.requesting = true;
 		try {
-			const answer = await this.ask(
-				{ method: "relocate_session", target: request.target, reason: request.reason },
-				signal,
-			);
+			const ask: HostAsk = { method: "relocate_session", target: request.target, reason: request.reason };
+			const answer = await this.ask(ask, connection, signal);
 			if ("status" in answer) return answer;
-			return this.settleRequest(request, record(answer.data));
+			return this.settleRequest(request, record(answer.data), connection);
 		} finally {
 			this.requesting = false;
 		}
 	}
 
-	/** Settles one `host_response`; `false` when no request of this session is waiting for that id. */
-	respond(frame: RpcHostResponse): boolean {
-		const resolve = this.pending.get(frame.id);
-		if (resolve === undefined) return false;
-		resolve(typeof frame.error === "string" ? refused("host_error", frame.error) : { data: frame.data });
-		return true;
+	/** Settles one `host_response`; only the connection the request went to may answer it. */
+	respond(frame: RpcHostResponse): HostResponseOutcome {
+		const pending = this.pending.get(frame.id);
+		if (pending === undefined) return "unknown";
+		if (this.deps.channel.current() !== pending.connection) return "not_offering_connection";
+		pending.finish(typeof frame.error === "string" ? refused("host_error", frame.error) : { data: frame.data });
+		return "answered";
 	}
 
 	dispose(): void {
 		this.unsubscribe();
 		this.scheduled = undefined;
-		for (const resolve of [...this.pending.values()]) resolve(refused("session_closed", "this session was closed"));
+		for (const { finish } of [...this.pending.values()]) finish(refused("session_closed", "this session was closed"));
 	}
 
 	private settleRequest(
 		request: RelocationRequest,
 		data: Record<string, unknown> | undefined,
+		connection: string,
 	): RelocationRequestResult {
 		if (data?.accepted === false)
 			return refused(
@@ -121,7 +130,7 @@ export class RpcSessionRelocation implements SessionRelocationHost {
 		if (data?.accepted !== true || !isPlainId(data.moveId))
 			return refused("invalid_host_answer", "the app accepted the move without a usable move id");
 		const target = typeof data.target === "string" && data.target !== "" ? data.target : request.target;
-		this.scheduled = { moveId: data.moveId, target, reason: request.reason };
+		this.scheduled = { moveId: data.moveId, target, reason: request.reason, connection };
 		return { status: "scheduled", target, moveId: data.moveId };
 	}
 
@@ -133,13 +142,15 @@ export class RpcSessionRelocation implements SessionRelocationHost {
 		// A new run took over meanwhile: its own settle announces the move.
 		if (due === undefined || this.deps.session.isStreaming) return;
 		this.scheduled = undefined;
-		this.deps.outputEvent({ type: "relocation_due", ...due } satisfies RpcRelocationDueEvent);
+		const { connection, ...fields } = due;
+		this.deps.channel.send(
+			connection,
+			{ type: "relocation_due", ...fields } satisfies RpcRelocationDueEvent,
+			"event",
+		);
 	}
 
-	private ask(
-		fields: { method: "list_relocation_targets" } | { method: "relocate_session"; target: string; reason: string },
-		signal?: AbortSignal,
-	): Promise<Answer> {
+	private ask(fields: HostAsk, connection: string, signal?: AbortSignal): Promise<Answer> {
 		if (signal?.aborted) return Promise.resolve(refused("cancelled", "the request was cancelled"));
 		const id = `hr_${crypto.randomUUID()}`;
 		return new Promise<Answer>((resolve) => {
@@ -154,22 +165,13 @@ export class RpcSessionRelocation implements SessionRelocationHost {
 				() => finish(refused("no_answer", "the app did not answer in time")),
 				HOST_ANSWER_TIMEOUT_MS,
 			);
-			this.pending.set(id, finish);
+			this.pending.set(id, { connection, finish });
 			signal?.addEventListener("abort", onAbort, { once: true });
-			this.deps.output({ type: "host_request", id, ...fields } satisfies RpcHostRequest);
+			this.deps.channel.send(
+				connection,
+				{ type: "host_request", id, ...fields } satisfies RpcHostRequest,
+				"request",
+			);
 		});
 	}
-}
-
-export function answerHostResponse(frame: RpcHostResponse, relocation: RpcSessionRelocation | undefined): object {
-	const reply = { id: frame.id, type: "response", command: "host_response" } as const;
-	if (typeof frame.id !== "string" || frame.id === "")
-		return { ...reply, success: false, error: "invalid_host_response" };
-	return relocation?.respond(frame) === true
-		? { ...reply, success: true }
-		: { ...reply, success: false, error: "unknown_host_request" };
-}
-
-export function isHostResponse(value: unknown): value is RpcHostResponse {
-	return record(value)?.type === "host_response";
 }

@@ -38,9 +38,9 @@ describe("relocation host requests go to the offering connection only", () => {
 		const notice = await dueSeen;
 
 		// Then: the stray answer is refused, typed; the desktop's accept stands and the move is due.
-		expect(replies).toEqual([
-			expect.objectContaining({ success: false, error: "not_offering_connection" }),
-			expect.objectContaining({ success: true }),
+		expect(replies()).toEqual([
+			expect.objectContaining({ connection: "second-window", success: false, error: "not_offering_connection" }),
+			expect.objectContaining({ connection: DESKTOP, success: true }),
 		]);
 		expect(notice).toMatchObject({ moveId: "mv-a1", target: "Studio" });
 	});

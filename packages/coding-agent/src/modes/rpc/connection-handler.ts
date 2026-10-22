@@ -83,7 +83,6 @@ import {
 	RESUME_SESSION_CAPABILITY,
 	RETRY_FALLBACK_COMMAND_CAPABILITY,
 	SESSION_HELD_CAPABILITY,
-	SESSION_RELOCATION_CAPABILITY,
 } from "./custom-capability.ts";
 import {
 	type EffectCommandContext,
@@ -143,7 +142,13 @@ import {
 import { availableModelsData, interruptRunningTurn } from "./session-control-actions-data.ts";
 import { SessionExtensionUiRequests, sessionDialogRequests } from "./session-extension-ui-requests.ts";
 import { subscribeSessionRecords } from "./session-record-stream.ts";
-import { answerHostResponse, isHostResponse, RpcSessionRelocation } from "./session-relocation.ts";
+import { RpcSessionRelocation } from "./session-relocation.ts";
+import {
+	answerHostResponse,
+	isHostResponse,
+	type RelocationClientInfo,
+	relocationChannel,
+} from "./session-relocation-channel.ts";
 
 export { buildRpcSessionState } from "./rpc-session-state.ts";
 
@@ -172,9 +177,8 @@ export interface RpcConnectionOptions {
 	 * Shared-session capability registry. A `set_client_info` carrying `capabilities`
 	 * registers them for the connection that sent it; absent on a classic connection.
 	 */
-	clientInfo?: {
+	clientInfo?: RelocationClientInfo & {
 		setCapabilities: (connectionId: string | undefined, capabilities: readonly string[]) => void;
-		connectionId: () => string | undefined;
 	};
 	/** Shared hosts dedupe `loaded_surfaces_changed` per connection by inventory digest; absent emits inline. */
 	publishLoadedSurfacesChanged?: (previous: string | undefined, digest: string) => void;
@@ -792,10 +796,13 @@ export function createRpcConnectionHandler(
 				? undefined
 				: new RpcSessionRelocation({
 						session,
-						offered: () => clientCapabilities?.includes(SESSION_RELOCATION_CAPABILITY) === true,
 						pendingPrompts: () => [...promptCalls],
-						output,
-						outputEvent,
+						channel: relocationChannel({
+							capabilities: () => clientCapabilities,
+							clientInfo: options.clientInfo,
+							output,
+							outputEvent,
+						}),
 					});
 		session.setRelocationHost?.(relocation);
 		if (replacedSession) {
@@ -1948,7 +1955,7 @@ export function createRpcConnectionHandler(
 		}
 
 		if (isHostResponse(parsed)) {
-			output(answerHostResponse(parsed, relocation));
+			output(answerHostResponse(parsed, (frame) => relocation?.respond(frame) ?? "unknown"));
 			return;
 		}
 

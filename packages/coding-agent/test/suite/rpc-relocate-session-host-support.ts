@@ -32,14 +32,16 @@ export async function relocationHost(options: RelocationHostOptions = {}) {
 			if (record.type === "relocation_due") due(record);
 		},
 	});
-	const replies: WireRecord[] = [];
+	// Both answers carry the request's id, so each reply is read from the records its own connection received.
+	const replies = () =>
+		received
+			.filter((entry) => entry.record.type === "response" && entry.record.command === "host_response")
+			.map((entry) => ({ connection: entry.connection, ...entry.record }));
 	const reply = (connection: string, record: WireRecord, data: unknown): void =>
-		void host
-			.send(
-				{ type: "host_response", id: String(record.id), sessionId: String(record.sessionId), data } as never,
-				connection,
-			)
-			.then((answer) => replies.push(answer));
+		void host.send(
+			{ type: "host_response", id: String(record.id), sessionId: String(record.sessionId), data } as never,
+			connection,
+		);
 	onRequest = (record) =>
 		options.answer
 			? options.answer(record, (connection, data) => reply(connection, record, data))
