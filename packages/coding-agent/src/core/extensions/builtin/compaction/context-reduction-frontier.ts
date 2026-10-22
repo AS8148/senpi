@@ -72,6 +72,7 @@ export function reduceContextWithFrontier(
 	if (state.cutIndex > messages.length || (state.cutIndex > 0 && fingerprint(state.cutIndex) !== state.prefixHash)) {
 		Object.assign(state, createContextReductionState());
 		clearReductionAnchor(state);
+		delete state.checkpointCut;
 		delete state.compactionRequired;
 	}
 	const reducePrefix = (cut: number) => [
