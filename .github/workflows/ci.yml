@@ -1332,7 +1332,7 @@ jobs:
         run: |
           {
             echo "## Inspector handoff"
-            echo "- OS: macos-latest"
+            echo "- OS: ${{ runner.os }}"
             echo "- Node: 24"
             echo "- Test: inspector-endpoint-handoff.test.ts"
           } >> "$GITHUB_STEP_SUMMARY"
