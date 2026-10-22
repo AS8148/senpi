@@ -6,7 +6,7 @@
 
 `packages/coding-agent/src/core/session-activity.ts` keeps child and background wake-source counts separately; publishers without a kind stay background work.
 
-`packages/coding-agent/src/core/session-manager.ts` persists `spawnedBy` in the session header and writes durable lifecycle, custody and child entries even before the first conversation entry (refusing while the header write is pending). Its compacted mirror keeps only active-branch entries in the retained tail, so an edited prompt after compaction no longer brings back messages the edit abandoned.
+`packages/coding-agent/src/core/session-manager.ts` persists `spawnedBy` in the session header and writes durable lifecycle, custody and child entries even before the first conversation entry (refusing while the header write is pending).
 
 Nothing calls the lifecycle yet: the session wiring and RPC surface follow in the next stacked PR.
 
@@ -16,11 +16,11 @@ Nothing calls the lifecycle yet: the session wiring and RPC surface follow in th
 
 ### Why an extension could not handle it
 
-`packages/coding-agent/src/core/session-manager.ts`, `packages/coding-agent/src/core/session-activity.ts`: JSONL persistence, the compacted mirror and wake-source accounting are engine-owned.
+`packages/coding-agent/src/core/session-manager.ts`, `packages/coding-agent/src/core/session-activity.ts`: JSONL persistence and wake-source accounting are engine-owned.
 
 ### Expected merge conflict zones
 
-`packages/coding-agent/src/core/session-manager.ts`: header creation, synchronous persistence and `_trimMirrorAfterCompaction`. `packages/coding-agent/src/core/session-activity.ts`: `WakeSourceTracker` counts.
+`packages/coding-agent/src/core/session-manager.ts`: header creation, synchronous persistence. `packages/coding-agent/src/core/session-activity.ts`: `WakeSourceTracker` counts.
 
 ## 2026-10-21 - Hold queued input without delaying its caller (senpi#3864)
 
