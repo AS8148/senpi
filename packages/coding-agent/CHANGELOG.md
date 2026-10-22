@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- Anthropic Subscription: a damaged seat-digest salt file is now replaced instead of being ignored, and the salt is now stored on filesystems without hard links, so seat digests keep matching across restarts ([omo#10304](https://github.com/code-yeongyu/oh-my-openagent/issues/10304)).
+
 - Context reduction on 1M windows no longer re-writes the whole cached conversation at every frontier step: the reduced prefix stays byte-identical and the Anthropic adapter keeps a cache checkpoint at its end, so a step only writes what changed. Thanks to @lee98www and @daehwanahn for the measured reports ([#3242](https://github.com/code-yeongyu/senpi/issues/3242)).
 
 - Compaction no longer keeps the previous turn when an invisible entry, such as an extension note, sits just before the kept message, and forced recovery after a "prompt is too long" error no longer picks the same cut again when such an entry leads the session ([#3864](https://github.com/code-yeongyu/senpi/issues/3864)).

@@ -1,15 +1,36 @@
 import { createHmac, randomBytes } from "node:crypto";
-import { linkSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { linkSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getAgentDir } from "../../../../config.ts";
 
 const SALT_FILE = join("anthropic-subscription", "seat-digest-salt");
 const SALT_BYTES = 32;
+const NO_HARD_LINKS = new Set(["EPERM", "ENOTSUP", "ENOSYS"]);
 const saltsByAgentDir = new Map<string, Buffer>();
+
+/**
+ * Removes a salt file of the wrong length (truncated or written by something else) so the next create
+ * replaces it. A file another process has already replaced (a different inode) is kept. The check and
+ * the unlink are not one atomic step, so two processes that both start against a damaged file can, in a
+ * narrow window, end with different salts until the next restart; digests are diagnostics, so that only
+ * costs a mismatch, never secrecy.
+ */
+function removeDamagedSalt(path: string, damagedInode: number): boolean {
+	try {
+		if (statSync(path).ino !== damagedInode) return true;
+		unlinkSync(path);
+		return true;
+	} catch (error) {
+		return (error as NodeJS.ErrnoException).code === "ENOENT";
+	}
+}
 
 function readOrCreateSalt(path: string): Buffer | undefined {
 	try {
-		return readFileSync(path);
+		const inode = statSync(path).ino;
+		const stored = readFileSync(path);
+		if (stored.length === SALT_BYTES) return stored;
+		if (!removeDamagedSalt(path, inode)) return undefined;
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== "ENOENT") return undefined;
 	}
@@ -19,8 +40,17 @@ function readOrCreateSalt(path: string): Buffer | undefined {
 	const staged = `${path}.${process.pid}.${randomBytes(6).toString("hex")}`;
 	try {
 		mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-		writeFileSync(staged, randomBytes(SALT_BYTES), { flag: "wx", mode: 0o600 });
-		linkSync(staged, path);
+		const salt = randomBytes(SALT_BYTES);
+		writeFileSync(staged, salt, { flag: "wx", mode: 0o600 });
+		try {
+			linkSync(staged, path);
+		} catch (error) {
+			// A filesystem without hard links: create the final name directly. A process starting at the same
+			// moment can see it half-written and replace it, so concurrent first starts there may diverge until
+			// the next restart; later starts converge on the stored salt.
+			if (!NO_HARD_LINKS.has((error as NodeJS.ErrnoException).code ?? "")) throw error;
+			writeFileSync(path, salt, { flag: "wx", mode: 0o600 });
+		}
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== "EEXIST") return undefined;
 	} finally {
