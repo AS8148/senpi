@@ -2,7 +2,7 @@
  * A REAL in-process host (router, registry, binding, `AgentSession`) with the relocation extension, a desktop client
  * that offers `session_relocation` and stays attached, and a scripted turn in which the agent asks to move to Studio.
  */
-import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/compat";
+import { type FauxResponseStep, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/compat";
 import relocateSessionExtension from "../../src/core/extensions/builtin/relocate-session/index.ts";
 import { startReleaseHost } from "./rpc-release-host-support.ts";
 
@@ -16,6 +16,10 @@ export interface RelocationHostOptions {
 	readonly otherClient?: { readonly name: string; readonly capabilities?: readonly string[] };
 	/** Who answers each `host_request`: the desktop accepts by default. */
 	readonly answer?: (request: WireRecord, reply: (connection: string, data: unknown) => void) => void;
+	/** The turn's closing reply after the tool, so a test can hold the turn open. */
+	readonly closing?: FauxResponseStep;
+	/** Runs after the session is opened and before the desktop attaches. */
+	readonly beforeDesktop?: (host: Awaited<ReturnType<typeof startReleaseHost>>, sessionPath: string) => Promise<void>;
 }
 
 export async function relocationHost(options: RelocationHostOptions = {}) {
@@ -51,9 +55,10 @@ export async function relocationHost(options: RelocationHostOptions = {}) {
 		fauxAssistantMessage([fauxToolCall("relocate_session", { target: "Studio", reason: "heavy build" })], {
 			stopReason: "toolUse",
 		}),
-		fauxAssistantMessage("handing over to Studio"),
+		options.closing ?? fauxAssistantMessage("handing over to Studio"),
 	]);
 	const opened = await host.open("relocating");
+	await options.beforeDesktop?.(host, opened.sessionPath);
 	await host.attach(opened.sessionPath, DESKTOP, OFFERS);
 	if (options.otherClient)
 		await host.attach(opened.sessionPath, options.otherClient.name, options.otherClient.capabilities);

@@ -163,8 +163,10 @@ export async function startReleaseHost(extension: ExtensionFactory, options: Rel
 			capabilities?: readonly string[],
 		): Promise<WireRecord> {
 			++serial;
-			connections.add(connection);
-			writer.registerConnection(connection, sink(connection));
+			if (!connections.has(connection)) {
+				connections.add(connection);
+				writer.registerConnection(connection, sink(connection));
+			}
 			if (capabilities !== undefined)
 				await writer.withConnection(connection, () =>
 					router.handle({
