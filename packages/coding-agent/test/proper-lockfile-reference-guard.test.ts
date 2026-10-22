@@ -49,7 +49,7 @@ const LOCK_SITES: Record<string, LockSite> = {
 			{ file: at("core/extensions/builtin/mcp/auth/token-store.ts"), fn: "clear", op: "rmSync(this.dir" },
 		],
 	},
-	[`${at("core/session-move/move-ledger.ts")}#acquire`]: {
+	[`${at("core/session-move/move-ledger-lock.ts")}#acquireMoveRecordLock`]: {
 		reason: "every record write goes through MoveLedger.write",
 		writes: [{ file: at("core/session-move/move-ledger.ts"), fn: "write", op: "renameFile(temp" }],
 	},
