@@ -151,8 +151,10 @@ export async function startReleaseHost(extension: ExtensionFactory, options: Rel
 			await router.releaseConnection(connection);
 			return { sessionId, sessionPath: data?.state?.sessionFile ?? sessionPath, session };
 		},
-		async attach(sessionPath: string): Promise<WireRecord> {
-			const connection = `attach-${++serial}`;
+		/** Attaches `connection` (a fresh one by default); `send(command, connection)` then speaks as that client. */
+		async attach(sessionPath: string, connection = `attach-${serial + 1}`): Promise<WireRecord> {
+			++serial;
+			connections.add(connection);
 			writer.registerConnection(connection, { writeRaw: receive, waitForBackpressure: async () => {} });
 			const id = `attach-${serial}`;
 			const answered = new Promise<WireRecord>((resolve) => answerWaiters.set(id, resolve));
