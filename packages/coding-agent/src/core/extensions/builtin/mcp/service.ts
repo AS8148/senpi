@@ -55,6 +55,7 @@ import {
 	type McpStartupRaceResult,
 	raceMcpStartupConnect,
 	shouldRaceMcpStartup,
+	waitForMcpStartupRace,
 } from "./startup-race.ts";
 import { safeTimer } from "./wrap.ts";
 
@@ -480,9 +481,14 @@ export class McpService {
 	 * session state from the catalog - the first turn's system prompt - call this
 	 * to OBSERVE the attach. A `"timeout"` result means the turn goes out with
 	 * what has landed so far and the rest arrives on a later turn.
+	 *
+	 * An attach (or re-sync) still on the queue has not handed its backgrounded connects over yet, so the queue is
+	 * awaited first, within the same budget: an early call must never read an empty pending set as settled (senpi#4027).
 	 */
-	whenAttachSettled(timeoutMs = MCP_ATTACH_SETTLE_TIMEOUT_MS): Promise<McpStartupRaceResult> {
-		return this.#deferredAttach.wait(timeoutMs);
+	async whenAttachSettled(timeoutMs = MCP_ATTACH_SETTLE_TIMEOUT_MS): Promise<McpStartupRaceResult> {
+		const startedAt = Date.now();
+		if ((await waitForMcpStartupRace(this.#attachQueue, timeoutMs)) === "timeout") return "timeout";
+		return this.#deferredAttach.wait(Math.max(0, timeoutMs - (Date.now() - startedAt)));
 	}
 
 	/** Subscribe to live MCP inventory transitions for session-scoped hosts. */
