@@ -12,11 +12,12 @@ import { auditSessionPath, findingKey, type SessionPathFinding } from "./session
  * - blocking primitives (`execSync`, `execFileSync`, `spawnSync`, `Bun.spawnSync`,
  *   `Bun.sleepSync`, `Atomics.wait`) FAIL unless the ledger already records that exact
  *   call site with the reason it is still there;
- * - whole-file synchronous reads and writes (`readFileSync`, `writeFileSync`, `appendFileSync`,
- *   resolved through any import alias) are REPORTED against the ledger: a new call site or an
- *   extra call in a ledgered function fails, removing one never does. The audit finds every
- *   other `*Sync` fs/crypto/zlib call too; the move path is held to that whole class with no
- *   ledger at all in `no-sync-on-move-path.test.ts`.
+ * - the whole-file sync calls the ledger records keep their (file, call, function) entries
+ *   there: an extra call in a ledgered function fails, removing one never does;
+ * - every other synchronous fs, crypto or zlib call is held to the frozen, shrink-only
+ *   baseline (`no-sync-in-session-path.baseline.json`, senpi#3993): a site it does not list
+ *   fails, and so does an entry that no longer occurs. The move files allow none at all
+ *   (`no-sync-on-move-path.test.ts`).
  *
  * Until the credential and footer probes go async, the unledgered blocking set is
  * `src/core/resolve-config-value.ts` and `src/core/footer-data-provider.ts`, so this
@@ -50,6 +51,8 @@ const baselineSchema = z.object({
 			callee: z.string().min(1),
 			symbol: z.string().min(1),
 			count: z.number().int().positive(),
+			/** Why a site that cannot simply become asynchronous stays, until senpi#3993 converts it. */
+			reason: z.string().min(1).optional(),
 		}),
 	),
 });
@@ -65,7 +68,7 @@ function baselineDrift(findings: readonly SessionPathFinding[]): {
 } {
 	const live = new Map<string, number>();
 	for (const finding of findings) {
-		if (finding.kind !== "sync-fs" || LEDGERED_SYNC_APIS.has(finding.callee)) continue;
+		if (finding.kind !== "sync-fs" || ledgerKeys.has(findingKey(finding))) continue;
 		live.set(baselineKey(finding), (live.get(baselineKey(finding)) ?? 0) + finding.count);
 	}
 	const frozen = new Map(syncBaseline.entries.map((entry) => [baselineKey(entry), entry.count]));
@@ -83,11 +86,11 @@ function describeFinding(finding: SessionPathFinding): string {
 	return `${finding.file}:${finding.lines.join(",")} ${finding.api} in ${finding.symbol} (x${finding.count})`;
 }
 
-/** The sync calls this ledger tracks across the whole session path, by declared name. */
-const LEDGERED_SYNC_APIS = new Set(["readFileSync", "writeFileSync", "appendFileSync"]);
+/** The ledger keeps exactly the call sites it records; every other sync call is held by the baseline. */
+const ledgerKeys = new Set(ledger.syncFs.map((entry) => findingKey(entry)));
 
 const ledgeredKind = (finding: SessionPathFinding): boolean =>
-	finding.kind === "blocking" || LEDGERED_SYNC_APIS.has(finding.callee);
+	finding.kind === "blocking" || ledgerKeys.has(findingKey(finding));
 
 /** Call sites the ledger does not already cover, by count. */
 function unledgered(

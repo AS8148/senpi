@@ -11,7 +11,7 @@ import { finishMove } from "../../core/session-move/finish.ts";
 import { answerMoveStatus, importMovedSession } from "../../core/session-move/import.ts";
 import { MoveLedger, type MoveRecord, type MoveStatus, parseMoveStatus } from "../../core/session-move/move-ledger.ts";
 import { headerSessionId, type MoveId, sessionOwnership } from "../../core/session-move/ownership.ts";
-import { realSessionPath } from "../../core/session-move/session-lock.ts";
+import { orderedRealPath, realSessionPath } from "../../core/session-move/session-lock.ts";
 import { normalizePath, resolvePath } from "../../utils/paths.ts";
 import type { RpcResponse } from "./rpc-types.ts";
 import {
@@ -146,7 +146,7 @@ async function run(
 		case "status":
 			return answerMoveStatus(ledger, parsed.moveId, parsed.sessionPath);
 		case "export": {
-			const sessionFile = await realSessionPath(parsed.sessionPath);
+			const sessionFile = await orderedRealPath(parsed.sessionPath);
 			const bundleDir = outgoing(parsed.moveId);
 			const manifest = await exportSessionForMove({
 				sessionFile,
@@ -188,7 +188,7 @@ async function run(
 			return { session_id: sessionId, session_path: sessionFile };
 		}
 		case "finish": {
-			const sessionFile = await realSessionPath(parsed.sessionPath);
+			const sessionFile = await orderedRealPath(parsed.sessionPath);
 			await finishMove({
 				sessionFile,
 				bundleDir: outgoing(parsed.moveId),

@@ -4,12 +4,14 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { auditSessionPath, movePathFiles, type SessionPathFinding } from "./session-path-audit.ts";
 
 /**
- * A move streams whole session files, bundles and resident blobs, so none of the move feature's own code may hold the
- * shared host's event loop: every synchronous fs, crypto or zlib call in it fails here, and the session-path ledger
- * may not excuse one (senpi#3676).
+ * A move streams whole session files, bundles and resident blobs, so the move files themselves (`movePathFiles`) may
+ * not hold the shared host's event loop: every synchronous fs, crypto or zlib call in them fails here, and neither the
+ * ledger nor the baseline may excuse one. Sync calls the move path reaches in shared modules are held by the frozen
+ * baseline in `no-sync-in-session-path.test.ts` instead (senpi#3676, senpi#3993).
  */
 const packageRoot = resolve(import.meta.dirname, "../..");
 const fixture = resolve(import.meta.dirname, "fixtures/move-path-sync-fixture.ts");
+const aliasFixture = resolve(import.meta.dirname, "fixtures/aliased-sync-fixture.ts");
 const ledger: { readonly blocking: readonly { file: string }[]; readonly syncFs: readonly { file: string }[] } =
 	JSON.parse(readFileSync(resolve(import.meta.dirname, "no-sync-in-session-path.ledger.json"), "utf-8"));
 const baseline: { readonly entries: readonly { file: string }[] } = JSON.parse(
@@ -19,12 +21,16 @@ const baseline: { readonly entries: readonly { file: string }[] } = JSON.parse(
 const describeFinding = (finding: SessionPathFinding): string =>
 	`${finding.file}:${finding.lines.join(",")} ${finding.api} in ${finding.symbol}`;
 
-describe("no synchronous I/O on the move path", () => {
+describe("no synchronous I/O in the move files", () => {
 	let findings: readonly SessionPathFinding[];
 	const ownFiles = new Set(movePathFiles(packageRoot));
 
 	beforeAll(() => {
-		findings = auditSessionPath({ packageRoot, roots: movePathFiles(packageRoot), extraRoots: [fixture] });
+		findings = auditSessionPath({
+			packageRoot,
+			roots: movePathFiles(packageRoot),
+			extraRoots: [fixture, aliasFixture],
+		});
 	}, 180_000);
 
 	it("flags sync calls the three-name list missed, under aliased, named and namespace imports", () => {
@@ -41,6 +47,23 @@ describe("no synchronous I/O on the move path", () => {
 			"sync-fs openSync in fixtureReadHeader",
 			"sync-fs readSync in fixtureReadHeader",
 			"sync-fs zlib.gzipSync in fixtureCompress",
+		]);
+	});
+
+	it("flags the non-import aliasing forms: destructuring, a renamed alias, bind/call and createRequire", () => {
+		// Given the aliasing fixture seeded as an extra root
+		// When its findings are picked out by their declared callee
+		const found = findings
+			.filter((finding) => finding.file.endsWith("aliased-sync-fixture.ts"))
+			.map((finding) => `${finding.callee} in ${finding.symbol}`)
+			.sort();
+		// Then each form resolves back to its node:fs declaration
+		expect(found).toEqual([
+			"copyFileSync in fixtureDestructured",
+			"existsSync in fixtureBoundOrCalled",
+			"mkdirSync in fixtureRequired",
+			"readFileSync in fixtureRenamed",
+			"statSync in fixtureBoundOrCalled",
 		]);
 	});
 

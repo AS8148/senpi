@@ -16,13 +16,18 @@ export async function realSessionPath(path: string): Promise<string> {
 
 const lockKey = (resolvedPath: string): string => `session-move:${resolvedPath}`;
 
-// Lock keys resolve one after another, in call order, so two steps asked for in order enter the per-file queue in
-// that order even though resolving the real path is asynchronous. `realSessionPath` never rejects.
-let keyOrder: Promise<unknown> = Promise.resolve();
+// Resolutions of one path settle one after another, in call order, so two steps asked for in order enter the
+// per-file queue in that order even though resolving the real path is asynchronous. Each path has its own chain, so
+// one stuck realpath never delays another file's; a chain is dropped once it is idle. `realSessionPath` never rejects.
+const pathChains = new Map<string, Promise<string>>();
 
-function orderedRealPath(path: string): Promise<string> {
-	const next = keyOrder.then(() => realSessionPath(path));
-	keyOrder = next;
+export function orderedRealPath(path: string): Promise<string> {
+	const key = resolve(path);
+	const next = (pathChains.get(key) ?? Promise.resolve("")).then(() => realSessionPath(path));
+	pathChains.set(key, next);
+	void next.then(() => {
+		if (pathChains.get(key) === next) pathChains.delete(key);
+	});
 	return next;
 }
 
