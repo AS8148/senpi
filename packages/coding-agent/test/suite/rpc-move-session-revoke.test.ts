@@ -11,17 +11,8 @@ import { moveLockKey } from "../../src/core/session-move/session-lock.ts";
 import { serializeByKey } from "../../src/core/session-sidecar-store.ts";
 import { opened } from "./rpc-inprocess-host-metrics.ts";
 import { createInProcessRig } from "./rpc-inprocess-host-support.ts";
-import { customTypes, devices, hostAndRelease, move, type Rig } from "./rpc-move-session-support.ts";
+import { customTypes, devices, hostAndRelease, importedOnB, move } from "./rpc-move-session-support.ts";
 import { SESSION_ID } from "./session-move-fixture.ts";
-
-async function importedOnB(a: Rig, b: Rig, fixture: Awaited<ReturnType<typeof devices>>, moveId: string) {
-	await move(b, { op: "prepare", moveId });
-	await hostAndRelease(a, fixture.repoA, fixture.sessionPath, moveId);
-	const exported = await move(a, { op: "export", sessionPath: fixture.sessionPath, moveId, target: "device-b" });
-	const bundleDir = (exported.data as { bundle_dir: string }).bundle_dir;
-	const imported = await move(b, { op: "import", bundleDir, cwd: fixture.repoB, from: "device-a" });
-	return (imported.data as { session_path: string }).session_path;
-}
 
 const lastEntry = (file: string) =>
 	JSON.parse(readFileSync(file, "utf8").trim().split("\n").at(-1) ?? "{}") as {
