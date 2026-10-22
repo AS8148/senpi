@@ -1,5 +1,6 @@
 import { constants, type Stats } from "node:fs";
 import { lstat, open, readlink } from "node:fs/promises";
+import { homedir } from "node:os";
 import { dirname, isAbsolute, join, parse, sep } from "node:path";
 import { ConfigReferenceError, type ConfigReferenceReason } from "@earendil-works/pi-ai/utils/config-reference";
 
@@ -32,10 +33,17 @@ function sameFile(left: Stats, right: Stats): boolean {
 	return left.dev === right.dev && left.ino === right.ino;
 }
 
+/** `~/` names the home directory; any other relative path is relative to the declaring config. */
+function absolutePath(input: FileReference): string {
+	const declared = input.reference.$file;
+	const fromHome = declared.startsWith("~/") || (process.platform === "win32" && declared.startsWith("~\\"));
+	if (fromHome) return `${homedir()}${sep}${declared.slice(2)}`;
+	return isAbsolute(declared) ? declared : `${input.baseDir}${sep}${declared}`;
+}
+
 /** Walk the original spelling and every symlink target before opening any bytes. */
 async function walk(input: FileReference): Promise<{ path: string; stat: Stats }> {
-	const declared = input.reference.$file;
-	const absolute = isAbsolute(declared) ? declared : `${input.baseDir}${sep}${declared}`;
+	const absolute = absolutePath(input);
 	let current = parse(absolute).root;
 	let pending = absolute.slice(current.length).split(sep).filter(Boolean);
 	let stat = await lstat(current);

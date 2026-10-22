@@ -33,6 +33,18 @@ describe("reference value contract", () => {
 		expect(await resolveReference({ $file: "./relative" }, { root: files.root })).toBe(SECRET);
 	});
 
+	it("resolves ~/ paths against the home directory instead of the declaring config", async () => {
+		const home = referenceRoot();
+		try {
+			home.file("home-credential", ROTATED);
+			vi.stubEnv("HOME", home.root);
+			vi.stubEnv("USERPROFILE", home.root);
+			expect(await resolveReference({ $file: "~/home-credential" }, { root: files.root })).toBe(ROTATED);
+		} finally {
+			home.close();
+		}
+	});
+
 	it("keeps concat literals and resolved bytes opaque", async () => {
 		const token = "$" + "{NAME}";
 		const path = files.file(token, `!printf forbidden ${token} {file:never}`);
