@@ -1,3 +1,21 @@
+## 2026-10-23 - QuestionResponse.cancelOrigin (sisyphuslabs/omo-desktop-app#4042)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: new `QuestionCancelOrigin` (`user`, `ui_failure`, `turn_abort`, `session_closed`, `ask_user_disabled`) and an optional `QuestionResponse.cancelOrigin`. A question UI sets `user` on a cancel the user chose; the ask-user builtin sets the rest. `showsPartialAnswers` in `builtin/ask-user/format.ts` is the one place that reads it: only `user` and `ui_failure` cancels show the model the answers given before the cancel.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts`: the lead rule for #4042 delivers partial answers for a cancel the user chose and keeps every lifecycle cancel (turn abort, session close, ask-user disabled, a closed RPC connection) silent. Only the surface that saw the cancel knows which it was, so the origin has to travel on the response.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `QuestionResponse` is the contract between `ExtensionUIContext.question` implementations (TUI, RPC) and the ask-user builtin; neither side can add a field the other does not see.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/types.ts`, `QuestionResponse`.
+
 ## 2026-10-21 - Itemized sendMessage custody (senpi#3811)
 
 ### What changed
