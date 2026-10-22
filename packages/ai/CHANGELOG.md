@@ -188,7 +188,6 @@
 ### Added
 
 - Provider diagnostics classify a dropped connection as `network` from a closed set of structured transport codes (`ECONNRESET`, `ECONNREFUSED`, `ENOTFOUND`, ...) read from the error or its `cause`, with `evidence: "structured_transport"` ([#3228](https://github.com/code-yeongyu/senpi/issues/3228)).
-
 ### Changed
 
 ### Fixed
@@ -559,13 +558,11 @@
 - Added an inherited copy code login method to Anthropic OAuth, next to the fork's browser login with manual code fallback. Copy code login shows the authorization code on Anthropic's page for pasting and works when the browser runs on another machine ([#10194](https://github.com/earendil-works/pi/pull/10194) by [@lucasmeijer](https://github.com/lucasmeijer)).
 
 - OpenGateway models refresh at runtime once OpenGateway is configured: a chat model the gateway starts serving appears without a senpi release when the gateway publishes its price and context window (or it is a serving tier of a shipped model), sized and priced from the gateway's own listing and price table; a model the gateway retires or stops listing disappears. A failed refresh keeps the last good list. ([#2552](https://github.com/code-yeongyu/senpi/issues/2552))
-
 ### Changed
 
 - OAuth browser pages show the logo in color (inherited).
 
 - The OpenGateway catalog now takes context windows, max output, and prices from the gateway itself, and `-ultrafast` serving tiers inherit their base model's capabilities. It adds `deepseek/deepseek-v4.1-flash-ultrafast`, `z-ai/glm-5.3-ultrafast`, and `z-ai/glm-5.3-flash-ultrafast`, and corrects 20 models, including `moonshotai/kimi-k3-ultrafast` (max output 20,480), `anthropic/claude-sonnet-4-6` (max output 64,000), `anthropic/claude-sonnet-4-5` (context 200,000), and the DeepSeek, GLM, and Qwen prices the gateway bills. A daily job now opens a refresh PR whenever the gateway's catalog changes. ([#2552](https://github.com/code-yeongyu/senpi/issues/2552))
-
 ### Fixed
 
 - A request that replays a `tool_reference` and is rejected by an Anthropic-compatible relay with `400 Tool reference ... not found in available tools` is retried once with the replay turned into text, and the tools those references named stay callable. Thanks to @ldz281. ([#2568](https://github.com/code-yeongyu/senpi/issues/2568), [#2574](https://github.com/code-yeongyu/senpi/pull/2574))
@@ -578,7 +575,6 @@
 
 - Regenerating model catalogs without `--strict` while OpenGateway is unreachable keeps the last good OpenGateway catalog instead of shipping it empty. ([#2552](https://github.com/code-yeongyu/senpi/issues/2552))
 - A faux provider registered through `@earendil-works/pi-ai/compat` now keeps answering after `resetApiProviders()`, which a session reload runs, both globally and inside the provider scope it was registered in. Before, a request sent after a reload failed with "No API provider registered", and when the faux API id contained a word the retry classifier treats as transient, the failure sat in a retry backoff for over 15 seconds. ([#2542](https://github.com/code-yeongyu/senpi/issues/2542))
-
 ### Removed
 
 ## [2026.10.1-3] - 2026-10-01
@@ -809,7 +805,6 @@
 - GitHub Copilot Business and Enterprise accounts no longer have requests sent to the individual host (`421 Misdirected Request`): the API host now comes from the token exchange's own `endpoints.api` (bound to that token), then the token's `proxy-ep`, then the GitHub Enterprise domain, with the individual host only as a last resort. This covers login and refresh (`/models`, model policies), inference, and a Copilot token passed as a key (`COPILOT_GITHUB_TOKEN` or an explicit `apiKey`). A 421 now says the request reached another plan's host and includes the GitHub request id. ([#2309](https://github.com/code-yeongyu/senpi/issues/2309))
 
 - The bundled Devin model seed lists exactly the SWE-2 lanes Devin serves: `swe-2-high`, `swe-2-medium` and `swe-2-max`. `swe-2-low` and `swe-2-high-lite`, which appear only inside the Devin CLI binary and are refused with `permission_denied`, are removed, so a config naming them no longer resolves silently. ([#2306](https://github.com/code-yeongyu/senpi/issues/2306))
-
 ### Removed
 
 ## [2026.9.28-5] - 2026-09-28
@@ -1983,7 +1978,6 @@
 ### Breaking Changes
 
 - Renamed `GoogleThinkingLevel` to `GoogleApiThinkingLevel` and added `ResolvedGoogleThinkingLevel` for normalized adapter levels.
-
 ### Added
 
 - Added provider-neutral `toolChoice` support to simple stream requests.
