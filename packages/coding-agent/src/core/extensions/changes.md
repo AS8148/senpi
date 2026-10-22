@@ -3,11 +3,13 @@
 ### What changed
 
 - `packages/coding-agent/src/core/extensions/types.ts`: `SessionMoveExportEvent { moveId, dir }` and `SessionMoveImportEvent { moveId, dir }` join the session events, with their `on()` overloads.
-- `packages/coding-agent/src/core/extensions/runner.ts`: `emitSessionMove(event)` runs the `session_move_export` or `session_move_import` handlers, each under the `session_shutdown` handler budget, and returns every failure (a throw or a handler still running at the cap), each also reported as an extension error. A `move` release refuses on any export failure; the import hand-over keeps the moved state for the next open on any import failure (senpi#3681 review).
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitSessionMove(event)` runs the `session_move_export` or `session_move_import` handlers, each under the `session_shutdown` handler budget (warned at `warnMs`, its `signal` aborted at the cap), and returns every failure (a throw or a handler still running at the cap), each also reported as an extension error. A `move` release refuses on any export failure; the import hand-over keeps the moved state for the next open on any import failure (senpi#3681 review).
+- `packages/coding-agent/src/core/extensions/types.ts`: both move events carry `signal: AbortSignal`, and `SessionMoveImportEvent` carries `redelivered: boolean` (senpi#3681 delta review).
 
 ### Why
 
 - `packages/coding-agent/src/core/extensions/types.ts`: extensions with per-session state outside the session folder need a contract to hand it to a move and get it back on the receiver.
+- `packages/coding-agent/src/core/extensions/types.ts`: a handler past the cap keeps running; without the signal it cannot know to stop, and without `redelivered` an idempotent handler cannot cheaply tell a second delivery from the first.
 - `packages/coding-agent/src/core/extensions/runner.ts`: the ordinary emit swallows handler errors, so one failed import would discard the only copy of the moved state, and an unbounded export handler could hold a `move` release (and, on its interrupt path, the session's closed admission) forever.
 
 ### Why an extension could not handle it

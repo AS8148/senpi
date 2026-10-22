@@ -30,7 +30,7 @@ describe("an export handler past its budget (senpi#3681 delta review)", () => {
 		const late = deferred();
 		const staleWritten = deferred();
 		let calls = 0;
-		let firstSignal: unknown;
+		let firstSignal: AbortSignal | undefined;
 		const extension: ExtensionFactory = (pi) => {
 			pi.on("session_move_export", async (event) => {
 				calls += 1;
@@ -39,7 +39,7 @@ describe("an export handler past its budget (senpi#3681 delta review)", () => {
 					writeFileSync(join(event.dir, "probe", "state.json"), '{"tasks":3}\n');
 					return;
 				}
-				firstSignal = Reflect.get(event, "signal");
+				firstSignal = event.signal;
 				firstStarted.resolve();
 				await late.promise;
 				mkdirSync(join(event.dir, "probe"), { recursive: true });
@@ -60,7 +60,7 @@ describe("an export handler past its budget (senpi#3681 delta review)", () => {
 		} finally {
 			vi.useRealTimers();
 		}
-		expect(firstSignal instanceof AbortSignal && firstSignal.aborted).toBe(true);
+		expect(firstSignal?.aborted).toBe(true);
 		expect(warn).toHaveBeenCalledWith(expect.stringContaining("session_move_export handler"));
 
 		expect(await host.send(moveRelease(sessionId, "rel-2"))).toMatchObject({ success: true });
@@ -87,10 +87,10 @@ describe("an import handler that outlives its attempt (senpi#3681 delta review)"
 	it("#given an import attempt that fails and its handler later changes its folder #when the state is delivered again #then the next attempt gets it intact and marked redelivered", async () => {
 		const sessionFile = writeSession(join(root(), "repo"));
 		moveIn(sessionFile, "move-92");
-		const seen: { dir: string; redelivered: unknown }[] = [];
+		const seen: { dir: string; redelivered: boolean }[] = [];
 
 		await restoreMovedState(SessionManager.open(sessionFile), async (event) => {
-			seen.push({ dir: event.dir, redelivered: Reflect.get(event, "redelivered") });
+			seen.push({ dir: event.dir, redelivered: event.redelivered });
 			return false;
 		});
 		const firstDir = seen[0]?.dir ?? "";
@@ -99,7 +99,7 @@ describe("an import handler that outlives its attempt (senpi#3681 delta review)"
 		writeFileSync(join(firstDir, "probe", "state.json"), '{"tasks":"half-applied"}\n');
 		let restored = "";
 		await restoreMovedState(SessionManager.open(sessionFile), async (event) => {
-			seen.push({ dir: event.dir, redelivered: Reflect.get(event, "redelivered") });
+			seen.push({ dir: event.dir, redelivered: event.redelivered });
 			restored = readFileSync(join(event.dir, "probe", "state.json"), "utf8");
 			return true;
 		});

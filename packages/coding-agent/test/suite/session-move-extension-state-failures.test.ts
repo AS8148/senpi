@@ -3,7 +3,7 @@
  * the moved state for the next open instead of throwing it away; a hung `session_move_export` handler fails the
  * release within the handler budget and reopens admission; and a failed `move` release removes what it staged.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -21,6 +21,11 @@ import { gatewayFixture } from "./rpc-release-gateway-fixture.ts";
 import { heldTurn, nextEvent, startReleaseHost } from "./rpc-release-host-support.ts";
 import { deferred, moveIn } from "./session-move-extension-state-support.ts";
 import { customTypes } from "./session-move-fixture.ts";
+
+const stagedAttempts = (sessionPath: string, moveId: string): string[] => {
+	const root = outgoingStateDir(sessionPath, moveId as MoveId);
+	return existsSync(root) ? readdirSync(root) : [];
+};
 
 afterEach(() => {
 	vi.useRealTimers();
@@ -119,7 +124,7 @@ describe("a hung session_move_export handler (senpi#3681 review)", () => {
 			hung.resolve();
 		}
 		expect(readFileSync(sessionPath, "utf8")).not.toContain(SESSION_RELEASED_ENTRY_TYPE);
-		expect(existsSync(outgoingStateDir(sessionPath, "move-62" as MoveId))).toBe(false);
+		expect(stagedAttempts(sessionPath, "move-62")).toEqual([]);
 		expect(await host.send({ type: "wake", id: "w", sessionId, delivery_ids: ["after-hang"] })).toMatchObject({
 			success: true,
 			data: { admitted: [{ delivery_id: "after-hang" }] },
@@ -150,6 +155,6 @@ describe("a failed move release (senpi#3681 review)", () => {
 		});
 
 		expect(reply).toMatchObject({ success: false, error: "release_failed" });
-		expect(existsSync(outgoingStateDir(sessionPath, "move-63" as MoveId))).toBe(false);
+		expect(stagedAttempts(sessionPath, "move-63")).toEqual([]);
 	});
 });

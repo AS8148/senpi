@@ -24,7 +24,7 @@
 import { rmSync } from "node:fs";
 import type { AgentSession } from "../../core/agent-session.ts";
 import { isMoveId, isPlainId, parseMoveId } from "../../core/session-move/bundle.ts";
-import { prepareOutgoingState } from "../../core/session-move/extension-state.ts";
+import { prepareOutgoingState, STATE_ATTEMPT_FIELD } from "../../core/session-move/extension-state.ts";
 import { SessionMovedAwayError } from "../../core/session-move/ownership.ts";
 import { isHandoffBusy } from "./handoff-activity.ts";
 import {
@@ -116,7 +116,7 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 	const admission = first.session.externalAdmission;
 	let dropped = NOTHING_DROPPED;
 	let answer: RpcResponse | undefined;
-	let stagedState: string | undefined;
+	let stagedState: { readonly attempt: string; readonly dir: string } | undefined;
 	try {
 		if (interrupted) {
 			admission.close(RELEASED_ADMISSION_CLOSED);
@@ -138,12 +138,12 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 			const [failed] = await first.session.extensionRunner.emitSessionMove({
 				type: "session_move_export",
 				moveId,
-				dir: stagedState,
+				dir: stagedState.dir,
 			});
 			if (failed !== undefined)
 				throw new Error(`${failed.extensionPath} could not write its state for the move: ${failed.error}`);
 		}
-		answer = await claimAndRelease(port, command, interrupted, dropped);
+		answer = await claimAndRelease(port, command, interrupted, dropped, stagedState?.attempt);
 		return answer;
 	} catch (cause) {
 		if (cause instanceof SessionMovedAwayError) {
@@ -162,7 +162,7 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 		if (answer?.success !== true) {
 			admission.reopen();
 			// A refused move is abandoned: what its export staged is never bundled, and a retry stages afresh.
-			if (stagedState !== undefined) rmSync(stagedState, { recursive: true, force: true });
+			if (stagedState !== undefined) rmSync(stagedState.dir, { recursive: true, force: true });
 		}
 	}
 }
@@ -176,6 +176,7 @@ async function claimAndRelease(
 	command: ReleaseSessionCommand,
 	interrupted: boolean,
 	dropped: ReleaseDropped,
+	stateAttempt: string | undefined,
 ): Promise<RpcResponse> {
 	const taken = interrupted ? { interrupted: true, dropped } : undefined;
 	const ready = releasable(port, command, taken);
@@ -200,6 +201,8 @@ async function claimAndRelease(
 			...(command.reason === "move"
 				? {
 						move_id: command.moveId,
+						// The export bundles only this attempt's staged state: a late write from an earlier one never travels.
+						...(stateAttempt === undefined ? {} : { [STATE_ATTEMPT_FIELD]: stateAttempt }),
 						target: command.target ?? "",
 						session_id: ready.session.sessionManager.getSessionId(),
 					}

@@ -1,8 +1,9 @@
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { loadEntriesFromFile, type SessionManager } from "../session-manager.ts";
-import { parseMoveId } from "./bundle.ts";
-import { type MoveId, SESSION_MOVED_IN } from "./ownership.ts";
+import { isPlainId, parseMoveId } from "./bundle.ts";
+import { type MoveId, SESSION_MOVED_IN, SESSION_RELEASED } from "./ownership.ts";
 
 /**
  * State an extension keeps outside the session folder (task records, logs, finished child sessions) and wants to
@@ -10,12 +11,23 @@ import { type MoveId, SESSION_MOVED_IN } from "./ownership.ts";
  * the `move` release, while their runtime is still live (`session_move_export`); export bundles that folder as the
  * `extension-state` payload; import unpacks it next to the session (`movedStateDir`); and the next open hands it to the
  * receiver's extensions once (`session_move_import`), then records `session_move_state_restored` and removes it.
+ *
+ * Every hand-over is per attempt (senpi#3681 delta review): a handler the host stopped waiting on can keep running,
+ * so each release attempt stages into its own folder and only the attempt recorded in the seal is bundled, and each
+ * import delivery hands out its own copy. A late write therefore only ever lands in a dead attempt's folder.
  */
 export const EXTENSION_STATE_PAYLOAD = "extension-state";
 export const MOVED_STATE_RESTORED = "session_move_state_restored";
+/** The `session_released` field naming the release attempt whose staged state the move bundles. */
+export const STATE_ATTEMPT_FIELD = "state_attempt";
 
 const MOVE_STATE = ".move-state";
+const DELIVERED_MARKER = "delivered";
+const DELIVERY_COPY = "attempt-";
 
+const newAttempt = (): string => randomBytes(8).toString("hex");
+
+/** Every release attempt of `moveId` stages under this folder; finish removes it whole. */
 export function outgoingStateDir(sessionFile: string, moveId: MoveId): string {
 	return join(dirname(sessionFile), MOVE_STATE, "out", parseMoveId(moveId));
 }
@@ -24,24 +36,55 @@ export function movedStateDir(sessionFile: string, moveId: MoveId): string {
 	return join(dirname(sessionFile), MOVE_STATE, "in", `${basename(sessionFile, ".jsonl")}.${parseMoveId(moveId)}`);
 }
 
-/** Creates the empty staging folder an export event writes into (an earlier attempt's leftovers are discarded). */
-export function prepareOutgoingState(sessionFile: string, moveId: MoveId): string {
-	const dir = outgoingStateDir(sessionFile, moveId);
-	rmSync(dir, { recursive: true, force: true });
-	mkdirSync(dir, { recursive: true });
-	return dir;
-}
-
 interface EntryLike {
 	readonly type: string;
 	readonly customType?: string;
 	readonly data?: unknown;
 }
 
-const moveIdOf = (entry: EntryLike): string | undefined => {
-	const value = (entry.data as { readonly move_id?: unknown } | undefined)?.move_id;
+const field = (entry: EntryLike, name: string): string | undefined => {
+	const { data } = entry;
+	if (typeof data !== "object" || data === null || !(name in data)) return undefined;
+	const value: unknown = Reflect.get(data, name);
 	return typeof value === "string" ? value : undefined;
 };
+
+const moveIdOf = (entry: EntryLike): string | undefined => field(entry, "move_id");
+
+function sealedAttempt(entries: readonly EntryLike[], moveId: MoveId): string | undefined {
+	const seal = entries.findLast(
+		(entry) => entry.type === "custom" && entry.customType === SESSION_RELEASED && moveIdOf(entry) === moveId,
+	);
+	const attempt = seal === undefined ? undefined : field(seal, STATE_ATTEMPT_FIELD);
+	return isPlainId(attempt) ? attempt : undefined;
+}
+
+/** The folder of the release attempt that sealed the session for `moveId`, if that release staged one. */
+export function sealedOutgoingStateDir(sessionFile: string, moveId: MoveId): string | undefined {
+	const attempt = sealedAttempt(loadEntriesFromFile(sessionFile), moveId);
+	return attempt === undefined ? undefined : join(outgoingStateDir(sessionFile, moveId), attempt);
+}
+
+/**
+ * Creates a fresh, empty folder for one release attempt. Earlier attempts of the move that never sealed the session
+ * are dead and removed (a handler still running for one of them may recreate its own folder, which is never read).
+ */
+export function prepareOutgoingState(
+	sessionFile: string,
+	moveId: MoveId,
+): { readonly attempt: string; readonly dir: string } {
+	const root = outgoingStateDir(sessionFile, moveId);
+	const sealed = sealedAttempt(loadEntriesFromFile(sessionFile), moveId);
+	if (existsSync(root)) {
+		for (const name of readdirSync(root)) {
+			if (name !== sealed) rmSync(join(root, name), { recursive: true, force: true });
+		}
+	}
+	const attempt = newAttempt();
+	const dir = join(root, attempt);
+	mkdirSync(dir, { recursive: true });
+	return { attempt, dir };
+}
 
 /**
  * The state the last move into this session left for its extensions, if it has not been handed over yet. Only the
@@ -62,24 +105,54 @@ export function pendingMovedState(sessionFile: string): { readonly moveId: MoveI
 	return existsSync(dir) ? { moveId: id, dir } : undefined;
 }
 
+/** Delivery bookkeeping for one pending folder: the `delivered` marker and each delivery's own copy. */
+const deliveryDir = (pendingDir: string): string =>
+	join(dirname(dirname(pendingDir)), "delivery", basename(pendingDir));
+
+export interface MovedStateDelivery {
+	readonly moveId: MoveId;
+	readonly dir: string;
+	readonly redelivered: boolean;
+}
+
 /**
- * Hands pending moved state to the session's extensions once: `deliver` runs the import handlers and resolves `true`
- * when every one of them restored it; only then is the restored marker written and the folder removed. A failed
- * handler, or a crash before the marker, re-delivers on the next open (handlers must be idempotent); a crash after it
- * only leaves a folder that is never read again and is removed here next time.
+ * Hands pending moved state to the session's extensions: `deliver` runs the import handlers on a fresh copy and
+ * resolves `true` when every one of them restored it; only then is the restored marker written and the state removed.
+ * A failed handler, or a crash before the marker, delivers it again on the next open with `redelivered` set (handlers
+ * must be idempotent). The copy is removed once `deliver` returns, so a handler still running past its budget can
+ * never change what a later delivery sees.
  */
 export async function restoreMovedState(
 	sessionManager: SessionManager,
-	deliver: (event: { readonly moveId: MoveId; readonly dir: string }) => Promise<boolean>,
+	deliver: (event: MovedStateDelivery) => Promise<boolean>,
 ): Promise<void> {
 	const sessionFile = sessionManager.getSessionFile();
 	if (sessionFile === undefined) return;
 	const pending = pendingMovedState(sessionFile);
 	if (pending === undefined) return;
-	if (!(await deliver(pending))) return;
+	const bookkeeping = deliveryDir(pending.dir);
+	const marker = join(bookkeeping, DELIVERED_MARKER);
+	const redelivered = existsSync(marker);
+	if (existsSync(bookkeeping)) {
+		for (const name of readdirSync(bookkeeping)) {
+			if (name.startsWith(DELIVERY_COPY)) rmSync(join(bookkeeping, name), { recursive: true, force: true });
+		}
+	}
+	mkdirSync(bookkeeping, { recursive: true });
+	writeFileSync(marker, "");
+	const copy = join(bookkeeping, `${DELIVERY_COPY}${newAttempt()}`);
+	cpSync(pending.dir, copy, { recursive: true });
+	let restored: boolean;
+	try {
+		restored = await deliver({ moveId: pending.moveId, dir: copy, redelivered });
+	} finally {
+		rmSync(copy, { recursive: true, force: true });
+	}
+	if (!restored) return;
 	sessionManager.appendCustomEntry(MOVED_STATE_RESTORED, {
 		move_id: pending.moveId,
 		restored_at: new Date().toISOString(),
 	});
 	rmSync(pending.dir, { recursive: true, force: true });
+	rmSync(bookkeeping, { recursive: true, force: true });
 }

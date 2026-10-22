@@ -33,8 +33,11 @@ export interface ExportSessionForMoveOptions {
 	/** Queued user input the release took out of the session (`dropped.user_messages`), in order. */
 	readonly droppedUserMessages: readonly string[];
 	readonly bundleDir: string;
-	/** What the extensions wrote at the move release (`outgoingStateDir`); bundled as the `extension-state` payload. */
-	readonly extensionStateDir?: string;
+	/**
+	 * What the extensions wrote at the move release, bundled as the `extension-state` payload. A function is resolved
+	 * inside the move lock, right before the bundle is written (`sealedOutgoingStateDir`: the sealing attempt's folder).
+	 */
+	readonly extensionStateDir?: string | (() => string | undefined);
 	/** Runs inside this process's move queue before anything is read; throw to refuse. */
 	readonly guard?: () => void;
 	/**
@@ -87,7 +90,9 @@ async function writeMoveBundle(options: ExportSessionForMoveOptions): Promise<Mo
 	mkdirSync(join(staging, dirname(SESSION_BUNDLE_PATH)), { recursive: true });
 	copyFileSync(sessionFile, join(staging, SESSION_BUNDLE_PATH));
 	const sidecars = copySidecars(dirname(sessionFile), sessionId, staging);
-	const stateFiles = copyExtensionState(options.extensionStateDir, staging);
+	const stateDir =
+		typeof options.extensionStateDir === "function" ? options.extensionStateDir() : options.extensionStateDir;
+	const stateFiles = copyExtensionState(stateDir, staging);
 	const manifest: MoveManifest = {
 		format: MOVE_BUNDLE_FORMAT,
 		moveId,

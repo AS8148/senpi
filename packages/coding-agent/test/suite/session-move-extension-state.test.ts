@@ -135,7 +135,8 @@ describe("extension state restored on open (senpi#3676)", () => {
 			data: { sessionId: expect.not.stringMatching(sessionId) },
 		});
 
-		expect(probe.seen.importDir).toBe(pendingDir);
+		expect(probe.seen.importDir).not.toBe(pendingDir);
+		expect(existsSync(probe.seen.importDir ?? "")).toBe(false);
 		expect(probe.seen.imported).toBe('{"tasks":3}\n');
 		expect(existsSync(pendingDir)).toBe(false);
 		expect(customTypes(sessionPath)).toContain(MOVED_STATE_RESTORED);
