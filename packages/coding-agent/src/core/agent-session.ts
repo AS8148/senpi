@@ -1253,8 +1253,10 @@ type SummarizationRequestAuth = {
 	thinkingLevel: ThinkingLevel;
 };
 
-function isHumanInput(options: { source?: InputSource } | undefined): boolean {
-	return inputOriginOf(options?.source) === "person";
+function isHumanInput(
+	options: { readonly source?: InputSource; readonly inputOrigin?: InputOrigin } | undefined,
+): boolean {
+	return originOf(options) === "person";
 }
 
 function promptKind(options: PromptOptions | undefined): HumanInputAdmittedEvent["kind"] {
@@ -6155,7 +6157,7 @@ export class AgentSession {
 		behavior: "steer" | "followUp",
 		options?: QueuedInputOptions,
 	): Promise<QueuedInputDisposition> {
-		const origin = inputOriginOf(options?.source);
+		const origin = originOf(options);
 		if (origin === "person" && this._engineTurnHold.held) {
 			await this.prompt(text, { ...options, images, streamingBehavior: behavior, humanInputReported: true });
 			return "queued";

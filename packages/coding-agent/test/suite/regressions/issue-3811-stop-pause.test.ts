@@ -297,6 +297,33 @@ describe("senpi#3811 user Stop pauses the session", () => {
 
 		expect(fixture.harness.faux.state.callCount).toBe(1);
 	});
+	for (const behavior of ["steer", "followUp"] as const) {
+		it(`resumes on a ${behavior} that names a person as its origin, whatever its source`, async () => {
+			// Given a session paused by an interactive Stop
+			const { fixture, probe } = await pausedFixture();
+			fixtures.push(fixture);
+			const rpc = fixture.bind();
+			await rpc.send({ type: "set_client_info", capabilities: ["interactive_user"] });
+			const prompt = fixture.session.prompt("Work on it");
+			await probe.toolStarted;
+			const stop = rpc.send({ type: "abort", intent: "stop", awaitIdle: true });
+			probe.releaseTool();
+			await Promise.all([prompt, stop]);
+			await settle(fixture);
+
+			// When a person's answer arrives through an extension-sourced steer or follow-up
+			await fixture.session[behavior]("Answer: use staging", undefined, {
+				source: "extension",
+				inputOrigin: "person",
+			});
+			await settle(fixture);
+
+			// Then the explicit person origin releases the pause and runs one turn
+			expect(fixture.harness.faux.state.callCount).toBe(2);
+			expect(await state(rpc)).toMatchObject({ paused: false });
+		});
+	}
+
 	it("continues the interrupted work with one turn on Resume when no wake was held", async () => {
 		const { fixture, probe } = await pausedFixture();
 		fixtures.push(fixture);
