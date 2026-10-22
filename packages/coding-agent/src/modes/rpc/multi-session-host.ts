@@ -22,6 +22,7 @@ import { ClientOccupancy } from "./host-client-occupancy.ts";
 import { HostCoreGate, type HostCoreHooks } from "./host-core-gate.ts";
 import { createHostDaemonPaths } from "./host-daemon-paths.ts";
 import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
+import { HandoffAnnouncement } from "./host-handoff-announcement.ts";
 import { reopenHandoverParkedSessions } from "./host-handover-reopen.ts";
 import { performIdleHandover } from "./host-handover-wire.ts";
 import { EXPECTED_RUNTIME_BUILD_ID_ENV } from "./host-idle-handover.ts";
@@ -277,6 +278,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 	const occupancy = new ClientOccupancy(() => {}, hostInstanceId());
 	let draining = false;
 	let handoffAnnounced = false;
+	const handoff = new HandoffAnnouncement();
 	const hostContext = hostSessionContext(socketPath);
 	const runtimeBuildId = await startupRuntimeBuildId();
 	const expected = process.env[EXPECTED_RUNTIME_BUILD_ID_ENV];
@@ -382,7 +384,9 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 	let boundIdentity: SocketFileIdentity | undefined;
 	let supervisorPublicIdentity: SocketFileIdentity | undefined;
 	const server = createServer((rawSocket) => {
+		const arrivedBeforeDrain = !draining && !shuttingDown;
 		const accept = (socket: Duplex = rawSocket): void => {
+			if (draining && !shuttingDown && handoff.deliverLate(socket, arrivedBeforeDrain)) return;
 			if (draining || shuttingDown) {
 				socket.destroy();
 				return;
@@ -503,18 +507,10 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 		draining = true;
 		crashCleanupPaths.length = 0;
 		hostLog("draining for a generation handoff");
-		void endpointSuperseded()
-			.then((superseded) => {
-				writer.broadcastHostRecord({
-					type: "host_superseded",
-					instanceId: hostInstanceId(),
-					generation: hostGeneration(process.env),
-					successor: superseded ? { socket: supervisorPublicSocketPath ?? socketPath } : null,
-				});
-			})
-			.catch((cause: unknown) => {
-				hostLog(`handoff announcement failed: ${String(cause)}`);
-			})
+		const identity = { instanceId: hostInstanceId(), generation: hostGeneration(process.env) };
+		void handoff
+			.begin(endpointSuperseded(), identity, supervisorPublicSocketPath ?? socketPath, hostLog)
+			.then((announced) => announced && writer.broadcastHostRecord(announced))
 			// A failed announcement still drains: parking is what lets this generation exit (senpi#2285).
 			.finally(() => {
 				handoffAnnounced = true;
