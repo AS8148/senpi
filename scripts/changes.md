@@ -31,6 +31,9 @@
 
 - `scripts/probe-native-grep.test.mjs`: repository test scripts.
 
+### Expected merge conflict zones
+
+- None expected: the change is local to this repository's CI and test scripts.
 
 ## 2026-10-19 - Release commands that read large output no longer fail with ENOBUFS
 

@@ -30,6 +30,9 @@
 
 - `.github/workflows/ci.yml`: CI steps are repository configuration.
 
+### Expected merge conflict zones
+
+- None expected: the change is local to this repository's CI and test scripts.
 
 ## 2026-10-21 - One macOS runner executes all five CI suites (senpi#3130)
 
