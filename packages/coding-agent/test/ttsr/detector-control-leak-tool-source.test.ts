@@ -37,6 +37,19 @@ describe("control-token-leak and tool arguments (omo#10789)", () => {
 		expect(fired).toBe(false);
 	});
 
+	// A degenerate run of chat-template controls inside a tool argument would be written to disk
+	// by the tool, so only angle-bracket markup is exempt in tool arguments (#3875 review).
+	it("still fires on a run of chat-template control tokens in a tool argument", () => {
+		const watch = watcher();
+		const args = `{"path":"a.txt","content":"done ${"<|im_end|>".repeat(6)}"}`;
+		let fired = false;
+		for (let i = 0; i < args.length; i += 7) {
+			const outcome = watch.handleDelta("tool", "write:1", args.slice(i, i + 7), 1, "write");
+			if (outcome.resolution !== null) fired = true;
+		}
+		expect(fired).toBe(true);
+	});
+
 	it("still fires on genuine control-token leakage in assistant text", () => {
 		const watch = watcher();
 		const leak = "answer: " + "</s>".repeat(6);

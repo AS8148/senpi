@@ -11,7 +11,7 @@
 ### Fixed
 
 - The control-token-leak guard only treats tokenizer special tokens (`</s>`, `<pad>`, `<end_of_turn>`, …) as angle-bracket leaks. Runs of ordinary markup such as `</div>` repeated in a row no longer stop a reply with "Degeneration guard: control-token leakage" in prose, thinking or code samples ([omo#10789](https://github.com/code-yeongyu/oh-my-openagent/issues/10789)).
-- The control-token-leak guard no longer runs on tool-call arguments. An HTML argument with consecutive closing tags (`</div></div></div></div>`) used to stop `show_html_page` with "Degeneration guard: control-token leakage" and resample the turn; assistant text and thinking are still guarded ([omo#10789](https://github.com/code-yeongyu/oh-my-openagent/issues/10789)).
+- The control-token-leak guard ignores HTML/XML tags in tool-call arguments. An HTML argument with consecutive closing tags (`</div></div></div></div>`) used to stop `show_html_page` with "Degeneration guard: control-token leakage" and resample the turn; chat-template tokens such as `<|im_end|>` in a tool argument, assistant text and thinking are still guarded ([omo#10789](https://github.com/code-yeongyu/oh-my-openagent/issues/10789)).
 
 - An idle RPC host (one open session, no work) no longer wakes about eleven times a second. While its supervisor pipe is watched, the supervisor pid is checked every 5 s instead of every 250 ms, and the event-loop stall probe ticks once a second after 2 s without session work, going back to 200 ms as soon as a session works. This cuts the idle CPU of every thread host the desktop keeps open ([#3738](https://github.com/code-yeongyu/senpi/issues/3738)).
 ### Removed
