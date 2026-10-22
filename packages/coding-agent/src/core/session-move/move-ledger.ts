@@ -123,14 +123,15 @@ export class MoveLedger {
 	 * Starts receiving a verified bundle into `target`, the session file it will land as. Only a move this device readied
 	 * (and whose window is still open) may start; a bundle for a move it never readied is declined for good
 	 * (`chunk_without_ready`). The first receive records its target and the move lands only there: a receive for another
-	 * target is fenced while the move is receiving or accepted. An accepted move re-lands at its own target only if it
-	 * was not revoked (its copy was deleted); a revoked move never lands again.
+	 * target is fenced while the move is receiving, and an accepted move never lands again, at any target (a deleted copy
+	 * is gone). A receiving record with no target (an older build wrote it) is fenced too: where it landed is unknown,
+	 * and a file it already landed is confirmed by the import's same-file check, which runs before this.
 	 */
 	beginReceive(moveId: MoveId, target: string): Promise<void> {
 		return this.locked(moveId, async () => {
 			const record = await this.current(moveId);
 			const stored = await this.storedTarget(moveId);
-			if (record?.state === "ready" || (record?.state === "receiving" && stored === undefined)) {
+			if (record?.state === "ready") {
 				await this.write(moveId, { state: "receiving" }, target);
 				return;
 			}
@@ -179,8 +180,7 @@ export class MoveLedger {
 
 	/**
 	 * Runs the import's commit (the atomic rename into `target`) under the move's lock, then records it accepted there.
-	 * Only the target this move's receive recorded may be renamed into, and only while it is receiving or, for a
-	 * re-land, accepted and not revoked.
+	 * Only the target this move's receive recorded may be renamed into, and only while it is receiving.
 	 */
 	commit<T>(moveId: MoveId, target: string, rename: () => T | Promise<T>): Promise<T> {
 		return this.locked(moveId, async () => {
@@ -210,10 +210,9 @@ export class MoveLedger {
 		});
 	}
 
-	/** Whether an import into `target` may proceed: the recorded target, receiving, or accepted and not revoked. */
+	/** Whether an import into `target` may proceed: only a receiving move, into the target its receive recorded. */
 	private landsAt(record: MoveRecord | undefined, stored: string | undefined, target: string): boolean {
-		if (stored !== target) return false;
-		return record?.state === "receiving" || (record?.state === "accepted" && !("revoked" in record));
+		return record?.state === "receiving" && stored !== undefined && stored === target;
 	}
 
 	/**
@@ -309,6 +308,10 @@ export class MoveLedger {
 
 function landedElsewhere(record: MoveRecord | undefined, stored: string | undefined): string | undefined {
 	if (record?.state === "accepted" && "revoked" in record) return "it was revoked here and never lands again";
+	if (record?.state === "accepted")
+		return "it already landed here once, and a move lands once (a deleted copy is gone; copy the session to a new thread instead)";
+	if (record?.state === "receiving" && stored === undefined)
+		return "an older version started receiving it and where it landed is unknown; only its already landed file is accepted";
 	return stored === undefined ? undefined : `it lands only as ${stored}`;
 }
 
