@@ -42,6 +42,28 @@
 
 `packages/coding-agent/src/core/session-manager.ts`: `_trimMirrorAfterCompaction` retained range construction. The existing tree-edit compaction regression keeps its exact summary-plus-edited-prompt assertion unchanged.
 
+## 2026-10-22 - Session lifecycle model: states, custody and durable records (senpi#3864)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: persists `spawnedBy` in the session header and writes durable `session-lifecycle`, `work-custody` and `child-lifecycle` entries even before the first conversation entry, refusing such an append while the header write is still pending.
+- `packages/coding-agent/src/core/session-activity.ts`: `WakeSourceTracker` keeps child and background counts apart; publishers without a kind stay background.
+
+### Why
+
+- `packages/coding-agent/src/core/session-manager.ts`: a root must not publish Done while work is still owed, and restart cannot replay work the model already acted on, so lifecycle and custody must reach disk from the first turn.
+- `packages/coding-agent/src/core/session-activity.ts`: the root-done rule waits on children and background work separately.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/session-manager.ts`: JSONL persistence and the session header are engine-owned.
+- `packages/coding-agent/src/core/session-activity.ts`: wake-source accounting is the core activity snapshot.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/session-manager.ts`: header creation (`newSession`) and the first-write gate in synchronous persistence.
+- `packages/coding-agent/src/core/session-activity.ts`: `WakeSourceTracker` counts.
+
 ## 2026-10-22 - Session lifecycle model: states, custody and durable records (senpi#3864, part 2 of the #3908 split)
 
 ### What changed
