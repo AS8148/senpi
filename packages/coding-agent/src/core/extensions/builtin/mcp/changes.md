@@ -1233,3 +1233,24 @@ The token store and refresh manager are this builtin's credential layer.
 ### Expected merge conflict zones
 
 `auth/oauth-provider.ts` token mapping and `auth/oauth-refresh.ts` `#doRefresh` at the next SDK or upstream sync.
+
+## 2026-10-22 - A connect or reconnect superseded by dispose or renew is not a server failure (senpi#4013)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/connection.ts`: `#markFailure` is a no-op once the connection is `disabled`, so `markDegraded`/`markSuspended`/`markNeedsAuth`/`markNeedsClientRegistration` from an attempt that dispose/disable superseded can no longer revive a disposed connection (which re-enabled `connect()`/`renew()`).
+- `packages/coding-agent/src/core/extensions/builtin/mcp/shared-lease.ts`: a released lease's `mark*` methods no longer reach the shared connection the surviving owners still use.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/startup-race.ts`: `connectMcpServer` returns without degrading or logging when the connection is `disabled` or its generation moved (a renew superseded the attempt); the startup `ensureFresh` catch returns silently once the connection is `disabled`.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service-connection.ts`: the reconnect callback's `ensureFresh` catch returns silently once the connection is `disabled`.
+
+### Why
+
+- `dispose()` aborts an in-flight attempt by shutting its transport down, but `shutdownMcpTransport` waits at most `SHUTDOWN_CLOSE_WAIT_MS` for the close; under Bun the close, and so the attempt's rejection, can land after `dispose()` returned. The late `connect was superseded` was then treated as a server failure: the disposed connection flipped to `degraded`, and a warning was written to a server log whose path is fixed at logger construction, recreating a removed agent dir. A reconnect in flight at dispose, a renew that superseded a startup connect, and a late OAuth refresh failure did the same.
+
+### Why an extension could not handle it
+
+- These are the MCP builtin's own connection state machine and its attach/reconnect paths; no extension hook observes or owns them.
+
+### Expected merge conflict zones
+
+- `connection.ts` `#markFailure`; `shared-lease.ts` `mark*` overrides; `startup-race.ts` `connectMcpServer` and the `refreshConnectedMcpCatalog` auth catch; `service-connection.ts` reconnect callback auth catch.

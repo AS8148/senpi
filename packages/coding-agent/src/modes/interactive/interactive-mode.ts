@@ -95,7 +95,11 @@ import { resolveChangelogSource } from "../../core/changelog-source.ts";
 import { collectEntriesForBranchSummary } from "../../core/compaction/branch-summarization.ts";
 import { findExtensionStackMatches } from "../../core/crash-log.ts";
 import { AssistantEditError, assistantTextEquals } from "../../core/edited-assistant-message.ts";
-import { askUserAnswerDisplayText, formatUserMessage } from "../../core/extensions/builtin/ask-user/format.ts";
+import {
+	askUserAnswerDisplayText,
+	formatUserMessage,
+	showsPartialAnswers,
+} from "../../core/extensions/builtin/ask-user/format.ts";
 import { askUserRenderers } from "../../core/extensions/builtin/ask-user/render.ts";
 import type {
 	AutocompleteProviderFactory,
@@ -4211,14 +4215,17 @@ export class InteractiveMode {
 		if (argument === "skip") {
 			const response: QuestionResponse = {
 				status: "cancelled",
+				cancelOrigin: "user",
 				answers: state.draft.answers ?? {},
 				unanswered: unansweredIds(state.request, state.draft),
 			};
 			state.finish(response);
 			await state.completion;
 			this.showStatus("The user dismissed the question.");
-			// Ordinary cancellation/abort stays silent in the builtin. Only this
-			// explicit command acknowledges dismissal, including on host bridges.
+			// The builtin delivers the partial answers of a cancel the user chose; sending them here too
+			// would reach the model twice. With nothing answered the builtin stays silent, so this
+			// explicit command acknowledges the dismissal, including on host bridges.
+			if (showsPartialAnswers(response)) return;
 			await this.session.sendUserMessage(
 				formatUserMessage(
 					response,
