@@ -1,3 +1,21 @@
+## 2026-10-19 - Extension state follows a moved session (senpi#3676)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: right after `session_start` in the extension binding, `restoreMovedState` (`session-move/extension-state.ts`) hands state a move left for this session to the `session_move_import` handlers through `emitSessionMove`; only when none failed does it record `session_move_state_restored` and remove the folder, so a failed import is delivered again on the next open (senpi#3681 review).
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: moving a session to another device (design v7 section 4) must carry state extensions keep outside the session folder; the receiving runtime is the only place that can hand it back to the extensions that own it, and doing it at binding means TUI, desktop and RPC share one path.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: an extension cannot know a session was just moved in, and the hand-back must run once across every extension before the first turn.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/agent-session.ts`, one call after the `session_start` emit in the extension binding, plus one import.
+
 ## 2026-10-22 - One owner of account selection for lanes that pick their own accounts (senpi#2081)
 
 ### What changed
@@ -276,6 +294,24 @@ Session creation and `--session` resolution run in core before any extension is 
 ### Expected merge conflict zones
 
 - LOW: the first guard of `_isRetryableError`, the predicate list of `_isHardErrorFallbackEligible`, the `noteHealthFailure` condition at the top of the `agent_end` retry block, and the new `_isLocalFailure` beside `_isCursorPayloadOverflow` in `agent-session.ts`.
+
+## 2026-10-21 - Launch-gated Fable 5.5 fallback (senpi#3893)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/settings.ts`: adds the Fable 5.5 chain key, with the same current-generation Opus-only max-effort ladder as Fable 5/5.1, only once `FABLE55_LAUNCH.released` is true; before release the shipped defaults contain no unreleased id. Existing defaults and user tombstones retain their semantics.
+
+### Why
+
+- `packages/coding-agent/src/core/retry-fallback/settings.ts`: explicit selection of the launch model needs the same recovery path as today's Fable models once it exists; gating the key on release keeps an unreleased id out of the shipped defaults (review of senpi#3897).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/retry-fallback/settings.ts`: shipped retry defaults are resolved by core settings before extension events.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/retry-fallback/settings.ts`: import and the release-gated `DEFAULT_FALLBACK_CHAINS` entry.
 
 ## 2026-10-18 - A multi-block queued input leaves the queue when it starts (senpi#3588, senpi#3768)
 

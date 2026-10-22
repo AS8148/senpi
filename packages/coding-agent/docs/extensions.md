@@ -724,6 +724,37 @@ export default function (pi: ExtensionAPI) {
 }
 ```
 
+#### session_move_export / session_move_import
+
+Moving a session to another device (`release_session` reason `move`, then RPC `move_session`) carries the session file, its extension sidecars and its resident blobs. State an extension keeps elsewhere (task records, logs, finished child sessions) follows only if the extension hands it over:
+
+```typescript
+pi.on("session_move_export", async (event, ctx) => {
+  // event.moveId - the move
+  // event.dir - an empty folder for this release attempt; write under a subfolder named after your extension
+  // event.signal - aborted when the host stops waiting on this handler; stop writing when it fires
+  // Throwing refuses the move: release_session answers release_failed and nothing is sealed.
+  // Each handler runs under the session_shutdown handler budget (sessionShutdownHandlerWarnMs warns, 2 s by
+  // default; sessionShutdownHandlerTimeoutMs caps, 10 s by default); one still running at the cap refuses the
+  // move the same way. A refused attempt's folder is removed, and only the attempt that seals the session is
+  // bundled, so anything a handler writes after its signal aborted never reaches the move.
+});
+
+pi.on("session_move_import", async (event, ctx) => {
+  // Fired right after session_start of an open that finds state a move brought in.
+  // event.dir - this delivery's own copy of what the sender's extensions wrote
+  // event.redelivered - true when this state was delivered before and not marked restored
+  // event.signal - aborted when the host stops waiting on this handler
+  // The state is marked restored and removed once every handler returned without throwing within the
+  // session_shutdown handler budget. Otherwise the failure is reported as an extension error and the next open
+  // delivers it again to every handler (redelivered: true), as does a crash before the hand-over is recorded.
+});
+```
+
+Import handlers must be idempotent: a handler that already applied the state, or part of it, may see the same state again, and restoring it twice must leave the same result as restoring it once. Use `event.redelivered` to skip work cheaply, for example by checking what you already restored for `event.moveId`.
+
+Setting `sessionShutdownHandlerTimeoutMs` to `0` removes the cap for move handlers too: a hung `session_move_export` handler then holds the `move` release (and, on its `interrupt` path, the session's closed admission) until it returns, and a hung `session_move_import` handler holds the session open.
+
 ### Agent Events
 
 #### before_agent_start

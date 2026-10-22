@@ -183,7 +183,11 @@ export function inProcessRuntimeFactory(): {
 				get isSessionBusy(): boolean {
 					return isSessionBusySnapshot(this.activitySnapshot);
 				},
-				extensionRunner: { hasHandlers: () => false, emit: async () => {} },
+				extensionRunner: {
+					hasHandlers: () => false,
+					emit: async () => {},
+					emitSessionMove: async () => [],
+				},
 				subscribe: () => () => {},
 				abort: async () => {
 					state.aborted = true;
