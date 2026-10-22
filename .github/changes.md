@@ -16,6 +16,21 @@
 
 - `.github/workflows/ci.yml`: the `macos-combined` job's `timeout-minutes` lines and the WebView executed-check condition.
 
+## 2026-10-22 - Script tests get the senpi-grep addon from one CI build step (senpi#3978)
+
+### What changed
+
+- `.github/workflows/ci.yml`: `test-workspaces` sets up Rust with the Rust cache and builds the senpi-grep N-API addon once ("Build native grep addon"), exporting `SENPI_GREP_NATIVE_PATH` through `$GITHUB_ENV` before both script-test steps.
+
+### Why
+
+- `.github/workflows/ci.yml`: the script tests built the addon inside a test hook (a cold release Rust build with a 300 s timeout) on every run. On a slow runner it timed out and turned main red at 69396c732a (`spawnSync npm ETIMEDOUT`).
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: CI steps are repository configuration.
+
+
 ## 2026-10-21 - One macOS runner executes all five CI suites (senpi#3130)
 
 ### What changed

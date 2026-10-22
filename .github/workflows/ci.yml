@@ -1022,6 +1022,28 @@ jobs:
           node scripts/run-tests.mjs bun test scripts/bun-bundle-provider-coverage.test.ts
           node scripts/run-tests.mjs bun test scripts/compiled-provider-probe.test.ts
 
+      # The native grep probe tests load the senpi-grep addon. Build it once here, with the Rust
+      # cache, and hand its path to both script-test steps; the test refuses to build it inside a
+      # hook in CI (#3978).
+      - name: Setup Rust
+        run: |
+          toolchain=stable
+          if [ -f rust-toolchain.toml ]; then
+            toolchain=$(python3 -c 'import tomllib; print(tomllib.load(open("rust-toolchain.toml", "rb"))["toolchain"]["channel"])')
+          fi
+          rustup toolchain install "$toolchain" --profile minimal
+          rustup default "$toolchain"
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Build native grep addon
+        working-directory: crates/senpi-grep
+        run: |
+          npm exec --yes --package @napi-rs/cli@3.7.2 -- napi build --platform --release -- --locked
+          node_file=$(ls senpi_grep.*.node)
+          echo "SENPI_GREP_NATIVE_PATH=$PWD/$node_file" >> "$GITHUB_ENV"
+
       - name: Script tests
         run: npm run test:scripts
 
