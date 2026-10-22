@@ -433,6 +433,7 @@ import {
 	VIRTUAL_MODEL_STATE_ENTRY,
 	type VirtualModelStateData,
 } from "./virtual-models.ts";
+import { CustodyViolation, DeliveryTicketRefused } from "./work-obligations.ts";
 
 /** Externally registered tools routed through eval in addition to declared eval exposure. */
 const EVAL_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set(["workflow", "monitor"]);
@@ -6568,6 +6569,11 @@ export class AgentSession {
 				));
 		if (held) {
 			claim?.resolve("finished-without-start");
+			// The ticket is admitted before any notice is written: a refused one keeps no item (senpi#3864).
+			if (options.ticket !== undefined) {
+				const admission = this.workObligations.admission(options.ticket);
+				if (admission !== "admitted") throw new DeliveryTicketRefused(options.ticket, admission);
+			}
 			const notices = this._engineTurnHold.noteItems(
 				items.map((item) => ({ source: item.producer, message: itemNoticeMessage(message, item), item })),
 			);
@@ -6586,6 +6592,30 @@ export class AgentSession {
 			},
 		}).catch(outcome.reject);
 		return outcome.promise;
+	}
+
+	/** A re-send of a queued ticket shares the queued message's outcome instead of waiting on a message never written. */
+	private _joinPersistWatcher(carrier: AgentMessage, joined: ItemizedAdmission): void {
+		const first = this._persistWatchers.get(carrier);
+		this._persistWatchers.set(
+			carrier,
+			first === undefined
+				? joined
+				: {
+						persisted: (entryId) => {
+							first.persisted(entryId);
+							joined.persisted(entryId);
+						},
+						failed: (error) => {
+							first.failed(error);
+							joined.failed(error);
+						},
+						droppedByAbort: () => {
+							first.droppedByAbort();
+							joined.droppedByAbort();
+						},
+					},
+		);
 	}
 
 	private _takePersistWatcher(message: AgentMessage): ItemizedAdmission | undefined {
@@ -6632,13 +6662,21 @@ export class AgentSession {
 				: undefined;
 		const ticket = options?.ticket ?? engineTicket;
 		const generation = this._userAbortGeneration;
-		if (ticket && !obligations.queue(ticket, { message: deliveryMessage, deliverAs: options?.deliverAs })) {
+		// The same ticket admission as the held branch, before the payload is queued (senpi#3864).
+		const admission = ticket === undefined ? "admitted" : obligations.admission(ticket);
+		if (ticket !== undefined && admission !== "admitted") {
 			deferredTurnClaim?.resolve("finished-without-start");
-			itemized?.failed(new Error(`Delivery ticket ${ticket} is no longer open`));
+			if (itemized !== undefined) {
+				itemized.failed(new DeliveryTicketRefused(ticket, admission));
+				return;
+			}
+			// A plain send keeps its contract: an unknown ticket is a custody violation, a settled one is a no-op.
+			if (admission === "unknown") throw new CustodyViolation(ticket);
 			return;
 		}
+		if (ticket) obligations.queue(ticket, { message: deliveryMessage, deliverAs: options?.deliverAs });
 		onQueued?.();
-		// A batch dropped by a newer Stop is decided again only after this delivery releases its ticket.
+		// A batch a user abort (Esc or Stop) dropped is decided again only after this delivery releases its ticket.
 		let readmit = false;
 		const delivery: ItemizedAdmission | undefined =
 			itemized === undefined
@@ -6739,12 +6777,15 @@ export class AgentSession {
 		itemized?: ItemizedAdmission,
 	): Promise<void> {
 		const userAbortGeneration = this._userAbortGeneration;
-		if (
-			options?.ticket &&
-			[...this.agent.peekQueuedMessages({ all: true }), ...this._pendingNextTurnMessages].some(
-				(queued) => queued.role === "custom" && messageTicket(queued) === options.ticket,
-			)
-		) {
+		const queuedCarrier =
+			options?.ticket === undefined
+				? undefined
+				: [...this.agent.peekQueuedMessages({ all: true }), ...this._pendingNextTurnMessages].find(
+						(queued) => queued.role === "custom" && messageTicket(queued) === options.ticket,
+					);
+		if (queuedCarrier !== undefined) {
+			// The ticket's message is already queued: this send's receipts settle when that message is written.
+			if (itemized !== undefined) this._joinPersistWatcher(queuedCarrier, itemized);
 			deferredTurnClaim?.resolve("delegated");
 			return;
 		}

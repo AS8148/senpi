@@ -2,19 +2,23 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/agent-session.ts`: `_admitItemized`'s held branch hands `options.ticket` to the held notices (`workObligations.held`), as a plain held send does; `sendCustomMessage` re-admits a batch a newer Stop dropped only after its ticket's delivery ended, so the re-admission keeps the ticket instead of being refused; `resumeSettled()` (internal) is published when the resume turn begins.
+- `packages/coding-agent/src/core/work-obligations.ts`: `admission(ticket)` is the one ticket admission check (unknown / closed / consumed / in-delivery); `queue()` uses it; `DeliveryTicketRefused` names the refusal.
+- `packages/coding-agent/src/core/agent-session.ts`: every itemized branch runs that admission before writing anything: the held branch before its notices (then hands the ticket to them), the delivery path before queueing the payload. A batch a user abort (Esc or Stop) dropped is re-admitted only after its ticket's delivery ended. A re-send whose ticket's message is still queued registers its receipts on that message before returning. `resumeSettled()` (internal) is published when the resume turn begins.
 
 ### Why
 
-- `packages/coding-agent/src/core/agent-session.ts`: merging #3871's itemized `sendMessage` with #3864's tickets let `{ items, ticket }` leave the ticket open when held, so `request_self_settle` and the lifecycle waited on it forever (#3963 merge-only review MEDIUM).
+- `packages/coding-agent/src/core/work-obligations.ts`: the held branch accepted a ticket without `queue()`'s checks, so a retry while stopped duplicated notices and an unknown ticket wrote notices and then rejected (#3963 delta review M1).
+- `packages/coding-agent/src/core/agent-session.ts`: merging #3871's itemized `sendMessage` with #3864's tickets left a held ticket open, refused an Esc-dropped batch on re-admission, and never settled a queued-ticket re-send's receipts (#3963 reviews: MEDIUM, M2, M3).
 
 ### Why an extension could not handle it
 
-- `packages/coding-agent/src/core/agent-session.ts`: ticket custody and held notices are engine state; an extension cannot close a ticket the engine moved into a notice.
+- `packages/coding-agent/src/core/work-obligations.ts`: ticket custody is engine state an extension cannot inspect before the engine writes.
+- `packages/coding-agent/src/core/agent-session.ts`: held notices, persist watchers and the delivery queue are engine state; an extension cannot close a ticket the engine moved into a notice.
 
 ### Expected merge conflict zones
 
-- `packages/coding-agent/src/core/agent-session.ts`: `_admitItemized` held branch, `sendCustomMessage` finally block, `_startResumeTurn`.
+- `packages/coding-agent/src/core/work-obligations.ts`: `queue()`.
+- `packages/coding-agent/src/core/agent-session.ts`: `_admitItemized` held branch, `sendCustomMessage`, `_deliverCustomMessage` queued-ticket return, `_startResumeTurn`.
 
 ## 2026-10-21 - A user Stop pauses the session and the run it started (senpi#3811)
 
