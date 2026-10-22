@@ -1,3 +1,21 @@
+## 2026-10-22 - `--rebind` reads the session's recorded cwd asynchronously (senpi#3676)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `sessionCwdOrUndefined` is now `async` and awaits `readSessionCwd` (`src/core/session-rebind.ts`), which reads the session header with `node:fs/promises`; the `--rebind` branch of `createSessionManager` awaits it. Errors still map to `undefined` exactly as before.
+
+### Why
+
+- The `move_session` RPC commands export a session through `readSessionCwd`, so its header read sits on the shared RPC host's session path, where `test/suite/no-sync-in-session-path.test.ts` forbids new synchronous filesystem calls. Making the one reader async keeps the CLI and the RPC host on a single implementation.
+
+### Why an extension could not handle it
+
+- `--rebind` resolution runs in core before any extension is loaded, and the header reader is shared core code.
+
+### Expected merge conflict zones
+
+- `main.ts`: `sessionCwdOrUndefined` and its `--rebind` call site.
+
 ## 2026-10-18 - A session is found by the id its file name carries (oh-my-openagent#7471)
 
 ### What changed

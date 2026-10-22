@@ -82,7 +82,7 @@ export function answerMoveStatus(
 export async function importMovedSession(
 	options: ImportMovedSessionOptions,
 ): Promise<{ readonly sessionFile: string }> {
-	const manifest = readManifest(options.bundleDir);
+	const manifest = await readManifest(options.bundleDir);
 	const targetCwd = resolvePath(options.targetCwd);
 	const sessionDir = options.sessionDir ? normalizePath(options.sessionDir) : getDefaultSessionDir(targetCwd);
 	const target = join(sessionDir, manifest.sessionFileName);
@@ -92,7 +92,7 @@ export async function importMovedSession(
 		return { sessionFile: target };
 	}
 	try {
-		verifyBundle(options.bundleDir, manifest);
+		await verifyBundle(options.bundleDir, manifest);
 	} catch (error) {
 		if (error instanceof MoveBundleInvalidError) await options.ledger.fail(manifest.moveId, "bundle_invalid");
 		throw error;
@@ -153,12 +153,12 @@ const extensionStateFiles = (manifest: MoveManifest) =>
 	manifest.payloads.filter((payload) => payload.kind === EXTENSION_STATE_PAYLOAD).flatMap((p) => p.files);
 
 /** Copies the payload files into staging and checks each copy, so nothing changed after `verifyBundle` is placed. */
-function stagePayloads(bundleDir: string, manifest: MoveManifest, staging: string): void {
+async function stagePayloads(bundleDir: string, manifest: MoveManifest, staging: string): Promise<void> {
 	for (const file of manifest.payloads.flatMap((payload) => payload.files)) {
 		const to = join(staging, STAGED_PAYLOADS, file.path);
 		mkdirSync(dirname(to), { recursive: true });
 		copyFileSync(join(bundleDir, file.path), to);
-		if (sha256File(to) !== file.sha256) throw new MoveBundleInvalidError(`${file.path} changed in transit`);
+		if ((await sha256File(to)) !== file.sha256) throw new MoveBundleInvalidError(`${file.path} changed in transit`);
 	}
 }
 
@@ -182,7 +182,7 @@ async function stage(bundleDir: string, manifest: MoveManifest, staging: string,
 			mkdirSync(dirname(to), { recursive: true });
 			copyFileSync(join(bundleDir, item.path), to);
 		}
-		stagePayloads(bundleDir, manifest, staging);
+		await stagePayloads(bundleDir, manifest, staging);
 		SessionManager.open(file, staging).appendCustomEntry(SESSION_MOVED_IN, {
 			move_id: manifest.moveId,
 			session_id: manifest.sessionId,

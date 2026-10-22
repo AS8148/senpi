@@ -44,7 +44,7 @@ describe("extension-state payload paths (senpi#3681 review)", () => {
 		file.path = "files/probe/state.json";
 		writeFileSync(manifestPath, JSON.stringify(manifest));
 
-		expect(() => readManifest(bundleDir)).toThrow(MoveBundleInvalidError);
+		await expect(readManifest(bundleDir)).rejects.toThrow(MoveBundleInvalidError);
 	});
 });
 

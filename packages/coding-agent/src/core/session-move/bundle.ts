@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { createReadStream } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join, posix, win32 } from "node:path";
 import { parseRepositoryIdentity, type RepositoryIdentity } from "../repository-identity.ts";
 import type { MoveId } from "./ownership.ts";
@@ -44,8 +45,11 @@ export class MoveBundleInvalidError extends Error {
 	}
 }
 
-export function sha256File(path: string): string {
-	return createHash("sha256").update(readFileSync(path)).digest("hex");
+/** Streams the file through the hash, so a large blob never blocks the host's event loop. */
+export async function sha256File(path: string): Promise<string> {
+	const hash = createHash("sha256");
+	for await (const chunk of createReadStream(path)) hash.update(chunk);
+	return hash.digest("hex");
 }
 
 const isString = (value: unknown): value is string => typeof value === "string";
@@ -116,10 +120,10 @@ function parsePayload(value: unknown): MovePayload {
 	return { kind: payload.kind, files };
 }
 
-export function readManifest(bundleDir: string): MoveManifest {
+export async function readManifest(bundleDir: string): Promise<MoveManifest> {
 	let raw: unknown;
 	try {
-		raw = JSON.parse(readFileSync(join(bundleDir, MANIFEST_FILE), "utf8"));
+		raw = JSON.parse(await readFile(join(bundleDir, MANIFEST_FILE), "utf8"));
 	} catch (error) {
 		throw new MoveBundleInvalidError(
 			`manifest unreadable: ${error instanceof Error ? error.message : String(error)}`,
@@ -147,17 +151,17 @@ export function readManifest(bundleDir: string): MoveManifest {
 	};
 }
 
-export function verifyBundle(bundleDir: string, manifest: MoveManifest): void {
+export async function verifyBundle(bundleDir: string, manifest: MoveManifest): Promise<void> {
 	for (const file of [manifest.session, ...manifest.sidecars, ...manifest.payloads.flatMap((p) => p.files)]) {
 		let actual: string;
 		try {
-			actual = sha256File(join(bundleDir, file.path));
+			actual = await sha256File(join(bundleDir, file.path));
 		} catch {
 			throw new MoveBundleInvalidError(`missing ${file.path}`);
 		}
 		if (actual !== file.sha256) throw new MoveBundleInvalidError(`${file.path} changed in transit`);
 	}
-	const header = readFileSync(join(bundleDir, manifest.session.path), "utf8").split("\n", 1)[0] ?? "";
+	const header = (await readFile(join(bundleDir, manifest.session.path), "utf8")).split("\n", 1)[0] ?? "";
 	let id: unknown;
 	try {
 		id = (JSON.parse(header) as { readonly id?: unknown }).id;

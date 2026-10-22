@@ -77,9 +77,9 @@ describe("an export handler past its budget (senpi#3681 delta review)", () => {
 
 		expect(exported).toMatchObject({ success: true });
 		const bundleDir = (exported.data as { bundle_dir: string }).bundle_dir;
-		expect(readManifest(bundleDir).payloads.flatMap((payload) => payload.files.map((file) => file.path))).toEqual([
-			"state/probe/state.json",
-		]);
+		expect(
+			(await readManifest(bundleDir)).payloads.flatMap((payload) => payload.files.map((file) => file.path)),
+		).toEqual(["state/probe/state.json"]);
 	});
 });
 

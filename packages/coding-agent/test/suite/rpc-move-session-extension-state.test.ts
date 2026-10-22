@@ -45,7 +45,7 @@ describe("move_session export with extension state (senpi#3681)", () => {
 
 		expect(exported).toMatchObject({ success: true });
 		const bundleDir = (exported.data as { bundle_dir: string }).bundle_dir;
-		expect(readManifest(bundleDir).payloads).toEqual([
+		expect((await readManifest(bundleDir)).payloads).toEqual([
 			{
 				kind: EXTENSION_STATE_PAYLOAD,
 				files: [{ path: join("state", "probe", "state.json"), sha256: expect.any(String) }],

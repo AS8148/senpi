@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { loadEntriesFromFile, type SessionManager } from "../session-manager.ts";
 import { isPlainId, parseMoveId } from "./bundle.ts";
@@ -139,7 +140,7 @@ export async function restoreMovedState(
 		}
 	}
 	mkdirSync(bookkeeping, { recursive: true });
-	writeFileSync(marker, "");
+	await writeFile(marker, "");
 	const copy = join(bookkeeping, `${DELIVERY_COPY}${newAttempt()}`);
 	cpSync(pending.dir, copy, { recursive: true });
 	let restored: boolean;

@@ -43,7 +43,7 @@ export function finishMove(options: FinishMoveOptions): Promise<void> {
 async function settleMove(options: FinishMoveOptions): Promise<void> {
 	const { sessionFile, bundleDir, moveId, answer } = options;
 	if (existsSync(bundleDir)) {
-		const bundled = readManifest(bundleDir).moveId;
+		const bundled = (await readManifest(bundleDir)).moveId;
 		if (bundled !== moveId) throw new MoveMismatchError(moveId, bundled, "the kept bundle");
 	}
 	const entries = loadEntriesFromFile(sessionFile);
@@ -105,6 +105,6 @@ function reclaimed(entries: readonly { type: string; customType?: string; data?:
 
 export async function requeueDroppedInput(sessionFile: string, bundleDir: string): Promise<void> {
 	if (!existsSync(bundleDir)) return;
-	const manifest = readManifest(bundleDir);
+	const manifest = await readManifest(bundleDir);
 	await requeueInput(sessionFile, manifest.moveId, manifest.droppedUserMessages);
 }
