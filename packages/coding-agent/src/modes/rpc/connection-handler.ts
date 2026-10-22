@@ -141,6 +141,7 @@ import {
 	RPC_ERROR_MEDIA_NOT_FOUND,
 	RPC_ERROR_RESPONSE_TOO_LARGE,
 	STEER_WHEN_IDLE_CAPABILITY,
+	USER_ACTIVITY_CAPABILITY,
 } from "./rpc-types.ts";
 import { runPauseForRun, runResumeForRun } from "./run-hold-commands.ts";
 import { availableModelsData, interruptRunningTurn } from "./session-control-actions-data.ts";
@@ -1018,6 +1019,7 @@ export function createRpcConnectionHandler(
 								EVAL_CELLS_CAPABILITY,
 								AUTH_KEY_VERIFY_CAPABILITY,
 								QUEUED_MESSAGE_REVISION_CAPABILITY,
+								USER_ACTIVITY_CAPABILITY,
 								RESUME_SESSION_CAPABILITY,
 								...(options.retryFallbackCommand ? [RETRY_FALLBACK_COMMAND_CAPABILITY] : []),
 								...(options.toolRuntime ? toolRuntimeCapabilities(options.toolRuntime) : []),
@@ -1766,6 +1768,22 @@ export function createRpcConnectionHandler(
 				}
 				session.setSessionName(name);
 				return success(id, "set_session_name");
+			}
+
+			case "record_user_activity": {
+				// `prompt` activity is emitted by prompt admission itself; a client may only report a draft.
+				// Read as unknown: the wire value is unchecked, whatever the declared command type says.
+				const kind: unknown = command.kind;
+				if (kind !== "draft") {
+					return error(
+						id,
+						"record_user_activity",
+						'record_user_activity: kind must be "draft"',
+						RPC_ERROR_INVALID_ARGUMENT,
+					);
+				}
+				session.recordUserActivity("draft");
+				return success(id, "record_user_activity");
 			}
 
 			// =================================================================
