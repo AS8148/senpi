@@ -119,12 +119,14 @@ export class MoveLedger {
 
 	/**
 	 * Starts receiving a verified bundle. Only a move this device readied (and whose window is still open) may start; a
-	 * bundle for a move it never readied is declined for good (`chunk_without_ready`).
+	 * bundle for a move it never readied is declined for good (`chunk_without_ready`). An accepted move, revoked or not,
+	 * already landed once and is fenced: re-importing its own file returns before this, and any other target would be a
+	 * second writable copy.
 	 */
 	beginReceive(moveId: MoveId): Promise<void> {
 		return this.locked(moveId, async () => {
 			const record = await this.current(moveId);
-			if (record?.state === "accepted" || record?.state === "receiving") return;
+			if (record?.state === "receiving") return;
 			if (record?.state === "ready") {
 				await this.write(moveId, { state: "receiving" });
 				return;
