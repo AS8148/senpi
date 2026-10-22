@@ -4,6 +4,7 @@ import type { AgentSession } from "../../core/agent-session.ts";
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { detachConnection } from "./connection-detach.ts";
 import { buildRpcSessionState } from "./connection-handler.ts";
+import { CONNECTION_ROLE_FIXED, ConnectionRoles, roleConnection } from "./connection-roles.ts";
 import { answerEffectFromTranscript } from "./effect-commands.ts";
 import { latestSessionEffect } from "./effect-ledger.ts";
 import { multiSessionHostCapabilities } from "./host-capabilities.ts";
@@ -150,6 +151,7 @@ export class SessionCommandRouter {
 	private readonly createBinding: typeof createRpcSessionBinding;
 	private readonly connectionOptions: Parameters<typeof createRpcSessionBinding>[4];
 	private readonly pendingCapabilities = new Map<string, string[]>();
+	private readonly connectionRoles = new ConnectionRoles();
 	private readonly finalizations = new Map<string, { promise: Promise<void>; resolve: () => void }>();
 	private readonly idleNow: () => number;
 	private readonly idleEvictionMs: number;
@@ -459,6 +461,17 @@ export class SessionCommandRouter {
 		}
 		if (command.type === "set_client_info" && !command.sessionId) {
 			const connection = this.writer.currentConnection();
+			if (
+				command.capabilities !== undefined &&
+				!this.connectionRoles.declare(roleConnection(connection), command.capabilities)
+			)
+				return {
+					id: command.id,
+					type: "response",
+					command: "set_client_info",
+					success: false,
+					error: CONNECTION_ROLE_FIXED,
+				} as RpcResponse;
 			if (connection !== undefined) {
 				this.pendingCapabilities.set(connection, command.capabilities ?? []);
 				this.writer.setConnectionCapabilities(connection, command.capabilities ?? []);
@@ -632,6 +645,7 @@ export class SessionCommandRouter {
 				...parkedEntryFromProfile(
 					{
 						sessionPath: retained.sessionPath,
+						contextOverlay: retained.contextOverlay,
 						...(retained.durableSessionId !== undefined ? { durableSessionId: retained.durableSessionId } : {}),
 					},
 					retained.profile,
@@ -809,13 +823,21 @@ export class SessionCommandRouter {
 	 * the failure response otherwise, exactly as an open does.
 	 */
 	reopenParked(entry: HandoverParkedEntry): Promise<RpcResponse | undefined> {
-		return this.open(parkedOpenCommand(entry), undefined, { reply: false, defaults: false });
+		return this.open({ ...parkedOpenCommand(entry), attended: false }, undefined, {
+			reply: false,
+			defaults: false,
+			contextOverlay: entry.contextOverlay,
+		});
 	}
 
 	private async open(
 		command: Extract<RpcCommand, { type: "open_session" }>,
 		owner?: string,
-		options?: { readonly reply?: boolean; readonly defaults?: boolean },
+		options?: {
+			readonly reply?: boolean;
+			readonly defaults?: boolean;
+			readonly contextOverlay?: HandoverParkedEntry["contextOverlay"];
+		},
 	): Promise<RpcResponse | undefined> {
 		// A parked session's reopen replays what its park recorded; a field it left empty stays empty
 		// rather than taking THIS host's default (senpi#3376 review).
@@ -844,6 +866,12 @@ export class SessionCommandRouter {
 		// registry, the runtime and the extensions downstream receive values already
 		// proven to satisfy every documented cap.
 		const kindError = sessionKindError(command.kind);
+		if (command.attended !== undefined && command.attended !== false)
+			return error(
+				command.id,
+				"open_session",
+				`${RPC_ERROR_INVALID_LAUNCH_PROFILE}: attended must be false or omitted`,
+			);
 		if (kindError) return error(command.id, "open_session", `${RPC_ERROR_INVALID_SESSION_KIND}: ${kindError}`);
 		const contextError = sessionContextError(command.context);
 		if (contextError)
@@ -875,6 +903,7 @@ export class SessionCommandRouter {
 			opened = await this.registry.openSession(
 				{
 					cwd: command.cwd ?? this.defaults.cwd,
+					...(command.attended === false ? { attended: false as const } : {}),
 					sessionPath: command.sessionPath,
 					holderEndpoint: {
 						host_instance: instanceId,
@@ -907,6 +936,7 @@ export class SessionCommandRouter {
 			);
 			const openedSession = opened;
 			const entry = this.registry.getForCommand(openedSession.sessionId, "open_session");
+			if (!opened.attached && options?.contextOverlay !== undefined) entry.contextOverlay = options.contextOverlay;
 			const state = entry.worker?.snapshot?.state;
 			// The runtime has now published its own lease. Recheck before attaching or replying,
 			// so an opener racing the initial lookup is rolled back rather than admitted.
@@ -949,6 +979,7 @@ export class SessionCommandRouter {
 								owner !== undefined
 									? (this.pendingCapabilities.get(owner) ?? this.connectionOptions?.capabilities ?? [])
 									: this.connectionOptions?.capabilities,
+							connectionRoles: this.connectionRoles,
 							clientInfo: {
 								setCapabilities: (connectionId, capabilities) => {
 									if (connectionId !== undefined) {
@@ -1049,6 +1080,7 @@ export class SessionCommandRouter {
 	async releaseConnection(connectionId: string): Promise<string[]> {
 		this.releasedConnections.add(connectionId);
 		this.writer.clearConnectionCapabilities(connectionId);
+		this.connectionRoles.release(connectionId);
 		for (const sessionId of this.sessionsByConnection.get(connectionId)?.keys() ?? [])
 			this.writer.detachConnectionFromSession(connectionId, sessionId);
 		const opens = this.opensByConnection.get(connectionId);
