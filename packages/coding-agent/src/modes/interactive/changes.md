@@ -2,12 +2,13 @@
 
 ### What changed
 
-- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `/answer skip` still sends `formatUserMessage` for the cancelled response, which now carries the answers the user had already chosen. For an async question (`waitForAnswer: false`) cancelled after partial answers it sends nothing itself, because the ask-user builtin's `deliverAnswer` now delivers that message.
-- `packages/coding-agent/src/modes/interactive/components/ask-user-answer-chip.ts`: a body that starts with "The user cancelled the question after answering part of it." gets a leading `↳ (cancelled)` row before the answer rows.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `/answer skip` settles the shown question as `cancelled` with `cancelOrigin: "user"` and the answers the user had already chosen. When those answers exist (`showsPartialAnswers`) it sends nothing itself, because the ask-user builtin's `deliverAnswer` delivers them once; with nothing answered it still sends the dismissal. `/answer` only ever reaches async questions (`shownQuestion` reads `pendingQuestions`, which only `showAsyncQuestion` fills), so a blocking question never gets a second copy from it.
+- `packages/coding-agent/src/modes/interactive/components/ask-user-question.ts`: `finish("cancelled")` (Esc, Ctrl+C) reports `cancelOrigin: "user"`.
+- `packages/coding-agent/src/modes/interactive/components/ask-user-answer-chip.ts`: a body with a cancel line ("The user cancelled the question after answering part of it." or "The question was cancelled after part of it was answered.") gets a leading `↳ (cancelled)` row, and only the lines after it become answer rows, so a failure reason above it is not read as an answer.
 
 ### Why
 
-- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: lead rule for #4042: a cancel with nothing answered stays "The user dismissed the question."; a cancel after partial answers shows them, and the model must receive exactly one message.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`, `packages/coding-agent/src/modes/interactive/components/ask-user-question.ts`: lead rule for #4042: only a cancel the user chose (or a failing question UI) shows the model the answers given before it, exactly once; every lifecycle cancel stays silent. The builtin can only tell a user's cancel from a lifecycle one if the UI says so.
 - `packages/coding-agent/src/modes/interactive/components/ask-user-answer-chip.ts`: without the marker a skipped question with partial answers rendered exactly like a submitted partial answer (senpi#4002 review, MEDIUM 1).
 
 ### Why an extension could not handle it
@@ -18,7 +19,8 @@
 ### Expected merge conflict zones
 
 - LOW: `packages/coding-agent/src/modes/interactive/interactive-mode.ts`, the `skip` branch of `handleAnswerCommand`.
-- LOW: `packages/coding-agent/src/modes/interactive/components/ask-user-answer-chip.ts`, the end of `summaryRows`.
+- LOW: `packages/coding-agent/src/modes/interactive/components/ask-user-answer-chip.ts`, `summaryRows`.
+- LOW: `packages/coding-agent/src/modes/interactive/components/ask-user-question.ts`, `finish`.
 
 ## 2026-10-21 - The resume picker's search finds a session by the id its file name carries (oh-my-openagent#7471)
 

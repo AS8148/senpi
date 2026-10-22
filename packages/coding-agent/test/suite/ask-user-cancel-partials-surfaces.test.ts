@@ -17,7 +17,12 @@ beforeEach(() =>
 		loadThemeFromPath(join(import.meta.dirname, "../../src/modes/interactive/theme/dark.json"), "truecolor"),
 	),
 );
-const PARTIAL: QuestionResponse = { status: "cancelled", answers: { q1: { selected: ["A"] } }, unanswered: ["q2"] };
+const PARTIAL: QuestionResponse = {
+	status: "cancelled",
+	cancelOrigin: "user",
+	answers: { q1: { selected: ["A"] } },
+	unanswered: ["q2"],
+};
 const NOTHING: QuestionResponse = { status: "cancelled", answers: {}, unanswered: ["q1", "q2"] };
 
 function chipRows(response: QuestionResponse): string[] {
@@ -42,7 +47,8 @@ it("/answer skip with nothing answered still sends the dismissal", () => {
 	expect(chipRows(NOTHING)).toEqual(["↳ Auth: (no answer)", "↳ Library: (no answer)"]);
 });
 
-async function asyncCancel(progress: QuestionResponse["answers"] | undefined, comment?: string, wait = false) {
+/** The user cancels (the desktop's Remove) after `progress`, or with `fail` the question UI fails instead. */
+async function asyncCancel(progress: QuestionResponse["answers"] | undefined, fail = false, wait = false) {
 	const delivery = await createAskUserDelivery();
 	const answer = Promise.withResolvers<QuestionResponse>();
 	const ctx = delivery.context((_request, opts) => {
@@ -53,12 +59,14 @@ async function asyncCancel(progress: QuestionResponse["answers"] | undefined, co
 	const execution = delivery.tool.execute("async-q", params, undefined, undefined, ctx as ExtensionToolContext);
 	if (!wait) await execution;
 	const settled = wait ? undefined : delivery.settled(ctx, "async-q");
-	answer.resolve({
-		status: "cancelled",
-		answers: progress ?? {},
-		unanswered: progress ? ["q2"] : ["q1", "q2"],
-		...(comment ? { comment } : {}),
-	});
+	if (fail) answer.reject(new Error("boom"));
+	else
+		answer.resolve({
+			status: "cancelled",
+			cancelOrigin: "user",
+			answers: progress ?? {},
+			unanswered: progress ? ["q2"] : ["q1", "q2"],
+		});
 	const result = await execution;
 	await settled;
 	return { deliveries: delivery.deliveries, result };
@@ -77,10 +85,10 @@ it("an async question cancelled with nothing answered stays silent", async () =>
 	expect(deliveries).toHaveLength(0);
 });
 
-it("a cancelled blocking question with a reason shows the reason and the partial answers", async () => {
-	const { result } = await asyncCancel({ q1: { selected: ["A"] } }, "Question UI failed: boom", true);
+it("a blocking question whose UI failed shows the reason and the partial answers", async () => {
+	const { result } = await asyncCancel({ q1: { selected: ["A"] } }, true, true);
 	expect(result.content.map((part) => ("text" in part ? part.text : "")).join("")).toBe(
-		"Question UI failed: boom\nThe user cancelled the question after answering part of it.\nAuth: A\nUnanswered: Library",
+		"Question UI failed: boom\nThe question was cancelled after part of it was answered.\nAuth: A\nUnanswered: Library",
 	);
 });
 

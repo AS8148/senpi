@@ -1,4 +1,9 @@
-import type { ExtensionUIContext, QuestionRequest, QuestionResponse } from "../../core/extensions/types.ts";
+import type {
+	ExtensionUIContext,
+	QuestionCancelOrigin,
+	QuestionRequest,
+	QuestionResponse,
+} from "../../core/extensions/types.ts";
 import { settledQuestionStatus, unansweredQuestionIds } from "./extension-ui-response.ts";
 import type { RpcExtensionUIProgress, RpcExtensionUIResponse, RpcQuestionUiRequest } from "./rpc-types.ts";
 
@@ -47,7 +52,11 @@ export class ConnectionQuestionBridge {
 			let timer: ReturnType<typeof setTimeout> | undefined;
 			let finished = false;
 			const unanswered = () => unansweredQuestionIds(request.questions, answers);
-			const finish = (status: QuestionResponse["status"], resolvedBy?: QuestionResponse["resolvedBy"]) => {
+			const finish = (
+				status: QuestionResponse["status"],
+				resolvedBy?: QuestionResponse["resolvedBy"],
+				cancelOrigin?: QuestionCancelOrigin,
+			) => {
 				if (finished) return;
 				finished = true;
 				clearTimeout(timer);
@@ -61,6 +70,7 @@ export class ConnectionQuestionBridge {
 					comment,
 					unanswered: unanswered(),
 					...(status === "timed_out" ? { autoResolvedAfterMs: Date.now() - askedAtMs } : {}),
+					...(cancelOrigin !== undefined ? { cancelOrigin } : {}),
 				};
 				this.output({
 					type: "question_resolved",
@@ -106,8 +116,9 @@ export class ConnectionQuestionBridge {
 						});
 				},
 				respond: (response) => {
+					// The client's cancel is the user's; a closed connection or an abort is a lifecycle cancel.
 					if ("cancelled" in response) {
-						cancel();
+						finish("cancelled", undefined, "user");
 						return true;
 					}
 					if (!("answers" in response)) return false;

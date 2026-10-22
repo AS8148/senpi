@@ -1,5 +1,5 @@
 import { releaseQuestionInput } from "../../../question-input.ts";
-import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../../types.ts";
+import type { ExtensionAPI, ExtensionContext, QuestionCancelOrigin, ToolDefinition } from "../../types.ts";
 import { WAKE_SOURCE_STATE_EVENT, type WakeSourceStateEvent } from "../monitor-state-event.ts";
 import { TOOL_NAMES } from "./family.ts";
 import {
@@ -7,7 +7,7 @@ import {
 	formatModelAnswer,
 	formatResultDetails,
 	formatUserMessage,
-	hasPartialAnswers,
+	showsPartialAnswers,
 } from "./format.ts";
 import {
 	ASK_USER_ASKED_EVENT,
@@ -66,9 +66,9 @@ function result(
  * this so every surface (interactive TUI, RPC) only has to RESOLVE
  * the question; a surface that delivered on its own would send it twice. It
  * steers into a running turn and follows up when idle - a follow-up always
- * triggers a turn, which is what wakes the model after a timeout. A question
- * cancelled with nothing answered stays silent: it was dismissed, superseded, or
- * aborted. One cancelled after the user answered part of it delivers those answers.
+ * triggers a turn, which is what wakes the model after a timeout. A cancelled
+ * question stays silent unless `showsPartialAnswers` holds: the user chose the
+ * cancel (or its UI failed) after answering part of it, and those answers go out.
  */
 export function deliverAnswer(
 	pi: Pick<ExtensionAPI, "sendUserMessage" | "events">,
@@ -77,7 +77,7 @@ export function deliverAnswer(
 	response: QuestionResponse,
 	variant: "codex" | "claude",
 ): void {
-	if (response.status === "cancelled" && !hasPartialAnswers(response)) return;
+	if (response.status === "cancelled" && !showsPartialAnswers(response)) return;
 	const content = formatUserMessage(response, request.requestId, request.questions, request.required === true);
 	const options = { deliverAs: ctx.isIdle() ? ("followUp" as const) : ("steer" as const) };
 	if (response.status === "answered" || response.status === "comment-submitted") releaseQuestionInput(ctx);
@@ -174,13 +174,17 @@ export function startQuestion(
 		idleTimeoutMs: request.timeoutMs,
 		onTimeout: finish,
 	});
-	const cancel = (message?: string, reportDetachedLoss = false) => {
+	const cancel = (origin: QuestionCancelOrigin, message?: string, reportDetachedLoss = false) => {
 		const lost = !attached && reportDetachedLoss;
 		const response = pending.cancel(lost ? "orphaned-after-restart" : "cancelled");
-		finish(message ? { ...response, comment: message } : response);
+		finish({
+			...response,
+			...(message ? { comment: message } : {}),
+			...(response.status === "cancelled" ? { cancelOrigin: origin } : {}),
+		});
 		if (lost) notify(message ?? "The pending question could not be restored.", "error");
 	};
-	const abort = () => cancel();
+	const abort = () => cancel("turn_abort");
 	unregister = registerPendingQuestion(sessionId, {
 		request,
 		pending,
@@ -256,7 +260,7 @@ export function startQuestion(
 			ctx.ui.notify(message, "error");
 			return;
 		}
-		cancel(message);
+		cancel("ui_failure", message);
 		ctx.ui.notify(message, "error");
 	};
 	const attach = () => {
@@ -366,8 +370,8 @@ export function createAskUserTool(variant: AskUserVariant, pi: ExtensionAPI, sta
 				response.status === "cancelled" && response.comment
 					? request.required === true
 						? formatGatedCancellation(response.comment, response, request.requestId, request.questions)
-						: hasPartialAnswers(response)
-							? `${response.comment}\n${formatModelAnswer(response, request.requestId, request.questions).text}`
+						: showsPartialAnswers(response)
+							? undefined
 							: response.comment
 					: undefined,
 			);

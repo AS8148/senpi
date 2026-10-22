@@ -29,12 +29,21 @@ const abortAfterDraft = async (reason?: string) => {
 	return answer;
 };
 
-it("shows the answered question and the unanswered rest when a structured ask is cancelled", async () => {
-	const response = await abortAfterDraft();
+it("shows the answered question and the unanswered rest when the user cancels a structured ask", async () => {
+	const bridge = new ConnectionQuestionBridge(() => {});
+	const answer = bridge.ask(request);
+	const id = bridge.pendingQuestions()[0].id;
+	bridge.progress({ type: "extension_ui_progress", id, answers: { q1: { selected: ["A"] } } });
+	bridge.respond({ type: "extension_ui_response", id, cancelled: true });
+	const response = await answer;
 	expect(response.status).toBe("cancelled");
 	expect(modelText(response)).toBe(
 		"The user cancelled the question after answering part of it.\nq1: A\nUnanswered: q2",
 	);
+});
+
+it("keeps the dismissal text when a structured ask is aborted after an answer", async () => {
+	expect(modelText(await abortAfterDraft())).toBe("The user dismissed the question.");
 });
 
 it("shows the answered question and the unanswered rest when a structured ask times out", async () => {
@@ -53,7 +62,7 @@ it("keeps the dismissal text for a cancelled ask with no answers", async () => {
 	expect(modelText(await answer)).toBe("The user dismissed the question.");
 });
 
-it("shows the fallback's partial answer when the degraded ask is aborted after the first question", async () => {
+it("keeps the dismissal text when the degraded ask is aborted after the first question", async () => {
 	const controller = new AbortController();
 	const select = vi
 		.fn()
@@ -64,9 +73,8 @@ it("shows the fallback's partial answer when the degraded ask is aborted after t
 		});
 	const response = await degradeQuestion({ select, input: vi.fn() }, request, { signal: controller.signal });
 	expect(response.status).toBe("cancelled");
-	expect(modelText(response)).toBe(
-		"The user cancelled the question after answering part of it.\nq1: A\nUnanswered: q2",
-	);
+	expect(response.answers).toEqual({ q1: { selected: ["A"] } });
+	expect(modelText(response)).toBe("The user dismissed the question.");
 });
 
 it("opens no input when the signal aborts as the fallback select returns Other", async () => {

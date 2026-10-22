@@ -37,17 +37,16 @@ async function fallbackWithFirstAnswered() {
 const textOf = (result: { content: { type: string; text?: string }[] }) =>
 	result.content.map((part) => part.text ?? "").join("");
 
-// sisyphuslabs/omo-desktop-app#4042: the extension settles an abort or an idle timeout from its own
-// draft, so the fallback must report each answer as progress or the model reads a bare dismissal.
-it("shows the fallback's answered question when the turn is aborted", async () => {
+// sisyphuslabs/omo-desktop-app#4042: the extension settles an idle timeout from its own draft, so the
+// fallback must report each answer as progress or the model reads a bare timeout. A turn abort is a
+// lifecycle cancel and stays a dismissal even with that draft.
+it("keeps the dismissal when the turn is aborted after the fallback's first answer", async () => {
 	const fallback = await fallbackWithFirstAnswered();
 	const controller = new AbortController();
 	const result = fallback.run(controller.signal);
 	await fallback.secondOpen;
 	controller.abort();
-	expect(textOf(await result)).toBe(
-		"The user cancelled the question after answering part of it.\nAuth: A\nUnanswered: Library",
-	);
+	expect(textOf(await result)).toBe("The user dismissed the question.");
 });
 
 it("shows the fallback's answered question when the question times out", async () => {

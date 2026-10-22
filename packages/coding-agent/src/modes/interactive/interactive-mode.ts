@@ -98,7 +98,7 @@ import { AssistantEditError, assistantTextEquals } from "../../core/edited-assis
 import {
 	askUserAnswerDisplayText,
 	formatUserMessage,
-	hasPartialAnswers,
+	showsPartialAnswers,
 } from "../../core/extensions/builtin/ask-user/format.ts";
 import { askUserRenderers } from "../../core/extensions/builtin/ask-user/render.ts";
 import type {
@@ -4201,16 +4201,17 @@ export class InteractiveMode {
 		if (argument === "skip") {
 			const response: QuestionResponse = {
 				status: "cancelled",
+				cancelOrigin: "user",
 				answers: state.draft.answers ?? {},
 				unanswered: unansweredIds(state.request, state.draft),
 			};
 			state.finish(response);
 			await state.completion;
 			this.showStatus("The user dismissed the question.");
-			// A cancellation with nothing answered stays silent in the builtin, so this explicit command
-			// acknowledges it, including on host bridges. An async question cancelled after partial
-			// answers is already delivered by the builtin; sending it here would deliver it twice.
-			if (!state.request.waitForAnswer && hasPartialAnswers(response)) return;
+			// The builtin delivers the partial answers of a cancel the user chose; sending them here too
+			// would reach the model twice. With nothing answered the builtin stays silent, so this
+			// explicit command acknowledges the dismissal, including on host bridges.
+			if (showsPartialAnswers(response)) return;
 			await this.session.sendUserMessage(
 				formatUserMessage(
 					response,
