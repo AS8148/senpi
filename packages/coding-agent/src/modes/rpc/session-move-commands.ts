@@ -162,13 +162,10 @@ async function run(
 						sessionFile,
 						"This session is open on this host. Release it with release_session reason move and this moveId first.",
 					);
-					const ownership = sessionOwnership(loadEntriesFromFile(sessionFile));
-					if (ownership.writable || ownership.state !== "moving" || ownership.moveId !== parsed.moveId)
-						throw new MoveRefusal(
-							RPC_ERROR_MOVE_NOT_RELEASED,
-							"This session file is not sealed for this move. Release it with release_session reason move and this moveId first; that also hands back its queued input.",
-						);
+					refuseUnlessSealedFor(sessionFile, parsed.moveId);
 				},
+				// Again inside the cross-process lock: a finish from another generation may have reclaimed it meanwhile.
+				lockedGuard: () => refuseUnlessSealedFor(sessionFile, parsed.moveId),
 			});
 			return {
 				move_id: manifest.moveId,
@@ -219,6 +216,15 @@ class MoveRefusal extends Error {
 		this.name = "MoveRefusal";
 		this.code = code;
 	}
+}
+
+function refuseUnlessSealedFor(sessionFile: string, moveId: MoveId): void {
+	const ownership = sessionOwnership(loadEntriesFromFile(sessionFile));
+	if (ownership.writable || ownership.state !== "moving" || ownership.moveId !== moveId)
+		throw new MoveRefusal(
+			RPC_ERROR_MOVE_NOT_RELEASED,
+			"This session file is not sealed for this move. Release it with release_session reason move and this moveId first; that also hands back its queued input.",
+		);
 }
 
 function refuseOpenHere(port: MoveSessionPort, sessionFile: string, detail: string): void {

@@ -14,7 +14,9 @@ export function realSessionPath(path: string): string {
 	}
 }
 
-export const moveLockKey = (sessionFile: string): string => `session-move:${realSessionPath(sessionFile)}`;
+const lockKey = (resolvedPath: string): string => `session-move:${resolvedPath}`;
+
+export const moveLockKey = (sessionFile: string): string => lockKey(realSessionPath(sessionFile));
 
 /**
  * Runs the sender's steps of a move (export, finish) one at a time per session file, across processes too.
@@ -29,7 +31,7 @@ export const moveLockKey = (sessionFile: string): string => `session-move:${real
  */
 export function withSessionMoveLock<T>(sessionFile: string, step: () => Promise<T>, guard?: () => void): Promise<T> {
 	const path = realSessionPath(sessionFile);
-	return serializeByKey(moveLockKey(path), async () => {
+	return serializeByKey(lockKey(path), async () => {
 		guard?.();
 		const sessionId = headerSessionId(loadEntriesFromFile(path));
 		return sessionId === undefined ? step() : withHolderMoveLock(path, sessionId, step);
