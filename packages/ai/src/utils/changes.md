@@ -1,3 +1,7 @@
+## 2026-10-20 - Keep Claude's spent-window reset in provider diagnostics (senpi#3825)
+
+`provider-diagnostic-sources.ts` adds `resetsAt` to a classified quota/rate-limit error from Claude's unified 5h/7d response headers. Only spent windows with future numeric resets contribute, and the latest spent window wins so a goal cannot wake while another cap still blocks it. Authentication and unknown errors do not read reset headers. `anthropic-provider-diagnostic.test.ts` exercises the real adapter against HTTP fixtures.
+
 ## 2026-10-21 - reportedCount: absent, null or non-finite provider counts are not reported (senpi#3879)
 
 ### What changed
