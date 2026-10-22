@@ -39,7 +39,13 @@ export const heldTurn: FauxResponseStep = (_context, options) =>
 		else options?.signal?.addEventListener("abort", settle, { once: true });
 	});
 
-export async function startReleaseHost(extension: ExtensionFactory) {
+export interface ReleaseHostOptions {
+	/** Advertised by the connection that opens each session, as a desktop's `set_client_info` would. */
+	readonly capabilities?: readonly string[];
+	readonly onRecord?: (record: WireRecord) => void;
+}
+
+export async function startReleaseHost(extension: ExtensionFactory, options: ReleaseHostOptions = {}) {
 	const dir = await mkdtemp(join(tmpdir(), "senpi-release-host-"));
 	const cwd = join(dir, "cwd");
 	await mkdir(cwd);
@@ -86,6 +92,7 @@ export async function startReleaseHost(extension: ExtensionFactory) {
 	const receive = (line: string): void => {
 		const record = JSON.parse(line) as WireRecord;
 		records.push(record);
+		options.onRecord?.(record);
 		if (record.type === "response" && typeof record.id === "string") answerWaiters.get(record.id)?.(record);
 	};
 	const writer = new SessionEventWriter(receive);
@@ -119,6 +126,12 @@ export async function startReleaseHost(extension: ExtensionFactory) {
 		async open(name: string): Promise<OpenedSession> {
 			const connection = `open-${name}`;
 			writer.registerConnection(connection, { writeRaw: receive, waitForBackpressure: async () => {} });
+			if (options.capabilities !== undefined) {
+				const capabilities = [...options.capabilities];
+				await writer.withConnection(connection, () =>
+					router.handle({ type: "set_client_info", id: `caps-${name}`, width: 80, capabilities }),
+				);
+			}
 			const id = `open-${++serial}`;
 			const sessionPath = join(dir, `${name}.jsonl`);
 			await writer.withConnection(connection, () =>
