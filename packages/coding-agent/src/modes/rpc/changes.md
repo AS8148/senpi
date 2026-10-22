@@ -1,3 +1,21 @@
+## 2026-10-22 - The record_user_activity refusal no longer repeats the client's value (senpi#3933)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `record_user_activity` with a kind other than `draft` answers `invalid_argument` with the fixed message `record_user_activity: kind must be "draft"` instead of `Unsupported activity kind: <value>`.
+
+### Why
+
+- The old message repeated an unchecked client value into the response, so its size and content were the client's choice. The fixed message bounds it. Regression: `test/suite/regressions/issue-3933-rpc-draft-activity-routing.test.ts`, which also covers that a multi-session host records the draft on the addressed session only.
+
+### Why an extension could not handle it
+
+- The refusal is produced by the RPC command switch before any session or extension code runs.
+
+### Expected merge conflict zones
+
+- LOW: the `record_user_activity` case of `handleCommand` in `packages/coding-agent/src/modes/rpc/connection-handler.ts`.
+
 ## 2026-10-21 - RPC clients can report draft activity, so the prompt-cache prewarm can run while a desktop user types (senpi#3859)
 
 ### What changed
