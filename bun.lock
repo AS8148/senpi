@@ -21,11 +21,11 @@
     },
     "packages/agent": {
       "name": "@earendil-works/pi-agent-core",
-      "version": "2026.10.21-1",
+      "version": "2026.10.21-2",
       "dependencies": {
         "@earendil-works/chord": "0.99.1",
-        "@earendil-works/pi-ai": "^2026.10.21-1",
-        "@earendil-works/pi-telemetry": "^2026.10.21-1",
+        "@earendil-works/pi-ai": "^2026.10.21-2",
+        "@earendil-works/pi-telemetry": "^2026.10.21-2",
         "diff": "9.0.0",
         "ignore": "7.0.9",
         "typebox": "1.3.34",
@@ -42,7 +42,7 @@
     },
     "packages/ai": {
       "name": "@earendil-works/pi-ai",
-      "version": "2026.10.21-1",
+      "version": "2026.10.21-2",
       "bin": {
         "pi-ai": "dist/cli.js",
       },
@@ -50,7 +50,7 @@
         "@anthropic-ai/sdk": "0.127.0",
         "@aws-sdk/client-bedrock-runtime": "3.1136.0",
         "@bufbuild/protobuf": "2.15.0",
-        "@earendil-works/pi-telemetry": "^2026.10.21-1",
+        "@earendil-works/pi-telemetry": "^2026.10.21-2",
         "@google/genai": "2.23.0",
         "@smithy/node-http-handler": "4.12.1",
         "@smithy/types": "4.18.0",
@@ -81,10 +81,10 @@
     },
     "packages/client": {
       "name": "@earendil-works/pi-client",
-      "version": "2026.10.21-1",
+      "version": "2026.10.21-2",
       "dependencies": {
         "@earendil-works/chord": "0.99.1",
-        "@earendil-works/pi-protocol": "2026.10.21-1",
+        "@earendil-works/pi-protocol": "2026.10.21-2",
       },
       "devDependencies": {
         "shx": "0.4.0",
@@ -93,7 +93,7 @@
     },
     "packages/coding-agent": {
       "name": "@code-yeongyu/senpi",
-      "version": "2026.10.21-1",
+      "version": "2026.10.21-2",
       "bin": {
         "pi": "dist/bundle/cli.js",
         "senpi": "dist/bundle/cli.js",
@@ -101,14 +101,14 @@
       "dependencies": {
         "@anthropic-ai/claude-agent-sdk": "0.3.306",
         "@anthropic-ai/sdk": "0.127.0",
-        "@code-yeongyu/senpi-codemode": "^2026.10.21-1",
+        "@code-yeongyu/senpi-codemode": "^2026.10.21-2",
         "@earendil-works/chord": "0.99.1",
-        "@earendil-works/pi-agent-core": "^2026.10.21-1",
-        "@earendil-works/pi-ai": "^2026.10.21-1",
-        "@earendil-works/pi-client": "^2026.10.21-1",
-        "@earendil-works/pi-protocol": "^2026.10.21-1",
-        "@earendil-works/pi-pty": "^2026.10.21-1",
-        "@earendil-works/pi-tui": "^2026.10.21-1",
+        "@earendil-works/pi-agent-core": "^2026.10.21-2",
+        "@earendil-works/pi-ai": "^2026.10.21-2",
+        "@earendil-works/pi-client": "^2026.10.21-2",
+        "@earendil-works/pi-protocol": "^2026.10.21-2",
+        "@earendil-works/pi-pty": "^2026.10.21-2",
+        "@earendil-works/pi-tui": "^2026.10.21-2",
         "@modelcontextprotocol/sdk": "1.32.1",
         "@mozilla/readability": "0.6.0",
         "@silvia-odwyer/photon-node": "0.3.4",
@@ -186,8 +186,8 @@
       "name": "@code-yeongyu/senpi-evals",
       "version": "2026.7.25",
       "devDependencies": {
-        "@code-yeongyu/senpi": "^2026.10.21-1",
-        "@earendil-works/pi-ai": "^2026.10.21-1",
+        "@code-yeongyu/senpi": "^2026.10.21-2",
+        "@earendil-works/pi-ai": "^2026.10.21-2",
         "@types/node": "26.6.2",
         "@vitest-evals/core": "0.17.0",
         "@vitest/coverage-v8": "5.0.1",
@@ -200,7 +200,7 @@
     },
     "packages/protocol": {
       "name": "@earendil-works/pi-protocol",
-      "version": "2026.10.21-1",
+      "version": "2026.10.21-2",
       "dependencies": {
         "@earendil-works/chord": "0.99.1",
         "typebox": "1.3.34",
@@ -212,7 +212,7 @@
     },
     "packages/pty": {
       "name": "@earendil-works/pi-pty",
-      "version": "2026.10.21-1",
+      "version": "2026.10.21-2",
       "dependencies": {
         "@xterm/headless": "6.0.0",
       },
@@ -222,15 +222,15 @@
     },
     "packages/senpi-codemode": {
       "name": "@code-yeongyu/senpi-codemode",
-      "version": "2026.10.21-1",
+      "version": "2026.10.21-2",
       "dependencies": {
         "@babel/parser": "8.0.4",
-        "@earendil-works/pi-ai": "^2026.10.21-1",
+        "@earendil-works/pi-ai": "^2026.10.21-2",
         "quickjs-wasi": "3.6.2",
         "typebox": "1.3.34",
       },
       "devDependencies": {
-        "@code-yeongyu/senpi": "2026.10.21-1",
+        "@code-yeongyu/senpi": "2026.10.21-2",
       },
       "peerDependencies": {
         "@code-yeongyu/senpi": "*",
@@ -238,11 +238,11 @@
     },
     "packages/server": {
       "name": "@code-yeongyu/senpi-server",
-      "version": "2026.10.21-1",
+      "version": "2026.10.21-2",
       "dependencies": {
         "@earendil-works/chord": "0.99.1",
-        "@earendil-works/pi-ai": "^2026.10.21-1",
-        "@earendil-works/pi-protocol": "^2026.10.21-1",
+        "@earendil-works/pi-ai": "^2026.10.21-2",
+        "@earendil-works/pi-protocol": "^2026.10.21-2",
       },
       "devDependencies": {
         "shx": "0.4.0",
@@ -253,8 +253,8 @@
       "name": "@earendil-works/pi-storage-sqlite-node",
       "version": "0.83.0",
       "dependencies": {
-        "@earendil-works/pi-agent-core": "^2026.10.21-1",
-        "@earendil-works/pi-ai": "^2026.10.21-1",
+        "@earendil-works/pi-agent-core": "^2026.10.21-2",
+        "@earendil-works/pi-ai": "^2026.10.21-2",
       },
       "devDependencies": {
         "@vitest/coverage-v8": "5.0.1",
@@ -263,7 +263,7 @@
     },
     "packages/telemetry": {
       "name": "@earendil-works/pi-telemetry",
-      "version": "2026.10.21-1",
+      "version": "2026.10.21-2",
       "devDependencies": {
         "@types/node": "26.6.2",
         "vitest": "5.0.1",
@@ -271,7 +271,7 @@
     },
     "packages/tui": {
       "name": "@earendil-works/pi-tui",
-      "version": "2026.10.21-1",
+      "version": "2026.10.21-2",
       "dependencies": {
         "get-east-asian-width": "1.7.0",
         "marked": "18.0.13",
@@ -292,7 +292,7 @@
     "@earendil-works/gondolin": {
       "undici": "6.28.1",
     },
-    "@hono/node-server": "2.1.1",
+    "@hono/node-server": "2.1.3",
     "brace-expansion": "5.0.12",
     "esbuild": "0.28.2",
     "express-rate-limit": "8.7.0",
@@ -300,7 +300,7 @@
     "gaxios": {
       "rimraf": "6.1.3",
     },
-    "hono": "4.13.8",
+    "hono": "4.13.11",
     "ip-address": "10.7.2",
     "postcss": "8.5.26",
     "protobufjs": "7.6.5",
@@ -492,7 +492,7 @@
 
     "@google/genai": ["@google/genai@2.23.0", "", { "dependencies": { "google-auth-library": "^10.3.0", "p-retry": "^4.6.2", "protobufjs": "^7.5.4", "ws": "^8.18.0" }, "peerDependencies": { "@modelcontextprotocol/sdk": "^1.25.2" }, "optionalPeers": ["@modelcontextprotocol/sdk"] }, "sha512-NFMzktoZ7jJg9AA3vUbWZocnkQP6DSGzL21ORwdVcBWkHli3k7v6B9zy07M4bTiKDAyIWfUh2J/oLYxCu0hNpQ=="],
 
-    "@hono/node-server": ["@hono/node-server@2.1.1", "", { "peerDependencies": { "hono": "^4" } }, "sha512-ELuehkj5VCBdgEw9zs+ivkKwyzzUCSQuE96YmiPvn1ECBoZCczbFXJLeEGMTYjphP6gydh4pHMqEYPVMYUVgQg=="],
+    "@hono/node-server": ["@hono/node-server@2.1.3", "", { "peerDependencies": { "hono": "^4" } }, "sha512-TA//nWMqPhbfdfneACk6t5a9eqbS9lABEPyKn0/xZTah3H3U2XaVg85rJFl0/Fyit0I552YDHgXGVSf3GwqbUw=="],
 
     "@jridgewell/resolve-uri": ["@jridgewell/resolve-uri@3.1.2", "", {}, "sha512-bRISgCIjP20/tbWSPWMEi54QVPRZExkuD9lJL+UIxUKtwVJA8wW1Trb1jMs1RFXo1CBTNZ/5hpC9QvmKWdopKw=="],
 
@@ -904,7 +904,7 @@
 
     "highlight.js": ["highlight.js@11.12.0", "", {}, "sha512-nbfWpyRMcMrPMmDwJB+dhX/eiaPKtc2RB+0QZskqJ3WjRA/FDS0e9hZrx8EC/lbEv8gXy98FcDbNa/dspAaJMg=="],
 
-    "hono": ["hono@4.13.8", "", {}, "sha512-/Gng7NfoykZl2pjukW5Z6+8Yxm3BPRf86GTbQnt0SbySkvax4fyL4H3HhY1cCpBGmiW9XDRFzRV+CXK2W8QudQ=="],
+    "hono": ["hono@4.13.11", "", {}, "sha512-/SMX/RQNJn7oNmFwH6DtwDqcrzZU2otm1FD6OJe2cWF6cfy/F8hq0XVBv7xW3FTJshRQwuBnXHDq2kNsdZnshg=="],
 
     "hosted-git-info": ["hosted-git-info@10.1.1", "", { "dependencies": { "lru-cache": "^11.1.0" } }, "sha512-DeOnSPAvOndYKfw075gt8yZzQ7S2hNztw34zBTfhIzLhmBTswIBg5/y+pqu/VD5cYWm5goAFTusDmUEmKZ0PEQ=="],
 
