@@ -1,3 +1,39 @@
+## 2026-10-21 - llama.cpp declares its API key optional (senpi#3869)
+
+### What changed
+
+- `packages/coding-agent/src/extensions/llama/provider.ts`: the llama.cpp `apiKey` auth sets `keyOptional: true`, so `Models.login` keeps a login whose optional key prompt was left blank.
+
+### Why
+
+- senpi#3867 made `Models.login` refuse blank keys; a keyless local llama-server is a valid setup. Regression: `test/llama-extension.test.ts` ("logs in through Models.login with no API key").
+
+### Why an extension could not handle it
+
+- This is the in-tree llama extension declaring its own auth metadata.
+
+### Expected merge conflict zones
+
+- LOW: the `apiKey` object in `createLlamaProvider`.
+
+## 2026-10-21 - Test runs refuse the real agent directory (senpi#3867)
+
+### What changed
+
+- `packages/coding-agent/src/config.ts`: `getAgentDir()` passes the resolved directory to the new `assertAgentDirAllowedInTests` in the same file; it lives here rather than in a new module so the RPC supervisor's import graph stays at its 55-module ceiling. In a senpi test run (`SENPI_TEST_AGENT_DIR_GUARD=1`, set only by senpi's own test harness and never inferred from `VITEST` or `NODE_ENV`, so a user's own test suite that runs the CLI is unaffected), a directory inside the real account home's `.senpi`, `.omo`, `.pi` or active brand config dir throws `RealAgentDirInTestError`. The real home comes from the account database, not `$HOME`. `SENPI_TEST_USE_REAL_AGENT_DIR=1` opts out, as it already does for the quarantine.
+
+### Why
+
+- senpi#3867: a test run without the Vitest quarantine setup (for example `bun test <file>` from inside an agent session that exports `OMO_CODING_AGENT_DIR`) resolved the user's real agent dir and left faux pool state in `credential-pool-state.json`. Regressions: `test/suite/regressions/issue-3867-real-agent-dir-guard.test.ts` and `issue-3867-built-cli-user-test-env.test.ts` (the built CLI starts under `NODE_ENV=test`/`VITEST` with no senpi marker).
+
+### Why an extension could not handle it
+
+- `getAgentDir()` is the core path resolver every store reads; the guard has to sit where the path is produced.
+
+### Expected merge conflict zones
+
+- LOW: the body of `getAgentDir()` and the import block in `packages/coding-agent/src/config.ts`.
+
 ## 2026-10-20 - The host holder type is exported (omo-desktop-app#3561)
 
 ### What changed
