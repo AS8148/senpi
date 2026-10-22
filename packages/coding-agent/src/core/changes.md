@@ -64,30 +64,6 @@
 - `packages/coding-agent/src/core/session-manager.ts`: header creation (`newSession`) and the first-write gate in synchronous persistence.
 - `packages/coding-agent/src/core/session-activity.ts`: `WakeSourceTracker` counts.
 
-## 2026-10-22 - Session lifecycle model: states, custody and durable records (senpi#3864, part 2 of the #3908 split)
-
-### What changed
-
-`packages/coding-agent/src/core/session-lifecycle-types.ts` defines one lifecycle per session (running, waiting on children, waiting on a person, paused, held, done, failed, cancelled), root/child roles and `spawnedBy` ancestry. `session-lifecycle-reducer.ts` applies state precedence. `session-lifecycle.ts` collects live facts and decides a root's state; a child's authoritative terminal task report outranks leftover local producer custody, and a root is done only when its own reply ended and no child or background obligation is left. `lifecycle-children.ts`, `lifecycle-attention.ts`, `lifecycle-record.ts` and `lifecycle-ledger.ts` keep child reports (fenced by generation), attention identities, epochs/revisions and the persisted record. `work-custody-record.ts` and `work-obligations.ts` persist custody through transfer, queued tickets, model-context consumption, idle settlement and held notices, without replaying consumed results after recovery.
-
-`packages/coding-agent/src/core/session-activity.ts` keeps child and background wake-source counts separately; publishers without a kind stay background work.
-
-`packages/coding-agent/src/core/session-manager.ts` persists `spawnedBy` in the session header and writes durable lifecycle, custody and child entries even before the first conversation entry (refusing while the header write is pending).
-
-Nothing calls the lifecycle yet: the session wiring and RPC surface follow in the next stacked PR.
-
-### Why
-
-`packages/coding-agent/src/core/session-lifecycle.ts`, `packages/coding-agent/src/core/session-manager.ts`: turn settlement alone does not mean that child results, queued wakes, timers or input preparation have finished. A root must not publish Done while work is still owed, and a restart cannot safely replay work the model may already have acted on.
-
-### Why an extension could not handle it
-
-`packages/coding-agent/src/core/session-manager.ts`, `packages/coding-agent/src/core/session-activity.ts`: JSONL persistence and wake-source accounting are engine-owned.
-
-### Expected merge conflict zones
-
-`packages/coding-agent/src/core/session-manager.ts`: header creation, synchronous persistence. `packages/coding-agent/src/core/session-activity.ts`: `WakeSourceTracker` counts.
-
 ## 2026-10-21 - Hold queued input without delaying its caller (senpi#3864)
 
 ### What changed
