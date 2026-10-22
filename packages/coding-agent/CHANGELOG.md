@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- The control-token-leak guard only treats tokenizer special tokens (`</s>`, `<pad>`, `<end_of_turn>`, …) as angle-bracket leaks. Runs of ordinary markup such as `</div>` repeated in a row no longer stop a reply with "Degeneration guard: control-token leakage" in prose, thinking or code samples ([omo#10789](https://github.com/code-yeongyu/oh-my-openagent/issues/10789)).
+- The control-token-leak guard ignores HTML/XML tags in tool-call arguments. An HTML argument with consecutive closing tags (`</div></div></div></div>`) used to stop `show_html_page` with "Degeneration guard: control-token leakage" and resample the turn; chat-template tokens such as `<|im_end|>` in a tool argument, assistant text and thinking are still guarded ([omo#10789](https://github.com/code-yeongyu/oh-my-openagent/issues/10789)).
 - RPC `login_api_key` without a usable key returns an error and stores nothing, and a test run that resolves the real agent directory now fails with `RealAgentDirInTestError` instead of writing there. The llama.cpp login declares its key optional, so a keyless local server still logs in ([#3867](https://github.com/code-yeongyu/senpi/issues/3867)).
 - Anthropic Subscription: a damaged seat-digest salt file is now replaced instead of being ignored, and the salt is now stored on filesystems without hard links, so seat digests keep matching across restarts ([omo#10304](https://github.com/code-yeongyu/oh-my-openagent/issues/10304)).
 
