@@ -1546,6 +1546,11 @@ re-register `capabilities` after every reconnect. `width` is accepted for compat
 renders no extension components, so a component factory passed to `setWidget`, `setHeader`, or `setFooter` never
 reaches the wire.
 
+In classic `--mode rpc` (one client over stdio), `SENPI_RPC_CLIENT_CAPABILITIES` is the initial set and a
+`set_client_info` that carries `capabilities` replaces it, after the `interactive_user` role check; one without
+`capabilities` keeps it. Withdrawing `question` settles each pending structured question once as `question_resolved` with
+outcome `cancelled`, and withdrawing or declaring `extension_events` stops or starts extension events.
+
 ### Session kind and context (`open_session`)
 
 `open_session` accepts two additive, opaque per-session fields. Both are inert inside the host: they never take part in

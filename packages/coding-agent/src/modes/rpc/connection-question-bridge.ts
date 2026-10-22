@@ -1,4 +1,9 @@
-import type { ExtensionUIContext, QuestionRequest, QuestionResponse } from "../../core/extensions/types.ts";
+import type {
+	ExtensionUIContext,
+	QuestionCancelOrigin,
+	QuestionRequest,
+	QuestionResponse,
+} from "../../core/extensions/types.ts";
 import { settledQuestionStatus, unansweredQuestionIds } from "./extension-ui-response.ts";
 import type { RpcExtensionUIProgress, RpcExtensionUIResponse, RpcQuestionUiRequest } from "./rpc-types.ts";
 
@@ -49,7 +54,11 @@ export class ConnectionQuestionBridge {
 			let timer: ReturnType<typeof setTimeout> | undefined;
 			let finished = false;
 			const unanswered = () => unansweredQuestionIds(request.questions, answers);
-			const finish = (status: QuestionResponse["status"], resolvedBy?: QuestionResponse["resolvedBy"]) => {
+			const finish = (
+				status: QuestionResponse["status"],
+				resolvedBy?: QuestionResponse["resolvedBy"],
+				cancelOrigin?: QuestionCancelOrigin,
+			) => {
 				if (finished) return;
 				finished = true;
 				clearTimeout(timer);
@@ -64,6 +73,7 @@ export class ConnectionQuestionBridge {
 					comment,
 					unanswered: unanswered(),
 					...(status === "timed_out" ? { autoResolvedAfterMs: Date.now() - askedAtMs } : {}),
+					...(cancelOrigin !== undefined ? { cancelOrigin } : {}),
 				};
 				this.output({
 					type: "question_resolved",
@@ -109,8 +119,9 @@ export class ConnectionQuestionBridge {
 						});
 				},
 				respond: (response, beforeAnswer) => {
+					// The client's cancel is the user's; a closed connection or an abort is a lifecycle cancel.
 					if ("cancelled" in response) {
-						cancel();
+						finish("cancelled", undefined, "user");
 						return true;
 					}
 					if (!("answers" in response)) return false;
@@ -164,10 +175,15 @@ export async function degradeQuestion(
 			[...question.options.map((option) => option.label), other],
 			opts,
 		);
+		// A pick that lands after the abort is not an answer, whether a label or "Other".
+		if (opts?.signal?.aborted) break;
 		if (selected === other) {
 			const text = await ui.input(question.question, undefined, opts);
 			if (text?.trim()) answers[question.id] = { selected: [], text };
 		} else if (selected !== undefined) answers[question.id] = { selected: [selected] };
+		// Report the answers so far as the structured bridge does: an abort or the idle timer settles the
+		// question from the extension's draft, before this fallback returns.
+		if (answers[question.id] !== undefined) opts?.onProgress?.({ answers: { ...answers } });
 	}
 	const unanswered = unansweredQuestionIds(request.questions, answers);
 	// An abort is never an answer. Like the structured bridge it settles cancelled, or timed_out when

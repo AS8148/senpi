@@ -207,6 +207,12 @@ export interface QuestionRequest {
 	required?: boolean;
 }
 
+/**
+ * Why a question was cancelled. Only a cancel the user chose (`user`) or a failing question UI
+ * (`ui_failure`) shows the model the answers given before it; the lifecycle cancels stay silent.
+ */
+export type QuestionCancelOrigin = "user" | "ui_failure" | "turn_abort" | "session_closed" | "ask_user_disabled";
+
 /** Outcome of ExtensionUIContext.question. */
 export interface QuestionResponse {
 	status: "answered" | "comment-submitted" | "timed_out" | "cancelled" | "orphaned-after-restart" | "unavailable";
@@ -216,6 +222,8 @@ export interface QuestionResponse {
 	comment?: string;
 	unanswered: string[];
 	autoResolvedAfterMs?: number;
+	/** Why a `cancelled` question ended; a UI omits it for every cancel the user did not choose. */
+	cancelOrigin?: QuestionCancelOrigin;
 }
 
 /**
