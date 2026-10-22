@@ -1,3 +1,21 @@
+## 2026-10-21 - Keep typed references opaque during legacy interpolation (senpi#3858)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config-interpolation.ts`: the legacy walker returns an entire valid reference object unchanged, preserving concat literals and file paths. Environment values retain existing nullish/fallback semantics and receive the shared name-only warnings.
+
+### Why
+
+- Walking inside a reference before its use-time resolution would alter its path and interpret literal concat text.
+
+### Why an extension could not handle it
+
+- Core configuration loading runs this walker before extension merging.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/mcp/config-interpolation.ts`.
+
 ## 2026-10-21 - Extract MCP config helpers without behavior changes (senpi#3858)
 
 ### What changed
