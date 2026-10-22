@@ -1258,6 +1258,11 @@ export class AgentSession {
 	private _queueClearRecorded: Promise<void> = Promise.resolve();
 	/** The exact message object queued for each `queuedId`, so removal and edits hit the native queue by identity. */
 	private readonly _queuedMessages = new Map<string, AgentMessage>();
+	/**
+	 * Input source of each user message this session admitted, written onto its session entry when the
+	 * message is persisted. Kept off the message itself so it can never reach a provider request.
+	 */
+	private readonly _userInputSources = new WeakMap<AgentMessage, InputSource>();
 	/** Recently delivered `queuedId`s (bounded), so a late dequeue answers `already_delivered`, not `not_found`. */
 	private readonly _deliveredQueuedIds = new Set<string>();
 	private _sessionLogger: SessionLogger;
@@ -3058,8 +3063,9 @@ export class AgentSession {
 			) {
 				const queuedMessages = Array.isArray(messages) ? messages : [messages];
 				const userMessage = queuedMessages.find((message) => message.role === "user");
+				const source = userMessage === undefined ? undefined : this._userInputSources.get(userMessage);
 				// The caller was already told this input started; it now waits in the queue, so persist
-				// it as queued input before it is enqueued, exactly like the regular queue path.
+				// it as queued input before it is enqueued, exactly like the regular queue path (source included).
 				const prepared =
 					userMessage?.role === "user"
 						? {
@@ -3071,6 +3077,7 @@ export class AgentSession {
 										: userMessage.content.filter((part) => part.type === "image"),
 								mode: "steer" as const,
 								enqueueOrder: this.reserveQueuedInputOrder(),
+								...(source === undefined ? {} : { source }),
 							}
 						: undefined;
 				if (prepared) onQueuedInput?.(prepared);
@@ -3571,7 +3578,9 @@ export class AgentSession {
 					event.message.role === "toolResult"
 				) {
 					// Regular LLM message - persist as SessionMessageEntry
-					entryId = this.sessionManager.appendOwnedMessage(event.message);
+					entryId = this.sessionManager.appendOwnedMessage(event.message, {
+						inputSource: this._userInputSources.get(event.message),
+					});
 					this._emitEntryAppended(entryId);
 					this._incrementMessageRevision();
 					this.externalAdmission.observePersisted(event.message);
@@ -5651,12 +5660,14 @@ export class AgentSession {
 			if (currentImages) {
 				userContent.push(...currentImages);
 			}
-			messages.push({
+			const userMessage: AgentMessage = {
 				role: "user",
 				content: userContent,
 				timestamp: Date.now(),
 				...clientMessageIdentity(options),
-			});
+			};
+			this._userInputSources.set(userMessage, options?.source ?? "interactive");
+			messages.push(userMessage);
 
 			// Consume next-turn messages transactionally: a final admission rejection
 			// restores them in their original order rather than dropping or duplicating
@@ -6089,13 +6100,14 @@ export class AgentSession {
 		input: QueuedInputOptions & Omit<PreparedClientInput, "enqueueOrder"> & Pick<PromptOptions, "textBlocks">,
 	): Promise<void> {
 		const clientMessageId = input.clientMessageId;
+		const sourced = { ...input, source: input.source ?? "interactive" };
 		if (clientMessageId === undefined) {
-			this._enqueuePreparedInput(input);
+			this._enqueuePreparedInput(sourced);
 			return;
 		}
 		await this._pendingInputs.admit(
 			{ clientMessageId, text: input.text, ...(input.images ? { images: input.images } : {}), mode: input.mode },
-			(queuedId) => this._enqueuePreparedInput({ ...input, queuedId }),
+			(queuedId) => this._enqueuePreparedInput({ ...sourced, queuedId }),
 		);
 	}
 
@@ -6122,6 +6134,7 @@ export class AgentSession {
 			images: input.images,
 			mode: input.mode,
 			enqueueOrder,
+			...(input.source === undefined ? {} : { source: input.source }),
 		};
 		input.onQueuedInput?.(prepared);
 		const queue = input.mode === "steer" ? this._steeringMessages : this._followUpMessages;
@@ -6141,6 +6154,10 @@ export class AgentSession {
 			timestamp: Date.now(),
 			...clientMessageIdentity(input),
 		};
+		// New input always arrives with a source: `_enqueueQueuedInput` applies the same "interactive" default
+		// `prompt()` does. Only restored input can lack one (a record written before sources were kept), and it
+		// stays unstamped: unknown origin, never defaulted to a trusted source.
+		if (input.source !== undefined) this._userInputSources.set(message, input.source);
 		this._queuedMessages.set(queuedId, message);
 		if (this._promptStartPending && this._skipNextPostCompactionAssistantCheck) {
 			const deferred =
@@ -6607,9 +6624,9 @@ export class AgentSession {
 			// before prompt() accepted the message must not silently drop it.
 			if (disposition === undefined) {
 				if (options?.deliverAs === "steer") {
-					await this._queueSteer(text, images, { textBlocks });
+					await this._queueSteer(text, images, { textBlocks, source: "extension" });
 				} else {
-					await this._queueFollowUp(text, images, { textBlocks });
+					await this._queueFollowUp(text, images, { textBlocks, source: "extension" });
 				}
 			}
 			throw error;
