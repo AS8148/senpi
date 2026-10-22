@@ -183,9 +183,19 @@ export class MoveLedger {
 		return this.settle(moveId, { state: "declined", reason }, ["receiving"]);
 	}
 
-	/** A verified import that could not finish; it may end a receiving move but never an accepted one. */
-	fail(moveId: MoveId, reason: FailReason): Promise<MoveRecord> {
-		return this.settle(moveId, { state: "failed", reason }, []);
+	/**
+	 * A verified import that could not finish; it may end a receiving move but never an accepted one. `unlessLanded` is
+	 * asked under the move's lock, right before the write: when this move's session file landed (an overlapping import's
+	 * commit may land it while this call waits for the lock), nothing is recorded and the current record is returned.
+	 */
+	fail(
+		moveId: MoveId,
+		reason: FailReason,
+		options: { readonly unlessLanded?: () => boolean } = {},
+	): Promise<MoveRecord | undefined> {
+		return this.locked(moveId, () =>
+			options.unlessLanded?.() ? this.current(moveId) : this.settleLocked(moveId, { state: "failed", reason }, []),
+		);
 	}
 
 	/**
@@ -268,14 +278,20 @@ export class MoveLedger {
 	 * settled here: its rename may have landed a copy, so only the file at its target settles it (`reconcile`).
 	 */
 	private settle(moveId: MoveId, next: MoveRecord, keeps: readonly MoveRecord["state"][]): Promise<MoveRecord> {
-		return this.locked(moveId, async () => {
-			const record = await this.current(moveId);
-			if (record !== undefined && (FINAL_STATES.includes(record.state) || keeps.includes(record.state)))
-				return record;
-			if (record !== undefined && (await this.landing(moveId)).committing === true) return record;
-			await this.write(moveId, next);
-			return next;
-		});
+		return this.locked(moveId, () => this.settleLocked(moveId, next, keeps));
+	}
+
+	/** `settle` for a caller that already holds the move's lock. */
+	private async settleLocked(
+		moveId: MoveId,
+		next: MoveRecord,
+		keeps: readonly MoveRecord["state"][],
+	): Promise<MoveRecord> {
+		const record = await this.current(moveId);
+		if (record !== undefined && (FINAL_STATES.includes(record.state) || keeps.includes(record.state))) return record;
+		if (record !== undefined && (await this.landing(moveId)).committing === true) return record;
+		await this.write(moveId, next);
+		return next;
 	}
 
 	/** The record, with a ready move whose window has passed declined as expired first (on disk, under the lock). */

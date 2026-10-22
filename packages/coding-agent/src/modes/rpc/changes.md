@@ -1,3 +1,21 @@
+## 2026-10-22 - The degraded question asks no trailing comment (sisyphuslabs/omo-desktop-app#4042)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: `degradeQuestion` no longer ends with `ui.input("Anything else? (optional)")`. It asks one `select` per question (and the per-question `input` behind "Other"), then settles through `settledQuestionStatus(answers, undefined)` like the structured path: `answered` when at least one question was answered (the rest are listed in `unanswered`), `cancelled` only when none was; the response carries no `comment` key. An aborted signal stops the fallback before its next dialog and settles `cancelled` (or `timed_out` for a `"timed_out"` abort reason, as the structured bridge does), never `answered`, keeping the partial answers.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: a client without the `question` capability renders each dialog as its own blocking card. The desktop showed the trailing optional input as a new, empty question after every ask; its Remove cannot dismiss a native-callback card, and its Send answered with the card's one option label, which reached the model as the user's comment.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: the fallback is the RPC connection's own `ExtensionUIContext.question` implementation; the ask-user extension only calls `ctx.ui.question`.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`, the tail of `degradeQuestion`.
+
 ## 2026-10-22 - The record_user_activity refusal no longer repeats the client's value (senpi#3933)
 
 ### What changed
