@@ -420,7 +420,7 @@ export async function openMicro(options: OpenMicroOptions = {}): Promise<OpenMic
 			for (const controller of modelRefreshControllers) controller.abort(new Error(message));
 			loginController?.abort(new Error(message));
 			clearPendingAuth(new Error(message));
-			void root.abort(BACKGROUND_CONTEXT).catch(() => {});
+			void harness.suspend(BACKGROUND_CONTEXT).catch(() => {});
 		};
 		if (lostBeforeOpen) stopOnLostLock(lostBeforeOpen);
 		return opened;
