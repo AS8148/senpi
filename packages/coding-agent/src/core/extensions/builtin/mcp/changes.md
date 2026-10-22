@@ -1219,7 +1219,7 @@ The token store and refresh manager are this builtin's credential layer.
 
 ### Why
 
-- An attach hands its backgrounded startup connects to `#deferredAttach` only after each startup race's 0 ms timer, near the end of the attach sync. A `whenAttachSettled` call that landed while the attach was still running read an empty pending set and reported `settled`, so a caller assembling the first turn (or a test observing the attach) saw MCP tools as attached when they were not.
+- An attach hands its backgrounded startup connects to `#deferredAttach` only after each startup race's 0 ms timer, near the end of the attach sync. A `whenAttachSettled` call that landed while the attach was still running read an empty pending set and reported `settled`, so code observing the attach (tests, and hosts watching it from outside; the first turn awaits the attach promise in `before_agent_start` and was not affected) saw MCP tools as attached when they were not.
 
 ### Why an extension could not handle it
 
