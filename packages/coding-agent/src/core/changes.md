@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/session-manager.ts`: persists `spawnedBy` in the session header and writes durable `session-lifecycle`, `work-custody` and `child-lifecycle` entries even before the first conversation entry, refusing such an append while the header write is still pending.
+- `packages/coding-agent/src/core/session-manager.ts`: persists `spawnedBy` in the session header and writes durable `session-lifecycle`, `work-custody` and `child-lifecycle` entries even before the first conversation entry, refusing such an append while the header write is still pending. A file that only lifecycle bookkeeping created or holds stays discardable by `discardHeaderOnlyFile`, like startup bookkeeping (senpi#3263), so a session nobody chatted in leaves no file.
 - `packages/coding-agent/src/core/session-activity.ts`: `WakeSourceTracker` keeps child and background counts apart; publishers without a kind stay background.
 
 ### Why
