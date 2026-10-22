@@ -1,16 +1,9 @@
 import { MONITOR_NOTIFICATION_CUSTOM_TYPE } from "../monitor-state-event.ts";
 import { monitorDetails } from "./monitor-notify-details.ts";
-import {
-	buildWakeMessage,
-	eventBody,
-	monitorShareChars,
-	renderedLength,
-	SYSTEM_REMINDER_CLOSE,
-	SYSTEM_REMINDER_OPEN,
-	WAKE_BUDGET_PAUSE_NOTICE,
-} from "./monitor-notify-format.ts";
+import { buildWakeMessage, eventBody, renderedLength, WAKE_BUDGET_PAUSE_NOTICE } from "./monitor-notify-format.ts";
 import { type MonitorSpill, OverflowBook } from "./monitor-overflow.ts";
 import type { MonitorEvent } from "./monitor-registry.ts";
+import { fitWake } from "./monitor-wake-fit.ts";
 import { WakePacer } from "./monitor-wake-pacing.ts";
 import { getTerminalNotificationDelivery, type TerminalNotifierDeps } from "./notify.ts";
 import type { MonitorDeliverySettings } from "./settings.ts";
@@ -186,16 +179,20 @@ export class MonitorNotifier {
 				.map(([id]) => id),
 		);
 		this.#events = this.#events.filter((event) => !suppressedIds.has(event.id));
-		const injectedIds = this.#fitWake(
+		const wake = fitWake(
+			this.#events,
+			this.#overflow,
 			ready.filter((id) => !suppressedIds.has(id)),
 			summaryIds,
 			settings.maxCharsPerInjection,
 		);
-		if (injectedIds.size === 0) {
+		if (wake.size === 0) {
 			this.#scheduleNext(this.#pendingIds(), now, settings);
 			return;
 		}
-		const selected = this.#events.filter((event) => injectedIds.has(event.id));
+		const injectedIds = new Set(wake.keys());
+		const selected = [...wake.values()].flatMap((share) => share.events);
+		const delivered = new Set(selected);
 		if (
 			this.#lastWakeAt !== undefined &&
 			now - this.#lastWakeAt > settings.rateLimitMs * WAKE_STREAK_QUIET_GAP_MULTIPLIER
@@ -208,7 +205,7 @@ export class MonitorNotifier {
 			(event) => event.type === "summary" && !event.summary.startsWith(RUNAWAY_PAUSE_SUMMARY_PREFIX),
 		);
 		const reachesBudget = !deliversSummary && this.#consecutiveWakes + 1 >= settings.wakeBudget;
-		const notices = [...injectedIds].map((id) => this.#overflow.notice(id));
+		const notices = [...wake].map(([id, share]) => (share.whole ? this.#overflow.notice(id) : ""));
 		const content = buildWakeMessage(
 			selected,
 			notices,
@@ -218,16 +215,17 @@ export class MonitorNotifier {
 		const details = { monitors: monitorDetails(selected, injectedIds, this.#overflow) };
 		delivery.send(content, reachesBudget ? { forceWake: true, details } : { details });
 		this.#lastWakeAt = now;
-		for (const id of injectedIds) {
-			if (summaryIds.has(id)) this.#pacer.forget(id);
+		for (const [id, share] of wake) {
+			if (share.events.some((event) => event.type === "summary")) this.#pacer.forget(id);
 			else this.#pacer.spend(id, now);
 			this.#lastInjectionAt.set(id, now);
-			this.#overflow.delete(id);
-			const fingerprint = fingerprints.get(id);
+			// A monitor that sent only a prefix keeps its remaining lines and overflow for the next wake.
+			if (share.whole) this.#overflow.delete(id);
+			const fingerprint = share.whole ? fingerprints.get(id) : undefined;
 			if (fingerprint === undefined) this.#lastInjectedBatch.delete(id);
 			else this.#lastInjectedBatch.set(id, fingerprint);
 		}
-		this.#events = this.#events.filter((event) => !injectedIds.has(event.id));
+		this.#events = this.#events.filter((event) => !delivered.has(event));
 		this.#consecutiveWakes = deliversSummary ? 0 : this.#consecutiveWakes + 1;
 		if (reachesBudget) {
 			// Only the monitors in this wake are paused; every other monitor keeps its held lines.
@@ -236,29 +234,6 @@ export class MonitorNotifier {
 		}
 		const remainingIds = this.#pendingIds();
 		if (remainingIds.size > 0) this.#scheduleNext(remainingIds, now, settings);
-	}
-
-	/**
-	 * Fill one wake by whole monitors in queue order within the character cap (the line cap already
-	 * holds per monitor at enqueue). The first ready monitor and every monitor carrying a summary
-	 * always go; any other monitor that does not fit waits for the next wake, so nothing is clipped.
-	 */
-	#fitWake(candidates: readonly string[], summaryIds: ReadonlySet<string>, maxChars: number): Set<string> {
-		const order = [...this.#events.map((event) => event.id), ...this.#overflow.ids()];
-		const ordered = [...new Set(order)].filter((id) => candidates.includes(id));
-		const budget =
-			maxChars - SYSTEM_REMINDER_OPEN.length - SYSTEM_REMINDER_CLOSE.length - WAKE_BUDGET_PAUSE_NOTICE.length - 1;
-		const fitted = new Set<string>();
-		let chars = 0;
-		for (const id of ordered) {
-			this.#overflow.flush(id);
-			const own = this.#events.filter((event) => event.id === id);
-			const share = monitorShareChars(own, this.#overflow.notice(id));
-			if (fitted.size > 0 && !summaryIds.has(id) && chars + share > budget) continue;
-			fitted.add(id);
-			chars += share;
-		}
-		return fitted;
 	}
 
 	#scheduleNext(ids: ReadonlySet<string>, now: number, settings: MonitorDeliverySettings): void {

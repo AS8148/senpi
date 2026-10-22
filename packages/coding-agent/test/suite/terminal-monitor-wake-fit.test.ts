@@ -95,6 +95,57 @@ describe("one wake never exceeds its size and never clips a line", () => {
 	});
 });
 
+describe("monitors that finish together never clip each other", () => {
+	it("delivers every completion summary and every line of three full monitors that end in the same wake", () => {
+		const { instance, scheduler, sent } = notifier({});
+		for (const tag of ["a", "b", "c"]) {
+			for (let index = 0; index < 40; index += 1) instance.notifyEvent(line(`bash_${tag}`, tag, wide(tag, index)));
+			instance.notifyEvent({ type: "summary", id: `bash_${tag}`, description: tag, summary: `DONE-${tag}` });
+		}
+		scheduler.inner.advanceBy(120_000);
+
+		for (const content of sent) {
+			expect(content.length).toBeLessThanOrEqual(MAX_CHARS);
+			expect(content).not.toMatch(/\.\.\.<\/system-reminder>$/);
+		}
+		for (const tag of ["a", "b", "c"]) {
+			expect(sent.filter((content) => content.includes(`DONE-${tag}`))).toHaveLength(1);
+			const got = delivered(sent, tag);
+			expect(got).toEqual(Array.from({ length: got.length }, (_, index) => `${tag}-${index}`));
+			const omitted = sent
+				.filter((content) => content.includes(`Monitor event(${tag})`))
+				.reduce(
+					(total, content) => total + Number(/\[(\d+) additional event lines omitted/.exec(content)?.[1] ?? 0),
+					0,
+				);
+			expect(got.length + omitted).toBe(40);
+		}
+	});
+
+	it("keeps a first monitor with the full wrapper (long rotated notice + pause notice) inside the cap, deferring its tail", () => {
+		const longPath = `/state/${"deep/".repeat(150)}overflow/mon_long.log`;
+		const spilled: string[] = [];
+		const { instance, scheduler, sent } = notifier({
+			wakeBudget: 1,
+			spill: (_id, lines) => {
+				spilled.push(...lines);
+				return { path: longPath, rotated: true };
+			},
+		});
+		for (let index = 0; index < 400; index += 1) instance.notifyEvent(line("bash_long", "long", wide("l", index)));
+		scheduler.inner.advanceBy(120_000);
+
+		for (const content of sent) {
+			expect(content.length).toBeLessThanOrEqual(MAX_CHARS);
+			expect(content).not.toMatch(/\.\.\.<\/system-reminder>$/);
+		}
+		const inline = delivered(sent, "l");
+		const fromFile = spilled.map((value) => /^l-\d+/.exec(value)?.[0] ?? value);
+		expect([...inline, ...fromFile]).toEqual(Array.from({ length: 400 }, (_, index) => `l-${index}`));
+		expect(sent.some((content) => content.includes(`${longPath}.1`))).toBe(true);
+	});
+});
+
 describe("a session wake-budget pause keeps other monitors' held lines", () => {
 	it("still delivers a paced monitor's queued and overflow lines after another monitor trips the budget", () => {
 		const spilled: string[] = [];
