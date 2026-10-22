@@ -1,3 +1,42 @@
+## 2026-10-22 - Frontier steps keep the reduced prefix cacheable (senpi#3242)
+
+### What changed
+
+- `context-reduction-frontier.ts`: the frontier re-reduces `[0, cut)` with `clearToolResults.keepRecent: 0`, like `collapse` and `shrinkAssistant` already are inside the prefix. The recent tail after the cut stays protected as before.
+- `context-reduction-frontier.ts`: every engaged result marks the last assistant message before the cut with `promptCacheBreakpoint` (a copy; the session history is never mutated). The request that advances the frontier marks both the old cut (read) and the new cut (written for the next step).
+- `test/support/context-reduction-fixture.ts`: `reductionBytes` ignores the hint, which moves with the frontier like a breakpoint and is not transcript content.
+
+### Why
+
+- With `keepRecent: 6` inside the prefix, the six newest results before the old cut were cleared at the next advance, so the first changed message sat about 16 messages before the old cut and the prefix could not be reused. With `keepRecent: 0` the first changed message is the old cut at every advance.
+- Without a breakpoint at the cut, a step's request read only the system prefix. SIMULATED on a 1M-window tool loop (`test/compaction/context-reduction-cache-replay.test.ts`, 1-hour TTL prices: write 2.0, read 0.1), the bytes re-written by a frontier step after the first fell from 142K-188K tokens (from the system prompt on) to 24K-27K (the newly reduced block and the tail).
+
+### Why an extension could not handle it
+
+- This is the compaction builtin's own reduction.
+
+### Expected merge conflict zones
+
+- `context-reduction-frontier.ts`: `reducePrefix` and every return after `state.engaged = true`.
+
+## 2026-10-21 - Preserve prefix cache keys during remote compaction (omo#10775)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote.ts`: compact endpoint requests derive their key with the same versioned prefix function as Responses providers (from the system prompt alone, since the compact body sends no tools, so the value differs from the parent request's key but stays stable between compactions). Stream payload rewrites preserve the provider's key. The request retains a separate session id for transport routing.
+
+### Why
+
+The compaction rewrite replaced the provider key with the session UUID, defeating cross-session affinity even after fixing the provider builder.
+
+### Why an extension could not handle it
+
+This builtin owns the compaction request rewrite and compact endpoint body.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote.ts`: request construction, stream rewrite, and transport session headers.
+
 ## 2026-10-19 - The compaction checkpoint's agent name is folded, not read from a full-history view (senpi#3110)
 
 ### What changed
