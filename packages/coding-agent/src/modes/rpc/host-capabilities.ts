@@ -33,7 +33,7 @@ import {
 	WARM_CAPABILITY,
 } from "./custom-capability.ts";
 import { EFFECT_LEDGER_CAPABILITY } from "./effect-record.ts";
-import { STEER_WHEN_IDLE_CAPABILITY } from "./rpc-types.ts";
+import { STEER_WHEN_IDLE_CAPABILITY, USER_ACTIVITY_CAPABILITY } from "./rpc-types.ts";
 import { MOVE_SESSION_CAPABILITY } from "./session-move-wire.ts";
 
 /** `unload_session` and `session_parked.reason` (senpi#3225). */
@@ -70,6 +70,7 @@ export function multiSessionHostCapabilities(options: {
 			EVAL_CELLS_CAPABILITY,
 			AUTH_KEY_VERIFY_CAPABILITY,
 			QUEUED_MESSAGE_REVISION_CAPABILITY,
+			USER_ACTIVITY_CAPABILITY,
 			// Both shared runtimes dispatch through the active session-writing holder guard.
 			SESSION_HELD_CAPABILITY,
 			RESUME_SESSION_CAPABILITY,
