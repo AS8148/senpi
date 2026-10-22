@@ -1,14 +1,16 @@
-import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { TLocalizedValidationError } from "typebox/error";
 import { CONFIG_DIR_NAME, getAgentDir } from "../../../../config.ts";
 import type { RegisteredMcpServerDeclaration } from "../../types.ts";
+import { McpConfigValidationError } from "./config-error.ts";
+import { hashConfig } from "./config-identity.ts";
+import { interpolateValue } from "./config-interpolation.ts";
+import { normalizeServer } from "./config-normalize.ts";
 import {
 	defaultSettings,
 	getServerEndpointValidationError,
 	type LoadMcpConfigOptions,
-	type McpServerConfig,
 	type McpServerSource,
 	type McpSettings,
 	type RawConfig,
@@ -17,14 +19,11 @@ import {
 	validateConfig,
 } from "./config-schema.ts";
 import { inheritMcpSharingScope } from "./sharing-policy.ts";
-import { MCP_STARTUP_RACE_MS } from "./startup-race.ts";
 
-export class McpConfigValidationError extends Error {
-	constructor(message: string) {
-		super(message);
-		this.name = "McpConfigValidationError";
-	}
-}
+export { McpConfigValidationError } from "./config-error.ts";
+export { hashConfig } from "./config-identity.ts";
+export { interpolateValue } from "./config-interpolation.ts";
+export { normalizeServer } from "./config-normalize.ts";
 
 interface JsonReadResult {
 	raw: unknown;
@@ -262,23 +261,6 @@ export function mergeExtensionMcpServers(
 	}
 }
 
-export function normalizeServer(server: NonNullable<RawConfig["mcpServers"]>[string]): McpServerConfig {
-	const type = server.type ?? (server.url ? "http" : "stdio");
-	return {
-		args: server.args ?? [],
-		connectTimeoutMs: server.connectTimeoutMs ?? 15_000,
-		enabled: server.enabled ?? true,
-		exposure: server.exposure ?? "auto",
-		idleTimeoutMin: server.idleTimeoutMin ?? 10,
-		lifecycle: server.lifecycle ?? "lazy",
-		logLevel: server.logLevel ?? "info",
-		requestTimeoutMs: server.requestTimeoutMs ?? 30_000,
-		startupTimeoutMs: server.startupTimeoutMs ?? MCP_STARTUP_RACE_MS,
-		type,
-		...server,
-	};
-}
-
 function interpolateConfig(
 	config: RawConfig | undefined,
 	env: Record<string, string | undefined>,
@@ -289,51 +271,4 @@ function interpolateConfig(
 		if (server !== undefined) inheritMcpSharingScope(raw, server);
 	}
 	return resolved;
-}
-
-export function interpolateValue(value: unknown, path: string, env: Record<string, string | undefined>): unknown {
-	if (typeof value === "string") return interpolateString(value, path, env);
-	if (Array.isArray(value)) return value.map((item, index) => interpolateValue(item, `${path}.${index}`, env));
-	if (typeof value === "object" && value !== null) {
-		const out: Record<string, unknown> = {};
-		for (const [key, item] of Object.entries(value)) out[key] = interpolateValue(item, `${path}.${key}`, env);
-		return out;
-	}
-	return value;
-}
-
-function interpolateString(value: string, path: string, env: Record<string, string | undefined>): string {
-	if (value.trimStart().startsWith("!") || value.includes("$(")) {
-		const displayPath = path.replace(/^mcp\./, "");
-		throw new McpConfigValidationError(
-			`MCP config interpolation rejected command substitution at ${displayPath}: config values may reference only environment variables for security; shell commands are never executed.`,
-		);
-	}
-	return value.replace(
-		/\$\{([A-Za-z_][A-Za-z0-9_]*)(:-([^}]*))?\}/g,
-		(_match, name: string, _fallback: string, fallbackValue: string | undefined) => {
-			return env[name] ?? fallbackValue ?? "";
-		},
-	);
-}
-
-export function hashConfig(config: McpServerConfig): string {
-	// startupTimeoutMs is a client-side startup-race policy, not a connection or
-	// catalog-shape input. Excluding it from the identity hash keeps the catalog
-	// cache valid across upgrades (configs written before the field existed hash
-	// identically) and avoids a needless reconnect when only the window changes.
-	const hashable: Record<string, unknown> = { ...config };
-	delete hashable.startupTimeoutMs;
-	return createHash("sha256").update(stableStringify(hashable)).digest("hex");
-}
-
-function stableStringify(value: unknown): string {
-	if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
-	if (typeof value === "object" && value !== null) {
-		return `{${Object.keys(value)
-			.sort()
-			.map((key) => `${JSON.stringify(key)}:${stableStringify((value as Record<string, unknown>)[key])}`)
-			.join(",")}}`;
-	}
-	return JSON.stringify(value);
 }

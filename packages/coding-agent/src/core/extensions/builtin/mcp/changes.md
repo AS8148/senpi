@@ -1,3 +1,26 @@
+## 2026-10-21 - Extract MCP config helpers without behavior changes (senpi#3858)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config-error.ts`: the existing validation error moved to its own module.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config-identity.ts`: the existing hash implementation moved unchanged to its own module.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config-interpolation.ts`: the existing legacy interpolation walker moved unchanged to its own module.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config-normalize.ts`: server defaults moved unchanged to their own module.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config.ts`: imports and re-exports these helpers so existing callers keep the same API.
+
+### Why
+
+- Isolates the interpolation walker and the configuration identity that reference support changes, so those edits land in focused modules.
+
+### Why an extension could not handle it
+
+- Core configuration loading runs these helpers before extension merging.
+
+### Expected merge conflict zones
+
+- MEDIUM: helper imports and exports in `packages/coding-agent/src/core/extensions/builtin/mcp/config.ts`.
+- LOW: the four extracted modules.
+
 ## 2026-10-14 - Negotiate modern MCP behind an SDK lifecycle bridge (senpi#3304)
 
 ### What changed
