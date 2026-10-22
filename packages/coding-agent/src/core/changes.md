@@ -1,3 +1,21 @@
+## 2026-10-22 - The session holds the host that can continue it on another computer (senpi#3959)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `setRelocationHost(host)` stores the `SessionRelocationHost` (`session-relocation.ts`, new) a host installs, and the `bindCore` `sessionControl` deps read it as `relocationHost`, so `pi.session.relocationTargets()` / `requestRelocation()` reach it; without one both answer `unavailable`.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: the agent's `relocate_session` tool must ask the session's host to continue the session on another of the user's computers (sisyphuslabs/omo-desktop-app#3137); the engine knows no other machines, so the host has to plug in per session.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: the host that runs a session (the RPC connection) is only known to the session runtime; an extension cannot reach the connection that would answer.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: LOW: one field beside `_controlEndpointHost`, one setter beside `setControlEndpointHost`, one line in the `createSessionControlActions` deps of `bindCore`, one type import.
+
 ## 2026-10-21 - A user Stop pauses the session and the run it started (senpi#3811)
 
 ### What changed
@@ -97,6 +115,25 @@ The switch admission and its re-check run inside the session's model-switch path
 ### Expected merge conflict zones
 
 - The `_switchActiveModel` options and its assert line, and the `_applyPendingModelSwitch` call, in `packages/coding-agent/src/core/agent-session.ts`, against upstream changes to model switching.
+
+## 2026-10-22 - Replace Biome with oxlint and oxfmt (senpi#3976)
+
+### What changed
+
+- `packages/coding-agent/src/core/messages.ts`: the exhaustive `default:` case body is wrapped in braces (oxlint `no-case-declarations`), replacing a `biome-ignore` comment.
+- `packages/coding-agent/src/core/sdk.ts`: an `oxlint-disable-next-line eslint/prefer-const` comment on the `let agent` that a closure reads (`() => agent`, passed to the cursor exec bridge); making it `const` is a separate, reviewed change because a closure that ran before the assignment would hit the temporal dead zone.
+
+### Why
+
+- The repository moved lint and format from Biome to oxlint 1.89.0 and oxfmt 0.74.0 (senpi#3976). oxlint reports this site where Biome did not; the change keeps behaviour identical.
+
+### Why an extension could not handle it
+
+- Lint configuration and source comments are read by the linter before any agent code runs.
+
+### Expected merge conflict zones
+
+- The `default:` case in `messages.ts` and the `agent` declaration in `createAgentSession` in `sdk.ts`.
 
 ## 2026-10-21 - Human-input seam: who typed an input (senpi#3811)
 

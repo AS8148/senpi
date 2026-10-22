@@ -199,6 +199,8 @@ async function connectMcpServer(connection: ServerConnection, logger?: McpConnec
 	} catch (error) {
 		// Dispose/disable or a renew superseded this attempt: its transport can close after that returned, so the late
 		// rejection is our own teardown, not a server failure, and must neither degrade nor log (senpi#4013).
+		// The generation check relies on reconnect being timer-scheduled (reconnect.ts scheduleReconnect): a degrade
+		// raised inside this attempt cannot bump the generation before this catch runs and hide a real failure.
 		if (connection.state === "disabled" || connection.generation !== generation) return;
 		const failure = error instanceof Error ? error : new Error(String(error));
 		if (connection.lastError === undefined) connection.markDegraded(failure);
