@@ -16,6 +16,24 @@ The switch admission and its re-check run inside the session's model-switch path
 
 - The `_switchActiveModel` options and its assert line, and the `_applyPendingModelSwitch` call, in `packages/coding-agent/src/core/agent-session.ts`, against upstream changes to model switching.
 
+## 2026-10-21 - Human-input seam: who typed an input (senpi#3811)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `onHumanInputAdmitted(listener)` reports a person's input synchronously, before it is queued or admitted: every input whose `inputOrigin` (`input-origin.ts`, classified at the entry point) is `person` (TUI submit, RPC `prompt`/`steer`/`follow_up`), human question answers (reported from the engine's `questionInput` release, before the answer is sent), and `resumeSession()`. Extension sends, wakes and continuations are never reported. It fires exactly once per input: internal re-entries into `prompt` carry `humanInputReported`.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: Stop/pause (#3811) and the session lifecycle (#3864) both need to know, synchronously and once, when a person's input enters the session.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: input admission and its origin are engine-owned; the RPC connection role is core RPC.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the first lines of `prompt`, `steer`, `followUp` and `resumeSession`, and the `questionInput` context action.
+
 ## 2026-10-21 - The session's sendUserMessage action receives the answer's origin from the runner (senpi#3917)
 
 ### What changed
