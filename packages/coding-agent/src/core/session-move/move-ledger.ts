@@ -1,4 +1,5 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
+import { readFile, rename as renameFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import lockfile from "proper-lockfile";
 import {
@@ -94,11 +95,11 @@ export class MoveLedger {
 	 * receiving or accepted stays so, and one already answered otherwise is refused.
 	 */
 	prepare(moveId: MoveId): Promise<MoveRecord> {
-		return this.locked(moveId, () => {
-			const record = this.current(moveId);
+		return this.locked(moveId, async () => {
+			const record = await this.current(moveId);
 			if (record === undefined) {
 				const ready = { state: "ready", expiresAt: new Date(this.now() + READY_TTL_MS).toISOString() } as const;
-				this.write(moveId, ready);
+				await this.write(moveId, ready);
 				return ready;
 			}
 			if (record.state === "ready" || record.state === "receiving" || record.state === "accepted") return record;
@@ -111,16 +112,16 @@ export class MoveLedger {
 	 * bundle for a move it never readied is declined for good (`chunk_without_ready`).
 	 */
 	beginReceive(moveId: MoveId): Promise<void> {
-		return this.locked(moveId, () => {
-			const record = this.current(moveId);
+		return this.locked(moveId, async () => {
+			const record = await this.current(moveId);
 			if (record?.state === "accepted" || record?.state === "receiving") return;
 			if (record?.state === "ready") {
-				this.write(moveId, { state: "receiving" });
+				await this.write(moveId, { state: "receiving" });
 				return;
 			}
 			if (record !== undefined) throw new MoveFencedError(moveId, record);
 			const declined = { state: "declined", reason: "chunk_without_ready" } as const;
-			this.write(moveId, declined);
+			await this.write(moveId, declined);
 			throw new MoveFencedError(moveId, declined);
 		});
 	}
@@ -132,13 +133,13 @@ export class MoveLedger {
 
 	/** The signed answer a sender gets; `movedIn` is whether the session file here already records the move. */
 	answerStatus(moveId: MoveId, here: { readonly movedIn: boolean }): Promise<MoveStatus> {
-		return this.locked(moveId, () => {
-			const record = this.current(moveId);
+		return this.locked(moveId, async (): Promise<MoveStatus> => {
+			const record = await this.current(moveId);
 			if (here.movedIn || record?.state === "accepted") return { state: "accepted" } as const;
 			if (record?.state === "ready") return { state: "receiving" } as const;
 			if (record !== undefined) return record;
 			const declined = { state: "declined", reason: "no_record" } as const;
-			this.write(moveId, declined);
+			await this.write(moveId, declined);
 			return declined;
 		});
 	}
@@ -156,12 +157,12 @@ export class MoveLedger {
 	/** Runs the import's commit (the atomic rename) under the move's lock, then records it accepted. */
 	commit<T>(moveId: MoveId, rename: () => T | Promise<T>): Promise<T> {
 		return this.locked(moveId, async () => {
-			const record = this.read(moveId);
+			const record = await this.read(moveId);
 			if (record !== undefined && record.state !== "receiving" && record.state !== "accepted") {
 				throw new MoveFencedError(moveId, record);
 			}
 			const result = await rename();
-			this.write(moveId, { state: "accepted" });
+			await this.write(moveId, { state: "accepted" });
 			return result;
 		});
 	}
@@ -172,21 +173,21 @@ export class MoveLedger {
 	 * `keeps` names the open states this transition must also leave alone.
 	 */
 	private settle(moveId: MoveId, next: MoveRecord, keeps: readonly MoveRecord["state"][]): Promise<MoveRecord> {
-		return this.locked(moveId, () => {
-			const record = this.current(moveId);
+		return this.locked(moveId, async () => {
+			const record = await this.current(moveId);
 			if (record !== undefined && (FINAL_STATES.includes(record.state) || keeps.includes(record.state)))
 				return record;
-			this.write(moveId, next);
+			await this.write(moveId, next);
 			return next;
 		});
 	}
 
 	/** The record, with a ready move whose window has passed declined as expired first (on disk, under the lock). */
-	private current(moveId: MoveId): MoveRecord | undefined {
-		const record = this.read(moveId);
+	private async current(moveId: MoveId): Promise<MoveRecord | undefined> {
+		const record = await this.read(moveId);
 		if (record?.state !== "ready" || this.now() < Date.parse(record.expiresAt)) return record;
 		const expired = { state: "declined", reason: "expired" } as const;
-		this.write(moveId, expired);
+		await this.write(moveId, expired);
 		return expired;
 	}
 
@@ -194,10 +195,10 @@ export class MoveLedger {
 		return join(this.dir, `${parseMoveId(moveId)}.json`);
 	}
 
-	private read(moveId: MoveId): MoveRecord | undefined {
+	private async read(moveId: MoveId): Promise<MoveRecord | undefined> {
 		let raw: string;
 		try {
-			raw = readFileSync(this.path(moveId), "utf8");
+			raw = await readFile(this.path(moveId), "utf8");
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
 			throw error;
@@ -207,11 +208,11 @@ export class MoveLedger {
 		return record;
 	}
 
-	private write(moveId: MoveId, record: MoveRecord): void {
+	private async write(moveId: MoveId, record: MoveRecord): Promise<void> {
 		const file = this.path(moveId);
 		const temp = `${file}.${process.pid}.tmp`;
-		writeFileSync(temp, `${JSON.stringify({ ...record, at: new Date().toISOString() })}\n`);
-		renameSync(temp, file);
+		await writeFile(temp, `${JSON.stringify({ ...record, at: new Date().toISOString() })}\n`);
+		await renameFile(temp, file);
 	}
 
 	private locked<T>(moveId: MoveId, fn: () => T | Promise<T>): Promise<T> {

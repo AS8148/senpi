@@ -74,7 +74,7 @@ export function answerMoveStatus(
 export async function importMovedSession(
 	options: ImportMovedSessionOptions,
 ): Promise<{ readonly sessionFile: string }> {
-	const manifest = readManifest(options.bundleDir);
+	const manifest = await readManifest(options.bundleDir);
 	const targetCwd = resolvePath(options.targetCwd);
 	const sessionDir = options.sessionDir ? normalizePath(options.sessionDir) : getDefaultSessionDir(targetCwd);
 	const target = join(sessionDir, manifest.sessionFileName);
@@ -84,7 +84,7 @@ export async function importMovedSession(
 		return { sessionFile: target };
 	}
 	try {
-		verifyBundle(options.bundleDir, manifest);
+		await verifyBundle(options.bundleDir, manifest);
 	} catch (error) {
 		if (error instanceof MoveBundleInvalidError) await options.ledger.fail(manifest.moveId, "bundle_invalid");
 		throw error;

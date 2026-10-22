@@ -1,4 +1,5 @@
-import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
 import { SessionHeldError } from "../session-hold-errors.ts";
 import { liveSessionHolders } from "../session-holders.ts";
@@ -83,26 +84,26 @@ async function writeMoveBundle(options: ExportSessionForMoveOptions): Promise<Mo
 	rmSync(staging, { recursive: true, force: true });
 	mkdirSync(join(staging, dirname(SESSION_BUNDLE_PATH)), { recursive: true });
 	copyFileSync(sessionFile, join(staging, SESSION_BUNDLE_PATH));
-	const sidecars = copySidecars(dirname(sessionFile), sessionId, staging);
+	const sidecars = await copySidecars(dirname(sessionFile), sessionId, staging);
 	const manifest: MoveManifest = {
 		format: MOVE_BUNDLE_FORMAT,
 		moveId,
 		sessionId,
 		sessionFileName: basename(sessionFile),
-		sourceCwd: readSessionCwd(sessionFile) ?? "",
+		sourceCwd: (await readSessionCwd(sessionFile)) ?? "",
 		repository: readRecordedRepositoryIdentity(sessionFile),
-		session: { path: SESSION_BUNDLE_PATH, sha256: sha256File(join(staging, SESSION_BUNDLE_PATH)) },
+		session: { path: SESSION_BUNDLE_PATH, sha256: await sha256File(join(staging, SESSION_BUNDLE_PATH)) },
 		sidecars,
 		droppedUserMessages: [...options.droppedUserMessages],
 		payloads: [],
 	};
-	writeFileSync(join(staging, MANIFEST_FILE), `${JSON.stringify(manifest, null, 1)}\n`);
+	await writeFile(join(staging, MANIFEST_FILE), `${JSON.stringify(manifest, null, 1)}\n`);
 	rmSync(options.bundleDir, { recursive: true, force: true });
 	renameSync(staging, options.bundleDir);
 	return manifest;
 }
 
-function copySidecars(sessionDir: string, sessionId: string, staging: string): BundleFile[] {
+async function copySidecars(sessionDir: string, sessionId: string, staging: string): Promise<BundleFile[]> {
 	const sources: string[] = [];
 	const extensions = join(sessionDir, "extensions");
 	const sidecarName = `${encodedSessionId(sessionId)}.json`;
@@ -113,12 +114,14 @@ function copySidecars(sessionDir: string, sessionId: string, staging: string): B
 		}
 	}
 	sources.push(...filesUnder(join(sessionDir, "resident-blobs", sessionId)));
-	return sources.map((source) => {
+	const files: BundleFile[] = [];
+	for (const source of sources) {
 		const path = join("files", relative(sessionDir, source));
 		mkdirSync(dirname(join(staging, path)), { recursive: true });
 		copyFileSync(source, join(staging, path));
-		return { path, sha256: sha256File(join(staging, path)) };
-	});
+		files.push({ path, sha256: await sha256File(join(staging, path)) });
+	}
+	return files;
 }
 
 function filesUnder(dir: string): string[] {
