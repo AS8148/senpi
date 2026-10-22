@@ -123,6 +123,37 @@ describe("queued person input is decided from the entries queued now (senpi#3863
 		await done;
 	});
 
+	it.each([
+		["a person's answer", "person" as const, true],
+		["an extension's message", "extension" as const, false],
+	])(
+		"tags %s that the sendUserMessage fallback queues after prompt() rejected: %s",
+		async (_label, inputOrigin, person) => {
+			const { harness, release, done } = await heldTurn();
+			harnesses.push(harness);
+			const session = harness.session;
+			const prompt = session.prompt.bind(session);
+			session.prompt = async () => {
+				session.prompt = prompt;
+				throw new Error("rejected before a disposition");
+			};
+
+			const failure = await session
+				.sendUserMessage("my answer", { deliverAs: "followUp" }, undefined, inputOrigin)
+				.then(
+					() => undefined,
+					(error: unknown) => error,
+				);
+			expect(failure).toBeInstanceOf(Error);
+			expect((failure as Error).message).toBe("rejected before a disposition");
+
+			expect(session.pendingMessageCount).toBeGreaterThan(0);
+			expect(session.hasQueuedPersonInput).toBe(person);
+			release();
+			await done;
+		},
+	);
+
 	it("stops counting once the person's input is delivered", async () => {
 		const { harness, release, done } = await heldTurn();
 		harnesses.push(harness);
