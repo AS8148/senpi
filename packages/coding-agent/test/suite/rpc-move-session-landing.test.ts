@@ -94,26 +94,54 @@ describe("move_session lands a move in one file (senpi#4004)", () => {
 		expect((await move(b, { op: "status", moveId: "move-l2" })).data).toEqual({ state: "accepted" });
 	});
 
-	for (const revoked of [false, true]) {
-		it(`#given the landed copy was deleted${revoked ? " after a revoke" : ""} #when the same import is retried #then it ${revoked ? "is refused" : "lands again, writable"}`, async () => {
+	const cases = [
+		{ name: "not revoked", moveId: "move-l3", revoke: false, dropFlag: false },
+		{ name: "revoked", moveId: "move-l4", revoke: true, dropFlag: false },
+		{ name: "revoked, but the record lost its revoke mark", moveId: "move-l5", revoke: true, dropFlag: true },
+	] as const;
+	for (const { name, moveId, revoke, dropFlag } of cases) {
+		it(`#given the landed copy was deleted (${name}) #when the same import is retried #then it is refused: a move lands once`, async () => {
 			const fixture = await devices();
 			await using a = createInProcessRig(fixture.agentA);
 			await using b = createInProcessRig(fixture.agentB);
-			const moveId = revoked ? "move-l4" : "move-l3";
 			const onB = await importedOnB(a, b, fixture, moveId);
-			if (revoked) await move(b, { op: "revoke", sessionPath: onB, moveId });
+			if (revoke) await move(b, { op: "revoke", sessionPath: onB, moveId });
+			if (dropFlag) {
+				const { revoked: _dropped, ...record } = JSON.parse(
+					readFileSync(ledgerFile(fixture.agentB, moveId), "utf8"),
+				) as Record<string, unknown>;
+				writeFileSync(ledgerFile(fixture.agentB, moveId), `${JSON.stringify(record)}\n`);
+			}
 			rmSync(onB);
 			const bundleDir = join(fixture.agentA, "session-moves", "outgoing", moveId);
 
-			const retried = await move(b, { op: "import", bundleDir, cwd: fixture.repoB, from: "device-a" });
-			if (revoked) {
-				expect(retried).toMatchObject({ success: false, error: "move_fenced" });
-				expect(existsSync(onB)).toBe(false);
-				return;
-			}
-			expect(retried).toMatchObject({ success: true, data: { session_path: onB } });
-			expect(sessionOwnership(loadEntriesFromFile(onB)).writable).toBe(true);
-			expect((await move(b, { op: "status", moveId })).data).toEqual({ state: "accepted" });
+			expect(await move(b, { op: "import", bundleDir, cwd: fixture.repoB, from: "device-a" })).toMatchObject({
+				success: false,
+				error: "move_fenced",
+			});
+			expect(existsSync(onB)).toBe(false);
 		});
 	}
+
+	it("#given a receiving record an older build wrote (no landing target) and its file landed in one folder #then an import into another folder is refused and the landed one is accepted", async () => {
+		const fixture = await devices();
+		await using a = createInProcessRig(fixture.agentA);
+		await using b = createInProcessRig(fixture.agentB);
+		const onB = await importedOnB(a, b, fixture, "move-l6");
+		writeFileSync(ledgerFile(fixture.agentB, "move-l6"), `${JSON.stringify({ state: "receiving" })}\n`);
+		const bundleDir = join(fixture.agentA, "session-moves", "outgoing", "move-l6");
+		const elsewhere = join(getDefaultSessionDir(fixture.repoA, fixture.agentB), basename(onB));
+
+		expect(await move(b, { op: "import", bundleDir, cwd: fixture.repoA, from: "device-a" })).toMatchObject({
+			success: false,
+			error: "move_fenced",
+		});
+		expect(existsSync(elsewhere)).toBe(false);
+		expect(await move(b, { op: "import", bundleDir, cwd: fixture.repoB, from: "device-a" })).toMatchObject({
+			success: true,
+			data: { session_path: onB },
+		});
+		expect(sessionOwnership(loadEntriesFromFile(onB)).writable).toBe(true);
+		expect((await move(b, { op: "status", moveId: "move-l6" })).data).toEqual({ state: "accepted" });
+	});
 });

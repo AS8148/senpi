@@ -20,7 +20,7 @@ function ledger(): MoveLedger {
 const id = (value: string) => value as MoveId;
 
 describe("MoveLedger fence", () => {
-	it("#given an accepted move #then another target is always fenced, and its own target only once revoked", async () => {
+	it("#given an accepted move, revoked or not #then no receive or commit lands it again, at any target", async () => {
 		const book = ledger();
 		for (const [move, revoke] of [
 			[id("a1"), false],
@@ -34,8 +34,8 @@ describe("MoveLedger fence", () => {
 			await expect(book.commit(move, "/sessions/elsewhere.jsonl", () => undefined)).rejects.toBeInstanceOf(
 				MoveFencedError,
 			);
-			if (revoke) await expect(book.beginReceive(move, LANDING)).rejects.toBeInstanceOf(MoveFencedError);
-			else await expect(book.beginReceive(move, LANDING)).resolves.toBeUndefined();
+			await expect(book.beginReceive(move, LANDING)).rejects.toBeInstanceOf(MoveFencedError);
+			await expect(book.commit(move, LANDING, () => undefined)).rejects.toBeInstanceOf(MoveFencedError);
 		}
 	});
 
@@ -49,6 +49,13 @@ describe("MoveLedger fence", () => {
 		);
 		await book.commit(id("t1"), LANDING, () => undefined);
 		expect(await book.answerStatus(id("t1"), { movedIn: false })).toEqual({ state: "accepted" });
+	});
+
+	it("#given a receiving record with no landing target (an older build) #then a receive for any target is fenced", async () => {
+		const book = ledger();
+		writeFileSync(join(book.dir, "t2.json"), `${JSON.stringify({ state: "receiving" })}\n`);
+		await expect(book.beginReceive(id("t2"), LANDING)).rejects.toBeInstanceOf(MoveFencedError);
+		await expect(book.commit(id("t2"), LANDING, () => undefined)).rejects.toBeInstanceOf(MoveFencedError);
 	});
 
 	it("#given a revoke whose record was lost or reset to plain accepted #when the revoke repeats #then revoked: true is back", async () => {
