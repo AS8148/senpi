@@ -88,6 +88,7 @@ export function createMcpSessionConnection(options: SessionConnectionOptions): M
 			try {
 				await entry.authPlan?.refresh?.ensureFresh();
 			} catch (error) {
+				if (entry.connection.state === "disabled") return;
 				const authError = markMcpConnectionNeedsAuth(entry.connection, error);
 				if (authError !== undefined) {
 					entry.logger.warn(authError.message);
