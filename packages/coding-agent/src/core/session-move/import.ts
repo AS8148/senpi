@@ -19,6 +19,7 @@ import {
 } from "./bundle.ts";
 import { EXTENSION_STATE_PAYLOAD, movedStateDir } from "./extension-state.ts";
 import { type MoveAnswer, MoveFencedError, type MoveLedger } from "./move-ledger.ts";
+import { moveStep } from "./move-steps.ts";
 import { headerSessionId, type MoveId, SESSION_MOVED, SESSION_MOVED_IN, sessionOwnership } from "./ownership.ts";
 import { requeueInput } from "./requeue.ts";
 import { REVOKED } from "./revoke.ts";
@@ -99,11 +100,13 @@ export async function answerMoveStatus(
 	moveId: MoveId,
 	sessionFile: string | undefined,
 ): Promise<MoveAnswer> {
-	if (sessionFile === undefined || !existsSync(sessionFile)) return ledger.answerStatus(moveId, { movedIn: false });
+	const landed = (target: string) => (existsSync(target) ? importOutcome(target, moveId) : "absent");
+	if (sessionFile === undefined || !existsSync(sessionFile))
+		return ledger.answerStatus(moveId, { movedIn: false, landed });
 	return serializeByKey(moveLockKey(sessionFile), async () => {
 		const outcome = importOutcome(sessionFile, moveId);
 		if (outcome === "absent") throw new StatusPathMismatchError(moveId, sessionFile);
-		return ledger.answerStatus(moveId, { movedIn: true, revoked: outcome === "revoked" });
+		return ledger.answerStatus(moveId, { movedIn: true, revoked: outcome === "revoked", landed });
 	});
 }
 
@@ -123,7 +126,7 @@ export async function importMovedSession(
 	const target = join(sessionDir, manifest.sessionFileName);
 	if (existsSync(target) && movedInFor(target, manifest.moveId)) {
 		// The rename already committed; a crash may have lost the ledger write, and the file is the authority.
-		await options.ledger.confirmLanded(manifest.moveId, target);
+		await options.ledger.confirmLanded(manifest.moveId, target, importOutcome(target, manifest.moveId) === "revoked");
 		return { sessionFile: target };
 	}
 	try {
@@ -138,15 +141,21 @@ export async function importMovedSession(
 		throw new MoveRefusedError(targetCwd, manifest.sourceCwd);
 	}
 	await options.ledger.beginReceive(manifest.moveId, target);
+	moveStep("import:received");
 	const staging = join(sessionDir, ".move-staging", encodeURIComponent(manifest.moveId));
 	try {
 		const staged = await stage(options.bundleDir, manifest, staging, options.from ?? "");
-		const sessionFile = await options.ledger.commit(manifest.moveId, target, () => {
-			replacePredecessor(target, manifest.sessionId, sessionDir);
-			// Before the rename: a crash here re-copies on retry, and after it the state is already in place.
-			placeExtensionState(staging, manifest, movedStateDir(target, manifest.moveId));
-			return rebindSessionFile(staged, targetCwd, sessionDir);
-		});
+		const sessionFile = await options.ledger.commit(
+			manifest.moveId,
+			target,
+			() => rebindSessionFile(staged, targetCwd, sessionDir),
+			() => {
+				replacePredecessor(target, manifest.sessionId, sessionDir);
+				// Before the rename: a crash here re-copies on retry, and after it the state is already in place.
+				placeExtensionState(staging, manifest, movedStateDir(target, manifest.moveId));
+			},
+		);
+		moveStep("import:accepted");
 		rmSync(staging, { recursive: true, force: true });
 		return { sessionFile };
 	} catch (error) {

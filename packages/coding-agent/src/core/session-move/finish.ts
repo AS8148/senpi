@@ -3,6 +3,7 @@ import { loadEntriesFromFile, SessionManager } from "../session-manager.ts";
 import { readManifest } from "./bundle.ts";
 import { outgoingStateDir } from "./extension-state.ts";
 import type { MoveAnswer } from "./move-ledger.ts";
+import { moveStep } from "./move-steps.ts";
 import { headerSessionId, type MoveId, SESSION_MOVED, SESSION_RECLAIMED, sessionOwnership } from "./ownership.ts";
 import { requeueInput } from "./requeue.ts";
 import { withSessionMoveLock } from "./session-lock.ts";
@@ -86,6 +87,7 @@ async function settleMove(options: FinishMoveOptions): Promise<void> {
 				target: ownership.target,
 				moved_at: new Date().toISOString(),
 			});
+			moveStep("finish:recorded");
 			break;
 		case "declined":
 		case "failed":
@@ -101,6 +103,7 @@ async function settleMove(options: FinishMoveOptions): Promise<void> {
 			throw new Error(`Unknown move answer ${JSON.stringify(unreachable)}`);
 		}
 	}
+	moveStep("finish:requeued");
 	discardMoveFiles(sessionFile, bundleDir, moveId);
 }
 
@@ -110,6 +113,7 @@ async function takeBack(sessionFile: string, bundleDir: string, data: Record<str
 		...data,
 		reclaimed_at: new Date().toISOString(),
 	});
+	moveStep("finish:recorded");
 	await requeueDroppedInput(sessionFile, bundleDir);
 }
 

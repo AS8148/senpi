@@ -1,14 +1,19 @@
 import { mkdirSync } from "node:fs";
 import { readFile, rename as renameFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { type HeldFileLock, lockWithLossHandling } from "../file-lock.ts";
-import {
-	FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS,
-	FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS,
-	isLockError,
-} from "../lockfile-policy.ts";
+import type { HeldFileLock } from "../file-lock.ts";
 import { serializeByKey } from "../session-sidecar-store.ts";
 import { parseMoveId } from "./bundle.ts";
+import {
+	type Landing,
+	type LandingOutcome,
+	landedElsewhere,
+	landsAt,
+	parseLanding,
+	settledLanding,
+} from "./move-landing.ts";
+import { acquireMoveRecordLock } from "./move-ledger-lock.ts";
+import { moveStep } from "./move-steps.ts";
 import type { MoveId } from "./ownership.ts";
 
 /**
@@ -56,9 +61,6 @@ export class MoveFencedError extends Error {
 		this.record = record;
 	}
 }
-
-const LOCK_OPTIONS = { realpath: false, stale: 10_000, update: 2_000, retries: 0 } as const;
-const LOCK_WAIT_MS = 15_000;
 
 const DECLINE_REASONS: readonly DeclineReason[] = [
 	"no_record",
@@ -130,14 +132,14 @@ export class MoveLedger {
 	beginReceive(moveId: MoveId, target: string): Promise<void> {
 		return this.locked(moveId, async () => {
 			const record = await this.current(moveId);
-			const stored = await this.storedTarget(moveId);
+			const landing = await this.landing(moveId);
 			if (record?.state === "ready") {
-				await this.write(moveId, { state: "receiving" }, target);
+				await this.write(moveId, { state: "receiving" }, { target });
 				return;
 			}
-			if (this.landsAt(record, stored, target)) return;
+			if (landsAt(record, landing, target)) return;
 			if (record?.state === "receiving" || record?.state === "accepted")
-				throw new MoveFencedError(moveId, record, landedElsewhere(record, stored));
+				throw new MoveFencedError(moveId, record, landedElsewhere(record, landing));
 			if (record !== undefined) throw new MoveFencedError(moveId, record);
 			const declined = { state: "declined", reason: "chunk_without_ready" } as const;
 			await this.write(moveId, declined);
@@ -152,11 +154,19 @@ export class MoveLedger {
 
 	/**
 	 * The signed answer a sender gets. `movedIn` is whether the session file here records the move, `revoked` whether it
-	 * records its revoke too (a revoke whose record write was lost still answers revoked).
+	 * records its revoke too (a revoke whose record write was lost still answers revoked). `landed` reads the file at the
+	 * recorded target, so a step a crash interrupted is settled from the files first (`reconcile`).
 	 */
-	answerStatus(moveId: MoveId, here: { readonly movedIn: boolean; readonly revoked?: boolean }): Promise<MoveAnswer> {
+	answerStatus(
+		moveId: MoveId,
+		here: {
+			readonly movedIn: boolean;
+			readonly revoked?: boolean;
+			readonly landed?: (target: string) => LandingOutcome;
+		},
+	): Promise<MoveAnswer> {
 		return this.locked(moveId, async (): Promise<MoveAnswer> => {
-			const record = await this.current(moveId);
+			const record = await this.reconcile(moveId, await this.current(moveId), here.landed);
 			if (here.revoked === true) return { state: "accepted", revoked: true } as const;
 			if (record?.state === "accepted") return record;
 			if (here.movedIn) return { state: "accepted" } as const;
@@ -179,40 +189,61 @@ export class MoveLedger {
 	}
 
 	/**
-	 * Runs the import's commit (the atomic rename into `target`) under the move's lock, then records it accepted there.
-	 * Only the target this move's receive recorded may be renamed into, and only while it is receiving.
+	 * Runs the import's commit (the atomic rename into `target`) under the move's lock. The record is stamped
+	 * `committing` before the rename, so a crash or failure on either side of it never lets the move land again; the
+	 * file at the target then decides (`confirmLanded`, `reconcile`). Only the recorded target may be renamed into.
+	 * `prepare` runs before the stamp: whatever it does or refuses lands nothing, so a refusal there still records failed.
 	 */
-	commit<T>(moveId: MoveId, target: string, rename: () => T | Promise<T>): Promise<T> {
+	commit<T>(moveId: MoveId, target: string, rename: () => T | Promise<T>, prepare?: () => void): Promise<T> {
 		return this.locked(moveId, async () => {
 			const record = await this.read(moveId);
-			const stored = await this.storedTarget(moveId);
-			if (!this.landsAt(record, stored, target))
-				throw new MoveFencedError(moveId, record, landedElsewhere(record, stored));
+			const landing = await this.landing(moveId);
+			if (!landsAt(record, landing, target))
+				throw new MoveFencedError(moveId, record, landedElsewhere(record, landing));
+			prepare?.();
+			await this.write(moveId, { state: "receiving" }, { target, committing: true });
+			moveStep("import:stamped");
 			const result = await rename();
-			await this.write(moveId, { state: "accepted" }, target);
+			moveStep("import:renamed");
+			await this.write(moveId, { state: "accepted" }, { target });
 			return result;
 		});
 	}
 
 	/**
 	 * The import found this move's file already landed at `target`: that file proves the commit, so a record a crash
-	 * left `receiving` (or lost) becomes accepted there. A target other than the recorded one is not this move's landing
-	 * and is fenced; an accepted record is final and stays as it is.
+	 * left `receiving`, committing or lost becomes accepted there, and revoked when the file is (`revoked`). A target
+	 * other than the recorded one is fenced; an accepted record only gains a revoke mark it was missing.
 	 */
-	confirmLanded(moveId: MoveId, target: string): Promise<void> {
+	confirmLanded(moveId: MoveId, target: string, revoked: boolean): Promise<void> {
 		return this.locked(moveId, async () => {
 			const record = await this.read(moveId);
-			const stored = await this.storedTarget(moveId);
+			const landing = await this.landing(moveId);
 			const open = record === undefined || record.state === "receiving" || record.state === "accepted";
-			if (!open || (stored !== undefined && stored !== target))
-				throw new MoveFencedError(moveId, record, landedElsewhere(record, stored));
-			if (record?.state !== "accepted") await this.write(moveId, { state: "accepted" }, target);
+			if (!open || (landing.target !== undefined && landing.target !== target))
+				throw new MoveFencedError(moveId, record, landedElsewhere(record, landing));
+			const marked = record?.state === "accepted" && "revoked" in record;
+			if (record?.state === "accepted" && (marked || !revoked)) return;
+			await this.write(moveId, revoked ? { state: "accepted", revoked: true } : { state: "accepted" }, { target });
 		});
 	}
 
-	/** Whether an import into `target` may proceed: only a receiving move, into the target its receive recorded. */
-	private landsAt(record: MoveRecord | undefined, stored: string | undefined, target: string): boolean {
-		return record?.state === "receiving" && stored !== undefined && stored === target;
+	/**
+	 * Settles a step a crash interrupted, from the file at the recorded target: a committing record becomes accepted
+	 * (revoked if the file is) when its file landed and failed when it did not, and an accepted record whose file is
+	 * sealed gains its revoke mark. Without `landed`, or without a recorded target, the record is returned as it is.
+	 */
+	private async reconcile(
+		moveId: MoveId,
+		record: MoveRecord | undefined,
+		landed: ((target: string) => LandingOutcome) | undefined,
+	): Promise<MoveRecord | undefined> {
+		const { target, committing } = await this.landing(moveId);
+		if (landed === undefined || target === undefined) return record;
+		const next = settledLanding(record, committing === true, landed(target));
+		if (next === undefined) return record;
+		await this.write(moveId, next, { target });
+		return next;
 	}
 
 	/**
@@ -225,20 +256,23 @@ export class MoveLedger {
 			const record = await this.read(moveId);
 			if (record !== undefined && record.state !== "receiving" && record.state !== "accepted") return;
 			if (record?.state === "accepted" && "revoked" in record) return;
-			await this.write(moveId, { state: "accepted", revoked: true }, await this.storedTarget(moveId));
+			const { target } = await this.landing(moveId);
+			await this.write(moveId, { state: "accepted", revoked: true }, target === undefined ? {} : { target });
 		});
 	}
 
 	/**
 	 * Records a final answer unless one is already there: once a sender may have heard `accepted`, `declined` or
 	 * `failed`, it never changes. Reads through `current()`, so a ready move whose window passed answers `expired`.
-	 * `keeps` names the open states this transition must also leave alone.
+	 * `keeps` names the open states this transition must also leave alone. A record stamped `committing` is never
+	 * settled here: its rename may have landed a copy, so only the file at its target settles it (`reconcile`).
 	 */
 	private settle(moveId: MoveId, next: MoveRecord, keeps: readonly MoveRecord["state"][]): Promise<MoveRecord> {
 		return this.locked(moveId, async () => {
 			const record = await this.current(moveId);
 			if (record !== undefined && (FINAL_STATES.includes(record.state) || keeps.includes(record.state)))
 				return record;
+			if (record !== undefined && (await this.landing(moveId)).committing === true) return record;
 			await this.write(moveId, next);
 			return next;
 		});
@@ -274,17 +308,14 @@ export class MoveLedger {
 		return record;
 	}
 
-	/** The session file this move lands as, recorded by its first receive; never part of an answer. */
-	private async storedTarget(moveId: MoveId): Promise<string | undefined> {
-		const value = await this.raw(moveId);
-		const target = typeof value === "object" && value !== null ? (value as { target?: unknown }).target : undefined;
-		return typeof target === "string" ? target : undefined;
+	/** Where this move lands (recorded by its first receive) and whether its commit began. */
+	private async landing(moveId: MoveId): Promise<Landing> {
+		return parseLanding(await this.raw(moveId));
 	}
 
-	private async write(moveId: MoveId, record: MoveRecord, target?: string): Promise<void> {
+	private async write(moveId: MoveId, record: MoveRecord, landing: Landing = {}): Promise<void> {
 		const file = this.path(moveId);
 		const temp = `${file}.${process.pid}.tmp`;
-		const landing = target === undefined ? {} : { target };
 		await writeFile(temp, `${JSON.stringify({ ...record, ...landing, at: new Date().toISOString() })}\n`);
 		this.#held.get(file)?.assertHeld();
 		await renameFile(temp, file);
@@ -294,7 +325,7 @@ export class MoveLedger {
 		const file = this.path(moveId);
 		return serializeByKey(file, async () => {
 			mkdirSync(this.dir, { recursive: true });
-			const held = await acquire(file);
+			const held = await acquireMoveRecordLock(file);
 			this.#held.set(file, held);
 			try {
 				return await fn();
@@ -303,33 +334,5 @@ export class MoveLedger {
 				await held.release().catch(() => undefined);
 			}
 		});
-	}
-}
-
-function landedElsewhere(record: MoveRecord | undefined, stored: string | undefined): string | undefined {
-	if (record?.state === "accepted" && "revoked" in record) return "it was revoked here and never lands again";
-	if (record?.state === "accepted")
-		return "it already landed here once, and a move lands once (a deleted copy is gone; copy the session to a new thread instead)";
-	if (record?.state === "receiving" && stored === undefined)
-		return "an older version started receiving it and where it landed is unknown; only its already landed file is accepted";
-	return stored === undefined ? undefined : `it lands only as ${stored}`;
-}
-
-async function acquire(file: string): Promise<HeldFileLock> {
-	const startedAt = Date.now();
-	for (let attempt = 0; ; attempt += 1) {
-		try {
-			return await lockWithLossHandling(file, { ...LOCK_OPTIONS, lockfilePath: `${file}.lock` });
-		} catch (error) {
-			if (!isLockError(error)) throw error;
-			const waited = Date.now() - startedAt;
-			if (waited >= LOCK_WAIT_MS)
-				throw new Error(`Move record ${file} stayed locked for ${waited}ms`, { cause: error });
-			const delay = Math.min(
-				FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS * 2 ** attempt,
-				FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS,
-			);
-			await new Promise<void>((resolve) => setTimeout(resolve, delay));
-		}
 	}
 }

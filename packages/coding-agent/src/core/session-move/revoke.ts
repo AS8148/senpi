@@ -1,5 +1,6 @@
 import { loadEntriesFromFile, SessionManager } from "../session-manager.ts";
 import type { MoveLedger } from "./move-ledger.ts";
+import { moveStep } from "./move-steps.ts";
 import {
 	headerSessionId,
 	type MoveId,
@@ -52,7 +53,9 @@ export function revokeImportedMove(options: RevokeMoveOptions): Promise<void> {
 		options.sessionFile,
 		async () => {
 			seal(options.sessionFile, options.moveId);
+			moveStep("revoke:sealed");
 			await options.ledger.markRevoked(options.moveId);
+			moveStep("revoke:marked");
 		},
 		options.guard,
 	);

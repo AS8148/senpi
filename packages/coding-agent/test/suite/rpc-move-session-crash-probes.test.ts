@@ -48,11 +48,21 @@ describe("move_session crash probes from the #4004 review", () => {
 		await using b = createInProcessRig(fixture.agentB);
 		const bundleDir = await exportedForB(a, b, fixture, "move-c2");
 		class FailsAfterRename extends MoveLedger {
-			override commit<T>(moveId: Parameters<MoveLedger["commit"]>[0], target: string, rename: () => T | Promise<T>) {
-				return super.commit(moveId, target, async () => {
-					await rename();
-					throw new Error("disk error after the rename");
-				});
+			override commit<T>(
+				moveId: Parameters<MoveLedger["commit"]>[0],
+				target: string,
+				rename: () => T | Promise<T>,
+				prepare?: () => void,
+			) {
+				return super.commit(
+					moveId,
+					target,
+					async () => {
+						await rename();
+						throw new Error("disk error after the rename");
+					},
+					prepare,
+				);
 			}
 		}
 		const ledger = new FailsAfterRename(join(fixture.agentB, "session-moves", "ledger"));
