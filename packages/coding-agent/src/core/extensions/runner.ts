@@ -45,6 +45,7 @@ import {
 } from "./handler-budget.ts";
 import { kernelToolsStorage } from "./kernel-tools-context.ts";
 import { drainPendingProviderRegistrations } from "./loader.ts";
+import { runSessionMoveHandlers, type SessionMoveFailure } from "./session-move-emit.ts";
 import { SessionStartTurnGate } from "./session-start-turn-gate.ts";
 import { QuitDeadline, type QuitHandlerBudget, type SessionShutdownBudget } from "./shutdown-quit-budget.ts";
 import { StaleExtensionContextError } from "./stale-context-error.ts";
@@ -110,6 +111,7 @@ import type {
 	SessionBeforeTreeResult,
 	SessionBoundaryDraft,
 	SessionMoveExportEvent,
+	SessionMoveImportEvent,
 	SessionShutdownEvent,
 	ToolCallEvent,
 	ToolCallEventResult,
@@ -1930,29 +1932,20 @@ export class ExtensionRunner {
 	}
 
 	/**
-	 * `session_move_export` handlers write the state that must follow a moved session; one that throws means that
-	 * state would be lost, so the first failure is returned (and reported) for the caller to refuse the move.
+	 * Move handlers carry state that exists nowhere else, so every failure (a throw, or a handler still running at the
+	 * `session_shutdown` handler budget) is reported and returned: a `move` release refuses on an export failure, and
+	 * the import hand-over keeps the moved state for the next open on an import failure.
 	 */
-	async emitSessionMoveExport(
-		event: SessionMoveExportEvent,
-	): Promise<{ extensionPath: string; error: string } | undefined> {
-		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, event.type)) {
-			for (const handler of handlers) {
-				try {
-					await handler(event, this.createContext(ext.path));
-				} catch (err) {
-					const error = err instanceof Error ? err.message : String(err);
-					this.emitError({
-						extensionPath: ext.path,
-						event: event.type,
-						error,
-						stack: err instanceof Error ? err.stack : undefined,
-					});
-					return { extensionPath: ext.path, error };
-				}
-			}
-		}
-		return undefined;
+	async emitSessionMove(
+		event: SessionMoveExportEvent | SessionMoveImportEvent,
+	): Promise<readonly SessionMoveFailure[]> {
+		const calls = flattenHandlers(this.extensions, event.type).map(({ path, handler }) => ({
+			extensionPath: path,
+			call: () => handler(event, this.createContext(path)),
+		}));
+		const failures = await runSessionMoveHandlers(event.type, calls, this.resolveSessionShutdownBudget().handler);
+		for (const failure of failures) this.emitError({ ...failure, event: event.type });
+		return failures;
 	}
 
 	private async dispatchEmit<TEvent extends RunnerEmitEvent>(event: TEvent): Promise<RunnerEmitResult<TEvent>> {

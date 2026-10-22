@@ -99,13 +99,21 @@ function parseSessionFileName(value: string): string {
 /** Payload kinds this version imports; any other kind refuses the bundle. */
 export const KNOWN_PAYLOAD_KINDS: ReadonlySet<string> = new Set(["extension-state"]);
 
+/** Where `extension-state` payload files sit inside the bundle. */
+export const EXTENSION_STATE_PREFIX = "state/";
+
 function parsePayload(value: unknown): MovePayload {
 	const payload = value as Partial<MovePayload> | null;
 	if (typeof payload !== "object" || payload === null || !isString(payload.kind) || !Array.isArray(payload.files))
 		throw new MoveBundleInvalidError("a payload is malformed");
 	if (!KNOWN_PAYLOAD_KINDS.has(payload.kind))
 		throw new MoveBundleInvalidError("it carries a payload this version cannot import");
-	return { kind: payload.kind, files: payload.files.map(parseFile) };
+	const files = payload.files.map(parseFile);
+	// The importer unpacks extension state by stripping this prefix; a file anywhere else is not extension state.
+	const outside = files.find((file) => !file.path.startsWith(EXTENSION_STATE_PREFIX));
+	if (outside !== undefined)
+		throw new MoveBundleInvalidError(`an extension-state file is listed outside state/: ${outside.path}`);
+	return { kind: payload.kind, files };
 }
 
 export function readManifest(bundleDir: string): MoveManifest {

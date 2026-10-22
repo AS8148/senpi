@@ -1,5 +1,5 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, relative } from "node:path";
+import { basename, dirname, join, posix, relative, sep } from "node:path";
 import { SessionHeldError } from "../session-hold-errors.ts";
 import { liveSessionHolders } from "../session-holders.ts";
 import { loadEntriesFromFile, SessionManager } from "../session-manager.ts";
@@ -118,7 +118,7 @@ function copySidecars(sessionDir: string, sessionId: string, staging: string): B
 	}
 	sources.push(...filesUnder(join(sessionDir, "resident-blobs", sessionId)));
 	return sources.map((source) => {
-		const path = join("files", relative(sessionDir, source));
+		const path = bundlePath("files", sessionDir, source);
 		mkdirSync(dirname(join(staging, path)), { recursive: true });
 		copyFileSync(source, join(staging, path));
 		return { path, sha256: sha256File(join(staging, path)) };
@@ -128,11 +128,16 @@ function copySidecars(sessionDir: string, sessionId: string, staging: string): B
 function copyExtensionState(dir: string | undefined, staging: string): BundleFile[] {
 	if (dir === undefined) return [];
 	return filesUnder(dir).map((source) => {
-		const path = join("state", relative(dir, source));
+		const path = bundlePath("state", dir, source);
 		mkdirSync(dirname(join(staging, path)), { recursive: true });
 		copyFileSync(source, join(staging, path));
 		return { path, sha256: sha256File(join(staging, path)) };
 	});
+}
+
+/** Manifest paths use `/` on every OS: the receiver strips the `files/` and `state/` prefixes by that separator. */
+function bundlePath(prefix: string, from: string, source: string): string {
+	return posix.join(prefix, ...relative(from, source).split(sep));
 }
 
 function filesUnder(dir: string): string[] {

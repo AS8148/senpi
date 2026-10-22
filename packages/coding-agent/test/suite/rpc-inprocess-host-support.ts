@@ -186,7 +186,7 @@ function inProcessRuntimeFactory(): {
 				extensionRunner: {
 					hasHandlers: () => false,
 					emit: async () => {},
-					emitSessionMoveExport: async () => undefined,
+					emitSessionMove: async () => [],
 				},
 				subscribe: () => () => {},
 				abort: async () => {

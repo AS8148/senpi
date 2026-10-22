@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/agent-session.ts`: right after `session_start` in the extension binding, `restoreMovedState` (`session-move/extension-state.ts`) hands state a move left for this session to the `session_move_import` handlers once, then records `session_move_state_restored` and removes the folder.
+- `packages/coding-agent/src/core/agent-session.ts`: right after `session_start` in the extension binding, `restoreMovedState` (`session-move/extension-state.ts`) hands state a move left for this session to the `session_move_import` handlers through `emitSessionMove`; only when none failed does it record `session_move_state_restored` and remove the folder, so a failed import is delivered again on the next open (senpi#3681 review).
 
 ### Why
 
@@ -14,7 +14,7 @@
 
 ### Expected merge conflict zones
 
-- LOW: `packages/coding-agent/src/core/agent-session.ts`, one line after the `session_start` emit in the extension binding, plus one import.
+- LOW: `packages/coding-agent/src/core/agent-session.ts`, one call after the `session_start` emit in the extension binding, plus one import.
 
 ## 2026-10-21 - The session's sendUserMessage action receives the answer's origin from the runner (senpi#3917)
 

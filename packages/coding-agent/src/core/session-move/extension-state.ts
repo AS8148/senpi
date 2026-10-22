@@ -63,19 +63,20 @@ export function pendingMovedState(sessionFile: string): { readonly moveId: MoveI
 }
 
 /**
- * Hands pending moved state to the session's extensions once: `deliver` runs the import handlers, then the restored
- * marker is written and the folder removed. A crash before the marker re-delivers on the next open (handlers must be
- * idempotent); a crash after it only leaves a folder that is never read again and is removed here next time.
+ * Hands pending moved state to the session's extensions once: `deliver` runs the import handlers and resolves `true`
+ * when every one of them restored it; only then is the restored marker written and the folder removed. A failed
+ * handler, or a crash before the marker, re-delivers on the next open (handlers must be idempotent); a crash after it
+ * only leaves a folder that is never read again and is removed here next time.
  */
 export async function restoreMovedState(
 	sessionManager: SessionManager,
-	deliver: (event: { readonly moveId: MoveId; readonly dir: string }) => Promise<void>,
+	deliver: (event: { readonly moveId: MoveId; readonly dir: string }) => Promise<boolean>,
 ): Promise<void> {
 	const sessionFile = sessionManager.getSessionFile();
 	if (sessionFile === undefined) return;
 	const pending = pendingMovedState(sessionFile);
 	if (pending === undefined) return;
-	await deliver(pending);
+	if (!(await deliver(pending))) return;
 	sessionManager.appendCustomEntry(MOVED_STATE_RESTORED, {
 		move_id: pending.moveId,
 		restored_at: new Date().toISOString(),

@@ -9854,7 +9854,9 @@ export class AgentSession {
 			this.syncPromptCacheSafeWaitEnv();
 			await this._extensionRunner.emit(this._sessionStartEvent);
 			await restoreMovedState(this.sessionManager, (moved) =>
-				this._extensionRunner.emit({ type: "session_move_import", ...moved }).then(() => undefined),
+				this._extensionRunner
+					.emitSessionMove({ type: "session_move_import", ...moved })
+					.then((failures) => failures.length === 0),
 			);
 			this._enforceConfiguredDefaultTools();
 			await this.extendResourcesFromExtensions(this._sessionStartEvent.reason === "reload" ? "reload" : "startup");

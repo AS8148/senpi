@@ -3,11 +3,12 @@
 ### What changed
 
 - `packages/coding-agent/src/core/extensions/types.ts`: `SessionMoveExportEvent { moveId, dir }` and `SessionMoveImportEvent { moveId, dir }` join the session events, with their `on()` overloads.
-- `packages/coding-agent/src/core/extensions/runner.ts`: `emitSessionMoveExport(event)` runs the export handlers and returns the first failure (also reported), so a `move` release refuses instead of sealing a session whose extension state was lost.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitSessionMove(event)` runs the `session_move_export` or `session_move_import` handlers, each under the `session_shutdown` handler budget, and returns every failure (a throw or a handler still running at the cap), each also reported as an extension error. A `move` release refuses on any export failure; the import hand-over keeps the moved state for the next open on any import failure (senpi#3681 review).
 
 ### Why
 
 - `packages/coding-agent/src/core/extensions/types.ts`: extensions with per-session state outside the session folder need a contract to hand it to a move and get it back on the receiver.
+- `packages/coding-agent/src/core/extensions/runner.ts`: the ordinary emit swallows handler errors, so one failed import would discard the only copy of the moved state, and an unbounded export handler could hold a `move` release (and, on its interrupt path, the session's closed admission) forever.
 
 ### Why an extension could not handle it
 
@@ -15,7 +16,7 @@
 
 ### Expected merge conflict zones
 
-- LOW: `packages/coding-agent/src/core/extensions/types.ts`, the session event union and the `on()` overload list; `runner.ts`, one method before `dispatchEmit` and one type import.
+- LOW: `packages/coding-agent/src/core/extensions/types.ts`, the session event union and the `on()` overload list; `packages/coding-agent/src/core/extensions/runner.ts`, one method before `dispatchEmit` and two type imports.
 
 ## 2026-10-21 - A person's answer keeps its origin through the session_start gate (senpi#3917)
 

@@ -21,10 +21,11 @@
  * Also refused while clients are attached (`attached`, unless `force`) and for a session this host
  * cannot hand over (`release_unsupported`: a worker isolate owns the runtime, or there is no file).
  */
+import { rmSync } from "node:fs";
 import type { AgentSession } from "../../core/agent-session.ts";
 import { isMoveId, isPlainId, parseMoveId } from "../../core/session-move/bundle.ts";
 import { prepareOutgoingState } from "../../core/session-move/extension-state.ts";
-import { type MoveId, SessionMovedAwayError } from "../../core/session-move/ownership.ts";
+import { SessionMovedAwayError } from "../../core/session-move/ownership.ts";
 import { isHandoffBusy } from "./handoff-activity.ts";
 import {
 	RPC_ERROR_ATTACHED,
@@ -115,6 +116,7 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 	const admission = first.session.externalAdmission;
 	let dropped = NOTHING_DROPPED;
 	let answer: RpcResponse | undefined;
+	let stagedState: string | undefined;
 	try {
 		if (interrupted) {
 			admission.close(RELEASED_ADMISSION_CLOSED);
@@ -129,8 +131,15 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 		const manager = first.session.sessionManager;
 		if (!manager.isTranscriptFlushed()) await manager.persistHeaderNow();
 		// A move takes the extensions' out-of-folder state with it; they write it while their runtime is still live.
+		// Each handler runs under the session_shutdown handler budget: a hung one fails the release instead of holding it.
 		if (command.reason === "move") {
-			const failed = await exportExtensionState(first.session, first.sessionPath, command.moveId);
+			const moveId = parseMoveId(command.moveId);
+			stagedState = prepareOutgoingState(first.sessionPath, moveId);
+			const [failed] = await first.session.extensionRunner.emitSessionMove({
+				type: "session_move_export",
+				moveId,
+				dir: stagedState,
+			});
 			if (failed !== undefined)
 				throw new Error(`${failed.extensionPath} could not write its state for the move: ${failed.error}`);
 		}
@@ -150,7 +159,11 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 		});
 		return answer;
 	} finally {
-		if (answer?.success !== true) admission.reopen();
+		if (answer?.success !== true) {
+			admission.reopen();
+			// A refused move is abandoned: what its export staged is never bundled, and a retry stages afresh.
+			if (stagedState !== undefined) rmSync(stagedState, { recursive: true, force: true });
+		}
 	}
 }
 
@@ -276,19 +289,4 @@ function refusal(id: string | undefined, code: string, data?: Readonly<Record<st
 		error: code,
 		...(data && { errorCode: code, errorData: data }),
 	};
-}
-
-function exportExtensionState(
-	session: AgentSession,
-	sessionPath: string,
-	moveId: string | undefined,
-): Promise<{ extensionPath: string; error: string } | undefined> {
-	let id: MoveId;
-	try {
-		id = parseMoveId(moveId);
-	} catch {
-		return Promise.resolve(undefined);
-	}
-	const dir = prepareOutgoingState(sessionPath, id);
-	return session.extensionRunner.emitSessionMoveExport({ type: "session_move_export", moveId: id, dir });
 }

@@ -86,7 +86,15 @@ describe("a failing session_move_import handler (senpi#3681 review)", () => {
 		expect(pendingMovedState(sessionPath)).toMatchObject({ moveId: "move-61", dir: pendingDir });
 
 		const reopenedId = (first.data as { sessionId: string }).sessionId;
-		expect(await host.release(reopenedId)).toMatchObject({ success: true });
+		expect(
+			await host.send({
+				type: "release_session",
+				id: "release-attached",
+				sessionId: reopenedId,
+				reason: "takeover",
+				force: true,
+			}),
+		).toMatchObject({ success: true });
 		expect(await host.attach(sessionPath)).toMatchObject({ success: true });
 
 		expect(imported).toEqual(['{"tasks":3}\n']);

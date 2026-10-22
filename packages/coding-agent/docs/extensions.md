@@ -733,12 +733,16 @@ pi.on("session_move_export", async (event, ctx) => {
   // event.moveId - the move
   // event.dir - an empty folder for this move; write under a subfolder named after your extension
   // Throwing refuses the move: release_session answers release_failed and nothing is sealed.
+  // Each handler runs under the session_shutdown handler budget (sessionShutdownHandlerTimeoutMs, 10 s by
+  // default); one still running at the cap refuses the move the same way. A refused move removes the folder.
 });
 
 pi.on("session_move_import", async (event, ctx) => {
   // Fired once on the receiving device, right after session_start of the first open after the move.
-  // event.dir - what the sender's extensions wrote; it is removed after every handler ran.
-  // A crash before that delivers it again on the next open, so restoring must be idempotent.
+  // event.dir - what the sender's extensions wrote; it is removed once every handler ran without failing.
+  // A handler that throws (or runs past the session_shutdown handler budget) is reported as an extension
+  // error and the folder is kept: the next open delivers it again to every handler, as does a crash before
+  // the hand-over is recorded, so restoring must be idempotent.
 });
 ```
 

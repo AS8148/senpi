@@ -1407,7 +1407,6 @@ export interface SessionAbortEvent {
 	type: "session_abort";
 }
 
-/** Fired on the old extension runner when a reload or session replacement rebuilds the runner and one or more extensions are absent from it. */
 /**
  * Fired when the session is released to move to another device, while this runtime is still live. Write the state
  * this extension keeps for the session outside the session folder (records, logs, finished child sessions) into
@@ -1431,6 +1430,7 @@ export interface SessionMoveImportEvent {
 	dir: string;
 }
 
+/** Fired on the old extension runner when a reload or session replacement rebuilds the runner and one or more extensions are absent from it. */
 export interface SessionExtensionsRemovedEvent {
 	type: "session_extensions_removed";
 	reason: SessionShutdownEvent["reason"];
