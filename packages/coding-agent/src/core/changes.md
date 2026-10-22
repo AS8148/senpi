@@ -1,3 +1,21 @@
+## 2026-10-21 - The session's sendUserMessage action receives the answer's origin from the runner (senpi#3917)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the `sendUserMessage` action takes the `inputOrigin` the runner captured at admission. The session-held `_personAnswerPending` token is removed.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: a session-level token could be cleared or consumed before a deferred answer ran.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: the action implementations are core.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/agent-session.ts`, the `sendUserMessage` action and `questionInput` in the extension binding.
+
 ## 2026-10-21 - An input release finishes when its run settles, and returns on every refused exit (senpi#3853)
 
 ### What changed
