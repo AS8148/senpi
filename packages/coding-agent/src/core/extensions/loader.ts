@@ -781,6 +781,10 @@ function createExtensionAPI(
 				runtime.assertActive();
 				return sessionControlOf(runtime).persistHeaderNow();
 			},
+			relocationOffered() {
+				runtime.assertActive();
+				return sessionControlOf(runtime).relocationOffered();
+			},
 			relocationTargets(signal) {
 				runtime.assertActive();
 				return sessionControlOf(runtime).relocationTargets(signal);

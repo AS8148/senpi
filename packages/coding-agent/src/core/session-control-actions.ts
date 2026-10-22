@@ -37,6 +37,7 @@ export function createSessionControlActions(deps: SessionControlActionDeps): Ses
 		admitExternalMessage: (input) => deps.admission.admit(input),
 		listAdmittedDeliveries: () => deps.admission.list(),
 		persistHeaderNow: () => deps.sessionManager.persistHeaderNow(),
+		relocationOffered: () => deps.relocationHost()?.offered() ?? false,
 		relocationTargets: async (signal) => (await deps.relocationHost()?.targets(signal)) ?? RELOCATION_NOT_OFFERED,
 		requestRelocation: async (request, signal) =>
 			(await deps.relocationHost()?.request(request, signal)) ?? RELOCATION_NOT_OFFERED,
@@ -53,6 +54,7 @@ export function unboundSessionControlActions(): SessionControlActions {
 		admitExternalMessage: notBound,
 		listAdmittedDeliveries: notBound,
 		persistHeaderNow: () => Promise.reject(new Error("Extension runtime not initialized")),
+		relocationOffered: notBound,
 		relocationTargets: () => Promise.reject(new Error("Extension runtime not initialized")),
 		requestRelocation: () => Promise.reject(new Error("Extension runtime not initialized")),
 	};

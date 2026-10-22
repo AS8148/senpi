@@ -161,6 +161,8 @@ export interface SessionControlActions {
 	listAdmittedDeliveries(): AdmittedDeliveries;
 	/** Writes the session header now, so the session id is durable before anything exposes it. */
 	persistHeaderNow(): Promise<void>;
+	/** Whether the session's host offers continuing it on another computer right now. */
+	relocationOffered(): boolean;
 	/** The computers the session's host offers to continue on; `unavailable` when no host offers any. */
 	relocationTargets(signal?: AbortSignal): Promise<RelocationTargetsResult>;
 	/** Asks the host to continue this session on `target` once the current turn ends; never interrupts it. */

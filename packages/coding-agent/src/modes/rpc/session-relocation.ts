@@ -69,6 +69,10 @@ export class RpcSessionRelocation implements SessionRelocationHost {
 		});
 	}
 
+	offered(): boolean {
+		return this.deps.channel.offerer() !== undefined;
+	}
+
 	async targets(signal?: AbortSignal): Promise<RelocationTargetsResult> {
 		const connection = this.deps.channel.offerer();
 		if (connection === undefined) return RELOCATION_NOT_OFFERED;

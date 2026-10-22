@@ -43,6 +43,8 @@ export type RelocationRequestResult =
 	| RelocationRefused;
 
 export interface SessionRelocationHost {
+	/** Whether a host offers relocation for this session right now; decides if the agent sees the tools at all. */
+	offered(): boolean;
 	targets(signal?: AbortSignal): Promise<RelocationTargetsResult>;
 	request(request: RelocationRequest, signal?: AbortSignal): Promise<RelocationRequestResult>;
 }

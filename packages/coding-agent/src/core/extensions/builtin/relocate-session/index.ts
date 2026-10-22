@@ -42,13 +42,35 @@ export function requestText(result: RelocationRequestResult): string {
 	}
 }
 
+const RELOCATION_TOOLS = ["list_relocation_targets", "relocate_session"];
+
+/**
+ * The tools are registered search-exposed with lazy activation off, so a session no host offers relocation for (a
+ * plain CLI) never sees them. They are activated at the start of each run while the host offers it, and retired again
+ * when it no longer does.
+ */
+function syncActivation(pi: ExtensionAPI): void {
+	const wanted = pi.session.relocationOffered();
+	const active = pi.getActiveTools();
+	const others = active.filter((name) => !RELOCATION_TOOLS.includes(name));
+	const next = wanted ? [...others, ...RELOCATION_TOOLS] : others;
+	if (next.length === active.length && next.every((name) => active.includes(name))) return;
+	pi.setActiveTools(next);
+}
+
 export default function relocateSessionExtension(pi: ExtensionAPI): void {
+	pi.on("session_start", () => syncActivation(pi));
+	pi.on("before_agent_start", () => {
+		syncActivation(pi);
+	});
 	pi.registerTool({
 		name: "list_relocation_targets",
 		label: "Other Computers",
 		description:
 			"List the user's other computers this session could continue on, as offered by the app running it: name, whether it is online, a capacity hint, and whether it is about to sleep. Read-only.",
 		parameters: Type.Object({}, { additionalProperties: false }),
+		exposure: "search",
+		allowLazyActivation: false,
 		async execute(_toolCallId, _params, signal) {
 			const result = await pi.session.relocationTargets(signal);
 			return toolText(targetsText(result), result);
@@ -67,6 +89,8 @@ export default function relocateSessionExtension(pi: ExtensionAPI): void {
 			},
 			{ additionalProperties: false },
 		),
+		exposure: "search",
+		allowLazyActivation: false,
 		async execute(_toolCallId, params, signal) {
 			const result = await pi.session.requestRelocation({ target: params.target, reason: params.reason }, signal);
 			return toolText(requestText(result), result);

@@ -5,6 +5,7 @@
  */
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it } from "vitest";
+import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import { getToolResult } from "./harness.ts";
 import { heldTurn } from "./rpc-release-host-support.ts";
 import {
@@ -29,14 +30,28 @@ const OFFERS = ["session_relocation"];
 const hostRequests = (records: readonly WireRecord[]) => records.filter((record) => record.type === "host_request");
 
 describe("relocate_session over RPC", () => {
-	it("is refused when the host offers no relocation, and the session stays writable here", async () => {
-		// Given: a connection that never advertised session_relocation (a plain CLI client).
+	it("is not offered to the agent where no host offers relocation; a direct call is refused typed", async () => {
+		// Given: a connection that never advertised session_relocation (a plain CLI client), after a turn.
 		const plain = await rig({});
+		plain.harness.setResponses([fauxAssistantMessage("hello")]);
+		await plain.harness.session.prompt("hi");
+		await plain.harness.session.agent.waitForIdle();
 
-		// When: the agent asks to continue elsewhere.
-		const result = await runToolTurn(plain, "relocate_session", { target: "Studio", reason: "heavy build" });
+		// When: something calls the tool anyway (a host that left mid-turn ends up here too).
+		const runner = plain.harness.getExtensionRunner();
+		const tool = runner.getAllRegisteredTools().find((entry) => entry.definition.name === "relocate_session");
+		if (!tool) throw new Error("relocate_session is not registered");
+		const result = await tool.definition.execute(
+			"direct",
+			{ target: "Studio", reason: "heavy build" },
+			undefined,
+			undefined,
+			runner.createContext() as ExtensionToolContext,
+		);
 
-		// Then: a typed refusal, nothing asked of a host, and the session still takes turns here.
+		// Then: neither tool was ever active for the model; the call is refused typed and nothing was asked of a host.
+		expect(plain.harness.session.getActiveToolNames()).not.toContain("relocate_session");
+		expect(plain.harness.session.getActiveToolNames()).not.toContain("list_relocation_targets");
 		expect(result.details).toMatchObject({ status: "unavailable", reason: "not_offered" });
 		expect(textOf(result)).toContain("this computer");
 		expect(textOf(result)).not.toMatch(/transfer/i);

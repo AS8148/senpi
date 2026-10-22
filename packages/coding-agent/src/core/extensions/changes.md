@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/extensions/loader.ts`: the `pi.session` object forwards `relocationTargets(signal?)` and `requestRelocation({ target, reason }, signal?)` to the bound `SessionControlActions` (types in `session-control-types.ts`, results in `core/session-relocation.ts`).
+- `packages/coding-agent/src/core/extensions/loader.ts`: the `pi.session` object forwards `relocationOffered()`, `relocationTargets(signal?)` and `requestRelocation({ target, reason }, signal?)` to the bound `SessionControlActions` (types in `session-control-types.ts`, results in `core/session-relocation.ts`).
 
 ### Why
 
