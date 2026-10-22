@@ -98,6 +98,25 @@ The switch admission and its re-check run inside the session's model-switch path
 
 - The `_switchActiveModel` options and its assert line, and the `_applyPendingModelSwitch` call, in `packages/coding-agent/src/core/agent-session.ts`, against upstream changes to model switching.
 
+## 2026-10-22 - Replace Biome with oxlint and oxfmt (senpi#3976)
+
+### What changed
+
+- `packages/coding-agent/src/core/messages.ts`: the exhaustive `default:` case body is wrapped in braces (oxlint `no-case-declarations`), replacing a `biome-ignore` comment.
+- `packages/coding-agent/src/core/sdk.ts`: an `oxlint-disable-next-line eslint/prefer-const` comment on the `let agent` that a closure reads (`() => agent`, passed to the cursor exec bridge); making it `const` is a separate, reviewed change because a closure that ran before the assignment would hit the temporal dead zone.
+
+### Why
+
+- The repository moved lint and format from Biome to oxlint 1.89.0 and oxfmt 0.74.0 (senpi#3976). oxlint reports this site where Biome did not; the change keeps behaviour identical.
+
+### Why an extension could not handle it
+
+- Lint configuration and source comments are read by the linter before any agent code runs.
+
+### Expected merge conflict zones
+
+- The `default:` case in `messages.ts` and the `agent` declaration in `createAgentSession` in `sdk.ts`.
+
 ## 2026-10-21 - Human-input seam: who typed an input (senpi#3811)
 
 ### What changed
