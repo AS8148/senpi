@@ -81,7 +81,14 @@ describe.skipIf(process.platform === "win32")("supervisor lifetime FIFO", () => 
 				expect(statSync(fifo).isFIFO()).toBe(true);
 				expect(statSync(fifo).mode & 0o777).toBe(0o600);
 			} else expect(existsSync(fifo)).toBe(false);
-			const [childPid] = execFileSync("pgrep", ["-P", String(supervisor.pid)], { encoding: "utf8" })
+			// The host is the supervisor's child listening on this hop; tsx also gives the supervisor an esbuild child.
+			const [childPid] = execFileSync(
+				"pgrep",
+				["-P", String(supervisor.pid), "-f", `unix://${join(hop, "host.sock")}`],
+				{
+					encoding: "utf8",
+				},
+			)
 				.split("\n")
 				.filter(Boolean)
 				.map(Number);
