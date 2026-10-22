@@ -96,6 +96,33 @@ it("releases a follow-up that an abort left queued for the person", async () => 
 	expect(h.session.lifecycle.state).not.toBe("waiting_background");
 });
 
+it.each(["clear", "abort"] as const)(
+	"releases an engine delivery handed back after a restart on %s",
+	async (release) => {
+		// Given an engine delivery restored from custody and re-sent with its own ticket, as recovery does.
+		const { h, release: finish, done } = await heldTurn();
+		const ticket = h.session.workObligations.open("delivery:wake-x:restored", "background").ticket();
+		await h.session.sendCustomMessage(wake, { deliverAs: "followUp", ticket });
+
+		// When the person clears the queue or aborts the turn.
+		if (release === "clear") {
+			h.session.clearQueue();
+			finish();
+			await done;
+		} else {
+			const aborting = h.session.abort();
+			finish();
+			await aborting;
+			await done;
+			await h.session.waitForIdle();
+		}
+
+		// Then the engine still owns it by its durable key, so nothing is left waiting.
+		expect(h.session.workObligations.activeCount).toBe(0);
+		expect(h.session.lifecycle.state).not.toBe("waiting_background");
+	},
+);
+
 it("does not count a next-turn message sent while idle as background work", async () => {
 	// Given a finished turn.
 	const h = await createBoundLifecycleHarness({ persistSession: true });
