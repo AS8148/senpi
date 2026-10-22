@@ -1733,6 +1733,12 @@ open. Before the CLI touches `process.stdin`, the child reads exactly that key w
 reopens `/dev/fd/0` as a close-on-exec lifetime descriptor, and restores fd 0 to `/dev/null`. Descendants that inherit
 stdin therefore receive immediate EOF. A missing or short key refuses startup with `internal_key_unavailable`.
 
+On Linux the supervisor also creates `lifetime.fifo` (mode 0600) in its private 0700 hop directory, holds its only
+writer (close-on-exec, opened before the child is spawned), and passes the path in `SENPI_RPC_HOST_LIFETIME_FIFO`. The
+host opens the read end non-blocking; EOF, when the kernel closes the last writer at the supervisor's death, ends it. This
+is the Linux event binding, because reopening stdin fails there. On macOS libuv reports no EOF for a FIFO, so the
+reopened stdin is the event binding. While either is armed, the recorded-identity check is one 30 s backstop.
+
 Where reopening succeeds, Node watches lifetime EOF with an unref'd `net.Socket`; Bun uses a `Bun.file(fd).stream()`
 reader that does not hold `process.exit()`. Any reopen failure, including Linux socketpair stdin's `ENXIO`, is logged
 and falls back to polling the recorded supervisor `SENPI_RPC_HOST_WATCH_PPID`: a free `kill(pid, 0)` every tick, and

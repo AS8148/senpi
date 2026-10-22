@@ -1,6 +1,6 @@
 import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { waitForListener } from "../../src/modes/rpc/host-lifecycle-proxy.ts";
@@ -31,8 +31,7 @@ function fifoAccessModes(pid: number, path: string): string[] {
 		}
 		return modes;
 	}
-	const listed = execFileSync("lsof", ["-a", "-p", String(pid), "-Fan", "--", path], { encoding: "utf8" }).split("\n");
-	return listed.filter((line) => line.startsWith("a")).map((line) => line.slice(1));
+	throw new Error(`fifoAccessModes reads /proc and runs on Linux only, not ${process.platform}`);
 }
 
 // senpi#3816 round 7 (lead ruling: FIFO). A real supervisor creates its lifetime FIFO 0600 in its 0700 hop directory,
@@ -77,14 +76,17 @@ describe.skipIf(process.platform === "win32")("supervisor lifetime FIFO", () => 
 			const hop = join(tmp, hopName ?? "");
 			const fifo = join(hop, "lifetime.fifo");
 			expect(statSync(hop).mode & 0o777).toBe(0o700);
-			expect(statSync(fifo).isFIFO()).toBe(true);
-			expect(statSync(fifo).mode & 0o777).toBe(0o600);
+			// Linux binds through the FIFO; macOS through the reopened stdin (libuv reports no FIFO EOF there).
+			if (process.platform === "linux") {
+				expect(statSync(fifo).isFIFO()).toBe(true);
+				expect(statSync(fifo).mode & 0o777).toBe(0o600);
+			} else expect(existsSync(fifo)).toBe(false);
 			const [childPid] = execFileSync("pgrep", ["-P", String(supervisor.pid)], { encoding: "utf8" })
 				.split("\n")
 				.filter(Boolean)
 				.map(Number);
 			expect(childPid).toBeGreaterThan(1);
-			expect(fifoAccessModes(childPid ?? 0, fifo)).toEqual(["r"]);
+			if (process.platform === "linux") expect(fifoAccessModes(childPid ?? 0, fifo)).toEqual(["r"]);
 			const childExit = await processExitEvent(childPid ?? 0);
 			try {
 				supervisor.kill("SIGKILL");

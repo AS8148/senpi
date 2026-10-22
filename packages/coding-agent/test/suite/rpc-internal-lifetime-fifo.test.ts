@@ -30,8 +30,9 @@ function lifetimeFifo(): { path: string; writer: number } {
 }
 
 // senpi#3816 round 7 (lead ruling: FIFO): supervisor death reaches the host as an event on Linux and macOS.
-describe.skipIf(process.platform === "win32")("FIFO lifetime binding", () => {
-	it.each(["node", "bun"])(
+describe.skipIf(process.platform === "win32")("lifetime event binding", () => {
+	// Linux only: libuv reports a FIFO's EOF there; on macOS the reopened stdin is the event binding instead.
+	it.skipIf(process.platform !== "linux").each(["node", "bun"])(
 		"%s fires within 1 s of the last writer closing",
 		async (runtime) => {
 			const fifo = lifetimeFifo();
@@ -67,18 +68,21 @@ describe.skipIf(process.platform === "win32")("FIFO lifetime binding", () => {
 		20_000,
 	);
 
-	it("an idle host bound by the FIFO makes no liveness wakes in 10 s (one long backstop only)", async () => {
+	it("an idle host with its event binding makes no liveness wakes in 10 s (one long backstop only)", async () => {
 		const fifo = lifetimeFifo();
+		// Linux binds through the FIFO path; macOS through a lifetime descriptor (its reopened stdin, here a stand-in).
+		const binding =
+			process.platform === "linux"
+				? { SENPI_RPC_HOST_LIFETIME_FIFO: fifo.path }
+				: { lifetimeFd: openSync(fifo.path, constants.O_RDONLY | constants.O_NONBLOCK) };
 		vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout"] });
 		const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
-		const stop = armHostWatchdog(
-			readHostWatchdogConfig({
-				SENPI_RPC_HOST_WATCH_PPID: "4242",
-				SENPI_RPC_HOST_WATCH_PSTART_TICKS: "123456",
-				SENPI_RPC_HOST_LIFETIME_FIFO: fifo.path,
-			}),
-			vi.fn(),
-		);
+		const env = { SENPI_RPC_HOST_WATCH_PPID: "4242", SENPI_RPC_HOST_WATCH_PSTART_TICKS: "123456" };
+		const config =
+			"lifetimeFd" in binding
+				? { ...readHostWatchdogConfig(env), lifetimeFd: binding.lifetimeFd }
+				: readHostWatchdogConfig({ ...env, ...binding });
+		const stop = armHostWatchdog(config, vi.fn());
 		try {
 			await vi.advanceTimersByTimeAsync(10_000);
 			expect(kill.mock.calls.filter(([pid, signal]) => pid === 4242 && signal === 0)).toHaveLength(0);

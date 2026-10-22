@@ -117,6 +117,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		internal,
 		...hop.transport,
 		supervisorStart: hop.supervisorStart,
+		lifetimeFifo: hop.lifetimeFifo,
 		daemonDir: paths.dir,
 		instanceId,
 		cleanupPaths: hostCrashCleanupPaths({

@@ -13,7 +13,7 @@
  * The bindings are unset for every other host launch, so nothing changes for
  * plain `senpi --mode rpc` runs, hosts started by hand, or embedders.
  */
-import { rmSync } from "node:fs";
+import { closeSync, constants, openSync, rmSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { Socket } from "node:net";
 import { envValue } from "../../core/brand.ts";
@@ -35,6 +35,13 @@ export const HOST_WATCH_PPID_ENV = "SENPI_RPC_HOST_WATCH_PPID";
 export const HOST_WATCH_PSTART_ENV = "SENPI_RPC_HOST_WATCH_PSTART";
 /** Linux: the supervisor's `/proc` start ticks, compared on the boot clock (senpi#3816 review). */
 export const HOST_WATCH_PSTART_TICKS_ENV = "SENPI_RPC_HOST_WATCH_PSTART_TICKS";
+/**
+ * POSIX: the supervisor's lifetime FIFO (senpi#3816 round 7). The supervisor holds its only writer; the host reads it,
+ * and EOF - the kernel closing the last writer when the supervisor dies for any reason - ends the host.
+ */
+export const HOST_WATCH_LIFETIME_FIFO_ENV = "SENPI_RPC_HOST_LIFETIME_FIFO";
+/** While an event binding (lifetime FIFO or reopened stdin) is armed, the identity check is one long backstop. */
+export const HOST_WATCH_BACKSTOP_INTERVAL_MS = 30_000;
 /** Poll cadence for the recorded-supervisor poll when it is the only binding. */
 export const HOST_WATCH_PPID_INTERVAL_MS = 250;
 /**
@@ -64,6 +71,7 @@ export interface HostWatchdogConfig {
 	readonly ppid?: number;
 	readonly processStartTime?: string;
 	readonly processStartTicks?: string;
+	readonly lifetimeFifo?: string;
 	readonly lifetimeFd?: number;
 	readonly scratchDir?: string;
 	readonly cleanupPaths?: readonly string[];
@@ -110,6 +118,7 @@ export function readHostWatchdogConfig(
 		ppid,
 		...(env[HOST_WATCH_PSTART_ENV] ? { processStartTime: env[HOST_WATCH_PSTART_ENV] } : {}),
 		...(env[HOST_WATCH_PSTART_TICKS_ENV] ? { processStartTicks: env[HOST_WATCH_PSTART_TICKS_ENV] } : {}),
+		...(env[HOST_WATCH_LIFETIME_FIFO_ENV] ? { lifetimeFifo: env[HOST_WATCH_LIFETIME_FIFO_ENV] } : {}),
 		scratchDir: scratchDir === undefined || scratchDir === "" ? undefined : scratchDir,
 		cleanupPaths,
 		publicSocket: publicSocket === "" ? undefined : publicSocket,
@@ -129,6 +138,7 @@ export function readHostWatchdogConfigFromBrandEnv(): HostWatchdogConfig | undef
 		[HOST_WATCH_PSTART_ENV]: process.env[HOST_WATCH_PSTART_ENV] ?? envValue("RPC_HOST_WATCH_PSTART"),
 		[HOST_WATCH_PSTART_TICKS_ENV]:
 			process.env[HOST_WATCH_PSTART_TICKS_ENV] ?? envValue("RPC_HOST_WATCH_PSTART_TICKS"),
+		[HOST_WATCH_LIFETIME_FIFO_ENV]: process.env[HOST_WATCH_LIFETIME_FIFO_ENV] ?? envValue("RPC_HOST_LIFETIME_FIFO"),
 		[HOST_SCRATCH_DIR_ENV]: process.env[HOST_SCRATCH_DIR_ENV] ?? envValue("RPC_HOST_SCRATCH_DIR"),
 		[HOST_PUBLIC_SOCKET_ENV]: process.env[HOST_PUBLIC_SOCKET_ENV] ?? envValue("RPC_HOST_PUBLIC_SOCKET"),
 		[HOST_CLEANUP_PATHS_ENV]: process.env[HOST_CLEANUP_PATHS_ENV] ?? envValue("RPC_HOST_CLEANUP_PATHS"),
@@ -212,14 +222,33 @@ export function armHostWatchdog(
 		pollWanted = true;
 		armPpid(pipeLive ? HOST_WATCH_PPID_BACKUP_INTERVAL_MS : soleInterval);
 	};
-	if (config.lifetimeFd !== undefined) {
+	// The lifetime FIFO is the event binding on every POSIX platform; a reopened stdin (macOS) stands in without one.
+	const fifoFd = openLifetimeFifo(config.lifetimeFifo);
+	if (fifoFd !== undefined && config.lifetimeFd !== undefined) closeSync(config.lifetimeFd);
+	const lifetime = fifoFd ?? config.lifetimeFd;
+	if (lifetime !== undefined) {
 		try {
-			disarmers.push(watchHostLifetime(config.lifetimeFd, () => fire("supervisor stdin lifetime closed"), fallback));
+			const source = fifoFd === undefined ? "supervisor stdin lifetime closed" : "supervisor lifetime FIFO closed";
+			disarmers.push(watchHostLifetime(lifetime, () => fire(source), fallback));
+			armPpid(HOST_WATCH_BACKSTOP_INTERVAL_MS);
 		} catch {
 			fallback();
 		}
 	} else fallback();
 	return disarm;
+}
+
+/**
+ * Opens the read end of the supervisor's lifetime FIFO without blocking: O_NONBLOCK returns at once whether or not a
+ * writer exists, and the supervisor opened its writer before it spawned this host. Any failure leaves the identity poll.
+ */
+function openLifetimeFifo(path: string | undefined): number | undefined {
+	if (path === undefined || process.platform !== "linux") return undefined;
+	try {
+		return openSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
+	} catch {
+		return undefined;
+	}
 }
 
 /**

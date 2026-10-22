@@ -16,6 +16,7 @@ import {
 	HOST_PUBLIC_SOCKET_ENV,
 	HOST_SCRATCH_DIR_ENV,
 	HOST_WATCH_FD_ENV,
+	HOST_WATCH_LIFETIME_FIFO_ENV,
 	HOST_WATCH_PPID_ENV,
 	HOST_WATCH_PSTART_ENV,
 	HOST_WATCH_PSTART_TICKS_ENV,
@@ -239,6 +240,7 @@ export function spawnHostChild(options: {
 	readonly internalSecret?: Buffer;
 	readonly internalKey?: Buffer;
 	readonly supervisorStart?: { readonly time?: string; readonly ticks?: string };
+	readonly lifetimeFifo?: string;
 	readonly daemonDir: string;
 	readonly instanceId: string;
 	readonly cleanupPaths: readonly string[];
@@ -258,6 +260,7 @@ export function spawnHostChild(options: {
 			[HOST_WATCH_PPID_ENV]: String(process.pid),
 			[HOST_WATCH_PSTART_ENV]: options.supervisorStart?.time,
 			[HOST_WATCH_PSTART_TICKS_ENV]: options.supervisorStart?.ticks,
+			[HOST_WATCH_LIFETIME_FIFO_ENV]: options.lifetimeFifo,
 			...(internal.dir ? { [HOST_SCRATCH_DIR_ENV]: internal.dir } : {}),
 			[SOCKET_SECRET_FILE_ENV]: process.platform === "win32" && internalSecret ? internal.secretPath : undefined,
 			SENPI_RPC_INTERNAL_KEY_STDIN: options.internalKey ? "1" : undefined,
