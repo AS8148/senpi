@@ -182,6 +182,21 @@ export class CredentialSlotRepository {
 	}
 
 	/**
+	 * Drops every health entry recorded for a provider and reports whether there was one. A clean
+	 * file is only read, never locked or written. Used when a provider's own lane becomes the only
+	 * owner of its account selection, so health the generic pool recorded earlier (often a block
+	 * pinned on the wrong account) cannot outlive the change (senpi#2081).
+	 */
+	async clearProvider(providerId: string): Promise<boolean> {
+		if ((await this.readDocument()).providers[providerId] === undefined) return false;
+		return this.withDocument((document) => {
+			if (document.providers[providerId] === undefined) return { result: false };
+			const { [providerId]: _retired, ...providers } = document.providers;
+			return { result: true, next: { ...document, providers } };
+		});
+	}
+
+	/**
 	 * Atomic read-modify-write for one slot's health. `stateVersion` increments
 	 * on every write so concurrent mutators can detect lost updates; returning
 	 * undefined removes the slot state entirely.
