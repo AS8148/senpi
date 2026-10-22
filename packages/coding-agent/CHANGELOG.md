@@ -6,7 +6,7 @@
 
 ### Added
 
-- Shared RPC hosts support live-only `attach_session`, one-hold `release_attachment`, and atomic `reclaim_session`. Attachments are fenced by durable session identity, and temporary releases let active turns finish ([#3795](https://github.com/code-yeongyu/senpi/issues/3795)).
+- Shared RPC hosts support live-only `attach_session`, one-hold `release_attachment`, and atomic `reclaim_session`. Attachments are fenced by durable session identity, and temporary releases let active turns finish ([#3795](https://github.com/code-yeongyu/senpi/issues/3795), [#3814](https://github.com/code-yeongyu/senpi/pull/3814)).
 
 - Every turn end now publishes a `turn_end_liveness` extension event (in-process and to RPC clients) that says what happens next: `continuing` (the core retries the turn, or a goal continuation or todo nudge was queued), `waiting` (and on what: a running subagent, a monitor, a background shell, an armed goal timer, a staged recovery, a queued message, or a question to the user; with the stop reason as `heldBy` when one applies, since those wakes still deliver a turn), `held` (an active session hold holds every automatic wake, or nothing will re-enter it and nothing may continue on its own: user abort, subagent session, print/JSON mode, deadline stop, or a paused/blocked goal), `stalled` (open work and nothing will bring the session back: a spent continuation guard, a provider error with its reset time when the error names one, a system or provider abort, or nothing armed); only a turn that actually completed reads `done`, or `done`. A `stalled` verdict is also saved in the session as a `turn-end-liveness` entry. Nothing starts or stops differently ([#3863](https://github.com/code-yeongyu/senpi/issues/3863)).
 
@@ -19,7 +19,7 @@
 
 ### Changed
 
-- Socket-host session mutations now require attachment. This release serves legacy unattached mutations with a deprecation line; `SENPI_RPC_REQUIRE_ATTACH=1` enforces immediately. `release_session` excludes the caller's own holds when checking for other attached clients ([#3795](https://github.com/code-yeongyu/senpi/issues/3795)).
+- Socket-host session mutations now require attachment. This release serves legacy unattached mutations with a deprecation line; `SENPI_RPC_REQUIRE_ATTACH=1` enforces immediately. `release_session` excludes the caller's own holds when checking for other attached clients ([#3795](https://github.com/code-yeongyu/senpi/issues/3795), [#3814](https://github.com/code-yeongyu/senpi/pull/3814)).
 
 ### Fixed
 
