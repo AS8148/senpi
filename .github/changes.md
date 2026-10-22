@@ -1,3 +1,21 @@
+## 2026-10-22 - Static checks have a bounded compiler heap (senpi#4022)
+
+### What changed
+
+- `.github/workflows/ci.yml`: only the `Static checks` job's `Check` step sets `NODE_OPTIONS=--max-old-space-size=10240`.
+
+### Why
+
+- The public GitHub-hosted `ubuntu-latest` runner has 16 GB RAM. A 10 GiB old-space cap leaves 6 GiB for the OS, runner and native allocations while allowing the root compiler to exceed its exhausted default heap. The two compiler commands run sequentially.
+
+### Why an extension could not handle it
+
+- Runner memory limits are workflow configuration, outside runtime extension points.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: the `Static checks` job's `Check` step.
+
 ## 2026-10-22 - The release job builds the senpi-grep addon before its tests (senpi#3978 follow-up)
 
 ### What changed
