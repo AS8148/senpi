@@ -1831,7 +1831,7 @@ export class AgentSession {
 	 * `compaction.model` override ("provider/model"), that model is used for the
 	 * summarization call instead of the session model — this is what lets an
 	 * SDK-owned lane (anthropic-subscription) compact on a cheaper/different model.
-	 * Unset, malformed, unknown, or spent overrides keep a usable session model;
+	 * Unset, malformed, unknown, spent, or credential-less overrides keep a usable session model;
 	 * a set override that cannot serve logs why the session model was used.
 	 * A spent account instead uses the held target or another authenticated model.
 	 */
@@ -1846,17 +1846,21 @@ export class AgentSession {
 		// Preserve the explicit override and original-model geometry on healthy sessions.
 		// A held downswitch uses its target only when the original account cannot serve.
 		if (usable(sessionModel)) {
-			if (configured && usable(configured)) {
+			if (!override) return sessionModel;
+			const fallbackReason = !configured
+				? slash > 0
+					? "unknown_model"
+					: "malformed"
+				: !usable(configured)
+					? "provider_spent"
+					: !this._modelRuntime.hasConfiguredAuth(configured.provider)
+						? "no_credentials"
+						: undefined;
+			if (configured && fallbackReason === undefined) {
 				this._compactionModelFallbackNotice = undefined;
 				return configured;
 			}
-			if (override) {
-				this._logCompactionModelFallback(
-					override,
-					configured ? "provider_spent" : slash > 0 ? "unknown_model" : "malformed",
-					sessionModel,
-				);
-			}
+			if (fallbackReason) this._logCompactionModelFallback(override, fallbackReason, sessionModel);
 			return sessionModel;
 		}
 		const pending = this._pendingModelSwitch?.model;
@@ -1879,7 +1883,7 @@ export class AgentSession {
 
 	private _logCompactionModelFallback(
 		override: string,
-		reason: "malformed" | "unknown_model" | "provider_spent",
+		reason: "malformed" | "unknown_model" | "provider_spent" | "no_credentials",
 		sessionModel: Model<any>,
 	): void {
 		const notice = `${override}\u0000${reason}`;

@@ -56,7 +56,7 @@ function seedHistory(harness: Harness, totalTokens: number): void {
 	harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
 }
 
-async function runPath(path: Path, compactionModel: string | undefined) {
+async function runPath(path: Path, compactionModel: string | undefined, prepare?: (harness: Harness) => void) {
 	const scenario = SCENARIOS[path];
 	const harness = await createHarness({
 		models: [SESSION_MODEL, SUMMARY_MODEL],
@@ -64,6 +64,7 @@ async function runPath(path: Path, compactionModel: string | undefined) {
 		settings: { compaction: compactionModel ? { model: compactionModel } : {} },
 		extensionFactories: [compactionExtension],
 	});
+	prepare?.(harness);
 	if (scenario.mode) await harness.session.bindExtensions({ mode: scenario.mode, shutdownHandler: () => {} });
 	seedHistory(harness, scenario.seedTokens);
 
@@ -124,8 +125,26 @@ describe("#830 compaction.model on a healthy provider", () => {
 		},
 	);
 
-	it("falls back to the session model and logs why when the override is unknown", async () => {
-		const { harness, calls } = await runPath("threshold", "faux/missing-model");
+	it.each([
+		{ name: "unknown", override: "faux/missing-model", reason: "unknown_model" },
+		{ name: "without credentials", override: "noauth/summary-model", reason: "no_credentials" },
+	])("falls back to the session model and logs why when the override is $name", async ({ override, reason }) => {
+		const { harness, calls } = await runPath("threshold", override, (harness) => {
+			const session = harness.getModel();
+			harness.modelRegistry.registerProvider("noauth", {
+				api: session.api,
+				baseUrl: session.baseUrl,
+				models: [
+					{
+						...SUMMARY_MODEL,
+						name: "No-auth summary",
+						reasoning: false,
+						input: ["text"],
+						cost: session.cost,
+					},
+				],
+			});
+		});
 		harnesses.push(harness);
 
 		expect(calls.filter((call) => call.summary).map((call) => call.model)).toEqual(["session-model"]);
@@ -134,12 +153,7 @@ describe("#830 compaction.model on a healthy provider", () => {
 			.filter((line) => line.includes('"event":"compaction_model_fallback"'))
 			.map((line) => JSON.parse(line));
 		expect(fallbackLines).toEqual([
-			expect.objectContaining({
-				level: "warn",
-				model: "faux/missing-model",
-				reason: "unknown_model",
-				to: "faux/session-model",
-			}),
+			expect.objectContaining({ level: "warn", model: override, reason, to: "faux/session-model" }),
 		]);
 	});
 });

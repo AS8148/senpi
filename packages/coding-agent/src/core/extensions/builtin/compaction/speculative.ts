@@ -369,7 +369,7 @@ export async function runExtensionCompaction(
 						attempt &&
 						isAssistantMessage(attempt) &&
 						attempt.stopReason === "error" &&
-						!isContextOverflow(attempt, snapshot.contextWindow)
+						!isContextOverflow(attempt, requestSnapshot.contextWindow)
 					) {
 						const failureKind = summaryRequestFailureKind(attempt);
 						throw new SummaryRequestError(
@@ -395,11 +395,11 @@ export async function runExtensionCompaction(
 		}
 		if (!response) return undefined;
 
-		if (isAssistantMessage(response) && isContextOverflow(response, snapshot.contextWindow)) {
+		if (isAssistantMessage(response) && isContextOverflow(response, requestSnapshot.contextWindow)) {
 			overflowAttempts++;
 			const elapsedMs = Date.now() - overflowRetryStartMs;
 			const retryMessages = allowOverflowRetry(overflowAttempts, elapsedMs)
-				? shrinkSummarizationInputForOverflowRetry(messages, snapshot.contextWindow, promptTokens)
+				? shrinkSummarizationInputForOverflowRetry(messages, requestSnapshot.contextWindow, promptTokens)
 				: undefined;
 			if (!retryMessages) {
 				throw new SummarizationOverflowExhaustedError(overflowAttempts, elapsedMs);

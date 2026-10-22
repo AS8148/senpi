@@ -11350,7 +11350,7 @@ Fallback eligibility and the agent_end retry decision are owned by `AgentSession
 
 ### What changed
 
-- `packages/coding-agent/src/core/agent-session.ts`: the extension context's `getCompactionModel` always goes through `_resolveCompactionModel`, the resolver core compaction already uses, instead of returning the session model until the account is spent. On a healthy session a configured, resolvable, usable `compaction.model` is returned; a malformed, unknown or spent override keeps the session model and logs one `compaction_model_fallback` warning per distinct cause. The spent-account order (held target, override, authenticated alternate that fits) is unchanged.
+- `packages/coding-agent/src/core/agent-session.ts`: the extension context's `getCompactionModel` always goes through `_resolveCompactionModel`, the resolver core compaction already uses, instead of returning the session model until the account is spent. On a healthy session a configured, resolvable, usable `compaction.model` is returned; a malformed, unknown, spent or credential-less override (checked with `hasConfiguredAuth`, the gate the spent path already uses) keeps the session model and logs one `compaction_model_fallback` warning per distinct cause, so a misconfigured override never stops builtin compaction. The spent-account order (held target, override, authenticated alternate that fits) is unchanged.
 - `packages/coding-agent/docs/extensions.md`: `ctx.getCompactionModel()` documents the healthy-session override.
 
 ### Why

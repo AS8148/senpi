@@ -1405,7 +1405,7 @@ if (usage && usage.tokens > 100_000) {
 
 ### ctx.getCompactionModel()
 
-Optional on hosts that expose session-owned summarization routing. While the session account is usable, returns the configured `compaction.model` when it resolves to a model whose account can serve, and the current session model otherwise (an override that cannot serve is logged as `compaction_model_fallback`). For a spent account, it tries the held switch target, the configured summary override, then an authenticated alternate with enough context capacity for the active transcript and reserved output. It does not change the active session selection and throws an account-limit error when no usable summary model is available.
+Optional on hosts that expose session-owned summarization routing. While the session account is usable, returns the configured `compaction.model` when it resolves to a model whose provider has credentials and whose account can serve, and the current session model otherwise (an override that cannot serve is logged as `compaction_model_fallback`). For a spent account, it tries the held switch target, the configured summary override, then an authenticated alternate with enough context capacity for the active transcript and reserved output. It does not change the active session selection and throws an account-limit error when no usable summary model is available.
 
 ### ctx.compact()
 
