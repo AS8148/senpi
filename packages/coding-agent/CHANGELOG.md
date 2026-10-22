@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- Anthropic Subscription: a turn retried on another account after a failure is now logged as an account switch rather than a timeout retry, and every continuity decision names the serving account by a short digest, salted per install so the account name cannot be recovered from it. A switch to another account always writes the whole prompt cache again, so the logs now show which seat paid for it. Thanks to 욜로개발조아 for the measured report ([omo#10304](https://github.com/code-yeongyu/oh-my-openagent/issues/10304)).
+
 ### Removed
 
 ## [2026.10.21-2] - 2026-10-22
