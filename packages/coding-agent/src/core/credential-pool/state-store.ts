@@ -130,16 +130,18 @@ export class CredentialSlotRepository {
 		fn: (document: CredentialPoolStateDocument) => { result: T; next?: CredentialPoolStateDocument },
 	): Promise<T> {
 		if (!existsSync(this.path)) mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 });
-		const release = await acquireStateFileLock(this.path, this.lockWaitBudgetMs);
+		const lock = await acquireStateFileLock(this.path, this.lockWaitBudgetMs);
 		try {
 			const stored = parseDocument(readStateFile(this.path));
 			const document = stored ?? freshDocument();
 			const { result, next } = fn(document);
-			if (next !== undefined || stored === undefined)
+			if (next !== undefined || stored === undefined) {
+				lock.assertHeld();
 				await writeStateFileAtomic(this.path, serialize(next ?? document));
+			}
 			return result;
 		} finally {
-			await release();
+			await lock.release();
 		}
 	}
 

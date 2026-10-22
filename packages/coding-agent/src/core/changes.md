@@ -133,6 +133,24 @@ The switch admission and its re-check run inside the session's model-switch path
 
 - LOW: `packages/coding-agent/src/core/agent-session.ts`, the `sendUserMessage` action and `questionInput` in the extension binding.
 
+## 2026-10-21 - Session context excludes cumulative SDK billing (omo#10792)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the context memoization fingerprint includes the request measurement, including the distinction between unknown and legacy usage.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: cumulative SDK usage inflated the footer, RPC context fields, extension context thresholds, and compaction. A measurement-only update must also invalidate cached context.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: core owns the memoized context value used by TUI, RPC, stats, and extension automation. Rewriting billing counters in an extension would break usage totals.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/agent-session.ts`, `messageFingerprint`.
+
 ## 2026-10-21 - An input release finishes when its run settles, and returns on every refused exit (senpi#3853)
 
 ### What changed
@@ -11581,6 +11599,24 @@ Fallback eligibility and the agent_end retry decision are owned by `AgentSession
 - `agent-session.ts`: the retry-state fields, the `transformContext` wrapper in `_installAgentNextTurnRefresh`, the start of the agent_end retry block, and `_isHardErrorFallbackEligible`.
 - `retry-fallback/settings.ts`: `DEFAULT_FALLBACK_CHAINS`.
 
+## 2026-10-21 - Queued input is tagged as a person's when it is enqueued (senpi#3863)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: every queued input is tagged when it is enqueued. Each input gets an `inputOrigin` (`person | extension | engine`, the lead's single field shared with senpi#3860/#3873/#3908) classified at its entry point by `inputOriginOf`: a TUI submit or an RPC client `prompt`/`steer`/`follow_up` is `person`, an extension API send is `extension` unless it carries `inputOrigin: "person"` (an answered question), and goal, monitor and codemode turns are `engine`. Only `person` entries count. Anything driven over RPC (for example `senpi host session steer` from automation) counts as a person's input by that entry-point rule, and when a person's input and an extension message are queued together, the extension message is delivered with it. A started prompt that a competing run displaces into the steer queue is tagged the same way, from its caller's source (`_promptAgent`'s `inputOrigin`). `hasQueuedPersonInput` answers from the ids still in `_queuedInputOrder`, so an input that was delivered, dequeued or cleared (Esc) no longer counts. It is exposed to extensions through `hasQueuedPersonInput` on the context actions. `sendUserMessage` and `QueuedInputOptions`/`PromptOptions` take `inputOrigin`; `_promptAgent` takes an options object (`deferredTurnClaim`, `onQueuedInput`, `inputOrigin`).
+
+### Why
+
+The goal extension's turn-end liveness verdict (senpi#3863) must release a senpi#3860 hold only for a person's queued input. The pending queue also holds Stop-hook, loop-tick and timed-out-question messages, and those must stay held, or the idle drain comes back. A counter in the extension drifted whenever a queued message was removed unsent.
+
+### Why an extension could not handle it
+
+The queue, its removal paths (`dequeueQueuedInput`, `editQueuedInput`, `clearQueue`) and the source of each enqueue are private to `AgentSession`. An extension sees inputs only through events and cannot see removals.
+
+### Expected merge conflict zones
+
+- `agent-session.ts`: the queue fields near `_followUpMessages`, `_enqueuePreparedInput`, the displaced-prompt branch of `_promptAgent` and its `prompt` call site, `pendingMessageCount`, the `sendUserMessage` options and its fallback enqueue, and the context actions beside `hasPendingMessages`.
+
 ## 2026-10-22 - Builtin compaction honours compaction.model on a healthy provider (senpi#830)
 
 ### What changed
@@ -11619,3 +11655,24 @@ The summary-model resolver reads session-owned state (settings, model runtime, s
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/core/agent-session.ts`: the `auth_login_end` member of the event union and the `auth-storage.ts` type import.
+
+## 2026-10-22 - Async file locks never crash the process on a late heartbeat report (oh-my-openagent#10878)
+
+### What changed
+
+- `packages/coding-agent/src/core/auth-storage.ts`: `acquireLockAsync` acquires through `lockWithLossHandling` (`core/file-lock.ts`) and passes its compromise callback as `onLost`, so the auth store's compromised-lock semantics are unchanged.
+- A lock reported lost while still held is not ignored: the holder stops. The auth store's `onLost` keeps rejecting the write as before, and the settings publish refuses its rename (`FileLockLostError`).
+- `packages/coding-agent/src/core/settings-manager.ts`: `acquireLockWithRetry` returns the `HeldFileLock` from `lockWithLossHandling`; `withPathLockAsync` calls `assertHeld()` before the rename that publishes the settings file and releases through the handle.
+
+### Why
+
+- `packages/coding-agent/src/core/auth-storage.ts`, `packages/coding-agent/src/core/settings-manager.ts`: proper-lockfile 4.1.2's heartbeat `stat` callback has no `lock.released` check. An unlock while that stat is in flight produces a late ENOENT that reaches `onCompromised`; the default handler throws from a timer and kills the process. Reported and diagnosed by @ayalcoh in oh-my-openagent#10878.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/auth-storage.ts` and `packages/coding-agent/src/core/settings-manager.ts` own these lock acquisitions; no extension hook sits between them and proper-lockfile.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/auth-storage.ts`: `acquireLockAsync` and the import block.
+- `packages/coding-agent/src/core/settings-manager.ts`: `acquireLockWithRetry`, the rename step of `withPathLockAsync`, and the import block.
