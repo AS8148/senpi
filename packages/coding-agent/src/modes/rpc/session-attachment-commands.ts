@@ -55,7 +55,7 @@ export function attachSession(
 	if (!identityMatches(host, entry, command.durableSessionId, command.expectedHostInstance))
 		return error(command.id, command.type, "session_identity_mismatch", {});
 	const owner = host.writer.currentConnection();
-	if (owner === undefined) return error(command.id, command.type, "session_not_attached", {});
+	if (owner === undefined) return error(command.id, command.type, "session_not_attached", { reason: "no_connection" });
 	try {
 		attach(host, owner, command.sessionId);
 		return {
@@ -76,7 +76,7 @@ export async function releaseAttachment(
 ): Promise<RpcResponse> {
 	const owner = host.writer.currentConnection();
 	if (owner === undefined || !host.sessionsByConnection.get(owner)?.has(command.sessionId))
-		return error(command.id, command.type, "session_not_attached", {});
+		return error(command.id, command.type, "session_not_attached", { reason: "not_attached" });
 	releaseOwnerAttachment(host, owner, command.sessionId);
 	// The drain owns every outstanding physical hold until its park; never preempt it.
 	const deferred = !host.draining && (await releaseDisconnectAttachment(host, command.sessionId));
@@ -105,7 +105,7 @@ export async function reclaimSession(
 	)
 		return error(command.id, command.type, "session_identity_mismatch", {});
 	const owner = host.writer.currentConnection();
-	if (owner === undefined) return error(command.id, command.type, "session_not_attached", {});
+	if (owner === undefined) return error(command.id, command.type, "session_not_attached", { reason: "no_connection" });
 	const own = host.sessionsByConnection.get(owner)?.get(row.sessionId) ?? 0;
 	const elsewhere = Math.max(0, entry.attachments - own);
 	if (elsewhere > 0) return error(command.id, command.type, "attached_elsewhere", { attachments: elsewhere });

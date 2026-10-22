@@ -7091,26 +7091,27 @@ The classic capability list in `connection-handler.ts`.
 - `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: the four attachment capability strings.
 - `packages/coding-agent/src/modes/rpc/rpc-types.ts`: public re-exports; preserve existing names and field shapes in the extracted definitions.
 
-## 2026-10-22 - Attachment refusals follow wire contract v1.1; unattended opens count as attachments (senpi#3795, senpi#3814)
+## 2026-10-22 - Attachment refusals follow wire contract v1.1; unattended opens count as attachments; unload excludes every caller hold (senpi#3795, senpi#3814)
 
 ### What changed
 
-- `packages/coding-agent/src/modes/rpc/session-attachment-commands.ts`: `attach_session` and `reclaim_session` refuse a draining or shutting-down host before admission with the v1 code `session_busy_lifecycle` and `errorData { reason: "host_draining" }`, leaving the entry unchanged. `session_not_attached` (a caller with no connection on attach and reclaim; no hold on release_attachment) is the one code wire contract v1.1 adds.
+- `packages/coding-agent/src/modes/rpc/session-attachment-commands.ts`: refusals follow wire contract v1.1 (lead ruling 2026-10-22, senpi#3795). `attach_session` and `reclaim_session` refuse a draining or shutting-down host before admission with the v1 code `session_busy_lifecycle` and `errorData { reason: "host_draining" }`, leaving the entry unchanged. The one code v1.1 adds, `session_not_attached`, carries `errorData { reason }`: `"no_connection"` from `attach_session` and `reclaim_session` without a caller connection, `"not_attached"` from `release_attachment` when the caller holds no attachment on the session.
 - `packages/coding-agent/src/modes/rpc/session-attachment-gate.ts`, `packages/coding-agent/src/modes/rpc/session-router-context.ts`, `packages/coding-agent/src/modes/rpc/session-router-open.ts`, `packages/coding-agent/src/modes/rpc/session-router-attachments.ts`: per design v7.1, an `open_session { attended: false }` hold is an attachment like any other open, so the gate admits its connection. `resume_session` stays outside the read allow-list and requires an attachment.
-- `packages/coding-agent/src/modes/rpc/rpc-client.ts`, `packages/coding-agent/src/modes/rpc/host-session-ref.ts`, `packages/coding-agent/src/modes/rpc/host-session-runner.ts`: `senpi host session` reopens a parked session unattended and then `attach_session`s before prompt, steer, abort, model or unload when the host advertises `attach_session`; harmless today and correct if unattended holds stop granting writes.
+- `packages/coding-agent/src/modes/rpc/session-router-routing.ts`: `unload_session` excludes every hold the caller owns when it counts other attached clients, exactly as `release_session` does; it used to subtract the caller as one hold.
 
 ### Why
 
-- The wire contract is shared with downstream clients. A drain is a transient lifecycle refusal, so it reuses the v1 lifecycle code with a typed reason instead of a code clients do not know, and an attach during a drain would only add holds the drain must clear.
+- The wire contract is shared with downstream clients. A drain is a transient lifecycle refusal, so it reuses the v1 lifecycle code with a typed reason instead of a code clients do not know, and an attach during a drain would only add holds the drain must clear. A typed reason lets a client tell a missing connection from a missing hold without parsing text.
 - Design v7.1 counts every open as an attachment; a stricter unattended rule needs its own design change.
+- A connection may hold one session more than once (an attach beside an open). Counting it as one let `senpi host session unload` on a parked session refuse itself as "1 other client(s) attached".
 
 ### Why an extension could not handle it
 
-- Wire refusals, drain admission, connection holds and the attach gate are host routing state.
+- Wire refusals, drain admission, connection holds, the attach gate and the unload admission are host routing state.
 
 ### Expected merge conflict zones
 
-- The drain fence at the top of `attachSession` / `reclaimSession`, the gate predicate, and the CLI's parked reopen.
+- The drain fence and reason payloads in `attachSession` / `releaseAttachment` / `reclaimSession`, the gate predicate, and the shared `otherAttachments` helper used by `release_session` and `unload_session`.
 
 ## 2026-10-21 - Attachment replies follow wire contract v1 and reclaim emits no close reply (senpi#3795)
 

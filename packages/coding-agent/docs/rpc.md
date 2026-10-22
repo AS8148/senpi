@@ -1640,7 +1640,7 @@ The answer is always `success: true` with `data.outcome`: `unloaded` (with `sess
 | `work_pending` | bash, an admitted delivery not yet written, another request for the session | `interrupt: true` |
 | `extension_work` | extension-published work: background terminal jobs, non-persistent monitors, detached eval cells, a pending question; `detail` names the sources | `force: true` (that work is stopped; only persistent monitors come back on the reopen) |
 | `children_live` | child tasks still working, or worker sessions here whose `context` names this session as parent or root | `children: "detach"` leaves them running |
-| `attached` | other clients hold the session (the caller's own attachment does not count) | `force: true`; they receive the park |
+| `attached` | other clients hold the session (none of the caller's own holds count) | `force: true`; they receive the park |
 | `host_draining`, `session_closing`, `unsupported` | the host is draining, the session is already closing, or it has no file / a worker isolate owns it | none |
 
 With `effectId` the unload is a ledger effect (`kind: "unload"`): `done` with `disposition: "unloaded"`, or `failed` with `outcome.kind: "refused"` and the same reason; a same-id retry replays. Capability: `unload_session`. CLI: `senpi host session unload <ref> [--interrupt] [--force] [--clear-queue] [--children detach]` (exit 3 on a refusal).
@@ -2283,7 +2283,7 @@ only to the live session selected by both routing and durable identity. A vanish
 returns `unknown_session`; a recycled routing id or mismatching host instance returns
 `session_identity_mismatch`. A draining or shutting-down host refuses before admission with
 `session_busy_lifecycle` and `errorData: { reason: "host_draining" }`; a caller without a connection
-receives `session_not_attached`. It never creates or resumes a runtime, and never applies a permission preset,
+receives `session_not_attached` with `errorData: { reason: "no_connection" }`. It never creates or resumes a runtime, and never applies a permission preset,
 prompt surface, or browser engine. Each success adds one attachment, connects the event stream, and publishes
 `session_status` with `lastChange.cause: "attach"`. Intentional profile-changing attaches through
 `open_session { sessionPath, permissionPreset, ... }` retain their existing behavior.
@@ -2297,7 +2297,8 @@ for settlement. The turn survives even when its original owner disconnected befo
 attacher released. The released hold immediately loses mutation and close authorization.
 A retained session remains live at zero attachments. `close_session` remains the destructive release.
 An unattached caller cannot release another connection's hold: a connection with no hold on that
-session receives `session_not_attached`.
+session receives `session_not_attached` with `errorData: { reason: "not_attached" }`. These
+attachment-command refusals carry `reason` only; only the gate refusal below adds `action`.
 
 ### Atomic recovery (`reclaim_session`)
 
@@ -2319,8 +2320,9 @@ An entry that is both busy and identity-mismatched therefore returns `session_bu
 Refusals change nothing: `session_busy_lifecycle` with `errorData.reason: "host_draining"` while
 draining or shutting down, `unknown_session` for an
 unheld path, `session_identity_mismatch` for missing or different identities,
-`session_busy_lifecycle` for opening/closing targets, and `attached_elsewhere`
-with `errorData.attachments` counting other holds. An attach that wins the synchronous admission race
+`session_busy_lifecycle` for opening/closing targets, `attached_elsewhere`
+with `errorData.attachments` counting other holds, and `session_not_attached` with
+`errorData.reason: "no_connection"` for a caller without a connection. An attach that wins the synchronous admission race
 causes `attached_elsewhere`; an attach after the claim cannot join the closing entry. Reclaim never opens
 or resumes an absent path.
 
@@ -2350,8 +2352,7 @@ message injection, settings/account changes, and extension UI responses/progress
 `resume_session` is gated too: it releases the session's engine holds and starts the held turns.
 An `open_session { "attended": false }` is an attachment like any other open: it admits the
 connection to gated commands until its own `close_session` or disconnect gives the hold back.
-`senpi host session` still sends `attach_session` after reopening a parked session for prompt, steer,
-abort, model, or unload.
+`senpi host session` therefore needs no extra `attach_session` after reopening a parked session.
 
 This release **serves** each new violation and writes exactly one stderr line per violation:
 

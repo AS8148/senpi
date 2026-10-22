@@ -11,7 +11,7 @@ import type { HostTarget } from "./host-runner.ts";
 import { detachBeforeClose } from "./host-session-detach.ts";
 import { mapError } from "./host-session-errors.ts";
 import { type HostSessionOpen, openHostSession } from "./host-session-open.ts";
-import { reopenSessionRef, resolveSessionRef, type SessionRef } from "./host-session-ref.ts";
+import { resolveSessionRef, type SessionRef } from "./host-session-ref.ts";
 import { type HostSessionWait, waitForHostSession } from "./host-session-wait.ts";
 import {
 	isTransportGoneError,
@@ -117,7 +117,18 @@ async function runHostSessionRequestOnce(request: HostSessionRequest, stoppingTi
 				const detail = { reason: "ambiguous_session", ref: request.ref, candidates: found.candidates, socket };
 				return refusal("refuse", undefined, detail);
 			}
-			({ sessionId, durableSessionId } = await reopenSessionRef(client, found, request.action));
+			// A parked session resumes from its transcript and stays retained past this short-lived client.
+			const reopen =
+				found.kind === "parked"
+					? {
+							sessionPath: found.sessionPath,
+							cwd: found.cwd,
+							retain_on_disconnect: true,
+							attended: false as const,
+						}
+					: { sessionPath: found.row.sessionPath, cwd: found.row.cwd };
+			durableSessionId = found.kind === "parked" ? found.durableSessionId : found.row.durableSessionId;
+			sessionId = (await client.openSession(reopen)).sessionId;
 		}
 		switch (request.action) {
 			case "open":

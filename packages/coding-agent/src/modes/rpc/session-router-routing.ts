@@ -63,6 +63,12 @@ export function handle(host: RouterContext, command: RpcCommand): Promise<RpcRes
 	});
 }
 
+/** Attachments held by connections other than the caller: every one of the caller's own holds is excluded. */
+function otherAttachments(host: RouterContext, caller: string | undefined, sessionId: string): number {
+	const own = caller === undefined ? 0 : (host.sessionsByConnection.get(caller)?.get(sessionId) ?? 0);
+	return Math.max(0, (host.registry.peek(sessionId)?.attachments ?? 0) - own);
+}
+
 export async function dispatch(
 	host: RouterContext,
 	command: Exclude<RpcCommand, { type: "warm" }>,
@@ -126,11 +132,7 @@ export async function dispatch(
 			{
 				draining: () => host.draining,
 				hostInstance: host.defaults.hostContext?.host_instance,
-				otherAttachments: (sessionId) => {
-					const owner = host.writer.currentConnection();
-					const own = owner === undefined ? 0 : (host.sessionsByConnection.get(owner)?.get(sessionId) ?? 0);
-					return Math.max(0, (host.registry.peek(sessionId)?.attachments ?? 0) - own);
-				},
+				otherAttachments: (sessionId) => otherAttachments(host, host.writer.currentConnection(), sessionId),
 				lookup: (sessionId) => host.registry.getForCommand(sessionId, "release_session"),
 				code: (cause) => code(cause),
 				// The release is itself one of the session's in-flight requests.
@@ -153,11 +155,7 @@ export async function dispatch(
 				otherRequests: (sessionId) => Math.max(0, (host.activeRequests.get(sessionId) ?? 1) - 1),
 				otherRequestsSettled: (sessionId) => otherRequestsSettled(host, sessionId),
 				pendingPrompts: (sessionId) => host.bindings.get(sessionId)?.pendingPrompts?.() ?? [],
-				otherAttachments: (sessionId) => {
-					const attachments = Math.max(0, host.registry.peek(sessionId)?.attachments ?? 0);
-					const own = caller !== undefined && host.sessionsByConnection.get(caller)?.has(sessionId) === true;
-					return own ? Math.max(0, attachments - 1) : attachments;
-				},
+				otherAttachments: (sessionId) => otherAttachments(host, caller, sessionId),
 				openChildSessions: (durableSessionId) =>
 					host.registry
 						.list()

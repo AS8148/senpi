@@ -7,7 +7,9 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { RpcClient } from "../../../../packages/coding-agent/src/modes/rpc/rpc-client.ts";
-import { guardRealAuth, installCleanupHooks, makeSandbox, spawnCli, track } from "./lib/common.mjs";
+import { guardRealAuth, installCleanupHooks, makeSandbox, runCli, spawnCli, track } from "./lib/common.mjs";
+import { startFakeModelServer } from "./lib/fake-model-server.mjs";
+import { hermeticEnv, writeMockModelsJson } from "./lib/mock-loop-support.mjs";
 
 // Two command-line client processes use the shipped transport against one real CLI host.
 if (process.argv[2] === "--client") {
@@ -41,10 +43,14 @@ if (process.argv[2] === "--client") {
 	const clients = [];
 	let stderr = "";
 	const socket = join(box.dir, "host.sock");
+	// A local fake model writes the transcript a parked session resumes from; a short idle window parks it.
+	const model = await startFakeModelServer({ turns: [{ text: "PARK-QA-OK" }] });
+	writeMockModelsJson(box.agentDir, model, "openai-completions");
+	const env = { ...hermeticEnv(box.env), SENPI_RPC_SESSION_IDLE_EVICTION_MS: "2000" };
 	const host = spawnCli(
 		["--mode", "rpc", "--multi-session", "--listen", socket, "--session-runtime", "in-process",
-			"--no-extensions", "--no-skills", "--no-context-files"],
-		{ env: box.env, cwd: box.cwd },
+			"--provider", "mock", "--model", "mock-model", "--no-extensions", "--no-skills", "--no-context-files"],
+		{ env, cwd: box.cwd },
 	);
 	const hostExit = once(host, "close");
 	const ready = new Promise((resolve, reject) => {
@@ -60,12 +66,13 @@ if (process.argv[2] === "--client") {
 	});
 	async function connect(name) {
 		const child = track(fork(fileURLToPath(import.meta.url), ["--client", socket], {
-			cwd: box.cwd, env: box.env, stdio: ["ignore", "pipe", "pipe", "ipc"],
+			cwd: box.cwd, env, stdio: ["ignore", "pipe", "pipe", "ipc"],
 			execArgv: ["--import", import.meta.resolve("tsx")],
 		}));
 		const exit = once(child, "close");
 		const pending = new Map();
 		const records = [];
+		const recordWaiters = new Set();
 		let serial = 0;
 		let readyResolve;
 		const started = new Promise((resolve) => { readyResolve = resolve; });
@@ -76,6 +83,12 @@ if (process.argv[2] === "--client") {
 			if (message.kind === "wire") {
 				records.push(message.record);
 				transcript.push({ client: name, direction: "receive", record: message.record });
+				for (const waiter of recordWaiters) {
+					if (!waiter.predicate(message.record)) continue;
+					recordWaiters.delete(waiter);
+					clearTimeout(waiter.timer);
+					waiter.resolve(message.record);
+				}
 			}
 			const waiter = pending.get(message.id);
 			if (!waiter) return;
@@ -92,6 +105,15 @@ if (process.argv[2] === "--client") {
 		}
 		const client = {
 			records,
+			waitFor(predicate, what) {
+				const seen = records.find(predicate);
+				if (seen) return Promise.resolve(seen);
+				return new Promise((resolve, reject) => {
+					const waiter = { predicate, resolve };
+					waiter.timer = setTimeout(() => { recordWaiters.delete(waiter); reject(new Error(`${name} deadline: ${what}`)); }, 60_000);
+					recordWaiters.add(waiter);
+				});
+			},
 			send(command) {
 				transcript.push({ client: name, direction: "send", command });
 				const id = ++serial;
@@ -145,22 +167,43 @@ if (process.argv[2] === "--client") {
 		assert.deepEqual((await b.send({ type: "reclaim_session", ...refs[1] })).data,
 			{ reclaimed: true, sessionId: refs[1].sessionId });
 		assert.deepEqual((await b.send({ type: "list_sessions" })).data.sessions, []);
+
+		// Parked unload through the real CLI: its reopen is its only hold, so nothing else counts as attached.
+		const parkOpen = await a.send({ type: "open_session", cwd: box.cwd, retain_on_disconnect: true });
+		assert.equal(parkOpen.success, true);
+		const parkId = parkOpen.data.sessionId;
+		const parkPath = parkOpen.data.state.sessionFile;
+		const settled = a.waitFor((record) => record.type === "agent_settled" && record.sessionId === parkId, "agent_settled");
+		assert.equal((await a.send({ type: "prompt", sessionId: parkId, message: "park me" })).success, true);
+		await settled;
+		assert.equal((await b.send({ type: "subscribe_sessions" })).success, true);
+		const parked = b.waitFor((record) => record.type === "session_status" && record.sessionId === parkId &&
+			record.lastChange?.cause === "park", "session parked");
+		assert.deepEqual((await a.send({ type: "release_attachment", sessionId: parkId })).data, { deferred: false });
+		await parked;
+		const unload = await runCli(["host", "session", "unload", parkPath, "--socket", socket, "--json"], { env, cwd: box.cwd });
+		writeFileSync(join(out, "cli-unload.json"), `${JSON.stringify({ code: unload.code, stdout: unload.stdout, stderr: unload.stderr }, null, 2)}\n`);
+		assert.equal(unload.code, 0, unload.stdout + unload.stderr);
+		const unloadPayload = JSON.parse(unload.stdout);
+		assert.equal(unloadPayload.outcome, "unloaded");
 		guard.assertUnchanged();
 		writeFileSync(join(out, "summary.json"), `${JSON.stringify({
-			pass: true, clients: 2, hosts: 1, attach: 2, release: 2, reclaim: 2,
-			unrelatedSessionPreserved: true, strayCloseResponses: 0, authUnchanged: true,
+			pass: true, clients: 2, hosts: 1, attach: 2, release: 3, reclaim: 2,
+			unrelatedSessionPreserved: true, strayCloseResponses: 0, parkedCliUnload: unloadPayload.outcome,
+			cliUnloadExit: unload.code, authUnchanged: true,
 		}, null, 2)}\n`);
-		console.log("PASS two real CLI client processes: attach=2 release=2 reclaim=2; B remains open/attached; stray close/end=0");
+		console.log("PASS two real CLI client processes: attach=2 release=3 reclaim=2; B remains open/attached; stray close/end=0; CLI parked unload exit=0 outcome=unloaded");
 	} finally {
 		for (const client of clients) await client.stop();
 		host.kill("SIGTERM");
 		const timer = setTimeout(() => host.kill("SIGKILL"), 10_000);
 		try { await hostExit; } finally { clearTimeout(timer); }
+		await model.stop();
 		box.cleanup();
 		guard.assertUnchanged();
 		writeFileSync(join(out, "transcript.jsonl"), `${transcript.map((record) => JSON.stringify(record)).join("\n")}\n`);
 		writeFileSync(join(out, "host.stderr.log"), stderr);
-		for (const name of ["transcript.jsonl", "host.stderr.log", "summary.json"]) {
+		for (const name of ["transcript.jsonl", "host.stderr.log", "cli-unload.json", "summary.json"]) {
 			try {
 				const hash = createHash("sha256").update(readFileSync(join(out, name))).digest("hex");
 				console.log(`${hash}  ${name}`);
