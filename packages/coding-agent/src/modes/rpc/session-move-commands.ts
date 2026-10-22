@@ -7,6 +7,7 @@ import { isAbsolute, join } from "node:path";
 import { getDefaultSessionDir, loadEntriesFromFile } from "../../core/session-manager.ts";
 import { parseMoveId } from "../../core/session-move/bundle.ts";
 import { exportSessionForMove } from "../../core/session-move/export.ts";
+import { outgoingStateDir } from "../../core/session-move/extension-state.ts";
 import { finishMove } from "../../core/session-move/finish.ts";
 import { answerMoveStatus, importMovedSession } from "../../core/session-move/import.ts";
 import { MoveLedger, type MoveRecord, type MoveStatus, parseMoveStatus } from "../../core/session-move/move-ledger.ts";
@@ -154,6 +155,7 @@ async function run(
 				target: parsed.target,
 				droppedUserMessages: parsed.dropped,
 				bundleDir,
+				extensionStateDir: outgoingStateDir(sessionFile, parsed.moveId),
 				guard: () => {
 					refuseOpenHere(
 						port,
