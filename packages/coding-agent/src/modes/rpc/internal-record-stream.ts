@@ -101,9 +101,18 @@ class InternalRecordStream extends Duplex {
 	override _write(chunk: Buffer, _encoding: BufferEncoding, callback: (error?: Error | null) => void): void {
 		let offset = 0;
 		const next = (error?: Error | null): void => {
-			if (error) return callback(error);
-			if (this.destroyed) return callback(new Error("internal_hop_lost"));
-			if (offset === chunk.length) return callback();
+			if (error) {
+				callback(error);
+				return;
+			}
+			if (this.destroyed) {
+				callback(new Error("internal_hop_lost"));
+				return;
+			}
+			if (offset === chunk.length) {
+				callback();
+				return;
+			}
 			try {
 				const end = Math.min(chunk.length, offset + INTERNAL_RECORD_MAX);
 				const record = this.sender.seal(chunk.subarray(offset, end));

@@ -5,6 +5,14 @@ import { createServer, type Socket } from "node:net";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
+function killIfAlive(pid: number): void {
+	try {
+		process.kill(pid, "SIGKILL");
+	} catch (cause) {
+		if (!(cause instanceof Error && "code" in cause && cause.code === "ESRCH")) throw cause;
+	}
+}
+
 // senpi#3795: the recorded supervisor is separated from the engine by a spawning wrapper.
 describe.skipIf(process.platform === "win32")("wrapped internal host lifetime", () => {
 	it.each(["node", "bun"])(
@@ -59,13 +67,7 @@ describe.skipIf(process.platform === "win32")("wrapped internal host lifetime", 
 					child.kill("SIGKILL");
 					await exited;
 				}
-				for (const pid of descendant ? [descendant.pid, descendant.ppid] : []) {
-					try {
-						process.kill(pid, "SIGKILL");
-					} catch (cause) {
-						if (!(cause instanceof Error && "code" in cause && cause.code === "ESRCH")) throw cause;
-					}
-				}
+				for (const pid of descendant ? [descendant.pid, descendant.ppid] : []) killIfAlive(pid);
 				control?.destroy();
 				await new Promise<void>((resolve) => server.close(() => resolve()));
 				rmSync(root, { recursive: true, force: true });

@@ -12,6 +12,27 @@ const serverNonce = Buffer.alloc(32, 13);
 const salt = Buffer.concat([clientNonce, serverNonce]);
 const derived = Buffer.from(hkdfSync("sha256", key, salt, "senpi-rpc-internal c2s", 32));
 
+// One end of an in-memory wire: reads from `readable`, writes to `writable`, and keeps both sides' backpressure.
+function joined(readable: PassThrough, writable: PassThrough): Duplex {
+	const duplex = new Duplex({
+		read() {
+			readable.resume();
+		},
+		write(chunk: Buffer, _encoding, callback) {
+			if (writable.write(chunk)) callback();
+			else writable.once("drain", () => callback());
+		},
+		final(callback) {
+			writable.end(callback);
+		},
+	});
+	readable.on("data", (chunk: Buffer) => {
+		if (!duplex.push(chunk)) readable.pause();
+	});
+	readable.once("end", () => duplex.push(null));
+	return duplex;
+}
+
 // senpi#3795: the hop is an authenticated byte stream, not one record per JSONL line.
 describe("internal sealed records", () => {
 	it("matches the independent AES-GCM wire contract", () => {
@@ -59,20 +80,8 @@ describe("internal sealed records", () => {
 	it("preserves a 131 KiB JSONL line across records and backpressure", async () => {
 		const a = new PassThrough({ highWaterMark: 32 });
 		const b = new PassThrough({ highWaterMark: 32 });
-		const client = createInternalRecordStream(
-			Duplex.from({ readable: b, writable: a }),
-			key,
-			clientNonce,
-			serverNonce,
-			"client",
-		);
-		const host = createInternalRecordStream(
-			Duplex.from({ readable: a, writable: b }),
-			key,
-			clientNonce,
-			serverNonce,
-			"server",
-		);
+		const client = createInternalRecordStream(joined(b, a), key, clientNonce, serverNonce, "client");
+		const host = createInternalRecordStream(joined(a, b), key, clientNonce, serverNonce, "server");
 		const line = JSON.stringify({ text: "x".repeat(131 * 1024) });
 		const received = new Promise<string>((resolve) => attachJsonlLineReader(host, resolve));
 		try {
@@ -90,13 +99,7 @@ describe("internal sealed records", () => {
 	it("handles fragmented headers and coalesced records", async () => {
 		const input = new PassThrough();
 		const output = new PassThrough();
-		const stream = createInternalRecordStream(
-			Duplex.from({ readable: input, writable: output }),
-			key,
-			clientNonce,
-			serverNonce,
-			"server",
-		);
+		const stream = createInternalRecordStream(joined(input, output), key, clientNonce, serverNonce, "server");
 		const sender = new InternalRecordCipher(derived, "c2s");
 		const wire = Buffer.concat([sender.seal(Buffer.from("one")), sender.seal(Buffer.from("two"))]);
 		const received: Buffer[] = [];
@@ -113,13 +116,7 @@ describe("internal sealed records", () => {
 	it.each(["header", "body", "length"] as const)("closes on incomplete or invalid %s at EOF", async (part) => {
 		const input = new PassThrough();
 		const output = new PassThrough();
-		const stream = createInternalRecordStream(
-			Duplex.from({ readable: input, writable: output }),
-			key,
-			clientNonce,
-			serverNonce,
-			"server",
-		);
+		const stream = createInternalRecordStream(joined(input, output), key, clientNonce, serverNonce, "server");
 		const errors = once(stream, "error");
 		const record = new InternalRecordCipher(derived, "c2s").seal(Buffer.from("never released"));
 		let released = 0;

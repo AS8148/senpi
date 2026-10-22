@@ -1,4 +1,6 @@
-import { closeSync, openSync, readSync } from "node:fs";
+// Calls go through the module object: Bun does not re-bind named built-in imports after the first link,
+// so an OS failure injected with syncBuiltinESMExports reaches this read path only by property access.
+import fs from "node:fs";
 
 const INTERNAL_KEY_STDIN_ENV = "SENPI_RPC_INTERNAL_KEY_STDIN";
 export interface InternalHostBootstrap {
@@ -15,11 +17,12 @@ function bootstrap(): InternalHostBootstrap | undefined {
 	const pause = new Int32Array(new SharedArrayBuffer(4));
 	let offset = 0;
 	let lifetimeFd: number | undefined;
+	let failure: unknown;
 	try {
 		while (offset < key.length) {
 			if (Date.now() >= deadline) throw new Error("internal_key_unavailable");
 			try {
-				const n = readSync(0, key, offset, key.length - offset, null);
+				const n = fs.readSync(0, key, offset, key.length - offset, null);
 				if (n === 0) throw new Error("internal_key_unavailable");
 				offset += n;
 			} catch (cause) {
@@ -32,16 +35,19 @@ function bootstrap(): InternalHostBootstrap | undefined {
 		}
 		try {
 			// close-on-exec: descendants inherit only restored /dev/null, never this lifetime fd.
-			lifetimeFd = openSync("/dev/fd/0", "r");
+			lifetimeFd = fs.openSync("/dev/fd/0", "r");
 		} catch {
 			// Linux socketpair stdin returns ENXIO. Every reopen failure has the same safe fallback.
 			process.stderr.write("senpi rpc host: stdin lifetime reopen unavailable; using supervisor identity poll\n");
 		}
-	} finally {
-		closeSync(0);
-		const restored = openSync("/dev/null", "r");
-		if (restored !== 0) throw new Error("internal_key_unavailable: cannot restore stdin");
+	} catch (cause) {
+		failure = cause;
 	}
+	// Runs on success and failure alike: descendants must inherit /dev/null, never the key pipe.
+	fs.closeSync(0);
+	const restored = fs.openSync("/dev/null", "r");
+	if (restored !== 0) throw new Error("internal_key_unavailable: cannot restore stdin");
+	if (failure !== undefined) throw failure;
 	return { key, ...(lifetimeFd === undefined ? {} : { lifetimeFd }) };
 }
 
