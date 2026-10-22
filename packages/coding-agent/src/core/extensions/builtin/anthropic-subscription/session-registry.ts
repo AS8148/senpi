@@ -233,6 +233,7 @@ export class AnthropicSubscriptionSessionRegistry {
 			pendingForkReason: null,
 			lastUsedAt: now,
 		};
+		// oxlint-disable-next-line eslint/prefer-const -- a callback in the initializer reads it; const would throw in the TDZ if the callback runs synchronously, so the rewrite is reviewed separately
 		let entry!: AnthropicSubscriptionSessionEntry;
 		entry = new Proxy(target, {
 			set: (current, property, value) => {

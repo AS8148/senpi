@@ -17,6 +17,24 @@
 
 - LOW: one export line in each barrel's host block.
 
+## 2026-10-22 - Replace Biome with oxlint and oxfmt (senpi#3976)
+
+### What changed
+
+- `packages/coding-agent/src/experimental/services/connection.ts`: `oxlint-disable-next-line eslint/prefer-const` comments on the two `let binding!` declarations a callback in their initializer reads.
+
+### Why
+
+- The repository moved lint and format from Biome to oxlint 1.89.0 and oxfmt 0.74.0 (senpi#3976). oxlint reports this site where Biome did not; the change keeps behaviour identical.
+
+### Why an extension could not handle it
+
+- Lint configuration and source comments are read by the linter before any agent code runs.
+
+### Expected merge conflict zones
+
+- The two `binding` declarations in `connection.ts`.
+
 ## 2026-10-18 - A session is found by the id its file name carries (oh-my-openagent#7471)
 
 ### What changed

@@ -16,6 +16,24 @@ The picker's search text is built in the host component; extensions cannot exten
 
 - LOW: `getSessionSearchText` and the `session-manager.ts` import line.
 
+## 2026-10-22 - Replace Biome with oxlint and oxfmt (senpi#3976)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: an `oxlint-disable-next-line eslint/prefer-const` comment on the settings `selector` declaration that its own callbacks read.
+
+### Why
+
+- The repository moved lint and format from Biome to oxlint 1.89.0 and oxfmt 0.74.0 (senpi#3976). oxlint reports this site where Biome did not; the change keeps behaviour identical.
+
+### Why an extension could not handle it
+
+- Lint configuration and source comments are read by the linter before any agent code runs.
+
+### Expected merge conflict zones
+
+- The settings selector block in `interactive-mode.ts`.
+
 ## 2026-10-19 - Suggest a fresh session with a handoff when a large session's cache has expired (senpi#3230)
 
 ### What changed

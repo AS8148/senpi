@@ -1,5 +1,24 @@
 # changes — senpi-monorepo root
 
+## 2026-10-22 - Replace Biome with oxlint and oxfmt (senpi#3976)
+
+### What changed
+
+- `biome.json`: removed. `.oxlintrc.json` and `.oxfmtrc.json` take over, scoped to the same 6,393 files through negated ignore patterns; the tab/3/120 layout carries over through `oxfmt --migrate=biome`.
+- `package.json`: `check` runs `npm run lint` (`oxlint --type-aware --deny-warnings`), `npm run fmt:check` (`oxfmt --check`) and `npm run lint:ratchet` in place of `biome check --error-on-warnings .`; `check:fix` runs `npm run fmt` and `oxlint --fix` first. `@biomejs/biome` is replaced by exact pins of `oxlint` 1.89.0, `oxlint-tsgolint` 7.0.2004, `oxfmt` 0.74.0 and `oxc-parser` 0.148.0.
+
+### Why
+
+- Sisyphus Labs moved every repository to the oxc toolchain (approved 2026-10-20). The per-file ratchet stops new `any`, `@ts-` comments and non-null assertions while the existing ones are rewritten later.
+
+### Why an extension could not handle it
+
+- The lint and format toolchain runs before any agent code exists.
+
+### Expected merge conflict zones
+
+- The `check` script chain and root `devDependencies` in `package.json`. Upstream pi-mono still uses Biome: on a sync, keep this repository's oxc scripts and pins and do not restore `biome.json`.
+
 ## 2026-10-17 - Pin TypeScript type roots to the repository (senpi#3482)
 
 ### What changed

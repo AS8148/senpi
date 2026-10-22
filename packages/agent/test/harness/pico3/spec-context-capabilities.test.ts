@@ -150,6 +150,7 @@ test("ordinary task scope covers its owned subtree but rejects every foreign dir
 test("a runtime captured by one phase expires when that phase method returns, not only when the whole phase loop ends", async () => {
 	const phaseGate = new Gate();
 	let captured: Runtime | undefined;
+	// oxlint-disable-next-line eslint/prefer-const -- a callback in the initializer reads it; const would throw in the TDZ if the callback runs synchronously, so the rewrite is reviewed separately
 	let state!: Namespace<{ latePhaseWritten: boolean }>;
 	const kind = defineTask<null, { phase: "later" }, null, null, null>({
 		name: "spec.phase.capability-lifetime",
