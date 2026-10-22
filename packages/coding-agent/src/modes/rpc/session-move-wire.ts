@@ -1,4 +1,4 @@
-import type { MoveAnswer, MoveStatus } from "../../core/session-move/move-ledger.ts";
+import type { MoveAnswer } from "../../core/session-move/move-ledger.ts";
 
 /** Capability: the host answers `move_session` (senpi#3676). */
 export const MOVE_SESSION_CAPABILITY = "move_session";
@@ -30,11 +30,10 @@ export type RpcMoveSessionCommand = { id?: string; type: "move_session" } & (
 );
 
 /** The receiver's record of a move as a client sees it; `expires_at` while it waits for the bundle. */
-export type RpcMoveRecord = MoveStatus | { state: "ready"; expires_at: string };
+export type RpcMoveRecord = MoveAnswer | { state: "ready"; expires_at: string };
 
 export type RpcMoveSessionData =
 	| RpcMoveRecord
-	| { state: "accepted"; revoked: true }
 	| { move_id: string; session_id: string; bundle_dir: string; files: number }
 	| { session_id: string; session_path: string }
 	| { ownership: "writable" | "moving" | "moved" };

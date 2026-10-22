@@ -28,12 +28,12 @@ export type MoveStatus =
 
 /**
  * A status answer as the sender hears it. `revoked` marks an accepted import the receiver later sealed with `revoke`:
- * the ledger keeps `accepted`, but the receiver's copy is read-only, so the sender must take the session back.
+ * the record stays `accepted` (final), but the receiver's copy is read-only, so the sender must take the session back.
  */
 export type MoveAnswer = MoveStatus | { readonly state: "accepted"; readonly revoked: true };
 
 /** `ready`: this device told the sender it can take the move; no bundle has been verified yet. */
-export type MoveRecord = MoveStatus | { readonly state: "ready"; readonly expiresAt: string };
+export type MoveRecord = MoveAnswer | { readonly state: "ready"; readonly expiresAt: string };
 
 /** How long a ready move waits for its bundle before it is declined as expired. */
 export const READY_TTL_MS = 10 * 60_000;
@@ -70,15 +70,16 @@ const FAIL_REASONS: readonly FailReason[] = ["bundle_invalid", "import_failed"];
 /** A receiver's answer as it arrives back at the sender; a `ready` record is not an answer. */
 export function parseMoveStatus(value: unknown): MoveAnswer | undefined {
 	const record = parseRecord(value);
-	if (record === undefined || record.state === "ready") return undefined;
-	const revoked = record.state === "accepted" && (value as { readonly revoked?: unknown }).revoked === true;
-	return revoked ? { state: "accepted", revoked: true } : record;
+	return record?.state === "ready" ? undefined : record;
 }
 
 function parseRecord(value: unknown): MoveRecord | undefined {
 	if (typeof value !== "object" || value === null) return undefined;
 	const { state, reason } = value as { readonly state?: unknown; readonly reason?: unknown };
-	if (state === "receiving" || state === "accepted") return { state };
+	if (state === "accepted" && (value as { readonly revoked?: unknown }).revoked === true)
+		return { state, revoked: true };
+	if (state === "receiving") return { state };
+	if (state === "accepted") return { state };
 	const { expiresAt } = value as { readonly expiresAt?: unknown };
 	if (state === "ready" && typeof expiresAt === "string" && !Number.isNaN(Date.parse(expiresAt)))
 		return { state, expiresAt };
@@ -140,11 +141,16 @@ export class MoveLedger {
 		return this.locked(moveId, () => this.current(moveId));
 	}
 
-	/** The signed answer a sender gets; `movedIn` is whether the session file here already records the move. */
-	answerStatus(moveId: MoveId, here: { readonly movedIn: boolean }): Promise<MoveStatus> {
-		return this.locked(moveId, async (): Promise<MoveStatus> => {
+	/**
+	 * The signed answer a sender gets. `movedIn` is whether the session file here records the move, `revoked` whether it
+	 * records its revoke too (a revoke whose record write was lost still answers revoked).
+	 */
+	answerStatus(moveId: MoveId, here: { readonly movedIn: boolean; readonly revoked?: boolean }): Promise<MoveAnswer> {
+		return this.locked(moveId, async (): Promise<MoveAnswer> => {
 			const record = await this.current(moveId);
-			if (here.movedIn || record?.state === "accepted") return { state: "accepted" } as const;
+			if (here.revoked === true) return { state: "accepted", revoked: true } as const;
+			if (record?.state === "accepted") return record;
+			if (here.movedIn) return { state: "accepted" } as const;
 			if (record?.state === "ready") return { state: "receiving" } as const;
 			if (record !== undefined) return record;
 			const declined = { state: "declined", reason: "no_record" } as const;
@@ -171,8 +177,23 @@ export class MoveLedger {
 				throw new MoveFencedError(moveId, record);
 			}
 			const result = await rename();
-			await this.write(moveId, { state: "accepted" });
+			// An accepted record is final; a repeated import must not drop a revoke recorded on it.
+			if (record?.state !== "accepted") await this.write(moveId, { state: "accepted" });
 			return result;
+		});
+	}
+
+	/**
+	 * Records the revoke of this move's import on its accepted record (`revoked: true`; the state stays `accepted`). The
+	 * import committed, so a record lost or left `receiving` by a crash becomes accepted and revoked; a repeat changes
+	 * nothing, and any other record is left alone.
+	 */
+	markRevoked(moveId: MoveId): Promise<void> {
+		return this.locked(moveId, async () => {
+			const record = await this.read(moveId);
+			if (record !== undefined && record.state !== "receiving" && record.state !== "accepted") return;
+			if (record?.state === "accepted" && "revoked" in record) return;
+			await this.write(moveId, { state: "accepted", revoked: true });
 		});
 	}
 

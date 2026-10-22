@@ -8,7 +8,7 @@ import {
 } from "../repository-identity.ts";
 import { getDefaultSessionDir, loadEntriesFromFile, SessionManager } from "../session-manager.ts";
 import { rebindSessionFile } from "../session-rebind.ts";
-import { encodedSessionId } from "../session-sidecar-store.ts";
+import { encodedSessionId, serializeByKey } from "../session-sidecar-store.ts";
 import {
 	EXTENSION_STATE_PREFIX,
 	MoveBundleInvalidError,
@@ -22,6 +22,7 @@ import { type MoveAnswer, MoveFencedError, type MoveLedger } from "./move-ledger
 import { headerSessionId, type MoveId, SESSION_MOVED, SESSION_MOVED_IN, sessionOwnership } from "./ownership.ts";
 import { requeueInput } from "./requeue.ts";
 import { REVOKED } from "./revoke.ts";
+import { moveLockKey } from "./session-lock.ts";
 
 export interface ImportMovedSessionOptions {
 	readonly bundleDir: string;
@@ -77,18 +78,33 @@ function importOutcome(file: string, moveId: MoveId): "absent" | "moved_in" | "r
 	return outcome;
 }
 
+export class StatusPathMismatchError extends Error {
+	readonly code = "move_mismatch";
+
+	constructor(moveId: MoveId, sessionFile: string) {
+		super(
+			`${sessionFile} is not the copy this device imported for move ${moveId}; nothing was answered. Pass the session_path import returned for this move, or leave sessionPath out to answer from this device's record.`,
+		);
+		this.name = "StatusPathMismatchError";
+	}
+}
+
 /**
- * The sender's question, answered with the session file as the authority: a committed import is accepted. The
- * ledger's `accepted` is final, so a later revoke of the copy is reported beside it (`revoked: true`), read from the file.
+ * The sender's question. The ledger answers, its `accepted` final and marked `revoked` once the import is revoked; a
+ * given session file is read in the move's queue and is the authority too (a committed import is accepted, a revoked
+ * one revoked), so a file that is not this move's import is refused. A path with no file answers from the ledger.
  */
 export async function answerMoveStatus(
 	ledger: MoveLedger,
 	moveId: MoveId,
 	sessionFile: string | undefined,
 ): Promise<MoveAnswer> {
-	const outcome = sessionFile !== undefined && existsSync(sessionFile) ? importOutcome(sessionFile, moveId) : "absent";
-	const status = await ledger.answerStatus(moveId, { movedIn: outcome !== "absent" });
-	return outcome === "revoked" && status.state === "accepted" ? { state: "accepted", revoked: true } : status;
+	if (sessionFile === undefined || !existsSync(sessionFile)) return ledger.answerStatus(moveId, { movedIn: false });
+	return serializeByKey(moveLockKey(sessionFile), async () => {
+		const outcome = importOutcome(sessionFile, moveId);
+		if (outcome === "absent") throw new StatusPathMismatchError(moveId, sessionFile);
+		return ledger.answerStatus(moveId, { movedIn: true, revoked: outcome === "revoked" });
+	});
 }
 
 /**

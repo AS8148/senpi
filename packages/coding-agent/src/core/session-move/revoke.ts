@@ -1,4 +1,5 @@
 import { loadEntriesFromFile, SessionManager } from "../session-manager.ts";
+import type { MoveLedger } from "./move-ledger.ts";
 import {
 	headerSessionId,
 	type MoveId,
@@ -13,6 +14,8 @@ export interface RevokeMoveOptions {
 	/** The copy this device imported for the move. */
 	readonly sessionFile: string;
 	readonly moveId: MoveId;
+	/** This device's move record; its accepted record is marked revoked once the copy is sealed. */
+	readonly ledger: MoveLedger;
 	/** Runs inside the move lock before anything is read; throw to refuse. */
 	readonly guard?: () => void;
 }
@@ -41,12 +44,16 @@ export const REVOKED = "revoked";
 /**
  * Seals the copy a receiving device imported for a move after the sender took the session back (senpi#4003):
  * `session_moved` with reason `revoked` makes it read-only for good. Only a file whose latest ownership step is this
- * move's `session_moved_in` is revoked; a repeat finds it already revoked and changes nothing.
+ * move's `session_moved_in` is revoked; a repeat finds it already revoked and changes nothing. After the seal, under the
+ * same lock, the move's accepted record is marked revoked; a repeat writes it again if a crash lost it.
  */
 export function revokeImportedMove(options: RevokeMoveOptions): Promise<void> {
 	return withSessionMoveLock(
 		options.sessionFile,
-		async () => seal(options.sessionFile, options.moveId),
+		async () => {
+			seal(options.sessionFile, options.moveId);
+			await options.ledger.markRevoked(options.moveId);
+		},
 		options.guard,
 	);
 }

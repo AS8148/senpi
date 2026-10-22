@@ -30,11 +30,23 @@ export class MoveMismatchError extends Error {
 	}
 }
 
+export class MoveAlreadyMovedError extends Error {
+	readonly code = "move_already_moved";
+
+	constructor(moveId: MoveId) {
+		super(
+			`The receiver revoked its copy for move ${moveId}, but this session file was already marked moved by an earlier accepted answer; nothing was changed and no copy is writable. Copy the session to a new thread to keep working from it.`,
+		);
+		this.name = "MoveAlreadyMovedError";
+	}
+}
+
 /**
  * Closes a move on the sending device from the receiver's answer. `accepted` records `session_moved` (read-only for
- * good). `declined`/`failed`, and `accepted` with `revoked` (the receiver sealed its copy), take the session back: `session_reclaimed` makes the file writable, the queued input
- * is re-queued under ids stable per move, then the bundle goes. While the bundle exists the re-queue runs again on
- * the next call, so a crash between any two steps loses nothing and doubles nothing.
+ * good). `declined`/`failed`, and `accepted` with `revoked` (the receiver sealed its copy), take the session back:
+ * `session_reclaimed` makes the file writable, the queued input is re-queued under ids stable per move, then the
+ * bundle goes. While the bundle exists the re-queue runs again on the next call, so a crash between any two steps
+ * loses nothing and doubles nothing. A revoked answer for a file already marked moved is refused.
  */
 export function finishMove(options: FinishMoveOptions): Promise<void> {
 	return withSessionMoveLock(options.sessionFile, () => settleMove(options), options.guard);
@@ -55,6 +67,7 @@ async function settleMove(options: FinishMoveOptions): Promise<void> {
 	}
 	if (ownership.moveId !== moveId) throw new MoveMismatchError(moveId, ownership.moveId, "the session file");
 	if (ownership.state === "moved") {
+		if ("revoked" in answer) throw new MoveAlreadyMovedError(moveId);
 		discardMoveFiles(sessionFile, bundleDir, moveId);
 		return;
 	}

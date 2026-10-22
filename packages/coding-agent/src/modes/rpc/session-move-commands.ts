@@ -39,6 +39,7 @@ const CORE_CODES: ReadonlySet<string> = new Set([
 	"move_repository_mismatch",
 	"move_target_occupied",
 	"move_mismatch",
+	"move_already_moved",
 	"session_moved_away",
 ]);
 
@@ -215,6 +216,7 @@ async function run(
 			await revokeImportedMove({
 				sessionFile,
 				moveId: parsed.moveId,
+				ledger,
 				guard: () =>
 					refuseOpenHere(
 						port,
