@@ -1,8 +1,30 @@
 // Calls go through the module object: Bun does not re-bind named built-in imports after the first link,
 // so an OS failure injected with syncBuiltinESMExports reaches this read path only by property access.
 import fs from "node:fs";
+import { Worker } from "node:worker_threads";
 
 const INTERNAL_KEY_STDIN_ENV = "SENPI_RPC_INTERNAL_KEY_STDIN";
+const INTERNAL_KEY_DEADLINE_MS = 2000;
+// Runs on its own thread: a launcher that keeps stdin open without sending the key leaves the main thread blocked in
+// read(2) (child stdio is a blocking socketpair and neither runtime can make it non-blocking), so only another thread can
+// enforce the bound. It stops as soon as the main thread reports the read finished.
+const KEY_DEADLINE_WORKER = `const { workerData } = require("node:worker_threads");
+if (Atomics.wait(new Int32Array(workerData.done), 0, 0, workerData.ms) === "timed-out") {
+	require("node:fs").writeSync(2, "senpi rpc host: internal_key_unavailable: no key within " + workerData.ms + "ms\\n");
+	process.kill(process.pid, "SIGKILL");
+}`;
+
+function armKeyDeadline(): () => void {
+	const done = new Int32Array(new SharedArrayBuffer(4));
+	new Worker(KEY_DEADLINE_WORKER, {
+		eval: true,
+		workerData: { done: done.buffer, ms: INTERNAL_KEY_DEADLINE_MS },
+	}).unref();
+	return () => {
+		Atomics.store(done, 0, 1);
+		Atomics.notify(done, 0);
+	};
+}
 export interface InternalHostBootstrap {
 	readonly key: Buffer;
 	readonly lifetimeFd?: number;
@@ -13,7 +35,8 @@ function bootstrap(): InternalHostBootstrap | undefined {
 	// Launchers forward stdin; only the engine consumes it. Descendants must never bootstrap again.
 	delete process.env[INTERNAL_KEY_STDIN_ENV];
 	const key = Buffer.alloc(32);
-	const deadline = Date.now() + 2000;
+	const deadline = Date.now() + INTERNAL_KEY_DEADLINE_MS;
+	const readFinished = armKeyDeadline();
 	const pause = new Int32Array(new SharedArrayBuffer(4));
 	let offset = 0;
 	let lifetimeFd: number | undefined;
@@ -43,6 +66,7 @@ function bootstrap(): InternalHostBootstrap | undefined {
 	} catch (cause) {
 		failure = cause;
 	}
+	readFinished();
 	// Runs on success and failure alike: descendants must inherit /dev/null, never the key pipe.
 	fs.closeSync(0);
 	const restored = fs.openSync("/dev/null", "r");
