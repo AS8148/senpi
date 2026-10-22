@@ -1,6 +1,7 @@
 import { existsSync, rmSync } from "node:fs";
 import { loadEntriesFromFile, SessionManager } from "../session-manager.ts";
 import { readManifest } from "./bundle.ts";
+import { outgoingStateDir } from "./extension-state.ts";
 import type { MoveStatus } from "./move-ledger.ts";
 import { headerSessionId, type MoveId, SESSION_MOVED, SESSION_RECLAIMED, sessionOwnership } from "./ownership.ts";
 import { requeueInput } from "./requeue.ts";
@@ -49,12 +50,12 @@ async function settleMove(options: FinishMoveOptions): Promise<void> {
 	const ownership = sessionOwnership(entries);
 	if (ownership.writable) {
 		if (reclaimed(entries, moveId)) await requeueDroppedInput(sessionFile, bundleDir);
-		rmSync(bundleDir, { recursive: true, force: true });
+		discardMoveFiles(sessionFile, bundleDir, moveId);
 		return;
 	}
 	if (ownership.moveId !== moveId) throw new MoveMismatchError(moveId, ownership.moveId, "the session file");
 	if (ownership.state === "moved") {
-		rmSync(bundleDir, { recursive: true, force: true });
+		discardMoveFiles(sessionFile, bundleDir, moveId);
 		return;
 	}
 	const sessionId = headerSessionId(entries) ?? "";
@@ -85,7 +86,12 @@ async function settleMove(options: FinishMoveOptions): Promise<void> {
 			throw new Error(`Unknown move answer ${JSON.stringify(unreachable)}`);
 		}
 	}
+	discardMoveFiles(sessionFile, bundleDir, moveId);
+}
+
+function discardMoveFiles(sessionFile: string, bundleDir: string, moveId: MoveId): void {
 	rmSync(bundleDir, { recursive: true, force: true });
+	rmSync(outgoingStateDir(sessionFile, moveId), { recursive: true, force: true });
 }
 
 function reclaimed(entries: readonly { type: string; customType?: string; data?: unknown }[], moveId: MoveId): boolean {
