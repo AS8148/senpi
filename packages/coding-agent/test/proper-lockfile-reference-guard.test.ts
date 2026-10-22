@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { type LockSite, lockSiteProblems, referenceViolations } from "./support/lock-site-scan.ts";
+import { type LockSite, lockSiteProblems, referenceViolations, withoutComments } from "./support/lock-site-scan.ts";
 
 // Source gates for proper-lockfile (oh-my-openagent#10878):
 // 1. Only core/file-lock.ts may reference the package: an async lock elsewhere gets the default
@@ -26,15 +26,19 @@ const LOCK_SYNC_ONLY = new Set(
 	].map((path) => `${SRC}/${path}`),
 );
 
+// Files vendored byte-for-byte into another repository (oh-my-openagent) may not import senpi internals, so they
+// cannot use core/file-lock.ts. Each must give every proper-lockfile lock call its own onCompromised (the default throws
+// from a heartbeat timer) and refuse the write before each commit rename once the lock was lost; tested in
+// test/file-lock-lost-writes.test.ts and test/suite/regressions/3796-grants-store.test.ts.
+const VENDORED_SELF_CONTAINED = new Set(
+	["core/extensions/builtin/mcp/env-grants-store.ts"].map((path) => `${SRC}/${path}`),
+);
+
 const at = (file: string) => `${SRC}/${file}`;
 const LOCK_SITES: Record<string, LockSite> = {
 	[`${at("core/extensions/builtin/mcp/catalog-cache.ts")}#writeMcpCachedServer`]: {
 		reason: "best-effort cache: the atomic rename is skipped once the lock is lost",
 		writes: [{ file: at("core/extensions/builtin/mcp/catalog-cache.ts"), fn: "atomicWriteJson", op: "rename(tmp" }],
-	},
-	[`${at("core/extensions/builtin/mcp/env-grants-store.ts")}#update`]: {
-		reason: "one short read-modify-write of the MCP env grants file; a lost lock skips the commit rename",
-		writes: [{ file: at("core/extensions/builtin/mcp/env-grants-store.ts"), fn: "update", op: "rename(temporary" }],
 	},
 	[`${at("core/credential-pool/state-file.ts")}#lockFileBefore`]: {
 		reason: "one short read-modify-write of the pool health sidecar",
@@ -194,10 +198,23 @@ describe("proper-lockfile reference guard", () => {
 
 	it("no file under packages/*/src references proper-lockfile except the helper and the lockSync-only files", () => {
 		const offenders = [...repoSources()]
-			.filter(([path]) => path !== HELPER)
+			.filter(([path]) => path !== HELPER && !VENDORED_SELF_CONTAINED.has(path))
 			.map(([path, source]) => ({ path, problems: referenceViolations(source, LOCK_SYNC_ONLY.has(path)) }))
 			.filter(({ problems }) => problems.length > 0);
 		expect(offenders).toEqual([]);
+	});
+
+	it("a vendored self-contained file imports no senpi internals and gives every lock call its own onCompromised", () => {
+		const sources = repoSources();
+		for (const path of VENDORED_SELF_CONTAINED) {
+			const code = withoutComments(sources.get(path) ?? "");
+			expect(code, path).not.toBe("");
+			const relativeImports = [...code.matchAll(/\bfrom\s+["'](\.[^"']*)["']/g)].map(([, spec]) => spec);
+			expect(relativeImports, path).toEqual([]);
+			const lockCalls = code.match(/\blockfile\.lock\s*\(/g)?.length ?? 0;
+			expect(lockCalls, path).toBeGreaterThan(0);
+			expect(code.match(/\bonCompromised\s*:/g)?.length ?? 0, path).toBe(lockCalls);
+		}
 	});
 
 	it("every lock call passes onLost or is an allowlisted call site whose writes each assert the lock", () => {

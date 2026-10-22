@@ -17,7 +17,11 @@
  * fields are omitted, and JSON has no whitespace. Hash: SHA-256 lowercase hex.
  *
  * Writers lock the path, reread and merge, create a private temporary file,
- * fsync it, rename it atomically, and fsync the directory on POSIX. Revocation
+ * fsync it, rename it atomically, and fsync the directory on POSIX. The lock
+ * passes its own onCompromised, which never throws (proper-lockfile's default
+ * throws from a heartbeat timer): a lost lock is only recorded, every rename
+ * attempt first refuses with GrantsLockLostError (code ELOCKLOST) once the lock
+ * was lost, and a lost lock is not released. Revocation
  * completes at the durable write; running engines apply it within watch latency
  * (at most the 5-second fallback interval).
  *
@@ -33,7 +37,7 @@ import { mkdir, open, rename, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { lockWithLossHandling } from "../../../file-lock.ts";
+import lockfile from "proper-lockfile";
 
 export interface GrantLabel {
 	readonly project: string;
@@ -135,12 +139,24 @@ function canonical(value: unknown): string {
 export function declarationDigest(identity: unknown): string {
 	return createHash("sha256").update(canonical(identity)).digest("hex");
 }
+/** The grants lock was lost or reclaimed before the write committed; the write was skipped. */
+export class GrantsLockLostError extends Error {
+	readonly code = "ELOCKLOST";
+	constructor(cause: Error) {
+		super("MCP grants lock was lost before the write committed; the write was skipped.", { cause });
+		this.name = "GrantsLockLostError";
+	}
+}
 async function update(path: string, mutate: (grants: Record<string, Grant>) => void): Promise<GrantSnapshot> {
 	await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-	const lock = await lockWithLossHandling(path, {
+	let lost: Error | undefined;
+	const release = await lockfile.lock(path, {
 		realpath: false,
 		stale: 30_000,
 		retries: { retries: 100, factor: 1.2, minTimeout: 20, maxTimeout: 200 },
+		onCompromised: (error: Error) => {
+			lost ??= error;
+		},
 	});
 	const temporary = join(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`);
 	try {
@@ -158,7 +174,7 @@ async function update(path: string, mutate: (grants: Record<string, Grant>) => v
 		}
 		for (let attempt = 0; ; attempt++) {
 			try {
-				lock.assertHeld();
+				if (lost !== undefined) throw new GrantsLockLostError(lost);
 				await rename(temporary, path);
 				break;
 			} catch (error) {
@@ -186,7 +202,7 @@ async function update(path: string, mutate: (grants: Record<string, Grant>) => v
 		try {
 			await rm(temporary, { force: true });
 		} finally {
-			await lock.release();
+			if (lost === undefined) await release();
 		}
 	}
 }

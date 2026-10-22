@@ -1,12 +1,12 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import lockfile from "proper-lockfile";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CredentialSlotRepository } from "../src/core/credential-pool/state-store.ts";
 import { McpTokenStore } from "../src/core/extensions/builtin/mcp/auth/token-store.ts";
-import { addGrant } from "../src/core/extensions/builtin/mcp/env-grants-store.ts";
+import { addGrant, GrantsLockLostError } from "../src/core/extensions/builtin/mcp/env-grants-store.ts";
 import { FileLockLostError } from "../src/core/file-lock.ts";
 import { parseMoveId } from "../src/core/session-move/bundle.ts";
 import { MoveLedger } from "../src/core/session-move/move-ledger.ts";
@@ -90,8 +90,9 @@ describe("a write under a lost lock is refused", () => {
 		const before = readFileSync(path, "utf8");
 		loseEveryLockRightAfterAcquire();
 
-		await expect(addGrant(path, "b".repeat(64), label, ["NEW"])).rejects.toBeInstanceOf(FileLockLostError);
+		await expect(addGrant(path, "b".repeat(64), label, ["NEW"])).rejects.toBeInstanceOf(GrantsLockLostError);
 		expect(readFileSync(path, "utf8")).toBe(before);
+		expect(readdirSync(dirname(path))).toEqual(["mcp-env-grants.json"]);
 	});
 
 	it("a move-ledger record is not written after the lock was lost", async () => {
