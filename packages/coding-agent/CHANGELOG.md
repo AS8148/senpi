@@ -8,6 +8,8 @@
 
 - Shared RPC hosts support live-only `attach_session`, one-hold `release_attachment`, and atomic `reclaim_session`. Attachments are fenced by durable session identity, and temporary releases let active turns finish ([#3795](https://github.com/code-yeongyu/senpi/issues/3795)).
 
+- RPC `move_session` drives a session move between two hosts through one implementation: the receiver readies, imports and answers status, the sender exports the released session and finishes the move from the receiver's answer; every refusal says why and what to do. Advertised as the `move_session` capability ([#3676](https://github.com/code-yeongyu/senpi/issues/3676)).
+
 - `RpcClient.setSessionContext(patch, sessionId?)` publishes session context (`set_session_context`) from an attached client, so a task runner can record a terminal `task_status` before it detaches ([#3905](https://github.com/code-yeongyu/senpi/issues/3905)).
 
 ### Changed

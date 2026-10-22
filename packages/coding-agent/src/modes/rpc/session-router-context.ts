@@ -33,7 +33,7 @@ export class RouterContext {
 		RpcSessionRegistry,
 		"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size" | "warm"
 	> &
-		Partial<Pick<RpcSessionRegistry, "holderPids" | "attachSession">>;
+		Partial<Pick<RpcSessionRegistry, "holderPids" | "attachSession" | "agentDir">>;
 
 	readonly writer: SessionEventWriter;
 
@@ -97,7 +97,7 @@ export class RouterContext {
 			RpcSessionRegistry,
 			"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size" | "warm"
 		> &
-			Partial<Pick<RpcSessionRegistry, "holderPids" | "attachSession">>,
+			Partial<Pick<RpcSessionRegistry, "holderPids" | "attachSession" | "agentDir">>,
 		writer: SessionEventWriter,
 		defaults: RpcHostSessionDefaults,
 		createBinding: typeof createRpcSessionBinding = createRpcSessionBinding,

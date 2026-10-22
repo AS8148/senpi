@@ -11,6 +11,7 @@ import type { SessionKind } from "../../core/extensions/types.ts";
 import type { RpcAttachmentCommand } from "./attachment-types.ts";
 import type { RpcExtensionUIProgress, RpcExtensionUIResponse } from "./rpc-question-types.ts";
 import type { RpcSessionCommand } from "./rpc-session-command-types.ts";
+import type { RpcMoveSessionCommand } from "./session-move-wire.ts";
 
 /** Every established command accepts an additive routing envelope. */
 export type RpcCommand =
@@ -111,6 +112,7 @@ export type RpcCommand =
 			retryFallback?: SessionRetryFallbackProfile;
 	  }
 	| { id?: string; type: "close_session"; sessionId: string }
+	| RpcMoveSessionCommand
 	| {
 			id?: string;
 			/**

@@ -16,6 +16,7 @@ import type { ApiKeyVerification } from "../../core/verify-api-key.ts";
 import type { ClientMessageAdmission } from "./client-admission-record.ts";
 import type { RpcAbortQuiesce, RpcEffectAnswer, RpcQueuedInputChange } from "./rpc-effect-answer-types.ts";
 import type { EditAssistantMessageResult, EditUserMessageResult, NavigateTreeResult } from "./rpc-result-types.ts";
+import type { RpcMoveSessionResponse } from "./session-move-wire.ts";
 
 export type RpcMutationResponse =
 	| {
@@ -201,6 +202,7 @@ export type RpcMutationResponse =
 			success: true;
 			data: ApiKeyVerification;
 	  }
+	| RpcMoveSessionResponse
 	| { id?: string; type: "response"; command: "account_pin"; success: true }
 	| { id?: string; type: "response"; command: "account_remove"; success: true }
 	| { id?: string; type: "response"; command: "account_order"; success: true }
