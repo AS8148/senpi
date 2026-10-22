@@ -1,3 +1,21 @@
+## 2026-10-21 - The TPS notice uses the shared generation-window rule (senpi#3879)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/tps.ts`: `reasonedBeforeFirstDelta` and `STREAMED_DELTA_TYPES` now come from `@earendil-works/pi-agent-core` (`packages/agent/src/response-timing.ts`); the local copies are gone. Behavior is unchanged.
+
+### Why
+
+- The persisted response timing (senpi#3879) and the TPS notice must measure the same window; one shared rule keeps them from drifting (review of senpi#3884).
+
+### Why an extension could not handle it
+
+- It is an extension already; the change only removes a duplicated helper.
+
+### Expected merge conflict zones
+
+- LOW: the imports and helper block at the top of `tps.ts`.
+
 ## 2026-10-21 - Deliver a resumed question's answer as a user message (senpi#3864)
 
 ### What changed
@@ -51,6 +69,25 @@ The shared cross-package event contract is engine-owned.
 ### Expected merge conflict zones
 
 `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: deliverAnswer; the rest of question persistence and formatting is unchanged.
+
+## 2026-10-21 - Optional launch-gated Fable recommendation (senpi#3893)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`: the Fable recommendation uses the launch id only when both `FABLE55_LAUNCH.released` and `promoteDefaults` are true. Both are false in this draft, so today's list is unchanged. Effort remains xhigh, provider ranking remains unchanged, and Opus 5.5 remains the first recommendation.
+- This change and its four-case flag-matrix test are their own commit (82547134f3), which no later commit touches, so it reverts cleanly. Launch-day support can land without this commit; keeping it still requires an explicit promotion flip in the central launch block.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`: release readiness and the decision to recommend a new Fable release are independent. No unreleased model should become a default.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`: the recommendation list belongs to this builtin.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`: import and Fable slot in `RECOMMENDED_DEFAULT_MODELS`.
 
 ## 2026-10-19 - Suggest a fresh session with a handoff when a large session's cache has expired (senpi#3230)
 

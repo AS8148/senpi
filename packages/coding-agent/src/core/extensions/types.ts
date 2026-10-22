@@ -1418,6 +1418,42 @@ export interface SessionAbortEvent {
 	type: "session_abort";
 }
 
+/**
+ * Fired when the session is released to move to another device, while this runtime is still live. Write the state
+ * this extension keeps for the session outside the session folder (records, logs, finished child sessions) into
+ * `dir`; it travels in the move's bundle. A handler that throws, or is still running at the `session_shutdown`
+ * handler budget, refuses the move: nothing is sealed.
+ */
+export interface SessionMoveExportEvent {
+	type: "session_move_export";
+	moveId: string;
+	/**
+	 * An empty folder for this release attempt; write under a subfolder named after the extension. Only the attempt
+	 * that seals the session is bundled, so a write after `signal` aborted never reaches the move.
+	 */
+	dir: string;
+	/** Aborted when the host stops waiting on this handler (the `session_shutdown` handler budget's hard cap). */
+	signal: AbortSignal;
+}
+
+/**
+ * Fired on the receiving device right after `session_start` of an open that finds state a move brought in, with a
+ * copy of the folder the sender's extensions filled. Restore from it. The state is marked restored and removed only
+ * when every handler returned without throwing within the `session_shutdown` handler budget; otherwise every handler
+ * gets it again on the next open (`redelivered: true`), as after a crash before that mark. Handlers must therefore be
+ * idempotent: restoring the same state twice must leave the same result as restoring it once.
+ */
+export interface SessionMoveImportEvent {
+	type: "session_move_import";
+	moveId: string;
+	/** This delivery's own copy: what a handler does to it after `signal` aborted never reaches a later delivery. */
+	dir: string;
+	/** True when this state was delivered before and not marked restored (an earlier attempt failed or crashed). */
+	redelivered: boolean;
+	/** Aborted when the host stops waiting on this handler (the `session_shutdown` handler budget's hard cap). */
+	signal: AbortSignal;
+}
+
 /** Fired on the old extension runner when a reload or session replacement rebuilds the runner and one or more extensions are absent from it. */
 export interface SessionExtensionsRemovedEvent {
 	type: "session_extensions_removed";
@@ -1471,6 +1507,8 @@ export type SessionEvent =
 	| SessionShutdownEvent
 	| SessionAbortEvent
 	| SessionExtensionsRemovedEvent
+	| SessionMoveExportEvent
+	| SessionMoveImportEvent
 	| SessionBeforeTreeEvent
 	| SessionTreeEvent;
 
@@ -2409,6 +2447,8 @@ export interface ExtensionAPI {
 	on(event: "session_shutdown", handler: ExtensionHandler<SessionShutdownEvent>): () => void;
 	on(event: "session_abort", handler: ExtensionHandler<SessionAbortEvent>): () => void;
 	on(event: "session_extensions_removed", handler: ExtensionHandler<SessionExtensionsRemovedEvent>): () => void;
+	on(event: "session_move_export", handler: ExtensionHandler<SessionMoveExportEvent>): () => void;
+	on(event: "session_move_import", handler: ExtensionHandler<SessionMoveImportEvent>): () => void;
 	on(
 		event: "session_before_tree",
 		handler: ExtensionHandler<SessionBeforeTreeEvent, SessionBeforeTreeResult>,
@@ -2901,6 +2941,13 @@ export interface ProviderConfig {
 	 * every expansion, so a settings change takes effect without re-registration.
 	 */
 	fallbackEligible?(): boolean;
+	/**
+	 * Set by a provider whose own lane chooses among the accounts stored for it (pin, session
+	 * stickiness, per-account limits) and fails over between them. The generic credential pool then
+	 * never wraps it: two layers choosing accounts pinned the lane's verdicts on slots the lane never
+	 * used and blocked all of them (senpi#2081).
+	 */
+	ownsAccountSelection?: boolean;
 }
 
 interface ProviderModelConfigBase {

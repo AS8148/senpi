@@ -987,13 +987,23 @@ daemon the same way instead of each re-implementing the decision:
 ```
 senpi host ensure     [--json] [--launch-spec <file>] [--policy upgrade|fallback|never] [--socket <path>]
 senpi host status     [--json] [--include-workers] [--all] [--socket <path>]
-senpi host stop       [--json] [--drain [--instance <id>] [--wait-ms <n>]] [--force] [--socket <path>]
+senpi host stop       [--json] [--drain [--instance <id>] [--wait-ms <n>]] [--force]
+                      [--expected-generation <json>] [--socket <path>]
 senpi host handoff    [--json] [--launch-spec <file>] [--socket <path>]
                       [--when idle --operation <id> --if-instance <id> --if-generation <n> --target-build <id>]
 senpi host shard-path --kind <p|i> --owner <id> [--root <dir>] [--json]
 senpi host gc         [--json] [--agent-dir <dir>]
 senpi host session <open|close|model|prompt|steer|abort|read|state|list|wait> ...   (see "Driving sessions from the CLI")
 ```
+
+`host stop --force --expected-generation '{"instanceId":…,"generation":…,"pid":…,"processStartTime":…}'` stops only the
+generation the operator confirmed (the identity `host status` reports). It takes the endpoint lock and refuses
+`stale_generation` without signalling when another generation holds the endpoint, and `unknown_owner` when the process
+cannot be proven. `processStartTime` is `null` on platforms that record none (Windows); there a registration and
+confirmation that are both null bind pid, instance id and generation, and the stop proves the same process before
+signalling: its live start time (read with a 10 s budget) must be no later than the registration was written, so a
+reused pid is refused `unknown_owner`, and an answering host must report the confirmed instance id. It cannot be
+combined with `--drain`.
 
 The contract is machine-first: EXACTLY ONE JSON line on stdout and nothing else, diagnostics on stderr,
 and an exit code that classifies the outcome without parsing the line.
@@ -1455,6 +1465,8 @@ Ends a subscription held by the same connection; a closed connection ends its su
 ```
 
 An attached connection patches the context a session publishes (on `list_sessions { include_workers: true }` and on `session_status` for subscribers with `include_context`). Keys match `^[a-z][a-z0-9_]{0,63}$`; values are strings of at most 256 characters, numbers, booleans, or `null` to delete; the patched context is at most 4096 bytes of JSON. The host's own keys (`host_socket`, `host_instance`, `shard_key`, `tree_key`) and the lineage keys (`parent_session_id`, `root_session_id`) are refused with `invalid_session_context` and `errorData { reason, action }`. The session's extensions keep reading the context the session was opened with, and a `childrenOf` subscription matches on that frozen open-time context, so no patch moves a session into or out of a supervisor's children view. The response carries the published `context`; subscribers with `include_context` receive a `session_status` with cause `context`.
+
+The SDK sends it with `RpcClient.setSessionContext(patch, sessionId?)`, which defaults to the attached session and rejects with an `RpcCommandError` carrying the code.
 
 A connection without an attachment receives `errorCode: "session_not_attached"` with `errorData.reason: "this connection is not attached to that session"` and `errorData.action: "attach first with open_session { sessionPath }, then patch its context"`.
 
@@ -2110,7 +2122,26 @@ no longer lists it and the handle answers `unknown_session`.
   `session_released` entry on disk or in memory, and a later release can be retried. A teardown that fails
   after it claimed the session leaves it closing.
 
-A release with `reason: "move"` (and a `moveId`) seals the session for a move to another device: its `session_released` entry records `move_id`, `target` and `session_id`, and from then on any write to the file is refused with `session_moved_away` until that same move is reclaimed. A later `takeover` release, or any ownership entry for another move, is refused too. A `move` without a `moveId`, or with one that is not a plain id (a letter or digit first, then letters, digits, `.`, `_` or `-`, at most 128 characters), is refused with `invalid_release_reason`, and a session whose own id is not a plain id is refused with `release_unsupported` (`errorData.detail: "session_id_not_plain"`) before anything is interrupted or sealed. A `session_moved_away` refusal after an `interrupt` carries `interrupted` and `dropped` like any other refusal after one.
+A release with `reason: "move"` (and a `moveId`) seals the session for a move to another device: its `session_released` entry records `move_id`, `target` and `session_id`, and from then on any write to the file is refused with `session_moved_away` until that same move is reclaimed. A later `takeover` release, or any ownership entry for another move, is refused too. A `move` without a `moveId`, or with one that is not a plain id (a letter or digit first, then letters, digits, `.`, `_` or `-`, at most 128 characters), is refused with `invalid_release_reason`, and a session whose own id is not a plain id is refused with `release_unsupported` (`errorData.detail: "session_id_not_plain"`) before anything is interrupted or sealed. A `session_moved_away` refusal after an `interrupt` carries `interrupted` and `dropped` like any other refusal after one. Before the seal, a `move` release runs the extensions' `session_move_export` handlers, each under the `session_shutdown` handler budget (`sessionShutdownHandlerTimeoutMs`); a handler that throws or is still running at the cap fails the release with `release_failed` (nothing sealed, admission open again). Each `move` release attempt stages into its own folder and its `session_released` entry records that attempt (`state_attempt`); `move_session export` bundles only the sealing attempt's state, so a handler still running from an earlier, failed attempt of the same move never feeds the bundle. A release refused after those handlers ran and before its seal is written removes its own attempt's folder; one refused after the seal (for example `session_closing`) keeps it, since the seal names it.
+
+### Moving a session to another device (`move_session`)
+
+A move hands a session to another host under the same id (capability `move_session`). The transport between the two hosts only carries the bundle folder and the receiver's answers; every decision about the session file is taken by `move_session`. Each host keeps its move folders under `<agentDir>/session-moves`.
+
+| `op` | Side | Fields | `data` |
+|---|---|---|---|
+| `prepare` | receiver | `moveId` | `{ state: "ready", expires_at }` (or `receiving` / `accepted` if it already is); the move must see its bundle within 10 minutes |
+| `cancel` | receiver | `moveId` | the record: `declined` with reason `cancelled`, unless already `receiving` or `accepted` |
+| `export` | sender | `sessionPath`, `moveId`, `target`, `droppedUserMessages?` | `{ move_id, session_id, bundle_dir, files }`; `bundle_dir` is the folder to send, kept until `finish` |
+| `import` | receiver | `bundleDir`, `cwd` (both absolute), `from?` | `{ session_id, session_path }`; the session lands in this host's session folder for `cwd` |
+| `status` | receiver | `moveId`, `sessionPath?` | the answer for the sender: `receiving`, `accepted`, or `declined` / `failed` with `reason`; an unknown move is recorded `declined` (`no_record`) before the answer |
+| `finish` | sender | `sessionPath`, `moveId`, `answer` (the `status` data) | `{ ownership: "moved" \| "writable" \| "moving" }` |
+
+`export` and `finish` run one at a time per session file, so two `finish` calls for one move settle it once and hand the queued input back once. This holds across processes too: each step takes the session's move lock, refuses a session any live process holds (`session_held`, for example another host generation on the same agent directory) and makes a concurrent open of that session wait or refuse. Inside the lock, both first refuse a session this host has open (compared after resolving `.`, `..` and symlinks).
+
+The order is: the receiver `prepare`s; the sender releases the session with `release_session` reason `move` (usually with `interrupt: true`) and passes its `dropped.user_messages` to `export`; the transport carries `bundle_dir` to the receiver, which `import`s it; the sender asks `status` (on start, on reconnect, and when the session is opened) and `finish`es with the answer. `accepted` leaves the sender's copy read-only for good; `declined` or `failed` makes it writable again with its queued input back. `receiving` changes nothing.
+
+Refusals carry `errorData.detail` (the reason and what to do): `invalid_move_request` (a field does not parse), `session_open_here` (export or finish of a session this host has open), `move_not_released` (export of a file not sealed for that move), `move_fenced` (a move already answered, or a bundle for a move the receiver never readied), `move_bundle_invalid`, `move_repository_mismatch` (`cwd` is not a checkout of the same repository), `move_target_occupied`, `move_mismatch`, `session_moved_away`, `session_held`, and `move_failed` for anything else. `move_failed` also refuses an `export` whose sealing `release_session` staged extension state that is no longer on disk: the session is never bundled without it, and `finish` with a `declined` answer takes it back.
 
 ### Host self-observation (event-loop stalls and memory pressure)
 
@@ -2332,6 +2363,7 @@ names a valid preset.
 | `list_sessions` | `include_workers?` (default false) | `{ sessions: [{ sessionId, durableSessionId, sessionPath, cwd, name, status, attachments, kind, context? }] }` | Includes `opening`/`closing` entries. Internally quarantined workers remain externally `closing` until exit. `attachments` is the session's live client attachment count; `0` on an `open` row is a retained session with no client attached. Every row carries `kind`. Rows with `kind: "worker"` are omitted unless `include_workers: true`, and `context` is published ONLY on that listing — a default listing carries no `context` at all. |
 | `detach_connection` | - | `{ deferred: string[] }` | Multi-session hosts that advertise `detach_connection`. Meant as the connection's last request: the host releases every session attachment this connection holds and answers only after that, so another connection's next `list_sessions` no longer counts it. `deferred` names the sessions that still count it (see `#### detach_connection`). Closing the socket afterwards releases nothing more. `senpi host session` sends it before closing, bounded at 5 s; on a host without the capability, or after a request timed out or the connection was lost, it relies on the release at socket close. |
 | `release_session` | `sessionId`, `reason: "takeover" \| "move"`, `moveId?` (required for `move`), `target?`, `interrupt?`, `force?` | `{ released: true, session_path, attachments }` | Hands the session to a runtime outside this host. See "Handing a session over (`release_session`)" below. |
+| `move_session` | `op` and its fields (see "Moving a session to another device (`move_session`)") | per `op` | Drives one step of a session move between hosts. Capability `move_session`. |
 | `wake` | `sessionId`, `delivery_ids?` | `{ admitted: [{ delivery_id, kind }] }` | Runs the session's registered inbox drain once. See "Waking a host session (`wake`)" below. |
 | `warm` | `cwd?`, `kind?`, `context?` (as on `open_session`; `cwd` MUST be absolute) | `{ state: "warmed" \| "already_warm" \| "unsupported" }` | Loads what the next matching `open_session` needs without opening a session; never listed, never an attachment, idempotent per profile. See "Warming a host" above. Advertised as the `warm` capability by in-process hosts only. |
 | every existing command | + `sessionId` (REQUIRED in multi mode) | unchanged | Routed to that session. |
@@ -3966,6 +3998,23 @@ Response:
 ```
 
 The current session name is available via `get_state` in the `sessionName` field. To set the initial name when starting RPC mode, pass `--name <name>` or `-n <name>` to the `senpi --mode rpc` process.
+
+#### record_user_activity
+
+Reports that the user started typing a draft in this session's composer (capability `user_activity`). It feeds the same first-activity signal the interactive editor sends, so a session with prompt-cache keep-alive enabled and an eligible model warms the first turn's prefix once while the user is still typing. Repeated reports are no-ops after the first, and nothing is sent to a provider when keep-alive is disabled or the model is ineligible. Only `kind: "draft"` is accepted: prompt activity is recorded by the prompt itself, and any other kind is refused with `invalid_argument` and the fixed message `record_user_activity: kind must be "draft"` (the refusal never repeats the value the client sent). On a multi-session host the command is session-scoped and passes the session-writer guard, so a session held by another writer answers `session_held`.
+
+```json
+{"type": "record_user_activity", "sessionId": "rpc-1", "kind": "draft"}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "record_user_activity",
+  "success": true
+}
+```
 
 #### wake
 

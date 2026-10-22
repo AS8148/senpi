@@ -359,6 +359,7 @@ import {
 	type SessionHeader,
 	SessionManager,
 } from "./session-manager.ts";
+import { restoreMovedState } from "./session-move/extension-state.ts";
 import { generateSessionTitle, sessionTitleRetryPolicy, shouldSkipSessionTitle } from "./session-title-generator.ts";
 import { SessionWorkBarrier } from "./session-work-barrier.ts";
 import {
@@ -1311,6 +1312,11 @@ export class AgentSession {
 	/** Recently delivered `queuedId`s (bounded), so a late dequeue answers `already_delivered`, not `not_found`. */
 	private readonly _deliveredQueuedIds = new Set<string>();
 	private _sessionLogger: SessionLogger;
+	/**
+	 * A single notice slot for `compaction.model` fallbacks: a cause logs once, and logs again only
+	 * after a different cause or a successful use of the override clears the slot.
+	 */
+	private _compactionModelFallbackNotice: string | undefined;
 	private _activeCompactionLogAttempt:
 		| { id: string; reason: CompactionReason; tokensBefore: number | undefined }
 		| undefined;
@@ -1884,7 +1890,8 @@ export class AgentSession {
 	 * `compaction.model` override ("provider/model"), that model is used for the
 	 * summarization call instead of the session model — this is what lets an
 	 * SDK-owned lane (anthropic-subscription) compact on a cheaper/different model.
-	 * Unset, malformed, or unknown overrides keep a usable session model.
+	 * Unset, malformed, unknown, spent, or credential-less overrides keep a usable session model;
+	 * a set override that cannot serve logs why the session model was used.
 	 * A spent account instead uses the held target or another authenticated model.
 	 */
 	private _resolveCompactionModel(sessionModel: Model<any>): Model<any> {
@@ -1897,7 +1904,28 @@ export class AgentSession {
 		const usable = (model: Model<any>): boolean => !this._retryFallback.isProviderSpent(model.provider);
 		// Preserve the explicit override and original-model geometry on healthy sessions.
 		// A held downswitch uses its target only when the original account cannot serve.
-		if (usable(sessionModel)) return configured && usable(configured) ? configured : sessionModel;
+		if (usable(sessionModel)) {
+			if (!override) return sessionModel;
+			const fallbackReason = !configured
+				? slash > 0
+					? "unknown_model"
+					: "malformed"
+				: !usable(configured)
+					? "provider_spent"
+					: this._modelRuntime.hasFreshAvailabilitySnapshot() &&
+							!this._modelRuntime.hasConfiguredAuth(configured.provider)
+						? // Only a published availability pass can say "no credentials": before it (or
+							// after a busy store read) the answer is unknown, the override is kept, and
+							// request-time auth decides.
+							"no_credentials"
+						: undefined;
+			if (configured && fallbackReason === undefined) {
+				this._compactionModelFallbackNotice = undefined;
+				return configured;
+			}
+			if (fallbackReason) this._logCompactionModelFallback(override, fallbackReason, sessionModel);
+			return sessionModel;
+		}
 		const pending = this._pendingModelSwitch?.model;
 		if (pending && usable(pending)) return pending;
 		if (configured && usable(configured)) return configured;
@@ -1914,6 +1942,21 @@ export class AgentSession {
 			);
 		if (available) return available;
 		throw new AccountUsageLimitError(sessionModel.provider, this._retryFallback.accountError(sessionModel.provider));
+	}
+
+	private _logCompactionModelFallback(
+		override: string,
+		reason: "malformed" | "unknown_model" | "provider_spent" | "no_credentials",
+		sessionModel: Model<any>,
+	): void {
+		const notice = `${override}\u0000${reason}`;
+		if (this._compactionModelFallbackNotice === notice) return;
+		this._compactionModelFallbackNotice = notice;
+		this._sessionLogger.warn("compaction_model_fallback", {
+			model: override,
+			reason,
+			to: `${sessionModel.provider}/${sessionModel.id}`,
+		});
 	}
 
 	private async _getCompactionRequestAuth(
@@ -7515,6 +7558,7 @@ export class AgentSession {
 				modelSelectSource: "set",
 				invalidateCompaction: true,
 				allowDeferral: false,
+				admittedLiveContextTokens: projection.liveContextTokens,
 				origin: heldSwitchOrigin(pending.origin),
 			});
 		} catch (error) {
@@ -7780,6 +7824,13 @@ export class AgentSession {
 			 * smaller than the model that just failed.
 			 */
 			repairWithSlice?: boolean;
+			/**
+			 * The context a held switch was already admitted with, measured per message
+			 * after its reduction (#3828). The usage-derived estimate still reports the
+			 * pre-slice size of a kept turn, so re-measuring here refused a switch the
+			 * reduction had just made fit.
+			 */
+			admittedLiveContextTokens?: number;
 		},
 	): Promise<SystemPromptChangeEvent | undefined> {
 		const previousModel = this.model;
@@ -7839,9 +7890,9 @@ export class AgentSession {
 				this._admitSwitchCompactionRequired(model, deferral, opts.persistDefault, opts.origin);
 				return undefined;
 			}
-			const admittedLiveContextTokens = opts.repairWithSlice
-				? this._reduceForSwitchTarget(model, liveContextTokens)
-				: liveContextTokens;
+			const admittedLiveContextTokens =
+				opts.admittedLiveContextTokens ??
+				(opts.repairWithSlice ? this._reduceForSwitchTarget(model, liveContextTokens) : liveContextTokens);
 			this._assertModelUsableForSwitch(model, admittedLiveContextTokens);
 			if (opts.appendSessionEntry) {
 				this.sessionManager.appendModelChange(
@@ -10218,6 +10269,11 @@ export class AgentSession {
 			this._engineTurnHold.start();
 			this.syncPromptCacheSafeWaitEnv();
 			await this._extensionRunner.emit(this._sessionStartEvent);
+			await restoreMovedState(this.sessionManager, (moved) =>
+				this._extensionRunner
+					.emitSessionMove({ type: "session_move_import", ...moved })
+					.then((failures) => failures.length === 0),
+			);
 			this._enforceConfiguredDefaultTools();
 			await this.extendResourcesFromExtensions(this._sessionStartEvent.reason === "reload" ? "reload" : "startup");
 		} finally {
@@ -10488,10 +10544,9 @@ export class AgentSession {
 				},
 				getContextUsage: () => this.getContextUsage(),
 				getCompactionSettings: () => this._getCompactionSettings(),
-				getCompactionModel: () =>
-					this.model && this._retryFallback.isProviderSpent(this.model.provider)
-						? this._resolveCompactionModel(this.model)
-						: this.model,
+				// One resolver for core and builtin compaction: a configured `compaction.model`
+				// summarizes on a healthy provider too, not only after the account is spent (#830).
+				getCompactionModel: () => (this.model ? this._resolveCompactionModel(this.model) : undefined),
 				getPromptCacheSafeWaitSeconds: () => this.resolvePromptCacheSafeWaitSeconds(),
 				getPromptCacheGoalBackstopMaxSeconds: () => this.settingsManager.getPromptCacheGoalBackstopMaxSeconds(),
 				getPromptCacheKeepAliveSettings: () => this.settingsManager.getPromptCacheKeepAliveSettings(),
