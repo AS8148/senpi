@@ -52,9 +52,9 @@ import {
 import { materializeSessionEntries } from "./session-entry-materializer.ts";
 import { replaceFileAtomically } from "./session-file-replace.ts";
 import { type HistoryReducer, HistoryReductions } from "./session-history-reduce.ts";
+import type { SpawnedBy } from "./session-lifecycle-types.ts";
 import { planLoadedTail } from "./session-loaded-tail.ts";
 import { SessionWriteGuard } from "./session-move/write-guard.ts";
-import type { SpawnedBy } from "./session-lifecycle-types.ts";
 import { type ResidentStoreStats, ResidentStringStore } from "./session-resident-store.ts";
 import { SessionWriteFence } from "./session-write-fence.ts";
 import {
