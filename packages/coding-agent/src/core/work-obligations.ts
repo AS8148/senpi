@@ -22,6 +22,7 @@ export class SessionWorkObligations implements WorkObligations {
 	private readonly records = new Map<string, WorkCustodyRecord>();
 	private readonly unpersisted = new Map<string, WorkCustodyRecord>();
 	private readonly delivering = new Set<DeliveryTicketId>();
+	private readonly publishedSources = new Set<string>();
 	private readonly store: CustodyStore;
 	constructor(store: CustodyStore) {
 		this.store = store;
@@ -61,6 +62,7 @@ export class SessionWorkObligations implements WorkObligations {
 
 	syncSource(source: string, kind: ObligationKind, activeCount: number): void {
 		const key = `wake-source:${source}`;
+		this.publishedSources.add(key);
 		const current = this.active.find((record) => record.key === key);
 		if (activeCount <= 0) {
 			if (current) this.close(current.id, "passive");
@@ -68,14 +70,23 @@ export class SessionWorkObligations implements WorkObligations {
 		}
 		if (current?.activeCount === activeCount && current.kind === kind) return;
 		this.install({
+			...current,
 			id: current?.id ?? crypto.randomUUID(),
 			key,
 			source,
 			kind,
 			activeCount,
-			state: "open",
+			state: current?.state ?? "open",
 		});
 		this.store.changed();
+	}
+
+	/** After a restart, a restored wake source stays open only if its producer published again. */
+	retireRestoredSources(): void {
+		for (const record of this.active) {
+			if (record.key.startsWith("wake-source:") && !this.publishedSources.has(record.key))
+				this.close(record.id, "passive");
+		}
 	}
 
 	queue(ticketId: DeliveryTicketId, payload: CustodyPayload): boolean {

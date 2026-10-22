@@ -189,7 +189,7 @@ export class LifecycleLedger {
 			holds: input.holds,
 			runPaused: input.holds.some((hold) => hold.kind === "run_fence"),
 			since: input.state === this.current.state ? this.current.since : now,
-			...(terminal && base.epoch > 0 ? { completionId: `${base.rootSessionId}:${base.epoch}` } : {}),
+			...(terminal && base.epoch > 0 ? { completionId: `${this.persistence.sessionId}:${base.epoch}` } : {}),
 			...(completion
 				? {
 						completion:
