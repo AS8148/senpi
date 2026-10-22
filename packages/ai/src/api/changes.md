@@ -1,3 +1,21 @@
+## 2026-10-22 - Anthropic stable-prefix cache checkpoints (senpi#3242)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `convertMessages` puts `cache_control` on the last `text`/`tool_use` block of an assistant message carrying `promptCacheBreakpoint` (never on a thinking block). Two hints are honoured when the system block holds a checkpoint (OAuth identity or a system prompt), and the second takes the tools checkpoint's slot because the system checkpoint covers the tools before it. Otherwise only the oldest hint is honoured. A hinted request drops the preceding tool-loop checkpoint, so a request never exceeds four breakpoints.
+
+### Why
+
+- `packages/ai/src/api/anthropic-messages.ts`: Anthropic finds earlier cache entries only within about 20 blocks before a breakpoint, and the breakpoints sat at the end of the conversation. A context-reduction step's request therefore read only the system prefix and re-wrote everything after it (400K-780K tokens per step on 1M windows in the reports). A checkpoint at the last message the frontier leaves unchanged lets the next step read that prefix.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/anthropic-messages.ts`: breakpoint placement is the adapter's own request construction, after every extension payload hook.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/api/anthropic-messages.ts`: `buildParams` (marker count, `toolCacheControl`, the `convertMessages` call), `convertMessages` (assistant branch, final checkpoint block) and the new `markAssistantMessageCacheCheckpoint`.
+
 ## 2026-10-21 - Responses cache affinity follows the stable prefix (omo#10775)
 
 ### What changed
