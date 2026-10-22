@@ -2,11 +2,11 @@
 
 ### What changed
 
-- `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: `degradeQuestion` checks the abort signal again after `select` returns "Other (type an answer)", so a signal that aborted while the select was open ends the fallback before `ui.input` opens.
+- `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: `degradeQuestion` checks the abort signal again after `select` returns "Other (type an answer)", so a signal that aborted while the select was open ends the fallback before `ui.input` opens. After each answered question it also calls `opts.onProgress({ answers })` with the answers so far, the draft shape the structured bridge reports.
 
 ### Why
 
-- `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: the abort check ran only at the top of the loop, so a select resolved with "Other" as the question was cancelled still opened one typed-answer dialog for a question that was already settled (senpi#3999 review, LOW 1).
+- `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: the abort check ran only at the top of the loop, so a select resolved with "Other" as the question was cancelled still opened one typed-answer dialog for a question that was already settled (senpi#3999 review, LOW 1). The ask-user extension settles an abort or its idle timeout from its own draft before the fallback returns, and the fallback never reported progress, so a timed-out fallback question reached the model without the answers the user had given.
 
 ### Why an extension could not handle it
 
@@ -14,7 +14,7 @@
 
 ### Expected merge conflict zones
 
-- LOW: `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`, the "Other" branch of the `degradeQuestion` loop.
+- LOW: `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`, the "Other" branch and the end of the `degradeQuestion` loop.
 
 ## 2026-10-22 - The degraded question asks no trailing comment (sisyphuslabs/omo-desktop-app#4042)
 

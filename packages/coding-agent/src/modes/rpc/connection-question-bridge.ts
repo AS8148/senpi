@@ -159,6 +159,9 @@ export async function degradeQuestion(
 			const text = await ui.input(question.question, undefined, opts);
 			if (text?.trim()) answers[question.id] = { selected: [], text };
 		} else if (selected !== undefined) answers[question.id] = { selected: [selected] };
+		// Report the answers so far as the structured bridge does: an abort or the idle timer settles the
+		// question from the extension's draft, before this fallback returns.
+		if (answers[question.id] !== undefined) opts?.onProgress?.({ answers: { ...answers } });
 	}
 	const unanswered = unansweredQuestionIds(request.questions, answers);
 	// An abort is never an answer. Like the structured bridge it settles cancelled, or timed_out when
