@@ -1,4 +1,5 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
+import { FABLE55_LAUNCH } from "@earendil-works/pi-ai/utils/fable55-launch";
 import { getAnthropicCompat, resolvePromptCacheTtlSeconds } from "@earendil-works/pi-ai/utils/prompt-cache-ttl";
 import { describe, expect, it } from "vitest";
 import { classifySdkError } from "../../src/core/extensions/builtin/anthropic-subscription/errors.ts";
@@ -59,11 +60,10 @@ describe("Fable 5.5 provisional preset (senpi#3893)", () => {
 		expect(resolvePresetName(model(id), { promptPreset: "auto" })).toBe(id);
 	});
 
-	it("inherits the same Opus-only fallback ladder and honors an explicit tombstone", () => {
-		expect(resolveRetryFallbackSettings(undefined).chains["claude-fable-5-5"]).toEqual([
-			"claude-opus-5-5:max",
-			"claude-opus-5:max",
-		]);
+	it("inherits the same Opus-only fallback ladder once released and honors an explicit tombstone", () => {
+		expect(resolveRetryFallbackSettings(undefined).chains["claude-fable-5-5"]).toEqual(
+			FABLE55_LAUNCH.released ? ["claude-opus-5-5:max", "claude-opus-5:max"] : undefined,
+		);
 		expect(
 			resolveRetryFallbackSettings({ fallbackChains: { "claude-fable-5-5": [] } }).chains["claude-fable-5-5"],
 		).toEqual([]);

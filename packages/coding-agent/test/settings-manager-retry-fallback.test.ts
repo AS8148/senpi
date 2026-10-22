@@ -138,7 +138,7 @@ describe("SettingsManager retry fallback settings", () => {
 			chains: {
 				"claude-fable-5": ["ccapi/kimi-k3:max"],
 				"claude-fable-5-1": ["claude-opus-5-5:max", "claude-opus-5:max"],
-					"claude-opus-5-5": ["claude-opus-5:max"],
+				"claude-opus-5-5": ["claude-opus-5:max"],
 			},
 			revertPolicy: "never",
 		});
