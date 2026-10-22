@@ -50,6 +50,29 @@ describe.skipIf(process.platform === "win32")("silent internal host", () => {
 		await host.dropped;
 	}, 25_000);
 
+	// senpi#3816 review (L2): a child that answers the wrong protocol (plain JSONL, no server proof) is not a host that
+	// is still starting: readiness fails at once and names why, instead of 30 s of retries.
+	it("the readiness probe fails fast and names the cause when the child answers without a server proof", async () => {
+		const root = mkdtempSync("/tmp/r3816-");
+		roots.push(root);
+		const path = join(root, "h.sock");
+		const server = createServer((peer) => {
+			peers.push(peer);
+			peer.once("data", (chunk) => {
+				const request = JSON.parse(String(chunk).split("\n")[0] ?? "{}");
+				peer.write(
+					`${JSON.stringify({ id: request.id, type: "response", command: request.type, success: true, data: { protocolVersion: 1 } })}\n`,
+				);
+			});
+		});
+		servers.push(server);
+		server.listen(path);
+		await once(server, "listening");
+		const started = performance.now();
+		await expect(waitForListener(path, 30_000, undefined, key)).rejects.toThrow(/host_identity_unproven/);
+		expect(performance.now() - started).toBeLessThan(3_000);
+	}, 10_000);
+
 	it("the activity observer gives up within its bound and drops the connection", async () => {
 		const host = await silentHost();
 		let settled = false;

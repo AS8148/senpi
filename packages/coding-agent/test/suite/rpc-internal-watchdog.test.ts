@@ -92,4 +92,18 @@ describe("recorded supervisor lifetime", () => {
 			stop();
 		}
 	});
+
+	// senpi#3816 review (M1, senpi#3738): on Linux an idle supervised host has no stdin lifetime fd and no slot 3, so the
+	// recorded identity is its only binding. It wakes once a second for the free liveness check, not four times.
+	it("an idle host whose only binding is the recorded identity wakes once a second", async () => {
+		vi.useFakeTimers();
+		const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
+		const stop = armHostWatchdog({ ppid: 4242, processStartTime: start, processStartTicks: startTicks }, vi.fn());
+		try {
+			await vi.advanceTimersByTimeAsync(10_000);
+			expect(kill.mock.calls.filter(([pid, signal]) => pid === 4242 && signal === 0)).toHaveLength(10);
+		} finally {
+			stop();
+		}
+	});
 });
