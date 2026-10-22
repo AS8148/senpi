@@ -272,8 +272,15 @@ describe("issue #1432 claude-sdk-oauth two-account failover reattach", () => {
 				(observation) => observation.kind === "flatten" && observation.reason === "account_changed",
 			),
 		).toEqual([]);
+		// The fork is labelled as the seat switch it is (oh-my-openagent#10304): prompt caches
+		// never cross accounts, so the new seat writes the prefix instead of reading it.
 		expect(
-			observations.some((observation) => observation.kind === "fork" && observation.reason === "timeout_retry"),
+			observations.some((observation) => observation.kind === "fork" && observation.reason === "account_changed"),
 		).toBe(true);
+		expect(observations.some((observation) => observation.reason === "timeout_retry")).toBe(false);
+		// The seat switch is attributable without naming the account: a digest, flagged as changed.
+		const switched = observations.find((observation) => observation.reason === "account_changed");
+		expect(switched).toMatchObject({ seat: expect.stringMatching(/^[0-9a-f]{8}$/), seatChanged: true });
+		expect(JSON.stringify(observations)).not.toContain("secondary");
 	}, 10_000);
 });
