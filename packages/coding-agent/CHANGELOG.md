@@ -12,6 +12,7 @@
 
 ### Fixed
 
+- RPC `login_api_key` without a usable key returns an error and stores nothing, and a test run that resolves the real agent directory now fails with `RealAgentDirInTestError` instead of writing there. The llama.cpp login declares its key optional, so a keyless local server still logs in ([#3867](https://github.com/code-yeongyu/senpi/issues/3867)).
 - Anthropic Subscription: a damaged seat-digest salt file is now replaced instead of being ignored, and the salt is now stored on filesystems without hard links, so seat digests keep matching across restarts ([omo#10304](https://github.com/code-yeongyu/oh-my-openagent/issues/10304)).
 
 - Context reduction on 1M windows no longer re-writes the whole cached conversation at every frontier step: the reduced prefix stays byte-identical and the Anthropic adapter keeps a cache checkpoint at its end, so a step only writes what changed. Thanks to @lee98www and @daehwanahn for the measured reports ([#3242](https://github.com/code-yeongyu/senpi/issues/3242)).

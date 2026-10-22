@@ -1,3 +1,40 @@
+## 2026-10-21 - Kimi keeps its blank-key, region-only login (senpi#3869)
+
+### What changed
+
+- `packages/ai/src/providers/kimi-coding-auth.ts`: the Kimi API-key auth declares `keyOptional: true`.
+
+### Why
+
+- senpi#3869 review: before senpi#3867 a user with `KIMI_API_KEY` in the environment could leave the key prompt blank to store only the region (`resolve` falls back from an empty stored key to `KIMI_API_KEY` and still routes to the stored region). Refusing that login would be a user-facing regression. Regression: the Kimi case in `test/login-empty-api-key.test.ts`.
+
+### Why an extension could not handle it
+
+- This is the in-tree Kimi provider declaring its own auth metadata.
+
+### Expected merge conflict zones
+
+- LOW: the object returned by `kimiCodeApiKeyAuth`.
+
+## 2026-10-21 - Logins refuse a blank API key unless the provider declares it optional (senpi#3867)
+
+### What changed
+
+- `packages/ai/src/auth/types.ts`: `ApiKeyAuth` gains optional `keyOptional`, which a provider sets when it works without a key (a local server such as llama.cpp).
+- `packages/ai/src/models.ts`: `Models.login` passes the provider's login result through `withoutBlankKey` when `keyOptional` is set, so a blank or `undefined` key is dropped and the URL/env-only credential is saved. Then `assertLoginKeyPresent` (fork-only `src/auth/pool/slots.ts`) throws `EmptyApiKeyError` for any remaining blank, whitespace or `undefined` key, before the store is touched. `appendLoginSlot` in the same file runs the same check, so `AuthStorage.set` and RPC `login_api_key` stay strict. Env-only logins that carry no `key` field (Bedrock profile or credential chain, Vertex ADC) still save.
+
+### Why
+
+- senpi#3867: an empty key was appended as a keyless `login-2` account that nothing could use. Regression: `test/login-empty-api-key.test.ts`.
+
+### Why an extension could not handle it
+
+- `Models.login` owns the write; an extension cannot veto a credential before the store mutation.
+
+### Expected merge conflict zones
+
+- LOW: the import block and the line after `raceWithAbortSignal(loginOperation, signal)` in `Models.login`.
+
 ## 2026-10-22 - AssistantMessage.promptCacheBreakpoint (senpi#3242)
 
 ### What changed

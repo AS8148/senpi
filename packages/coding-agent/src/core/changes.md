@@ -1,3 +1,21 @@
+## 2026-10-21 - Composed API-key auth keeps keyOptional (senpi#3869)
+
+### What changed
+
+- `packages/coding-agent/src/core/provider-api-key-auth.ts`: `composeApiKeyAuth` copies the base provider's `keyOptional` onto the `ApiKeyAuth` it builds for a provider that `models.json` or an extension overlay names.
+
+### Why
+
+- senpi#3869 review: `Models.login` reads `keyOptional` from the resolved (composed) provider. Without the copy, llama.cpp with a `models.json` entry or an overlay lost the flag and a keyless login was refused with `EmptyApiKeyError`. Regression: the "keyless login on the resolved provider" cases in `test/llama-extension.test.ts`.
+
+### Why an extension could not handle it
+
+- Composition happens in the core model runtime, after every extension registered.
+
+### Expected merge conflict zones
+
+- LOW: the object literal returned at the end of `composeApiKeyAuth`.
+
 ## 2026-10-21 - A held model switch is not re-refused after its reduction (senpi#3828)
 
 ### What changed
