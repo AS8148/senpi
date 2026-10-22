@@ -1,3 +1,21 @@
+## 2026-10-23 - Classic --mode rpc applies set_client_info capabilities (senpi#4006)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: on a connection without the shared-host `clientInfo` registry (classic `--mode rpc`), a `set_client_info` that carries `capabilities` replaces the handler's capability set after the senpi#3811 role check, cancels pending structured questions once when `question` is withdrawn, and re-subscribes extension events when `extension_events` comes or goes (the subscription moved into `subscribeExtensionEvents`, unchanged). A `set_client_info` without `capabilities` keeps the set; the launch-time `SENPI_RPC_CLIENT_CAPABILITIES` stays the initial value. The shared-host branch is unchanged.
+
+### Why
+
+- The handler only assigned the declared set inside the shared-host branch, so a classic client's declaration was accepted and ignored: a client that declared `question` still got single select dialogs, against `docs/rpc.md` "Client information". Regression: `test/suite/regressions/issue-4006-classic-set-client-info-capabilities.test.ts`.
+
+### Why an extension could not handle it
+
+- Client capabilities are read by the RPC connection handler before any extension sees a dialog request.
+
+### Expected merge conflict zones
+
+- HIGH (guaranteed, planned): senpi#4000 rewrites the same `set_client_info` case and the same extension-event subscription helper in `connection-handler.ts` for per-connection capabilities on shared hosts. This change lands first and #4000 rebases onto it, keeping this classic branch as it is.
+
 ## 2026-10-21 - Stop intent, held input and run pause commands (senpi#3811)
 
 ### What changed
