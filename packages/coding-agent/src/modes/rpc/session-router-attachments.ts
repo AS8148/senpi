@@ -52,6 +52,7 @@ export function recordAttachment(host: RouterContext, owner: string, sessionId: 
 	const owned = host.sessionsByConnection.get(owner) ?? new Map<string, number>();
 	owned.set(sessionId, (owned.get(sessionId) ?? 0) + 1);
 	host.sessionsByConnection.set(owner, owned);
+	host.attachOrder.attached(sessionId, owner);
 }
 
 /**

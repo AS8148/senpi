@@ -8,6 +8,7 @@ import { recordAttachment, releaseDisconnectAttachment, releaseOwnerAttachment }
 import { claimClose, finalizeClose } from "./session-router-close.ts";
 import type { RouterContext } from "./session-router-context.ts";
 import { code, detail, error } from "./session-router-errors.ts";
+import { connectionLeft } from "./session-router-relocation.ts";
 
 function identityMatches(
 	host: RouterContext,
@@ -119,6 +120,7 @@ export async function reclaimSession(
 	const claim = claimClose(host, row.sessionId, { drainAttachments: true });
 	host.sessionsByConnection.get(owner)?.delete(row.sessionId);
 	if (host.sessionsByConnection.get(owner)?.size === 0) host.sessionsByConnection.delete(owner);
+	connectionLeft(host, row.sessionId, owner);
 	if (host.handoverParkedDir !== undefined && entry.sessionPath !== undefined)
 		await clearHandoverParkedSession(host.handoverParkedDir, entry.sessionPath).catch(() => {});
 	if (claim.finalizer) {
