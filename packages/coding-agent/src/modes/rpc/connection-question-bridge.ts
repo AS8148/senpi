@@ -156,13 +156,15 @@ export async function degradeQuestion(
 			if (text?.trim()) answers[question.id] = { selected: [], text };
 		} else if (selected !== undefined) answers[question.id] = { selected: [selected] };
 	}
-	const comment = await ui.input("Anything else? (optional)", undefined, opts);
+	// No trailing "anything else?" prompt: a client without `question` shows every dialog as its own
+	// blocking card, so an optional comment read as a new question from the agent
+	// (sisyphuslabs/omo-desktop-app#4042). "Other" above still takes a typed answer per question.
 	const unanswered = request.questions.filter((q) => !answers[q.id]).map((q) => q.id);
 	return {
-		status: comment?.trim() ? "comment-submitted" : unanswered.length ? "cancelled" : "answered",
-		...(comment?.trim() || unanswered.length === 0 ? { resolvedBy: "rpc_connection" as const } : {}),
+		status: unanswered.length ? "cancelled" : "answered",
+		...(unanswered.length === 0 ? { resolvedBy: "rpc_connection" as const } : {}),
 		answers,
-		comment,
+		comment: undefined,
 		unanswered,
 	};
 }
