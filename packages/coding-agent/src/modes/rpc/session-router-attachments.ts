@@ -1,6 +1,5 @@
 import { finalizeClose, tryClaimClose } from "./session-router-close.ts";
 import type { RouterContext } from "./session-router-context.ts";
-import { forgetUnattended, releaseUnattended } from "./session-router-unattended.ts";
 /** Disconnect semantics shared by socket loss and release_attachment. True means settlement owns the final release. */
 export async function releaseDisconnectAttachment(host: RouterContext, sessionId: string): Promise<boolean> {
 	// Headless completion contract: a turn survives its client's death and
@@ -69,7 +68,6 @@ export async function releaseConnection(host: RouterContext, connectionId: strin
 	const opens = host.opensByConnection.get(connectionId);
 	const owned = host.sessionsByConnection.get(connectionId);
 	host.sessionsByConnection.delete(connectionId);
-	forgetUnattended(host, connectionId);
 	if (host.draining) {
 		// Drain owns teardown now, even when a client reacts to the announcement early.
 		// Its attachment-draining claim releases these counts once work settles.
@@ -136,7 +134,6 @@ export function releaseOwnerAttachment(host: RouterContext, owner: string, sessi
 	const owned = host.sessionsByConnection.get(owner);
 	const count = owned?.get(sessionId);
 	if (!owned || count === undefined) return;
-	releaseUnattended(host, owner, sessionId);
 	if (count === 1) {
 		host.writer.detachConnectionFromSession(owner, sessionId);
 		owned.delete(sessionId);
@@ -146,7 +143,6 @@ export function releaseOwnerAttachment(host: RouterContext, owner: string, sessi
 
 /** Drops per-connection records for a handle the host closed on its own. */
 export function forgetSessionOwnership(host: RouterContext, sessionId: string): void {
-	forgetUnattended(host, undefined, sessionId);
 	for (const [connection, owned] of host.sessionsByConnection) {
 		owned.delete(sessionId);
 		if (owned.size === 0) host.sessionsByConnection.delete(connection);

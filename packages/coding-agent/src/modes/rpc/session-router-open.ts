@@ -13,7 +13,6 @@ import type { RouterContext } from "./session-router-context.ts";
 import { code, detail, error } from "./session-router-errors.ts";
 import { sweepDrain } from "./session-router-occupancy.ts";
 import { validatedOpenProfile } from "./session-router-open-profile.ts";
-import { recordUnattended } from "./session-router-unattended.ts";
 import { liveToolMediaScope, toolMediaPersister } from "./tool-media-store.ts";
 
 export function openWithBarrier(
@@ -137,7 +136,6 @@ export async function open(
 			const owned = host.sessionsByConnection.get(owner) ?? new Map<string, number>();
 			owned.set(openedSession.sessionId, (owned.get(openedSession.sessionId) ?? 0) + 1);
 			host.sessionsByConnection.set(owner, owned);
-			if (command.attended === false) recordUnattended(host, owner, openedSession.sessionId);
 		}
 		if (!host.bindings.has(openedSession.sessionId)) {
 			host.bindings.set(

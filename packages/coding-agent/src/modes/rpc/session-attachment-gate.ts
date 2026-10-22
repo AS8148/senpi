@@ -1,7 +1,6 @@
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
 import type { RouterContext } from "./session-router-context.ts";
 import { error } from "./session-router-errors.ts";
-import { holdsWriteAttachment } from "./session-router-unattended.ts";
 
 /** Effect-based reads only. New session commands require attachment by default. */
 const UNATTACHED_READS = new Set<RpcCommand["type"]>([
@@ -52,7 +51,7 @@ export function attachmentGate(host: RouterContext, command: RpcCommand): RpcRes
 		command.type === "release_attachment"
 	)
 		return undefined;
-	if (holdsWriteAttachment(host, owner, command.sessionId)) return undefined;
+	if (host.sessionsByConnection.get(owner)?.has(command.sessionId)) return undefined;
 	if (process.env.SENPI_RPC_REQUIRE_ATTACH === "1")
 		return error(command.id, command.type, "session_not_attached", {
 			reason: "this connection is not attached to that session",

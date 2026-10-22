@@ -8,7 +8,6 @@ import { recordAttachment, releaseDisconnectAttachment, releaseOwnerAttachment }
 import { claimClose, finalizeClose } from "./session-router-close.ts";
 import type { RouterContext } from "./session-router-context.ts";
 import { code, detail, error } from "./session-router-errors.ts";
-import { forgetUnattended } from "./session-router-unattended.ts";
 
 function identityMatches(
 	host: RouterContext,
@@ -27,6 +26,15 @@ function identityMatches(
 	);
 }
 
+/** Wire contract v1.1: a draining or stopping host refuses attachment before admission with a v1 code. */
+function drainingRefusal(
+	host: RouterContext,
+	command: Extract<RpcAttachmentCommand, { type: "attach_session" | "reclaim_session" }>,
+): RpcResponse | undefined {
+	if (!host.draining && !host.drainExitRequested) return undefined;
+	return error(command.id, command.type, "session_busy_lifecycle", { reason: "host_draining" });
+}
+
 /** Synchronous ownership admission shared by ordinary attach and atomic reclaim. */
 function attach(host: RouterContext, owner: string, sessionId: string): void {
 	if (!host.registry.attachSession) throw new Error("live attachment is unavailable");
@@ -39,6 +47,8 @@ export function attachSession(
 	host: RouterContext,
 	command: Extract<RpcAttachmentCommand, { type: "attach_session" }>,
 ): RpcResponse {
+	const draining = drainingRefusal(host, command);
+	if (draining) return draining;
 	const entry = host.registry.peek(command.sessionId);
 	if (entry?.state !== "open" || !host.bindings.has(command.sessionId))
 		return error(command.id, command.type, "unknown_session", {});
@@ -77,7 +87,8 @@ export async function reclaimSession(
 	host: RouterContext,
 	command: Extract<RpcAttachmentCommand, { type: "reclaim_session" }>,
 ): Promise<RpcResponse> {
-	if (host.draining || host.drainExitRequested) return error(command.id, command.type, "host_draining", {});
+	const draining = drainingRefusal(host, command);
+	if (draining) return draining;
 	if (typeof command.sessionPath !== "string" || command.sessionPath.length === 0)
 		return error(command.id, command.type, "unknown_session", {});
 	const key = canonicalSessionPath(command.sessionPath);
@@ -102,7 +113,6 @@ export async function reclaimSession(
 	attach(host, owner, row.sessionId);
 	const claim = claimClose(host, row.sessionId, { drainAttachments: true });
 	host.sessionsByConnection.get(owner)?.delete(row.sessionId);
-	forgetUnattended(host, owner, row.sessionId);
 	if (host.sessionsByConnection.get(owner)?.size === 0) host.sessionsByConnection.delete(owner);
 	if (host.handoverParkedDir !== undefined && entry.sessionPath !== undefined)
 		await clearHandoverParkedSession(host.handoverParkedDir, entry.sessionPath).catch(() => {});
