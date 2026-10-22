@@ -2318,3 +2318,22 @@ This is the builtin extension that owns summary generation and native routing.
 ### Expected merge conflict zones
 
 Summary auth/snapshot setup in `speculative.ts` and native-compaction gates in `index.ts`.
+
+## 2026-10-22 - Overflow retries use the summary model's window (senpi#830)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative.ts`: a configured summary model with no credentials at request time (kept while availability was unknown) falls back to the session model instead of failing the summary, so compaction is never disabled by the override.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative.ts`: overflow detection and the overflow-retry input shrink use the request snapshot's context window, which is the selected summary model's window, instead of the session model's.
+
+### Why
+
+With `compaction.model` now honoured on healthy sessions (senpi#830), the summary model often differs from the session model. A smaller summary window could let a silent overflow (input above the window without a provider error) go undetected, and retries shrank toward the wrong budget.
+
+### Why an extension could not handle it
+
+This is the builtin extension that owns summary generation and its retry loop.
+
+### Expected merge conflict zones
+
+The overflow branches of the retry loop in `runExtensionCompaction` in `speculative.ts`.

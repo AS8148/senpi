@@ -1,9 +1,11 @@
 import { existsSync, rmSync } from "node:fs";
 import { loadEntriesFromFile, SessionManager } from "../session-manager.ts";
 import { readManifest } from "./bundle.ts";
+import { outgoingStateDir } from "./extension-state.ts";
 import type { MoveStatus } from "./move-ledger.ts";
 import { headerSessionId, type MoveId, SESSION_MOVED, SESSION_RECLAIMED, sessionOwnership } from "./ownership.ts";
 import { requeueInput } from "./requeue.ts";
+import { withSessionMoveLock } from "./session-lock.ts";
 
 export interface FinishMoveOptions {
 	readonly sessionFile: string;
@@ -13,6 +15,8 @@ export interface FinishMoveOptions {
 	readonly moveId: MoveId;
 	/** The receiver's signed answer. `receiving` changes nothing: the move is still open. */
 	readonly answer: MoveStatus;
+	/** Runs inside the move lock before anything is read; throw to refuse. */
+	readonly guard?: () => void;
 }
 
 export class MoveMismatchError extends Error {
@@ -32,22 +36,26 @@ export class MoveMismatchError extends Error {
  * is re-queued under ids stable per move, then the bundle goes. While the bundle exists the re-queue runs again on
  * the next call, so a crash between any two steps loses nothing and doubles nothing.
  */
-export async function finishMove(options: FinishMoveOptions): Promise<void> {
+export function finishMove(options: FinishMoveOptions): Promise<void> {
+	return withSessionMoveLock(options.sessionFile, () => settleMove(options), options.guard);
+}
+
+async function settleMove(options: FinishMoveOptions): Promise<void> {
 	const { sessionFile, bundleDir, moveId, answer } = options;
 	if (existsSync(bundleDir)) {
-		const bundled = readManifest(bundleDir).moveId;
+		const bundled = (await readManifest(bundleDir)).moveId;
 		if (bundled !== moveId) throw new MoveMismatchError(moveId, bundled, "the kept bundle");
 	}
 	const entries = loadEntriesFromFile(sessionFile);
 	const ownership = sessionOwnership(entries);
 	if (ownership.writable) {
 		if (reclaimed(entries, moveId)) await requeueDroppedInput(sessionFile, bundleDir);
-		rmSync(bundleDir, { recursive: true, force: true });
+		discardMoveFiles(sessionFile, bundleDir, moveId);
 		return;
 	}
 	if (ownership.moveId !== moveId) throw new MoveMismatchError(moveId, ownership.moveId, "the session file");
 	if (ownership.state === "moved") {
-		rmSync(bundleDir, { recursive: true, force: true });
+		discardMoveFiles(sessionFile, bundleDir, moveId);
 		return;
 	}
 	const sessionId = headerSessionId(entries) ?? "";
@@ -78,7 +86,12 @@ export async function finishMove(options: FinishMoveOptions): Promise<void> {
 			throw new Error(`Unknown move answer ${JSON.stringify(unreachable)}`);
 		}
 	}
+	discardMoveFiles(sessionFile, bundleDir, moveId);
+}
+
+function discardMoveFiles(sessionFile: string, bundleDir: string, moveId: MoveId): void {
 	rmSync(bundleDir, { recursive: true, force: true });
+	rmSync(outgoingStateDir(sessionFile, moveId), { recursive: true, force: true });
 }
 
 function reclaimed(entries: readonly { type: string; customType?: string; data?: unknown }[], moveId: MoveId): boolean {
@@ -92,6 +105,6 @@ function reclaimed(entries: readonly { type: string; customType?: string; data?:
 
 export async function requeueDroppedInput(sessionFile: string, bundleDir: string): Promise<void> {
 	if (!existsSync(bundleDir)) return;
-	const manifest = readManifest(bundleDir);
+	const manifest = await readManifest(bundleDir);
 	await requeueInput(sessionFile, manifest.moveId, manifest.droppedUserMessages);
 }

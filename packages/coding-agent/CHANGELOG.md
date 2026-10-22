@@ -6,12 +6,18 @@
 
 ### Added
 
+- Extensions can move the state they keep outside the session folder along with a moved session: `session_move_export` hands them a folder to fill at the move release (a handler that fails refuses the move), and `session_move_import` gives it back once on the receiving device at the first open after the move ([#3676](https://github.com/code-yeongyu/senpi/issues/3676)).
+- RPC `move_session` drives a session move between two hosts through one implementation: the receiver readies, imports and answers status, the sender exports the released session and finishes the move from the receiver's answer; every refusal says why and what to do. Advertised as the `move_session` capability ([#3676](https://github.com/code-yeongyu/senpi/issues/3676)).
+
 - `RpcClient.setSessionContext(patch, sessionId?)` publishes session context (`set_session_context`) from an attached client, so a task runner can record a terminal `task_status` before it detaches ([#3905](https://github.com/code-yeongyu/senpi/issues/3905)).
+
+- Claude Fable 5.5 (and Claude Mythos 5.5) use the tuned Fable prompt preset; once the model is released they also get the same default retry-fallback chain as Fable 5.1 (the chain and the Claude Code subscription floor stay off until launch) ([#3893](https://github.com/code-yeongyu/senpi/issues/3893), [#3897](https://github.com/code-yeongyu/senpi/pull/3897)).
 
 ### Changed
 
 ### Fixed
 
+- Bumped two pinned overrides because `serveStatic` decoded the request path twice, so middleware on static paths could be bypassed (moderate): `hono` from 4.13.8 to 4.13.11 for GHSA-5r4p-p66f-jhc7, and `@hono/node-server`, which carries its own `serveStatic`, from 2.1.1 to 2.1.3 for GHSA-rmxm-3fg6-px4f. Both are pulled in through `@modelcontextprotocol/sdk`.
 - HTML strikethrough (`<s>…</s>`), SVG `<mask>` markup and fenced examples of their closing tags no longer stop a reply with "Degeneration guard: control-token leakage". A leaked `</s>` run that closes nothing still does ([#3880](https://github.com/code-yeongyu/senpi/issues/3880)).
 - The control-token-leak guard only treats tokenizer special tokens (`</s>`, `<pad>`, `<end_of_turn>`, …) as angle-bracket leaks. Runs of ordinary markup such as `</div>` repeated in a row no longer stop a reply with "Degeneration guard: control-token leakage" in prose, thinking or code samples ([omo#10789](https://github.com/code-yeongyu/oh-my-openagent/issues/10789)).
 - The control-token-leak guard ignores HTML/XML tags in tool-call arguments. An HTML argument with consecutive closing tags (`</div></div></div></div>`) used to stop `show_html_page` with "Degeneration guard: control-token leakage" and resample the turn; chat-template tokens such as `<|im_end|>` in a tool argument, assistant text and thinking are still guarded ([omo#10789](https://github.com/code-yeongyu/oh-my-openagent/issues/10789)).
@@ -22,6 +28,7 @@
 
 - Compaction no longer keeps the previous turn when an invisible entry, such as an extension note, sits just before the kept message, and forced recovery after a "prompt is too long" error no longer picks the same cut again when such an entry leads the session ([#3864](https://github.com/code-yeongyu/senpi/issues/3864)).
 - Anthropic Subscription: a turn retried on another account after a failure is now logged as an account switch rather than a timeout retry, and every continuity decision names the serving account by a short digest, salted per install so the account name cannot be recovered from it. A switch to another account always writes the whole prompt cache again, so the logs now show which seat paid for it. Thanks to 욜로개발조아 for the measured report ([omo#10304](https://github.com/code-yeongyu/oh-my-openagent/issues/10304)).
+- A configured `compaction.model` now summarizes threshold, speculative and idle compaction while the session provider is healthy. Previously builtin compaction used it only after the session account was spent, so summaries (often discarded speculative ones) ran on the expensive session model. Without an override, compaction is unchanged; an override that cannot serve (unknown model, spent account, or no credentials) falls back to the session model and logs `compaction_model_fallback` with the reason, once per cause until the cause changes or the override is used. A credential store that is busy while availability is first read no longer counts as "no credentials": the override is kept, the request-time check decides, and availability is re-read up to five times with backoff ([#830](https://github.com/code-yeongyu/senpi/issues/830)).
 - `record_user_activity` refuses a kind other than `draft` with a fixed message, `record_user_activity: kind must be "draft"`, instead of repeating the value the client sent ([#3933](https://github.com/code-yeongyu/senpi/issues/3933)).
 
 ### Removed
