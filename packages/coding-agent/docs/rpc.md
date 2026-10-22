@@ -3989,7 +3989,7 @@ The current session name is available via `get_state` in the `sessionName` field
 
 #### record_user_activity
 
-Reports that the user started typing a draft in this session's composer (capability `user_activity`). It feeds the same first-activity signal the interactive editor sends, so a session with prompt-cache keep-alive enabled and an eligible model warms the first turn's prefix once while the user is still typing. Repeated reports are no-ops after the first, and nothing is sent to a provider when keep-alive is disabled or the model is ineligible. Only `kind: "draft"` is accepted: prompt activity is recorded by the prompt itself, and any other kind is refused with `invalid_argument`. On a multi-session host the command is session-scoped and passes the session-writer guard, so a session held by another writer answers `session_held`.
+Reports that the user started typing a draft in this session's composer (capability `user_activity`). It feeds the same first-activity signal the interactive editor sends, so a session with prompt-cache keep-alive enabled and an eligible model warms the first turn's prefix once while the user is still typing. Repeated reports are no-ops after the first, and nothing is sent to a provider when keep-alive is disabled or the model is ineligible. Only `kind: "draft"` is accepted: prompt activity is recorded by the prompt itself, and any other kind is refused with `invalid_argument` and the fixed message `record_user_activity: kind must be "draft"` (the refusal never repeats the value the client sent). On a multi-session host the command is session-scoped and passes the session-writer guard, so a session held by another writer answers `session_held`.
 
 ```json
 {"type": "record_user_activity", "sessionId": "rpc-1", "kind": "draft"}
@@ -5151,7 +5151,7 @@ a terminal outcome while detached is published once through the next bound exten
 
 `RpcSessionState.pendingDialogs` lists the still-open select, confirm, input and editor request frames, including requests that remain live across `new_session`, `switch_session`, `fork`, `clone` and `import_jsonl`. The array is empty once all dialogs are resolved, cancelled or timed out. Clients recovering from a gap can restore these dialogs and remove dialogs absent from this authoritative snapshot.
 
-Clients without the `question` capability get a sequential fallback: one `select` per question (options plus "Other (type an answer)"), then one `input` for a comment. The result maps back to the same `QuestionResponse`.
+Clients without the `question` capability get a sequential fallback: one `select` per question (options plus "Other (type an answer)", which asks one `input` for that question's typed answer). No comment prompt follows the last question. The result maps back to the same `QuestionResponse` without a `comment`: `answered` when at least one question was answered (the others listed in `unanswered`), `cancelled` when none was. An abort of the question's signal opens no further dialog and settles `cancelled` (or `timed_out` when the abort reason is `"timed_out"`), never `answered`, keeping the answers given before it.
 
 ### Extension UI Responses (stdin)
 

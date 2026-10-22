@@ -1045,6 +1045,16 @@ export type ClearedQueue = {
 	readonly ordered: readonly QueuedInput[];
 };
 
+/**
+ * The origin an input is tagged and released with: an explicit origin (a person's answer, classified when it is
+ * delivered through the extension API) wins over the one its source implies.
+ */
+function originOf(
+	options: { readonly source?: InputSource; readonly inputOrigin?: InputOrigin } | undefined,
+): InputOrigin {
+	return options?.inputOrigin ?? inputOriginOf(options?.source);
+}
+
 /** A human input about to be queued or admitted (senpi#3811 design 4.4). */
 export interface HumanInputAdmittedEvent {
 	readonly kind: "prompt" | "steer" | "follow_up" | "answer" | "resume";
@@ -1060,6 +1070,8 @@ export interface QueuedInputOptions extends ClientMessageIdentity {
 	enqueueOrder?: number;
 	/** Input provenance reported to `input` extension handlers; defaults to "interactive". */
 	source?: InputSource;
+	/** Who the input came from; defaults from `source` (see `originOf`). */
+	inputOrigin?: InputOrigin;
 	/** Persist the prepared queue record before publishing or enqueuing it. */
 	onQueuedInput?: (input: PreparedClientInput) => void;
 }
@@ -1268,6 +1280,8 @@ export class AgentSession {
 	private _steeringMessages: string[] = [];
 	/** Tracks pending follow-up messages for UI display. Removed when delivered. */
 	private _followUpMessages: string[] = [];
+	/** Queued-input ids a person enqueued (see `hasQueuedPersonInput`); stale ids are pruned on read. */
+	private readonly _personQueuedIds = new Set<string>();
 	/** Recovery-only order across both native queue modes and TUI compaction ownership. */
 	private _queuedInputOrder: QueuedInput[] = [];
 	/** The cause of the abort in flight, reported on the `agent_end` it produces. */
@@ -3071,6 +3085,7 @@ export class AgentSession {
 	private async _promptAgent(
 		messages: AgentMessage | AgentMessage[],
 		{
+			inputOrigin,
 			deferredTurnClaim,
 			onQueuedInput,
 		}: {
@@ -3148,7 +3163,8 @@ export class AgentSession {
 				for (const message of queuedMessages) this.agent.steer(message);
 				if (prepared) {
 					this._steeringMessages.push(prepared.text);
-					this._recordQueuedInput(prepared.text, "steer", prepared, userMessage);
+					const queuedId = this._recordQueuedInput(prepared.text, "steer", prepared, userMessage);
+					if (inputOrigin === "person") this._personQueuedIds.add(queuedId);
 					this._emitQueueUpdate();
 				}
 				return;
@@ -5788,7 +5804,7 @@ export class AgentSession {
 			this.setSessionThinkingLevel(options.thinkingLevel);
 		}
 		await this._promptAgent(messages, {
-			inputOrigin: inputOriginOf(options?.source),
+			inputOrigin: originOf(options),
 			onQueuedInput: options?.onQueuedInput,
 		});
 		await this.waitForRetry();
@@ -6212,6 +6228,7 @@ export class AgentSession {
 		const queue = input.mode === "steer" ? this._steeringMessages : this._followUpMessages;
 		queue.push(input.text);
 		const queuedId = this._recordQueuedInput(input.text, input.mode, prepared, undefined, input.queuedId);
+		if (originOf(input) === "person") this._personQueuedIds.add(queuedId);
 		this._sessionLogger.debug("queue_enqueue", {
 			mode: input.mode,
 			count: queue.length,
@@ -6722,9 +6739,17 @@ export class AgentSession {
 			// before prompt() accepted the message must not silently drop it.
 			if (disposition === undefined) {
 				if (options?.deliverAs === "steer") {
-					await this._queueSteer(text, images, { textBlocks, source: "extension" });
+					await this._queueSteer(text, images, {
+						textBlocks,
+						source: "extension",
+						inputOrigin,
+					});
 				} else {
-					await this._queueFollowUp(text, images, { textBlocks, source: "extension" });
+					await this._queueFollowUp(text, images, {
+						textBlocks,
+						source: "extension",
+						inputOrigin,
+					});
 				}
 			}
 			throw error;
@@ -6941,6 +6966,18 @@ export class AgentSession {
 	 */
 	whenQueueClearRecorded(): Promise<void> {
 		return this._queueClearRecorded;
+	}
+
+	/**
+	 * Whether a person's input is waiting in the queue: a TUI submit, an RPC client prompt/steer/follow_up or an
+	 * answered question, tagged when it was enqueued. Decided from the entries actually queued now, so an input
+	 * that was delivered, dequeued or cleared no longer counts. Extension and engine sends are never a person's.
+	 */
+	get hasQueuedPersonInput(): boolean {
+		for (const id of this._personQueuedIds) {
+			if (!this._queuedInputOrder.some((input) => input.queuedId === id)) this._personQueuedIds.delete(id);
+		}
+		return this._personQueuedIds.size > 0;
 	}
 
 	/** Number of pending messages (includes both steering and follow-up) */
@@ -10217,6 +10254,7 @@ export class AgentSession {
 					void this.abort();
 				},
 				hasPendingMessages: () => this.pendingMessageCount > 0,
+				hasQueuedPersonInput: () => this.hasQueuedPersonInput,
 				isCompacting: () => this.isCompacting,
 				checkReloadVeto: () => this.checkReloadVeto(),
 				shutdown: () => {
@@ -12594,6 +12632,7 @@ function messageFingerprint(message: AgentMessage | undefined): string {
 			if (typeof part.thinking === "string") size += part.thinking.length;
 		}
 	}
-	const usage = (message as { usage?: { input?: number; output?: number; totalTokens?: number } }).usage;
-	return `${size}:${usage?.input ?? ""}:${usage?.output ?? ""}:${usage?.totalTokens ?? ""}`;
+	const usage = (message as { usage?: Usage }).usage;
+	const requestContext = usage?.contextUsage;
+	return `${size}:${usage?.input ?? ""}:${usage?.output ?? ""}:${usage?.totalTokens ?? ""}:${requestContext?.input}:${requestContext?.output}:${requestContext === null}`;
 }

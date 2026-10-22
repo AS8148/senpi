@@ -528,6 +528,7 @@ export class ExtensionRunner {
 	private waitForIdleFn: () => Promise<void> = async () => {};
 	private abortFn: ExtensionContextActions["abort"] = () => {};
 	private hasPendingMessagesFn: () => boolean = () => false;
+	private hasQueuedPersonInputFn: () => boolean = () => false;
 	private isCompactingFn: () => boolean = () => false;
 	private checkReloadVetoFn: ExtensionContextActions["checkReloadVeto"];
 	private getContextUsageFn: () => ContextUsage | undefined = () => undefined;
@@ -682,6 +683,7 @@ export class ExtensionRunner {
 		this.getSignalFn = contextActions.getSignal;
 		this.abortFn = contextActions.abort;
 		this.hasPendingMessagesFn = contextActions.hasPendingMessages;
+		this.hasQueuedPersonInputFn = contextActions.hasQueuedPersonInput ?? (() => false);
 		this.isCompactingFn = contextActions.isCompacting;
 		this.checkReloadVetoFn = contextActions.checkReloadVeto;
 		this.shutdownHandler = contextActions.shutdown;
@@ -1522,6 +1524,10 @@ export class ExtensionRunner {
 			hasPendingMessages: () => {
 				runner.assertActive();
 				return runner.hasPendingMessagesFn();
+			},
+			hasQueuedPersonInput: () => {
+				runner.assertActive();
+				return runner.hasQueuedPersonInputFn();
 			},
 			get requestReload() {
 				runner.assertActive();
