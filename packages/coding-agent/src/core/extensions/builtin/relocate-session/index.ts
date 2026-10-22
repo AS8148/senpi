@@ -60,9 +60,15 @@ function syncActivation(pi: ExtensionAPI): void {
 
 export default function relocateSessionExtension(pi: ExtensionAPI): void {
 	pi.on("session_start", () => syncActivation(pi));
-	pi.on("before_agent_start", () => {
-		syncActivation(pi);
-	});
+	// Preview-safe: the prompt-cache prewarm and keep-alive compose the next turn's prefix through a preview pass that
+	// must see the tools the turn will send, so a preview changes nothing and a real turn settles the activation.
+	pi.on(
+		"before_agent_start",
+		(event) => {
+			if (event.preview !== true) syncActivation(pi);
+		},
+		{ previewSafe: true },
+	);
 	pi.registerTool({
 		name: "list_relocation_targets",
 		label: "Other Computers",
