@@ -3,10 +3,11 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { McpOAuthProvider } from "./auth/oauth-provider.ts";
 import type { McpServerConfig } from "./config-schema.ts";
 import type { McpElicitationUiProvider } from "./elicitation.ts";
-import { AuthError, ConnectError, TimeoutError } from "./errors.ts";
+import { ConnectError, TimeoutError } from "./errors.ts";
 import type { McpLogger } from "./log.ts";
 import { delay, reapProcessTree } from "./process-tree.ts";
 import type { McpMaterializedTransport, McpTransportSpec } from "./transport-sdk.ts";
+import { errorMessage, mcpTransportSpec } from "./transport-spec.ts";
 import { type McpAsyncErrorSink, safeInterval, safeTimer } from "./wrap.ts";
 
 export type McpTransportConnection = {
@@ -44,7 +45,7 @@ const SHUTDOWN_GRACE_MS = 100,
 	SHUTDOWN_CLOSE_WAIT_MS = 400;
 
 export function createMcpTransport(options: CreateMcpTransportOptions): McpTransportConnection {
-	const spec = options.config.type === "stdio" ? stdioSpec(options) : httpSpec(options);
+	const spec = mcpTransportSpec(options);
 	return createConnection(options, spec, options.config.connectTimeoutMs);
 }
 
@@ -107,50 +108,6 @@ export async function shutdownMcpTransport(connection: McpTransportConnection): 
 		});
 	}
 	await Promise.race([closePromise, delay(SHUTDOWN_CLOSE_WAIT_MS)]);
-}
-
-function stdioSpec(options: CreateMcpTransportOptions): McpTransportSpec {
-	const command = options.config.command;
-	if (command === undefined || command.trim().length === 0) {
-		throw new ConnectError(`MCP server ${options.serverName} stdio command is required`, {
-			phase: "create",
-			serverName: options.serverName,
-		});
-	}
-	return {
-		args: options.config.args,
-		authProvider: options.authProvider,
-		command,
-		cwd: options.config.cwd,
-		env: { ...definedEnv(options.env), ...(options.config.env ?? {}) },
-		kind: "stdio",
-	};
-}
-
-function httpSpec(options: CreateMcpTransportOptions): McpTransportSpec {
-	if (options.config.url === undefined || options.config.url.trim().length === 0) {
-		throw new ConnectError(`MCP server ${options.serverName} HTTP URL is required`, {
-			phase: "create",
-			serverName: options.serverName,
-		});
-	}
-	let url: URL;
-	try {
-		url = new URL(options.config.url);
-	} catch (error) {
-		throw new ConnectError(`MCP server ${options.serverName} HTTP URL is invalid: ${errorMessage(error)}`, {
-			cause: error,
-			phase: "create",
-			serverName: options.serverName,
-		});
-	}
-	const headers = buildHeaders(options);
-	return {
-		authProvider: options.authProvider,
-		kind: "http",
-		requestInit: Object.keys(headers).length === 0 ? undefined : { headers },
-		url,
-	};
 }
 
 function createConnection(
@@ -219,40 +176,6 @@ function createConnection(
 		...(spec.kind === "http" ? { endpointUrl: spec.url } : {}),
 	};
 }
-
-function definedEnv(env: Record<string, string | undefined> | undefined): Record<string, string> {
-	const result: Record<string, string> = {};
-	for (const [key, value] of Object.entries(env ?? {})) {
-		if (value !== undefined) result[key] = value;
-	}
-	return result;
-}
-
-function buildHeaders(options: CreateMcpTransportOptions): Record<string, string> {
-	const headers = { ...(options.config.headers ?? {}) };
-	const shouldAttachBearer =
-		options.config.auth === "bearer" ||
-		(options.config.auth === undefined && options.config.bearerTokenEnv !== undefined);
-	if (!shouldAttachBearer) return headers;
-	const envName = options.config.bearerTokenEnv;
-	if (envName === undefined || envName.trim().length === 0) {
-		throw new AuthError(`MCP server ${options.serverName} bearer auth requires bearerTokenEnv`, {
-			phase: "create",
-			serverName: options.serverName,
-		});
-	}
-	const token = options.env?.[envName] ?? process.env[envName];
-	if (token === undefined || token.length === 0) {
-		throw new AuthError(`MCP server ${options.serverName} bearer token env ${envName} is not set`, {
-			phase: "create",
-			serverName: options.serverName,
-		});
-	}
-	headers.authorization = `Bearer ${token}`;
-	return headers;
-}
-
-const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 // The SDK (1.32+) refuses a redirect to another origin and reports `Redirect to <target> not followed` with a
 // 3xx code. senpi keeps that default (senpi#2940); this names both origins and the rule so the user can fix the URL.

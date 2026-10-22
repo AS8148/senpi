@@ -1,3 +1,24 @@
+## 2026-10-22 - Extract extension server resolution and transport spec building without behavior changes (senpi#3858)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config-extension.ts`: holds the unchanged `resolveExtensionMcpServer` and `mergeExtensionMcpServers`, moved from `config.ts`, which re-exports them.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/transport-spec.ts`: holds the unchanged stdio and HTTP spec builders, bearer header assembly and `errorMessage`, moved from `transport.ts`; `mcpTransportSpec` selects the builder by transport type exactly as `createMcpTransport` did.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config.ts` and `packages/coding-agent/src/core/extensions/builtin/mcp/transport.ts`: import the moved units.
+
+### Why
+
+- Isolates extension admission and transport spec building, which reference support changes, so those edits land in focused modules within the size boundary.
+
+### Why an extension could not handle it
+
+- MCP config loading and transport construction are private to the builtin.
+
+### Expected merge conflict zones
+
+- LOW: the re-export block in `packages/coding-agent/src/core/extensions/builtin/mcp/config.ts`.
+- LOW: `createMcpTransport` and the import block in `packages/coding-agent/src/core/extensions/builtin/mcp/transport.ts`.
+
 ## 2026-10-21 - Keep typed references opaque during legacy interpolation (senpi#3858)
 
 ### What changed
