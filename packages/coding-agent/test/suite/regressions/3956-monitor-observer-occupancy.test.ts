@@ -36,7 +36,9 @@ async function classifyingEndpoint() {
 			pending = pending.slice(newline + 1);
 			firstLines.push(line);
 			const request = JSON.parse(line) as { id?: string };
-			client.write(`${JSON.stringify({ type: "response", id: request.id, success: true, data: { snapshot: [] } })}\n`);
+			client.write(
+				`${JSON.stringify({ type: "response", id: request.id, success: true, data: { snapshot: [] } })}\n`,
+			);
 		});
 	});
 	await new Promise<void>((resolve) => server.listen(socketPath, resolve));
