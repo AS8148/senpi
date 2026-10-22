@@ -14,14 +14,19 @@ const suites = combined?.steps.filter((step) => step.id && /run-tests\.mjs|npm r
 test("CI allocates one macOS runner while retaining the other matrix legs", () => {
 	assert.ok(combined);
 	assert.equal(combined["runs-on"], "macos-latest");
-	assert.equal(combined.if, undefined);
+	// Pull requests run it only for platform-specific diffs (senpi#3957, ci-platform-scope.test.mjs).
+	assert.equal(combined.if, "needs.platform-scope.outputs.full == 'true'");
 	assert.deepEqual(Object.keys(jobs).filter((name) =>
 		JSON.stringify(jobs[name]["runs-on"]).includes("macos") ||
 		jobs[name].strategy?.matrix.os?.includes("macos-latest")), ["macos-combined"]);
 	for (const name of originals) {
-		assert.deepEqual(jobs[name].strategy.matrix.os,
-			["webview-kernel", "terminal-cross-os", "inspector-handoff"].includes(name)
-				? ["ubuntu-latest", "windows-latest"] : ["ubuntu-latest"]);
+		const os = jobs[name].strategy.matrix.os;
+		if (["webview-kernel", "terminal-cross-os", "inspector-handoff"].includes(name)) {
+			// Linux always, Windows only for a full run (senpi#3957); never macOS.
+			assert.match(os, /^\$\{\{ fromJSON\(.*'\["ubuntu-latest", "windows-latest"\]' \|\| '\["ubuntu-latest"\]'\) \}\}$/, name);
+		} else {
+			assert.deepEqual(os, ["ubuntu-latest"]);
+		}
 	}
 	assert.ok(jobs["check-and-test"].needs.includes("macos-combined"));
 	assert.ok(jobs["check-and-test"].steps.some((step) => step.run?.includes("needs.macos-combined.result")));
@@ -93,12 +98,20 @@ test("suite conditions survive earlier failures but refuse failed installs, snap
 			assert.equal(Function(`return (${condition});`)(), expected, step.name);
 		}
 	}
-	const gate = jobs["check-and-test"].steps.find((step) => step.run?.includes("join(needs.*.result"));
-	for (const result of ["success", "failure", "cancelled", "skipped"]) {
-		const results = jobs["check-and-test"].needs.map((name) => name === "macos-combined" ? result : "success");
-		const script = gate.run.replace(/\$\{\{\s*join\(needs\.\*\.result,\s*' '\)\s*\}\}/, results.join(" "));
-		const run = spawnSync("bash", ["-c", script], { encoding: "utf8", timeout: 5000 });
-		assert.equal(run.status, result === "success" ? 0 : 1, run.stdout + run.stderr);
+	const gate = jobs["check-and-test"].steps.find((step) => step.run?.includes("ci-platform-scope.mjs verify"));
+	// A full run (every main push) accepts only success; a non-full PR run may also skip it.
+	for (const [full, result, expected] of [
+		["true", "success", 0], ["true", "failure", 1], ["true", "cancelled", 1], ["true", "skipped", 1],
+		["false", "skipped", 0], ["false", "failure", 1],
+	]) {
+		const needs = Object.fromEntries(jobs["check-and-test"].needs.map((name) =>
+			[name, { result: name === "macos-combined" ? result : "success" }]));
+		const script = gate.run.replace(/\$\{\{\s*needs\.platform-scope\.outputs\.full\s*\}\}/, full);
+		const run = spawnSync("bash", ["-c", script], {
+			cwd: new URL("..", import.meta.url), encoding: "utf8", timeout: 5000,
+			env: { ...process.env, NEEDS_JSON: JSON.stringify(needs) },
+		});
+		assert.equal(run.status, expected, `${full} ${result}: ${run.stdout}${run.stderr}`);
 	}
 });
 
