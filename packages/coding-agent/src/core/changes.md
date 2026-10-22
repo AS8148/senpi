@@ -1,3 +1,21 @@
+## 2026-10-22 - The session holds the host that can continue it on another computer (senpi#3959)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `setRelocationHost(host)` stores the `SessionRelocationHost` (`session-relocation.ts`, new) a host installs, and the `bindCore` `sessionControl` deps read it as `relocationHost`, so `pi.session.relocationTargets()` / `requestRelocation()` reach it; without one both answer `unavailable`.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: the agent's `relocate_session` tool must ask the session's host to continue the session on another of the user's computers (sisyphuslabs/omo-desktop-app#3137); the engine knows no other machines, so the host has to plug in per session.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: the host that runs a session (the RPC connection) is only known to the session runtime; an extension cannot reach the connection that would answer.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: LOW: one field beside `_controlEndpointHost`, one setter beside `setControlEndpointHost`, one line in the `createSessionControlActions` deps of `bindCore`, one type import.
+
 ## 2026-10-21 - A user Stop pauses the session and the run it started (senpi#3811)
 
 ### What changed
