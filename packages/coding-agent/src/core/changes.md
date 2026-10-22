@@ -9,6 +9,14 @@
 
 - `packages/coding-agent/src/core/work-obligations.ts`: the extension API guard needs the same prefixes the engine matches on.
 
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/work-obligations.ts`: the prefixes are engine custody identity; only the core can define and match them.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the `ENGINE_DELIVERY_KEY_PREFIX` import and the `_isEngineDelivery` / `_releaseQueuedDeliveries` block order.
+
 ## 2026-10-19 - Extension state follows a moved session (senpi#3676)
 
 ### What changed

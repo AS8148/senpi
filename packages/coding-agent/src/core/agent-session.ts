@@ -1225,8 +1225,6 @@ function promptKind(options: PromptOptions | undefined): HumanInputAdmittedEvent
 	return "prompt";
 }
 
-/** senpi#3864: custody key prefix of a delivery ticket the engine opened itself (a producer keys its own). */
-
 export class AgentSession {
 	readonly agent: Agent;
 	readonly sessionManager: SessionManager;
