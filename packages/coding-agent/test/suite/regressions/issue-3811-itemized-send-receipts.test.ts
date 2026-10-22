@@ -45,6 +45,31 @@ function noticeEntries(fixture: ResumeFixture): Array<{ id: string; data: Record
 		);
 }
 
+/** Every `session-notice` write that carries `itemId` fails, as a full disk would fail it. */
+function failNoticeWritesCarrying(fixture: ResumeFixture, itemId: string): void {
+	const manager = fixture.h.sessionManager;
+	const append = manager.appendCustomEntry.bind(manager);
+	manager.appendCustomEntry = (customType, data, options) => {
+		if (customType === "session-notice" && JSON.stringify(data).includes(`"itemId":"${itemId}"`))
+			throw new Error("disk full");
+		return append(customType, data, options);
+	};
+}
+
+const twoItems: readonly SendMessageItem[] = [
+	{ itemId: "a", producer: "task", content: "Task A finished" },
+	{ itemId: "b", producer: "task", content: "Task B finished" },
+];
+
+function sendTwoItems(fixture: ResumeFixture): unknown {
+	return fixture
+		.api()
+		.sendMessage(
+			{ customType: WAKE, content: "Task A finished\n\nTask B finished", display: false },
+			{ triggerTurn: true, deliverAs: "followUp", items: twoItems },
+		);
+}
+
 function persistedNotices(fixture: ResumeFixture): number {
 	return fixture.h
 		.eventsOfType("session_notice")
@@ -153,6 +178,58 @@ describe("senpi#3811 itemized sendMessage custody", () => {
 		const delivered = JSON.stringify(fixture.h.faux.getCallLog().at(-1)?.context.messages);
 		expect(delivered).toContain("Task A finished");
 		expect(delivered).toContain("Task B finished");
+		expect(fixture.h.session.pausedNoticeCount).toBe(0);
+	});
+
+	it("rejects a held batch whose notice write fails and keeps none of its items in custody", async () => {
+		// Given a stopped session whose notice write for the second item fails
+		const fixture = await textFixture();
+		fixtures.push(fixture);
+		await fixture.h.session.stop();
+		failNoticeWritesCarrying(fixture, "b");
+
+		// When a coordinator sends a batch of two items
+		let sending: unknown;
+		expect(() => {
+			sending = sendTwoItems(fixture);
+		}).not.toThrow();
+
+		// Then the receipts reject and neither item is in custody, so the sender can retry the whole batch
+		await expect(settlesWithin(Promise.resolve(sending), "the held batch's receipts")).rejects.toThrow("disk full");
+		expect(noticeEntries(fixture)).toEqual([]);
+		expect(persistedNotices(fixture)).toBe(0);
+		expect(fixture.h.session.pausedNoticeCount).toBe(0);
+	});
+
+	it("rejects the receipts of a held batch sent from agent_settled when its notice write fails", async () => {
+		// Given a running turn and an extension that sends a batch from agent_settled once the turn is stopped
+		const fixture = await resumeFixture();
+		fixtures.push(fixture);
+		let armed = false;
+		let sending: unknown;
+		fixture.api().on("agent_settled", () => {
+			if (!armed) return;
+			armed = false;
+			sending = sendTwoItems(fixture);
+		});
+		failNoticeWritesCarrying(fixture, "b");
+		const toolStarted = fixture.toolStarted();
+		const prompt = fixture.h.session.prompt("Work on it");
+		await toolStarted;
+
+		// When the user stops the turn, so the deferred batch is admitted while the Stop holds the session
+		armed = true;
+		const stop = fixture.h.session.stop();
+		fixture.releaseTool();
+		await Promise.all([prompt, stop]);
+		await settle(fixture);
+
+		// Then the deferred admission still answers: its receipts reject and no item is in custody
+		expect(sending).toBeDefined();
+		await expect(settlesWithin(Promise.resolve(sending), "the deferred batch's receipts")).rejects.toThrow(
+			"disk full",
+		);
+		expect(noticeEntries(fixture)).toEqual([]);
 		expect(fixture.h.session.pausedNoticeCount).toBe(0);
 	});
 

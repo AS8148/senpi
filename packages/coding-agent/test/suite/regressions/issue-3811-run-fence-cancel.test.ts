@@ -1,5 +1,6 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
+import { EngineTurnHold, type SessionHoldEvent } from "../../../src/core/engine-turn-hold.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../../src/core/extensions/types.ts";
 import { createIdentityHarness } from "../rpc-client-identity-harness.ts";
 
@@ -14,7 +15,12 @@ interface Probe {
 const runR: RunRef = { kind: "dag", id: "r1" };
 const runR2: RunRef = { kind: "dag", id: "r2" };
 
-async function fencedFixture(): Promise<{ fixture: Fixture; probe: Probe; resumedCauses: string[] }> {
+async function fencedFixture(): Promise<{
+	fixture: Fixture;
+	probe: Probe;
+	pausedKinds: string[];
+	resumedCauses: string[];
+}> {
 	const probe: Probe = {};
 	const fixture = await createIdentityHarness({
 		extensionFactories: [
@@ -28,14 +34,16 @@ async function fencedFixture(): Promise<{ fixture: Fixture; probe: Probe; resume
 	});
 	await fixture.session.bindExtensions({ mode: "rpc" });
 	fixture.harness.setResponses([fauxAssistantMessage("the cancelled run's wake ran a turn")]);
+	const pausedKinds: string[] = [];
 	const resumedCauses: string[] = [];
 	fixture.session.subscribe((event) => {
 		const type: string = event.type;
+		if (type === "session_paused") pausedKinds.push(String(Reflect.get(event, "kind")));
 		if (type === "session_resumed") resumedCauses.push(String(Reflect.get(event, "cause")));
 	});
 	probe.context?.fenceRun?.(runR);
 	probe.context?.fenceRun?.(runR2);
-	return { fixture, probe, resumedCauses };
+	return { fixture, probe, pausedKinds, resumedCauses };
 }
 
 function fenceKeys(probe: Probe): string[] {
@@ -99,16 +107,43 @@ describe("senpi#3811 workflow cancel releases the parent's run fence", () => {
 		expect(fixture.harness.faux.state.callCount).toBe(1);
 	});
 
-	it("emits session_resumed with run_cancelled only when the last hold goes", async () => {
-		const { fixture, probe, resumedCauses } = await fencedFixture();
+	it("never reports a pause or a resume for fences alone, which do not pause the session", async () => {
+		const { fixture, probe, pausedKinds, resumedCauses } = await fencedFixture();
 		fixtures.push(fixture);
 
 		probe.context?.releaseRunFence?.(runR);
-		expect(resumedCauses).toEqual([]);
-
 		probe.context?.releaseRunFence?.(runR2);
+
 		expect(fenceKeys(probe)).toEqual([]);
-		expect(resumedCauses).toEqual(["run_cancelled"]);
+		expect(pausedKinds).toEqual([]);
+		expect(resumedCauses).toEqual([]);
+	});
+
+	it("emits one session_resumed for the Stop it pairs with when a fence outlives that Stop", () => {
+		// Given a stopped ledger whose Stop also fenced a run
+		const events: SessionHoldEvent[] = [];
+		const ledger = new EngineTurnHold(
+			[],
+			false,
+			() => "entry",
+			() => {},
+			(event) => {
+				events.push(event);
+			},
+		);
+		ledger.addHold("session_hold", { key: "session_hold:1" });
+		ledger.addHold("run_fence", { key: "run_fence:dag:r1", data: { runRef: runR } });
+
+		// When the Stop is released on its own, and the run is cancelled later
+		ledger.release(["session_hold:1"], "resume_session");
+		ledger.release(["run_fence:dag:r1"], "run_cancelled");
+
+		// Then the one pause has exactly one resume
+		expect(
+			events.flatMap((event) =>
+				event.type === "session_paused" || event.type === "session_resumed" ? [event.type] : [],
+			),
+		).toEqual(["session_paused", "session_resumed"]);
 	});
 
 	it("treats releasing a run that holds no fence as a no-op", async () => {

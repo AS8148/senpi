@@ -1,7 +1,14 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import type { PromptTemplate } from "../../../src/core/prompt-templates.ts";
-import { type ResumeFixture, resumeFixture, runRef, settle } from "./issue-3811-resume-support.ts";
+import {
+	type ResumeFixture,
+	resumeFixture,
+	runRef,
+	settle,
+	settlesWithin,
+	stopDuringNextAdmission,
+} from "./issue-3811-resume-support.ts";
 
 const deploy: PromptTemplate = {
 	name: "deploy",
@@ -62,6 +69,30 @@ describe("senpi#3811 a run pause holds every person input before anything runs",
 		await resumeRun(fixture, childSeq);
 		expect(fixture.h.faux.state.callCount).toBe(callsBefore + 1);
 		expect(fixture.h.session.pausedHeldInputCount).toBe(0);
+	});
+
+	it("keeps a held '.' held when a newer Stop keeps the run resume turn from starting", async () => {
+		// Given a child with history, paused for its parent's run, holding a "."
+		const fixture = await textFixture();
+		fixtures.push(fixture);
+		await fixture.h.session.prompt("Work on it");
+		await settle(fixture);
+		const childSeq = await pausedForRun(fixture);
+		await fixture.h.session.prompt(".");
+		expect(fixture.h.session.pausedHeldInputCount).toBe(1);
+
+		// When the parent resumes the run and a newer Stop lands while that turn is admitted
+		stopDuringNextAdmission(fixture);
+		const resumed = await settlesWithin(
+			fixture.h.session.resumeForRun({ parentSessionId: "p", parentPauseSeq: 1, childSeqCutoff: childSeq }),
+			"resumeForRun",
+		);
+		await settle(fixture);
+
+		// Then no turn continued the work, so the "." is still held for the next release
+		expect(resumed.turnId).toBeUndefined();
+		expect(fixture.h.session.paused).toBe(true);
+		expect(fixture.h.session.pausedHeldInputCount).toBe(1);
 	});
 
 	it("holds a prompt template typed while the run is paused and expands it when the run resumes", async () => {
