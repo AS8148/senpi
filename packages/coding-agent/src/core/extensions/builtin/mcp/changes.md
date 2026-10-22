@@ -1,3 +1,27 @@
+## 2026-10-22 - Key MCP identities with a per-installation secret and adopt legacy caches by credential (senpi#3858)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config-identity-key.ts`: the installation key `config-identity.key` in the agent directory is 32 random bytes written to a private temporary file and published with `link()`, so it is complete or absent and never replaced. An existing key is used only as a regular file owned by the user, mode `0600`, exactly 32 bytes. Without a valid key, identities are `ephemeral:` HMACs under a per-process key.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config-identity.ts` and `auth/catalog-identity.ts`: `hashConfig` and the catalog credential identity are HMAC-SHA-256 under that key; the unkeyed forms remain only to read entries earlier builds wrote.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/log.ts`: literal-header and log redaction fingerprints are keyed too.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/catalog-cache.ts`: an `ephemeral:` identity is never persisted.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/catalog-cache-adoption.ts` and `service.ts`: a cache entry written under the unkeyed identities is adopted, and rewritten under the keyed ones, only when both its config hash and its credential identity match, so offline lazy catalogs keep working and a changed account never inherits another's catalog.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config.ts` and `config-generation.ts`: identities are keyed with the session's agent directory.
+
+### Why
+
+- A plain SHA-256 of a config or a bearer token is an offline-guessable fingerprint of the secret it covers, and it is persisted in the catalog cache and exposed in status.
+
+### Why an extension could not handle it
+
+- Catalog identity, cache persistence and connection admission are private to the MCP builtin.
+
+### Expected merge conflict zones
+
+- MEDIUM: the cache lookup in `#syncFromConfig` in `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`.
+- LOW: `hashConfig` in `packages/coding-agent/src/core/extensions/builtin/mcp/config-identity.ts` and `mcpCredentialIdentity` in `auth/catalog-identity.ts`.
+
 ## 2026-10-22 - Sanitize MCP sinks through the resolved-reference registry (senpi#3858)
 
 ### What changed

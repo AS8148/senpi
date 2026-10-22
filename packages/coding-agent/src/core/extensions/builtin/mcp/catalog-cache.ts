@@ -5,6 +5,7 @@ import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import lockfile from "proper-lockfile";
 import { getAgentDir } from "../../../../config.ts";
 import { redactResolvedReferenceData } from "../../../config-reference-redaction.ts";
+import { isEphemeralIdentity } from "./config-identity-key.ts";
 import type { McpServerDeclaredConfig } from "./config-schema.ts";
 import type { ServerConnection } from "./connection.ts";
 import { collectAllPages } from "./expose/pagination.ts";
@@ -106,6 +107,8 @@ export async function writeMcpCachedServer(
 	server: McpCachedServerCatalog,
 	isCurrent?: () => boolean,
 ): Promise<void> {
+	// Without a valid installation key nothing keyed is persisted (senpi#3858).
+	if (isEphemeralIdentity(server.configHash) || isEphemeralIdentity(server.credentialIdentity)) return;
 	if (isCurrent?.() === false) return;
 	const path = getMcpCatalogCachePath(agentDir);
 	await mkdir(dirname(path), { recursive: true });

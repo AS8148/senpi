@@ -69,7 +69,7 @@ export async function resolveMcpConfigGeneration(scope: McpGenerationScope): Pro
 		...(headers === undefined ? {} : { headers }),
 	};
 	inheritMcpSharingScope(scope.declared, config);
-	return { config, configHash: hashConfig(config) };
+	return { config, configHash: hashConfig(config, scope.agentDir) };
 }
 
 /** For a server that declares references: every transport re-reads them, and a changed snapshot re-keys. */

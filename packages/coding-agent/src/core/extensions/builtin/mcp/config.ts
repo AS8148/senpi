@@ -73,7 +73,7 @@ export function loadMcpConfig(options: LoadMcpConfigOptions): ResolvedMcpConfig 
 
 	for (const item of sources) {
 		if (item.trusted && item.config?.mcpServers) {
-			addTrustedServers(result, item.config.mcpServers, item.source, item.path);
+			addTrustedServers(result, item.config.mcpServers, { source: item.source, sourcePath: item.path, agentDir });
 			continue;
 		}
 		if (!item.trusted) {
@@ -165,18 +165,17 @@ function normalizeSettings(settings: RawConfig["settings"]): McpSettings {
 function addTrustedServers(
 	result: ResolvedMcpConfig,
 	servers: NonNullable<RawConfig["mcpServers"]>,
-	source: McpServerSource,
-	sourcePath: string,
+	origin: { readonly source: McpServerSource; readonly sourcePath: string; readonly agentDir: string },
 ): void {
 	for (const [name, server] of Object.entries(servers)) {
 		const config = normalizeServer(server);
 		inheritMcpSharingScope(server, config);
 		result.servers[name] = {
 			config,
-			configHash: hashConfig(config),
+			configHash: hashConfig(config, origin.agentDir),
 			name,
-			source,
-			sourcePath,
+			source: origin.source,
+			sourcePath: origin.sourcePath,
 			state: config.enabled ? "enabled" : "disabled",
 			transport: config.type,
 		};

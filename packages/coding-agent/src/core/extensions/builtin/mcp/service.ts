@@ -11,12 +11,8 @@ import {
 } from "../tool-search/service.ts";
 import { mcpCredentialIdentity } from "./auth/catalog-identity.ts";
 import { resolveAuthMode } from "./auth/context.ts";
-import {
-	cachedCatalogNeedsRefresh,
-	getValidCachedServer,
-	type McpCatalogCacheFile,
-	readMcpCatalogCache,
-} from "./catalog-cache.ts";
+import { cachedCatalogNeedsRefresh, type McpCatalogCacheFile, readMcpCatalogCache } from "./catalog-cache.ts";
+import { adoptMcpCachedServer, legacyMcpCacheIdentity } from "./catalog-cache-adoption.ts";
 import { loadMcpConfig, mergeExtensionMcpServers, visitSpawnableMcpServers } from "./config.ts";
 import { resolveWantedMcpGenerations } from "./config-generation.ts";
 import type { McpServerDeclaredConfig, ResolvedMcpConfig, ResolvedMcpServer } from "./config-schema.ts";
@@ -697,6 +693,17 @@ export class McpService {
 			const credentialIdentity = credentialIdentities.get(name);
 			const key = `${name}\0${generation.configHash}\0${credentialIdentity ?? "unknown"}`;
 			if (this.#connections.has(key)) continue;
+			const cachedCatalog =
+				useCache && credentialIdentity !== undefined && cache !== undefined
+					? await adoptMcpCachedServer({
+							cache,
+							agentDir: options.agentDir,
+							serverName: name,
+							current: { configHash: generation.configHash, credentialIdentity },
+							legacy: () => legacyMcpCacheIdentity(generation.config, name, options),
+						})
+					: undefined;
+			if (this.#disposed) return;
 			const entry = createMcpSessionConnection({
 				registry: this.#registry,
 				share: this.#shareConnections,
@@ -725,10 +732,6 @@ export class McpService {
 					this.#config?.servers[name]?.state === "enabled" &&
 					this.#config.servers[name]?.configHash === current.configHash,
 			});
-			const cachedCatalog =
-				useCache && credentialIdentity !== undefined && cache !== undefined
-					? getValidCachedServer(cache, name, generation.configHash, credentialIdentity)
-					: undefined;
 			entry.cachedCatalog = cachedCatalog;
 			this.#connections.set(key, entry);
 			this.#connectionKeysByName.set(name, key);
