@@ -5114,7 +5114,7 @@ a terminal outcome while detached is published once through the next bound exten
 
 `RpcSessionState.pendingDialogs` lists the still-open select, confirm, input and editor request frames, including requests that remain live across `new_session`, `switch_session`, `fork`, `clone` and `import_jsonl`. The array is empty once all dialogs are resolved, cancelled or timed out. Clients recovering from a gap can restore these dialogs and remove dialogs absent from this authoritative snapshot.
 
-Clients without the `question` capability get a sequential fallback: one `select` per question (options plus "Other (type an answer)"), then one `input` for a comment. The result maps back to the same `QuestionResponse`.
+Clients without the `question` capability get a sequential fallback: one `select` per question (options plus "Other (type an answer)", which asks one `input` for that question's typed answer). No comment prompt follows the last question. The result maps back to the same `QuestionResponse` without a `comment`: `answered` when at least one question was answered (the others listed in `unanswered`), `cancelled` when none was. An abort of the question's signal opens no further dialog and settles `cancelled` (or `timed_out` when the abort reason is `"timed_out"`), never `answered`, keeping the answers given before it.
 
 ### Extension UI Responses (stdin)
 
