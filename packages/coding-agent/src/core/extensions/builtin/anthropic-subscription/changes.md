@@ -1,3 +1,21 @@
+## 2026-10-22 - A damaged seat-digest salt is replaced (oh-my-openagent#10304 follow-up)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/seat-digest.ts`: a salt file that is not exactly 32 bytes is removed (only if it is still the file that was read, by inode) and recreated through the same link-into-place path, instead of being ignored in favour of a process-only salt.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/seat-digest.ts`: a truncated salt left on disk sent every later process to the process-only fallback forever, so seat digests never matched across restarts on that install (review LOW 2 on senpi#3947).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/seat-digest.ts`: the salt is private state of this extension.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/seat-digest.ts`: `readOrCreateSalt` and the new `removeDamagedSalt`.
+
 ## 2026-10-22 - A same-turn retry on another seat is reported as a seat switch, and every continuity decision names its seat (oh-my-openagent#10304)
 
 ### What changed

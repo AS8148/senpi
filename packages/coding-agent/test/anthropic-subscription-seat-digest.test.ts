@@ -1,8 +1,8 @@
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createHash, createHmac } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { seatDigest } from "../src/core/extensions/builtin/anthropic-subscription/seat-digest.ts";
 
@@ -77,6 +77,18 @@ describe("anthropic-subscription seat digest (oh-my-openagent#10304)", () => {
 		expect(new Set(digests).size).toBe(1);
 		expect(seatDigest("primary", directory)).toBe(digests[0]);
 	}, 30_000);
+
+	it("replaces a salt file of the wrong length instead of falling back on every restart", () => {
+		const directory = install();
+		const salt = join(directory, "anthropic-subscription", "seat-digest-salt");
+		mkdirSync(dirname(salt), { recursive: true });
+		writeFileSync(salt, "short", { mode: 0o600 });
+		const digest = seatDigest("primary", directory);
+		const stored = readFileSync(salt);
+
+		expect(stored.length).toBe(32);
+		expect(digest).toBe(createHmac("sha256", stored).update("primary").digest("hex").slice(0, 8));
+	});
 
 	it("never fails the caller when the salt cannot be stored, and stays salted", () => {
 		const directory = install();

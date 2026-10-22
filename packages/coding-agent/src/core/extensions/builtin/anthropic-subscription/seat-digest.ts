@@ -1,5 +1,5 @@
 import { createHmac, randomBytes } from "node:crypto";
-import { linkSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { linkSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getAgentDir } from "../../../../config.ts";
 
@@ -7,9 +7,27 @@ const SALT_FILE = join("anthropic-subscription", "seat-digest-salt");
 const SALT_BYTES = 32;
 const saltsByAgentDir = new Map<string, Buffer>();
 
+/**
+ * Removes a salt file of the wrong length (truncated or written by something else) so the next create
+ * replaces it. Only the file that was read is removed: if another process has already replaced it, the
+ * inode differs and the new salt is kept.
+ */
+function removeDamagedSalt(path: string, damagedInode: number): boolean {
+	try {
+		if (statSync(path).ino !== damagedInode) return true;
+		unlinkSync(path);
+		return true;
+	} catch (error) {
+		return (error as NodeJS.ErrnoException).code === "ENOENT";
+	}
+}
+
 function readOrCreateSalt(path: string): Buffer | undefined {
 	try {
-		return readFileSync(path);
+		const inode = statSync(path).ino;
+		const stored = readFileSync(path);
+		if (stored.length === SALT_BYTES) return stored;
+		if (!removeDamagedSalt(path, inode)) return undefined;
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== "ENOENT") return undefined;
 	}
