@@ -12,6 +12,9 @@ const packageRoot = resolve(import.meta.dirname, "../..");
 const fixture = resolve(import.meta.dirname, "fixtures/move-path-sync-fixture.ts");
 const ledger: { readonly blocking: readonly { file: string }[]; readonly syncFs: readonly { file: string }[] } =
 	JSON.parse(readFileSync(resolve(import.meta.dirname, "no-sync-in-session-path.ledger.json"), "utf-8"));
+const baseline: { readonly entries: readonly { file: string }[] } = JSON.parse(
+	readFileSync(resolve(import.meta.dirname, "no-sync-in-session-path.baseline.json"), "utf-8"),
+);
 
 const describeFinding = (finding: SessionPathFinding): string =>
 	`${finding.file}:${finding.lines.join(",")} ${finding.api} in ${finding.symbol}`;
@@ -49,10 +52,12 @@ describe("no synchronous I/O on the move path", () => {
 		expect(own).toEqual([]);
 	});
 
-	it("lets no ledger entry excuse a move-path file", () => {
-		// Given the session-path ledger
-		// When its entries are matched against the move feature's files
-		const excused = [...ledger.blocking, ...ledger.syncFs].filter((entry) => ownFiles.has(entry.file));
+	it("lets no ledger or baseline entry excuse a move-path file", () => {
+		// Given the session-path ledger and the shrink-only sync baseline
+		// When their entries are matched against the move feature's files
+		const excused = [...ledger.blocking, ...ledger.syncFs, ...baseline.entries].filter((entry) =>
+			ownFiles.has(entry.file),
+		);
 		// Then none is excused
 		expect(excused).toEqual([]);
 	});
