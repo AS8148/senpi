@@ -31,7 +31,9 @@ it.skipIf(process.platform === "win32").each(["success", "failure", "cancelled"]
 		// The gate verifies the needs context through scripts/ci-platform-scope.mjs (senpi#3957).
 		const step = job.steps.find((candidate) => candidate.run?.includes("ci-platform-scope.mjs verify"));
 		if (!step?.run) throw new TypeError("Missing executable fan-in step");
-		const needs = Object.fromEntries(job.needs.map((name) => [name, { result: name === "codemode-gate" ? result : "success" }]));
+		const needs = Object.fromEntries(
+			job.needs.map((name) => [name, { result: name === "codemode-gate" ? result : "success" }]),
+		);
 		// A full run (every main push) is the strictest case: no job may be skipped.
 		const script = step.run.replace(/\$\{\{\s*needs\.platform-scope\.outputs\.full\s*\}\}/u, "true");
 		// When: the workflow runner executes the actual gate with that needs context.
