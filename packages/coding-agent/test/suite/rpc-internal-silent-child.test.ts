@@ -23,7 +23,6 @@ async function silentHost() {
 	const root = mkdtempSync("/tmp/r3816-");
 	roots.push(root);
 	const path = join(root, "h.sock");
-	let dropped!: Promise<void>;
 	const accepted = new Promise<Socket>((resolve) => {
 		const server = createServer((peer) => {
 			peers.push(peer);
@@ -33,7 +32,9 @@ async function silentHost() {
 		servers.push(server);
 		server.listen(path);
 	});
-	dropped = accepted.then((peer) => (peer.destroyed ? undefined : once(peer, "close").then(() => undefined)));
+	const dropped: Promise<void> = accepted.then((peer) =>
+		peer.destroyed ? undefined : once(peer, "close").then(() => undefined),
+	);
 	await once(servers.at(-1) as Server, "listening");
 	return { root, path, dropped };
 }
