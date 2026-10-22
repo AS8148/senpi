@@ -79,6 +79,7 @@ import {
 	MEDIA_PLACEHOLDERS_CAPABILITY,
 	QUESTION_CAPABILITY,
 	QUEUED_MESSAGE_REVISION_CAPABILITY,
+	RESUME_SESSION_CAPABILITY,
 	RETRY_FALLBACK_COMMAND_CAPABILITY,
 	SESSION_HELD_CAPABILITY,
 } from "./custom-capability.ts";
@@ -926,9 +927,12 @@ export function createRpcConnectionHandler(
 		const settled = new AbortController();
 		const loginSignal = AbortSignal.any([controller.signal, settled.signal]);
 		activeLogins.set(provider, controller);
+		const authStorage = session.modelRegistry.authStorage;
+		// A replacement left by an earlier login is not this login's; drop it so it is never reported here.
+		authStorage.takeReplacement(provider);
 
 		try {
-			await session.modelRegistry.authStorage.login(provider as OAuthProviderId, {
+			await authStorage.login(provider as OAuthProviderId, {
 				onAuth: (info) => {
 					outputEvent({ type: "auth_login_url", provider, url: info.url });
 				},
@@ -941,7 +945,9 @@ export function createRpcConnectionHandler(
 			});
 			session.modelRegistry.refresh();
 			if (provider === ANTHROPIC_SUBSCRIPTION_PROVIDER_ID) emitProviderAccountsChanged(provider);
-			outputEvent({ type: "auth_login_end", provider, success: true });
+			// The client shows what this login replaced and where the previous credential is (senpi#3486).
+			const replacement = authStorage.takeReplacement(provider);
+			outputEvent({ type: "auth_login_end", provider, success: true, ...replacement });
 		} catch (loginError: unknown) {
 			const message = loginError instanceof Error ? loginError.message : String(loginError);
 			outputEvent({ type: "auth_login_end", provider, success: false, error: message });
@@ -1001,6 +1007,7 @@ export function createRpcConnectionHandler(
 								EVAL_CELLS_CAPABILITY,
 								AUTH_KEY_VERIFY_CAPABILITY,
 								QUEUED_MESSAGE_REVISION_CAPABILITY,
+								RESUME_SESSION_CAPABILITY,
 								...(options.retryFallbackCommand ? [RETRY_FALLBACK_COMMAND_CAPABILITY] : []),
 								...(options.toolRuntime ? toolRuntimeCapabilities(options.toolRuntime) : []),
 								// Client flags cannot advertise a host guard this classic binding does not run, nor a tool runtime.
@@ -1054,6 +1061,25 @@ export function createRpcConnectionHandler(
 					if (err instanceof ContinueFromLeafError) return error(id, command.type, err.message, err.code);
 					throw err;
 				}
+			}
+
+			case "resume_session": {
+				turnRequested = true;
+				const resumed = session.resumeSession();
+				promptCalls.add(resumed);
+				void resumed.then(
+					() => promptCalls.delete(resumed),
+					(err: unknown) => {
+						promptCalls.delete(resumed);
+						output({
+							type: "extension_error",
+							extensionPath: "runtime",
+							event: "resume_session",
+							error: err instanceof Error ? err.message : String(err),
+						});
+					},
+				);
+				return success(id, "resume_session");
 			}
 
 			case "send_custom_message": {
@@ -1786,11 +1812,16 @@ export function createRpcConnectionHandler(
 			}
 
 			case "login_api_key": {
-				session.modelRegistry.authStorage.set(command.provider, { type: "api_key", key: command.key });
+				const replacement = session.modelRegistry.authStorage.set(command.provider, {
+					type: "api_key",
+					key: command.key,
+				});
 				// Answer after the registry sees the key: a client re-reading auth status on this
 				// response must not get the pre-login snapshot (#2384).
 				await session.modelRegistry.refresh();
-				return success(id, "login_api_key");
+				// The client shows what this key replaced and where the previous login is (senpi#3448).
+				session.modelRegistry.authStorage.takeReplacement(command.provider);
+				return success(id, "login_api_key", replacement);
 			}
 
 			case "verify_api_key": {

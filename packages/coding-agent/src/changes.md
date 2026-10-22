@@ -1,3 +1,21 @@
+## 2026-10-18 - A session is found by the id its file name carries (oh-my-openagent#7471)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `resolveSessionPath` matches the header id first, then the id the file name carries, then an id prefix, for both the project and the global listing. `findLocalSessionByExactId` (`--session-id`) also matches the id the file name carries, so it opens that session instead of creating a second file under the same id.
+
+### Why
+
+A session file named `<timestamp>_<id>.jsonl` whose header carried a different id could not be opened with `--session <id>`, though the file name (and the resume hint printed from it) named that id; `--session-id <id>` then created a second session under the same id.
+
+### Why an extension could not handle it
+
+Session creation and `--session` resolution run in core before any extension is loaded.
+
+### Expected merge conflict zones
+
+- `main.ts`: `resolveSessionPath`, `findLocalSessionByExactId` and the import line.
+
 ## 2026-10-19 - Print mode stops waiting for a silent stdin pipe (senpi#3715)
 
 ### What changed
@@ -5170,3 +5188,39 @@ The package barrel is the only public entry point; an extension cannot add expor
 ### Expected merge conflict zones
 
 - LOW: the `core/skills.ts` export block in `packages/coding-agent/src/index.ts`.
+
+## 2026-10-16 - Auth notices reach the TUI at startup, once per change (#3448)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `collectAuthDiagnostics` also reports the store's pending credential notices for non-interactive runs; the interactive branch passes `authNotices` (auth errors plus pending notices, with `markSeen`) to `InteractiveMode`.
+
+### Why
+
+- `packages/coding-agent/src/main.ts`: the credential and billing notices reached only model listing, print mode and RPC; the TUI, the main surface, never showed them (#3486 review).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/main.ts` builds the startup options every mode receives.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: `collectAuthDiagnostics`, `interactiveAuthNotices`, and the `InteractiveMode` options in the interactive branch.
+
+## 2026-10-17 - Auth diagnostics show each credential notice once (#3486)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `collectAuthDiagnostics(storage, context, { persistSeen })` and `interactiveAuthNotices` are exported and take notices through `takePendingNotices`; model listing and print mode record them as seen, RPC runs do not.
+
+### Why
+
+- `packages/coding-agent/src/main.ts`: print mode showed the notice twice per run, and model listing showed it on every run (#3486 review).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/main.ts` owns the startup diagnostics of every mode.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: `collectAuthDiagnostics`, `interactiveAuthNotices` and their four call sites.
