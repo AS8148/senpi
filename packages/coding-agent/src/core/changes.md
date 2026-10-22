@@ -16,6 +16,24 @@
 
 - LOW: the object literal returned at the end of `composeApiKeyAuth`.
 
+## 2026-10-21 - A held model switch is not re-refused after its reduction (senpi#3828)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_switchActiveModel` takes `admittedLiveContextTokens`, and `_applyPendingModelSwitch` passes the per-message measurement it just admitted the held switch with. The usage-derived estimate is no longer re-measured on that path.
+
+### Why
+
+A desktop user's Claude subscription hit its limit in a ~600k-token thread, and they switched to a 500k-window model. At the next send, the held switch's summary request went to the limited model and failed. The deterministic slice then reduced the transcript so that it fit. But `_switchActiveModel` re-measured the context from the kept turn's reported usage, which still said ~600k, and threw "cannot switch ... Compact the session, then revalidate and retry the model switch". The switch never applied (omo#10746 is the same shape).
+
+### Why an extension could not handle it
+
+The switch admission and its re-check run inside the session's model-switch path, before any provider request or extension hook.
+
+### Expected merge conflict zones
+
+- The `_switchActiveModel` options and its assert line, and the `_applyPendingModelSwitch` call, in `packages/coding-agent/src/core/agent-session.ts`, against upstream changes to model switching.
+
 ## 2026-10-21 - Human-input seam: who typed an input (senpi#3811)
 
 ### What changed
@@ -936,6 +954,7 @@ The RPC host and the TUI link renderer both need it; it is a core contract, not 
 ### Expected merge conflict zones
 
 - None: a new file.
+
 ## 2026-10-16 - Extension providers can declare ambient api-key auth (senpi#2327)
 
 ### What changed
@@ -954,6 +973,7 @@ The RPC host and the TUI link renderer both need it; it is a core contract, not 
 ### Expected merge conflict zones
 
 - LOW: the `ProviderConfigInput` field list and the `ProviderAmbientAuth` interface in `provider-composer.ts`; the ambient branch of `composeApiKeyAuth` in `provider-api-key-auth.ts`.
+
 ## 2026-10-15 - AgentSession.activeWakeSources (senpi#3225)
 
 ### What changed
@@ -2345,6 +2365,7 @@ The watchdog wraps the session's own retry continuation inside `AgentSession`; n
 ### Expected merge conflict zones
 
 - LOW: the end of the `AgentSession` constructor and `dispose()`; `session-resident-store.ts` (fork-only).
+
 ## 2026-10-02 - Mark repeated and cap-skipped skill invocations in place
 
 ### What changed
@@ -3058,6 +3079,7 @@ Exclusion is a repository-level decision about which upstream files exist at all
 ### Expected merge conflict zones
 
 Every upstream release that touches these paths re-adds or modifies them: re-run `git rm -rqf --ignore-unmatch $(cat .github/agent/upstream-exclusions.txt)` after the merge and extend the list (with a dated block here) when upstream adds a new file to an excluded feature.
+
 ## 2026-09-30 - A usage limit worded as text switches pooled accounts and cools the spent one until its reset (senpi#1768)
 
 ### What changed
@@ -3081,6 +3103,7 @@ Credential rotation and its failure classifier are core runtime; no extension ho
 
 - `packages/coding-agent/src/core/credential-pool/classify.ts`: the rate-limit branch condition and its hint expression.
 - `packages/coding-agent/src/core/credential-pool/rotation-stream.ts`: the `classify` wrapper's context.
+
 ## 2026-09-30 - Package-manager subprocesses stay hidden on Windows (senpi#2450)
 
 ### What changed
@@ -4280,6 +4303,7 @@ CLI parsing and the interactive login command are core surfaces that run before 
 ### Expected merge conflict zones
 
 - The `else` branch of `_setSessionFile` that handles a not-yet-existing path.
+
 ## 2026-09-22 - settings.json provider-key migration (senpi#1989)
 
 ### What changed
@@ -4341,6 +4365,7 @@ auth.json is read and repaired inside the package before any extension loads; th
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/core/auth-storage.ts`, against any other change to the credential load/parse seam.
+
 ## 2026-09-22 - chatgpt-subscription provider id in core resolution and display (senpi#1989)
 
 ### What changed
@@ -5338,6 +5363,7 @@ runtime it registered into is private or shared.
 - MEDIUM: `packages/coding-agent/src/core/agent-session.ts` - the constants block above the class and the `transformContext` closure inside `_installAgentNextTurnRefresh`.
 - LOW: the new `packages/coding-agent/src/core/cursor-history-admission.ts`.
 - LOW: the `contextWindow` line in `packages/coding-agent/src/core/extensions/builtin/cursor-cli-oauth/models.ts`.
+
 ## 2026-09-12 - Bind session-write grants to live writers (senpi#1612)
 
 ### What changed
@@ -6181,6 +6207,7 @@ runtime it registered into is private or shared.
 
 - LOW: `lockfile-policy.ts` constants block.
 - LOW: the lock-acquire helpers in `auth-storage.ts`, `settings-manager.ts`, `credential-pool/state-store.ts`.
+
 ## 2026-09-04 - Adopt the v0.84.4 core runtime fixes
 
 ### What changed
@@ -6504,6 +6531,7 @@ runtime it registered into is private or shared.
 ### Expected merge conflict zones
 
 - LOW: resident string storage and `appendCompaction()` mirror maintenance.
+
 ## 2026-08-31 - Shared session host is OFF by default (opt-in)
 
 - Interactive sessions no longer join the shared RPC host implicitly. `main.ts` now gates
@@ -6585,6 +6613,7 @@ runtime it registered into is private or shared.
 ### Expected merge conflict zones
 
 - `agent-session.ts`: active-tool selection, tool registry refresh, reload, and system-prompt assembly.
+
 ## 2026-08-29 - Bound Cursor serialized tool-result admissions
 
 ### What changed
@@ -6915,6 +6944,7 @@ Historical entry, superseded by the 2026-09-14 eval-only grep restoration above.
 
 - `packages/coding-agent/src/core/session-manager.ts`: added `reloadFromDisk()` to reload `fileEntries`, update internal maps/caches, and rebuild index from `this.sessionFile` if it exists.
 - Enables in-process mirrors (such as interactive host proxy) to synchronize with external changes like host-committed compactions.
+
 ## 2026-08-27 - Default retry policy phase-2 close-out (docs)
 
 ### What changed
@@ -7239,6 +7269,7 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 ### Expected merge conflict zones
 
 - LOW: `packages/coding-agent/src/core/agent-session.ts` retry scheduling and `packages/coding-agent/src/core/extensions/types.ts` event contract.
+
 ## 2026-08-24 - expose abort provenance to interactive rendering
 
 ### What changed
@@ -7439,6 +7470,7 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 ### Expected merge conflict zones
 
 - `core/retry-fallback/settings.ts` `ProviderRetrySettings` field list only (comment line).
+
 ## 2026-08-20 - Cursor exec emits tool_result after native write/edit
 
 ### What changed
@@ -7460,6 +7492,7 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 - `packages/coding-agent/src/core/cursor-exec-bridge.ts` `executeTool` (ownership recheck after preflight plus `emitToolResult`).
 - `packages/coding-agent/src/core/cursor-exec-bridge-session.ts` session wiring.
 - `packages/coding-agent/src/core/agent-session.ts` `emitExecBridgeToolResult`.
+
 ## 2026-08-20 - Append-only goal continuations and exponentially floored 429 waits
 
 ### What changed
@@ -7868,6 +7901,7 @@ Conflict zone: `cursor-exec-bridge.ts` `executeTool`, `cursor-exec-bridge-sessio
 
 - `cursor-exec-bridge-session.ts` signature and `getAbortSignal` resolution,
   `sdk.ts` `cursorExecHandlers` wiring.
+
 ## 2026-08-18 - Cursor reasoning levels: session provenance and legacy id resolution
 
 ### What changed
@@ -10939,6 +10973,7 @@ unrelated fallback bus, silently disconnecting `pi.rpc.emit` on trust-requiring 
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/core/settings-manager.ts` `Settings.compaction` typing and `getCompactionSettings()` return value.
+
 ## 2026-09-06 - Fail closed when recovery fallback cannot admit context
 
 ### What changed
@@ -10962,6 +10997,7 @@ unrelated fallback bus, silently disconnecting `pi.rpc.emit` on trust-requiring 
 
 - LOW: `_handleRetryableError` fallback admission in
   packages/coding-agent/src/core/agent-session.ts.
+
 ## 2026-09-06 - Make fallback activation atomic for unusable candidates
 
 ### What changed
@@ -11203,6 +11239,7 @@ The `promptSurface` plumbing in `agent-session.ts`, `agent-session-services.ts` 
 ### Expected merge conflict zones
 
 - LOW: the documented model set and warning text in `packages/coding-agent/src/core/ultrafast-lanes.ts`.
+
 ## 2026-10-10 - Replay-safe retained recovery and durable rejection admission (senpi#3060)
 
 ### What changed
@@ -11240,6 +11277,7 @@ An unsafe newest result poisoned every retained suffix. Repeated automatic admis
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/core/agent-session.ts`: rejection-helper import and `_wouldCompactionOverflow` delegation.
+
 ## 2026-10-11 - Spent accounts stop retrying and compaction uses a usable model (senpi#3131)
 
 ### What changed
@@ -11276,6 +11314,7 @@ The invalid predicate was inside the session-owned compaction resolver.
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/core/agent-session.ts`: `_resolveCompactionModel`.
+
 ## 2026-10-13 - Public holder endpoint evidence (senpi#3255)
 
 ### What changed

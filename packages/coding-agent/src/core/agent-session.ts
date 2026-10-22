@@ -7197,6 +7197,7 @@ export class AgentSession {
 				modelSelectSource: "set",
 				invalidateCompaction: true,
 				allowDeferral: false,
+				admittedLiveContextTokens: projection.liveContextTokens,
 				origin: heldSwitchOrigin(pending.origin),
 			});
 		} catch (error) {
@@ -7462,6 +7463,13 @@ export class AgentSession {
 			 * smaller than the model that just failed.
 			 */
 			repairWithSlice?: boolean;
+			/**
+			 * The context a held switch was already admitted with, measured per message
+			 * after its reduction (#3828). The usage-derived estimate still reports the
+			 * pre-slice size of a kept turn, so re-measuring here refused a switch the
+			 * reduction had just made fit.
+			 */
+			admittedLiveContextTokens?: number;
 		},
 	): Promise<SystemPromptChangeEvent | undefined> {
 		const previousModel = this.model;
@@ -7521,9 +7529,9 @@ export class AgentSession {
 				this._admitSwitchCompactionRequired(model, deferral, opts.persistDefault, opts.origin);
 				return undefined;
 			}
-			const admittedLiveContextTokens = opts.repairWithSlice
-				? this._reduceForSwitchTarget(model, liveContextTokens)
-				: liveContextTokens;
+			const admittedLiveContextTokens =
+				opts.admittedLiveContextTokens ??
+				(opts.repairWithSlice ? this._reduceForSwitchTarget(model, liveContextTokens) : liveContextTokens);
 			this._assertModelUsableForSwitch(model, admittedLiveContextTokens);
 			if (opts.appendSessionEntry) {
 				this.sessionManager.appendModelChange(
