@@ -23,6 +23,7 @@ import {
 	type ModelThinkingLevel,
 	type Usage,
 } from "@earendil-works/pi-ai";
+import { appendDebugLogEntry } from "../../core/hidden-stdout-log.ts";
 import { findInitialModel } from "../../core/model-resolver.ts";
 import { ModelRuntime } from "../../core/model-runtime.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
@@ -411,8 +412,8 @@ export async function openMicro(options: OpenMicroOptions = {}): Promise<OpenMic
 				await location.release().catch(() => {});
 			},
 		};
-		// Another process reclaimed the session lock and may be writing this session. Stop without
-		// closing: the gated storage already refuses every commit, and closing could flush more writes.
+		// Another process reclaimed the session lock and may be writing this session. Suspend signals and
+		// joins every run and writes nothing (the gated storage refuses any commit), then closes the files.
 		stopOnLostLock = () => {
 			const message = "Another process took over this micro session; it was stopped to protect its history.";
 			update({ fatal: message });
@@ -420,7 +421,7 @@ export async function openMicro(options: OpenMicroOptions = {}): Promise<OpenMic
 			for (const controller of modelRefreshControllers) controller.abort(new Error(message));
 			loginController?.abort(new Error(message));
 			clearPendingAuth(new Error(message));
-			void harness.suspend(BACKGROUND_CONTEXT).catch(() => {});
+			void harness.suspend(BACKGROUND_CONTEXT).catch(logLostLockStopFailure);
 		};
 		if (lostBeforeOpen) stopOnLostLock(lostBeforeOpen);
 		return opened;
@@ -429,6 +430,28 @@ export async function openMicro(options: OpenMicroOptions = {}): Promise<OpenMic
 		await executionEnv?.cleanup(BACKGROUND_CONTEXT).catch(() => {});
 		await location.release().catch(() => {});
 		throw error;
+	}
+}
+
+function errorFields(error: unknown): { name: string; code?: string } {
+	if (!(error instanceof Error)) return { name: typeof error };
+	const code = (error as NodeJS.ErrnoException).code;
+	return code === undefined ? { name: error.name } : { name: error.name, code };
+}
+
+/** Names and codes only: error messages can carry absolute session paths. */
+function logLostLockStopFailure(error: unknown): void {
+	try {
+		appendDebugLogEntry(
+			"micro session stop after a lost lock failed",
+			JSON.stringify({
+				event: "micro_lost_lock_stop_failed",
+				error: errorFields(error),
+				...(error instanceof Error && error.cause !== undefined ? { cause: errorFields(error.cause) } : {}),
+			}),
+		);
+	} catch {
+		// The debug log is best effort; this runs from a heartbeat timer and must not throw.
 	}
 }
 
