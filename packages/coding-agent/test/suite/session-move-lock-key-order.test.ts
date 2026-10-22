@@ -3,13 +3,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// A realpath can hang (a stalled network mount). `gates` holds one open for a chosen path until the test releases it.
-const hooks = vi.hoisted(() => ({ gates: new Map<string, Promise<void>>() }));
+// A realpath can hang (a stalled network mount). Each gate held for a path is taken by the next realpath of that path,
+// in order, and keeps it open until the test releases it; a gated call then answers without disk I/O, so which call
+// settles first depends only on release order. A call with no gate left runs the real realpath.
+const hooks = vi.hoisted(() => ({ gates: new Map<string, Promise<void>[]>() }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("node:fs/promises")>();
 	const realpath = (async (path: Parameters<typeof actual.realpath>[0], ...rest: unknown[]) => {
-		await hooks.gates.get(String(path));
+		const gate = hooks.gates.get(String(path))?.shift();
+		if (gate !== undefined) {
+			await gate;
+			return String(path);
+		}
 		return Reflect.apply(actual.realpath, actual, [path, ...rest]);
 	}) as typeof actual.realpath;
 	return { ...actual, default: { ...actual, realpath }, realpath };
@@ -33,14 +39,13 @@ function sessionFiles(): { readonly a: string; readonly b: string } {
 	return { a, b };
 }
 
+/** Holds the next not-yet-held realpath of `path` open; returns its release. */
 function hold(path: string): () => void {
 	let release = (): void => {};
-	hooks.gates.set(
-		path,
-		new Promise<void>((resolve) => {
-			release = resolve;
-		}),
-	);
+	const gate = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	hooks.gates.set(path, [...(hooks.gates.get(path) ?? []), gate]);
 	return release;
 }
 
@@ -60,20 +65,22 @@ describe("move lock keys resolve in call order per file, independently across fi
 		expect(resolvedB).toBe(realpathSync(b));
 		expect(aSettled).toBe(false);
 		release();
-		expect(await pendingA).toBe(realpathSync(a));
+		expect(await pendingA).toBe(a);
 	});
 
-	it("keeps call order for one file even when the first resolution is slow", async () => {
-		// Given two resolutions of the same file, the first held open
+	it("keeps call order for one file even when the later call's realpath answers first", async () => {
+		// Given two resolutions of the same file, each realpath held open
 		const { a } = sessionFiles();
-		const release = hold(a);
+		const releaseFirst = hold(a);
+		const releaseSecond = hold(a);
 		const order: number[] = [];
 		const first = orderedRealPath(a).then(() => order.push(1));
 		const second = orderedRealPath(a).then(() => order.push(2));
-		// When the first is released
-		release();
+		// When the second realpath is released before the first
+		releaseSecond();
+		releaseFirst();
 		await Promise.all([first, second]);
-		// Then they settled in call order
+		// Then the second still waited for the first: they settled in call order
 		expect(order).toEqual([1, 2]);
 	});
 });
