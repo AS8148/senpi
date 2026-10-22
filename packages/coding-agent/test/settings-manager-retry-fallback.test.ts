@@ -97,7 +97,6 @@ describe("SettingsManager retry fallback settings", () => {
 		const shipped = {
 			"claude-fable-5": ["claude-opus-5-5:max", "claude-opus-5:max"],
 			"claude-fable-5-1": ["claude-opus-5-5:max", "claude-opus-5:max"],
-			"claude-fable-5-5": ["claude-opus-5-5:max", "claude-opus-5:max"],
 			"claude-opus-5-5": ["claude-opus-5:max"],
 		};
 		expect(SettingsManager.create(projectDir, agentDir).getRetryFallbackSettings()).toEqual({
@@ -139,8 +138,7 @@ describe("SettingsManager retry fallback settings", () => {
 			chains: {
 				"claude-fable-5": ["ccapi/kimi-k3:max"],
 				"claude-fable-5-1": ["claude-opus-5-5:max", "claude-opus-5:max"],
-				"claude-fable-5-5": ["claude-opus-5-5:max", "claude-opus-5:max"],
-				"claude-opus-5-5": ["claude-opus-5:max"],
+					"claude-opus-5-5": ["claude-opus-5:max"],
 			},
 			revertPolicy: "never",
 		});
@@ -155,7 +153,6 @@ describe("SettingsManager retry fallback settings", () => {
 		expect(SettingsManager.create(projectDir, agentDir).getRetryFallbackSettings().chains).toEqual({
 			"claude-fable-5": ["claude-opus-5-5:max", "claude-opus-5:max"],
 			"claude-fable-5-1": ["claude-opus-5-5:max", "claude-opus-5:max"],
-			"claude-fable-5-5": ["claude-opus-5-5:max", "claude-opus-5:max"],
 			"claude-opus-5-5": ["claude-opus-5:max"],
 		});
 	});
@@ -187,7 +184,6 @@ describe("SettingsManager retry fallback settings", () => {
 		expect(manager.getRetryFallbackSettings().chains).toEqual({
 			"claude-fable-5": ["claude-opus-5-5:max", "claude-opus-5:max"],
 			"claude-fable-5-1": ["claude-opus-5-5:max", "claude-opus-5:max"],
-			"claude-fable-5-5": ["claude-opus-5-5:max", "claude-opus-5:max"],
 			"claude-opus-5-5": ["claude-opus-5:max"],
 		});
 	});
@@ -213,7 +209,6 @@ describe("SettingsManager retry fallback settings", () => {
 		expect(Object.keys(chains).sort()).toEqual([
 			"claude-fable-5",
 			"claude-fable-5-1",
-			"claude-fable-5-5",
 			"claude-opus-5-5",
 			"example-gateway/unrelated-model",
 		]);

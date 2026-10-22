@@ -189,11 +189,11 @@ Session creation and `--session` resolution run in core before any extension is 
 
 ### What changed
 
-- `packages/coding-agent/src/core/retry-fallback/settings.ts`: adds the provisional Fable 5.5 chain key with the same current-generation Opus-only max-effort ladder as Fable 5/5.1. Existing defaults and user tombstones retain their semantics.
+- `packages/coding-agent/src/core/retry-fallback/settings.ts`: adds the Fable 5.5 chain key, with the same current-generation Opus-only max-effort ladder as Fable 5/5.1, only once `FABLE55_LAUNCH.released` is true; before release the shipped defaults contain no unreleased id. Existing defaults and user tombstones retain their semantics.
 
 ### Why
 
-- `packages/coding-agent/src/core/retry-fallback/settings.ts`: explicit selection of the launch model needs the same recovery path as today's Fable models; adding a chain key does not recommend or select that model.
+- `packages/coding-agent/src/core/retry-fallback/settings.ts`: explicit selection of the launch model needs the same recovery path as today's Fable models once it exists; gating the key on release keeps an unreleased id out of the shipped defaults (review of senpi#3897).
 
 ### Why an extension could not handle it
 
@@ -201,7 +201,7 @@ Session creation and `--session` resolution run in core before any extension is 
 
 ### Expected merge conflict zones
 
-- `packages/coding-agent/src/core/retry-fallback/settings.ts`: import and `DEFAULT_FALLBACK_CHAINS` entry.
+- `packages/coding-agent/src/core/retry-fallback/settings.ts`: import and the release-gated `DEFAULT_FALLBACK_CHAINS` entry.
 
 ## 2026-10-18 - A multi-block queued input leaves the queue when it starts (senpi#3588, senpi#3768)
 
