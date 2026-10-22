@@ -123,7 +123,10 @@ export function connectInternalConnection(
 				auth: { client_nonce: clientNonce },
 			}),
 		]);
-		const auth = object(object(response.data).auth);
+		// A reply without a server proof is a host that cannot prove the key (or speaks another protocol).
+		const data = response.data;
+		if (!isObject(data) || !isObject(data.auth)) throw new Error("host_identity_unproven");
+		const auth = data.auth;
 		const serverNonce = nonce(auth.server_nonce);
 		if (
 			response.id !== "internal-protocol" ||

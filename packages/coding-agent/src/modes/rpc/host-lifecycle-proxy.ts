@@ -145,6 +145,8 @@ export async function waitForListener(
 			throw new Error(
 				`${socketPath}: host accepted the internal hop but did not answer within ${Math.round(probeMs)}ms`,
 			);
+		// A host that answered but could not prove the key will not start proving it: fail now, and say why.
+		if (probe !== "refused") throw new Error(`${socketPath}: ${probe.unproven}`);
 		await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 50));
 	}
 	throw new Error(`${socketPath}: host did not start listening within ${timeoutMs}ms`);
@@ -155,7 +157,7 @@ async function canConnect(
 	secret: Uint8Array | undefined,
 	internalKey: Buffer | undefined,
 	probeMs: number,
-): Promise<"ready" | "refused" | "silent"> {
+): Promise<"ready" | "refused" | "silent" | { readonly unproven: "host_identity_unproven" | "auth_failed" }> {
 	if (internalKey) {
 		const socket = createConnection(resolveSocketTransportAddress(socketPath, process.platform, secret));
 		let accepted = false;
@@ -195,8 +197,10 @@ async function canConnect(
 					stream.write('{"id":"internal-ready","type":"get_protocol_info","observe":true}\n');
 				}),
 			);
-		} catch {
+		} catch (cause) {
 			socket.destroy();
+			const reason = cause instanceof Error ? cause.message : "";
+			if (reason === "host_identity_unproven" || reason === "auth_failed") return { unproven: reason };
 			return outcome(false);
 		} finally {
 			clearTimeout(timer);

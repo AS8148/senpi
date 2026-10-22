@@ -43,7 +43,12 @@ class InternalRecordStream extends Duplex {
 		this.wire = wire;
 		this.sender = sender;
 		this.receiver = receiver;
-		// A transport failure is always delivered as close, including before an owner attaches.
+		// A transport failure is always delivered as close, including before an owner attaches. A record that fails
+		// framing or verification is logged once per stream by its code (never key or plaintext material).
+		this.once("error", (error) => {
+			if (error.message.startsWith("internal_record"))
+				process.stderr.write(`senpi rpc: internal hop closed: ${error.message}\n`);
+		});
 		this.on("error", () => {});
 		wire.on("data", (chunk: Buffer) => {
 			wire.pause();
@@ -114,7 +119,12 @@ class InternalRecordStream extends Duplex {
 			if (this.wireDone) this.finish();
 			else this.wire.resume();
 		} catch (cause) {
-			this.destroy(cause instanceof Error ? cause : new Error("internal_record_invalid"));
+			// A record that fails authentication surfaces as the cipher's own error; name it by the record contract.
+			this.destroy(
+				cause instanceof Error && cause.message.startsWith("internal_record")
+					? cause
+					: new Error("internal_record_unverified", { cause }),
+			);
 		}
 	}
 

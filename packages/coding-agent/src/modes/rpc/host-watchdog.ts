@@ -50,6 +50,12 @@ export const HOST_WATCH_PPID_BACKUP_INTERVAL_MS = 5_000;
  * elsewhere (`ps`), so an idle host spawns no processes (senpi#3738). Counted in ticks, so no clock step moves it.
  */
 export const HOST_WATCH_IDENTITY_INTERVAL_MS = 5_000;
+/**
+ * Liveness cadence when the recorded supervisor identity is the host's ONLY binding (senpi#3816 review, senpi#3738):
+ * on Linux a supervised host has no stdin lifetime fd and no slot 3. One free `kill(pid, 0)` a second; supervisor
+ * death is then noticed within about a second instead of 250 ms, for a quarter of the idle wakeups.
+ */
+export const HOST_WATCH_IDENTITY_ONLY_INTERVAL_MS = 1_000;
 export const HOST_WATCH_SPAWNING_IDENTITY_INTERVAL_MS = 60_000;
 export const HOST_CLEANUP_PATHS_ENV = "SENPI_RPC_HOST_CLEANUP_PATHS";
 
@@ -191,17 +197,20 @@ export function armHostWatchdog(
 	// The poll runs only when the stdin lifetime reader is absent or failed. While a legacy inherited
 	// pipe is armed it merely backs that pipe up (senpi#3738); a pipe that cannot be read (never
 	// inherited, or failed later) leaves the poll as the only binding, so it goes back to the fast cadence.
+	// Sole binding: a recorded supervisor identity polls at the identity-only cadence; a bare legacy ppid keeps 250 ms.
+	const recordedIdentity = config.processStartTicks !== undefined || config.processStartTime !== undefined;
+	const soleInterval = recordedIdentity ? HOST_WATCH_IDENTITY_ONLY_INTERVAL_MS : HOST_WATCH_PPID_INTERVAL_MS;
 	let pollWanted = false;
 	let pipeLive = false;
 	if (config.fd !== undefined) {
 		pipeLive = watchFdForEof(config.fd, fire, disarmers, () => {
 			pipeLive = false;
-			if (pollWanted) armPpid(HOST_WATCH_PPID_INTERVAL_MS);
+			if (pollWanted) armPpid(soleInterval);
 		});
 	}
 	const fallback = (): void => {
 		pollWanted = true;
-		armPpid(pipeLive ? HOST_WATCH_PPID_BACKUP_INTERVAL_MS : HOST_WATCH_PPID_INTERVAL_MS);
+		armPpid(pipeLive ? HOST_WATCH_PPID_BACKUP_INTERVAL_MS : soleInterval);
 	};
 	if (config.lifetimeFd !== undefined) {
 		try {

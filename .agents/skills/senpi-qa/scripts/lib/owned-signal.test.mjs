@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { OwnedSignalRefusedError, signalOwnedProcess } from "./common.mjs";
+import { OwnedSignalRefusedError, signalOwnedProcess } from "./owned-signal.mjs";
 
 // A fake process table: `inspect` answers ppid / pgid / command / cwd, `kill` records instead of signalling.
 function table(rows) {

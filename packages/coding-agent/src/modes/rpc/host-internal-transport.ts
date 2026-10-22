@@ -31,7 +31,13 @@ export function internalHostTransport(
 			if (bootstrap)
 				void acceptInternalConnection(socket, bootstrap.key, { protocolVersion: 1, serverVersion: VERSION })
 					.then(accept)
-					.catch(() => socket.destroy());
+					.catch((cause: unknown) => {
+						// One line per refused connection: the refusal code only (auth_required, auth_failed, a timeout).
+						process.stderr.write(
+							`senpi rpc host: internal connection refused: ${cause instanceof Error ? cause.message : "unknown"}\n`,
+						);
+						socket.destroy();
+					});
 			else if (secret) authenticateSocket(socket, secret, () => accept());
 			else accept();
 		},

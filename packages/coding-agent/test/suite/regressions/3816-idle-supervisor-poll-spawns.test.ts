@@ -17,11 +17,12 @@ vi.mock("node:child_process", async (original) => {
 	};
 });
 
-import { armHostWatchdog, HOST_WATCH_PPID_INTERVAL_MS } from "../../../src/modes/rpc/host-watchdog.ts";
+import { armHostWatchdog, HOST_WATCH_IDENTITY_ONLY_INTERVAL_MS } from "../../../src/modes/rpc/host-watchdog.ts";
 import { readProcessStartTime } from "../../../src/utils/process-identity.ts";
 
 const WINDOW_MS = 10_000;
 
+// In-PR regression guard: it pins a defect found in review of this PR (senpi#3816), not a bug that shipped.
 // senpi#3816 review (senpi#3738 regression): with no stdin lifetime reader (always so on Linux), the recorded
 // supervisor identity poll ran `ps` every 250 ms for the life of an idle host.
 describe.skipIf(process.platform === "win32")("idle recorded-supervisor poll", () => {
@@ -37,7 +38,7 @@ describe.skipIf(process.platform === "win32")("idle recorded-supervisor poll", (
 		spawned.files.length = 0;
 	});
 
-	it("spawns no ps over 10 s while the supervisor stays alive, and still checks liveness at the fast cadence", async () => {
+	it("spawns no ps over 10 s while the supervisor stays alive, and still checks liveness once a second", async () => {
 		vi.useFakeTimers();
 		const kill = vi.spyOn(process, "kill");
 		const supervisor = process.ppid;
@@ -48,7 +49,7 @@ describe.skipIf(process.platform === "win32")("idle recorded-supervisor poll", (
 			// At most one identity read at arm time; none while idle.
 			expect(spawned.files.filter((file) => file === "ps").length).toBeLessThanOrEqual(1);
 			expect(kill.mock.calls.filter(([pid, signal]) => pid === supervisor && signal === 0)).toHaveLength(
-				WINDOW_MS / HOST_WATCH_PPID_INTERVAL_MS,
+				WINDOW_MS / HOST_WATCH_IDENTITY_ONLY_INTERVAL_MS,
 			);
 			expect(fired).not.toHaveBeenCalled();
 		} finally {
