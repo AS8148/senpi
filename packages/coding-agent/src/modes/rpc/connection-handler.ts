@@ -1817,7 +1817,7 @@ export function createRpcConnectionHandler(
 					key: command.key,
 				});
 				// The response carries what this key replaced (senpi#3448). Consume the record before the
-				// await below, so an OAuth login that finishes meanwhile keeps its own record (#3952).
+				// await below, so no record is pending across it and a concurrent OAuth login keeps its own (#3952).
 				session.modelRegistry.authStorage.takeReplacement(command.provider);
 				// Answer after the registry sees the key: a client re-reading auth status on this
 				// response must not get the pre-login snapshot (#2384).

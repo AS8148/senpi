@@ -7103,7 +7103,7 @@ The classic capability list in `connection-handler.ts`.
 
 - `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the start and the success branch of `startLogin`.
 
-## 2026-10-21 - login_api_key consumes its replacement record before it awaits (#3952)
+## 2026-10-22 - login_api_key takes its replacement record before it awaits (#3952, hardening)
 
 ### What changed
 
@@ -7111,7 +7111,7 @@ The classic capability list in `connection-handler.ts`.
 
 ### Why
 
-- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: an RPC OAuth login for the same provider that finished during that await had its replacement record taken by `login_api_key`, so its `auth_login_end` went out without `replaced`/`backupPath` (#3952).
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: a same-provider RPC OAuth login whose record was written during that await could have it taken by `login_api_key`, losing `replaced`/`backupPath` from its `auth_login_end`. #3486 narrowed that to a few microtasks; taking the record in the same step as `set()` closes it (#3952).
 
 ### Why an extension could not handle it
 

@@ -22,6 +22,8 @@ function registerScriptedOAuth(harness: ReturnType<typeof makeHarness>): void {
 	});
 }
 
+// Guard (senpi#3952): #3486 already narrowed this window to a few microtasks, so these also pass on the
+// pre-hardening handler; they pin that each RPC login reports only its own replacement.
 describe("RPC logins report only their own replacement (senpi#3952)", () => {
 	let tempDir: string;
 	let cleanup: (() => void) | undefined;
