@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash, createHmac } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -76,6 +76,30 @@ describe("anthropic-subscription seat digest (oh-my-openagent#10304)", () => {
 		expect(digests.every((digest) => /^[0-9a-f]{8}$/.test(digest))).toBe(true);
 		expect(new Set(digests).size).toBe(1);
 		expect(seatDigest("primary", directory)).toBe(digests[0]);
+		expect(readdirSync(join(directory, "anthropic-subscription"))).toEqual(["seat-digest-salt"]);
+	}, 30_000);
+
+	it("stores the salt on a filesystem without hard links", async () => {
+		const directory = install();
+		const module = new URL("../src/core/extensions/builtin/anthropic-subscription/seat-digest.ts", import.meta.url)
+			.pathname;
+		const script = [
+			`const fs = (await import("node:fs")).default; const { syncBuiltinESMExports } = await import("node:module");`,
+			`fs.linkSync = () => { throw Object.assign(new Error("no links"), { code: "EPERM" }); };`,
+			`syncBuiltinESMExports();`,
+			`const { seatDigest } = await import(${JSON.stringify(module)});`,
+			`process.stdout.write(seatDigest("primary", ${JSON.stringify(directory)}));`,
+		].join("\n");
+		const digest = await new Promise<string>((resolve, reject) => {
+			execFile(process.execPath, ["--input-type=module", "-e", script], (error, stdout) =>
+				error ? reject(error) : resolve(stdout),
+			);
+		});
+		const salt = join(directory, "anthropic-subscription", "seat-digest-salt");
+
+		expect(readFileSync(salt).length).toBe(32);
+		expect(digest).toBe(createHmac("sha256", readFileSync(salt)).update("primary").digest("hex").slice(0, 8));
+		expect(readdirSync(dirname(salt))).toEqual(["seat-digest-salt"]);
 	}, 30_000);
 
 	it("replaces a salt file of the wrong length instead of falling back on every restart", () => {

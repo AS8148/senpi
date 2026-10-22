@@ -5,6 +5,7 @@ import { getAgentDir } from "../../../../config.ts";
 
 const SALT_FILE = join("anthropic-subscription", "seat-digest-salt");
 const SALT_BYTES = 32;
+const NO_HARD_LINKS = new Set(["EPERM", "ENOTSUP", "ENOSYS"]);
 const saltsByAgentDir = new Map<string, Buffer>();
 
 /**
@@ -37,8 +38,16 @@ function readOrCreateSalt(path: string): Buffer | undefined {
 	const staged = `${path}.${process.pid}.${randomBytes(6).toString("hex")}`;
 	try {
 		mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-		writeFileSync(staged, randomBytes(SALT_BYTES), { flag: "wx", mode: 0o600 });
-		linkSync(staged, path);
+		const salt = randomBytes(SALT_BYTES);
+		writeFileSync(staged, salt, { flag: "wx", mode: 0o600 });
+		try {
+			linkSync(staged, path);
+		} catch (error) {
+			// A filesystem without hard links: create the final name directly. A racing reader can then see
+			// it half-written, which the length check above repairs on the next start.
+			if (!NO_HARD_LINKS.has((error as NodeJS.ErrnoException).code ?? "")) throw error;
+			writeFileSync(path, salt, { flag: "wx", mode: 0o600 });
+		}
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== "EEXIST") return undefined;
 	} finally {
