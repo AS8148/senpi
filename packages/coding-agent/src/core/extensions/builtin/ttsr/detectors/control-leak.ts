@@ -13,6 +13,14 @@ const RUN_THRESHOLD_QUOTATION = 8;
 const EVIDENCE_TTL_CHARS = 2048;
 const NO_PAYLOAD_OFFSET = -1;
 
+/**
+ * Special-token names that are also ordinary markup elements: HTML `<s>` (strikethrough) and SVG
+ * `<mask>`. Their opening form is markup, a closing form that closes an earlier opening is markup,
+ * and a closing form quoted in a fence or quotation is a documented example; only an unmatched,
+ * unquoted closing form (a leaked `</s>` EOS run) stays a leak candidate (senpi#3880).
+ */
+const MARKUP_COLLIDING_SGML_NAMES: ReadonlySet<string> = new Set(["s", "mask"]);
+
 export interface PendingControlEvidence {
 	readonly tokenId: string;
 	readonly family: TokenFamily;
@@ -42,6 +50,7 @@ export interface ControlLeakState {
 	pendingEvidence: PendingControlEvidence | undefined;
 	latched: DetectorMatch | null;
 	currentOffset: number;
+	openMarkup: Map<string, number>;
 }
 
 function thresholdFor(context: LeakContextKind): number {
@@ -83,8 +92,33 @@ function processReject(state: ControlLeakState, text: string, startOffset: numbe
 	state.tracker.observeText(text);
 }
 
+function isCollidingMarkup(state: ControlLeakState, token: ControlToken, context: LeakContextKind): boolean {
+	if (token.family !== "sgml") {
+		return false;
+	}
+	const closing = token.name.startsWith("/");
+	const name = (closing ? token.name.slice(1) : token.name).toLowerCase();
+	if (!MARKUP_COLLIDING_SGML_NAMES.has(name)) {
+		return false;
+	}
+	const open = state.openMarkup.get(name) ?? 0;
+	if (!closing) {
+		state.openMarkup.set(name, open + 1);
+		return true;
+	}
+	if (open > 0) {
+		state.openMarkup.set(name, open - 1);
+		return true;
+	}
+	return context === "quotation";
+}
+
 function processToken(state: ControlLeakState, token: ControlToken): void {
 	const context = state.tracker.classify(token.startOffset);
+	if (isCollidingMarkup(state, token, context)) {
+		processReject(state, token.text, token.startOffset);
+		return;
+	}
 	noteNonWhitespace(state, token.startOffset);
 	const run = state.run;
 	if (
@@ -162,6 +196,7 @@ export function createControlLeakDetector(): StreamDetector<ControlLeakState> {
 			pendingEvidence: undefined,
 			latched: null,
 			currentOffset: 0,
+			openMarkup: new Map(),
 		}),
 		checkDelta: (state: ControlLeakState, delta: string, _ctx: DetectorContext) => {
 			if (state.latched !== null) {

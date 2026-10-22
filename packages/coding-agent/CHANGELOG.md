@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- HTML strikethrough (`<s>…</s>`), SVG `<mask>` markup and fenced examples of their closing tags no longer stop a reply with "Degeneration guard: control-token leakage". A leaked `</s>` run that closes nothing still does ([#3880](https://github.com/code-yeongyu/senpi/issues/3880)).
 - The control-token-leak guard only treats tokenizer special tokens (`</s>`, `<pad>`, `<end_of_turn>`, …) as angle-bracket leaks. Runs of ordinary markup such as `</div>` repeated in a row no longer stop a reply with "Degeneration guard: control-token leakage" in prose, thinking or code samples ([omo#10789](https://github.com/code-yeongyu/oh-my-openagent/issues/10789)).
 - The control-token-leak guard no longer runs on tool-call arguments. An HTML argument with consecutive closing tags (`</div></div></div></div>`) used to stop `show_html_page` with "Degeneration guard: control-token leakage" and resample the turn; assistant text and thinking are still guarded ([omo#10789](https://github.com/code-yeongyu/oh-my-openagent/issues/10789)).
 

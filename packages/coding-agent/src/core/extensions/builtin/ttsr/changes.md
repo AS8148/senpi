@@ -1,3 +1,18 @@
+## 2026-10-22 — Markup that spells a special token is not a leak (senpi#3880)
+
+### What changed
+- `detectors/control-leak.ts`: `s` and `mask` are both tokenizer special tokens and markup elements (HTML strikethrough, SVG mask). For these two names an opening tag is markup, a closing tag that closes an earlier opening in the same stream is markup, and a closing tag in quotation context (fence, inline code, quote) is a documented example. All three are fed to the context tracker as text and never start or extend a run. Only an unmatched, unquoted closing tag (a leaked `</s>` EOS run) stays a candidate.
+
+### Why
+- Nested `<s>` or `<mask>` markup and a fenced SVG example of `</mask>` closers aborted text and thinking as control-token leakage after the omo#10789 allowlist (senpi#3880).
+
+### Tests
+- `test/ttsr/detector-control-leak-markup-collisions.test.ts` (RED 3 failed before the change): nested strikethrough, nested mask and the fenced mask example stay silent across every split; closers beyond the opened markup still fire.
+- Contract change: `detector-control-leak.test.ts` B-P9 used an opening `<s>` run as its start-context positive; it now uses `<bos>`.
+
+### Paths
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/detectors/control-leak.ts`
+
 ## 2026-10-21 — Angle-bracket leak candidates are tokenizer special tokens only (omo#10789)
 
 ### What changed
