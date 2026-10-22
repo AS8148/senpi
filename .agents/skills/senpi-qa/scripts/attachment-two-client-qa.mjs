@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { fork } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
@@ -42,7 +42,9 @@ if (process.argv[2] === "--client") {
 	const transcript = [];
 	const clients = [];
 	let stderr = "";
-	const socket = join(box.dir, "host.sock");
+	// macOS caps a Unix socket path at 103 bytes; a deep sandbox root overflows it, so only the socket lives here.
+	const socketDir = mkdtempSync("/tmp/aq-");
+	const socket = join(socketDir, "host.sock");
 	// A local fake model writes the transcript a parked session resumes from; a short idle window parks it.
 	const model = await startFakeModelServer({ turns: [{ text: "PARK-QA-OK" }] });
 	writeMockModelsJson(box.agentDir, model, "openai-completions");
@@ -200,6 +202,7 @@ if (process.argv[2] === "--client") {
 		try { await hostExit; } finally { clearTimeout(timer); }
 		await model.stop();
 		box.cleanup();
+		rmSync(socketDir, { recursive: true, force: true });
 		guard.assertUnchanged();
 		writeFileSync(join(out, "transcript.jsonl"), `${transcript.map((record) => JSON.stringify(record)).join("\n")}\n`);
 		writeFileSync(join(out, "host.stderr.log"), stderr);
