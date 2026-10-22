@@ -395,11 +395,14 @@ export function assertLoginKeyPresent(credential: Credential): void {
  * it in a receipt without re-reading storage.
  */
 export function appendLoginSlot(
-	current: PooledCredential | undefined,
+	stored: PooledCredential | undefined,
 	flat: Credential,
 	onAllocated?: (name: string, origin: "generated" | "provider") => void,
 ): Credential {
 	assertLoginKeyPresent(flat);
+	// A pool holds one kind: a login of the other kind replaces the credential instead of joining it
+	// as a slot nothing can project (senpi#3448). The caller backs up what it replaces.
+	const current = stored?.type === flat.type ? stored : undefined;
 	const provided = providedSlots(flat);
 	if (provided) {
 		// Provider-owned envelopes identify an addition by immutable ID, never by

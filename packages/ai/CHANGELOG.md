@@ -10,9 +10,13 @@
 
 ### Changed
 
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`huggingface`, `nvidia`, `opencode`, `openrouter`, `radius`, `venice`, `vercel-ai-gateway`).
+
 ### Fixed
 
 - An API-key login with an empty or missing key is refused with `EmptyApiKeyError` instead of saving an unusable `login-N` account. Providers that work without a key, or fall back to an ambient key, set `apiKey.keyOptional` and keep accepting a blank key; Kimi does, so a blank-key login that only picks the region for `KIMI_API_KEY` still works ([#3867](https://github.com/code-yeongyu/senpi/issues/3867)).
+- Responses prompt-cache keys now follow the model, instructions, and tool schemas instead of session ids across OpenAI, ChatGPT subscription, and Azure. New sessions and task children with identical prefixes share cache affinity, and Responses tools render in deterministic name order ([omo#10775](https://github.com/code-yeongyu/oh-my-openagent/issues/10775)).
+
 ### Removed
 
 ## [2026.10.21-1] - 2026-10-21
@@ -29,6 +33,8 @@
 - The bundled model catalog is refreshed from models.dev and the providers' model listings (`amazon-bedrock`, `huggingface`, `opencode`, `opengateway`, `openrouter`, `venice`).
 
 ### Fixed
+
+- `appendLoginSlot` replaces a credential of the other kind instead of adding an unusable slot; new `auth/pool/kinds` helpers classify slots and report the unused kinds of a mixed credential ([#3448](https://github.com/code-yeongyu/senpi/issues/3448))
 
 ### Removed
 
