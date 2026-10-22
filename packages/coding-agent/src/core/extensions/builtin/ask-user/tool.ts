@@ -242,6 +242,8 @@ export function startQuestion(
 		if (response.status === "cancelled") {
 			// Another client's cancel through a terminal's control endpoint carries no answers: it keeps the
 			// draft the UI reported as progress instead of wiping it. A cancel that carries answers updates it.
+			// This holds for every cancel without answers, lifecycle ones included; `showsPartialAnswers` alone
+			// decides whether the kept draft reaches the model, so a lifecycle cancel stays silent.
 			if (Object.keys(response.answers).length > 0 || response.comment !== undefined)
 				pending.touch({ answers: response.answers, comment: response.comment });
 			const cancelled = pending.cancel("cancelled");
