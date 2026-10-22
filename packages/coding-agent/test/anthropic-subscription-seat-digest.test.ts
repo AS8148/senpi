@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -43,6 +44,39 @@ describe("anthropic-subscription seat digest (oh-my-openagent#10304)", () => {
 		expect(statSync(salt).mode & 0o777).toBe(0o600);
 		expect(statSync(salt).size).toBe(32);
 	});
+
+	it("converges on one salt when several processes use it for the first time at once", async () => {
+		const directory = install();
+		const module = new URL("../src/core/extensions/builtin/anthropic-subscription/seat-digest.ts", import.meta.url)
+			.pathname;
+		// Each child slows the salt write down, so a racing process would see the salt file before its
+		// bytes land whenever the final name can exist half-written.
+		const script = [
+			`const fs = (await import("node:fs")).default; const { syncBuiltinESMExports } = await import("node:module");`,
+			`const write = fs.writeFileSync;`,
+			`fs.writeFileSync = (target, data, options) => { if (!String(target).includes("seat-digest-salt")) return write(target, data, options);`,
+			`write(target, Buffer.alloc(0), options); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400);`,
+			`return write(target, data, { ...options, flag: "w" }); };`,
+			`syncBuiltinESMExports();`,
+			`const { seatDigest } = await import(${JSON.stringify(module)});`,
+			`process.stdout.write(seatDigest("primary", ${JSON.stringify(directory)}));`,
+		].join("\n");
+		const digests = await Promise.all(
+			Array.from(
+				{ length: 12 },
+				() =>
+					new Promise<string>((resolve, reject) => {
+						execFile(process.execPath, ["--input-type=module", "-e", script], (error, stdout) =>
+							error ? reject(error) : resolve(stdout),
+						);
+					}),
+			),
+		);
+
+		expect(digests.every((digest) => /^[0-9a-f]{8}$/.test(digest))).toBe(true);
+		expect(new Set(digests).size).toBe(1);
+		expect(seatDigest("primary", directory)).toBe(digests[0]);
+	}, 30_000);
 
 	it("never fails the caller when the salt cannot be stored, and stays salted", () => {
 		const directory = install();

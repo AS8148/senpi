@@ -1,5 +1,5 @@
 import { createHmac, randomBytes } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { linkSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getAgentDir } from "../../../../config.ts";
 
@@ -13,11 +13,20 @@ function readOrCreateSalt(path: string): Buffer | undefined {
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== "ENOENT") return undefined;
 	}
+	// The salt is written whole to a private file and then hard-linked into place: the link either
+	// creates the final name with all 32 bytes or fails with EEXIST, so a racing process never reads a
+	// half-written salt, and every process converges on the first one linked.
+	const staged = `${path}.${process.pid}.${randomBytes(6).toString("hex")}`;
 	try {
 		mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-		writeFileSync(path, randomBytes(SALT_BYTES), { flag: "wx", mode: 0o600 });
+		writeFileSync(staged, randomBytes(SALT_BYTES), { flag: "wx", mode: 0o600 });
+		linkSync(staged, path);
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== "EEXIST") return undefined;
+	} finally {
+		try {
+			unlinkSync(staged);
+		} catch {}
 	}
 	try {
 		return readFileSync(path);
