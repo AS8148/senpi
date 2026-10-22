@@ -195,6 +195,9 @@ async function connectMcpServer(connection: ServerConnection, logger?: McpConnec
 	try {
 		await connection.connect();
 	} catch (error) {
+		// Dispose/disable superseded this attempt: its transport can close after dispose returned, so the late
+		// rejection is our own teardown, not a server failure, and must neither degrade nor log (senpi#4013).
+		if (connection.state === "disabled") return;
 		const failure = error instanceof Error ? error : new Error(String(error));
 		if (connection.lastError === undefined) connection.markDegraded(failure);
 		logger?.warn(failure.message);
