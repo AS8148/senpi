@@ -32,8 +32,13 @@ export interface ExportSessionForMoveOptions {
 	/** Queued user input the release took out of the session (`dropped.user_messages`), in order. */
 	readonly droppedUserMessages: readonly string[];
 	readonly bundleDir: string;
-	/** Runs inside the move lock before anything is read; throw to refuse. */
+	/** Runs inside this process's move queue before anything is read; throw to refuse. */
 	readonly guard?: () => void;
+	/**
+	 * Runs inside the cross-process move lock, right before the session is read and sealed; throw to refuse. A check on
+	 * the session file's state belongs here: another generation can change it between `guard` and the lock.
+	 */
+	readonly lockedGuard?: () => void;
 }
 
 /**
@@ -42,7 +47,14 @@ export interface ExportSessionForMoveOptions {
  * manifest. Running it again for the same move rewrites the same bundle without a second release entry.
  */
 export function exportSessionForMove(options: ExportSessionForMoveOptions): Promise<MoveManifest> {
-	return withSessionMoveLock(options.sessionFile, () => writeMoveBundle(options), options.guard);
+	return withSessionMoveLock(
+		options.sessionFile,
+		() => {
+			options.lockedGuard?.();
+			return writeMoveBundle(options);
+		},
+		options.guard,
+	);
 }
 
 async function writeMoveBundle(options: ExportSessionForMoveOptions): Promise<MoveManifest> {
