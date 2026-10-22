@@ -7,7 +7,8 @@
 
 ### Why
 
-- `packages/ai/src/api/anthropic-messages.ts`: `pi-messages.ts` must not leak a request-local hint onto its wire. Anthropic finds earlier cache entries only within about 20 blocks before a breakpoint, and the breakpoints sat at the end of the conversation. A context-reduction step's request therefore read only the system prefix and re-wrote everything after it (400K-780K tokens per step on 1M windows in the reports). A checkpoint at the last message the frontier leaves unchanged lets the next step read that prefix.
+- `packages/ai/src/api/anthropic-messages.ts`: Anthropic finds earlier cache entries only within about 20 blocks before a breakpoint, and the breakpoints sat at the end of the conversation. A context-reduction step's request therefore read only the system prefix and re-wrote everything after it (400K-780K tokens per step on 1M windows in the reports). A checkpoint at the last message the frontier leaves unchanged lets the next step read that prefix.
+- `packages/ai/src/api/pi-messages.ts`: the pi-messages wire carries `context.messages` as they are, so a request-local hint must not leak onto it.
 
 ### Why an extension could not handle it
 
