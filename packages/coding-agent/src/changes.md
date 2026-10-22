@@ -5297,3 +5297,25 @@ The package barrel is the only public entry point; an extension cannot add expor
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/main.ts`: `collectAuthDiagnostics`, `interactiveAuthNotices` and their four call sites.
+
+## 2026-10-22 - Async file locks never crash the process on a late heartbeat report (oh-my-openagent#10878)
+
+### What changed
+
+- `packages/coding-agent/src/experimental/server.ts`: the launcher and activation locks acquire through `lockWithLossHandling` (`core/file-lock.ts`). `ServerProfile` gains `assertHeld()` and `acquireServerActivation` returns `{ release, assertHeld }`; startup, cold activation (before the spawn and on every connect poll) and foreground start abort with `FileLockLostError` once their lock is lost.
+- `packages/coding-agent/src/experimental/session-worker.ts`: the session ownership lock acquires through `lockWithLossHandling` with `onLost: stopWorkerOnLostOwnership(...)` (`experimental/session-worker-ownership.ts`): a worker that loses its session lock reports `worker_failed` (bounded by 1 s) and exits without closing, so it never writes the session another owner now holds.
+- `packages/coding-agent/src/package-manager-cli.ts`: the managed self-update lock acquires through `lockWithLossHandling` and the update aborts with `FileLockLostError` before the release rename and before each activation once the lock is lost; the `lockSync` path is unchanged.
+
+### Why
+
+- `packages/coding-agent/src/experimental/server.ts`, `packages/coding-agent/src/experimental/session-worker.ts`, `packages/coding-agent/src/package-manager-cli.ts`: proper-lockfile 4.1.2's heartbeat `stat` callback has no `lock.released` check, so an unlock while that stat is in flight reaches the default `onCompromised`, which throws from a timer and kills the process. Reported and diagnosed by @ayalcoh in oh-my-openagent#10878.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/experimental/server.ts`, `packages/coding-agent/src/experimental/session-worker.ts` and `packages/coding-agent/src/package-manager-cli.ts` own these process-level locks before any extension loads.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/experimental/server.ts`: `acquireServerProfile`'s launcher lock, `acquireServerActivation`, and the import block.
+- `packages/coding-agent/src/experimental/session-worker.ts`: the `releaseOwnership` acquisition in `run` and the import block.
+- `packages/coding-agent/src/package-manager-cli.ts`: the lock in `runManagedSelfUpdate` and the import block.
