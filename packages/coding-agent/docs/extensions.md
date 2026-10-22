@@ -487,8 +487,8 @@ whose `details.runRef` names that run as notices until the user resumes; untagge
 fence. Human input and `resume_session` release fences together with the user's Stop.
 `ctx.releaseRunFence({ kind, id })` drops that run's fence when the run is cancelled: call it after the run is
 journaled terminal. Later wakes tagged with the run are admitted again, fences for other runs stay, and releasing a
-run that has no fence does nothing. `session_resumed` (cause `run_cancelled`) fires only when the released fence was
-the last hold.
+run that has no fence does nothing. A fence alone does not pause the session, so fencing or releasing only a fence
+emits no `session_paused`/`session_resumed` and no `session_hold_changed`; each pause gets exactly one resume.
 
 #### held_wakes_released
 
@@ -515,7 +515,7 @@ and release entries carry `keys`. Restart restores both identity and metadata.
 
 `getHold(key)` returns the current keyed record, or `undefined`.
 `release(keys, cause)` releases only the named keys and emits `session_resumed`
-only when the final active record goes. `releaseAll(cause)` delegates to that
+only when the session stops being held, once per `session_paused`. `releaseAll(cause)` delegates to that
 operation. The cause union remains `"input" | "resume_session"`.
 `engine-turn-hold-notices.ts` owns notice persistence, coalescing, counts, and
 consumption; the ledger delegates to that one custody path.
@@ -2078,8 +2078,9 @@ pi.sendMessage({
 - `items` - Make the message an itemized batch: one `{ itemId, producer, runRef?, content?, details? }` per wake it
   carries. The call then returns a promise of one receipt per item, `{ itemId, entryId, disposition, noticeId? }`.
   Admission is atomic: if a pause applies to the batch or to any item (a Stop, a parent's run pause, an unattended
-  hold, or a fence on that item's `runRef`), every item is stored as its own notice entry (`notice_persisted`, with
-  the item's own `content` and `details`, or the batch content when an item has none); otherwise the batch is
+  hold, or a fence on that item's `runRef`), every item is stored as its own notice (`notice_persisted`, with
+  the item's own `content` and `details`, or the batch content when an item has none), all written in one entry, so
+  the batch is kept whole or not at all: if that write fails the promise rejects and no item is kept; otherwise the batch is
   delivered as one message and every receipt names that message's entry (`message_persisted`). A held item's notice
   is delivered on its own when the session resumes, and a later wake from the same producer never replaces it.
   A host without item custody (an embedder's runtime) delivers the batch as a plain message and the promise

@@ -11,6 +11,8 @@ export interface RunResumePorts {
 		readonly text: string;
 		readonly images?: readonly ImageContent[];
 	}[];
+	/** Held manual-continue inputs: the turn continues the work itself, so it consumes them without carrying them. */
+	readonly continueInputs: () => readonly string[];
 	readonly heldWakes: () => readonly { readonly source: string; readonly message: Message }[];
 	readonly send: (message: Message) => Promise<void>;
 	/** The next turn's id once it starts, or undefined once `until` settles first; it stops listening either way. */
@@ -37,6 +39,7 @@ export async function startRunResumeTurn(
 	ports: RunResumePorts,
 ): Promise<{ turnId: string | undefined; delivered: Promise<boolean> }> {
 	const inputs = ports.heldInputs();
+	const continues = ports.continueInputs();
 	const wakes = ports.heldWakes();
 	const content: Part[] = [
 		...inputs.flatMap((input): Part[] => [
@@ -61,7 +64,7 @@ export async function startRunResumeTurn(
 		}
 		if (turnId === undefined || !ports.current()) return false;
 		ports.consume(
-			inputs.map((input) => input.inputId),
+			[...inputs.map((input) => input.inputId), ...continues],
 			wakes.map((wake) => wake.source),
 		);
 		return true;

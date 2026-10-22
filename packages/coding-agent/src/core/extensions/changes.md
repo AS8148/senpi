@@ -22,7 +22,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionContext` gains optional `getPauseState()` (the session's hold records and pause seq) `fenceRun(runRef)` and `releaseRunFence(runRef)` (drops a cancelled run's fence); new `SessionHoldRecord` and the `session_hold_changed` event, fired when a user Stop, a run fence or a release changes the holds.
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionContext` gains optional `getPauseState()` (the session's hold records and pause seq) `fenceRun(runRef)` and `releaseRunFence(runRef)` (drops a cancelled run's fence); new `SessionHoldRecord` and the `session_hold_changed` event, fired when the session becomes paused or resumed (a user Stop, a parent's run pause, a release); a run fence alone does not pause the session, so adding or releasing only a fence fires nothing.
 - `packages/coding-agent/src/core/extensions/runner.ts`: binds those context actions from the session and guards them with `assertActive()`.
 
 ### Why

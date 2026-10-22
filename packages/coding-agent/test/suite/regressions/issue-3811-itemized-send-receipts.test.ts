@@ -35,14 +35,13 @@ function nextTurnStart(fixture: ResumeFixture): Promise<void> {
 	});
 }
 
-function noticeEntries(fixture: ResumeFixture): Array<{ id: string; data: Record<string, unknown> }> {
-	return fixture.h.sessionManager
-		.getEntries()
-		.flatMap((entry) =>
-			entry.type === "custom" && entry.customType === "session-notice"
-				? [{ id: entry.id, data: entry.data as Record<string, unknown> }]
-				: [],
-		);
+/** Every stored notice with the entry that holds it; a held batch is one entry holding one notice per item. */
+function heldNotices(fixture: ResumeFixture): Array<{ entryId: string; notice: Record<string, unknown> }> {
+	return fixture.h.sessionManager.getEntries().flatMap((entry) => {
+		if (entry.type !== "custom" || entry.customType !== "session-notice") return [];
+		const data = entry.data as { notices?: Array<Record<string, unknown>> } & Record<string, unknown>;
+		return (data.notices ?? [data]).map((notice) => ({ entryId: entry.id, notice }));
+	});
 }
 
 /** Every `session-notice` write that carries `itemId` fails, as a full disk would fail it. */
@@ -111,7 +110,7 @@ describe("senpi#3811 itemized sendMessage custody", () => {
 		expect(new Set(receipts.map((receipt) => receipt.entryId))).toEqual(new Set([carrier?.id]));
 	});
 
-	it("splits a batch a Stop holds into one notice entry and one receipt per item", async () => {
+	it("splits a batch a Stop holds into one notice and one receipt per item, written as one entry", async () => {
 		// Given a stopped session
 		const fixture = await textFixture();
 		fixtures.push(fixture);
@@ -123,16 +122,27 @@ describe("senpi#3811 itemized sendMessage custody", () => {
 			{ itemId: "b", producer: "task", content: "Task B finished" },
 		]);
 
-		// Then no turn started and each item is its own stored notice with its own content and receipt
+		// Then no turn started and each item is its own stored notice with its own content and receipt, in one entry
 		expect(fixture.h.faux.state.callCount).toBe(0);
-		const notices = noticeEntries(fixture);
+		const notices = heldNotices(fixture);
 		expect(notices).toHaveLength(2);
+		expect(new Set(notices.map((held) => held.entryId)).size).toBe(1);
 		expect(receipts).toEqual([
-			{ itemId: "a", entryId: notices[0]?.id, disposition: "notice_persisted", noticeId: notices[0]?.data.noticeId },
-			{ itemId: "b", entryId: notices[1]?.id, disposition: "notice_persisted", noticeId: notices[1]?.data.noticeId },
+			{
+				itemId: "a",
+				entryId: notices[0]?.entryId,
+				disposition: "notice_persisted",
+				noticeId: notices[0]?.notice.noticeId,
+			},
+			{
+				itemId: "b",
+				entryId: notices[1]?.entryId,
+				disposition: "notice_persisted",
+				noticeId: notices[1]?.notice.noticeId,
+			},
 		]);
-		expect(JSON.stringify(notices[0]?.data.message)).toContain("Task A finished");
-		expect(JSON.stringify(notices[0]?.data.message)).not.toContain("Task B finished");
+		expect(JSON.stringify(notices[0]?.notice.message)).toContain("Task A finished");
+		expect(JSON.stringify(notices[0]?.notice.message)).not.toContain("Task B finished");
 		expect(persistedNotices(fixture)).toBe(2);
 		expect(fixture.h.session.pausedNoticeCount).toBe(2);
 	});
@@ -158,7 +168,7 @@ describe("senpi#3811 itemized sendMessage custody", () => {
 		// Then admission is atomic: both items are held as their own notices
 		expect(fixture.h.faux.state.callCount).toBe(0);
 		expect(receipts.map((receipt) => receipt.disposition)).toEqual(["notice_persisted", "notice_persisted"]);
-		expect(noticeEntries(fixture)).toHaveLength(2);
+		expect(heldNotices(fixture)).toHaveLength(2);
 	});
 
 	it("never lets a later wake from the same producer replace a held item's notice", async () => {
@@ -196,7 +206,7 @@ describe("senpi#3811 itemized sendMessage custody", () => {
 
 		// Then the receipts reject and neither item is in custody, so the sender can retry the whole batch
 		await expect(settlesWithin(Promise.resolve(sending), "the held batch's receipts")).rejects.toThrow("disk full");
-		expect(noticeEntries(fixture)).toEqual([]);
+		expect(heldNotices(fixture)).toEqual([]);
 		expect(persistedNotices(fixture)).toBe(0);
 		expect(fixture.h.session.pausedNoticeCount).toBe(0);
 	});
@@ -229,7 +239,7 @@ describe("senpi#3811 itemized sendMessage custody", () => {
 		await expect(settlesWithin(Promise.resolve(sending), "the deferred batch's receipts")).rejects.toThrow(
 			"disk full",
 		);
-		expect(noticeEntries(fixture)).toEqual([]);
+		expect(heldNotices(fixture)).toEqual([]);
 		expect(fixture.h.session.pausedNoticeCount).toBe(0);
 	});
 

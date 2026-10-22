@@ -15,6 +15,13 @@ interface HeldNotice {
 	itemId?: string;
 	runRef?: unknown;
 }
+/** One `session-notice` entry holding every item of an itemized batch, so the batch is written or not at all. */
+type HeldNoticeBatch = { notices: HeldNotice[] };
+export type HeldItem = {
+	readonly source: string;
+	readonly message: CustomMessage;
+	readonly item: { readonly itemId: string; readonly runRef?: unknown };
+};
 
 /**
  * Durable notice custody. A plain wake keeps only the latest model payload of its source; an itemized notice keeps
@@ -35,7 +42,8 @@ export class EngineTurnHoldNotices {
 		for (const entry of entries) {
 			if (entry.type !== "custom") continue;
 			if (entry.customType === "session-notice") {
-				this.remember(entry.data as HeldNotice);
+				const data = entry.data as HeldNotice | HeldNoticeBatch;
+				for (const notice of "notices" in data ? data.notices : [data]) this.remember(notice);
 			} else if (entry.customType === "session-notices-consumed") {
 				const ids = new Set((entry.data as { noticeIds: string[] }).noticeIds);
 				for (const [source, wake] of Object.entries(this.wakes)) this.forget(source, wake, ids);
@@ -81,32 +89,37 @@ export class EngineTurnHoldNotices {
 	}
 
 	/**
-	 * Store one item of an itemized batch as its own notice entry (senpi#3811 design 4.5). Unlike `note`, a write
-	 * that fails throws and keeps nothing, so the sender keeps the item instead of trusting a receipt.
+	 * Store every item of an itemized batch as its own notice, in ONE entry (senpi#3811 design 4.5): the batch is
+	 * admitted all-or-nothing. Unlike `note`, a write that fails throws and keeps no item, so the sender keeps the
+	 * whole batch and a retry duplicates nothing.
 	 */
-	noteItem(
-		source: string,
+	noteItems(
 		pauseSeq: number,
-		message: CustomMessage,
-		item: { readonly itemId: string; readonly runRef?: unknown },
+		items: readonly HeldItem[],
 		stopped = false,
-	): { noticeId: string; entryId: string } {
-		const data: HeldNotice = {
-			noticeId: crypto.randomUUID(),
-			producer: source,
-			pauseSeq,
-			at: new Date().toISOString(),
-			heldCount: this.noticeCount + 1,
-			text: this.noticeText(this.noticeCount + 1, source, stopped),
-			action: "resume_session",
-			message,
-			itemId: item.itemId,
-			...(item.runRef === undefined ? {} : { runRef: item.runRef }),
-		};
-		const entryId = this.append("session-notice", data);
+	): Array<{ itemId: string; noticeId: string; entryId: string }> {
+		const at = new Date().toISOString();
+		const held = items.map(({ source, message, item }, index) => {
+			const heldCount = this.noticeCount + index + 1;
+			const notice: HeldNotice = {
+				noticeId: crypto.randomUUID(),
+				producer: source,
+				pauseSeq,
+				at,
+				heldCount,
+				text: this.noticeText(heldCount, source, stopped),
+				action: "resume_session",
+				message,
+				itemId: item.itemId,
+				...(item.runRef === undefined ? {} : { runRef: item.runRef }),
+			};
+			return { itemId: item.itemId, notice };
+		});
+		const batch: HeldNoticeBatch = { notices: held.map(({ notice }) => notice) };
+		const entryId = this.append("session-notice", batch);
 		if (typeof entryId !== "string") throw new Error("the notice entry was not written");
-		this.remember(data);
-		return { noticeId: data.noticeId, entryId };
+		for (const { notice } of held) this.remember(notice);
+		return held.map(({ itemId, notice }) => ({ itemId, noticeId: notice.noticeId, entryId }));
 	}
 
 	messages(): Array<{ source: string; noticeIds: readonly string[]; message: CustomMessage }> {

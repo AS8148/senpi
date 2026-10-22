@@ -84,9 +84,10 @@ holds: { kind: HoldKind; key: string; since: string; data?: unknown; sourceCount
 keys each record by `key` (defaulting to its kind) and preserves opaque `data`
 through a restart. Persisted additions carry `key`/`data`, and release entries list `keys`. It
 implements only `unattended`. Consumers must distinguish kinds rather than infer
-them from the notification text. A first hold emits `session_paused` with `kind`,
-`pauseSeq`, `at`, `noticeCount`, and `persisted`. Releasing emits
-`session_resumed { cause: "input" | "resume_session", pauseSeq, at }`.
+them from the notification text. The first hold that pauses the session emits `session_paused` with `kind`,
+`pauseSeq`, `at`, `noticeCount`, and `persisted`. The release that ends the pause emits
+`session_resumed { cause: "input" | "resume_session", pauseSeq, at }` once; a run fence alone pauses nothing and
+emits neither.
 The ordinary extension UI `notify` event shows the paused count and Resume
 instruction too. Attachment lifecycle extension events remain distinct from
 these engine pause events: attachment never releases any ledger hold.

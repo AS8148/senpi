@@ -1286,7 +1286,7 @@ export interface SessionHoldRecord {
 	data?: unknown;
 }
 
-/** Fired when this session's holds change: a user Stop, a run fence, or a release. Omo propagates a Stop to its run. */
+/** Fired when this session becomes paused or resumed; a run fence alone does not pause it. Omo propagates a Stop to its run. */
 export interface SessionHoldChangedEvent {
 	type: "session_hold_changed";
 	change: "paused" | "resumed";
@@ -3061,7 +3061,7 @@ export interface SendMessageItem {
 	readonly details?: unknown;
 }
 
-/** Where an item of an itemized batch went: its own notice entry, or the one message entry that carried it. */
+/** Where an item of an itemized batch went: its own notice (`noticeId`) in the held batch's one notice entry, or the one message entry that carried it. */
 export interface SendMessageReceipt {
 	readonly itemId: string;
 	readonly entryId: string;

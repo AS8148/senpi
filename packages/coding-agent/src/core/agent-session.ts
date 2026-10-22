@@ -1301,6 +1301,7 @@ export class AgentSession {
 	private readonly _resumeEffects = new Map<string, ResumeSessionAnswer>();
 	private _stopInterrupt: StopInterrupt | undefined;
 	private _deliveredHeldInputIds: string[] = [];
+	private _heldCommandRun: Promise<void> | undefined;
 	private readonly _releaseExtras: CustomMessage[] = [];
 	private _releaseExtrasGeneration = 0;
 	private _engineTurnPauseRecorded = false;
@@ -5273,7 +5274,12 @@ export class AgentSession {
 				options?.preflightResult?.(true);
 				return;
 			}
-			if (origin === "person") this._beginPersonInput();
+			if (origin === "person") {
+				this._beginPersonInput();
+				// The held commands this input released run first, in the order typed, so its turn starts after them.
+				const heldCommands = this._takeHeldCommandRun();
+				if (heldCommands !== undefined) await heldCommands;
+			}
 			await this._prompt(text, {
 				...options,
 				observedPauseSeq,
@@ -6381,10 +6387,11 @@ export class AgentSession {
 
 	/**
 	 * The atomic admission of an itemized batch: if a live hold applies to the batch or to any item (by that item's
-	 * producer and run), every item becomes its own notice entry; otherwise the batch is delivered as one message
-	 * and every item's receipt names the entry that message was written to.
+	 * producer and run), every item becomes its own notice, all in one entry; otherwise the batch is delivered as one
+	 * message and every item's receipt names the entry that message was written to. Async so a failed write rejects
+	 * the receipts even on a deferred path; the held branch still decides custody before its first await.
 	 */
-	private _admitItemized<T>(
+	private async _admitItemized<T>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
 		options: SendMessageOptions & { items: readonly SendMessageItem[] },
 		claim?: DeferredTurnClaim,
@@ -6400,12 +6407,10 @@ export class AgentSession {
 				));
 		if (held) {
 			claim?.resolve("finished-without-start");
-			return Promise.resolve(
-				items.map((item) => {
-					const notice = this._engineTurnHold.noteItem(item.producer, itemNoticeMessage(message, item), item);
-					return { itemId: item.itemId, disposition: "notice_persisted" as const, ...notice };
-				}),
+			const notices = this._engineTurnHold.noteItems(
+				items.map((item) => ({ source: item.producer, message: itemNoticeMessage(message, item), item })),
 			);
+			return notices.map((notice) => ({ ...notice, disposition: "notice_persisted" as const }));
 		}
 		const outcome = Promise.withResolvers<readonly SendMessageReceipt[]>();
 		this.sendCustomMessage(message, options, claim, undefined, {
@@ -6736,10 +6741,15 @@ export class AgentSession {
 	/** The resume turn both resume paths start; held input and notices are consumed only if no newer Stop aborted it. */
 	private async _startResumeTurn(): ReturnType<typeof startRunResumeTurn> {
 		const generation = this._userAbortGeneration;
-		await this._takeHeldCommands();
+		const { run, continues } = this._takeHeldCommands();
+		await run;
 		return startRunResumeTurn({
 			heldInputs: () =>
-				this._heldInputs.pending().map((input) => ({ ...input, text: this._preparedHeldText(input) })),
+				this._heldInputs
+					.pending()
+					.filter((input) => !continues.has(input.inputId))
+					.map((input) => ({ ...input, text: this._preparedHeldText(input) })),
+			continueInputs: () => [...continues],
 			heldWakes: () => this._engineTurnHold.messages(),
 			send: (message) => this.sendCustomMessage(message, { triggerTurn: true }, undefined, () => true),
 			turnStarted: (until) => this._nextTurnStart(until),
@@ -6772,28 +6782,42 @@ export class AgentSession {
 		this._releaseExtrasGeneration = this._userAbortGeneration;
 		if (this._stopHoldLive())
 			this._releaseExtras.push({ role: "custom", ...stopResumeDirective(), timestamp: Date.now() });
-		this._releaseExtras.push(...this._takeHeldInputs());
+		const { messages, commands } = this._takeHeldInputs();
+		this._releaseExtras.push(...messages);
+		// A later capture that finds no commands keeps the run an earlier one (a question answer's) still owes.
+		if (commands !== undefined) this._heldCommandRun = commands;
+	}
+
+	/** The held-command run the last release started, for the person input it releases to await (senpi#3811). */
+	private _takeHeldCommandRun(): Promise<void> | undefined {
+		const run = this._heldCommandRun;
+		this._heldCommandRun = undefined;
+		return run;
 	}
 
 	/**
-	 * Held input is prepared when delivered, not when held (senpi#3811). Takes the held extension commands and
-	 * manual-continue "." inputs (the delivering turn continues the work itself) out of custody now, and returns the
-	 * run of those commands in the order they were typed; the run reports a failure instead of rejecting.
+	 * Held input is prepared when delivered, not when held (senpi#3811). The held extension commands leave custody
+	 * now and run in the order typed: a command that ran is delivered, so no later release runs it twice; the run
+	 * reports a failure instead of rejecting. A manual-continue "." stays in custody: the delivering turn continues
+	 * the work itself, so it is settled with that turn and stays held if the turn is not delivered.
 	 */
-	private _takeHeldCommands(): Promise<void> {
-		const commands: string[] = [];
+	private _takeHeldCommands(): { run: Promise<void> | undefined; continues: ReadonlySet<string> } {
+		const commands: HeldInput[] = [];
+		const continues = new Set<string>();
+		const hasMessages = this.agent.state.messages.length > 0;
 		for (const input of this._heldInputs.pending()) {
 			if (input.prepare !== true) continue;
-			const command = this._isExtensionCommandText(input.text);
-			const hasMessages = this.agent.state.messages.length > 0;
 			const hasImages = (input.images?.length ?? 0) > 0;
-			if (!command && !isManualContinueSubmission({ text: input.text, hasMessages, hasImages })) continue;
-			this._heldInputs.consume([input.inputId]);
-			if (command) commands.push(input.text);
+			if (this._isExtensionCommandText(input.text)) commands.push(input);
+			else if (isManualContinueSubmission({ text: input.text, hasMessages, hasImages }))
+				continues.add(input.inputId);
 		}
-		return (async () => {
-			for (const text of commands) await this._tryExecuteExtensionCommand(text);
+		if (commands.length === 0) return { run: undefined, continues };
+		this._heldInputs.consume(commands.map((input) => input.inputId));
+		const run = (async () => {
+			for (const input of commands) await this._tryExecuteExtensionCommand(input.text);
 		})().catch((error: unknown) => this._sessionLogger.warn("held_command_failed", { error: String(error) }));
+		return { run, continues };
 	}
 
 	/** A held person input's text as the model receives it: skills and prompt templates expanded. */
@@ -6802,20 +6826,26 @@ export class AgentSession {
 		return expandPromptTemplateWithMetadata(this._expandSkillCommand(input.text), [...this.promptTemplates]).text;
 	}
 
-	private _takeHeldInputs(): CustomMessage[] {
-		void this._takeHeldCommands();
+	private _takeHeldInputs(): { messages: CustomMessage[]; commands: Promise<void> | undefined } {
+		const { run, continues } = this._takeHeldCommands();
 		const pending = this._heldInputs.pending();
+		// Consumed at settlement only if the releasing turn was delivered; a "." rides that turn without a message.
 		this._deliveredHeldInputIds.push(...pending.map((input) => input.inputId));
-		return pending.map((input) => ({
-			role: "custom",
-			customType: HELD_INPUT_ENTRY,
-			content:
-				input.images === undefined
-					? this._preparedHeldText(input)
-					: [{ type: "text", text: this._preparedHeldText(input) }, ...input.images],
-			display: true,
-			timestamp: Date.now(),
-		}));
+		const messages = pending
+			.filter((input) => !continues.has(input.inputId))
+			.map(
+				(input): CustomMessage => ({
+					role: "custom",
+					customType: HELD_INPUT_ENTRY,
+					content:
+						input.images === undefined
+							? this._preparedHeldText(input)
+							: [{ type: "text", text: this._preparedHeldText(input) }, ...input.images],
+					display: true,
+					timestamp: Date.now(),
+				}),
+			);
+		return { messages, commands: run };
 	}
 
 	/** A parent's Stop reaching this child (senpi#3811): hold every automatic turn until the parent's run Resume. */

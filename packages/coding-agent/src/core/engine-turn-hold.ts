@@ -1,4 +1,4 @@
-import { EngineTurnHoldNotices } from "./engine-turn-hold-notices.ts";
+import { EngineTurnHoldNotices, type HeldItem } from "./engine-turn-hold-notices.ts";
 import type { CustomMessage } from "./messages.ts";
 import type { HistoryReducer } from "./session-history-reduce.ts";
 import type { SessionEntry } from "./session-manager.ts";
@@ -55,6 +55,8 @@ export class EngineTurnHold {
 	private goalDeferred = false;
 	private generationValue = 0;
 	private attended: boolean;
+	/** A `session_paused` is out with no `session_resumed` yet; a replayed held ledger counts as paused. */
+	private pauseOpen: boolean;
 	private readonly append: (type: string, data: unknown) => unknown;
 	private readonly notify: (message: string) => void;
 	private readonly emit: (event: SessionHoldEvent) => void;
@@ -87,6 +89,7 @@ export class EngineTurnHold {
 				for (const key of data.keys) this.records.delete(key);
 			}
 		}
+		this.pauseOpen = this.isHeld();
 	}
 
 	/** A run fence alone holds only wakes tagged with its run (senpi#3811), so it does not hold the session. */
@@ -153,7 +156,6 @@ export class EngineTurnHold {
 	addHold(kind: HoldKind, opts?: { key?: string; data?: unknown }): void {
 		const key = opts?.key ?? kind;
 		if (this.records.has(key)) return;
-		const wasHeld = this.isHeld();
 		const at = new Date().toISOString();
 		this.pauseSeq++;
 		this.records.set(key, { kind, key, since: at, data: opts?.data, sourceCounts: {} });
@@ -171,7 +173,9 @@ export class EngineTurnHold {
 		} catch (error) {
 			this.writeFailed(error);
 		} finally {
-			if (!wasHeld)
+			// A run fence alone does not pause the session, so it emits no `session_paused` (senpi#3811).
+			if (!this.pauseOpen && this.isHeld()) {
+				this.pauseOpen = true;
 				this.emit({
 					type: "session_paused",
 					pauseSeq: this.pauseSeq,
@@ -180,6 +184,7 @@ export class EngineTurnHold {
 					noticeCount: this.noticeCount,
 					persisted,
 				});
+			}
 			if (!persisted) this.notify("Pause could not be saved; it will not survive a restart.");
 		}
 	}
@@ -187,7 +192,6 @@ export class EngineTurnHold {
 	release(keys: string[], cause: HoldReleaseCause): void {
 		const present = [...new Set(keys)].filter((key) => this.records.has(key));
 		if (present.length === 0) return;
-		const wasHeld = this.isHeld();
 		const at = new Date().toISOString();
 		this.append("session-hold", {
 			op: "release",
@@ -197,9 +201,11 @@ export class EngineTurnHold {
 			at,
 		} satisfies HoldEntry);
 		for (const key of present) this.records.delete(key);
-		// A fence alone does not hold the session, so dropping one of several fences is not a resume (senpi#3811).
-		if (!this.isHeld() && (wasHeld || this.records.size === 0))
+		// Each `session_paused` gets one `session_resumed`; a fence that outlives the pause resumes nothing (senpi#3811).
+		if (this.pauseOpen && !this.isHeld()) {
+			this.pauseOpen = false;
 			this.emit({ type: "session_resumed", pauseSeq: this.pauseSeq, cause, at });
+		}
 	}
 
 	holdsSource(source: string): boolean {
@@ -217,21 +223,21 @@ export class EngineTurnHold {
 		if (!this.attended) this.showNotice();
 	}
 
-	/** One held item of an itemized batch: its own notice entry and `session_notice` event (senpi#3811 design 4.5). */
-	noteItem(
-		source: string,
-		message: CustomMessage,
-		item: { readonly itemId: string; readonly runRef?: unknown },
-	): { noticeId: string; entryId: string } {
-		const notice = this.notices.noteItem(source, this.pauseSeq, message, item, this.stopped);
-		this.emit({
-			type: "session_notice",
-			noticeIds: [notice.noticeId],
-			noticeCount: this.noticeCount,
-			disposition: "notice_persisted",
-		});
+	/**
+	 * A held itemized batch, written all-or-nothing: each item becomes its own notice with its own `session_notice`
+	 * event, and a failed write throws with no item kept (senpi#3811 design 4.5).
+	 */
+	noteItems(items: readonly HeldItem[]): Array<{ itemId: string; noticeId: string; entryId: string }> {
+		const notices = this.notices.noteItems(this.pauseSeq, items, this.stopped);
+		for (const notice of notices)
+			this.emit({
+				type: "session_notice",
+				noticeIds: [notice.noticeId],
+				noticeCount: this.noticeCount,
+				disposition: "notice_persisted",
+			});
 		if (!this.attended) this.showNotice();
-		return notice;
+		return notices;
 	}
 
 	messages(): ReturnType<EngineTurnHoldNotices["messages"]> {
