@@ -1,3 +1,21 @@
+## 2026-10-22 - `pi.session.relocationTargets()` and `pi.session.requestRelocation()` (senpi#3959)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/loader.ts`: the `pi.session` object forwards `relocationTargets(signal?)` and `requestRelocation({ target, reason }, signal?)` to the bound `SessionControlActions` (types in `session-control-types.ts`, results in `core/session-relocation.ts`).
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/loader.ts`: the builtin `relocate-session` extension's tools need the session's relocation host through the public API.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/loader.ts`: `pi.session` is built here; the loader is the only place that creates it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/loader.ts`: LOW: two methods appended after `persistHeaderNow` in the `session` block of the API object.
+
 ## 2026-10-19 - session_move_export and session_move_import events (senpi#3676)
 
 ### What changed

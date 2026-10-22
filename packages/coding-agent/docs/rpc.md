@@ -2064,6 +2064,44 @@ The order is: the receiver `prepare`s; the sender releases the session with `rel
 
 Refusals carry `errorData.detail` (the reason and what to do): `invalid_move_request` (a field does not parse), `session_open_here` (export or finish of a session this host has open), `move_not_released` (export of a file not sealed for that move), `move_fenced` (a move already answered, or a bundle for a move the receiver never readied), `move_bundle_invalid`, `move_repository_mismatch` (`cwd` is not a checkout of the same repository), `move_target_occupied`, `move_mismatch`, `session_moved_away`, `session_held`, and `move_failed` for anything else. `move_failed` also refuses an `export` whose sealing `release_session` staged extension state that is no longer on disk: the session is never bundled without it, and `finish` with a `declined` answer takes it back.
 
+### Continuing a session on another computer (`session_relocation`)
+
+The agent can ask to continue its own session on another of the user's computers (tools `list_relocation_targets` and `relocate_session { target, reason }`). The engine knows no other machines, so it asks the client that offers relocation, and that client (the host app, for example the desktop) runs the move with the commands above. The engine never moves anything itself and never interrupts a turn.
+
+A multi-session host advertises `session_relocation` in `get_protocol_info.capabilities`. A client offers relocation by sending `session_relocation` in `set_client_info.capabilities` before it opens the session: like `question`, the capability is read from the connection that opened the session. Without it (a plain CLI, a classic single-session `--mode rpc` process, a client that does not offer it), both tools answer `unavailable` with reason `not_offered`, nothing is sent, and the session keeps working here.
+
+The session asks with an outbound `host_request`, tagged with the routing `sessionId` and sent to the connections attached to the session:
+
+```json
+{"type":"host_request","id":"hr_5f0c...","method":"list_relocation_targets","sessionId":"rpc-1"}
+{"type":"host_request","id":"hr_9a1d...","method":"relocate_session","target":"Studio","reason":"heavy build","sessionId":"rpc-1"}
+```
+
+The client answers once, under the request's `id` and the same `sessionId`, with `data` (or `error` when it failed):
+
+```json
+{"type":"host_response","id":"hr_5f0c...","sessionId":"rpc-1","data":{"targets":[{"name":"Studio","online":true,"capacity":"high","aboutToSleep":false}]}}
+{"type":"host_response","id":"hr_9a1d...","sessionId":"rpc-1","data":{"accepted":true,"moveId":"mv-a1","target":"Studio"}}
+{"type":"host_response","id":"hr_9a1d...","sessionId":"rpc-1","data":{"accepted":false,"reason":"target_busy","detail":"Studio is running a build"}}
+```
+
+Every `host_response` is acknowledged under its `id`: `{"type":"response","command":"host_response","success":true}`, or `success: false` with `error: "unknown_host_request"` (no request of this session waits for that id: already answered, timed out, or never sent) or `"invalid_host_response"` (no `id`).
+
+- `list_relocation_targets` `data`: `targets`, each `{ name, online, capacity?, aboutToSleep? }`. `name` is what the agent passes as `target`; `capacity` is a free-form hint. The list passes through unchanged; one that does not parse is refused `invalid_host_answer`.
+- `relocate_session` `data`: `{ accepted: true, moveId, target? }` accepts (`moveId` is the plain id the host will use for `release_session` and `move_session`; `target` is the name to show, defaulting to the asked one), and `{ accepted: false, reason?, detail? }` declines. The host should prepare the receiver before accepting, and must decline a session it cannot release (for example one in a worker isolate, which `release_session` answers `release_unsupported`).
+- The session waits at most 60 seconds for an answer (refused `no_answer`); an aborted tool call is refused `cancelled`; a session closed while waiting is refused `session_closed`; `error` is refused `host_error` with the error text.
+- A session without a session file answers `unavailable` with reason `not_releasable` without asking. One accepted move per run: a second `relocate_session` while one is scheduled or still being asked is refused `already_scheduled` without asking.
+
+The agent's tool results are typed in `details`: `{ status: "listed", targets }`, `{ status: "scheduled", target, moveId }`, `{ status: "unavailable", reason, detail }`, or `{ status: "refused", reason, detail }` (the host's own `reason` and `detail` when it declined). Every outcome except `scheduled` leaves the session open and writable here.
+
+**When the move happens.** An accepted request is scheduled; it never interrupts the run that asked for it. The tool result tells the agent the work continues on the target when this turn ends, and the run goes on to its natural end (further tool calls, its closing reply, queued follow-ups). When that run settles (`agent_settled`) and every `prompt` call behind it has returned, the session sends one event:
+
+```json
+{"type":"relocation_due","moveId":"mv-a1","target":"Studio","reason":"heavy build","sessionId":"rpc-1"}
+```
+
+It comes after the run's `agent_end`, and only when no new run has started meanwhile; if one has, the notice follows that run's settle instead. At that point `release_session` finds the session quiet. The host then runs the ordinary move: `release_session { reason: "move", moveId, target }` (with `force: true` while its own client is attached), `move_session export`, the transport to the receiver, `import`, `status` and `finish`. The release ends this runtime: `session_released` records `move_id`, `target` and `session_id`, and the thread keeps its id, conversation and queued input (`dropped.user_messages` travels with `export`). A host that decides not to move after `relocation_due` changes nothing; the session stays writable here, and the host should tell the agent (for example with a follow-up prompt). The scheduled move is forgotten when the session closes or its runtime is replaced.
+
 ### Host self-observation (event-loop stalls and memory pressure)
 
 Every in-process session shares the host's event loop, so a session that blocks it freezes every other session and the
@@ -2285,6 +2323,7 @@ names a valid preset.
 | `detach_connection` | - | `{ deferred: string[] }` | Multi-session hosts that advertise `detach_connection`. Meant as the connection's last request: the host releases every session attachment this connection holds and answers only after that, so another connection's next `list_sessions` no longer counts it. `deferred` names the sessions that still count it (see `#### detach_connection`). Closing the socket afterwards releases nothing more. `senpi host session` sends it before closing, bounded at 5 s; on a host without the capability, or after a request timed out or the connection was lost, it relies on the release at socket close. |
 | `release_session` | `sessionId`, `reason: "takeover" \| "move"`, `moveId?` (required for `move`), `target?`, `interrupt?`, `force?` | `{ released: true, session_path, attachments }` | Hands the session to a runtime outside this host. See "Handing a session over (`release_session`)" below. |
 | `move_session` | `op` and its fields (see "Moving a session to another device (`move_session`)") | per `op` | Drives one step of a session move between hosts. Capability `move_session`. |
+| `host_response` | `id`, `data?`, `error?` | `{ type: "response", command: "host_response", success }` | Answers one `host_request` of the session (see "Continuing a session on another computer"). Capability `session_relocation`. |
 | `wake` | `sessionId`, `delivery_ids?` | `{ admitted: [{ delivery_id, kind }] }` | Runs the session's registered inbox drain once. See "Waking a host session (`wake`)" below. |
 | `warm` | `cwd?`, `kind?`, `context?` (as on `open_session`; `cwd` MUST be absolute) | `{ state: "warmed" \| "already_warm" \| "unsupported" }` | Loads what the next matching `open_session` needs without opening a session; never listed, never an attachment, idempotent per profile. See "Warming a host" above. Advertised as the `warm` capability by in-process hosts only. |
 | every existing command | + `sessionId` (REQUIRED in multi mode) | unchanged | Routed to that session. |

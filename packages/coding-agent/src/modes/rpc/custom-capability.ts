@@ -38,6 +38,11 @@ export const ATTENDED_CAPABILITY = "attended";
 export const MEDIA_PLACEHOLDERS_CAPABILITY = "media_placeholders";
 /** Opt-in: the client can present a multi-question `extension_ui_request{method:"question"}`. */
 export const QUESTION_CAPABILITY = "question";
+/**
+ * Both directions, like `media_placeholders`: a host advertises it in `get_protocol_info` (its sessions send
+ * `host_request` / `relocation_due`), and a client sends it in `set_client_info` to offer moving a session elsewhere.
+ */
+export const SESSION_RELOCATION_CAPABILITY = "session_relocation";
 
 /**
  * HOST capability (advertised in `get_protocol_info`, never sent by a client):

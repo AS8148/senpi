@@ -42,6 +42,8 @@ describe("relocate_session success on a real host", () => {
 		]);
 		const { sessionId, sessionPath, session } = await host.open("relocating");
 		const durableId = session.sessionId;
+		// The desktop stays attached to the thread it shows: host requests reach the attached connections.
+		expect(await host.attach(sessionPath)).toMatchObject({ success: true });
 
 		// When: the agent asks mid-turn; once the turn ends the host runs the existing move steps.
 		await host.send({ type: "prompt", id: "work", sessionId, message: "run the heavy build" });
@@ -53,6 +55,7 @@ describe("relocate_session success on a real host", () => {
 			reason: "move",
 			moveId: "mv-a1",
 			target: "Studio",
+			force: true,
 		});
 		const exported = await host.send({
 			type: "move_session",

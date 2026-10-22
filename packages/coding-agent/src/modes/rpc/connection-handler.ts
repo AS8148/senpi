@@ -82,6 +82,7 @@ import {
 	RESUME_SESSION_CAPABILITY,
 	RETRY_FALLBACK_COMMAND_CAPABILITY,
 	SESSION_HELD_CAPABILITY,
+	SESSION_RELOCATION_CAPABILITY,
 } from "./custom-capability.ts";
 import {
 	type EffectCommandContext,
@@ -140,6 +141,7 @@ import {
 import { availableModelsData, interruptRunningTurn } from "./session-control-actions-data.ts";
 import { SessionExtensionUiRequests, sessionDialogRequests } from "./session-extension-ui-requests.ts";
 import { subscribeSessionRecords } from "./session-record-stream.ts";
+import { answerHostResponse, isHostResponse, RpcSessionRelocation } from "./session-relocation.ts";
 
 export { buildRpcSessionState } from "./rpc-session-state.ts";
 
@@ -331,6 +333,7 @@ export function createRpcConnectionHandler(
 	let replacementIssuedHere = false;
 	let session = runtimeHost.session;
 	let sessionControl: HostSessionControl | undefined;
+	let relocation: RpcSessionRelocation | undefined;
 	const promptCalls = new Set<Promise<unknown>>();
 	// Set by the first command that asks this session for a turn; `set_retry_fallback` is refused after it.
 	let turnRequested = false;
@@ -777,6 +780,19 @@ export function createRpcConnectionHandler(
 			(line) => void process.stderr.write(`senpi rpc session ${routingSessionId ?? "classic"}: ${line}\n`),
 		);
 		session.setControlEndpointHost?.(sessionControl);
+		// Only a host session can be released for a move, so only it offers relocation (docs/rpc.md).
+		relocation?.dispose();
+		relocation =
+			routingSessionId === undefined
+				? undefined
+				: new RpcSessionRelocation({
+						session,
+						offered: () => clientCapabilities?.includes(SESSION_RELOCATION_CAPABILITY) === true,
+						pendingPrompts: () => [...promptCalls],
+						output,
+						outputEvent,
+					});
+		session.setRelocationHost?.(relocation);
 		if (replacedSession) {
 			lastAbortSource = undefined;
 			if (routingSessionId !== undefined || !replacementIssuedHere) {
@@ -1904,6 +1920,11 @@ export function createRpcConnectionHandler(
 			return;
 		}
 
+		if (isHostResponse(parsed)) {
+			output(answerHostResponse(parsed, relocation));
+			return;
+		}
+
 		// Handle extension UI responses
 		if (
 			typeof parsed === "object" &&
@@ -1962,6 +1983,8 @@ export function createRpcConnectionHandler(
 		stopLimitEvents();
 		sessionControl?.dispose();
 		sessionControl = undefined;
+		relocation?.dispose();
+		relocation = undefined;
 		questions.cancelAll();
 		pendingExtensionRequests.close();
 		unsubscribeProviderAccountEvents();

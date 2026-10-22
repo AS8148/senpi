@@ -6,6 +6,7 @@
 
 ### Added
 
+- The agent can continue its own session on another of your computers, for example a stronger one for heavy work or off one that is about to sleep: `list_relocation_targets` shows the computers the app offers, and `relocate_session` asks the app to move the session when the current turn ends. The turn is never cut short, and the thread keeps its id, conversation and queued messages. Where no app offers it (a plain CLI) or the app declines, the agent is told and keeps working where it is. Hosts advertise `session_relocation` and talk to the session through `host_request` / `host_response` and `relocation_due` ([#3959](https://github.com/code-yeongyu/senpi/issues/3959)).
 - Extensions can move the state they keep outside the session folder along with a moved session: `session_move_export` hands them a folder to fill at the move release (a handler that fails refuses the move), and `session_move_import` gives it back once on the receiving device at the first open after the move ([#3676](https://github.com/code-yeongyu/senpi/issues/3676)).
 - RPC `move_session` drives a session move between two hosts through one implementation: the receiver readies, imports and answers status, the sender exports the released session and finishes the move from the receiver's answer; every refusal says why and what to do. Advertised as the `move_session` capability ([#3676](https://github.com/code-yeongyu/senpi/issues/3676)).
 

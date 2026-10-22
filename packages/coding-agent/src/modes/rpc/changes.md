@@ -1,3 +1,21 @@
+## 2026-10-22 - Host requests: a session asks its client to continue it on another computer (senpi#3959)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: adds `RpcHostRequest` (outbound `host_request`, methods `list_relocation_targets` and `relocate_session`), `RpcHostResponse` (inbound `host_response`, added to `RpcInboundRecord`) and `RpcRelocationDueEvent` (`relocation_due`). The behavior lives in `session-relocation.ts` (new), wired from `connection-handler.ts`; capability `session_relocation` (`custom-capability.ts`, `host-capabilities.ts`); `host_response` is a control frame in `session-held.ts` and allowed while closing in `session-registry.ts`; docs/rpc.md "Continuing a session on another computer".
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the engine has no view of other machines, so the agent's relocation request is answered by the client that runs the host (the desktop), and a scheduled move is announced when the turn ends instead of interrupting it.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the wire types are the RPC protocol's own; an extension cannot add inbound record kinds.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: LOW: three type declarations above `RpcInboundRecord`, and the `RpcInboundRecord` union itself.
+
 ## 2026-10-21 - Admit Resume promptly and preserve park context patches (senpi#3853)
 
 ### What changed

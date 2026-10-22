@@ -356,6 +356,7 @@ import {
 	SessionManager,
 } from "./session-manager.ts";
 import { restoreMovedState } from "./session-move/extension-state.ts";
+import type { SessionRelocationHost } from "./session-relocation.ts";
 import { generateSessionTitle, sessionTitleRetryPolicy, shouldSkipSessionTitle } from "./session-title-generator.ts";
 import { SessionWorkBarrier } from "./session-work-barrier.ts";
 import {
@@ -1286,6 +1287,7 @@ export class AgentSession {
 			}),
 	});
 	private _controlEndpointHost: ControlEndpointHost | undefined;
+	private _relocationHost: SessionRelocationHost | undefined;
 	// Queues held while the first post-compaction response is classified. Agent
 	// core otherwise drains steering immediately before AgentSession can consume
 	// the stale-usage exemption and schedule the continuation itself.
@@ -4953,6 +4955,11 @@ export class AgentSession {
 	/** Installed by the interactive mode before it binds extensions; `pi.session.registerControlEndpoint` needs one. */
 	setControlEndpointHost(host: ControlEndpointHost | undefined): void {
 		this._controlEndpointHost = host;
+	}
+
+	/** Installed by a host that can continue this session on another computer (`pi.session.requestRelocation`). */
+	setRelocationHost(host: SessionRelocationHost | undefined): void {
+		this._relocationHost = host;
 	}
 
 	/** Current session display name, if set */
@@ -10077,6 +10084,7 @@ export class AgentSession {
 					admission: this.externalAdmission,
 					sessionManager: this.sessionManager,
 					host: () => this._controlEndpointHost,
+					relocationHost: () => this._relocationHost,
 				}),
 			},
 			{
