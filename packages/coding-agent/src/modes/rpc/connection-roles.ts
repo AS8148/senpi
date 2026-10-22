@@ -34,9 +34,9 @@ export class ConnectionRoles {
 		return true;
 	}
 
-	/** The roles this connection explicitly declared, or undefined while it has declared none. */
+	/** The roles this connection explicitly declared, or undefined while it has declared none (no id = a stdio client). */
 	rolesOf(connectionId: string | undefined): readonly string[] | undefined {
-		return connectionId === undefined ? undefined : this.declared.get(connectionId);
+		return this.declared.get(roleConnection(connectionId));
 	}
 
 	/** Takes a declaration made elsewhere (the host, for a worker isolate) unless this connection already declared. */
@@ -45,7 +45,7 @@ export class ConnectionRoles {
 	}
 
 	has(connectionId: string | undefined, role: string): boolean {
-		return connectionId !== undefined && (this.declared.get(connectionId)?.includes(role) ?? false);
+		return this.declared.get(roleConnection(connectionId))?.includes(role) ?? false;
 	}
 
 	release(connectionId: string): void {
