@@ -115,7 +115,9 @@ export async function importMovedSession(
 		rmSync(staging, { recursive: true, force: true });
 		return { sessionFile };
 	} catch (error) {
-		if (!(error instanceof MoveFencedError))
+		// A landed file means only the `accepted` write was lost: the move stays receiving so a re-run can accept it.
+		const landed = existsSync(target) && movedInFor(target, manifest.moveId);
+		if (!(error instanceof MoveFencedError) && !landed)
 			await options.ledger.fail(
 				manifest.moveId,
 				error instanceof MoveBundleInvalidError ? "bundle_invalid" : "import_failed",

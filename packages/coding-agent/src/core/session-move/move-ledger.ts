@@ -169,16 +169,15 @@ export class MoveLedger {
 
 	/**
 	 * Records accepted for a move whose session file already landed here (it records `session_moved_in` for this move):
-	 * the file is the authority. A lost `accepted` write leaves `receiving`, or `failed` once the import's catch ran; a
-	 * racing import of the same move may have recorded `bundle_invalid` after the rename. The sender cannot have heard
-	 * either, because `answerStatus` answers accepted as soon as the file landed. `ready` and `declined` are refused:
-	 * `commit` refuses them before any rename, and nothing writes them over `receiving`, so they never sit beside a landed
-	 * file of this move.
+	 * the file is the authority. A lost `accepted` write leaves `receiving` (the import records no failure once the file
+	 * landed), and a lost ledger leaves no record; both become accepted. Every other answer a sender may have heard
+	 * (`declined`, `failed`) and an unreceived `ready` are refused, so an answer never changes once given.
 	 */
 	accept(moveId: MoveId): Promise<void> {
 		return this.locked(moveId, async () => {
 			const record = await this.read(moveId);
-			if (record?.state === "ready" || record?.state === "declined") throw new MoveFencedError(moveId, record);
+			if (record !== undefined && record.state !== "receiving" && record.state !== "accepted")
+				throw new MoveFencedError(moveId, record);
 			await this.write(moveId, { state: "accepted" });
 		});
 	}
