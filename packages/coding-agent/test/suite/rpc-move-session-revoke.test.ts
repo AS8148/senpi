@@ -149,8 +149,8 @@ describe("move_session revoke (senpi#4003)", () => {
 		expect(() =>
 			SessionManager.open(onB).appendMessage({ role: "user", content: "after revoke", timestamp: 9 }),
 		).toThrow(SessionMovedAwayError);
-		// Without the copy's path the answer comes from the ledger alone, whose `accepted` stays final.
-		expect((await move(b, { op: "status", moveId: "move-r7" })).data).toEqual({ state: "accepted" });
+		// Without the copy's path the ledger answers: its record stays `accepted` and carries the revoke too.
+		expect((await move(b, { op: "status", moveId: "move-r7" })).data).toEqual({ state: "accepted", revoked: true });
 	});
 
 	it("#given the receiver wrote turns on its copy after the import #then revoke still seals it, keeps those turns, and refuses later writes", async () => {

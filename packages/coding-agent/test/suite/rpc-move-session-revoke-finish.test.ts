@@ -46,6 +46,29 @@ describe("move_session finish with a revoked answer (senpi#4003)", () => {
 		expect(readFileSync(fixture.sessionPath, "utf8")).toBe(before);
 	});
 
+	it("#given the sender was already marked moved #when a revoked answer arrives #then finish refuses move_already_moved and changes nothing", async () => {
+		const fixture = await devices();
+		await using a = createInProcessRig(fixture.agentA);
+		await using b = createInProcessRig(fixture.agentB);
+		const onB = await importedOnB(a, b, fixture, "move-f3");
+		const accepted = { state: "accepted" };
+		expect(
+			await move(a, { op: "finish", sessionPath: fixture.sessionPath, moveId: "move-f3", answer: accepted }),
+		).toMatchObject({ success: true, data: { ownership: "moved" } });
+		await move(b, { op: "revoke", sessionPath: onB, moveId: "move-f3" });
+		const before = readFileSync(fixture.sessionPath, "utf8");
+
+		expect(
+			await move(a, {
+				op: "finish",
+				sessionPath: fixture.sessionPath,
+				moveId: "move-f3",
+				answer: { state: "accepted", revoked: true },
+			}),
+		).toMatchObject({ success: false, error: "move_already_moved", errorData: { detail: expect.any(String) } });
+		expect(readFileSync(fixture.sessionPath, "utf8")).toBe(before);
+	});
+
 	it("#given an import that was not revoked #when the sender finishes with plain accepted #then it is still marked moved", async () => {
 		const fixture = await devices();
 		await using a = createInProcessRig(fixture.agentA);
