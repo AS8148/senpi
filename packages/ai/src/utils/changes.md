@@ -1,3 +1,21 @@
+## 2026-10-21 - reportedCount: absent, null or non-finite provider counts are not reported (senpi#3879)
+
+### What changed
+
+- `packages/ai/src/utils/reported-count.ts` (fork-only): `reportedCount(value)` returns a finite number or undefined; the four adapters that parse a reasoning count use it.
+
+### Why
+
+- Gateways can send `"reasoning_tokens": null`; a `=== undefined` check let that through as `reasoning: null`, which compaction's retained-message check treats as invalid usage (review of senpi#3884).
+
+### Why an extension could not handle it
+
+- Usage parsing happens inside each adapter's stream.
+
+### Expected merge conflict zones
+
+- None: new file.
+
 ## 2026-10-18 - Anthropic compat gains supportsGzipRequestBody (senpi#3643)
 
 ### What changed
