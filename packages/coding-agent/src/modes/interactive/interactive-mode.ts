@@ -95,7 +95,11 @@ import { resolveChangelogSource } from "../../core/changelog-source.ts";
 import { collectEntriesForBranchSummary } from "../../core/compaction/branch-summarization.ts";
 import { findExtensionStackMatches } from "../../core/crash-log.ts";
 import { AssistantEditError, assistantTextEquals } from "../../core/edited-assistant-message.ts";
-import { askUserAnswerDisplayText, formatUserMessage } from "../../core/extensions/builtin/ask-user/format.ts";
+import {
+	askUserAnswerDisplayText,
+	formatUserMessage,
+	showsPartialAnswers,
+} from "../../core/extensions/builtin/ask-user/format.ts";
 import { askUserRenderers } from "../../core/extensions/builtin/ask-user/render.ts";
 import type {
 	AutocompleteProviderFactory,
@@ -282,6 +286,7 @@ import {
 	replayedModelChangeNotice,
 } from "./model-change-notice.ts";
 import { getModelSearchText } from "./model-search.ts";
+import { PAUSE_STATUS_KEY, pauseFooterText, resumeCommandTarget } from "./pause-footer.ts";
 import {
 	isNetworkProviderError,
 	isNetworkProviderMessage,
@@ -4197,14 +4202,17 @@ export class InteractiveMode {
 		if (argument === "skip") {
 			const response: QuestionResponse = {
 				status: "cancelled",
+				cancelOrigin: "user",
 				answers: state.draft.answers ?? {},
 				unanswered: unansweredIds(state.request, state.draft),
 			};
 			state.finish(response);
 			await state.completion;
 			this.showStatus("The user dismissed the question.");
-			// Ordinary cancellation/abort stays silent in the builtin. Only this
-			// explicit command acknowledges dismissal, including on host bridges.
+			// The builtin delivers the partial answers of a cancel the user chose; sending them here too
+			// would reach the model twice. With nothing answered the builtin stays silent, so this
+			// explicit command acknowledges the dismissal, including on host bridges.
+			if (showsPartialAnswers(response)) return;
 			await this.session.sendUserMessage(
 				formatUserMessage(
 					response,
@@ -5031,6 +5039,11 @@ export class InteractiveMode {
 					this.editor.setText("");
 					return;
 				}
+				if (text === "/resume" && resumeCommandTarget(this.session) === "resume_session") {
+					this.editor.setText("");
+					await this.session.resumeSession();
+					return;
+				}
 				if (text === "/resume" || text === "/sessions") {
 					this.showSessionSelector();
 					this.editor.setText("");
@@ -5774,6 +5787,12 @@ export class InteractiveMode {
 				if (notice !== undefined) this.addModelChangeNotice(notice);
 				break;
 			}
+
+			case "session_paused":
+			case "session_resumed":
+			case "session_notice":
+				this.setExtensionStatus(PAUSE_STATUS_KEY, pauseFooterText(this.session));
+				break;
 
 			case "retry_fallback_applied": {
 				if (this.pendingZeroDelayRetryIndicator) {
@@ -7426,7 +7445,7 @@ export class InteractiveMode {
 		});
 		const allQueued = ordered?.map((message) => message.text) ?? [...steering, ...followUp];
 		this.updatePendingMessagesDisplay();
-		await this.session.abort();
+		await this.session.stop();
 
 		if (allQueued.length === 0) {
 			return 0;
