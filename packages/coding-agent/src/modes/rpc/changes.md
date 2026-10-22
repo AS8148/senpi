@@ -16,6 +16,25 @@
 
 - HIGH (guaranteed, planned): senpi#4000 rewrites the same `set_client_info` case and the same extension-event subscription helper in `connection-handler.ts` for per-connection capabilities on shared hosts. This change lands first and #4000 rebases onto it, keeping this classic branch as it is.
 
+## 2026-10-21 - Stop intent, held input and run pause commands (senpi#3811)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `pauseForRun`, `resumeForRun` and `holdInput` send the run controls as typed calls (a refusal throws its engine error), so a task runner driving a host-session child needs no raw-command path.
+- `connection-roles.ts` adds `task_parent` to the per-connection roles, so a connection's `interactive_user` and `task_parent` are both fixed at its first explicit `set_client_info` and read per connection by `connection-handler.ts` (never from launch capabilities). `abort`/`interrupt` accept `intent: "stop"` from interactive connections only (`stop_requires_interactive_client` otherwise). New commands `hold_input` (interactive connections, or the task parent relaying run guidance into the child it paused, checked by `parentSessionId`), `withdraw_held_input` (`held-input-commands.ts`), `pause_for_run` and `resume_for_run` (`run-hold-commands.ts`, task-parent connections only); field checks live in `pause-command-validation.ts`. `get_state` reports `paused`, `pausedNoticeCount`, `pausedHeldInputCount` and `runPaused`.
+
+### Why
+
+- The desktop and omo's runner need to say who stopped a session and to pause and resume task children for their parent's run.
+
+### Why an extension could not handle it
+
+- Connection roles and command dispatch are core RPC.
+
+### Expected merge conflict zones
+
+- The `set_client_info` and command switch in `connection-handler.ts`; the command and response unions in `rpc-types.ts`.
+
 ## 2026-10-22 - The degraded question asks no trailing comment (sisyphuslabs/omo-desktop-app#4042)
 
 ### What changed
