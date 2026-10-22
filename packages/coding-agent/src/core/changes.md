@@ -59,7 +59,7 @@ The switch admission and its re-check run inside the session's model-switch path
 ### What changed
 
 - `packages/coding-agent/src/core/messages.ts`: the exhaustive `default:` case body is wrapped in braces (oxlint `no-case-declarations`), replacing a `biome-ignore` comment.
-- `packages/coding-agent/src/core/sdk.ts`: an `oxlint-disable-next-line eslint/prefer-const` comment on the `let agent` that a callback in its initializer reads; making it `const` is a separate, reviewed change because a synchronous callback would hit the temporal dead zone.
+- `packages/coding-agent/src/core/sdk.ts`: an `oxlint-disable-next-line eslint/prefer-const` comment on the `let agent` that a closure reads (`() => agent`, passed to the cursor exec bridge); making it `const` is a separate, reviewed change because a closure that ran before the assignment would hit the temporal dead zone.
 
 ### Why
 

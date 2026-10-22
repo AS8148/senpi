@@ -96,7 +96,7 @@ describe("Agent queuedInputPort (senpi#3549)", () => {
 
 	it("reports a steering drain as the steering queue", async () => {
 		const log: string[] = [];
-		// oxlint-disable-next-line eslint/prefer-const -- a callback in the initializer reads it; const would throw in the TDZ if the callback runs synchronously, so the rewrite is reviewed separately
+		// oxlint-disable-next-line eslint/prefer-const -- a closure reads it; const would throw in the TDZ if that closure ran before the assignment, so the rewrite is reviewed separately
 		let agent: Agent | undefined;
 		agent = new Agent({
 			streamFn: recordingStream(log, () => {
@@ -252,7 +252,7 @@ describe("Agent queuedInputPort (senpi#3549)", () => {
 
 		it("continue() after an assistant message", async () => {
 			const log: string[] = [];
-			// oxlint-disable-next-line eslint/prefer-const -- a callback in the initializer reads it; const would throw in the TDZ if the callback runs synchronously, so the rewrite is reviewed separately
+			// oxlint-disable-next-line eslint/prefer-const -- a closure reads it; const would throw in the TDZ if that closure ran before the assignment, so the rewrite is reviewed separately
 			let agent: Agent | undefined;
 			agent = new Agent({
 				initialState: { messages: [user("first"), assistant("done")] },
@@ -270,7 +270,7 @@ describe("Agent queuedInputPort (senpi#3549)", () => {
 
 		it("continueWithQueuedMessages()", async () => {
 			const log: string[] = [];
-			// oxlint-disable-next-line eslint/prefer-const -- a callback in the initializer reads it; const would throw in the TDZ if the callback runs synchronously, so the rewrite is reviewed separately
+			// oxlint-disable-next-line eslint/prefer-const -- a closure reads it; const would throw in the TDZ if that closure ran before the assignment, so the rewrite is reviewed separately
 			let agent: Agent | undefined;
 			agent = new Agent({
 				initialState: { messages: [user("first")] },
@@ -288,7 +288,7 @@ describe("Agent queuedInputPort (senpi#3549)", () => {
 
 		it("the drain after agent_end", async () => {
 			const log: string[] = [];
-			// oxlint-disable-next-line eslint/prefer-const -- a callback in the initializer reads it; const would throw in the TDZ if the callback runs synchronously, so the rewrite is reviewed separately
+			// oxlint-disable-next-line eslint/prefer-const -- a closure reads it; const would throw in the TDZ if that closure ran before the assignment, so the rewrite is reviewed separately
 			let agent: Agent | undefined;
 			agent = new Agent({
 				streamFn: recordingStream(log),

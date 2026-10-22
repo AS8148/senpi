@@ -5,7 +5,7 @@
 ### What changed
 
 - `biome.json`: removed. `.oxlintrc.json` and `.oxfmtrc.json` take over, scoped to the same 6,393 files through negated ignore patterns; the tab/3/120 layout carries over through `oxfmt --migrate=biome`.
-- `package.json`: `check` runs `npm run lint` (`oxlint --type-aware --deny-warnings`), `npm run fmt:check` (`oxfmt --check`) and `npm run lint:ratchet` in place of `biome check --error-on-warnings .`; `check:fix` runs `npm run fmt` and `oxlint --fix` first. `@biomejs/biome` is replaced by exact pins of `oxlint` 1.89.0, `oxlint-tsgolint` 7.0.2004, `oxfmt` 0.74.0 and `oxc-parser` 0.148.0.
+- `package.json`: `check` runs `npm run lint` (`oxlint --deny-warnings`), `npm run fmt:check` (`oxfmt --check`) and `npm run lint:ratchet` in place of `biome check --error-on-warnings .`; `check:fix` runs `npm run fmt` and `oxlint --fix` first. `@biomejs/biome` is replaced by exact pins of `oxlint` 1.89.0, `oxfmt` 0.74.0 and `oxc-parser` 0.148.0. Every type-aware rule is set off in `.oxlintrc.json` (lint runs without `--type-aware`, so an enabled one would be skipped silently).
 
 ### Why
 

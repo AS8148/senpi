@@ -24,16 +24,37 @@ const caseOf = (node: AstNode | undefined): "upper" | "lower" | undefined => {
 const mismatches = (text: unknown, expected: "upper" | "lower"): boolean =>
 	typeof text === "string" && text !== (expected === "upper" ? text.toUpperCase() : text.toLowerCase());
 
+// The constant text of a string literal or of a template literal with no expressions.
+const constantText = (node: AstNode | undefined): unknown => {
+	if (node?.type === "Literal") return node["value"];
+	if (node?.type !== "TemplateLiteral" || nodes(node["expressions"]).length > 0) return undefined;
+	const value = nodes(node["quasis"])[0]?.["value"];
+	return typeof value === "object" && value !== null ? Reflect.get(value, "cooked") : undefined;
+};
+
+const caseMessage = (expected: "upper" | "lower"): string =>
+	`This compares a ${expected}-cased string with a literal that is not ${expected}case, so it never matches (Biome noStringCaseMismatch).`;
+
 // oxlint-disable-next-line import/no-default-export -- the oxlint plugin loader reads the default export.
 export default {
 	meta: { name: "biome-port" },
 	rules: {
 		"no-implicit-any-let": {
-			create: (context: RuleContext) => ({
+			create: (context: RuleContext) => {
+				// A for-in or for-of loop variable is assigned by the loop, so Biome does not report it.
+				const loopVariables = new WeakSet<AstNode>();
+				const markLoopVariable = (node: AstNode): void => {
+					const left = child(node, "left");
+					if (left !== undefined) loopVariables.add(left);
+				};
+				return {
+				ForInStatement: markLoopVariable,
+				ForOfStatement: markLoopVariable,
 				VariableDeclaration: (node: AstNode) => {
 					// JavaScript has no type annotations, so Biome checks TypeScript files only.
 					if (!/\.[cm]?tsx?$/.test(context.filename ?? "")) return;
-					if (node["kind"] !== "let" || node["declare"] === true) return;
+					if (node["kind"] !== "let" && node["kind"] !== "var") return;
+					if (loopVariables.has(node)) return;
 					for (const declarator of nodes(node["declarations"])) {
 						const id = child(declarator, "id");
 						if (
@@ -43,29 +64,29 @@ export default {
 						)
 							context.report({
 								node: declarator,
-								message:
-									"This let has no type and no initial value, so it is implicitly any: give it a type (Biome noImplicitAnyLet).",
+								message: `This ${String(node["kind"])} has no type and no initial value, so it is implicitly any: give it a type (Biome noImplicitAnyLet).`,
 							});
 					}
 				},
-			}),
+				};
+			},
 		},
 		"no-string-case-mismatch": {
 			create: (context: RuleContext) => ({
 				BinaryExpression: (node: AstNode) => {
 					if (!["===", "!==", "==", "!="].includes(String(node["operator"]))) return;
-					const left = child(node, "left");
-					const right = child(node, "right");
-					for (const [call, other] of [
-						[left, right],
-						[right, left],
-					] as const) {
-						const expected = caseOf(call);
-						if (expected !== undefined && other?.type === "Literal" && mismatches(other["value"], expected))
-							context.report({
-								node,
-								message: `This compares a ${expected}-cased string with a literal that is not ${expected}case, so it never matches (Biome noStringCaseMismatch).`,
-							});
+					// Biome checks only the form with the case-changing call on the left.
+					const expected = caseOf(child(node, "left"));
+					if (expected !== undefined && mismatches(constantText(child(node, "right")), expected))
+						context.report({ node, message: caseMessage(expected) });
+				},
+				SwitchStatement: (node: AstNode) => {
+					const expected = caseOf(child(node, "discriminant"));
+					if (expected === undefined) return;
+					for (const switchCase of nodes(node["cases"])) {
+						const test = child(switchCase, "test");
+						if (test !== undefined && mismatches(constantText(test), expected))
+							context.report({ node: test, message: caseMessage(expected) });
 					}
 				},
 			}),

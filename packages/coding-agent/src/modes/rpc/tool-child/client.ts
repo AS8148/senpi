@@ -504,7 +504,7 @@ function settle(live: Pick<Live, "pending">, jobId: string, apply: (pending: Pen
 function firstMessage(channel: ToolChildChannel): Promise<ToolChildMessage> {
 	return new Promise((resolve) => {
 		let done = false;
-		// oxlint-disable-next-line eslint/prefer-const -- a callback in the initializer reads it; const would throw in the TDZ if the callback runs synchronously, so the rewrite is reviewed separately
+		// oxlint-disable-next-line eslint/prefer-const -- a closure reads it; const would throw in the TDZ if that closure ran before the assignment, so the rewrite is reviewed separately
 		let unsubscribe: (() => void) | undefined;
 		unsubscribe = channel.onMessage((message) => {
 			if (done) return;

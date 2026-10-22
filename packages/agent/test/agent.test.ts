@@ -1483,7 +1483,7 @@ describe("Agent", () => {
 				},
 			};
 			let providerCalls = 0;
-			// oxlint-disable-next-line eslint/prefer-const -- a callback in the initializer reads it; const would throw in the TDZ if the callback runs synchronously, so the rewrite is reviewed separately
+			// oxlint-disable-next-line eslint/prefer-const -- a closure reads it; const would throw in the TDZ if that closure ran before the assignment, so the rewrite is reviewed separately
 			let agent: Agent;
 			agent = new Agent({
 				initialState: { tools: [tool] },
@@ -1550,7 +1550,7 @@ describe("Agent", () => {
 				},
 			};
 			let providerCalls = 0;
-			// oxlint-disable-next-line eslint/prefer-const -- a callback in the initializer reads it; const would throw in the TDZ if the callback runs synchronously, so the rewrite is reviewed separately
+			// oxlint-disable-next-line eslint/prefer-const -- a closure reads it; const would throw in the TDZ if that closure ran before the assignment, so the rewrite is reviewed separately
 			let agent: Agent;
 			agent = new Agent({
 				initialState: { tools: [tool] },
@@ -1634,7 +1634,7 @@ describe("Agent", () => {
 				content: [{ type: "text", text: "replacement instruction" }],
 				timestamp: Date.now(),
 			};
-			// oxlint-disable-next-line eslint/prefer-const -- a callback in the initializer reads it; const would throw in the TDZ if the callback runs synchronously, so the rewrite is reviewed separately
+			// oxlint-disable-next-line eslint/prefer-const -- a closure reads it; const would throw in the TDZ if that closure ran before the assignment, so the rewrite is reviewed separately
 			let agent: Agent;
 			agent = new Agent({
 				initialState: { tools: [tool] },

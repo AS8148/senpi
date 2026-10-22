@@ -57,7 +57,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/experimental/services/connection.ts`: `oxlint-disable-next-line eslint/prefer-const` comments on the two `let binding!` declarations a callback in their initializer reads.
+- `packages/coding-agent/src/experimental/services/connection.ts`: `oxlint-disable-next-line eslint/prefer-const` comments on the two `let binding!` declarations that a closure reads; `const` would hit the temporal dead zone if that closure ran before the assignment.
 
 ### Why
 
