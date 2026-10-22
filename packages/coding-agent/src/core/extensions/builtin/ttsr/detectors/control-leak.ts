@@ -198,7 +198,7 @@ export function createControlLeakDetector(): StreamDetector<ControlLeakState> {
 			currentOffset: 0,
 			openMarkup: new Map(),
 		}),
-		checkDelta: (state: ControlLeakState, delta: string, _ctx: DetectorContext) => {
+		checkDelta: (state: ControlLeakState, delta: string, ctx: DetectorContext) => {
 			if (state.latched !== null) {
 				return state.latched;
 			}
@@ -209,7 +209,14 @@ export function createControlLeakDetector(): StreamDetector<ControlLeakState> {
 					} else if (outcome.kind === "reject") {
 						processReject(state, outcome.text, outcome.startOffset);
 					} else {
-						processToken(state, outcome.token);
+						// Tool arguments carry markup (HTML for show_html_page, XML, JSX), so an angle-bracket
+						// tag there is payload, not a leaked token. `<|...|>` and `[UPPER]` leaks still count
+						// because they would be written to disk by the tool (omo#10789).
+						if (ctx.source === "tool" && outcome.token.family === "sgml") {
+							processReject(state, outcome.token.text, outcome.token.startOffset);
+						} else {
+							processToken(state, outcome.token);
+						}
 					}
 				}
 				if (state.latched !== null) {

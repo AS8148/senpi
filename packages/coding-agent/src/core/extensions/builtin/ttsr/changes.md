@@ -29,16 +29,17 @@
 ## 2026-10-21 — The control-token-leak guard no longer watches tool arguments (omo#10789)
 
 ### What changed
-- `watch.ts` `StreamWatcher.handleDelta` skips the control-token-leak detector for `source: "tool"` deltas. Assistant text and thinking are still watched exactly as before. The collapse detector and TTSR rules are unchanged for every source.
+- For `source: "tool"` deltas, the control-token-leak detector (`detectors/control-leak.ts` `checkDelta`) treats angle-bracket (`sgml`) candidates as text. `<|...|>` (`ctrl`) and `[UPPER]` (`bracket`) leaks in tool arguments still fire, because the tool would write them to disk (#3875 review). Assistant text and thinking are watched exactly as before. The collapse detector and TTSR rules are unchanged for every source.
 
 ### Why
 - A tool call's arguments are structured data the tool validates, not model prose where a leaked chat-control token means anything. `show_html_page`'s `html` argument streams as tool deltas, and four or more consecutive closing tags (`</div></div></div></div>`, the `sgml` family at `RUN_THRESHOLD_NORMAL = 4`) latched the guard. It surfaced "Degeneration guard: control-token leakage" and resampled the turn, so large pages could not be shown (omo#10789).
 
 ### Test
-- `test/ttsr/detector-control-leak-tool-source.test.ts`: an HTML tool argument with four consecutive closing tags does not fire (RED before the change). A genuine `</s>` run in assistant text still fires.
+- `test/ttsr/detector-control-leak-tool-source.test.ts`: an HTML tool argument with four consecutive closing tags does not fire (RED before the change); a tool argument spelling `<s>` markup does not fire; a run of `<|im_end|>` in a tool argument still fires. A genuine `</s>` run in assistant text still fires.
 
 ### Paths
 - `packages/coding-agent/src/core/extensions/builtin/ttsr/watch.ts`
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/detectors/control-leak.ts`
 
 # TTSR Fork Tracker
 
