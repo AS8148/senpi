@@ -1,4 +1,4 @@
-## 2026-10-21 - Preserve message cut classification across bookkeeping (senpi#3864)
+## 2026-10-22 - Preserve message cut classification across bookkeeping (senpi#3864)
 
 ### What changed
 
@@ -6,7 +6,7 @@
 
 ### Why
 
-`packages/coding-agent/src/core/compaction/compaction.ts`: new lifecycle records before a retained user message made the backed-up entry look like a split of the previous turn, retaining the previous assistant and preventing compaction progress. Leading metadata also made the raw-index recovery step choose the first message cut again. The metadata stays retained, but it does not define the message boundary.
+`packages/coding-agent/src/core/compaction/compaction.ts`: invisible custom entries (extension notes, and the session-lifecycle records senpi#3864 adds) before a retained user message made the backed-up entry look like a split of the previous turn, retaining the previous assistant and preventing compaction progress. Leading metadata also made the raw-index recovery step choose the first message cut again. The metadata stays retained, but it does not define the message boundary.
 
 ### Why an extension could not handle it
 
