@@ -18,6 +18,42 @@ Whether the generic credential pool wraps a provider is decided in `ModelRuntime
 - `couldRotateCredentials` and the start of both rotation-capable `lazyStream` bodies in `model-runtime.ts`.
 - The tail of `ProviderConfigInput`, after `fallbackEligible`.
 
+## 2026-10-21 - Composed API-key auth keeps keyOptional (senpi#3869)
+
+### What changed
+
+- `packages/coding-agent/src/core/provider-api-key-auth.ts`: `composeApiKeyAuth` copies the base provider's `keyOptional` onto the `ApiKeyAuth` it builds for a provider that `models.json` or an extension overlay names.
+
+### Why
+
+- senpi#3869 review: `Models.login` reads `keyOptional` from the resolved (composed) provider. Without the copy, llama.cpp with a `models.json` entry or an overlay lost the flag and a keyless login was refused with `EmptyApiKeyError`. Regression: the "keyless login on the resolved provider" cases in `test/llama-extension.test.ts`.
+
+### Why an extension could not handle it
+
+- Composition happens in the core model runtime, after every extension registered.
+
+### Expected merge conflict zones
+
+- LOW: the object literal returned at the end of `composeApiKeyAuth`.
+
+## 2026-10-21 - A held model switch is not re-refused after its reduction (senpi#3828)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_switchActiveModel` takes `admittedLiveContextTokens`, and `_applyPendingModelSwitch` passes the per-message measurement it just admitted the held switch with. The usage-derived estimate is no longer re-measured on that path.
+
+### Why
+
+A desktop user's Claude subscription hit its limit in a ~600k-token thread, and they switched to a 500k-window model. At the next send, the held switch's summary request went to the limited model and failed. The deterministic slice then reduced the transcript so that it fit. But `_switchActiveModel` re-measured the context from the kept turn's reported usage, which still said ~600k, and threw "cannot switch ... Compact the session, then revalidate and retry the model switch". The switch never applied (omo#10746 is the same shape).
+
+### Why an extension could not handle it
+
+The switch admission and its re-check run inside the session's model-switch path, before any provider request or extension hook.
+
+### Expected merge conflict zones
+
+- The `_switchActiveModel` options and its assert line, and the `_applyPendingModelSwitch` call, in `packages/coding-agent/src/core/agent-session.ts`, against upstream changes to model switching.
+
 ## 2026-10-21 - Human-input seam: who typed an input (senpi#3811)
 
 ### What changed
