@@ -1,3 +1,17 @@
+## 2026-10-22 - heldBy names the turn's own stop first (senpi#3900, part)
+
+### What changed
+
+- `turn-end-liveness.ts` `heldReason`: when a person's queued message releases a hold, `waiting{on, heldBy}` now names the turn's own stop first (a deadline stop, then a user abort) and only then the session-wide hold-ledger kind. The `ledger-hold` row (`held{<kind>}`, no person input queued) is unchanged, and so is the wire shape (`heldBy?: HeldReason`).
+
+### Why
+
+`heldBy` is a single diagnostic value; the lifecycle consumer (senpi#3864) asked that the turn's own stop win, since that is the stop the person is reacting to. The other half of senpi#3900 (report `waiting` only when the engine will actually start a turn from the queued input, e.g. not after a user abort) is still open there.
+
+### Expected merge conflict zones
+
+- `turn-end-liveness.ts`: `heldReason`.
+
 ## 2026-10-21 - Turn-end liveness verdict (#3863)
 
 ### What changed
