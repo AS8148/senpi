@@ -7234,18 +7234,18 @@ The classic capability list in `connection-handler.ts`.
 - `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: the four attachment capability strings.
 - `packages/coding-agent/src/modes/rpc/rpc-types.ts`: public re-exports; preserve existing names and field shapes in the extracted definitions.
 
-## 2026-10-22 - Split router keeps per-connection roles; record_user_activity skips the attach gate (senpi#3811, senpi#3859, senpi#3814)
+## 2026-10-22 - Split router keeps per-connection roles; record_user_activity requires an attachment (senpi#3811, senpi#3859, senpi#3814)
 
 ### What changed
 
 - `packages/coding-agent/src/modes/rpc/session-router-routing.ts`, `packages/coding-agent/src/modes/rpc/session-router-context.ts`, `packages/coding-agent/src/modes/rpc/session-router-open.ts`, `packages/coding-agent/src/modes/rpc/session-router-attachments.ts`: senpi#3811's per-connection `interactive_user` role binding, re-applied to the split router at its three sites: `set_client_info` declares a connection's roles and refuses a change with `connection_role_fixed`, `open_session` hands the host's `ConnectionRoles` to the session binding, and `releaseConnection` releases the connection's roles.
-- `packages/coding-agent/src/modes/rpc/session-attachment-gate.ts`: `record_user_activity` (senpi#3859) is on the attach gate's allow-list.
+- `packages/coding-agent/src/modes/rpc/session-attachment-gate.ts`: `record_user_activity` (senpi#3859) requires an attachment like every other session command; the gate's exempt list is exported as `ATTACH_GATE_EXEMPT` and pinned by an exact-set test.
 - `packages/coding-agent/src/modes/rpc/rpc-session-command-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-mutation-response-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-types.ts`: senpi#3859's `record_user_activity` command, response and `USER_ACTIVITY_CAPABILITY`, moved into the split type files.
 
 ### Why
 
 - senpi#3814 split `session-command-router.ts` while senpi#3811 changed it on main; keeping the split file alone would have dropped the role binding silently.
-- record_user_activity stays ungated by lead ruling 2026-10-22 (senpi#3814): the desktop prewarm path sends it (omo-desktop-app OmoAdapter.ts:7121), and its only effect is one prompt-cache warm-up per session, with no transcript entry or session state change. It is served unattached and writes no grace line.
+- record_user_activity is gated by lead ruling 2026-10-22 (senpi#3814), superseding the earlier ungated ruling. Its only known caller, the desktop prewarm path (omo-desktop-app OmoAdapter.ts:7121 at d86e4f76e8), sends it on the session's own opener connection (OmoSessionHandle.ts:397-403), so gating it costs that caller nothing.
 - The grace line escapes a client-chosen sessionId, so it is always exactly one line, and release_attachment uses the same stopping-host test as attach_session and reclaim_session.
 
 ### Why an extension could not handle it

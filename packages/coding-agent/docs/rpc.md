@@ -2386,10 +2386,10 @@ in the following effect-based read allow-list:
 `get_provider_accounts`, `resolve_path`, `memory_report`, `eval_cells.list`, `eval_cells.peek`,
 and `check_reload_veto`.
 
-`record_user_activity` is also never gated (lead ruling 2026-10-22, senpi#3814). The desktop app's prewarm
-path sends it (omo-desktop-app `apps/server/src/provider/Layers/OmoAdapter.ts:7121`), and its only effect is
-one prompt-cache warm-up per session: it writes no transcript entry and changes no session state
-(senpi#3859). An unattached `record_user_activity` is served and writes no grace line.
+`record_user_activity` is gated like any other session command (lead ruling 2026-10-22, senpi#3814). Its only
+known caller, the desktop app's prewarm path (omo-desktop-app `apps/server/src/provider/Layers/OmoAdapter.ts:7121`),
+sends it on the session's own opener connection: the handle it uses is created from that session's
+`open_session` reply (`OmoSessionHandle.ts:397-403`), so the connection is already attached.
 
 Host discovery/control remains available: `get_protocol_info`, `list_sessions`, `subscribe_sessions`,
 `unsubscribe_sessions`, `get_subscription_limits`, `warm`, `detach_connection`, `attach_session`,
@@ -4054,7 +4054,7 @@ The current session name is available via `get_state` in the `sessionName` field
 
 #### record_user_activity
 
-Reports that the user started typing a draft in this session's composer (capability `user_activity`). It feeds the same first-activity signal the interactive editor sends, so a session with prompt-cache keep-alive enabled and an eligible model warms the first turn's prefix once while the user is still typing. Repeated reports are no-ops after the first, and nothing is sent to a provider when keep-alive is disabled or the model is ineligible. Only `kind: "draft"` is accepted: prompt activity is recorded by the prompt itself, and any other kind is refused with `invalid_argument` and the fixed message `record_user_activity: kind must be "draft"` (the refusal never repeats the value the client sent). On a multi-session host the command is session-scoped and passes the session-writer guard, so a session held by another writer answers `session_held`. It is exempt from the attachment gate: an unattached connection may send it (see Attachment admission).
+Reports that the user started typing a draft in this session's composer (capability `user_activity`). It feeds the same first-activity signal the interactive editor sends, so a session with prompt-cache keep-alive enabled and an eligible model warms the first turn's prefix once while the user is still typing. Repeated reports are no-ops after the first, and nothing is sent to a provider when keep-alive is disabled or the model is ineligible. Only `kind: "draft"` is accepted: prompt activity is recorded by the prompt itself, and any other kind is refused with `invalid_argument` and the fixed message `record_user_activity: kind must be "draft"` (the refusal never repeats the value the client sent). On a multi-session host the command is session-scoped and passes the session-writer guard, so a session held by another writer answers `session_held`. It requires the connection to be attached to the session, as every session command does (see Attachment admission).
 
 ```json
 {"type": "record_user_activity", "sessionId": "rpc-1", "kind": "draft"}
