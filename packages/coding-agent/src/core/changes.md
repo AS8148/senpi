@@ -1,3 +1,24 @@
+## 2026-10-22 - Redact every resolved reference value at outbound sinks (senpi#3858)
+
+### What changed
+
+- `packages/coding-agent/src/core/config-reference-redaction.ts`: a process-lifetime registry of every value a reference resolved to, rotated and retired ones included, with no cap and no eviction. It redacts raw, JSON-escaped and URL-encoded forms of each value from text, and makes redacted JSON copies for persistence and display.
+- `packages/coding-agent/src/core/config-reference-resolver.ts`: registers each resolved file, variable and concatenated value before returning it.
+- `packages/coding-agent/src/core/sensitive-output.ts`: the shared sensitive-output scrubber also removes registered values, covering the hidden-stdout log, the interactive stderr guard and hook output.
+
+### Why
+
+- A server or tool can reflect a credential, including an old one through a later connection, so redaction must recognize every value ever resolved and run where text leaves the process, never on the wire-facing originals.
+
+### Why an extension could not handle it
+
+- Resolution and the core output scrubbers are core internals that run before any extension sees the text.
+
+### Expected merge conflict zones
+
+- LOW: the return paths of `resolveConfigReference` in `packages/coding-agent/src/core/config-reference-resolver.ts`.
+- LOW: `redactSensitiveTokenValues` in `packages/coding-agent/src/core/sensitive-output.ts`.
+
 ## 2026-10-22 - Resolve auth.json references per use and per selected slot (senpi#3858)
 
 ### What changed

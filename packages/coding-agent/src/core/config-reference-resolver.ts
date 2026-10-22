@@ -7,6 +7,7 @@ import {
 } from "@earendil-works/pi-ai/utils/config-reference";
 import { warnOpaqueConfigEnvironment } from "./config-reference-env.ts";
 import { readConfigReferenceFile } from "./config-reference-file.ts";
+import { rememberResolvedReferenceValue } from "./config-reference-redaction.ts";
 
 export interface ConfigReferenceContext {
 	readonly origin: string;
@@ -51,17 +52,20 @@ export async function resolveConfigReference(
 	// trusted source to unknown or extension-supplied objects.
 	if (source === undefined) throw new ConfigReferenceError("configuration value", value, "forbidden");
 	if ("$file" in value) {
-		return readConfigReferenceFile({
+		const text = await readConfigReferenceFile({
 			field: source.field,
 			reference: value,
 			baseDir: source.baseDir ?? dirname(source.origin),
 		});
+		rememberResolvedReferenceValue(text);
+		return text;
 	}
 	if ("$env" in value) {
 		const result = (env ?? source.env ?? process.env)[value.$env];
 		warnOpaqueConfigEnvironment(value.$env, result);
 		if (result === undefined) throw new ConfigReferenceError(source.field, value, "unset");
 		if (result === "") throw new ConfigReferenceError(source.field, value, "empty");
+		rememberResolvedReferenceValue(result);
 		return result;
 	}
 	const parts: string[] = [];
@@ -70,5 +74,6 @@ export async function resolveConfigReference(
 	}
 	const result = parts.join("");
 	if (result === "") throw new ConfigReferenceError(source.field, value, "empty");
+	rememberResolvedReferenceValue(result);
 	return result;
 }

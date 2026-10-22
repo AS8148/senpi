@@ -1,3 +1,26 @@
+## 2026-10-22 - Sanitize MCP sinks through the resolved-reference registry (senpi#3858)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/log.ts`: every log line, in the ring buffer and the log file, is scrubbed of registered values after the existing pattern redaction.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/catalog-cache.ts`: the catalog cache persists a redacted copy; the in-memory catalog, whose resource URIs are sent back on subscribe, keeps the server's exact strings.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service-snapshot.ts`, `diagnose.ts` and `service.ts`: server snapshots, connect diagnostics and the RPC wire status carry redacted text; the original errors are unchanged.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/commands.ts`: `/mcp` error notifications are redacted.
+
+### Why
+
+- These are the MCP outputs that leave the process or are persisted for display; a reflected value must not reach any of them.
+
+### Why an extension could not handle it
+
+- The MCP logger, catalog cache, status snapshots and commands are private to the builtin.
+
+### Expected merge conflict zones
+
+- LOW: `#formatLine` in `packages/coding-agent/src/core/extensions/builtin/mcp/log.ts`.
+- LOW: `writeMcpCachedServer` in `packages/coding-agent/src/core/extensions/builtin/mcp/catalog-cache.ts`.
+- LOW: `#captureWireStatus` in `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`.
+
 ## 2026-10-22 - Admit MCP references by source and resolve them per connection generation (senpi#3858)
 
 ### What changed

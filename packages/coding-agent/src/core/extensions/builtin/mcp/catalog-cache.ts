@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import lockfile from "proper-lockfile";
 import { getAgentDir } from "../../../../config.ts";
+import { redactResolvedReferenceData } from "../../../config-reference-redaction.ts";
 import type { McpServerDeclaredConfig } from "./config-schema.ts";
 import type { ServerConnection } from "./connection.ts";
 import { collectAllPages } from "./expose/pagination.ts";
@@ -118,7 +119,8 @@ export async function writeMcpCachedServer(
 		if (isCurrent?.() === false) return;
 		const cache = await readMcpCatalogCache(agentDir);
 		if (isCurrent?.() === false) return;
-		const next: McpCatalogCacheFile = { version: 1, servers: { ...cache.servers, [serverName]: server } };
+		const persisted = redactResolvedReferenceData(server);
+		const next: McpCatalogCacheFile = { version: 1, servers: { ...cache.servers, [serverName]: persisted } };
 		await atomicWriteJson(path, next, isCurrent);
 	} finally {
 		await release();

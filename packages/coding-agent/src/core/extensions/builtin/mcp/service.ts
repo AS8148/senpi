@@ -1,6 +1,7 @@
 import type { ConfigReferenceError } from "@earendil-works/pi-ai/utils/config-reference";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { getAgentDir } from "../../../../config.ts";
+import { redactResolvedReferenceData } from "../../../config-reference-redaction.ts";
 import type { ExtensionAPI, ExtensionUIContext, SessionShutdownEvent, SessionStartEvent } from "../../types.ts";
 import {
 	getToolSearchService,
@@ -906,7 +907,7 @@ export class McpService {
 				.sort()
 				.map((name) => this.#captureWireStatusServer(name, owner)),
 		);
-		const snapshot: McpWireStatusSnapshot = { servers };
+		const snapshot: McpWireStatusSnapshot = redactResolvedReferenceData({ servers });
 		const previous = this.getWireStatusSnapshot(sessionId);
 		this.#latestWireStatus = snapshot;
 		if (sessionId !== undefined) this.#wireStatusBySession.set(sessionId, snapshot);

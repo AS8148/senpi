@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { closeSync, fchmodSync, mkdirSync, openSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getAgentDir } from "../../../../config.ts";
+import { redactResolvedReferenceValues } from "../../../config-reference-redaction.ts";
 import { LOG_SINK_RETRY_MS, rotateLogIfNeeded } from "../../../log-file-rotation.ts";
 
 export type McpLogLevel = "debug" | "info" | "notice" | "warning" | "error" | "critical" | "alert" | "emergency";
@@ -156,7 +157,7 @@ class FileMcpLogger implements McpLogger {
 			message: redactMcpLogTextWithContext(message, context),
 			data: redactedData,
 		};
-		return redactKnownSecrets(JSON.stringify(entry), context);
+		return redactResolvedReferenceValues(redactKnownSecrets(JSON.stringify(entry), context));
 	}
 
 	#pushRing(line: string): void {

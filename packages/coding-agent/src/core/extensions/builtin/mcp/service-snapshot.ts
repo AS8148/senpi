@@ -1,3 +1,4 @@
+import { redactResolvedReferenceValues } from "../../../config-reference-redaction.ts";
 import type { ResolvedMcpServer } from "./config-schema.ts";
 import type { ServerConnection } from "./connection.ts";
 import type { McpConnectionEntry, McpServerSnapshot } from "./service-types.ts";
@@ -21,7 +22,8 @@ export function buildMcpServerSnapshot(
 				: (connection?.state ?? "not_spawned"),
 		generation: connection?.generation ?? null,
 		pid: connection?.getRootPid() ?? null,
-		lastError: connection?.lastError?.message ?? null,
+		lastError:
+			connection?.lastError === undefined ? null : redactResolvedReferenceValues(connection.lastError.message),
 		uptimeMs: entry === undefined ? null : now - entry.createdAtMs,
 		counters: entry?.counters ?? { callCount: 0, errorCount: 0, totalLatencyMs: 0, reconnectCount: 0 },
 	};
