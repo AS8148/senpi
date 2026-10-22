@@ -8,6 +8,7 @@ import { isSecurityNoticeState } from "../../core/security-notices.ts";
 import { createWebViewBroker } from "../../core/webview/webview-broker.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import type { RpcConnectionOptions } from "./connection-handler.ts";
+import { roleConnection } from "./connection-roles.ts";
 import type { RpcSessionBinding } from "./session-binding.ts";
 import type { SessionEventWriter } from "./session-event-writer.ts";
 import type { RpcSessionLaunchProfile } from "./session-registry.ts";
@@ -64,7 +65,7 @@ export class SessionWorkerClient {
 	private writer?: SessionEventWriter;
 	private sessionId?: string;
 	private requestClose?: () => void;
-	private options: Pick<RpcConnectionOptions, "capabilities" | "clientInfo"> = {};
+	private options: Pick<RpcConnectionOptions, "capabilities" | "clientInfo" | "connectionRoles"> = {};
 	private readonly listeners = new Set<() => void>();
 	private cancelUiPending = false;
 	private terminalFailure?: string;
@@ -132,7 +133,7 @@ export class SessionWorkerClient {
 		sessionId: string,
 		writer: SessionEventWriter,
 		requestClose: () => void,
-		options: Pick<RpcConnectionOptions, "capabilities" | "clientInfo">,
+		options: Pick<RpcConnectionOptions, "capabilities" | "clientInfo" | "connectionRoles">,
 	): Promise<RpcSessionBinding> {
 		this.sessionId = sessionId;
 		this.writer = writer;
@@ -143,18 +144,25 @@ export class SessionWorkerClient {
 			sessionId,
 			capabilities: options.capabilities ?? [],
 			connection: writer.currentConnection(),
+			roles: options.connectionRoles?.rolesOf(roleConnection(writer.currentConnection())),
 		});
 		return {
 			handle: async (command) => {
+				const connection = writer.currentConnection();
 				if (
 					"type" in command &&
 					command.type === "extension_ui_response" &&
 					"id" in command &&
 					typeof command.id === "string" &&
-					writer.acceptWorkerGrantResponse(sessionId, command.id, writer.currentConnection()) === false
+					writer.acceptWorkerGrantResponse(sessionId, command.id, connection) === false
 				)
 					return;
-				await this.request({ type: "command", command, connection: writer.currentConnection() });
+				await this.request({
+					type: "command",
+					command,
+					connection,
+					roles: options.connectionRoles?.rolesOf(roleConnection(connection)),
+				});
 			},
 			cancelPendingExtensionUiRequests: () => this.post({ type: "cancel_ui" }),
 			dispose: async () => {
@@ -328,6 +336,13 @@ export class SessionWorkerClient {
 			case "capabilities":
 				if (message.connection === undefined)
 					this.options = { ...this.options, capabilities: message.capabilities };
+				// The isolate already refused a changed role; a refusal here means the two registries drifted.
+				if (
+					this.options.connectionRoles?.declare(roleConnection(message.connection), message.capabilities) === false
+				)
+					process.stderr.write(
+						`senpi rpc worker role drift: connection ${roleConnection(message.connection)} declared a changed role\n`,
+					);
 				this.options.clientInfo?.setCapabilities(message.connection, message.capabilities);
 				acknowledge(message.signal, true);
 				return;

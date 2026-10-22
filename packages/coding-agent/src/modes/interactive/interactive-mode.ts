@@ -81,6 +81,7 @@ import {
 import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.ts";
 import { formatNoModelsAvailableMessage } from "../../core/auth-guidance.ts";
 import { isApiKeyLoginProvider, loginRowStatus } from "../../core/auth-providers.ts";
+import { describeCredentialReplacement } from "../../core/auth-storage.ts";
 import { markModeCrashHandler } from "../../core/bootstrap-crash-listeners.ts";
 import { envValue } from "../../core/brand.ts";
 import {
@@ -282,6 +283,7 @@ import {
 	replayedModelChangeNotice,
 } from "./model-change-notice.ts";
 import { getModelSearchText } from "./model-search.ts";
+import { PAUSE_STATUS_KEY, pauseFooterText, resumeCommandTarget } from "./pause-footer.ts";
 import {
 	isNetworkProviderError,
 	isNetworkProviderMessage,
@@ -875,6 +877,8 @@ export interface InteractiveModeOptions {
 	legacyPiEditNotice?: string;
 	/** Runtime diagnostics collected during session creation. */
 	startupDiagnostics?: Array<{ type: "info" | "warning" | "error"; message: string }>;
+	/** Credential notices to show once at startup; `markSeen` runs after they are shown (senpi#3486). */
+	authNotices?: { readonly messages: readonly string[]; readonly markSeen: () => void };
 	/** Warning message if session model couldn't be restored */
 	modelFallbackMessage?: string;
 	/** Cwd to trust after reload if it gained a .pi directory during this implicitly trusted session. */
@@ -1888,6 +1892,7 @@ export class InteractiveMode {
 			migratedProviders,
 			legacyPiEditNotice,
 			startupDiagnostics,
+			authNotices,
 			modelFallbackMessage,
 			initialMessage,
 			initialImages,
@@ -1904,6 +1909,10 @@ export class InteractiveMode {
 		for (const diagnostic of startupDiagnostics ?? []) {
 			if (diagnostic.type === "warning") this.showWarning(diagnostic.message);
 			else if (diagnostic.type === "error") this.showError(diagnostic.message);
+		}
+		if (authNotices && authNotices.messages.length > 0) {
+			for (const message of authNotices.messages) this.showWarning(message);
+			authNotices.markSeen();
 		}
 
 		const modelsJsonError = this.session.modelRuntime.getError();
@@ -5036,6 +5045,11 @@ export class InteractiveMode {
 					this.editor.setText("");
 					return;
 				}
+				if (text === "/resume" && resumeCommandTarget(this.session) === "resume_session") {
+					this.editor.setText("");
+					await this.session.resumeSession();
+					return;
+				}
 				if (text === "/resume" || text === "/sessions") {
 					this.showSessionSelector();
 					this.editor.setText("");
@@ -5779,6 +5793,12 @@ export class InteractiveMode {
 				if (notice !== undefined) this.addModelChangeNotice(notice);
 				break;
 			}
+
+			case "session_paused":
+			case "session_resumed":
+			case "session_notice":
+				this.setExtensionStatus(PAUSE_STATUS_KEY, pauseFooterText(this.session));
+				break;
 
 			case "retry_fallback_applied": {
 				if (this.pendingZeroDelayRetryIndicator) {
@@ -7431,7 +7451,7 @@ export class InteractiveMode {
 		});
 		const allQueued = ordered?.map((message) => message.text) ?? [...steering, ...followUp];
 		this.updatePendingMessagesDisplay();
-		await this.session.abort();
+		await this.session.stop();
 
 		if (allQueued.length === 0) {
 			return 0;
@@ -9402,6 +9422,8 @@ export class InteractiveMode {
 		providerId: string,
 		method: "api_key" | "oauth",
 	): Promise<void> {
+		// A replacement recorded by another login path must not be reported as this one's.
+		this.session.modelRegistry.authStorage.takeReplacement(providerId);
 		await this.session.modelRuntime.login(
 			providerId,
 			method,
@@ -9412,6 +9434,9 @@ export class InteractiveMode {
 			},
 			{ getDeviceId: () => this.settingsManager.getOrCreateDeviceId() },
 		);
+		// A login of the other kind replaced the stored one: say where it went (senpi#3448).
+		const replacement = this.session.modelRegistry.authStorage.takeReplacement(providerId);
+		if (replacement) this.showWarning(describeCredentialReplacement(providerId, replacement));
 	}
 
 	private async showLoginDialog(providerId: string, providerName: string): Promise<void> {
