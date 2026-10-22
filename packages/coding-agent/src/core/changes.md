@@ -1,3 +1,21 @@
+## 2026-10-22 - An itemized send settles its delivery ticket exactly once (senpi#3864 x senpi#3811)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_admitItemized`'s held branch hands `options.ticket` to the held notices (`workObligations.held`), as a plain held send does; `sendCustomMessage` re-admits a batch a newer Stop dropped only after its ticket's delivery ended, so the re-admission keeps the ticket instead of being refused; `resumeSettled()` (internal) is published when the resume turn begins.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: merging #3871's itemized `sendMessage` with #3864's tickets let `{ items, ticket }` leave the ticket open when held, so `request_self_settle` and the lifecycle waited on it forever (#3963 merge-only review MEDIUM).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: ticket custody and held notices are engine state; an extension cannot close a ticket the engine moved into a notice.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_admitItemized` held branch, `sendCustomMessage` finally block, `_startResumeTurn`.
+
 ## 2026-10-21 - A user Stop pauses the session and the run it started (senpi#3811)
 
 ### What changed

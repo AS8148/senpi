@@ -2108,6 +2108,8 @@ pi.sendMessage({
 - `triggerTurn: true` - If agent is idle, trigger an LLM response immediately. Only applies to `"steer"` and `"followUp"` modes (ignored for `"nextTurn"`). Requested from a `session_start` handler, the turn starts once every extension's `session_start` handler has returned.
 - `ticket` - A delivery ticket from `pi.lifecycle.obligations`. Returning from
   `sendMessage` does not acknowledge model consumption.
+  With `items`, the ticket covers the whole batch: a held batch hands it to its notices, and a batch a
+  newer Stop drops during admission keeps it when it is decided again.
 - `items` - Make the message an itemized batch: one `{ itemId, producer, runRef?, content?, details? }` per wake it
   carries. The call then returns a promise of one receipt per item, `{ itemId, entryId, disposition, noticeId? }`.
   Admission is atomic: if a pause applies to the batch or to any item (a Stop, a parent's run pause, an unattended

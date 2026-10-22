@@ -6571,6 +6571,10 @@ export class AgentSession {
 			const notices = this._engineTurnHold.noteItems(
 				items.map((item) => ({ source: item.producer, message: itemNoticeMessage(message, item), item })),
 			);
+			// senpi#3864: the batch's delivery ticket moves into the held notices, as a plain held send's does.
+			const firstNotice = notices[0];
+			if (options.ticket !== undefined && firstNotice !== undefined)
+				this.workObligations.held(options.ticket, firstNotice.noticeId);
 			return notices.map((notice) => ({ ...notice, disposition: "notice_persisted" as const }));
 		}
 		const outcome = Promise.withResolvers<readonly SendMessageReceipt[]>();
@@ -6634,6 +6638,18 @@ export class AgentSession {
 			return;
 		}
 		onQueued?.();
+		// A batch dropped by a newer Stop is decided again only after this delivery releases its ticket.
+		let readmit = false;
+		const delivery: ItemizedAdmission | undefined =
+			itemized === undefined
+				? undefined
+				: {
+						persisted: itemized.persisted,
+						failed: itemized.failed,
+						droppedByAbort: () => {
+							readmit = true;
+						},
+					};
 		try {
 			const startsTurn = options?.triggerTurn === true && !this.isStreaming;
 			if (startsTurn) this._pendingCustomTurnHeaders++;
@@ -6645,7 +6661,7 @@ export class AgentSession {
 			if (generation !== this._userAbortGeneration) {
 				if (ticket) this._retireLifecycleDelivery(ticket, !this._isEngineDelivery(ticket));
 				deferredTurnClaim?.resolve("finished-without-start");
-				itemized?.droppedByAbort();
+				readmit = itemized !== undefined;
 				return;
 			}
 			await this._deliverCustomMessage(
@@ -6653,7 +6669,7 @@ export class AgentSession {
 				{ ...options, ticket },
 				deferredTurnClaim,
 				releasedWake,
-				itemized,
+				delivery,
 			);
 			if (ticket && generation !== this._userAbortGeneration) {
 				const retainedForLater = [
@@ -6667,6 +6683,7 @@ export class AgentSession {
 			throw error;
 		} finally {
 			if (ticket) obligations.endDelivery(ticket);
+			if (readmit) itemized?.droppedByAbort();
 		}
 	}
 
@@ -7053,25 +7070,34 @@ export class AgentSession {
 		return { turnStarted: turnId !== undefined, settled };
 	}
 
-	/** The resume turn both resume paths start; held input and notices are consumed only if no newer Stop aborted it. */
 	/**
 	 * Settles once the latest resume turn's held input and notices were consumed, or the turn was not delivered
-	 * (senpi#3811/#3864). Internal: lets a caller wait for the consumption deterministically instead of counting ticks.
+	 * (senpi#3811/#3864). Published when that resume turn begins, so a caller waits for consumption deterministically
+	 * instead of counting ticks.
+	 * @internal Not part of the RPC surface.
 	 */
 	resumeSettled(): Promise<void> {
 		return this._resumeSettlement;
 	}
 
+	/** The resume turn both resume paths start; held input and notices are consumed only if no newer Stop aborted it. */
 	private async _startResumeTurn(onQueued?: () => void): ReturnType<typeof startRunResumeTurn> {
-		const generation = this._userAbortGeneration;
-		const { run, continues } = this._takeHeldCommands();
-		await run;
-		const started = await this._startResumeTurnWith(generation, continues, onQueued);
-		this._resumeSettlement = started.delivered.then(
-			() => undefined,
-			() => undefined,
-		);
-		return started;
+		const settlement = Promise.withResolvers<void>();
+		this._resumeSettlement = settlement.promise;
+		try {
+			const generation = this._userAbortGeneration;
+			const { run, continues } = this._takeHeldCommands();
+			await run;
+			const started = await this._startResumeTurnWith(generation, continues, onQueued);
+			started.delivered.then(
+				() => settlement.resolve(),
+				() => settlement.resolve(),
+			);
+			return started;
+		} catch (error) {
+			settlement.resolve();
+			throw error;
+		}
 	}
 
 	private _startResumeTurnWith(
