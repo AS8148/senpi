@@ -1,3 +1,22 @@
+## 2026-10-22 - Extract auth credential value readers without behavior changes (senpi#3858)
+
+### What changed
+
+- `packages/coding-agent/src/core/auth-storage.ts`: delegates the existing read-only validator and both read-time API-key projections to a focused module.
+- `packages/coding-agent/src/core/auth-credential-values.ts`: holds those unchanged bodies, including the read-only command exemption.
+
+### Why
+
+- Isolates the exact auth value boundary that needs reference support before changing its behavior.
+
+### Why an extension could not handle it
+
+- Credential file reads and request-scoped projections are internal core operations.
+
+### Expected merge conflict zones
+
+- LOW: validation and the two `read` return paths in `packages/coding-agent/src/core/auth-storage.ts`.
+
 ## 2026-10-21 - Resolve model references with per-value provenance (senpi#3858)
 
 ### What changed
