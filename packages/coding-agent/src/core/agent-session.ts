@@ -10683,9 +10683,12 @@ export class AgentSession {
 				releaseRunFence: (runRef) => this._runHolds.releaseFences("run_cancelled", [runRef]),
 				questionInput: () => {
 					this._humanInputAdmitted("answer");
-					this._captureReleaseExtras();
-					this._engineTurnInput.begin({ consumeAtSettlement: this._stopHoldLive() });
-					this._engineResumeWindow = false;
+					// Under the parent's run pause the answer is held like every person input: nothing is released or run (senpi#3811).
+					if (this._runHolds.inheritedOwner() === undefined) {
+						this._captureReleaseExtras();
+						this._engineTurnInput.begin({ consumeAtSettlement: this._stopHoldLive() });
+						this._engineResumeWindow = false;
+					}
 					this._personAnswerPending = true;
 					// The answer's follow-on (if any) enters prompt() synchronously after this; settle once it has.
 					queueMicrotask(() => {
