@@ -8,6 +8,8 @@
 - `session-stream.ts`: `createResidentAttempt` computes both from the live entry, the in-memory binding or the restored binding, in that order.
 - Tests: `test/anthropic-subscription-seat-digest.test.ts` pins the per-install salt; `test/anthropic-subscription-continuity-retry-checkpoint.test.ts` pins both labels at the same boundary; `test/suite/regressions/1432-anthropic-subscription-failover-reattach.test.ts` and `723-anthropic-subscription-timeout-abort-retry-continuity.test.ts` pin `seatChanged: true` on a failover and `false` on a same-seat retry, and that no slot name reaches the observation.
 
+- Supersedes the label in two older entries of this file: the senpi#1432 entry ("same-turn failover forks at the pre-turn boundary with reason `timeout_retry`") and the #723 retry-checkpoint entry. A checkpoint fork on another account is now `account_changed`; the older entries stay as dated history.
+
 ### Why
 
 Prompt caches never cross Anthropic organizations, and each subscription seat is its own organization, so the first request on a new seat writes the whole prefix. A same-turn retry that failed over to another seat was labelled `fork / timeout_retry`, the label of a same-seat retry that reads its cache. In the reported incident every such record read only the 29,319-token system and tool prefix and wrote 0.8-0.9M tokens, and nothing in the logs could tell a seat switch from a same-seat retry or say which seat served it.
@@ -1124,7 +1126,7 @@ This IS the extension; the provider id is its own registration constant and the 
 
 ### What changed
 
-- `session-continuity.ts`: `ContinuityDecisionInput.crossAccountResumeSupported` is a required boolean, filled by `session-stream.ts` from `auth.authLane !== "config-dir"`. `decideFromBinding` flattens account drift only with `cross_root_unsupported` on the config-dir lane; otherwise it falls through to the retry checkpoint (same-turn failover forks at the pre-turn boundary with reason `timeout_retry`; superseded by the 2026-10-22 entry: that fork is now labelled `account_changed`) and the prefix checks (a matching prefix reattaches with reason `account_changed`). `model_changed` still flattens.
+- `session-continuity.ts`: `ContinuityDecisionInput.crossAccountResumeSupported` is a required boolean, filled by `session-stream.ts` from `auth.authLane !== "config-dir"`. `decideFromBinding` flattens account drift only with `cross_root_unsupported` on the config-dir lane; otherwise it falls through to the retry checkpoint (same-turn failover forks at the pre-turn boundary with reason `timeout_retry`) and the prefix checks (a matching prefix reattaches with reason `account_changed`). `model_changed` still flattens.
 - Removed `decideFailoverContinuity`, `FailoverContinuityInput`, `FailoverLane`, and `test/claude-sdk-oauth-failover-continuity.test.ts`. Tests were flipped in `anthropic-subscription-restart-binding-drift.test.ts`, `anthropic-subscription-restored-security.test.ts`, and `anthropic-subscription-continuity-retry-checkpoint.test.ts`; added regression coverage in `suite/regressions/1432-anthropic-subscription-failover-reattach.test.ts`.
 
 ### Why
@@ -1447,7 +1449,7 @@ been consumed here.
   "timeout_retry"`), or the cold-seed `flatten` with the same reason when no boundary exists (first
   turn). A digest mismatch falls through to the pre-existing branches unchanged.
 - `session-observability.ts`: `ContinuityReason` union and the sanitizer allowlist admit
-  `timeout_retry`. No new event types; one observation per main turn is preserved. (Superseded by the 2026-10-22 entry: a checkpoint fork on another account is labelled `account_changed`.)
+  `timeout_retry`. No new event types; one observation per main turn is preserved.
 - Tests: `test/suite/regressions/723-anthropic-subscription-timeout-abort-retry-continuity.test.ts`,
   `test/anthropic-subscription-continuity-decision.test.ts`, `test/anthropic-subscription-continuity-retry-checkpoint.test.ts`.
 
