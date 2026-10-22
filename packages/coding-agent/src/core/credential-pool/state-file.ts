@@ -1,5 +1,5 @@
 import { chmodSync, existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import lockfile from "proper-lockfile";
+import { lockWithLossHandling } from "../file-lock.ts";
 import { CredentialStoreBusyError, FILE_STORAGE_LOCK_OPTIONS, isLockError } from "../lockfile-policy.ts";
 
 const FILE_WRITE_OPTIONS = { encoding: "utf-8", mode: 0o600 } as const;
@@ -90,7 +90,7 @@ async function lockFileBefore(path: string, startedAt: number, deadline: number)
 	let attempt = 0;
 	while (true) {
 		try {
-			return await lockfile.lock(path, FILE_STORAGE_LOCK_OPTIONS);
+			return (await lockWithLossHandling(path, FILE_STORAGE_LOCK_OPTIONS)).release;
 		} catch (error) {
 			if (!isLockError(error)) throw error;
 			const remainingMs = deadline - Date.now();

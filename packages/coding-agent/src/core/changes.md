@@ -11537,3 +11537,23 @@ Fallback eligibility and the agent_end retry decision are owned by `AgentSession
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/core/agent-session.ts`: the `auth_login_end` member of the event union and the `auth-storage.ts` type import.
+
+## 2026-10-22 - Async file locks never crash the process on a late heartbeat report (oh-my-openagent#10878)
+
+### What changed
+
+- `packages/coding-agent/src/core/auth-storage.ts`: `acquireLockAsync` acquires through `lockWithLossHandling` (`core/file-lock.ts`) and passes its compromise callback as `onLost`, so the auth store's compromised-lock semantics are unchanged.
+- `packages/coding-agent/src/core/settings-manager.ts`: `acquireLockWithRetry` returns the `HeldFileLock` from `lockWithLossHandling`; `withPathLockAsync` calls `assertHeld()` before the rename that publishes the settings file and releases through the handle.
+
+### Why
+
+- `packages/coding-agent/src/core/auth-storage.ts`, `packages/coding-agent/src/core/settings-manager.ts`: proper-lockfile 4.1.2's heartbeat `stat` callback has no `lock.released` check. An unlock while that stat is in flight produces a late ENOENT that reaches `onCompromised`; the default handler throws from a timer and kills the process. Reported and diagnosed by @ayalcoh in oh-my-openagent#10878.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/auth-storage.ts` and `packages/coding-agent/src/core/settings-manager.ts` own these lock acquisitions; no extension hook sits between them and proper-lockfile.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/auth-storage.ts`: `acquireLockAsync` and the import block.
+- `packages/coding-agent/src/core/settings-manager.ts`: `acquireLockWithRetry`, the rename step of `withPathLockAsync`, and the import block.

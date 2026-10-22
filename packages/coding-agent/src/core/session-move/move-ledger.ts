@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import lockfile from "proper-lockfile";
+import { lockWithLossHandling } from "../file-lock.ts";
 import {
 	FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS,
 	FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS,
@@ -226,7 +226,7 @@ async function acquire(file: string): Promise<() => Promise<void>> {
 	const startedAt = Date.now();
 	for (let attempt = 0; ; attempt += 1) {
 		try {
-			return await lockfile.lock(file, { ...LOCK_OPTIONS, lockfilePath: `${file}.lock` });
+			return (await lockWithLossHandling(file, { ...LOCK_OPTIONS, lockfilePath: `${file}.lock` })).release;
 		} catch (error) {
 			if (!isLockError(error)) throw error;
 			const waited = Date.now() - startedAt;

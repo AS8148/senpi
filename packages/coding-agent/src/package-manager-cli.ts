@@ -33,6 +33,7 @@ import {
 } from "./config.ts";
 import { brandProfile } from "./core/brand.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
+import { lockWithLossHandling } from "./core/file-lock.ts";
 import { ModelRuntime } from "./core/model-runtime.ts";
 import { DefaultPackageManager } from "./core/package-manager.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
@@ -180,7 +181,7 @@ async function runManagedSelfUpdate(managedRoot: string, version: string): Promi
 
 	let releaseLock: () => Promise<void>;
 	try {
-		releaseLock = await lockfile.lock(join(managedRoot, "update"), { realpath: false });
+		({ release: releaseLock } = await lockWithLossHandling(join(managedRoot, "update"), { realpath: false }));
 	} catch (error: unknown) {
 		if (error instanceof Error && "code" in error && error.code === "ELOCKED") {
 			throw new Error("Another managed Pi update is already running.");

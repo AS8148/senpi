@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, realpath } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
-import lockfile from "proper-lockfile";
 import { getAgentDir } from "../../config.ts";
+import { lockWithLossHandling } from "../../core/file-lock.ts";
 
 export interface MicroSessionLocation {
 	id: string;
@@ -41,7 +41,7 @@ export async function selectSession(cwdInput: string, continueSession: boolean):
 
 	let release: () => Promise<void>;
 	try {
-		release = await lockfile.lock(path, { realpath: false, retries: 0 });
+		({ release } = await lockWithLossHandling(path, { realpath: false, retries: 0 }));
 	} catch (error) {
 		throw new Error(`Micro session is already open: ${path}`, { cause: error });
 	}

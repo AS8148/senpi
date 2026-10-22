@@ -22,9 +22,9 @@ import {
 	SessionNotFoundError,
 } from "@earendil-works/pi-server";
 import { createUnixServer, getUnixSocketPath } from "@earendil-works/pi-server/unix";
-import lockfile from "proper-lockfile";
 import type { AuthInput } from "../cli/experimental/command-options.ts";
 import { getAgentDir } from "../config.ts";
+import { lockWithLossHandling } from "../core/file-lock.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { CoordinatorConnection, type CoordinatorStartupLease, ensureCoordinator } from "./coordinator.ts";
 import { createPresentationFacetData } from "./plugins/bundled.ts";
@@ -118,7 +118,7 @@ export async function acquireServerProfile(directory: string, requestedServerId?
 		}
 	}
 
-	const release = await lockfile.lock(join(directory, `launcher-${serverId}`), {
+	const { release } = await lockWithLossHandling(join(directory, `launcher-${serverId}`), {
 		realpath: false,
 		stale: LOCK_STALE_MS,
 		update: LOCK_STALE_MS / 3,
@@ -205,8 +205,8 @@ export async function activateServer(options: ActivateServerOptions): Promise<Ac
 	}
 }
 
-export function acquireServerActivation(directory: string, serverId: ServerId): Promise<() => Promise<void>> {
-	return lockfile.lock(join(directory, `activation-${serverId}`), {
+export async function acquireServerActivation(directory: string, serverId: ServerId): Promise<() => Promise<void>> {
+	const { release } = await lockWithLossHandling(join(directory, `activation-${serverId}`), {
 		realpath: false,
 		stale: ACTIVATION_TIMEOUT_MS * 2,
 		update: ACTIVATION_TIMEOUT_MS,
@@ -218,6 +218,7 @@ export function acquireServerActivation(directory: string, serverId: ServerId): 
 			maxRetryTime: ACTIVATION_TIMEOUT_MS,
 		},
 	});
+	return release;
 }
 
 async function connect(route: UnixServerRoute): Promise<Client | undefined> {

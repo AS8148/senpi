@@ -3,8 +3,8 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, wri
 import { join } from "node:path";
 import type { OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { OAuthClientInformationFull } from "@modelcontextprotocol/sdk/shared/auth.js";
-import lockfile from "proper-lockfile";
 import { getAgentDir } from "../../../../../config.ts";
+import { type HeldFileLock, lockWithLossHandling } from "../../../../file-lock.ts";
 import { adoptLegacyRecord, type LegacyMigration, readRecordAsync } from "./legacy-migration.ts";
 
 // OAuth credential record of one server, persisted at
@@ -128,9 +128,10 @@ export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 	}
 
 	async update(mutate: (current: TRecord | undefined) => TRecord | undefined): Promise<TRecord | undefined> {
-		const release = await this.#acquire();
+		const { release, assertHeld } = await this.#acquire();
 		try {
 			const next = mutate(this.read());
+			assertHeld();
 			if (next === undefined) {
 				this.#removeRecord();
 			} else {
@@ -151,7 +152,7 @@ export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 	// must use readUnlocked/writeUnlocked (never update/write) to avoid
 	// re-entrant lock acquisition, which proper-lockfile rejects immediately.
 	async withLock<T>(fn: () => Promise<T> | T): Promise<T> {
-		const release = await this.#acquire();
+		const { release } = await this.#acquire();
 		try {
 			return await fn();
 		} finally {
@@ -173,7 +174,7 @@ export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 	}
 
 	async clear(): Promise<void> {
-		const release = await this.#acquire();
+		const { release } = await this.#acquire();
 		try {
 			rmSync(this.dir, { force: true, recursive: true });
 			rmSync(join(this.legacyDir, TOKENS_FILE), { force: true });
@@ -188,11 +189,11 @@ export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 		chmodSync(this.dir, 0o700);
 	}
 
-	async #acquire(): Promise<() => Promise<void>> {
+	async #acquire(): Promise<Pick<HeldFileLock, "release" | "assertHeld">> {
 		this.#ensureDir();
-		if (this.#disableLock) return () => Promise.resolve();
+		if (this.#disableLock) return { release: () => Promise.resolve(), assertHeld: () => {} };
 		try {
-			return await lockfile.lock(this.dir, {
+			return await lockWithLossHandling(this.dir, {
 				lockfilePath: this.lockPath,
 				realpath: false,
 				retries: { retries: this.#lock.retries, factor: 1.2, minTimeout: 20, maxTimeout: 200 },
