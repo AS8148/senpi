@@ -13,7 +13,7 @@
  * The bindings are unset for every other host launch, so nothing changes for
  * plain `senpi --mode rpc` runs, hosts started by hand, or embedders.
  */
-import { closeSync, constants, openSync, rmSync } from "node:fs";
+import { rmSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { Socket } from "node:net";
 import { envValue } from "../../core/brand.ts";
@@ -22,7 +22,7 @@ import { compareRecordedStart, readProcessStartTicks } from "../../utils/process
 import { recordHostCrash } from "./host-crash-record.ts";
 import { HOST_DAEMON_DIR_ENV } from "./host-daemon-paths.ts";
 import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
-import { watchHostLifetime } from "./host-lifetime-reader.ts";
+import { armLifetimeBinding, HOST_WATCH_LIFETIME_FIFO_ENV } from "./host-lifetime-binding.ts";
 
 /** Inherited fd whose EOF means "the supervisor died"; set by the supervisor only. */
 export const HOST_WATCH_FD_ENV = "SENPI_RPC_HOST_WATCH_FD";
@@ -35,11 +35,7 @@ export const HOST_WATCH_PPID_ENV = "SENPI_RPC_HOST_WATCH_PPID";
 export const HOST_WATCH_PSTART_ENV = "SENPI_RPC_HOST_WATCH_PSTART";
 /** Linux: the supervisor's `/proc` start ticks, compared on the boot clock (senpi#3816 review). */
 export const HOST_WATCH_PSTART_TICKS_ENV = "SENPI_RPC_HOST_WATCH_PSTART_TICKS";
-/**
- * POSIX: the supervisor's lifetime FIFO (senpi#3816 round 7). The supervisor holds its only writer; the host reads it,
- * and EOF - the kernel closing the last writer when the supervisor dies for any reason - ends the host.
- */
-export const HOST_WATCH_LIFETIME_FIFO_ENV = "SENPI_RPC_HOST_LIFETIME_FIFO";
+export { HOST_WATCH_LIFETIME_FIFO_ENV } from "./host-lifetime-binding.ts";
 /** While an event binding (lifetime FIFO or reopened stdin) is armed, the identity check is one long backstop. */
 export const HOST_WATCH_BACKSTOP_INTERVAL_MS = 30_000;
 /** Poll cadence for the recorded-supervisor poll when it is the only binding. */
@@ -222,33 +218,17 @@ export function armHostWatchdog(
 		pollWanted = true;
 		armPpid(pipeLive ? HOST_WATCH_PPID_BACKUP_INTERVAL_MS : soleInterval);
 	};
-	// The lifetime FIFO is the event binding on every POSIX platform; a reopened stdin (macOS) stands in without one.
-	const fifoFd = openLifetimeFifo(config.lifetimeFifo);
-	if (fifoFd !== undefined && config.lifetimeFd !== undefined) closeSync(config.lifetimeFd);
-	const lifetime = fifoFd ?? config.lifetimeFd;
-	if (lifetime !== undefined) {
-		try {
-			const source = fifoFd === undefined ? "supervisor stdin lifetime closed" : "supervisor lifetime FIFO closed";
-			disarmers.push(watchHostLifetime(lifetime, () => fire(source), fallback));
-			armPpid(HOST_WATCH_BACKSTOP_INTERVAL_MS);
-		} catch {
-			fallback();
-		}
+	let stopLifetime: (() => void) | undefined;
+	try {
+		stopLifetime = armLifetimeBinding(config, fire, fallback);
+	} catch {
+		stopLifetime = undefined;
+	}
+	if (stopLifetime !== undefined) {
+		disarmers.push(stopLifetime);
+		armPpid(HOST_WATCH_BACKSTOP_INTERVAL_MS);
 	} else fallback();
 	return disarm;
-}
-
-/**
- * Opens the read end of the supervisor's lifetime FIFO without blocking: O_NONBLOCK returns at once whether or not a
- * writer exists, and the supervisor opened its writer before it spawned this host. Any failure leaves the identity poll.
- */
-function openLifetimeFifo(path: string | undefined): number | undefined {
-	if (path === undefined || process.platform !== "linux") return undefined;
-	try {
-		return openSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
-	} catch {
-		return undefined;
-	}
 }
 
 /**

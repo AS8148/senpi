@@ -63,6 +63,10 @@ const INTERNAL_HOP_LEAVES = new Set(
 		"internal-record-stream",
 		"host-lifetime-reader",
 		"host-lifecycle-internal-key",
+		// The one lifetime binding interface (senpi#3816 round 7: FIFO on Linux, reopened stdin on macOS). Measured:
+		// 62 modules with it (6 hop leaves before it), 3,404 source / 3,198 built bytes, 44 code lines; it imports only
+		// Node builtins and host-lifetime-reader, already a leaf.
+		"host-lifetime-binding",
 	]
 		.map((name) => `packages/coding-agent/dist/modes/rpc/${name}.js`)
 		// One clock domain per platform for the recorded supervisor start (senpi#3816 delta review): /proc start ticks

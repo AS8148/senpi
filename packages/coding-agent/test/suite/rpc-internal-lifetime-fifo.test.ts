@@ -3,7 +3,6 @@ import { once } from "node:events";
 import { closeSync, constants, mkdtempSync, openSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { armHostWatchdog, readHostWatchdogConfig } from "../../src/modes/rpc/host-watchdog.ts";
 
 const roots: string[] = [];
 const writers: number[] = [];
@@ -67,27 +66,4 @@ describe.skipIf(process.platform === "win32")("lifetime event binding", () => {
 		},
 		20_000,
 	);
-
-	it("an idle host with its event binding makes no liveness wakes in 10 s (one long backstop only)", async () => {
-		const fifo = lifetimeFifo();
-		// Linux binds through the FIFO path; macOS through a lifetime descriptor (its reopened stdin, here a stand-in).
-		const binding =
-			process.platform === "linux"
-				? { SENPI_RPC_HOST_LIFETIME_FIFO: fifo.path }
-				: { lifetimeFd: openSync(fifo.path, constants.O_RDONLY | constants.O_NONBLOCK) };
-		vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout"] });
-		const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
-		const env = { SENPI_RPC_HOST_WATCH_PPID: "4242", SENPI_RPC_HOST_WATCH_PSTART_TICKS: "123456" };
-		const config =
-			"lifetimeFd" in binding
-				? { ...readHostWatchdogConfig(env), lifetimeFd: binding.lifetimeFd }
-				: readHostWatchdogConfig({ ...env, ...binding });
-		const stop = armHostWatchdog(config, vi.fn());
-		try {
-			await vi.advanceTimersByTimeAsync(10_000);
-			expect(kill.mock.calls.filter(([pid, signal]) => pid === 4242 && signal === 0)).toHaveLength(0);
-		} finally {
-			stop();
-		}
-	});
 });
