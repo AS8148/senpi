@@ -6,6 +6,7 @@
 import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { readProcessStartTicks } from "../../utils/process-start-identity.ts";
 import { createInternalSocketPath } from "./host-lifecycle-scratch.ts";
 import { createSocketSecret, socketSecretPath } from "./socket-transport.ts";
 
@@ -32,7 +33,10 @@ export async function prepareInternalHop(daemonDir: string) {
 		internalSocket: internal.socket,
 		internalSecret,
 		internalKey,
-		supervisorStartTime: internalKey ? await recordedOwnerStartTime(internal.dir) : undefined,
+		// The child compares these on one clock per platform: ps lstart off Linux, /proc start ticks on Linux.
+		supervisorStart: internalKey
+			? { time: await recordedOwnerStartTime(internal.dir), ticks: readProcessStartTicks(process.pid) }
+			: undefined,
 		transport: { ...(internalSecret ? { internalSecret } : {}), ...(internalKey ? { internalKey } : {}) },
 	};
 }

@@ -63,7 +63,12 @@ const INTERNAL_HOP_LEAVES = new Set(
 		"internal-record-stream",
 		"host-lifetime-reader",
 		"host-lifecycle-internal-key",
-	].map((name) => `packages/coding-agent/dist/modes/rpc/${name}.js`),
+	]
+		.map((name) => `packages/coding-agent/dist/modes/rpc/${name}.js`)
+		// One clock domain per platform for the recorded supervisor start (senpi#3816 delta review): /proc start ticks
+		// on Linux, ps lstart elsewhere. Measured: 61 modules with it (5 hop leaves before it), 2,512 source /
+		// 2,184 built bytes, 40 code lines; its only repo import, process-identity, was already in the graph.
+		.concat("packages/coding-agent/dist/utils/process-start-identity.js"),
 );
 
 function loadedModules(entries: readonly { phase: string; url: string }[]): string[] {

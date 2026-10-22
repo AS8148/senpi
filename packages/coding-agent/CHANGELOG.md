@@ -28,6 +28,7 @@
 - Switching a long conversation to a model with a smaller context window while the current model is at its usage limit now applies the switch at the next message. Before, the conversation was reduced to fit, but the switch was still refused with "cannot switch ... Compact the session, then revalidate and retry the model switch" ([#3828](https://github.com/code-yeongyu/senpi/issues/3828)).
 - `login_api_key` takes its replacement record before it waits for the model refresh, so a concurrent OAuth login for the same provider always keeps its own `replaced` / `backupPath` ([#3952](https://github.com/code-yeongyu/senpi/issues/3952)).
 - On macOS and Linux, the private hop between the RPC host supervisor and its engine is now authenticated and sealed. Each launch hands the engine a fresh key once through stdin; both sides prove that key before any traffic, and every record is encrypted with AES-256-GCM, so a process that reaches the private socket can neither read session traffic nor inject into it. The engine also follows its supervisor's lifetime through the end of that stdin, or by polling the recorded supervisor PID and start time where stdin cannot be reopened, so wrappers and re-exec no longer break the lifetime binding and an unreadable identity no longer counts as a dead supervisor. An engine that is started without its key refuses to run within two seconds ([#3795](https://github.com/code-yeongyu/senpi/issues/3795)).
+
 ### Removed
 
 ## [2026.10.21-1] - 2026-10-21

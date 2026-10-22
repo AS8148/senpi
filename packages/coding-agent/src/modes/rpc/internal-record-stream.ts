@@ -33,6 +33,10 @@ class InternalRecordStream extends Duplex {
 	private bodyUsed = 0;
 	private pending: Buffer | undefined;
 	private offset = 0;
+	/** The peer finished sending (end or close); records still pending are delivered before the readable side ends. */
+	private wireDone = false;
+	private wireClosed = false;
+	private ended = false;
 
 	constructor(wire: Duplex, sender: InternalRecordCipher, receiver: InternalRecordCipher) {
 		super();
@@ -47,13 +51,30 @@ class InternalRecordStream extends Duplex {
 			this.offset = 0;
 			this.consume();
 		});
+		// A peer that ends while records wait behind backpressure has still sent them complete and verifiable:
+		// they are delivered first, and only an incomplete trailing record is truncation (senpi#3816 review).
 		wire.once("end", () => {
-			if (this.headerUsed !== 0 || this.body !== undefined || this.pending !== undefined)
-				this.destroy(new Error("internal_record_truncated"));
-			else this.push(null);
+			this.wireDone = true;
+			if (this.pending === undefined) this.finish();
 		});
 		wire.once("error", (error) => this.destroy(error));
-		wire.once("close", () => this.destroy());
+		wire.once("close", () => {
+			this.wireDone = true;
+			this.wireClosed = true;
+			if (this.ended && this.readableEnded) this.destroy();
+			else if (this.pending === undefined) this.finish();
+		});
+		// Once the reader has every delivered record and the transport is gone, the stream closes as before.
+		this.once("end", () => {
+			if (this.wireClosed) this.destroy();
+		});
+	}
+
+	private finish(): void {
+		if (this.ended) return;
+		this.ended = true;
+		if (this.headerUsed !== 0 || this.body !== undefined) this.destroy(new Error("internal_record_truncated"));
+		else this.push(null);
 	}
 
 	private consume(): void {
@@ -81,13 +102,17 @@ class InternalRecordStream extends Duplex {
 					this.body = undefined;
 					this.bodyUsed = 0;
 					if (!this.push(plaintext)) {
-						if (this.offset === chunk.length) this.pending = undefined;
+						if (this.offset === chunk.length) {
+							this.pending = undefined;
+							if (this.wireDone) this.finish();
+						}
 						return;
 					}
 				}
 			}
 			this.pending = undefined;
-			this.wire.resume();
+			if (this.wireDone) this.finish();
+			else this.wire.resume();
 		} catch (cause) {
 			this.destroy(cause instanceof Error ? cause : new Error("internal_record_invalid"));
 		}

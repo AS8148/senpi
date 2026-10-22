@@ -2,6 +2,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { Socket } from "node:net";
 import type { Duplex } from "node:stream";
 import { createInternalRecordStream } from "./internal-record-stream.ts";
+import { MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
 
 type Frame = Record<string, unknown>;
 const HEX = /^[0-9a-f]{64}$/;
@@ -28,9 +29,18 @@ function nonce(value: unknown): string {
 	return value;
 }
 
-/** Shared 8 KiB / 2 s budget, including fragmented frames and bytes coalesced after authentication. */
+/**
+ * The host (server) side guards its pre-auth reads with the 8 KiB / 2 s budget (design 2b/2e), fragmented frames and
+ * bytes coalesced after authentication included. The supervisor-side client only bounds a line by the normal RPC
+ * ceiling and has no deadline: a host whose event loop stalls answers late, and its connections must still be
+ * served, as raw connections were (senpi#3816 review).
+ */
+const HOST_PRE_AUTH_BUDGET = { maxBytes: 8192, timeoutMs: 2000 } as const;
+const CLIENT_PRE_AUTH_BUDGET = { maxBytes: MAX_RPC_LINE_CHARACTERS, timeoutMs: undefined } as const;
+
 async function handshake<T>(
 	socket: Socket,
+	budget: { readonly maxBytes: number; readonly timeoutMs: number | undefined },
 	run: (read: () => Promise<Frame>, send: (frame: Frame) => Promise<void>) => Promise<T>,
 ): Promise<T> {
 	let readBytes = 0;
@@ -41,8 +51,11 @@ async function handshake<T>(
 		rejectPending?.(error);
 		socket.destroy();
 	};
-	const timer = setTimeout(() => fail(new Error("internal_auth_timeout")), 2000);
-	timer.unref();
+	const timer =
+		budget.timeoutMs === undefined
+			? undefined
+			: setTimeout(() => fail(new Error("internal_auth_timeout")), budget.timeoutMs);
+	timer?.unref();
 	const onError = (error: Error) => fail(error);
 	const onClose = () => fail(new Error("internal_hop_lost"));
 	socket.on("error", onError);
@@ -59,7 +72,7 @@ async function handshake<T>(
 				const newline = chunk.indexOf(10);
 				const used = newline === -1 ? chunk.length : newline + 1;
 				readBytes += used;
-				if (readBytes > 8192) return fail(new Error("internal_auth_oversized"));
+				if (readBytes > budget.maxBytes) return fail(new Error("internal_auth_oversized"));
 				buffer = Buffer.concat([buffer, chunk.subarray(0, used)]);
 				if (newline === -1) return;
 				socket.pause();
@@ -87,14 +100,14 @@ async function handshake<T>(
 		socket.destroy();
 		throw cause;
 	} finally {
-		clearTimeout(timer);
+		if (timer) clearTimeout(timer);
 		socket.off("error", onError);
 		socket.off("close", onClose);
 	}
 }
 
 export function connectInternalConnection(socket: Socket, key: Buffer): Promise<Duplex> {
-	return handshake(socket, async (read, send) => {
+	return handshake(socket, CLIENT_PRE_AUTH_BUDGET, async (read, send) => {
 		const clientNonce = randomBytes(32).toString("hex");
 		const [response] = await Promise.all([
 			read(),
@@ -135,7 +148,7 @@ export function connectInternalConnection(socket: Socket, key: Buffer): Promise<
 }
 
 export function acceptInternalConnection(socket: Socket, key: Buffer, protocol: Frame = {}): Promise<Duplex> {
-	return handshake(socket, async (read, send) => {
+	return handshake(socket, HOST_PRE_AUTH_BUDGET, async (read, send) => {
 		// Wire contract frame 5: any other first frame, a first frame without a valid nonce, or a command before
 		// authenticate is answered auth_required naming that command, then the connection closes.
 		const refuse = async (frame: Frame): Promise<never> => {

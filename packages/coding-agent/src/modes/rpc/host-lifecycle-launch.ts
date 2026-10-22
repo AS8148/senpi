@@ -18,6 +18,7 @@ import {
 	HOST_WATCH_FD_ENV,
 	HOST_WATCH_PPID_ENV,
 	HOST_WATCH_PSTART_ENV,
+	HOST_WATCH_PSTART_TICKS_ENV,
 } from "./host-watchdog.ts";
 import type { SocketFileIdentity } from "./socket-ownership.ts";
 import { SOCKET_SECRET_FILE_ENV } from "./socket-transport.ts";
@@ -237,7 +238,7 @@ export function spawnHostChild(options: {
 	readonly internal: { readonly dir?: string; readonly secretPath: string };
 	readonly internalSecret?: Buffer;
 	readonly internalKey?: Buffer;
-	readonly supervisorStartTime?: string;
+	readonly supervisorStart?: { readonly time?: string; readonly ticks?: string };
 	readonly daemonDir: string;
 	readonly instanceId: string;
 	readonly cleanupPaths: readonly string[];
@@ -255,7 +256,8 @@ export function spawnHostChild(options: {
 			[HOST_INSTANCE_ID_ENV]: options.instanceId,
 			[HOST_WATCH_FD_ENV]: String(HOST_CHILD_WATCH_FD),
 			[HOST_WATCH_PPID_ENV]: String(process.pid),
-			[HOST_WATCH_PSTART_ENV]: options.supervisorStartTime,
+			[HOST_WATCH_PSTART_ENV]: options.supervisorStart?.time,
+			[HOST_WATCH_PSTART_TICKS_ENV]: options.supervisorStart?.ticks,
 			...(internal.dir ? { [HOST_SCRATCH_DIR_ENV]: internal.dir } : {}),
 			[SOCKET_SECRET_FILE_ENV]: process.platform === "win32" && internalSecret ? internal.secretPath : undefined,
 			SENPI_RPC_INTERNAL_KEY_STDIN: options.internalKey ? "1" : undefined,

@@ -116,7 +116,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		internalSocket,
 		internal,
 		...hop.transport,
-		supervisorStartTime: hop.supervisorStartTime,
+		supervisorStart: hop.supervisorStart,
 		daemonDir: paths.dir,
 		instanceId,
 		cleanupPaths: hostCrashCleanupPaths({

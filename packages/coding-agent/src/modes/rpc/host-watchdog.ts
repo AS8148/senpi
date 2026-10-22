@@ -17,12 +17,8 @@ import { rmSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { Socket } from "node:net";
 import { envValue } from "../../core/brand.ts";
-import {
-	observeProcessStartMs,
-	processStartObservationSpawns,
-	processStartTimeMs,
-	sameProcessStartMs,
-} from "../../utils/process-identity.ts";
+import { readProcessStartTime } from "../../utils/process-identity.ts";
+import { compareRecordedStart, readProcessStartTicks } from "../../utils/process-start-identity.ts";
 import { recordHostCrash } from "./host-crash-record.ts";
 import { HOST_DAEMON_DIR_ENV } from "./host-daemon-paths.ts";
 import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
@@ -37,6 +33,8 @@ export const HOST_PUBLIC_SOCKET_ENV = "SENPI_RPC_HOST_PUBLIC_SOCKET";
 /** Fallback binding when no inherited fd is available: poll this pid. */
 export const HOST_WATCH_PPID_ENV = "SENPI_RPC_HOST_WATCH_PPID";
 export const HOST_WATCH_PSTART_ENV = "SENPI_RPC_HOST_WATCH_PSTART";
+/** Linux: the supervisor's `/proc` start ticks, compared on the boot clock (senpi#3816 review). */
+export const HOST_WATCH_PSTART_TICKS_ENV = "SENPI_RPC_HOST_WATCH_PSTART_TICKS";
 /** Poll cadence for the recorded-supervisor poll when it is the only binding. */
 export const HOST_WATCH_PPID_INTERVAL_MS = 250;
 /**
@@ -46,10 +44,10 @@ export const HOST_WATCH_PPID_INTERVAL_MS = 250;
  */
 export const HOST_WATCH_PPID_BACKUP_INTERVAL_MS = 5_000;
 /**
- * How often the recorded supervisor's start time is compared (senpi#3816 review). The liveness check runs every tick
- * and catches a dead supervisor (ESRCH); its pid can only be reused after that death, so the start-time comparison only
- * has to catch a death between ticks and runs rarely: every 5 s where reading it spawns nothing (Linux `/proc`), every
- * 60 s where it spawns `ps`, so an idle host does not spawn processes (senpi#3738).
+ * How often the recorded supervisor's start is compared (senpi#3816 review). The liveness check runs every tick and
+ * catches a dead supervisor (ESRCH); its pid can only be reused after that death, so the start comparison only has to
+ * catch a death between ticks and runs rarely: every 5 s on Linux (`/proc` start ticks, nothing spawned), every 60 s
+ * elsewhere (`ps`), so an idle host spawns no processes (senpi#3738). Counted in ticks, so no clock step moves it.
  */
 export const HOST_WATCH_IDENTITY_INTERVAL_MS = 5_000;
 export const HOST_WATCH_SPAWNING_IDENTITY_INTERVAL_MS = 60_000;
@@ -59,6 +57,7 @@ export interface HostWatchdogConfig {
 	readonly fd?: number;
 	readonly ppid?: number;
 	readonly processStartTime?: string;
+	readonly processStartTicks?: string;
 	readonly lifetimeFd?: number;
 	readonly scratchDir?: string;
 	readonly cleanupPaths?: readonly string[];
@@ -104,6 +103,7 @@ export function readHostWatchdogConfig(
 		fd,
 		ppid,
 		...(env[HOST_WATCH_PSTART_ENV] ? { processStartTime: env[HOST_WATCH_PSTART_ENV] } : {}),
+		...(env[HOST_WATCH_PSTART_TICKS_ENV] ? { processStartTicks: env[HOST_WATCH_PSTART_TICKS_ENV] } : {}),
 		scratchDir: scratchDir === undefined || scratchDir === "" ? undefined : scratchDir,
 		cleanupPaths,
 		publicSocket: publicSocket === "" ? undefined : publicSocket,
@@ -121,6 +121,8 @@ export function readHostWatchdogConfigFromBrandEnv(): HostWatchdogConfig | undef
 		[HOST_WATCH_FD_ENV]: process.env[HOST_WATCH_FD_ENV] ?? envValue("RPC_HOST_WATCH_FD"),
 		[HOST_WATCH_PPID_ENV]: process.env[HOST_WATCH_PPID_ENV] ?? envValue("RPC_HOST_WATCH_PPID"),
 		[HOST_WATCH_PSTART_ENV]: process.env[HOST_WATCH_PSTART_ENV] ?? envValue("RPC_HOST_WATCH_PSTART"),
+		[HOST_WATCH_PSTART_TICKS_ENV]:
+			process.env[HOST_WATCH_PSTART_TICKS_ENV] ?? envValue("RPC_HOST_WATCH_PSTART_TICKS"),
 		[HOST_SCRATCH_DIR_ENV]: process.env[HOST_SCRATCH_DIR_ENV] ?? envValue("RPC_HOST_SCRATCH_DIR"),
 		[HOST_PUBLIC_SOCKET_ENV]: process.env[HOST_PUBLIC_SOCKET_ENV] ?? envValue("RPC_HOST_PUBLIC_SOCKET"),
 		[HOST_CLEANUP_PATHS_ENV]: process.env[HOST_CLEANUP_PATHS_ENV] ?? envValue("RPC_HOST_CLEANUP_PATHS"),
@@ -183,7 +185,7 @@ export function armHostWatchdog(
 		if (stopped || ppid === undefined || ppidIntervalMs === intervalMs) return;
 		stopPpid?.();
 		ppidIntervalMs = intervalMs;
-		stopPpid = watchPpid(ppid, config.processStartTime, fire, intervalMs);
+		stopPpid = watchPpid(ppid, { ticks: config.processStartTicks, time: config.processStartTime }, fire, intervalMs);
 	};
 	disarmers.push(() => stopPpid?.());
 	// The poll runs only when the stdin lifetime reader is absent or failed. While a legacy inherited
@@ -269,23 +271,29 @@ function watchFdForEof(
 
 /**
  * Poll only the recorded supervisor, never process.ppid (a wrapper may be the parent). Every tick is a free
- * `kill(pid, 0)`: ESRCH is death. The start time is compared rarely (see HOST_WATCH_IDENTITY_INTERVAL_MS) and an
- * observed mismatch is death; an unreadable, missing or timed-out identity is unknown, never death.
+ * `kill(pid, 0)`: ESRCH is death. The recorded start is compared rarely, on one clock per platform
+ * (`compareRecordedStart`); only an observed change is death, and an unreadable or missing identity is unknown.
  */
 function watchPpid(
 	supervisorPid: number,
-	recordedStart: string | undefined,
+	recorded: { readonly ticks?: string; readonly time?: string },
 	fire: (reason: string) => void,
 	intervalMs: number,
 ): () => void {
 	// Tests and embedders may bind the watchdog to this process itself; that
 	// is a valid live binding rather than evidence of supervisor loss.
 	if (supervisorPid === process.pid) return () => {};
-	const recordedMs = recordedStart ? processStartTimeMs(recordedStart) : undefined;
-	const identityEveryMs = processStartObservationSpawns()
-		? HOST_WATCH_SPAWNING_IDENTITY_INTERVAL_MS
-		: HOST_WATCH_IDENTITY_INTERVAL_MS;
-	let nextIdentityAt = Date.now() + identityEveryMs;
+	const linux = process.platform === "linux";
+	const comparable = linux ? recorded.ticks !== undefined : recorded.time !== undefined;
+	const identityEveryTicks = Math.max(
+		1,
+		Math.round((linux ? HOST_WATCH_IDENTITY_INTERVAL_MS : HOST_WATCH_SPAWNING_IDENTITY_INTERVAL_MS) / intervalMs),
+	);
+	const probe = {
+		ticks: (pid: number) => readProcessStartTicks(pid),
+		time: (pid: number) => readProcessStartTime(pid, process.platform, 1000),
+	};
+	let ticks = 0;
 	let stopped = false;
 	let probing = false;
 	const timer = setInterval(() => {
@@ -294,14 +302,13 @@ function watchPpid(
 			fire(`supervisor pid ${supervisorPid} is gone`);
 			return;
 		}
-		if (recordedMs === undefined || probing || Date.now() < nextIdentityAt) return;
+		ticks += 1;
+		if (!comparable || probing || ticks % identityEveryTicks !== 0) return;
 		probing = true;
-		nextIdentityAt = Date.now() + identityEveryMs;
-		void observeProcessStartMs(supervisorPid)
+		void compareRecordedStart(supervisorPid, recorded, process.platform, probe)
 			.then(
-				(observedMs) => {
-					if (!stopped && observedMs !== undefined && !sameProcessStartMs(recordedMs, observedMs))
-						fire(`supervisor pid ${supervisorPid} start time changed`);
+				(result) => {
+					if (!stopped && result === "changed") fire(`supervisor pid ${supervisorPid} start time changed`);
 				},
 				// Permission, timeout and probe failures are unknown, never death.
 				() => {},
