@@ -2280,7 +2280,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(data.anthropic.models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
-				if (m.status === "deprecated") continue;
+				if (m.status === "deprecated" && !keepDeprecatedUpstream("anthropic", modelId)) continue;
 
 				models.push({
 					id: modelId,
