@@ -9,7 +9,6 @@ import { SessionManager } from "../../src/core/session-manager.ts";
 import { SessionMovedAwayError } from "../../src/core/session-move/ownership.ts";
 import { moveLockKey } from "../../src/core/session-move/session-lock.ts";
 import { serializeByKey } from "../../src/core/session-sidecar-store.ts";
-import { MOVE_SESSION_REVOKE_CAPABILITY } from "../../src/modes/rpc/session-move-wire.ts";
 import { opened } from "./rpc-inprocess-host-metrics.ts";
 import { createInProcessRig } from "./rpc-inprocess-host-support.ts";
 import { customTypes, devices, hostAndRelease, move, type Rig } from "./rpc-move-session-support.ts";
@@ -140,7 +139,77 @@ describe("move_session revoke (senpi#4003)", () => {
 		expect(customTypes(onB)).toEqual(["session_released", "session_moved_in"]);
 	});
 
-	it("#then the capability a client detects revoke by is move_session_revoke", () => {
-		expect(MOVE_SESSION_REVOKE_CAPABILITY).toBe("move_session_revoke");
+	it("#given B revoked its import #when status asks about that move with the copy's path #then it answers accepted with revoked: true", async () => {
+		const fixture = await devices();
+		await using a = createInProcessRig(fixture.agentA);
+		await using b = createInProcessRig(fixture.agentB);
+		const onB = await importedOnB(a, b, fixture, "move-r7");
+		expect((await move(b, { op: "status", moveId: "move-r7", sessionPath: onB })).data).toEqual({
+			state: "accepted",
+		});
+
+		expect(await move(b, { op: "revoke", sessionPath: onB, moveId: "move-r7" })).toMatchObject({ success: true });
+
+		expect(await move(b, { op: "status", moveId: "move-r7", sessionPath: onB })).toMatchObject({
+			success: true,
+			data: { state: "accepted", revoked: true },
+		});
+		// accepted + revoked: the engine's write guard refuses the copy.
+		expect(() =>
+			SessionManager.open(onB).appendMessage({ role: "user", content: "after revoke", timestamp: 9 }),
+		).toThrow(SessionMovedAwayError);
+		// Without the copy's path the answer comes from the ledger alone, whose `accepted` stays final.
+		expect((await move(b, { op: "status", moveId: "move-r7" })).data).toEqual({ state: "accepted" });
+	});
+
+	it("#given the receiver wrote turns on its copy after the import #then revoke still seals it, keeps those turns, and refuses later writes", async () => {
+		const fixture = await devices();
+		await using a = createInProcessRig(fixture.agentA);
+		await using b = createInProcessRig(fixture.agentB);
+		const onB = await importedOnB(a, b, fixture, "move-r8");
+		SessionManager.open(onB).appendMessage({ role: "user", content: "typed on B", timestamp: 5 });
+
+		expect(await move(b, { op: "revoke", sessionPath: onB, moveId: "move-r8" })).toMatchObject({
+			success: true,
+			data: { ownership: "moved" },
+		});
+		expect(readFileSync(onB, "utf8")).toContain("typed on B");
+		expect(customTypes(onB)).toEqual(["session_released", "session_moved_in", "session_moved"]);
+		expect(() =>
+			SessionManager.open(onB).appendMessage({ role: "user", content: "after revoke", timestamp: 9 }),
+		).toThrow(SessionMovedAwayError);
+	});
+
+	it("#given B's copy was re-imported for a later move #when revoke names the earlier move #then it refuses move_mismatch", async () => {
+		const fixture = await devices();
+		await using a = createInProcessRig(fixture.agentA);
+		await using b = createInProcessRig(fixture.agentB);
+		const first = await importedOnB(a, b, fixture, "move-r9a");
+		const accepted = { state: "accepted" };
+		expect(
+			await move(a, { op: "finish", sessionPath: fixture.sessionPath, moveId: "move-r9a", answer: accepted }),
+		).toMatchObject({ success: true, data: { ownership: "moved" } });
+
+		await move(a, { op: "prepare", moveId: "move-r9b" });
+		await hostAndRelease(b, fixture.repoB, first, "move-r9b");
+		const back = await move(b, { op: "export", sessionPath: first, moveId: "move-r9b", target: "device-a" });
+		const backDir = (back.data as { bundle_dir: string }).bundle_dir;
+		expect(await move(a, { op: "import", bundleDir: backDir, cwd: fixture.repoA, from: "device-b" })).toMatchObject({
+			success: true,
+			data: { session_path: fixture.sessionPath },
+		});
+		expect(await move(b, { op: "finish", sessionPath: first, moveId: "move-r9b", answer: accepted })).toMatchObject({
+			success: true,
+			data: { ownership: "moved" },
+		});
+
+		const again = await importedOnB(a, b, fixture, "move-r9c");
+		expect(again).toBe(first);
+		const before = readFileSync(again, "utf8");
+		expect(await move(b, { op: "revoke", sessionPath: again, moveId: "move-r9a" })).toMatchObject({
+			success: false,
+			error: "move_mismatch",
+		});
+		expect(readFileSync(again, "utf8")).toBe(before);
 	});
 });
