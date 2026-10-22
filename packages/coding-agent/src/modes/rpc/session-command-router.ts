@@ -6,6 +6,7 @@ import { detachConnection } from "./connection-detach.ts";
 import { buildRpcSessionState } from "./connection-handler.ts";
 import { CONNECTION_ROLE_FIXED, ConnectionRoles, roleConnection } from "./connection-roles.ts";
 import { SESSION_RELOCATION_CAPABILITY } from "./custom-capability.ts";
+import { SessionAttachOrder } from "./session-attach-order.ts";
 import { answerEffectFromTranscript } from "./effect-commands.ts";
 import { latestSessionEffect } from "./effect-ledger.ts";
 import { multiSessionHostCapabilities } from "./host-capabilities.ts";
@@ -139,6 +140,7 @@ export class SessionCommandRouter {
 	private readonly stopLimitBroadcast: () => void;
 	/** Session handles opened by each connection, with one count per attachment. */
 	private readonly sessionsByConnection = new Map<string, Map<string, number>>();
+	private readonly attachOrder = new SessionAttachOrder();
 	/** Opens currently awaiting runtime/binding setup, keyed by connection. */
 	private readonly opensByConnection = new Map<string, Set<Promise<void>>>();
 	/** Connections whose socket has already been detached. */
@@ -757,13 +759,13 @@ export class SessionCommandRouter {
 	 * advertised `session_relocation` in its own `set_client_info` (docs/rpc.md). Only it is asked and only it may answer.
 	 */
 	private relocationConnection(sessionId: string): string | undefined {
-		for (const [connection, owned] of this.sessionsByConnection)
-			if (
-				owned.has(sessionId) &&
-				this.writer.getConnectionCapabilities(connection)?.includes(SESSION_RELOCATION_CAPABILITY)
-			)
-				return connection;
-		return undefined;
+		return this.attachOrder
+			.connections(sessionId)
+			.find(
+				(connection) =>
+					this.sessionsByConnection.get(connection)?.has(sessionId) === true &&
+					this.writer.getConnectionCapabilities(connection)?.includes(SESSION_RELOCATION_CAPABILITY) === true,
+			);
 	}
 
 	/** Attachments of the session other than `caller`'s own: an unload or release never counts its requester. */
@@ -775,6 +777,7 @@ export class SessionCommandRouter {
 
 	/** Drops per-connection records for a handle the host closed on its own. */
 	private forgetSessionOwnership(sessionId: string): void {
+		this.attachOrder.forgetSession(sessionId);
 		for (const [connection, owned] of this.sessionsByConnection) {
 			owned.delete(sessionId);
 			if (owned.size === 0) this.sessionsByConnection.delete(connection);
@@ -1003,6 +1006,7 @@ export class SessionCommandRouter {
 				const owned = this.sessionsByConnection.get(owner) ?? new Map<string, number>();
 				owned.set(openedSession.sessionId, (owned.get(openedSession.sessionId) ?? 0) + 1);
 				this.sessionsByConnection.set(owner, owned);
+				this.attachOrder.attached(openedSession.sessionId, owner);
 			}
 			if (!this.bindings.has(openedSession.sessionId)) {
 				this.bindings.set(
@@ -1122,8 +1126,12 @@ export class SessionCommandRouter {
 		this.releasedConnections.add(connectionId);
 		this.writer.clearConnectionCapabilities(connectionId);
 		this.connectionRoles.release(connectionId);
-		for (const sessionId of this.sessionsByConnection.get(connectionId)?.keys() ?? [])
+		for (const sessionId of this.sessionsByConnection.get(connectionId)?.keys() ?? []) {
 			this.writer.detachConnectionFromSession(connectionId, sessionId);
+			this.connectionLeft(sessionId, connectionId);
+		}
+		// The socket is gone (dropped, not `detach_connection`): nothing will ever open with its capabilities again.
+		if (!this.writer.hasConnection(connectionId)) this.pendingCapabilities.delete(connectionId);
 		const opens = this.opensByConnection.get(connectionId);
 		const owned = this.sessionsByConnection.get(connectionId);
 		this.sessionsByConnection.delete(connectionId);
@@ -1312,14 +1320,22 @@ export class SessionCommandRouter {
 		}
 	}
 
+	/** `connection` no longer attaches to `sessionId`: its attach order and what it offered the session end. */
+	private connectionLeft(sessionId: string, connection: string): void {
+		this.attachOrder.detached(sessionId, connection);
+		this.bindings.get(sessionId)?.connectionDetached?.(connection);
+	}
+
 	/** Detaches the closing connection from the session's record fanout. */
 	private releaseOwnerAttachment(owner: string, sessionId: string): void {
 		this.writer.detachConnectionFromSession(owner, sessionId);
 		const owned = this.sessionsByConnection.get(owner);
 		const count = owned?.get(sessionId);
 		if (!owned || count === undefined) return;
-		if (count === 1) owned.delete(sessionId);
-		else owned.set(sessionId, count - 1);
+		if (count === 1) {
+			owned.delete(sessionId);
+			this.connectionLeft(sessionId, owner);
+		} else owned.set(sessionId, count - 1);
 		if (owned.size === 0) this.sessionsByConnection.delete(owner);
 	}
 

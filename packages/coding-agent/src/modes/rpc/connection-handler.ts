@@ -216,6 +216,8 @@ export interface RpcConnectionHandler {
 	isShutdownRequested(): boolean;
 	/** Cancel UI requests that can no longer be answered by this connection. */
 	cancelPendingExtensionUiRequests(): void;
+	/** A shared host's connection left this session; what it was offering ends. */
+	connectionDetached(connectionId: string): void;
 	/**
 	 * Tear down subscriptions and dispose the runtime. Never calls process.exit; `processExit` tells the runtime the
 	 * caller exits right after (senpi#3711).
@@ -2054,6 +2056,9 @@ export function createRpcConnectionHandler(
 		cancelPendingExtensionUiRequests() {
 			questions.cancelAll();
 			pendingExtensionRequests.cancelAll();
+		},
+		connectionDetached(connectionId) {
+			relocation?.connectionDetached(connectionId);
 		},
 		async dispose(disposeOptions) {
 			await ready;

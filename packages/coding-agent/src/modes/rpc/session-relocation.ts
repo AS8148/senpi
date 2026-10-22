@@ -111,6 +111,14 @@ export class RpcSessionRelocation implements SessionRelocationHost {
 		return "answered";
 	}
 
+	/** The connection `connectionId` left the session: what it accepted or was asked ends here, never later. */
+	connectionDetached(connectionId: string): void {
+		if (this.scheduled?.connection === connectionId) this.scheduled = undefined;
+		for (const pending of [...this.pending.values()])
+			if (pending.connection === connectionId)
+				pending.finish(refused("app_disconnected", "the app that was asked left this session"));
+	}
+
 	dispose(): void {
 		this.unsubscribe();
 		this.scheduled = undefined;
@@ -142,6 +150,8 @@ export class RpcSessionRelocation implements SessionRelocationHost {
 		// A new run took over meanwhile: its own settle announces the move.
 		if (due === undefined || this.deps.session.isStreaming) return;
 		this.scheduled = undefined;
+		// Only the connection that accepted, while it still offers relocation here, is told to move the session.
+		if (this.deps.channel.offerer() !== due.connection) return;
 		const { connection, ...fields } = due;
 		this.deps.channel.send(
 			connection,
