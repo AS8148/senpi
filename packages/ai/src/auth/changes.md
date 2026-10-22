@@ -1,3 +1,25 @@
+## 2026-10-22 - Resolve slot-scoped requests through the store's own slot read (senpi#3858)
+
+### What changed
+
+- `packages/ai/src/auth/types.ts`: optional `CredentialStore.readSlot` reads one pooled slot already projected for a slot-scoped request.
+- `packages/ai/src/auth/credential-read.ts`: `readSlotCredential` uses the store's `readSlot` when present and otherwise projects `read`. A projected key that is still an object raises `ModelsError("auth")` caused by `ConfigReferenceError` (`forbidden`), so an unresolved reference never reaches a provider.
+- `packages/ai/src/auth/resolve.ts`: slot-scoped resolution reads through `readSlotCredential`; the flat credential is read only for unscoped requests.
+- `scripts/check-entry-graphs.mjs`: the `./models` budget grows by `utils/config-reference-error.ts`.
+
+### Why
+
+- Reading the whole credential first resolved its flat key, so a pooled request failed on an unused account's broken reference, and the selected slot's reference reached the provider unresolved.
+
+### Why an extension could not handle it
+
+- Slot-scoped auth resolution is the cross-provider choke point in `resolve.ts`.
+
+### Expected merge conflict zones
+
+- MEDIUM: the slot branch of `resolveProviderAuthWithSignal` in `packages/ai/src/auth/resolve.ts`.
+- LOW: the `CredentialStore` interface in `packages/ai/src/auth/types.ts`.
+
 ## 2026-10-22 - Extract the credential-store read without behavior changes (senpi#3858)
 
 ### What changed

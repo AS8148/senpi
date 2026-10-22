@@ -6,6 +6,7 @@
 
 ### Added
 
+- `auth.json` accepts `$file`, `$env` and `$concat` reference objects in an API key's `key` and in each pooled account's `key`. Each one is read again on every use, relative to the auth.json directory; a slot-scoped request resolves only the selected account, and a malformed object is a named configuration error ([#3858](https://github.com/code-yeongyu/senpi/issues/3858)).
 - Configuration-value resolution supports typed file, environment, and concatenation references with source authority checks and bounded, validated file reads; reference output remains literal rather than entering command or environment interpolation again ([#3858](https://github.com/code-yeongyu/senpi/issues/3858)).
 
 ### Changed

@@ -38,7 +38,8 @@ const BUDGETS = {
 			// +1 (senpi#3292): google-thinking-generation.ts, the type-only leaf inferring the level map of generation-4 rows.
 			// +1 (senpi#3378): model-cost.ts, the type-only leaf that picks the cost card in force for a request.
 			// +1 (senpi#3858): auth/credential-read.ts, the credential-store read auth/resolve.ts wraps in ModelsError.
-			maxFiles: 25,
+			// +1 (senpi#3858): utils/config-reference-error.ts, the typebox-free error a slot read raises for an unresolved reference.
+			maxFiles: 26,
 			forbid: ["providers/", "models.generated.ts", "index.ts", "utils/validation.ts", "utils/typebox-helpers.ts"],
 		},
 		"./utils/*": { maxFiles: 3, forbid: ["providers/", "api/", "index.ts"] },

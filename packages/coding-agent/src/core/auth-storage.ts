@@ -22,6 +22,7 @@ import {
 	type CredentialSlot,
 	listSlots,
 	type PooledCredential,
+	projectSlot,
 	removeSlot,
 	repairManagedSentinelSlots,
 	upsertSlot,
@@ -38,6 +39,7 @@ import { migrateAnthropicOAuthToSubscription } from "./anthropic-oauth-migration
 import {
 	resolveReadOnlyCredential,
 	resolveStoredCredential,
+	resolveStoredSlot,
 	validateReadOnlyAuthData,
 } from "./auth-credential-values.ts";
 import { migrateLegacyProviderKeys } from "./auth-provider-key-migration.ts";
@@ -340,7 +342,20 @@ export class ReadOnlyAuthStorage implements CredentialStore {
 		// rename. Nothing is rewritten here.
 		const credential = readByProviderId(this.load(), providerId);
 		options?.signal?.throwIfAborted();
-		return resolveReadOnlyCredential(credential);
+		return resolveReadOnlyCredential(credential, providerId, this.authPath);
+	}
+
+	async readSlot(
+		providerId: string,
+		slotName: string,
+		options?: AuthOperationOptions,
+	): Promise<Credential | undefined> {
+		options?.signal?.throwIfAborted();
+		const credential = readByProviderId(this.load(), providerId);
+		options?.signal?.throwIfAborted();
+		return resolveStoredSlot(credential, { providerId, slotName, authPath: this.authPath }, (flat) =>
+			resolveReadOnlyCredential(flat, providerId, this.authPath),
+		);
 	}
 
 	async list(options?: AuthOperationOptions): Promise<readonly CredentialInfo[]> {
@@ -740,7 +755,18 @@ export class AuthStorage implements CredentialStore {
 		if (runtimeKey) return { type: "api_key", key: runtimeKey };
 		const credential = (await this.readLatestData(options))[provider];
 		options?.signal?.throwIfAborted();
-		return resolveStoredCredential(credential);
+		return resolveStoredCredential(credential, provider, this.authPath);
+	}
+
+	async readSlot(provider: string, slotName: string, options?: AuthOperationOptions): Promise<Credential | undefined> {
+		options?.signal?.throwIfAborted();
+		const runtimeKey = this.runtimeOverrides.get(provider);
+		if (runtimeKey) return projectSlot({ type: "api_key", key: runtimeKey }, slotName);
+		const credential = (await this.readLatestData(options))[provider];
+		options?.signal?.throwIfAborted();
+		return resolveStoredSlot(credential, { providerId: provider, slotName, authPath: this.authPath }, (flat) =>
+			resolveStoredCredential(flat, provider, this.authPath),
+		);
 	}
 
 	async modify(
