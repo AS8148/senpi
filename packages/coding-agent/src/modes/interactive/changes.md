@@ -1,3 +1,21 @@
+## 2026-10-22 - Count a resumed TUI answer once (senpi#3864 review)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the question overlay reports a local answer as human input only when the answer is a tool result; a resumed question's `user-message` answer is reported by its delivery.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: a resumed blocking question answered in the TUI was counted twice.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the overlay is interactive mode itself.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `showQuestionOverlay` finish.
+
 ## 2026-10-22 - Admit TUI answers as human input for the lifecycle (senpi#3864)
 
 ### What changed

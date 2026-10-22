@@ -6385,12 +6385,10 @@ export class AgentSession {
 	}
 
 	private _queuedDeliveryTickets(): string[] {
-		return this.agent
-			.peekQueuedMessages({ all: true })
-			.flatMap((queued) => {
-				const ticket = queued.role === "custom" ? messageTicket(queued) : undefined;
-				return ticket === undefined ? [] : [ticket];
-			});
+		return this.agent.peekQueuedMessages({ all: true }).flatMap((queued) => {
+			const ticket = queued.role === "custom" ? messageTicket(queued) : undefined;
+			return ticket === undefined ? [] : [ticket];
+		});
 	}
 
 	/**
@@ -6466,7 +6464,7 @@ export class AgentSession {
 		) {
 			this._engineTurnHold.note(engineWakeSource(message.customType), appMessage);
 			if (options?.ticket) {
-				const noticeId = heldLifecycleNotice(this, options.ticket);
+				const noticeId = heldLifecycleNotice(this, options.ticket, message.customType);
 				if (noticeId) this.workObligations.held(options.ticket, noticeId);
 			}
 			deferredTurnClaim?.resolve("finished-without-start");

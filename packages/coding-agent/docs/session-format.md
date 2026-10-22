@@ -242,8 +242,17 @@ Lifecycle persistence uses custom entries on the session that owes the work:
 - `child-lifecycle`: the runner's latest task report, fenced by `runEpoch` and
   `generation`, persisted before changing the parent's lifecycle.
 
-These records are durable even before a first conversation message. Reopening
-holds the restore barrier until producers rehydrate and custody recovery completes.
+- `interrupted-run`: `{ ticketId, runId, status: "INTERRUPTED", reason: "host_restart", at }`,
+  appended on restore for a delivery its run had consumed when the host stopped. Each
+  tool call of that run without a result also gets a synthetic `toolResult` with
+  `isError: true` and `details.interrupted.reason: "host_restart"`; the tool is not re-run.
+
+These records are durable even before a first conversation message; a file that holds
+only them (and setup entries) is still discarded when the session closes unused. Reopening
+holds the restore barrier until producers rehydrate and custody recovery completes. A
+restored wake source whose producer does not publish again by then is retired.
+A delivery that leaves the queue unconsumed (cleared, or left queued by an abort for the
+person's next turn) is cancelled or turns passive, so it is never redelivered.
 Consumed but interrupted work is not redelivered; it requires human continuation
 (or remains held unattended). Unsealed self-settle requests are invalidated on
 restart, while a sealed decision and completion identity remain unchanged.

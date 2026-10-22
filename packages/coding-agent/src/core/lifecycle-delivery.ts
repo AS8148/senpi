@@ -1,5 +1,6 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AgentSession } from "./agent-session.ts";
+import { engineWakeSource } from "./engine-turn-hold.ts";
 import type { CustomMessage } from "./messages.ts";
 import type { HistoryReducer } from "./session-history-reduce.ts";
 import type { SessionLifecycleController } from "./session-lifecycle.ts";
@@ -55,7 +56,11 @@ export function consumeLifecycleDelivery(
  * #3860 currently returns void from note(). Capture its appended notice by
  * ticket identity instead of introducing another held-message store.
  */
-export function heldLifecycleNotice(session: AgentSession, ticketId: DeliveryTicketId): string | undefined {
+export function heldLifecycleNotice(
+	session: AgentSession,
+	ticketId: DeliveryTicketId,
+	customType: string,
+): string | undefined {
 	for (const entry of session.sessionManager.getEntries().toReversed()) {
 		if (entry.type !== "custom" || entry.customType !== "session-notice" || !isRecord(entry.data)) continue;
 		if (
@@ -65,8 +70,13 @@ export function heldLifecycleNotice(session: AgentSession, ticketId: DeliveryTic
 			typeof entry.data.noticeId === "string"
 		)
 			return entry.data.noticeId;
-		// Goal notices deliberately store no pre-rendered message (#3860).
-		if (entry.data.producer === "goal" && entry.data.message === undefined && typeof entry.data.noticeId === "string")
+		// Goal notices deliberately store no pre-rendered message (#3860), so only a goal continuation may claim one.
+		if (
+			engineWakeSource(customType) === "goal" &&
+			entry.data.producer === "goal" &&
+			entry.data.message === undefined &&
+			typeof entry.data.noticeId === "string"
+		)
 			return entry.data.noticeId;
 	}
 	return undefined;

@@ -144,6 +144,7 @@ the shared human-admission hook, including connections that declared
 `open_session.spawnedBy` is `{ parentSessionId, rootSessionId, taskId }`, with three
 nonempty strings, persisted in the new session header. It identifies execution
 children; `parentSession` remains fork/transcript ancestry and does not make a child.
+A malformed `spawnedBy` is refused with the error `invalid_spawned_by`.
 
 ## Eval cell control
 
