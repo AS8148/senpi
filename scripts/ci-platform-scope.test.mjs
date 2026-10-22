@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
-import { classify, FULL_CI_LABEL, isPlatformPath, PLATFORM_JOBS, verifyNeeds } from "./ci-platform-scope.mjs";
+import { classify, FULL_CI_LABEL, isPlatformPath, PLATFORM_JOBS, platformJobFiles, verifyNeeds } from "./ci-platform-scope.mjs";
 
 const workflow = (file) => parse(readFileSync(new URL(`../.github/workflows/${file}`, import.meta.url), "utf8"));
 const script = fileURLToPath(new URL("./ci-platform-scope.mjs", import.meta.url));
@@ -55,6 +55,32 @@ describe("platform scope classifier (senpi#3957)", () => {
 		assert.equal(pr(["packages/ai/src/x.ts", "crates/senpi-grep/src/lib.rs"]).full, true);
 	});
 
+	it("counts the RPC sources and every file a macOS/Windows job runs as platform-specific", () => {
+		const text = readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
+		const jobFiles = platformJobFiles(text);
+		for (const path of [
+			"packages/coding-agent/src/modes/rpc/socket-transport.ts",
+			"packages/coding-agent/src/modes/rpc/host-readiness.ts",
+		]) {
+			assert.equal(isPlatformPath(path), true, path);
+		}
+		for (const path of [
+			"packages/coding-agent/test/suite/hooks-trust.test.ts",
+			"packages/coding-agent/test/suite/schedule-runner.test.ts",
+			"packages/coding-agent/test/rpc-socket-transport.test.ts",
+			"packages/tui/test/tui-main-screen-mouse.test.ts",
+			"packages/senpi-codemode/test/js-kernel-webview.test.ts",
+		]) {
+			assert.equal(isPlatformPath(path, jobFiles), true, path);
+		}
+		// A suite only the Linux jobs run stays off macOS/Windows.
+		assert.equal(isPlatformPath("packages/coding-agent/test/suite/agent-session-compaction.test.ts", jobFiles), false);
+		assert.equal(pr(["packages/coding-agent/test/suite/hooks-trust.test.ts"]).full, false);
+		assert.equal(classify({ event: "pull_request", labels: [], changedPaths: ["packages/coding-agent/test/suite/hooks-trust.test.ts"], jobFiles }).full, true);
+		// Only jobs on a macOS/Windows runner contribute: the Linux-only check job's own files do not.
+		assert.ok(!jobFiles.includes("packages/senpi-codemode/scripts/gate-build.ts"));
+	});
+
 	it("runs the full set for every non-PR event, the label, and an unknown or truncated diff", () => {
 		for (const event of ["push", "merge_group", "workflow_dispatch", "schedule"]) {
 			assert.equal(classify({ event, labels: [], changedPaths: ["README.md"] }).full, true, event);
@@ -78,7 +104,13 @@ describe("platform scope classifier (senpi#3957)", () => {
 			assert.equal(run("[]", changed).status, 0);
 			assert.equal(run(JSON.stringify([FULL_CI_LABEL]), changed).status, 0);
 			assert.equal(run("[]", "").status, 0);
-			assert.equal(readFileSync(output, "utf8"), "full=false\nfull=true\nfull=true\n");
+			writeFileSync(changed, "packages/coding-agent/test/suite/hooks-trust.test.ts\n");
+			assert.equal(run("[]", changed).status, 0);
+			const withWorkflow = spawnSync(process.execPath,
+				[script, "classify", "--event", "pull_request", "--labels", "null", "--changed", changed, "--workflow", fileURLToPath(new URL("../.github/workflows/ci.yml", import.meta.url))],
+				{ encoding: "utf8", env: { ...process.env, GITHUB_OUTPUT: output } });
+			assert.equal(withWorkflow.status, 0, withWorkflow.stderr);
+			assert.equal(readFileSync(output, "utf8"), "full=false\nfull=true\nfull=true\nfull=false\nfull=true\n");
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
@@ -151,6 +183,7 @@ describe("ci.yml wiring", () => {
 		const classifyStep = jobs["platform-scope"].steps.find((step) => step.run?.includes("ci-platform-scope.mjs classify"));
 		assert.ok(classifyStep);
 		assert.match(classifyStep.env.PR_LABELS, /github\.event\.pull_request\.labels\.\*\.name/);
+		assert.match(classifyStep.run, /--workflow \.github\/workflows\/ci\.yml$/);
 		assert.equal(jobs["platform-scope"]["runs-on"], "ubuntu-latest");
 	});
 });
@@ -180,8 +213,18 @@ describe("platform-only legs of the other PR workflows", () => {
 			const legs = Object.values(jobs).filter((job) => job.strategy?.matrix?.os);
 			assert.equal(legs.length, 1);
 			assert.match(String(legs[0].strategy.matrix.os), /needs\.platform-scope\.outputs\.full == 'true'/);
+			const scope = jobs["platform-scope"];
+			assert.ok(scope.steps[0].with["sparse-checkout"].split("\n").includes(`.github/workflows/${file}`));
+			assert.ok(scope.steps.some((step) => step.run?.endsWith(`--workflow .github/workflows/${file}`)));
 		});
 	}
+
+	it("every workflow the label calls keys its concurrency group by the workflow name first", () => {
+		// In a called run github.workflow is the caller's name, so the label run and the PR's own run get separate groups.
+		for (const file of ["ci.yml", "read-summary-binary-parity.yml", "session-worker-compile.yml"]) {
+			assert.match(String(workflow(file).concurrency.group), /^\$\{\{ github\.workflow \}\}-/, file);
+		}
+	});
 
 	it("every pull_request workflow with macOS/Windows legs cancels its superseded PR run", () => {
 		for (const file of ["ci.yml", "read-summary-binary-parity.yml", "session-worker-compile.yml", "native-prebuilds.yml"]) {

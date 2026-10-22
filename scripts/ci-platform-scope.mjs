@@ -45,6 +45,8 @@ const platformPaths = [
 	/^packages\/pty\//,
 	/^packages\/coding-agent\/native\//,
 	/^packages\/coding-agent\/install-lock\//,
+	// Named pipes, Job Objects and the supervisor live here under generic file names.
+	/^packages\/coding-agent\/src\/modes\/rpc\//,
 	/^(package\.json|package-lock\.json|npm-shrinkwrap\.json|bun\.lock|pnpm-lock\.yaml)$/,
 	/^scripts\/(build-binaries|build-native-|copy-pty-native|prepare-bun-compile-assets|smoke-standalone-binary|compiled-extension-|devenv-setup|probe-native-|native-prebuild|session-worker-compile|generate-claude-agent-sdk-platform-lock|claude-sdk-platform-lock|rolldown-platform-lock)/,
 	/^scripts\/qa\/read-summary-/,
@@ -55,17 +57,41 @@ const platformPaths = [
 const platformName = /(^|[/._-])(win32|windows|darwin|macos|wsl|powershell)([/._-]|$)/i;
 const platformExtension = /\.(ps1|cmd|bat)$/i;
 
-/** @param {string} path */
-export function isPlatformPath(path) {
-	return platformPaths.some((pattern) => pattern.test(path)) || platformName.test(path) || platformExtension.test(path);
+/**
+ * Files the macOS/Windows jobs of a workflow name in their steps (the suites and scripts they run). A change to one of
+ * them changes what those jobs test, whatever its name, so it counts as platform-specific. The workflow is scanned as
+ * text, job by job (two-space job keys under `jobs:`), because the scope job runs before any dependency is installed.
+ * @param {string} workflowText
+ * @returns {string[]} repository-relative suffixes such as `test/suite/hooks-trust.test.ts`
+ */
+export function platformJobFiles(workflowText) {
+	const body = workflowText.split(/^jobs:\n/m)[1] ?? "";
+	const jobs = body.split(/^(?=  [\w-]+:\n)/m).filter((job) => /\b(windows|macos)-latest\b/.test(job));
+	const files = new Set();
+	for (const job of jobs) {
+		for (const [token] of job.matchAll(/[\w./-]+\.(?:test\.)?[cm]?[jt]sx?\b/g)) {
+			const file = token.replace(/^(?:\.\.?\/)+/, "");
+			if (file.includes("/") || file.includes(".test.")) files.add(file);
+		}
+	}
+	return [...files].sort();
 }
 
 /**
- * @param {{ event: string, labels: string[], changedPaths: string[] | null }} input
+ * @param {string} path
+ * @param {readonly string[]} [jobFiles] platformJobFiles() of the workflows whose platform legs this run decides
+ */
+export function isPlatformPath(path, jobFiles = []) {
+	return platformPaths.some((pattern) => pattern.test(path)) || platformName.test(path) || platformExtension.test(path)
+		|| jobFiles.some((file) => path === file || path.endsWith(`/${file}`));
+}
+
+/**
+ * @param {{ event: string, labels: string[], changedPaths: string[] | null, jobFiles?: readonly string[] }} input
  *   changedPaths is null when the diff could not be read.
  * @returns {{ full: boolean, reason: string }}
  */
-export function classify({ event, labels, changedPaths }) {
+export function classify({ event, labels, changedPaths, jobFiles = [] }) {
 	if (event !== "pull_request") return { full: true, reason: `event ${event} always runs the full set` };
 	if (labels.includes(FULL_CI_LABEL)) return { full: true, reason: `label ${FULL_CI_LABEL}` };
 	if (changedPaths === null) return { full: true, reason: "changed files unavailable" };
@@ -73,7 +99,7 @@ export function classify({ event, labels, changedPaths }) {
 	if (changedPaths.length >= PR_FILES_API_LIMIT) {
 		return { full: true, reason: `${changedPaths.length} changed files may be truncated` };
 	}
-	const platform = changedPaths.filter(isPlatformPath);
+	const platform = changedPaths.filter((path) => isPlatformPath(path, jobFiles));
 	if (platform.length > 0) {
 		return { full: true, reason: `platform paths changed: ${platform.slice(0, 10).join(", ")}` };
 	}
@@ -109,10 +135,12 @@ function main(argv) {
 		// Outside a pull request the labels expression renders as null.
 		const labels = JSON.parse(argument(rest, "labels")) ?? [];
 		if (!Array.isArray(labels)) throw new Error("--labels must be a JSON array");
+		const workflows = rest.flatMap((value, index) => (rest[index - 1] === "--workflow" ? [value] : []));
 		const decision = classify({
 			event: argument(rest, "event"),
 			labels,
 			changedPaths: readChangedPaths(argument(rest, "changed")),
+			jobFiles: workflows.flatMap((file) => platformJobFiles(readFileSync(file, "utf8"))),
 		});
 		console.log(`full=${decision.full} (${decision.reason})`);
 		if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `full=${decision.full}\n`);

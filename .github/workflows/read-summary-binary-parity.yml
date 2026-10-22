@@ -26,7 +26,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: read-summary-parity-${{ github.ref }}
+  # The workflow name leads the group: in a run-full-ci call it is the caller's, so the label run and the PR's own run
+  # never cancel each other (senpi#3957).
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -43,7 +45,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          sparse-checkout: scripts/ci-platform-scope.mjs
+          sparse-checkout: |
+            scripts/ci-platform-scope.mjs
+            .github/workflows/read-summary-binary-parity.yml
           sparse-checkout-cone-mode: false
 
       - name: List the pull request's changed files
@@ -65,7 +69,7 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
-        run: node scripts/ci-platform-scope.mjs classify --event "$EVENT_NAME" --labels "$PR_LABELS" --changed "${CHANGED_FILES:-}"
+        run: node scripts/ci-platform-scope.mjs classify --event "$EVENT_NAME" --labels "$PR_LABELS" --changed "${CHANGED_FILES:-}" --workflow .github/workflows/read-summary-binary-parity.yml
 
   # Linux on every matching PR; macOS and Windows only when ci-platform-scope.mjs decides the run is full: a push to
   # main, the run-full-ci label (ci-full-label.yml) or a platform-specific diff (senpi#3957).

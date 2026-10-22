@@ -55,7 +55,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          sparse-checkout: scripts/ci-platform-scope.mjs
+          sparse-checkout: |
+            scripts/ci-platform-scope.mjs
+            .github/workflows/session-worker-compile.yml
           sparse-checkout-cone-mode: false
 
       - name: List the pull request's changed files
@@ -77,7 +79,7 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
-        run: node scripts/ci-platform-scope.mjs classify --event "$EVENT_NAME" --labels "$PR_LABELS" --changed "${CHANGED_FILES:-}"
+        run: node scripts/ci-platform-scope.mjs classify --event "$EVENT_NAME" --labels "$PR_LABELS" --changed "${CHANGED_FILES:-}" --workflow .github/workflows/session-worker-compile.yml
 
   # Linux on every matching PR; macOS and Windows only when ci-platform-scope.mjs decides the run is full: a push to
   # main, the run-full-ci label (ci-full-label.yml) or a platform-specific diff (senpi#3957).
