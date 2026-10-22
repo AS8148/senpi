@@ -24,8 +24,9 @@ import { endpoint } from "../rpc-host-endpoint.ts";
 const ASK = [
 	"export default function (pi) {",
 	'	pi.registerCommand("ask-question", { description: "question fixture", handler: async (_args, ctx) => {',
-	'		await ctx.ui.question({ requestId: "classic-question", waitForAnswer: true, timeoutMs: 60000,',
+	'		const result = await ctx.ui.question({ requestId: "classic-question", waitForAnswer: true, timeoutMs: 60000,',
 	'			questions: [{ id: "q1", header: "q1", question: "q1", options: [{ label: "A" }, { label: "B" }], multiSelect: false }] });',
+	'		ctx.ui.notify("QUESTION_STATUS=" + result.status);',
 	"	} });",
 	"}",
 ].join("\n");
@@ -118,6 +119,33 @@ describe("classic --mode rpc over stdio", () => {
 	}, 60_000);
 });
 
+describe("classic --mode rpc withdrawing question", () => {
+	it("cancels the pending structured question once", async () => {
+		await classicCli(async (client) => {
+			// Given: the client declared `question` and a structured question is pending.
+			await client.request({ type: "set_client_info", width: 80, capabilities: ["question"] });
+			const dialog = nextDialog(client);
+			client.send({ type: "prompt", message: "/ask-question" });
+			const question = await dialog;
+			expect(question.method).toBe("question");
+
+			// When: the client declares again without `question`.
+			const settled = client.wait(
+				(record) => record.type === "extension_ui_request" && record.message === "QUESTION_STATUS=cancelled",
+			);
+			expect(await client.request({ type: "set_client_info", width: 80, capabilities: [] })).toMatchObject({
+				success: true,
+			});
+
+			// Then: the question it can no longer answer is cancelled exactly once.
+			await settled;
+			expect(
+				client.records.filter((record) => record.type === "question_resolved" && record.id === question.id),
+			).toEqual([expect.objectContaining({ outcome: "cancelled" })]);
+		});
+	}, 60_000);
+});
+
 type RpcExtensionApi = ExtensionAPI & { readonly rpc?: { emit(name: string, data: unknown): void } };
 type WireRecord = Record<string, unknown>;
 
@@ -190,6 +218,8 @@ describe("classic handler extension_events", () => {
 		expect(await emitted("after-resize")).toBe(1);
 		await send({ type: "set_client_info", width: 80, capabilities: [] });
 		expect(await emitted("withdrawn")).toBe(0);
+		await send({ type: "set_client_info", width: 80, capabilities: ["extension_events"] });
+		expect(await emitted("again")).toBe(1);
 	});
 
 	it("the launch capabilities are the initial set, which a declaration then replaces", async () => {

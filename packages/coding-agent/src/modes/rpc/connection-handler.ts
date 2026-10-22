@@ -778,7 +778,10 @@ export function createRpcConnectionHandler(
 	/** A classic connection's own declaration (senpi#4006); a shared host routes it through `clientInfo` instead. */
 	const replaceClientCapabilities = (next: readonly string[]): void => {
 		const hadEvents = clientCapabilities?.includes(EXTENSION_EVENTS_CAPABILITY) ?? false;
+		const hadQuestion = clientCapabilities?.includes(QUESTION_CAPABILITY) ?? false;
 		clientCapabilities = next;
+		// A structured question the client can no longer answer settles once as cancelled.
+		if (hadQuestion && !next.includes(QUESTION_CAPABILITY)) questions.cancelAll();
 		if (hadEvents === next.includes(EXTENSION_EVENTS_CAPABILITY)) return;
 		unsubscribeExtensionEvents?.();
 		subscribeExtensionEvents();
