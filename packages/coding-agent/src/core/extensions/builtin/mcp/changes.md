@@ -24,7 +24,9 @@ Project skill servers use a finite inherited environment, explicit session overr
 
 The self-contained `env-grants-store.ts` supplies the shared version-1 schema, canonical declaration digest, atomic locked writer and state-reconciliation observer. Native callers pass the configured agent directory to its exported path resolver. `project-skill-policy.ts` rechecks declaration identity before grant writes and every transport materialization.
 
-`packages/coding-agent/src/core/extensions/builtin/mcp/env-grants-store.ts` retries only Windows `EPERM`, `EACCES` and `EBUSY` atomic replacements while holding the existing lock, with five backoffs totaling 1,550 ms. Exhaustion rethrows the original error and cleans up the temporary file and lock; POSIX and other errors are not retried.
+`packages/coding-agent/src/core/extensions/builtin/mcp/env-grants-store.ts` retries only Windows `EPERM`, `EACCES` and `EBUSY` atomic replacements while holding the existing lock, with five backoffs totaling 1,550 ms.
+
+The store takes its lock through `core/file-lock.ts` `lockWithLossHandling` (main's rule from oh-my-openagent#10878: only that helper may call proper-lockfile's async lock, because the default `onCompromised` throws from a heartbeat timer). `lock.assertHeld()` runs right before each commit rename, so a grant whose lock was reclaimed is refused with `FileLockLostError` instead of overwriting the new owner's grants file. The site is listed in `test/proper-lockfile-reference-guard.test.ts`; `test/file-lock-lost-writes.test.ts` covers the refusal. Exhaustion rethrows the original error and cleans up the temporary file and lock; POSIX and other errors are not retried.
 
 `connection-types.ts`, `connection.ts`, `service-connection.ts`, `service.ts`, `transport.ts`, `transport-sdk.ts` and `project-stdio-transport.ts` carry policy through initial connect, renew and SDK restart. Project-only pool keys in `sharing-policy.ts` include declaration, policy and provenance digests. `host-registry.ts` observes grants and invalidates all matching underlying connections through `shared-connection.ts`, without waiting for leases to become idle.
 

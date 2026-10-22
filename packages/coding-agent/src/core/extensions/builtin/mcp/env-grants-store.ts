@@ -33,7 +33,7 @@ import { mkdir, open, rename, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import lockfile from "proper-lockfile";
+import { lockWithLossHandling } from "../../../file-lock.ts";
 
 export interface GrantLabel {
 	readonly project: string;
@@ -137,7 +137,7 @@ export function declarationDigest(identity: unknown): string {
 }
 async function update(path: string, mutate: (grants: Record<string, Grant>) => void): Promise<GrantSnapshot> {
 	await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-	const release = await lockfile.lock(path, {
+	const lock = await lockWithLossHandling(path, {
 		realpath: false,
 		stale: 30_000,
 		retries: { retries: 100, factor: 1.2, minTimeout: 20, maxTimeout: 200 },
@@ -158,6 +158,7 @@ async function update(path: string, mutate: (grants: Record<string, Grant>) => v
 		}
 		for (let attempt = 0; ; attempt++) {
 			try {
+				lock.assertHeld();
 				await rename(temporary, path);
 				break;
 			} catch (error) {
@@ -185,7 +186,7 @@ async function update(path: string, mutate: (grants: Record<string, Grant>) => v
 		try {
 			await rm(temporary, { force: true });
 		} finally {
-			await release();
+			await lock.release();
 		}
 	}
 }

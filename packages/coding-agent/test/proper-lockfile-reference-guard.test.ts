@@ -32,6 +32,10 @@ const LOCK_SITES: Record<string, LockSite> = {
 		reason: "best-effort cache: the atomic rename is skipped once the lock is lost",
 		writes: [{ file: at("core/extensions/builtin/mcp/catalog-cache.ts"), fn: "atomicWriteJson", op: "rename(tmp" }],
 	},
+	[`${at("core/extensions/builtin/mcp/env-grants-store.ts")}#update`]: {
+		reason: "one short read-modify-write of the MCP env grants file; a lost lock skips the commit rename",
+		writes: [{ file: at("core/extensions/builtin/mcp/env-grants-store.ts"), fn: "update", op: "rename(temporary" }],
+	},
 	[`${at("core/credential-pool/state-file.ts")}#lockFileBefore`]: {
 		reason: "one short read-modify-write of the pool health sidecar",
 		writes: [{ file: at("core/credential-pool/state-store.ts"), fn: "withDocument", op: "writeStateFileAtomic(" }],

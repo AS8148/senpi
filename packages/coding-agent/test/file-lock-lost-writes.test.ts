@@ -6,6 +6,7 @@ import lockfile from "proper-lockfile";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CredentialSlotRepository } from "../src/core/credential-pool/state-store.ts";
 import { McpTokenStore } from "../src/core/extensions/builtin/mcp/auth/token-store.ts";
+import { addGrant } from "../src/core/extensions/builtin/mcp/env-grants-store.ts";
 import { FileLockLostError } from "../src/core/file-lock.ts";
 import { parseMoveId } from "../src/core/session-move/bundle.ts";
 import { MoveLedger } from "../src/core/session-move/move-ledger.ts";
@@ -79,6 +80,18 @@ describe("a write under a lost lock is refused", () => {
 		await expect(store.update(() => ({ accessToken: "overwritten" }))).rejects.toBeInstanceOf(FileLockLostError);
 		await expect(store.clear()).rejects.toBeInstanceOf(FileLockLostError);
 		expect(readFileSync(store.tokensPath, "utf8")).toBe(before);
+	});
+
+	// senpi#3796: a grant saved after its lock was reclaimed would overwrite the new owner's grants.
+	it("an MCP environment grant is not saved after the lock was lost", async () => {
+		const path = join(await tempDir(), "mcp-env-grants.json");
+		const label = { project: "p", skill: "s", server: "srv" };
+		await addGrant(path, "a".repeat(64), label, ["KEPT"]);
+		const before = readFileSync(path, "utf8");
+		loseEveryLockRightAfterAcquire();
+
+		await expect(addGrant(path, "b".repeat(64), label, ["NEW"])).rejects.toBeInstanceOf(FileLockLostError);
+		expect(readFileSync(path, "utf8")).toBe(before);
 	});
 
 	it("a move-ledger record is not written after the lock was lost", async () => {
