@@ -1,3 +1,39 @@
+## 2026-10-21 - The combined macOS job keeps base per-step caps (senpi#3939)
+
+### What changed
+
+- `.github/workflows/ci.yml`: in `macos-combined`, the process-kernel and WebView suite steps go back to their base `timeout-minutes: 12` (from 20). The job cap drops from 115 to 99, the sum of the suite step caps plus 10 minutes of setup margin. The "Require the WebView suites to have executed" step runs only when the WebView suite step passed, as it did on base.
+
+### Why
+
+- `.github/workflows/ci.yml`: with 20-minute caps, a hung process-kernel suite held the scarce hosted macOS runner 8 minutes longer than before #3910. After a failed WebView suite, the executed check only added a second red step or a JSON read error.
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: step timeouts and conditions are repository CI configuration.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: the `macos-combined` job's `timeout-minutes` lines and the WebView executed-check condition.
+
+## 2026-10-21 - One macOS runner executes all five CI suites (senpi#3130)
+
+### What changed
+
+- `.github/workflows/ci.yml`: `macos-combined` replaces the macOS legs of WebView, process kernel, RPC supervisor exit, terminal tools and Inspector handoff. One pinned checkout/toolchain setup, install and workspace build serve independent suite steps with their own temp snapshots/checks, execution assertions, diagnostics and timeouts. The required `Check and test` fan-in includes the combined job; Linux and Windows matrix legs stay unchanged.
+
+### Why
+
+- `.github/workflows/ci.yml`: five macOS jobs per head saturate the hosted runner quota. Combining them reduces the CI workflow to one macOS job without skipping coverage. Process kernel, terminal tools and Inspector handoff on macOS intentionally become required through the combined job; their remaining matrix legs are not added to the fan-in. WebView runs last because stopped/killed Chrome tests can wedge hosted macOS runners (#2290).
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: runner allocation and required-status wiring are repository CI configuration.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: the five OS matrices, combined job and `check-and-test` needs/summary lists.
+
 ## 2026-10-19 - CI runs the tool child's Job Object containment tests on Windows (senpi#3566)
 
 ### What changed
