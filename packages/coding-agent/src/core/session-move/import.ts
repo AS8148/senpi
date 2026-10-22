@@ -86,7 +86,10 @@ export async function importMovedSession(
 	const targetCwd = resolvePath(options.targetCwd);
 	const sessionDir = options.sessionDir ? normalizePath(options.sessionDir) : getDefaultSessionDir(targetCwd);
 	const target = join(sessionDir, manifest.sessionFileName);
-	if (existsSync(target) && movedInFor(target, manifest.moveId)) {
+	// Once this move's file landed (an overlapping import may land it at any await below), the move records no failure:
+	// only its `accepted` write can have been lost, so it stays receiving and a re-run accepts it.
+	const landed = () => existsSync(target) && movedInFor(target, manifest.moveId);
+	if (landed()) {
 		// The rename already committed; a crash or a failed write may have lost `accepted`, and the file is the authority.
 		await options.ledger.accept(manifest.moveId);
 		return { sessionFile: target };
@@ -94,12 +97,13 @@ export async function importMovedSession(
 	try {
 		await verifyBundle(options.bundleDir, manifest);
 	} catch (error) {
-		if (error instanceof MoveBundleInvalidError) await options.ledger.fail(manifest.moveId, "bundle_invalid");
+		if (error instanceof MoveBundleInvalidError && !landed())
+			await options.ledger.fail(manifest.moveId, "bundle_invalid");
 		throw error;
 	}
 	const read = options.readIdentity ?? readRepositoryIdentity;
 	if (compareRepositoryIdentities(manifest.repository, await read(targetCwd)) !== "same") {
-		await options.ledger.decline(manifest.moveId, "repository");
+		if (!landed()) await options.ledger.decline(manifest.moveId, "repository");
 		throw new MoveRefusedError(targetCwd, manifest.sourceCwd);
 	}
 	await options.ledger.beginReceive(manifest.moveId);
@@ -115,9 +119,7 @@ export async function importMovedSession(
 		rmSync(staging, { recursive: true, force: true });
 		return { sessionFile };
 	} catch (error) {
-		// A landed file means only the `accepted` write was lost: the move stays receiving so a re-run can accept it.
-		const landed = existsSync(target) && movedInFor(target, manifest.moveId);
-		if (!(error instanceof MoveFencedError) && !landed)
+		if (!(error instanceof MoveFencedError) && !landed())
 			await options.ledger.fail(
 				manifest.moveId,
 				error instanceof MoveBundleInvalidError ? "bundle_invalid" : "import_failed",

@@ -170,8 +170,10 @@ export class MoveLedger {
 	/**
 	 * Records accepted for a move whose session file already landed here (it records `session_moved_in` for this move):
 	 * the file is the authority. A lost `accepted` write leaves `receiving` (the import records no failure once the file
-	 * landed), and a lost ledger leaves no record; both become accepted. Every other answer a sender may have heard
-	 * (`declined`, `failed`) and an unreceived `ready` are refused, so an answer never changes once given.
+	 * landed), which becomes accepted. A lost ledger leaves no record, which becomes accepted only if the import is re-run
+	 * before anyone asks: a `status` without the session path fences a missing record as `declined/no_record` first.
+	 * Every answer a sender may have heard (`declined`, `failed`) and an unreceived `ready` are refused, so an answer never
+	 * changes once given.
 	 */
 	accept(moveId: MoveId): Promise<void> {
 		return this.locked(moveId, async () => {
