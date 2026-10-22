@@ -4,6 +4,7 @@ import type { AgentSession } from "../../core/agent-session.ts";
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { detachConnection } from "./connection-detach.ts";
 import { buildRpcSessionState } from "./connection-handler.ts";
+import { CONNECTION_ROLE_FIXED, ConnectionRoles, roleConnection } from "./connection-roles.ts";
 import { answerEffectFromTranscript } from "./effect-commands.ts";
 import { latestSessionEffect } from "./effect-ledger.ts";
 import { multiSessionHostCapabilities } from "./host-capabilities.ts";
@@ -41,6 +42,7 @@ import { readDrainVerdicts } from "./session-drain.ts";
 import { drainSessionEffects, installSessionEffectSink } from "./session-effect-status.ts";
 import type { SessionEventWriter } from "./session-event-writer.ts";
 import { dispatchSessionBinding, sessionHeldCheck } from "./session-held.ts";
+import { moveSession } from "./session-move-commands.ts";
 import type { OpenRpcSession, RpcSessionLaunchProfile, RpcSessionRegistry } from "./session-registry.ts";
 import { RpcSessionRegistryError } from "./session-registry.ts";
 import { releaseSession } from "./session-release.ts";
@@ -144,12 +146,13 @@ export class SessionCommandRouter {
 		RpcSessionRegistry,
 		"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size" | "warm"
 	> &
-		Partial<Pick<RpcSessionRegistry, "holderPids">>;
+		Partial<Pick<RpcSessionRegistry, "holderPids" | "agentDir">>;
 	private readonly writer: SessionEventWriter;
 	private readonly defaults: RpcHostSessionDefaults;
 	private readonly createBinding: typeof createRpcSessionBinding;
 	private readonly connectionOptions: Parameters<typeof createRpcSessionBinding>[4];
 	private readonly pendingCapabilities = new Map<string, string[]>();
+	private readonly connectionRoles = new ConnectionRoles();
 	private readonly finalizations = new Map<string, { promise: Promise<void>; resolve: () => void }>();
 	private readonly idleNow: () => number;
 	private readonly idleEvictionMs: number;
@@ -181,7 +184,7 @@ export class SessionCommandRouter {
 			RpcSessionRegistry,
 			"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size" | "warm"
 		> &
-			Partial<Pick<RpcSessionRegistry, "holderPids">>,
+			Partial<Pick<RpcSessionRegistry, "holderPids" | "agentDir">>,
 		writer: SessionEventWriter,
 		defaults: RpcHostSessionDefaults,
 		createBinding: typeof createRpcSessionBinding = createRpcSessionBinding,
@@ -426,6 +429,23 @@ export class SessionCommandRouter {
 				},
 				command,
 			);
+		if (command.type === "move_session") {
+			const agentDir = this.registry.agentDir;
+			if (agentDir === undefined)
+				return error(
+					command.id,
+					command.type,
+					"move_unsupported: this host keeps no agent directory to move sessions in",
+				);
+			return moveSession(
+				{
+					agentDir,
+					hostedPaths: () =>
+						this.registry.list().flatMap((row) => (row.sessionPath === undefined ? [] : [row.sessionPath])),
+				},
+				command,
+			);
+		}
 		if (command.type === "unload_session") {
 			const caller = this.writer.currentConnection();
 			return unloadSession(
@@ -459,6 +479,17 @@ export class SessionCommandRouter {
 		}
 		if (command.type === "set_client_info" && !command.sessionId) {
 			const connection = this.writer.currentConnection();
+			if (
+				command.capabilities !== undefined &&
+				!this.connectionRoles.declare(roleConnection(connection), command.capabilities)
+			)
+				return {
+					id: command.id,
+					type: "response",
+					command: "set_client_info",
+					success: false,
+					error: CONNECTION_ROLE_FIXED,
+				} as RpcResponse;
 			if (connection !== undefined) {
 				this.pendingCapabilities.set(connection, command.capabilities ?? []);
 				this.writer.setConnectionCapabilities(connection, command.capabilities ?? []);
@@ -966,6 +997,7 @@ export class SessionCommandRouter {
 								owner !== undefined
 									? (this.pendingCapabilities.get(owner) ?? this.connectionOptions?.capabilities ?? [])
 									: this.connectionOptions?.capabilities,
+							connectionRoles: this.connectionRoles,
 							clientInfo: {
 								setCapabilities: (connectionId, capabilities) => {
 									if (connectionId !== undefined) {
@@ -1066,6 +1098,7 @@ export class SessionCommandRouter {
 	async releaseConnection(connectionId: string): Promise<string[]> {
 		this.releasedConnections.add(connectionId);
 		this.writer.clearConnectionCapabilities(connectionId);
+		this.connectionRoles.release(connectionId);
 		for (const sessionId of this.sessionsByConnection.get(connectionId)?.keys() ?? [])
 			this.writer.detachConnectionFromSession(connectionId, sessionId);
 		const opens = this.opensByConnection.get(connectionId);
