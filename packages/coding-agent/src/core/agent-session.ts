@@ -1253,10 +1253,8 @@ type SummarizationRequestAuth = {
 	thinkingLevel: ThinkingLevel;
 };
 
-function isHumanInput(
-	options: { readonly source?: InputSource; readonly inputOrigin?: InputOrigin } | undefined,
-): boolean {
-	return originOf(options) === "person";
+function isHumanInput(options: { source?: InputSource } | undefined): boolean {
+	return inputOriginOf(options?.source) === "person";
 }
 
 function promptKind(options: PromptOptions | undefined): HumanInputAdmittedEvent["kind"] {
