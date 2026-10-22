@@ -10,6 +10,11 @@
 - `test/ttsr/detector-control-leak-markup-collisions.test.ts` (RED 3 failed before the change): nested strikethrough, nested mask and the fenced mask example stay silent across every split; closers beyond the opened markup still fire.
 - Contract change: `detector-control-leak.test.ts` B-P9 used an opening `<s>` run as its start-context positive; it now uses `<bos>`.
 
+### Review follow-up (senpi#3973)
+- A repeated closer is never exempt: only a quoted `</mask>` is a documented example, so a fenced `</s>` loop fires at the quotation threshold (8).
+- Opener credit is bounded. It expires after `EVIDENCE_TTL_CHARS`, it is not granted to openers inside quotation, and a whitespace-only run of openers grants one credit, not one per opener.
+- Tests (RED 4 failed on the previous head): a fenced `</s>` loop fires; a single fenced `</s>` stays silent; an unclosed strikethrough, a fenced opener, and a run of leaked openers do not hide a later `</s>` run.
+
 ### Paths
 - `packages/coding-agent/src/core/extensions/builtin/ttsr/detectors/control-leak.ts`
 

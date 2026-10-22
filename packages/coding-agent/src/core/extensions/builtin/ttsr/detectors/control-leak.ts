@@ -15,11 +15,13 @@ const NO_PAYLOAD_OFFSET = -1;
 
 /**
  * Special-token names that are also ordinary markup elements: HTML `<s>` (strikethrough) and SVG
- * `<mask>`. Their opening form is markup, a closing form that closes an earlier opening is markup,
- * and a closing form quoted in a fence or quotation is a documented example; only an unmatched,
- * unquoted closing form (a leaked `</s>` EOS run) stays a leak candidate (senpi#3880).
+ * `<mask>`. Their opening form is markup. A closing form that closes a recent opening (within
+ * EVIDENCE_TTL_CHARS, opened outside quotation, not one of a whitespace-only run of openers) is
+ * markup. A quoted `</mask>` is a documented example. Every other closing form counts, so a leaked
+ * `</s>` EOS run fires in prose and, at the quotation threshold, inside a fence (senpi#3880).
  */
 const MARKUP_COLLIDING_SGML_NAMES: ReadonlySet<string> = new Set(["s", "mask"]);
+const QUOTED_EXAMPLE_SGML_NAMES: ReadonlySet<string> = new Set(["mask"]);
 
 export interface PendingControlEvidence {
 	readonly tokenId: string;
@@ -50,7 +52,8 @@ export interface ControlLeakState {
 	pendingEvidence: PendingControlEvidence | undefined;
 	latched: DetectorMatch | null;
 	currentOffset: number;
-	openMarkup: Map<string, number>;
+	openMarkup: Map<string, number[]>;
+	markupRunTokenId: string | null;
 }
 
 function thresholdFor(context: LeakContextKind): number {
@@ -81,6 +84,7 @@ function processGround(state: ControlLeakState, value: string, offset: number): 
 		}
 	} else {
 		state.whitespaceOnlySinceToken = false;
+		state.markupRunTokenId = null;
 		noteNonWhitespace(state, offset);
 	}
 	state.tracker.observeGround(value);
@@ -88,6 +92,7 @@ function processGround(state: ControlLeakState, value: string, offset: number): 
 
 function processReject(state: ControlLeakState, text: string, startOffset: number): void {
 	state.whitespaceOnlySinceToken = false;
+	state.markupRunTokenId = null;
 	noteNonWhitespace(state, startOffset);
 	state.tracker.observeText(text);
 }
@@ -101,24 +106,31 @@ function isCollidingMarkup(state: ControlLeakState, token: ControlToken, context
 	if (!MARKUP_COLLIDING_SGML_NAMES.has(name)) {
 		return false;
 	}
-	const open = state.openMarkup.get(name) ?? 0;
+	const credits = (state.openMarkup.get(name) ?? []).filter((end) => token.startOffset - end <= EVIDENCE_TTL_CHARS);
+	state.openMarkup.set(name, credits);
 	if (!closing) {
-		state.openMarkup.set(name, open + 1);
+		if (context !== "quotation" && state.markupRunTokenId !== token.tokenId) {
+			credits.push(token.endOffset);
+		}
+		state.markupRunTokenId = token.tokenId;
 		return true;
 	}
-	if (open > 0) {
-		state.openMarkup.set(name, open - 1);
+	if (credits.length > 0) {
+		credits.pop();
 		return true;
 	}
-	return context === "quotation";
+	return context === "quotation" && QUOTED_EXAMPLE_SGML_NAMES.has(name);
 }
 
 function processToken(state: ControlLeakState, token: ControlToken): void {
 	const context = state.tracker.classify(token.startOffset);
 	if (isCollidingMarkup(state, token, context)) {
+		const runTokenId = state.markupRunTokenId;
 		processReject(state, token.text, token.startOffset);
+		state.markupRunTokenId = runTokenId;
 		return;
 	}
+	state.markupRunTokenId = null;
 	noteNonWhitespace(state, token.startOffset);
 	const run = state.run;
 	if (
@@ -197,6 +209,7 @@ export function createControlLeakDetector(): StreamDetector<ControlLeakState> {
 			latched: null,
 			currentOffset: 0,
 			openMarkup: new Map(),
+			markupRunTokenId: null,
 		}),
 		checkDelta: (state: ControlLeakState, delta: string, ctx: DetectorContext) => {
 			if (state.latched !== null) {
