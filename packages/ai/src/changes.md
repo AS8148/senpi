@@ -1,3 +1,21 @@
+## 2026-10-21 - AssistantMessage.failureSource (senpi#3866)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `AssistantMessage` gains optional `failureSource?: "local"`.
+
+### Why
+
+- A run can fail in local code (the session's pending-input journal, a local file) with no provider request involved. The agent marks that failure so a session never retries the model or walks the fallback chain on it (omo#10781).
+
+### Why an extension could not handle it
+
+- `AssistantMessage` is the public message contract in `pi-ai`.
+
+### Expected merge conflict zones
+
+- LOW: after `abortSource` in `AssistantMessage` in `packages/ai/src/types.ts`.
+
 ## 2026-10-18 - AnthropicMessagesCompat.supportsGzipRequestBody (senpi#3643)
 
 ### What changed
@@ -35,6 +53,26 @@ The map is private to `pi-ai`; a consumer can only enumerate it through an expor
 ### Expected merge conflict zones
 
 - `packages/ai/src/env-api-keys.ts`: the map moved out of `getApiKeyEnvVars`, and the two exports sit above it.
+
+## 2026-10-16 - Image generation results carry the provider diagnostic (omo#10285)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `AssistantImages` gains optional `providerDiagnostic`, the same bounded classification `AssistantMessage` already carries.
+- `packages/ai/src/api/openai-images.ts`: the SDK images call runs inside `awaitProviderTransport` with `openAICompatibleProviderDiagnosticFromError`, as the chat adapters' calls do, and a failed request sets `providerDiagnostic` from `readProviderDiagnostic(error)`.
+
+### Why
+
+The coding agent's `generate_image` tool needs the HTTP status of a rejected images request (404/405 means the provider has no images endpoint) to move past such a gateway. Reading it from the formatted `errorMessage` would be guessing from prose.
+
+### Why an extension could not handle it
+
+`AssistantImages` is the `pi-ai` result type; only the adapter that made the request sees the SDK error.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/types.ts`: the `AssistantImages` field list, beside `errorMessage`.
+- `packages/ai/src/api/openai-images.ts`: the request callback and the `catch` block of `generateImages`.
 
 ## 2026-10-15 - ProviderDiagnostic gains the network category and structured_transport evidence (senpi#3228)
 

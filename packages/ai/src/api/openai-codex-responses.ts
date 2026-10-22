@@ -6,6 +6,7 @@ import type {
 	ResponseInput,
 	ResponseStreamEvent,
 } from "openai/resources/responses/responses.js";
+import { readProviderDiagnostic } from "../provider-diagnostic.ts";
 import { getWireIdentity } from "../wire-identity.ts";
 
 type ProcessWithOsBuiltinModule = typeof process & {
@@ -47,6 +48,8 @@ import { formatProviderError, normalizeProviderError } from "../utils/error-body
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
+import { attachProviderDiagnostic } from "../utils/provider-diagnostic-carrier.ts";
+import { transportProviderDiagnosticFromError } from "../utils/provider-diagnostic-sources.ts";
 import { appendRetryAfterMsMarker, extract429RetryAfterMs } from "../utils/retry-hint.ts";
 import { getSystemMessageText } from "../utils/text.ts";
 import { getDeclaredTools, getInitialSystemMessage, normalizeContext, resolveTranscript } from "../utils/transcript.ts";
@@ -63,8 +66,16 @@ import {
 	recordWebSocketSseFallback,
 	recordWebSocketSuccess,
 } from "./openai-codex-responses/fallback-state.ts";
+import {
+	codexEventProviderDiagnostic,
+	codexHttpProviderDiagnostic,
+} from "./openai-codex-responses/provider-diagnostic.ts";
 import { buildCodexReasoning, type CodexReasoningSummaryInput } from "./openai-codex-responses/reasoning.ts";
-import { applyChatGptSubscriptionCacheAffinityHeaders, clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
+import {
+	applyChatGptSubscriptionCacheAffinityHeaders,
+	clampOpenAIPromptCacheKey,
+	deriveOpenAIPromptCacheKey,
+} from "./openai-prompt-cache.ts";
 import {
 	convertResponsesMessages,
 	convertResponsesTools,
@@ -288,7 +299,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			);
 			const cacheSessionId = options?.cacheRetention === "none" ? undefined : options?.sessionId;
 			const codexSessionId = clampOpenAIPromptCacheKey(cacheSessionId);
-			let body = buildRequestBody(model, normalizedContext, options, codexSessionId, grammarToolInputProperties);
+			let body = buildRequestBody(model, normalizedContext, options, grammarToolInputProperties);
 			const nextBody = await options?.onPayload?.(body, model);
 			if (nextBody !== undefined) {
 				body = nextBody as RequestBody;
@@ -481,7 +492,10 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 							errorMessage = appendRetryAfterMsMarker(errorMessage, hintMs);
 						}
 					}
-					throw new Error(errorMessage);
+					throw attachProviderDiagnostic(
+						new Error(errorMessage),
+						codexHttpProviderDiagnostic(response.status, errorText),
+					);
 				} catch (error) {
 					if (error instanceof Error) {
 						if (error.name === "AbortError" || error.message === "Request was aborted") {
@@ -532,6 +546,11 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = formatProviderError(normalizeProviderError(error));
+			const providerDiagnostic =
+				output.stopReason === "error"
+					? (readProviderDiagnostic(error) ?? transportProviderDiagnosticFromError(error))
+					: undefined;
+			if (providerDiagnostic !== undefined) output.providerDiagnostic = providerDiagnostic;
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
@@ -577,7 +596,6 @@ function buildRequestBody(
 	model: Model<"openai-codex-responses">,
 	context: TranscriptContext,
 	options: OpenAICodexResponsesOptions | undefined,
-	cacheSessionId: string | undefined,
 	grammarToolInputProperties: ReadonlyMap<string, string> = createGrammarToolInputProperties(
 		getDeclaredTools(context.messages),
 		model.compat?.supportsOpenAIGrammarTools ?? false,
@@ -622,7 +640,7 @@ function buildRequestBody(
 		input: messages,
 		text: { verbosity: options?.textVerbosity || "low" },
 		include: ["reasoning.encrypted_content"],
-		prompt_cache_key: cacheSessionId,
+		prompt_cache_key: options?.cacheRetention === "none" ? undefined : deriveOpenAIPromptCacheKey(model.id, context),
 		tool_choice: options?.toolChoice ?? "auto",
 		parallel_tool_calls: true,
 	};
@@ -855,21 +873,26 @@ async function* mapCodexEvents(
 			if (hintMs !== undefined) {
 				errorText = appendRetryAfterMsMarker(errorText, hintMs);
 			}
-			throw new CodexApiError(errorText, {
-				code: code || undefined,
-				payload: event,
-			});
+			throw attachProviderDiagnostic(
+				new CodexApiError(errorText, { code: code || undefined, payload: event }),
+				codexEventProviderDiagnostic(event),
+			);
 		}
 
 		if (type === "response.failed") {
 			const code = getCodexEventErrorCode(event);
 			const message = getCodexEventErrorMessage(event);
-			let errorText = message || "Codex response failed";
+			let errorText =
+				describeChatGptUsageLimitEvent({ ...event, error: getCodexEventError(event) }) ??
+				(message || "Codex response failed");
 			const hintMs = extract429RetryAfterMs({ bodyText: JSON.stringify(event) });
 			if (hintMs !== undefined) {
 				errorText = appendRetryAfterMsMarker(errorText, hintMs);
 			}
-			throw new CodexApiError(errorText, { code, payload: event });
+			throw attachProviderDiagnostic(
+				new CodexApiError(errorText, { code, payload: event }),
+				codexEventProviderDiagnostic(event),
+			);
 		}
 
 		if (type === "response.done" || type === "response.completed" || type === "response.incomplete") {

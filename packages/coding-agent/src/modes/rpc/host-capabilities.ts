@@ -1,10 +1,15 @@
-import { type ToolRuntimeKind, toolRuntimeCapability } from "../../cli/tool-runtime.ts";
+import {
+	isHostOwnedToolRuntimeCapability,
+	type ToolRuntimeKind,
+	toolRuntimeCapabilities,
+} from "../../cli/tool-runtime.ts";
 import {
 	ACCEPT_EDITS_PERMISSION_PRESET_CAPABILITY,
 	AUTO_PERMISSION_PRESET_CAPABILITY,
 } from "../../core/extensions/builtin/permission-system/config.ts";
 import { DURABLE_CLIENT_MESSAGE_ID_CAPABILITY } from "./client-admission-record.ts";
 import {
+	ATTENDED_CAPABILITY,
 	AUTH_KEY_VERIFY_CAPABILITY,
 	AUTO_TITLE_PER_SESSION_CAPABILITY,
 	AUTO_TITLE_SESSIONS_CAPABILITY,
@@ -18,6 +23,7 @@ import {
 	PROMPT_SURFACE_CAPABILITY,
 	PROMPT_SURFACE_CHAT_CAPABILITY,
 	QUEUED_MESSAGE_REVISION_CAPABILITY,
+	RESUME_SESSION_CAPABILITY,
 	RETAIN_ON_DISCONNECT_CAPABILITY,
 	RETRY_FALLBACK_PROFILE_CAPABILITY,
 	SESSION_CONTEXT_CAPABILITY,
@@ -66,6 +72,8 @@ export function multiSessionHostCapabilities(options: {
 			QUEUED_MESSAGE_REVISION_CAPABILITY,
 			// Both shared runtimes dispatch through the active session-writing holder guard.
 			SESSION_HELD_CAPABILITY,
+			RESUME_SESSION_CAPABILITY,
+			ATTENDED_CAPABILITY,
 			// Host capabilities, not client opt-ins: only a multi-session host owns the
 			// attachment refcount `open_session.retain_on_disconnect` detaches from, the
 			// per-session launch profile `context`/`auto_title` travel on, and the session
@@ -98,8 +106,9 @@ export function multiSessionHostCapabilities(options: {
 			AUTO_PERMISSION_PRESET_CAPABILITY,
 			// Only an in-process runtime shares the loop a warm loads into (senpi#2314).
 			...(options.warm ? [WARM_CAPABILITY] : []),
-			toolRuntimeCapability(options.toolRuntime),
-			...options.negotiated,
+			...toolRuntimeCapabilities(options.toolRuntime),
+			// The host alone says where tool work runs; a negotiated copy would make two answers.
+			...options.negotiated.filter((capability) => !isHostOwnedToolRuntimeCapability(capability)),
 		]),
 	];
 }

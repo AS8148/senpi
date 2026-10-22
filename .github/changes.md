@@ -1,3 +1,39 @@
+## 2026-10-21 - One macOS runner executes all five CI suites (senpi#3130)
+
+### What changed
+
+- `.github/workflows/ci.yml`: `macos-combined` replaces the macOS legs of WebView, process kernel, RPC supervisor exit, terminal tools and Inspector handoff. One pinned checkout/toolchain setup, install and workspace build serve independent suite steps with their own temp snapshots/checks, execution assertions, diagnostics and timeouts. The required `Check and test` fan-in includes the combined job; Linux and Windows matrix legs stay unchanged.
+
+### Why
+
+- `.github/workflows/ci.yml`: five macOS jobs per head saturate the hosted runner quota. Combining them reduces the CI workflow to one macOS job without skipping coverage. Process kernel, terminal tools and Inspector handoff on macOS intentionally become required through the combined job; their remaining matrix legs are not added to the fan-in. WebView runs last because stopped/killed Chrome tests can wedge hosted macOS runners (#2290).
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: runner allocation and required-status wiring are repository CI configuration.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: the five OS matrices, combined job and `check-and-test` needs/summary lists.
+
+## 2026-10-19 - CI runs the tool child's Job Object containment tests on Windows (senpi#3566)
+
+### What changed
+
+- `.github/workflows/ci.yml`: a `tool-child-windows` job (`Tool child Job Object (Windows)`, `windows-latest`, Bun `1.4.3`) runs the tool child's Windows containment tests (`windows-job.win32.test.ts`, `launch-barrier.win32.test.ts`, `child-containment.test.ts`, `windows-breakaway.test.ts`, `windows-command-line.test.ts`) under Bun between the OS-temp snapshot and check steps. A follow-up step fails the job unless both real-kernel files executed and every test in them passed, because a suite that skips itself exits 0. The job is listed in the `Check and test` fan-in.
+
+### Why
+
+- The tool child holds every command it launches in a Windows Job Object through `bun:ffi` calls into kernel32. Those tests skip themselves under Node and on other platforms, so no existing job ran them against the real kernel.
+
+### Why an extension could not handle it
+
+- CI jobs are repository workflow configuration.
+
+### Expected merge conflict zones
+
+- LOW: the new job block and the `Check and test` `needs` list.
+
 ## 2026-10-18 - CI runs the main-screen wheel and ask-user hint tests on Windows (senpi#3604)
 
 ### What changed

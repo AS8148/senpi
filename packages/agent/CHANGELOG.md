@@ -6,9 +6,61 @@
 
 ### Added
 
+- A run that fails on an error from the `queuedInputPort` (`claim`, `release`, `commitConsumption`) ends with a failure message marked `failureSource: "local"`, so callers can tell a local failure from a provider one ([#3866](https://github.com/code-yeongyu/senpi/issues/3866)).
+
 ### Changed
 
 ### Fixed
+
+### Removed
+
+## [2026.10.21-1] - 2026-10-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.20-1] - 2026-10-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.19-2] - 2026-10-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.19-1] - 2026-10-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- The `pico3` harness bash tool no longer SIGKILLs its own process group when a run is aborted after `bash` failed to start (Node < 24.22 / 26.10 signals the caller's group for a child without a pid) ([#3706](https://github.com/code-yeongyu/senpi/issues/3706)).
 
 ### Removed
 

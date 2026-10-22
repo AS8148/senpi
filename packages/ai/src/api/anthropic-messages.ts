@@ -100,6 +100,7 @@ import {
 	isAnthropicWebSearchReplayBlock,
 	isReplayableAnthropicProviderNativeBlock,
 } from "./anthropic-native-replay-blocks.ts";
+import { logAnthropicRequestShape } from "./anthropic-request-shape-log.ts";
 import { sanitizeAnthropicToolPairs } from "./anthropic-tool-pairs.ts";
 import { demoteToolReferenceReplay, demoteUnavailableToolReferences } from "./anthropic-tool-references.ts";
 import {
@@ -171,7 +172,7 @@ function getCacheControl(
 // The bundled Claude Code version and the floor of the advertised `claude-cli/<version>`
 // (see utils/claude-code-version.ts). Keep this exact declaration: a downstream installer
 // (oh-my-openagent) rewrites it byte-for-byte in the installed dist and bundle.
-const claudeCodeVersion = "2.1.296";
+const claudeCodeVersion = "2.1.306";
 
 // Claude Code 2.x tool names (canonical casing)
 // Source: https://cchistory.mariozechner.at/data/prompts-2.1.11.md
@@ -1456,11 +1457,14 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					maxRetries: 0,
 					...(payloadRequestMetadata.headers ? { headers: payloadRequestMetadata.headers } : {}),
 				};
-				const send = (body: MessageCreateParamsStreaming) =>
-					awaitProviderTransport(
+				// Logged before the call: the SDK throws on a non-2xx, and a rejected attempt is the one worth rebuilding.
+				const send = (body: MessageCreateParamsStreaming) => {
+					logAnthropicRequestShape(model, body);
+					return awaitProviderTransport(
 						() => client.beta.messages.create({ ...body, stream: true }, requestOptions).asResponse(),
 						anthropicProviderDiagnosticFromError,
 					);
+				};
 				const sent = await sendWithForcedToolChoiceFallback({
 					target: model,
 					params,

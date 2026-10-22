@@ -1,4 +1,8 @@
-import { type ToolRuntimeKind, toolRuntimeCapability } from "../../cli/tool-runtime.ts";
+import {
+	isHostOwnedToolRuntimeCapability,
+	type ToolRuntimeKind,
+	toolRuntimeCapabilities,
+} from "../../cli/tool-runtime.ts";
 import { messagePathProjectRoot, resolveMessagePath } from "../../core/message-path-resolution.ts";
 import { clientFacingIdentity } from "./client-admission-record.ts";
 /**
@@ -75,6 +79,7 @@ import {
 	MEDIA_PLACEHOLDERS_CAPABILITY,
 	QUESTION_CAPABILITY,
 	QUEUED_MESSAGE_REVISION_CAPABILITY,
+	RESUME_SESSION_CAPABILITY,
 	RETRY_FALLBACK_COMMAND_CAPABILITY,
 	SESSION_HELD_CAPABILITY,
 } from "./custom-capability.ts";
@@ -133,7 +138,7 @@ import {
 	STEER_WHEN_IDLE_CAPABILITY,
 } from "./rpc-types.ts";
 import { availableModelsData, interruptRunningTurn } from "./session-control-actions-data.ts";
-import { SessionExtensionUiRequests } from "./session-extension-ui-requests.ts";
+import { SessionExtensionUiRequests, sessionDialogRequests } from "./session-extension-ui-requests.ts";
 import { subscribeSessionRecords } from "./session-record-stream.ts";
 
 export { buildRpcSessionState } from "./rpc-session-state.ts";
@@ -201,8 +206,11 @@ export interface RpcConnectionHandler {
 	isShutdownRequested(): boolean;
 	/** Cancel UI requests that can no longer be answered by this connection. */
 	cancelPendingExtensionUiRequests(): void;
-	/** Tear down subscriptions and dispose the runtime. Never calls process.exit. */
-	dispose(): Promise<void>;
+	/**
+	 * Tear down subscriptions and dispose the runtime. Never calls process.exit; `processExit` tells the runtime the
+	 * caller exits right after (senpi#3711).
+	 */
+	dispose(options?: { readonly processExit?: boolean }): Promise<void>;
 }
 
 /** The tool call a dialog is about, as wire fields (absent when the dialog is not a permission request). */
@@ -455,6 +463,7 @@ export function createRpcConnectionHandler(
 
 	// Pending extension UI requests waiting for response
 	const pendingExtensionRequests = new SessionExtensionUiRequests();
+	sessionDialogRequests.set(session, pendingExtensionRequests);
 	const questions = new ConnectionQuestionBridge(output);
 
 	let shutdownRequested = false;
@@ -498,6 +507,7 @@ export function createRpcConnectionHandler(
 			}
 
 			pendingExtensionRequests.set(id, {
+				frame: { type: "extension_ui_request", id, ...request } as RpcExtensionUIRequest,
 				resolve: (response: RpcExtensionUIResponse) => {
 					cleanup();
 					resolve(parseResponse(response));
@@ -590,6 +600,9 @@ export function createRpcConnectionHandler(
 					widgetKey: key,
 					widgetLines: content as string[] | undefined,
 					widgetPlacement: options?.placement,
+					...(content !== undefined && options?.actions !== undefined && options.actions.length > 0
+						? { widgetActions: options.actions.map(({ label, command }) => ({ label, command })) }
+						: {}),
 				} as RpcExtensionUIRequest);
 			}
 		},
@@ -652,6 +665,7 @@ export function createRpcConnectionHandler(
 			const id = crypto.randomUUID();
 			return new Promise((resolve, reject) => {
 				pendingExtensionRequests.set(id, {
+					frame: { type: "extension_ui_request", id, method: "editor", title, prefill },
 					resolve: (response: RpcExtensionUIResponse) => {
 						if ("cancelled" in response && response.cancelled) {
 							resolve(undefined);
@@ -754,6 +768,7 @@ export function createRpcConnectionHandler(
 		const replacedSession = session !== runtimeHost.session;
 		session = runtimeHost.session;
 		sessionQuestionBridges.set(session, questions);
+		sessionDialogRequests.set(session, pendingExtensionRequests);
 		// Installed before the bind below: extensions register their control endpoint on session_start.
 		sessionControl?.dispose();
 		sessionControl = new HostSessionControl(
@@ -912,9 +927,12 @@ export function createRpcConnectionHandler(
 		const settled = new AbortController();
 		const loginSignal = AbortSignal.any([controller.signal, settled.signal]);
 		activeLogins.set(provider, controller);
+		const authStorage = session.modelRegistry.authStorage;
+		// A replacement left by an earlier login is not this login's; drop it so it is never reported here.
+		authStorage.takeReplacement(provider);
 
 		try {
-			await session.modelRegistry.authStorage.login(provider as OAuthProviderId, {
+			await authStorage.login(provider as OAuthProviderId, {
 				onAuth: (info) => {
 					outputEvent({ type: "auth_login_url", provider, url: info.url });
 				},
@@ -927,7 +945,9 @@ export function createRpcConnectionHandler(
 			});
 			session.modelRegistry.refresh();
 			if (provider === ANTHROPIC_SUBSCRIPTION_PROVIDER_ID) emitProviderAccountsChanged(provider);
-			outputEvent({ type: "auth_login_end", provider, success: true });
+			// The client shows what this login replaced and where the previous credential is (senpi#3486).
+			const replacement = authStorage.takeReplacement(provider);
+			outputEvent({ type: "auth_login_end", provider, success: true, ...replacement });
 		} catch (loginError: unknown) {
 			const message = loginError instanceof Error ? loginError.message : String(loginError);
 			outputEvent({ type: "auth_login_end", provider, success: false, error: message });
@@ -987,10 +1007,14 @@ export function createRpcConnectionHandler(
 								EVAL_CELLS_CAPABILITY,
 								AUTH_KEY_VERIFY_CAPABILITY,
 								QUEUED_MESSAGE_REVISION_CAPABILITY,
+								RESUME_SESSION_CAPABILITY,
 								...(options.retryFallbackCommand ? [RETRY_FALLBACK_COMMAND_CAPABILITY] : []),
-								...(options.toolRuntime ? [toolRuntimeCapability(options.toolRuntime)] : []),
-								// Client flags cannot advertise a host guard this classic binding does not run.
-								...(options.capabilities ?? []).filter((capability) => capability !== SESSION_HELD_CAPABILITY),
+								...(options.toolRuntime ? toolRuntimeCapabilities(options.toolRuntime) : []),
+								// Client flags cannot advertise a host guard this classic binding does not run, nor a tool runtime.
+								...(options.capabilities ?? []).filter(
+									(capability) =>
+										capability !== SESSION_HELD_CAPABILITY && !isHostOwnedToolRuntimeCapability(capability),
+								),
 							]),
 						],
 						mode: "classic",
@@ -1037,6 +1061,25 @@ export function createRpcConnectionHandler(
 					if (err instanceof ContinueFromLeafError) return error(id, command.type, err.message, err.code);
 					throw err;
 				}
+			}
+
+			case "resume_session": {
+				turnRequested = true;
+				const resumed = session.resumeSession();
+				promptCalls.add(resumed);
+				void resumed.then(
+					() => promptCalls.delete(resumed),
+					(err: unknown) => {
+						promptCalls.delete(resumed);
+						output({
+							type: "extension_error",
+							extensionPath: "runtime",
+							event: "resume_session",
+							error: err instanceof Error ? err.message : String(err),
+						});
+					},
+				);
+				return success(id, "resume_session");
 			}
 
 			case "send_custom_message": {
@@ -1769,11 +1812,16 @@ export function createRpcConnectionHandler(
 			}
 
 			case "login_api_key": {
-				session.modelRegistry.authStorage.set(command.provider, { type: "api_key", key: command.key });
+				const replacement = session.modelRegistry.authStorage.set(command.provider, {
+					type: "api_key",
+					key: command.key,
+				});
 				// Answer after the registry sees the key: a client re-reading auth status on this
 				// response must not get the pre-login snapshot (#2384).
 				await session.modelRegistry.refresh();
-				return success(id, "login_api_key");
+				// The client shows what this key replaced and where the previous login is (senpi#3448).
+				session.modelRegistry.authStorage.takeReplacement(command.provider);
+				return success(id, "login_api_key", replacement);
 			}
 
 			case "verify_api_key": {
@@ -1910,7 +1958,7 @@ export function createRpcConnectionHandler(
 					eventOutput.enqueueEvent({ type: "subscription_limits", ...limits }),
 				)
 			: () => {};
-	const dispose = async (): Promise<void> => {
+	const dispose = async (disposeOptions: { readonly processExit?: boolean } = {}): Promise<void> => {
 		stopLimitEvents();
 		sessionControl?.dispose();
 		sessionControl = undefined;
@@ -1926,7 +1974,7 @@ export function createRpcConnectionHandler(
 		unsubscribeLoadedSurfaces = undefined;
 		unsubscribeExtensionEvents = undefined;
 		if (options.disposeRuntime !== false) {
-			await runtimeHost.dispose();
+			await runtimeHost.dispose(disposeOptions);
 		}
 	};
 
@@ -1950,9 +1998,9 @@ export function createRpcConnectionHandler(
 			questions.cancelAll();
 			pendingExtensionRequests.cancelAll();
 		},
-		async dispose() {
+		async dispose(disposeOptions) {
 			await ready;
-			await dispose();
+			await dispose(disposeOptions);
 		},
 	};
 }
