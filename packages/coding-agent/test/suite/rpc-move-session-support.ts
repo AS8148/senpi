@@ -82,14 +82,14 @@ export async function hostAndRelease(rig: Rig, cwd: string, sessionPath: string,
 	return { session, released };
 }
 
-/** Moves the fixture's session from A to B under `moveId` and returns B's imported copy. */
-export async function importedOnB(
+/** B readies the move and A releases and exports the fixture's session for it; returns the bundle folder. */
+export async function exportedForB(
 	a: Rig,
 	b: Rig,
 	fixture: Awaited<ReturnType<typeof devices>>,
 	moveId: string,
 	droppedUserMessages: readonly string[] = [],
-) {
+): Promise<string> {
 	await move(b, { op: "prepare", moveId });
 	await hostAndRelease(a, fixture.repoA, fixture.sessionPath, moveId);
 	const exported = await move(a, {
@@ -99,7 +99,18 @@ export async function importedOnB(
 		target: "device-b",
 		droppedUserMessages,
 	});
-	const bundleDir = (exported.data as { bundle_dir: string }).bundle_dir;
+	return (exported.data as { bundle_dir: string }).bundle_dir;
+}
+
+/** Moves the fixture's session from A to B under `moveId` and returns B's imported copy. */
+export async function importedOnB(
+	a: Rig,
+	b: Rig,
+	fixture: Awaited<ReturnType<typeof devices>>,
+	moveId: string,
+	droppedUserMessages: readonly string[] = [],
+) {
+	const bundleDir = await exportedForB(a, b, fixture, moveId, droppedUserMessages);
 	const imported = await move(b, { op: "import", bundleDir, cwd: fixture.repoB, from: "device-a" });
 	return (imported.data as { session_path: string }).session_path;
 }
