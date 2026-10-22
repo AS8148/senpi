@@ -2030,8 +2030,9 @@ no longer lists it and the handle answers `unknown_session`.
   answered `session_closing`: either its whole turn runs and lands before `session_released`, or it is still
   running at the final check, which then answers `turn_active`. A header write that fails answers `release_failed`
   with `errorData.detail`, and the session stays hosted. A session whose file exists awaits nothing here.
-- While clients are attached (`attachments > 0` - e.g. a Desktop thread) it is refused with `attached` and
-  `errorData { attachments }`; with `force: true` those clients receive
+- It refuses while another client is attached (e.g. a second Desktop window): `attached` with
+  `errorData { attachments }`, the number of OTHER attached clients. The requesting connection does not count: a
+  client attached to the session it releases is drained with it and needs no `force`. With `force: true` the other clients receive
   `session_closed { sessionId, reason: "released", sessionPath }`, which tells them the file is now written
   elsewhere and must NOT be reopened on this host.
 - A draining host answers `host_draining`; a worker-isolate session or one with no file answers
@@ -2100,7 +2101,7 @@ The agent's tool results are typed in `details`: `{ status: "listed", targets }`
 {"type":"relocation_due","moveId":"mv-a1","target":"Studio","reason":"heavy build","sessionId":"rpc-1"}
 ```
 
-It comes after the run's `agent_end`, and only when no new run has started meanwhile; if one has, the notice follows that run's settle instead. At that point `release_session` finds the session quiet. The host then runs the ordinary move: `release_session { reason: "move", moveId, target }` (with `force: true` while its own client is attached), `move_session export`, the transport to the receiver, `import`, `status` and `finish`. The release ends this runtime: `session_released` records `move_id`, `target` and `session_id`, and the thread keeps its id, conversation and queued input (`dropped.user_messages` travels with `export`). A host that decides not to move after `relocation_due` changes nothing; the session stays writable here, and the host should tell the agent (for example with a follow-up prompt). The scheduled move is forgotten when the session closes or its runtime is replaced.
+It comes after the run's `agent_end`, and only when no new run has started meanwhile; if one has, the notice follows that run's settle instead. At that point `release_session` finds the session quiet. The host then runs the ordinary move: `release_session { reason: "move", moveId, target }` from its own attached connection (which does not count as another client, so no `force` is needed; another attached client makes it refuse `attached` and the session stays writable), `move_session export`, the transport to the receiver, `import`, `status` and `finish`. The release ends this runtime: `session_released` records `move_id`, `target` and `session_id`, and the thread keeps its id, conversation and queued input (`dropped.user_messages` travels with `export`). A host that decides not to move after `relocation_due` changes nothing; the session stays writable here, and the host should tell the agent (for example with a follow-up prompt). The scheduled move is forgotten when the session closes or its runtime is replaced.
 
 ### Host self-observation (event-loop stalls and memory pressure)
 

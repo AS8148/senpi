@@ -14,6 +14,8 @@
 
 ### Changed
 
+- `release_session` refuses `attached` only while ANOTHER client is attached; the connection asking for the release no longer counts, so a client can release (or move) the session it shows without `force`. `errorData.attachments` now counts only those other clients ([#3994](https://github.com/code-yeongyu/senpi/pull/3994)).
+
 ### Fixed
 
 - An answer to a question that arrives while a session is starting up now counts as your input, so it releases held background work like any other answer ([#3917](https://github.com/code-yeongyu/senpi/issues/3917)).

@@ -412,7 +412,8 @@ export class SessionCommandRouter {
 			return detachConnection(command, this.writer.currentConnection(), (id) => this.releaseConnection(id));
 		if (command.type === "open_session") return this.openWithBarrier(command);
 		if (command.type === "close_session") return this.close(command);
-		if (command.type === "release_session")
+		if (command.type === "release_session") {
+			const caller = this.writer.currentConnection();
 			return releaseSession(
 				{
 					draining: () => this.draining,
@@ -423,10 +424,12 @@ export class SessionCommandRouter {
 					otherRequests: (sessionId) => Math.max(0, (this.activeRequests.get(sessionId) ?? 1) - 1),
 					otherRequestsSettled: (sessionId) => this.otherRequestsSettled(sessionId),
 					pendingPrompts: (sessionId) => this.bindings.get(sessionId)?.pendingPrompts?.() ?? [],
+					otherAttachments: (sessionId) => this.otherAttachments(sessionId, caller),
 					tearDown: (sessionId, sessionPath) => this.tearDownReleased(sessionId, sessionPath),
 				},
 				command,
 			);
+		}
 		if (command.type === "move_session") {
 			const agentDir = this.registry.agentDir;
 			if (agentDir === undefined)
@@ -456,11 +459,7 @@ export class SessionCommandRouter {
 					otherRequests: (sessionId) => Math.max(0, (this.activeRequests.get(sessionId) ?? 1) - 1),
 					otherRequestsSettled: (sessionId) => this.otherRequestsSettled(sessionId),
 					pendingPrompts: (sessionId) => this.bindings.get(sessionId)?.pendingPrompts?.() ?? [],
-					otherAttachments: (sessionId) => {
-						const attachments = Math.max(0, this.registry.peek(sessionId)?.attachments ?? 0);
-						const own = caller !== undefined && this.sessionsByConnection.get(caller)?.has(sessionId) === true;
-						return own ? Math.max(0, attachments - 1) : attachments;
-					},
+					otherAttachments: (sessionId) => this.otherAttachments(sessionId, caller),
 					openChildSessions: (durableSessionId) =>
 						this.registry
 							.list()
@@ -737,6 +736,13 @@ export class SessionCommandRouter {
 		else await this.finalizations.get(sessionId)?.promise;
 		this.writer.forgetSession(sessionId);
 		return true;
+	}
+
+	/** Attachments of the session other than `caller`'s own: an unload or release never counts its requester. */
+	private otherAttachments(sessionId: string, caller: string | undefined): number {
+		const attachments = Math.max(0, this.registry.peek(sessionId)?.attachments ?? 0);
+		const own = caller !== undefined && this.sessionsByConnection.get(caller)?.has(sessionId) === true;
+		return own ? Math.max(0, attachments - 1) : attachments;
 	}
 
 	/** Drops per-connection records for a handle the host closed on its own. */

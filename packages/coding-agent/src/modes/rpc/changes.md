@@ -3,6 +3,7 @@
 ### What changed
 
 - `packages/coding-agent/src/modes/rpc/rpc-types.ts`: adds `RpcHostRequest` (outbound `host_request`, methods `list_relocation_targets` and `relocate_session`), `RpcHostResponse` (inbound `host_response`, added to `RpcInboundRecord`) and `RpcRelocationDueEvent` (`relocation_due`). The behavior lives in `session-relocation.ts` (new), wired from `connection-handler.ts`; capability `session_relocation` (`custom-capability.ts`, `host-capabilities.ts`); `host_response` is a control frame in `session-held.ts` and allowed while closing in `session-registry.ts`; docs/rpc.md "Continuing a session on another computer".
+- `packages/coding-agent/src/modes/rpc/session-release.ts`, `packages/coding-agent/src/modes/rpc/session-command-router.ts`: the `attached` refusal of `release_session` counts only clients OTHER than the requesting connection (`SessionReleasePort.otherAttachments`, the rule `unload_session` already used), so the host that runs a relocation from its attached connection releases with no `force`.
 
 ### Why
 

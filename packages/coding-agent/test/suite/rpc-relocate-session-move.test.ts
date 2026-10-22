@@ -45,11 +45,21 @@ async function relocatedTurn() {
 	]);
 	const opened = await host.open("relocating");
 	expect(await host.attach(opened.sessionPath, DESKTOP)).toMatchObject({ success: true });
-	await host.send({ type: "prompt", id: "work", sessionId: opened.sessionId, message: "run the heavy build" }, DESKTOP);
+	await host.send(
+		{ type: "prompt", id: "work", sessionId: opened.sessionId, message: "run the heavy build" },
+		DESKTOP,
+	);
 	const notice = await dueSeen;
 	const release = () =>
 		host.send(
-			{ type: "release_session", id: "rel", sessionId: opened.sessionId, reason: "move", moveId: "mv-a1", target: "Studio" },
+			{
+				type: "release_session",
+				id: "rel",
+				sessionId: opened.sessionId,
+				reason: "move",
+				moveId: "mv-a1",
+				target: "Studio",
+			},
 			DESKTOP,
 		);
 	return { host, notice, release, ...opened };
