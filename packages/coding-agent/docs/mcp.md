@@ -59,20 +59,23 @@ HTTP(S) endpoint for `type:"http"` servers (Streamable HTTP with SSE fallback).
 Executable for `type:"stdio"` servers. Never passed through a shell.
 
 ### `args`
-Argument array for `command`. Default `[]`.
+Argument array for `command`. Default `[]`. An entry may be a
+[reference object](#reference-objects).
 
 ### `env`
 Extra environment variables for the child process. Values support `${VAR}`
 expansion from the trusted parent environment. The child does not inherit your
 whole environment: it sees only `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`
 and `USER` (on Windows, the system path and profile variables) plus `env`,
-so pass every variable the server reads through `env`.
+so pass every variable the server reads through `env`. A value may also be a
+[reference object](#reference-objects).
 
 ### `cwd`
 Working directory for the child process. Default: the session cwd.
 
 ### `headers`
-Extra HTTP headers for `type:"http"` servers.
+Extra HTTP headers for `type:"http"` servers. A value may be a
+[reference object](#reference-objects).
 
 ### `auth`
 `"bearer" | "oauth" | false`. Default: autodetected — `bearerTokenEnv` or an
@@ -131,6 +134,56 @@ that stay active while the rest goes behind `tool_search`. Default: none.
 ### `logLevel`
 Minimum RFC-5424 level (`debug`…`emergency`) for the server's
 `notifications/message` log stream. Default: record everything (rate-capped).
+
+### Reference objects
+
+A `headers`, `env` or `args` value can point at a secret instead of holding
+it. A reference object takes the place of the whole string:
+
+```jsonc
+{ "$file": "~/.creds/token" }                              // absolute, ~/ (home), or relative to this mcp.json
+{ "$env": "TOKEN" }                                        // a valid variable name
+{ "$concat": ["Bearer ", { "$file": "~/.creds/token" }] }  // strings plus $file/$env, one level only
+```
+
+- **Where.** Only `headers.*`, `env.*` and `args[]`. `url`, `command`, `cwd`
+  and `oauth` refuse them, and text such as `"Bearer {file:~/k}"` inside a
+  string stays literal.
+- **Who.** A reference is read exactly where `${VAR}` would expand: your own
+  `mcp.json`, a trusted project's `mcp.json` and imported `.mcp.json`, and
+  stdio servers of skills you own. A remote skill server, a skill of an
+  untrusted project and a server an extension declares refuse it before
+  anything is read: the server is skipped with a message naming the field.
+  An untrusted project's own `mcp.json` stays inert until you trust the
+  project, as it does today.
+- **When.** Each connection, reconnects included, reads the current value, so
+  a rotated file is picked up without restarting senpi. Contents are never
+  cached.
+- **Files.** A regular file owned by you or root, at most 64 KiB of UTF-8 text
+  (surrounding whitespace is trimmed), not writable by group or others, with
+  no directory above it writable by another user (a sticky directory passes
+  only for an entry you or root own). A file other users can read still works,
+  with a one-time warning. On Windows the owner, mode and ancestor checks are
+  skipped (ACLs are not inspected); the type, size and UTF-8 checks still run.
+- **Variables.** `$env` reads the session environment. The value is used as
+  plain text and never re-scanned: a variable whose value looks like
+  `{file:...}` is not followed, and senpi warns once, naming the variable but
+  never its value.
+- **Failures.** A missing, empty, unreadable, non-regular, oversized or
+  non-UTF-8 file, or an unset or empty variable, is a named error such as
+  `mcpServers.docs.headers.Authorization: configuration reference missing`.
+  Only that server stops; the others keep working, and no partial value is
+  ever sent.
+
+Differences from OpenCode: references are JSON objects rather than
+`{file:...}`/`{env:...}` text, an environment variable's value is never
+re-scanned for another reference, and URL fields take no references.
+
+Tools that write these objects for you, such as `omo setup`, should first
+check that the installed engine reads them: its `package.json` declares
+`"senpiCapabilities": { "configReferenceObjects": 1 }` (or a higher number).
+An older engine lacks the field and may pass an object through without
+validating it.
 
 ### Settings fields (`settings`)
 
@@ -277,6 +330,11 @@ the same line senpi draws for `mcp.json` files:
   per server; declare the server in your own `mcp.json`, where variables and
   `bearerTokenEnv` keep working.
 
+[Reference objects](#reference-objects) follow the same line: the stdio
+servers of skills you own may use them, and the servers of an untrusted
+project's skill and every remote skill server are skipped when they declare
+one.
+
 ## Resources and prompts
 
 - `mcp_list_resources` / `mcp_read_resource` register automatically when a
@@ -328,6 +386,15 @@ the same line senpi draws for `mcp.json` files:
 - Tokens are stored `0600` and never logged; server log streams and tool
   output are redacted by the same secret scrubber as the rest of senpi and
   capped by `outputGuard`.
+- Every value a [reference object](#reference-objects) resolves to, rotated
+  ones included, is removed (raw and URL-encoded) from MCP logs, the catalog
+  cache, server status, RPC snapshots, diagnostics and `/mcp` errors. Values
+  sent back to a server, such as a resource URI it listed, keep their exact
+  bytes.
+- Config and catalog identities are HMAC-SHA-256 under a private
+  per-installation key, `config-identity.key` in the agent directory, created
+  once with mode `0600` and never replaced. Without a valid key, nothing keyed
+  is persisted.
 
 ## Disabling MCP entirely
 
