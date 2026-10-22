@@ -6,6 +6,7 @@
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it } from "vitest";
 import { getToolResult } from "./harness.ts";
+import { heldTurn } from "./rpc-release-host-support.ts";
 import {
 	type RelocationRig,
 	relocationRig,
@@ -115,6 +116,40 @@ describe("relocate_session over RPC", () => {
 		const lastEnd = accepting.records.findLastIndex((record) => record.type === "agent_end");
 		expect(lastEnd).toBeGreaterThan(-1);
 		expect(dueAt).toBeGreaterThan(lastEnd);
+	});
+
+	it("drops a scheduled move when the user aborts the turn: no relocation_due follows", async () => {
+		// Given: an accepted move, and a turn still running after the tool answered.
+		const accepting = await rig({
+			capabilities: OFFERS,
+			host: () => ({ data: { accepted: true, moveId: "mv-1", target: "Studio" } }),
+		});
+		accepting.harness.setResponses([
+			fauxAssistantMessage([fauxToolCall("relocate_session", { target: "Studio", reason: "a" })], {
+				stopReason: "toolUse",
+			}),
+			heldTurn,
+		]);
+		const scheduled = new Promise<void>((resolve) => {
+			const stop = accepting.harness.session.subscribe((event) => {
+				if (event.type !== "tool_execution_end" || event.toolName !== "relocate_session") return;
+				stop();
+				resolve();
+			});
+		});
+		const turn = accepting.harness.session.prompt("move, then keep working");
+		await scheduled;
+
+		// When: the user aborts the turn from the client.
+		await accepting.handler.handleInputLine(JSON.stringify({ type: "abort", id: "stop" }));
+		await turn;
+		await accepting.harness.session.agent.waitForIdle();
+
+		// Then: the move was scheduled, but the abort dropped it. A later turn here settles too (a move still
+		// scheduled would be announced at that settle), and still nothing tells the host to move.
+		expect(getToolResult(accepting.harness, "relocate_session").details).toMatchObject({ status: "scheduled" });
+		expect(await stillWritableHere(accepting)).toBe(true);
+		expect(accepting.records.some((record) => record.type === "relocation_due")).toBe(false);
 	});
 
 	it("refuses a second move while one is already scheduled for this turn", async () => {

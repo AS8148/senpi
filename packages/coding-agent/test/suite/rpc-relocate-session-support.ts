@@ -46,7 +46,9 @@ export async function relocationRig(options: {
 		if (record.type !== "host_request" || options.host === undefined) return;
 		const answer = options.host(record);
 		if (answer !== undefined)
-			queueMicrotask(() => void handler?.handleInputLine(JSON.stringify({ type: "host_response", id: record.id, ...answer })));
+			queueMicrotask(
+				() => void handler?.handleInputLine(JSON.stringify({ type: "host_response", id: record.id, ...answer })),
+			);
 	};
 	handler = createRpcConnectionHandler(
 		runtimeHost(harness.session),
