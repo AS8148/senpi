@@ -1718,7 +1718,7 @@ export function createRpcConnectionHandler(
 					return error(
 						id,
 						"record_user_activity",
-						`Unsupported activity kind: ${String(kind)}`,
+						'record_user_activity: kind must be "draft"',
 						RPC_ERROR_INVALID_ARGUMENT,
 					);
 				}
