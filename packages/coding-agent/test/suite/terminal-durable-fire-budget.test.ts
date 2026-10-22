@@ -185,7 +185,7 @@ function deliveryChain(options: { wakesPerHour?: number; spill?: boolean } = {})
 			: {
 					spillOverflow: (_id: string, batch: readonly string[]) => {
 						spilled.push(...batch);
-						return "/state/overflow/mon_feed.log";
+						return { path: "/state/overflow/mon_feed.log", rotated: false };
 					},
 				}),
 		scheduler,
