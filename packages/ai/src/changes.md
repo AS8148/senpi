@@ -1,3 +1,21 @@
+## 2026-10-22 - AssistantMessage.promptCacheBreakpoint (senpi#3242)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `AssistantMessage` gains optional `promptCacheBreakpoint?: true`, a request-only hint that the history up to and including the message is a stable prefix. Context reduction sets it on copies; it is never persisted.
+
+### Why
+
+- `packages/ai/src/types.ts`: context reduction must tell the provider adapter where the prefix it leaves unchanged ends, so the adapter can keep a cache checkpoint there instead of re-writing the cached conversation at every frontier step.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/types.ts`: the hint has to travel on the message the adapter converts, which is a core message contract.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/types.ts`: the end of `AssistantMessage`.
+
 ## 2026-10-21 - AssistantMessage.timing (senpi#3879)
 
 ### What changed

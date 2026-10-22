@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- Context reduction on 1M windows no longer re-writes the whole cached conversation at every frontier step: the reduced prefix stays byte-identical and the Anthropic adapter keeps a cache checkpoint at its end, so a step only writes what changed. Thanks to @lee98www and @daehwanahn for the measured reports ([#3242](https://github.com/code-yeongyu/senpi/issues/3242)).
+
 - Compaction no longer keeps the previous turn when an invisible entry, such as an extension note, sits just before the kept message, and forced recovery after a "prompt is too long" error no longer picks the same cut again when such an entry leads the session ([#3864](https://github.com/code-yeongyu/senpi/issues/3864)).
 - Anthropic Subscription: a turn retried on another account after a failure is now logged as an account switch rather than a timeout retry, and every continuity decision names the serving account by a short digest, salted per install so the account name cannot be recovered from it. A switch to another account always writes the whole prompt cache again, so the logs now show which seat paid for it. Thanks to 욜로개발조아 for the measured report ([omo#10304](https://github.com/code-yeongyu/oh-my-openagent/issues/10304)).
 
