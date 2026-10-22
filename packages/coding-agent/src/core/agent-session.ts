@@ -1223,6 +1223,9 @@ function promptKind(options: PromptOptions | undefined): HumanInputAdmittedEvent
 	return "prompt";
 }
 
+/** senpi#3864: custody key prefix of a delivery ticket the engine opened itself (a producer keys its own). */
+const ENGINE_DELIVERY_KEY_PREFIX = "delivery:";
+
 export class AgentSession {
 	readonly agent: Agent;
 	readonly sessionManager: SessionManager;
@@ -1314,8 +1317,6 @@ export class AgentSession {
 	private readonly _supersededCompactionLogAttemptIds = new Set<string>();
 	/** Messages queued to be included with the next user prompt as context ("asides"). */
 	private _pendingNextTurnMessages: CustomMessage[] = [];
-	/** senpi#3864: delivery tickets this session opened itself, as opposed to a producer's own ticket. */
-	private readonly _engineDeliveryTickets = new Set<string>();
 	private _pendingCustomMessages: CustomMessage[] = [];
 	/** Deliveries from other sessions: admitted once into the queues below, tracked until their entry is written. */
 	readonly externalAdmission = new ExternalAdmission({
@@ -6345,9 +6346,13 @@ export class AgentSession {
 			options?.ticket === undefined &&
 			options?.deliverAs !== "nextTurn" &&
 			(this.isStreaming || options?.triggerTurn === true)
-				? obligations.open(`delivery:${message.customType}:${deliveryId ?? randomUUID()}`, "background").ticket()
+				? obligations
+						.open(
+							`${ENGINE_DELIVERY_KEY_PREFIX}${message.customType}:${deliveryId ?? randomUUID()}`,
+							"background",
+						)
+						.ticket()
 				: undefined;
-		if (engineTicket) this._engineDeliveryTickets.add(engineTicket);
 		const ticket = options?.ticket ?? engineTicket;
 		const generation = this._userAbortGeneration;
 		if (ticket && !obligations.queue(ticket, { message: deliveryMessage, deliverAs: options?.deliverAs })) {
@@ -6364,7 +6369,7 @@ export class AgentSession {
 				if (startsTurn) this._pendingCustomTurnHeaders--;
 			}
 			if (generation !== this._userAbortGeneration) {
-				if (ticket) this._retireLifecycleDelivery(ticket, options?.ticket !== undefined);
+				if (ticket) this._retireLifecycleDelivery(ticket, !this._isEngineDelivery(ticket));
 				deferredTurnClaim?.resolve("finished-without-start");
 				return;
 			}
@@ -6374,7 +6379,7 @@ export class AgentSession {
 					...this.agent.peekQueuedMessages({ all: true }),
 					...this._pendingNextTurnMessages,
 				].some((queued) => queued.role === "custom" && messageTicket(queued) === ticket);
-				if (!retainedForLater) this._retireLifecycleDelivery(ticket, options?.ticket !== undefined);
+				if (!retainedForLater) this._retireLifecycleDelivery(ticket, !this._isEngineDelivery(ticket));
 			}
 		} catch (error) {
 			if (ticket) obligations.failed(ticket);
@@ -6396,9 +6401,16 @@ export class AgentSession {
 	 * one is cancelled (a producer keeps its own ticket open without the payload); one an abort left queued waits
 	 * for a person's turn, so its engine ticket turns passive.
 	 */
+	/** Read from the durable custody key, so a delivery re-sent from custody after a restart is still the engine's. */
+	private _isEngineDelivery(ticket: string): boolean {
+		return this.workObligations.active.some(
+			(record) => record.ticketId === ticket && record.key.startsWith(ENGINE_DELIVERY_KEY_PREFIX),
+		);
+	}
+
 	private _releaseQueuedDeliveries(tickets: readonly string[], cause: "cleared" | "aborted"): void {
 		for (const ticket of tickets) {
-			const engineOwned = this._engineDeliveryTickets.delete(ticket);
+			const engineOwned = this._isEngineDelivery(ticket);
 			if (cause === "cleared") {
 				if (engineOwned) this.workObligations.cancel(ticket);
 				else this.workObligations.retire(ticket);

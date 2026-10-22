@@ -1,3 +1,21 @@
+## 2026-10-22 - Release deliveries that leave the queue unconsumed (senpi#3864 review)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: recognizes a delivery ticket it opened itself by its durable `delivery:` custody key, so the ownership survives a restart. `clearQueue` cancels such a ticket (a producer keeps its own open without the payload), a follow-up an abort left queued turns passive, and a next-turn message never opens an engine ticket. A held delivery claims a goal notice only when it is a goal continuation.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: a cleared or abort-stranded delivery, including one re-sent from custody after a restart, kept the session waiting on background work forever, and recovery would send a cleared message again.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: the agent queues, abort and custody are engine-owned.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: `sendCustomMessage` ticket opening, `clearQueue`, `_abortWithProvenance`, `_retireLifecycleDelivery` callers.
+
 ## 2026-10-22 - Wire the session lifecycle into the session runtime (senpi#3864)
 
 ### What changed
