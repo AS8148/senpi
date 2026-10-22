@@ -1,6 +1,11 @@
 import { describe, it } from "vitest";
 
-import { expectLeakMatchEverywhere, expectNoLeakMatchEverywhere, runSplitMatrix, sgml } from "./control-leak-helpers.ts";
+import {
+	expectLeakMatchEverywhere,
+	expectNoLeakMatchEverywhere,
+	runSplitMatrix,
+	sgml,
+} from "./control-leak-helpers.ts";
 
 // senpi#3880: `s` and `mask` are tokenizer special tokens AND ordinary markup (HTML strikethrough,
 // SVG mask). Markup uses of them must never abort a reply; a leaked unquoted `</s>` EOS run still must.
