@@ -6,6 +6,8 @@
 
 ### Added
 
+- `RpcClient.setSessionContext(patch, sessionId?)` publishes session context (`set_session_context`) from an attached client, so a task runner can record a terminal `task_status` before it detaches ([#3905](https://github.com/code-yeongyu/senpi/issues/3905)).
+
 ### Changed
 
 ### Fixed

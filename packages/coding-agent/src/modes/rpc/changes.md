@@ -1,3 +1,21 @@
+## 2026-10-21 - RpcClient can publish session context (senpi#3905)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `RpcClient.setSessionContext(patch, sessionId?)` sends `set_session_context` for the attached session (or the one named) and rejects with `RpcCommandError` carrying the host's code (`session_not_attached`, `invalid_session_context`).
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the command existed on the host, but an SDK client had no way to send it (`send` is private). A task runner must publish `task_status` through its attachment before it detaches, so a successor host can recognize a finished session (senpi#3853, oh-my-openagent#10778).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the RPC client is a public SDK class of the RPC mode, not part of the extension API.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/rpc-client.ts`, the method before `closeSession`.
+
 ## 2026-10-21 - RPC clients can report draft activity, so the prompt-cache prewarm can run while a desktop user types (senpi#3859)
 
 ### What changed
