@@ -13,7 +13,7 @@ afterEach(() => {
 
 const NOT_ATTACHED = { success: false, errorCode: "session_not_attached" };
 
-// senpi#3814 review MEDIUM: the gate's exemptions are a reviewed list. Adding one must change this test.
+// senpi#3814 review MEDIUM: the gate's exemptions are a reviewed list; record_user_activity is not on it.
 it("exempts exactly the reviewed commands from the attach gate", () => {
 	expect([...ATTACH_GATE_EXEMPT].sort()).toEqual(
 		[
@@ -47,7 +47,6 @@ it("exempts exactly the reviewed commands from the attach gate", () => {
 			"memory_report",
 			"open_session",
 			"reclaim_session",
-			"record_user_activity",
 			"resolve_path",
 			"subscribe_sessions",
 			"unsubscribe_sessions",
@@ -56,20 +55,27 @@ it("exempts exactly the reviewed commands from the attach gate", () => {
 	);
 });
 
-// Lead ruling 2026-10-22 (senpi#3814): record_user_activity stays ungated. The desktop prewarm path sends it
-// (omo-desktop-app apps/server/src/provider/Layers/OmoAdapter.ts:7121); its only effect is one prompt-cache warm-up.
-it("serves desktop prewarm draft activity (omo-desktop-app OmoAdapter.ts record_user_activity) without an attachment", async () => {
+// Lead ruling 2026-10-22 (senpi#3814): record_user_activity is gated. Its only known caller, the desktop prewarm
+// path (omo-desktop-app OmoAdapter.ts:7121), sends it on the session's own opener connection.
+it("serves desktop prewarm draft activity on its attached opener connection", async () => {
 	process.env.SENPI_RPC_REQUIRE_ATTACH = "1";
 	await using rig = await attachmentRig();
 	const ref = await rig.session();
-	const activity = await rig.send("stranger", {
+	const activity = await rig.send("caller", {
 		id: "draft",
 		type: "record_user_activity",
 		sessionId: ref.sessionId,
 		kind: "draft",
 	});
 	expect(activity).not.toMatchObject(NOT_ATTACHED);
+});
+
+it("refuses an unattached record_user_activity under enforcement, like every other session mutation", async () => {
+	process.env.SENPI_RPC_REQUIRE_ATTACH = "1";
+	await using rig = await attachmentRig();
+	const ref = await rig.session();
 	const mutations = [
+		{ type: "record_user_activity", kind: "draft" },
 		{ type: "prompt", message: "x" },
 		{ type: "steer", message: "x" },
 		{ type: "follow_up", message: "x" },

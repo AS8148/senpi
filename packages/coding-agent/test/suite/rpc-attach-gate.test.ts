@@ -28,6 +28,7 @@ describe.each(["in-process", "worker"] as const)("attachment gate (%s)", (sessio
 				{ type: "export_html", outputPath: `${host.scratch}/export.html` },
 				{ type: "unload_session" },
 				{ type: "set_client_info", capabilities: [] },
+				{ type: "record_user_activity", kind: "draft" },
 				{ type: "future_session_mutation" },
 			];
 			for (const mutation of mutations) {
@@ -44,10 +45,6 @@ describe.each(["in-process", "worker"] as const)("attachment gate (%s)", (sessio
 			for (const type of ["get_state", "get_messages"]) {
 				expect(await stranger.request({ type, sessionId }), type).toMatchObject({ success: true });
 			}
-			// Lead ruling 2026-10-22 (senpi#3814): record_user_activity is never gated; its only effect is one warm-up.
-			expect(await stranger.request({ type: "record_user_activity", sessionId, kind: "draft" })).toMatchObject({
-				success: true,
-			});
 			expect(await stranger.request({ type: "list_sessions" })).toMatchObject({ success: true });
 			expect(await stranger.request({ type: "close_session", sessionId })).toMatchObject({
 				success: false,
@@ -80,9 +77,6 @@ describe.each(["in-process", "worker"] as const)("attachment gate (%s)", (sessio
 				await logged;
 			}
 			await stranger.request({ type: "get_state", sessionId });
-			expect(await stranger.request({ type: "record_user_activity", sessionId, kind: "draft" })).toMatchObject({
-				success: true,
-			});
 			const violations = host
 				.stderrText()
 				.split("\n")
