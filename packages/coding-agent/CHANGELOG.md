@@ -12,7 +12,7 @@
 
 ### Fixed
 
-- Bumped the pinned overrides for GHSA-5r4p-p66f-jhc7 (moderate: `serveStatic` decoded the request path twice, so middleware on static paths could be bypassed): `hono` from 4.13.8 to 4.13.11, and `@hono/node-server`, which carries its own `serveStatic`, from 2.1.1 to 2.1.3. Both are pulled in through `@modelcontextprotocol/sdk`.
+- Bumped two pinned overrides because `serveStatic` decoded the request path twice, so middleware on static paths could be bypassed (moderate): `hono` from 4.13.8 to 4.13.11 for GHSA-5r4p-p66f-jhc7, and `@hono/node-server`, which carries its own `serveStatic`, from 2.1.1 to 2.1.3 for GHSA-rmxm-3fg6-px4f. Both are pulled in through `@modelcontextprotocol/sdk`.
 - RPC `login_api_key` without a usable key returns an error and stores nothing, and a test run that resolves the real agent directory now fails with `RealAgentDirInTestError` instead of writing there. The llama.cpp login declares its key optional, so a keyless local server still logs in ([#3867](https://github.com/code-yeongyu/senpi/issues/3867)).
 - Anthropic Subscription: a damaged seat-digest salt file is now replaced instead of being ignored, and the salt is now stored on filesystems without hard links, so seat digests keep matching across restarts ([omo#10304](https://github.com/code-yeongyu/oh-my-openagent/issues/10304)).
 

@@ -1,6 +1,6 @@
 # changes — senpi-monorepo root
 
-## 2026-10-22 - hono and @hono/node-server overrides for GHSA-5r4p-p66f-jhc7
+## 2026-10-22 - hono and @hono/node-server overrides for GHSA-5r4p-p66f-jhc7 and GHSA-rmxm-3fg6-px4f
 
 ### What changed
 
@@ -8,7 +8,7 @@
 
 ### Why
 
-- GHSA-5r4p-p66f-jhc7 (moderate): `serveStatic` decoded the request path twice, so middleware guarding static paths could be bypassed. `hono` and `@hono/node-server` each ship a `serveStatic`, and both arrive through the `@modelcontextprotocol/sdk` subtree the fork does not declare, so both pins move.
+- GHSA-5r4p-p66f-jhc7 (`hono`) and GHSA-rmxm-3fg6-px4f (`@hono/node-server`), both moderate: `serveStatic` decoded the request path twice, so middleware guarding static paths could be bypassed. `hono` and `@hono/node-server` each ship a `serveStatic`, and both arrive through the `@modelcontextprotocol/sdk` subtree the fork does not declare, so both pins move.
 
 ### Why an extension could not handle it
 
