@@ -314,8 +314,8 @@ export class SessionLifecycleController {
 						...(input.providerRetryAtMs === undefined ? {} : { retryAtMs: input.providerRetryAtMs }),
 					}
 				: this.ownTask?.terminal === "error" ||
-						this.ownTask?.terminal === "lost" ||
-						this.ownTask?.terminal === "interrupted"
+					  this.ownTask?.terminal === "lost" ||
+					  this.ownTask?.terminal === "interrupted"
 					? {
 							reason: this.ownTask.terminal === "error" ? "task_error" : this.ownTask.terminal,
 							taskId: this.ownTask.taskId,
