@@ -22,3 +22,6 @@ switch (s.toLowerCase()) { case "Abc": break; case "abc": break; case `XY`: brea
 switch ((s.toLowerCase())) { case "Abc": break; }
 switch (s.toUpperCase()) { case ("abc"): break; }
 switch (s) { case "Abc": break; }
+export const g1 = s.toUpperCase() /* ( */ === "abc";
+switch (s.toLowerCase()) { case /* ( */ "Abc": break; }
+switch /* ( */ (s.toLowerCase()) { case "Abc": break; }

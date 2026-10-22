@@ -14,3 +14,4 @@ export const c3 = model?.type === "chat";
 export const c4 = (model.type) === "chat";
 export const c5 = model["type"] === "chat";
 export const c6 = model.type === `chat`;
+export const d1 = model.type /* ( */ === "chat";

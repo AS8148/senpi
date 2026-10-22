@@ -2,9 +2,14 @@
 // suspicious/noImplicitAnyLet and correctness/noStringCaseMismatch. Each is checked against Biome 2.5.14
 // on one probe corpus (scripts/oxlint-biome-ports.test.mjs holds the verdicts).
 type AstNode = { readonly type: string; readonly start?: number; readonly end?: number; readonly [key: string]: unknown };
+type Token = { readonly type: string; readonly value: string };
+type SourceCode = {
+	getTokensBetween(left: AstNode, right: AstNode): readonly Token[];
+	getTokenBefore(node: AstNode | Token): Token | null;
+};
 type RuleContext = {
 	readonly filename?: string;
-	readonly sourceCode?: { readonly text?: string };
+	readonly sourceCode: SourceCode;
 	report(descriptor: { node: AstNode; message: string }): void;
 };
 type Case = "upper" | "lower";
@@ -49,11 +54,19 @@ const mismatches = (text: string | undefined, expected: Case): boolean =>
 const caseMessage = (expected: Case): string =>
 	`This compares a ${expected}-cased string with a literal that is not ${expected}case, so it never matches (Biome noStringCaseMismatch).`;
 
-// oxlint's AST drops parentheses; Biome sees a parenthesized operand as a different node and skips it.
-const hasParen = (context: RuleContext, from: number | undefined, to: number | undefined, count = 1): boolean => {
-	const text = context.sourceCode?.text;
-	if (text === undefined || from === undefined || to === undefined) return false;
-	return (text.slice(from, to).match(/\(/g)?.length ?? 0) >= count;
+// oxlint's AST drops parentheses, and Biome skips a parenthesized operand, so the tokens around a node
+// tell. Comments are not tokens, so a ( inside a comment never counts.
+const isPunctuator = (token: Token | null | undefined, value: string): boolean =>
+	token?.type === "Punctuator" && token.value === value;
+const operandsParenthesized = (context: RuleContext, left: AstNode, right: AstNode): boolean =>
+	context.sourceCode.getTokensBetween(left, right).some((token) => isPunctuator(token, "(") || isPunctuator(token, ")"));
+const wrappedTimes = (context: RuleContext, node: AstNode, times: number): boolean => {
+	let token: Token | null = context.sourceCode.getTokenBefore(node);
+	for (let wraps = 0; wraps < times; wraps += 1) {
+		if (!isPunctuator(token, "(")) return false;
+		if (token !== null) token = context.sourceCode.getTokenBefore(token);
+	}
+	return true;
 };
 
 const noImplicitAnyLet = {
@@ -93,7 +106,7 @@ const noStringCaseMismatch = {
 			const left = child(node, "left");
 			const right = child(node, "right");
 			if (left === undefined || right === undefined) return;
-			if (hasParen(context, node.start, left.start) || hasParen(context, left.end, right.start)) return;
+			if (operandsParenthesized(context, left, right)) return;
 			for (const [call, other] of [
 				[left, right],
 				[right, left],
@@ -105,12 +118,13 @@ const noStringCaseMismatch = {
 		},
 		SwitchStatement: (node: AstNode) => {
 			const discriminant = child(node, "discriminant");
-			if (discriminant === undefined || hasParen(context, node.start, discriminant.start, 2)) return;
+			// `switch (x)` always has one ( before the discriminant; a second one means it is parenthesized.
+			if (discriminant === undefined || wrappedTimes(context, discriminant, 2)) return;
 			const expected = caseOf(discriminant);
 			if (expected === undefined) return;
 			for (const switchCase of nodes(node["cases"])) {
 				const test = child(switchCase, "test");
-				if (test === undefined || hasParen(context, switchCase.start, test.start)) continue;
+				if (test === undefined || wrappedTimes(context, test, 1)) continue;
 				if (mismatches(constantText(test), expected)) context.report({ node: test, message: caseMessage(expected) });
 			}
 		},

@@ -2,8 +2,9 @@
 // check): chat models may omit `type`, so comparing `<expr>.type` with "chat" misses them. It reports
 // exactly the six shapes the Grit pattern lists, which scripts/oxlint-biome-parity.test.mjs checks.
 type AstNode = { readonly type: string; readonly start?: number; readonly end?: number; readonly [key: string]: unknown };
+type Token = { readonly type: string; readonly value: string };
 type RuleContext = {
-	readonly sourceCode?: { readonly text?: string };
+	readonly sourceCode: { getTokensBetween(left: AstNode, right: AstNode): readonly Token[] };
 	report(descriptor: { node: AstNode; message: string }): void;
 };
 
@@ -25,11 +26,11 @@ const isTypeMember = (node: unknown): boolean => {
 };
 
 // oxlint's AST drops parentheses; Grit matches the written syntax, so a parenthesized operand is no match.
-const parenthesized = (context: RuleContext, node: AstNode, left: AstNode, right: AstNode): boolean => {
-	const text = context.sourceCode?.text;
-	if (text === undefined) return false;
-	return /\(/.test(text.slice(node.start ?? 0, left.start ?? 0)) || /\(/.test(text.slice(left.end ?? 0, right.start ?? 0));
-};
+// A ( or ) token between the operands means one of them is parenthesized; comments are not tokens.
+const parenthesized = (context: RuleContext, left: AstNode, right: AstNode): boolean =>
+	context.sourceCode
+		.getTokensBetween(left, right)
+		.some((token) => token.type === "Punctuator" && (token.value === "(" || token.value === ")"));
 
 // oxlint-disable-next-line import/no-default-export -- the oxlint plugin loader reads the default export.
 export default {
@@ -41,7 +42,7 @@ export default {
 					const operator = String(node["operator"]);
 					const left = node["left"];
 					const right = node["right"];
-					if (!isNode(left) || !isNode(right) || parenthesized(context, node, left, right)) return;
+					if (!isNode(left) || !isNode(right) || parenthesized(context, left, right)) return;
 					const typeFirst = TYPE_FIRST.has(operator) && isTypeMember(left) && isChat(right);
 					const chatFirst = CHAT_FIRST.has(operator) && isChat(left) && isTypeMember(right);
 					if (typeFirst || chatFirst) context.report({ node, message: MESSAGE });
