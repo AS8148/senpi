@@ -1,4 +1,4 @@
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -17,6 +17,38 @@ function ledger(): MoveLedger {
 const id = (value: string) => value as MoveId;
 
 describe("MoveLedger fence", () => {
+	it("#given an accepted move, revoked or not #when another receive begins #then it is fenced", async () => {
+		const book = ledger();
+		for (const [move, revoke] of [
+			[id("a1"), false],
+			[id("a2"), true],
+		] as const) {
+			await book.prepare(move);
+			await book.beginReceive(move);
+			await book.commit(move, () => undefined);
+			if (revoke) await book.markRevoked(move);
+			await expect(book.beginReceive(move)).rejects.toBeInstanceOf(MoveFencedError);
+		}
+	});
+
+	it("#given a revoke whose record was lost or reset to plain accepted #when the revoke repeats #then revoked: true is back", async () => {
+		const book = ledger();
+		await book.prepare(id("v1"));
+		await book.beginReceive(id("v1"));
+		await book.commit(id("v1"), () => undefined);
+		await book.markRevoked(id("v1"));
+		const record = join(book.dir, "v1.json");
+
+		rmSync(record);
+		await book.markRevoked(id("v1"));
+		expect(await book.answerStatus(id("v1"), { movedIn: false })).toEqual({ state: "accepted", revoked: true });
+
+		writeFileSync(record, `${JSON.stringify({ state: "accepted" })}\n`);
+		expect(await book.answerStatus(id("v1"), { movedIn: false })).toEqual({ state: "accepted" });
+		await book.markRevoked(id("v1"));
+		expect(await book.answerStatus(id("v1"), { movedIn: false })).toEqual({ state: "accepted", revoked: true });
+	});
+
 	it("#given no record #when the sender asks #then the answer is a durable decline that blocks a later import", async () => {
 		const book = ledger();
 		expect(await book.answerStatus(id("m1"), { movedIn: false })).toEqual({ state: "declined", reason: "no_record" });
