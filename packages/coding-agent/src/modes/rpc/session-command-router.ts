@@ -6,7 +6,6 @@ import { detachConnection } from "./connection-detach.ts";
 import { buildRpcSessionState } from "./connection-handler.ts";
 import { CONNECTION_ROLE_FIXED, ConnectionRoles, roleConnection } from "./connection-roles.ts";
 import { SESSION_RELOCATION_CAPABILITY } from "./custom-capability.ts";
-import { SessionAttachOrder } from "./session-attach-order.ts";
 import { answerEffectFromTranscript } from "./effect-commands.ts";
 import { latestSessionEffect } from "./effect-ledger.ts";
 import { multiSessionHostCapabilities } from "./host-capabilities.ts";
@@ -38,6 +37,7 @@ import {
 	RPC_ERROR_SESSION_CLOSING,
 	RPC_ERROR_UNKNOWN_SESSION,
 } from "./rpc-types.ts";
+import { SessionAttachOrder } from "./session-attach-order.ts";
 import { runWithSessionAttribution } from "./session-attribution.ts";
 import { createRpcSessionBinding, type RpcSessionBinding } from "./session-binding.ts";
 import { readDrainVerdicts } from "./session-drain.ts";

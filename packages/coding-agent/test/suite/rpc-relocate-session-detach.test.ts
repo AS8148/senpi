@@ -3,8 +3,9 @@
  * detaches (`close_session`, its socket still open) gets no `relocation_due` for a move it accepted, and a request
  * still waiting on it fails at once instead of after the 60 s answer timeout.
  */
-import { type FauxResponseStep, fauxAssistantMessage } from "@earendil-works/pi-ai/compat";
+
 import type { ToolResultMessage } from "@earendil-works/pi-ai/compat";
+import { type FauxResponseStep, fauxAssistantMessage } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
 import { nextEvent } from "./rpc-release-host-support.ts";
 import { DESKTOP, relocationHost } from "./rpc-relocate-session-host-support.ts";
@@ -35,7 +36,9 @@ describe("the offering connection detaching from the session", () => {
 		await toolDone;
 
 		// When: the desktop detaches, then the run ends, then a later turn here settles as well.
-		expect(await host.send({ type: "close_session", id: "bye", sessionId }, DESKTOP)).toMatchObject({ success: true });
+		expect(await host.send({ type: "close_session", id: "bye", sessionId }, DESKTOP)).toMatchObject({
+			success: true,
+		});
 		const settled = nextEvent(session, "agent_settled");
 		closing.release();
 		await settled;
