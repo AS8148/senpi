@@ -1,3 +1,13 @@
+## 2026-10-22 - Extensions cannot open engine custody keys (senpi#3986)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/lifecycle-api.ts`: `pi.lifecycle.obligations.open` and a token's `transfer` refuse keys under `delivery:` or `wake-source:` with a typed `ReservedCustodyKey` error; the engine's own calls are unaffected.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/lifecycle-api.ts`: the engine identifies its delivery tickets and wake sources by those prefixes, so an extension ticket under them would be cancelled on a queue clear or retired as a stale wake source.
+
 ## 2026-10-19 - session_move_export and session_move_import events (senpi#3676)
 
 ### What changed

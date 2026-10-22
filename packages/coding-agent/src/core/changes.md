@@ -1,3 +1,14 @@
+## 2026-10-22 - One home for the engine custody key prefixes (senpi#3986)
+
+### What changed
+
+- `packages/coding-agent/src/core/work-obligations.ts`: `ENGINE_DELIVERY_KEY_PREFIX`, `WAKE_SOURCE_KEY_PREFIX` and `ENGINE_CUSTODY_KEY_PREFIXES` are defined here and used by `syncSource`, the restored-source sweep and `agent-session.ts`.
+- `packages/coding-agent/src/core/agent-session.ts`: the clear/abort doc block sits on `_releaseQueuedDeliveries` again.
+
+### Why
+
+- `packages/coding-agent/src/core/work-obligations.ts`: the extension API guard needs the same prefixes the engine matches on.
+
 ## 2026-10-19 - Extension state follows a moved session (senpi#3676)
 
 ### What changed

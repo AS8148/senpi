@@ -422,6 +422,7 @@ import {
 	VIRTUAL_MODEL_STATE_ENTRY,
 	type VirtualModelStateData,
 } from "./virtual-models.ts";
+import { ENGINE_DELIVERY_KEY_PREFIX } from "./work-obligations.ts";
 
 /** Externally registered tools routed through eval in addition to declared eval exposure. */
 const EVAL_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set(["workflow", "monitor"]);
@@ -1225,7 +1226,6 @@ function promptKind(options: PromptOptions | undefined): HumanInputAdmittedEvent
 }
 
 /** senpi#3864: custody key prefix of a delivery ticket the engine opened itself (a producer keys its own). */
-const ENGINE_DELIVERY_KEY_PREFIX = "delivery:";
 
 export class AgentSession {
 	readonly agent: Agent;
@@ -6439,11 +6439,6 @@ export class AgentSession {
 		});
 	}
 
-	/**
-	 * senpi#3864: a queued delivery that leaves the queue unconsumed is no longer work the engine owes. A cleared
-	 * one is cancelled (a producer keeps its own ticket open without the payload); one an abort left queued waits
-	 * for a person's turn, so its engine ticket turns passive.
-	 */
 	/** Read from the durable custody key, so a delivery re-sent from custody after a restart is still the engine's. */
 	private _isEngineDelivery(ticket: string): boolean {
 		return this.workObligations.active.some(
@@ -6451,6 +6446,11 @@ export class AgentSession {
 		);
 	}
 
+	/**
+	 * senpi#3864: a queued delivery that leaves the queue unconsumed is no longer work the engine owes. A cleared
+	 * one is cancelled (a producer keeps its own ticket open without the payload); one an abort left queued waits
+	 * for a person's turn, so its engine ticket turns passive.
+	 */
 	private _releaseQueuedDeliveries(tickets: readonly string[], cause: "cleared" | "aborted"): void {
 		for (const ticket of tickets) {
 			const engineOwned = this._isEngineDelivery(ticket);

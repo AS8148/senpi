@@ -2,6 +2,11 @@ import type { DeliveryTicketId, ObligationKind, ObligationToken, WorkObligations
 import type { SessionEntry } from "./session-manager.ts";
 import { type CustodyPayload, custodyIsOpen, readWorkCustody, type WorkCustodyRecord } from "./work-custody-record.ts";
 
+/** Custody keys the engine opens itself (senpi#3986): queued deliveries and published wake sources. */
+export const ENGINE_DELIVERY_KEY_PREFIX = "delivery:";
+export const WAKE_SOURCE_KEY_PREFIX = "wake-source:";
+export const ENGINE_CUSTODY_KEY_PREFIXES = [ENGINE_DELIVERY_KEY_PREFIX, WAKE_SOURCE_KEY_PREFIX] as const;
+
 export class CustodyViolation extends Error {
 	readonly key: string;
 	constructor(key: string) {
@@ -61,7 +66,7 @@ export class SessionWorkObligations implements WorkObligations {
 	}
 
 	syncSource(source: string, kind: ObligationKind, activeCount: number): void {
-		const key = `wake-source:${source}`;
+		const key = `${WAKE_SOURCE_KEY_PREFIX}${source}`;
 		this.publishedSources.add(key);
 		const current = this.active.find((record) => record.key === key);
 		if (activeCount <= 0) {
@@ -84,7 +89,7 @@ export class SessionWorkObligations implements WorkObligations {
 	/** After a restart, a restored wake source stays open only if its producer published again. */
 	retireRestoredSources(): void {
 		for (const record of this.active) {
-			if (record.key.startsWith("wake-source:") && !this.publishedSources.has(record.key))
+			if (record.key.startsWith(WAKE_SOURCE_KEY_PREFIX) && !this.publishedSources.has(record.key))
 				this.close(record.id, "passive");
 		}
 	}
