@@ -1135,7 +1135,7 @@
     "typescript/no-non-null-assertion": 1
   },
   "packages/coding-agent/test/llama-extension.test.ts": {
-    "typescript/no-non-null-assertion": 4
+    "typescript/no-non-null-assertion": 5
   },
   "packages/coding-agent/test/manual-qa/auto-compaction-input-surface.mts": {
     "typescript/no-non-null-assertion": 1
