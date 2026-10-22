@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+// Regression for sisyphuslabs/omo-desktop-app#3137 (desktop#4008 handover): a re-run import after a lost `accepted` write.
 import { describe, expect, it } from "vitest";
 import { importMovedSession } from "../../src/core/session-move/import.ts";
 import { MoveFencedError, MoveLedger } from "../../src/core/session-move/move-ledger.ts";
@@ -23,18 +23,14 @@ class LosesAcceptedWrite extends MoveLedger {
 }
 
 describe("a re-run move import with the session file as the authority", () => {
-	it("#given the accepted write failed after the rename #when the import runs again #then it returns the session and the ledger reads accepted", async () => {
+	it("#given the accepted write failed after the rename #then the move stays receiving, and a re-run returns the session and records accepted", async () => {
 		const { cwdB, bundleDir, ledger, readIdentity } = await setup();
 		const lossy = new LosesAcceptedWrite(ledger.dir, true);
-		await expect(
-			importMovedSession({ bundleDir, targetCwd: cwdB, ledger: lossy, readIdentity }),
-		).rejects.toThrow("the accepted write failed");
+		const lost = importMovedSession({ bundleDir, targetCwd: cwdB, ledger: lossy, readIdentity });
+		await expect(lost).rejects.toThrow("the accepted write failed");
 		const landed = lossy.landed ?? "";
 		expect(customTypes(landed).at(-1)).toBe("session_moved_in");
-		expect(await ledger.answerStatus(MOVE, { movedIn: false })).toEqual({
-			state: "failed",
-			reason: "import_failed",
-		});
+		expect(await ledger.answerStatus(MOVE, { movedIn: false })).toEqual({ state: "receiving" });
 
 		const again = await importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity });
 
@@ -45,26 +41,34 @@ describe("a re-run move import with the session file as the authority", () => {
 	it("#given the import failed before its rename #when it runs again #then the failed move is not accepted", async () => {
 		const { cwdB, bundleDir, ledger, readIdentity } = await setup();
 		const lossy = new LosesAcceptedWrite(ledger.dir, false);
-		await expect(
-			importMovedSession({ bundleDir, targetCwd: cwdB, ledger: lossy, readIdentity }),
-		).rejects.toThrow("the accepted write failed");
+		const lost = importMovedSession({ bundleDir, targetCwd: cwdB, ledger: lossy, readIdentity });
+		await expect(lost).rejects.toThrow("the accepted write failed");
 		expect(lossy.landed).toBeUndefined();
 
-		await expect(importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity })).rejects.toBeInstanceOf(
-			MoveFencedError,
-		);
+		const again = importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity });
+		await expect(again).rejects.toBeInstanceOf(MoveFencedError);
 		expect(await ledger.answerStatus(MOVE, { movedIn: false })).toEqual({
 			state: "failed",
 			reason: "import_failed",
 		});
 	});
 
-	it("#given a ready or declined move #when accept runs #then it is refused and the record stays", async () => {
+	it("#given a ready, declined or failed move #when accept runs #then it is refused and the record stays", async () => {
 		const { ledger } = await setup();
 		await expect(ledger.accept(MOVE)).rejects.toBeInstanceOf(MoveFencedError);
 		const declined = "move-0002" as MoveId;
 		await ledger.decline(declined, "cancelled");
 		await expect(ledger.accept(declined)).rejects.toBeInstanceOf(MoveFencedError);
-		expect(await ledger.answerStatus(declined, { movedIn: false })).toEqual({ state: "declined", reason: "cancelled" });
+		expect(await ledger.answerStatus(declined, { movedIn: false })).toEqual({
+			state: "declined",
+			reason: "cancelled",
+		});
+		const failed = "move-0003" as MoveId;
+		await ledger.fail(failed, "import_failed");
+		await expect(ledger.accept(failed)).rejects.toBeInstanceOf(MoveFencedError);
+		expect(await ledger.answerStatus(failed, { movedIn: false })).toEqual({
+			state: "failed",
+			reason: "import_failed",
+		});
 	});
 });
