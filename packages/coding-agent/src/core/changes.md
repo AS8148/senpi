@@ -11468,7 +11468,8 @@ Fallback eligibility and the agent_end retry decision are owned by `AgentSession
 
 ### What changed
 
-- `packages/coding-agent/src/core/agent-session.ts`: the extension context's `getCompactionModel` always goes through `_resolveCompactionModel`, the resolver core compaction already uses, instead of returning the session model until the account is spent. On a healthy session a configured, resolvable, usable `compaction.model` is returned; a malformed, unknown, spent or credential-less override (checked with `hasConfiguredAuth`, the gate the spent path already uses) keeps the session model and logs one `compaction_model_fallback` warning per distinct cause, so a misconfigured override never stops builtin compaction. The spent-account order (held target, override, authenticated alternate that fits) is unchanged.
+- `packages/coding-agent/src/core/agent-session.ts`: the extension context's `getCompactionModel` always goes through `_resolveCompactionModel`, the resolver core compaction already uses, instead of returning the session model until the account is spent. On a healthy session a configured, resolvable, usable `compaction.model` is returned; a malformed, unknown, spent or credential-less override (checked with `hasConfiguredAuth`, the gate the spent path already uses) keeps the session model and logs a `compaction_model_fallback` warning through a single notice slot: a cause logs once, and again only after a different cause or a successful use of the override. `no_credentials` is decided only from a published availability snapshot (`hasFreshAvailabilitySnapshot()`); before one, or after a busy credential read, the answer is unknown and the override is kept, so a misconfigured override never stops builtin compaction and a busy store never logs a false `no_credentials`.
+- `packages/coding-agent/src/core/model-runtime.ts`: an availability pass that hit a busy credential store schedules a bounded re-read (five attempts, 250 ms doubling, unref'd timer; a published pass resets the budget), so a store locked during startup no longer leaves every provider unconfigured until an unrelated refresh. The spent-account order (held target, override, authenticated alternate that fits) is unchanged.
 - `packages/coding-agent/docs/extensions.md`: `ctx.getCompactionModel()` documents the healthy-session override.
 
 ### Why
@@ -11482,6 +11483,7 @@ The summary-model resolver reads session-owned state (settings, model runtime, s
 ### Expected merge conflict zones
 
 - `agent-session.ts`: `_resolveCompactionModel` and its healthy-session early return, the new private field beside `_sessionLogger`, and `getCompactionModel` in the extension context actions.
+- `model-runtime.ts`: `answeredFromBusyStore` and the retry fields beside `providerAvailabilitySeq`.
 
 ## 2026-10-21 - The auth_login_end event can name a replaced credential (#3486)
 

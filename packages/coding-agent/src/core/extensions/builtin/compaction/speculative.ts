@@ -33,7 +33,7 @@ import {
 } from "../../../compaction/warm-anchor.ts";
 import { CredentialFailoverError, TURN_RETRY_SUPPRESSION_PREFIX } from "../../../credential-pool/failover.ts";
 import { convertToLlm } from "../../../messages.ts";
-import type { ModelRegistry } from "../../../model-registry.ts";
+import type { ModelRegistry, ResolvedRequestAuth } from "../../../model-registry.ts";
 import type { ReadonlySessionManager } from "../../../session-manager.ts";
 import type { ApplyCompactionResult, ContextUsage, ProviderRequestPreparation } from "../../types.ts";
 import { pruneToolResults } from "./emergency-prune.ts";
@@ -273,18 +273,27 @@ export async function runExtensionCompaction(
 	onProgress?: CompactionProgressCallback,
 ): Promise<CompactionResult | undefined> {
 	if (signal?.aborted) return undefined;
-	const selectedModel = context.getCompactionModel?.() ?? snapshot.model;
-	const selectedSnapshot =
-		selectedModel === snapshot.model
-			? snapshot
-			: { ...snapshot, model: selectedModel, contextWindow: selectedModel.contextWindow };
-	const auth = await context.modelRegistry?.getApiKeyAndHeaders(selectedModel);
-	if (signal?.aborted) return undefined;
 	// A provider is authenticated for summarization by a resolved key, a credential
 	// request header, or ambient request-time auth. The ambient marker comes from the
 	// same provider resolution normal turns use; an unconfigured keyed provider still
 	// has none of these and is rejected before a request.
-	if (!auth?.ok || !(auth.apiKey || hasCredentialHeaders(auth.headers) || auth.ambient)) {
+	const authenticated = (resolved: ResolvedRequestAuth | undefined): boolean =>
+		resolved?.ok === true && Boolean(resolved.apiKey || hasCredentialHeaders(resolved.headers) || resolved.ambient);
+	let selectedModel = context.getCompactionModel?.() ?? snapshot.model;
+	let auth = await context.modelRegistry?.getApiKeyAndHeaders(selectedModel);
+	if (signal?.aborted) return undefined;
+	// A configured summary model whose credentials could not be confirmed earlier (#830) must not
+	// disable compaction: without credentials at request time, summarize on the session model.
+	if (selectedModel !== snapshot.model && !authenticated(auth)) {
+		selectedModel = snapshot.model;
+		auth = await context.modelRegistry?.getApiKeyAndHeaders(selectedModel);
+		if (signal?.aborted) return undefined;
+	}
+	const selectedSnapshot =
+		selectedModel === snapshot.model
+			? snapshot
+			: { ...snapshot, model: selectedModel, contextWindow: selectedModel.contextWindow };
+	if (!auth?.ok || !authenticated(auth)) {
 		const detail = auth && !auth.ok ? auth.error : `no credentials resolved for provider "${selectedModel.provider}"`;
 		throw new SummaryGenerationError("auth", `summarization credentials unavailable: ${detail}`);
 	}

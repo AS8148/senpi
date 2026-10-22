@@ -2302,6 +2302,7 @@ Summary auth/snapshot setup in `speculative.ts` and native-compaction gates in `
 
 ### What changed
 
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative.ts`: a configured summary model with no credentials at request time (kept while availability was unknown) falls back to the session model instead of failing the summary, so compaction is never disabled by the override.
 - `packages/coding-agent/src/core/extensions/builtin/compaction/speculative.ts`: overflow detection and the overflow-retry input shrink use the request snapshot's context window, which is the selected summary model's window, instead of the session model's.
 
 ### Why

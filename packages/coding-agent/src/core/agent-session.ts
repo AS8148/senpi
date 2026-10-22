@@ -1285,7 +1285,10 @@ export class AgentSession {
 	/** Recently delivered `queuedId`s (bounded), so a late dequeue answers `already_delivered`, not `not_found`. */
 	private readonly _deliveredQueuedIds = new Set<string>();
 	private _sessionLogger: SessionLogger;
-	/** Last logged `compaction.model` fallback, so a repeated lookup logs one line per distinct cause. */
+	/**
+	 * A single notice slot for `compaction.model` fallbacks: a cause logs once, and logs again only
+	 * after a different cause or a successful use of the override clears the slot.
+	 */
 	private _compactionModelFallbackNotice: string | undefined;
 	private _activeCompactionLogAttempt:
 		| { id: string; reason: CompactionReason; tokensBefore: number | undefined }
@@ -1881,8 +1884,12 @@ export class AgentSession {
 					: "malformed"
 				: !usable(configured)
 					? "provider_spent"
-					: !this._modelRuntime.hasConfiguredAuth(configured.provider)
-						? "no_credentials"
+					: this._modelRuntime.hasFreshAvailabilitySnapshot() &&
+							!this._modelRuntime.hasConfiguredAuth(configured.provider)
+						? // Only a published availability pass can say "no credentials": before it (or
+							// after a busy store read) the answer is unknown, the override is kept, and
+							// request-time auth decides.
+							"no_credentials"
 						: undefined;
 			if (configured && fallbackReason === undefined) {
 				this._compactionModelFallbackNotice = undefined;
