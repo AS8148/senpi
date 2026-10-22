@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: `degradeQuestion` no longer ends with `ui.input("Anything else? (optional)")`. It asks one `select` per question (and the per-question `input` behind "Other"), then settles `answered` when every question was answered and `cancelled` otherwise; `comment` is always unset.
+- `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: `degradeQuestion` no longer ends with `ui.input("Anything else? (optional)")`. It asks one `select` per question (and the per-question `input` behind "Other"), then settles through `settledQuestionStatus(answers, undefined)` like the structured path: `answered` when at least one question was answered (the rest are listed in `unanswered`), `cancelled` only when none was; the response carries no `comment` key.
 
 ### Why
 

@@ -51,10 +51,33 @@ it("never turns an input card's 'Answer' label into the comment the model reads"
 	const select = vi.fn().mockResolvedValueOnce("A").mockResolvedValueOnce("B");
 	const input = vi.fn().mockResolvedValue("Answer");
 	const response = await degradeQuestion({ select, input }, request);
-	expect(response.comment).toBeUndefined();
+	expect("comment" in response).toBe(false);
 	const { text, words } = formatModelAnswer(response, request.requestId, request.questions);
 	expect(text).toBe("q1: A\nq2: B");
 	expect(words).toEqual([]);
+});
+// A partial fallback answer settles like the structured path (`settledQuestionStatus`): the answered
+// questions reach the model and the rest are listed as unanswered, never "dismissed" (#4042 review).
+it("keeps a partial degraded answer: answered questions reach the model, the rest are unanswered", async () => {
+	const select = vi.fn().mockResolvedValueOnce("A").mockResolvedValueOnce(undefined);
+	const input = vi.fn();
+	const response = await degradeQuestion({ select, input }, request);
+	expect(response).toStrictEqual({
+		status: "answered",
+		resolvedBy: "rpc_connection",
+		answers: { q1: { selected: ["A"] } },
+		unanswered: ["q2"],
+	});
+	expect(formatModelAnswer(response, request.requestId, request.questions).text).toBe("q1: A\nUnanswered: q2");
+});
+it("settles a degraded question with no answer at all as cancelled", async () => {
+	const select = vi.fn().mockResolvedValue(undefined);
+	const input = vi.fn();
+	expect(await degradeQuestion({ select, input }, request)).toStrictEqual({
+		status: "cancelled",
+		answers: {},
+		unanswered: ["q1", "q2"],
+	});
 });
 it("broadcasts, replays once after message end, and forgets resolved questions", async () => {
 	const writer = new SessionEventWriter(() => {});

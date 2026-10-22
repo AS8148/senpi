@@ -159,12 +159,12 @@ export async function degradeQuestion(
 	// No trailing "anything else?" prompt: a client without `question` shows every dialog as its own
 	// blocking card, so an optional comment read as a new question from the agent
 	// (sisyphuslabs/omo-desktop-app#4042). "Other" above still takes a typed answer per question.
-	const unanswered = request.questions.filter((q) => !answers[q.id]).map((q) => q.id);
+	// A partial answer settles like the structured path: answered, with the rest listed unanswered.
+	const status = settledQuestionStatus(answers, undefined);
 	return {
-		status: unanswered.length ? "cancelled" : "answered",
-		...(unanswered.length === 0 ? { resolvedBy: "rpc_connection" as const } : {}),
+		status: status ?? "cancelled",
+		...(status !== undefined ? { resolvedBy: "rpc_connection" as const } : {}),
 		answers,
-		comment: undefined,
-		unanswered,
+		unanswered: unansweredQuestionIds(request.questions, answers),
 	};
 }
