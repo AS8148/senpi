@@ -691,7 +691,7 @@
     "typescript/no-explicit-any": 3
   },
   "packages/coding-agent/src/core/agent-session.ts": {
-    "typescript/no-explicit-any": 34,
+    "typescript/no-explicit-any": 35,
     "typescript/no-non-null-assertion": 2
   },
   "packages/coding-agent/src/core/compaction/branch-summarization.ts": {
@@ -738,6 +738,9 @@
   },
   "packages/coding-agent/src/core/extensions/builtin/cursor-cli-oauth/session-router.ts": {
     "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/src/core/extensions/builtin/goal/turn-end-liveness.ts": {
+    "typescript/no-non-null-assertion": 1
   },
   "packages/coding-agent/src/core/extensions/builtin/herdr/herdr-client.ts": {
     "typescript/no-non-null-assertion": 1
@@ -1475,6 +1478,9 @@
   },
   "packages/coding-agent/test/suite/regressions/3853-rpc-unattended.test.ts": {
     "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/suite/regressions/3863-queued-person-input.test.ts": {
+    "typescript/no-non-null-assertion": 1
   },
   "packages/coding-agent/test/suite/regressions/5661-uppercase-header-values.test.ts": {
     "typescript/no-non-null-assertion": 1
