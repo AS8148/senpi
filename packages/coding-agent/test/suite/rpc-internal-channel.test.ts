@@ -157,6 +157,49 @@ describe.skipIf(process.platform === "win32")("authenticated internal connection
 		});
 	});
 
+	// senpi#3816 review: the 2 s / 8 KiB pre-auth budget is the host's (server) guard. A supervisor-side client
+	// whose host answers late (a stalled engine event loop) must still connect, as raw connections did.
+	it("completes a client handshake whose host answers after more than 2 s", async () => {
+		const root = mkdtempSync("/tmp/rpc-hop-slow-");
+		roots.push(root);
+		const path = join(root, "host.sock");
+		await listen(
+			createServer((socket) => {
+				sockets.push(socket);
+				attachJsonlLineReader(socket, (line) => {
+					const frame = JSON.parse(line);
+					if (frame.type === "get_protocol_info") {
+						const nonce = "0c".repeat(32);
+						const answer = {
+							id: frame.id,
+							type: "response",
+							command: frame.type,
+							success: true,
+							data: {
+								capabilities: ["socket_auth"],
+								auth: {
+									launch_id: "internal",
+									server_nonce: nonce,
+									server_proof: createHmac("sha256", key)
+										.update(`senpi-rpc-server\ninternal\n${frame.auth.client_nonce}\n${nonce}`)
+										.digest("hex"),
+								},
+							},
+						};
+						setTimeout(() => socket.write(`${JSON.stringify(answer)}\n`), 2_500);
+					} else if (frame.type === "authenticate")
+						socket.write(
+							`${JSON.stringify({ id: frame.id, type: "response", command: "authenticate", success: true })}\n`,
+						);
+				});
+			}),
+			path,
+		);
+		const stream = await connectInternalConnection(peer(path), key);
+		sockets.push(stream);
+		expect(stream.destroyed).toBe(false);
+	}, 10_000);
+
 	it("rejects a listener that cannot prove the internal key", async () => {
 		const root = mkdtempSync("/tmp/rpc-hop-forged-");
 		roots.push(root);

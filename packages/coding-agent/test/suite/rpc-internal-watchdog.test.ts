@@ -1,24 +1,40 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const probe = vi.hoisted(() => ({ identity: undefined as string | undefined, fail: false, calls: 0 }));
+const probe = vi.hoisted(() => ({
+	identity: undefined as string | undefined,
+	ticks: undefined as string | undefined,
+	fail: false,
+	calls: 0,
+}));
+// Both clock domains (senpi#3816 review): macOS compares ps lstart, Linux compares /proc start ticks.
 vi.mock("../../src/utils/process-identity.ts", async (original) => ({
 	...(await original<typeof import("../../src/utils/process-identity.ts")>()),
-	observeProcessStartMs: async () => {
+	readProcessStartTime: async () => {
 		probe.calls++;
 		if (probe.fail) throw new Error("identity unavailable");
-		return probe.identity === undefined ? undefined : Date.parse(probe.identity);
+		return probe.identity;
+	},
+}));
+vi.mock("../../src/utils/process-start-identity.ts", async (original) => ({
+	...(await original<typeof import("../../src/utils/process-start-identity.ts")>()),
+	readProcessStartTicks: () => {
+		probe.calls++;
+		if (probe.fail) throw new Error("identity unavailable");
+		return probe.ticks;
 	},
 }));
 
 import { armHostWatchdog, readHostWatchdogConfig } from "../../src/modes/rpc/host-watchdog.ts";
 
 const start = "Tue Oct 20 10:00:00 2026";
+const startTicks = "123456";
 // The identity check is rare (senpi#3816 review); this window covers its slowest cadence.
 const IDENTITY_WINDOW_MS = 61_000;
 afterEach(() => {
 	vi.restoreAllMocks();
 	vi.useRealTimers();
 	probe.identity = undefined;
+	probe.ticks = undefined;
 	probe.fail = false;
 	probe.calls = 0;
 });
@@ -30,9 +46,11 @@ describe("recorded supervisor lifetime", () => {
 			SENPI_RPC_HOST_WATCH_FD: "3",
 			SENPI_RPC_HOST_WATCH_PPID: "4242",
 			SENPI_RPC_HOST_WATCH_PSTART: start,
+			SENPI_RPC_HOST_WATCH_PSTART_TICKS: startTicks,
 		});
 		expect(config?.fd).toBe(process.platform === "win32" ? 3 : undefined);
 		expect(config?.processStartTime).toBe(start);
+		expect(config?.processStartTicks).toBe(startTicks);
 	});
 
 	it.each(["wrapper", "missing", "unreadable", "permission"] as const)(
@@ -44,9 +62,10 @@ describe("recorded supervisor lifetime", () => {
 				return true;
 			});
 			probe.identity = kind === "wrapper" ? start : undefined;
+			probe.ticks = kind === "wrapper" ? startTicks : undefined;
 			probe.fail = kind === "unreadable";
 			const fired = vi.fn();
-			const stop = armHostWatchdog({ ppid: 4242, processStartTime: start }, fired);
+			const stop = armHostWatchdog({ ppid: 4242, processStartTime: start, processStartTicks: startTicks }, fired);
 			try {
 				await vi.advanceTimersByTimeAsync(IDENTITY_WINDOW_MS);
 				expect(fired).not.toHaveBeenCalled();
@@ -63,8 +82,9 @@ describe("recorded supervisor lifetime", () => {
 			return true;
 		});
 		probe.identity = "Tue Oct 20 11:00:00 2026";
+		probe.ticks = "999999";
 		const fired = vi.fn();
-		const stop = armHostWatchdog({ ppid: 4242, processStartTime: start }, fired);
+		const stop = armHostWatchdog({ ppid: 4242, processStartTime: start, processStartTicks: startTicks }, fired);
 		try {
 			await vi.advanceTimersByTimeAsync(IDENTITY_WINDOW_MS);
 			expect(fired).toHaveBeenCalledTimes(1);
