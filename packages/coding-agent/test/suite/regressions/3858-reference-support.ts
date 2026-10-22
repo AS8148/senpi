@@ -12,7 +12,11 @@ export const ROTATED = "synthetic/3858 credential?+beta";
 export type Reference = { $file: string } | { $env: string } | { $concat: unknown[] };
 
 export function referenceRoot() {
-	const root = mkdtempSync(join(tmpdir(), "config-reference-3858-"));
+	// External macOS scratch volumes may have group-writable mount points.
+	// Successful file-read fixtures need a secure ancestor chain independently
+	// of the runtime's TMPDIR; mkdtemp creates an owner-only directory here.
+	const parent = process.platform === "darwin" ? "/Users/Shared" : tmpdir();
+	const root = mkdtempSync(join(parent, "config-reference-3858-"));
 	return {
 		root,
 		file: (name: string, value: string | Uint8Array = SECRET, mode = 0o600) => {

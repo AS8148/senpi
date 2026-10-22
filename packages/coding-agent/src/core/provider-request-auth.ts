@@ -1,4 +1,6 @@
 import { type AnyModel, type Api, isModelType, type Model, type ProviderHeaders } from "@earendil-works/pi-ai";
+import type { ConfigValue } from "@earendil-works/pi-ai/utils/config-reference";
+import { assertConfigReferenceAuthority } from "./config-reference-resolver.ts";
 import type { ModelsJsonProvider } from "./model-config.ts";
 import { configuredApiKey, configuredHeaders } from "./provider-api-key-auth.ts";
 import type { AuthStatus, ProviderConfigInput } from "./provider-composer.ts";
@@ -14,7 +16,7 @@ function rawModelHeaders(
 	model: AnyModel,
 	config: ModelsJsonProvider | undefined,
 	extension: ProviderConfigInput | undefined,
-): Record<string, string> | undefined {
+): Record<string, ConfigValue> | undefined {
 	// models.json definitions and overrides are chat-only. Extension definitions
 	// are matched by operation and id so colliding models cannot share headers.
 	const chatDefinition = isModelType(model, "chat")
@@ -23,6 +25,18 @@ function rawModelHeaders(
 	const extensionModel = extension?.models?.find(
 		(entry) => (entry.type ?? "chat") === (model.type ?? "chat") && entry.id === model.id,
 	);
+	for (const [name, value] of Object.entries(extensionModel?.headers ?? {})) {
+		assertConfigReferenceAuthority(value, {
+			origin: "provider extension",
+			field: `extension.models.${model.id}.headers.${name}`,
+			authority: "extension",
+		});
+	}
+	for (const value of [
+		...Object.values(isModelType(model, "chat") ? (config?.modelOverrides?.[model.id]?.headers ?? {}) : {}),
+		...Object.values(chatDefinition?.headers ?? {}),
+	])
+		assertConfigReferenceAuthority(value);
 	const headers = {
 		...(isModelType(model, "chat") ? config?.modelOverrides?.[model.id]?.headers : undefined),
 		...chatDefinition?.headers,

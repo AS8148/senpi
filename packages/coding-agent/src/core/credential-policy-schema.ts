@@ -1,4 +1,5 @@
 import { DEFAULT_SLOT_BLOCK_MS, MAX_SLOT_BLOCK_MS } from "@earendil-works/pi-ai/auth/pool/failover";
+import { NonemptyConfigValueSchema } from "@earendil-works/pi-ai/utils/config-reference";
 import { type Static, Type } from "typebox";
 
 /** Policy defaults shared with the pool engine so schema and runtime cannot drift. */
@@ -12,7 +13,7 @@ export const CREDENTIAL_POLICY_DEFAULTS = {
 const CredentialSlotRefSchema = Type.Object(
 	{
 		env: Type.Optional(Type.String({ minLength: 1 })),
-		value: Type.Optional(Type.String({ minLength: 1 })),
+		value: Type.Optional(NonemptyConfigValueSchema),
 	},
 	{ additionalProperties: false },
 );

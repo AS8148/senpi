@@ -1,6 +1,7 @@
 import type { Credential } from "@earendil-works/pi-ai";
 import { listSlots as listCredentialSlots, type PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
-import { resolveConfigValue } from "../resolve-config-value.ts";
+import type { ConfigValue } from "@earendil-works/pi-ai/utils/config-reference";
+import { getConfigValueEnvVarNames, resolveConfigValue } from "../resolve-config-value.ts";
 import { discoverEnvSlots } from "./env-slots.ts";
 import type { RunSlot } from "./failover.ts";
 import { STORE_BUSY, writeHealthUnlessStoreBusy } from "./health-write.ts";
@@ -72,7 +73,7 @@ export type RotationSources = {
 		affinity?: boolean;
 		cooldownBaseMs?: number;
 		cooldownCapMs?: number;
-		slots?: Record<string, { env?: string; value?: string }>;
+		slots?: Record<string, { env?: string; value?: ConfigValue }>;
 	};
 	now?: () => number;
 };
@@ -119,7 +120,17 @@ export async function listRotationSlots(
 			ref.env !== undefined
 				? env(ref.env)
 				: ref.value !== undefined
-					? await resolveConfigValue(ref.value, {})
+					? await resolveConfigValue(
+							ref.value,
+							typeof ref.value === "string"
+								? {}
+								: Object.fromEntries(
+										getConfigValueEnvVarNames(ref.value).flatMap((variable) => {
+											const value = env(variable);
+											return value === undefined ? [] : [[variable, value]];
+										}),
+									),
+						)
 					: undefined;
 		if (!key) continue;
 		policySlots.push({ name, envVarName, key, source: "env" });

@@ -5,7 +5,11 @@
 
 import type { ConfigValue } from "@earendil-works/pi-ai/utils/config-reference";
 import { warnMissingConfigEnvironment, warnOpaqueConfigEnvironment } from "./config-reference-env.ts";
-import { type ConfigReferenceContext, resolveConfigReference } from "./config-reference-resolver.ts";
+import {
+	assertConfigReferenceAuthority,
+	type ConfigReferenceContext,
+	resolveConfigReference,
+} from "./config-reference-resolver.ts";
 import { runConfigCommand } from "./resolve-config-command.ts";
 
 // Cache for shell command results (persists for process lifetime). The in-flight
@@ -122,27 +126,38 @@ function resolveTemplate(parts: TemplatePart[], env?: Record<string, string>): s
 	return resolved;
 }
 
-export function getConfigValueEnvVarName(config: string): string | undefined {
+export function getConfigValueEnvVarName(config: ConfigValue): string | undefined {
+	if (typeof config !== "string") return "$env" in config ? config.$env : undefined;
 	const reference = parseConfigValueReference(config);
 	if (reference.type !== "template") return undefined;
 	return reference.parts.length === 1 && reference.parts[0]?.type === "env" ? reference.parts[0].name : undefined;
 }
 
-export function getConfigValueEnvVarNames(config: string): string[] {
+export function getConfigValueEnvVarNames(config: ConfigValue): string[] {
+	if (typeof config !== "string") {
+		if ("$env" in config) return [config.$env];
+		return "$concat" in config
+			? [
+					...new Set(
+						config.$concat.flatMap((part) => (typeof part !== "string" && "$env" in part ? [part.$env] : [])),
+					),
+				]
+			: [];
+	}
 	const reference = parseConfigValueReference(config);
 	return reference.type === "template" ? getTemplateEnvVarNames(reference.parts) : [];
 }
 
-export function getMissingConfigValueEnvVarNames(config: string, env?: Record<string, string>): string[] {
+export function getMissingConfigValueEnvVarNames(config: ConfigValue, env?: Record<string, string>): string[] {
 	return getConfigValueEnvVarNames(config).filter((name) => resolveEnvConfigValue(name, env) === undefined);
 }
 
-export function isCommandConfigValue(config: string): boolean {
-	return parseConfigValueReference(config).type === "command";
+export function isCommandConfigValue(config: ConfigValue): boolean {
+	return typeof config === "string" && parseConfigValueReference(config).type === "command";
 }
 
-export function isConfigValueConfigured(config: string, env?: Record<string, string>): boolean {
-	return getMissingConfigValueEnvVarNames(config, env).length === 0;
+export function isConfigValueConfigured(config: ConfigValue, env?: Record<string, string>): boolean {
+	return typeof config !== "string" || getMissingConfigValueEnvVarNames(config, env).length === 0;
 }
 
 /**
@@ -223,11 +238,12 @@ export async function resolveConfigValueOrThrow(
 }
 
 export async function resolveHeadersOrThrow(
-	headers: Record<string, string> | undefined,
+	headers: Record<string, ConfigValue> | undefined,
 	description: string,
 	env?: Record<string, string>,
 ): Promise<Record<string, string> | undefined> {
 	if (!headers) return undefined;
+	for (const value of Object.values(headers)) assertConfigReferenceAuthority(value);
 	const resolved: Record<string, string> = {};
 	for (const [key, value] of Object.entries(headers)) {
 		resolved[key] = await resolveConfigValueOrThrow(value, `${description} header "${key}"`, env);

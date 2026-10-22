@@ -1,3 +1,4 @@
+import { ConfigValueSchema, NonemptyConfigValueSchema } from "@earendil-works/pi-ai/utils/config-reference";
 import { type Static, Type } from "typebox";
 import { Compile } from "typebox/compile";
 import { CredentialPolicySchema } from "./credential-policy-schema.ts";
@@ -202,7 +203,7 @@ const ModelDefinitionSchema = Type.Object({
 	promptCache: Type.Optional(ModelPromptCacheSchema),
 	contextWindow: Type.Optional(Type.Number()),
 	maxTokens: Type.Optional(Type.Number()),
-	headers: Type.Optional(Type.Record(Type.String(), Type.String())),
+	headers: Type.Optional(Type.Record(Type.String(), ConfigValueSchema)),
 	extraBody: Type.Optional(ExtraBodySchema),
 	cacheRetention: Type.Optional(Type.Union([Type.Literal("none"), Type.Literal("short"), Type.Literal("long")])),
 	compat: Type.Optional(ProviderCompatSchema),
@@ -229,7 +230,7 @@ const ModelOverrideSchema = Type.Object({
 	promptCache: Type.Optional(ModelPromptCacheSchema),
 	contextWindow: Type.Optional(Type.Number()),
 	maxTokens: Type.Optional(Type.Number()),
-	headers: Type.Optional(Type.Record(Type.String(), Type.String())),
+	headers: Type.Optional(Type.Record(Type.String(), ConfigValueSchema)),
 	extraBody: Type.Optional(ExtraBodySchema),
 	cacheRetention: Type.Optional(Type.Union([Type.Literal("none"), Type.Literal("short"), Type.Literal("long")])),
 	compat: Type.Optional(ProviderCompatSchema),
@@ -239,9 +240,9 @@ const ProviderConfigSchema = Type.Object({
 	name: Type.Optional(Type.String({ minLength: 1 })),
 	disabled: Type.Optional(Type.Boolean()),
 	baseUrl: Type.Optional(Type.String({ minLength: 1 })),
-	apiKey: Type.Optional(Type.String({ minLength: 1 })),
+	apiKey: Type.Optional(NonemptyConfigValueSchema),
 	api: Type.Optional(Type.String({ minLength: 1 })),
-	headers: Type.Optional(Type.Record(Type.String(), Type.String())),
+	headers: Type.Optional(Type.Record(Type.String(), ConfigValueSchema)),
 	extraBody: Type.Optional(ExtraBodySchema),
 	cacheRetention: Type.Optional(Type.Union([Type.Literal("none"), Type.Literal("short"), Type.Literal("long")])),
 	compat: Type.Optional(ProviderCompatSchema),

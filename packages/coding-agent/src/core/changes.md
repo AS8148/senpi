@@ -1,3 +1,31 @@
+## 2026-10-21 - Resolve model references with per-value provenance (senpi#3858)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-config-schema.ts`: reference unions in provider API keys and provider/model/override headers; URL fields remain strings.
+- `packages/coding-agent/src/core/credential-policy-schema.ts`: reference unions in credential policy slot values.
+- `packages/coding-agent/src/core/model-reference-origins.ts`: records the declaring file and exact field on each schema-listed reference value before freezing the retained snapshot.
+- `packages/coding-agent/src/core/model-config.ts`: attaches that metadata to the actual retained values, rather than the temporary validation clone.
+- `packages/coding-agent/src/core/provider-api-key-auth.ts`: refuses extension key/header/model-header objects before any configured reference read and resolves model-config values using the request environment.
+- `packages/coding-agent/src/core/provider-request-auth.ts`: preserves reference objects through model header precedence and refuses extension model-header objects before merging.
+- `packages/coding-agent/src/core/provider-header-auth.ts`: recognizes configured reference headers without performing I/O during availability checks.
+- `packages/coding-agent/src/core/resolve-config-value.ts`: reference-aware environment-name discovery and header authority preflight, with concat literal parts kept opaque.
+- `packages/coding-agent/src/core/model-runtime.ts`: the pool-presence helper reuses the policy-slot type instead of duplicating a string-only value type; its key-counting behavior is unchanged.
+
+### Why
+
+- Relative paths need their own declaring file, and an extension override must not inherit a trusted file's authority after a merge.
+- A missing reference is a named resolution error, not an invitation to silently fall back to ambient process credentials.
+
+### Why an extension could not handle it
+
+- Schema validation, immutable model configuration, provider composition, and request authentication happen inside the core.
+
+### Expected merge conflict zones
+
+- MEDIUM: model schema value slots and provider auth resolution signatures.
+- LOW: the new per-value origin registration module.
+
 ## 2026-10-22 - Extract credential policy schema without behavior changes (senpi#3858)
 
 ### What changed

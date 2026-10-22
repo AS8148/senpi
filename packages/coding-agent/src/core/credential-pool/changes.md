@@ -1,3 +1,21 @@
+## 2026-10-21 - Resolve typed policy-slot references (senpi#3858)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/rotation-slots.ts`: policy slot values accept the shared reference union, read named reference environment values from the supplied environment source, and propagate named reference failures.
+
+### Why
+
+- Policy slots need the same reference and origin contract as provider keys. An empty explicit request environment must not silently inherit ambient process credentials.
+
+### Why an extension could not handle it
+
+- Rotation chooses credentials before invoking the provider request path.
+
+### Expected merge conflict zones
+
+- LOW: `RotationSources.policy.slots` and the policy-slot resolution loop.
+
 ## 2026-10-17 - envSlotVarNames: every name the env slots read (senpi#3531)
 
 ### What changed
