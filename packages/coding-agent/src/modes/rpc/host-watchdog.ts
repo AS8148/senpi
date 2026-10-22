@@ -17,7 +17,12 @@ import { rmSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { Socket } from "node:net";
 import { envValue } from "../../core/brand.ts";
-import { processStartTimeMs, readProcessStartTime } from "../../utils/process-identity.ts";
+import {
+	observeProcessStartMs,
+	processStartObservationSpawns,
+	processStartTimeMs,
+	sameProcessStartMs,
+} from "../../utils/process-identity.ts";
 import { recordHostCrash } from "./host-crash-record.ts";
 import { HOST_DAEMON_DIR_ENV } from "./host-daemon-paths.ts";
 import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
@@ -40,6 +45,14 @@ export const HOST_WATCH_PPID_INTERVAL_MS = 250;
  * an idle host does not wake four times a second for a signal the pipe already delivers.
  */
 export const HOST_WATCH_PPID_BACKUP_INTERVAL_MS = 5_000;
+/**
+ * How often the recorded supervisor's start time is compared (senpi#3816 review). The liveness check runs every tick
+ * and catches a dead supervisor (ESRCH); its pid can only be reused after that death, so the start-time comparison only
+ * has to catch a death between ticks and runs rarely: every 5 s where reading it spawns nothing (Linux `/proc`), every
+ * 60 s where it spawns `ps`, so an idle host does not spawn processes (senpi#3738).
+ */
+export const HOST_WATCH_IDENTITY_INTERVAL_MS = 5_000;
+export const HOST_WATCH_SPAWNING_IDENTITY_INTERVAL_MS = 60_000;
 export const HOST_CLEANUP_PATHS_ENV = "SENPI_RPC_HOST_CLEANUP_PATHS";
 
 export interface HostWatchdogConfig {
@@ -255,8 +268,9 @@ function watchFdForEof(
 }
 
 /**
- * Poll only the recorded supervisor, never process.ppid (a wrapper may be the parent).
- * An absent pid or observed start-time mismatch is death; every observation error is unknown.
+ * Poll only the recorded supervisor, never process.ppid (a wrapper may be the parent). Every tick is a free
+ * `kill(pid, 0)`: ESRCH is death. The start time is compared rarely (see HOST_WATCH_IDENTITY_INTERVAL_MS) and an
+ * observed mismatch is death; an unreadable, missing or timed-out identity is unknown, never death.
  */
 function watchPpid(
 	supervisorPid: number,
@@ -267,29 +281,34 @@ function watchPpid(
 	// Tests and embedders may bind the watchdog to this process itself; that
 	// is a valid live binding rather than evidence of supervisor loss.
 	if (supervisorPid === process.pid) return () => {};
+	const recordedMs = recordedStart ? processStartTimeMs(recordedStart) : undefined;
+	const identityEveryMs = processStartObservationSpawns()
+		? HOST_WATCH_SPAWNING_IDENTITY_INTERVAL_MS
+		: HOST_WATCH_IDENTITY_INTERVAL_MS;
+	let nextIdentityAt = Date.now() + identityEveryMs;
 	let stopped = false;
 	let probing = false;
 	const timer = setInterval(() => {
-		if (probing || stopped) return;
+		if (stopped) return;
+		if (!processAlive(supervisorPid)) {
+			fire(`supervisor pid ${supervisorPid} is gone`);
+			return;
+		}
+		if (recordedMs === undefined || probing || Date.now() < nextIdentityAt) return;
 		probing = true;
-		void (async () => {
-			try {
-				if (!processAlive(supervisorPid)) {
-					if (!stopped) fire(`supervisor pid ${supervisorPid} is gone`);
-					return;
-				}
-				if (!recordedStart) return;
-				const observed = await readProcessStartTime(supervisorPid, process.platform, 1000);
-				const recordedMs = processStartTimeMs(recordedStart);
-				const observedMs = observed === undefined ? undefined : processStartTimeMs(observed);
-				if (!stopped && recordedMs !== undefined && observedMs !== undefined && recordedMs !== observedMs)
-					fire(`supervisor pid ${supervisorPid} start time changed`);
-			} catch {
-				// Permission, timeout and unreadable/missing start time are unknown, never death.
-			} finally {
+		nextIdentityAt = Date.now() + identityEveryMs;
+		void observeProcessStartMs(supervisorPid)
+			.then(
+				(observedMs) => {
+					if (!stopped && observedMs !== undefined && !sameProcessStartMs(recordedMs, observedMs))
+						fire(`supervisor pid ${supervisorPid} start time changed`);
+				},
+				// Permission, timeout and probe failures are unknown, never death.
+				() => {},
+			)
+			.finally(() => {
 				probing = false;
-			}
-		})();
+			});
 	}, intervalMs);
 	timer.unref?.();
 	return () => {

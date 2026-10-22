@@ -51,12 +51,19 @@ const SUPERVISOR_CORE_ALLOWLIST = new Set(["brand.js", "process-crash-record.js"
  */
 const SUPERVISOR_MODULE_CEILING = 55;
 // senpi#3795: the approved sealed hop adds only these transport/lifetime leaves. Count
-// the leaves actually loaded, not four slots of generic headroom: the pre-existing
+// the leaves actually loaded, not slots of generic headroom: the pre-existing
 // graph still has its original ceiling even if a leaf is later removed.
+// `host-lifecycle-internal-key` holds the supervisor's hop key and credentials, split out of host-lifecycle.ts
+// (senpi#3816 review); its own imports were already in the graph. Measured: 60 modules with it (4 hop leaves
+// before it), 1,970 source / 2,065 built bytes, 29 code lines.
 const INTERNAL_HOP_LEAVES = new Set(
-	["internal-channel", "internal-record-cipher", "internal-record-stream", "host-lifetime-reader"].map(
-		(name) => `packages/coding-agent/dist/modes/rpc/${name}.js`,
-	),
+	[
+		"internal-channel",
+		"internal-record-cipher",
+		"internal-record-stream",
+		"host-lifetime-reader",
+		"host-lifecycle-internal-key",
+	].map((name) => `packages/coding-agent/dist/modes/rpc/${name}.js`),
 );
 
 function loadedModules(entries: readonly { phase: string; url: string }[]): string[] {

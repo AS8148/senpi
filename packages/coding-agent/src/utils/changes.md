@@ -1,5 +1,23 @@
 # changes
 
+## 2026-10-22 - Spawn-free process start time on Linux (senpi#3795)
+
+### What changed
+
+- `packages/coding-agent/src/utils/process-identity.ts`: `observeProcessStartMs` returns a process's start time in epoch ms, reading `/proc/<pid>/stat` and the boot time from `/proc/stat` on Linux (no process spawned) and the existing `ps`/CIM probe elsewhere; `processStartObservationSpawns` says which applies. An unreadable entry is `undefined`.
+
+### Why
+
+- `packages/coding-agent/src/utils/process-identity.ts`: the RPC host's recorded-supervisor poll compared start times through `ps`, which spawned a process four times a second for the life of every idle Linux host (senpi#3816 review, a senpi#3738 regression).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/utils/process-identity.ts`: the poll runs in the core RPC host watchdog before any extension loads.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/utils/process-identity.ts`: the `node:fs` import and the new functions placed before `readProcessStartTime`.
+
 ## 2026-10-19 - Never signal a child whose spawn failed (senpi#3706)
 
 ### What changed

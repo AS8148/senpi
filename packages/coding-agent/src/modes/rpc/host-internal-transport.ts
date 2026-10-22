@@ -1,0 +1,39 @@
+/**
+ * The engine side of the supervisor's private hop (senpi#3795): the stdin-delivered key and lifetime descriptor
+ * from the bootstrap, and how each accepted internal connection is admitted. Split out of multi-session-host.ts.
+ */
+import type { Socket } from "node:net";
+import type { Duplex } from "node:stream";
+import { VERSION } from "../../config.ts";
+import type { HostWatchdogConfig } from "./host-watchdog.ts";
+import { getInternalHostBootstrap } from "./internal-bootstrap.ts";
+import { acceptInternalConnection } from "./internal-channel.ts";
+import { authenticateSocket } from "./socket-transport.ts";
+
+export interface InternalHostTransport {
+	/** The supervisor's watchdog binding, plus the reopened stdin lifetime descriptor when the bootstrap has one. */
+	readonly watchdogConfig: HostWatchdogConfig | undefined;
+	/** Authenticates and seals (POSIX key), authenticates (Windows secret), or accepts as is (no supervisor). */
+	admit(socket: Socket, accept: (socket?: Duplex) => void): void;
+}
+
+export function internalHostTransport(
+	configured: HostWatchdogConfig | undefined,
+	secret: Uint8Array | undefined,
+): InternalHostTransport {
+	const bootstrap = getInternalHostBootstrap();
+	return {
+		watchdogConfig: configured && {
+			...configured,
+			...(bootstrap?.lifetimeFd === undefined ? {} : { lifetimeFd: bootstrap.lifetimeFd }),
+		},
+		admit(socket, accept) {
+			if (bootstrap)
+				void acceptInternalConnection(socket, bootstrap.key, { protocolVersion: 1, serverVersion: VERSION })
+					.then(accept)
+					.catch(() => socket.destroy());
+			else if (secret) authenticateSocket(socket, secret, () => accept());
+			else accept();
+		},
+	};
+}

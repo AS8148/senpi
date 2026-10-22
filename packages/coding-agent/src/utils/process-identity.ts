@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { readFileSync } from "node:fs";
 
 const WINDOWS_FILETIME_EPOCH = 116444736000000000n;
 export const PROCESS_START_TOLERANCE_MS = 3_000;
@@ -227,6 +228,41 @@ export async function waitForGone(pidFile: DaemonPidFile, timeoutMs: number): Pr
 		await delay(100);
 	}
 	return !(await processMatchesPidFile(pidFile));
+}
+
+// /proc/<pid>/stat field 22 is the start time in clock ticks since boot; USER_HZ is 100 on the Linux ABIs senpi ships.
+const LINUX_USER_HZ = 100;
+
+function linuxProcessStartMs(pid: number): number | undefined {
+	try {
+		const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+		// The command name (field 2) may contain spaces and parentheses; fields resume after its last ")".
+		const ticks = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19]);
+		const bootSeconds = Number(/^btime (\d+)$/m.exec(readFileSync("/proc/stat", "utf8"))?.[1]);
+		if (!Number.isFinite(ticks) || !Number.isFinite(bootSeconds)) return undefined;
+		return Math.round(bootSeconds * 1000 + (ticks * 1000) / LINUX_USER_HZ);
+	} catch {
+		return undefined;
+	}
+}
+
+/** Whether {@link observeProcessStartMs} spawns a probe process (`ps`, CIM) on this platform. */
+export function processStartObservationSpawns(platform: NodeJS.Platform = process.platform): boolean {
+	return platform !== "linux";
+}
+
+/**
+ * A process's start time in epoch ms, or `undefined` when it cannot be read. Linux reads `/proc` and spawns nothing;
+ * other platforms run the `ps`/CIM probe. Compare results with {@link sameProcessStartMs}.
+ */
+export async function observeProcessStartMs(
+	pid: number,
+	platform: NodeJS.Platform = process.platform,
+	timeoutMs = 1000,
+): Promise<number | undefined> {
+	if (!processStartObservationSpawns(platform)) return linuxProcessStartMs(pid);
+	const identity = await readProcessStartTime(pid, platform, timeoutMs);
+	return identity === undefined ? undefined : processStartTimeMs(identity);
 }
 
 export async function readProcessStartTime(

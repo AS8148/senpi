@@ -3,7 +3,6 @@ import { createServer, type Server } from "node:net";
 import { basename, dirname, join } from "node:path";
 import type { Duplex } from "node:stream";
 import type { ToolRuntimeKind } from "../../cli/tool-runtime.ts";
-import { VERSION } from "../../config.ts";
 import type { CreateAgentSessionRuntimeFactory } from "../../core/agent-session-runtime.ts";
 import { envValue } from "../../core/brand.ts";
 import { HostMcpRegistry } from "../../core/extensions/builtin/mcp/host-registry.ts";
@@ -27,6 +26,7 @@ import { reopenHandoverParkedSessions } from "./host-handover-reopen.ts";
 import { performIdleHandover } from "./host-handover-wire.ts";
 import { EXPECTED_RUNTIME_BUILD_ID_ENV } from "./host-idle-handover.ts";
 import { type HostIdleOverrides, RPC_CLOSE_GRACE_MS_ENV, resolveHostIdlePolicy } from "./host-idle-policy.ts";
+import { internalHostTransport } from "./host-internal-transport.ts";
 import { parseIdleExitMs } from "./host-lifecycle.ts";
 import { prepareSocketPath } from "./host-lifecycle-proxy.ts";
 import { createZeroSessionTrim, startHostObservers } from "./host-observers.ts";
@@ -34,8 +34,6 @@ import { runAsHostGenerationProcess } from "./host-process-role.ts";
 import { createEndpointReservations } from "./host-reservations.ts";
 import { hostChildDrainRequestFile, watchDrainRequest } from "./host-stop-intent.ts";
 import { armHostWatchdog, readHostWatchdogConfigFromBrandEnv } from "./host-watchdog.ts";
-import { getInternalHostBootstrap } from "./internal-bootstrap.ts";
-import { acceptInternalConnection } from "./internal-channel.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
 import { hostGeneration, hostInstanceId, protocolIdentity } from "./protocol-identity.ts";
 import { rpcCommandShapeError } from "./rpc-input-validation.ts";
@@ -57,7 +55,6 @@ import {
 } from "./socket-ownership.ts";
 import { socketSink } from "./socket-sink.ts";
 import {
-	authenticateSocket,
 	ensureSocketSecret,
 	resolveSocketTransportAddress,
 	SOCKET_SECRET_FILE_ENV,
@@ -364,12 +361,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 		process.platform === "win32"
 			? await ensureSocketSecret(process.env[SOCKET_SECRET_FILE_ENV] ?? socketSecretPath(socketPath))
 			: undefined;
-	const bootstrap = getInternalHostBootstrap();
-	const configuredWatchdog = readHostWatchdogConfigFromBrandEnv();
-	const watchdogConfig = configuredWatchdog && {
-		...configuredWatchdog,
-		...(bootstrap?.lifetimeFd === undefined ? {} : { lifetimeFd: bootstrap.lifetimeFd }),
-	};
+	const { watchdogConfig, admit } = internalHostTransport(readHostWatchdogConfigFromBrandEnv(), secret);
 	// This host's OWN copy of the crash-path cleanup list. A drain empties it: once a successor
 	// generation is registered, the daemon state files under those paths describe the successor,
 	// and a crash of this (already replaced) host must not take them with it.
@@ -441,15 +433,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			socket.once("close", detach);
 			socket.once("error", () => detach());
 		};
-		if (bootstrap)
-			void acceptInternalConnection(rawSocket, bootstrap.key, {
-				protocolVersion: 1,
-				serverVersion: VERSION,
-			})
-				.then(accept)
-				.catch(() => rawSocket.destroy());
-		else if (secret) authenticateSocket(rawSocket, secret, () => accept());
-		else accept();
+		admit(rawSocket, accept);
 	});
 	server.on("error", (cause) => {
 		if (!shuttingDown) process.stderr.write(`senpi rpc socket listener failed: ${errorMessage(cause)}\n`);

@@ -1,10 +1,9 @@
 #!/usr/bin/env node
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAgentDir, isBundledNode, VERSION } from "../../config.ts";
-import { readProcessStartTime } from "../../utils/process-identity.ts";
 import { HostAdmission } from "./host-admission.ts";
 import { classifyChildExit, noteChildExit } from "./host-child-exit.ts";
 import { hostCrashCleanupPaths } from "./host-cleanup-paths.ts";
@@ -12,6 +11,7 @@ import { createHostDaemonPaths, generationPaths } from "./host-daemon-paths.ts";
 import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
 import { SupervisorActivity, SupervisorOwner } from "./host-lifecycle-activity.ts";
 import { drainOnPublicSocketLoss, SupervisorDrain, watchWin32ChildIdentity } from "./host-lifecycle-drain.ts";
+import { prepareInternalHop } from "./host-lifecycle-internal-key.ts";
 import {
 	HOST_CHILD_WATCH_FD,
 	parseSupervisorArgs,
@@ -27,7 +27,7 @@ import {
 	prepareSocketPath,
 	waitForListener,
 } from "./host-lifecycle-proxy.ts";
-import { createInternalSocketPath, readSettingsFile, recordChildPid } from "./host-lifecycle-scratch.ts";
+import { readSettingsFile, recordChildPid } from "./host-lifecycle-scratch.ts";
 import {
 	performShutdown,
 	registerSupervisorSignals,
@@ -38,7 +38,6 @@ import {
 import { startSupervisorTicker } from "./host-lifecycle-ticker.ts";
 import { errorMessage, writeStderrLine } from "./host-supervisor-log.ts";
 import { PUBLIC_SOCKET_IDENTITY_FILE, statSocketIdentity, writeSocketIdentityFile } from "./socket-ownership.ts";
-import { createSocketSecret, socketSecretPath } from "./socket-transport.ts";
 
 // The exit verdict, the launch surface and the cold-start/idle-exit policy live in their own modules
 // (host-child-exit.ts, host-lifecycle-launch.ts, host-lifecycle-policy.ts); they stay exported from
@@ -91,14 +90,8 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	// It is provisioned BEFORE the internal hop and the child so a provisioning
 	// failure leaves no scratch directory and no host process behind.
 	const publicSecret = process.platform === "win32" ? await ensurePublicSocketSecret(publicSocket) : undefined;
-	const internal = await createInternalSocketPath(paths.dir);
-	const internalSocket = internal.socket;
-	const internalSecretPath = internal.secretPath ?? socketSecretPath(internalSocket);
-	const internalSecret = process.platform === "win32" ? await createSocketSecret(internalSecretPath) : undefined;
-	const internalKey = process.platform === "win32" ? undefined : randomBytes(32);
-	const supervisorStartTime = internalKey
-		? await readProcessStartTime(process.pid, process.platform, 1000).catch(() => undefined)
-		: undefined;
+	const hop = await prepareInternalHop(paths.dir);
+	const { internal, internalSocket, internalSecret, internalKey } = hop;
 	const state: SupervisorState = {
 		shuttingDown: false,
 		shutdownReason: undefined,
@@ -111,8 +104,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	const activity = new SupervisorActivity({
 		idleExitMs: policy.coldStart === "persistent" ? Number.POSITIVE_INFINITY : policy.idleExitMs,
 		internalSocket,
-		...(internalSecret ? { internalSecret } : {}),
-		...(internalKey ? { internalKey } : {}),
+		...hop.transport,
 		instanceId,
 		settled: () => state.shuttingDown,
 		onActivity: () => owner.activity(),
@@ -122,10 +114,9 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	const child = spawnHostChild({
 		launch,
 		internalSocket,
-		internal: { ...internal, secretPath: internalSecretPath },
-		...(internalSecret ? { internalSecret } : {}),
-		...(internalKey ? { internalKey } : {}),
-		supervisorStartTime,
+		internal,
+		...hop.transport,
+		supervisorStartTime: hop.supervisorStartTime,
 		daemonDir: paths.dir,
 		instanceId,
 		cleanupPaths: hostCrashCleanupPaths({
@@ -178,8 +169,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	);
 	const server = createPublicProxy({
 		internalSocket,
-		...(internalSecret ? { internalSecret } : {}),
-		...(internalKey ? { internalKey } : {}),
+		...hop.transport,
 		...(publicSecret ? { publicSecret } : {}),
 		clients: activity.clients,
 		admission,

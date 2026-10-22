@@ -136,19 +136,23 @@ export function connectInternalConnection(socket: Socket, key: Buffer): Promise<
 
 export function acceptInternalConnection(socket: Socket, key: Buffer, protocol: Frame = {}): Promise<Duplex> {
 	return handshake(socket, async (read, send) => {
-		const first = await read();
-		if (first.type !== "get_protocol_info") {
+		// Wire contract frame 5: any other first frame, a first frame without a valid nonce, or a command before
+		// authenticate is answered auth_required naming that command, then the connection closes.
+		const refuse = async (frame: Frame): Promise<never> => {
 			await send({
-				id: first.id,
+				id: frame.id,
 				type: "response",
-				command: first.type,
+				command: frame.type,
 				success: false,
 				error: "auth_required",
 				errorCode: "auth_required",
 			});
 			throw new Error("auth_required");
-		}
-		const clientNonce = nonce(object(first.auth).client_nonce);
+		};
+		const first = await read();
+		const offered = isObject(first.auth) ? first.auth.client_nonce : undefined;
+		if (first.type !== "get_protocol_info" || typeof offered !== "string" || !HEX.test(offered)) return refuse(first);
+		const clientNonce = offered;
 		const serverNonce = randomBytes(32).toString("hex");
 		const [frame] = await Promise.all([
 			read(),
@@ -168,9 +172,8 @@ export function acceptInternalConnection(socket: Socket, key: Buffer, protocol: 
 				},
 			}),
 		]);
-		const valid =
-			frame.type === "authenticate" &&
-			matches(frame.client_proof, proof(key, "senpi-rpc-client", serverNonce, clientNonce));
+		if (frame.type !== "authenticate") return refuse(frame);
+		const valid = matches(frame.client_proof, proof(key, "senpi-rpc-client", serverNonce, clientNonce));
 		await send({
 			id: frame.id,
 			type: "response",
