@@ -32,6 +32,8 @@ export interface ExportSessionForMoveOptions {
 	/** Queued user input the release took out of the session (`dropped.user_messages`), in order. */
 	readonly droppedUserMessages: readonly string[];
 	readonly bundleDir: string;
+	/** Runs inside the move lock before anything is read; throw to refuse. */
+	readonly guard?: () => void;
 }
 
 /**
@@ -40,7 +42,7 @@ export interface ExportSessionForMoveOptions {
  * manifest. Running it again for the same move rewrites the same bundle without a second release entry.
  */
 export function exportSessionForMove(options: ExportSessionForMoveOptions): Promise<MoveManifest> {
-	return withSessionMoveLock(options.sessionFile, () => writeMoveBundle(options));
+	return withSessionMoveLock(options.sessionFile, () => writeMoveBundle(options), options.guard);
 }
 
 async function writeMoveBundle(options: ExportSessionForMoveOptions): Promise<MoveManifest> {

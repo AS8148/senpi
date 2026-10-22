@@ -119,6 +119,7 @@ export async function moveSession(port: MoveSessionPort, command: RpcMoveSession
 	try {
 		return answer(command.id, await run(parsed, port, ledger, outgoing));
 	} catch (cause) {
+		if (cause instanceof MoveRefusal) return refusal(command.id, cause.code, cause.message);
 		const code = typeof cause === "object" && cause !== null && "code" in cause ? cause.code : undefined;
 		const detail = cause instanceof Error ? cause.message : String(cause);
 		return refusal(
@@ -146,19 +147,6 @@ async function run(
 			return answerMoveStatus(ledger, parsed.moveId, parsed.sessionPath);
 		case "export": {
 			const sessionFile = realSessionPath(parsed.sessionPath);
-			if (openHere(port, sessionFile))
-				return {
-					refuse: RPC_ERROR_SESSION_OPEN_HERE,
-					detail:
-						"This session is open on this host. Release it with release_session reason move and this moveId first.",
-				};
-			const ownership = sessionOwnership(loadEntriesFromFile(sessionFile));
-			if (ownership.writable || ownership.state !== "moving" || ownership.moveId !== parsed.moveId)
-				return {
-					refuse: RPC_ERROR_MOVE_NOT_RELEASED,
-					detail:
-						"This session file is not sealed for this move. Release it with release_session reason move and this moveId first; that also hands back its queued input.",
-				};
 			const bundleDir = outgoing(parsed.moveId);
 			const manifest = await exportSessionForMove({
 				sessionFile,
@@ -166,6 +154,19 @@ async function run(
 				target: parsed.target,
 				droppedUserMessages: parsed.dropped,
 				bundleDir,
+				guard: () => {
+					refuseOpenHere(
+						port,
+						sessionFile,
+						"This session is open on this host. Release it with release_session reason move and this moveId first.",
+					);
+					const ownership = sessionOwnership(loadEntriesFromFile(sessionFile));
+					if (ownership.writable || ownership.state !== "moving" || ownership.moveId !== parsed.moveId)
+						throw new MoveRefusal(
+							RPC_ERROR_MOVE_NOT_RELEASED,
+							"This session file is not sealed for this move. Release it with release_session reason move and this moveId first; that also hands back its queued input.",
+						);
+				},
 			});
 			return {
 				move_id: manifest.moveId,
@@ -191,17 +192,17 @@ async function run(
 		}
 		case "finish": {
 			const sessionFile = realSessionPath(parsed.sessionPath);
-			if (openHere(port, sessionFile))
-				return {
-					refuse: RPC_ERROR_SESSION_OPEN_HERE,
-					detail:
-						"This session is open on this host, so its runtime would not see the move end. Close it here, then finish the move.",
-				};
 			await finishMove({
 				sessionFile,
 				bundleDir: outgoing(parsed.moveId),
 				moveId: parsed.moveId,
 				answer: parsed.answer,
+				guard: () =>
+					refuseOpenHere(
+						port,
+						sessionFile,
+						"This session is open on this host, so its runtime would not see the move end. Close it here, then finish the move.",
+					),
 			});
 			const ownership = sessionOwnership(loadEntriesFromFile(sessionFile));
 			return { ownership: ownership.writable ? "writable" : ownership.state };
@@ -209,8 +210,18 @@ async function run(
 	}
 }
 
-function openHere(port: MoveSessionPort, sessionFile: string): boolean {
-	return port.hostedPaths().some((path) => realSessionPath(path) === sessionFile);
+class MoveRefusal extends Error {
+	readonly code: string;
+	constructor(code: string, detail: string) {
+		super(detail);
+		this.name = "MoveRefusal";
+		this.code = code;
+	}
+}
+
+function refuseOpenHere(port: MoveSessionPort, sessionFile: string, detail: string): void {
+	if (port.hostedPaths().some((path) => realSessionPath(path) === sessionFile))
+		throw new MoveRefusal(RPC_ERROR_SESSION_OPEN_HERE, detail);
 }
 
 function answer(id: string | undefined, data: Awaited<ReturnType<typeof run>>): RpcResponse {
