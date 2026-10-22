@@ -40,10 +40,11 @@ export class LifecycleChildren {
 		if (
 			previous &&
 			(report.runEpoch < previous.runEpoch ||
-				(report.runEpoch === previous.runEpoch && report.generation <= previous.generation))
+				(report.runEpoch === previous.runEpoch &&
+					(previous.terminal !== undefined || report.generation <= previous.generation)))
 		)
 			return false;
-		// A new run epoch replaces the entire old report, including terminal state.
+		// A terminal is final within its run epoch; only a new run epoch replaces it.
 		// Human waits remain runner-owned until an explicit child-to-human bridge exists.
 		const accepted: ChildLifecycleReport = {
 			...report,
