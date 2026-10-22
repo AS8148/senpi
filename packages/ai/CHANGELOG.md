@@ -16,6 +16,7 @@
 
 ### Fixed
 
+- `appendLoginSlot` replaces a credential of the other kind instead of adding an unusable slot; new `auth/pool/kinds` helpers classify slots and report the unused kinds of a mixed credential ([#3448](https://github.com/code-yeongyu/senpi/issues/3448))
 - Claude usage-limit failures retain the reset time from spent five-hour and weekly windows, so goal recovery can wait until the account is usable again ([#3825](https://github.com/code-yeongyu/senpi/issues/3825)).
 - OpenAI (Completions and Responses) and Google (Gemini API and Vertex) leave `usage.reasoning` unset when the provider reports no reasoning count, instead of reporting 0, as the `Usage` contract documents ([#3879](https://github.com/code-yeongyu/senpi/issues/3879)).
 
@@ -39,8 +40,6 @@
 - The bundled model catalog is refreshed from models.dev and the providers' model listings (`amazon-bedrock`, `huggingface`, `opencode`, `opengateway`, `openrouter`, `venice`).
 
 ### Fixed
-
-- `appendLoginSlot` replaces a credential of the other kind instead of adding an unusable slot; new `auth/pool/kinds` helpers classify slots and report the unused kinds of a mixed credential ([#3448](https://github.com/code-yeongyu/senpi/issues/3448))
 
 ### Removed
 
