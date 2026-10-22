@@ -117,6 +117,7 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 	let dropped = NOTHING_DROPPED;
 	let answer: RpcResponse | undefined;
 	let stagedState: { readonly attempt: string; readonly dir: string } | undefined;
+	let sealed = false;
 	try {
 		if (interrupted) {
 			admission.close(RELEASED_ADMISSION_CLOSED);
@@ -143,7 +144,9 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 			if (failed !== undefined)
 				throw new Error(`${failed.extensionPath} could not write its state for the move: ${failed.error}`);
 		}
-		answer = await claimAndRelease(port, command, interrupted, dropped, stagedState?.attempt);
+		answer = await claimAndRelease(port, command, interrupted, dropped, stagedState?.attempt, () => {
+			sealed = true;
+		});
 		return answer;
 	} catch (cause) {
 		if (cause instanceof SessionMovedAwayError) {
@@ -161,8 +164,9 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 	} finally {
 		if (answer?.success !== true) {
 			admission.reopen();
-			// A refused move is abandoned: what its export staged is never bundled, and a retry stages afresh.
-			if (stagedState !== undefined) rmSync(stagedState.dir, { recursive: true, force: true });
+			// A move refused before its seal is abandoned: what its export staged is never bundled, and a retry stages
+			// afresh. Once the seal names this attempt, its folder is the move's state and stays for export.
+			if (stagedState !== undefined && !sealed) rmSync(stagedState.dir, { recursive: true, force: true });
 		}
 	}
 }
@@ -177,6 +181,7 @@ async function claimAndRelease(
 	interrupted: boolean,
 	dropped: ReleaseDropped,
 	stateAttempt: string | undefined,
+	onSealed: () => void,
 ): Promise<RpcResponse> {
 	const taken = interrupted ? { interrupted: true, dropped } : undefined;
 	const ready = releasable(port, command, taken);
@@ -216,6 +221,7 @@ async function claimAndRelease(
 		admission.reopen();
 		throw cause;
 	}
+	onSealed();
 	if (!(await port.tearDown(command.sessionId, ready.sessionPath))) {
 		return refusal(command.id, RPC_ERROR_SESSION_CLOSING, taken);
 	}

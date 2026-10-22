@@ -63,6 +63,16 @@ export function exportSessionForMove(options: ExportSessionForMoveOptions): Prom
 	);
 }
 
+/** The release that sealed the session staged extension state that is no longer on disk; bundling would lose it. */
+export class MovedStateMissingError extends Error {
+	constructor(dir: string) {
+		super(
+			`The extension state the move release staged is missing (${dir}); the session was not exported without it. Finish the move as declined to take the session back, then release it again.`,
+		);
+		this.name = "MovedStateMissingError";
+	}
+}
+
 async function writeMoveBundle(options: ExportSessionForMoveOptions): Promise<MoveManifest> {
 	const { sessionFile } = options;
 	const moveId = parseMoveId(options.moveId);
@@ -85,13 +95,14 @@ async function writeMoveBundle(options: ExportSessionForMoveOptions): Promise<Mo
 			released_at: new Date().toISOString(),
 		});
 	}
+	const stateDir =
+		typeof options.extensionStateDir === "function" ? options.extensionStateDir() : options.extensionStateDir;
+	if (stateDir !== undefined && !existsSync(stateDir)) throw new MovedStateMissingError(stateDir);
 	const staging = `${options.bundleDir}.partial-${process.pid}`;
 	rmSync(staging, { recursive: true, force: true });
 	mkdirSync(join(staging, dirname(SESSION_BUNDLE_PATH)), { recursive: true });
 	copyFileSync(sessionFile, join(staging, SESSION_BUNDLE_PATH));
 	const sidecars = copySidecars(dirname(sessionFile), sessionId, staging);
-	const stateDir =
-		typeof options.extensionStateDir === "function" ? options.extensionStateDir() : options.extensionStateDir;
 	const stateFiles = copyExtensionState(stateDir, staging);
 	const manifest: MoveManifest = {
 		format: MOVE_BUNDLE_FORMAT,
