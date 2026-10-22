@@ -80,10 +80,9 @@ globalThis.fetch = async (input) => {
 					allowedFallbackModels: [
 						{
 							provider: "anthropic",
-							model: "claude-opus-5-5",
-							cost: generated["claude-opus-5-5"].cost,
+							model: "claude-opus-5",
+							cost: { input: 7.25, output: 31.5, cacheRead: 0.73, cacheWrite: 9.06 },
 						},
-						{ provider: "anthropic", model: "claude-opus-5", cost: generated["claude-opus-5"].cost },
 					],
 				},
 			});

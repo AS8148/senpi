@@ -12,6 +12,8 @@ export const FABLE55_LAUNCH = {
 	minimumClaudeCodeVersion: null as string | null,
 	released: false,
 	promoteDefaults: false,
+	/** Server-side refusal fallbacks. Fable 5.1 baseline until Anthropic's launch docs name the 5.5 list. */
+	refusalFallbackModels: ["claude-opus-4-8", "claude-opus-5"] as readonly string[],
 	metadataSource: "models.dev",
 } as const;
 
