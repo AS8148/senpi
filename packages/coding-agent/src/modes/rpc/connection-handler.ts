@@ -1816,11 +1816,12 @@ export function createRpcConnectionHandler(
 					type: "api_key",
 					key: command.key,
 				});
+				// The response carries what this key replaced (senpi#3448). Consume the record before the
+				// await below, so an OAuth login that finishes meanwhile keeps its own record (#3952).
+				session.modelRegistry.authStorage.takeReplacement(command.provider);
 				// Answer after the registry sees the key: a client re-reading auth status on this
 				// response must not get the pre-login snapshot (#2384).
 				await session.modelRegistry.refresh();
-				// The client shows what this key replaced and where the previous login is (senpi#3448).
-				session.modelRegistry.authStorage.takeReplacement(command.provider);
 				return success(id, "login_api_key", replacement);
 			}
 

@@ -7102,3 +7102,21 @@ The classic capability list in `connection-handler.ts`.
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the start and the success branch of `startLogin`.
+
+## 2026-10-21 - login_api_key consumes its replacement record before it awaits (#3952)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `login_api_key` takes the store's replacement record right after `set()`, before awaiting the registry refresh, instead of after it.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: an RPC OAuth login for the same provider that finished during that await had its replacement record taken by `login_api_key`, so its `auth_login_end` went out without `replaced`/`backupPath` (#3952).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts` owns the RPC auth commands.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the `login_api_key` case.
