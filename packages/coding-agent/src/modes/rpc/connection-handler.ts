@@ -767,6 +767,23 @@ export function createRpcConnectionHandler(
 		}
 	};
 
+	const subscribeExtensionEvents = (): void => {
+		unsubscribeExtensionEvents = clientCapabilities?.includes(EXTENSION_EVENTS_CAPABILITY)
+			? session.extensionRunner.onRpcEvent(({ name, data }) => {
+					outputEvent({ type: "extension_event", name, data } satisfies RpcExtensionEvent);
+				})
+			: undefined;
+	};
+
+	/** A classic connection's own declaration (senpi#4006); a shared host routes it through `clientInfo` instead. */
+	const replaceClientCapabilities = (next: readonly string[]): void => {
+		const hadEvents = clientCapabilities?.includes(EXTENSION_EVENTS_CAPABILITY) ?? false;
+		clientCapabilities = next;
+		if (hadEvents === next.includes(EXTENSION_EVENTS_CAPABILITY)) return;
+		unsubscribeExtensionEvents?.();
+		subscribeExtensionEvents();
+	};
+
 	const rebindSession = async (deferRefresh = false): Promise<void> => {
 		unsubscribeLoadedSurfaces?.();
 		unsubscribeExtensionEvents?.();
@@ -798,11 +815,7 @@ export function createRpcConnectionHandler(
 				} satisfies RpcSessionReplacedEvent);
 			}
 		}
-		unsubscribeExtensionEvents = clientCapabilities?.includes(EXTENSION_EVENTS_CAPABILITY)
-			? session.extensionRunner.onRpcEvent(({ name, data }) => {
-					outputEvent({ type: "extension_event", name, data } satisfies RpcExtensionEvent);
-				})
-			: undefined;
+		subscribeExtensionEvents();
 		subscribeLoadedSurfaceEvents();
 		// Subscribe to the replaced session before its bind runs, not after. The bind
 		// is deferred by design - awaiting it would deadlock a client whose
@@ -1203,10 +1216,11 @@ export function createRpcConnectionHandler(
 				if (command.capabilities !== undefined) {
 					if (!connectionRoles.declare(roleConnection(options.clientInfo?.connectionId()), command.capabilities))
 						return error(id, "set_client_info", CONNECTION_ROLE_FIXED);
-				}
-				if (options.clientInfo && command.capabilities !== undefined) {
-					clientCapabilities = command.capabilities;
-					options.clientInfo.setCapabilities(options.clientInfo.connectionId(), command.capabilities);
+					if (!options.clientInfo) replaceClientCapabilities(command.capabilities);
+					else {
+						clientCapabilities = command.capabilities;
+						options.clientInfo.setCapabilities(options.clientInfo.connectionId(), command.capabilities);
+					}
 				}
 				return success(id, "set_client_info");
 
