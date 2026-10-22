@@ -1,3 +1,29 @@
+## 2026-10-22 - Wire the session lifecycle into the session runtime (senpi#3864)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: binds the lifecycle to native message/idle edges, prompt admission (the #3873 `inputOrigin`), `sendCustomMessage`, extension binding/disposal and the restore barrier; adds `lifecycle`, `reportChildLifecycle`, `requestSelfSettle`, `refreshLifecycle` and `admitHumanAnswer`.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: carries the `spawnedBy` launch profile.
+- `packages/coding-agent/src/core/session-manager.ts`: the compacted mirror keeps only active-branch entries in its retained tail.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: turn settlement alone does not mean child results, queued wakes, timers or input preparation have finished.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: a child session must know its root and parent from its first entry.
+- `packages/coding-agent/src/core/session-manager.ts`: with a lifecycle entry written every turn, the first kept entry before an edited prompt can precede abandoned messages, which the old trim linearized back into the model context.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: model-context consumption, input admission and the restore barrier are engine-owned.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: the runtime launch profile is core.
+- `packages/coding-agent/src/core/session-manager.ts`: mirror trimming is internal persistence shared by every compaction path.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: native event subscription, settled/idle processing, prompt disposition/admission, `sendCustomMessage`, extension binding and disposal.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `CreateAgentSessionRuntimeResult`.
+- `packages/coding-agent/src/core/session-manager.ts`: `_trimMirrorAfterCompaction` retained range.
+
 ## 2026-10-22 - Keep abandoned branches out of the compacted mirror (senpi#3864)
 
 ### What changed

@@ -1,3 +1,21 @@
+## 2026-10-22 - Inspect both message queues (senpi#3864)
+
+### What changed
+
+- `packages/agent/src/agent.ts`: `peekQueuedMessages({ all: true })` returns steering and follow-up queues without consuming them.
+
+### Why
+
+- `packages/agent/src/agent.ts`: delivery-ticket retries must see every queued copy.
+
+### Why an extension could not handle it
+
+- `packages/agent/src/agent.ts`: the queues are private to `Agent`.
+
+### Expected merge conflict zones
+
+- `packages/agent/src/agent.ts`: `peekQueuedMessages`.
+
 ## 2026-10-21 - A run that failed in the queued-input port is marked local (senpi#3866)
 
 ### What changed

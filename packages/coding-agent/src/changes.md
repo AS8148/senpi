@@ -1,3 +1,21 @@
+## 2026-10-22 - Export the session lifecycle contract (senpi#3864)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: exports lifecycle snapshots, events, child reports, `SpawnedBy`, self-settle results and obligation/ticket interfaces.
+
+### Why
+
+- `packages/coding-agent/src/index.ts`: RPC clients and the desktop type against them.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/index.ts`: the package entry point is core.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/index.ts`: type export list.
+
 ## 2026-10-21 - Export the shared session lifecycle contract (senpi#3864)
 
 ### What changed

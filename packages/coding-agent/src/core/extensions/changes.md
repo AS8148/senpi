@@ -1,3 +1,33 @@
+## 2026-10-22 - Expose lifecycle actions to extensions (senpi#3864)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: adds the optional `lifecycle` action (`LifecycleApi`).
+- `packages/coding-agent/src/core/extensions/runner.ts`: binds the lifecycle action and resolves it at invocation.
+- `packages/coding-agent/src/core/extensions/loader.ts`: gives loaded extensions the lifecycle API.
+- `packages/coding-agent/src/core/extensions/index.ts`: exports the lifecycle API types.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts`: builtin task/goal extensions report child state and runs to the engine lifecycle.
+- `packages/coding-agent/src/core/extensions/runner.ts`: a retired runner must not reach a replaced session.
+- `packages/coding-agent/src/core/extensions/loader.ts`: extensions get the same action surface as builtins.
+- `packages/coding-agent/src/core/extensions/index.ts`: extension authors type against them.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts`: this is the extension contract itself.
+- `packages/coding-agent/src/core/extensions/runner.ts`: the runner owns action binding.
+- `packages/coding-agent/src/core/extensions/loader.ts`: the loader builds the extension API object.
+- `packages/coding-agent/src/core/extensions/index.ts`: public barrel.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionActions`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: runtime action binding in `initialize`.
+- `packages/coding-agent/src/core/extensions/loader.ts`: API object construction.
+- `packages/coding-agent/src/core/extensions/index.ts`: type exports.
+
 ## 2026-10-21 - Resolve lifecycle actions after extension initialization (senpi#3864)
 
 ### What changed

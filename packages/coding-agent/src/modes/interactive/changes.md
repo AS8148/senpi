@@ -1,3 +1,21 @@
+## 2026-10-22 - Admit TUI answers as human input for the lifecycle (senpi#3864)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: admits a synchronous question/dialog answer through `admitHumanAnswer` before resuming work.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: a person answering must invalidate self-settle and count as human input.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the TUI answer path is interactive mode itself.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: question/dialog answer handling.
+
 ## 2026-10-21 - The resume picker's search finds a session by the id its file name carries (oh-my-openagent#7471)
 
 ### What changed
