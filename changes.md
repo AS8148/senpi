@@ -1,5 +1,23 @@
 # changes — senpi-monorepo root
 
+## 2026-10-22 - hono and @hono/node-server overrides for GHSA-5r4p-p66f-jhc7
+
+### What changed
+
+- `package.json`: the root `overrides` block moves `hono` from 4.13.8 to 4.13.11 and `@hono/node-server` from 2.1.1 to 2.1.3; `package-lock.json`, `bun.lock` and the coding-agent install lock resolve both versions.
+
+### Why
+
+- GHSA-5r4p-p66f-jhc7 (moderate): `serveStatic` decoded the request path twice, so middleware guarding static paths could be bypassed. `hono` and `@hono/node-server` each ship a `serveStatic`, and both arrive through the `@modelcontextprotocol/sdk` subtree the fork does not declare, so both pins move.
+
+### Why an extension could not handle it
+
+- Dependency resolution is read by the package manager before any extension is loaded.
+
+### Expected merge conflict zones
+
+- The root `overrides` block in `package.json` and the matching lockfile entries, if another override bump lands first.
+
 ## 2026-10-17 - Pin TypeScript type roots to the repository (senpi#3482)
 
 ### What changed
