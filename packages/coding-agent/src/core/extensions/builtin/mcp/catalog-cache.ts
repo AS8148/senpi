@@ -2,9 +2,9 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import lockfile from "proper-lockfile";
 import { getAgentDir } from "../../../../config.ts";
 import { redactResolvedReferenceData } from "../../../config-reference-redaction.ts";
+import { lockWithLossHandling } from "../../../file-lock.ts";
 import { isEphemeralIdentity } from "./config-identity-key.ts";
 import type { McpServerDeclaredConfig } from "./config-schema.ts";
 import type { ServerConnection } from "./connection.ts";
@@ -76,13 +76,19 @@ export async function collectServerCatalogForCache(
 	credentialIdentity?: string,
 ): Promise<McpCachedServerCatalog> {
 	const tools = await collectAllPages<ListedTool>((cursor) =>
-		connection.client.listTools(cursor === undefined ? {} : { cursor }, { timeout: config.requestTimeoutMs }),
+		connection.client.listTools(cursor === undefined ? {} : { cursor }, {
+			timeout: config.requestTimeoutMs,
+		}),
 	);
 	const resources = await collectOptionalPages<ListedResource>((cursor) =>
-		connection.client.listResources(cursor === undefined ? {} : { cursor }, { timeout: config.requestTimeoutMs }),
+		connection.client.listResources(cursor === undefined ? {} : { cursor }, {
+			timeout: config.requestTimeoutMs,
+		}),
 	);
 	const prompts = await collectOptionalPages<ListedPrompt>((cursor) =>
-		connection.client.listPrompts(cursor === undefined ? {} : { cursor }, { timeout: config.requestTimeoutMs }),
+		connection.client.listPrompts(cursor === undefined ? {} : { cursor }, {
+			timeout: config.requestTimeoutMs,
+		}),
 	);
 	const resourceTemplates = await collectOptionalPages<ListedResourceTemplate>((cursor) =>
 		connection.client.listResourceTemplates(cursor === undefined ? {} : { cursor }, {
@@ -112,7 +118,7 @@ export async function writeMcpCachedServer(
 	if (isCurrent?.() === false) return;
 	const path = getMcpCatalogCachePath(agentDir);
 	await mkdir(dirname(path), { recursive: true });
-	const release = await lockfile.lock(dirname(path), {
+	const lock = await lockWithLossHandling(dirname(path), {
 		lockfilePath: `${path}.lock`,
 		realpath: false,
 		retries: { retries: 50, factor: 1.2, minTimeout: 20, maxTimeout: 200 },
@@ -123,10 +129,13 @@ export async function writeMcpCachedServer(
 		const cache = await readMcpCatalogCache(agentDir);
 		if (isCurrent?.() === false) return;
 		const persisted = redactResolvedReferenceData(server);
-		const next: McpCatalogCacheFile = { version: 1, servers: { ...cache.servers, [serverName]: persisted } };
-		await atomicWriteJson(path, next, isCurrent);
+		const next: McpCatalogCacheFile = {
+			version: 1,
+			servers: { ...cache.servers, [serverName]: persisted },
+		};
+		await atomicWriteJson(path, next, isCurrent, lock.assertHeld);
 	} finally {
-		await release();
+		await lock.release();
 	}
 }
 
@@ -139,12 +148,18 @@ async function collectOptionalPages<TItem>(listFn: (cursor: string | undefined) 
 	}
 }
 
-async function atomicWriteJson(path: string, value: unknown, isCurrent?: () => boolean): Promise<void> {
+async function atomicWriteJson(
+	path: string,
+	value: unknown,
+	isCurrent?: () => boolean,
+	assertHeld?: () => void,
+): Promise<void> {
 	await mkdir(dirname(path), { recursive: true });
 	const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
 	try {
 		await writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 		if (isCurrent?.() === false) return;
+		assertHeld?.();
 		await rename(tmp, path);
 	} finally {
 		await rm(tmp, { force: true });

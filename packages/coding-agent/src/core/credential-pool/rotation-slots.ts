@@ -1,5 +1,6 @@
 import type { Credential } from "@earendil-works/pi-ai";
-import { listSlots as listCredentialSlots, type PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
+import { slotsOfOwnKind } from "@earendil-works/pi-ai/auth/pool/kinds";
+import type { PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
 import type { ConfigValue } from "@earendil-works/pi-ai/utils/config-reference";
 import { getConfigValueEnvVarNames, resolveConfigValue } from "../resolve-config-value.ts";
 import { discoverEnvSlots } from "./env-slots.ts";
@@ -95,7 +96,11 @@ function overlayState(slot: RotationSlot, state: CredentialSlotState | undefined
  */
 function overlayModelBlock(slot: RotationSlot, until: number | undefined): RotationSlot {
 	if (until === undefined || (slot.blockedUntil !== undefined && slot.blockedUntil >= until)) return slot;
-	return { ...slot, blockedUntil: until, blockReason: slot.blockReason ?? "rate_limit" };
+	return {
+		...slot,
+		blockedUntil: until,
+		blockReason: slot.blockReason ?? "rate_limit",
+	};
 }
 
 /**
@@ -113,7 +118,12 @@ export async function listRotationSlots(
 	const modelId = options.modelId;
 	const now = sources.now ?? Date.now;
 	const { providerId, credential, env, repository } = sources;
-	const policySlots: { name: string; envVarName: string; key: string; source: "env" }[] = [];
+	const policySlots: {
+		name: string;
+		envVarName: string;
+		key: string;
+		source: "env";
+	}[] = [];
 	for (const [name, ref] of Object.entries(sources.policy?.slots ?? {})) {
 		const envVarName = ref.env ?? `models.json:${name}`;
 		const key =
@@ -138,7 +148,8 @@ export async function listRotationSlots(
 	if (credential) {
 		const state = await repository.listSlots(providerId, "stored");
 		const slots: RotationSlot[] = [];
-		for (const slot of listCredentialSlots(credential)) {
+		// A slot of the other kind cannot project, so a session must never be handed it (senpi#3486).
+		for (const slot of slotsOfOwnKind(credential)) {
 			const persisted = state[slot.name];
 			const storedRevision = await repository.storedCredentialRevision(providerId, slot.name, {
 				key: slot.key,

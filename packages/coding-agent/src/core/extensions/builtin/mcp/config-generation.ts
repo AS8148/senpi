@@ -46,9 +46,10 @@ async function resolveRecord(
 ): Promise<Record<string, string> | undefined> {
 	if (values === undefined) return undefined;
 	const entries = await Promise.all(
-		Object.entries(values).map(
-			async ([key, value]): Promise<[string, string]> => [key, await resolveValue(value, env)],
-		),
+		Object.entries(values).map(async ([key, value]): Promise<[string, string]> => [
+			key,
+			await resolveValue(value, env),
+		]),
 	);
 	return Object.fromEntries(entries);
 }

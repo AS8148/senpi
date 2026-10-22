@@ -50,8 +50,7 @@ async function walk(input: FileReference): Promise<{ path: string; stat: Stats }
 	let links = 0;
 	checkOwner(input, stat);
 	checkWritable(input, stat, true);
-	while (pending.length > 0) {
-		const part = pending.shift()!;
+	for (let part = pending.shift(); part !== undefined; part = pending.shift()) {
 		if (part === ".") continue;
 		if (!stat.isDirectory()) fail(input, "non-regular");
 		const next = part === ".." ? dirname(current) : join(current, part);

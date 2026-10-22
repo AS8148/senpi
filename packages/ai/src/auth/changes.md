@@ -41,6 +41,24 @@
 - LOW: the `readCredential` import in `packages/ai/src/auth/resolve.ts`.
 - LOW: the `./models` budget comment in `scripts/check-entry-graphs.mjs`.
 
+## 2026-10-21 - ApiKeyAuth.keyOptional for providers that work without a key (senpi#3869)
+
+### What changed
+
+- `packages/ai/src/auth/types.ts`: `ApiKeyAuth` gains optional `keyOptional`. A provider sets it when it works without a key (a local server such as llama.cpp); `Models.login` then drops a blank key instead of refusing it with `EmptyApiKeyError`.
+
+### Why
+
+- senpi#3867 refuses blank API-key saves. The refusal must apply only to providers that need a key, and that has to come from provider metadata rather than a list of names (senpi#3869 review).
+
+### Why an extension could not handle it
+
+- `Models.login` reads the flag from the provider's auth contract, which lives in `pi-ai`.
+
+### Expected merge conflict zones
+
+- LOW: the field list of `ApiKeyAuth` next to `ambientOnly`.
+
 ## 2026-10-09 - Restore auth-tracker coverage for upstream-modified paths (senpi#3006)
 
 ### What changed
@@ -83,3 +101,22 @@ Exchange classification and credential resolution happen before provider request
 ### Expected merge conflict zones
 
 - The exchange catch in `oauth-refresh.ts` and error mapping in `resolve.ts`.
+
+## 2026-10-16 - A pool holds one kind of credential (#3448)
+
+### What changed
+
+- `packages/ai/src/auth/pool/slots.ts`: `appendLoginSlot` replaces a stored credential of the other kind instead of appending the login as a slot; the store backs up what it replaces.
+- `packages/ai/src/auth/pool/kinds.ts` (new): `slotKind` (only from a slot's own material; a slot with neither tokens nor a key is unclassified) `unusedSlotKinds`, which names the other-kind slots of a mixed pool so the store can report them, and `slotsOfOwnKind`, the slots a credential can project (rotation selects only from these).
+
+### Why
+
+- `packages/ai/src/auth/pool/slots.ts`: slots are projected through the top-level type, so a key slot under an OAuth credential projected to nothing and was never used (omo-desktop-app#2793).
+
+### Why an extension could not handle it
+
+- `packages/ai/src/auth/pool/slots.ts` is the pool algebra every credential write goes through.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/auth/pool/slots.ts`: the start of `appendLoginSlot`.
