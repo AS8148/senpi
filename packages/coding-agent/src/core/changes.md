@@ -1,3 +1,23 @@
+## 2026-10-22 - One owner of account selection for lanes that pick their own accounts (senpi#2081)
+
+### What changed
+
+- `model-runtime.ts`: `couldRotateCredentials` returns false for a provider registered with `ownsAccountSelection`, so the generic credential pool never wraps it. Before that provider's first request in a process, the generic-pool health already recorded for it in `credential-pool-state.json` is retired, once per process and retried if the file is busy.
+- `provider-composer.ts`: `ProviderConfigInput.ownsAccountSelection`.
+
+### Why
+
+senpi#2081: both layers chose accounts. The lane chose from all its accounts and ignored the outer slot, so every lane verdict was pinned on whichever outer slot was picked, and one request blocked every outer slot. The lane is the owner that keeps the session pin, resident-account stickiness, account order, per-account and per-model limits, and auth re-probe. Blocks that older builds persisted are retired so an upgrade heals with no re-login.
+
+### Why an extension could not handle it
+
+Whether the generic credential pool wraps a provider is decided in `ModelRuntime` before any extension code runs.
+
+### Expected merge conflict zones
+
+- `couldRotateCredentials` and the start of both rotation-capable `lazyStream` bodies in `model-runtime.ts`.
+- The tail of `ProviderConfigInput`, after `fallbackEligible`.
+
 ## 2026-10-21 - Composed API-key auth keeps keyOptional (senpi#3869)
 
 ### What changed
