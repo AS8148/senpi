@@ -10,6 +10,8 @@
 
 ### Changed
 
+- An RPC client that declares `interactive_user` in `set_client_info` keeps that role for the life of its connection: a later `set_client_info` that adds or drops it is refused with `connection_role_fixed`, so the heartbeat must repeat the same capability list. The role marks a person's client and is what may Stop or release a pause in senpi#3811 ([#3811](https://github.com/code-yeongyu/senpi/issues/3811)).
+
 ### Fixed
 
 - An answer to a question that arrives while a session is starting up now counts as your input, so it releases held background work like any other answer ([#3917](https://github.com/code-yeongyu/senpi/issues/3917)).
