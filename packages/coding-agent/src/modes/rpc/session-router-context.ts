@@ -11,6 +11,7 @@ import { drainSessionEffects, installSessionEffectSink } from "./session-effect-
 import type { SessionEventWriter } from "./session-event-writer.ts";
 
 import type { RpcSessionRegistry } from "./session-registry.ts";
+import { SessionAttachOrder } from "./session-attach-order.ts";
 import { tearDownReleased } from "./session-router-close.ts";
 import { routingIdOf } from "./session-router-errors.ts";
 import { sweepIdleSessions } from "./session-router-occupancy.ts";
@@ -23,6 +24,9 @@ export class RouterContext {
 
 	/** Session handles opened by each connection, with one count per attachment. */
 	readonly sessionsByConnection = new Map<string, Map<string, number>>();
+
+	/** When each connection first attached to each session: relocation asks the earliest offerer (senpi#3994). */
+	readonly attachOrder = new SessionAttachOrder();
 
 	/** Opens currently awaiting runtime/binding setup, keyed by connection. */
 	readonly opensByConnection = new Map<string, Set<Promise<void>>>();

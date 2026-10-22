@@ -47,6 +47,7 @@ describe("multi-session RPC protocol info", () => {
 					"detach_connection",
 					"unload_session",
 					"move_session",
+					"session_relocation",
 					"session_context",
 					"session_kind",
 					"session_status",

@@ -66,6 +66,7 @@ export {
 	RPC_ERROR_WARM_FAILED,
 } from "./rpc-error-types.ts";
 export type { RpcCommand, RpcInboundRecord } from "./rpc-host-command-types.ts";
+export type { RpcHostRequest, RpcHostResponse, RpcRelocationDueEvent } from "./rpc-relocation-types.ts";
 export type {
 	RpcHostKernelMemory,
 	RpcHostLifecycleEvent,

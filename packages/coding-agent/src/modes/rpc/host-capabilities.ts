@@ -29,6 +29,7 @@ import {
 	SESSION_CONTEXT_CAPABILITY,
 	SESSION_HELD_CAPABILITY,
 	SESSION_KIND_CAPABILITY,
+	SESSION_RELOCATION_CAPABILITY,
 	SESSION_STATUS_CAPABILITY,
 	WARM_CAPABILITY,
 } from "./custom-capability.ts";
@@ -90,6 +91,8 @@ export function multiSessionHostCapabilities(options: {
 			UNLOAD_SESSION_CAPABILITY,
 			// Only a multi-session host owns a move ledger and the hosted-session list export checks against.
 			MOVE_SESSION_CAPABILITY,
+			// A host session asks the client that offers it to continue the session elsewhere (`host_request`).
+			SESSION_RELOCATION_CAPABILITY,
 			SESSION_CONTEXT_CAPABILITY,
 			SESSION_KIND_CAPABILITY,
 			// Only a multi-session host sees every session, so only it can stream their status.

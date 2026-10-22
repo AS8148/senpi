@@ -133,7 +133,7 @@ export class RpcSessionRegistry {
 		if (!entry) throw new RpcSessionRegistryError("unknown_session");
 		if (
 			entry.state === "closing" &&
-			!["abort", "abort_bash", "extension_ui_response", "extension_ui_progress"].includes(command)
+			!["abort", "abort_bash", "extension_ui_response", "extension_ui_progress", "host_response"].includes(command)
 		) {
 			throw new RpcSessionRegistryError("session_closing");
 		}

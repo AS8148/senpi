@@ -10,6 +10,7 @@ import type { SessionKind } from "../../core/extensions/types.ts";
 
 import type { RpcAttachmentCommand } from "./attachment-types.ts";
 import type { RpcExtensionUIProgress, RpcExtensionUIResponse } from "./rpc-question-types.ts";
+import type { RpcHostResponse } from "./rpc-relocation-types.ts";
 import type { RpcSessionCommand } from "./rpc-session-command-types.ts";
 import type { RpcMoveSessionCommand } from "./session-move-wire.ts";
 
@@ -225,5 +226,5 @@ export type RpcCommand =
 			context?: Record<string, string>;
 	  };
 
-/** Stdin records: session/host commands plus extension-UI replies and progress. */
-export type RpcInboundRecord = RpcCommand | RpcExtensionUIResponse | RpcExtensionUIProgress;
+/** Stdin records: session/host commands plus extension-UI replies and progress, and host-request answers. */
+export type RpcInboundRecord = RpcCommand | RpcExtensionUIResponse | RpcExtensionUIProgress | RpcHostResponse;

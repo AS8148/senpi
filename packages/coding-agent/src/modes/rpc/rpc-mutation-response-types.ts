@@ -31,7 +31,12 @@ export type RpcMutationResponse =
 			type: "response";
 			command: "prompt";
 			success: true;
-			data?: ClientMessageIdentity & { disposition?: PromptDisposition; admission?: ClientMessageAdmission };
+			data?: ClientMessageIdentity & {
+				disposition?: PromptDisposition;
+				admission?: ClientMessageAdmission;
+				/** Kept as a notice: automatic input while the user's Stop holds the session (senpi#3811). */
+				heldAsNotice?: boolean;
+			};
 	  }
 	| { id?: string; type: "response"; command: "send_custom_message"; success: true }
 	| { id?: string; type: "response"; command: "append_user_message"; success: true }
@@ -41,14 +46,22 @@ export type RpcMutationResponse =
 			type: "response";
 			command: "steer";
 			success: true;
-			data?: ClientMessageIdentity & { disposition?: QueuedInputDisposition; admission?: ClientMessageAdmission };
+			data?: ClientMessageIdentity & {
+				disposition?: QueuedInputDisposition;
+				admission?: ClientMessageAdmission;
+				heldAsNotice?: boolean;
+			};
 	  }
 	| {
 			id?: string;
 			type: "response";
 			command: "follow_up";
 			success: true;
-			data?: ClientMessageIdentity & { disposition?: QueuedInputDisposition; admission?: ClientMessageAdmission };
+			data?: ClientMessageIdentity & {
+				disposition?: QueuedInputDisposition;
+				admission?: ClientMessageAdmission;
+				heldAsNotice?: boolean;
+			};
 	  }
 	| {
 			id?: string;
@@ -110,7 +123,6 @@ export type RpcMutationResponse =
 			data: { model: Model<any>; thinkingLevel: ThinkingLevel; isScoped: boolean } | null;
 	  }
 	| { id?: string; type: "response"; command: "continue_from_leaf"; success: true }
-	| { id?: string; type: "response"; command: "resume_session"; success: true }
 	| { id?: string; type: "response"; command: "set_thinking_level"; success: true; data?: RpcEffectAnswer }
 	| {
 			id?: string;

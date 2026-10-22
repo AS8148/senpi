@@ -267,6 +267,9 @@ export class SessionEventWriter {
 		const isTargeted =
 			record.type === "response" ||
 			record.type === "bash_execution_update" ||
+			// Relocation records belong to the one connection that offers it (session-relocation-channel.ts).
+			record.type === "host_request" ||
+			record.type === "relocation_due" ||
 			(record.type === "extension_ui_request" &&
 				["select", "confirm", "input", "editor"].includes(String(record.method)));
 		const tagged = { ...value, sessionId } as RpcRecord;

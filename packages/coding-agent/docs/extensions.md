@@ -474,6 +474,22 @@ and call `ctx.noteHeldWake("goal")` (or its own source key) instead of charging.
 Source-only notices are consumed on release and reported through
 `held_wakes_released`; they never require a model payload to clear the hold.
 
+#### session_hold_changed
+
+`pi.on("session_hold_changed", (event, ctx) => ...)` fires when this session becomes paused or resumed
+(senpi#3811). `event.change` is `"paused"` or `"resumed"`, `event.pauseSeq` is the session's pause sequence, and
+`event.holds` lists the live records as `{ kind, key, data? }`: `session_hold` for a user Stop, `run_fence` for a
+run the Stop paused, `inherited_hold` while a parent's run keeps this task child paused, and `unattended`. A
+workflow runner uses it to pause the run a stopped session started.
+
+`ctx.getPauseState()` returns the same `{ pauseSeq, holds }` snapshot. `ctx.fenceRun({ kind, id })` keeps wakes
+whose `details.runRef` names that run as notices until the user resumes; untagged wakes are not affected by a
+fence. Human input and `resume_session` release fences together with the user's Stop.
+`ctx.releaseRunFence({ kind, id })` drops that run's fence when the run is cancelled: call it after the run is
+journaled terminal. Later wakes tagged with the run are admitted again, fences for other runs stay, and releasing a
+run that has no fence does nothing. A fence alone does not pause the session, so fencing or releasing only a fence
+emits no `session_paused`/`session_resumed` and no `session_hold_changed`; each pause gets exactly one resume.
+
 #### held_wakes_released
 
 `pi.on("held_wakes_released", (event, ctx) => ...)` receives
@@ -499,7 +515,7 @@ and release entries carry `keys`. Restart restores both identity and metadata.
 
 `getHold(key)` returns the current keyed record, or `undefined`.
 `release(keys, cause)` releases only the named keys and emits `session_resumed`
-only when the final active record goes. `releaseAll(cause)` delegates to that
+only when the session stops being held, once per `session_paused`. `releaseAll(cause)` delegates to that
 operation. The cause union remains `"input" | "resume_session"`.
 `engine-turn-hold-notices.ts` owns notice persistence, coalescing, counts, and
 consumption; the ledger delegates to that one custody path.
@@ -1811,6 +1827,9 @@ runtime's steering or follow-up queue like the user's queued input. The protocol
 | `admitExternalMessage({ delivery_id, text, deliverAs, expected_turn_id?, sender?, display_text?, whenIdle? })` | `{ kind, turn_epoch }` | Decides and acts in one synchronous call. `whenIdle` (`start`, the default, or `queue`) is what an idle session does with it: start a turn, or hold it (`queued`) in the `deliverAs` queue for the next turn. `kind` is `started`, `queued`, `steered`, `turn_conflict` (stale epoch, or a steer without one), `held_draft` (nothing enqueued; retry on the next wake) or `already_admitted` (also for a delivery whose entry the file refused, until the run that refused it has settled and the file's last write succeeded). The delivery becomes a `custom` entry `session_control_delivery` whose `details.delivery_id` proves it was applied. Throws once a host started handing the session over (`release_session`). `sender` (`{ kind: "agent", session_id, name? }`, `{ kind: "command_line", user? }` or `{ kind: "external", platform, author? }`) and `display_text` (the message as written) go to the entry's `details`: the terminal labels the message by its sender over `display_text`, while the model reads `text`. |
 | `listAdmittedDeliveries()` | `{ pending, emitted, failed? }` | The process-lifetime ledger: `pending` is held by the runtime, `emitted` has its transcript entry written, `failed` (present only when non-empty, `[{ delivery_id, error }]`) had its entry refused by the session file: no longer held, still with its sender, admissible again once the run that refused it has settled and the file's last write succeeded. |
 | `persistHeaderNow()` | `Promise<void>` | Writes the session header now, so the session id is durable before anything exposes it. |
+| `relocationOffered()` | `boolean` | Whether the session's host offers continuing it on another computer right now. The builtin relocation tools are active only while it is `true`. |
+| `relocationTargets(signal?)` | `Promise<RelocationTargetsResult>` | The user's other computers the session's host offers to continue on (`listed`), or `unavailable` when no host offers relocation. |
+| `requestRelocation({ target, reason }, signal?)` | `Promise<RelocationRequestResult>` | Asks the host to continue this session on `target` when the current turn ends (`scheduled`); never interrupts the turn. `unavailable` or `refused` leaves the session working here. See `docs/rpc.md` "Continuing a session on another computer". |
 
 ```typescript
 export default function ({ pi }) {
@@ -2090,6 +2109,32 @@ pi.sendMessage({
   - `"followUp"` - Waits for agent to finish. Delivered only when agent has no more tool calls.
   - `"nextTurn"` - Queued for next user prompt. Does not interrupt or trigger anything.
 - `triggerTurn: true` - If agent is idle, trigger an LLM response immediately. Only applies to `"steer"` and `"followUp"` modes (ignored for `"nextTurn"`). Requested from a `session_start` handler, the turn starts once every extension's `session_start` handler has returned.
+- `items` - Make the message an itemized batch: one `{ itemId, producer, runRef?, content?, details? }` per wake it
+  carries. The call then returns a promise of one receipt per item, `{ itemId, entryId, disposition, noticeId? }`.
+  Admission is atomic: if a pause applies to the batch or to any item (a Stop, a parent's run pause, an unattended
+  hold, or a fence on that item's `runRef`), every item is stored as its own notice (`notice_persisted`, with
+  the item's own `content` and `details`, or the batch content when an item has none), all written in one entry, so
+  the batch is kept whole or not at all: if that write fails the promise rejects and no item is kept; otherwise the batch is
+  delivered as one message and every receipt names that message's entry (`message_persisted`). A held item's notice
+  is delivered on its own when the session resumes, and a later wake from the same producer never replaces it.
+  A host without item custody (an embedder's runtime) delivers the batch as a plain message and the promise
+  answers `undefined`, as an engine without `items` would. The itemized return type also admits `void`, so an
+  `ExtensionAPI` implementation or test double written with a single `sendMessage(...): void` signature stays
+  assignable; treat `void` like `undefined` (no receipts). Without `items`, `sendMessage` returns nothing, as before.
+
+```typescript
+const receipts = await pi.sendMessage(
+  { customType: "my-coordinator:wake", content: "Task A finished\n\nTask B finished", display: false },
+  {
+    triggerTurn: true,
+    deliverAs: "followUp",
+    items: [
+      { itemId: "a", producer: "task", runRef: { kind: "task", id: "t1" }, content: "Task A finished" },
+      { itemId: "b", producer: "task", content: "Task B finished" },
+    ],
+  },
+);
+```
 
 ### pi.sendUserMessage(content, options?)
 

@@ -13,6 +13,7 @@ import type { RouterContext } from "./session-router-context.ts";
 import { code, detail, error } from "./session-router-errors.ts";
 import { sweepDrain } from "./session-router-occupancy.ts";
 import { validatedOpenProfile } from "./session-router-open-profile.ts";
+import { relocationConnection } from "./session-router-relocation.ts";
 import { liveToolMediaScope, toolMediaPersister } from "./tool-media-store.ts";
 
 export function openWithBarrier(
@@ -136,6 +137,7 @@ export async function open(
 			const owned = host.sessionsByConnection.get(owner) ?? new Map<string, number>();
 			owned.set(openedSession.sessionId, (owned.get(openedSession.sessionId) ?? 0) + 1);
 			host.sessionsByConnection.set(owner, owned);
+			host.attachOrder.attached(openedSession.sessionId, owner);
 		}
 		if (!host.bindings.has(openedSession.sessionId)) {
 			host.bindings.set(
@@ -160,6 +162,8 @@ export async function open(
 								}
 							},
 							connectionId: () => host.writer.currentConnection(),
+							relocationConnection: () => relocationConnection(host, openedSession.sessionId),
+							deliverTo: (connection, deliver) => host.writer.withConnection(connection, deliver),
 						},
 					},
 				),

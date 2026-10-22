@@ -472,6 +472,7 @@ export class Harness<Ks extends readonly AnyKind[] = []> {
 				routes.set(key, doc);
 			}
 		}
+		// oxlint-disable-next-line eslint/prefer-const -- a closure reads it; const would throw in the TDZ if that closure ran before the assignment, so the rewrite is reviewed separately
 		let token!: Namespace<T>;
 		token = {
 			id,

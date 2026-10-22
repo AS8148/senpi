@@ -4,7 +4,7 @@ import type { RpcProtocolInfo } from "./rpc-protocol-info-types.ts";
 import type { RpcSessionState } from "./rpc-session-state-types.ts";
 import type { SessionStatusRecord } from "./session-status.ts";
 
-export type RpcHostResponse =
+export type RpcHostCommandResponse =
 	| {
 			id?: string;
 			type: "response";

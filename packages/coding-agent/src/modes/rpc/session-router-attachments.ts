@@ -1,5 +1,6 @@
 import { finalizeClose, tryClaimClose } from "./session-router-close.ts";
 import type { RouterContext } from "./session-router-context.ts";
+import { connectionLeft } from "./session-router-relocation.ts";
 /** Disconnect semantics shared by socket loss and release_attachment. True means settlement owns the final release. */
 export async function releaseDisconnectAttachment(host: RouterContext, sessionId: string): Promise<boolean> {
 	// Headless completion contract: a turn survives its client's death and
@@ -64,8 +65,12 @@ export async function releaseConnection(host: RouterContext, connectionId: strin
 	host.releasedConnections.add(connectionId);
 	host.writer.clearConnectionCapabilities(connectionId);
 	host.connectionRoles.release(connectionId);
-	for (const sessionId of host.sessionsByConnection.get(connectionId)?.keys() ?? [])
+	for (const sessionId of host.sessionsByConnection.get(connectionId)?.keys() ?? []) {
 		host.writer.detachConnectionFromSession(connectionId, sessionId);
+		connectionLeft(host, sessionId, connectionId);
+	}
+	// The socket is gone (dropped, not `detach_connection`): nothing will ever open with its capabilities again.
+	if (!host.writer.hasConnection(connectionId)) host.pendingCapabilities.delete(connectionId);
 	const opens = host.opensByConnection.get(connectionId);
 	const owned = host.sessionsByConnection.get(connectionId);
 	host.sessionsByConnection.delete(connectionId);
@@ -138,12 +143,14 @@ export function releaseOwnerAttachment(host: RouterContext, owner: string, sessi
 	if (count === 1) {
 		host.writer.detachConnectionFromSession(owner, sessionId);
 		owned.delete(sessionId);
+		connectionLeft(host, sessionId, owner);
 	} else owned.set(sessionId, count - 1);
 	if (owned.size === 0) host.sessionsByConnection.delete(owner);
 }
 
 /** Drops per-connection records for a handle the host closed on its own. */
 export function forgetSessionOwnership(host: RouterContext, sessionId: string): void {
+	host.attachOrder.forgetSession(sessionId);
 	for (const [connection, owned] of host.sessionsByConnection) {
 		owned.delete(sessionId);
 		if (owned.size === 0) host.sessionsByConnection.delete(connection);
