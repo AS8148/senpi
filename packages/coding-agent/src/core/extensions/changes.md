@@ -1,3 +1,21 @@
+## 2026-10-22 - ProviderConfig.ownsAccountSelection (senpi#2081)
+
+### What changed
+
+- `types.ts`: optional `ownsAccountSelection` on `ProviderConfig`. A provider whose lane chooses among its own stored accounts sets it, and the generic credential pool then never wraps that provider.
+
+### Why
+
+senpi#2081: a lane that picks its own accounts, wrapped by the generic pool, had its verdicts pinned on outer slots it never used, and every slot ended up blocked.
+
+### Why an extension could not handle it
+
+The flag is the extension's way to tell the core pool not to wrap it; the core reads it.
+
+### Expected merge conflict zones
+
+- The tail of `ProviderConfig`, after `fallbackEligible`.
+
 ## 2026-10-21 - Deterministic discovered extension registration (omo#10775)
 
 ### What changed

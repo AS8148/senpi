@@ -1,3 +1,26 @@
+## 2026-10-22 - All-accounts refusals are pool verdicts, not auth failures (senpi#2081)
+
+### What changed
+
+- `index.ts`: the provider registers with `ownsAccountSelection: true`, so the generic credential pool no longer wraps the lane. This lane is the one owner of account selection, keeping the pin, the resident account, account order, and per-account and per-model limits.
+- `affinity.ts`: `AllAccountsBlockedError.blockReason` is `auth_error` only when every candidate is auth-blocked. A pool where any account waits on a deadline reports that deadline as a temporary block.
+- `guidance.ts`: every all-accounts and single-account refusal ends with the credential pool's `ACCOUNT_POOL_REFUSAL_NOTE`, so the outer pool fails the request instead of blocking the outer slot that ran the attempt.
+- `errors.ts`: an `HTTP 408` or `HTTP 5xx` result is a transient failure even when its text says "unauthorized".
+
+### Why
+
+senpi#2081: a mixed pool (one revoked account, one briefly rate-limited) was reported as an authentication error, persisted as `auth_error` on every outer slot, and refused all requests until a re-login.
+
+### Why an extension could not handle it
+
+This is the bundled Anthropic Subscription extension itself; the outer pool reads its refusal text before any hook runs.
+
+### Expected merge conflict zones
+
+- The `blockReason` argument at the end of `selectAccount`.
+- The closing lines of `allAccountsBlockedGuidance` and `singleAccountUnavailableGuidance`.
+- The transient branches near the end of `classifyErrorKind`.
+
 ## 2026-10-20 - Native-1M models are requested by their plain id; only legacy ids use the [1m] opt-in (senpi#3801)
 
 ### What changed
