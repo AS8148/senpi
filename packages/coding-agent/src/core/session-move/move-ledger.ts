@@ -1,7 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { readFile, rename as renameFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { HeldFileLock } from "../file-lock.ts";
 import { serializeByKey } from "../session-sidecar-store.ts";
 import { parseMoveId } from "./bundle.ts";
 import {
@@ -12,7 +11,7 @@ import {
 	parseLanding,
 	settledLanding,
 } from "./move-landing.ts";
-import { acquireMoveRecordLock } from "./move-ledger-lock.ts";
+import { MoveRecordLocks } from "./move-ledger-lock.ts";
 import { moveStep } from "./move-steps.ts";
 import type { MoveId } from "./ownership.ts";
 
@@ -97,7 +96,7 @@ function parseRecord(value: unknown): MoveRecord | undefined {
 export class MoveLedger {
 	readonly dir: string;
 	private readonly now: () => number;
-	readonly #held = new Map<string, HeldFileLock>();
+	readonly #locks = new MoveRecordLocks();
 
 	constructor(dir: string, options: MoveLedgerOptions = {}) {
 		this.dir = dir;
@@ -332,8 +331,9 @@ export class MoveLedger {
 	private async write(moveId: MoveId, record: MoveRecord, landing: Landing = {}): Promise<void> {
 		const file = this.path(moveId);
 		const temp = `${file}.${process.pid}.tmp`;
+		this.#locks.assertHeld(file);
 		await writeFile(temp, `${JSON.stringify({ ...record, ...landing, at: new Date().toISOString() })}\n`);
-		this.#held.get(file)?.assertHeld();
+		this.#locks.assertHeld(file);
 		await renameFile(temp, file);
 	}
 
@@ -341,14 +341,7 @@ export class MoveLedger {
 		const file = this.path(moveId);
 		return serializeByKey(file, async () => {
 			mkdirSync(this.dir, { recursive: true });
-			const held = await acquireMoveRecordLock(file);
-			this.#held.set(file, held);
-			try {
-				return await fn();
-			} finally {
-				this.#held.delete(file);
-				await held.release().catch(() => undefined);
-			}
+			return this.#locks.hold(file, fn);
 		});
 	}
 }
