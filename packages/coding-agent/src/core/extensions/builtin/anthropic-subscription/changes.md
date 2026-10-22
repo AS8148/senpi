@@ -3,7 +3,7 @@
 ### What changed
 
 - `executable-model-support.ts`: reads the optional launch model's Claude Code floor from the one `FABLE55_LAUNCH` block. The floor stays unset until observed; no version is guessed.
-- The real-binary regression includes the launch chain key once `released` is flipped. Before release the key only recovers explicit selections and is not a promoted default. Every existing promoted model and every recovery rung remains checked.
+- The real-binary regression checks the launch chain key from the moment `released` is flipped, because the key exists only then; before release the default chains contain no 5.5 key at all. Every existing promoted model and every recovery rung remains checked.
 - Existing family-wide adaptive/xhigh markers in `options.ts` already cover Fable/Mythos 5.5; the usage-credit classifier is not a per-version allowlist. Focused tests verify the new model remains a non-retryable entitlement rather than an account-wide rate limit. The broader classification design in #3752 remains separate.
 
 ### Why

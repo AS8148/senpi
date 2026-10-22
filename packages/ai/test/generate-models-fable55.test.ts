@@ -5,9 +5,10 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { Api, Model } from "../src/types.ts";
+import { FABLE55_LAUNCH } from "../src/utils/fable55-launch.ts";
 
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
-const modelId = "claude-fable-5-5";
+const modelId = FABLE55_LAUNCH.modelId;
 
 // senpi#3893: synthetic values test source fidelity, not an unreleased model's price card.
 const sourceModel = {

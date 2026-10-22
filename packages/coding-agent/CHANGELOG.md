@@ -6,7 +6,7 @@
 
 ### Added
 
-- Claude Fable 5.5 (and Claude Mythos 5.5) use the tuned Fable prompt preset and get the same default retry-fallback chain as Fable 5.1, ready for the day the model is released (the Claude Code subscription floor is set at launch) ([#3893](https://github.com/code-yeongyu/senpi/issues/3893), [#3897](https://github.com/code-yeongyu/senpi/pull/3897)).
+- Claude Fable 5.5 (and Claude Mythos 5.5) use the tuned Fable prompt preset; once the model is released they also get the same default retry-fallback chain as Fable 5.1 (the chain and the Claude Code subscription floor stay off until launch) ([#3893](https://github.com/code-yeongyu/senpi/issues/3893), [#3897](https://github.com/code-yeongyu/senpi/pull/3897)).
 
 ### Changed
 

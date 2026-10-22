@@ -21,7 +21,7 @@
 ### What changed
 
 - `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`: the Fable recommendation uses the launch id only when both `FABLE55_LAUNCH.released` and `promoteDefaults` are true. Both are false in this draft, so today's list is unchanged. Effort remains xhigh, provider ranking remains unchanged, and Opus 5.5 remains the first recommendation.
-- This change and its four-case flag-matrix test are the separate final commit. Launch-day support can land without this commit; keeping it still requires an explicit promotion flip in the central launch block.
+- This change and its four-case flag-matrix test are their own commit (82547134f3), which no later commit touches, so it reverts cleanly. Launch-day support can land without this commit; keeping it still requires an explicit promotion flip in the central launch block.
 
 ### Why
 
