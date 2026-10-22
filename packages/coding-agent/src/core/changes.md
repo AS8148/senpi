@@ -1,3 +1,22 @@
+## 2026-10-22 - Extract credential policy schema without behavior changes (senpi#3858)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-config-schema.ts`: imports the unchanged credential policy schema and re-exports its public defaults and type.
+- `packages/coding-agent/src/core/credential-policy-schema.ts`: owns the existing slot policy schema, defaults, and inferred policy type.
+
+### Why
+
+- Keeps the policy value boundary independently reviewable before adding reference values.
+
+### Why an extension could not handle it
+
+- The model configuration validator is an internal core boundary.
+
+### Expected merge conflict zones
+
+- LOW: imports and credential policy definitions in `packages/coding-agent/src/core/model-config-schema.ts`.
+
 ## 2026-10-21 - Extract provider request authentication without behavior changes (senpi#3858)
 
 ### What changed
