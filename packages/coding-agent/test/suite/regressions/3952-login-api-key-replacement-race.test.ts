@@ -57,10 +57,10 @@ describe("RPC logins report only their own replacement (senpi#3952)", () => {
 		const keyRefreshEntered = new Promise<void>((resolve) => {
 			markKeyRefreshEntered = resolve;
 		});
-		vi.spyOn(registry, "refresh").mockImplementationOnce(async () => {
+		vi.spyOn(registry, "refresh").mockImplementationOnce(async (options) => {
 			markKeyRefreshEntered();
 			await keyRefreshHeld;
-			await realRefresh();
+			return realRefresh(options);
 		});
 
 		// login_api_key answers only after its refresh, which this test holds open; keep the promise.
