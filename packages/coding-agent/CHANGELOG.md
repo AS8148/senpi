@@ -17,6 +17,7 @@
 
 ### Fixed
 
+- Importing a moved session again after its `accepted` record failed to write now returns the landed session and records the move accepted, instead of refusing it with `move_fenced` ([#3998](https://github.com/code-yeongyu/senpi/pull/3998)).
 - Bumped two pinned overrides because `serveStatic` decoded the request path twice, so middleware on static paths could be bypassed (moderate): `hono` from 4.13.8 to 4.13.11 for GHSA-5r4p-p66f-jhc7, and `@hono/node-server`, which carries its own `serveStatic`, from 2.1.1 to 2.1.3 for GHSA-rmxm-3fg6-px4f. Both are pulled in through `@modelcontextprotocol/sdk`.
 - HTML strikethrough (`<s>…</s>`), SVG `<mask>` markup and fenced examples of their closing tags no longer stop a reply with "Degeneration guard: control-token leakage". A leaked `</s>` run that closes nothing still does ([#3880](https://github.com/code-yeongyu/senpi/issues/3880)).
 - The control-token-leak guard only treats tokenizer special tokens (`</s>`, `<pad>`, `<end_of_turn>`, …) as angle-bracket leaks. Runs of ordinary markup such as `</div>` repeated in a row no longer stop a reply with "Degeneration guard: control-token leakage" in prose, thinking or code samples ([omo#10789](https://github.com/code-yeongyu/oh-my-openagent/issues/10789)).
