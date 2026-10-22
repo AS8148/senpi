@@ -1,3 +1,23 @@
+## 2026-10-22 - macOS/Windows CI jobs run on pull requests only for platform-specific diffs (senpi#3957)
+
+### What changed
+
+- `.github/workflows/ci.yml`: a `platform-scope` job runs `scripts/ci-platform-scope.mjs` on the PR's changed files and labels. The macOS and Windows-only jobs need it and run only when it outputs `full=true`; the ubuntu+windows matrices keep their Linux leg and add Windows only then. `Check and test` verifies its needs through the same script, which accepts `skipped` only for those jobs and only when the scope said `full=false`. The workflow is also callable (`workflow_call`), and its concurrency group starts with the workflow name so a called run never cancels the PR's own run.
+- `.github/workflows/read-summary-binary-parity.yml`, `.github/workflows/session-worker-compile.yml`: the same scope job decides the macOS/Windows matrix legs; both also run on pushes to main with their PR paths, and are callable.
+- `.github/workflows/ci-full-label.yml`: the `run-full-ci` label calls the three workflows in full on the labelled PR.
+
+### Why
+
+- Hosted macOS and Windows runners have little concurrency, and every PR ran about a dozen jobs on them, so PRs queued behind each other on platform runners even when they changed no platform code. Pushes to main, the merge queue and manual runs still run the full set, so a platform regression surfaces right after merge.
+
+### Why an extension could not handle it
+
+- Workflow triggers and job conditions are repository CI configuration; no runtime extension point reaches them.
+
+### Expected merge conflict zones
+
+- The `on:` and `concurrency:` blocks of `ci.yml`, the `needs`/`if` lines of its macOS/Windows jobs and matrices, and the `Check and test` verify step.
+
 ## 2026-10-21 - One macOS runner executes all five CI suites (senpi#3130)
 
 ### What changed
