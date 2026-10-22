@@ -83,6 +83,11 @@ function answeredLines(response: QuestionResponse, questions: Questions, words: 
 	return lines;
 }
 
+function unansweredLine(response: QuestionResponse, questions: Questions): string[] {
+	const unanswered = response.unanswered.map((id) => headerFor(id, questions));
+	return unanswered.length > 0 ? [`Unanswered: ${unanswered.join(", ")}`] : [];
+}
+
 const GATED_NO_ANSWER = "No answer: do not take the action it gates. Keep that action pending and end the turn.";
 
 /** A required question gates an action, so every settlement without an answer refuses that action (senpi#2949). */
@@ -127,20 +132,15 @@ function formatBody(response: QuestionResponse, questions: Questions, words: Wor
 		return formatGatedNoAnswer(response, questions, words);
 	}
 	switch (response.status) {
-		case "answered": {
-			const lines = answeredLines(response, questions, words);
-			const unanswered = response.unanswered.map((id) => headerFor(id, questions));
-			if (unanswered.length > 0) lines.push(`Unanswered: ${unanswered.join(", ")}`);
-			return lines.join("\n");
-		}
+		case "answered":
+			return [...answeredLines(response, questions, words), ...unansweredLine(response, questions)].join("\n");
 		case "comment-submitted": {
 			const comment = response.comment?.trim() ?? "";
 			const lines = [
 				`The user responded: ${comment.length > 0 ? words.comment(comment) : ""}`,
 				...answeredLines(response, questions, words),
+				...unansweredLine(response, questions),
 			];
-			const unanswered = response.unanswered.map((id) => headerFor(id, questions));
-			if (unanswered.length > 0) lines.push(`Unanswered: ${unanswered.join(", ")}`);
 			return lines.join("\n");
 		}
 		case "timed_out": {
@@ -150,13 +150,24 @@ function formatBody(response: QuestionResponse, questions: Questions, words: Wor
 			];
 			const selected = answeredLines(response, questions, words);
 			if (selected.length > 0) {
-				lines.push(`Before going idle the user had selected: ${selected.join("; ")}`);
+				lines.push(
+					`Before going idle the user had selected: ${selected.join("; ")}`,
+					...unansweredLine(response, questions),
+				);
 			}
 			lines.push("Continue the work to completion on your best judgment; do not ask this question again this turn.");
 			return lines.join("\n");
 		}
-		case "cancelled":
-			return "The user dismissed the question.";
+		case "cancelled": {
+			// A cancel after partial answers keeps them: the model must not redo or contradict what the user chose.
+			const answered = answeredLines(response, questions, words);
+			if (answered.length === 0) return "The user dismissed the question.";
+			return [
+				"The user cancelled the question after answering part of it.",
+				...answered,
+				...unansweredLine(response, questions),
+			].join("\n");
+		}
 		case "orphaned-after-restart":
 			return "The pending question could not be resumed after a restart; continue on best judgment.";
 		case "unavailable":

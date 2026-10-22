@@ -155,6 +155,7 @@ export async function degradeQuestion(
 			opts,
 		);
 		if (selected === other) {
+			if (opts?.signal?.aborted) break;
 			const text = await ui.input(question.question, undefined, opts);
 			if (text?.trim()) answers[question.id] = { selected: [], text };
 		} else if (selected !== undefined) answers[question.id] = { selected: [selected] };
