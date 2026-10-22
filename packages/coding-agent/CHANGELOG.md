@@ -26,6 +26,8 @@
 - On Windows, input sent while a turn was running no longer gets stuck. Every save of a queued input failed with `EPERM` (the session file was flushed through a read-only handle), and each reopen replayed the input and failed again. The same failure was also taken for a model error, so the session ran through its whole fallback chain in under a second and stayed on the last model. A local file or journal error now shows as a local error naming the file, and the session keeps its model ([#3866](https://github.com/code-yeongyu/senpi/issues/3866)).
 - A goal waiting on a subscription limit now retries at the provider's reset time instead of immediately retrying the spent account. Structured quota/rate-limit resets and retry-after hints take precedence over legacy error text; failures without a reset keep the existing backoff ([#3825](https://github.com/code-yeongyu/senpi/issues/3825)).
 - Switching a long conversation to a model with a smaller context window while the current model is at its usage limit now applies the switch at the next message. Before, the conversation was reduced to fit, but the switch was still refused with "cannot switch ... Compact the session, then revalidate and retry the model switch" ([#3828](https://github.com/code-yeongyu/senpi/issues/3828)).
+- `login_api_key` takes its replacement record before it waits for the model refresh, so a concurrent OAuth login for the same provider always keeps its own `replaced` / `backupPath` ([#3952](https://github.com/code-yeongyu/senpi/issues/3952)).
+
 ### Removed
 
 ## [2026.10.21-1] - 2026-10-21
