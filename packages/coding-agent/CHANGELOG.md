@@ -7,11 +7,13 @@
 ### Added
 
 - RPC clients can tell a session that the user started typing with `record_user_activity` (`kind: "draft"`, capability `user_activity`). With prompt-cache keep-alive enabled and an eligible model, the session then warms the first turn's prompt cache while the user is still typing, as the terminal editor already does ([#3859](https://github.com/code-yeongyu/senpi/issues/3859)).
+- A user message's session entry now records where its input came from: `inputSource` on the `message` entry is `interactive`, `rpc` or `extension`, the same value its `input` event reported, so an extension can replay a resumed session's transcript with the same trust it applied live. It is stored on the entry only and never sent to a provider. Queued input restored after a host restart keeps its source; input requeued by a session move, edited input, and records from before this change carry no `inputSource` ([code-yeongyu/oh-my-openagent#10378](https://github.com/code-yeongyu/oh-my-openagent/issues/10378)).
 
 ### Changed
 
 ### Fixed
 
+- An answer to a question that arrives while a session is starting up now counts as your input, so it releases held background work like any other answer ([#3917](https://github.com/code-yeongyu/senpi/issues/3917)).
 - Responses prompt-cache keys now follow the stable prefix across sessions and task children, including remote compaction. Session routing stays separate from cache affinity ([omo#10775](https://github.com/code-yeongyu/oh-my-openagent/issues/10775)).
 - Discovered extension handlers register in filename order rather than filesystem enumeration order, keeping their prompt contributions reproducible ([omo#10775](https://github.com/code-yeongyu/oh-my-openagent/issues/10775)).
 - Reopening an unattended session no longer spends quota on goals or background events until you send input or choose Resume. Held events survive restart and are released once; ordinary attended sessions keep receiving every event, and completed tasks are not reopened after a host restart ([#3853](https://github.com/code-yeongyu/senpi/issues/3853)).
@@ -33,6 +35,7 @@
 ### Fixed
 
 - An idle RPC host (one open session, no work) no longer wakes about eleven times a second. While its supervisor pipe is watched, the supervisor pid is checked every 5 s instead of every 250 ms, and the event-loop stall probe ticks once a second after 2 s without session work, going back to 200 ms as soon as a session works. This cuts the idle CPU of every thread host the desktop keeps open ([#3738](https://github.com/code-yeongyu/senpi/issues/3738)).
+- Saving a login of the other kind (an API key over an OAuth login, or the reverse) now replaces the stored credential instead of storing one that is never used; the previous credential is backed up first and the replacement is reported (`login_api_key` answers `data.replaced`/`data.backupPath`, an RPC OAuth login's `auth_login_end` carries `replaced`/`backupPath`; `/login` shows a warning). A mixed credential written by older releases is left in use as it is and reported with the `/login` step that switches it; loading never changes which credential bills. The notice is shown once per change in the TUI, print mode and model listing, and `/account` marks the unused slot and refuses to pin it ([#3448](https://github.com/code-yeongyu/senpi/issues/3448))
 ### Removed
 
 ## [2026.10.20-1] - 2026-10-20

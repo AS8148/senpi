@@ -1,3 +1,21 @@
+## 2026-10-21 - The session's sendUserMessage action receives the answer's origin from the runner (senpi#3917)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the `sendUserMessage` action takes the `inputOrigin` the runner captured at admission. The session-held `_personAnswerPending` token is removed.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: a session-level token could be cleared or consumed before a deferred answer ran.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: the action implementations are core.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/agent-session.ts`, the `sendUserMessage` action and `questionInput` in the extension binding.
+
 ## 2026-10-21 - An input release finishes when its run settles, and returns on every refused exit (senpi#3853)
 
 ### What changed
@@ -409,6 +427,27 @@ The engine-turn bound and the session mirror are session internals; the builtin 
 
 - LOW: `session-manager.ts`, the `historyGeneration` / `verbatimFromCount` fields after `fullEntryCount`, one line in `_resetToNewSession`, `_completeFileLoad`, `_loadEntries`, `_buildIndex`, `_retainLoadedTail`, `_trimMirrorAfterCompaction` and both `createBranchedSession` branches, `reduceHistory` after `getEntryCount`, and the `ReadonlySessionManager` pick list.
 - LOW: `agent-session.ts`, the first argument of `engineTurnStop` in `_stopEngineTurn` and the `engine-turn-limit.ts` import.
+
+## 2026-10-19 - A user message's session entry records its input source (omo#10378)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: `SessionMessageEntry` declares `inputSource?: InputSource`, and `appendOwnedMessage(message, { inputSource })` writes it onto the entry, never onto the message.
+- `packages/coding-agent/src/core/agent-session.ts`: `_userInputSources`, a WeakMap from each user message the session admits to the `InputSource` its `input` event reported (`source ?? "interactive"`): filled where `prompt()` builds the user message and where `_enqueuePreparedInput` builds a queued steer/follow-up, and read when `message_end` persists that message. `sendUserMessage`'s fallback enqueue after a rejected `prompt()` now passes `source: "extension"`. The prepared record handed to durable custody (`onQueuedInput`) carries the same `source`, both on the regular queue path (`_enqueuePreparedInput`) and in `_promptAgent` when a prompt loses the start race and is queued as a steer, so `restoreQueuedInput` re-stamps restored input with its real source. Only restored input whose record has no source (written before this change), input requeued by a session move, and edited input get no `inputSource`; it is never defaulted at restore, because that would give unknown or extension-originated input a trusted source.
+- `packages/coding-agent/src/core/client-message-identity.ts`: `PreparedClientInput.source?: InputSource`.
+
+### Why
+
+An extension that rebuilds per-session trust state when a session is resumed (omo's plan gate, which must count only human-typed requests) can replay the transcript only if each persisted user entry says where the input came from. The value is session metadata: carrying it on the message put it into every provider request (review of the first version), so it lives on the entry only.
+
+### Why an extension could not handle it
+
+The user message is built and persisted inside the session; an extension sees the source on the `input` event but cannot attach it to the entry that is later written, and a resumed session has only the transcript.
+
+### Expected merge conflict zones
+
+- LOW: `session-manager.ts` `SessionMessageEntry`, `appendOwnedMessage` and `_appendMessage`.
+- LOW: `agent-session.ts`, the `_userInputSources` field beside `_queuedMessages`, the user-message literal in `prompt()`, the start of `_enqueueQueuedInput`, `_enqueuePreparedInput`, the `appendOwnedMessage` call in the `message_end` persistence branch, the `prepared` literals in `_enqueuePreparedInput` and in `_promptAgent`'s start-race catch, and the two fallback enqueues in `sendUserMessage`'s catch.
 
 ## 2026-10-19 - An abort that joins an open agent_end boundary still releases a held handler (senpi#3650 follow-up)
 
@@ -11297,6 +11336,25 @@ It serves core RPC auth commands.
 
 None (fork-only file).
 
+## 2026-10-16 - A login of the other kind replaces the credential, recoverably (#3448)
+
+### What changed
+
+- `packages/coding-agent/src/core/auth-storage.ts`: when a login of the other kind replaces a provider's credential, `set` and `modify` (the interactive `/login` path) first back up auth.json, then record `{ replaced, backupPath }`; `set` returns it and `takeReplacement(provider)` hands it to the caller once. `describeCredentialReplacement` words the notice. Loading never rewrites a mixed-kind pool written by older builds: the credential that pays stays in use, and `pendingNotices()` returns one notice per provider naming the unused login, its slots in auth.json and the `/login` step that switches to it. `markNoticesSeen(ids)` records shown ids in `auth-notices-seen.json` beside auth.json; an id is derived from the unused slots, so a changed problem is shown again. `set` returns `CredentialReplacement | undefined`.
+
+### Why
+
+- `packages/coding-agent/src/core/auth-storage.ts`: an API key saved over an OAuth login was appended as a slot the pool could never project, so it was never used and `login_api_key` still answered success (omo-desktop-app#2793). The fix must never delete a credential silently or switch which credential bills without the user's action (#3486 review).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/auth-storage.ts` owns the credential store every login and load goes through.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/auth-storage.ts`: `set`, `modify`, `takeReplacement`/`noteReplacement`, `parseStorageContent`, and the notice helpers after `repairPoisonedPoolSlots`.
+
+
 ## 2026-10-16 - Context files and a large skills catalog are size-bounded (senpi#3460)
 
 ### What changed
@@ -11325,6 +11383,27 @@ Context files and the skills section are assembled by core before extensions see
 - `skills.ts`: the area where `formatSkillsForPrompt` used to live.
 - `settings-manager.ts`: the `Settings` interface beside `compaction`.
 
+## 2026-10-17 - Credential notices once per run and per change; unused slots in the account list (#3486)
+
+### What changed
+
+- `packages/coding-agent/src/core/auth-storage.ts`: `takePendingNotices({ persistSeen })` hands each pending notice out once per process and, for runs a person reads, records it as seen. Notice ids are built from slot names, never key material. `markNoticesSeen` drops ids of problems that no longer exist and reports a failed write instead of throwing.
+- `packages/coding-agent/src/core/credential-accounts.ts`: a stored slot of the other kind is summarized with `unused: true`, and `pinCredentialAccount` refuses it with the `/login` step.
+
+### Why
+
+- `packages/coding-agent/src/core/auth-storage.ts`: print mode collects auth diagnostics twice per run and showed the notice twice; a failed seen-file write aborted TUI startup; the id hashed key material into a second file (#3486 review).
+- `packages/coding-agent/src/core/credential-accounts.ts`: the account list showed the unusable slot as a normal account, and pinning it was silently ignored (#3486 review).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/auth-storage.ts` and `packages/coding-agent/src/core/credential-accounts.ts` own the credential store and the account surface.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/auth-storage.ts`: `unusedLoginNotices`, `takePendingNotices` and `markNoticesSeen`.
+- `packages/coding-agent/src/core/credential-accounts.ts`: `CredentialAccountSummary`, the stored-slot loop in `summarizeCredentialAccounts`, and `pinCredentialAccount`.
+
 ## 2026-10-19 - A request-shape 400 recovers on the same model; Claude chains drop pre-5 Opus (senpi#3727)
 
 ### What changed
@@ -11345,3 +11424,21 @@ Fallback eligibility and the agent_end retry decision are owned by `AgentSession
 
 - `agent-session.ts`: the retry-state fields, the `transformContext` wrapper in `_installAgentNextTurnRefresh`, the start of the agent_end retry block, and `_isHardErrorFallbackEligible`.
 - `retry-fallback/settings.ts`: `DEFAULT_FALLBACK_CHAINS`.
+
+## 2026-10-21 - The auth_login_end event can name a replaced credential (#3486)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the `auth_login_end` member of the session event union gains optional `replaced` (the `CredentialReplacement` kind) and `backupPath`.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: RPC clients must learn when an OAuth login replaced a stored API key and where its backup is (#3486 review).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts` owns the session event types the RPC writer emits.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the `auth_login_end` member of the event union and the `auth-storage.ts` type import.
