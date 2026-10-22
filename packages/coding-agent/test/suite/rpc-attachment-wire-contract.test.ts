@@ -12,6 +12,9 @@ it("validates every attachment and capability response against wire contract v1.
 		await rig.send("other", { id: "identity", type: "attach_session", ...ref, durableSessionId: "stale" }),
 	);
 	responses.push(await rig.send("other", { id: "attach", type: "attach_session", ...ref }));
+	// No caller connection: host-internal calls reach the attachment commands without one.
+	responses.push(await rig.router.handle({ id: "attach-unowned", type: "attach_session", ...ref }));
+	responses.push(await rig.router.handle({ id: "reclaim-unowned", type: "reclaim_session", ...ref }));
 	responses.push(await rig.send("caller", { id: "foreign", type: "reclaim_session", ...ref }));
 	responses.push(
 		await rig.send("caller", {
@@ -36,7 +39,7 @@ it("validates every attachment and capability response against wire contract v1.
 	);
 	// Do not hide unsolicited responses emitted while a command finalizes.
 	responses.push(...rig.records().filter((record) => record.type === "response" && record.command !== "open_session"));
-	expect(responses.length).toBeGreaterThanOrEqual(11);
+	expect(responses.length).toBeGreaterThanOrEqual(13);
 	for (const response of responses) {
 		const parsed = attachmentWireResponse.safeParse(response);
 		expect(parsed.success, JSON.stringify({ response, issues: parsed.error?.issues })).toBe(true);

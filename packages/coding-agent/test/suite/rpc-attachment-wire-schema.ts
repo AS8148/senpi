@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-// Independent transcription of wire-contract-v1.1, not inferred from the host's TypeScript types.
+// Independent transcription of wire contract v1.1 (lead ruling 2026-10-22, senpi#3795), not inferred from the
+// host's TypeScript types.
 const hex32 = z.string().regex(/^[0-9a-f]{64}$/);
 const auth = z.strictObject({
 	launch_id: z.string().uuid(),
@@ -25,15 +26,19 @@ const refusal = (command: string, codes: readonly string[]) =>
 
 // Host draining is not a code of its own: session_busy_lifecycle carries reason "host_draining".
 const draining = z.strictObject({ reason: z.literal("host_draining") });
+// The attachment commands' own session_not_attached carries errorData { reason } only, never the gate's action.
+const notAttached = (reason: "no_connection" | "not_attached") => z.strictObject({ reason: z.literal(reason) });
 
 export const attachmentWireResponse = z.union([
 	success("attach_session", z.strictObject({ sessionId: z.string(), attached: z.literal(true) })),
-	refusal("attach_session", ["unknown_session", "session_identity_mismatch", "session_not_attached"]),
+	refusal("attach_session", ["unknown_session", "session_identity_mismatch"]),
+	refusal("attach_session", ["session_not_attached"]).extend({ errorData: notAttached("no_connection") }),
 	refusal("attach_session", ["session_busy_lifecycle"]).extend({ errorData: draining }),
 	success("release_attachment", z.strictObject({ deferred: z.boolean() })),
-	refusal("release_attachment", ["session_not_attached"]),
+	refusal("release_attachment", ["session_not_attached"]).extend({ errorData: notAttached("not_attached") }),
 	success("reclaim_session", z.strictObject({ reclaimed: z.literal(true), sessionId: z.string() })),
-	refusal("reclaim_session", ["unknown_session", "session_identity_mismatch", "session_not_attached"]),
+	refusal("reclaim_session", ["unknown_session", "session_identity_mismatch"]),
+	refusal("reclaim_session", ["session_not_attached"]).extend({ errorData: notAttached("no_connection") }),
 	refusal("reclaim_session", ["session_busy_lifecycle"]).extend({
 		errorData: z.union([draining, z.strictObject({})]).optional(),
 	}),

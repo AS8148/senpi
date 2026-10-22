@@ -14,6 +14,12 @@ import {
 	waitForStderr,
 } from "../helpers/rpc-socket-host-support.ts";
 
+function isStatus(record: RecordValue, sessionId: string, cause: "detach"): boolean {
+	const change = record.lastChange;
+	const changeCause = typeof change === "object" && change !== null && "cause" in change ? change.cause : undefined;
+	return record.type === "session_status" && record.sessionId === sessionId && changeCause === cause;
+}
+
 describe("RPC Unix-socket multi-connection host", () => {
 	it("reopens the path after explicit close and dropped surviving attachment", async () => {
 		const qa = scratch("reopen");
@@ -42,9 +48,11 @@ describe("RPC Unix-socket multi-connection host", () => {
 				sessionPath: path,
 			});
 			await a.peer.request({ id: "close", type: "close_session", sessionId });
+			// The drop closes the last attachment; the host reports its registry reaching zero sessions.
+			const closed = a.peer.waitFor((record) => record.type === "host_trimmed" && record.sessions === 0);
 			b.peer.close();
 			b.socket.destroy();
-			await new Promise((resolve) => setTimeout(resolve, 100));
+			await closed;
 			const c = await connectPeer(qa.socketPath);
 			try {
 				await expect(
@@ -105,9 +113,13 @@ describe("RPC Unix-socket multi-connection host", () => {
 
 			// Only the second attachment dies. The runtime is refcounted, so the
 			// holder must keep serving commands on its own handle.
+			expect(await holder.peer.request({ id: "watch", type: "subscribe_sessions" })).toMatchObject({
+				success: true,
+			});
+			const detached = holder.peer.waitFor((record) => isStatus(record, heldId, "detach"));
 			dropper.peer.close();
 			dropper.socket.destroy();
-			await new Promise((resolve) => setTimeout(resolve, 500));
+			await detached;
 
 			await expect(
 				holder.peer.request({
