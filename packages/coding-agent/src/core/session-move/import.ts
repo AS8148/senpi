@@ -9,7 +9,15 @@ import {
 import { getDefaultSessionDir, loadEntriesFromFile, SessionManager } from "../session-manager.ts";
 import { rebindSessionFile } from "../session-rebind.ts";
 import { encodedSessionId } from "../session-sidecar-store.ts";
-import { MoveBundleInvalidError, type MoveManifest, readManifest, verifyBundle } from "./bundle.ts";
+import {
+	EXTENSION_STATE_PREFIX,
+	MoveBundleInvalidError,
+	type MoveManifest,
+	readManifest,
+	sha256File,
+	verifyBundle,
+} from "./bundle.ts";
+import { EXTENSION_STATE_PAYLOAD, movedStateDir } from "./extension-state.ts";
 import { MoveFencedError, type MoveLedger, type MoveStatus } from "./move-ledger.ts";
 import { headerSessionId, type MoveId, SESSION_MOVED_IN, sessionOwnership } from "./ownership.ts";
 import { requeueInput } from "./requeue.ts";
@@ -100,12 +108,18 @@ export async function importMovedSession(
 		const staged = await stage(options.bundleDir, manifest, staging, options.from ?? "");
 		const sessionFile = await options.ledger.commit(manifest.moveId, () => {
 			replacePredecessor(target, manifest.sessionId, sessionDir);
+			// Before the rename: a crash here re-copies on retry, and after it the state is already in place.
+			placeExtensionState(staging, manifest, movedStateDir(target, manifest.moveId));
 			return rebindSessionFile(staged, targetCwd, sessionDir);
 		});
 		rmSync(staging, { recursive: true, force: true });
 		return { sessionFile };
 	} catch (error) {
-		if (!(error instanceof MoveFencedError)) await options.ledger.fail(manifest.moveId, "import_failed");
+		if (!(error instanceof MoveFencedError))
+			await options.ledger.fail(
+				manifest.moveId,
+				error instanceof MoveBundleInvalidError ? "bundle_invalid" : "import_failed",
+			);
 		throw error;
 	}
 }
@@ -132,6 +146,33 @@ function replacePredecessor(target: string, sessionId: string, sessionDir: strin
 	rmSync(target, { force: true });
 }
 
+/** Payload files are staged here, next to the staged session file, and placed from this checked copy. */
+const STAGED_PAYLOADS = ".payloads";
+
+const extensionStateFiles = (manifest: MoveManifest) =>
+	manifest.payloads.filter((payload) => payload.kind === EXTENSION_STATE_PAYLOAD).flatMap((p) => p.files);
+
+/** Copies the payload files into staging and checks each copy, so nothing changed after `verifyBundle` is placed. */
+async function stagePayloads(bundleDir: string, manifest: MoveManifest, staging: string): Promise<void> {
+	for (const file of manifest.payloads.flatMap((payload) => payload.files)) {
+		const to = join(staging, STAGED_PAYLOADS, file.path);
+		mkdirSync(dirname(to), { recursive: true });
+		copyFileSync(join(bundleDir, file.path), to);
+		if ((await sha256File(to)) !== file.sha256) throw new MoveBundleInvalidError(`${file.path} changed in transit`);
+	}
+}
+
+function placeExtensionState(staging: string, manifest: MoveManifest, dir: string): void {
+	const files = extensionStateFiles(manifest);
+	if (files.length === 0) return;
+	rmSync(dir, { recursive: true, force: true });
+	for (const file of files) {
+		const to = join(dir, file.path.slice(EXTENSION_STATE_PREFIX.length));
+		mkdirSync(dirname(to), { recursive: true });
+		copyFileSync(join(staging, STAGED_PAYLOADS, file.path), to);
+	}
+}
+
 async function stage(bundleDir: string, manifest: MoveManifest, staging: string, from: string): Promise<string> {
 	const file = join(staging, manifest.sessionFileName);
 	if (!(existsSync(file) && movedInFor(file, manifest.moveId))) {
@@ -141,6 +182,7 @@ async function stage(bundleDir: string, manifest: MoveManifest, staging: string,
 			mkdirSync(dirname(to), { recursive: true });
 			copyFileSync(join(bundleDir, item.path), to);
 		}
+		await stagePayloads(bundleDir, manifest, staging);
 		SessionManager.open(file, staging).appendCustomEntry(SESSION_MOVED_IN, {
 			move_id: manifest.moveId,
 			session_id: manifest.sessionId,
