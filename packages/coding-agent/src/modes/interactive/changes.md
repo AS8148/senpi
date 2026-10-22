@@ -23,6 +23,25 @@
 - LOW: `packages/coding-agent/src/modes/interactive/components/ask-user-answer-chip.ts`, `summaryRows`.
 - LOW: `packages/coding-agent/src/modes/interactive/components/ask-user-question.ts`, `finish`.
 
+## 2026-10-22 - Replace Biome with oxlint and oxfmt (senpi#3976)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: an `oxlint-disable-next-line eslint/prefer-const` comment on the settings `selector` declaration that its own callbacks read.
+
+### Why
+
+- The repository moved lint and format from Biome to oxlint 1.89.0 and oxfmt 0.74.0 (senpi#3976). oxlint reports this site where Biome did not; the change keeps behaviour identical.
+
+### Why an extension could not handle it
+
+- Lint configuration and source comments are read by the linter before any agent code runs.
+
+### Expected merge conflict zones
+
+- The settings selector block in `interactive-mode.ts`.
+
+
 ## 2026-10-21 - The resume picker's search finds a session by the id its file name carries (oh-my-openagent#7471)
 
 ### What changed
