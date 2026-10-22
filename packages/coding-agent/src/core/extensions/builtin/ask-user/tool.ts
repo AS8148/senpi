@@ -239,6 +239,17 @@ export function startQuestion(
 	};
 	const accept = (response: QuestionResponse) => {
 		if (settled) return;
+		if (response.status === "cancelled") {
+			// Another client's cancel through a terminal's control endpoint carries no answers: it keeps the
+			// draft the UI reported as progress instead of wiping it. A cancel that carries answers updates it.
+			if (Object.keys(response.answers).length > 0 || response.comment !== undefined)
+				pending.touch({ answers: response.answers, comment: response.comment });
+			const cancelled = pending.cancel("cancelled");
+			finish(
+				response.cancelOrigin !== undefined ? { ...cancelled, cancelOrigin: response.cancelOrigin } : cancelled,
+			);
+			return;
+		}
 		pending.touch({ answers: response.answers, comment: response.comment });
 		if (response.status === "timed_out") {
 			finish(response);
