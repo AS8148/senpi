@@ -28,6 +28,7 @@ import { goalStoreRef as buildGoalStoreRef } from "./store-ref.ts";
 import { staleGoalTodoReminder, todoResultAddsOpenTasks } from "./todo-gate.ts";
 import { TodoOwedBackstop } from "./todo-owed-backstop.ts";
 import { registerGoalTools } from "./tool-registration.ts";
+import { reportTurnEndLiveness } from "./turn-end-liveness-report.ts";
 import { TurnUsageTracker } from "./turn-usage.ts";
 import type { Goal, GoalAccountingMode, GoalStoreRef } from "./types.ts";
 import { updateGoalUi } from "./ui.ts";
@@ -296,16 +297,24 @@ export default function goalExtension(pi: ExtensionAPI): void {
 			goal = continuationGoal;
 			syncContinuationGoal(ctx, goal);
 		}
-		if (deadlineStopPendingSinceLastTurn(ctx.sessionManager.getBranch()) === undefined) {
-			todoOwedBackstop.afterAgentEnd({
-				ctx,
-				event,
-				goal,
-				continuationPending,
-				hasActiveWakeSources: monitorContinuation.hasActiveWakeSources(),
-				wakeSourceNames: monitorContinuation.liveWakeSources(),
-			});
-		}
+		const deadlineStop = deadlineStopPendingSinceLastTurn(ctx.sessionManager.getBranch()) !== undefined;
+		const todoOutcome = deadlineStop
+			? undefined
+			: todoOwedBackstop.afterAgentEnd({
+					ctx,
+					event,
+					goal,
+					continuationPending,
+					hasActiveWakeSources: monitorContinuation.hasActiveWakeSources(),
+					wakeSourceNames: monitorContinuation.liveWakeSources(),
+				});
+		reportTurnEndLiveness(pi, ctx, event, {
+			goal,
+			todoOutcome,
+			deadlineStop,
+			continuationPending,
+			monitor: monitorContinuation,
+		});
 	});
 
 	pi.on("agent_settled", async (_event, ctx) => {

@@ -355,6 +355,7 @@ import {
 	type SessionHeader,
 	SessionManager,
 } from "./session-manager.ts";
+import { restoreMovedState } from "./session-move/extension-state.ts";
 import { generateSessionTitle, sessionTitleRetryPolicy, shouldSkipSessionTitle } from "./session-title-generator.ts";
 import { SessionWorkBarrier } from "./session-work-barrier.ts";
 import {
@@ -1043,6 +1044,16 @@ export type ClearedQueue = {
 	readonly ordered: readonly QueuedInput[];
 };
 
+/**
+ * The origin an input is tagged and released with: an explicit origin (a person's answer, classified when it is
+ * delivered through the extension API) wins over the one its source implies.
+ */
+function originOf(
+	options: { readonly source?: InputSource; readonly inputOrigin?: InputOrigin } | undefined,
+): InputOrigin {
+	return options?.inputOrigin ?? inputOriginOf(options?.source);
+}
+
 /** A human input about to be queued or admitted (senpi#3811 design 4.4). */
 export interface HumanInputAdmittedEvent {
 	readonly kind: "prompt" | "steer" | "follow_up" | "answer" | "resume";
@@ -1058,6 +1069,8 @@ export interface QueuedInputOptions extends ClientMessageIdentity {
 	enqueueOrder?: number;
 	/** Input provenance reported to `input` extension handlers; defaults to "interactive". */
 	source?: InputSource;
+	/** Who the input came from; defaults from `source` (see `originOf`). */
+	inputOrigin?: InputOrigin;
 	/** Persist the prepared queue record before publishing or enqueuing it. */
 	onQueuedInput?: (input: PreparedClientInput) => void;
 }
@@ -1266,6 +1279,8 @@ export class AgentSession {
 	private _steeringMessages: string[] = [];
 	/** Tracks pending follow-up messages for UI display. Removed when delivered. */
 	private _followUpMessages: string[] = [];
+	/** Queued-input ids a person enqueued (see `hasQueuedPersonInput`); stale ids are pruned on read. */
+	private readonly _personQueuedIds = new Set<string>();
 	/** Recovery-only order across both native queue modes and TUI compaction ownership. */
 	private _queuedInputOrder: QueuedInput[] = [];
 	/** The cause of the abort in flight, reported on the `agent_end` it produces. */
@@ -1285,6 +1300,11 @@ export class AgentSession {
 	/** Recently delivered `queuedId`s (bounded), so a late dequeue answers `already_delivered`, not `not_found`. */
 	private readonly _deliveredQueuedIds = new Set<string>();
 	private _sessionLogger: SessionLogger;
+	/**
+	 * A single notice slot for `compaction.model` fallbacks: a cause logs once, and logs again only
+	 * after a different cause or a successful use of the override clears the slot.
+	 */
+	private _compactionModelFallbackNotice: string | undefined;
 	private _activeCompactionLogAttempt:
 		| { id: string; reason: CompactionReason; tokensBefore: number | undefined }
 		| undefined;
@@ -1857,7 +1877,8 @@ export class AgentSession {
 	 * `compaction.model` override ("provider/model"), that model is used for the
 	 * summarization call instead of the session model — this is what lets an
 	 * SDK-owned lane (anthropic-subscription) compact on a cheaper/different model.
-	 * Unset, malformed, or unknown overrides keep a usable session model.
+	 * Unset, malformed, unknown, spent, or credential-less overrides keep a usable session model;
+	 * a set override that cannot serve logs why the session model was used.
 	 * A spent account instead uses the held target or another authenticated model.
 	 */
 	private _resolveCompactionModel(sessionModel: Model<any>): Model<any> {
@@ -1870,7 +1891,28 @@ export class AgentSession {
 		const usable = (model: Model<any>): boolean => !this._retryFallback.isProviderSpent(model.provider);
 		// Preserve the explicit override and original-model geometry on healthy sessions.
 		// A held downswitch uses its target only when the original account cannot serve.
-		if (usable(sessionModel)) return configured && usable(configured) ? configured : sessionModel;
+		if (usable(sessionModel)) {
+			if (!override) return sessionModel;
+			const fallbackReason = !configured
+				? slash > 0
+					? "unknown_model"
+					: "malformed"
+				: !usable(configured)
+					? "provider_spent"
+					: this._modelRuntime.hasFreshAvailabilitySnapshot() &&
+							!this._modelRuntime.hasConfiguredAuth(configured.provider)
+						? // Only a published availability pass can say "no credentials": before it (or
+							// after a busy store read) the answer is unknown, the override is kept, and
+							// request-time auth decides.
+							"no_credentials"
+						: undefined;
+			if (configured && fallbackReason === undefined) {
+				this._compactionModelFallbackNotice = undefined;
+				return configured;
+			}
+			if (fallbackReason) this._logCompactionModelFallback(override, fallbackReason, sessionModel);
+			return sessionModel;
+		}
 		const pending = this._pendingModelSwitch?.model;
 		if (pending && usable(pending)) return pending;
 		if (configured && usable(configured)) return configured;
@@ -1887,6 +1929,21 @@ export class AgentSession {
 			);
 		if (available) return available;
 		throw new AccountUsageLimitError(sessionModel.provider, this._retryFallback.accountError(sessionModel.provider));
+	}
+
+	private _logCompactionModelFallback(
+		override: string,
+		reason: "malformed" | "unknown_model" | "provider_spent" | "no_credentials",
+		sessionModel: Model<any>,
+	): void {
+		const notice = `${override}\u0000${reason}`;
+		if (this._compactionModelFallbackNotice === notice) return;
+		this._compactionModelFallbackNotice = notice;
+		this._sessionLogger.warn("compaction_model_fallback", {
+			model: override,
+			reason,
+			to: `${sessionModel.provider}/${sessionModel.id}`,
+		});
 	}
 
 	private async _getCompactionRequestAuth(
@@ -3026,6 +3083,7 @@ export class AgentSession {
 	private async _promptAgent(
 		messages: AgentMessage | AgentMessage[],
 		{
+			inputOrigin,
 			deferredTurnClaim,
 			onQueuedInput,
 		}: {
@@ -3103,7 +3161,8 @@ export class AgentSession {
 				for (const message of queuedMessages) this.agent.steer(message);
 				if (prepared) {
 					this._steeringMessages.push(prepared.text);
-					this._recordQueuedInput(prepared.text, "steer", prepared, userMessage);
+					const queuedId = this._recordQueuedInput(prepared.text, "steer", prepared, userMessage);
+					if (inputOrigin === "person") this._personQueuedIds.add(queuedId);
 					this._emitQueueUpdate();
 				}
 				return;
@@ -5738,7 +5797,7 @@ export class AgentSession {
 			this.setSessionThinkingLevel(options.thinkingLevel);
 		}
 		await this._promptAgent(messages, {
-			inputOrigin: inputOriginOf(options?.source),
+			inputOrigin: originOf(options),
 			onQueuedInput: options?.onQueuedInput,
 		});
 		await this.waitForRetry();
@@ -6162,6 +6221,7 @@ export class AgentSession {
 		const queue = input.mode === "steer" ? this._steeringMessages : this._followUpMessages;
 		queue.push(input.text);
 		const queuedId = this._recordQueuedInput(input.text, input.mode, prepared, undefined, input.queuedId);
+		if (originOf(input) === "person") this._personQueuedIds.add(queuedId);
 		this._sessionLogger.debug("queue_enqueue", {
 			mode: input.mode,
 			count: queue.length,
@@ -6672,9 +6732,17 @@ export class AgentSession {
 			// before prompt() accepted the message must not silently drop it.
 			if (disposition === undefined) {
 				if (options?.deliverAs === "steer") {
-					await this._queueSteer(text, images, { textBlocks, source: "extension" });
+					await this._queueSteer(text, images, {
+						textBlocks,
+						source: "extension",
+						inputOrigin,
+					});
 				} else {
-					await this._queueFollowUp(text, images, { textBlocks, source: "extension" });
+					await this._queueFollowUp(text, images, {
+						textBlocks,
+						source: "extension",
+						inputOrigin,
+					});
 				}
 			}
 			throw error;
@@ -6891,6 +6959,18 @@ export class AgentSession {
 	 */
 	whenQueueClearRecorded(): Promise<void> {
 		return this._queueClearRecorded;
+	}
+
+	/**
+	 * Whether a person's input is waiting in the queue: a TUI submit, an RPC client prompt/steer/follow_up or an
+	 * answered question, tagged when it was enqueued. Decided from the entries actually queued now, so an input
+	 * that was delivered, dequeued or cleared no longer counts. Extension and engine sends are never a person's.
+	 */
+	get hasQueuedPersonInput(): boolean {
+		for (const id of this._personQueuedIds) {
+			if (!this._queuedInputOrder.some((input) => input.queuedId === id)) this._personQueuedIds.delete(id);
+		}
+		return this._personQueuedIds.size > 0;
 	}
 
 	/** Number of pending messages (includes both steering and follow-up) */
@@ -9908,6 +9988,11 @@ export class AgentSession {
 			this._engineTurnHold.start();
 			this.syncPromptCacheSafeWaitEnv();
 			await this._extensionRunner.emit(this._sessionStartEvent);
+			await restoreMovedState(this.sessionManager, (moved) =>
+				this._extensionRunner
+					.emitSessionMove({ type: "session_move_import", ...moved })
+					.then((failures) => failures.length === 0),
+			);
 			this._enforceConfiguredDefaultTools();
 			await this.extendResourcesFromExtensions(this._sessionStartEvent.reason === "reload" ? "reload" : "startup");
 		} finally {
@@ -10161,6 +10246,7 @@ export class AgentSession {
 					void this.abort();
 				},
 				hasPendingMessages: () => this.pendingMessageCount > 0,
+				hasQueuedPersonInput: () => this.hasQueuedPersonInput,
 				isCompacting: () => this.isCompacting,
 				checkReloadVeto: () => this.checkReloadVeto(),
 				shutdown: () => {
@@ -10168,10 +10254,9 @@ export class AgentSession {
 				},
 				getContextUsage: () => this.getContextUsage(),
 				getCompactionSettings: () => this._getCompactionSettings(),
-				getCompactionModel: () =>
-					this.model && this._retryFallback.isProviderSpent(this.model.provider)
-						? this._resolveCompactionModel(this.model)
-						: this.model,
+				// One resolver for core and builtin compaction: a configured `compaction.model`
+				// summarizes on a healthy provider too, not only after the account is spent (#830).
+				getCompactionModel: () => (this.model ? this._resolveCompactionModel(this.model) : undefined),
 				getPromptCacheSafeWaitSeconds: () => this.resolvePromptCacheSafeWaitSeconds(),
 				getPromptCacheGoalBackstopMaxSeconds: () => this.settingsManager.getPromptCacheGoalBackstopMaxSeconds(),
 				getPromptCacheKeepAliveSettings: () => this.settingsManager.getPromptCacheKeepAliveSettings(),

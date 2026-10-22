@@ -112,6 +112,10 @@ import {
 // is already part of this module's graph; the CLI bootstrap deliberately does not import it.
 setWireIdentity(BRAND?.userAgent ?? APP_NAME);
 
+/** Availability re-reads after a busy credential store: 250, 500, 1000, 2000, 4000 ms. */
+const BUSY_AVAILABILITY_RETRY_LIMIT = 5;
+const BUSY_AVAILABILITY_RETRY_BASE_MS = 250;
+
 interface RegisteredVirtualModel {
 	model: Model<Api>;
 	route: VirtualModelDefinition["route"];
@@ -295,6 +299,8 @@ export class ModelRuntime implements Models {
 	private availabilityRefreshSeq = 0;
 	private availabilityErrorSeq = 0;
 	private readonly providerAvailabilitySeq = new Map<string, number>();
+	private busyAvailabilityRetries = 0;
+	private busyAvailabilityRetryTimer: ReturnType<typeof setTimeout> | undefined;
 	private availabilityError: string | undefined;
 	private readonly credentialOperations = new Map<string, Promise<unknown>>();
 	/**
@@ -531,6 +537,7 @@ export class ModelRuntime implements Models {
 			auth,
 		};
 		this.availabilityInitialized = true;
+		this.busyAvailabilityRetries = 0;
 		if (errorSeq === this.availabilityErrorSeq) this.availabilityError = undefined;
 	}
 
@@ -614,7 +621,28 @@ export class ModelRuntime implements Models {
 		if (errorSeq === this.availabilityErrorSeq) {
 			this.availabilityError = "Credential store was busy; availability will be re-read on the next refresh";
 		}
+		this.scheduleBusyAvailabilityRetry();
 		return true;
+	}
+
+	/**
+	 * Re-read availability after a busy store, so a lock held during startup does not leave
+	 * every provider unconfigured until some later caller happens to refresh. Bounded: at most
+	 * {@link BUSY_AVAILABILITY_RETRY_LIMIT} attempts with doubling delays, reset by a published
+	 * pass; the timer never keeps the process alive.
+	 */
+	private scheduleBusyAvailabilityRetry(): void {
+		if (this.busyAvailabilityRetryTimer !== undefined) return;
+		if (this.busyAvailabilityRetries >= BUSY_AVAILABILITY_RETRY_LIMIT) return;
+		const delayMs = BUSY_AVAILABILITY_RETRY_BASE_MS * 2 ** this.busyAvailabilityRetries;
+		this.busyAvailabilityRetries += 1;
+		this.busyAvailabilityRetryTimer = setTimeout(() => {
+			this.busyAvailabilityRetryTimer = undefined;
+			this.queueAvailabilityRefresh().catch(() => {
+				// The pass records its own availability error; a later busy read schedules the next attempt.
+			});
+		}, delayMs);
+		this.busyAvailabilityRetryTimer.unref?.();
 	}
 
 	getProviders(): readonly Provider[] {

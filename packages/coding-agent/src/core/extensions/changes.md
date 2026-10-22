@@ -1,3 +1,25 @@
+## 2026-10-19 - session_move_export and session_move_import events (senpi#3676)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `SessionMoveExportEvent { moveId, dir }` and `SessionMoveImportEvent { moveId, dir }` join the session events, with their `on()` overloads.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitSessionMove(event)` runs the `session_move_export` or `session_move_import` handlers, each under the `session_shutdown` handler budget (warned at `warnMs`, its `signal` aborted at the cap), and returns every failure (a throw or a handler still running at the cap), each also reported as an extension error. A `move` release refuses on any export failure; the import hand-over keeps the moved state for the next open on any import failure (senpi#3681 review).
+- `packages/coding-agent/src/core/extensions/types.ts`: both move events carry `signal: AbortSignal`, and `SessionMoveImportEvent` carries `redelivered: boolean` (senpi#3681 delta review).
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts`: extensions with per-session state outside the session folder need a contract to hand it to a move and get it back on the receiver.
+- `packages/coding-agent/src/core/extensions/types.ts`: a handler past the cap keeps running; without the signal it cannot know to stop, and without `redelivered` an idempotent handler cannot cheaply tell a second delivery from the first.
+- `packages/coding-agent/src/core/extensions/runner.ts`: the ordinary emit swallows handler errors, so one failed import would discard the only copy of the moved state, and an unbounded export handler could hold a `move` release (and, on its interrupt path, the session's closed admission) forever.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts`: these are new host lifecycle events; only the host knows when a session is sealed for a move or first opened after one.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/types.ts`, the session event union and the `on()` overload list; `packages/coding-agent/src/core/extensions/runner.ts`, one method before `dispatchEmit` and two type imports.
+
 ## 2026-10-22 - ProviderConfig.ownsAccountSelection (senpi#2081)
 
 ### What changed
@@ -3857,3 +3879,23 @@ Only the session owns account suppression and pending model selection.
 ### Expected merge conflict zones
 
 The compaction context/action declarations in `types.ts` and callback storage, binding, and context construction in `runner.ts`.
+
+## 2026-10-21 - Extensions can ask whether a person's input is queued (senpi#3863)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionContext.hasQueuedPersonInput?()` and the matching optional context action; `InputOrigin` (`person | extension | engine`); `sendUserMessage` options take `inputOrigin`, where `"person"` marks an extension send as a person's input (an answered question).
+- `packages/coding-agent/src/core/extensions/runner.ts`: binds `hasQueuedPersonInput` from the session's context actions (false when the host does not provide it).
+
+### Why
+
+The goal extension's turn-end liveness verdict releases a hold only for a person's queued input. That has to come from the session's per-entry tags, not from a count the extension keeps.
+
+### Why an extension could not handle it
+
+This is the extension contract itself. The queue state lives in `AgentSession`.
+
+### Expected merge conflict zones
+
+- `types.ts`: beside `hasPendingMessages` in `ExtensionContext` and `ExtensionContextActions`, and both `sendUserMessage` option types.
+- `runner.ts`: the context-action fields and the `hasPendingMessages` binding.

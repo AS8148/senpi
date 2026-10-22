@@ -45,6 +45,7 @@ import {
 } from "./handler-budget.ts";
 import { kernelToolsStorage } from "./kernel-tools-context.ts";
 import { drainPendingProviderRegistrations } from "./loader.ts";
+import { runSessionMoveHandlers, type SessionMoveEmission, type SessionMoveFailure } from "./session-move-emit.ts";
 import { SessionStartTurnGate } from "./session-start-turn-gate.ts";
 import { QuitDeadline, type QuitHandlerBudget, type SessionShutdownBudget } from "./shutdown-quit-budget.ts";
 import { StaleExtensionContextError } from "./stale-context-error.ts";
@@ -527,6 +528,7 @@ export class ExtensionRunner {
 	private waitForIdleFn: () => Promise<void> = async () => {};
 	private abortFn: ExtensionContextActions["abort"] = () => {};
 	private hasPendingMessagesFn: () => boolean = () => false;
+	private hasQueuedPersonInputFn: () => boolean = () => false;
 	private isCompactingFn: () => boolean = () => false;
 	private checkReloadVetoFn: ExtensionContextActions["checkReloadVeto"];
 	private getContextUsageFn: () => ContextUsage | undefined = () => undefined;
@@ -681,6 +683,7 @@ export class ExtensionRunner {
 		this.getSignalFn = contextActions.getSignal;
 		this.abortFn = contextActions.abort;
 		this.hasPendingMessagesFn = contextActions.hasPendingMessages;
+		this.hasQueuedPersonInputFn = contextActions.hasQueuedPersonInput ?? (() => false);
 		this.isCompactingFn = contextActions.isCompacting;
 		this.checkReloadVetoFn = contextActions.checkReloadVeto;
 		this.shutdownHandler = contextActions.shutdown;
@@ -1522,6 +1525,10 @@ export class ExtensionRunner {
 				runner.assertActive();
 				return runner.hasPendingMessagesFn();
 			},
+			hasQueuedPersonInput: () => {
+				runner.assertActive();
+				return runner.hasQueuedPersonInputFn();
+			},
 			get requestReload() {
 				runner.assertActive();
 				return runner.reloadHandler ? () => runner.requestReload() : undefined;
@@ -1926,6 +1933,21 @@ export class ExtensionRunner {
 			return this.dispatchLifecycle(event) as Promise<RunnerEmitResult<TEvent>>;
 		}
 		return this.dispatchEmit(event);
+	}
+
+	/**
+	 * Move handlers carry state that exists nowhere else, so every failure (a throw, or a handler still running at the
+	 * `session_shutdown` handler budget) is reported and returned: a `move` release refuses on an export failure, and
+	 * the import hand-over keeps the moved state for the next open on an import failure.
+	 */
+	async emitSessionMove(event: SessionMoveEmission): Promise<readonly SessionMoveFailure[]> {
+		const calls = flattenHandlers(this.extensions, event.type).map(({ path, handler }) => ({
+			extensionPath: path,
+			call: (signal: AbortSignal) => handler({ ...event, signal }, this.createContext(path)),
+		}));
+		const failures = await runSessionMoveHandlers(event.type, calls, this.resolveSessionShutdownBudget().handler);
+		for (const failure of failures) this.emitError({ ...failure, event: event.type });
+		return failures;
 	}
 
 	private async dispatchEmit<TEvent extends RunnerEmitEvent>(event: TEvent): Promise<RunnerEmitResult<TEvent>> {
