@@ -10,6 +10,8 @@
 
 - `RpcClient.setSessionContext(patch, sessionId?)` publishes session context (`set_session_context`) from an attached client, so a task runner can record a terminal `task_status` before it detaches ([#3905](https://github.com/code-yeongyu/senpi/issues/3905)).
 
+- Claude Fable 5.5 (and Claude Mythos 5.5) use the tuned Fable prompt preset; once the model is released they also get the same default retry-fallback chain as Fable 5.1 (the chain and the Claude Code subscription floor stay off until launch) ([#3893](https://github.com/code-yeongyu/senpi/issues/3893), [#3897](https://github.com/code-yeongyu/senpi/pull/3897)).
+
 ### Changed
 
 ### Fixed
