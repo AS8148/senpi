@@ -79,6 +79,58 @@ it("settles a degraded question with no answer at all as cancelled", async () =>
 		unanswered: ["q1", "q2"],
 	});
 });
+// An abort is never an answer: the fallback settles it like the structured bridge (cancelled, or
+// timed_out when the abort carries that status), keeps what the user had answered, and asks nothing more.
+const threeQuestions = {
+	...request,
+	questions: ["q1", "q2", "q3"].map((id) => ({ ...request.questions[0], id, header: id, question: id })),
+};
+const abortOnSecondSelect = (controller: AbortController, reason?: string) =>
+	vi
+		.fn()
+		.mockResolvedValueOnce("A")
+		.mockImplementationOnce(async () => {
+			controller.abort(reason);
+			return undefined;
+		})
+		.mockResolvedValue("B");
+it("settles a fallback aborted partway as cancelled, keeping the partial answers and asking nothing more", async () => {
+	const controller = new AbortController();
+	const select = abortOnSecondSelect(controller);
+	const input = vi.fn();
+	const response = await degradeQuestion({ select, input }, threeQuestions, { signal: controller.signal });
+	expect(response).toStrictEqual({
+		status: "cancelled",
+		answers: { q1: { selected: ["A"] } },
+		unanswered: ["q2", "q3"],
+	});
+	expect(select).toHaveBeenCalledTimes(2);
+	expect(input).not.toHaveBeenCalled();
+});
+it("settles a fallback aborted with a timeout as timed_out, keeping the partial answers", async () => {
+	const controller = new AbortController();
+	const select = abortOnSecondSelect(controller, "timed_out");
+	const response = await degradeQuestion({ select, input: vi.fn() }, threeQuestions, { signal: controller.signal });
+	expect(response).toMatchObject({
+		status: "timed_out",
+		answers: { q1: { selected: ["A"] } },
+		unanswered: ["q2", "q3"],
+	});
+	expect(response.resolvedBy).toBeUndefined();
+	expect(typeof response.autoResolvedAfterMs).toBe("number");
+	expect(select).toHaveBeenCalledTimes(2);
+});
+it("opens no dialog when the signal is already aborted", async () => {
+	const controller = new AbortController();
+	controller.abort();
+	const select = vi.fn();
+	expect(await degradeQuestion({ select, input: vi.fn() }, request, { signal: controller.signal })).toStrictEqual({
+		status: "cancelled",
+		answers: {},
+		unanswered: ["q1", "q2"],
+	});
+	expect(select).not.toHaveBeenCalled();
+});
 it("broadcasts, replays once after message end, and forgets resolved questions", async () => {
 	const writer = new SessionEventWriter(() => {});
 	const records = new Map<string, string[]>();
