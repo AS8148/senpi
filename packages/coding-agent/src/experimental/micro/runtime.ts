@@ -35,6 +35,7 @@ import type {
 	MicroView,
 	MicroViewSource,
 } from "./api.ts";
+import { lockGatedStorage } from "./lock-gated-storage.ts";
 import { createPicoModels, readModelsView } from "./models.ts";
 import { selectSession } from "./sessions.ts";
 import { createMicroTools } from "./tools.ts";
@@ -92,7 +93,7 @@ export async function openMicro(options: OpenMicroOptions = {}): Promise<OpenMic
 		const pendingReports: unknown[] = [];
 		let report: (error: unknown) => void = (error) => pendingReports.push(error);
 		const harness = await Harness.open(
-			storage,
+			lockGatedStorage(storage, location.assertHeld),
 			{
 				models: picoModels,
 				tools: microTools.declarations,
@@ -410,10 +411,16 @@ export async function openMicro(options: OpenMicroOptions = {}): Promise<OpenMic
 				await location.release().catch(() => {});
 			},
 		};
-		// Another process reclaimed the session lock, so it may be writing this session: stop writing here.
+		// Another process reclaimed the session lock and may be writing this session. Stop without
+		// closing: the gated storage already refuses every commit, and closing could flush more writes.
 		stopOnLostLock = () => {
-			notice("error", "Another process took over this micro session; it was closed to protect its history.");
-			void opened.close();
+			const message = "Another process took over this micro session; it was stopped to protect its history.";
+			update({ fatal: message });
+			notice("error", message);
+			for (const controller of modelRefreshControllers) controller.abort(new Error(message));
+			loginController?.abort(new Error(message));
+			clearPendingAuth(new Error(message));
+			void root.abort(BACKGROUND_CONTEXT).catch(() => {});
 		};
 		if (lostBeforeOpen) stopOnLostLock(lostBeforeOpen);
 		return opened;

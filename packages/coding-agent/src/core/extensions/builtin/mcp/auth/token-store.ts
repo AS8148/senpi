@@ -129,10 +129,10 @@ export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 	}
 
 	async update(mutate: (current: TRecord | undefined) => TRecord | undefined): Promise<TRecord | undefined> {
-		const { release, assertHeld } = await this.#acquire();
+		const held = await this.#acquire();
+		this.#held = held;
 		try {
 			const next = mutate(this.read());
-			assertHeld();
 			if (next === undefined) {
 				this.#removeRecord();
 			} else {
@@ -141,7 +141,8 @@ export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 			}
 			return next;
 		} finally {
-			await release();
+			this.#held = undefined;
+			await held.release();
 		}
 	}
 
@@ -168,9 +169,8 @@ export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 	}
 
 	// Inside withLock this is the commit step of a read-refresh-write (the OAuth refresh spends a
-	// rotating refresh token over the network first), so it refuses to write once the lock was lost.
+	// rotating refresh token over the network first): each write below refuses once the lock was lost.
 	writeUnlocked(record: TRecord | undefined): void {
-		this.#held?.assertHeld();
 		if (record === undefined) {
 			this.#removeRecord();
 			return;
@@ -216,6 +216,12 @@ export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 		const tmp = join(this.dir, `${TOKENS_FILE}.${randomBytes(6).toString("hex")}.tmp`);
 		writeFileSync(tmp, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
 		chmodSync(tmp, 0o600);
+		try {
+			this.#held?.assertHeld();
+		} catch (error) {
+			rmSync(tmp, { force: true });
+			throw error;
+		}
 		renameSync(tmp, this.tokensPath);
 		chmodSync(this.tokensPath, 0o600);
 	}
@@ -225,11 +231,13 @@ export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 	}
 
 	#removeRecord(): void {
+		this.#held?.assertHeld();
 		this.#removeTokens();
 		removeIndexEntry(this.rootDir, this.serverName, this.#hash);
 	}
 
 	#writeIndex(): void {
+		this.#held?.assertHeld();
 		writeIndexEntry(this.rootDir, this.serverName, this.#hash);
 	}
 }

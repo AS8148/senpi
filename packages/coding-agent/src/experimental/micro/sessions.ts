@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, realpath } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { getAgentDir } from "../../config.ts";
-import { lockWithLossHandling } from "../../core/file-lock.ts";
+import { type HeldFileLock, lockWithLossHandling } from "../../core/file-lock.ts";
 
 export interface MicroSessionLocation {
 	id: string;
@@ -10,6 +10,8 @@ export interface MicroSessionLocation {
 	cwd: string;
 	created: boolean;
 	release(): Promise<void>;
+	/** Throws FileLockLostError once another process reclaimed the session lock. */
+	assertHeld(): void;
 }
 
 function cwdKey(cwd: string): string {
@@ -43,11 +45,11 @@ export async function selectSession(
 		created = true;
 	}
 
-	let release: () => Promise<void>;
+	let lock: HeldFileLock;
 	try {
-		({ release } = await lockWithLossHandling(path, { realpath: false, retries: 0, onLost }));
+		lock = await lockWithLossHandling(path, { realpath: false, retries: 0, onLost });
 	} catch (error) {
 		throw new Error(`Micro session is already open: ${path}`, { cause: error });
 	}
-	return { id: basename(path), path, cwd, created, release };
+	return { id: basename(path), path, cwd, created, release: lock.release, assertHeld: lock.assertHeld };
 }

@@ -2,55 +2,78 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { type LockSite, lockSiteProblems, referenceViolations } from "./support/lock-site-scan.ts";
 
-// Two source gates for proper-lockfile (oh-my-openagent#10878):
-// 1. Only core/file-lock.ts may reference the package. Its async lock gets the dependency's default
-//    onCompromised, which throws from a heartbeat timer and kills the process on a release race.
-//    The only other references allowed are the listed lockSync-only files (no heartbeat), and
-//    there the default-import binding may be used only as `<binding>.lockSync/unlockSync/checkSync(`.
-// 2. A holder that lost a live lock must stop: every lockWithLossHandling( call passes onLost, or
-//    its file is listed below with the reason and the file whose assertHeld() guards its writes.
+// Source gates for proper-lockfile (oh-my-openagent#10878):
+// 1. Only core/file-lock.ts may reference the package: an async lock elsewhere gets the default
+//    onCompromised, which throws from a heartbeat timer. The listed lockSync-only files (no
+//    heartbeat) may use their default import only for the sync calls.
+// 2. A holder that lost a live lock must stop. Each lockWithLossHandling( call passes onLost, or
+//    its call site is listed below with a reason, and each write under that lock has its own
+//    assertHeld() right before it.
 
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const SRC = "packages/coding-agent/src";
 const HELPER = `${SRC}/core/file-lock.ts`;
 
-const LOCK_SYNC_ONLY = new Set([
-	`${SRC}/core/auth-storage.ts`,
-	`${SRC}/core/settings-manager.ts`,
-	`${SRC}/core/trust-manager.ts`,
-	`${SRC}/core/extensions/builtin/hooks/trust-storage.ts`,
-	`${SRC}/package-manager-cli.ts`,
-]);
+const LOCK_SYNC_ONLY = new Set(
+	[
+		"core/auth-storage.ts",
+		"core/settings-manager.ts",
+		"core/trust-manager.ts",
+		"core/extensions/builtin/hooks/trust-storage.ts",
+		"package-manager-cli.ts",
+	].map((path) => `${SRC}/${path}`),
+);
 
-const STOPS_AT_ASSERT_HELD: Record<string, { reason: string; assertedIn: string }> = {
-	[`${SRC}/core/extensions/builtin/mcp/catalog-cache.ts`]: {
-		reason: "best-effort cache; the atomic rename is skipped once the lock is lost",
-		assertedIn: `${SRC}/core/extensions/builtin/mcp/catalog-cache.ts`,
+const at = (file: string) => `${SRC}/${file}`;
+const LOCK_SITES: Record<string, LockSite> = {
+	[`${at("core/extensions/builtin/mcp/catalog-cache.ts")}#writeMcpCachedServer`]: {
+		reason: "best-effort cache: the atomic rename is skipped once the lock is lost",
+		writes: [{ file: at("core/extensions/builtin/mcp/catalog-cache.ts"), fn: "atomicWriteJson", op: "rename(tmp" }],
 	},
-	[`${SRC}/core/credential-pool/state-file.ts`]: {
-		reason: "one short read-modify-write; the store asserts before writing the state file",
-		assertedIn: `${SRC}/core/credential-pool/state-store.ts`,
+	[`${at("core/credential-pool/state-file.ts")}#lockFileBefore`]: {
+		reason: "one short read-modify-write of the pool health sidecar",
+		writes: [{ file: at("core/credential-pool/state-store.ts"), fn: "withDocument", op: "writeStateFileAtomic(" }],
 	},
-	[`${SRC}/core/extensions/builtin/mcp/auth/token-store.ts`]: {
-		reason: "update, clear and writeUnlocked (the OAuth refresh commit) assert before writing",
-		assertedIn: `${SRC}/core/extensions/builtin/mcp/auth/token-store.ts`,
+	[`${at("core/extensions/builtin/mcp/auth/token-store.ts")}##acquire`]: {
+		reason: "update, clear and withLock (the OAuth refresh) write only through these methods",
+		writes: [
+			{ file: at("core/extensions/builtin/mcp/auth/token-store.ts"), fn: "#writeAtomic", op: "renameSync(tmp" },
+			{
+				file: at("core/extensions/builtin/mcp/auth/token-store.ts"),
+				fn: "#removeRecord",
+				op: "this.#removeTokens(",
+			},
+			{ file: at("core/extensions/builtin/mcp/auth/token-store.ts"), fn: "#writeIndex", op: "writeIndexEntry(" },
+			{ file: at("core/extensions/builtin/mcp/auth/token-store.ts"), fn: "clear", op: "rmSync(this.dir" },
+		],
 	},
-	[`${SRC}/core/session-move/move-ledger.ts`]: {
-		reason: "every record write asserts before its rename",
-		assertedIn: `${SRC}/core/session-move/move-ledger.ts`,
+	[`${at("core/session-move/move-ledger.ts")}#acquire`]: {
+		reason: "every record write goes through MoveLedger.write",
+		writes: [{ file: at("core/session-move/move-ledger.ts"), fn: "write", op: "renameSync(temp" }],
 	},
-	[`${SRC}/core/settings-manager.ts`]: {
-		reason: "the settings publish asserts before its rename",
-		assertedIn: `${SRC}/core/settings-manager.ts`,
+	[`${at("core/settings-manager.ts")}#acquireLockWithRetry`]: {
+		reason: "the async settings publish is one rename",
+		writes: [{ file: at("core/settings-manager.ts"), fn: "withPathLockAsync", op: "rename(tempPath" }],
 	},
-	[`${SRC}/experimental/server.ts`]: {
-		reason: "launcher and activation abort their operation at assertHeld checkpoints",
-		assertedIn: `${SRC}/experimental/server.ts`,
+	[`${at("experimental/server.ts")}#acquireServerProfile`]: {
+		reason: "server startup aborts before it goes live",
+		writes: [{ file: at("experimental/server.ts"), fn: "startServer", op: "relay.start(" }],
 	},
-	[`${SRC}/package-manager-cli.ts`]: {
-		reason: "the update aborts before the release rename and before activation",
-		assertedIn: `${SRC}/package-manager-cli.ts`,
+	[`${at("experimental/server.ts")}#acquireServerActivation`]: {
+		reason: "activation aborts before spawning and before handing back a foreground server",
+		writes: [
+			{ file: at("experimental/server.ts"), fn: "activateServer", op: "spawnInternalProcess(" },
+			{ file: at("experimental/server.ts"), fn: "startForegroundServer", op: "return server;" },
+		],
+	},
+	[`${at("package-manager-cli.ts")}#runManagedSelfUpdate`]: {
+		reason: "the update aborts before its release rename and before each activation",
+		writes: [
+			{ file: at("package-manager-cli.ts"), fn: "runManagedSelfUpdate", op: "renameSync(stageDir" },
+			{ file: at("package-manager-cli.ts"), fn: "runManagedSelfUpdate", op: "activateManagedRelease(" },
+		],
 	},
 };
 
@@ -70,71 +93,16 @@ function sourceFiles(directory: string, insideSrc: boolean): string[] {
 	return files;
 }
 
-/** Blanks comments while keeping string contents, so a module name inside a string is still seen. */
-function withoutComments(source: string): string {
-	let out = "";
-	let i = 0;
-	while (i < source.length) {
-		const char = source[i];
-		const next = source[i + 1];
-		if (char === "/" && next === "/") {
-			while (i < source.length && source[i] !== "\n") i++;
-		} else if (char === "/" && next === "*") {
-			const end = source.indexOf("*/", i + 2);
-			i = end === -1 ? source.length : end + 2;
-			out += " ";
-		} else if (char === '"' || char === "'" || char === "`") {
-			const start = i++;
-			while (i < source.length && source[i] !== char) i += source[i] === "\\" ? 2 : 1;
-			out += source.slice(start, ++i);
-		} else {
-			out += char;
-			i++;
-		}
-	}
-	return out;
-}
-
-const SYNC_ONLY_IMPORT = /^\s*import\s+(\w+)\s+from\s+["']proper-lockfile["'];?\s*$/m;
-
-function referenceViolations(path: string, source: string): string[] {
-	const code = withoutComments(source);
-	if (!code.includes("proper-lockfile") || path === HELPER) return [];
-	if (!LOCK_SYNC_ONLY.has(path)) return ["references proper-lockfile"];
-	const [importLine, binding] = code.match(SYNC_ONLY_IMPORT) ?? [];
-	if (!importLine || !binding) return ["lockSync-only file must use one plain default import"];
-	const rest = code.replace(importLine, "");
-	if (rest.includes("proper-lockfile")) return ["second proper-lockfile reference"];
-	const uses = [
-		...rest.matchAll(new RegExp(`(?<![\\w.$/-])${binding}\\b(?![-.]\\w*\\.ts)(\\s*\\.\\s*\\w+\\s*\\()?`, "g")),
-	];
-	return uses
-		.filter(([, call]) => !call || !/^\s*\.\s*(lockSync|unlockSync|checkSync)\s*\($/.test(call))
-		.map(([use]) => `non-sync use: ${use.trim()}`);
-}
-
-function callArguments(code: string, openParen: number): string {
-	let depth = 0;
-	for (let i = openParen; i < code.length; i++) {
-		if (code[i] === "(") depth++;
-		else if (code[i] === ")" && --depth === 0) return code.slice(openParen + 1, i);
-	}
-	return code.slice(openParen + 1);
-}
-
-function lockCallsWithoutOnLost(source: string): number {
-	const code = withoutComments(source);
-	return [...code.matchAll(/\blockWithLossHandling\s*\(/g)].filter(
-		(match) => !/\bonLost\b/.test(callArguments(code, (match.index ?? 0) + match[0].length - 1)),
-	).length;
-}
-
-const relativePath = (path: string) => relative(repoRoot, path).split(sep).join("/");
-const read = (path: string) => readFileSync(join(repoRoot, path), "utf8");
+const repoSources = (): Map<string, string> =>
+	new Map(
+		sourceFiles(join(repoRoot, "packages"), false).map((path) => [
+			relative(repoRoot, path).split(sep).join("/"),
+			readFileSync(path, "utf8"),
+		]),
+	);
 
 describe("proper-lockfile reference guard", () => {
 	it("rejects every way to reach the async lock outside the helper", () => {
-		const offender = `${SRC}/core/example.ts`;
 		for (const shape of [
 			'import lockfile from "proper-lockfile";',
 			'import * as pl from "proper-lockfile";',
@@ -146,20 +114,14 @@ describe("proper-lockfile reference guard", () => {
 			'const pl = await import("proper-lockfile");',
 			'const url = "https://x"; const pl = require("proper-lockfile");',
 		]) {
-			expect(referenceViolations(offender, shape), shape).not.toEqual([]);
+			expect(referenceViolations(shape, false), shape).not.toEqual([]);
 		}
-		expect(referenceViolations(offender, "// see proper-lockfile\n/* proper-lockfile */ const a = 1;")).toEqual([]);
+		expect(referenceViolations("// see proper-lockfile\n/* proper-lockfile */ const a = 1;", false)).toEqual([]);
 	});
 
 	it("allows a lockSync-only file only the sync calls on its default import", () => {
-		const syncFile = `${SRC}/core/trust-manager.ts`;
-		const head = 'import lockfile from "proper-lockfile";\n';
-		expect(
-			referenceViolations(
-				syncFile,
-				`${head}import { x } from "./lockfile-policy.ts";\nlockfile.lockSync(p);\nlockfile.unlockSync(p);`,
-			),
-		).toEqual([]);
+		const head = 'import lockfile from "proper-lockfile";\nimport { x } from "./lockfile-policy.ts";\n';
+		expect(referenceViolations(`${head}lockfile.lockSync(p);\nlockfile.unlockSync(p);`, true)).toEqual([]);
 		for (const body of [
 			"await lockfile.lock(p);",
 			'await lockfile["lock"](p);',
@@ -168,37 +130,75 @@ describe("proper-lockfile reference guard", () => {
 			"run(lockfile);",
 			'const pl = require("proper-lockfile");',
 		]) {
-			expect(referenceViolations(syncFile, `${head}${body}`), body).not.toEqual([]);
+			expect(referenceViolations(`${head}${body}`, true), body).not.toEqual([]);
 		}
-		expect(referenceViolations(syncFile, 'import lockfile, { lock } from "proper-lockfile";')).not.toEqual([]);
+		expect(referenceViolations('import lockfile, { lock } from "proper-lockfile";', true)).not.toEqual([]);
 	});
 
-	it("finds lock calls that pass no onLost", () => {
-		expect(lockCallsWithoutOnLost("await lockWithLossHandling(p, { stale: 1, onLost: stop });")).toBe(0);
-		expect(lockCallsWithoutOnLost("await lockWithLossHandling(p, { stale: f(1) });")).toBe(1);
-		expect(lockCallsWithoutOnLost("await lockWithLossHandling(p, { ...opts }); // onLost")).toBe(1);
+	describe("lock call sites are checked per call", () => {
+		const file = "src/store.ts";
+		const sites: Record<string, LockSite> = {
+			[`${file}#save`]: { reason: "test", writes: [{ file, fn: "commit", op: "renameSync(" }] },
+		};
+		const listed = [
+			"export async function save(path: string): Promise<void> {",
+			"\tconst lock = await lockWithLossHandling(path, { realpath: false });",
+			"\tcommit(lock);",
+			"}",
+			"function commit(lock: HeldFileLock): void {",
+			"\tlock.assertHeld();",
+			"\trenameSync(a, b);",
+			"}",
+			"",
+		].join("\n");
+
+		it("accepts a listed call whose write has its own assertHeld()", () => {
+			expect(lockSiteProblems(new Map([[file, listed]]), sites)).toEqual([]);
+		});
+
+		it("RED: a new lock call without onLost in an already-allowlisted file fails", () => {
+			const added = `${listed}export async function other(path: string): Promise<void> {\n\tawait lockWithLossHandling(path, {});\n}\n`;
+			expect(lockSiteProblems(new Map([[file, added]]), sites)).toEqual([
+				`${file}#other: lock call without onLost is not an allowlisted site`,
+			]);
+		});
+
+		it("RED: a second unlisted lock call inside an allowlisted function fails", () => {
+			const doubled = listed.replace("\tcommit(lock);", "\tcommit(lock);\n\tawait lockWithLossHandling(path, {});");
+			expect(lockSiteProblems(new Map([[file, doubled]]), sites)).toEqual([
+				`${file}#save: 2 lock calls without onLost share one allowlisted site`,
+			]);
+		});
+
+		it("RED: a locked write without its own assertHeld() fails, even with one earlier in the function", () => {
+			const shared = listed.replace("\trenameSync(a, b);", "\trenameSync(a, b);\n\trenameSync(c, d);");
+			expect(lockSiteProblems(new Map([[file, shared]]), sites)).toEqual([
+				`${file}#save -> ${file}#commit renameSync(: write without its own assertHeld() before it`,
+			]);
+			const missing = listed.replace("\tlock.assertHeld();\n", "");
+			expect(lockSiteProblems(new Map([[file, missing]]), sites)).toHaveLength(1);
+		});
+
+		it("a call that passes onLost needs no allowlist entry; a stale entry fails", () => {
+			const withOnLost = listed.replace("{ realpath: false }", "{ realpath: false, onLost: stop }");
+			expect(lockSiteProblems(new Map([[file, withOnLost]]), {})).toEqual([]);
+			expect(lockSiteProblems(new Map([[file, withOnLost]]), sites)).toEqual([
+				`${file}#save: allowlisted site has no lock call without onLost`,
+			]);
+		});
 	});
 
 	it("no file under packages/*/src references proper-lockfile except the helper and the lockSync-only files", () => {
-		const offenders = sourceFiles(join(repoRoot, "packages"), false)
-			.map((path) => ({
-				path: relativePath(path),
-				problems: referenceViolations(relativePath(path), readFileSync(path, "utf8")),
-			}))
+		const offenders = [...repoSources()]
+			.filter(([path]) => path !== HELPER)
+			.map(([path, source]) => ({ path, problems: referenceViolations(source, LOCK_SYNC_ONLY.has(path)) }))
 			.filter(({ problems }) => problems.length > 0);
 		expect(offenders).toEqual([]);
 	});
 
-	it("every lock site passes onLost or is a listed site whose writes call assertHeld()", () => {
-		const unlisted = sourceFiles(join(repoRoot, "packages"), false)
-			.map(relativePath)
-			.filter(
-				(path) => path !== HELPER && lockCallsWithoutOnLost(read(path)) > 0 && !(path in STOPS_AT_ASSERT_HELD),
-			);
-		expect(unlisted).toEqual([]);
-		for (const [path, { assertedIn }] of Object.entries(STOPS_AT_ASSERT_HELD)) {
-			expect(lockCallsWithoutOnLost(read(path)), `${path} no longer needs its allowlist entry`).toBeGreaterThan(0);
-			expect(withoutComments(read(assertedIn)), assertedIn).toMatch(/\bassertHeld(?:\?\.)?\(\)/);
-		}
+	it("every lock call passes onLost or is an allowlisted call site whose writes each assert the lock", () => {
+		const sources = repoSources();
+		sources.delete(HELPER);
+		expect(lockSiteProblems(sources, LOCK_SITES)).toEqual([]);
 	});
 });
