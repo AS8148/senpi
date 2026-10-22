@@ -87,8 +87,8 @@ export async function importMovedSession(
 	const sessionDir = options.sessionDir ? normalizePath(options.sessionDir) : getDefaultSessionDir(targetCwd);
 	const target = join(sessionDir, manifest.sessionFileName);
 	if (existsSync(target) && movedInFor(target, manifest.moveId)) {
-		// The rename already committed; a crash may have lost the ledger write, and the file is the authority.
-		await options.ledger.commit(manifest.moveId, () => undefined);
+		// The rename already committed; a crash or a failed write may have lost `accepted`, and the file is the authority.
+		await options.ledger.accept(manifest.moveId);
 		return { sessionFile: target };
 	}
 	try {

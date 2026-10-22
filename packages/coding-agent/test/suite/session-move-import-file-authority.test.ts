@@ -59,4 +59,13 @@ describe("a re-run move import with the session file as the authority", () => {
 			reason: "import_failed",
 		});
 	});
+
+	it("#given a ready or declined move #when accept runs #then it is refused and the record stays", async () => {
+		const { ledger } = await setup();
+		await expect(ledger.accept(MOVE)).rejects.toBeInstanceOf(MoveFencedError);
+		const declined = "move-0002" as MoveId;
+		await ledger.decline(declined, "cancelled");
+		await expect(ledger.accept(declined)).rejects.toBeInstanceOf(MoveFencedError);
+		expect(await ledger.answerStatus(declined, { movedIn: false })).toEqual({ state: "declined", reason: "cancelled" });
+	});
 });
