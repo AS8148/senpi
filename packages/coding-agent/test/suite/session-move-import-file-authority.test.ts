@@ -7,12 +7,11 @@ import { customTypes, MOVE, setup } from "./session-move-fixture.ts";
 
 class LosesAcceptedWrite extends MoveLedger {
 	landed: string | undefined;
+	private readonly renames: boolean;
 
-	constructor(
-		dir: string,
-		private readonly renames: boolean,
-	) {
+	constructor(dir: string, renames: boolean) {
 		super(dir);
+		this.renames = renames;
 	}
 
 	override commit<T>(moveId: MoveId, rename: () => T | Promise<T>): Promise<T> {
