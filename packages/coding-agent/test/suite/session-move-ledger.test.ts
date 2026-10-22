@@ -5,6 +5,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { MoveFencedError, MoveLedger } from "../../src/core/session-move/move-ledger.ts";
 import type { MoveId } from "../../src/core/session-move/ownership.ts";
 
+/** The session file a receive in these tests lands as. */
+const LANDING = "/sessions/landing.jsonl";
+
 const dirs: string[] = [];
 afterEach(() => {
 	for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
@@ -17,25 +20,42 @@ function ledger(): MoveLedger {
 const id = (value: string) => value as MoveId;
 
 describe("MoveLedger fence", () => {
-	it("#given an accepted move, revoked or not #when another receive begins #then it is fenced", async () => {
+	it("#given an accepted move #then another target is always fenced, and its own target only once revoked", async () => {
 		const book = ledger();
 		for (const [move, revoke] of [
 			[id("a1"), false],
 			[id("a2"), true],
 		] as const) {
 			await book.prepare(move);
-			await book.beginReceive(move);
-			await book.commit(move, () => undefined);
+			await book.beginReceive(move, LANDING);
+			await book.commit(move, LANDING, () => undefined);
 			if (revoke) await book.markRevoked(move);
-			await expect(book.beginReceive(move)).rejects.toBeInstanceOf(MoveFencedError);
+			await expect(book.beginReceive(move, "/sessions/elsewhere.jsonl")).rejects.toBeInstanceOf(MoveFencedError);
+			await expect(book.commit(move, "/sessions/elsewhere.jsonl", () => undefined)).rejects.toBeInstanceOf(
+				MoveFencedError,
+			);
+			if (revoke) await expect(book.beginReceive(move, LANDING)).rejects.toBeInstanceOf(MoveFencedError);
+			else await expect(book.beginReceive(move, LANDING)).resolves.toBeUndefined();
 		}
+	});
+
+	it("#given a receive in progress #then a receive or commit for another target is fenced and the first target wins", async () => {
+		const book = ledger();
+		await book.prepare(id("t1"));
+		await book.beginReceive(id("t1"), LANDING);
+		await expect(book.beginReceive(id("t1"), "/sessions/elsewhere.jsonl")).rejects.toBeInstanceOf(MoveFencedError);
+		await expect(book.commit(id("t1"), "/sessions/elsewhere.jsonl", () => undefined)).rejects.toBeInstanceOf(
+			MoveFencedError,
+		);
+		await book.commit(id("t1"), LANDING, () => undefined);
+		expect(await book.answerStatus(id("t1"), { movedIn: false })).toEqual({ state: "accepted" });
 	});
 
 	it("#given a revoke whose record was lost or reset to plain accepted #when the revoke repeats #then revoked: true is back", async () => {
 		const book = ledger();
 		await book.prepare(id("v1"));
-		await book.beginReceive(id("v1"));
-		await book.commit(id("v1"), () => undefined);
+		await book.beginReceive(id("v1"), LANDING);
+		await book.commit(id("v1"), LANDING, () => undefined);
 		await book.markRevoked(id("v1"));
 		const record = join(book.dir, "v1.json");
 
@@ -52,41 +72,41 @@ describe("MoveLedger fence", () => {
 	it("#given no record #when the sender asks #then the answer is a durable decline that blocks a later import", async () => {
 		const book = ledger();
 		expect(await book.answerStatus(id("m1"), { movedIn: false })).toEqual({ state: "declined", reason: "no_record" });
-		await expect(book.beginReceive(id("m1"))).rejects.toBeInstanceOf(MoveFencedError);
-		await expect(book.commit(id("m1"), () => undefined)).rejects.toBeInstanceOf(MoveFencedError);
+		await expect(book.beginReceive(id("m1"), LANDING)).rejects.toBeInstanceOf(MoveFencedError);
+		await expect(book.commit(id("m1"), LANDING, () => undefined)).rejects.toBeInstanceOf(MoveFencedError);
 	});
 
 	it("#given a receive in progress #when the sender asks #then it hears receiving and nothing is declined", async () => {
 		const book = ledger();
 		await book.prepare(id("m2"));
-		await book.beginReceive(id("m2"));
+		await book.beginReceive(id("m2"), LANDING);
 		expect(await book.answerStatus(id("m2"), { movedIn: false })).toEqual({ state: "receiving" });
-		await book.commit(id("m2"), () => undefined);
+		await book.commit(id("m2"), LANDING, () => undefined);
 		expect(await book.answerStatus(id("m2"), { movedIn: false })).toEqual({ state: "accepted" });
 	});
 
 	it("#given an accepted move whose session was later deleted #when the sender asks #then it still hears accepted", async () => {
 		const book = ledger();
 		await book.prepare(id("m3"));
-		await book.beginReceive(id("m3"));
-		await book.commit(id("m3"), () => undefined);
+		await book.beginReceive(id("m3"), LANDING);
+		await book.commit(id("m3"), LANDING, () => undefined);
 		expect(await book.answerStatus(id("m3"), { movedIn: false })).toEqual({ state: "accepted" });
 	});
 
 	it("#given an accepted move #when a cancel or expiry arrives #then it never turns into a decline", async () => {
 		const book = ledger();
 		await book.prepare(id("m4"));
-		await book.beginReceive(id("m4"));
-		await book.commit(id("m4"), () => undefined);
+		await book.beginReceive(id("m4"), LANDING);
+		await book.commit(id("m4"), LANDING, () => undefined);
 		expect(await book.decline(id("m4"), "cancelled")).toEqual({ state: "accepted" });
 	});
 
 	it("#given a commit whose rename throws #then nothing is recorded as accepted", async () => {
 		const book = ledger();
 		await book.prepare(id("m5"));
-		await book.beginReceive(id("m5"));
+		await book.beginReceive(id("m5"), LANDING);
 		await expect(
-			book.commit(id("m5"), () => {
+			book.commit(id("m5"), LANDING, () => {
 				throw new Error("disk full");
 			}),
 		).rejects.toThrow("disk full");

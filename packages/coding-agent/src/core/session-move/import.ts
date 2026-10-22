@@ -123,7 +123,7 @@ export async function importMovedSession(
 	const target = join(sessionDir, manifest.sessionFileName);
 	if (existsSync(target) && movedInFor(target, manifest.moveId)) {
 		// The rename already committed; a crash may have lost the ledger write, and the file is the authority.
-		await options.ledger.commit(manifest.moveId, () => undefined);
+		await options.ledger.confirmLanded(manifest.moveId, target);
 		return { sessionFile: target };
 	}
 	try {
@@ -137,11 +137,11 @@ export async function importMovedSession(
 		await options.ledger.decline(manifest.moveId, "repository");
 		throw new MoveRefusedError(targetCwd, manifest.sourceCwd);
 	}
-	await options.ledger.beginReceive(manifest.moveId);
+	await options.ledger.beginReceive(manifest.moveId, target);
 	const staging = join(sessionDir, ".move-staging", encodeURIComponent(manifest.moveId));
 	try {
 		const staged = await stage(options.bundleDir, manifest, staging, options.from ?? "");
-		const sessionFile = await options.ledger.commit(manifest.moveId, () => {
+		const sessionFile = await options.ledger.commit(manifest.moveId, target, () => {
 			replacePredecessor(target, manifest.sessionId, sessionDir);
 			// Before the rename: a crash here re-copies on retry, and after it the state is already in place.
 			placeExtensionState(staging, manifest, movedStateDir(target, manifest.moveId));
