@@ -6,7 +6,6 @@ import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createConnection } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -17,36 +16,44 @@ import {
 	installCleanupHooks,
 	makeSandbox,
 	repoRoot,
+	signalOwnedProcess,
 } from "../lib/common.mjs";
 
 const HOP_PREFIX = "senpi-rpc-host-internal-";
 
-function listProcesses() {
-	return execFileSync("ps", ["-axww", "-o", "pid=,ppid=,command="], { encoding: "utf8" })
-		.split("\n")
-		.map((line) => line.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/))
-		.filter(Boolean)
-		.map(([, pid, ppid, command]) => ({ pid: Number(pid), ppid: Number(ppid), command }));
-}
-
-/** Finds the host's internal hop: the first hop directory under the temp roots that a running host listens on. */
-export function locateHop({ roots = [tmpdir(), "/tmp"] } = {}) {
-	const processes = listProcesses();
-	const hops = roots.flatMap((root) => {
+/**
+ * This run's host only (2026-10-22 incident: the old lookup took the first hop directory in shared /tmp that any live
+ * process listened on, and SIGKILLed that foreign supervisor). The supervisor is the pid `host ensure` returned; its
+ * hop is the directory under THIS sandbox's TMPDIR whose owner record names that pid; the host is its single direct
+ * child. Shared /tmp is never listed and no process is picked by its command line.
+ */
+export function locateHop({ supervisorPid, sandboxTmp }) {
+	const ownerPid = (dir) => {
 		try {
-			return readdirSync(root).filter((name) => name.startsWith(HOP_PREFIX)).map((name) => join(root, name));
+			return JSON.parse(readFileSync(join(dir, ".owner"), "utf8")).pid;
 		} catch {
-			return [];
+			return undefined;
 		}
-	});
-	const hop = hops.find((dir) => processes.some((p) => p.command.includes(dir)));
-	const child = hop && processes.find((p) => p.command.includes(`unix://${join(hop, "host.sock")}`));
-	return child ? { hop, childPid: child.pid, supervisorPid: child.ppid } : undefined;
+	};
+	const hops = readdirSync(sandboxTmp)
+		.filter((name) => name.startsWith(HOP_PREFIX))
+		.map((name) => join(sandboxTmp, name))
+		.filter((dir) => ownerPid(dir) === supervisorPid);
+	let listed = "";
+	try {
+		listed = execFileSync("pgrep", ["-P", String(supervisorPid)], { encoding: "utf8" });
+	} catch (cause) {
+		// pgrep exits 1 when the supervisor has no children; anything else is a real failure.
+		if (cause?.status !== 1) throw cause;
+	}
+	const children = listed.split("\n").filter(Boolean).map(Number);
+	if (hops.length !== 1 || children.length !== 1) return undefined;
+	return { hop: hops[0], childPid: children[0], supervisorPid };
 }
 
-export function stopSupervisor({ supervisorPid, signal = "SIGKILL" }) {
-	process.kill(supervisorPid, signal);
-	return true;
+/** Stops the supervisor `host ensure` returned, through the shared ownership guard. */
+export function stopSupervisor({ supervisorPid, sandboxPath, signal = "SIGKILL" }) {
+	return signalOwnedProcess({ pid: supervisorPid, returned: true, sandboxPath, signal });
 }
 
 async function runQa() {
@@ -104,7 +111,7 @@ async function runQa() {
 			raw.closed && raw.lines.length === 1 && raw.lines[0].error === "auth_required" && raw.lines[0].command === "get_protocol_info",
 			JSON.stringify(raw.lines),
 		);
-		stopSupervisor({ supervisorPid, sandboxPath: box.dir, sock, signal: "SIGKILL" });
+		stopSupervisor({ supervisorPid, sandboxPath: box.dir, signal: "SIGKILL" });
 		const exited = await waitForExit(childPid, 15_000);
 		note("afterSupervisorKill", { childExited: exited });
 		checks.ok("SIGKILL of the supervisor ends the host child", exited);
