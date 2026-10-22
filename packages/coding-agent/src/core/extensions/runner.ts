@@ -12,16 +12,19 @@ import { stripAnsi } from "../../utils/ansi.ts";
 import type { ResourceDiagnostic } from "../diagnostics.ts";
 import type { DiscoveredResourceEntry } from "../discovered-resource-scope.ts";
 import { createEventBus, type EventBus, EXTENSION_RPC_EVENT_CHANNEL, type ExtensionRpcEvent } from "../event-bus.ts";
+import type { InputOrigin } from "../input-origin.ts";
 import type { KeybindingsConfig } from "../keybindings.ts";
 import type { NamedMemoryReporter } from "../memory-report/memory-report-registry.ts";
 import type { ModelRegistry } from "../model-registry.ts";
 import type { ScopedModel } from "../model-resolver.ts";
+import { bindQuestionInput } from "../question-input.ts";
 import type { SessionManager } from "../session-manager.ts";
 import {
 	DEFAULT_EXTENSION_EVENT_HANDLER_TIMEOUT_MS,
 	DEFAULT_EXTENSION_EVENT_HANDLER_WARN_MS,
 	DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS,
 	DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS,
+	DEFAULT_SESSION_SHUTDOWN_QUIT_BUDGET_MS,
 	SettingsManager,
 } from "../settings-manager.ts";
 import type { BuildSystemPromptOptions } from "../system-prompt.ts";
@@ -30,6 +33,7 @@ import { goalFilePath } from "./builtin/goal/persistence.ts";
 import { goalStoreRef } from "./builtin/goal/store-ref.ts";
 import { disableServerSearch } from "./builtin/server-search-fallback.ts";
 import { dispatchContextMessages } from "./context-dispatch.ts";
+import { reclaimRunnerHandles, registerRunnerExtensions } from "./extension-handle-ledger.ts";
 import {
 	type BudgetedSequence,
 	type ExtensionHandlerBudget,
@@ -42,6 +46,7 @@ import {
 import { kernelToolsStorage } from "./kernel-tools-context.ts";
 import { drainPendingProviderRegistrations } from "./loader.ts";
 import { SessionStartTurnGate } from "./session-start-turn-gate.ts";
+import { QuitDeadline, type QuitHandlerBudget, type SessionShutdownBudget } from "./shutdown-quit-budget.ts";
 import { StaleExtensionContextError } from "./stale-context-error.ts";
 import type {
 	AgentBeforeSettleEvent,
@@ -82,11 +87,13 @@ import type {
 	MessageRenderer,
 	ModelSelectEvent,
 	ModelSelectEventResult,
+	OffloadOptions,
 	ProjectTrustContext,
 	ProjectTrustEvent,
 	ProjectTrustEventResult,
 	ProviderConfig,
 	ProviderRequestPreparation,
+	RegisteredChildModule,
 	RegisteredCommand,
 	RegisteredMcpServerDeclaration,
 	RegisteredTool,
@@ -366,16 +373,19 @@ const UNBOUNDED_HANDLER_BUDGET: ExtensionHandlerBudget = { warnMs: 0, timeoutMs:
  *
  * Each handler runs under the host's shutdown budget (see
  * `ExtensionRunner.emit`), so a hung extension cannot hold teardown hostage.
+ * Afterwards senpi closes the servers, sockets and timers an extension instance
+ * still holds open (senpi#2292), with or without handlers.
  */
 export async function emitSessionShutdownEvent(
 	extensionRunner: ExtensionRunner,
 	event: SessionShutdownEvent,
+	options: { readonly processExit?: boolean } = {},
 ): Promise<boolean> {
-	if (extensionRunner.hasHandlers("session_shutdown")) {
-		await extensionRunner.emit(event);
-		return true;
-	}
-	return false;
+	if (options.processExit && event.reason === "quit") extensionRunner.armProcessExitBudget();
+	const emitted = extensionRunner.hasHandlers("session_shutdown");
+	if (emitted) await extensionRunner.emit(event);
+	reclaimRunnerHandles(extensionRunner);
+	return emitted;
 }
 
 function snapshotEventHandlers(extensions: Extension[], event: ExtensionEvent["type"]) {
@@ -502,12 +512,17 @@ export class ExtensionRunner {
 	private handlerStallListener: ((stall: ExtensionHandlerStall) => void) | undefined;
 	private handlerTurnScope: () => number = () => 0;
 	private reportedInvalidHandlerBudget = false;
+	private processExitRequestedAt: number | undefined;
 	private readonly heldHandlerWaits = new HeldHandlerWaits();
 	private getModel: () => Model<any> | undefined = () => undefined;
 	private getServiceTier: () => ServiceTier | undefined = () => undefined;
 	private getEffectiveServiceTier: () => ServiceTier | undefined = () => this.getServiceTier();
 	private getScopedModels: () => readonly ScopedModel[] = () => [];
 	private isIdleFn: () => boolean = () => true;
+	private engineTurnsHeldFn: () => boolean = () => false;
+	private noteHeldWakeFn: (source: string) => void = () => {};
+	private questionInput: ExtensionContextActions["questionInput"];
+	private personAnswerPending = false;
 	private isProjectTrustedFn: () => boolean = () => true;
 	private getSignalFn: () => AbortSignal | undefined = () => undefined;
 	private waitForIdleFn: () => Promise<void> = async () => {};
@@ -565,6 +580,7 @@ export class ExtensionRunner {
 	private onUserActivityFn: ExtensionContextActions["onUserActivity"];
 	private getAgentDirFn: () => string = () => getAgentDir();
 	private executeToolFn: ExtensionContextActions["executeTool"];
+	private offloadFn: ExtensionContextActions["offload"];
 	private getCallableToolsFn: () => readonly AgentTool[] = () => [];
 	private newSessionHandler: NewSessionHandler = async () => ({ cancelled: false });
 	private forkHandler: ForkHandler = async () => ({ cancelled: false });
@@ -599,6 +615,7 @@ export class ExtensionRunner {
 		eventBus: EventBus = createEventBus(),
 	) {
 		this.extensions = extensions;
+		registerRunnerExtensions(this, extensions);
 		this.runtime = runtime;
 		this.uiContext = noOpUIContext;
 		this.cwd = cwd;
@@ -623,8 +640,12 @@ export class ExtensionRunner {
 			if (options?.triggerTurn === true) this.sessionStartTurns.admit(() => actions.sendMessage(message, options));
 			else actions.sendMessage(message, options);
 		};
-		this.runtime.sendUserMessage = (content, options) =>
-			this.sessionStartTurns.admit(() => actions.sendUserMessage(content, options));
+		this.runtime.sendUserMessage = (content, options) => {
+			// Captured at admission: a deferred answer keeps the origin it was delivered with.
+			const inputOrigin: InputOrigin = this.personAnswerPending ? "person" : "extension";
+			this.personAnswerPending = false;
+			this.sessionStartTurns.admit(() => actions.sendUserMessage(content, options, inputOrigin));
+		};
 		this.runtime.appendEntry = actions.appendEntry;
 		this.runtime.setSessionName = actions.setSessionName;
 		this.runtime.getSessionName = actions.getSessionName;
@@ -647,12 +668,16 @@ export class ExtensionRunner {
 		if (actions.sessionControl) this.runtime.sessionControl = actions.sessionControl;
 		this.runtime.createContext = () => this.createContext();
 
+		this.offloadFn = contextActions.offload;
 		// Context actions (required)
 		this.getModel = contextActions.getModel;
 		this.getServiceTier = contextActions.getServiceTier;
 		this.getEffectiveServiceTier = contextActions.getEffectiveServiceTier ?? contextActions.getServiceTier;
 		this.getScopedModels = contextActions.getScopedModels;
 		this.isIdleFn = contextActions.isIdle;
+		this.engineTurnsHeldFn = contextActions.engineTurnsHeld ?? (() => false);
+		this.noteHeldWakeFn = contextActions.noteHeldWake ?? (() => {});
+		this.questionInput = contextActions.questionInput;
 		this.isProjectTrustedFn = contextActions.isProjectTrusted;
 		this.getSignalFn = contextActions.getSignal;
 		this.abortFn = contextActions.abort;
@@ -868,6 +893,11 @@ export class ExtensionRunner {
 		return this.uiContext;
 	}
 
+	/** True while session_start handlers run and the turns they trigger are still held. */
+	sessionStartTurnsHeld(): boolean {
+		return this.sessionStartTurns.holding;
+	}
+
 	hasUI(): boolean {
 		return this.uiContext !== noOpUIContext;
 	}
@@ -878,6 +908,33 @@ export class ExtensionRunner {
 
 	getExtensionIdentities(): Array<{ path: string; resolvedPath: string }> {
 		return this.extensions.map(({ path, resolvedPath }) => ({ path, resolvedPath }));
+	}
+
+	readonly #reportedChildModuleReplacements = new Set<string>();
+
+	/**
+	 * Every registered child module by id. Unlike tools, the last extension to register an id wins, in load order; the
+	 * replacement is logged once, so a module that shadows another (a builtin's included) is never silent.
+	 */
+	getAllChildModules(): Map<string, RegisteredChildModule> {
+		const modules = new Map<string, RegisteredChildModule>();
+		for (const ext of this.extensions)
+			for (const [id, entry] of ext.childModules ?? []) {
+				const earlier = modules.get(id);
+				const replacement = `${id}\0${earlier?.sourceInfo.path}\0${entry.sourceInfo.path}`;
+				if (
+					earlier !== undefined &&
+					earlier.sourceInfo.path !== entry.sourceInfo.path &&
+					!this.#reportedChildModuleReplacements.has(replacement)
+				) {
+					this.#reportedChildModuleReplacements.add(replacement);
+					console.warn(
+						`Child module "${id}" from ${entry.sourceInfo.path} replaces the one from ${earlier.sourceInfo.path}`,
+					);
+				}
+				modules.set(id, entry);
+			}
+		return modules;
 	}
 
 	/**
@@ -1363,7 +1420,13 @@ export class ExtensionRunner {
 		const getEffectiveServiceTier = this.getEffectiveServiceTier;
 		const getScopedModels = this.getScopedModels;
 		let compactionSignal: AbortSignal | undefined;
-		return {
+		const context: ExtensionContext = {
+			offload: (id: string, args: unknown, options?: OffloadOptions) => {
+				runner.assertActive();
+				if (runner.offloadFn === undefined)
+					return Promise.reject(new Error(`offload_unavailable: no session backs this context (offload ${id})`));
+				return runner.offloadFn(id, args, options);
+			},
 			get ui() {
 				runner.assertActive();
 				return runner.uiContext;
@@ -1427,6 +1490,14 @@ export class ExtensionRunner {
 			isIdle: () => {
 				runner.assertActive();
 				return runner.isIdleFn();
+			},
+			engineTurnsHeld: () => {
+				runner.assertActive();
+				return runner.engineTurnsHeldFn();
+			},
+			noteHeldWake: (source) => {
+				runner.assertActive();
+				runner.noteHeldWakeFn(source);
 			},
 			isProjectTrusted: () => {
 				runner.assertActive();
@@ -1581,6 +1652,18 @@ export class ExtensionRunner {
 				return runner.getRegisteredMcpServers();
 			},
 		};
+		if (this.questionInput) {
+			bindQuestionInput(context, () => {
+				runner.assertActive();
+				// The answer's own sendUserMessage follows synchronously and takes this token at admission.
+				runner.personAnswerPending = true;
+				queueMicrotask(() => {
+					runner.personAnswerPending = false;
+				});
+				runner.questionInput?.();
+			});
+		}
+		return context;
 	}
 
 	/**
@@ -1755,23 +1838,37 @@ export class ExtensionRunner {
 	 * effect without a reload). A malformed value must never break teardown, so
 	 * an invalid setting is reported and the shipped defaults are used.
 	 */
-	private resolveSessionShutdownBudget(): ExtensionHandlerBudget {
+	/**
+	 * The next `quit` emission ends in process exit, so its handlers share the total quit budget (senpi#3711). A quit
+	 * that keeps the process alive (closing one session on an RPC host) keeps only the per-handler limits.
+	 */
+	armProcessExitBudget(): void {
+		this.processExitRequestedAt ??= Date.now();
+	}
+
+	private resolveSessionShutdownBudget(): SessionShutdownBudget {
 		try {
 			const settings = SettingsManager.create(this.cwd, this.getAgentDirFn(), {
 				projectTrusted: this.isProjectTrustedFn(),
 			});
 			return {
-				warnMs: settings.getSessionShutdownHandlerWarnMs(),
-				timeoutMs: settings.getSessionShutdownHandlerTimeoutMs(),
+				handler: {
+					warnMs: settings.getSessionShutdownHandlerWarnMs(),
+					timeoutMs: settings.getSessionShutdownHandlerTimeoutMs(),
+				},
+				quitMs: settings.getSessionShutdownQuitBudgetMs(),
 			};
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);
 			console.warn(
-				`Using the default session_shutdown handler budget (warn ${DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS}ms, hard cap ${DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS}ms): ${message}`,
+				`Using the default session_shutdown handler budget (warn ${DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS}ms, hard cap ${DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS}ms, quit ${DEFAULT_SESSION_SHUTDOWN_QUIT_BUDGET_MS}ms): ${message}`,
 			);
 			return {
-				warnMs: DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS,
-				timeoutMs: DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS,
+				handler: {
+					warnMs: DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS,
+					timeoutMs: DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS,
+				},
+				quitMs: DEFAULT_SESSION_SHUTDOWN_QUIT_BUDGET_MS,
 			};
 		}
 	}
@@ -1788,8 +1885,9 @@ export class ExtensionRunner {
 		extensionPath: string,
 		event: SessionShutdownEvent,
 		handler: (...args: unknown[]) => Promise<unknown>,
-		budget: ExtensionHandlerBudget,
+		{ budget, endsAtQuitDeadline }: QuitHandlerBudget,
 	): Promise<void> {
+		const startedAt = Date.now();
 		const outcome = await runBudgetedHandler({
 			extensionPath,
 			event: "session_shutdown",
@@ -1804,13 +1902,21 @@ export class ExtensionRunner {
 			},
 		});
 		if (outcome.kind === "failed") throw outcome.error;
-		if (outcome.kind === "timed_out") {
+		if (outcome.kind === "timed_out" && endsAtQuitDeadline) {
+			console.warn(
+				`Extension ${extensionPath} session_shutdown handler overran the quit budget after ${Date.now() - startedAt}ms; quitting without it.`,
+			);
+		} else if (outcome.kind === "timed_out") {
 			this.emitError({
 				extensionPath,
 				event: "session_shutdown",
 				error: `handler timed out after ${budget.timeoutMs}ms`,
 			});
 		}
+	}
+
+	emitHeldWakesReleased(sources: Record<string, number>): Promise<void> {
+		return this.emit({ type: "held_wakes_released", sources });
 	}
 
 	emit<TEvent extends RunnerEmitEvent>(event: TEvent): Promise<RunnerEmitResult<TEvent>> {
@@ -1856,18 +1962,32 @@ export class ExtensionRunner {
 		// handlers without a cap (ask-user and approval dialogs legitimately block).
 		// The shutdown budget is resolved lazily so runners with no shutdown handler read no settings.
 		const isSessionShutdown = event.type === "session_shutdown";
-		let shutdownBudget: ExtensionHandlerBudget | undefined;
+		let shutdownBudget: SessionShutdownBudget | undefined;
+		let quitDeadline: QuitDeadline | undefined;
 
 		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, event.type)) {
 			for (const handler of handlers) {
 				try {
 					if (isSessionShutdown) {
-						shutdownBudget ??= this.resolveSessionShutdownBudget();
+						const shutdownEvent = event as SessionShutdownEvent;
+						if (!shutdownBudget) {
+							shutdownBudget = this.resolveSessionShutdownBudget();
+							if (
+								shutdownEvent.reason === "quit" &&
+								this.processExitRequestedAt !== undefined &&
+								shutdownBudget.quitMs > 0
+							) {
+								quitDeadline = new QuitDeadline(shutdownBudget.quitMs, Date.now, this.processExitRequestedAt);
+							}
+						}
 						await this.runSessionShutdownHandler(
 							ext.path,
-							event as SessionShutdownEvent,
+							shutdownEvent,
 							handler,
-							shutdownBudget,
+							quitDeadline?.budgetFor(shutdownBudget.handler) ?? {
+								budget: shutdownBudget.handler,
+								endsAtQuitDeadline: false,
+							},
 						);
 						continue;
 					}

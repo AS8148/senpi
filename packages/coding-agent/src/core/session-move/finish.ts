@@ -14,6 +14,8 @@ export interface FinishMoveOptions {
 	readonly moveId: MoveId;
 	/** The receiver's signed answer. `receiving` changes nothing: the move is still open. */
 	readonly answer: MoveStatus;
+	/** Runs inside the move lock before anything is read; throw to refuse. */
+	readonly guard?: () => void;
 }
 
 export class MoveMismatchError extends Error {
@@ -34,7 +36,7 @@ export class MoveMismatchError extends Error {
  * the next call, so a crash between any two steps loses nothing and doubles nothing.
  */
 export function finishMove(options: FinishMoveOptions): Promise<void> {
-	return withSessionMoveLock(options.sessionFile, () => settleMove(options));
+	return withSessionMoveLock(options.sessionFile, () => settleMove(options), options.guard);
 }
 
 async function settleMove(options: FinishMoveOptions): Promise<void> {

@@ -11,6 +11,7 @@ import {
 	MOVE_BUNDLE_FORMAT,
 	type MoveManifest,
 	parseMoveId,
+	parsePlainId,
 	SESSION_BUNDLE_PATH,
 	sha256File,
 } from "./bundle.ts";
@@ -34,6 +35,8 @@ export interface ExportSessionForMoveOptions {
 	readonly bundleDir: string;
 	/** What the extensions wrote at the move release (`outgoingStateDir`); bundled as the `extension-state` payload. */
 	readonly extensionStateDir?: string;
+	/** Runs inside the move lock before anything is read; throw to refuse. */
+	readonly guard?: () => void;
 }
 
 /**
@@ -42,14 +45,15 @@ export interface ExportSessionForMoveOptions {
  * manifest. Running it again for the same move rewrites the same bundle without a second release entry.
  */
 export function exportSessionForMove(options: ExportSessionForMoveOptions): Promise<MoveManifest> {
-	return withSessionMoveLock(options.sessionFile, () => writeMoveBundle(options));
+	return withSessionMoveLock(options.sessionFile, () => writeMoveBundle(options), options.guard);
 }
 
 async function writeMoveBundle(options: ExportSessionForMoveOptions): Promise<MoveManifest> {
 	const { sessionFile } = options;
 	const moveId = parseMoveId(options.moveId);
 	const entries = loadEntriesFromFile(sessionFile);
-	const sessionId = headerSessionId(entries) ?? "";
+	// The id names the resident-blob folder copied below and must be one the receiver accepts: check it before sealing.
+	const sessionId = parsePlainId(headerSessionId(entries), "session id");
 	// A live runtime could still write the transcript, its sidecars or its resident blobs after the seal.
 	const holders = await liveSessionHolders(sessionFile, sessionId);
 	if (holders.length > 0) throw new SessionHeldError(sessionFile, holders);

@@ -76,6 +76,7 @@ type RpcSessionCommand =
 			deliverAs?: "steer" | "followUp" | "nextTurn";
 	  }
 	| { id?: string; type: "continue_from_leaf" }
+	| { id?: string; type: "resume_session" }
 	| { id?: string; type: "append_user_message"; content: unknown }
 	| { id?: string; type: "append_session_entry"; entry: SessionEntry }
 	| ({
@@ -505,6 +506,8 @@ export type RpcCommand =
 	| {
 			id?: string;
 			type: "open_session";
+			/** An observational/unattended open; attaching never releases an existing hold. */
+			attended?: false;
 			/**
 			 * Attach only to an existing session on this host generation. Requires
 			 * `expected_host_instance`; mismatch returns `owner_changed`, a released
@@ -790,6 +793,9 @@ export interface RpcSessionModelEntry {
 }
 
 export interface RpcSessionState {
+	paused: boolean;
+	pausedNoticeCount: number;
+	holds: { kind: "unattended"; key: string; since: string; data?: unknown; sourceCounts: Record<string, number> }[];
 	model?: Model<any>;
 	/**
 	 * Model switch held until the next compaction, or `null` when no switch is held.
@@ -845,6 +851,8 @@ export interface RpcSessionState {
 	isBashRunning: boolean;
 	/** Open question prompts awaiting an answer. Absent when none are pending. */
 	pendingQuestions?: RpcQuestionUiRequest[];
+	/** Live select, confirm, input and editor request frames, including across session replacements; [] when none. */
+	pendingDialogs?: RpcExtensionUIRequest[];
 }
 
 // ============================================================================
@@ -993,6 +1001,8 @@ export type RpcResponse =
 					attachments: number;
 					/** Milliseconds since the session's idle window was last refreshed. */
 					idleMs?: number;
+					/** The session's tool child (senpi#3566): `none` until its first job, then `live` or `exited`. */
+					tool_child?: { state: "none" | "live" | "exited"; generation?: number; pid?: number };
 				}>;
 			};
 	  }
@@ -1119,6 +1129,7 @@ export type RpcResponse =
 			data: { model: Model<any>; thinkingLevel: ThinkingLevel; isScoped: boolean } | null;
 	  }
 	| { id?: string; type: "response"; command: "continue_from_leaf"; success: true }
+	| { id?: string; type: "response"; command: "resume_session"; success: true }
 	| {
 			id?: string;
 			type: "response";
@@ -1312,7 +1323,14 @@ export type RpcResponse =
 	// The URL and completion arrive as auth_login_url / auth_login_end events.
 	| { id?: string; type: "response"; command: "login_start"; success: true }
 	| { id?: string; type: "response"; command: "login_cancel"; success: true }
-	| { id?: string; type: "response"; command: "login_api_key"; success: true }
+	| {
+			id?: string;
+			type: "response";
+			command: "login_api_key";
+			success: true;
+			/** Present when the key replaced a login of the other kind; `backupPath` holds the previous file (senpi#3448). */
+			data?: { replaced: "oauth" | "api_key"; backupPath?: string };
+	  }
 	| { id?: string; type: "response"; command: "logout"; success: true }
 	| {
 			id?: string;
@@ -1473,6 +1491,8 @@ export type RpcExtensionUIRequest =
 			widgetKey: string;
 			widgetLines: string[] | undefined;
 			widgetPlacement?: "aboveEditor" | "belowEditor";
+			/** Choices offered with the widget; a client sends `command` as a normal prompt when one is picked. */
+			widgetActions?: { label: string; command: string }[];
 	  }
 	| { type: "extension_ui_request"; id: string; method: "setTitle"; title: string }
 	| { type: "extension_ui_request"; id: string; method: "set_editor_text"; text: string }
