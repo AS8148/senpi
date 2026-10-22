@@ -35,7 +35,8 @@ interface EntryLike {
 	readonly id?: unknown;
 }
 
-const REVOKED = "revoked";
+/** The `session_moved` reason a revoke records. */
+export const REVOKED = "revoked";
 
 /**
  * Seals the copy a receiving device imported for a move after the sender took the session back (senpi#4003):

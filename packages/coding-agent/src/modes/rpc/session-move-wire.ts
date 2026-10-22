@@ -34,6 +34,7 @@ export type RpcMoveRecord = MoveStatus | { state: "ready"; expires_at: string };
 
 export type RpcMoveSessionData =
 	| RpcMoveRecord
+	| { state: "accepted"; revoked: true }
 	| { move_id: string; session_id: string; bundle_dir: string; files: number }
 	| { session_id: string; session_path: string }
 	| { ownership: "writable" | "moving" | "moved" };
