@@ -3776,6 +3776,7 @@ export class InteractiveMode {
 				title,
 				options,
 				(option) => {
+					this.session.admitHumanAnswer();
 					opts?.signal?.removeEventListener("abort", onAbort);
 					this.hideExtensionSelector();
 					resolve(option);
@@ -3856,6 +3857,7 @@ export class InteractiveMode {
 				title,
 				placeholder,
 				(value) => {
+					this.session.admitHumanAnswer();
 					opts?.signal?.removeEventListener("abort", onAbort);
 					this.hideExtensionInput();
 					resolve(value);
@@ -3899,6 +3901,7 @@ export class InteractiveMode {
 				title,
 				prefill,
 				(value) => {
+					this.session.admitHumanAnswer();
 					this.hideExtensionEditor();
 					resolve(value);
 				},
@@ -3938,6 +3941,7 @@ export class InteractiveMode {
 			const previousWorkingMessage = this.workingMessage;
 			const finish = (response: QuestionResponse) => {
 				if (settled) return;
+				if (request.waitForAnswer && response.resolvedBy === "local_ui") this.session.admitHumanAnswer();
 				settled = true;
 				opts?.signal?.removeEventListener("abort", onAbort);
 				this.workingMessage = previousWorkingMessage;

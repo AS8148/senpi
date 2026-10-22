@@ -1,3 +1,21 @@
+## 2026-10-21 - Export the shared session lifecycle contract (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/index.ts` exports lifecycle snapshots, events, child reports, spawned-session identity, self-settle results and obligation/ticket interfaces.
+
+### Why
+
+`packages/coding-agent/src/index.ts`: RPC clients and extension producers need the engine's named contract rather than separate copies.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/index.ts`: the package's public entry point and its declarations belong to the engine.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/index.ts`: core session type exports.
+
 ## 2026-10-18 - A session is found by the id its file name carries (oh-my-openagent#7471)
 
 ### What changed

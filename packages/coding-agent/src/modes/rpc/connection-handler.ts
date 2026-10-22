@@ -466,9 +466,9 @@ export function createRpcConnectionHandler(
 	};
 
 	// Pending extension UI requests waiting for response
-	const pendingExtensionRequests = new SessionExtensionUiRequests();
+	const pendingExtensionRequests = new SessionExtensionUiRequests(() => session.refreshLifecycle());
 	sessionDialogRequests.set(session, pendingExtensionRequests);
-	const questions = new ConnectionQuestionBridge(output);
+	const questions = new ConnectionQuestionBridge(output, () => session.refreshLifecycle());
 
 	let shutdownRequested = false;
 
@@ -1002,6 +1002,7 @@ export function createRpcConnectionHandler(
 						capabilities: [
 							...new Set([
 								"multi_session",
+								"session_lifecycle",
 								AUTO_TITLE_SESSIONS_CAPABILITY,
 								MEDIA_PLACEHOLDERS_CAPABILITY,
 								DURABLE_CLIENT_MESSAGE_ID_CAPABILITY,
@@ -1210,6 +1211,8 @@ export function createRpcConnectionHandler(
 
 			case "get_state":
 				return success(id, "get_state", buildRpcSessionState(session, lastAbortSource));
+			case "request_self_settle":
+				return success(id, "request_self_settle", session.requestSelfSettle());
 
 			case "get_effect_status":
 				return runGetEffectStatus(effectContext(), command);
@@ -1923,6 +1926,8 @@ export function createRpcConnectionHandler(
 				questions,
 				dialogs: pendingExtensionRequests,
 				routed: routingSessionId !== undefined,
+				// An answer is a person's input by its entry point, whatever the connection role.
+				beforeAnswer: () => session.admitHumanAnswer(),
 			});
 			if (reply) output(reply);
 			return;

@@ -9,6 +9,7 @@
  */
 
 import type { InputOrigin } from "../input-origin.ts";
+import type { LifecycleApi } from "../session-lifecycle-types.ts";
 import type { UploadRedaction, UploadRedactionOptions } from "../share/upload-redaction.ts";
 import type { ContextEvent } from "./context-event.ts";
 
@@ -239,6 +240,11 @@ export interface ExtensionUIContext {
 		request: QuestionRequest,
 		opts?: ExtensionUIDialogOptions & {
 			onProgress?: (draft: { answers?: QuestionResponse["answers"]; comment?: string }) => void;
+			/**
+			 * How the answer reaches the model. A "user-message" answer is reported as a person's input when it
+			 * is delivered, so a UI adapter must not report it again.
+			 */
+			deliver?: "tool-result" | "user-message";
 		},
 	): Promise<QuestionResponse>;
 
@@ -2344,6 +2350,8 @@ export type ExtensionHandler<E, R = undefined> = (event: E, ctx: ExtensionContex
  * ExtensionAPI passed to extension factory functions.
  */
 export interface ExtensionAPI {
+	/** Durable engine custody and generation-fenced child/workflow reporting. */
+	readonly lifecycle: LifecycleApi;
 	// =========================================================================
 	// Session Context
 	// =========================================================================
@@ -2582,7 +2590,7 @@ export interface ExtensionAPI {
 	/** Send a custom message to the session. */
 	sendMessage<T = unknown>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
-		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
+		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn"; ticket?: string },
 	): void;
 
 	/**
@@ -3017,7 +3025,7 @@ type HandlerFn = (...args: unknown[]) => Promise<unknown>;
 
 export type SendMessageHandler = <T = unknown>(
 	message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
-	options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
+	options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn"; ticket?: string },
 ) => void;
 
 export type SendUserMessageHandler = (
@@ -3189,6 +3197,7 @@ export interface ExtensionRuntimeState {
  * Provided to runner.initialize(), copied into the shared runtime.
  */
 export interface ExtensionActions {
+	lifecycle?: LifecycleApi;
 	sendMessage: SendMessageHandler;
 	/** The runner passes the origin it captured when the extension called `sendUserMessage` (a person's answer is `person`). */
 	sendUserMessage: (
