@@ -5284,9 +5284,9 @@ The package barrel is the only public entry point; an extension cannot add expor
 
 ### What changed
 
-- `packages/coding-agent/src/experimental/server.ts`: the launcher and activation locks acquire through `lockWithLossHandling` (`core/file-lock.ts`).
-- `packages/coding-agent/src/experimental/session-worker.ts`: the session ownership lock acquires through `lockWithLossHandling`.
-- `packages/coding-agent/src/package-manager-cli.ts`: the managed self-update lock acquires through `lockWithLossHandling`; the `lockSync` path is unchanged.
+- `packages/coding-agent/src/experimental/server.ts`: the launcher and activation locks acquire through `lockWithLossHandling` (`core/file-lock.ts`). `ServerProfile` gains `assertHeld()` and `acquireServerActivation` returns `{ release, assertHeld }`; startup, cold activation (before the spawn and on every connect poll) and foreground start abort with `FileLockLostError` once their lock is lost.
+- `packages/coding-agent/src/experimental/session-worker.ts`: the session ownership lock acquires through `lockWithLossHandling` with `onLost: stopWorkerOnLostOwnership(...)` (`experimental/session-worker-ownership.ts`): a worker that loses its session lock reports `worker_failed` (bounded by 1 s) and exits without closing, so it never writes the session another owner now holds.
+- `packages/coding-agent/src/package-manager-cli.ts`: the managed self-update lock acquires through `lockWithLossHandling` and the update aborts with `FileLockLostError` before the release rename and before each activation once the lock is lost; the `lockSync` path is unchanged.
 
 ### Why
 

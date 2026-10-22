@@ -59,7 +59,13 @@ export interface OpenMicroResult {
 }
 
 export async function openMicro(options: OpenMicroOptions = {}): Promise<OpenMicroResult> {
-	const location = await selectSession(options.cwd ?? process.cwd(), options.continueSession ?? false);
+	let lostBeforeOpen: Error | undefined;
+	let stopOnLostLock = (error: Error): void => {
+		lostBeforeOpen = error;
+	};
+	const location = await selectSession(options.cwd ?? process.cwd(), options.continueSession ?? false, (error) =>
+		stopOnLostLock(error),
+	);
 	let storage: JsonlStorage | undefined;
 	let executionEnv: NodeExecutionEnv | undefined;
 	try {
@@ -383,7 +389,7 @@ export async function openMicro(options: OpenMicroOptions = {}): Promise<OpenMic
 		}
 		harness.resume();
 
-		return {
+		const opened: OpenMicroResult = {
 			view: {
 				current: () => state,
 				subscribe: (listener) => {
@@ -404,6 +410,13 @@ export async function openMicro(options: OpenMicroOptions = {}): Promise<OpenMic
 				await location.release().catch(() => {});
 			},
 		};
+		// Another process reclaimed the session lock, so it may be writing this session: stop writing here.
+		stopOnLostLock = () => {
+			notice("error", "Another process took over this micro session; it was closed to protect its history.");
+			void opened.close();
+		};
+		if (lostBeforeOpen) stopOnLostLock(lostBeforeOpen);
+		return opened;
 	} catch (error) {
 		await storage?.close(BACKGROUND_CONTEXT).catch(() => {});
 		await executionEnv?.cleanup(BACKGROUND_CONTEXT).catch(() => {});

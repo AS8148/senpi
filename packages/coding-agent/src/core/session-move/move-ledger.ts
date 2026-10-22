@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { lockWithLossHandling } from "../file-lock.ts";
+import { type HeldFileLock, lockWithLossHandling } from "../file-lock.ts";
 import {
 	FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS,
 	FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS,
@@ -77,6 +77,7 @@ function parseRecord(value: unknown): MoveRecord | undefined {
 export class MoveLedger {
 	readonly dir: string;
 	private readonly now: () => number;
+	readonly #held = new Map<string, HeldFileLock>();
 
 	constructor(dir: string, options: MoveLedgerOptions = {}) {
 		this.dir = dir;
@@ -205,6 +206,7 @@ export class MoveLedger {
 		const file = this.path(moveId);
 		const temp = `${file}.${process.pid}.tmp`;
 		writeFileSync(temp, `${JSON.stringify({ ...record, at: new Date().toISOString() })}\n`);
+		this.#held.get(file)?.assertHeld();
 		renameSync(temp, file);
 	}
 
@@ -212,21 +214,23 @@ export class MoveLedger {
 		const file = this.path(moveId);
 		return serializeByKey(file, async () => {
 			mkdirSync(this.dir, { recursive: true });
-			const release = await acquire(file);
+			const held = await acquire(file);
+			this.#held.set(file, held);
 			try {
 				return await fn();
 			} finally {
-				await release().catch(() => undefined);
+				this.#held.delete(file);
+				await held.release().catch(() => undefined);
 			}
 		});
 	}
 }
 
-async function acquire(file: string): Promise<() => Promise<void>> {
+async function acquire(file: string): Promise<HeldFileLock> {
 	const startedAt = Date.now();
 	for (let attempt = 0; ; attempt += 1) {
 		try {
-			return (await lockWithLossHandling(file, { ...LOCK_OPTIONS, lockfilePath: `${file}.lock` })).release;
+			return await lockWithLossHandling(file, { ...LOCK_OPTIONS, lockfilePath: `${file}.lock` });
 		} catch (error) {
 			if (!isLockError(error)) throw error;
 			const waited = Date.now() - startedAt;

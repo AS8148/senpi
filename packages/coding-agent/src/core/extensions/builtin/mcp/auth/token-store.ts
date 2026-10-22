@@ -71,6 +71,7 @@ export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 	readonly #legacyHash: string;
 	readonly #lock: Required<TokenStoreLockOptions>;
 	readonly #disableLock: boolean;
+	#held: Pick<HeldFileLock, "release" | "assertHeld"> | undefined;
 
 	constructor(options: TokenStoreOptions) {
 		this.serverName = options.serverName;
@@ -152,11 +153,13 @@ export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 	// must use readUnlocked/writeUnlocked (never update/write) to avoid
 	// re-entrant lock acquisition, which proper-lockfile rejects immediately.
 	async withLock<T>(fn: () => Promise<T> | T): Promise<T> {
-		const { release } = await this.#acquire();
+		const held = await this.#acquire();
+		this.#held = held;
 		try {
 			return await fn();
 		} finally {
-			await release();
+			this.#held = undefined;
+			await held.release();
 		}
 	}
 
@@ -164,7 +167,10 @@ export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 		return this.read();
 	}
 
+	// Inside withLock this is the commit step of a read-refresh-write (the OAuth refresh spends a
+	// rotating refresh token over the network first), so it refuses to write once the lock was lost.
 	writeUnlocked(record: TRecord | undefined): void {
+		this.#held?.assertHeld();
 		if (record === undefined) {
 			this.#removeRecord();
 			return;
@@ -174,8 +180,9 @@ export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 	}
 
 	async clear(): Promise<void> {
-		const { release } = await this.#acquire();
+		const { release, assertHeld } = await this.#acquire();
 		try {
+			assertHeld();
 			rmSync(this.dir, { force: true, recursive: true });
 			rmSync(join(this.legacyDir, TOKENS_FILE), { force: true });
 		} finally {

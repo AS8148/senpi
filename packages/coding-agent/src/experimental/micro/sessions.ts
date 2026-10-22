@@ -17,7 +17,11 @@ function cwdKey(cwd: string): string {
 }
 
 /** Select a new session, or the newest session for this cwd, without opening any JSONL logs. */
-export async function selectSession(cwdInput: string, continueSession: boolean): Promise<MicroSessionLocation> {
+export async function selectSession(
+	cwdInput: string,
+	continueSession: boolean,
+	onLost: (error: Error) => void,
+): Promise<MicroSessionLocation> {
 	const cwd = await realpath(resolve(cwdInput));
 	const root = join(getAgentDir(), "experimental", "micro-sessions", cwdKey(cwd));
 	await mkdir(root, { recursive: true });
@@ -41,7 +45,7 @@ export async function selectSession(cwdInput: string, continueSession: boolean):
 
 	let release: () => Promise<void>;
 	try {
-		({ release } = await lockWithLossHandling(path, { realpath: false, retries: 0 }));
+		({ release } = await lockWithLossHandling(path, { realpath: false, retries: 0, onLost }));
 	} catch (error) {
 		throw new Error(`Micro session is already open: ${path}`, { cause: error });
 	}

@@ -45,6 +45,7 @@ import {
 	type SessionWorkerServices,
 	type WorkerServiceScope,
 } from "./services/worker.ts";
+import { stopWorkerOnLostOwnership } from "./session-worker-ownership.ts";
 
 export type { SessionWorkerRuntime } from "./services/worker.ts";
 
@@ -535,6 +536,10 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 		stale: 2_000,
 		update: 1_000,
 		retries: { retries: 320, factor: 1, minTimeout: 25, maxTimeout: 25, maxRetryTime: 8_000 },
+		onLost: stopWorkerOnLostOwnership({
+			report: (message) => control.send({ type: "worker_failed", token, sessionKey, message }),
+			exit: (code) => process.exit(code),
+		}),
 	});
 	const executionEnv = new NodeExecutionEnv({ cwd: metadata.cwd });
 	const repo = new JsonlSessionRepo({ fileSystem: executionEnv, sessionsRoot: sessionDir });
