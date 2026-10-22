@@ -51,7 +51,7 @@ const LOCK_SITES: Record<string, LockSite> = {
 	},
 	[`${at("core/session-move/move-ledger.ts")}#acquire`]: {
 		reason: "every record write goes through MoveLedger.write",
-		writes: [{ file: at("core/session-move/move-ledger.ts"), fn: "write", op: "renameSync(temp" }],
+		writes: [{ file: at("core/session-move/move-ledger.ts"), fn: "write", op: "renameFile(temp" }],
 	},
 	[`${at("core/settings-manager.ts")}#acquireLockWithRetry`]: {
 		reason: "the async settings publish is one rename",

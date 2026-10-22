@@ -277,6 +277,24 @@ Session creation and `--session` resolution run in core before any extension is 
 
 - LOW: the first guard of `_isRetryableError`, the predicate list of `_isHardErrorFallbackEligible`, the `noteHealthFailure` condition at the top of the `agent_end` retry block, and the new `_isLocalFailure` beside `_isCursorPayloadOverflow` in `agent-session.ts`.
 
+## 2026-10-21 - Launch-gated Fable 5.5 fallback (senpi#3893)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/settings.ts`: adds the Fable 5.5 chain key, with the same current-generation Opus-only max-effort ladder as Fable 5/5.1, only once `FABLE55_LAUNCH.released` is true; before release the shipped defaults contain no unreleased id. Existing defaults and user tombstones retain their semantics.
+
+### Why
+
+- `packages/coding-agent/src/core/retry-fallback/settings.ts`: explicit selection of the launch model needs the same recovery path as today's Fable models once it exists; gating the key on release keeps an unreleased id out of the shipped defaults (review of senpi#3897).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/retry-fallback/settings.ts`: shipped retry defaults are resolved by core settings before extension events.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/retry-fallback/settings.ts`: import and the release-gated `DEFAULT_FALLBACK_CHAINS` entry.
+
 ## 2026-10-18 - A multi-block queued input leaves the queue when it starts (senpi#3588, senpi#3768)
 
 ### What changed
@@ -11519,6 +11537,27 @@ Fallback eligibility and the agent_end retry decision are owned by `AgentSession
 
 - `agent-session.ts`: the retry-state fields, the `transformContext` wrapper in `_installAgentNextTurnRefresh`, the start of the agent_end retry block, and `_isHardErrorFallbackEligible`.
 - `retry-fallback/settings.ts`: `DEFAULT_FALLBACK_CHAINS`.
+
+## 2026-10-22 - Builtin compaction honours compaction.model on a healthy provider (senpi#830)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the extension context's `getCompactionModel` always goes through `_resolveCompactionModel`, the resolver core compaction already uses, instead of returning the session model until the account is spent. On a healthy session a configured, resolvable, usable `compaction.model` is returned; a malformed, unknown, spent or credential-less override (checked with `hasConfiguredAuth`, the gate the spent path already uses) keeps the session model and logs a `compaction_model_fallback` warning through a single notice slot: a cause logs once, and again only after a different cause or a successful use of the override. `no_credentials` is decided only from a published availability snapshot (`hasFreshAvailabilitySnapshot()`); before one, or after a busy credential read, the answer is unknown and the override is kept, so a misconfigured override never stops builtin compaction and a busy store never logs a false `no_credentials`.
+- `packages/coding-agent/src/core/model-runtime.ts`: an availability pass that hit a busy credential store schedules a bounded re-read (five attempts, 250 ms doubling, unref'd timer; a published pass resets the budget), so a store locked during startup no longer leaves every provider unconfigured until an unrelated refresh. The spent-account order (held target, override, authenticated alternate that fits) is unchanged.
+- `packages/coding-agent/docs/extensions.md`: `ctx.getCompactionModel()` documents the healthy-session override.
+
+### Why
+
+Builtin threshold, speculative and idle compaction pick their summarizer through `ctx.getCompactionModel()`, so a configured summary model was ignored until the session provider was spent. Two users measured the cost: speculative summaries, most of them later invalidated, ran on Opus or a slow local model instead of the configured cheap model.
+
+### Why an extension could not handle it
+
+The summary-model resolver reads session-owned state (settings, model runtime, spent-account tracking) and is exposed to the builtin extension only through the core extension context.
+
+### Expected merge conflict zones
+
+- `agent-session.ts`: `_resolveCompactionModel` and its healthy-session early return, the new private field beside `_sessionLogger`, and `getCompactionModel` in the extension context actions.
+- `model-runtime.ts`: `answeredFromBusyStore` and the retry fields beside `providerAvailabilitySeq`.
 
 ## 2026-10-21 - The auth_login_end event can name a replaced credential (#3486)
 
