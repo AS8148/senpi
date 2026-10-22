@@ -16,8 +16,6 @@
 
 - `packages/coding-agent/src/core/extensions/loader.ts`: LOW: two methods appended after `persistHeaderNow` in the `session` block of the API object.
 
-||||||| 5827be99e
-
 ## 2026-10-23 - QuestionResponse.cancelOrigin (sisyphuslabs/omo-desktop-app#4042)
 
 ### What changed
