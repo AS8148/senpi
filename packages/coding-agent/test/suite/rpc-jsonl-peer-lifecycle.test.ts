@@ -1,25 +1,33 @@
 import { PassThrough } from "node:stream";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { JsonlPeer, type RecordValue } from "../helpers/rpc-jsonl-peer.ts";
 
 /**
  * Observe whether Node reports an unhandled rejection while `body` runs.
  *
- * Subscribes before triggering, then waits for either the rejection event or a
- * bounded deadline, so the check never depends on a fixed sleep landing after
- * the microtask checkpoint.
+ * Node reports an unhandled rejection after the microtask queue drains and before the
+ * next macrotask phase. A rejection sentinel created after `body` and left unhandled is
+ * reported in that same pass, after any rejection `body` caused, so the check ends on an
+ * event rather than on elapsed time.
  */
-async function unhandledRejectionDuring(body: () => void, settleMs = 250): Promise<unknown> {
+async function unhandledRejectionDuring(body: () => void): Promise<unknown> {
+	const sentinel = new Error("unhandled-rejection sentinel");
+	const seen: unknown[] = [];
 	let onUnhandled!: (reason: unknown) => void;
-	const observed = new Promise<unknown>((resolve) => {
-		onUnhandled = (reason: unknown) => resolve(reason);
+	const settled = new Promise<void>((resolve) => {
+		onUnhandled = (reason: unknown) => {
+			if (reason === sentinel) resolve();
+			else seen.push(reason);
+		};
 		process.on("unhandledRejection", onUnhandled);
-		setTimeout(() => resolve(undefined), settleMs);
 	});
 	try {
 		body();
-		return await observed;
+		await new Promise((resolve) => setImmediate(resolve));
+		void Promise.reject(sentinel);
+		await settled;
+		return seen[0];
 	} finally {
 		process.off("unhandledRejection", onUnhandled);
 	}
@@ -32,12 +40,14 @@ describe("JSONL peer waiter lifecycle", () => {
 	// holding yet. A longer timeout only narrows the window; the rejection must be
 	// handled from the moment the waiter exists.
 	it("does not surface an unhandled rejection when an armed waiter times out before it is awaited", async () => {
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		const peer = new JsonlPeer(new PassThrough(), () => {});
 		let pending!: Promise<RecordValue>;
 
 		const reason = await unhandledRejectionDuring(() => {
 			pending = peer.waitFor(() => false, 1);
-		});
+			vi.advanceTimersByTime(1);
+		}).finally(() => vi.useRealTimers());
 
 		expect(reason).toBeUndefined();
 		// The rejection still reaches the eventual awaiter; it is handled, not swallowed.

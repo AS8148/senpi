@@ -38,6 +38,8 @@ const UNATTACHED_READS = new Set<RpcCommand["type"]>([
 	"eval_cells.list",
 	"eval_cells.peek",
 	"check_reload_veto",
+	// Composer draft activity only warms the session; desktop's prewarm handle sends it unattached (senpi#3859).
+	"record_user_activity",
 ]);
 
 /** Socket ownership is checked before lifecycle routing AND before worker dispatch. */

@@ -44,6 +44,10 @@ describe.each(["in-process", "worker"] as const)("attachment gate (%s)", (sessio
 			for (const type of ["get_state", "get_messages"]) {
 				expect(await stranger.request({ type, sessionId }), type).toMatchObject({ success: true });
 			}
+			// senpi#3859: desktop's prewarm handle reports draft activity without attaching, so it is never gated.
+			expect(await stranger.request({ type: "record_user_activity", sessionId, kind: "draft" })).toMatchObject({
+				success: true,
+			});
 			expect(await stranger.request({ type: "list_sessions" })).toMatchObject({ success: true });
 			expect(await stranger.request({ type: "close_session", sessionId })).toMatchObject({
 				success: false,
@@ -76,6 +80,9 @@ describe.each(["in-process", "worker"] as const)("attachment gate (%s)", (sessio
 				await logged;
 			}
 			await stranger.request({ type: "get_state", sessionId });
+			expect(await stranger.request({ type: "record_user_activity", sessionId, kind: "draft" })).toMatchObject({
+				success: true,
+			});
 			const violations = host
 				.stderrText()
 				.split("\n")

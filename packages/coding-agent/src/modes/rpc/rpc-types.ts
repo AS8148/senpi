@@ -101,7 +101,7 @@ export type {
 	RpcEvalCellSnapshot,
 } from "./rpc-result-types.ts";
 export type { RpcWhenIdle } from "./rpc-session-command-types.ts";
-export { STEER_WHEN_IDLE_CAPABILITY } from "./rpc-session-command-types.ts";
+export { STEER_WHEN_IDLE_CAPABILITY, USER_ACTIVITY_CAPABILITY } from "./rpc-session-command-types.ts";
 export type {
 	RpcAccountFailoverEvent,
 	RpcAuthAccountsChangedEvent,

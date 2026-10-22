@@ -2,6 +2,7 @@ import { VERSION } from "../../config.ts";
 
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { detachConnection } from "./connection-detach.ts";
+import { CONNECTION_ROLE_FIXED, roleConnection } from "./connection-roles.ts";
 
 import { answerEffectFromTranscript } from "./effect-commands.ts";
 
@@ -172,6 +173,17 @@ export async function dispatch(
 	}
 	if (command.type === "set_client_info" && !command.sessionId) {
 		const connection = host.writer.currentConnection();
+		if (
+			command.capabilities !== undefined &&
+			!host.connectionRoles.declare(roleConnection(connection), command.capabilities)
+		)
+			return {
+				id: command.id,
+				type: "response",
+				command: "set_client_info",
+				success: false,
+				error: CONNECTION_ROLE_FIXED,
+			} as RpcResponse;
 		if (connection !== undefined) {
 			host.pendingCapabilities.set(connection, command.capabilities ?? []);
 			host.writer.setConnectionCapabilities(connection, command.capabilities ?? []);

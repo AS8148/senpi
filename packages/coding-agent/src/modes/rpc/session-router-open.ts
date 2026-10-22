@@ -151,6 +151,7 @@ export async function open(
 							owner !== undefined
 								? (host.pendingCapabilities.get(owner) ?? host.connectionOptions?.capabilities ?? [])
 								: host.connectionOptions?.capabilities,
+						connectionRoles: host.connectionRoles,
 						clientInfo: {
 							setCapabilities: (connectionId, capabilities) => {
 								if (connectionId !== undefined) {

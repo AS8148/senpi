@@ -231,6 +231,8 @@ export type RpcSessionCommand =
 	| { id?: string; type: "get_tree" }
 	| { id?: string; type: "get_last_assistant_text" }
 	| { id?: string; type: "set_session_name"; name: string }
+	/** The user started typing a draft in this session's composer (senpi#3859). Only `draft` is accepted. */
+	| { id?: string; type: "record_user_activity"; kind: "draft" }
 	| { id?: string; type: "import_jsonl"; inputPath: string; cwdOverride?: string }
 
 	// Messages
@@ -275,3 +277,6 @@ export type RpcWhenIdle = "queue" | "start";
 
 /** Capability: `steer`/`follow_up` accept `whenIdle: "start"`. */
 export const STEER_WHEN_IDLE_CAPABILITY = "steer_when_idle";
+
+/** Capability: `record_user_activity` reports composer draft activity (senpi#3859). */
+export const USER_ACTIVITY_CAPABILITY = "user_activity";

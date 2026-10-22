@@ -8,6 +8,7 @@
  * - Interact with the user via UI primitives
  */
 
+import type { InputOrigin } from "../input-origin.ts";
 import type { UploadRedaction, UploadRedactionOptions } from "../share/upload-redaction.ts";
 import type { ContextEvent } from "./context-event.ts";
 
@@ -2887,6 +2888,13 @@ export interface ProviderConfig {
 	 * every expansion, so a settings change takes effect without re-registration.
 	 */
 	fallbackEligible?(): boolean;
+	/**
+	 * Set by a provider whose own lane chooses among the accounts stored for it (pin, session
+	 * stickiness, per-account limits) and fails over between them. The generic credential pool then
+	 * never wraps it: two layers choosing accounts pinned the lane's verdicts on slots the lane never
+	 * used and blocked all of them (senpi#2081).
+	 */
+	ownsAccountSelection?: boolean;
 }
 
 interface ProviderModelConfigBase {
@@ -3184,7 +3192,12 @@ export interface ExtensionRuntimeState {
  */
 export interface ExtensionActions {
 	sendMessage: SendMessageHandler;
-	sendUserMessage: SendUserMessageHandler;
+	/** The runner passes the origin it captured when the extension called `sendUserMessage` (a person's answer is `person`). */
+	sendUserMessage: (
+		content: Parameters<SendUserMessageHandler>[0],
+		options?: Parameters<SendUserMessageHandler>[1],
+		inputOrigin?: InputOrigin,
+	) => void;
 	appendEntry: AppendEntryHandler;
 	setSessionName: SetSessionNameHandler;
 	getSessionName: GetSessionNameHandler;

@@ -1,5 +1,6 @@
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 
+import { ConnectionRoles } from "./connection-roles.ts";
 import { latestSessionEffect } from "./effect-ledger.ts";
 
 import type { RpcHostKernelMemory } from "./rpc-types.ts";
@@ -43,6 +44,8 @@ export class RouterContext {
 	readonly connectionOptions: Parameters<typeof createRpcSessionBinding>[4];
 
 	readonly pendingCapabilities = new Map<string, string[]>();
+	/** Roles each connection declared through set_client_info (senpi#3811). */
+	readonly connectionRoles = new ConnectionRoles();
 
 	readonly finalizations = new Map<string, { promise: Promise<void>; resolve: () => void }>();
 

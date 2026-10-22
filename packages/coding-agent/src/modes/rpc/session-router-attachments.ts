@@ -63,6 +63,7 @@ export function recordAttachment(host: RouterContext, owner: string, sessionId: 
 export async function releaseConnection(host: RouterContext, connectionId: string): Promise<string[]> {
 	host.releasedConnections.add(connectionId);
 	host.writer.clearConnectionCapabilities(connectionId);
+	host.connectionRoles.release(connectionId);
 	for (const sessionId of host.sessionsByConnection.get(connectionId)?.keys() ?? [])
 		host.writer.detachConnectionFromSession(connectionId, sessionId);
 	const opens = host.opensByConnection.get(connectionId);
