@@ -1,3 +1,25 @@
+## 2026-10-23 - /answer skip reports partial answers once (sisyphuslabs/omo-desktop-app#4042)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `/answer skip` still sends `formatUserMessage` for the cancelled response, which now carries the answers the user had already chosen. For an async question (`waitForAnswer: false`) cancelled after partial answers it sends nothing itself, because the ask-user builtin's `deliverAnswer` now delivers that message.
+- `packages/coding-agent/src/modes/interactive/components/ask-user-answer-chip.ts`: a body that starts with "The user cancelled the question after answering part of it." gets a leading `↳ (cancelled)` row before the answer rows.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: lead rule for #4042: a cancel with nothing answered stays "The user dismissed the question."; a cancel after partial answers shows them, and the model must receive exactly one message.
+- `packages/coding-agent/src/modes/interactive/components/ask-user-answer-chip.ts`: without the marker a skipped question with partial answers rendered exactly like a submitted partial answer (senpi#4002 review, MEDIUM 1).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `/answer` is the interactive mode's own command over its shown question state; the builtin never sees the command.
+- `packages/coding-agent/src/modes/interactive/components/ask-user-answer-chip.ts`: the chip is the interactive transcript's renderer for answer frames.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/interactive/interactive-mode.ts`, the `skip` branch of `handleAnswerCommand`.
+- LOW: `packages/coding-agent/src/modes/interactive/components/ask-user-answer-chip.ts`, the end of `summaryRows`.
+
 ## 2026-10-21 - The resume picker's search finds a session by the id its file name carries (oh-my-openagent#7471)
 
 ### What changed

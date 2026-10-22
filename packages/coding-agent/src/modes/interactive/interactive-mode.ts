@@ -95,7 +95,11 @@ import { resolveChangelogSource } from "../../core/changelog-source.ts";
 import { collectEntriesForBranchSummary } from "../../core/compaction/branch-summarization.ts";
 import { findExtensionStackMatches } from "../../core/crash-log.ts";
 import { AssistantEditError, assistantTextEquals } from "../../core/edited-assistant-message.ts";
-import { askUserAnswerDisplayText, formatUserMessage } from "../../core/extensions/builtin/ask-user/format.ts";
+import {
+	askUserAnswerDisplayText,
+	formatUserMessage,
+	hasPartialAnswers,
+} from "../../core/extensions/builtin/ask-user/format.ts";
 import { askUserRenderers } from "../../core/extensions/builtin/ask-user/render.ts";
 import type {
 	AutocompleteProviderFactory,
@@ -4203,8 +4207,10 @@ export class InteractiveMode {
 			state.finish(response);
 			await state.completion;
 			this.showStatus("The user dismissed the question.");
-			// Ordinary cancellation/abort stays silent in the builtin. Only this
-			// explicit command acknowledges dismissal, including on host bridges.
+			// A cancellation with nothing answered stays silent in the builtin, so this explicit command
+			// acknowledges it, including on host bridges. An async question cancelled after partial
+			// answers is already delivered by the builtin; sending it here would deliver it twice.
+			if (!state.request.waitForAnswer && hasPartialAnswers(response)) return;
 			await this.session.sendUserMessage(
 				formatUserMessage(
 					response,

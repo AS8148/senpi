@@ -2,7 +2,13 @@ import { releaseQuestionInput } from "../../../question-input.ts";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../../types.ts";
 import { WAKE_SOURCE_STATE_EVENT, type WakeSourceStateEvent } from "../monitor-state-event.ts";
 import { TOOL_NAMES } from "./family.ts";
-import { formatGatedCancellation, formatModelAnswer, formatResultDetails, formatUserMessage } from "./format.ts";
+import {
+	formatGatedCancellation,
+	formatModelAnswer,
+	formatResultDetails,
+	formatUserMessage,
+	hasPartialAnswers,
+} from "./format.ts";
 import {
 	ASK_USER_ASKED_EVENT,
 	ASK_USER_QUESTION_ENTRY,
@@ -60,8 +66,9 @@ function result(
  * this so every surface (interactive TUI, RPC) only has to RESOLVE
  * the question; a surface that delivered on its own would send it twice. It
  * steers into a running turn and follows up when idle - a follow-up always
- * triggers a turn, which is what wakes the model after a timeout. A cancelled
- * question stays silent: it was dismissed, superseded, or aborted.
+ * triggers a turn, which is what wakes the model after a timeout. A question
+ * cancelled with nothing answered stays silent: it was dismissed, superseded, or
+ * aborted. One cancelled after the user answered part of it delivers those answers.
  */
 export function deliverAnswer(
 	pi: Pick<ExtensionAPI, "sendUserMessage" | "events">,
@@ -70,11 +77,12 @@ export function deliverAnswer(
 	response: QuestionResponse,
 	variant: "codex" | "claude",
 ): void {
-	if (response.status === "cancelled") return;
+	if (response.status === "cancelled" && !hasPartialAnswers(response)) return;
 	const content = formatUserMessage(response, request.requestId, request.questions, request.required === true);
 	const options = { deliverAs: ctx.isIdle() ? ("followUp" as const) : ("steer" as const) };
 	if (response.status === "answered" || response.status === "comment-submitted") releaseQuestionInput(ctx);
 	pi.sendUserMessage(content, options);
+	if (response.status === "cancelled") return;
 	void emitAskUserNotification(pi, ctx, request, response, variant);
 }
 function emitWake(pi: Pick<ExtensionAPI, "events">, sessionId: string) {
@@ -358,7 +366,9 @@ export function createAskUserTool(variant: AskUserVariant, pi: ExtensionAPI, sta
 				response.status === "cancelled" && response.comment
 					? request.required === true
 						? formatGatedCancellation(response.comment, response, request.requestId, request.questions)
-						: response.comment
+						: hasPartialAnswers(response)
+							? `${response.comment}\n${formatModelAnswer(response, request.requestId, request.questions).text}`
+							: response.comment
 					: undefined,
 			);
 		},

@@ -154,8 +154,9 @@ export async function degradeQuestion(
 			[...question.options.map((option) => option.label), other],
 			opts,
 		);
+		// A pick that lands after the abort is not an answer, whether a label or "Other".
+		if (opts?.signal?.aborted) break;
 		if (selected === other) {
-			if (opts?.signal?.aborted) break;
 			const text = await ui.input(question.question, undefined, opts);
 			if (text?.trim()) answers[question.id] = { selected: [], text };
 		} else if (selected !== undefined) answers[question.id] = { selected: [selected] };

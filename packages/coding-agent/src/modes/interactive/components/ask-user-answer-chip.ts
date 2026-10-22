@@ -1,5 +1,5 @@
 import { type Component, Container, MouseRegion, truncateToWidth } from "@earendil-works/pi-tui";
-import type { AskUserAnswerFrame } from "../../../core/extensions/builtin/ask-user/format.ts";
+import { type AskUserAnswerFrame, CANCELLED_WITH_ANSWERS } from "../../../core/extensions/builtin/ask-user/format.ts";
 import { ASK_USER_QUESTION_ENTRY } from "../../../core/extensions/builtin/ask-user/notify.ts";
 import type { SessionEntry } from "../../../core/session-manager.ts";
 import { stripAnsi } from "../../../utils/ansi.ts";
@@ -43,6 +43,7 @@ function summaryRows(frame: AskUserAnswerFrame, headers: readonly string[]): str
 	if (comment !== undefined) {
 		answers.push(`↳ ${headers[0] ?? unanswered[0] ?? frame.requestId}: ${JSON.stringify(comment)}`);
 	} else answers.push(...unanswered.map((header) => `↳ ${header}: (no answer)`));
+	if (frame.body.startsWith(CANCELLED_WITH_ANSWERS)) answers.unshift("↳ (cancelled)");
 	return answers.length > 0 ? answers : fallbackHeaders.map((header) => `↳ ${header}: (no answer)`);
 }
 

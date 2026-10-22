@@ -88,6 +88,13 @@ function unansweredLine(response: QuestionResponse, questions: Questions): strin
 	return unanswered.length > 0 ? [`Unanswered: ${unanswered.join(", ")}`] : [];
 }
 
+export const CANCELLED_WITH_ANSWERS = "The user cancelled the question after answering part of it.";
+
+/** Whether a settled question carries at least one answer the user gave before it ended. */
+export function hasPartialAnswers(response: QuestionResponse): boolean {
+	return Object.values(response.answers).some((answer) => answerBody(answer, "") !== undefined);
+}
+
 const GATED_NO_ANSWER = "No answer: do not take the action it gates. Keep that action pending and end the turn.";
 
 /** A required question gates an action, so every settlement without an answer refuses that action (senpi#2949). */
@@ -162,11 +169,7 @@ function formatBody(response: QuestionResponse, questions: Questions, words: Wor
 			// A cancel after partial answers keeps them: the model must not redo or contradict what the user chose.
 			const answered = answeredLines(response, questions, words);
 			if (answered.length === 0) return "The user dismissed the question.";
-			return [
-				"The user cancelled the question after answering part of it.",
-				...answered,
-				...unansweredLine(response, questions),
-			].join("\n");
+			return [CANCELLED_WITH_ANSWERS, ...answered, ...unansweredLine(response, questions)].join("\n");
 		}
 		case "orphaned-after-restart":
 			return "The pending question could not be resumed after a restart; continue on best judgment.";
