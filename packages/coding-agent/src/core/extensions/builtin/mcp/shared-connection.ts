@@ -1,5 +1,7 @@
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { collectServerCatalogForCache, type McpCachedServerCatalog, writeMcpCachedServer } from "./catalog-cache.ts";
+import { McpConfigGenerationChangedError } from "./config-generation.ts";
+import type { McpServerConfig } from "./config-schema.ts";
 import { ServerConnection } from "./connection.ts";
 import type { ServerConnectionOptions } from "./connection-types.ts";
 import { MCP_KEEP_ALIVE_INTERVAL_MS } from "./idle.ts";
@@ -49,8 +51,10 @@ export class SharedMcpConnection {
 			},
 			getRingBuffer: () => options.logger.getRingBuffer(),
 		};
+		const resolveConfig = options.resolveConfig;
 		this.connection = new ServerConnection({
 			...options,
+			...(resolveConfig === undefined ? {} : { resolveConfig: () => this.#renewedConfig(resolveConfig) }),
 			logger,
 			elicitationUiProvider: () => {
 				// SDK server requests carry no originating tool-call id.
@@ -193,6 +197,18 @@ export class SharedMcpConnection {
 		for (const lease of [...this.leases]) await lease.dispose();
 		this.#onDispose();
 		await this.connection.dispose();
+	}
+
+	/** A changed snapshot re-keys every lease of the shared connection, not only the one that admitted it. */
+	async #renewedConfig(resolveConfig: () => Promise<McpServerConfig>): Promise<McpServerConfig> {
+		try {
+			return await resolveConfig();
+		} catch (error) {
+			if (error instanceof McpConfigGenerationChangedError) {
+				for (const lease of this.leases) lease.options.onGenerationChanged?.();
+			}
+			throw error;
+		}
 	}
 
 	#renew(): Promise<Client> {

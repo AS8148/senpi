@@ -1,6 +1,8 @@
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ReadOnlyAuthStorage } from "../../../src/core/auth-storage.ts";
+import { updateMcpServerConfig } from "../../../src/core/extensions/builtin/mcp/config-edit.ts";
 import { validateConfig } from "../../../src/core/extensions/builtin/mcp/config-schema.ts";
 import { ModelConfig } from "../../../src/core/model-config.ts";
 import { referenceRoot } from "./3858-reference-support.ts";
@@ -44,6 +46,14 @@ describe("reference schema boundaries", () => {
 		}
 		const fields = position === "oauth" ? { oauth: { clientId: ref } } : { [position]: ref };
 		expect(validateConfig.Check({ mcpServers: { demo: { command: "fixture", ...fields } } })).toBe(false);
+	});
+
+	// #3858 storage contract: an MCP config edit rewrites raw JSON and keeps every reference object intact.
+	it("keeps MCP reference objects through a config edit", () => {
+		const declared = { command: "fixture", env: { TOKEN: ref }, args: [{ $concat: ["--key=", { $file: "~/k" }] }] };
+		const path = files.file("mcp.json", JSON.stringify({ mcpServers: { demo: declared } }));
+		expect(updateMcpServerConfig(path, "demo", { enabled: false })).toBe(true);
+		expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ mcpServers: { demo: { ...declared, enabled: false } } });
 	});
 
 	it("leaves opaque extraBody objects uninspected", () => {

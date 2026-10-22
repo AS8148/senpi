@@ -37,6 +37,8 @@ export type CreateMcpTransportOptions = {
 	readonly elicitationUiProvider?: McpElicitationUiProvider;
 	// Present only when OAuth is the resolved auth mode for this server.
 	readonly authProvider?: McpOAuthProvider;
+	/** Re-reads a declaring server's references for this transport (senpi#3858). */
+	readonly resolveConfig?: () => Promise<McpServerConfig>;
 };
 
 const SHUTDOWN_GRACE_MS = 100,
@@ -148,20 +150,26 @@ function createConnection(
 			return materialized?.readPid() ?? lastRootPid;
 		},
 		materialize: async (): Promise<void> => {
-			pending ??= import("./modern/dispatch.ts").then(({ materializeNegotiatedTransport }) =>
-				materializeNegotiatedTransport(
-					{
-						elicitationUiProvider: options.elicitationUiProvider,
-						logger: options.logger,
-						onStart: captureRootPid,
-						sink: asyncErrorSink,
-						spec,
-					},
-					options.serverName,
-					connectTimeoutMs,
-					abort.signal,
-				),
-			);
+			const materializeWith = (current: McpTransportSpec) =>
+				import("./modern/dispatch.ts").then(({ materializeNegotiatedTransport }) =>
+					materializeNegotiatedTransport(
+						{
+							elicitationUiProvider: options.elicitationUiProvider,
+							logger: options.logger,
+							onStart: captureRootPid,
+							sink: asyncErrorSink,
+							spec: current,
+						},
+						options.serverName,
+						connectTimeoutMs,
+						abort.signal,
+					),
+				);
+			const { resolveConfig } = options;
+			pending ??=
+				resolveConfig === undefined
+					? materializeWith(spec)
+					: resolveConfig().then((config) => materializeWith(mcpTransportSpec({ ...options, config })));
 			materialized = await pending;
 			if (abort.signal.aborted) {
 				await materialized.close();

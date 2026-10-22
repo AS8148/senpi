@@ -12,7 +12,7 @@ export function buildMcpServerSnapshot(
 	return {
 		name,
 		configState: server?.state ?? "removed",
-		configHash: server?.configHash ?? null,
+		configHash: entry?.generationHash ?? server?.configHash ?? null,
 		source: server?.source ?? null,
 		sourcePath: server?.sourcePath ?? null,
 		lifecycleState:

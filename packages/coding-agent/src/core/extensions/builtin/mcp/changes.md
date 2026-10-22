@@ -1,3 +1,30 @@
+## 2026-10-22 - Admit MCP references by source and resolve them per connection generation (senpi#3858)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config-schema.ts`: `headers.*`, `env.*` and `args[]` accept exact `$file`, `$env` and `$concat` objects; `url`, `command`, `cwd` and OAuth fields keep refusing them. `McpServerDeclaredConfig` is the declared server; `McpServerConfig` stays the resolved snapshot every connection, transport and diagnostic uses.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config-references.ts`: lists a server's reference positions, records the declaring file as each reference's trusted origin when a trusted file is read, and refuses references from sources that do not expand legacy `${NAME}`.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config.ts`, `config-extension.ts` and `skill-server.ts`: trusted global, project and Claude files and trusted stdio skills record origins; extension declarations, remote skills and untrusted skills are refused before any I/O, each as its own diagnostic or warning.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config-generation.ts`: resolves one connection generation into an immutable snapshot, keys it, and for a declaring server re-reads every transport's references, re-keying when the snapshot changed. A server whose reference fails is reported and never connects; the others continue.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`, `service-connection.ts`, `service-snapshot.ts`, `service-types.ts`, `startup-race.ts` and `service-tools-changed.ts`: connection keys, shared-connection identity and catalog identity follow the admitted generation; `reconnectServer` re-reads first and re-keys a changed snapshot; a reference failure is the server's `lastError`.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/connection.ts`, `connection-types.ts`, `transport.ts` and `shared-connection.ts`: every transport of a declaring server builds its spec from a fresh snapshot; a shared renewal whose snapshot changed re-keys every lease.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/context.ts`, `auth/catalog-identity.ts`, `auth/commands-auth.ts`, `catalog.ts`, `catalog-cache.ts`, `config-identity.ts`, `config-normalize.ts`, `expose/policy.ts`, `expose/status.ts`, `manager.ts` and `sharing-policy.ts`: accept the declared type where they read only non-reference fields; literal-secret and session-value scans skip reference objects.
+
+### Why
+
+- A secret file or variable referenced from `mcp.json` must be read where legacy `${NAME}` would be expanded and nowhere else, on every connection generation so a rotated file is picked up, and one broken reference must not take down the other servers.
+
+### Why an extension could not handle it
+
+- MCP config loading, trust, connection admission and transport construction are private to the builtin.
+
+### Expected merge conflict zones
+
+- MEDIUM: `#syncFromConfig` and `reconnectServer` in `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`.
+- MEDIUM: `createMcpSessionConnection` in `packages/coding-agent/src/core/extensions/builtin/mcp/service-connection.ts`.
+- LOW: the server schema and types in `packages/coding-agent/src/core/extensions/builtin/mcp/config-schema.ts`.
+- LOW: `materialize` in `packages/coding-agent/src/core/extensions/builtin/mcp/transport.ts`.
+
 ## 2026-10-22 - Extract extension server resolution and transport spec building without behavior changes (senpi#3858)
 
 ### What changed

@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import type { McpServerConfig } from "../config-schema.ts";
+import type { McpServerDeclaredConfig } from "../config-schema.ts";
 import { resolveAuthMode } from "./context.ts";
 import { McpTokenStore } from "./token-store.ts";
 
 /** Local snapshot only: never migrates credentials, acquires a lock, or refreshes authentication. */
 export function mcpCredentialIdentity(
-	config: McpServerConfig,
+	config: McpServerDeclaredConfig,
 	serverName: string,
 	agentDir: string | undefined,
 	env: Record<string, string | undefined> | undefined,

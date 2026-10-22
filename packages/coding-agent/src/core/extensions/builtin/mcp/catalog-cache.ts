@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import lockfile from "proper-lockfile";
 import { getAgentDir } from "../../../../config.ts";
-import type { McpServerConfig } from "./config-schema.ts";
+import type { McpServerDeclaredConfig } from "./config-schema.ts";
 import type { ServerConnection } from "./connection.ts";
 import { collectAllPages } from "./expose/pagination.ts";
 
@@ -69,7 +69,7 @@ export function cachedCatalogNeedsRefresh(cached: McpCachedServerCatalog, now = 
 
 export async function collectServerCatalogForCache(
 	connection: ServerConnection,
-	config: McpServerConfig,
+	config: Pick<McpServerDeclaredConfig, "requestTimeoutMs">,
 	configHash: string,
 	credentialIdentity?: string,
 ): Promise<McpCachedServerCatalog> {

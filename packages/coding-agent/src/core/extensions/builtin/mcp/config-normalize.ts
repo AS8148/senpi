@@ -1,7 +1,16 @@
-import type { McpServerConfig, RawConfig } from "./config-schema.ts";
+import type { McpServerConfig, McpServerDeclaration, McpServerDeclaredConfig, RawConfig } from "./config-schema.ts";
 import { MCP_STARTUP_RACE_MS } from "./startup-race.ts";
 
-export function normalizeServer(server: NonNullable<RawConfig["mcpServers"]>[string]): McpServerConfig {
+type LiteralDeclaration = Omit<McpServerDeclaration, "args" | "env" | "headers"> & {
+	args?: string[];
+	env?: Record<string, string>;
+	headers?: Record<string, string>;
+};
+
+/** A declaration of plain strings normalizes to a resolved snapshot; one holding references stays declared. */
+export function normalizeServer(server: LiteralDeclaration): McpServerConfig;
+export function normalizeServer(server: NonNullable<RawConfig["mcpServers"]>[string]): McpServerDeclaredConfig;
+export function normalizeServer(server: NonNullable<RawConfig["mcpServers"]>[string]): McpServerDeclaredConfig {
 	const type = server.type ?? (server.url ? "http" : "stdio");
 	return {
 		args: server.args ?? [],

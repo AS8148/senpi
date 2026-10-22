@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import type { McpServerConfig } from "./config-schema.ts";
+import type { McpServerDeclaredConfig } from "./config-schema.ts";
 
-export function hashConfig(config: McpServerConfig): string {
+export function hashConfig(config: McpServerDeclaredConfig): string {
 	// startupTimeoutMs is a client-side startup-race policy, not a connection or
 	// catalog-shape input. Excluding it from the identity hash keeps the catalog
 	// cache valid across upgrades (configs written before the field existed hash

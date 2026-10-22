@@ -1,6 +1,8 @@
+import { ConfigReferenceError } from "@earendil-works/pi-ai/utils/config-reference";
 import type { RegisteredMcpServerDeclaration } from "../../types.ts";
 import { hashConfig } from "./config-identity.ts";
 import { normalizeServer } from "./config-normalize.ts";
+import { refuseMcpReferences } from "./config-references.ts";
 import type { RawConfig, ResolvedMcpConfig, ResolvedMcpServer } from "./config-schema.ts";
 
 /**
@@ -14,6 +16,7 @@ export function resolveExtensionMcpServer(
 	sourcePath: string,
 	registrationCwd: string,
 ): ResolvedMcpServer {
+	refuseMcpReferences(name, raw);
 	const withCwd = { ...raw, cwd: raw.cwd ?? registrationCwd };
 	const config = normalizeServer(withCwd);
 	return {
@@ -49,11 +52,18 @@ export function mergeExtensionMcpServers(
 				`Extension MCP server '${decl.name}' from ${decl.extensionPath} replaces untrusted ${existing.source} placeholder from ${existing.sourcePath}.`,
 			);
 		}
-		result.servers[decl.name] = resolveExtensionMcpServer(
-			decl.name,
-			decl.config,
-			decl.extensionPath,
-			decl.registrationCwd,
-		);
+		try {
+			result.servers[decl.name] = resolveExtensionMcpServer(
+				decl.name,
+				decl.config,
+				decl.extensionPath,
+				decl.registrationCwd,
+			);
+		} catch (error) {
+			if (!(error instanceof ConfigReferenceError)) throw error;
+			result.diagnostics.push(
+				`Extension MCP server '${decl.name}' from ${decl.extensionPath} skipped: ${error.message}`,
+			);
+		}
 	}
 }

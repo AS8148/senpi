@@ -154,6 +154,10 @@ export interface McpConnectionEntry {
 	readonly key: string;
 	readonly name: string;
 	readonly configHash: string;
+	/** The admitted generation's identity; equals `configHash` for a server that declares no reference (senpi#3858). */
+	readonly generationHash?: string;
+	/** Present when the server declares references: whether a fresh snapshot no longer matches the admitted one. */
+	readonly generationChanged?: () => Promise<boolean>;
 	readonly connection: ServerConnection;
 	readonly logger: McpLogger;
 	readonly createdAtMs: number;

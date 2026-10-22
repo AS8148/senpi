@@ -1,3 +1,4 @@
+import type { ConfigReferenceError } from "@earendil-works/pi-ai/utils/config-reference";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { getAgentDir } from "../../../../config.ts";
 import type { ExtensionAPI, ExtensionUIContext, SessionShutdownEvent, SessionStartEvent } from "../../types.ts";
@@ -16,7 +17,8 @@ import {
 	readMcpCatalogCache,
 } from "./catalog-cache.ts";
 import { loadMcpConfig, mergeExtensionMcpServers, visitSpawnableMcpServers } from "./config.ts";
-import type { McpServerConfig, ResolvedMcpConfig, ResolvedMcpServer } from "./config-schema.ts";
+import { resolveWantedMcpGenerations } from "./config-generation.ts";
+import type { McpServerDeclaredConfig, ResolvedMcpConfig, ResolvedMcpServer } from "./config-schema.ts";
 import type { ServerConnection } from "./connection.ts";
 import type { McpSessionRegistration } from "./expose/session.ts";
 import type { McpServerExposureStatus } from "./expose/status.ts";
@@ -124,6 +126,8 @@ export class McpService {
 	readonly #connections = new Map<string, McpConnectionEntry>();
 	readonly #connectionKeysByName = new Map<string, string>();
 	readonly #outputArtifacts = new McpOutputArtifacts();
+	/** Servers whose references failed in the latest sync; each one is reported, never connected (senpi#3858). */
+	readonly #referenceErrors = new Map<string, ConfigReferenceError>();
 
 	readonly #registry: HostMcpRegistry;
 	readonly #shareConnections: boolean;
@@ -568,6 +572,10 @@ export class McpService {
 	async reconnectServer(name: string): Promise<void> {
 		const entry = this.#entryForName(name);
 		if (entry === undefined) throw new Error(`Unknown MCP server: ${name || "<missing>"}`);
+		if (await entry.generationChanged?.()) {
+			await entry.onCredentialsChanged?.();
+			return;
+		}
 		await reconnectMcpNow(entry.connection);
 	}
 
@@ -647,6 +655,12 @@ export class McpService {
 				credentialIdentities.set(name, mcpCredentialIdentity(server.config, name, agentDir, env));
 			}
 		});
+		const generations = await resolveWantedMcpGenerations(
+			wanted,
+			(name) => (declarers.get(name) ?? owner).options,
+			this.#referenceErrors,
+		);
+		if (this.#disposed) return;
 		const agentDirs = new Set([owner, ...declarers.values()].map((declarer) => declarer.options.agentDir));
 		const caches = new Map<string | undefined, McpCatalogCacheFile>();
 		for (const agentDir of agentDirs) {
@@ -660,7 +674,7 @@ export class McpService {
 			const key =
 				server?.configHash === undefined
 					? undefined
-					: `${entry.name}\0${server.configHash}\0${credentialIdentities.get(entry.name) ?? "unknown"}`;
+					: `${entry.name}\0${generations.get(entry.name)?.configHash ?? server.configHash}\0${credentialIdentities.get(entry.name) ?? "unknown"}`;
 			// A connection whose credentials went stale is re-created with its declarer's options, never kept under an
 			// unchanged key: kept, it would refuse every session sharing it until the service is disposed.
 			if (key === entry.key && entry.credentialsCurrent?.() !== false) continue;
@@ -673,13 +687,14 @@ export class McpService {
 
 		const connects: Promise<void>[] = [];
 		for (const [name, server] of wanted) {
-			if (server.config === undefined || server.configHash === undefined) continue;
+			const generation = generations.get(name);
+			if (server.config === undefined || server.configHash === undefined || generation === undefined) continue;
 			const serverConfig = server.config;
 			const declarer = declarers.get(name) ?? owner;
 			const options = declarer.options;
 			const cache = caches.get(options.agentDir);
 			const credentialIdentity = credentialIdentities.get(name);
-			const key = `${name}\0${server.configHash}\0${credentialIdentity ?? "unknown"}`;
+			const key = `${name}\0${generation.configHash}\0${credentialIdentity ?? "unknown"}`;
 			if (this.#connections.has(key)) continue;
 			const entry = createMcpSessionConnection({
 				registry: this.#registry,
@@ -688,7 +703,8 @@ export class McpService {
 				key,
 				name,
 				configHash: server.configHash,
-				config: server.config,
+				generation,
+				declared: serverConfig,
 				credentialIdentity,
 				credentialsCurrent: () =>
 					mcpCredentialIdentity(serverConfig, name, options.agentDir, options.env) === credentialIdentity,
@@ -710,7 +726,7 @@ export class McpService {
 			});
 			const cachedCatalog =
 				useCache && credentialIdentity !== undefined && cache !== undefined
-					? getValidCachedServer(cache, name, server.configHash, credentialIdentity)
+					? getValidCachedServer(cache, name, generation.configHash, credentialIdentity)
 					: undefined;
 			entry.cachedCatalog = cachedCatalog;
 			this.#connections.set(key, entry);
@@ -860,6 +876,8 @@ export class McpService {
 		const connection = entry?.credentialsCurrent?.() === false ? undefined : entry?.connection;
 		connection?.refreshCapturedDiagnostics();
 		const snapshot = buildMcpServerSnapshot(name, server, connection, entry);
+		const referenceError = entry === undefined ? this.#referenceErrors.get(name) : undefined;
+		if (referenceError !== undefined) return { ...snapshot, lastError: referenceError.message };
 		if (
 			config !== undefined &&
 			entry?.connection.state === "needs_auth" &&
@@ -996,10 +1014,13 @@ export class McpService {
 		return this.#pendingAuth;
 	}
 
-	getAuthTarget(
-		name: string,
-	):
-		| { config: McpServerConfig; agentDir?: string; env?: Record<string, string | undefined>; callbackUrl?: string }
+	getAuthTarget(name: string):
+		| {
+				config: McpServerDeclaredConfig;
+				agentDir?: string;
+				env?: Record<string, string | undefined>;
+				callbackUrl?: string;
+		  }
 		| undefined {
 		const server = this.#config?.servers[name];
 		if (server?.config === undefined) return undefined;

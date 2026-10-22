@@ -6,6 +6,7 @@ import { McpConfigValidationError } from "./config-error.ts";
 import { hashConfig } from "./config-identity.ts";
 import { interpolateValue } from "./config-interpolation.ts";
 import { normalizeServer } from "./config-normalize.ts";
+import { rememberMcpReferenceOrigins } from "./config-references.ts";
 import {
 	defaultSettings,
 	getServerEndpointValidationError,
@@ -106,6 +107,7 @@ function readTrustedConfig(
 	const config = interpolateConfig(validateRaw(raw, path), env);
 	const endpointError = config ? getServerEndpointValidationError(config) : undefined;
 	if (endpointError) throw new McpConfigValidationError(`Invalid MCP config at ${endpointError}`);
+	rememberMcpReferenceOrigins(config?.mcpServers, path);
 	return config;
 }
 
