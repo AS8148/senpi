@@ -77,7 +77,7 @@ export function functionSpans(code: string): FunctionSpan[] {
 	return spans;
 }
 
-function callArguments(code: string, openParen: number): string {
+export function callArguments(code: string, openParen: number): string {
 	let depth = 0;
 	for (let i = openParen; i < code.length; i++) {
 		if (code[i] === "(") depth++;
@@ -164,4 +164,46 @@ function writeProblems(
 
 function escapeRegExp(text: string): string {
 	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+const VENDORED_ALLOWED_MODULE = /^(?:node:[\w/]+|proper-lockfile)$/;
+const DEFAULT_LOCKFILE_IMPORT = /^\s*import\s+(\w+)\s+from\s+["']proper-lockfile["'];?\s*$/m;
+
+/**
+ * A file vendored byte-for-byte into another repository may import only node built-ins and proper-lockfile,
+ * through exactly one plain default import, and may use that import only as `<binding>.lock(` calls that
+ * each pass their own `onCompromised` (the default one throws from a heartbeat timer).
+ */
+export function vendoredSelfContainedViolations(source: string): string[] {
+	const code = withoutComments(source);
+	const problems: string[] = [];
+	const specifiers = [
+		...code.matchAll(/\b(?:import|export)\b[^;"'`]*?\bfrom\s*["']([^"']+)["']/g),
+		...code.matchAll(/\bimport\s*["']([^"']+)["']/g),
+		...code.matchAll(/\b(?:require|import)\s*\(\s*["'`]([^"'`]+)["'`]\s*\)/g),
+	].map(([, specifier]) => specifier ?? "");
+	for (const specifier of specifiers)
+		if (!VENDORED_ALLOWED_MODULE.test(specifier)) problems.push(`imports ${specifier}`);
+	if (/\b(?:require|import)\s*\(\s*[^"'`\s)]/.test(code))
+		problems.push("dynamic import or require of a computed module");
+	const [importLine, binding] = code.match(DEFAULT_LOCKFILE_IMPORT) ?? [];
+	const references = code.match(/["']proper-lockfile["']/g)?.length ?? 0;
+	if (!importLine || !binding || references !== 1) {
+		problems.push("needs exactly one plain default import of proper-lockfile");
+		return problems;
+	}
+	const rest = code.replace(importLine, "");
+	let lockCalls = 0;
+	for (const use of rest.matchAll(new RegExp(`(?<![\\w.$])${binding}\\b(\\s*\\.\\s*(\\w+)\\s*\\()?`, "g"))) {
+		const [whole, call, method] = use;
+		if (!call || method !== "lock") {
+			problems.push(`uses ${binding} other than as ${binding}.lock(: ${whole.trim()}`);
+			continue;
+		}
+		lockCalls++;
+		const args = callArguments(rest, (use.index ?? 0) + whole.length - 1);
+		if (!/\bonCompromised\s*:/.test(args)) problems.push(`${binding}.lock( without its own onCompromised`);
+	}
+	if (lockCalls === 0) problems.push(`no ${binding}.lock( call`);
+	return problems;
 }

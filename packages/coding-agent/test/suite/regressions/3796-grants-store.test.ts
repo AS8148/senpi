@@ -160,18 +160,18 @@ it("refuses the next Windows replace attempt once the lock is lost during a back
 	const before = fs.readFileSync(path, "utf8");
 	Object.defineProperty(process, "platform", { value: "win32" });
 	const realLock = lockfile.lock;
-	let lose: (() => void) | undefined;
+	let lose: (() => Promise<void>) | undefined;
 	vi.spyOn(lockfile, "lock").mockImplementation(async (file, options) => {
 		const release = await realLock(file, options);
-		lose = () => {
-			void release();
+		lose = async () => {
+			await release();
 			options?.onCompromised?.(Object.assign(new Error("synthetic lost lock"), { code: "ECOMPROMISED" }));
 		};
 		return release;
 	});
 	mocks.rename.mockClear().mockRejectedValueOnce(Object.assign(new Error("synthetic open handle"), { code: "EPERM" }));
 	mocks.delay.mockImplementationOnce(async () => {
-		lose?.();
+		await lose?.();
 	});
 	await expect(addGrant(path, identity, label, ["NEW"])).rejects.toBeInstanceOf(GrantsLockLostError);
 	expect(mocks.rename).toHaveBeenCalledTimes(1);
