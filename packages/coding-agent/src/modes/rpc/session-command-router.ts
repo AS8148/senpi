@@ -42,6 +42,7 @@ import { readDrainVerdicts } from "./session-drain.ts";
 import { drainSessionEffects, installSessionEffectSink } from "./session-effect-status.ts";
 import type { SessionEventWriter } from "./session-event-writer.ts";
 import { dispatchSessionBinding, sessionHeldCheck } from "./session-held.ts";
+import { moveSession } from "./session-move-commands.ts";
 import type { OpenRpcSession, RpcSessionLaunchProfile, RpcSessionRegistry } from "./session-registry.ts";
 import { RpcSessionRegistryError } from "./session-registry.ts";
 import { releaseSession } from "./session-release.ts";
@@ -145,7 +146,7 @@ export class SessionCommandRouter {
 		RpcSessionRegistry,
 		"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size" | "warm"
 	> &
-		Partial<Pick<RpcSessionRegistry, "holderPids">>;
+		Partial<Pick<RpcSessionRegistry, "holderPids" | "agentDir">>;
 	private readonly writer: SessionEventWriter;
 	private readonly defaults: RpcHostSessionDefaults;
 	private readonly createBinding: typeof createRpcSessionBinding;
@@ -183,7 +184,7 @@ export class SessionCommandRouter {
 			RpcSessionRegistry,
 			"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size" | "warm"
 		> &
-			Partial<Pick<RpcSessionRegistry, "holderPids">>,
+			Partial<Pick<RpcSessionRegistry, "holderPids" | "agentDir">>,
 		writer: SessionEventWriter,
 		defaults: RpcHostSessionDefaults,
 		createBinding: typeof createRpcSessionBinding = createRpcSessionBinding,
@@ -428,6 +429,23 @@ export class SessionCommandRouter {
 				},
 				command,
 			);
+		if (command.type === "move_session") {
+			const agentDir = this.registry.agentDir;
+			if (agentDir === undefined)
+				return error(
+					command.id,
+					command.type,
+					"move_unsupported: this host keeps no agent directory to move sessions in",
+				);
+			return moveSession(
+				{
+					agentDir,
+					hostedPaths: () =>
+						this.registry.list().flatMap((row) => (row.sessionPath === undefined ? [] : [row.sessionPath])),
+				},
+				command,
+			);
+		}
 		if (command.type === "unload_session") {
 			const caller = this.writer.currentConnection();
 			return unloadSession(
