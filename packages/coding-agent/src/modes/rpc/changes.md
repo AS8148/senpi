@@ -7227,7 +7227,8 @@ The classic capability list in `connection-handler.ts`.
 ### Why
 
 - senpi#3814 split `session-command-router.ts` while senpi#3811 changed it on main; keeping the split file alone would have dropped the role binding silently.
-- The desktop app's prewarm handle reports composer draft activity without attaching to the session. The command only warms the session, so it is served unattached and writes no grace line.
+- record_user_activity stays ungated by lead ruling 2026-10-22 (senpi#3814): the desktop prewarm path sends it (omo-desktop-app OmoAdapter.ts:7121), and its only effect is one prompt-cache warm-up per session, with no transcript entry or session state change. It is served unattached and writes no grace line.
+- The grace line escapes a client-chosen sessionId, so it is always exactly one line, and release_attachment uses the same stopping-host test as attach_session and reclaim_session.
 
 ### Why an extension could not handle it
 

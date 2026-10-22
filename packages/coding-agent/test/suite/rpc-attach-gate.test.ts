@@ -44,7 +44,7 @@ describe.each(["in-process", "worker"] as const)("attachment gate (%s)", (sessio
 			for (const type of ["get_state", "get_messages"]) {
 				expect(await stranger.request({ type, sessionId }), type).toMatchObject({ success: true });
 			}
-			// senpi#3859: desktop's prewarm handle reports draft activity without attaching, so it is never gated.
+			// Lead ruling 2026-10-22 (senpi#3814): record_user_activity is never gated; its only effect is one warm-up.
 			expect(await stranger.request({ type: "record_user_activity", sessionId, kind: "draft" })).toMatchObject({
 				success: true,
 			});

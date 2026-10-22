@@ -2386,9 +2386,10 @@ in the following effect-based read allow-list:
 `get_provider_accounts`, `resolve_path`, `memory_report`, `eval_cells.list`, `eval_cells.peek`,
 and `check_reload_veto`.
 
-`record_user_activity` is also never gated. It only warms the session for the user's first turn, and an
-unattached caller exists: the desktop app's prewarm handle reports composer draft activity without
-attaching (senpi#3859). An unattached `record_user_activity` is served and writes no grace line.
+`record_user_activity` is also never gated (lead ruling 2026-10-22, senpi#3814). The desktop app's prewarm
+path sends it (omo-desktop-app `apps/server/src/provider/Layers/OmoAdapter.ts:7121`), and its only effect is
+one prompt-cache warm-up per session: it writes no transcript entry and changes no session state
+(senpi#3859). An unattached `record_user_activity` is served and writes no grace line.
 
 Host discovery/control remains available: `get_protocol_info`, `list_sessions`, `subscribe_sessions`,
 `unsubscribe_sessions`, `get_subscription_limits`, `warm`, `detach_connection`, `attach_session`,

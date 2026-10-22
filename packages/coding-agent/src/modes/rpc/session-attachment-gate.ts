@@ -3,7 +3,7 @@ import type { RouterContext } from "./session-router-context.ts";
 import { error } from "./session-router-errors.ts";
 
 /** Effect-based reads only. New session commands require attachment by default. */
-const UNATTACHED_READS = new Set<RpcCommand["type"]>([
+export const ATTACH_GATE_EXEMPT: ReadonlySet<RpcCommand["type"]> = new Set<RpcCommand["type"]>([
 	"get_protocol_info",
 	"list_sessions",
 	"subscribe_sessions",
@@ -38,14 +38,21 @@ const UNATTACHED_READS = new Set<RpcCommand["type"]>([
 	"eval_cells.list",
 	"eval_cells.peek",
 	"check_reload_veto",
-	// Composer draft activity only warms the session; desktop's prewarm handle sends it unattached (senpi#3859).
+	// Ungated by lead ruling 2026-10-22 (senpi#3814). The desktop prewarm path sends it
+	// (omo-desktop-app apps/server/src/provider/Layers/OmoAdapter.ts:7121), and its only effect is one
+	// prompt-cache warm-up per session: no transcript entry and no session state change (senpi#3859).
 	"record_user_activity",
 ]);
+
+/** A client-chosen id as one log token: control characters and quotes escaped, so it never adds a line. */
+function logSafe(value: string): string {
+	return JSON.stringify(value).slice(1, -1);
+}
 
 /** Socket ownership is checked before lifecycle routing AND before worker dispatch. */
 export function attachmentGate(host: RouterContext, command: RpcCommand): RpcResponse | undefined {
 	const owner = host.writer.currentConnection();
-	if (owner === undefined || UNATTACHED_READS.has(command.type)) return undefined;
+	if (owner === undefined || ATTACH_GATE_EXEMPT.has(command.type)) return undefined;
 	if (!("sessionId" in command) || command.sessionId === undefined) return undefined;
 	if (
 		command.type === "close_session" ||
@@ -60,7 +67,7 @@ export function attachmentGate(host: RouterContext, command: RpcCommand): RpcRes
 			action: "attach first with attach_session { sessionId, durableSessionId } or open_session { sessionPath }",
 		});
 	process.stderr.write(
-		`senpi rpc host: ${command.type} on ${command.sessionId} from a connection not attached to it (refused from the next release)\n`,
+		`senpi rpc host: ${command.type} on ${logSafe(command.sessionId)} from a connection not attached to it (refused from the next release)\n`,
 	);
 	return undefined;
 }

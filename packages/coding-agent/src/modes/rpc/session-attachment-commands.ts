@@ -26,12 +26,17 @@ function identityMatches(
 	);
 }
 
+/** One test for every attachment command: a host that drains or is stopping owns every outstanding hold. */
+function hostStopping(host: RouterContext): boolean {
+	return host.draining || host.drainExitRequested;
+}
+
 /** Wire contract v1.1: a draining or stopping host refuses attachment before admission with a v1 code. */
 function drainingRefusal(
 	host: RouterContext,
 	command: Extract<RpcAttachmentCommand, { type: "attach_session" | "reclaim_session" }>,
 ): RpcResponse | undefined {
-	if (!host.draining && !host.drainExitRequested) return undefined;
+	if (!hostStopping(host)) return undefined;
 	return error(command.id, command.type, "session_busy_lifecycle", { reason: "host_draining" });
 }
 
@@ -79,7 +84,7 @@ export async function releaseAttachment(
 		return error(command.id, command.type, "session_not_attached", { reason: "not_attached" });
 	releaseOwnerAttachment(host, owner, command.sessionId);
 	// The drain owns every outstanding physical hold until its park; never preempt it.
-	const deferred = !host.draining && (await releaseDisconnectAttachment(host, command.sessionId));
+	const deferred = !hostStopping(host) && (await releaseDisconnectAttachment(host, command.sessionId));
 	return { id: command.id, type: "response", command: command.type, success: true, data: { deferred } };
 }
 

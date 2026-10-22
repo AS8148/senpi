@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import { ATTACH_GATE_EXEMPT } from "../../src/modes/rpc/session-attachment-gate.ts";
 import { attachmentRig } from "./rpc-attachment-support.ts";
 import { opened } from "./rpc-inprocess-host-metrics.ts";
 
@@ -11,6 +12,49 @@ afterEach(() => {
 });
 
 const NOT_ATTACHED = { success: false, errorCode: "session_not_attached" };
+
+// senpi#3814 review MEDIUM: the gate's exemptions are a reviewed list. Adding one must change this test.
+it("exempts exactly the reviewed commands from the attach gate", () => {
+	expect([...ATTACH_GATE_EXEMPT].sort()).toEqual(
+		[
+			"attach_session",
+			"check_reload_veto",
+			"detach_connection",
+			"eval_cells.list",
+			"eval_cells.peek",
+			"get_auth_providers",
+			"get_available_models",
+			"get_available_thinking_levels",
+			"get_commands",
+			"get_effect_status",
+			"get_entries",
+			"get_fast_mode",
+			"get_follow_up_messages",
+			"get_fork_messages",
+			"get_last_assistant_text",
+			"get_loaded_surfaces",
+			"get_media",
+			"get_messages",
+			"get_pending_inputs",
+			"get_protocol_info",
+			"get_provider_accounts",
+			"get_session_stats",
+			"get_state",
+			"get_steering_messages",
+			"get_subscription_limits",
+			"get_tree",
+			"list_sessions",
+			"memory_report",
+			"open_session",
+			"reclaim_session",
+			"record_user_activity",
+			"resolve_path",
+			"subscribe_sessions",
+			"unsubscribe_sessions",
+			"warm",
+		].sort(),
+	);
+});
 
 // Lead ruling 2026-10-22 (senpi#3814): record_user_activity stays ungated. The desktop prewarm path sends it
 // (omo-desktop-app apps/server/src/provider/Layers/OmoAdapter.ts:7121); its only effect is one prompt-cache warm-up.
