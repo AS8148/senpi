@@ -24,6 +24,19 @@ describe("control-token-leak and tool arguments (omo#10789)", () => {
 		expect(fired).toBe(false);
 	});
 
+	// The grammar alone stays silent on </div>, so this case owns the source bypass: </s> is a
+	// tokenizer special token AND HTML strikethrough, and a tool argument must still never fire.
+	it("does not fire on a tool argument whose markup spells a tokenizer special token", () => {
+		const watch = watcher();
+		const html = `{"html":"<s><s><s><s>old</s></s></s></s>"}`;
+		let fired = false;
+		for (let i = 0; i < html.length; i += 7) {
+			const outcome = watch.handleDelta("tool", "show_html_page:1", html.slice(i, i + 7), 1, "show_html_page");
+			if (outcome.resolution !== null) fired = true;
+		}
+		expect(fired).toBe(false);
+	});
+
 	it("still fires on genuine control-token leakage in assistant text", () => {
 		const watch = watcher();
 		const leak = "answer: " + "</s>".repeat(6);
