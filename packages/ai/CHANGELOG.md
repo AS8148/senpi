@@ -6,6 +6,18 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.21-3] - 2026-10-22
+
+### Breaking Changes
+
+### Added
+
 - Claude Fable 5.5 is known to the model-catalog generator, so the catalog refresh after its release lists it with the pricing, limits and status models.dev publishes. The Anthropic catalog also keeps a model it already ships after models.dev marks it deprecated, labeled deprecated, like the other providers do ([#3893](https://github.com/code-yeongyu/senpi/issues/3893), [#3897](https://github.com/code-yeongyu/senpi/pull/3897)).
 
 ### Changed
