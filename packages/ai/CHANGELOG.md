@@ -10,6 +10,8 @@
 
 ### Changed
 
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`huggingface`, `nvidia`, `opencode`, `openrouter`, `radius`, `venice`, `vercel-ai-gateway`).
+
 ### Fixed
 
 - Responses prompt-cache keys now follow the model, instructions, and tool schemas instead of session ids across OpenAI, ChatGPT subscription, and Azure. New sessions and task children with identical prefixes share cache affinity, and Responses tools render in deterministic name order ([omo#10775](https://github.com/code-yeongyu/oh-my-openagent/issues/10775)).
