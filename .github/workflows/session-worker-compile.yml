@@ -35,6 +35,12 @@ on:
 permissions:
   contents: read
 
+# One group per pull request, so a new push cancels the superseded run and its queued jobs instead of leaving them in
+# the shared runner queue; main pushes get one group per commit and are never cancelled (senpi#3957).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   platform-scope:
     name: Platform scope

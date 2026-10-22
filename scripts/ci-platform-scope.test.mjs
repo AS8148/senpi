@@ -182,4 +182,14 @@ describe("platform-only legs of the other PR workflows", () => {
 			assert.match(String(legs[0].strategy.matrix.os), /needs\.platform-scope\.outputs\.full == 'true'/);
 		});
 	}
+
+	it("every pull_request workflow with macOS/Windows legs cancels its superseded PR run", () => {
+		for (const file of ["ci.yml", "read-summary-binary-parity.yml", "session-worker-compile.yml", "native-prebuilds.yml"]) {
+			const { concurrency } = workflow(file);
+			assert.ok(concurrency?.group, file);
+			assert.match(String(concurrency.group), /github\.(ref|event\.pull_request\.number)/, file);
+			assert.notEqual(concurrency["cancel-in-progress"], false, file);
+			assert.ok(concurrency["cancel-in-progress"] !== undefined, file);
+		}
+	});
 });
