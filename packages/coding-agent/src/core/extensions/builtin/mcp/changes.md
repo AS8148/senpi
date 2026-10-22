@@ -1256,3 +1256,21 @@ The token store and refresh manager are this builtin's credential layer.
 ### Expected merge conflict zones
 
 - `connection.ts` `#markFailure`; `shared-lease.ts` `mark*` overrides; `startup-race.ts` `connectMcpServer` and the `refreshConnectedMcpCatalog` auth catch; `service-connection.ts` reconnect callback auth catch.
+
+## 2026-10-22 - whenAttachSettled observes an attach that is still running (senpi#4027)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: `whenAttachSettled` first awaits the attach queue (every attach and re-sync joins it synchronously via `#queueSync`), bounded by the same timeout, and then the backgrounded connects in `#deferredAttach` with the remaining budget.
+
+### Why
+
+- An attach hands its backgrounded startup connects to `#deferredAttach` only after each startup race's 0 ms timer, near the end of the attach sync. A `whenAttachSettled` call that landed while the attach was still running read an empty pending set and reported `settled`, so a caller assembling the first turn (or a test observing the attach) saw MCP tools as attached when they were not.
+
+### Why an extension could not handle it
+
+- The attach queue and the deferred-connect set are private to the MCP service; no extension hook can observe an attach in flight.
+
+### Expected merge conflict zones
+
+- `service.ts` `whenAttachSettled` and its doc comment; the `./startup-race.ts` import list (`waitForMcpStartupRace`).

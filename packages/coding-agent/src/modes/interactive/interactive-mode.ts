@@ -7746,6 +7746,7 @@ export class InteractiveMode {
 	private async showSettingsSelector(): Promise<void> {
 		const availableThinkingLevels = this.session.getAvailableThinkingLevels();
 		this.showSelector((done) => {
+			// oxlint-disable-next-line eslint/prefer-const -- a closure reads it; const would throw in the TDZ if that closure ran before the assignment, so the rewrite is reviewed separately
 			let selector: SettingsSelectorComponent | undefined;
 			selector = new SettingsSelectorComponent(
 				{

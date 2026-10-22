@@ -148,6 +148,13 @@ import { runPauseForRun, runResumeForRun } from "./run-hold-commands.ts";
 import { availableModelsData, interruptRunningTurn } from "./session-control-actions-data.ts";
 import { SessionExtensionUiRequests, sessionDialogRequests } from "./session-extension-ui-requests.ts";
 import { subscribeSessionRecords } from "./session-record-stream.ts";
+import { RpcSessionRelocation } from "./session-relocation.ts";
+import {
+	answerHostResponse,
+	isHostResponse,
+	type RelocationClientInfo,
+	relocationChannel,
+} from "./session-relocation-channel.ts";
 
 export { buildRpcSessionState } from "./rpc-session-state.ts";
 
@@ -176,9 +183,8 @@ export interface RpcConnectionOptions {
 	 * Shared-session capability registry. A `set_client_info` carrying `capabilities`
 	 * registers them for the connection that sent it; absent on a classic connection.
 	 */
-	clientInfo?: {
+	clientInfo?: RelocationClientInfo & {
 		setCapabilities: (connectionId: string | undefined, capabilities: readonly string[]) => void;
-		connectionId: () => string | undefined;
 		hasCapability?: (connectionId: string, capability: string) => boolean;
 	};
 	bindSecurityPresentation?: (
@@ -224,6 +230,8 @@ export interface RpcConnectionHandler {
 	isShutdownRequested(): boolean;
 	/** Cancel UI requests that can no longer be answered by this connection. */
 	cancelPendingExtensionUiRequests(): void;
+	/** A shared host's connection left this session; what it was offering ends. */
+	connectionDetached(connectionId: string): void;
 	/**
 	 * Tear down subscriptions and dispose the runtime. Never calls process.exit; `processExit` tells the runtime the
 	 * caller exits right after (senpi#3711).
@@ -356,6 +364,7 @@ export function createRpcConnectionHandler(
 	let replacementIssuedHere = false;
 	let session = runtimeHost.session;
 	let sessionControl: HostSessionControl | undefined;
+	let relocation: RpcSessionRelocation | undefined;
 	const promptCalls = new Set<Promise<unknown>>();
 	// Set by the first command that asks this session for a turn; `set_retry_fallback` is refused after it.
 	let turnRequested = false;
@@ -877,6 +886,22 @@ export function createRpcConnectionHandler(
 			(line) => void process.stderr.write(`senpi rpc session ${routingSessionId ?? "classic"}: ${line}\n`),
 		);
 		session.setControlEndpointHost?.(sessionControl);
+		// Only a host session can be released for a move, so only it offers relocation (docs/rpc.md).
+		relocation?.dispose();
+		relocation =
+			routingSessionId === undefined
+				? undefined
+				: new RpcSessionRelocation({
+						session,
+						pendingPrompts: () => [...promptCalls],
+						channel: relocationChannel({
+							capabilities: () => clientCapabilities,
+							clientInfo: options.clientInfo,
+							output,
+							outputEvent,
+						}),
+					});
+		session.setRelocationHost?.(relocation);
 		if (replacedSession) {
 			lastAbortSource = undefined;
 			if (routingSessionId !== undefined || !replacementIssuedHere) {
@@ -2079,6 +2104,11 @@ export function createRpcConnectionHandler(
 			return;
 		}
 
+		if (isHostResponse(parsed)) {
+			output(answerHostResponse(parsed, (frame) => relocation?.respond(frame) ?? "unknown"));
+			return;
+		}
+
 		// Handle extension UI responses
 		if (
 			typeof parsed === "object" &&
@@ -2153,6 +2183,8 @@ export function createRpcConnectionHandler(
 		stopLimitEvents();
 		sessionControl?.dispose();
 		sessionControl = undefined;
+		relocation?.dispose();
+		relocation = undefined;
 		questions.cancelAll();
 		pendingExtensionRequests.close();
 		unsubscribeProviderAccountEvents();
@@ -2188,6 +2220,9 @@ export function createRpcConnectionHandler(
 		cancelPendingExtensionUiRequests() {
 			questions.cancelAll();
 			pendingExtensionRequests.cancelAll();
+		},
+		connectionDetached(connectionId) {
+			relocation?.connectionDetached(connectionId);
 		},
 		async dispose(disposeOptions) {
 			await ready;

@@ -45,7 +45,9 @@ let root: string;
 let stop: (() => void) | undefined;
 const label = { project: "/synthetic/project", skill: "carrier", server: "probe" };
 const identity = declarationDigest({ command: "synthetic-probe" });
-const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+if (platformDescriptor === undefined) throw new Error("process.platform has no property descriptor");
+const platform: PropertyDescriptor = platformDescriptor;
 
 beforeEach(() => {
 	mocks.rename.mockReset().mockImplementation(mocks.realRename);
