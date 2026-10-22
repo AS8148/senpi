@@ -6,9 +6,13 @@
 
 ### Added
 
+- Stop now pauses the session. Terminal and monitor notices, detached eval cells, goal continuations, and task deliveries that arrive after a Stop are kept as notices and no longer start a turn by themselves. Type a message or run `/resume` to continue; the footer shows how many updates are waiting. A Stop also pauses the workflow run the session started, and a message resumes it; cancelling that run releases its pause (extensions call `ctx.releaseRunFence()`). RPC clients get `intent: "stop"` on `abort`/`interrupt` for `interactive_user` connections, `hold_input`, `withdraw_held_input`, `pause_for_run`, `resume_for_run`, and `paused`, `pausedNoticeCount`, `pausedHeldInputCount` and `runPaused` in `get_state`. Extensions can send an itemized batch with `pi.sendMessage(message, { items })` and get one receipt per item: a paused session stores each item as its own notice ([#3811](https://github.com/code-yeongyu/senpi/issues/3811)).
+
 ### Changed
 
 ### Fixed
+
+- In classic `--mode rpc` (one client over stdio), a `set_client_info` that carries `capabilities` now takes effect, after the connection-role check: a client that declares `question` gets the structured question frame instead of single select dialogs, withdrawing `question` cancels a pending structured question once, and declaring or withdrawing `extension_events` subscribes or unsubscribes extension events. A `set_client_info` without `capabilities` keeps the set, and `SENPI_RPC_CLIENT_CAPABILITIES` is only the initial value ([#4006](https://github.com/code-yeongyu/senpi/issues/4006)).
 
 ### Removed
 
