@@ -1,3 +1,55 @@
+## 2026-10-22 - Anthropic stable-prefix cache checkpoints (senpi#3242)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `convertMessages` puts `cache_control` on the last `text`/`tool_use` block of an assistant message carrying `promptCacheBreakpoint` (never on a thinking block). Two hints are honoured when the system block holds a checkpoint (OAuth identity or a system prompt), and the second takes the tools checkpoint's slot because the system checkpoint covers the tools before it. Otherwise only the oldest hint is honoured. A hinted request drops the preceding tool-loop checkpoint, so a request never exceeds four breakpoints; a turn with ten or more parallel tool calls can then push the previous entry past the 20-block lookback and re-write the tail since the cut (bounded by the 10% block budget).
+- `packages/ai/src/api/pi-messages.ts`: strips `promptCacheBreakpoint` from assistant messages before sending, because the pi-messages wire carries `context.messages` as they are.
+
+### Why
+
+- `packages/ai/src/api/anthropic-messages.ts`: Anthropic finds earlier cache entries only within about 20 blocks before a breakpoint, and the breakpoints sat at the end of the conversation. A context-reduction step's request therefore read only the system prefix and re-wrote everything after it (400K-780K tokens per step on 1M windows in the reports). A checkpoint at the last message the frontier leaves unchanged lets the next step read that prefix.
+- `packages/ai/src/api/pi-messages.ts`: the pi-messages wire carries `context.messages` as they are, so a request-local hint must not leak onto it.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/anthropic-messages.ts`: breakpoint placement is the adapter's own request construction, after every extension payload hook.
+- `packages/ai/src/api/pi-messages.ts`: the adapter serializes the message list itself.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/api/anthropic-messages.ts`: `buildParams` (marker count, `toolCacheControl`, the `convertMessages` call), `convertMessages` (assistant branch, final checkpoint block) and the new `markAssistantMessageCacheCheckpoint`.
+- `packages/ai/src/api/pi-messages.ts`: the `context.messages` mapping in the request payload.
+
+## 2026-10-21 - usage.reasoning is left unset when the provider reports no reasoning count (senpi#3879)
+
+### What changed
+
+- `packages/ai/src/api/openai-completions.ts`: `usage.reasoning` is set only when `completion_tokens_details.reasoning_tokens` is a finite number (through `utils/reported-count.ts` `reportedCount`); absent, `null` or non-finite leaves it unset, and a reported 0 stays 0. It used to be `|| 0`.
+- `packages/ai/src/api/openai-responses-shared.ts`: `usage.reasoning` is set only when `output_tokens_details.reasoning_tokens` is a finite number (through `utils/reported-count.ts` `reportedCount`); absent, `null` or non-finite leaves it unset, and a reported 0 stays 0. It used to be `|| 0`.
+- `packages/ai/src/api/google-generative-ai.ts`: `usage.reasoning` is set only when `usageMetadata.thoughtsTokenCount` is a finite number (through `utils/reported-count.ts` `reportedCount`); absent, `null` or non-finite leaves it unset, and a reported 0 stays 0. It used to be `|| 0`.
+- `packages/ai/src/api/google-vertex.ts`: `usage.reasoning` is set only when `usageMetadata.thoughtsTokenCount` is a finite number (through `utils/reported-count.ts` `reportedCount`); absent, `null` or non-finite leaves it unset, and a reported 0 stays 0. It used to be `|| 0`.
+
+### Why
+
+- `packages/ai/src/api/openai-completions.ts`: `Usage.reasoning` is documented as "left undefined by providers that don't" expose a breakdown, but these adapters zero-filled it, so a client could not tell a reported zero from no data and showed "Reasoning 0" for providers that never report it (desktop #3729 review).
+- `packages/ai/src/api/openai-responses-shared.ts`: `Usage.reasoning` is documented as "left undefined by providers that don't" expose a breakdown, but these adapters zero-filled it, so a client could not tell a reported zero from no data and showed "Reasoning 0" for providers that never report it (desktop #3729 review).
+- `packages/ai/src/api/google-generative-ai.ts`: `Usage.reasoning` is documented as "left undefined by providers that don't" expose a breakdown, but these adapters zero-filled it, so a client could not tell a reported zero from no data and showed "Reasoning 0" for providers that never report it (desktop #3729 review).
+- `packages/ai/src/api/google-vertex.ts`: `Usage.reasoning` is documented as "left undefined by providers that don't" expose a breakdown, but these adapters zero-filled it, so a client could not tell a reported zero from no data and showed "Reasoning 0" for providers that never report it (desktop #3729 review).
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/openai-completions.ts`: usage parsing happens inside the adapter's stream before any extension sees the message.
+- `packages/ai/src/api/openai-responses-shared.ts`: usage parsing happens inside the adapter's stream before any extension sees the message.
+- `packages/ai/src/api/google-generative-ai.ts`: usage parsing happens inside the adapter's stream before any extension sees the message.
+- `packages/ai/src/api/google-vertex.ts`: usage parsing happens inside the adapter's stream before any extension sees the message.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/api/openai-completions.ts`, the `reasoning` line of the usage object.
+- LOW: `packages/ai/src/api/openai-responses-shared.ts`, the `reasoning` line of the usage object.
+- LOW: `packages/ai/src/api/google-generative-ai.ts`, the `reasoning` line of the usage object.
+- LOW: `packages/ai/src/api/google-vertex.ts`, the `reasoning` line of the usage object.
+
 ## 2026-10-21 - Responses cache affinity follows the stable prefix (omo#10775)
 
 ### What changed
