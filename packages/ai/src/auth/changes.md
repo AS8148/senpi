@@ -1,3 +1,24 @@
+## 2026-10-22 - Extract the credential-store read without behavior changes (senpi#3858)
+
+### What changed
+
+- `packages/ai/src/auth/credential-read.ts`: holds the unchanged `readCredential` store read and its `ModelsError` wrapping, moved from `resolve.ts`.
+- `packages/ai/src/auth/resolve.ts`: imports the moved read.
+- `scripts/check-entry-graphs.mjs`: the `./models` entry budget grows by this one leaf module.
+
+### Why
+
+- Isolates the store read that reference-object support extends, so the behavior edit lands in a focused module and `resolve.ts` stays within the size boundary.
+
+### Why an extension could not handle it
+
+- Provider auth resolution is a core auth internal.
+
+### Expected merge conflict zones
+
+- LOW: the `readCredential` import in `packages/ai/src/auth/resolve.ts`.
+- LOW: the `./models` budget comment in `scripts/check-entry-graphs.mjs`.
+
 ## 2026-10-09 - Restore auth-tracker coverage for upstream-modified paths (senpi#3006)
 
 ### What changed

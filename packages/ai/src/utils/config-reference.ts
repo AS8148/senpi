@@ -1,5 +1,8 @@
 import { type Static, Type } from "typebox";
 import { Compile } from "typebox/compile";
+import { ConfigReferenceError } from "./config-reference-error.ts";
+
+export { ConfigReferenceError, type ConfigReferenceReason } from "./config-reference-error.ts";
 
 const FileReferenceSchema = Type.Object({ $file: Type.String({ minLength: 1 }) }, { additionalProperties: false });
 const EnvReferenceSchema = Type.Object(
@@ -16,35 +19,6 @@ export const ConfigValueSchema = Type.Union([Type.String(), ConfigReferenceSchem
 export const NonemptyConfigValueSchema = Type.Union([Type.String({ minLength: 1 }), ConfigReferenceSchema]);
 export type ConfigReference = Static<typeof ConfigReferenceSchema>;
 export type ConfigValue = string | ConfigReference;
-
-export type ConfigReferenceReason =
-	| "malformed"
-	| "forbidden"
-	| "unset"
-	| "empty"
-	| "missing"
-	| "unreadable"
-	| "oversize"
-	| "invalid-utf8"
-	| "non-regular"
-	| "unsafe-owner"
-	| "unsafe-permissions"
-	| "changed";
-
-/** Contains the declaration, never resolved credential bytes. */
-export class ConfigReferenceError extends Error {
-	readonly field: string;
-	readonly reference: unknown;
-	readonly reason: ConfigReferenceReason;
-
-	constructor(field: string, reference: unknown, reason: ConfigReferenceReason) {
-		super(`${field}: configuration reference ${reason}`);
-		this.name = "ConfigReferenceError";
-		this.field = field;
-		this.reference = reference;
-		this.reason = reason;
-	}
-}
 
 const validateReference = Compile(ConfigReferenceSchema);
 

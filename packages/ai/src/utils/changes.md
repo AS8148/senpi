@@ -1,3 +1,22 @@
+## 2026-10-22 - Extract the configuration reference error without behavior changes (senpi#3858)
+
+### What changed
+
+- `packages/ai/src/utils/config-reference-error.ts`: holds the unchanged `ConfigReferenceError` and `ConfigReferenceReason`, moved from `config-reference.ts`.
+- `packages/ai/src/utils/config-reference.ts`: imports and re-exports them, so its public entry keeps the same API.
+
+### Why
+
+- Lets the auth resolution path raise the named error without loading the compiled reference schemas.
+
+### Why an extension could not handle it
+
+- The credential pool raises this error before extension processing.
+
+### Expected merge conflict zones
+
+- LOW: the import and re-export at the top of `packages/ai/src/utils/config-reference.ts`.
+
 ## 2026-10-21 - Shared configuration reference object grammar (senpi#3858)
 
 ### What changed
