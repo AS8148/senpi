@@ -168,7 +168,11 @@ it.each(["drain", "shutdown"] as const)("refuses reclaim during %s before admiss
 			durableSessionId: ref.durableSessionId,
 			expectedHostInstance: ref.expectedHostInstance,
 		});
-		expect(response).toMatchObject({ success: false, errorCode: "host_draining" });
+		expect(response).toMatchObject({
+			success: false,
+			errorCode: "session_busy_lifecycle",
+			errorData: { reason: "host_draining" },
+		});
 		expect(attachmentWireResponse.safeParse(response).success).toBe(true);
 		expect(entry).toMatchObject(before);
 		expect(

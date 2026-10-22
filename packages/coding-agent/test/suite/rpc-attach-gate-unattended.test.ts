@@ -13,8 +13,8 @@ const REFUSED = {
 
 const enforcing = { preload: 'process.env.SENPI_RPC_REQUIRE_ATTACH = "1";' };
 
-// senpi#3795 x senpi#3853: resume_session releases engine holds, so it is a mutation; an unattended
-// (attended:false) open only observes, so it never grants or takes away a write attachment.
+// senpi#3795: resume_session releases engine holds, so it is a mutation that requires attachment. Per
+// design v7.1 an open_session { attended: false } hold is an attachment like any other open.
 describe.each(["in-process", "worker"] as const)("attachment gate and unattended holds (%s)", (sessionRuntime) => {
 	it("refuses resume_session from an unattached connection and serves it to the attached one", async () => {
 		const host = await startWorkerHost(undefined, { socket: true, sessionRuntime, ...enforcing });
@@ -60,14 +60,13 @@ describe.each(["in-process", "worker"] as const)("attachment gate and unattended
 		}
 	}, 60_000);
 
-	it("keeps an unattended open out of the write attachments while still counting its lifetime", async () => {
+	it("counts an unattended open as an attachment of its connection (design v7.1)", async () => {
 		const host = await startWorkerHost(undefined, { socket: true, sessionRuntime, ...enforcing });
 		try {
 			const owner = await host.connect();
 			const observer = await host.connect();
 			const opened = await owner.request({ type: "open_session", cwd: host.cwd });
 			const sessionId = opened.data?.sessionId;
-			const durableSessionId = opened.data?.state?.sessionId;
 			const sessionPath = opened.data?.state?.sessionFile;
 			expect(
 				await observer.request({ type: "open_session", cwd: host.cwd, sessionPath, attended: false }),
@@ -75,38 +74,16 @@ describe.each(["in-process", "worker"] as const)("attachment gate and unattended
 			expect((await observer.request({ type: "list_sessions" })).data?.sessions).toEqual([
 				expect.objectContaining({ sessionId, attachments: 2 }),
 			]);
-			for (const mutation of [{ type: "resume_session" }, { type: "append_user_message", content: "held" }])
-				expect(await observer.request({ ...mutation, sessionId }), mutation.type).toMatchObject(REFUSED);
-			expect(await observer.request({ type: "get_state", sessionId })).toMatchObject({ success: true });
+			expect(await observer.request({ type: "append_user_message", sessionId, content: "attached" })).toMatchObject({
+				success: true,
+			});
+			expect(await observer.request({ type: "resume_session", sessionId })).toMatchObject({ success: true });
 			expect(await observer.request({ type: "close_session", sessionId })).toMatchObject({ success: true });
 			expect((await observer.request({ type: "list_sessions" })).data?.sessions).toEqual([
 				expect.objectContaining({ sessionId, attachments: 1 }),
 			]);
-			await observer.request({ type: "open_session", cwd: host.cwd, sessionPath, attended: false });
-			expect(await observer.request({ type: "attach_session", sessionId, durableSessionId })).toMatchObject({
-				success: true,
-			});
-			expect(await observer.request({ type: "resume_session", sessionId })).toMatchObject({ success: true });
-		} finally {
-			await host.dispose();
-		}
-	}, 60_000);
-
-	it("never releases the write attachment of a connection that also opened unattended", async () => {
-		const host = await startWorkerHost(undefined, { socket: true, sessionRuntime, ...enforcing });
-		try {
-			const owner = await host.connect();
-			const opened = await owner.request({ type: "open_session", cwd: host.cwd });
-			const sessionId = opened.data?.sessionId;
-			const sessionPath = opened.data?.state?.sessionFile;
-			expect(
-				await owner.request({ type: "open_session", cwd: host.cwd, sessionPath, attended: false }),
-			).toMatchObject({ success: true });
-			expect(await owner.request({ type: "close_session", sessionId })).toMatchObject({ success: true });
-			expect(
-				await owner.request({ type: "append_user_message", sessionId, content: "still attached" }),
-			).toMatchObject({ success: true });
-			expect(await owner.request({ type: "resume_session", sessionId })).toMatchObject({ success: true });
+			expect(await observer.request({ type: "resume_session", sessionId })).toMatchObject(REFUSED);
+			expect(host.stderrText()).not.toContain("(refused from the next release)");
 		} finally {
 			await host.dispose();
 		}

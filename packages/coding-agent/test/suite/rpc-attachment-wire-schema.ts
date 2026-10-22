@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-// Independent transcription of wire-contract-v1, not inferred from the host's TypeScript types.
+// Independent transcription of wire-contract-v1.1, not inferred from the host's TypeScript types.
 const hex32 = z.string().regex(/^[0-9a-f]{64}$/);
 const auth = z.strictObject({
 	launch_id: z.string().uuid(),
@@ -23,20 +23,23 @@ const refusal = (command: string, codes: readonly string[]) =>
 		errorData: z.record(z.string(), z.unknown()).optional(),
 	});
 
+// Host draining is not a code of its own: session_busy_lifecycle carries reason "host_draining".
+const draining = z.strictObject({ reason: z.literal("host_draining") });
+
 export const attachmentWireResponse = z.union([
 	success("attach_session", z.strictObject({ sessionId: z.string(), attached: z.literal(true) })),
 	refusal("attach_session", ["unknown_session", "session_identity_mismatch", "session_not_attached"]),
+	refusal("attach_session", ["session_busy_lifecycle"]).extend({ errorData: draining }),
 	success("release_attachment", z.strictObject({ deferred: z.boolean() })),
 	refusal("release_attachment", ["session_not_attached"]),
 	success("reclaim_session", z.strictObject({ reclaimed: z.literal(true), sessionId: z.string() })),
-	refusal("reclaim_session", [
-		"host_draining",
-		"unknown_session",
-		"session_identity_mismatch",
-		"session_busy_lifecycle",
-		"attached_elsewhere",
-		"session_not_attached",
-	]),
+	refusal("reclaim_session", ["unknown_session", "session_identity_mismatch", "session_not_attached"]),
+	refusal("reclaim_session", ["session_busy_lifecycle"]).extend({
+		errorData: z.union([draining, z.strictObject({})]).optional(),
+	}),
+	refusal("reclaim_session", ["attached_elsewhere"]).extend({
+		errorData: z.object({ attachments: z.number().int().positive() }).passthrough(),
+	}),
 	// release_session predates v1; v1 adds caller-aware admission, not a new success envelope.
 	success(
 		"release_session",

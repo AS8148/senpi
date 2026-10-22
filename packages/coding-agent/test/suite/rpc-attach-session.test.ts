@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { attachmentRig } from "./rpc-attachment-support.ts";
+import { attachmentWireResponse } from "./rpc-attachment-wire-schema.ts";
 import { startWorkerHost } from "./rpc-worker-host-support.ts";
 
 // senpi#3795: unlike open-by-path, a transient attach never creates a session or changes its profile.
@@ -71,4 +72,37 @@ it("preserves every launch profile field and publishes an attach", async () => {
 			lastChange: expect.objectContaining({ cause: "attach" }),
 		}),
 	);
+});
+
+// wire contract v1.1: attach_session is fenced like reclaim_session while the host drains or shuts down,
+// with the v1 code session_busy_lifecycle and errorData.reason "host_draining".
+it.each(["drain", "shutdown"] as const)("refuses attach during %s before admission", async (phase) => {
+	await using rig = await attachmentRig();
+	const ref = await rig.session();
+	const entry = rig.registry.peek(ref.sessionId);
+	const turn = rig.turns.get(ref.sessionPath);
+	if (!entry || !turn) throw new Error("Missing live session");
+	// A running turn keeps the drain from parking the session, so the handle is still live.
+	turn.start();
+	if (phase === "shutdown") rig.teardown.hold();
+	const shutdown = phase === "shutdown" ? rig.router.dispose() : undefined;
+	if (phase === "drain") rig.router.beginDrain();
+	const before = { state: entry.state, attachments: entry.attachments };
+	try {
+		const response = await rig.send("late", { id: "draining-attach", type: "attach_session", ...ref });
+		expect(response).toMatchObject({
+			success: false,
+			errorCode: "session_busy_lifecycle",
+			errorData: { reason: "host_draining" },
+		});
+		expect(attachmentWireResponse.safeParse(response).success).toBe(true);
+		expect(entry).toMatchObject(before);
+		expect(
+			await rig.send("late", { id: "no-late-hold", type: "release_attachment", sessionId: ref.sessionId }),
+		).toMatchObject({ success: false, errorCode: "session_not_attached" });
+	} finally {
+		turn.finish();
+		rig.teardown.release();
+		await shutdown;
+	}
 });

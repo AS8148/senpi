@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import { attachmentRig } from "./rpc-attachment-support.ts";
 import { attachmentWireResponse } from "./rpc-attachment-wire-schema.ts";
 
-it("validates every attachment and capability response against wire contract v1", async () => {
+it("validates every attachment and capability response against wire contract v1.1", async () => {
 	await using rig = await attachmentRig();
 	const ref = await rig.session();
 	const responses: unknown[] = [];
