@@ -1314,6 +1314,8 @@ export class AgentSession {
 	private readonly _supersededCompactionLogAttemptIds = new Set<string>();
 	/** Messages queued to be included with the next user prompt as context ("asides"). */
 	private _pendingNextTurnMessages: CustomMessage[] = [];
+	/** senpi#3864: delivery tickets this session opened itself, as opposed to a producer's own ticket. */
+	private readonly _engineDeliveryTickets = new Set<string>();
 	private _pendingCustomMessages: CustomMessage[] = [];
 	/** Deliveries from other sessions: admitted once into the queues below, tracked until their entry is written. */
 	readonly externalAdmission = new ExternalAdmission({
@@ -6338,11 +6340,15 @@ export class AgentSession {
 		// Normalize the legacy untyped content boundary before persisting a retry payload.
 		const deliveryMessage = { ...message, content: message.content ?? [] };
 		const deliveryId = deliveryIdOf({ ...deliveryMessage, role: "custom", timestamp: Date.now() });
-		const ticket =
-			options?.ticket ??
-			(this.isStreaming || options?.triggerTurn === true || options?.deliverAs === "nextTurn"
+		// A next-turn message waits for a person's turn, so it is never work the engine owes.
+		const engineTicket =
+			options?.ticket === undefined &&
+			options?.deliverAs !== "nextTurn" &&
+			(this.isStreaming || options?.triggerTurn === true)
 				? obligations.open(`delivery:${message.customType}:${deliveryId ?? randomUUID()}`, "background").ticket()
-				: undefined);
+				: undefined;
+		if (engineTicket) this._engineDeliveryTickets.add(engineTicket);
+		const ticket = options?.ticket ?? engineTicket;
 		const generation = this._userAbortGeneration;
 		if (ticket && !obligations.queue(ticket, { message: deliveryMessage, deliverAs: options?.deliverAs })) {
 			deferredTurnClaim?.resolve("finished-without-start");
@@ -6375,6 +6381,30 @@ export class AgentSession {
 			throw error;
 		} finally {
 			if (ticket) obligations.endDelivery(ticket);
+		}
+	}
+
+	private _queuedDeliveryTickets(): string[] {
+		return this.agent
+			.peekQueuedMessages({ all: true })
+			.flatMap((queued) => {
+				const ticket = queued.role === "custom" ? messageTicket(queued) : undefined;
+				return ticket === undefined ? [] : [ticket];
+			});
+	}
+
+	/**
+	 * senpi#3864: a queued delivery that leaves the queue unconsumed is no longer work the engine owes. A cleared
+	 * one is cancelled (a producer keeps its own ticket open without the payload); one an abort left queued waits
+	 * for a person's turn, so its engine ticket turns passive.
+	 */
+	private _releaseQueuedDeliveries(tickets: readonly string[], cause: "cleared" | "aborted"): void {
+		for (const ticket of tickets) {
+			const engineOwned = this._engineDeliveryTickets.delete(ticket);
+			if (cause === "cleared") {
+				if (engineOwned) this.workObligations.cancel(ticket);
+				else this.workObligations.retire(ticket);
+			} else if (engineOwned) this.workObligations.passive(ticket);
 		}
 	}
 
@@ -7129,7 +7159,9 @@ export class AgentSession {
 		this._queueClearRecorded = recorded;
 		this._postCompactionDeferredSteeringMessages = [];
 		this._postCompactionDeferredFollowUpMessages = [];
+		const clearedDeliveries = this._queuedDeliveryTickets();
 		this.agent.clearAllQueues();
+		this._releaseQueuedDeliveries(clearedDeliveries, "cleared");
 		this.externalAdmission.dropQueued();
 		this._emitQueueUpdate();
 		const cleared = { steering, followUp } as ClearedQueue;
@@ -7215,6 +7247,14 @@ export class AgentSession {
 		if (hasPendingTriggerTurnAdmission) this._recordUserAbort();
 		if (this._isBeforeSettle) this._abortDuringBeforeSettle = true;
 		await this._abortActiveAgentAndRetry("user");
+		const releaseStranded = () => this._releaseQueuedDeliveries(this._queuedDeliveryTickets(), "aborted");
+		if (this.isIdle) releaseStranded();
+		else
+			this.waitForIdle().then(releaseStranded, (error: unknown) => {
+				this._sessionLogger.warn("abort_delivery_release_failed", {
+					error: error instanceof Error ? error.message : String(error),
+				});
+			});
 		// An Esc that joined an open agent_end boundary returns at once: a boundary handler that holds the run is still
 		// released after the grace (senpi#3650), without making abort() itself wait for it.
 		if (!this.isIdle) {

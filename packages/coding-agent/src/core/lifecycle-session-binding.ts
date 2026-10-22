@@ -211,6 +211,7 @@ export class LifecycleSessionBinding {
 			this.recordInterruptedTools(transcript?.id ?? record.transcriptEntryId);
 		}
 		this.restored = true;
+		this.controller.obligations.retireRestoredSources();
 		this.controller.restoreComplete();
 		for (const record of this.controller.obligations.active) {
 			if (record.state !== "queued" || !record.payload || !record.ticketId) continue;

@@ -113,7 +113,8 @@ The shared `SessionLifecycle` type is exported by `@code-yeongyu/senpi`:
   and `interrupted_run`; attention remains visible even when a hold wins precedence.
 - Optional `holds`: `{ kind, since }[]` from the shared hold ledger, where `kind` is
   `session_hold`, `inherited_hold`, `run_fence`, or `unattended`.
-- On a sealed epoch, `completionId` is `<rootSessionId>:<epoch>`. A `done` also carries
+- On a sealed epoch, `completionId` is `<sessionId>:<epoch>`, the session's own id (for a root
+  this equals `rootSessionId`), so a child's terminal never shares its root's id. A `done` also carries
   `completion: { kind: "goal" | "run" | "agent" | "reply", at, goalId?, runId? }`.
   A `failed` carries `failure: { reason, message?, retryAtMs?, taskId?, runEpoch? }`,
   with reason `provider_error`, `tool_error`, `task_error`, `lost`, or `interrupted`.
