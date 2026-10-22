@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { copyFile, mkdir, readdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { normalizePath, resolvePath } from "../../utils/paths.ts";
 import {
@@ -6,9 +6,10 @@ import {
 	type RepositoryIdentity,
 	readRepositoryIdentity,
 } from "../repository-identity.ts";
-import { getDefaultSessionDir, loadEntriesFromFile, SessionManager } from "../session-manager.ts";
+import { getDefaultSessionDir, loadEntriesFromFileAsync, SessionManager } from "../session-manager.ts";
 import { rebindSessionFile } from "../session-rebind.ts";
 import { encodedSessionId } from "../session-sidecar-store.ts";
+import { pathExists } from "../tools/path-utils.ts";
 import { MoveBundleInvalidError, type MoveManifest, readManifest, verifyBundle } from "./bundle.ts";
 import { MoveFencedError, type MoveLedger, type MoveStatus } from "./move-ledger.ts";
 import { headerSessionId, type MoveId, SESSION_MOVED_IN, sessionOwnership } from "./ownership.ts";
@@ -46,8 +47,8 @@ export class MoveTargetOccupiedError extends Error {
 	}
 }
 
-const movedInFor = (file: string, moveId: MoveId): boolean =>
-	loadEntriesFromFile(file).some(
+const movedInFor = async (file: string, moveId: MoveId): Promise<boolean> =>
+	(await loadEntriesFromFileAsync(file)).some(
 		(entry) =>
 			entry.type === "custom" &&
 			entry.customType === SESSION_MOVED_IN &&
@@ -55,12 +56,13 @@ const movedInFor = (file: string, moveId: MoveId): boolean =>
 	);
 
 /** The sender's question, answered with the session file as the authority: a committed import is accepted. */
-export function answerMoveStatus(
+export async function answerMoveStatus(
 	ledger: MoveLedger,
 	moveId: MoveId,
 	sessionFile: string | undefined,
 ): Promise<MoveStatus> {
-	const movedIn = sessionFile !== undefined && existsSync(sessionFile) && movedInFor(sessionFile, moveId);
+	const movedIn =
+		sessionFile !== undefined && (await pathExists(sessionFile)) && (await movedInFor(sessionFile, moveId));
 	return ledger.answerStatus(moveId, { movedIn });
 }
 
@@ -78,7 +80,7 @@ export async function importMovedSession(
 	const targetCwd = resolvePath(options.targetCwd);
 	const sessionDir = options.sessionDir ? normalizePath(options.sessionDir) : getDefaultSessionDir(targetCwd);
 	const target = join(sessionDir, manifest.sessionFileName);
-	if (existsSync(target) && movedInFor(target, manifest.moveId)) {
+	if ((await pathExists(target)) && (await movedInFor(target, manifest.moveId))) {
 		// The rename already committed; a crash may have lost the ledger write, and the file is the authority.
 		await options.ledger.commit(manifest.moveId, () => undefined);
 		return { sessionFile: target };
@@ -98,11 +100,11 @@ export async function importMovedSession(
 	const staging = join(sessionDir, ".move-staging", encodeURIComponent(manifest.moveId));
 	try {
 		const staged = await stage(options.bundleDir, manifest, staging, options.from ?? "");
-		const sessionFile = await options.ledger.commit(manifest.moveId, () => {
-			replacePredecessor(target, manifest.sessionId, sessionDir);
+		const sessionFile = await options.ledger.commit(manifest.moveId, async () => {
+			await replacePredecessor(target, manifest.sessionId, sessionDir);
 			return rebindSessionFile(staged, targetCwd, sessionDir);
 		});
-		rmSync(staging, { recursive: true, force: true });
+		await rm(staging, { recursive: true, force: true });
 		return { sessionFile };
 	} catch (error) {
 		if (!(error instanceof MoveFencedError)) await options.ledger.fail(manifest.moveId, "import_failed");
@@ -115,33 +117,33 @@ export async function importMovedSession(
  * It is removed before the rename: if the rename then fails, the move is recorded `import_failed`, the sender takes
  * the session back, and nothing writable was lost here (the removed copy could not be written).
  */
-function replacePredecessor(target: string, sessionId: string, sessionDir: string): void {
-	if (!existsSync(target)) return;
-	const entries = loadEntriesFromFile(target);
+async function replacePredecessor(target: string, sessionId: string, sessionDir: string): Promise<void> {
+	if (!(await pathExists(target))) return;
+	const entries = await loadEntriesFromFileAsync(target);
 	if (headerSessionId(entries) !== sessionId || sessionOwnership(entries).writable) {
 		throw new MoveTargetOccupiedError(target);
 	}
 	const extensions = join(sessionDir, "extensions");
-	if (existsSync(extensions)) {
-		for (const extension of readdirSync(extensions, { withFileTypes: true })) {
+	if (await pathExists(extensions)) {
+		for (const extension of await readdir(extensions, { withFileTypes: true })) {
 			if (extension.isDirectory())
-				rmSync(join(extensions, extension.name, `${encodedSessionId(sessionId)}.json`), { force: true });
+				await rm(join(extensions, extension.name, `${encodedSessionId(sessionId)}.json`), { force: true });
 		}
 	}
-	rmSync(join(sessionDir, "resident-blobs", sessionId), { recursive: true, force: true });
-	rmSync(target, { force: true });
+	await rm(join(sessionDir, "resident-blobs", sessionId), { recursive: true, force: true });
+	await rm(target, { force: true });
 }
 
 async function stage(bundleDir: string, manifest: MoveManifest, staging: string, from: string): Promise<string> {
 	const file = join(staging, manifest.sessionFileName);
-	if (!(existsSync(file) && movedInFor(file, manifest.moveId))) {
-		rmSync(staging, { recursive: true, force: true });
+	if (!((await pathExists(file)) && (await movedInFor(file, manifest.moveId)))) {
+		await rm(staging, { recursive: true, force: true });
 		for (const item of [manifest.session, ...manifest.sidecars]) {
 			const to = item === manifest.session ? file : join(staging, item.path.replace(/^files\//, ""));
-			mkdirSync(dirname(to), { recursive: true });
-			copyFileSync(join(bundleDir, item.path), to);
+			await mkdir(dirname(to), { recursive: true });
+			await copyFile(join(bundleDir, item.path), to);
 		}
-		SessionManager.open(file, staging).appendCustomEntry(SESSION_MOVED_IN, {
+		(await SessionManager.openAsync(file, staging)).appendCustomEntry(SESSION_MOVED_IN, {
 			move_id: manifest.moveId,
 			session_id: manifest.sessionId,
 			from,

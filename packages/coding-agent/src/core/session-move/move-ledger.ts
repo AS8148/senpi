@@ -1,5 +1,4 @@
-import { mkdirSync } from "node:fs";
-import { readFile, rename as renameFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename as renameFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import lockfile from "proper-lockfile";
 import {
@@ -218,7 +217,7 @@ export class MoveLedger {
 	private locked<T>(moveId: MoveId, fn: () => T | Promise<T>): Promise<T> {
 		const file = this.path(moveId);
 		return serializeByKey(file, async () => {
-			mkdirSync(this.dir, { recursive: true });
+			await mkdir(this.dir, { recursive: true });
 			const release = await acquire(file);
 			try {
 				return await fn();

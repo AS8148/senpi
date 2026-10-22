@@ -1,0 +1,59 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { beforeAll, describe, expect, it } from "vitest";
+import { auditSessionPath, movePathFiles, type SessionPathFinding } from "./session-path-audit.ts";
+
+/**
+ * A move streams whole session files, bundles and resident blobs, so none of the move feature's own code may hold the
+ * shared host's event loop: every synchronous fs, crypto or zlib call in it fails here, and the session-path ledger
+ * may not excuse one (senpi#3676).
+ */
+const packageRoot = resolve(import.meta.dirname, "../..");
+const fixture = resolve(import.meta.dirname, "fixtures/move-path-sync-fixture.ts");
+const ledger: { readonly blocking: readonly { file: string }[]; readonly syncFs: readonly { file: string }[] } =
+	JSON.parse(readFileSync(resolve(import.meta.dirname, "no-sync-in-session-path.ledger.json"), "utf-8"));
+
+const describeFinding = (finding: SessionPathFinding): string =>
+	`${finding.file}:${finding.lines.join(",")} ${finding.api} in ${finding.symbol}`;
+
+describe("no synchronous I/O on the move path", () => {
+	let findings: readonly SessionPathFinding[];
+	const ownFiles = new Set(movePathFiles(packageRoot));
+
+	beforeAll(() => {
+		findings = auditSessionPath({ packageRoot, roots: movePathFiles(packageRoot), extraRoots: [fixture] });
+	}, 180_000);
+
+	it("flags sync calls the three-name list missed, under aliased, named and namespace imports", () => {
+		// Given the fixture seeded as an extra root
+		// When its findings are picked out
+		const found = findings
+			.filter((finding) => finding.file.endsWith("move-path-sync-fixture.ts"))
+			.map((finding) => `${finding.kind} ${finding.api} in ${finding.symbol}`)
+			.sort();
+		// Then every call is reported, resolved through its import form
+		expect(found).toEqual([
+			"sync-fs copyInPlace in fixtureCopyBundle",
+			"sync-fs fs.cpSync in fixtureCopyTree",
+			"sync-fs openSync in fixtureReadHeader",
+			"sync-fs readSync in fixtureReadHeader",
+			"sync-fs zlib.gzipSync in fixtureCompress",
+		]);
+	});
+
+	it("finds no synchronous I/O in the move feature's own files", () => {
+		// Given the call graph rooted at the move commands and modules
+		// When the findings inside those files are listed
+		const own = findings.filter((finding) => ownFiles.has(finding.file)).map(describeFinding);
+		// Then there are none
+		expect(own).toEqual([]);
+	});
+
+	it("lets no ledger entry excuse a move-path file", () => {
+		// Given the session-path ledger
+		// When its entries are matched against the move feature's files
+		const excused = [...ledger.blocking, ...ledger.syncFs].filter((entry) => ownFiles.has(entry.file));
+		// Then none is excused
+		expect(excused).toEqual([]);
+	});
+});

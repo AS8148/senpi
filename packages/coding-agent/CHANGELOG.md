@@ -14,6 +14,7 @@
 
 ### Fixed
 
+- A session move on a shared RPC host no longer blocks every other session while it copies, removes or scans the session: export, finish, import and the rebind an import commits through read the session, copy it and its resident blobs, and clean up bundles with asynchronous I/O, and the rebind reads only the header line where only the header is needed ([#3676](https://github.com/code-yeongyu/senpi/issues/3676)).
 - An answer to a question that arrives while a session is starting up now counts as your input, so it releases held background work like any other answer ([#3917](https://github.com/code-yeongyu/senpi/issues/3917)).
 - Responses prompt-cache keys now follow the stable prefix across sessions and task children, including remote compaction. Session routing stays separate from cache affinity ([omo#10775](https://github.com/code-yeongyu/oh-my-openagent/issues/10775)).
 - Discovered extension handlers register in filename order rather than filesystem enumeration order, keeping their prompt contributions reproducible ([omo#10775](https://github.com/code-yeongyu/oh-my-openagent/issues/10775)).

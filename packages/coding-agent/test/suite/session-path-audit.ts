@@ -23,12 +23,23 @@ export const SESSION_PATH_ROOT_FILES = [
 /** Root directory expanded to all of its `.ts` sources. */
 export const SESSION_PATH_ROOT_DIRECTORY = "src/core/tools";
 
+/**
+ * The move feature's own code: every module under `src/core/session-move`, the RPC `move_session` commands and the
+ * rebind an import commits through. Nothing in these files may call synchronous I/O, and no ledger entry may name one.
+ */
+export const MOVE_PATH_DIRECTORY = "src/core/session-move";
+export const MOVE_PATH_EXTRA_FILES = ["src/modes/rpc/session-move-commands.ts", "src/core/session-rebind.ts"] as const;
+
 /** Blocking primitives written as a bare or member call: `spawnSync(...)`, `cp.spawnSync(...)`. */
 const BLOCKING_CALLEES = new Set(["execSync", "execFileSync", "spawnSync"]);
 /** Blocking primitives that only exist in qualified form. */
 const QUALIFIED_BLOCKING_CALLEES = new Set(["Atomics.wait", "Bun.spawnSync", "Bun.sleepSync"]);
-/** Synchronous filesystem calls: reported against a ledger, never banned outright. */
-const SYNC_FS_CALLEES = new Set(["readFileSync", "writeFileSync", "appendFileSync"]);
+/**
+ * Synchronous I/O: every `*Sync` export of these modules (`openSync`, `readSync`, `copyFileSync`, `cpSync`,
+ * `rmSync`, `scryptSync`, `gzipSync`, ...), however it is imported - named, aliased, default or namespace - because
+ * the checker resolves the callee back to its declaration in the module. Reported against a ledger, never banned.
+ */
+const SYNC_IO_MODULES = new Set(["fs", "node:fs", "crypto", "node:crypto", "zlib", "node:zlib"]);
 
 export type SessionPathFindingKind = "blocking" | "sync-fs";
 
@@ -39,6 +50,8 @@ export interface SessionPathFinding {
 	readonly file: string;
 	/** The call as written (`spawnSync`, `Atomics.wait`, `fs.readFileSync`). */
 	readonly api: string;
+	/** The declared name behind it, through any import alias (`copyInPlace` -> `copyFileSync`). */
+	readonly callee: string;
 	/** Enclosing function, method or `<module>` for top-level code. */
 	readonly symbol: string;
 	readonly count: number;
@@ -50,6 +63,8 @@ export interface SessionPathAuditOptions {
 	readonly packageRoot: string;
 	/** Extra call-graph roots. The audit's own can-fail proof seeds a fixture through this. */
 	readonly extraRoots?: readonly string[];
+	/** Replaces the session-path roots, so one sub-path (the move path) can be audited on its own. */
+	readonly roots?: readonly string[];
 }
 
 type FunctionLike =
@@ -81,6 +96,17 @@ function collectTypeScriptSources(directory: string): string[] {
 		else if (entry.endsWith(".ts") && !entry.endsWith(".d.ts")) found.push(full);
 	}
 	return found;
+}
+
+/** Package-relative move-path files, POSIX separators. */
+export function movePathFiles(packageRoot: string): string[] {
+	const root = resolve(packageRoot);
+	return [
+		...collectTypeScriptSources(resolve(root, MOVE_PATH_DIRECTORY)).map((file) =>
+			relative(root, file).split("\\").join("/"),
+		),
+		...MOVE_PATH_EXTRA_FILES,
+	];
 }
 
 export function sessionPathRoots(packageRoot: string): string[] {
@@ -205,17 +231,27 @@ function classify(
 	checker: ts.TypeChecker,
 	call: ts.CallExpression,
 	sources: ReadonlySet<string>,
-): { kind: SessionPathFindingKind; api: string } | undefined {
+): { kind: SessionPathFindingKind; api: string; callee: string } | undefined {
 	const callee = call.expression;
 	if (!ts.isIdentifier(callee) && !ts.isPropertyAccessExpression(callee)) return undefined;
 	const written = callee.getText();
-	if (QUALIFIED_BLOCKING_CALLEES.has(written)) return { kind: "blocking", api: written };
+	if (QUALIFIED_BLOCKING_CALLEES.has(written)) return { kind: "blocking", api: written, callee: written };
 	const declarations = declarationsOf(checker, callee);
 	if (declarations.some((declaration) => sources.has(resolve(declaration.getSourceFile().fileName)))) return undefined;
 	const name = symbolName(checker, callee) ?? (ts.isPropertyAccessExpression(callee) ? callee.name.text : written);
-	if (BLOCKING_CALLEES.has(name)) return { kind: "blocking", api: written };
-	if (SYNC_FS_CALLEES.has(name)) return { kind: "sync-fs", api: written };
+	if (BLOCKING_CALLEES.has(name)) return { kind: "blocking", api: written, callee: name };
+	if (name.endsWith("Sync") && declarations.some(declaredInSyncIoModule))
+		return { kind: "sync-fs", api: written, callee: name };
 	return undefined;
+}
+
+/** Whether a declaration sits inside `declare module "fs"` (or another module in `SYNC_IO_MODULES`). */
+function declaredInSyncIoModule(declaration: ts.Declaration): boolean {
+	for (let current: ts.Node | undefined = declaration; current; current = current.parent) {
+		if (ts.isModuleDeclaration(current) && ts.isStringLiteral(current.name))
+			return SYNC_IO_MODULES.has(current.name.text);
+	}
+	return false;
 }
 
 /** Declared name behind an import alias (`spawnSync as nodeSpawnSync` -> `spawnSync`). */
@@ -232,7 +268,10 @@ function symbolName(checker: ts.TypeChecker, callee: ts.Expression): string | un
  */
 export function auditSessionPath(options: SessionPathAuditOptions): readonly SessionPathFinding[] {
 	const packageRoot = resolve(options.packageRoot);
-	const roots = [...sessionPathRoots(packageRoot), ...(options.extraRoots ?? []).map((root) => resolve(root))];
+	const roots = [
+		...(options.roots ?? sessionPathRoots(packageRoot)).map((root) => resolve(packageRoot, root)),
+		...(options.extraRoots ?? []).map((root) => resolve(root)),
+	];
 	const program = createProgram(packageRoot, roots);
 	const checker = program.getTypeChecker();
 	const sources = new Set(
@@ -259,7 +298,7 @@ export function auditSessionPath(options: SessionPathAuditOptions): readonly Ses
 			}
 			grouped.set(key, {
 				lines: [line],
-				finding: { kind: classified.kind, file, api: classified.api, symbol, count: 0, lines: [] },
+				finding: { ...classified, file, symbol, count: 0, lines: [] },
 			});
 		}
 	}

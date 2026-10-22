@@ -12,8 +12,11 @@ import { auditSessionPath, findingKey, type SessionPathFinding } from "./session
  * - blocking primitives (`execSync`, `execFileSync`, `spawnSync`, `Bun.spawnSync`,
  *   `Bun.sleepSync`, `Atomics.wait`) FAIL unless the ledger already records that exact
  *   call site with the reason it is still there;
- * - synchronous filesystem calls are REPORTED against the ledger: a new call site or an
- *   extra call in a ledgered function fails, removing one never does.
+ * - whole-file synchronous reads and writes (`readFileSync`, `writeFileSync`, `appendFileSync`,
+ *   resolved through any import alias) are REPORTED against the ledger: a new call site or an
+ *   extra call in a ledgered function fails, removing one never does. The audit finds every
+ *   other `*Sync` fs/crypto/zlib call too; the move path is held to that whole class with no
+ *   ledger at all in `no-sync-on-move-path.test.ts`.
  *
  * Until the credential and footer probes go async, the unledgered blocking set is
  * `src/core/resolve-config-value.ts` and `src/core/footer-data-provider.ts`, so this
@@ -43,6 +46,12 @@ function describeFinding(finding: SessionPathFinding): string {
 	return `${finding.file}:${finding.lines.join(",")} ${finding.api} in ${finding.symbol} (x${finding.count})`;
 }
 
+/** The sync calls this ledger tracks across the whole session path, by declared name. */
+const LEDGERED_SYNC_APIS = new Set(["readFileSync", "writeFileSync", "appendFileSync"]);
+
+const ledgeredKind = (finding: SessionPathFinding): boolean =>
+	finding.kind === "blocking" || LEDGERED_SYNC_APIS.has(finding.callee);
+
 /** Call sites the ledger does not already cover, by count. */
 function unledgered(
 	findings: readonly SessionPathFinding[],
@@ -51,7 +60,10 @@ function unledgered(
 ): string[] {
 	const allowed = new Map(baseline.map((entry) => [findingKey(entry), entry.count]));
 	return findings
-		.filter((finding) => finding.kind === kind && finding.count > (allowed.get(findingKey(finding)) ?? 0))
+		.filter(
+			(finding) =>
+				finding.kind === kind && ledgeredKind(finding) && finding.count > (allowed.get(findingKey(finding)) ?? 0),
+		)
 		.map(describeFinding);
 }
 

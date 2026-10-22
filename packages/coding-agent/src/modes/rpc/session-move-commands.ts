@@ -4,7 +4,7 @@
  * outgoing bundles and the session folder for a working directory) and maps refusals to wire codes.
  */
 import { isAbsolute, join } from "node:path";
-import { getDefaultSessionDir, loadEntriesFromFile } from "../../core/session-manager.ts";
+import { getDefaultSessionDir, loadEntriesFromFileAsync } from "../../core/session-manager.ts";
 import { parseMoveId } from "../../core/session-move/bundle.ts";
 import { exportSessionForMove } from "../../core/session-move/export.ts";
 import { finishMove } from "../../core/session-move/finish.ts";
@@ -146,7 +146,7 @@ async function run(
 		case "status":
 			return answerMoveStatus(ledger, parsed.moveId, parsed.sessionPath);
 		case "export": {
-			const sessionFile = realSessionPath(parsed.sessionPath);
+			const sessionFile = await realSessionPath(parsed.sessionPath);
 			const bundleDir = outgoing(parsed.moveId);
 			const manifest = await exportSessionForMove({
 				sessionFile,
@@ -154,13 +154,13 @@ async function run(
 				target: parsed.target,
 				droppedUserMessages: parsed.dropped,
 				bundleDir,
-				guard: () => {
-					refuseOpenHere(
+				guard: async () => {
+					await refuseOpenHere(
 						port,
 						sessionFile,
 						"This session is open on this host. Release it with release_session reason move and this moveId first.",
 					);
-					refuseUnlessSealedFor(sessionFile, parsed.moveId);
+					await refuseUnlessSealedFor(sessionFile, parsed.moveId);
 				},
 				// Again inside the cross-process lock: a finish from another generation may have reclaimed it meanwhile.
 				lockedGuard: () => refuseUnlessSealedFor(sessionFile, parsed.moveId),
@@ -182,13 +182,13 @@ async function run(
 				sessionDir,
 				from: parsed.from,
 			});
-			const sessionId = headerSessionId(loadEntriesFromFile(sessionFile));
+			const sessionId = headerSessionId(await loadEntriesFromFileAsync(sessionFile));
 			if (sessionId === undefined)
 				throw new Error(`The imported session at ${sessionFile} has no id in its header.`);
 			return { session_id: sessionId, session_path: sessionFile };
 		}
 		case "finish": {
-			const sessionFile = realSessionPath(parsed.sessionPath);
+			const sessionFile = await realSessionPath(parsed.sessionPath);
 			await finishMove({
 				sessionFile,
 				bundleDir: outgoing(parsed.moveId),
@@ -201,7 +201,7 @@ async function run(
 						"This session is open on this host, so its runtime would not see the move end. Close it here, then finish the move.",
 					),
 			});
-			const ownership = sessionOwnership(loadEntriesFromFile(sessionFile));
+			const ownership = sessionOwnership(await loadEntriesFromFileAsync(sessionFile));
 			return { ownership: ownership.writable ? "writable" : ownership.state };
 		}
 	}
@@ -216,8 +216,8 @@ class MoveRefusal extends Error {
 	}
 }
 
-function refuseUnlessSealedFor(sessionFile: string, moveId: MoveId): void {
-	const ownership = sessionOwnership(loadEntriesFromFile(sessionFile));
+async function refuseUnlessSealedFor(sessionFile: string, moveId: MoveId): Promise<void> {
+	const ownership = sessionOwnership(await loadEntriesFromFileAsync(sessionFile));
 	if (ownership.writable || ownership.state !== "moving" || ownership.moveId !== moveId)
 		throw new MoveRefusal(
 			RPC_ERROR_MOVE_NOT_RELEASED,
@@ -225,9 +225,9 @@ function refuseUnlessSealedFor(sessionFile: string, moveId: MoveId): void {
 		);
 }
 
-function refuseOpenHere(port: MoveSessionPort, sessionFile: string, detail: string): void {
-	if (port.hostedPaths().some((path) => realSessionPath(path) === sessionFile))
-		throw new MoveRefusal(RPC_ERROR_SESSION_OPEN_HERE, detail);
+async function refuseOpenHere(port: MoveSessionPort, sessionFile: string, detail: string): Promise<void> {
+	const hosted = await Promise.all(port.hostedPaths().map((path) => realSessionPath(path)));
+	if (hosted.includes(sessionFile)) throw new MoveRefusal(RPC_ERROR_SESSION_OPEN_HERE, detail);
 }
 
 function answer(id: string | undefined, data: Awaited<ReturnType<typeof run>>): RpcResponse {
