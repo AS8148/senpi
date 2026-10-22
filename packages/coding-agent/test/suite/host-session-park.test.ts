@@ -63,7 +63,16 @@ describe("host session references across a park", () => {
 			).toMatchObject({ exitCode: 0 });
 			await parked;
 
-			const unloaded = await runHostSessionRequest({ action: "unload", target, ref: sessionPath });
+			// The CLI's defaults for a bare `senpi host session unload <ref>`.
+			const unloaded = await runHostSessionRequest({
+				action: "unload",
+				target,
+				ref: sessionPath,
+				interrupt: false,
+				force: false,
+				clearQueue: false,
+				children: "refuse",
+			});
 			expect(unloaded, JSON.stringify(unloaded.payload)).toMatchObject({
 				exitCode: 0,
 				payload: { action: "unload", outcome: "unloaded" },
