@@ -9,9 +9,12 @@ import { SessionMovedAwayError } from "../../src/core/session-move/ownership.ts"
 import { createInProcessRig } from "./rpc-inprocess-host-support.ts";
 import { customTypes, devices, importedOnB, move } from "./rpc-move-session-support.ts";
 
-const lastData = (file: string) =>
-	(JSON.parse(readFileSync(file, "utf8").trim().split("\n").at(-1) ?? "{}") as { data?: Record<string, unknown> })
-		.data;
+const reclaimedData = (file: string) =>
+	readFileSync(file, "utf8")
+		.trim()
+		.split("\n")
+		.map((line) => JSON.parse(line) as { customType?: string; data?: Record<string, unknown> })
+		.find((entry) => entry.customType === "session_reclaimed")?.data;
 
 describe("move_session finish with a revoked answer (senpi#4003)", () => {
 	it("#given the sender is still sealed for the move #when it finishes with accepted + revoked #then it reclaims the session writable, never moved", async () => {
@@ -27,7 +30,7 @@ describe("move_session finish with a revoked answer (senpi#4003)", () => {
 			await move(a, { op: "finish", sessionPath: fixture.sessionPath, moveId: "move-f1", answer }),
 		).toMatchObject({ success: true, data: { ownership: "writable" } });
 		expect(customTypes(fixture.sessionPath)).toEqual(["session_released", "session_reclaimed"]);
-		expect(lastData(fixture.sessionPath)).toMatchObject({ move_id: "move-f1", reason: "revoked" });
+		expect(reclaimedData(fixture.sessionPath)).toMatchObject({ move_id: "move-f1", reason: "revoked" });
 		expect(readFileSync(fixture.sessionPath, "utf8")).toContain("keep me");
 		expect(() =>
 			SessionManager.open(fixture.sessionPath).appendMessage({ role: "user", content: "mine", timestamp: 9 }),

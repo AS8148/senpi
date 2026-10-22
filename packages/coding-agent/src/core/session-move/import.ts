@@ -18,7 +18,7 @@ import {
 	verifyBundle,
 } from "./bundle.ts";
 import { EXTENSION_STATE_PAYLOAD, movedStateDir } from "./extension-state.ts";
-import { MoveFencedError, type MoveLedger, type MoveStatus } from "./move-ledger.ts";
+import { type MoveAnswer, MoveFencedError, type MoveLedger } from "./move-ledger.ts";
 import { headerSessionId, type MoveId, SESSION_MOVED, SESSION_MOVED_IN, sessionOwnership } from "./ownership.ts";
 import { requeueInput } from "./requeue.ts";
 import { REVOKED } from "./revoke.ts";
@@ -63,9 +63,6 @@ const movedInFor = (file: string, moveId: MoveId): boolean =>
 			(entry.data as { move_id?: unknown } | undefined)?.move_id === moveId,
 	);
 
-/** A status answer; `revoked` marks an accepted import this device later sealed with `revoke`. */
-export type MoveStatusAnswer = MoveStatus | { readonly state: "accepted"; readonly revoked: true };
-
 /** What the session file records for the move: nothing, its import, or its import and then a revoke. */
 function importOutcome(file: string, moveId: MoveId): "absent" | "moved_in" | "revoked" {
 	let outcome: "absent" | "moved_in" | "revoked" = "absent";
@@ -88,7 +85,7 @@ export async function answerMoveStatus(
 	ledger: MoveLedger,
 	moveId: MoveId,
 	sessionFile: string | undefined,
-): Promise<MoveStatusAnswer> {
+): Promise<MoveAnswer> {
 	const outcome = sessionFile !== undefined && existsSync(sessionFile) ? importOutcome(sessionFile, moveId) : "absent";
 	const status = await ledger.answerStatus(moveId, { movedIn: outcome !== "absent" });
 	return outcome === "revoked" && status.state === "accepted" ? { state: "accepted", revoked: true } : status;

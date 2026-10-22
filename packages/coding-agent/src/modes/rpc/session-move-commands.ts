@@ -10,7 +10,7 @@ import { exportSessionForMove } from "../../core/session-move/export.ts";
 import { sealedOutgoingStateDir } from "../../core/session-move/extension-state.ts";
 import { finishMove } from "../../core/session-move/finish.ts";
 import { answerMoveStatus, importMovedSession } from "../../core/session-move/import.ts";
-import { MoveLedger, type MoveRecord, type MoveStatus, parseMoveStatus } from "../../core/session-move/move-ledger.ts";
+import { type MoveAnswer, MoveLedger, type MoveRecord, parseMoveStatus } from "../../core/session-move/move-ledger.ts";
 import { headerSessionId, type MoveId, sessionOwnership } from "../../core/session-move/ownership.ts";
 import { revokeImportedMove } from "../../core/session-move/revoke.ts";
 import { realSessionPath } from "../../core/session-move/session-lock.ts";
@@ -56,7 +56,7 @@ type Parsed =
 			readonly dropped: readonly string[];
 	  }
 	| { readonly op: "import"; readonly bundleDir: string; readonly cwd: string; readonly from: string }
-	| { readonly op: "finish"; readonly sessionPath: string; readonly moveId: MoveId; readonly answer: MoveStatus }
+	| { readonly op: "finish"; readonly sessionPath: string; readonly moveId: MoveId; readonly answer: MoveAnswer }
 	| { readonly op: "revoke"; readonly sessionPath: string; readonly moveId: MoveId };
 
 function plainMoveId(value: unknown): MoveId | undefined {

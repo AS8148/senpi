@@ -2,7 +2,7 @@ import { existsSync, rmSync } from "node:fs";
 import { loadEntriesFromFile, SessionManager } from "../session-manager.ts";
 import { readManifest } from "./bundle.ts";
 import { outgoingStateDir } from "./extension-state.ts";
-import type { MoveStatus } from "./move-ledger.ts";
+import type { MoveAnswer } from "./move-ledger.ts";
 import { headerSessionId, type MoveId, SESSION_MOVED, SESSION_RECLAIMED, sessionOwnership } from "./ownership.ts";
 import { requeueInput } from "./requeue.ts";
 import { withSessionMoveLock } from "./session-lock.ts";
@@ -14,7 +14,7 @@ export interface FinishMoveOptions {
 	/** The move the answer is about; the bundle and the file must be about the same move. */
 	readonly moveId: MoveId;
 	/** The receiver's signed answer. `receiving` changes nothing: the move is still open. */
-	readonly answer: MoveStatus;
+	readonly answer: MoveAnswer;
 	/** Runs inside the move lock before anything is read; throw to refuse. */
 	readonly guard?: () => void;
 }
@@ -32,7 +32,7 @@ export class MoveMismatchError extends Error {
 
 /**
  * Closes a move on the sending device from the receiver's answer. `accepted` records `session_moved` (read-only for
- * good). `declined`/`failed` takes the session back: `session_reclaimed` makes the file writable, the queued input
+ * good). `declined`/`failed`, and `accepted` with `revoked` (the receiver sealed its copy), take the session back: `session_reclaimed` makes the file writable, the queued input
  * is re-queued under ids stable per move, then the bundle goes. While the bundle exists the re-queue runs again on
  * the next call, so a crash between any two steps loses nothing and doubles nothing.
  */
@@ -63,6 +63,10 @@ async function settleMove(options: FinishMoveOptions): Promise<void> {
 		case "receiving":
 			return;
 		case "accepted":
+			if ("revoked" in answer) {
+				await takeBack(sessionFile, bundleDir, { move_id: moveId, session_id: sessionId, reason: "revoked" });
+				break;
+			}
 			SessionManager.open(sessionFile).appendCustomEntry(SESSION_MOVED, {
 				move_id: moveId,
 				session_id: sessionId,
@@ -72,14 +76,12 @@ async function settleMove(options: FinishMoveOptions): Promise<void> {
 			break;
 		case "declined":
 		case "failed":
-			SessionManager.open(sessionFile).appendCustomEntry(SESSION_RECLAIMED, {
+			await takeBack(sessionFile, bundleDir, {
 				move_id: moveId,
 				session_id: sessionId,
 				reason: answer.state,
 				detail: answer.reason,
-				reclaimed_at: new Date().toISOString(),
 			});
-			await requeueDroppedInput(sessionFile, bundleDir);
 			break;
 		default: {
 			const unreachable: never = answer;
@@ -87,6 +89,15 @@ async function settleMove(options: FinishMoveOptions): Promise<void> {
 		}
 	}
 	discardMoveFiles(sessionFile, bundleDir, moveId);
+}
+
+/** `session_reclaimed` makes the file writable again, then the queued input comes back under ids stable per move. */
+async function takeBack(sessionFile: string, bundleDir: string, data: Record<string, string>): Promise<void> {
+	SessionManager.open(sessionFile).appendCustomEntry(SESSION_RECLAIMED, {
+		...data,
+		reclaimed_at: new Date().toISOString(),
+	});
+	await requeueDroppedInput(sessionFile, bundleDir);
 }
 
 function discardMoveFiles(sessionFile: string, bundleDir: string, moveId: MoveId): void {

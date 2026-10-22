@@ -1,4 +1,4 @@
-import type { MoveStatus } from "../../core/session-move/move-ledger.ts";
+import type { MoveAnswer, MoveStatus } from "../../core/session-move/move-ledger.ts";
 
 /** Capability: the host answers `move_session` (senpi#3676). */
 export const MOVE_SESSION_CAPABILITY = "move_session";
@@ -25,7 +25,7 @@ export type RpcMoveSessionCommand = { id?: string; type: "move_session" } & (
 	| { op: "status"; moveId: string; sessionPath?: string }
 	| { op: "export"; sessionPath: string; moveId: string; target: string; droppedUserMessages?: string[] }
 	| { op: "import"; bundleDir: string; cwd: string; from?: string }
-	| { op: "finish"; sessionPath: string; moveId: string; answer: MoveStatus }
+	| { op: "finish"; sessionPath: string; moveId: string; answer: MoveAnswer }
 	| { op: "revoke"; sessionPath: string; moveId: string }
 );
 

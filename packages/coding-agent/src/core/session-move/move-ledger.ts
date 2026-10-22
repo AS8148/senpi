@@ -26,6 +26,12 @@ export type MoveStatus =
 	| { readonly state: "declined"; readonly reason: DeclineReason }
 	| { readonly state: "failed"; readonly reason: FailReason };
 
+/**
+ * A status answer as the sender hears it. `revoked` marks an accepted import the receiver later sealed with `revoke`:
+ * the ledger keeps `accepted`, but the receiver's copy is read-only, so the sender must take the session back.
+ */
+export type MoveAnswer = MoveStatus | { readonly state: "accepted"; readonly revoked: true };
+
 /** `ready`: this device told the sender it can take the move; no bundle has been verified yet. */
 export type MoveRecord = MoveStatus | { readonly state: "ready"; readonly expiresAt: string };
 
@@ -62,9 +68,11 @@ const DECLINE_REASONS: readonly DeclineReason[] = [
 const FAIL_REASONS: readonly FailReason[] = ["bundle_invalid", "import_failed"];
 
 /** A receiver's answer as it arrives back at the sender; a `ready` record is not an answer. */
-export function parseMoveStatus(value: unknown): MoveStatus | undefined {
+export function parseMoveStatus(value: unknown): MoveAnswer | undefined {
 	const record = parseRecord(value);
-	return record?.state === "ready" ? undefined : record;
+	if (record === undefined || record.state === "ready") return undefined;
+	const revoked = record.state === "accepted" && (value as { readonly revoked?: unknown }).revoked === true;
+	return revoked ? { state: "accepted", revoked: true } : record;
 }
 
 function parseRecord(value: unknown): MoveRecord | undefined {
