@@ -16,6 +16,24 @@
 
 - LOW: `packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction-lifecycle.ts`, the `message_end` usage anchor.
 
+## 2026-10-21 - Preserve prefix cache keys during remote compaction (omo#10775)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote.ts`: compact endpoint requests derive their key with the same versioned prefix function as Responses providers (from the system prompt alone, since the compact body sends no tools, so the value differs from the parent request's key but stays stable between compactions). Stream payload rewrites preserve the provider's key. The request retains a separate session id for transport routing.
+
+### Why
+
+The compaction rewrite replaced the provider key with the session UUID, defeating cross-session affinity even after fixing the provider builder.
+
+### Why an extension could not handle it
+
+This builtin owns the compaction request rewrite and compact endpoint body.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote.ts`: request construction, stream rewrite, and transport session headers.
+
 ## 2026-10-19 - The compaction checkpoint's agent name is folded, not read from a full-history view (senpi#3110)
 
 ### What changed
@@ -2208,6 +2226,7 @@ untouched. Expected upstream conflict zones: `builtin/compaction/speculative.ts`
 ### Expected merge conflict zones
 
 - LOW: `lane-policy.ts` `LaneContext` and `disablesSenpiCompaction()` provider-scoping logic.
+
 ## 2026-10-10 - Recover unsafe newest entries without retrying identical rejections (senpi#3060)
 
 ### What changed
@@ -2279,6 +2298,7 @@ This is private state and request-assembly policy inside the owning builtin comp
 - `context-reduction-frontier.ts` around initial engagement and failed cut admission.
 - `context-pipeline.ts` around emergency-prune budgeting and handoff detection.
 - `context-reduction-state.ts` around request usage anchors.
+
 ## 2026-10-11 - Summarize away from spent accounts (senpi#3131)
 
 ### What changed
