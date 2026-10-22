@@ -1,3 +1,58 @@
+## 2026-10-21 - llama.cpp declares its API key optional (senpi#3869)
+
+### What changed
+
+- `packages/coding-agent/src/extensions/llama/provider.ts`: the llama.cpp `apiKey` auth sets `keyOptional: true`, so `Models.login` keeps a login whose optional key prompt was left blank.
+
+### Why
+
+- senpi#3867 made `Models.login` refuse blank keys; a keyless local llama-server is a valid setup. Regression: `test/llama-extension.test.ts` ("logs in through Models.login with no API key").
+
+### Why an extension could not handle it
+
+- This is the in-tree llama extension declaring its own auth metadata.
+
+### Expected merge conflict zones
+
+- LOW: the `apiKey` object in `createLlamaProvider`.
+
+## 2026-10-21 - Test runs refuse the real agent directory (senpi#3867)
+
+### What changed
+
+- `packages/coding-agent/src/config.ts`: `getAgentDir()` passes the resolved directory to the new `assertAgentDirAllowedInTests` in the same file; it lives here rather than in a new module so the RPC supervisor's import graph stays at its 55-module ceiling. In a senpi test run (`SENPI_TEST_AGENT_DIR_GUARD=1`, set only by senpi's own test harness and never inferred from `VITEST` or `NODE_ENV`, so a user's own test suite that runs the CLI is unaffected), a directory inside the real account home's `.senpi`, `.omo`, `.pi` or active brand config dir throws `RealAgentDirInTestError`. The real home comes from the account database, not `$HOME`. `SENPI_TEST_USE_REAL_AGENT_DIR=1` opts out, as it already does for the quarantine.
+
+### Why
+
+- senpi#3867: a test run without the Vitest quarantine setup (for example `bun test <file>` from inside an agent session that exports `OMO_CODING_AGENT_DIR`) resolved the user's real agent dir and left faux pool state in `credential-pool-state.json`. Regressions: `test/suite/regressions/issue-3867-real-agent-dir-guard.test.ts` and `issue-3867-built-cli-user-test-env.test.ts` (the built CLI starts under `NODE_ENV=test`/`VITEST` with no senpi marker).
+
+### Why an extension could not handle it
+
+- `getAgentDir()` is the core path resolver every store reads; the guard has to sit where the path is produced.
+
+### Expected merge conflict zones
+
+- LOW: the body of `getAgentDir()` and the import block in `packages/coding-agent/src/config.ts`.
+
+## 2026-10-20 - The host holder type is exported (omo-desktop-app#3561)
+
+### What changed
+
+- `packages/coding-agent/src/modes/index.ts`: exports `describeHostHolder` and `type HostHolder` from `./rpc/host-holder.ts`.
+- `packages/coding-agent/src/index.ts`: re-exports `type HostHolder` next to `HostEnsureRefusedError`.
+
+### Why
+
+- `HostEnsureRefusedError.holder` is part of the public refusal; embedders (the omo runner, the desktop) read it with the same type.
+
+### Why an extension could not handle it
+
+- These are the package's public barrels.
+
+### Expected merge conflict zones
+
+- LOW: one export line in each barrel's host block.
+
 ## 2026-10-18 - A session is found by the id its file name carries (oh-my-openagent#7471)
 
 ### What changed
@@ -5188,3 +5243,39 @@ The package barrel is the only public entry point; an extension cannot add expor
 ### Expected merge conflict zones
 
 - LOW: the `core/skills.ts` export block in `packages/coding-agent/src/index.ts`.
+
+## 2026-10-16 - Auth notices reach the TUI at startup, once per change (#3448)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `collectAuthDiagnostics` also reports the store's pending credential notices for non-interactive runs; the interactive branch passes `authNotices` (auth errors plus pending notices, with `markSeen`) to `InteractiveMode`.
+
+### Why
+
+- `packages/coding-agent/src/main.ts`: the credential and billing notices reached only model listing, print mode and RPC; the TUI, the main surface, never showed them (#3486 review).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/main.ts` builds the startup options every mode receives.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: `collectAuthDiagnostics`, `interactiveAuthNotices`, and the `InteractiveMode` options in the interactive branch.
+
+## 2026-10-17 - Auth diagnostics show each credential notice once (#3486)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `collectAuthDiagnostics(storage, context, { persistSeen })` and `interactiveAuthNotices` are exported and take notices through `takePendingNotices`; model listing and print mode record them as seen, RPC runs do not.
+
+### Why
+
+- `packages/coding-agent/src/main.ts`: print mode showed the notice twice per run, and model listing showed it on every run (#3486 review).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/main.ts` owns the startup diagnostics of every mode.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: `collectAuthDiagnostics`, `interactiveAuthNotices` and their four call sites.
