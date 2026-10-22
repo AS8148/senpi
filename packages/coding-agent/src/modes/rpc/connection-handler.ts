@@ -79,6 +79,7 @@ import {
 	MEDIA_PLACEHOLDERS_CAPABILITY,
 	QUESTION_CAPABILITY,
 	QUEUED_MESSAGE_REVISION_CAPABILITY,
+	RESUME_SESSION_CAPABILITY,
 	RETRY_FALLBACK_COMMAND_CAPABILITY,
 	SESSION_HELD_CAPABILITY,
 } from "./custom-capability.ts";
@@ -1003,6 +1004,7 @@ export function createRpcConnectionHandler(
 								AUTH_KEY_VERIFY_CAPABILITY,
 								QUEUED_MESSAGE_REVISION_CAPABILITY,
 								USER_ACTIVITY_CAPABILITY,
+								RESUME_SESSION_CAPABILITY,
 								...(options.retryFallbackCommand ? [RETRY_FALLBACK_COMMAND_CAPABILITY] : []),
 								...(options.toolRuntime ? toolRuntimeCapabilities(options.toolRuntime) : []),
 								// Client flags cannot advertise a host guard this classic binding does not run, nor a tool runtime.
@@ -1056,6 +1058,25 @@ export function createRpcConnectionHandler(
 					if (err instanceof ContinueFromLeafError) return error(id, command.type, err.message, err.code);
 					throw err;
 				}
+			}
+
+			case "resume_session": {
+				turnRequested = true;
+				const resumed = session.resumeSession();
+				promptCalls.add(resumed);
+				void resumed.then(
+					() => promptCalls.delete(resumed),
+					(err: unknown) => {
+						promptCalls.delete(resumed);
+						output({
+							type: "extension_error",
+							extensionPath: "runtime",
+							event: "resume_session",
+							error: err instanceof Error ? err.message : String(err),
+						});
+					},
+				);
+				return success(id, "resume_session");
 			}
 
 			case "send_custom_message": {
