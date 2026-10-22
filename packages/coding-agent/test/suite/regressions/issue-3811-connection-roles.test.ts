@@ -138,6 +138,14 @@ describe("senpi#3811 connection roles", () => {
 		expect(dropped).toMatchObject({ success: false, error: expect.stringContaining("connection_role_fixed") });
 	});
 
+	it("answers a stdio reader, which has no connection id, with the role its client declared", () => {
+		const roles = new ConnectionRoles();
+		roles.declare(SOLE_CONNECTION, [INTERACTIVE_USER_CAPABILITY]);
+
+		expect(roles.has(undefined, INTERACTIVE_USER_CAPABILITY)).toBe(true);
+		expect(roles.rolesOf(undefined)).toEqual([INTERACTIVE_USER_CAPABILITY]);
+	});
+
 	it("lets a worker isolate adopt the host's declaration without overriding one made inside the isolate", () => {
 		const isolate = new ConnectionRoles();
 		isolate.adopt("client", [INTERACTIVE_USER_CAPABILITY]);
