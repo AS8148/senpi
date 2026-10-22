@@ -38,7 +38,7 @@ permissions:
 # One group per pull request, so a new push cancels the superseded run and its queued jobs instead of leaving them in
 # the shared runner queue; main pushes get one group per commit and are never cancelled (senpi#3957).
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  group: session-worker-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -67,7 +67,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          if gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100" --jq '.[].filename' > "$RUNNER_TEMP/changed-files"; then
+          if gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100" --jq '.[] | .filename, (.previous_filename // empty)' > "$RUNNER_TEMP/changed-files"; then
             echo "CHANGED_FILES=$RUNNER_TEMP/changed-files" >> "$GITHUB_ENV"
           else
             echo "::warning::could not list the changed files; running the full macOS/Windows set"

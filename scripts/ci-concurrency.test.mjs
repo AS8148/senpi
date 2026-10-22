@@ -14,7 +14,7 @@ const CONTEXT = String.raw`github\.(ref|sha)`;
  * Evaluate the expression shapes the CI concurrency block may use, for one event:
  * - `${{ github.event_name == '<event>' }}` (or `!=`), a boolean;
  * - `<prefix>${{ github.<ref|sha> }}` or `<prefix>${{ github.event_name == '<event>' && github.<ref|sha> || github.<ref|sha> }}`,
- *   a group name. The prefix may also be `${{ github.workflow }}-`, which is the caller's workflow name when another
+ *   a group name. The prefix may contain `${{ github.workflow }}`, which is the caller's workflow name when another
  *   workflow calls ci.yml (senpi#3957).
  * Anything else fails, so a new shape has to be taught here instead of being guessed at.
  * @param {unknown} value
@@ -22,11 +22,8 @@ const CONTEXT = String.raw`github\.(ref|sha)`;
  */
 function evaluate(value, run) {
 	if (typeof value === "boolean") return value;
-	const workflowPrefix = /^\$\{\{\s*github\.workflow\s*\}\}-/;
-	if (workflowPrefix.test(String(value))) {
-		return `${run.workflow ?? "CI"}-${evaluate(String(value).replace(workflowPrefix, ""), run)}`;
-	}
-	const text = String(value);
+	const workflowName = (run.workflow ?? "CI").replace(/[^\w-]/g, "_");
+	const text = String(value).replace(/\$\{\{\s*github\.workflow\s*\}\}/g, workflowName);
 	const eventTest = (operator, event) => (operator === "==" ? run.event === event : run.event !== event);
 	const boolean = new RegExp(String.raw`^\$\{\{\s*${EVENT_TEST}\s*\}\}$`).exec(text);
 	if (boolean) return eventTest(boolean[1], boolean[2]);

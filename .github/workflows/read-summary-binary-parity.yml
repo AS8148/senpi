@@ -26,10 +26,11 @@ permissions:
   contents: read
 
 concurrency:
-  # The workflow name leads the group: in a run-full-ci call it is the caller's, so the label run and the PR's own run
-  # never cancel each other (senpi#3957).
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # A fixed per-file prefix, then the workflow name (the caller's in a run-full-ci call), so the label run, the PR's own
+  # run and the label run's other called workflows never cancel each other; main pushes get one group per commit and are
+  # never cancelled, so every merge keeps its own macOS/Windows parity result (senpi#3957).
+  group: read-summary-parity-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   platform-scope:
@@ -57,7 +58,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          if gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100" --jq '.[].filename' > "$RUNNER_TEMP/changed-files"; then
+          if gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100" --jq '.[] | .filename, (.previous_filename // empty)' > "$RUNNER_TEMP/changed-files"; then
             echo "CHANGED_FILES=$RUNNER_TEMP/changed-files" >> "$GITHUB_ENV"
           else
             echo "::warning::could not list the changed files; running the full macOS/Windows set"

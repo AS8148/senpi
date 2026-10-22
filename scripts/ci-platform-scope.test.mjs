@@ -219,11 +219,43 @@ describe("platform-only legs of the other PR workflows", () => {
 		});
 	}
 
-	it("every workflow the label calls keys its concurrency group by the workflow name first", () => {
-		// In a called run github.workflow is the caller's name, so the label run and the PR's own run get separate groups.
-		for (const file of ["ci.yml", "read-summary-binary-parity.yml", "session-worker-compile.yml"]) {
-			assert.match(String(workflow(file).concurrency.group), /^\$\{\{ github\.workflow \}\}-/, file);
-		}
+	describe("concurrency of the workflows the label calls", () => {
+		// Evaluates the concurrency expressions these workflows use, for one run context.
+		const evaluate = (value, run) => typeof value === "boolean" ? value : String(value).replace(/\$\{\{(.*?)\}\}/g, (_, expr) => {
+			const js = expr
+				.replace(/github\.event_name/g, "run.event").replace(/github\.workflow/g, "run.workflow")
+				.replace(/github\.event\.pull_request\.number/g, "run.pr").replace(/github\.ref/g, "run.ref").replace(/github\.sha/g, "run.sha")
+				.replace(/==/g, "===");
+			assert.doesNotMatch(js, /github\./, `unsupported expression: ${expr}`);
+			return String(Function("run", `return (${js});`)(run));
+		});
+		const files = ["ci.yml", "read-summary-binary-parity.yml", "session-worker-compile.yml"];
+		const pr = (workflowName, sha = "s1") => ({ event: "pull_request", workflow: workflowName, ref: "refs/pull/7/merge", pr: 7, sha });
+		const push = (workflowName, sha) => ({ event: "push", workflow: workflowName, ref: "refs/heads/main", pr: undefined, sha });
+		const LABEL = "CI full set (run-full-ci label)";
+
+		it("never shares a group between sibling workflows of one label run", () => {
+			const groups = files.map((file) => evaluate(workflow(file).concurrency.group, pr(LABEL)));
+			assert.equal(new Set(groups).size, files.length, groups.join(" | "));
+		});
+
+		it("never shares a group between a label run and the PR's own run", () => {
+			const own = { "ci.yml": "CI", "read-summary-binary-parity.yml": "Read summary binary parity", "session-worker-compile.yml": "Compiled session worker" };
+			for (const file of files) {
+				const { group } = workflow(file).concurrency;
+				assert.notEqual(evaluate(group, pr(LABEL)), evaluate(group, pr(own[file])), file);
+			}
+		});
+
+		it("cancels a superseded PR run but gives every main commit its own uncancelled group", () => {
+			for (const file of files) {
+				const { group, "cancel-in-progress": cancel } = workflow(file).concurrency;
+				assert.equal(evaluate(group, pr("W", "a")), evaluate(group, pr("W", "b")), file);
+				assert.equal(evaluate(cancel, pr("W")), "true", file);
+				assert.notEqual(evaluate(group, push("W", "c1")), evaluate(group, push("W", "c2")), file);
+				assert.equal(evaluate(cancel, push("W", "c1")), "false", file);
+			}
+		});
 	});
 
 	it("every pull_request workflow with macOS/Windows legs cancels its superseded PR run", () => {
@@ -231,6 +263,7 @@ describe("platform-only legs of the other PR workflows", () => {
 			const { concurrency } = workflow(file);
 			assert.ok(concurrency?.group, file);
 			assert.match(String(concurrency.group), /github\.(ref|event\.pull_request\.number)/, file);
+			assert.ok(file === "native-prebuilds.yml" || workflow(file).jobs["platform-scope"].steps.some((step) => step.run?.includes("previous_filename")), `${file} classifies renames by both paths`);
 			assert.notEqual(concurrency["cancel-in-progress"], false, file);
 			assert.ok(concurrency["cancel-in-progress"] !== undefined, file);
 		}
