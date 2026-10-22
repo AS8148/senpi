@@ -123,60 +123,91 @@ export async function ensurePublicSocketSecret(publicSocket: string): Promise<Bu
 	}
 }
 
+/**
+ * One sealed readiness probe: the internal handshake and the ready reply together, on one monotonic timer (senpi#3816
+ * review). A child that accepts the hop and stays silent that long is not a working host, so readiness fails at once
+ * instead of hanging the supervisor; a host that is not listening yet is retried until the overall deadline.
+ */
+export const INTERNAL_READINESS_PROBE_MS = 10_000;
+
 export async function waitForListener(
 	socketPath: string,
 	timeoutMs: number,
 	secret?: Uint8Array,
 	internalKey?: Buffer,
 ): Promise<void> {
-	const deadline = Date.now() + timeoutMs;
-	while (Date.now() <= deadline) {
-		if (await canConnect(socketPath, secret, internalKey)) return;
+	const deadline = performance.now() + timeoutMs;
+	while (performance.now() <= deadline) {
+		const probeMs = Math.max(1, Math.min(INTERNAL_READINESS_PROBE_MS, deadline - performance.now()));
+		const probe = await canConnect(socketPath, secret, internalKey, probeMs);
+		if (probe === "ready") return;
+		if (probe === "silent")
+			throw new Error(
+				`${socketPath}: host accepted the internal hop but did not answer within ${Math.round(probeMs)}ms`,
+			);
 		await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 50));
 	}
 	throw new Error(`${socketPath}: host did not start listening within ${timeoutMs}ms`);
 }
 
-async function canConnect(socketPath: string, secret?: Uint8Array, internalKey?: Buffer): Promise<boolean> {
+async function canConnect(
+	socketPath: string,
+	secret: Uint8Array | undefined,
+	internalKey: Buffer | undefined,
+	probeMs: number,
+): Promise<"ready" | "refused" | "silent"> {
 	if (internalKey) {
 		const socket = createConnection(resolveSocketTransportAddress(socketPath, process.platform, secret));
+		let accepted = false;
+		let expired = false;
+		socket.once("connect", () => {
+			accepted = true;
+		});
+		// Destroying the socket ends the handshake or the ready wait, whichever is running, and drops the connection.
+		const timer = setTimeout(() => {
+			expired = true;
+			socket.destroy();
+		}, probeMs);
+		timer.unref();
+		const outcome = (ready: boolean) => (ready ? "ready" : accepted && expired ? "silent" : "refused");
 		try {
 			const stream = await connectInternalConnection(socket, internalKey);
-			return await new Promise<boolean>((resolve) => {
-				const timer = setTimeout(() => settle(false), 2000);
-				timer.unref();
-				const settle = (ready: boolean) => {
-					clearTimeout(timer);
-					stream.destroy();
-					resolve(ready);
-				};
-				stream.once("error", () => settle(false));
-				stream.once("close", () => settle(false));
-				attachJsonlLineReader(
-					stream,
-					(line) => {
-						try {
-							const response = JSON.parse(line);
-							if (response.id === "internal-ready") settle(response.success === true);
-						} catch {
-							settle(false);
-						}
-					},
-					{ maxLineLength: MAX_RPC_LINE_CHARACTERS },
-				);
-				stream.write('{"id":"internal-ready","type":"get_protocol_info","observe":true}\n');
-			});
+			return outcome(
+				await new Promise<boolean>((resolve) => {
+					const settle = (ready: boolean) => {
+						stream.destroy();
+						resolve(ready);
+					};
+					stream.once("error", () => settle(false));
+					stream.once("close", () => settle(false));
+					attachJsonlLineReader(
+						stream,
+						(line) => {
+							try {
+								const response = JSON.parse(line);
+								if (response.id === "internal-ready") settle(response.success === true);
+							} catch {
+								settle(false);
+							}
+						},
+						{ maxLineLength: MAX_RPC_LINE_CHARACTERS },
+					);
+					stream.write('{"id":"internal-ready","type":"get_protocol_info","observe":true}\n');
+				}),
+			);
 		} catch {
 			socket.destroy();
-			return false;
+			return outcome(false);
+		} finally {
+			clearTimeout(timer);
 		}
 	}
 	return new Promise((resolve) => {
 		const socket: Socket = createConnection(resolveSocketTransportAddress(socketPath, process.platform, secret));
 		if (secret) sendSocketHandshake(socket, secret);
-		const settle = (value: boolean): void => {
+		const settle = (connected: boolean): void => {
 			socket.destroy();
-			resolve(value);
+			resolve(connected ? "ready" : "refused");
 		};
 		socket.once("connect", () => settle(true));
 		socket.once("error", () => settle(false));

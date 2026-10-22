@@ -31,12 +31,12 @@ function nonce(value: unknown): string {
 
 /**
  * The host (server) side guards its pre-auth reads with the 8 KiB / 2 s budget (design 2b/2e), fragmented frames and
- * bytes coalesced after authentication included. The supervisor-side client only bounds a line by the normal RPC
- * ceiling and has no deadline: a host whose event loop stalls answers late, and its connections must still be
- * served, as raw connections were (senpi#3816 review).
+ * bytes coalesced after authentication included. The supervisor-side client bounds a line by the normal RPC ceiling;
+ * its deadline is the caller's: the readiness probe and the activity observer pass one (a child that accepts and never
+ * answers must fail, senpi#3816 review), while the proxy forwarding a public connection passes none, so a host whose
+ * event loop stalls still serves the connections made meanwhile, as raw connections were.
  */
 const HOST_PRE_AUTH_BUDGET = { maxBytes: 8192, timeoutMs: 2000 } as const;
-const CLIENT_PRE_AUTH_BUDGET = { maxBytes: MAX_RPC_LINE_CHARACTERS, timeoutMs: undefined } as const;
 
 async function handshake<T>(
 	socket: Socket,
@@ -106,8 +106,13 @@ async function handshake<T>(
 	}
 }
 
-export function connectInternalConnection(socket: Socket, key: Buffer): Promise<Duplex> {
-	return handshake(socket, CLIENT_PRE_AUTH_BUDGET, async (read, send) => {
+/** `timeoutMs` bounds the whole client handshake on a monotonic timer; omitted, there is no deadline. */
+export function connectInternalConnection(
+	socket: Socket,
+	key: Buffer,
+	options: { readonly timeoutMs?: number } = {},
+): Promise<Duplex> {
+	return handshake(socket, { maxBytes: MAX_RPC_LINE_CHARACTERS, timeoutMs: options.timeoutMs }, async (read, send) => {
 		const clientNonce = randomBytes(32).toString("hex");
 		const [response] = await Promise.all([
 			read(),

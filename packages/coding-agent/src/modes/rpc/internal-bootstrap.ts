@@ -80,6 +80,8 @@ function bootstrap(): InternalHostBootstrap | undefined {
 	// Runs on success and failure alike: descendants must inherit /dev/null, never the key pipe.
 	fs.closeSync(0);
 	const restored = fs.openSync("/dev/null", "r");
+	// Fatal by design: a host whose fd 0 is not /dev/null would hand the key pipe to every descendant, so it refuses
+	// to start rather than run with stdin it cannot account for.
 	if (restored !== 0) throw new Error("internal_key_unavailable: cannot restore stdin");
 	if (failure !== undefined) throw failure;
 	return { key, ...(lifetimeFd === undefined ? {} : { lifetimeFd }) };

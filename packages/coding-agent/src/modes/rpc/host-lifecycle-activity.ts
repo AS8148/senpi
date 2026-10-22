@@ -28,6 +28,12 @@ export interface SupervisorActivityOptions {
 	readonly onActivity?: () => void;
 }
 
+/**
+ * The observer's internal handshake bound (senpi#3816 review), the same 5 s the raw connect had: a child that accepts
+ * and never answers fails the open, and the connection is dropped.
+ */
+export const INTERNAL_OBSERVER_HANDSHAKE_MS = 5_000;
+
 export class SupervisorActivity {
 	readonly decider: IdleExitDecider;
 	readonly clients: ClientOccupancy;
@@ -103,7 +109,10 @@ export class SupervisorActivity {
 		if (secret) sendSocketHandshake(next, secret);
 		let stream: Duplex;
 		try {
-			if (this.options.internalKey) stream = await connectInternalConnection(next, this.options.internalKey);
+			if (this.options.internalKey)
+				stream = await connectInternalConnection(next, this.options.internalKey, {
+					timeoutMs: INTERNAL_OBSERVER_HANDSHAKE_MS,
+				});
 			else {
 				await waitForConnect(next, 5_000);
 				stream = next;

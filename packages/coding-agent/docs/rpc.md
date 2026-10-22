@@ -1735,14 +1735,19 @@ stdin therefore receive immediate EOF. A missing or short key refuses startup wi
 
 Where reopening succeeds, Node watches lifetime EOF with an unref'd `net.Socket`; Bun uses a `Bun.file(fd).stream()`
 reader that does not hold `process.exit()`. Any reopen failure, including Linux socketpair stdin's `ENXIO`, is logged
-and falls back to polling `SENPI_RPC_HOST_WATCH_PPID` and `SENPI_RPC_HOST_WATCH_PSTART`. Only `ESRCH` or an observed
-start-time mismatch ends the host. Missing, unreadable, timed-out or permission-denied identity observations keep it
+and falls back to polling the recorded supervisor `SENPI_RPC_HOST_WATCH_PPID`: a free `kill(pid, 0)` every tick, and
+its start compared on one clock per platform, rarely. On Linux that is `SENPI_RPC_HOST_WATCH_PSTART_TICKS`, the
+supervisor's `/proc/<pid>/stat` start ticks (internal, not a secret; immune to wall-clock steps, read without spawning);
+elsewhere it is the `ps lstart` value in `SENPI_RPC_HOST_WATCH_PSTART`. Only `ESRCH` or an observed start change ends
+the host. Missing, unreadable, timed-out or permission-denied identity observations keep it
 running. The direct parent is never compared: spawning wrappers may legitimately be between supervisor and host.
 Slot 3 is still passed but is not armed for supervised POSIX children because wrappers can close or reuse it.
 Windows retains its inherited lifetime pipe. Bare hosts and embedders without supervisor configuration are unaffected.
 
 The POSIX internal hop stays in its per-launch temporary directory and publishes no key file. Proxy, readiness and
 activity-observer connections all prove the in-memory key with challenge-response before sending session traffic.
+The readiness probe (10 s) and the activity observer (5 s) bound their handshake, so a child that accepts the hop and
+never answers fails startup; the proxy forwarding a public connection has no deadline.
 The child announces `launch_id: "internal"` and `socket_auth`; neither side sends the key. After authentication,
 HKDF-SHA256 derives separate `senpi-rpc-internal c2s` and `senpi-rpc-internal s2c` keys using the two raw nonces as salt.
 Each record has a four-byte big-endian ciphertext length (17..65552), AES-256-GCM ciphertext and a 16-byte tag.
