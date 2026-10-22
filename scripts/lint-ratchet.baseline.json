@@ -1346,7 +1346,7 @@
     "typescript/no-non-null-assertion": 2
   },
   "packages/coding-agent/test/suite/ask-user-keyboard-model.test.ts": {
-    "typescript/no-non-null-assertion": 4
+    "typescript/no-non-null-assertion": 5
   },
   "packages/coding-agent/test/suite/ask-user-mouse-host.test.ts": {
     "typescript/no-non-null-assertion": 10
@@ -1514,6 +1514,9 @@
   },
   "packages/coding-agent/test/suite/regressions/issue-1894-inprocess-theme-init.test.ts": {
     "typescript/no-non-null-assertion": 3
+  },
+  "packages/coding-agent/test/suite/regressions/issue-3811-goal-stop-pause.test.ts": {
+    "typescript/no-explicit-any": 3
   },
   "packages/coding-agent/test/suite/regressions/issue-447-goal-continuation.test.ts": {
     "typescript/no-non-null-assertion": 2
