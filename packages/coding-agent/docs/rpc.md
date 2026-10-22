@@ -50,21 +50,44 @@ Observe session events for progress and `agent_idle` for settlement. Hosts adver
 `resume_session` and `attended` in `get_protocol_info.capabilities`; classic RPC
 advertises `resume_session` only because it does not accept `open_session`.
 
+After a user Stop (senpi#3811) Resume runs one turn instead: held human input first, then the held notices, then a
+hidden note that the interrupted tool calls were not re-run. The response still acknowledges release admission; the
+turn runs after it. Every field below is optional, so the bare form keeps working:
+
+```json
+{"type":"resume_session","expectedSeq":3,"mode":"continue","message":"Use staging","effectId":"resume-7"}
+```
+
+`expectedSeq` is the `pauseSeq` the client rendered; a different current seq answers `resumed: false, reason:
+"stale"` and changes nothing. `mode: "release"` releases the Stop and an `unattended` hold without starting a turn
+(the notices ride the next human message). `message` is delivered first in the resumed turn. The answer comes once the
+resumed turn has started, or with `turnStarted: false` once it is clear no turn starts (for example a newer Stop landed
+while the turn was admitted); held input and notices stay held until a turn that no newer Stop aborted delivers them.
+A repeated `effectId` answers the recorded outcome with `replayed: true` and resumes nothing again, also after a
+reopen. A session with nothing held answers
+`not_paused`; a task child held only for its parent's run answers `resume_through_parent` with `parentSessionId`.
+
+```json
+{"type":"response","command":"resume_session","success":true,"data":{"resumed":true,"pauseSeq":3,"turnStarted":true,"deliveredNotices":2,"deliveredHeldInputs":1}}
+```
+
 `get_state` and `open_session.state` include:
 
 ```typescript
 paused: boolean;
 pausedNoticeCount: number;
-holds: { kind: "unattended"; key: string; since: string; data?: unknown; sourceCounts: Record<string, number> }[];
+holds: { kind: HoldKind; key: string; since: string; data?: unknown; sourceCounts: Record<string, number> }[];
+// HoldKind = "unattended" | "session_hold" | "run_fence" | "inherited_hold" (senpi#3811)
 ```
 
 `since` is an ISO timestamp. This is the shared engine hold ledger; this release
 keys each record by `key` (defaulting to its kind) and preserves opaque `data`
 through a restart. Persisted additions carry `key`/`data`, and release entries list `keys`. It
 implements only `unattended`. Consumers must distinguish kinds rather than infer
-them from the notification text. A first hold emits `session_paused` with `kind`,
-`pauseSeq`, `at`, `noticeCount`, and `persisted`. Releasing emits
-`session_resumed { cause: "input" | "resume_session", pauseSeq, at }`.
+them from the notification text. The first hold that pauses the session emits `session_paused` with `kind`,
+`pauseSeq`, `at`, `noticeCount`, and `persisted`. The release that ends the pause emits
+`session_resumed { cause: "input" | "resume_session", pauseSeq, at }` once; a run fence alone pauses nothing and
+emits neither.
 The ordinary extension UI `notify` event shows the paused count and Resume
 instruction too. Attachment lifecycle extension events remain distinct from
 these engine pause events: attachment never releases any ledger hold.
@@ -2068,7 +2091,7 @@ no longer lists it and the handle answers `unknown_session`.
   `session_released` entry on disk or in memory, and a later release can be retried. A teardown that fails
   after it claimed the session leaves it closing.
 
-A release with `reason: "move"` (and a `moveId`) seals the session for a move to another device: its `session_released` entry records `move_id`, `target` and `session_id`, and from then on any write to the file is refused with `session_moved_away` until that same move is reclaimed. A later `takeover` release, or any ownership entry for another move, is refused too. A `move` without a `moveId`, or with one that is not a plain id (a letter or digit first, then letters, digits, `.`, `_` or `-`, at most 128 characters), is refused with `invalid_release_reason`, and a session whose own id is not a plain id is refused with `release_unsupported` (`errorData.detail: "session_id_not_plain"`) before anything is interrupted or sealed. A `session_moved_away` refusal after an `interrupt` carries `interrupted` and `dropped` like any other refusal after one.
+A release with `reason: "move"` (and a `moveId`) seals the session for a move to another device: its `session_released` entry records `move_id`, `target` and `session_id`, and from then on any write to the file is refused with `session_moved_away` until that same move is reclaimed. A later `takeover` release, or any ownership entry for another move, is refused too. A `move` without a `moveId`, or with one that is not a plain id (a letter or digit first, then letters, digits, `.`, `_` or `-`, at most 128 characters), is refused with `invalid_release_reason`, and a session whose own id is not a plain id is refused with `release_unsupported` (`errorData.detail: "session_id_not_plain"`) before anything is interrupted or sealed. A `session_moved_away` refusal after an `interrupt` carries `interrupted` and `dropped` like any other refusal after one. Before the seal, a `move` release runs the extensions' `session_move_export` handlers, each under the `session_shutdown` handler budget (`sessionShutdownHandlerTimeoutMs`); a handler that throws or is still running at the cap fails the release with `release_failed` (nothing sealed, admission open again). Each `move` release attempt stages into its own folder and its `session_released` entry records that attempt (`state_attempt`); `move_session export` bundles only the sealing attempt's state, so a handler still running from an earlier, failed attempt of the same move never feeds the bundle. A release refused after those handlers ran and before its seal is written removes its own attempt's folder; one refused after the seal (for example `session_closing`) keeps it, since the seal names it.
 
 ### Moving a session to another device (`move_session`)
 
@@ -2087,7 +2110,7 @@ A move hands a session to another host under the same id (capability `move_sessi
 
 The order is: the receiver `prepare`s; the sender releases the session with `release_session` reason `move` (usually with `interrupt: true`) and passes its `dropped.user_messages` to `export`; the transport carries `bundle_dir` to the receiver, which `import`s it; the sender asks `status` (on start, on reconnect, and when the session is opened) and `finish`es with the answer. `accepted` leaves the sender's copy read-only for good; `declined` or `failed` makes it writable again with its queued input back. `receiving` changes nothing.
 
-Refusals carry `errorData.detail` (the reason and what to do): `invalid_move_request` (a field does not parse), `session_open_here` (export or finish of a session this host has open), `move_not_released` (export of a file not sealed for that move), `move_fenced` (a move already answered, or a bundle for a move the receiver never readied), `move_bundle_invalid`, `move_repository_mismatch` (`cwd` is not a checkout of the same repository), `move_target_occupied`, `move_mismatch`, `session_moved_away`, `session_held`, and `move_failed` for anything else.
+Refusals carry `errorData.detail` (the reason and what to do): `invalid_move_request` (a field does not parse), `session_open_here` (export or finish of a session this host has open), `move_not_released` (export of a file not sealed for that move), `move_fenced` (a move already answered, or a bundle for a move the receiver never readied), `move_bundle_invalid`, `move_repository_mismatch` (`cwd` is not a checkout of the same repository), `move_target_occupied`, `move_mismatch`, `session_moved_away`, `session_held`, and `move_failed` for anything else. `move_failed` also refuses an `export` whose sealing `release_session` staged extension state that is no longer on disk: the session is never bundled without it, and `finish` with a `declined` answer takes it back.
 
 ### Host self-observation (event-loop stalls and memory pressure)
 
@@ -2757,6 +2780,83 @@ answers after the turn settled.
 
 ```json
 {"type": "response", "command": "interrupt", "success": true, "data": {"interrupted": true, "turnId": "3"}}
+```
+
+With `"intent": "stop"` (on `abort` or `interrupt`) the command is a user Stop: the session is paused before the
+turn is stopped, and automatic wakes that arrive later (terminal and monitor notices, detached eval cells, goal
+continuations, task and team deliveries) are kept as notices instead of starting a turn. Only a connection that
+declared the `interactive_user` capability with `set_client_info` may send it; any other connection gets
+`stop_requires_interactive_client`. The capability is fixed at its first declaration on a connection. `interrupt`
+with `"intent": "stop"` also stops an automatic turn that started after the one `turnId` named, and pauses an
+idle session. Human input (`prompt`, `steer`, `follow_up` on an `interactive_user` connection) or `resume_session` releases the pause. The same commands from any other connection are automatic: while a Stop or a run hold is live they answer `heldAsNotice: true` and are delivered as a notice when the session resumes (an `unattended` hold alone is released by any prompt, as before); `get_state`
+reports `paused`, `pausedNoticeCount` and `pausedHeldInputCount`.
+
+```json
+{"type": "set_client_info", "width": 120, "capabilities": ["interactive_user"]}
+{"type": "abort", "intent": "stop", "awaitIdle": true}
+```
+
+#### hold_input
+
+Hold human input for a paused session and deliver it at the start of the turn that resumes it. An interactive
+connection may hold input. A `task_parent` connection may relay a person's run guidance into the child it paused for
+that run: it sends `parentSessionId` (the session that sent `pause_for_run`), and another parent is refused with
+`wrong_parent`. `origin` is optional; when present it must be `"human"`. Any other connection is refused with
+`hold_input_requires_interactive_client`. Idempotent by `inputId`: the same id and `revision` answers the existing
+entry, an id that was already delivered answers `alreadyDelivered: true`, and the same id with another revision is
+refused with `input_id_conflict`.
+
+```json
+{"type": "hold_input", "inputId": "g-1", "revision": 1, "text": "Use the staging database"}
+```
+
+```json
+{"type": "response", "command": "hold_input", "success": true, "data": {"entryId": "a1b2c3", "duplicate": false}}
+```
+
+#### withdraw_held_input
+
+Withdraw held input before it is delivered. Interactive connections only.
+
+```json
+{"type": "withdraw_held_input", "inputId": "g-1"}
+```
+
+```json
+{"type": "response", "command": "withdraw_held_input", "success": true, "data": {"withdrawn": true}}
+```
+
+#### pause_for_run
+
+Pause this session because its parent's run was paused (a task child of a stopped session). Only a connection that
+declared the `task_parent` capability may send it. The child keeps every automatic wake as a notice and holds human
+input instead of starting a turn; its own `resume_session` is refused until the parent resumes the run. A later call
+with a higher `parentPauseSeq` raises the hold; a different `parentSessionId` is refused with `wrong_parent`.
+`childSeq` is this session's own pause sequence, which the parent passes back as `childSeqCutoff` on resume.
+
+```json
+{"type": "pause_for_run", "parentSessionId": "s-parent", "parentPauseSeq": 2, "runRef": {"kind": "dag", "id": "r1"}}
+```
+
+```json
+{"type": "response", "command": "pause_for_run", "success": true, "data": {"held": true, "childSeq": 4}}
+```
+
+#### resume_for_run
+
+Release a run-owned pause and start this child's resumed turn: held human input first, then the notices held while
+paused, then a directive about the interrupted turn. `task_parent` connections only. A `parentPauseSeq` other than
+the newest one this child saw (older or newer) answers `released: false, reason: "stale"`. A Stop the user gave this
+child directly is released only when its sequence is at or below `childSeqCutoff`; a newer one survives
+(`otherHoldLive: true`) and no turn starts. `turnId` is absent when the resumed turn did not start (a Stop landed while
+it was admitted). Held input and notices are consumed only by a resumed turn that no newer Stop aborted.
+
+```json
+{"type": "resume_for_run", "parentSessionId": "s-parent", "parentPauseSeq": 2, "resumeId": "rs-1", "childSeqCutoff": 4}
+```
+
+```json
+{"type": "response", "command": "resume_for_run", "success": true, "data": {"released": true, "otherHoldLive": false, "turnId": "7"}}
 ```
 
 #### dequeue_message
@@ -3947,7 +4047,7 @@ The current session name is available via `get_state` in the `sessionName` field
 
 #### record_user_activity
 
-Reports that the user started typing a draft in this session's composer (capability `user_activity`). It feeds the same first-activity signal the interactive editor sends, so a session with prompt-cache keep-alive enabled and an eligible model warms the first turn's prefix once while the user is still typing. Repeated reports are no-ops after the first, and nothing is sent to a provider when keep-alive is disabled or the model is ineligible. Only `kind: "draft"` is accepted: prompt activity is recorded by the prompt itself, and any other kind is refused with `invalid_argument`. On a multi-session host the command is session-scoped and passes the session-writer guard, so a session held by another writer answers `session_held`.
+Reports that the user started typing a draft in this session's composer (capability `user_activity`). It feeds the same first-activity signal the interactive editor sends, so a session with prompt-cache keep-alive enabled and an eligible model warms the first turn's prefix once while the user is still typing. Repeated reports are no-ops after the first, and nothing is sent to a provider when keep-alive is disabled or the model is ineligible. Only `kind: "draft"` is accepted: prompt activity is recorded by the prompt itself, and any other kind is refused with `invalid_argument` and the fixed message `record_user_activity: kind must be "draft"` (the refusal never repeats the value the client sent). On a multi-session host the command is session-scoped and passes the session-writer guard, so a session held by another writer answers `session_held`.
 
 ```json
 {"type": "record_user_activity", "sessionId": "rpc-1", "kind": "draft"}
@@ -5109,7 +5209,7 @@ a terminal outcome while detached is published once through the next bound exten
 
 `RpcSessionState.pendingDialogs` lists the still-open select, confirm, input and editor request frames, including requests that remain live across `new_session`, `switch_session`, `fork`, `clone` and `import_jsonl`. The array is empty once all dialogs are resolved, cancelled or timed out. Clients recovering from a gap can restore these dialogs and remove dialogs absent from this authoritative snapshot.
 
-Clients without the `question` capability get a sequential fallback: one `select` per question (options plus "Other (type an answer)"), then one `input` for a comment. The result maps back to the same `QuestionResponse`.
+Clients without the `question` capability get a sequential fallback: one `select` per question (options plus "Other (type an answer)", which asks one `input` for that question's typed answer). No comment prompt follows the last question. The result maps back to the same `QuestionResponse` without a `comment`: `answered` when at least one question was answered (the others listed in `unanswered`), `cancelled` when none was. An abort of the question's signal opens no further dialog and settles `cancelled` (or `timed_out` when the abort reason is `"timed_out"`), never `answered`, keeping the answers given before it.
 
 ### Extension UI Responses (stdin)
 

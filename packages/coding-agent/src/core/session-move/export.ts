@@ -1,5 +1,5 @@
 import { copyFile, mkdir, readdir, rename, rm, writeFile } from "node:fs/promises";
-import { basename, dirname, join, relative } from "node:path";
+import { basename, dirname, join, posix, relative, sep } from "node:path";
 import { SessionHeldError } from "../session-hold-errors.ts";
 import { liveSessionHolders } from "../session-holders.ts";
 import { loadEntriesFromFileAsync, SessionManager } from "../session-manager.ts";
@@ -16,6 +16,7 @@ import {
 	SESSION_BUNDLE_PATH,
 	sha256File,
 } from "./bundle.ts";
+import { EXTENSION_STATE_PAYLOAD } from "./extension-state.ts";
 import {
 	headerSessionId,
 	type MoveId,
@@ -33,6 +34,11 @@ export interface ExportSessionForMoveOptions {
 	/** Queued user input the release took out of the session (`dropped.user_messages`), in order. */
 	readonly droppedUserMessages: readonly string[];
 	readonly bundleDir: string;
+	/**
+	 * What the extensions wrote at the move release, bundled as the `extension-state` payload. A function is resolved
+	 * inside the move lock, right before the bundle is written (`sealedOutgoingStateDir`: the sealing attempt's folder).
+	 */
+	readonly extensionStateDir?: string | (() => string | undefined | Promise<string | undefined>);
 	/** Runs inside this process's move queue before anything is read; throw to refuse. */
 	readonly guard?: () => void | Promise<void>;
 	/**
@@ -58,6 +64,16 @@ export function exportSessionForMove(options: ExportSessionForMoveOptions): Prom
 	);
 }
 
+/** The release that sealed the session staged extension state that is no longer on disk; bundling would lose it. */
+export class MovedStateMissingError extends Error {
+	constructor(dir: string) {
+		super(
+			`The extension state the move release staged is missing (${dir}); the session was not exported without it. Finish the move as declined to take the session back, then release it again.`,
+		);
+		this.name = "MovedStateMissingError";
+	}
+}
+
 async function writeMoveBundle(options: ExportSessionForMoveOptions): Promise<MoveManifest> {
 	const { sessionFile } = options;
 	const moveId = parseMoveId(options.moveId);
@@ -80,11 +96,15 @@ async function writeMoveBundle(options: ExportSessionForMoveOptions): Promise<Mo
 			released_at: new Date().toISOString(),
 		});
 	}
+	const stateDir =
+		typeof options.extensionStateDir === "function" ? await options.extensionStateDir() : options.extensionStateDir;
+	if (stateDir !== undefined && !(await pathExists(stateDir))) throw new MovedStateMissingError(stateDir);
 	const staging = `${options.bundleDir}.partial-${process.pid}`;
 	await rm(staging, { recursive: true, force: true });
 	await mkdir(join(staging, dirname(SESSION_BUNDLE_PATH)), { recursive: true });
 	await copyFile(sessionFile, join(staging, SESSION_BUNDLE_PATH));
 	const sidecars = await copySidecars(dirname(sessionFile), sessionId, staging);
+	const stateFiles = await copyExtensionState(stateDir, staging);
 	const manifest: MoveManifest = {
 		format: MOVE_BUNDLE_FORMAT,
 		moveId,
@@ -95,7 +115,7 @@ async function writeMoveBundle(options: ExportSessionForMoveOptions): Promise<Mo
 		session: { path: SESSION_BUNDLE_PATH, sha256: await sha256File(join(staging, SESSION_BUNDLE_PATH)) },
 		sidecars,
 		droppedUserMessages: [...options.droppedUserMessages],
-		payloads: [],
+		payloads: stateFiles.length > 0 ? [{ kind: EXTENSION_STATE_PAYLOAD, files: stateFiles }] : [],
 	};
 	await writeFile(join(staging, MANIFEST_FILE), `${JSON.stringify(manifest, null, 1)}\n`);
 	await rm(options.bundleDir, { recursive: true, force: true });
@@ -116,12 +136,29 @@ async function copySidecars(sessionDir: string, sessionId: string, staging: stri
 	sources.push(...(await filesUnder(join(sessionDir, "resident-blobs", sessionId))));
 	const files: BundleFile[] = [];
 	for (const source of sources) {
-		const path = join("files", relative(sessionDir, source));
+		const path = bundlePath("files", sessionDir, source);
 		await mkdir(dirname(join(staging, path)), { recursive: true });
 		await copyFile(source, join(staging, path));
 		files.push({ path, sha256: await sha256File(join(staging, path)) });
 	}
 	return files;
+}
+
+async function copyExtensionState(dir: string | undefined, staging: string): Promise<BundleFile[]> {
+	if (dir === undefined) return [];
+	const files: BundleFile[] = [];
+	for (const source of await filesUnder(dir)) {
+		const path = bundlePath("state", dir, source);
+		await mkdir(dirname(join(staging, path)), { recursive: true });
+		await copyFile(source, join(staging, path));
+		files.push({ path, sha256: await sha256File(join(staging, path)) });
+	}
+	return files;
+}
+
+/** Manifest paths use `/` on every OS: the receiver strips the `files/` and `state/` prefixes by that separator. */
+function bundlePath(prefix: string, from: string, source: string): string {
+	return posix.join(prefix, ...relative(from, source).split(sep));
 }
 
 async function filesUnder(dir: string): Promise<string[]> {
