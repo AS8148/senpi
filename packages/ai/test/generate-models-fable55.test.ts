@@ -21,7 +21,13 @@ const sourceModel = {
 };
 
 describe("Fable 5.5 launch generation", () => {
-	it.each(["listed", "absent", "deprecated"] as const)("uses live metadata only when the model is %s", (status) => {
+	// The sandbox catalog is a fixture, never the committed one: the launch refresh commits a real 5.5 row (senpi#3893).
+	it.each([
+		["listed", false],
+		["absent", false],
+		["deprecated", false],
+		["deprecated", true],
+	] as const)("uses live metadata only when the model is %s (shipped before: %s)", (status, shippedBefore) => {
 		const root = mkdtempSync(join(tmpdir(), "senpi-fable55-"));
 		try {
 			const isolated = join(root, "package");
@@ -29,6 +35,10 @@ describe("Fable 5.5 launch generation", () => {
 			for (const entry of ["package.json", "scripts", "src"]) {
 				cpSync(join(packageRoot, entry), join(isolated, entry), { recursive: true });
 			}
+			const shippedCatalog = shippedBefore
+				? { "anthropic-messages": { [`chat:${modelId}`]: { id: modelId, provider: "anthropic" } } }
+				: {};
+			writeFileSync(join(isolated, "src/providers/data/anthropic.json"), JSON.stringify(shippedCatalog));
 			const models = {
 				"claude-opus-5": { ...sourceModel, id: "claude-opus-5" },
 				...(status === "absent" ? {} : { [modelId]: { ...sourceModel, id: modelId, status } }),
@@ -64,6 +74,10 @@ globalThis.fetch = async (input) => {
 				string,
 				Model<Api>
 			>;
+			if (status === "deprecated" && shippedBefore) {
+				expect(generated[modelId]).toMatchObject({ id: modelId, deprecated: true });
+				return;
+			}
 			if (status !== "listed") {
 				expect(generated[modelId]).toBeUndefined();
 				return;
