@@ -1,3 +1,59 @@
+## 2026-10-21 - usage.reasoning is left unset when the provider reports no reasoning count (senpi#3879)
+
+### What changed
+
+- `packages/ai/src/api/openai-completions.ts`: `usage.reasoning` is set only when `completion_tokens_details.reasoning_tokens` is a finite number (through `utils/reported-count.ts` `reportedCount`); absent, `null` or non-finite leaves it unset, and a reported 0 stays 0. It used to be `|| 0`.
+- `packages/ai/src/api/openai-responses-shared.ts`: `usage.reasoning` is set only when `output_tokens_details.reasoning_tokens` is a finite number (through `utils/reported-count.ts` `reportedCount`); absent, `null` or non-finite leaves it unset, and a reported 0 stays 0. It used to be `|| 0`.
+- `packages/ai/src/api/google-generative-ai.ts`: `usage.reasoning` is set only when `usageMetadata.thoughtsTokenCount` is a finite number (through `utils/reported-count.ts` `reportedCount`); absent, `null` or non-finite leaves it unset, and a reported 0 stays 0. It used to be `|| 0`.
+- `packages/ai/src/api/google-vertex.ts`: `usage.reasoning` is set only when `usageMetadata.thoughtsTokenCount` is a finite number (through `utils/reported-count.ts` `reportedCount`); absent, `null` or non-finite leaves it unset, and a reported 0 stays 0. It used to be `|| 0`.
+
+### Why
+
+- `packages/ai/src/api/openai-completions.ts`: `Usage.reasoning` is documented as "left undefined by providers that don't" expose a breakdown, but these adapters zero-filled it, so a client could not tell a reported zero from no data and showed "Reasoning 0" for providers that never report it (desktop #3729 review).
+- `packages/ai/src/api/openai-responses-shared.ts`: `Usage.reasoning` is documented as "left undefined by providers that don't" expose a breakdown, but these adapters zero-filled it, so a client could not tell a reported zero from no data and showed "Reasoning 0" for providers that never report it (desktop #3729 review).
+- `packages/ai/src/api/google-generative-ai.ts`: `Usage.reasoning` is documented as "left undefined by providers that don't" expose a breakdown, but these adapters zero-filled it, so a client could not tell a reported zero from no data and showed "Reasoning 0" for providers that never report it (desktop #3729 review).
+- `packages/ai/src/api/google-vertex.ts`: `Usage.reasoning` is documented as "left undefined by providers that don't" expose a breakdown, but these adapters zero-filled it, so a client could not tell a reported zero from no data and showed "Reasoning 0" for providers that never report it (desktop #3729 review).
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/openai-completions.ts`: usage parsing happens inside the adapter's stream before any extension sees the message.
+- `packages/ai/src/api/openai-responses-shared.ts`: usage parsing happens inside the adapter's stream before any extension sees the message.
+- `packages/ai/src/api/google-generative-ai.ts`: usage parsing happens inside the adapter's stream before any extension sees the message.
+- `packages/ai/src/api/google-vertex.ts`: usage parsing happens inside the adapter's stream before any extension sees the message.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/api/openai-completions.ts`, the `reasoning` line of the usage object.
+- LOW: `packages/ai/src/api/openai-responses-shared.ts`, the `reasoning` line of the usage object.
+- LOW: `packages/ai/src/api/google-generative-ai.ts`, the `reasoning` line of the usage object.
+- LOW: `packages/ai/src/api/google-vertex.ts`, the `reasoning` line of the usage object.
+
+## 2026-10-21 - Responses cache affinity follows the stable prefix (omo#10775)
+
+### What changed
+
+- `packages/ai/src/api/openai-prompt-cache.ts`: derives a bounded, versioned key from model id, leading instructions, and the sorted tool schema set, excluding session ids and conversation messages.
+- `packages/ai/src/api/openai-responses.ts`, `packages/ai/src/api/openai-codex-responses.ts`, and `packages/ai/src/api/azure-openai-responses.ts`: use that derivation whenever caching is enabled, including native GPT-5.6+ requests and prewarm. Subscription transport headers and WebSocket ownership remain session-scoped.
+- `packages/ai/src/api/openai-responses-shared.ts`: emits Responses tools in name order without mutating the caller's array.
+
+### Why
+
+- `packages/ai/src/api/openai-prompt-cache.ts`: session UUID keys prevent new sessions and task children with identical prefixes from sharing cache affinity.
+- `packages/ai/src/api/openai-responses.ts`, `packages/ai/src/api/openai-codex-responses.ts`, and `packages/ai/src/api/azure-openai-responses.ts`: all Responses transports need the same prefix-derived body key so API-key, subscription, Azure, prewarm, and compaction calls agree.
+- `packages/ai/src/api/openai-responses-shared.ts`: stable tool ordering is required for identical provider-prefix bytes.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/openai-prompt-cache.ts`: the derivation is shared provider behavior, not a session extension concern.
+- `packages/ai/src/api/openai-responses.ts`, `packages/ai/src/api/openai-codex-responses.ts`, and `packages/ai/src/api/azure-openai-responses.ts`: these adapters construct cache fields before extension payload hooks and are shared by every session.
+- `packages/ai/src/api/openai-responses-shared.ts`: the adapter serializes tool schemas after extension tool registration, so an extension cannot enforce transport-wide ordering.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/api/openai-prompt-cache.ts`: shared derivation and clamp.
+- `packages/ai/src/api/openai-responses.ts`, `packages/ai/src/api/openai-codex-responses.ts`, and `packages/ai/src/api/azure-openai-responses.ts`: imports and request builders.
+- `packages/ai/src/api/openai-responses-shared.ts`: `convertResponsesTools`.
+
 ## 2026-10-20 - chatgpt-subscription failures carry a classified providerDiagnostic (senpi#3771)
 
 ### What changed
