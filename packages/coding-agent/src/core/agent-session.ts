@@ -12624,6 +12624,7 @@ function messageFingerprint(message: AgentMessage | undefined): string {
 			if (typeof part.thinking === "string") size += part.thinking.length;
 		}
 	}
-	const usage = (message as { usage?: { input?: number; output?: number; totalTokens?: number } }).usage;
-	return `${size}:${usage?.input ?? ""}:${usage?.output ?? ""}:${usage?.totalTokens ?? ""}`;
+	const usage = (message as { usage?: Usage }).usage;
+	const requestContext = usage?.contextUsage;
+	return `${size}:${usage?.input ?? ""}:${usage?.output ?? ""}:${usage?.totalTokens ?? ""}:${requestContext?.input}:${requestContext?.output}:${requestContext === null}`;
 }
