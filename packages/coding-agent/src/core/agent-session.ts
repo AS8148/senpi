@@ -401,6 +401,7 @@ import {
 	type ThinkingClampNotice,
 } from "./thinking-levels.ts";
 import { resetTimings, time } from "./timings.ts";
+import { ToolBarrier, type ToolBarrierSpec, toolBarrierSpecError } from "./tool-barrier.ts";
 import { type SessionMessageUpdateEvent, withResolvedToolName } from "./tool-call-display-name.ts";
 import {
 	createSessionHostCallHandler,
@@ -530,6 +531,10 @@ export type AgentSessionEvent =
 	/** The session's tool child changed state (senpi#3566; the minimal record todo 14 extends). */
 	| { type: "session_tool_child"; state: "spawned" | "exited" | "respawned"; generation: number; pid: number }
 	| { type: "session_abort" }
+	/** A workspace-writing tool call started waiting on the turn's tool barrier (senpi#3717). */
+	| { type: "tool_barrier_waiting"; id: string; toolCallId: string; toolName: string }
+	/** The tool barrier's ceiling passed before a release; it opened by itself (senpi#3717). */
+	| { type: "tool_barrier_expired"; id: string; deadlineMs: number }
 	| SessionHoldEvent
 	| {
 			type: "resume_compaction_required";
@@ -1160,6 +1165,8 @@ export interface PromptOptions extends ClientMessageIdentity {
 	onSessionWorkReady?: () => void;
 	sessionTitlePrompt?: string | false;
 	onQueuedInput?: (input: PreparedClientInput) => void;
+	/** Arm the tool barrier for the turn this prompt starts; ignored when the prompt is queued instead (senpi#3717). */
+	toolBarrier?: ToolBarrierSpec;
 }
 
 /** Result from cycleModel() */
@@ -1577,6 +1584,7 @@ export class AgentSession {
 	});
 	/** Created on the first `ctx.executeTool()` call. */
 	private _nestedToolCalls: NestedToolCallRunner | undefined;
+	private readonly _toolBarrier = new ToolBarrier((spec) => this._emit({ type: "tool_barrier_expired", ...spec }));
 	private _toolDefinitions: Map<string, ToolDefinitionEntry> = new Map();
 	private _toolPromptSnippets: Map<string, string> = new Map();
 	private _toolPromptGuidelines: Map<string, string[]> = new Map();
@@ -1611,7 +1619,15 @@ export class AgentSession {
 			nextQueuedId: () => this._mintQueuedId(),
 			onChange: (update) => this._emit({ type: "pending_input_update", ...update }),
 		});
-		this.agent.queuedInputPort = this._pendingInputs.queuedInputPort();
+		const queuedInputPort = this._pendingInputs.queuedInputPort();
+		this.agent.queuedInputPort = {
+			...queuedInputPort,
+			// A follow-up the core drains starts a new turn, inside the same run: the armed turn's barrier ends here.
+			commitConsumption: (queue, messages) => {
+				if (queue === "followUp") this._toolBarrier.clear();
+				return queuedInputPort.commitConsumption(queue, messages);
+			},
+		};
 		this.settingsManager = config.settingsManager;
 		this._unsubscribeSettingsSource = this.settingsManager.subscribeToSourceSelection((source) => {
 			this._emit({ type: "settings_source_selected", ...source });
@@ -2143,10 +2159,10 @@ export class AgentSession {
 		};
 		this._bindToolSearchRemovedHints();
 
-		this.agent.beforeToolCall = async ({ toolCall, args }) => {
+		this.agent.beforeToolCall = async ({ toolCall, args }, signal) => {
 			this._toolExecutionDepth++;
 			try {
-				const result = await this.preflightToolCall(toolCall, args);
+				const result = await this.preflightToolCall(toolCall, args, { signal });
 				if (result?.block) {
 					this._toolExecutionDepth--;
 				}
@@ -2170,10 +2186,16 @@ export class AgentSession {
 	async preflightToolCall(
 		toolCall: AgentToolCall,
 		args: unknown,
-		options: { waitForEventQueue?: boolean; parentToolCallId?: string } = {},
+		options: { waitForEventQueue?: boolean; parentToolCallId?: string; signal?: AbortSignal } = {},
 	) {
 		if (options.waitForEventQueue !== false) {
 			await this._agentEventQueue;
+		}
+		const signal = options.signal ?? this.agent.signal;
+		// A call released by Stop never runs: block it without asking its hooks (a permission prompt) about it.
+		// Callers such as executeTool only honor an explicit block, so returning nothing here would let it run.
+		if ((await this._waitForToolBarrier(toolCall, signal)) && signal?.aborted) {
+			return { block: true, reason: "Operation aborted" };
 		}
 
 		const runner = this._extensionRunner;
@@ -2281,8 +2303,12 @@ export class AgentSession {
 					context: { messages: this.agent.state.messages, tools: this.agent.state.tools },
 					// A nested call runs inside its caller's execution: waiting on the event queue here
 					// could wait on the caller's own tool_execution_start processing.
-					beforeToolCall: ({ toolCall: call, args: callArgs }) =>
-						this.preflightToolCall(call, callArgs, { waitForEventQueue: false, parentToolCallId: parentId }),
+					beforeToolCall: ({ toolCall: call, args: callArgs }, callSignal) =>
+						this.preflightToolCall(call, callArgs, {
+							waitForEventQueue: false,
+							parentToolCallId: parentId,
+							signal: callSignal,
+						}),
 					afterToolCall: ({ toolCall: call, args: callArgs, result, isError }) =>
 						this._emitAfterToolCallHooks(call, callArgs, result, isError, parentId),
 					signal,
@@ -3066,6 +3092,9 @@ export class AgentSession {
 			return;
 		}
 		this._isAgentRunActive = false;
+		// The run is over, so the turn a barrier was armed for is too. agent_end keeps it across an
+		// expected retry; a retry that is cancelled or declined settles here without another agent_end.
+		this._toolBarrier.clear();
 		this._warnQueuedInputOutlivingRun(agentEnd);
 		// Before the settle and idle edges: the drain they wake may redeliver what this run's file refused.
 		this.externalAdmission.observeRunSettled();
@@ -3296,9 +3325,12 @@ export class AgentSession {
 			// A retry owns the queue the same way: the retry handler drops the failed
 			// assistant from agent state, so the core's post-run check would otherwise
 			// see a user tail and drain queued steering into the doomed retry request.
-			if (requiredAutoCompaction || this._willRetryAfterAgentEnd(event.messages)) {
+			const willRetry = this._willRetryAfterAgentEnd(event.messages);
+			if (requiredAutoCompaction || willRetry) {
 				this.agent.suppressQueuedMessageDrain();
 			}
+			// The barrier belongs to the armed turn: it ends here, before the core drains any follow-up.
+			if (!willRetry) this._toolBarrier.clear();
 			// agent_before_settle (D-15) decides the post-run queue: it continues first (queued follow-ups
 			// wait until that continuation would stop) or keeps input it cannot run. Input its handlers queue
 			// must not start an agent-core drain run before the boundary commits.
@@ -4457,6 +4489,7 @@ export class AgentSession {
 		clearMcpGrantPresentations(this.sessionId);
 		this._engineTurnHold.invalidate();
 		this._deadlineTracker.disarm();
+		this._toolBarrier.clear();
 		for (const dispose of this._toolContextDisposers) dispose();
 		try {
 			this._probeBackScheduler.cancel("dispose");
@@ -5393,6 +5426,8 @@ export class AgentSession {
 	 * @throws Error if no model selected or no API key available (when not streaming)
 	 */
 	async prompt(text: string, options?: PromptOptions): Promise<void> {
+		const barrierError = options?.toolBarrier === undefined ? undefined : toolBarrierSpecError(options.toolBarrier);
+		if (barrierError !== undefined) throw new Error(barrierError);
 		if (isHumanInput(options) && options?.humanInputReported !== true) this._humanInputAdmitted(promptKind(options));
 		// Held synchronously, before any await: an external delivery never overtakes this input.
 		const hold = this.externalAdmission.beginInput({
@@ -6014,6 +6049,7 @@ export class AgentSession {
 			return;
 		}
 
+		if (options?.toolBarrier) this._toolBarrier.arm(options.toolBarrier);
 		promptDisposition?.("started");
 		emitPendingCommandInvocation();
 		preflightResult?.(true);
@@ -10884,6 +10920,8 @@ export class AgentSession {
 				registerLazyToolActivator: (activator) => {
 					this._lazyToolActivation.register(activator);
 				},
+				armToolBarrier: (spec) => this.armToolBarrier(spec),
+				releaseToolBarrier: (id) => this.releaseToolBarrier(id),
 				getCommands,
 				setModel: async (model, origin) => {
 					if (!this._modelRuntime.hasConfiguredAuth(model.provider)) return false;
@@ -11299,6 +11337,31 @@ export class AgentSession {
 		}
 
 		this.setActiveToolsByName([...new Set(nextActiveToolNames)]);
+	}
+
+	/**
+	 * Arm the tool barrier (senpi#3717): until `releaseToolBarrier(id)`, the end of the turn it was armed for,
+	 * or `deadlineMs`, every tool not declared `workspaceEffect: "read"` waits before it runs.
+	 */
+	armToolBarrier(spec: ToolBarrierSpec): void {
+		const error = toolBarrierSpecError(spec);
+		if (error !== undefined) throw new Error(error);
+		this._toolBarrier.arm(spec);
+	}
+
+	/** Open the barrier armed under `id`; false (a no-op) when no barrier with that id is armed. */
+	releaseToolBarrier(id: string): boolean {
+		return this._toolBarrier.release(id);
+	}
+
+	/** Hold a workspace-changing call while a tool barrier is armed; true when it waited. */
+	private async _waitForToolBarrier(toolCall: AgentToolCall, signal: AbortSignal | undefined): Promise<boolean> {
+		if (this._toolDefinitions.get(toolCall.name)?.definition.workspaceEffect === "read") return false;
+		const wait = this._toolBarrier.wait(signal);
+		if (!wait) return false;
+		this._emit({ type: "tool_barrier_waiting", id: wait.id, toolCallId: toolCall.id, toolName: toolCall.name });
+		await wait.done;
+		return true;
 	}
 
 	/** Normalized exposure of a registered tool (C-EX-1); a name without a definition is `direct`. */
