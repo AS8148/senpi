@@ -15,6 +15,7 @@
 
 - Concurrent prompts after a pause no longer duplicate held input or discard a newer update. A failed skill preparation no longer blocks later prompts, and a parent pause arriving during a skill read keeps commands and manual continues held until the parent resumes them ([#4047](https://github.com/code-yeongyu/senpi/pull/4047)).
 - Invoking a project skill no longer stalls the other sessions on a shared host while its file is read and checked; the link checks from #3796 are unchanged ([#3796](https://github.com/code-yeongyu/senpi/issues/3796)).
+- An MCP server over HTTP with no saved sign-in no longer freezes the whole process for up to 30 seconds. Each request's synchronous token lookup could spin on the legacy-credential migration lock while the background lookup in the same process held it, so the holder could never release it; tool calls then failed with "MCP metadata was not ready before the request timeout". The lookup now skips the lock when there is nothing to migrate, and the background claim never holds the lock across an await ([#3546](https://github.com/code-yeongyu/senpi/issues/3546)).
 
 ### Removed
 
