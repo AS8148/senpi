@@ -185,6 +185,7 @@ type RpcSessionCommand =
 
 	// State
 	| { id?: string; type: "get_state" }
+	| { id?: string; type: "request_self_settle" }
 	/**
 	 * The newest receipt of one effect (capability `effect_ledger`). With `sessionId` it answers from the
 	 * loaded session; with `sessionPath` (and no `sessionId`) from that transcript on disk, searching the
@@ -557,6 +558,7 @@ export type RpcCommand =
 			type: "open_session";
 			/** An observational/unattended open; attaching never releases an existing hold. */
 			attended?: false;
+			spawnedBy?: import("../../core/session-lifecycle-types.ts").SpawnedBy;
 			/**
 			 * Attach only to an existing session on this host generation. Requires
 			 * `expected_host_instance`; mismatch returns `owner_changed`, a released
@@ -845,6 +847,7 @@ export interface RpcSessionState {
 	paused: boolean;
 	pausedNoticeCount: number;
 	holds: { kind: HoldKind; key: string; since: string; data?: unknown; sourceCounts: Record<string, number> }[];
+	lifecycle: import("../../core/session-lifecycle-types.ts").SessionLifecycle;
 	model?: Model<any>;
 	/**
 	 * Model switch held until the next compaction, or `null` when no switch is held.
@@ -1196,6 +1199,13 @@ export type RpcResponse =
 
 	// State
 	| { id?: string; type: "response"; command: "get_state"; success: true; data: RpcSessionState }
+	| {
+			id?: string;
+			type: "response";
+			command: "request_self_settle";
+			success: true;
+			data: import("../../core/session-lifecycle-types.ts").SelfSettleResult;
+	  }
 
 	// Model
 	| {
