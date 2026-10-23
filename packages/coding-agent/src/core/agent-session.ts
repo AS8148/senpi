@@ -3975,6 +3975,14 @@ export class AgentSession {
 					}
 				}
 			}
+			// The exemption covers only the first response after a compaction. A run that ends on that response
+			// without consuming it (an aborted or failed response, a blocked retry) has still spent it: hand the
+			// input parked while that run started back to the ordinary queues, whose rules decide when it runs,
+			// instead of holding it until a later overflow compaction (#4036).
+			if (this._hasPendingPostCompactionUsageExemption(msg) && !this._isAssistantFromBeforeLatestCompaction(msg)) {
+				this._skipNextPostCompactionAssistantCheck = false;
+				this._flushPostCompactionDeferredMessages();
+			}
 		}
 
 		if (event.type === "agent_end") {
