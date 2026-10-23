@@ -17,9 +17,11 @@ import type { ClientMessageIdentity } from "../../core/client-message-identity.t
 import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import type { EngineOrdinal } from "../../core/engine-build-identity.ts";
+import type { HoldKind } from "../../core/engine-turn-hold.ts";
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
 import type { ContextUsage, SessionControlAdmission, SessionKind } from "../../core/extensions/types.ts";
 import type { ResolvedMessagePath } from "../../core/message-path-resolution.ts";
+import type { PendingInputSnapshot, PendingInputUpdate } from "../../core/pending-input-session.ts";
 import type { SessionEntry, SessionMessageEntry, SessionTreeNode, UsageTotals } from "../../core/session-manager.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import type { ApiKeyVerification } from "../../core/verify-api-key.ts";
@@ -33,6 +35,7 @@ export type { RpcCommandInvocationEvent } from "./rpc-command-invocation.ts";
 export type { RpcCommandsChangedEvent, RpcSlashCommand } from "./rpc-command-surface.ts";
 
 import type { RpcSubscriptionLimitsEvent } from "./rpc-host-lifecycle-types.ts";
+import type { RpcMoveSessionCommand, RpcMoveSessionResponse } from "./session-move-wire.ts";
 
 export type {
 	RpcHostKernelMemory,
@@ -74,6 +77,15 @@ type RpcSessionCommand =
 			deliverAs?: "steer" | "followUp" | "nextTurn";
 	  }
 	| { id?: string; type: "continue_from_leaf" }
+	/** Resume after a Stop or an unattended hold. Every field is optional so older clients keep working (senpi#3811). */
+	| {
+			id?: string;
+			type: "resume_session";
+			expectedSeq?: number;
+			mode?: "continue" | "release";
+			message?: string;
+			effectId?: string;
+	  }
 	| { id?: string; type: "append_user_message"; content: unknown }
 	| { id?: string; type: "append_session_entry"; entry: SessionEntry }
 	| ({
@@ -108,8 +120,38 @@ type RpcSessionCommand =
 			clearQueue?: boolean;
 			/** How long `awaitIdle` waits, 0..60000 ms; default 10000. */
 			graceMs?: number;
+			/** `stop` is a user Stop: the session is paused until human input or resume_session (senpi#3811). */
+			intent?: "stop" | "abort";
 	  }
-	| { id?: string; type: "interrupt"; turnId?: string }
+	| { id?: string; type: "interrupt"; turnId?: string; intent?: "stop" | "abort" }
+	/** Human input held for a paused session, delivered when it resumes; idempotent by inputId (senpi#3811). */
+	| {
+			id?: string;
+			type: "hold_input";
+			inputId: string;
+			revision: number;
+			text: string;
+			/** Required from a task_parent connection: the parent session that paused this child for its run. */
+			parentSessionId?: string;
+			origin?: "human";
+	  }
+	| { id?: string; type: "withdraw_held_input"; inputId: string }
+	/** Task-parent connections only: pause or resume this child for its parent's run (senpi#3811). */
+	| {
+			id?: string;
+			type: "pause_for_run";
+			parentSessionId: string;
+			parentPauseSeq: number;
+			runRef: { kind: "dag" | "task" | "workpool" | "team"; id: string };
+	  }
+	| {
+			id?: string;
+			type: "resume_for_run";
+			parentSessionId: string;
+			parentPauseSeq: number;
+			resumeId: string;
+			childSeqCutoff: number;
+	  }
 	| { id?: string; type: "abort_compaction" }
 	| { id?: string; type: "reload" }
 	| { id?: string; type: "check_reload_veto" }
@@ -144,6 +186,12 @@ type RpcSessionCommand =
 	 * whole file before answering `found: false`. For inputs `effectId` is the `clientMessageId`.
 	 */
 	| { id?: string; type: "get_effect_status"; effectId: string; sessionPath?: string }
+	/**
+	 * The pending inputs in durable custody (queued, sending, failed) and an explicit outcome for each listed id,
+	 * consistent through `throughCursor` (senpi#3549). Subscribe to `pending_input_update` first, then apply this
+	 * snapshot and only updates after its cursor. At most 64 ids.
+	 */
+	| { id?: string; type: "get_pending_inputs"; knownClientMessageIds?: string[] }
 
 	// Model
 	| { id?: string; type: "set_model"; provider: string; modelId: string; effectId?: string }
@@ -258,6 +306,8 @@ type RpcSessionCommand =
 	| { id?: string; type: "get_tree" }
 	| { id?: string; type: "get_last_assistant_text" }
 	| { id?: string; type: "set_session_name"; name: string }
+	/** The user started typing a draft in this session's composer (senpi#3859). Only `draft` is accepted. */
+	| { id?: string; type: "record_user_activity"; kind: "draft" }
 	| { id?: string; type: "import_jsonl"; inputPath: string; cwdOverride?: string }
 
 	// Messages
@@ -379,7 +429,7 @@ export const RPC_ERROR_UNKNOWN_COMMAND = "unknown_command";
 export const RPC_ERROR_TURN_ACTIVE = "turn_active";
 /** `release_session` while other session work runs (bash, compaction, another request for the session); `errorData.busy` names it. */
 export const RPC_ERROR_SESSION_BUSY = "session_busy";
-/** `release_session` while clients are attached, without `force: true`; `errorData.attachments` names how many. */
+/** `release_session` while OTHER clients are attached (the requesting connection does not count), without `force`; `errorData.attachments` names how many. */
 export const RPC_ERROR_ATTACHED = "attached";
 /** `release_session` with a `reason` other than `takeover`. */
 export const RPC_ERROR_INVALID_RELEASE_REASON = "invalid_release_reason";
@@ -460,6 +510,9 @@ export interface RpcAbortQuiesce {
 /** Capability: `steer`/`follow_up` accept `whenIdle: "start"`. */
 export const STEER_WHEN_IDLE_CAPABILITY = "steer_when_idle";
 
+/** Capability: `record_user_activity` reports composer draft activity (senpi#3859). */
+export const USER_ACTIVITY_CAPABILITY = "user_activity";
+
 /** What `steer`/`follow_up` do on an idle session: queue (default) or start a turn. */
 export type RpcWhenIdle = "queue" | "start";
 
@@ -497,6 +550,8 @@ export type RpcCommand =
 	| {
 			id?: string;
 			type: "open_session";
+			/** An observational/unattended open; attaching never releases an existing hold. */
+			attended?: false;
 			/**
 			 * Attach only to an existing session on this host generation. Requires
 			 * `expected_host_instance`; mismatch returns `owner_changed`, a released
@@ -581,6 +636,7 @@ export type RpcCommand =
 			retryFallback?: SessionRetryFallbackProfile;
 	  }
 	| { id?: string; type: "close_session"; sessionId: string }
+	| RpcMoveSessionCommand
 	| {
 			id?: string;
 			/**
@@ -593,7 +649,10 @@ export type RpcCommand =
 			 */
 			type: "release_session";
 			sessionId: string;
-			reason: "takeover";
+			/** `move` seals the file for a move to another device (`moveId` required); writes are refused here after. */
+			reason: "takeover" | "move";
+			moveId?: string;
+			target?: string;
 			interrupt?: boolean;
 			force?: boolean;
 	  }
@@ -778,6 +837,9 @@ export interface RpcSessionModelEntry {
 }
 
 export interface RpcSessionState {
+	paused: boolean;
+	pausedNoticeCount: number;
+	holds: { kind: HoldKind; key: string; since: string; data?: unknown; sourceCounts: Record<string, number> }[];
 	model?: Model<any>;
 	/**
 	 * Model switch held until the next compaction, or `null` when no switch is held.
@@ -808,6 +870,15 @@ export interface RpcSessionState {
 	/** True when the active model is served at the priority ("fast") tier. */
 	fastMode: boolean;
 	isStreaming: boolean;
+	/** Human input held for delivery when the session resumes (senpi#3811). */
+	pausedHeldInputCount?: number;
+	/** A run this session started is paused by its Stop (senpi#3811). */
+	runPaused?: boolean;
+	/** The pause seq to send as `resume_session.expectedSeq`, and the live hold records (senpi#3811). */
+	pause?: {
+		pauseSeq: number;
+		records: { kind: string; key: string; runRef?: { kind: string; id: string }; parentSessionId?: string }[];
+	};
 	isCompacting: boolean;
 	steeringMode: "all" | "one-at-a-time";
 	followUpMode: "all" | "one-at-a-time";
@@ -833,6 +904,8 @@ export interface RpcSessionState {
 	isBashRunning: boolean;
 	/** Open question prompts awaiting an answer. Absent when none are pending. */
 	pendingQuestions?: RpcQuestionUiRequest[];
+	/** Live select, confirm, input and editor request frames, including across session replacements; [] when none. */
+	pendingDialogs?: RpcExtensionUIRequest[];
 }
 
 // ============================================================================
@@ -981,6 +1054,8 @@ export type RpcResponse =
 					attachments: number;
 					/** Milliseconds since the session's idle window was last refreshed. */
 					idleMs?: number;
+					/** The session's tool child (senpi#3566): `none` until its first job, then `live` or `exited`. */
+					tool_child?: { state: "none" | "live" | "exited"; generation?: number; pid?: number };
 				}>;
 			};
 	  }
@@ -1015,7 +1090,12 @@ export type RpcResponse =
 			type: "response";
 			command: "prompt";
 			success: true;
-			data?: ClientMessageIdentity & { disposition?: PromptDisposition; admission?: ClientMessageAdmission };
+			data?: ClientMessageIdentity & {
+				disposition?: PromptDisposition;
+				admission?: ClientMessageAdmission;
+				/** Kept as a notice: automatic input while the user's Stop holds the session (senpi#3811). */
+				heldAsNotice?: boolean;
+			};
 	  }
 	| { id?: string; type: "response"; command: "send_custom_message"; success: true }
 	| { id?: string; type: "response"; command: "append_user_message"; success: true }
@@ -1025,14 +1105,22 @@ export type RpcResponse =
 			type: "response";
 			command: "steer";
 			success: true;
-			data?: ClientMessageIdentity & { disposition?: QueuedInputDisposition; admission?: ClientMessageAdmission };
+			data?: ClientMessageIdentity & {
+				disposition?: QueuedInputDisposition;
+				admission?: ClientMessageAdmission;
+				heldAsNotice?: boolean;
+			};
 	  }
 	| {
 			id?: string;
 			type: "response";
 			command: "follow_up";
 			success: true;
-			data?: ClientMessageIdentity & { disposition?: QueuedInputDisposition; admission?: ClientMessageAdmission };
+			data?: ClientMessageIdentity & {
+				disposition?: QueuedInputDisposition;
+				admission?: ClientMessageAdmission;
+				heldAsNotice?: boolean;
+			};
 	  }
 	| {
 			id?: string;
@@ -1054,6 +1142,22 @@ export type RpcResponse =
 			command: "interrupt";
 			success: true;
 			data: { interrupted: boolean; turnId?: string };
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "hold_input";
+			success: true;
+			data: { entryId?: string; duplicate?: boolean; alreadyDelivered?: boolean };
+	  }
+	| { id?: string; type: "response"; command: "withdraw_held_input"; success: true; data: { withdrawn: boolean } }
+	| { id?: string; type: "response"; command: "pause_for_run"; success: true; data: { held: true; childSeq: number } }
+	| {
+			id?: string;
+			type: "response";
+			command: "resume_for_run";
+			success: true;
+			data: { released: boolean; reason?: "stale" | "not_held"; otherHoldLive?: boolean; turnId?: string };
 	  }
 	| { id?: string; type: "response"; command: "abort_compaction"; success: true }
 	| { id?: string; type: "response"; command: "reload"; success: true; data: { cancelled: boolean; reason?: string } }
@@ -1096,6 +1200,7 @@ export type RpcResponse =
 			success: true;
 			data: { found: true; effect: EffectStatus } | { found: false; searched: "complete" };
 	  }
+	| { id?: string; type: "response"; command: "get_pending_inputs"; success: true; data: PendingInputSnapshot }
 	| { id?: string; type: "response"; command: "set_favorite_models"; success: true }
 	| { id?: string; type: "response"; command: "set_scoped_models"; success: true }
 	| {
@@ -1106,6 +1211,22 @@ export type RpcResponse =
 			data: { model: Model<any>; thinkingLevel: ThinkingLevel; isScoped: boolean } | null;
 	  }
 	| { id?: string; type: "response"; command: "continue_from_leaf"; success: true }
+	| {
+			id?: string;
+			type: "response";
+			command: "resume_session";
+			success: true;
+			data?: {
+				resumed: boolean;
+				reason?: "stale" | "not_paused" | "resume_through_parent";
+				parentSessionId?: string;
+				pauseSeq: number;
+				turnStarted: boolean;
+				deliveredNotices: number;
+				deliveredHeldInputs: number;
+				replayed?: boolean;
+			};
+	  }
 	| {
 			id?: string;
 			type: "response";
@@ -1244,6 +1365,7 @@ export type RpcResponse =
 			data: { text: string | null };
 	  }
 	| { id?: string; type: "response"; command: "set_session_name"; success: true }
+	| { id?: string; type: "response"; command: "record_user_activity"; success: true }
 	| { id?: string; type: "response"; command: "import_jsonl"; success: true; data: { cancelled: boolean } }
 
 	// Messages
@@ -1299,7 +1421,14 @@ export type RpcResponse =
 	// The URL and completion arrive as auth_login_url / auth_login_end events.
 	| { id?: string; type: "response"; command: "login_start"; success: true }
 	| { id?: string; type: "response"; command: "login_cancel"; success: true }
-	| { id?: string; type: "response"; command: "login_api_key"; success: true }
+	| {
+			id?: string;
+			type: "response";
+			command: "login_api_key";
+			success: true;
+			/** Present when the key replaced a login of the other kind; `backupPath` holds the previous file (senpi#3448). */
+			data?: { replaced: "oauth" | "api_key"; backupPath?: string };
+	  }
 	| { id?: string; type: "response"; command: "logout"; success: true }
 	| {
 			id?: string;
@@ -1315,6 +1444,7 @@ export type RpcResponse =
 			success: true;
 			data: { accounts: RpcProviderAccount[]; ordered: boolean };
 	  }
+	| RpcMoveSessionResponse
 	| { id?: string; type: "response"; command: "account_pin"; success: true }
 	| { id?: string; type: "response"; command: "account_remove"; success: true }
 	| { id?: string; type: "response"; command: "account_order"; success: true }
@@ -1419,6 +1549,8 @@ export type RpcExtensionUIRequest =
 			type: "extension_ui_request";
 			id: string;
 			method: "select";
+			/** Permanent MCP env grant; only a grant_select presentation may answer. */
+			grantSelect?: boolean;
 			title: string;
 			options: string[];
 			timeout?: number;
@@ -1459,6 +1591,8 @@ export type RpcExtensionUIRequest =
 			widgetKey: string;
 			widgetLines: string[] | undefined;
 			widgetPlacement?: "aboveEditor" | "belowEditor";
+			/** Choices offered with the widget; a client sends `command` as a normal prompt when one is picked. */
+			widgetActions?: { label: string; command: string }[];
 	  }
 	| { type: "extension_ui_request"; id: string; method: "setTitle"; title: string }
 	| { type: "extension_ui_request"; id: string; method: "set_editor_text"; text: string }
@@ -1499,8 +1633,38 @@ export type RpcExtensionUIProgress = {
 	sessionId?: string;
 };
 
-/** Stdin records: session/host commands plus extension-UI replies and progress. */
-export type RpcInboundRecord = RpcCommand | RpcExtensionUIResponse | RpcExtensionUIProgress;
+/** Outbound: a host session asks the client that offers `session_relocation` (docs/rpc.md). */
+export type RpcHostRequest =
+	| { type: "host_request"; id: string; method: "list_relocation_targets"; sessionId?: string }
+	| {
+			type: "host_request";
+			id: string;
+			method: "relocate_session";
+			target: string;
+			reason: string;
+			sessionId?: string;
+	  };
+
+/** Inbound answer to one `host_request`, under its `id`: `data` for an answer, `error` when the client failed. */
+export type RpcHostResponse = {
+	type: "host_response";
+	id: string;
+	sessionId?: string;
+	data?: unknown;
+	error?: string;
+};
+
+/** Outbound: the run that scheduled an accepted move settled; the host runs the move now. */
+export type RpcRelocationDueEvent = {
+	type: "relocation_due";
+	moveId: string;
+	target: string;
+	reason: string;
+	sessionId?: string;
+};
+
+/** Stdin records: session/host commands plus extension-UI replies and progress, and host-request answers. */
+export type RpcInboundRecord = RpcCommand | RpcExtensionUIResponse | RpcExtensionUIProgress | RpcHostResponse;
 
 /** Outbound deadline refresh for an open `question` request. */
 export type RpcQuestionUpdatedEvent = {
@@ -1542,6 +1706,9 @@ export interface RpcHighReasoningWarningEvent {
 	provider: string;
 	thinkingLevel: ThinkingLevel;
 }
+
+/** A pending input in durable custody changed; `changes` are complete projections, in cursor order. */
+export type RpcPendingInputUpdateEvent = { type: "pending_input_update" } & PendingInputUpdate;
 
 /** Emitted after explicit skill tokens are expanded for a user-authored request. */
 export interface RpcSkillInvocationEvent {

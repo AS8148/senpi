@@ -1,3 +1,130 @@
+## 2026-10-21 - Kimi keeps its blank-key, region-only login (senpi#3869)
+
+### What changed
+
+- `packages/ai/src/providers/kimi-coding-auth.ts`: the Kimi API-key auth declares `keyOptional: true`.
+
+### Why
+
+- senpi#3869 review: before senpi#3867 a user with `KIMI_API_KEY` in the environment could leave the key prompt blank to store only the region (`resolve` falls back from an empty stored key to `KIMI_API_KEY` and still routes to the stored region). Refusing that login would be a user-facing regression. Regression: the Kimi case in `test/login-empty-api-key.test.ts`.
+
+### Why an extension could not handle it
+
+- This is the in-tree Kimi provider declaring its own auth metadata.
+
+### Expected merge conflict zones
+
+- LOW: the object returned by `kimiCodeApiKeyAuth`.
+
+## 2026-10-21 - Logins refuse a blank API key unless the provider declares it optional (senpi#3867)
+
+### What changed
+
+- `packages/ai/src/auth/types.ts`: `ApiKeyAuth` gains optional `keyOptional`, which a provider sets when it works without a key (a local server such as llama.cpp).
+- `packages/ai/src/models.ts`: `Models.login` passes the provider's login result through `withoutBlankKey` when `keyOptional` is set, so a blank or `undefined` key is dropped and the URL/env-only credential is saved. Then `assertLoginKeyPresent` (fork-only `src/auth/pool/slots.ts`) throws `EmptyApiKeyError` for any remaining blank, whitespace or `undefined` key, before the store is touched. `appendLoginSlot` in the same file runs the same check, so `AuthStorage.set` and RPC `login_api_key` stay strict. Env-only logins that carry no `key` field (Bedrock profile or credential chain, Vertex ADC) still save.
+
+### Why
+
+- senpi#3867: an empty key was appended as a keyless `login-2` account that nothing could use. Regression: `test/login-empty-api-key.test.ts`.
+
+### Why an extension could not handle it
+
+- `Models.login` owns the write; an extension cannot veto a credential before the store mutation.
+
+### Expected merge conflict zones
+
+- LOW: the import block and the line after `raceWithAbortSignal(loginOperation, signal)` in `Models.login`.
+
+## 2026-10-22 - AssistantMessage.promptCacheBreakpoint (senpi#3242)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `AssistantMessage` gains optional `promptCacheBreakpoint?: true`, a request-only hint that the history up to and including the message is a stable prefix. Context reduction sets it on copies; it is never persisted.
+
+### Why
+
+- `packages/ai/src/types.ts`: context reduction must tell the provider adapter where the prefix it leaves unchanged ends, so the adapter can keep a cache checkpoint there instead of re-writing the cached conversation at every frontier step.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/types.ts`: the hint has to travel on the message the adapter converts, which is a core message contract.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/types.ts`: the end of `AssistantMessage`.
+
+## 2026-10-21 - AssistantMessage.timing (senpi#3879)
+
+### What changed
+
+- `packages/ai/src/types.ts`: new `AssistantMessageTiming` (`requestedAt`, optional `firstTokenAt`/`lastTokenAt`, `endedAt`, optional `generationMs`, all milliseconds) and an optional `AssistantMessage.timing`.
+
+### Why
+
+- A reply's time to first token and generation rate were measured only live by the TPS notice and discarded; RPC clients (the desktop turn stats line, desktop #3729) and reloaded sessions had no record of them.
+
+### Why an extension could not handle it
+
+- The message type is the public `pi-ai` contract; an extension cannot add a persisted field to it.
+
+### Expected merge conflict zones
+
+- LOW: `AssistantMessage` in `packages/ai/src/types.ts`, next to `endTurn`/`timestamp`.
+
+## 2026-10-21 - Request context is distinct from cumulative billing (omo#10792)
+
+### What changed
+
+- `packages/ai/src/types.ts`: optional `Usage.contextUsage` records the latest request's input (including cache reads/writes) and output separately. `null` means the provider reports cumulative billing but no request measurement; absent preserves the legacy single-request contract. Existing billing fields retain their semantics. The two-part snapshot preserves both prompt-only overflow/anchor calculations and occupied-context totals without subtracting cumulative output.
+
+### Why
+
+- `packages/ai/src/types.ts`: an SDK query can bill multiple requests whose input contexts overlap. Their sum cannot describe the current context window.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/types.ts`: the public usage contract must carry the distinction through persistence, provider middleware, and every context consumer without changing billing.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/types.ts`, the optional fields in `Usage`. Keep this additive field if upstream still uses one usage object.
+
+## 2026-10-21 - AssistantMessage.failureSource (senpi#3866)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `AssistantMessage` gains optional `failureSource?: "local"`.
+
+### Why
+
+- A run can fail in local code (the session's pending-input journal, a local file) with no provider request involved. The agent marks that failure so a session never retries the model or walks the fallback chain on it (omo#10781).
+
+### Why an extension could not handle it
+
+- `AssistantMessage` is the public message contract in `pi-ai`.
+
+### Expected merge conflict zones
+
+- LOW: after `abortSource` in `AssistantMessage` in `packages/ai/src/types.ts`.
+
+## 2026-10-18 - AnthropicMessagesCompat.supportsGzipRequestBody (senpi#3643)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `AnthropicMessagesCompat` gains optional `supportsGzipRequestBody`.
+
+### Why
+
+- Lets a model or provider opt in or out of gzip request bodies (senpi#3643).
+
+### Why an extension could not handle it
+
+- The compat type is part of the public model contract in `pi-ai`.
+
+### Expected merge conflict zones
+
+- LOW: the end of `AnthropicMessagesCompat` in `packages/ai/src/types.ts`.
+
 ## 2026-10-17 - Export the provider credential env names (senpi#3531)
 
 ### What changed
@@ -17,6 +144,64 @@ The map is private to `pi-ai`; a consumer can only enumerate it through an expor
 ### Expected merge conflict zones
 
 - `packages/ai/src/env-api-keys.ts`: the map moved out of `getApiKeyEnvVars`, and the two exports sit above it.
+
+
+## 2026-10-18 - Cursor families published after the 2026-08-18 capture (senpi#3620)
+
+### What changed
+
+- `src/cursor/capability-table.ts` (split out of `src/cursor/model-capabilities.ts`, which keeps the types, parser
+  and alias lookups): capability entries for `claude-opus-5-5`, `claude-fable-5-1`, `claude-sonnet-5-5`,
+  `claude-haiku-5-5`, `muse-wonder-1.0`, `muse-spark-1.3`, `grok-4.7`, `gemini-4-argon`, `gemini-3.8-flash` and
+  `default`. Each window is the ceiling the server reported on the first checkpoint on 2026-10-18 for the suffix
+  variant senpi sends; `maxWindow` is the largest context option AvailableModels offers. `reasoning_effort` joins
+  `CursorParameterId` (Sonnet 5.5, Haiku 5.5, Muse Wonder, Grok 4.7 and the Gemini 4/3.8 rows name the axis so).
+- `src/cursor/display-name.ts` (moved out of `catalog-grouping.ts`): names drop zero-width characters and doubled
+  spaces, the Haiku 5.5 plain group drops Cursor's "No Thinking" whole, and a thinking group whose label never said
+  so gains "Thinking".
+- `src/cursor/model-input.ts` (moved out of `api/cursor-agent.ts`): image input follows AvailableModels'
+  `supportsImages`, adding Kimi K3, Muse and Grok 4.5/4.6.
+- `src/cursor/model-capabilities.ts` + `src/cursor/display-name.ts` + `src/cursor/catalog-grouping.ts` (review LOW-1 fix):
+  the ten families' entries carry the new `served-checkpoint` evidence kind, and a display name drops its `1M` size
+  token when the measured window is smaller — Opus 5.5, Fable 5.1 and Muse Spark 1.3 serve 300k for the default option
+  senpi sends; Cursor's `1M` label names the extended-context tier (`maxWindow`). `available-models` entries keep
+  Cursor's label untouched (their mismatch is senpi#3621's scope).
+
+### Why
+
+- The ten families answered live requests through the #2038 derived grouping but advertised the 200k placeholder
+  window, two carried broken names, and image-capable families were offered as text-only.
+- A picker name promising 1M while the served window is 300k misleads (review LOW-1); the name now follows the window
+  the server was measured serving, sourced from the committed 2026-10-18 checkpoint fixture and Cursor's published
+  "up to 1M with extended context" tier.
+
+### Why an extension couldn't do it
+
+- Catalog normalization and discovery run inside the provider before any extension sees a model.
+
+### Expected merge-conflict zones
+
+- `src/cursor/model-capabilities.ts`, `src/cursor/capability-table.ts`, `src/cursor/catalog-grouping.ts`, the
+  discovery block of `api/cursor-agent.ts`.
+## 2026-10-16 - Image generation results carry the provider diagnostic (omo#10285)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `AssistantImages` gains optional `providerDiagnostic`, the same bounded classification `AssistantMessage` already carries.
+- `packages/ai/src/api/openai-images.ts`: the SDK images call runs inside `awaitProviderTransport` with `openAICompatibleProviderDiagnosticFromError`, as the chat adapters' calls do, and a failed request sets `providerDiagnostic` from `readProviderDiagnostic(error)`.
+
+### Why
+
+The coding agent's `generate_image` tool needs the HTTP status of a rejected images request (404/405 means the provider has no images endpoint) to move past such a gateway. Reading it from the formatted `errorMessage` would be guessing from prose.
+
+### Why an extension could not handle it
+
+`AssistantImages` is the `pi-ai` result type; only the adapter that made the request sees the SDK error.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/types.ts`: the `AssistantImages` field list, beside `errorMessage`.
+- `packages/ai/src/api/openai-images.ts`: the request callback and the `catch` block of `generateImages`.
 
 ## 2026-10-15 - ProviderDiagnostic gains the network category and structured_transport evidence (senpi#3228)
 
