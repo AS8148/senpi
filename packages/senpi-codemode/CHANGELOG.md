@@ -12,6 +12,8 @@
 
 ### Removed
 
+- Removed the built-in llama.cpp provider's image-format exception along with the `/llama` integration ([#3202](https://github.com/code-yeongyu/senpi/issues/3202)).
+
 ## [2026.10.21-3] - 2026-10-22
 
 ### Breaking Changes

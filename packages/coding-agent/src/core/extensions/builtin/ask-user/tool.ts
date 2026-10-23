@@ -220,7 +220,7 @@ export function startQuestion(
 	const first = request.questions[0];
 	pi.events.emit("herdr:blocked", {
 		active: true,
-		label: first ? `${first.header} — ${first.question}` : "Question",
+		label: first ? `${first.header} - ${first.question}` : "Question",
 		id: request.requestId,
 	});
 	signal?.addEventListener("abort", abort, { once: true });
@@ -228,7 +228,8 @@ export function startQuestion(
 	const opts: QuestionDialogOptions = {
 		timeout: request.timeoutMs,
 		signal: controller.signal,
-		deliver: request.waitForAnswer ? "tool-result" : "user-message",
+		// A resumed question delivers its answer as a user message (deliverAnswer), like an async one.
+		deliver: request.waitForAnswer && !resuming ? "tool-result" : "user-message",
 		hardDeadlineAtMs: Date.now() + 7_200_000,
 		getDeadlineAtMs: () => pending.deadlineAtMs,
 		onProgress: (progress) => {
