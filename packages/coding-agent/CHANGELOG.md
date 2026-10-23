@@ -6,10 +6,14 @@
 
 ### Added
 
+- Shared RPC hosts support live-only `attach_session`, one-hold `release_attachment`, and atomic `reclaim_session`. Attachments are fenced by durable session identity, and temporary releases let active turns finish ([#3795](https://github.com/code-yeongyu/senpi/issues/3795), [#3814](https://github.com/code-yeongyu/senpi/pull/3814)).
+
 - The agent can continue its own session on another of your computers, for example a stronger one for heavy work or off one that is about to sleep: `list_relocation_targets` shows the computers the app offers, and `relocate_session` asks the app to move the session when the current turn ends. The turn is never cut short, and the thread keeps its id, conversation and queued messages. Where no app offers it (a plain CLI) or the app declines, the agent is told and keeps working where it is. Hosts advertise `session_relocation` and talk to the session through `host_request` / `host_response` and `relocation_due`, which go only to the app connection that offers it; a user who stops the turn keeps the session here. The two tools appear in the agent's tool list only while an app offers this, so a plain CLI session never sees them ([#3994](https://github.com/code-yeongyu/senpi/pull/3994), [#3959](https://github.com/code-yeongyu/senpi/issues/3959)).
 - Stop now pauses the session. Terminal and monitor notices, detached eval cells, goal continuations, and task deliveries that arrive after a Stop are kept as notices and no longer start a turn by themselves. Type a message or run `/resume` to continue; the footer shows how many updates are waiting. A Stop also pauses the workflow run the session started, and a message resumes it; cancelling that run releases its pause (extensions call `ctx.releaseRunFence()`). RPC clients get `intent: "stop"` on `abort`/`interrupt` for `interactive_user` connections, `hold_input`, `withdraw_held_input`, `pause_for_run`, `resume_for_run`, and `paused`, `pausedNoticeCount`, `pausedHeldInputCount` and `runPaused` in `get_state`. Extensions can send an itemized batch with `pi.sendMessage(message, { items })` and get one receipt per item: a paused session stores each item as its own notice ([#3811](https://github.com/code-yeongyu/senpi/issues/3811)).
 
 ### Changed
+
+- Socket-host session mutations now require attachment. This release serves legacy unattached mutations with a deprecation line; `SENPI_RPC_REQUIRE_ATTACH=1` enforces immediately. `release_session` excludes the caller's own holds when checking for other attached clients ([#3795](https://github.com/code-yeongyu/senpi/issues/3795), [#3814](https://github.com/code-yeongyu/senpi/pull/3814)).
 
 - `release_session` refuses `attached` only while ANOTHER client is attached; the connection asking for the release no longer counts, so a client can release (or move) the session it shows without `force`. `errorData.attachments` now counts only those other clients ([#3994](https://github.com/code-yeongyu/senpi/pull/3994)).
 
@@ -18,6 +22,7 @@
 - In classic `--mode rpc` (one client over stdio), a `set_client_info` that carries `capabilities` now takes effect, after the connection-role check: a client that declares `question` gets the structured question frame instead of single select dialogs, withdrawing `question` cancels a pending structured question once, and declaring or withdrawing `extension_events` subscribes or unsubscribes extension events. A `set_client_info` without `capabilities` keeps the set, and `SENPI_RPC_CLIENT_CAPABILITIES` is only the initial value ([#4006](https://github.com/code-yeongyu/senpi/issues/4006)).
 - A question that times out, or that the user cancels, after they had already answered part of it now shows the agent those answers and lists the questions left unanswered, instead of only saying the user dismissed it. A user cancel is the cancel button or Remove on a question card, Esc or Ctrl+C in the terminal question, or `/answer skip`; a question whose UI fails shows the failure and the partial answers. An async question (`waitForAnswer: false`) cancelled this way now delivers one message with the partial answers, and `/answer skip` adds no second copy. Every other cancel stays silent as before, even with answers: aborting the turn (Esc on the run), closing the session, disabling ask-user and an RPC client disconnecting. A cancel with nothing answered still reads "The user dismissed the question." A timed-out question with several answers lists them one per line. An RPC client without the `question` capability now reports each answer as the user gives it, so its partial answers survive a timeout too, and a pick that lands after a cancel is no longer recorded ([sisyphuslabs/omo-desktop-app#4042](https://github.com/sisyphuslabs/omo-desktop-app/issues/4042)).
 - MCP: a connect, reconnect or OAuth refresh that a session dispose (or a reconnect) superseded is no longer treated as a server failure: it writes nothing to the server's log after dispose returned (which could recreate a removed agent dir), never flips the disposed connection to `degraded` (which let it reconnect again), and a released shared connection's owner no longer degrades the connection other sessions still use ([#4013](https://github.com/code-yeongyu/senpi/issues/4013)).
+- MCP: `whenAttachSettled()` no longer reports `settled` while an attach is still running: it waits for the queued attach to hand over its backgrounded connects first, within the same timeout, so a caller that observes the attach right after it starts no longer sees MCP tools as attached when they are not ([#4027](https://github.com/code-yeongyu/senpi/issues/4027)).
 
 ### Removed
 
@@ -26,8 +31,6 @@
 ### Breaking Changes
 
 ### Added
-
-- Shared RPC hosts support live-only `attach_session`, one-hold `release_attachment`, and atomic `reclaim_session`. Attachments are fenced by durable session identity, and temporary releases let active turns finish ([#3795](https://github.com/code-yeongyu/senpi/issues/3795), [#3814](https://github.com/code-yeongyu/senpi/pull/3814)).
 
 - Every turn end now publishes a `turn_end_liveness` extension event (in-process and to RPC clients) that says what happens next: `continuing` (the core retries the turn, or a goal continuation or todo nudge was queued), `waiting` (and on what: a running subagent, a monitor, a background shell, an armed goal timer, a staged recovery, a queued message, or a question to the user; with the stop reason as `heldBy` when one applies, since those wakes still deliver a turn), `held` (an active session hold holds every automatic wake, or nothing will re-enter it and nothing may continue on its own: user abort, subagent session, print/JSON mode, deadline stop, or a paused/blocked goal), `stalled` (open work and nothing will bring the session back: a spent continuation guard, a provider error with its reset time when the error names one, a system or provider abort, or nothing armed); only a turn that actually completed reads `done`, or `done`. A `stalled` verdict is also saved in the session as a `turn-end-liveness` entry. Nothing starts or stops differently ([#3863](https://github.com/code-yeongyu/senpi/issues/3863)).
 
@@ -39,8 +42,6 @@
 - Claude Fable 5.5 (and Claude Mythos 5.5) use the tuned Fable prompt preset; once the model is released they also get the same default retry-fallback chain as Fable 5.1 (the chain and the Claude Code subscription floor stay off until launch) ([#3893](https://github.com/code-yeongyu/senpi/issues/3893), [#3897](https://github.com/code-yeongyu/senpi/pull/3897)).
 
 ### Changed
-
-- Socket-host session mutations now require attachment. This release serves legacy unattached mutations with a deprecation line; `SENPI_RPC_REQUIRE_ATTACH=1` enforces immediately. `release_session` excludes the caller's own holds when checking for other attached clients ([#3795](https://github.com/code-yeongyu/senpi/issues/3795), [#3814](https://github.com/code-yeongyu/senpi/pull/3814)).
 
 ### Fixed
 
