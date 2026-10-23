@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
 import { heldTurn, nextEvent } from "../rpc-release-host-support.ts";
@@ -56,9 +57,15 @@ describe("a scheduled relocation being cleared", () => {
 				);
 				expect(outcomes).toEqual([
 					expect.objectContaining({
-						details: { status: "dropped", reason, moveId: "mv-dropped", target: "Studio" },
+						details: expect.objectContaining({
+							status: "dropped",
+							reason,
+							moveId: "mv-dropped",
+							target: "Studio",
+						}),
 					}),
 				]);
+				expect(rig.harness.eventsOfType("agent_start")).toHaveLength(1);
 				await stillWritableHere(rig);
 				expect(
 					rig.harness.session.messages.filter(
@@ -71,4 +78,48 @@ describe("a scheduled relocation being cleared", () => {
 			}
 		},
 	);
+
+	it("persists the abort notice when the session closes without another prompt", async () => {
+		// Given: an accepted relocation with the closing model response still running.
+		const rig = await relocationRig({
+			capabilities: ["session_relocation"],
+			host: () => ({ data: { accepted: true, moveId: "mv-close", target: "Studio" } }),
+		});
+		try {
+			rig.harness.setResponses([
+				fauxAssistantMessage([fauxToolCall("relocate_session", { target: "Studio", reason: "heavy build" })], {
+					stopReason: "toolUse",
+				}),
+				heldTurn,
+			]);
+			const toolDone = nextEvent(rig.harness.session, "tool_execution_end");
+			const turn = rig.harness.session.prompt("continue on Studio");
+			await toolDone;
+
+			// When: the user aborts and the session closes without another model request.
+			await rig.handler.handleInputLine(JSON.stringify({ type: "abort", id: "abort-close" }));
+			await turn;
+			await rig.harness.session.agent.waitForIdle();
+			const file = rig.harness.session.sessionFile;
+			if (file === undefined) throw new Error("expected a persisted session");
+			await rig.handler.dispose();
+			rig.harness.session.dispose();
+
+			// Then: the saved conversation already contains exactly one typed correction.
+			const entries: { customType?: string }[] = (await readFile(file, "utf8"))
+				.trim()
+				.split("\n")
+				.map((line) => JSON.parse(line));
+			expect(entries.filter((entry) => entry.customType === "session_relocation")).toEqual([
+				expect.objectContaining({
+					type: "custom_message",
+					display: false,
+					details: { status: "dropped", reason: "aborted", moveId: "mv-close", target: "Studio" },
+				}),
+			]);
+			expect(rig.harness.eventsOfType("agent_start")).toHaveLength(1);
+		} finally {
+			await rig.cleanup();
+		}
+	});
 });

@@ -20,7 +20,7 @@
 
 ### Fixed
 
-- An accepted request to continue a session on another computer now tells the agent once if it is cancelled because the app disconnected, the user aborted, or the app withdrew its offer. The session stays on this computer, and the notice does not start another turn ([#4078](https://github.com/code-yeongyu/senpi/issues/4078)).
+- An accepted request to continue a session on another computer now tells the agent once if it is cancelled because the app disconnected, the user aborted, or the app withdrew its offer. After an abort, the notice is saved before the next prompt, even if the session closes immediately. The session stays on this computer, and the notice does not start another turn ([#4078](https://github.com/code-yeongyu/senpi/issues/4078)).
 - A `models.json` `models[]` entry that repeats a built-in model without `cost` keeps the built-in price instead of billing at $0, and a custom model with no price anywhere reports its cost as unknown (no `$` amount) instead of $0; `hideFreeModels` no longer hides such a model ([#3844](https://github.com/code-yeongyu/senpi/issues/3844)).
 - An RPC session whose worker dies before it finishes opening (for example a worker that cannot load its modules) now fails with `open_failed` and the worker's error, instead of `session_closing` ([#4037](https://github.com/code-yeongyu/senpi/issues/4037)).
 - The RPC host's cleanup of leftover internal socket directories under `/tmp` now only removes the current user's directories, scans a `TMPDIR` that is `/tmp` once, and a socket path that fits nowhere names every location it tried ([#3487](https://github.com/code-yeongyu/senpi/issues/3487)).

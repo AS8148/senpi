@@ -28,6 +28,7 @@ type Scheduled = {
 	readonly target: string;
 	readonly reason: string;
 	readonly connection: string;
+	readonly dropReason?: "aborted";
 };
 type HostAsk = { method: "list_relocation_targets" } | { method: "relocate_session"; target: string; reason: string };
 
@@ -67,8 +68,13 @@ export class RpcSessionRelocation implements SessionRelocationHost {
 		this.deps = deps;
 		this.unsubscribe = deps.session.subscribe((event) => {
 			// A run the user stopped takes its scheduled move with it: the user chose to stay here.
-			if (event.type === "agent_end" && deps.session.currentAbortSource === "user") this.dropScheduled("aborted");
-			if (event.type === "agent_settled" && this.scheduled !== undefined) void this.announceWhenReleasable();
+			if (event.type === "agent_end" && deps.session.currentAbortSource === "user" && this.scheduled !== undefined)
+				this.scheduled = { ...this.scheduled, dropReason: "aborted" };
+			if (event.type === "agent_settled" && this.scheduled !== undefined) {
+				// agent_end still streams: wait until settlement so the correction is appended, not parked.
+				if (this.scheduled.dropReason !== undefined) this.dropScheduled(this.scheduled.dropReason);
+				else void this.announceWhenReleasable();
+			}
 		});
 	}
 
@@ -178,10 +184,10 @@ export class RpcSessionRelocation implements SessionRelocationHost {
 			return;
 		}
 		this.scheduled = undefined;
-		const { connection, ...fields } = due;
+		const { connection, moveId, target, reason } = due;
 		this.deps.channel.send(
 			connection,
-			{ type: "relocation_due", ...fields } satisfies RpcRelocationDueEvent,
+			{ type: "relocation_due", moveId, target, reason } satisfies RpcRelocationDueEvent,
 			"event",
 		);
 	}
