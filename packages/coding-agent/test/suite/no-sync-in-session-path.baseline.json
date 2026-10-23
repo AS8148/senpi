@@ -248,6 +248,13 @@
 			"count": 1
 		},
 		{
+			"file": "src/core/lifecycle-goal.ts",
+			"callee": "statSync",
+			"symbol": "readLifecycleGoal",
+			"count": 1,
+			"reason": "Already on main before this baseline lands: no-goal lifecycle admission deliberately avoids waiting on unrelated asynchronous filesystem work (#3864)."
+		},
+		{
 			"file": "src/core/log-file-rotation.ts",
 			"callee": "chmodSync",
 			"symbol": "rotateLogIfNeeded",
@@ -330,6 +337,13 @@
 			"callee": "statSync",
 			"symbol": "migrateModelsJsonProviderIds",
 			"count": 1
+		},
+		{
+			"file": "src/core/prompt-size-report.ts",
+			"callee": "realpathSync",
+			"symbol": "entry",
+			"count": 1,
+			"reason": "Already on main before this baseline lands: sizes-only startup accounts for canonical home paths (#3483)."
 		},
 		{
 			"file": "src/core/retry-fallback/log.ts",
