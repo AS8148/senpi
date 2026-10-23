@@ -13,6 +13,7 @@ import type { SessionWorkerClient } from "./session-worker-client.ts";
 
 /** The immutable flags selected when a routing session is opened. */
 export interface RpcSessionLaunchProfile extends AgentSessionLaunchProfile {
+	attended?: false;
 	sessionPath?: string;
 	/**
 	 * Durable session id chosen by the caller, applied ONLY when this open creates the session.
@@ -150,6 +151,8 @@ export interface RpcSessionRow {
 	context: PublishedSessionContext;
 	/** Milliseconds since the last routed command or session-owned activity refreshed the idle window. */
 	idleMs: number;
+	/** The session's tool child (senpi#3566): `none` until its first job, then `live` or `exited`. */
+	tool_child: { state: "none" | "live" | "exited"; generation?: number; pid?: number };
 }
 
 export interface OpenRpcSession {

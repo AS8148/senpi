@@ -13,6 +13,7 @@
 import { isHostCrash, readHostCrashRecords } from "./host-crash-record.ts";
 import { readDaemonEnvKeys } from "./host-daemon-env.ts";
 import { createHostDaemonPaths, parseShardSocket, type ShardKind } from "./host-daemon-paths.ts";
+import { readHostRegistration } from "./host-daemon-registration.ts";
 import type { HostProtocolInfo } from "./host-decision.ts";
 import { type HostGenerationRow, pruneDeadGenerations, readGenerationRows } from "./host-generations.ts";
 import { OBSERVE_REQUEST_FIELD } from "./host-observe-request.ts";
@@ -46,6 +47,7 @@ export interface HostStatusReport {
 	readonly lifecycle: "ready" | "stopping" | null;
 	readonly socket: string;
 	readonly pid: number | null;
+	readonly processStartTime: string | null;
 	readonly instanceId: string | null;
 	readonly generation: number | null;
 	readonly engineVersion: string | null;
@@ -59,6 +61,8 @@ export interface HostStatusReport {
 	readonly zombies: number | null;
 	readonly rss_mb: number | null;
 	readonly host_rss_mb: number | null;
+	/** The supervisor's and host's memory footprint (`phys_footprint` / `RssAnon`), which RSS understates (senpi#3110). */
+	readonly host_footprint_mb: number | null;
 	readonly open_fds: number | null;
 	/**
 	 * Whether the ANSWERING generation's memory sampler reads pressure right now (RSS above
@@ -133,6 +137,7 @@ export async function probeHostStatus(
 	if (prune) await pruneDeadGenerations(paths);
 	const generations = await readGenerationRows(paths, { includeDead: !prune });
 	const current = generations.find((row) => row.current && row.alive);
+	const registered = await readHostRegistration(paths);
 	const metrics = current ? await readHostProcessMetrics(current.pid) : UNOBSERVED_METRICS;
 	// A socket that did not answer who it is will not answer what it holds: asking again would only
 	// spend a second budget on a hung endpoint.
@@ -146,6 +151,10 @@ export async function probeHostStatus(
 		lifecycle: host?.lifecycle ?? null,
 		socket: options.socket,
 		pid: current?.pid ?? null,
+		processStartTime:
+			registered?.instanceId === current?.instanceId && registered?.record.pid === current?.pid
+				? (registered?.record.processStartTime ?? null)
+				: null,
 		instanceId: host?.instanceId ?? current?.instanceId ?? null,
 		generation: host?.generation ?? current?.generation ?? null,
 		engineVersion: host?.engineVersion ?? current?.engineVersion ?? null,
@@ -157,6 +166,7 @@ export async function probeHostStatus(
 		zombies: metrics.zombies,
 		rss_mb: metrics.rss_mb,
 		host_rss_mb: metrics.host_rss_mb,
+		host_footprint_mb: metrics.host_footprint_mb,
 		open_fds: metrics.open_fds,
 		memory_pressure: host?.memory_pressure ?? null,
 		env_keys: await readDaemonEnvKeys(paths),
@@ -219,4 +229,10 @@ export function hostSummary(host: HostProtocolInfo | undefined): Record<string, 
 	};
 }
 
-const UNOBSERVED_METRICS: HostProcessMetrics = { rss_mb: null, host_rss_mb: null, open_fds: null, zombies: null };
+const UNOBSERVED_METRICS: HostProcessMetrics = {
+	rss_mb: null,
+	host_rss_mb: null,
+	host_footprint_mb: null,
+	open_fds: null,
+	zombies: null,
+};

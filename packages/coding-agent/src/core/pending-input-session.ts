@@ -6,6 +6,8 @@ import type { PendingInputProjection } from "./pending-input-projection.ts";
 import { createSessionQueuedInputPort } from "./pending-input-session-port.ts";
 import { PENDING_INPUT_TRANSITION, type PendingInputJournal, PendingInputStore } from "./pending-input-store.ts";
 import type { OperationOutcome, PendingInputMode, PendingInputOperationResult } from "./pending-input-types.ts";
+import type { HistoryReducer } from "./session-history-reduce.ts";
+import type { SessionManager } from "./session-manager.ts";
 
 export interface IdentifiedInput {
 	readonly clientMessageId: string;
@@ -15,7 +17,8 @@ export interface IdentifiedInput {
 }
 
 export interface SessionPendingInputsOptions {
-	readonly sessionManager: ConstructorParameters<typeof SessionPendingInputJournal>[0];
+	readonly sessionManager: ConstructorParameters<typeof SessionPendingInputJournal>[0] &
+		Pick<SessionManager, "reduceHistory">;
 	/** The session's own queue-id counter, so a store handle and the session's queued record share one id. */
 	readonly nextQueuedId: () => string;
 	/** Receives every committed change, in cursor order. */
@@ -62,6 +65,12 @@ export class ClientMessageIdConflictError extends Error {
 	}
 }
 
+/** Whether the session history records any pending-input transition; folded without a full-history view (senpi#2537). */
+const holdsPendingInputTransition: HistoryReducer<boolean> = {
+	initial: () => false,
+	add: (held, entry) => held || (entry.type === "custom" && entry.customType === PENDING_INPUT_TRANSITION),
+};
+
 /**
  * The pending inputs of one AgentSession (senpi#3549): the store, opened on the first identified input, and the
  * agent queue port over it. Input without a client id never touches the store and keeps the legacy queue path.
@@ -78,9 +87,7 @@ export class SessionPendingInputs {
 	constructor(options: SessionPendingInputsOptions) {
 		this.options = options;
 		// A session file that already holds pending inputs is recovered now: the agent's first drain must see them.
-		const journaled = options.sessionManager
-			.getEntries()
-			.some((entry) => entry.type === "custom" && entry.customType === PENDING_INPUT_TRANSITION);
+		const journaled = options.sessionManager.reduceHistory(holdsPendingInputTransition);
 		// Opened eagerly, unawaited: every later use awaits this same opening and surfaces its failure, so the
 		// eager start only must not report it a second time as an unhandled rejection.
 		if (journaled) this.store().catch(() => undefined);

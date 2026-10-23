@@ -148,6 +148,7 @@ describe("session move review fixes (senpi#3631)", () => {
 			bundleDir: backDir,
 		});
 		const ledgerA = new MoveLedger(join(base, "ledger-a"));
+		await ledgerA.prepare(BACK);
 		const { sessionFile } = await importMovedSession({
 			bundleDir: backDir,
 			targetCwd: cwdA,
@@ -252,7 +253,7 @@ describe("session move review fixes (senpi#3631)", () => {
 	});
 
 	it("#given a move the receiver was asked about before it arrived #then the late import is refused", async () => {
-		const { cwdB, bundleDir, ledger, readIdentity } = await setup();
+		const { cwdB, bundleDir, ledger, readIdentity } = await setup(undefined, undefined, { ready: false });
 		expect(await answerMoveStatus(ledger, MOVE, undefined)).toEqual({ state: "declined", reason: "no_record" });
 		await expect(importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity })).rejects.toBeInstanceOf(
 			MoveFencedError,

@@ -21,7 +21,10 @@
  * Also refused while clients are attached (`attached`, unless `force`) and for a session this host
  * cannot hand over (`release_unsupported`: a worker isolate owns the runtime, or there is no file).
  */
+import { rmSync } from "node:fs";
 import type { AgentSession } from "../../core/agent-session.ts";
+import { isMoveId, isPlainId, parseMoveId } from "../../core/session-move/bundle.ts";
+import { prepareOutgoingState, STATE_ATTEMPT_FIELD } from "../../core/session-move/extension-state.ts";
 import { SessionMovedAwayError } from "../../core/session-move/ownership.ts";
 import { isHandoffBusy } from "./handoff-activity.ts";
 import {
@@ -78,6 +81,8 @@ export interface SessionReleasePort extends ReleaseSettlePort {
 	code(cause: unknown): string;
 	/** Requests for the session in flight on any connection, the release itself not counted. */
 	otherRequests(sessionId: string): number;
+	/** Clients attached to the session other than the connection asking for the release. */
+	otherAttachments(sessionId: string): number;
 	/**
 	 * Claims every attachment and tears the session down, sealing it as released. Its claim is taken
 	 * before its first await. `false` when another close already owns the entry.
@@ -92,11 +97,17 @@ interface Releasable {
 }
 
 export async function releaseSession(port: SessionReleasePort, command: ReleaseSessionCommand): Promise<RpcResponse> {
-	const validMove = command.reason === "move" && typeof command.moveId === "string" && command.moveId !== "";
+	// Export and the receiver's ledger accept only a plain move id; a release under any other id could never finish.
+	const validMove = command.reason === "move" && isMoveId(command.moveId);
 	if (command.reason !== "takeover" && !validMove) return refusal(command.id, RPC_ERROR_INVALID_RELEASE_REASON);
 	if (port.draining()) return refusal(command.id, RPC_ERROR_HOST_DRAINING);
 	const first = releasable(port, command, undefined);
 	if (!("session" in first)) return first;
+	// The seal records the session's own id, which the bundle and the receiver use as a folder name: a move of a session
+	// whose id is not a plain id is refused here, before anything is interrupted or sealed (never sanitized).
+	if (command.reason === "move" && !isPlainId(first.session.sessionManager.getSessionId())) {
+		return refusal(command.id, RPC_ERROR_RELEASE_UNSUPPORTED, { detail: "session_id_not_plain" });
+	}
 	const busy = busySignals(port, command.sessionId, first.session);
 	const interrupted = busy.length > 0;
 	if (interrupted && command.interrupt !== true) {
@@ -107,6 +118,8 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 	const admission = first.session.externalAdmission;
 	let dropped = NOTHING_DROPPED;
 	let answer: RpcResponse | undefined;
+	let stagedState: { readonly attempt: string; readonly dir: string } | undefined;
+	let sealed = false;
 	try {
 		if (interrupted) {
 			admission.close(RELEASED_ADMISSION_CLOSED);
@@ -120,11 +133,29 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 		// A written session awaits nothing, so its claim stays in the same turn as the request that asked.
 		const manager = first.session.sessionManager;
 		if (!manager.isTranscriptFlushed()) await manager.persistHeaderNow();
-		answer = await claimAndRelease(port, command, interrupted, dropped);
+		// A move takes the extensions' out-of-folder state with it; they write it while their runtime is still live.
+		// Each handler runs under the session_shutdown handler budget: a hung one fails the release instead of holding it.
+		if (command.reason === "move") {
+			const moveId = parseMoveId(command.moveId);
+			stagedState = prepareOutgoingState(first.sessionPath, moveId);
+			const [failed] = await first.session.extensionRunner.emitSessionMove({
+				type: "session_move_export",
+				moveId,
+				dir: stagedState.dir,
+			});
+			if (failed !== undefined)
+				throw new Error(`${failed.extensionPath} could not write its state for the move: ${failed.error}`);
+		}
+		answer = await claimAndRelease(port, command, interrupted, dropped, stagedState?.attempt, () => {
+			sealed = true;
+		});
 		return answer;
 	} catch (cause) {
 		if (cause instanceof SessionMovedAwayError) {
-			answer = refusal(command.id, cause.code, { detail: cause.message });
+			answer = refusal(command.id, cause.code, {
+				detail: cause.message,
+				...(interrupted ? { interrupted: true, dropped } : {}),
+			});
 			return answer;
 		}
 		answer = refusal(command.id, RPC_ERROR_RELEASE_FAILED, {
@@ -133,7 +164,12 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 		});
 		return answer;
 	} finally {
-		if (answer?.success !== true) admission.reopen();
+		if (answer?.success !== true) {
+			admission.reopen();
+			// A move refused before its seal is abandoned: what its export staged is never bundled, and a retry stages
+			// afresh. Once the seal names this attempt, its folder is the move's state and stays for export.
+			if (stagedState !== undefined && !sealed) rmSync(stagedState.dir, { recursive: true, force: true });
+		}
 	}
 }
 
@@ -146,6 +182,8 @@ async function claimAndRelease(
 	command: ReleaseSessionCommand,
 	interrupted: boolean,
 	dropped: ReleaseDropped,
+	stateAttempt: string | undefined,
+	onSealed: () => void,
 ): Promise<RpcResponse> {
 	const taken = interrupted ? { interrupted: true, dropped } : undefined;
 	const ready = releasable(port, command, taken);
@@ -170,6 +208,8 @@ async function claimAndRelease(
 			...(command.reason === "move"
 				? {
 						move_id: command.moveId,
+						// The export bundles only this attempt's staged state: a late write from an earlier one never travels.
+						...(stateAttempt === undefined ? {} : { [STATE_ATTEMPT_FIELD]: stateAttempt }),
 						target: command.target ?? "",
 						session_id: ready.session.sessionManager.getSessionId(),
 					}
@@ -183,6 +223,7 @@ async function claimAndRelease(
 		admission.reopen();
 		throw cause;
 	}
+	onSealed();
 	if (!(await port.tearDown(command.sessionId, ready.sessionPath))) {
 		return refusal(command.id, RPC_ERROR_SESSION_CLOSING, taken);
 	}
@@ -245,8 +286,9 @@ function releasable(
 	if (session === undefined) return refuse(RPC_ERROR_RELEASE_UNSUPPORTED, { detail: "worker_runtime" });
 	const sessionPath = entry.sessionPath ?? session.sessionFile;
 	if (sessionPath === undefined) return refuse(RPC_ERROR_RELEASE_UNSUPPORTED, { detail: "no_session_file" });
-	if (entry.attachments > 0 && command.force !== true)
-		return refuse(RPC_ERROR_ATTACHED, { attachments: entry.attachments });
+	// The requesting connection's own attachment is not another client: it is drained with the rest.
+	const others = port.otherAttachments(command.sessionId);
+	if (others > 0 && command.force !== true) return refuse(RPC_ERROR_ATTACHED, { attachments: others });
 	return { session, sessionPath, attachments: entry.attachments };
 }
 
