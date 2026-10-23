@@ -1,3 +1,21 @@
+## 2026-10-23 - Reading the lifecycle never writes (senpi#3980)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the `lifecycle` getter returns the ledger snapshot without recomputing. `executeBash` refreshes the lifecycle when a user shell command starts and when it ends, and `compaction_start` / `compaction_end` refresh it like `session_paused` / `session_resumed`.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: the getter recomputed, so a `get_state` read while a fact had changed without an event (a running user shell command) appended and emitted a lifecycle record. Every fact now raises its own change edge, so a read is a read.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: the lifecycle getter, user bash bookkeeping and compaction events are session core state.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the `lifecycle` getter, the start and `finally` of `executeBash`, and the first line of `_emit`.
+
 ## 2026-10-20 - Contain project skill links and retain security notices (senpi#3796)
 
 ### What changed

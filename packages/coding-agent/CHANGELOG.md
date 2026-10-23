@@ -19,6 +19,7 @@
 
 ### Fixed
 
+- Reading a session's lifecycle (`get_state` or `session.lifecycle`) no longer writes a lifecycle record to the session file. A user shell command and compaction now update the lifecycle when they start and end, so the state a client reads is already current ([#3980](https://github.com/code-yeongyu/senpi/issues/3980)).
 - The RPC host's cleanup of leftover internal socket directories under `/tmp` now only removes the current user's directories, scans a `TMPDIR` that is `/tmp` once, and a socket path that fits nowhere names every location it tried ([#3487](https://github.com/code-yeongyu/senpi/issues/3487)).
 - `RpcClient.setSessionContext` called with no attached session and no `sessionId` now rejects with `RpcCommandError` and `errorCode: "session_not_attached"`, as its documentation says, instead of a plain `Error`; nothing is sent ([#3967](https://github.com/code-yeongyu/senpi/issues/3967)).
 - Editing a prompt after compaction no longer brings messages the edit abandoned back into the model context ([#3864](https://github.com/code-yeongyu/senpi/issues/3864)).

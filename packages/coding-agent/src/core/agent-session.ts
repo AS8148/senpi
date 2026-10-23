@@ -2771,7 +2771,13 @@ export class AgentSession {
 	}
 
 	private _emit(event: AgentSessionEvent): void {
-		if (event.type === "session_paused" || event.type === "session_resumed") this.refreshLifecycle();
+		if (
+			event.type === "session_paused" ||
+			event.type === "session_resumed" ||
+			event.type === "compaction_start" ||
+			event.type === "compaction_end"
+		)
+			this.refreshLifecycle();
 		this._logSessionEvent(event);
 		if (event.type === "entry_appended") {
 			event = { ...event, entry: describeUsageLimitEntry(event.entry) };
@@ -7541,8 +7547,8 @@ export class AgentSession {
 		});
 	}
 
+	/** Reads the lifecycle; every fact that feeds it raises its own change edge, so a read never writes (senpi#3980). */
 	get lifecycle() {
-		this._lifecycleBinding.controller.recompute();
 		return this._lifecycleBinding.controller.ledger.snapshot;
 	}
 
@@ -12981,6 +12987,7 @@ export class AgentSession {
 	): Promise<BashResult> {
 		const abortController = new AbortController();
 		this._bashAbortControllers.add(abortController);
+		this.refreshLifecycle();
 
 		// Apply command prefix if configured (e.g., "shopt -s expand_aliases" for alias support)
 		const prefix = this.settingsManager.getShellCommandPrefix();
@@ -13010,6 +13017,7 @@ export class AgentSession {
 			return result;
 		} finally {
 			this._bashAbortControllers.delete(abortController);
+			this.refreshLifecycle();
 		}
 	}
 
