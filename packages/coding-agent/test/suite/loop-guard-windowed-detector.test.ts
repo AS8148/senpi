@@ -49,7 +49,10 @@ describe("detectWindowedRepeat", () => {
 			rec("eval", { code: "analyze(x)" }),
 		];
 		expect(detectWindowedRepeat(records)).toBeUndefined();
-		expect(detectIdenticalRun(records)?.windowed).toBe(false);
+		const consecutive = detectIdenticalRun(records);
+		expect(consecutive?.kind).toBe("identical");
+		if (consecutive?.kind !== "identical") return;
+		expect(consecutive.windowed).toBe(false);
 	});
 
 	it("counts occurrences across a period-7 interleave the cycle detector cannot see", () => {
