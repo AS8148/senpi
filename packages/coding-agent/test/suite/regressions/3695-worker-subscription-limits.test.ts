@@ -80,3 +80,55 @@ it("a mirrored record that comes straight back is not published again", () => {
 
 	expect(published).toEqual(["2026-10-23T10:00:00.000Z"]);
 });
+
+// Two different records with the same reportedAt (report() keeps the previous reportedAt when only the
+// error changes) must settle on one value whatever order they arrive in, or host and worker bounce them.
+const tiedErrors = () => {
+	const base = {
+		provider: "anthropic-subscription",
+		account: "work",
+		windows: [{ id: "claude:5h", label: "5h", windowMinutes: 300, usedPercent: 12 }],
+		reportedAt: "2026-10-23T10:00:00.000Z",
+	};
+	return [
+		{ ...base, error: "rate limited" },
+		{ ...base, error: "sign-in needed" },
+	] as const;
+};
+
+it("records tied on reportedAt settle on the same value in either arrival order", () => {
+	const [first, second] = tiedErrors();
+	const forward = new SubscriptionLimitStore();
+	const backward = new SubscriptionLimitStore();
+
+	forward.adopt(first);
+	forward.adopt(second);
+	backward.adopt(second);
+	backward.adopt(first);
+
+	expect(forward.snapshot()).toEqual(backward.snapshot());
+});
+
+it("a crossed pair of tied records between two mirrored stores stops echoing", () => {
+	const [first, second] = tiedErrors();
+	const host = new SubscriptionLimitStore();
+	const worker = new SubscriptionLimitStore();
+	const toWorker: (typeof first | typeof second)[] = [];
+	const toHost: (typeof first | typeof second)[] = [];
+	host.subscribe((limits) => toWorker.push(structuredClone(limits) as typeof first));
+	worker.subscribe((limits) => toHost.push(structuredClone(limits) as typeof first));
+
+	host.adopt(first);
+	host.adopt(second);
+	let deliveries = 0;
+	while ((toWorker.length > 0 || toHost.length > 0) && deliveries < 100) {
+		const next = toWorker.shift();
+		if (next !== undefined) worker.adopt(next);
+		const back = toHost.shift();
+		if (back !== undefined) host.adopt(back);
+		deliveries += 1;
+	}
+
+	expect(deliveries).toBeLessThan(100);
+	expect(host.snapshot()).toEqual(worker.snapshot());
+});
