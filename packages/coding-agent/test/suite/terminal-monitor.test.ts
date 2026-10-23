@@ -214,6 +214,10 @@ describe("terminal monitor tool", () => {
 			timeout_ms: 50,
 		});
 		expect(firstText(timedResult)).toMatch(/^Monitor started with ID: mon_[0-9A-HJKMNP-TV-Z]{16}$/);
+		const timedSummary = summaryEvent(await timedOut).summary;
+		// Structural guard on the summary shape, not its prose: the timed-out branch deliberately
+		// omits the "(exit code N)" suffix the other branches append.
+		expect(timedSummary).not.toContain("exit code");
 		await timedOut;
 		// The machine-read outcome, not the summary prose: a timed watch ends with reason
 		// "timeout" exactly once (derived from exit.timedOut at the settle site).

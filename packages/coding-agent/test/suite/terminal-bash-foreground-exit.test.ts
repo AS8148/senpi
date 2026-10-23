@@ -36,25 +36,28 @@ describe("terminal bash foreground exit", () => {
 		const tool = createPtyBashTool(ctx);
 		const ready = join(dir, "ready");
 		const pidFile = join(dir, "bg.pid");
-		// The readiness file only exists after the nohup'd child is running with SIGHUP
-		// ignored, so the shell exiting cannot race the ignore into a kill. On the native
-		// backend the PTY hangup then provably spares it; on the pipe fallback (no PTY, no
-		// hangup) the assertion guards the other half of the contract: a normal return must
-		// never signal the group — only the timeout path ever kills it.
-		const start = await tool.execute("fg-nohup-start", {
-			command: `nohup sh -c 'touch ${ready}; exec sleep 30' >/dev/null 2>&1 & echo $! > ${pidFile}; until test -f ${ready}; do sleep 0.05; done; echo STARTED`,
-		});
-		expect(start.isError).toBeFalsy();
-		expect(firstText(start)).toContain("STARTED");
+		try {
+			// Guards a contract this PR newly documents (the docs are the change): a normal
+			// foreground return never signals the job's group on either backend — native
+			// PtySession::wait never kills, and the pipe fallback only kills at a deadline.
+			// The readiness file makes the native SIGHUP race deterministic: it exists only
+			// after the nohup'd child runs with SIGHUP ignored, so the hangup spares it.
+			const start = await tool.execute("fg-nohup-start", {
+				command: `nohup sh -c 'touch ${ready}; exec sleep 30' >/dev/null 2>&1 & echo $! > ${pidFile}; until test -f ${ready}; do sleep 0.05; done; echo STARTED`,
+			});
+			expect(start.isError).toBeFalsy();
+			expect(firstText(start)).toContain("STARTED");
 
-		const probe = await tool.execute("fg-nohup-probe", {
-			command: `kill -0 $(cat ${pidFile}) 2>/dev/null && echo ALIVE || echo DEAD`,
-		});
-		expect(firstText(probe)).toContain("ALIVE");
-
-		const cleanup = await tool.execute("fg-nohup-cleanup", {
-			command: `kill $(cat ${pidFile}) 2>/dev/null; echo CLEANED`,
-		});
-		expect(firstText(cleanup)).toContain("CLEANED");
+			const probe = await tool.execute("fg-nohup-probe", {
+				command: `kill -0 $(cat ${pidFile}) 2>/dev/null && echo ALIVE || echo DEAD`,
+			});
+			expect(firstText(probe)).toContain("ALIVE");
+		} finally {
+			// teardown() cannot reach this child (it left the tool's process group), so a
+			// failed assertion must not leak the 30s sleep.
+			await tool.execute("fg-nohup-cleanup", {
+				command: `kill $(cat ${pidFile}) 2>/dev/null; echo CLEANED`,
+			});
+		}
 	});
 });

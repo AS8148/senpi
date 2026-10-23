@@ -11,7 +11,7 @@
 
 ### Changed
 
-- The terminal prompt section, the `bash`/`monitor` tool descriptions and the bun-1-4 skill now state what the code does: a plain `&` job dies with a foreground call's PTY hangup (native backend); `nohup` racily escapes that hangup (a child can still die when the call returns before nohup takes effect) and survives only as an untracked orphan that the call's timeout group-kill removes; `setsid` leaves the process group entirely and survives even that kill; a non-persistent monitor's `timeout_ms` kills the watched command on both backends; a timed-out local command watch now summarizes as `watcher killed at deadline (timed_out)` while RPC watches keep `watcher timed_out` (they kill nothing) ([#3611](https://github.com/code-yeongyu/senpi/issues/3611)).
+- The terminal guidance now states what the code does: a plain `&` job dies with a foreground call's PTY hangup (native backend); `nohup` at best leaves an untracked orphan that the call's timeout still group-kills (the full race and `setsid` analysis lives in the terminal tracker); a non-persistent monitor's `timeout_ms` kills the watched command; a timed-out local command watch now summarizes as `watcher killed at deadline (timed_out)` while RPC watches keep `watcher timed_out` — they kill nothing ([#3611](https://github.com/code-yeongyu/senpi/issues/3611)).
 
 
 - `release_session` refuses `attached` only while ANOTHER client is attached; the connection asking for the release no longer counts, so a client can release (or move) the session it shows without `force`. `errorData.attachments` now counts only those other clients ([#3994](https://github.com/code-yeongyu/senpi/pull/3994)).
