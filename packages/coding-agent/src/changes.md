@@ -1,3 +1,167 @@
+## 2026-10-22 - `--rebind` reads the session's recorded cwd asynchronously (senpi#3676)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `sessionCwdOrUndefined` is now `async` and awaits `readSessionCwd` (`src/core/session-rebind.ts`), which reads the session header with `node:fs/promises`; the `--rebind` branch of `createSessionManager` awaits it. Errors still map to `undefined` exactly as before.
+
+### Why
+
+- The `move_session` RPC commands export a session through `readSessionCwd`, so its header read sits on the shared RPC host's session path, where `test/suite/no-sync-in-session-path.test.ts` forbids new synchronous filesystem calls. Making the one reader async keeps the CLI and the RPC host on a single implementation.
+
+### Why an extension could not handle it
+
+- `--rebind` resolution runs in core before any extension is loaded, and the header reader is shared core code.
+
+### Expected merge conflict zones
+
+- `main.ts`: `sessionCwdOrUndefined` and its `--rebind` call site.
+
+## 2026-10-22 - Replace Biome with oxlint and oxfmt (senpi#3976)
+
+### What changed
+
+- `packages/coding-agent/src/experimental/services/connection.ts`: `oxlint-disable-next-line eslint/prefer-const` comments on the two `let binding!` declarations that a closure reads; `const` would hit the temporal dead zone if that closure ran before the assignment.
+
+### Why
+
+- The repository moved lint and format from Biome to oxlint 1.89.0 and oxfmt 0.74.0 (senpi#3976). oxlint reports this site where Biome did not; the change keeps behaviour identical.
+
+### Why an extension could not handle it
+
+- Lint configuration and source comments are read by the linter before any agent code runs.
+
+### Expected merge conflict zones
+
+- The two `binding` declarations in `connection.ts`.
+
+
+## 2026-10-21 - llama.cpp declares its API key optional (senpi#3869)
+
+### What changed
+
+- `packages/coding-agent/src/extensions/llama/provider.ts`: the llama.cpp `apiKey` auth sets `keyOptional: true`, so `Models.login` keeps a login whose optional key prompt was left blank.
+
+### Why
+
+- senpi#3867 made `Models.login` refuse blank keys; a keyless local llama-server is a valid setup. Regression: `test/llama-extension.test.ts` ("logs in through Models.login with no API key").
+
+### Why an extension could not handle it
+
+- This is the in-tree llama extension declaring its own auth metadata.
+
+### Expected merge conflict zones
+
+- LOW: the `apiKey` object in `createLlamaProvider`.
+
+## 2026-10-21 - Test runs refuse the real agent directory (senpi#3867)
+
+### What changed
+
+- `packages/coding-agent/src/config.ts`: `getAgentDir()` passes the resolved directory to the new `assertAgentDirAllowedInTests` in the same file; it lives here rather than in a new module so the RPC supervisor's import graph stays at its 55-module ceiling. In a senpi test run (`SENPI_TEST_AGENT_DIR_GUARD=1`, set only by senpi's own test harness and never inferred from `VITEST` or `NODE_ENV`, so a user's own test suite that runs the CLI is unaffected), a directory inside the real account home's `.senpi`, `.omo`, `.pi` or active brand config dir throws `RealAgentDirInTestError`. The real home comes from the account database, not `$HOME`. `SENPI_TEST_USE_REAL_AGENT_DIR=1` opts out, as it already does for the quarantine.
+
+### Why
+
+- senpi#3867: a test run without the Vitest quarantine setup (for example `bun test <file>` from inside an agent session that exports `OMO_CODING_AGENT_DIR`) resolved the user's real agent dir and left faux pool state in `credential-pool-state.json`. Regressions: `test/suite/regressions/issue-3867-real-agent-dir-guard.test.ts` and `issue-3867-built-cli-user-test-env.test.ts` (the built CLI starts under `NODE_ENV=test`/`VITEST` with no senpi marker).
+
+### Why an extension could not handle it
+
+- `getAgentDir()` is the core path resolver every store reads; the guard has to sit where the path is produced.
+
+### Expected merge conflict zones
+
+- LOW: the body of `getAgentDir()` and the import block in `packages/coding-agent/src/config.ts`.
+
+## 2026-10-20 - The host holder type is exported (omo-desktop-app#3561)
+
+### What changed
+
+- `packages/coding-agent/src/modes/index.ts`: exports `describeHostHolder` and `type HostHolder` from `./rpc/host-holder.ts`.
+- `packages/coding-agent/src/index.ts`: re-exports `type HostHolder` next to `HostEnsureRefusedError`.
+
+### Why
+
+- `HostEnsureRefusedError.holder` is part of the public refusal; embedders (the omo runner, the desktop) read it with the same type.
+
+### Why an extension could not handle it
+
+- These are the package's public barrels.
+
+### Expected merge conflict zones
+
+- LOW: one export line in each barrel's host block.
+
+## 2026-10-21 - Micro context reads the request measurement (omo#10792)
+
+### What changed
+
+- `packages/coding-agent/src/experimental/micro/runtime.ts`: the micro status context count prefers `Usage.contextUsage` while cumulative usage totals retain their existing fields.
+
+### Why
+
+- `packages/coding-agent/src/experimental/micro/runtime.ts`: the same SDK message must not display cumulative billing as context on this independent surface.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/experimental/micro/runtime.ts`: this runtime owns its own context projection.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/experimental/micro/runtime.ts`, `contextTokenCount`.
+
+## 2026-10-22 - Export the session lifecycle contract (senpi#3864)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: exports lifecycle snapshots, events, child reports, `SpawnedBy`, self-settle results and obligation/ticket interfaces.
+
+### Why
+
+- `packages/coding-agent/src/index.ts`: RPC clients and the desktop type against them.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/index.ts`: the package entry point is core.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/index.ts`: type export list.
+
+## 2026-10-21 - Export the shared session lifecycle contract (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/index.ts` exports lifecycle snapshots, events, child reports, spawned-session identity, self-settle results and obligation/ticket interfaces.
+
+### Why
+
+`packages/coding-agent/src/index.ts`: RPC clients and extension producers need the engine's named contract rather than separate copies.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/index.ts`: the package's public entry point and its declarations belong to the engine.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/index.ts`: core session type exports.
+
+## 2026-10-18 - A session is found by the id its file name carries (oh-my-openagent#7471)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `resolveSessionPath` matches the header id first, then the id the file name carries, then an id prefix, for both the project and the global listing. `findLocalSessionByExactId` (`--session-id`) also matches the id the file name carries, so it opens that session instead of creating a second file under the same id.
+
+### Why
+
+A session file named `<timestamp>_<id>.jsonl` whose header carried a different id could not be opened with `--session <id>`, though the file name (and the resume hint printed from it) named that id; `--session-id <id>` then created a second session under the same id.
+
+### Why an extension could not handle it
+
+Session creation and `--session` resolution run in core before any extension is loaded.
+
+### Expected merge conflict zones
+
+- `main.ts`: `resolveSessionPath`, `findLocalSessionByExactId` and the import line.
+
 ## 2026-10-19 - Print mode stops waiting for a silent stdin pipe (senpi#3715)
 
 ### What changed
@@ -5208,3 +5372,78 @@ The package barrel is the only public entry point; an extension cannot add expor
 ### Expected merge conflict zones
 
 - LOW: the `core/skills.ts` export block in `packages/coding-agent/src/index.ts`.
+## 2026-10-16 - Offline prompt size CLI route (senpi#3483)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `--print-prompt-sizes` forces offline print startup, opens the normal runtime and exits through the diagnostic before stdin, model streaming or catalog refresh.
+
+### Why
+
+The size breakdown must describe the loaded current project, including extensions, while making no provider request.
+
+### Why an extension could not handle it
+
+The flag changes core startup and dispatch before extensions can handle a turn.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: offline selection, app mode selection and the post-runtime-creation diagnostic branch.
+
+## 2026-10-16 - Auth notices reach the TUI at startup, once per change (#3448)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `collectAuthDiagnostics` also reports the store's pending credential notices for non-interactive runs; the interactive branch passes `authNotices` (auth errors plus pending notices, with `markSeen`) to `InteractiveMode`.
+
+### Why
+
+- `packages/coding-agent/src/main.ts`: the credential and billing notices reached only model listing, print mode and RPC; the TUI, the main surface, never showed them (#3486 review).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/main.ts` builds the startup options every mode receives.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: `collectAuthDiagnostics`, `interactiveAuthNotices`, and the `InteractiveMode` options in the interactive branch.
+
+## 2026-10-17 - Auth diagnostics show each credential notice once (#3486)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `collectAuthDiagnostics(storage, context, { persistSeen })` and `interactiveAuthNotices` are exported and take notices through `takePendingNotices`; model listing and print mode record them as seen, RPC runs do not.
+
+### Why
+
+- `packages/coding-agent/src/main.ts`: print mode showed the notice twice per run, and model listing showed it on every run (#3486 review).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/main.ts` owns the startup diagnostics of every mode.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: `collectAuthDiagnostics`, `interactiveAuthNotices` and their four call sites.
+
+## 2026-10-22 - Async file locks never crash the process on a late heartbeat report (oh-my-openagent#10878)
+
+### What changed
+
+- `packages/coding-agent/src/experimental/server.ts`: the launcher and activation locks acquire through `lockWithLossHandling` (`core/file-lock.ts`). `ServerProfile` gains `assertHeld()` and `acquireServerActivation` returns `{ release, assertHeld }`; startup, cold activation (before the spawn and on every connect poll) and foreground start abort with `FileLockLostError` once their lock is lost.
+- `packages/coding-agent/src/experimental/session-worker.ts`: the session ownership lock acquires through `lockWithLossHandling` with `onLost: stopWorkerOnLostOwnership(...)` (`experimental/session-worker-ownership.ts`): a worker that loses its session lock reports `worker_failed` (bounded by 1 s) and exits without closing, so it never writes the session another owner now holds.
+- `packages/coding-agent/src/package-manager-cli.ts`: the managed self-update lock acquires through `lockWithLossHandling` and the update aborts with `FileLockLostError` before the release rename and before each activation once the lock is lost; the `lockSync` path is unchanged.
+
+### Why
+
+- `packages/coding-agent/src/experimental/server.ts`, `packages/coding-agent/src/experimental/session-worker.ts`, `packages/coding-agent/src/package-manager-cli.ts`: proper-lockfile 4.1.2's heartbeat `stat` callback has no `lock.released` check, so an unlock while that stat is in flight reaches the default `onCompromised`, which throws from a timer and kills the process. Reported and diagnosed by @ayalcoh in oh-my-openagent#10878.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/experimental/server.ts`, `packages/coding-agent/src/experimental/session-worker.ts` and `packages/coding-agent/src/package-manager-cli.ts` own these process-level locks before any extension loads.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/experimental/server.ts`: `acquireServerProfile`'s launcher lock, `acquireServerActivation`, and the import block.
+- `packages/coding-agent/src/experimental/session-worker.ts`: the `releaseOwnership` acquisition in `run` and the import block.
+- `packages/coding-agent/src/package-manager-cli.ts`: the lock in `runManagedSelfUpdate` and the import block.

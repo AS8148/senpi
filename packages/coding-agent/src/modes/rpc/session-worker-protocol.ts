@@ -38,12 +38,21 @@ export interface WorkerSnapshot {
 export type HostToSessionWorker =
 	| { type: "prepare"; request: number; configuration: CliRuntimeConfiguration; profile: RpcSessionLaunchProfile }
 	| { type: "commit"; request: number }
-	| { type: "bind"; request: number; sessionId: string; capabilities: readonly string[]; connection?: string }
-	| { type: "command"; request: number; command: object; connection?: string }
+	| {
+			type: "bind";
+			request: number;
+			sessionId: string;
+			capabilities: readonly string[];
+			connection?: string;
+			/** Roles the connection explicitly declared on the host (senpi#3811); the isolate adopts them. */
+			roles?: readonly string[];
+	  }
+	| { type: "command"; request: number; command: object; connection?: string; roles?: readonly string[] }
 	| { type: "prompt_surface"; request: number; surface: PromptSurface }
 	| { type: "browser_engine"; request: number; engine: BrowserEngine }
 	| { type: "permission_preset"; request: number; preset: string }
 	| { type: "cancel_ui" }
+	| { type: "cancel_grant"; id: string }
 	| { type: "close" };
 
 export type SessionWorkerToHost =
@@ -74,4 +83,14 @@ export function typedWorkerRefusal(cause: unknown): never {
 	const message = cause instanceof Error ? cause.message : String(cause);
 	if (message.startsWith("open_failed: ")) throw new RpcSessionRegistryError("open_failed", message.slice(13));
 	throw cause;
+}
+
+/**
+ * Whether an open step failed only because its worker died: the worker's request channel rejects what is pending
+ * with a plain `session_closing` / `session_worker_exited`, and the claims and grants it held report a typed
+ * `session_closing` (senpi#4037).
+ */
+export function closedByWorkerDeath(cause: unknown): boolean {
+	if (cause instanceof RpcSessionRegistryError) return cause.code === "session_closing";
+	return cause instanceof Error && (cause.message === "session_closing" || cause.message === "session_worker_exited");
 }

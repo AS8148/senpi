@@ -1,3 +1,21 @@
+## 2026-10-23 - Local release regeneration keeps the last good OpenGateway catalog (senpi#4067)
+
+### What changed
+
+- `scripts/local-release.mjs`: its `generate-models` run passes `-- --keep-last-good-opengateway`, the same opt-in as the release's `runGenerateModels`.
+
+### Why
+
+- `scripts/local-release.mjs`: an OpenGateway feed break must not stop a release; the dedicated OpenGateway refresh workflow is what fails on it.
+
+### Why an extension could not handle it
+
+- `scripts/local-release.mjs`: release tooling runs outside the runtime.
+
+### Expected merge conflict zones
+
+- `scripts/local-release.mjs`: the `generate-models` call before `check:provider-defaults`.
+
 ## 2026-10-19 - The bundle ships the RPC host supervisor as its own program (senpi#3743)
 
 ### What changed
@@ -15,6 +33,44 @@
 ### Expected merge conflict zones
 
 - `scripts/build-coding-agent-bundle.mjs`: the input check list and the end of `buildBundle`.
+
+## 2026-10-22 - Replace Biome with oxlint and oxfmt (senpi#3976)
+
+### What changed
+
+- `scripts/biome/model-type-comparison.grit`: removed. The same check runs as the oxlint JS plugin `scripts/oxlint/model-type-comparison.ts` (`senpi/model-type-comparison`); it reports exactly the shapes the Grit pattern reports. The pattern itself moves to `scripts/oxlint/parity/model-type-comparison.grit`, kept only so `node scripts/oxlint-biome-parity.mjs --update` can regenerate Biome's verdicts; `scripts/oxlint-biome-parity.test.mjs` fails when any ported rule (this one, `biome-port/no-implicit-any-let` or `biome-port/no-string-case-mismatch`) flags different corpus lines than Biome 2.5.14.
+
+### Why
+
+- Biome is no longer installed (senpi#3976), so the Grit plugin cannot run.
+
+### Why an extension could not handle it
+
+- Lint configuration and source comments are read by the linter before any agent code runs.
+
+### Expected merge conflict zones
+
+- None expected: the Grit file is fork-only and upstream does not carry it.
+
+
+## 2026-10-22 - The native grep probe tests never build the addon inside a CI test hook (senpi#3978)
+
+### What changed
+
+- `scripts/native-grep-addon.mjs`: `resolveNativeGrepAddon` picks the exported path, then a local addon, and otherwise builds locally, but refuses in CI with a message naming the missing "Build native grep addon" step. `scripts/native-grep-addon.test.mjs` covers the four cases.
+- `scripts/probe-native-grep.test.mjs`: the `before()` hook uses the resolver. A failed local build now reports how to build the addon or set `SENPI_GREP_NATIVE_PATH`.
+
+### Why
+
+- `scripts/probe-native-grep.test.mjs`: in CI the hook ran a cold release build with a 300 s timeout, so a slow runner failed all six tests with a bare `spawnSync npm ETIMEDOUT` that named no cause.
+
+### Why an extension could not handle it
+
+- `scripts/probe-native-grep.test.mjs`: repository test scripts.
+
+### Expected merge conflict zones
+
+- None expected: the change is local to this repository's CI and test scripts.
 
 ## 2026-10-19 - Release commands that read large output no longer fail with ENOBUFS
 

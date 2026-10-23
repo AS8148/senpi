@@ -25,6 +25,7 @@ const BROADCAST_LIFECYCLE_RECORDS = new Set([
 	"agent_idle",
 	"session_opened",
 	"session_closed",
+	"session_lifecycle",
 ]);
 
 type RegisteredConnection = {
@@ -57,8 +58,10 @@ function snapshotPlaceholderLine(record: SnapshotRecord): string {
 }
 
 export class SessionEventFanout {
+	onConnectionClosed?: (id: string) => void;
 	private readonly connections = new Map<string, RegisteredConnection>();
 	private readonly sessionSnapshots = new Map<string, SnapshotRecord[]>();
+	private readonly lifecycleSnapshots = new Map<string, SnapshotRecord>();
 	private readonly pendingQuestions = new Map<string, Map<string, Record<string, unknown>>>();
 	private readonly connectionCapabilities = new Map<string, Set<string>>();
 	private readonly connectionSessions = new Map<string, Set<string>>();
@@ -77,6 +80,7 @@ export class SessionEventFanout {
 					this.connectionCapabilities.delete(id);
 					this.connectionSessions.delete(id);
 					this.registeredCapabilityConnections.delete(id);
+					this.onConnectionClosed?.(id);
 				}
 				process.stderr.write(
 					`senpi rpc connection ${id} event queue failed; closing: ${cause instanceof Error ? cause.message : String(cause)}\n`,
@@ -213,6 +217,10 @@ export class SessionEventFanout {
 		placeholderLine?: string,
 		source?: Record<string, unknown>,
 	): void {
+		if (value.type === "session_lifecycle") {
+			this.lifecycleSnapshots.set(sessionId, { line, placeholderLine, source });
+			return;
+		}
 		if (value.type === "extension_ui_request" && value.method === "question" && typeof value.id === "string") {
 			const pending = this.pendingQuestions.get(sessionId) ?? new Map<string, Record<string, unknown>>();
 			pending.set(value.id, { ...value });
@@ -241,12 +249,15 @@ export class SessionEventFanout {
 	forgetSession(sessionId: string): void {
 		this.pendingQuestions.delete(sessionId);
 		this.sessionSnapshots.delete(sessionId);
+		this.lifecycleSnapshots.delete(sessionId);
 	}
 
 	private replaySnapshot(id: string, sessionId: string): void {
 		const actor = this.connections.get(id)?.actor;
 		if (!actor) return;
 		const placeholders = this.connectionHas(id, MEDIA_PLACEHOLDERS_CAPABILITY);
+		const lifecycle = this.lifecycleSnapshots.get(sessionId);
+		if (lifecycle) actor.enqueue(placeholders ? snapshotPlaceholderLine(lifecycle) : lifecycle.line);
 		for (const record of this.sessionSnapshots.get(sessionId) ?? [])
 			actor.enqueue(placeholders ? snapshotPlaceholderLine(record) : record.line);
 	}

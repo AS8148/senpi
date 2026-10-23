@@ -12,9 +12,89 @@
 
 ### Fixed
 
+- OpenGateway catalog generation and runtime refresh accept the public price envelope and legacy flat tables, and reject unsupported currency or billing units. Runtime refresh and release regeneration keep the last good catalog when the feed fails or yields no usable models; the dedicated strict OpenGateway refresh still fails on it ([#4067](https://github.com/code-yeongyu/senpi/issues/4067)).
+
+### Removed
+
+## [2026.10.21-3] - 2026-10-22
+
+### Breaking Changes
+
+### Added
+
+- Claude Fable 5.5 is known to the model-catalog generator, so the catalog refresh after its release lists it with the pricing, limits and status models.dev publishes. The Anthropic catalog also keeps a model it already ships after models.dev marks it deprecated, labeled deprecated, like the other providers do ([#3893](https://github.com/code-yeongyu/senpi/issues/3893), [#3897](https://github.com/code-yeongyu/senpi/pull/3897)).
+
+### Changed
+
+### Fixed
+
+- An API-key login with an empty or missing key is refused with `EmptyApiKeyError` instead of saving an unusable `login-N` account. Providers that work without a key, or fall back to an ambient key, set `apiKey.keyOptional` and keep accepting a blank key; Kimi does, so a blank-key login that only picks the region for `KIMI_API_KEY` still works ([#3867](https://github.com/code-yeongyu/senpi/issues/3867)).
+- `AssistantMessage.promptCacheBreakpoint?: true` marks the end of a stable prefix; the Anthropic adapter keeps a cache checkpoint there, so context reduction no longer re-writes the cached conversation at every step ([#3242](https://github.com/code-yeongyu/senpi/issues/3242)).
+- Context estimation and overflow checks can use the latest request's context separately from cumulative billed usage, preventing internal SDK requests from inflating context pressure ([omo#10792](https://github.com/code-yeongyu/oh-my-openagent/issues/10792)).
+
+### Removed
+
+## [2026.10.21-2] - 2026-10-22
+
+### Breaking Changes
+
+### Added
+
+- `AssistantMessage.timing` (`AssistantMessageTiming`): optional response timing stamped by the agent loop ([#3879](https://github.com/code-yeongyu/senpi/issues/3879)).
+
+- `AssistantMessage.failureSource?: "local"` marks a failure raised by local code rather than a provider, so retry and model fallback can skip it ([#3866](https://github.com/code-yeongyu/senpi/issues/3866)).
+
+### Changed
+
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`huggingface`, `nvidia`, `opencode`, `openrouter`, `radius`, `venice`, `vercel-ai-gateway`).
+
+### Fixed
+
+- `appendLoginSlot` replaces a credential of the other kind instead of adding an unusable slot; new `auth/pool/kinds` helpers classify slots and report the unused kinds of a mixed credential ([#3448](https://github.com/code-yeongyu/senpi/issues/3448))
+- Claude usage-limit failures retain the reset time from spent five-hour and weekly windows, so goal recovery can wait until the account is usable again ([#3825](https://github.com/code-yeongyu/senpi/issues/3825)).
+- OpenAI (Completions and Responses) and Google (Gemini API and Vertex) leave `usage.reasoning` unset when the provider reports no reasoning count, instead of reporting 0, as the `Usage` contract documents ([#3879](https://github.com/code-yeongyu/senpi/issues/3879)).
+
+- Responses prompt-cache keys now follow the model, instructions, and tool schemas instead of session ids across OpenAI, ChatGPT subscription, and Azure. New sessions and task children with identical prefixes share cache affinity, and Responses tools render in deterministic name order ([omo#10775](https://github.com/code-yeongyu/oh-my-openagent/issues/10775)).
+
+- Cursor: Claude Opus 5.5, Fable 5.1, Sonnet 5.5, Haiku 5.5, Muse Wonder, Muse Spark 1.3, Grok 4.7, Gemini 4 Argon, Gemini 3.8 Flash and Auto advertise the context window Cursor actually serves instead of the 200k placeholder; Haiku 5.5 and Grok 4.7 Fast get clean names, and Kimi K3, Muse and Grok 4.5/4.6 accept images ([#3620](https://github.com/code-yeongyu/senpi/issues/3620)).
+
+### Removed
+
+## [2026.10.21-1] - 2026-10-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- Models that models.dev marks deprecated stay available and are labeled `deprecated` instead of disappearing from the bundled catalog: GitHub Copilot Claude Opus 4.7, GPT-5.5 and GPT-5.4, Baseten's Kimi K2 models and others keep working. A model models.dev no longer lists is still removed, and models the catalog had already dropped are not brought back.
+- The advertised Claude Code fingerprint floor that Anthropic OAuth requests declare follows the bundled Claude Agent SDK to Claude Code 2.1.306 ([#3854](https://github.com/code-yeongyu/senpi/issues/3854)).
+
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`amazon-bedrock`, `huggingface`, `opencode`, `opengateway`, `openrouter`, `venice`).
+
+### Fixed
+
+### Removed
+
+## [2026.10.20-1] - 2026-10-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- OpenGateway's DeepSeek V4.1 Flash Ultrafast now costs about 5x more per input token ($0.03 -> $0.15 per 1M) and GLM-5.3 Flash Ultrafast about 7x more ($0.015 -> $0.105), following the gateway's prices; OpenRouter DeepSeek Chat and GLM-5 have smaller context windows (128,000 and 198,000 tokens); Mistral Ministral 3B, Ministral 8B and Voxtral Small and about a dozen OpenRouter models follow upstream prices ([#3806](https://github.com/code-yeongyu/senpi/pull/3806)).
+- The bundled model catalog is refreshed: `deepseek-v4.1-flash-1017` appears on the Alibaba and Qwen token plans and Cloudflare, Venice adds `mercury-3`, several models report lower maximum output tokens (Together Qwen3.6-Plus and Qwen3.7-Max, Vercel AI Gateway DeepSeek V4.1 Flash, OpenRouter Qwen3.5 397B, Qwen3.8 27B, DeepSeek Chat and GLM-5), Cloudflare Workers AI Gemma 4 26B and Nemotron 3 120B change their thinking levels, and Amazon Bedrock GPT-5.6 Sol and Terra support strict tool schemas in the US and India regions ([#3806](https://github.com/code-yeongyu/senpi/pull/3806)).
+
+### Fixed
+
 - A ChatGPT subscription failure now carries a `providerDiagnostic` in every shape the backend reports it (an HTTP error, an in-stream `error` event, a `response.failed` event): a usage limit is `quota` and a rate limit `rate_limit`, each with the new optional `resetsAt` (epoch ms) when the backend names the reset, and an unrecognized failure keeps the provider's own lowercase error type as its `code` instead of reading "no code" ([#3771](https://github.com/code-yeongyu/senpi/issues/3771)).
 
 ### Removed
+
+- Mistral `open-mistral-7b`, `open-mixtral-8x22b` and `open-mixtral-8x7b` (deprecated upstream) and Venice `zai-org-glm-4.7-flash` leave the bundled catalog ([#3806](https://github.com/code-yeongyu/senpi/pull/3806)).
 
 ## [2026.10.19-2] - 2026-10-20
 
