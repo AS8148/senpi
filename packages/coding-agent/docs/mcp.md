@@ -388,7 +388,9 @@ one.
   capped by `outputGuard`.
 - Every value a [reference object](#reference-objects) resolves to, rotated
   ones included, is removed (raw and URL-encoded) from MCP logs, the catalog
-  cache, server status, RPC snapshots, diagnostics and `/mcp` errors. Values
+  cache, server status, RPC snapshots, diagnostics and `/mcp` errors, as well
+  as tool and resource results, progress and spill files. Model-facing results
+  are sanitized too: provider requests leave the process. Values
   sent back to a server, such as a resource URI it listed, keep their exact
   bytes.
 - Config and catalog identities are HMAC-SHA-256 under a private

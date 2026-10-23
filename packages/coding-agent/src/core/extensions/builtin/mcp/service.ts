@@ -881,7 +881,12 @@ export class McpService {
 		connection?.refreshCapturedDiagnostics();
 		const snapshot = buildMcpServerSnapshot(name, server, connection, entry);
 		const referenceError = entry === undefined ? this.#referenceErrors.get(name) : undefined;
-		if (referenceError !== undefined) return { ...snapshot, lastError: referenceError.message };
+		if (referenceError !== undefined)
+			return redactResolvedReferenceData({
+				...snapshot,
+				lifecycleState: "degraded",
+				lastError: referenceError.message,
+			});
 		if (
 			config !== undefined &&
 			entry?.connection.state === "needs_auth" &&
@@ -925,7 +930,7 @@ export class McpService {
 		const entry = shared !== undefined && resolvesSameCredentials(owner, shared) ? shared : undefined;
 		const connection = entry?.credentialsCurrent?.() === false ? undefined : entry?.connection;
 		const connected = connection?.state === "connected";
-		const needsAuth = !connected && this.#serverSnapshot(name, server, entry).lifecycleState === "needs_auth";
+		const diagnostic = this.#serverSnapshot(name, server, entry);
 		const cached = entry?.credentialsCurrent?.() === false ? undefined : entry?.cachedCatalog;
 		const tools = cached?.tools ?? [];
 		const resources = cached?.resources ?? [];
@@ -941,6 +946,7 @@ export class McpService {
 		return {
 			name,
 			serverInfo,
+			...(diagnostic.lastError === null ? {} : { lastError: diagnostic.lastError }),
 			tools: tools.map(mapWireTool),
 			resources: resources.map(mapWireResource),
 			resourceTemplates: resourceTemplates.map(mapWireResourceTemplate),
@@ -952,11 +958,14 @@ export class McpService {
 			...(connection?.state === undefined && server?.state === undefined
 				? {}
 				: {
-						status: needsAuth
-							? "needs_auth"
-							: entry?.startupCatalogClaim?.ownsRegistration()
-								? "connecting"
-								: (connection?.state ?? server?.state),
+						status:
+							!connected && diagnostic.lifecycleState === "needs_auth"
+								? "needs_auth"
+								: entry === undefined && diagnostic.lifecycleState === "degraded"
+									? "degraded"
+									: entry?.startupCatalogClaim?.ownsRegistration()
+										? "connecting"
+										: (connection?.state ?? server?.state),
 					}),
 		};
 	}

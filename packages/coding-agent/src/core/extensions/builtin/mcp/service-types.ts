@@ -71,6 +71,7 @@ export type McpWireStatusServer = {
 	readonly resourceTemplates: readonly McpWireResourceTemplate[];
 	readonly authStatus: McpWireAuthStatus;
 	readonly status?: McpWireServerStatus;
+	readonly lastError?: string;
 };
 
 export type McpWireStatusSnapshot = {

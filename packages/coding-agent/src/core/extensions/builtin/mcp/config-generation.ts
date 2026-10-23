@@ -4,6 +4,7 @@ import { hashConfig } from "./config-identity.ts";
 import { mcpServerReferences } from "./config-references.ts";
 import type { McpServerConfig, McpServerDeclaredConfig, ResolvedMcpServer } from "./config-schema.ts";
 import { ConnectError } from "./errors.ts";
+import { createMcpLogger } from "./log.ts";
 import { inheritMcpSharingScope } from "./sharing-policy.ts";
 
 type Env = Readonly<Record<string, string | undefined>>;
@@ -97,10 +98,11 @@ export function mcpGenerationRenewal(
  */
 export async function resolveWantedMcpGenerations(
 	wanted: Map<string, ResolvedMcpServer>,
-	scopeOf: (name: string) => Pick<McpGenerationScope, "env" | "agentDir">,
+	scopeOf: (name: string) => Pick<McpGenerationScope, "env" | "agentDir"> & { readonly logDir?: string },
 	failures: Map<string, ConfigReferenceError>,
 ): Promise<Map<string, McpConfigGeneration>> {
 	const generations = new Map<string, McpConfigGeneration>();
+	failures.clear();
 	await Promise.all(
 		[...wanted].map(async ([name, server]) => {
 			if (server.config === undefined) return;
@@ -113,6 +115,11 @@ export async function resolveWantedMcpGenerations(
 			} catch (error) {
 				if (!(error instanceof ConfigReferenceError)) throw error;
 				failures.set(name, error);
+				createMcpLogger(name, { logDir: scopeOf(name).logDir }).error(error.name, {
+					field: error.field,
+					reference: error.reference,
+					reason: error.reason,
+				});
 				wanted.delete(name);
 			}
 		}),

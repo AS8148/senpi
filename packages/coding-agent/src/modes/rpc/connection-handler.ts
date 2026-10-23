@@ -271,6 +271,7 @@ function loadedMcpServers(snapshot: McpWireStatusSnapshot): RpcLoadedMcpServer[]
 		toolCount: server.tools.length,
 		status: loadedMcpStatus(server),
 		authStatus: server.authStatus,
+		...(server.lastError === undefined ? {} : { lastError: server.lastError }),
 	}));
 }
 

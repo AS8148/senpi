@@ -3,10 +3,16 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readMcpCatalogCache, writeMcpCachedServer } from "../../src/core/extensions/builtin/mcp/catalog-cache.ts";
 import { diagnoseCapturedMcpConnectFailure } from "../../src/core/extensions/builtin/mcp/diagnose.ts";
 import { createMcpLogger } from "../../src/core/extensions/builtin/mcp/log.ts";
-import { ensureMcpResourceSubscriptions } from "../../src/core/extensions/builtin/mcp/resources.ts";
+import {
+	ensureMcpResourceSubscriptions,
+	expandMcpResourceMentions,
+} from "../../src/core/extensions/builtin/mcp/resources.ts";
+import { McpService } from "../../src/core/extensions/builtin/mcp/service.ts";
 import { buildMcpServerSnapshot } from "../../src/core/extensions/builtin/mcp/service-snapshot.ts";
 import { ROTATED, referenceRoot, resolveReference, SECRET } from "../suite/regressions/3858-reference-support.ts";
 import { serverConfig } from "./fixtures/reconnect.ts";
+import { capturingPi, registeredTool, textContent } from "./fixtures/register-call.ts";
+import { cleanupRoots, makeRoot, setConfig, stdioServer } from "./fixtures/service-lifecycle.ts";
 
 // #3858: redaction is an outbound projection, never a mutation of protocol data.
 describe("reference disclosure boundaries", () => {
@@ -87,5 +93,64 @@ describe("reference disclosure boundaries", () => {
 		});
 		expect(diagnostic?.message).not.toContain(SECRET);
 		expect(error.message).toContain(SECRET);
+	});
+
+	it("sanitizes server tool and resource text before model, display and spill sinks", async () => {
+		// #3858 QA (a): a real server reflects a resolved value; wire replies must stay raw.
+		const cleanup: Array<() => Promise<void>> = [];
+		const service = new McpService();
+		const secret = "synthetic/3858?+output";
+		try {
+			const root = makeRoot("3858-reflected-output", cleanup);
+			setConfig(root, {
+				fx: { ...stdioServer(["--tools", "1"]), env: { TOKEN: { $env: "VALUE" } }, exposure: "direct" },
+			});
+			const pi = capturingPi();
+			await service.attachSession(
+				{ type: "session_start", reason: "startup" },
+				{ cwd: root.cwd, isProjectTrusted: () => true },
+				pi,
+				{ agentDir: root.agentDir, env: { VALUE: secret } },
+			);
+			expect(await service.whenAttachSettled(10_000)).toBe("settled");
+			const client = service.getConnection("fx")?.client;
+			if (client === undefined) throw new Error("fixture did not connect");
+			const reflected = secret;
+			const uri = `fixture://${encodeURIComponent(secret)}`;
+
+			const rawTool = await client.callTool({ name: "tool_1", arguments: { value: reflected } });
+			const rawResource = await client.readResource({ uri });
+			const result = await Reflect.apply(registeredTool(pi, "mcp_fx_tool_1").execute, undefined, [
+				"echo",
+				{ value: reflected },
+				undefined,
+				undefined,
+			]);
+			const resource = await Reflect.apply(registeredTool(pi, "mcp_read_resource").execute, undefined, [
+				"read",
+				{ server: "fx", uri },
+				undefined,
+				undefined,
+			]);
+			const mention = await expandMcpResourceMentions(`Read @mcp:fx/${uri}`, () => service.getMcpResourceServers());
+			const spill = await Reflect.apply(registeredTool(pi, "mcp_fx_tool_1").execute, undefined, [
+				"spill",
+				{ value: reflected.repeat(8000) },
+				undefined,
+				undefined,
+			]);
+			const spillPath = /Full output saved to: (.+)/.exec(textContent(spill))?.[1];
+			if (spillPath === undefined) throw new Error("fixture did not spill");
+			const outward = JSON.stringify({ result, resource, mention }) + readFileSync(spillPath, "utf8");
+
+			expect(JSON.stringify(rawTool)).toContain(secret);
+			expect(JSON.stringify(rawResource)).toContain(encodeURIComponent(secret));
+			expect.soft(outward).not.toContain(secret);
+			expect.soft(outward).not.toContain(encodeURIComponent(secret));
+			expect.soft(outward).toContain("<redacted>");
+		} finally {
+			await service.dispose("quit");
+			await cleanupRoots(cleanup);
+		}
 	});
 });

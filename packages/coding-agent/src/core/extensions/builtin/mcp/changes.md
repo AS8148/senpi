@@ -1,3 +1,27 @@
+## 2026-10-23 - Close reference output and startup diagnostic gaps (senpi#3858)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/guard/output-guard.ts`: sanitizes a separate content projection before returning inline text or writing spill files. Model-facing results are sanitized by default: provider requests leave the process, so a server echo must not forward a resolved credential to the provider. No documented pass-through contract was found; the MCP documentation already promises tool-output redaction. Wire replies and resource identifiers remain raw in memory.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/expose/call.ts` and `packages/coding-agent/src/core/extensions/builtin/mcp/expose/register.ts`: sanitize progress notifications, result details and user-facing tool errors, including structured results mapped to text.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/resources.ts`: sanitizes resource listings, read previews, error messages and expanded mentions without changing the URI sent to the server.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config-generation.ts`: logs each typed reference failure and clears obsolete failures on the next sync; failed servers still open no transport and do not prevent sibling connections.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts` and `packages/coding-agent/src/core/extensions/builtin/mcp/service-types.ts`: expose failed reference resolution as `degraded` with the sanitized named `lastError` in status and RPC inventory.
+
+### Why
+
+- Real CLI QA found resolved values in RPC tool results despite redacted logs, and missing-reference servers silently remained `enabled` in RPC inventory. The existing failure map preserved containment but was not projected to all user-facing surfaces.
+
+### Why an extension could not handle it
+
+- Tool-result projection, spill persistence and pre-transport failure capture belong to the MCP builtin. A downstream extension cannot reliably intercept every sink.
+
+### Expected merge conflict zones
+
+- LOW: content projection in `packages/coding-agent/src/core/extensions/builtin/mcp/guard/output-guard.ts`, `expose/call.ts`, `expose/register.ts` and `resources.ts`.
+- MEDIUM: `#serverSnapshot` and `#captureWireStatusServer` in `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`; failure capture in `config-generation.ts`.
+- LOW: optional `lastError` on `McpWireStatusServer` in `packages/coding-agent/src/core/extensions/builtin/mcp/service-types.ts`.
+
 ## 2026-10-22 - Key MCP identities with a per-installation secret and adopt legacy caches by credential (senpi#3858)
 
 ### What changed
