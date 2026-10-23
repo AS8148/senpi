@@ -7,9 +7,10 @@
  * `loopfile.ts`, `status.ts`), so the runtime here is a thin, testable adapter.
  *
  * Load-bearing rules implemented here:
- * - A tick NEVER steers. Idle dispatch goes through `sendUserMessage(..., {
+ * - A tick STEERS. Idle dispatch goes through `sendUserMessage(..., {
  *   expandPromptTemplates: true })` so a slash payload reaches the real command path;
- *   a busy session receives the tick as a follow-up instead.
+ *   a busy session receives the tick as a steer, delivered into the running turn at its
+ *   next boundary, never parked as a follow-up behind it.
  * - Shutdown SUSPENDS: timers are cancelled, the ticker disposed, and the snapshot is
  *   persisted without a terminal reason (every senpi shutdown reason is resumable).
  * - Keepalive is applied only to an attributed dynamic iteration, never after an ordinary
@@ -482,8 +483,8 @@ export function createLoopExtension(deps: LoopExtensionDeps = {}): ExtensionFact
 
 		/**
 		 * Delivers one tick. Idle dispatch expands prompt templates so a slash payload
-		 * reaches its real command handler; a busy session gets a follow-up instead of
-		 * steering. A slash payload cannot be queued at all, so it waits for the turn to
+		 * reaches its real command handler; a busy session gets the tick steered into the
+		 * running turn. A slash payload cannot be queued at all, so it waits for the turn to
 		 * settle rather than being rewritten into plain text.
 		 */
 		async function dispatchTick(tick: LoopTick): Promise<void> {
@@ -538,7 +539,7 @@ export function createLoopExtension(deps: LoopExtensionDeps = {}): ExtensionFact
 			syncScheduleWakeupActivation();
 			pi.sendUserMessage(built.text, {
 				expandPromptTemplates: true,
-				...(busy ? { deliverAs: "followUp" as const } : {}),
+				...(busy ? { deliverAs: tick.deliverAs } : {}),
 			});
 			if (held) {
 				// The session keeps this tick as a notice (senpi#3811): no iteration ran, so neither

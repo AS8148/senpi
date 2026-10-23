@@ -63,9 +63,12 @@ and keep domain parsing (and error relabeling) on this side of the seam.
 
 ## TICK DELIVERY
 
-A tick never steers. When idle, `index.ts` dispatches through `sendUserMessage` with
+A tick steers. When idle, `index.ts` dispatches through `sendUserMessage` with
 `expandPromptTemplates: true` so a slash payload reaches the real command path; a busy
-session receives the tick as a follow-up. Sentinel payloads (the four `<<...>>`
+session receives the tick as a steer, so it lands in the running turn at its next boundary
+instead of waiting behind it as a follow-up. A busy tick whose payload is an extension
+slash command still waits for `agent_settled`, because extension commands cannot be queued
+at all. Sentinel payloads (the four `<<...>>`
 loop/loop-file forms) deliver the long instruction block once as an anchor, later ticks send
 a short reminder pointing back at it, keeping the cached message prefix stable; a changed
 loop-file fingerprint re-anchors. Verbatim `prompt` payloads are always sent as-is.

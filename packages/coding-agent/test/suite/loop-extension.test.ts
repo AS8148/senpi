@@ -349,7 +349,7 @@ describe("loop extension tick dispatch", () => {
 		expect(f.timers.armedKeys).toHaveLength(1);
 	});
 
-	it("delivers a due tick as a follow-up while streaming and never steers", async () => {
+	it("steers a due tick into the running turn while streaming, never as a follow-up", async () => {
 		const f = await fixture();
 		await f.emit("session_start", { reason: "startup" });
 		const created = await f.controller.startFixed({
@@ -372,8 +372,8 @@ describe("loop extension tick dispatch", () => {
 		await f.controller.fireDue(created.loopId);
 
 		expect(f.userMessages).toHaveLength(1);
-		expect(f.userMessages[0].deliverAs).toBe("followUp");
-		expect(f.userMessages.some((message) => message.deliverAs === "steer")).toBe(false);
+		expect(f.userMessages[0].deliverAs).toBe("steer");
+		expect(f.userMessages.some((message) => message.deliverAs === "followUp")).toBe(false);
 	});
 
 	it("routes a timer-driven fire through persist-and-dispatch, not scheduler state alone", async () => {

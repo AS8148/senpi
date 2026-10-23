@@ -117,13 +117,13 @@ export interface CreateDynamicRequest {
 	readonly payload: LoopPayload;
 }
 
-/** One dispatchable delivery. The caller turns this into a message; ticks never steer. */
+/** One dispatchable delivery. The caller turns this into a message; a tick for a busy session steers. */
 export interface LoopTick {
 	readonly loopId: LoopId;
 	readonly deliveryId: DeliveryId;
 	/** Occurrence this delivery represents; equal to the `now` it was decided at. */
 	readonly scheduledForAt: EpochMs;
-	readonly deliverAs: "followUp";
+	readonly deliverAs: "steer";
 	/** True when this delivery drains a coalesced or recovered occurrence. */
 	readonly coalesced: boolean;
 }
@@ -556,7 +556,7 @@ export function createLoopScheduler(deps: LoopSchedulerDeps): LoopScheduler {
 			loopId,
 			deliveryId,
 			scheduledForAt: nowMs,
-			deliverAs: "followUp",
+			deliverAs: "steer",
 			coalesced: entry.coalescedFirePending,
 		};
 		let expired = false;
@@ -911,7 +911,7 @@ export function createLoopScheduler(deps: LoopSchedulerDeps): LoopScheduler {
 						loopId: entry.id,
 						deliveryId,
 						scheduledForAt: nowMs,
-						deliverAs: "followUp",
+						deliverAs: "steer",
 						coalesced: true,
 					});
 				}
