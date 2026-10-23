@@ -9,6 +9,7 @@ import type { AgentMessage, StreamFn, ThinkingLevel } from "@earendil-works/pi-a
 import {
 	dropFailedAssistantTurns,
 	getCurrentSystemMessage,
+	isContextOverflow,
 	normalizeContext,
 	type RetryCallbacks,
 	type RetryPolicy,
@@ -28,6 +29,12 @@ import type {
 } from "@earendil-works/pi-ai/compat";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
 import { estimateContextTokens as estimateProviderContextTokens } from "@earendil-works/pi-ai/utils/estimate";
+import {
+	allowOverflowRetry,
+	boundSummarizationInput,
+	SummarizationOverflowExhaustedError,
+	shrinkSummarizationInputForOverflowRetry,
+} from "../extensions/builtin/compaction/overflow-retry.ts";
 import { resolveEffectiveReserveTokens } from "../extensions/builtin/compaction/policy.ts";
 import { withoutServerSearch } from "../extensions/builtin/server-search-fallback.ts";
 import { convertToLlm, isContextExcludedCustomMessage } from "../messages.ts";
@@ -1053,39 +1060,66 @@ export async function generateSummaryWithUsage(
 		if (customInstructions) basePrompt = `${basePrompt}\n\nAdditional focus: ${customInstructions}`;
 	}
 
-	let promptText = "";
-	if (!sourceContext) {
-		const llmMessages = convertToLlm(transformedSource.messages);
-		const conversationText = serializeConversation(llmMessages);
-		promptText = `<conversation>\n${conversationText}\n</conversation>\n\n`;
-		if (transformedSource.previousSummary) {
-			promptText += `<previous-summary>\n${transformedSource.previousSummary}\n</previous-summary>\n\n`;
-		}
+	// The serialized history is bounded to the window with the builtin compaction's rule (senpi#4032): a history
+	// that is close to the window by construction (an overflow, a required pre-prompt compaction) must not make the
+	// summary request overflow the same window, or the compaction - and with it overflow recovery - never succeeds.
+	const boundsHistory = !sourceContext && model.contextWindow > 0;
+	const promptTokens = Math.ceil(`${basePrompt}${transformedSource.previousSummary ?? ""}`.length / 4);
+	// Measured on what is sent (serialization already truncates long tool results), so a fitting request is unchanged.
+	const serializedFits = (messages: AgentMessage[]): boolean =>
+		Math.ceil(serializeConversation(convertToLlm(messages)).length / 4) + promptTokens + maxTokens <=
+		model.contextWindow;
+	let summarizedMessages = transformedSource.messages;
+	if (boundsHistory && !serializedFits(summarizedMessages)) {
+		const bounded = boundSummarizationInput(summarizedMessages, model.contextWindow, promptTokens);
+		summarizedMessages = bounded.length > 0 ? bounded : summarizedMessages.slice(-1);
 	}
-	promptText += basePrompt;
+	const overflowStartedAt = Date.now();
+	let overflowAttempts = 0;
+	let response: AssistantMessage;
+	while (true) {
+		let promptText = "";
+		if (!sourceContext) {
+			const llmMessages = convertToLlm(summarizedMessages);
+			const conversationText = serializeConversation(llmMessages);
+			promptText = `<conversation>\n${conversationText}\n</conversation>\n\n`;
+			if (transformedSource.previousSummary) {
+				promptText += `<previous-summary>\n${transformedSource.previousSummary}\n</previous-summary>\n\n`;
+			}
+		}
+		promptText += basePrompt;
 
-	const completionOptions = createSummarizationOptions(
-		model,
-		maxTokens,
-		apiKey,
-		headers,
-		env,
-		signal,
-		thinkingLevel,
-		extraBody,
-		sessionId,
-		sourceContext ? cacheFriendly?.requestOptions : undefined,
-		sourceContext ? "short" : undefined,
-	);
-	const response = await completeSummarization(
-		model,
-		buildSummarizationContext(promptText, sourceContext),
-		completionOptions,
-		streamFn,
-		retry,
-		callbacks,
-		summarizationMaxDurationMs,
-	);
+		const completionOptions = createSummarizationOptions(
+			model,
+			maxTokens,
+			apiKey,
+			headers,
+			env,
+			signal,
+			thinkingLevel,
+			extraBody,
+			sessionId,
+			sourceContext ? cacheFriendly?.requestOptions : undefined,
+			sourceContext ? "short" : undefined,
+		);
+		response = await completeSummarization(
+			model,
+			buildSummarizationContext(promptText, sourceContext),
+			completionOptions,
+			streamFn,
+			retry,
+			callbacks,
+			summarizationMaxDurationMs,
+		);
+		if (!boundsHistory || !isContextOverflow(response, model.contextWindow)) break;
+		overflowAttempts += 1;
+		const elapsedMs = Date.now() - overflowStartedAt;
+		const shrunk = allowOverflowRetry(overflowAttempts, elapsedMs)
+			? shrinkSummarizationInputForOverflowRetry(summarizedMessages, model.contextWindow, promptTokens)
+			: undefined;
+		if (shrunk === undefined) throw new SummarizationOverflowExhaustedError(overflowAttempts, elapsedMs);
+		summarizedMessages = shrunk;
+	}
 
 	const failure = getSummarizationFailure(response, "Summarization");
 	if (failure) throw new Error(failure);
