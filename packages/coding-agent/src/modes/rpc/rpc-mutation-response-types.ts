@@ -73,6 +73,14 @@ export type RpcMutationResponse =
 	| {
 			id?: string;
 			type: "response";
+			command: "release_tool_barrier";
+			success: true;
+			/** False when no barrier with that id was armed (never armed, already released, ended, or expired). */
+			data: { released: boolean };
+	  }
+	| {
+			id?: string;
+			type: "response";
 			command: "dequeue_message" | "edit_queued_message";
 			success: true;
 			data: RpcQueuedInputChange & Partial<RpcEffectAnswer>;

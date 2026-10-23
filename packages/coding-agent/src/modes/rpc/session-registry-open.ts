@@ -138,7 +138,10 @@ export async function openRegistrySession(
 	claimSettled?.();
 	host.options.onSizeChange?.(host.entries.size);
 	try {
-		const newSessionOptions = requestedDurableId !== undefined ? { id: requestedDurableId } : undefined;
+		const newSessionOptions = {
+			...(requestedDurableId !== undefined ? { id: requestedDurableId } : {}),
+			...(storedProfile.spawnedBy ? { spawnedBy: storedProfile.spawnedBy } : {}),
+		};
 		const manager = sessionPath
 			? host.options.sessionFileLoad === "blocking"
 				? SessionManager.open(sessionPath, undefined, storedProfile.cwd, newSessionOptions)

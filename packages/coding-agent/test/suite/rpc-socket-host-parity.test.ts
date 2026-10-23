@@ -13,6 +13,13 @@ function normalizeResponse(value: RecordValue): RecordValue {
 		delete data.sessionId;
 		delete data.sessionFile;
 		delete data.cwd;
+		if (data.lifecycle && typeof data.lifecycle === "object") {
+			// These are generated session identity/time, like sessionId and message timestamps above.
+			const lifecycle = { ...(data.lifecycle as RecordValue) };
+			delete lifecycle.rootSessionId;
+			delete lifecycle.since;
+			data.lifecycle = lifecycle;
+		}
 		if (Array.isArray(data.messages)) {
 			data.messages = data.messages.map((message) => {
 				if (typeof message !== "object" || message === null) return message;

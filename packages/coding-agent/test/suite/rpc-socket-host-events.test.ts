@@ -42,6 +42,7 @@ describe("RPC Unix-socket multi-connection host", () => {
 					"agent_start",
 					"agent_settled",
 					"agent_idle",
+					"session_lifecycle",
 					"session_opened",
 					"session_closed",
 				]);

@@ -9,6 +9,7 @@ import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts"
 import type { ContextUsage } from "../../core/extensions/types.ts";
 
 import type { SessionEntry, UsageTotals } from "../../core/session-manager.ts";
+import type { ThinkingLevelSource } from "../../core/session-thinking-memory.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import type { RpcExtensionUIRequest, RpcQuestionUiRequest } from "./rpc-question-types.ts";
 
@@ -103,6 +104,7 @@ export interface RpcSessionState {
 	paused: boolean;
 	pausedNoticeCount: number;
 	holds: { kind: HoldKind; key: string; since: string; data?: unknown; sourceCounts: Record<string, number> }[];
+	lifecycle: import("../../core/session-lifecycle-types.ts").SessionLifecycle;
 	model?: Model<any>;
 	/**
 	 * Model switch held until the next compaction, or `null` when no switch is held.
@@ -116,6 +118,16 @@ export interface RpcSessionState {
 	 * from "high is simply the effective level" without it.
 	 */
 	thinkingSelection?: ThinkingSelection;
+	/**
+	 * Where `thinkingLevel` came from (senpi#3819): a direct request, this session's or the global
+	 * last level for the model, a default, a fallback, or a clamp. Absent on older hosts.
+	 */
+	thinkingLevelSource?: ThinkingLevelSource;
+	/**
+	 * This session's last thinking level per model, keyed `provider/id` (senpi#3819). A model switch
+	 * restores from it, so clients read it instead of keeping a copy. Absent on older hosts.
+	 */
+	sessionModelThinkingLevels?: Record<string, ThinkingLevel>;
 	/**
 	 * Abort owner of the most recent aborted turn, or the in-flight one while it is
 	 * still settling. Retained after settle: the live session getter is transient, so a

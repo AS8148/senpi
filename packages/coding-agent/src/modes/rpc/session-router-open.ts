@@ -12,7 +12,7 @@ import { close } from "./session-router-close.ts";
 import type { RouterContext } from "./session-router-context.ts";
 import { code, detail, error } from "./session-router-errors.ts";
 import { sweepDrain } from "./session-router-occupancy.ts";
-import { validatedOpenProfile } from "./session-router-open-profile.ts";
+import { invalidSpawnedBy, validatedOpenProfile } from "./session-router-open-profile.ts";
 import { relocationConnection } from "./session-router-relocation.ts";
 import { liveToolMediaScope, toolMediaPersister } from "./tool-media-store.ts";
 
@@ -99,8 +99,10 @@ export async function open(
 	);
 	try {
 		await assertSessionNotHeld(command.sessionPath);
+		if (invalidSpawnedBy(command)) return error(command.id, "open_session", "invalid_spawned_by");
+		const ancestry = command.spawnedBy;
 		opened = await host.registry.openSession(
-			profile,
+			ancestry ? { ...profile, spawnedBy: ancestry } : profile,
 			// Host lifecycle policy, deliberately outside the immutable launch profile.
 			{
 				retainOnDisconnect: command.retain_on_disconnect === true,

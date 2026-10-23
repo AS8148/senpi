@@ -22,6 +22,23 @@ import type { RpcSessionLaunchProfile } from "./session-registry.ts";
 import type { RouterContext } from "./session-router-context.ts";
 
 import { error } from "./session-router-errors.ts";
+/** `open_session.spawnedBy` must name the parent, root and task when present; the open answers `invalid_spawned_by` otherwise. */
+export function invalidSpawnedBy(command: Extract<RpcCommand, { type: "open_session" }>): boolean {
+	const ancestry = command.spawnedBy;
+	return (
+		ancestry !== undefined &&
+		(typeof ancestry !== "object" ||
+			ancestry === null ||
+			Array.isArray(ancestry) ||
+			typeof ancestry.parentSessionId !== "string" ||
+			ancestry.parentSessionId.length === 0 ||
+			typeof ancestry.rootSessionId !== "string" ||
+			ancestry.rootSessionId.length === 0 ||
+			typeof ancestry.taskId !== "string" ||
+			ancestry.taskId.length === 0)
+	);
+}
+
 export function validatedOpenProfile(
 	host: RouterContext,
 	command: Extract<RpcCommand, { type: "open_session" }>,

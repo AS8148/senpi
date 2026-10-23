@@ -7,6 +7,7 @@ import type { BashResult } from "../../core/bash-executor.ts";
 import type { ClientMessageIdentity } from "../../core/client-message-identity.ts";
 
 import type { SessionEntry } from "../../core/session-manager.ts";
+import type { ToolBarrierSpec } from "../../core/tool-barrier.ts";
 
 import type { RpcSessionModelEntry } from "./rpc-session-state-types.ts";
 
@@ -28,7 +29,11 @@ export type RpcSessionCommand =
 			unknownCommandAsText?: boolean;
 			clientMessageId?: string;
 			clientTurnId?: string;
+			/** Arm the tool barrier for the turn this prompt starts (capability `tool_barrier`, senpi#3717). */
+			toolBarrier?: ToolBarrierSpec;
 	  }
+	/** Open the tool barrier armed under `barrierId`; an unknown or cleared id is a successful no-op. */
+	| { id?: string; type: "release_tool_barrier"; barrierId: string }
 	| {
 			id?: string;
 			type: "send_custom_message";
@@ -143,6 +148,7 @@ export type RpcSessionCommand =
 
 	// State
 	| { id?: string; type: "get_state" }
+	| { id?: string; type: "request_self_settle" }
 	/**
 	 * The newest receipt of one effect (capability `effect_ledger`). With `sessionId` it answers from the
 	 * loaded session; with `sessionPath` (and no `sessionId`) from that transcript on disk, searching the
@@ -167,6 +173,7 @@ export type RpcSessionCommand =
 	| { id?: string; type: "set_thinking_level"; level: ThinkingLevel; scope?: "turn"; effectId?: string }
 	| { id?: string; type: "cycle_thinking_level" }
 	| { id?: string; type: "get_available_thinking_levels" }
+	| { id?: string; type: "get_model_thinking_level"; provider: string; modelId: string }
 
 	// Fast mode (ChatGPT Subscription priority service tier)
 	| { id?: string; type: "set_fast_mode"; enabled: boolean }

@@ -8,6 +8,7 @@ import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts"
 import type { ResolvedMessagePath } from "../../core/message-path-resolution.ts";
 import type { PendingInputSnapshot } from "../../core/pending-input-session.ts";
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
+import type { ThinkingLevelSource } from "../../core/session-thinking-memory.ts";
 
 import type { EffectStatus } from "./effect-record.ts";
 import type { RpcSlashCommand } from "./rpc-command-surface.ts";
@@ -22,6 +23,13 @@ import type {
 
 export type RpcReadResponse =
 	| { id?: string; type: "response"; command: "get_state"; success: true; data: RpcSessionState }
+	| {
+			id?: string;
+			type: "response";
+			command: "request_self_settle";
+			success: true;
+			data: import("../../core/session-lifecycle-types.ts").SelfSettleResult;
+	  }
 	| {
 			id?: string;
 			type: "response";
@@ -45,6 +53,13 @@ export type RpcReadResponse =
 			command: "get_available_thinking_levels";
 			success: true;
 			data: { levels: ThinkingLevel[] };
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "get_model_thinking_level";
+			success: true;
+			data: { level: ThinkingLevel; source: ThinkingLevelSource; availableLevels: ThinkingLevel[] };
 	  }
 	| {
 			id?: string;
