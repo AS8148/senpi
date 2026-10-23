@@ -40,6 +40,7 @@
 - An image-only queued steer or follow-up now leaves the queue once it is delivered, instead of staying listed in the queue display and RPC queue snapshots ([#3592](https://github.com/code-yeongyu/senpi/issues/3592)).
 - Compaction: when a long session overflowed the context window (or needed a required compaction before a prompt), the summary request could itself exceed the same window, so the compaction and overflow recovery could never succeed. The summarizer input is now bounded to fit the window, dropping the oldest history first, and shrinks on a provider overflow; the summary request then says how many earlier messages it left out ([#4032](https://github.com/code-yeongyu/senpi/issues/4032)).
 - Compaction: when a single long turn came close to the context window and the compaction cut fell inside it, the summary request for that turn's first part could exceed the same window, so the compaction failed and the session could never compact. That request is now bounded like the history summary: the turn's request is kept, its oldest tool steps are left out first, and the summary says how many ([#4079](https://github.com/code-yeongyu/senpi/issues/4079)).
+- The queued-message warning (`queued_input_outlived_run`) no longer fires when a turn ends without finishing, such as a retry stopped during its backoff; it reports only messages still waiting after a turn that finished normally ([#4064](https://github.com/code-yeongyu/senpi/issues/4064)).
 
 ### Removed
 
