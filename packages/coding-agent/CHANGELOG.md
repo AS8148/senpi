@@ -24,6 +24,7 @@
 - Messages steered while the first prompt after a compaction was starting no longer wait for a later compaction when threshold compaction is off (including sessions whose compaction is handled by the compaction extension): they are delivered in that run, in order, once. If the first response after a compaction is aborted or fails, they are delivered on the next turn like any other queued message. Before, they could sit in the queue for hours and arrive as a burst after an unrelated later compaction ([#4036](https://github.com/code-yeongyu/senpi/issues/4036)).
 - A queued message that is still waiting after a whole turn has finished normally without it is now logged as a warning (`queued_input_outlived_run` in the session log) with its age, mode and source, so a stuck message is visible instead of silently held. Turns that fail or are stopped keep their queue for the next prompt and are not reported ([#4036](https://github.com/code-yeongyu/senpi/issues/4036)).
 - An image-only queued steer or follow-up now leaves the queue once it is delivered, instead of staying listed in the queue display and RPC queue snapshots ([#3592](https://github.com/code-yeongyu/senpi/issues/3592)).
+- An MCP server over HTTP with no saved sign-in no longer freezes the whole process for up to 30 seconds. Each request's synchronous token lookup could spin on the legacy-credential migration lock while the background lookup in the same process held it, so the holder could never release it; tool calls then failed with "MCP metadata was not ready before the request timeout". The lookup now skips the lock when there is nothing to migrate, and the background claim never holds the lock across an await ([#3546](https://github.com/code-yeongyu/senpi/issues/3546)).
 
 ### Removed
 
@@ -46,11 +47,6 @@
 
 ### Fixed
 
-<<<<<<< HEAD
-- An MCP server over HTTP with no saved sign-in no longer freezes the whole process for up to 30 seconds. Each request's synchronous token lookup could spin on the legacy-credential migration lock while the background lookup in the same process held it, so the holder could never release it; tool calls then failed with "MCP metadata was not ready before the request timeout". The lookup now skips the lock when there is nothing to migrate, and the background claim never holds the lock across an await ([#3546](https://github.com/code-yeongyu/senpi/issues/3546)).
-
-||||||| b6301b18de
-=======
 - Anthropic Subscription no longer locks out every account with "No credential slots available" until re-login, for example when one account is revoked and another is briefly rate-limited. The subscription lane is now the only layer that chooses its accounts (the Cursor CLI lane too). Blocks that older versions left in `credential-pool-state.json` are cleared on the first request after upgrading. A temporary failure (rate limit, server error, timeout, a custom provider's non-standard error body) never becomes a lasting auth block for any provider. When no account can serve, the error names each one with its reason and when it is due back ([#2081](https://github.com/code-yeongyu/senpi/issues/2081)).
 - `turn_end_liveness`: when a person's queued message releases a hold, `heldBy` now names the turn's own stop (deadline stop, then user abort) before a session-wide hold kind ([#3900](https://github.com/code-yeongyu/senpi/issues/3900)).
 - Importing a moved session again after its `accepted` record failed to write now returns the landed session and records the move accepted, instead of refusing it with `move_fenced` ([#3998](https://github.com/code-yeongyu/senpi/pull/3998)).
@@ -249,7 +245,6 @@
 
 - `senpi host ensure` refuses with `endpoint_occupied` (exit 3) when an unregistered process holds the public socket and does not answer, instead of starting a host that loses the bind and exits 1 with only `host_error`.
 
->>>>>>> origin/main
 ### Removed
 
 ## [2026.10.18] - 2026-10-18
