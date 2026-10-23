@@ -1,3 +1,21 @@
+## 2026-10-23 - A refused prompt releases the tool barrier it armed (senpi#4106)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: when `_promptAgent` throws before the run starts, `prompt` releases the tool barrier it armed for that prompt (by its id) and rethrows.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: the barrier is armed before `_promptAgent` can refuse the turn ("Human input or Resume is required"), so a refused non-person prompt left the barrier held until its ceiling and the client had been told it was armed.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: the barrier and the turn admission are session core state.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the `_promptAgent` call at the end of `prompt`.
+
 ## 2026-10-20 - A model switch restores that model's last thinking level in this session (senpi#3819)
 
 ### What changed

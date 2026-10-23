@@ -6146,11 +6146,17 @@ export class AgentSession {
 		if (options?.thinkingLevel !== undefined) {
 			this.setSessionThinkingLevel(options.thinkingLevel);
 		}
-		await this._promptAgent(messages, {
-			inputOrigin: originOf(options),
-			onQueuedInput: options?.onQueuedInput,
-			onTurnAdmitted: options?.onTurnAdmitted,
-		});
+		try {
+			await this._promptAgent(messages, {
+				inputOrigin: originOf(options),
+				onQueuedInput: options?.onQueuedInput,
+				onTurnAdmitted: options?.onTurnAdmitted,
+			});
+		} catch (error) {
+			// A turn the engine refused never ran, so it releases the barrier it armed (senpi#4106).
+			if (options?.toolBarrier && !this._isAgentRunActive) this._toolBarrier.release(options.toolBarrier.id);
+			throw error;
+		}
 		await this.waitForRetry();
 		await this.waitForIdle();
 		if (options?.onSessionWorkReady) {
