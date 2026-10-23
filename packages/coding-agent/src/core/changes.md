@@ -1,3 +1,24 @@
+## 2026-10-20 - A model switch restores that model's last thinking level in this session (senpi#3819)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-thinking-memory.ts` (new): `ThinkingLevelSource`, `deriveSessionModelThinkingLevels(branch)` (the last level per `provider/id` from `thinking_level_change` entries that name their model) and `SessionThinkingMemory`, which re-derives only when the branch leaf moved.
+- `packages/coding-agent/src/core/session-manager.ts`: `ThinkingLevelChangeEntry` gains optional `provider` / `modelId`; `appendThinkingLevelChange` takes the model as a trailing optional argument and writes them.
+- `packages/coding-agent/src/core/agent-session.ts`: `_setThinkingLevel` stamps the active model on every entry it writes. `_getThinkingForModelSwitch` resolves a switch as: a fallback's ephemeral level, else this session's last level for the model, else a favorite's `:level`, else the global `modelThinkingLevels` entry, else the model's default, else the configured default, clamped; it returns the source. New `thinkingLevelSource` getter, `getSessionModelThinkingLevels()` and `getThinkingLevelForModel(model)` (the current level for the active model, otherwise what a switch would restore, without applying it); the switch rollbacks restore the source with the level. New config field `initialThinkingLevelSource`.
+- `packages/coding-agent/src/core/sdk.ts`: records the startup level's source (`session`, `global`, `model-default`, `default`, `explicit`, `clamped`) and passes it to the session; the startup thinking entries name their model.
+
+### Why
+
+- The only per-model memory was the global `modelThinkingLevels` map, shared by every session on the host and never written by session-scoped changes (`/thinking`, RPC `set_thinking_level` with `scope: "turn"`). A thread that went A(high) -> B -> A came back at whatever another thread last used on A, or at the default. The desktop and the TUI both need the restore and the source, from one implementation (sisyphuslabs/omo-desktop-app#3598). Deriving the map from the session branch makes resume, fork and tree navigation correct without a second store. Test: `test/suite/regressions/3819-per-session-thinking-memory.test.ts`.
+
+### Why an extension could not handle it
+
+- Model switches, thinking-level persistence and the session entry format are core session state; an extension cannot intercept the level a switch applies before it is written.
+
+### Expected merge conflict zones
+
+- MEDIUM: `_getThinkingForModelSwitch` and the `_setThinkingLevel` append calls in `agent-session.ts`; the startup thinking resolution in `sdk.ts`; `appendThinkingLevelChange` in `session-manager.ts`.
+
 ## 2026-10-20 - Contain project skill links and retain security notices (senpi#3796)
 
 ### What changed

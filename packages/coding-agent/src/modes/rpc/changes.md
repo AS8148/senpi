@@ -1,3 +1,25 @@
+## 2026-10-20 - `get_state` reports where the thinking level came from and the session's per-model levels; `get_model_thinking_level` reads one model's level (senpi#3819)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RpcSessionState` gains optional `thinkingLevelSource` and `sessionModelThinkingLevels`; new command `get_model_thinking_level { provider, modelId }` answering `{ level, source, availableLevels }`.
+- `packages/coding-agent/src/modes/rpc/rpc-session-state.ts`: `buildRpcSessionState` fills both from the session.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: handles `get_model_thinking_level` through `AgentSession.getThinkingLevelForModel`; an unknown model answers `model_not_found`, a missing field `invalid_argument`.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `getModelThinkingLevel(provider, modelId)`.
+- `packages/coding-agent/src/modes/rpc/session-command-activity.ts`, `session-held.ts`: the command is a read (no activity refresh, admitted while a session is held).
+
+### Why
+
+- Clients (the desktop's effort control, sisyphuslabs/omo-desktop-app#3598) must read the per-model restore from the engine instead of keeping their own copy, including the level a model would get before the client switches to it. Test: `test/suite/regressions/3819-rpc-model-thinking-level.test.ts`.
+
+### Why an extension could not handle it
+
+- `get_state` is the RPC wire projection of the session.
+
+### Expected merge conflict zones
+
+- LOW: the `RpcSessionState` thinking fields and the matching lines in `buildRpcSessionState`; the command and response unions in `rpc-types.ts`; the thinking cases in `connection-handler.ts`.
+
 ## 2026-10-23 - A worker that dies before commit is reported as open_failed (senpi#4037)
 
 ### What changed
