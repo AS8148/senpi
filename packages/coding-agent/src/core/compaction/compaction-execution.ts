@@ -255,8 +255,7 @@ async function generateTurnPrefixSummary(
 			Math.ceil(serializeConversation(convertToLlm(turnMessages)).length / 4) + promptTokens + maxTokens <=
 			model.contextWindow;
 		if (boundsTurn && !serializedFits) {
-			const bounded = boundSummarizationInput(turnMessages, model.contextWindow, promptTokens);
-			summarizedMessages = bounded.length > 0 ? bounded : turnMessages.slice(0, 1);
+			summarizedMessages = boundSummarizationInput(turnMessages, model.contextWindow, promptTokens);
 		}
 	}
 	const overflowStartedAt = Date.now();
