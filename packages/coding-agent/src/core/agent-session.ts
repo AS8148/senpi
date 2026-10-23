@@ -3977,7 +3977,10 @@ export class AgentSession {
 						// compaction owns the continuation now.
 						this._requiredCompactionAdmissionError = undefined;
 					}
-					allowsPostCompactionUsageExemptContinuation = this._postCompactionUsageExemptAssistants.has(msg);
+					// A failed first response consumes the exemption but must not continue the run: input queued behind it
+					// waits for the next prompt, exactly as after a failed response without a compaction (#4036).
+					allowsPostCompactionUsageExemptContinuation =
+						this._postCompactionUsageExemptAssistants.has(msg) && msg.stopReason !== "error" && msg.stopReason !== "aborted";
 					if (allowsPostCompactionUsageExemptContinuation) {
 						this._flushPostCompactionDeferredMessages();
 					}
@@ -6470,14 +6473,39 @@ export class AgentSession {
 	}
 
 	private _flushPostCompactionDeferredMessages(): void {
-		for (const message of this._postCompactionDeferredSteeringMessages) {
-			this.agent.steer(message);
-		}
+		const steering = this._postCompactionDeferredSteeringMessages;
+		const followUps = this._postCompactionDeferredFollowUpMessages;
 		this._postCompactionDeferredSteeringMessages = [];
-		for (const message of this._postCompactionDeferredFollowUpMessages) {
-			this.agent.followUp(message);
-		}
 		this._postCompactionDeferredFollowUpMessages = [];
+		this._requeueAtOriginalPlace(steering, "steer");
+		this._requeueAtOriginalPlace(followUps, "followUp");
+	}
+
+	/**
+	 * Hand parked input back to the agent queue at the place it was sent: newer input of the same mode that was
+	 * queued meanwhile is moved behind it, so delivery keeps the order the input was sent in (#4036).
+	 */
+	private _requeueAtOriginalPlace(parked: readonly AgentMessage[], mode: QueuedInput["mode"]): void {
+		if (parked.length === 0) return;
+		const enqueueOrderOf = new Map<AgentMessage, number>();
+		for (const input of this._queuedInputOrder) {
+			const message = this._queuedMessages.get(input.queuedId);
+			if (message !== undefined) enqueueOrderOf.set(message, input.enqueueOrder);
+		}
+		const orderOf = (message: AgentMessage): number => enqueueOrderOf.get(message) ?? Number.POSITIVE_INFINITY;
+		const oldestParked = Math.min(...parked.map(orderOf));
+		const parkedSet = new Set(parked);
+		const newer = this._queuedInputOrder
+			.filter((input) => input.mode === mode && input.enqueueOrder > oldestParked)
+			.map((input) => this._queuedMessages.get(input.queuedId))
+			.filter(
+				(message): message is AgentMessage =>
+					message !== undefined && !parkedSet.has(message) && this.agent.removeQueuedMessage(message),
+			);
+		for (const message of [...parked, ...newer].sort((a, b) => orderOf(a) - orderOf(b))) {
+			if (mode === "steer") this.agent.steer(message);
+			else this.agent.followUp(message);
+		}
 	}
 
 	/**
