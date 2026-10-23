@@ -310,6 +310,24 @@ describe("proper-lockfile reference guard", () => {
 			expect(vendoredSelfContainedViolations(`${hidden}${valid}`)).toEqual(["imports ../../../file-lock.ts"]);
 		});
 
+		// #4035 review: a division after a postfix ++/-- or a closing bracket is not a regex, so nothing after it is hidden.
+		it.each(["x++ / y", "x-- / y", "(x) / y", "x[0] / y", "x / y"])(
+			"RED: code after a division %s with a later // stays visible",
+			(division) => {
+				const hidden = `const q = ${division}; const s = "a/b//c"; import("../../../file-lock.ts");\n`;
+				expect(vendoredSelfContainedViolations(`${hidden}${valid}`)).toEqual(["imports ../../../file-lock.ts"]);
+			},
+		);
+
+		it("accepts a spread before onCompromised and a handler whose text contains ...", () => {
+			const calls = [
+				"export const a = (path: string, options: object) => lockfile.lock(path, { ...options, onCompromised: () => {} });",
+				'export const b = (path: string) => lockfile.lock(path, { onCompromised: () => console.warn("lock lost...") });',
+				"",
+			].join("\n");
+			expect(vendoredSelfContainedViolations(`${valid}${calls}`)).toEqual([]);
+		});
+
 		it("every listed vendored file passes", () => {
 			const sources = repoSources();
 			for (const path of VENDORED_SELF_CONTAINED) {

@@ -1,5 +1,34 @@
-/** A `/` after one of these (or at the start) opens a regular expression literal, not a division. */
-const REGEX_CAN_START = /(?:^|[(,=:[!&|?{};+\-*%<>~^]|\breturn|\btypeof)\s*$/;
+/** Keywords after which an expression starts, so a following `/` opens a regex rather than dividing. */
+const EXPRESSION_KEYWORDS = new Set([
+	"return",
+	"typeof",
+	"instanceof",
+	"in",
+	"of",
+	"new",
+	"delete",
+	"void",
+	"throw",
+	"case",
+	"do",
+	"else",
+	"yield",
+	"await",
+]);
+
+/**
+ * Whether a `/` following `before` opens a regular expression, judged by the previous token as a tokenizer
+ * would: an operand (identifier, number, closing bracket, postfix `++`/`--`) is followed by a division.
+ */
+function regexCanStart(before: string): boolean {
+	const code = before.trimEnd();
+	const last = code.at(-1);
+	if (last === undefined) return true;
+	if (last === "+" || last === "-") return !code.endsWith(last + last);
+	if (last === ")" || last === "]" || last === "}") return false;
+	if (/[\w$]/.test(last)) return EXPRESSION_KEYWORDS.has(code.match(/[\w$]+$/)?.[0] ?? "");
+	return true;
+}
 
 /** The end index (exclusive) of the regular expression literal that opens at `start`, flags included. */
 function regexLiteralEnd(source: string, start: number): number {
@@ -30,7 +59,7 @@ export function withoutComments(source: string): string {
 	while (i < source.length) {
 		const char = source[i];
 		const next = source[i + 1];
-		if (char === "/" && next !== "/" && next !== "*" && REGEX_CAN_START.test(out)) {
+		if (char === "/" && next !== "/" && next !== "*" && regexCanStart(out)) {
 			const end = regexLiteralEnd(source, i);
 			out += source.slice(i, end);
 			i = end;
@@ -220,6 +249,13 @@ const OWN_ON_COMPROMISED =
 	/\bonCompromised\s*:\s*(?!(?:undefined|null|void)\b)(?:\(|async\b|function\b|[A-Za-z_$][\w$]*\s*[,}\n])/;
 const DEFAULT_LOCKFILE_IMPORT = /^\s*import\s+(\w+)\s+from\s+["']proper-lockfile["'];?\s*$/m;
 
+/** A spread after `onCompromised` can replace it (later keys win); one before it, or `...` inside a string, cannot. */
+function spreadsAfterOnCompromised(args: string): boolean {
+	const code = args.replace(/(["'`])(?:\\.|(?!\1)[^\\])*\1/g, '""');
+	const handler = code.search(/\bonCompromised\s*:/);
+	return handler !== -1 && code.slice(handler).includes("...");
+}
+
 /**
  * A file vendored byte-for-byte into another repository may import only node built-ins and proper-lockfile,
  * through exactly one plain default import, and may use that import only as `<binding>.lock(` calls that
@@ -256,7 +292,8 @@ export function vendoredSelfContainedViolations(source: string): string[] {
 		lockCalls++;
 		const args = callArguments(rest, (use.index ?? 0) + whole.length - 1);
 		if (!OWN_ON_COMPROMISED.test(args)) problems.push(`${binding}.lock( without its own onCompromised`);
-		else if (/\.\.\./.test(args)) problems.push(`${binding}.lock( spreads options that can replace onCompromised`);
+		else if (spreadsAfterOnCompromised(args))
+			problems.push(`${binding}.lock( spreads options that can replace onCompromised`);
 	}
 	if (lockCalls === 0) problems.push(`no ${binding}.lock( call`);
 	return problems;
