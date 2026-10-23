@@ -20,6 +20,27 @@
 
 - LOW: the `RpcSessionState` thinking fields and the matching lines in `buildRpcSessionState`; the command and response unions in `rpc-types.ts`; the thinking cases in `connection-handler.ts`.
 
+## 2026-10-20 - The internal-hop reaper stays inside this user's directories (senpi#3487 follow-up)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-internal-dir-reaper.ts`: `reapOrphanedInternalHostDirs` only removes leftover hop directories owned by the current user, so a shared `/tmp` root never touches another user's hop.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-scratch.ts`: `internalHostDirRoots()` deduplicates roots by realpath (a `TMPDIR` that is `/tmp`, or a symlink to it, is one root, kept under the shorter of the two names so a long `TMPDIR` spelling never removes the `/tmp` fallback), and `internal_socket_path_too_long` names every candidate path it tried.
+- Tests: `packages/coding-agent/test/suite/regressions/3487-rpc-internal-socket-long-tmpdir.test.ts` adds cases where another user's hop is skipped, a hop is still reaped on a platform without a user id, a `TMPDIR` of `/tmp` is scanned once, and a long `TMPDIR` symlink to `/tmp` still places the socket under `/tmp`; the long-TMPDIR cases use unique `mkdtemp` roots.
+
+### Why
+
+- Review notes on #3502: with `/tmp` as a fallback root, the reaper could see other users' hop directories, the same root could be scanned twice, and the too-long error named only one path.
+
+### Why an extension could not handle it
+
+- The internal hop is created and reaped by the host supervisor before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/host-internal-dir-reaper.ts`, the ownership check in `reapOrphanedInternalHostDirs`.
+- LOW: `packages/coding-agent/src/modes/rpc/host-lifecycle-scratch.ts`, the realpath dedupe in `internalHostDirRoots()`.
+
 ## 2026-10-23 - RpcClient.setSessionContext refuses a missing session with session_not_attached (senpi#3967)
 
 ### What changed
