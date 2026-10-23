@@ -15,6 +15,7 @@
 
 - Concurrent prompts after a pause no longer duplicate held input or discard a newer update. A failed skill preparation no longer blocks later prompts, and a parent pause arriving during a skill read keeps commands and manual continues held until the parent resumes them ([#4047](https://github.com/code-yeongyu/senpi/pull/4047)).
 - Invoking a project skill no longer stalls the other sessions on a shared host while its file is read and checked; the link checks from #3796 are unchanged ([#3796](https://github.com/code-yeongyu/senpi/issues/3796)).
+- An MCP server over HTTP with no saved sign-in no longer freezes the whole process for up to 30 seconds. Each request's synchronous token lookup could spin on the legacy-credential migration lock while the background lookup in the same process held it, so the holder could never release it; tool calls then failed with "MCP metadata was not ready before the request timeout". The lookup now skips the lock when there is nothing to migrate, and the background claim never holds the lock across an await ([#3546](https://github.com/code-yeongyu/senpi/issues/3546)).
 
 ### Removed
 
@@ -65,7 +66,6 @@
 - Compaction: when a long session overflowed the context window (or needed a required compaction before a prompt), the summary request could itself exceed the same window, so the compaction and overflow recovery could never succeed. The summarizer input is now bounded to fit the window, dropping the oldest history first, and shrinks on a provider overflow; the summary request then says how many earlier messages it left out ([#4032](https://github.com/code-yeongyu/senpi/issues/4032)).
 - Compaction: when a single long turn came close to the context window and the compaction cut fell inside it, the summary request for that turn's first part could exceed the same window, so the compaction failed and the session could never compact. That request is now bounded like the history summary: the turn's request is kept, its oldest tool steps are left out first, and the summary says how many ([#4079](https://github.com/code-yeongyu/senpi/issues/4079)).
 - The queued-message warning (`queued_input_outlived_run`) no longer fires when a turn ends without finishing, such as a retry stopped during its backoff; it reports only messages still waiting after a turn that finished normally ([#4064](https://github.com/code-yeongyu/senpi/issues/4064)).
-- An MCP server over HTTP with no saved sign-in no longer freezes the whole process for up to 30 seconds. Each request's synchronous token lookup could spin on the legacy-credential migration lock while the background lookup in the same process held it, so the holder could never release it; tool calls then failed with "MCP metadata was not ready before the request timeout". The lookup now skips the lock when there is nothing to migrate, and the background claim never holds the lock across an await ([#3546](https://github.com/code-yeongyu/senpi/issues/3546)).
 
 ### Removed
 
