@@ -8,6 +8,7 @@
  * - Interact with the user via UI primitives
  */
 
+import type { PromptSizeReport } from "../prompt-size-report.ts";
 import type { InputOrigin } from "../input-origin.ts";
 import type { UploadRedaction, UploadRedactionOptions } from "../share/upload-redaction.ts";
 import type { ContextEvent } from "./context-event.ts";
@@ -71,6 +72,7 @@ import type { BashResult } from "../bash-executor.ts";
 import type { BrowserEngine } from "../browser-engine.ts";
 import type { CompactionPreparation, CompactionResult } from "../compaction/index.ts";
 import type { WarmAnchorSnapshot } from "../compaction/warm-anchor.ts";
+import type { DynamicSystemPromptPart } from "../dynamic-prompt/build.ts";
 import type { EventBus } from "../event-bus.ts";
 import type { ExecOptions, ExecResult } from "../exec.ts";
 import type { ReadonlyFooterDataProvider } from "../footer-data-provider.ts";
@@ -694,9 +696,13 @@ export interface PromptCachePrefixRequest {
 	readonly model: Model<Api>;
 	readonly context: Context;
 	readonly options: SimpleStreamOptions;
+	/** Sizes of the exact preview composition; never includes prompt or tool content. */
+	readonly sizeReport?: PromptSizeReport;
 }
 
 export interface PromptCachePrefixRequestOptions {
+	/** Inspect composition without resolving credentials (which may refresh over the network). */
+	readonly sizesOnly?: boolean;
 	/** Aborting stops the preview pass before its next handler and resolves the build as `skipped`. */
 	readonly signal?: AbortSignal;
 }
@@ -1279,6 +1285,8 @@ export interface ResourcesDiscoverResult {
 /** Fired when a session is started, loaded, or reloaded */
 export interface SessionStartEvent {
 	type: "session_start";
+	/** Diagnostic startup: built-in MCP attach and cache prewarm are skipped; every other handler runs; no turn starts. */
+	readonly sizesOnly?: boolean;
 	/** Why this session start happened. */
 	reason: "startup" | "reload" | "new" | "resume" | "fork";
 	/** Initial model resolver branch, when the session was resolved during this startup. */
@@ -2241,6 +2249,8 @@ export interface BeforeAgentStartEventResult {
 	message?: Pick<CustomMessage, "customType" | "content" | "display" | "details">;
 	/** Replace the complete system prompt for this turn. Later handlers observe this exact override. */
 	systemPrompt?: string;
+	/** Exact render parts of a complete replacement, used only by preview accounting. */
+	readonly systemPromptParts?: readonly DynamicSystemPromptPart[];
 }
 
 export interface SessionBeforeSwitchResult {
