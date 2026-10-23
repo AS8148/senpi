@@ -3532,6 +3532,10 @@ See [examples/extensions/timed-confirm.ts](../examples/extensions/timed-confirm.
 ctx.ui.setStatus("my-ext", "Processing...");
 ctx.ui.setStatus("my-ext", undefined);  // Clear
 
+// Subagent tree spend, shown after the session's own cost: "$0.380 (+1.270)"
+ctx.ui.setSubagentCost(1.27);
+ctx.ui.setSubagentCost(undefined);  // Clear
+
 // Working loader (shown during streaming)
 ctx.ui.setWorkingMessage("Thinking deeply...");
 ctx.ui.setWorkingMessage();  // Restore default
