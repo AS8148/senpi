@@ -134,4 +134,43 @@ describe("#4079 the summarization bound inside one long turn", () => {
 		expect(userText(shrunk?.[0])).toContain("more characters truncated");
 		expect(estimateTotalTokens(shrunk ?? [])).toBeLessThanOrEqual(summarizationHistoryBudget(CONTEXT_WINDOW, 100));
 	});
+	it("#given a turn that starts with a custom message and no request #when the input is bounded #then it never comes back empty", () => {
+		// given: no user-like message, so nothing anchors the request
+		const start: AgentMessage = {
+			role: "custom",
+			customType: "turn-start",
+			content: "start",
+			display: false,
+			timestamp: 0,
+		} as AgentMessage;
+		const reply = oneLongTurn(1).filter((message) => message.role === "assistant")[0];
+		const bigReply = {
+			...reply,
+			content: [{ type: "text" as const, text: "z".repeat(400_000) }],
+			stopReason: "stop" as const,
+		} as AgentMessage;
+
+		// when
+		const bounded = boundSummarizationInput([start, bigReply], 100_000, 100);
+
+		// then
+		expect(bounded.length).toBeGreaterThan(0);
+		expect(bounded.at(-1)).toBe(bigReply);
+	});
+	it("#given a request already cut by an earlier retry #when the next retry cuts it again #then it carries one note with the combined count", () => {
+		// given
+		const original = `pasted log ${"y".repeat(200_000)}`;
+		const request: AgentMessage = { role: "user", content: original, timestamp: 0 };
+		const once = shrinkSummarizationInputForOverflowRetry([request], CONTEXT_WINDOW, 100) ?? [];
+
+		// when
+		const twice = shrinkSummarizationInputForOverflowRetry(once, CONTEXT_WINDOW, 100) ?? [];
+
+		// then
+		const text = userText(twice[0]);
+		expect(text.match(/more characters truncated/g)).toHaveLength(1);
+		const kept = text.slice(0, text.indexOf("\n\n[... "));
+		const cut = Number(/\[\.\.\. (\d+) more characters truncated\]$/.exec(text)?.[1]);
+		expect(kept.length + cut).toBe(original.length);
+	});
 });
