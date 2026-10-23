@@ -4,6 +4,24 @@
 
 ### Breaking Changes
 
+### Added
+
+### Changed
+
+- A scheduled prompt (`schedule_prompt`) now arrives in its session while that session is open in the TUI or over RPC: the open session delivers its own due prompts, steered into the running turn when the agent is working, or starting a turn when it is idle. Before, `senpi schedule run` held them until the session was closed and then ran them headlessly. Prompts for sessions that are not open still go through `senpi schedule run`. If the open session cannot deliver a due prompt, it now says so in a warning ([#4074](https://github.com/code-yeongyu/senpi/issues/4074)).
+- A `/loop` tick that comes due while the agent is working is now steered into the running turn, so the agent reads it at its next step instead of only after the whole turn ends. This covers fixed (cron) loops, `schedule_wakeup` wakeups, keepalive wakeups and catch-up ticks. A tick whose prompt is an extension command still waits for the turn to finish. When a dynamic loop's tick lands in a turn the loop did not start and that turn ends without `schedule_wakeup`, the loop re-arms its fallback wakeup without using up its one keepalive credit ([#4072](https://github.com/code-yeongyu/senpi/issues/4072)).
+
+### Fixed
+
+- Concurrent prompts after a pause no longer duplicate held input or discard a newer update. A failed skill preparation no longer blocks later prompts, and a parent pause arriving during a skill read keeps commands and manual continues held until the parent resumes them ([#4047](https://github.com/code-yeongyu/senpi/pull/4047)).
+- Invoking a project skill no longer stalls the other sessions on a shared host while its file is read and checked; the link checks from #3796 are unchanged ([#3796](https://github.com/code-yeongyu/senpi/issues/3796)).
+
+### Removed
+
+## [2026.10.23-1] - 2026-10-23
+
+### Breaking Changes
+
 - Removed the built-in `/llama` llama.cpp router integration and its `/llama` command, the `llama.cpp` inline extension, and the interactive post-login llama.cpp guidance. A saved `llama.cpp` provider or credential in a user config is ignored and no longer resolves; the Ollama provider and third-party `meta-llama` catalog models are unaffected ([#3202](https://github.com/code-yeongyu/senpi/issues/3202), requested by @code-yeongyu).
 
 ### Added
@@ -25,6 +43,7 @@
 
 ### Fixed
 
+- A shared RPC host whose previous generation died is no longer left without an owner: `host status` gives the endpoint back to the one generation it can prove still serves the socket, so `host stop` and `host handoff` no longer refuse `unknown_owner` for a healthy host, and a host that registered while a status read was pruning keeps its registration. `host status --json` reports which generation the pointer names (`pointer.state`: `current`, `elected` or `missing` with the candidates it saw) ([#1911](https://github.com/code-yeongyu/senpi/issues/1911)).
 - On macOS Terminal.app the question hint now says `cmd+r` (toggle mouse reporting) to select text, since Terminal has no drag modifier that bypasses an app's mouse reporting ([#3604](https://github.com/code-yeongyu/senpi/issues/3604)).
 - An accepted request to continue a session on another computer now tells the agent once if it is cancelled because the app disconnected, the user aborted, or the app withdrew its offer. After an abort, the notice is saved before the next prompt, even if the session closes immediately. The session stays on this computer, and the notice does not start another turn ([#4078](https://github.com/code-yeongyu/senpi/issues/4078)).
 - Subscription limits: a background usage poll no longer locks a healthy Claude login when the token refresh fails with something other than a rejection (an HTML error page, a network error); only `invalid_grant` or a 400/401 from the token endpoint asks you to run `/login`. A failed poll also keeps the account's plan in the shared cache, so another process reading it still shows the plan ([#3695](https://github.com/code-yeongyu/senpi/issues/3695)).
