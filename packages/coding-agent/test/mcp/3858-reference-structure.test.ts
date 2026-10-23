@@ -67,6 +67,46 @@ describe("reference redaction preserves structure", () => {
 		});
 	});
 
+	// #3858 delta review 3: a secret embedded in a value shaped like a protocol value is still redacted.
+	it("redacts a token-shaped value under every protocol key", () => {
+		const keys = ["type", "mimeType", "format", "jsonrpc", "role", "$schema", "kind", "method"];
+		// Real credentials are token-shaped (prefix_ + base62, hex, base64url, dotted JWT); they fit inside a media
+		// type or schema URL, unlike the spaced shared SECRET.
+		const tokens = [
+			SECRET,
+			"ghp_AbCdEf0123456789xyz",
+			"sk-live-0123abcdEF4567",
+			"a1b2c3d4e5f60718293a",
+			"eyJhbGci.eyJzdWIi.c2ln",
+		];
+		for (const token of tokens) rememberResolvedReferenceValue(token);
+		for (const token of tokens) {
+			const shapes = [
+				token,
+				`application/${token}`,
+				`image/${token}+xml`,
+				`text/${token}`,
+				`https://json-schema.org/${token}`,
+				`https://json-schema.org/draft/2020-12/${token}`,
+				`${token}-date-time`,
+				`2.0${token}`,
+				`Bearer ${token}`,
+			];
+			for (const key of keys) {
+				for (const shape of shapes) {
+					const out = JSON.stringify(redactResolvedReferenceData({ [key]: shape }));
+					expect(out, `${key}: ${shape}`).not.toContain(token);
+				}
+			}
+		}
+		expect(
+			redactResolvedReferenceData({
+				$schema: "https://json-schema.org/draft/2020-12/schema",
+				mimeType: "application/json",
+			}),
+		).toEqual({ $schema: "https://json-schema.org/draft/2020-12/schema", mimeType: "application/json" });
+	});
+
 	it("serializes values with toJSON the way JSON would before redacting them", () => {
 		const at = new Date("2026-10-24T00:00:00.000Z");
 		expect(redactResolvedReferenceData({ at, note: `seen ${SECRET}` })).toEqual({

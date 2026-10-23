@@ -71,22 +71,73 @@ const SCHEMA_FORMATS = new Set([
 	"password",
 ]);
 
+/** Media types MCP servers send in content blocks and resources. */
+const MEDIA_TYPES = new Set([
+	"text/plain",
+	"text/markdown",
+	"text/html",
+	"text/css",
+	"text/csv",
+	"text/javascript",
+	"text/xml",
+	"text/x-python",
+	"text/x-typescript",
+	"application/json",
+	"application/xml",
+	"application/yaml",
+	"application/javascript",
+	"application/typescript",
+	"application/pdf",
+	"application/zip",
+	"application/gzip",
+	"application/octet-stream",
+	"application/x-ndjson",
+	"image/png",
+	"image/jpeg",
+	"image/gif",
+	"image/webp",
+	"image/svg+xml",
+	"image/bmp",
+	"image/avif",
+	"image/heic",
+	"image/tiff",
+	"audio/wav",
+	"audio/mpeg",
+	"audio/mp3",
+	"audio/ogg",
+	"audio/webm",
+	"audio/flac",
+	"audio/aac",
+	"video/mp4",
+	"video/webm",
+]);
+/** The published JSON Schema draft identifiers. */
+const SCHEMA_URLS = new Set([
+	"http://json-schema.org/draft-04/schema#",
+	"http://json-schema.org/draft-06/schema#",
+	"http://json-schema.org/draft-07/schema#",
+	"http://json-schema.org/schema#",
+	"https://json-schema.org/draft/2019-09/schema",
+	"https://json-schema.org/draft/2020-12/schema",
+]);
+
 /**
- * A string under one of these keys is kept only when it is a known protocol value (a content-block kind, a
- * schema type or format, a media type, the JSON-RPC version, a role); any other value is redacted as usual,
- * so a credential echoed into a protocol field is still caught (fail closed).
+ * Each protocol key keeps a value only when it EXACTLY equals an entry of its allowlist (no open patterns, so
+ * no secret can hide inside a kept value); any other value is redacted as usual, so a credential echoed into a
+ * protocol field is still caught (fail closed). An allowlisted value is a public protocol token, so it is kept
+ * even when a remembered value happens to equal it.
  */
-const PROTOCOL_VALUES: Readonly<Record<string, (value: string) => boolean>> = {
-	type: (value) => PROTOCOL_TYPES.has(value),
-	mimeType: (value) => value.length <= 100 && /^[a-z]+\/[\w.+-]+$/i.test(value),
-	format: (value) => SCHEMA_FORMATS.has(value),
-	jsonrpc: (value) => value === "2.0",
-	role: (value) => value === "user" || value === "assistant",
-	$schema: (value) => value.length <= 100 && /^https:\/\/json-schema\.org\/[\w./-]+$/.test(value),
+const PROTOCOL_VALUES: Readonly<Record<string, ReadonlySet<string>>> = {
+	type: PROTOCOL_TYPES,
+	mimeType: MEDIA_TYPES,
+	format: SCHEMA_FORMATS,
+	jsonrpc: new Set(["2.0"]),
+	role: new Set(["user", "assistant"]),
+	$schema: SCHEMA_URLS,
 };
 
 function isProtocolValue(key: string, value: string): boolean {
-	return Object.hasOwn(PROTOCOL_VALUES, key) && PROTOCOL_VALUES[key]?.(value) === true;
+	return Object.hasOwn(PROTOCOL_VALUES, key) && PROTOCOL_VALUES[key]?.has(value) === true;
 }
 
 /** Copies JSON-shaped data, redacting string leaves only; never mutates the wire-facing original. */

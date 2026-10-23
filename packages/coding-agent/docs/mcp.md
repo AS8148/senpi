@@ -156,10 +156,12 @@ it. A reference object takes the place of the whole string:
   logs and status. Values shorter than four characters are not redacted.
   In structured data, only string values are redacted; keys, numbers,
   booleans, null and array/object shape stay intact. A protocol field keeps
-  its value only when it is a known protocol value: a content-block or schema
-  `type`, a media type in `mimeType`, a schema `format`, `jsonrpc: "2.0"`, a
-  `role` of `user` or `assistant`, or a json-schema.org `$schema`. Anything
-  else in those fields is redacted like any other string.
+  its value only when the value exactly matches a fixed list: a content-block
+  or schema `type`, a common media type in `mimeType` (for example
+  `image/png`), a schema `format`, `jsonrpc: "2.0"`, a `role` of `user` or
+  `assistant`, or a published JSON Schema draft URL in `$schema`. Anything
+  else in those fields, including an unlisted media type, is redacted like
+  any other string.
 - **Who.** A reference is read exactly where `${VAR}` would expand: your own
   `mcp.json`, a trusted project's `mcp.json` and imported `.mcp.json`, and
   stdio servers of skills you own. A remote skill server, a skill of an
