@@ -37,6 +37,7 @@ export class RpcCommandError extends Error {
 }
 
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
+import type { ThinkingLevelSource } from "../../core/session-thinking-memory.ts";
 import type { JsonAgentSessionEvent } from "../json-event.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
 import {
@@ -73,7 +74,7 @@ import type {
 	RpcSlashCommand,
 	RpcUnloadAnswer,
 } from "./rpc-types.ts";
-import { RPC_ERROR_UNKNOWN_COMMAND } from "./rpc-types.ts";
+import { RPC_ERROR_SESSION_NOT_ATTACHED, RPC_ERROR_UNKNOWN_COMMAND } from "./rpc-types.ts";
 import {
 	readSocketSecret,
 	resolveSocketTransportAddress,
@@ -478,6 +479,7 @@ export class RpcClient {
 
 	async openSession(options: {
 		attended?: false;
+		spawnedBy?: import("../../core/session-lifecycle-types.ts").SpawnedBy;
 		/** Attach only on this generation; requires `expected_host_instance`. */
 		expectedHostInstance?: string;
 		sessionPath?: string;
@@ -567,13 +569,23 @@ export class RpcClient {
 
 	/**
 	 * Patch the context the attached session publishes (`set_session_context`); `null` deletes a key.
-	 * Rejects with {@link RpcCommandError} carrying the host's code (`session_not_attached`, `invalid_session_context`).
+	 * Rejects with {@link RpcCommandError} carrying the host's code (`session_not_attached`, `invalid_session_context`);
+	 * a client with no attached session and no `sessionId` refuses locally with the same `session_not_attached` code.
 	 */
 	async setSessionContext(
 		patch: Record<string, string | number | boolean | null>,
 		sessionId = this.sessionId,
 	): Promise<void> {
-		if (!sessionId) throw new Error("set_session_context needs a session");
+		if (!sessionId) {
+			throw new RpcCommandError(
+				`${RPC_ERROR_SESSION_NOT_ATTACHED}: set_session_context needs a session`,
+				RPC_ERROR_SESSION_NOT_ATTACHED,
+				{
+					reason: "this client has no attached session",
+					action: "attach with openSession first, or pass a sessionId",
+				},
+			);
+		}
 		this.getData(await this.send({ type: "set_session_context", sessionId, patch }, false));
 	}
 
@@ -940,6 +952,18 @@ export class RpcClient {
 	async getAvailableThinkingLevels(): Promise<ThinkingLevel[]> {
 		const response = await this.send({ type: "get_available_thinking_levels" });
 		return this.getData<{ levels: ThinkingLevel[] }>(response).levels;
+	}
+
+	/**
+	 * The level a model runs at in this session (the current one when it is active, otherwise what a
+	 * switch to it would restore), where that level comes from, and the levels the model supports.
+	 */
+	async getModelThinkingLevel(
+		provider: string,
+		modelId: string,
+	): Promise<{ level: ThinkingLevel; source: ThinkingLevelSource; availableLevels: ThinkingLevel[] }> {
+		const response = await this.send({ type: "get_model_thinking_level", provider, modelId });
+		return this.getData(response);
 	}
 
 	/**
