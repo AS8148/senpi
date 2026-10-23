@@ -1,6 +1,7 @@
 import type { TranscriptContext } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxOverflowError } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
+import { estimateTokens } from "../../../src/core/compaction/compaction.ts";
 import { createHarness, type Harness } from "../harness.ts";
 
 /**
@@ -14,7 +15,7 @@ const TURN_TEXT = "long-running session history ".repeat(100);
 
 /** The provider's own size check: about four characters per token over everything it is sent. */
 function providerInputTokens(context: TranscriptContext): number {
-	let chars = context.systemPrompt?.length ?? 0;
+	let chars = 0;
 	for (const message of context.messages) {
 		if (typeof message.content === "string") {
 			chars += message.content.length;
@@ -57,7 +58,7 @@ function seedHistoryJustUnderTheWindow(harness: Harness): number {
 	}
 	const messages = harness.sessionManager.buildSessionContext().messages;
 	harness.session.agent.state.messages = messages;
-	return providerInputTokens({ messages });
+	return messages.reduce((total, message) => total + estimateTokens(message), 0);
 }
 
 describe("#4032 compaction when the summarizer input itself would overflow the window", () => {
