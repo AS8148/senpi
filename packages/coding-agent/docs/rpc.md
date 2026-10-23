@@ -3121,6 +3121,8 @@ Response:
   "data": {
     "model": {...},
     "thinkingLevel": "medium",
+    "thinkingLevelSource": "session",
+    "sessionModelThinkingLevels": {"anthropic/<model>": "medium", "openai/<model>": "high"},
     "serviceTier": "priority",
     "fastMode": true,
     "isStreaming": false,
@@ -3141,6 +3143,8 @@ Response:
 The `model` field is a full [Model](#model) object or `null`. `pendingModelSwitch` is always present: `null` means no held switch, while an object with `provider` and `id` identifies a switch that applies after the next compaction. The `sessionName` field is the display name set via `set_session_name`, or omitted if not set.
 
 `pendingDialogs` contains the live `extension_ui_request` frames for select, confirm, input and editor dialogs, or `[]` when none await an answer. Still-open dialogs remain listed after session replacement; resolved, cancelled and timed-out requests are removed. Use these frames to reconcile dialogs during event recovery, separately from `pendingQuestions`.
+
+Each model keeps its own thinking level per session. `sessionModelThinkingLevels` maps `provider/id` to the level that model last ran at in this session, rebuilt from the session file on resume. A model switch (`set_model`, `cycle_model`, the TUI's `/model`) restores, in order: this session's level for the model, a favorite's `:level`, the model's last level in any session (`modelThinkingLevels` in settings), the model's own default, then the configured default, always clamped to the levels the model supports. `thinkingLevelSource` says which one applies: `explicit` (set directly), `session`, `global`, `model-default`, `default`, `fallback` (a retry fallback's temporary level) or `clamped` (a requested or restored level the model cannot run, replaced by the nearest one it can). Hosts before this change omit both fields.
 
 `serviceTier` is the tier a request would carry right now (`"auto"`, `"flex"`, or `"priority"`), omitted when no tier applies. `fastMode` is `true` when the active model is served at the priority ("fast") tier — either because fast mode is on for this session or because the model selection itself pins `priority`. The two never disagree: whenever `fastMode` is `true`, `serviceTier` is `"priority"`.
 
@@ -3403,6 +3407,26 @@ Response:
   }
 }
 ```
+
+#### get_model_thinking_level
+
+The thinking level one model runs at in this session, without switching to it. For the active model it is the current level; for any other model it is the level `set_model` would restore (see `thinkingLevelSource` under [get_state](#get_state) for the order). A client shows a model's effort with it before the user sends anything, instead of keeping its own per-model copy. The command only reads and does not count as session activity.
+
+```json
+{"type": "get_model_thinking_level", "provider": "openai", "modelId": "<model>"}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "get_model_thinking_level",
+  "success": true,
+  "data": {"level": "high", "source": "session", "availableLevels": ["off", "low", "medium", "high"]}
+}
+```
+
+An unknown model answers `success: false` with `errorCode: "model_not_found"`; a missing `provider` or `modelId` answers `errorCode: "invalid_argument"`.
 
 ### Fast mode
 
