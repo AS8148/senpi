@@ -2,9 +2,12 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
-import { createHarness, type Harness } from "../harness.ts";
+import type { ExtensionAPI } from "../../../src/core/extensions/index.ts";
+import { createHarness, getUserTexts, type Harness } from "../harness.ts";
 
 const WARNING = "queued_input_outlived_run";
+const HARD_ERROR = "invalid_request_error: the request was malformed";
+const IMAGE = { type: "image", data: "aGk=", mimeType: "image/png" } as const;
 
 function sessionLogLines(harness: Harness): Array<Record<string, unknown>> {
 	let raw: string;
@@ -20,20 +23,24 @@ function outlivedWarnings(harness: Harness): Array<Record<string, unknown>> {
 	return sessionLogLines(harness).filter((line) => line.event === WARNING);
 }
 
-async function runOrdinaryTurn(harness: Harness, text: string): Promise<void> {
-	await harness.session.prompt(text);
+async function settle(harness: Harness): Promise<void> {
 	await harness.session.waitForIdle();
 	await harness.session.waitForSettledSessionWork();
 }
 
-describe("#4036 a queued input that outlives a completed run is reported", () => {
+async function runTurn(harness: Harness, text: string): Promise<void> {
+	await harness.session.prompt(text).catch(() => undefined);
+	await settle(harness);
+}
+
+describe("#4036 a queued input that outlives a completed turn is reported, and only then", () => {
 	const harnesses: Harness[] = [];
 
 	afterEach(() => {
 		while (harnesses.length > 0) harnesses.pop()?.cleanup();
 	});
 
-	it("#given a steer queued while idle #when the next run delivers it #then nothing is reported", async () => {
+	it("#given a steer queued while idle #when the next turn delivers it #then nothing is reported", async () => {
 		// given
 		const harness = await createHarness();
 		harnesses.push(harness);
@@ -41,15 +48,15 @@ describe("#4036 a queued input that outlives a completed run is reported", () =>
 		await harness.session.steer("steer queued while idle");
 
 		// when
-		await runOrdinaryTurn(harness, "an ordinary turn");
-		await runOrdinaryTurn(harness, "another ordinary turn");
+		await runTurn(harness, "an ordinary turn");
+		await runTurn(harness, "another ordinary turn");
 
 		// then
 		expect(harness.session.getSteeringMessages()).toEqual([]);
 		expect(outlivedWarnings(harness)).toEqual([]);
 	});
 
-	it("#given a steer whose delivery was lost #when a whole run starts and settles without it #then a warning carries its age, mode and source, once", async () => {
+	it("#given a steer whose delivery was lost #when a whole turn starts and ends normally without it #then a warning carries its age, mode and source, once", async () => {
 		// given
 		const harness = await createHarness();
 		harnesses.push(harness);
@@ -58,8 +65,8 @@ describe("#4036 a queued input that outlives a completed run is reported", () =>
 		harness.session.agent.clearAllQueues();
 
 		// when
-		await runOrdinaryTurn(harness, "an ordinary turn");
-		await runOrdinaryTurn(harness, "another ordinary turn");
+		await runTurn(harness, "an ordinary turn");
+		await runTurn(harness, "another ordinary turn");
 
 		// then
 		expect(harness.session.getSteeringMessages()).toEqual(["steer the agent never receives"]);
@@ -68,5 +75,122 @@ describe("#4036 a queued input that outlives a completed run is reported", () =>
 		expect(warnings[0]).toMatchObject({ level: "warn", mode: "steer", source: "interactive" });
 		expect(warnings[0]?.queuedId).toEqual(expect.any(String));
 		expect(warnings[0]?.ageMs).toEqual(expect.any(Number));
+	});
+
+	it("#given a follow-up queued while idle #when the next turn fails #then nothing is reported and the turn after delivers it once", async () => {
+		// given
+		const harness = await createHarness();
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: HARD_ERROR }),
+			fauxAssistantMessage("handled the turn after"),
+			fauxAssistantMessage("handled the follow-up"),
+			fauxAssistantMessage("unexpected extra turn"),
+		]);
+		await harness.session.followUp("follow-up queued while idle");
+
+		// when
+		await runTurn(harness, "a turn that fails");
+		await runTurn(harness, "the turn after");
+
+		// then
+		expect(getUserTexts(harness).filter((text) => text === "follow-up queued while idle")).toHaveLength(1);
+		expect(outlivedWarnings(harness)).toEqual([]);
+	});
+
+	it("#given an accepted compaction and a steer sent while the next prompt starts #when that turn is aborted by the provider #then nothing is reported and the next turn delivers it once", async () => {
+		// given
+		const promptStarting = Promise.withResolvers<void>();
+		const releasePrompt = Promise.withResolvers<void>();
+		const harness = await createHarness({
+			models: [{ id: "issue-4036-aborted", contextWindow: 128_000, maxTokens: 64 }],
+			settings: { compaction: { enabled: true, reserveTokens: 16_384, keepRecentTokens: 1 } },
+			extensionFactories: [
+				(pi: ExtensionAPI) => {
+					pi.on("session_before_compact", (event) => ({
+						compaction: {
+							summary: "accepted summary",
+							firstKeptEntryId: event.preparation.firstKeptEntryId,
+							tokensBefore: event.preparation.tokensBefore,
+						},
+					}));
+					pi.on("before_agent_start", async (event) => {
+						if (event.prompt !== "a turn that is aborted") return;
+						promptStarting.resolve();
+						await releasePrompt.promise;
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("seed response")]);
+		await harness.session.prompt("seed context ".repeat(40));
+		const runAutoCompaction = Reflect.get(harness.session, "_runAutoCompaction");
+		if (typeof runAutoCompaction !== "function") throw new Error("Expected AgentSession._runAutoCompaction");
+		await runAutoCompaction.call(harness.session, "threshold", false);
+		harness.setResponses([
+			{
+				...fauxAssistantMessage("aborted response"),
+				stopReason: "aborted",
+				errorMessage: "provider stream aborted",
+			},
+			fauxAssistantMessage("handled the steer"),
+			fauxAssistantMessage("unexpected extra turn"),
+		]);
+
+		// when
+		const prompt = harness.session.prompt("a turn that is aborted").catch(() => undefined);
+		await promptStarting.promise;
+		await harness.session.prompt("steer sent while the prompt started", { streamingBehavior: "steer" });
+		releasePrompt.resolve();
+		await prompt;
+		await settle(harness);
+		await runTurn(harness, "the next turn");
+
+		// then
+		expect(getUserTexts(harness).filter((text) => text === "steer sent while the prompt started")).toHaveLength(1);
+		expect(outlivedWarnings(harness)).toEqual([]);
+	});
+
+	it("#given a follow-up queued during a turn #when that turn retries a transient error and then fails #then nothing is reported and the next turn delivers it once", async () => {
+		// given
+		const harness = await createHarness({ settings: { retry: { enabled: true, baseDelayMs: 1 } } });
+		harnesses.push(harness);
+		let followUpQueued: Promise<unknown> | undefined;
+		harness.setResponses([
+			() => {
+				followUpQueued = harness.session.followUp("follow-up queued during the turn");
+				return fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" });
+			},
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: HARD_ERROR }),
+			fauxAssistantMessage("handled the next turn"),
+			fauxAssistantMessage("handled the follow-up"),
+			fauxAssistantMessage("unexpected extra turn"),
+		]);
+
+		// when
+		await runTurn(harness, "a turn that retries and fails");
+		await followUpQueued;
+		await runTurn(harness, "the next turn");
+
+		// then
+		expect(getUserTexts(harness).filter((text) => text === "follow-up queued during the turn")).toHaveLength(1);
+		expect(outlivedWarnings(harness)).toEqual([]);
+	});
+
+	it("#given an image-only steer queued while idle #when the next turn delivers it #then it leaves the queue and nothing is reported", async () => {
+		// given
+		const harness = await createHarness();
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("handled"), fauxAssistantMessage("handled again")]);
+		await harness.session.steer("", [IMAGE]);
+
+		// when
+		await runTurn(harness, "an ordinary turn");
+		await runTurn(harness, "another ordinary turn");
+
+		// then
+		expect(harness.session.getSteeringMessages()).toEqual([]);
+		expect(outlivedWarnings(harness)).toEqual([]);
 	});
 });
