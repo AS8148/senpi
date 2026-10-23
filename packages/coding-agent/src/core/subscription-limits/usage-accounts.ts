@@ -21,27 +21,39 @@ import { CredentialStoreBusyError } from "../lockfile-policy.ts";
 import type { UsageProvider } from "./usage-endpoints.ts";
 
 const EXPIRING_WITHIN_MS = 5 * 60_000;
-const REJECTED_STATUS = /\bstatus=40[01]\b/;
+const STATUS_IN_TEXT = /\bstatus=(\d{3})\b/;
 const MAX_CAUSE_LINKS = 16;
+
+function causeChain(error: unknown): object[] {
+	const links: object[] = [];
+	let link: unknown = error;
+	while (typeof link === "object" && link !== null && !links.includes(link) && links.length < MAX_CAUSE_LINKS) {
+		links.push(link);
+		link = Reflect.get(link, "cause");
+	}
+	return links;
+}
 
 /**
  * A background poll records the `auth_error` lock only on an explicit rejection from the token endpoint:
- * `invalid_grant`, or a 400/401 answer (senpi#3695). `isGrantRejected` alone also calls an HTML error page
- * or a plain network failure rejected; a turn tolerates that, but a poll would then lock a healthy login.
+ * a 400/401 answer, or `invalid_grant` when no status is known (senpi#3695). `isGrantRejected` alone also
+ * calls an HTML error page or a plain network failure rejected; a turn tolerates that, but a poll would then
+ * lock a healthy login. The endpoint's own numeric status decides first; only without one is the text read,
+ * and then only its first `status=`, because the flattened message carries the server's body after it.
  */
 function tokenEndpointRejected(error: unknown): boolean {
 	if (!isGrantRejected(error)) return false;
-	const seen = new Set<unknown>();
-	let link: unknown = error;
-	while (typeof link === "object" && link !== null && !seen.has(link) && seen.size < MAX_CAUSE_LINKS) {
-		seen.add(link);
+	const links = causeChain(error);
+	for (const link of links) {
 		const status: unknown = Reflect.get(link, "status");
-		if (status === 400 || status === 401) return true;
+		if (typeof status === "number") return status === 400 || status === 401;
+	}
+	for (const link of links) {
 		const message: unknown = Reflect.get(link, "message");
-		if (typeof message === "string" && (message.includes("invalid_grant") || REJECTED_STATUS.test(message))) {
-			return true;
-		}
-		link = Reflect.get(link, "cause");
+		if (typeof message !== "string") continue;
+		const status = STATUS_IN_TEXT.exec(message)?.[1];
+		if (status !== undefined) return status === "400" || status === "401";
+		if (message.includes("invalid_grant")) return true;
 	}
 	return false;
 }

@@ -241,7 +241,9 @@ describe("usage poll accounts and payloads (senpi#3684)", () => {
 			innerMessage ?? `HTTP request failed. status=${status}; url=https://example.invalid/token; body=${body}`,
 			status,
 		);
-		return new Error(`Anthropic token refresh request failed. details=Error: ${endpoint.message}`, { cause: endpoint });
+		return new Error(`Anthropic token refresh request failed. details=Error: ${endpoint.message}`, {
+			cause: endpoint,
+		});
 	};
 
 	it.each([
@@ -266,8 +268,14 @@ describe("usage poll accounts and payloads (senpi#3684)", () => {
 	it.each([
 		["a wrapped 403 whose body says invalid_grant", wrappedEndpointError(403, '{"error":"invalid_grant"}')],
 		["a wrapped 404 whose body says status=400", wrappedEndpointError(404, "upstream said status=400")],
-		["an unwrapped 403 message whose body says invalid_grant", new Error('HTTP request failed. status=403; body={"error":"invalid_grant"}')],
-		["an unwrapped 404 message whose body says status=401", new Error("HTTP request failed. status=404; body=proxy: status=401")],
+		[
+			"an unwrapped 403 message whose body says invalid_grant",
+			new Error('HTTP request failed. status=403; body={"error":"invalid_grant"}'),
+		],
+		[
+			"an unwrapped 404 message whose body says status=401",
+			new Error("HTTP request failed. status=404; body=proxy: status=401"),
+		],
 	])("a non-rejection status (%s) never locks the account", async (_label, failure) => {
 		const store = revokedStore();
 		const accounts = await listPollAccounts({
