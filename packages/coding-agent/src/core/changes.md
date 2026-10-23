@@ -1,3 +1,22 @@
+## 2026-10-23 - Product copy punctuation (senpi#4040)
+
+### What changed
+
+- `packages/coding-agent/src/core/export-html/template.js`: omit the unused clipboard-error binding now that product JavaScript joins the oxlint source scope; the clipboard fallback is unchanged.
+
+### Why
+
+- The product-copy oxlint rule rejects em dashes in strings, templates and JSX text. Existing copy must pass it without changing control flow or punctuation matching.
+
+### Why an extension could not handle it
+
+- These source strings and lint directives are read before runtime extensions can rewrite them.
+
+### Expected merge conflict zones
+
+- The listed copy strings and adjacent lint comments only.
+
+
 ## 2026-10-21 - A models.json model entry keeps the built-in price; an unpriced custom model costs unknown, not $0 (senpi#3844)
 
 ### What changed
