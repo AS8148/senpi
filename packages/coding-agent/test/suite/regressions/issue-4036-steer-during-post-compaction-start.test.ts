@@ -86,4 +86,43 @@ describe("#4036 a steer sent while the first prompt after a compaction is starti
 			expect(harness.eventsOfType("compaction_end")).toHaveLength(1);
 		},
 	);
+	it("#given an accepted compaction #when the first response after it is aborted by the provider #then a steer sent while it started is delivered on the next turn exactly once, like ordinary queued input", async () => {
+		// given
+		const promptStarting = Promise.withResolvers<void>();
+		const releasePrompt = Promise.withResolvers<void>();
+		const harness = await createAcceptedCompactionHarness(true, async (prompt) => {
+			if (prompt !== FIRST_PROMPT) return;
+			promptStarting.resolve();
+			await releasePrompt.promise;
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("seed response")]);
+		await harness.session.prompt("seed context ".repeat(40));
+		await compactOnThreshold(harness);
+		harness.setResponses([
+			{
+				...fauxAssistantMessage("aborted response after the compaction"),
+				stopReason: "aborted",
+				errorMessage: "provider stream aborted",
+			},
+			fauxAssistantMessage("steer handled on the next turn"),
+			fauxAssistantMessage("unexpected extra turn"),
+		]);
+
+		// when
+		const prompt = harness.session.prompt(FIRST_PROMPT);
+		await promptStarting.promise;
+		await harness.session.prompt(STEER, { streamingBehavior: "steer" });
+		releasePrompt.resolve();
+		await prompt;
+		await harness.session.waitForSettledSessionWork();
+		await harness.session.prompt("the next turn");
+		await harness.session.waitForSettledSessionWork();
+
+		// then
+		expect(getUserTexts(harness).filter((text) => text === STEER)).toHaveLength(1);
+		expect(getAssistantTexts(harness)).toContain("steer handled on the next turn");
+		expect(harness.session.getSteeringMessages()).toEqual([]);
+		expect(harness.eventsOfType("compaction_end")).toHaveLength(1);
+	});
 });
