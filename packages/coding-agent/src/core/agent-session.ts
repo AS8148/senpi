@@ -318,6 +318,7 @@ import { expandPromptTemplateWithMetadata, type PromptTemplate } from "./prompt-
 import { type ProviderFailure, providerFailureOf } from "./provider-failure.ts";
 import { rejectedImageSources } from "./provider-rejected-images.ts";
 import { createProviderTimeoutRetryPlan, runBoundedRetryContinuation } from "./provider-timeout-retry.ts";
+import { QueuedInputAges } from "./queued-input-age.ts";
 import { checkSessionReloadVeto } from "./reload-veto.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
 import { isBillingErrorMessage } from "./retry-fallback/billing.ts";
@@ -1373,6 +1374,7 @@ export class AgentSession {
 	 * message is persisted. Kept off the message itself so it can never reach a provider request.
 	 */
 	private readonly _userInputSources = new WeakMap<AgentMessage, InputSource>();
+	private readonly _queuedInputAges = new QueuedInputAges();
 	/** Recently delivered `queuedId`s (bounded), so a late dequeue answers `already_delivered`, not `not_found`. */
 	private readonly _deliveredQueuedIds = new Set<string>();
 	private _sessionLogger: SessionLogger;
@@ -3080,6 +3082,7 @@ export class AgentSession {
 			return;
 		}
 		this._isAgentRunActive = false;
+		this._warnQueuedInputOutlivingRun(agentEnd);
 		// Before the settle and idle edges: the drain they wake may redeliver what this run's file refused.
 		this.externalAdmission.observeRunSettled();
 		let deferredActions: DeferredAgentSettledAction[] = [];
@@ -3199,7 +3202,10 @@ export class AgentSession {
 			throw new Error("The previous run was interrupted. Human input or Resume is required before another turn.");
 		deferredTurnClaim?.resolve("started");
 		this._lifecycleBinding.prepareRun();
-		if (!this._isAgentRunActive) this.externalAdmission.beginTurn();
+		if (!this._isAgentRunActive) {
+			this.externalAdmission.beginTurn();
+			this._queuedInputAges.noteRunStarted();
+		}
 		this._isAgentRunActive = true;
 		onTurnAdmitted?.();
 		// A new turn admitted: arm the inactivity lease and the hard max-runtime cap.
@@ -3558,8 +3564,26 @@ export class AgentSession {
 	private _consumePostCompactionUsageExemption(message: AssistantMessage): boolean {
 		if (this._postCompactionUsageExemptAssistants.has(message)) return true;
 		if (!this._isPostCompactionUsageExempt(message)) return false;
-		this._skipNextPostCompactionAssistantCheck = false;
+		this._releasePostCompactionDeferral();
 		this._postCompactionUsageExemptAssistants.add(message);
+		return true;
+	}
+
+	/**
+	 * Disarm the post-compaction usage exemption and hand the input parked behind it back to the ordinary queues.
+	 * Every path that spends the exemption goes through here, so none can leave that input parked (#4036).
+	 */
+	private _releasePostCompactionDeferral(): void {
+		this._skipNextPostCompactionAssistantCheck = false;
+		this._flushPostCompactionDeferredMessages();
+	}
+
+	/** The first response after a compaction spends the exemption however it ended; true when it was released here. */
+	private _releaseSpentPostCompactionExemption(message: AssistantMessage): boolean {
+		if (!this._hasPendingPostCompactionUsageExemption(message) || this._isAssistantFromBeforeLatestCompaction(message)) {
+			return false;
+		}
+		this._releasePostCompactionDeferral();
 		return true;
 	}
 
@@ -3679,15 +3703,20 @@ export class AgentSession {
 			this._overflowRecoveryRungs = 0;
 			this._retryFallback.resetTurn();
 			const messageText = userMessageText(event.message.content);
-			if (messageText) {
+			// Image-only input has no text to match: find it by the message the queue handed to the agent (#3592).
+			const imageOnlyQueued = messageText
+				? undefined
+				: this._queuedInputOrder.find((input) => this._queuedMessages.get(input.queuedId) === event.message);
+			if (messageText || imageOnlyQueued !== undefined) {
 				const { clientMessageId } = readClientMessageIdentity(event.message);
 				const queued =
-					clientMessageId === undefined
+					imageOnlyQueued ??
+					(clientMessageId === undefined
 						? undefined
-						: this._queuedInputOrder.find((input) => input.clientMessageId === clientMessageId);
+						: this._queuedInputOrder.find((input) => input.clientMessageId === clientMessageId));
 				// Check steering queue first
 				const steeringIndex =
-					clientMessageId === undefined || queued?.mode === "steer"
+					(clientMessageId === undefined && queued === undefined) || queued?.mode === "steer"
 						? this._steeringMessages.indexOf(messageText)
 						: -1;
 				if (steeringIndex !== -1) {
@@ -3697,7 +3726,7 @@ export class AgentSession {
 				} else {
 					// Check follow-up queue
 					const followUpIndex =
-						clientMessageId === undefined || queued?.mode === "followUp"
+						(clientMessageId === undefined && queued === undefined) || queued?.mode === "followUp"
 							? this._followUpMessages.indexOf(messageText)
 							: -1;
 					if (followUpIndex !== -1) {
@@ -3840,6 +3869,7 @@ export class AgentSession {
 		let retryContinuationBlocked = false;
 		let retryExhaustionAllowsQueuedContinuation = false;
 		let allowsPostCompactionUsageExemptContinuation = false;
+		let releasedExemptionAllowsQueuedContinuation = false;
 		const userAbortSuppressedQueuedContinuation =
 			event.type === "agent_end" && this._suppressQueuedContinuationAfterUserAbort;
 		if (userAbortSuppressedQueuedContinuation) {
@@ -3994,9 +4024,17 @@ export class AgentSession {
 						// compaction owns the continuation now.
 						this._requiredCompactionAdmissionError = undefined;
 					}
-					allowsPostCompactionUsageExemptContinuation = this._postCompactionUsageExemptAssistants.has(msg);
+					// A failed first response consumes the exemption but must not continue the run: input queued behind it
+					// waits for the next prompt, exactly as after a failed response without a compaction (#4036).
+					allowsPostCompactionUsageExemptContinuation =
+						this._postCompactionUsageExemptAssistants.has(msg) && msg.stopReason !== "error" && msg.stopReason !== "aborted";
 					if (allowsPostCompactionUsageExemptContinuation) {
 						this._flushPostCompactionDeferredMessages();
+					}
+					// Released before the admission re-sample below, which would otherwise still read the armed
+					// exemption's "threshold" placeholder and fail the prompt with a false RequiredCompactionError.
+					if (this._releaseSpentPostCompactionExemption(msg)) {
+						releasedExemptionAllowsQueuedContinuation = this._agentEndAllowsQueuedContinuation(event.messages);
 					}
 					// _runAutoCompaction() returns false both when recovery was rejected and
 					// when an accepted compaction had no queue to continue. Re-sample after
@@ -4011,6 +4049,14 @@ export class AgentSession {
 					}
 				}
 			}
+			// The exemption covers only the first response after a compaction. A run that ends on that response
+			// without consuming it (a blocked or exhausted retry, a user abort) has still spent it: the input parked
+			// while that run started rejoins the ordinary queues, whose rules then decide when it runs, exactly as
+			// for input queued in a run without a compaction (#4036).
+			if (this._releaseSpentPostCompactionExemption(msg)) {
+				releasedExemptionAllowsQueuedContinuation =
+					!userAbortSuppressedQueuedContinuation && this._agentEndAllowsQueuedContinuation(event.messages);
+			}
 		}
 
 		if (event.type === "agent_end") {
@@ -4020,6 +4066,7 @@ export class AgentSession {
 				!retryContinuationBlocked &&
 				(allowsQueuedContinuation ||
 					allowsPostCompactionUsageExemptContinuation ||
+					releasedExemptionAllowsQueuedContinuation ||
 					retryExhaustionAllowsQueuedContinuation) &&
 				this.agent.hasQueuedMessages()
 			) {
@@ -5585,7 +5632,12 @@ export class AgentSession {
 			claim.started = started;
 			this._promptStartPending = false;
 			this._notifyAdmissionIdle();
-			if (!started && claim.joined === true && !this.isStreaming) this._drainJoinedInput();
+			if (!started && claim.joined === true && !this.isStreaming) {
+				// Input that joined while the exemption was armed was parked; the turn it was meant for never ran,
+				// so hand it to the drain. The exemption stays armed for the drained run's first response (#4036).
+				this._flushPostCompactionDeferredMessages();
+				this._drainJoinedInput();
+			}
 		};
 		// A joiner marks the claim it queued into; one that queues after that claim already failed (it awaited in
 		// between) drains its own input, since the claimer has nothing left to release.
@@ -6513,14 +6565,39 @@ export class AgentSession {
 	}
 
 	private _flushPostCompactionDeferredMessages(): void {
-		for (const message of this._postCompactionDeferredSteeringMessages) {
-			this.agent.steer(message);
-		}
+		const steering = this._postCompactionDeferredSteeringMessages;
+		const followUps = this._postCompactionDeferredFollowUpMessages;
 		this._postCompactionDeferredSteeringMessages = [];
-		for (const message of this._postCompactionDeferredFollowUpMessages) {
-			this.agent.followUp(message);
-		}
 		this._postCompactionDeferredFollowUpMessages = [];
+		this._requeueAtOriginalPlace(steering, "steer");
+		this._requeueAtOriginalPlace(followUps, "followUp");
+	}
+
+	/**
+	 * Hand parked input back to the agent queue at the place it was sent: newer input of the same mode that was
+	 * queued meanwhile is moved behind it, so delivery keeps the order the input was sent in (#4036).
+	 */
+	private _requeueAtOriginalPlace(parked: readonly AgentMessage[], mode: QueuedInput["mode"]): void {
+		if (parked.length === 0) return;
+		const enqueueOrderOf = new Map<AgentMessage, number>();
+		for (const input of this._queuedInputOrder) {
+			const message = this._queuedMessages.get(input.queuedId);
+			if (message !== undefined) enqueueOrderOf.set(message, input.enqueueOrder);
+		}
+		const orderOf = (message: AgentMessage): number => enqueueOrderOf.get(message) ?? Number.POSITIVE_INFINITY;
+		const oldestParked = Math.min(...parked.map(orderOf));
+		const parkedSet = new Set(parked);
+		const newer = this._queuedInputOrder
+			.filter((input) => input.mode === mode && input.enqueueOrder > oldestParked)
+			.map((input) => this._queuedMessages.get(input.queuedId))
+			.filter(
+				(message): message is AgentMessage =>
+					message !== undefined && !parkedSet.has(message) && this.agent.removeQueuedMessage(message),
+			);
+		for (const message of [...parked, ...newer].sort((a, b) => orderOf(a) - orderOf(b))) {
+			if (mode === "steer") this.agent.steer(message);
+			else this.agent.followUp(message);
+		}
 	}
 
 	/**
@@ -7729,7 +7806,30 @@ export class AgentSession {
 			...clientMessageIdentity(options),
 		});
 		if (message !== undefined) this._queuedMessages.set(queuedId, message);
+		this._queuedInputAges.noteQueued(queuedId, Date.now());
 		return queuedId;
+	}
+
+	/** Queued input that a whole turn started after and settled without delivering is overdue: say so (#4036). */
+	private _warnQueuedInputOutlivingRun(agentEnd: AgentEvent | undefined): void {
+		// A failed or aborted turn keeps queued input for the next prompt by design, so it proves nothing is stuck;
+		// the next turn that ends normally still catches input that really is.
+		const settledMessages = agentEnd?.type === "agent_end" ? agentEnd.messages : this.agent.state.messages;
+		const lastAssistant = settledMessages.findLast((message) => message.role === "assistant");
+		if (lastAssistant?.role === "assistant" && (lastAssistant.stopReason === "error" || lastAssistant.stopReason === "aborted")) {
+			return;
+		}
+		const stillQueued = this._queuedInputOrder.map((input) => input.queuedId);
+		for (const { queuedId, ageMs } of this._queuedInputAges.takeOutlived(stillQueued, Date.now())) {
+			const input = this._queuedInputOrder.find((candidate) => candidate.queuedId === queuedId);
+			const message = this._queuedMessages.get(queuedId);
+			this._sessionLogger.warn("queued_input_outlived_run", {
+				queuedId,
+				mode: input?.mode,
+				ageMs,
+				source: message === undefined ? undefined : this._userInputSources.get(message),
+			});
+		}
 	}
 
 	private _mintQueuedId(): string {
@@ -10352,14 +10452,17 @@ export class AgentSession {
 			return compacted;
 		}
 
-		// Stuck-overflow recovery above runs regardless of the flag; threshold
-		// compaction below is the proactive path the user switched off (#1422).
-		if (!settings.enabled) return false;
-
 		// The first ordinary response can carry provider usage calculated before
 		// compaction. Consume that exemption only after proving this is not an
 		// overflow, then retain the decision for later admission re-sampling.
+		// It is consumed even when threshold compaction is switched off: the
+		// exemption is what releases input queued while that response started,
+		// so leaving it armed parked that input until a later compaction (#4036).
 		if (this._consumePostCompactionUsageExemption(assistantMessage)) return false;
+
+		// Stuck-overflow recovery above runs regardless of the flag; threshold
+		// compaction below is the proactive path the user switched off (#1422).
+		if (!settings.enabled) return false;
 
 		// Case 2: Threshold - context is getting large
 		// For error messages or all-zero usage messages, estimate from the last valid response.
