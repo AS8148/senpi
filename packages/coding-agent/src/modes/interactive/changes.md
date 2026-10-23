@@ -1,3 +1,22 @@
+## 2026-10-18 - Terminal.app's selection hint names Command-R (senpi#3604 follow-up)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/ask-user-async-widget.ts`: `selectionBypassHint()` returns `cmd+r (toggle mouse reporting)` for Terminal.app instead of `option+drag`, and the tmux note names only iTerm2.
+
+### Why
+
+- Apple documents Option-drag in Terminal as rectangular selection and Command-R as the "Allow Mouse Reporting" toggle; it documents no drag modifier that bypasses an app's mouse reporting.
+
+### Why an extension could not handle it
+
+- The widget is the interactive host's own component.
+
+### Expected merge conflict zones
+
+- LOW: the Terminal.app and tmux rows of `selectionBypassHint`.
+
+## 2026-10-20 - Present retained skill security reasons once (senpi#3796)
 ## 2026-10-23 - Product copy punctuation (senpi#4040)
 
 ### What changed

@@ -25,6 +25,7 @@
 
 ### Fixed
 
+- On macOS Terminal.app the question hint now says `cmd+r` (toggle mouse reporting) to select text, since Terminal has no drag modifier that bypasses an app's mouse reporting ([#3604](https://github.com/code-yeongyu/senpi/issues/3604)).
 - An accepted request to continue a session on another computer now tells the agent once if it is cancelled because the app disconnected, the user aborted, or the app withdrew its offer. After an abort, the notice is saved before the next prompt, even if the session closes immediately. The session stays on this computer, and the notice does not start another turn ([#4078](https://github.com/code-yeongyu/senpi/issues/4078)).
 - Subscription limits: a background usage poll no longer locks a healthy Claude login when the token refresh fails with something other than a rejection (an HTML error page, a network error); only `invalid_grant` or a 400/401 from the token endpoint asks you to run `/login`. A failed poll also keeps the account's plan in the shared cache, so another process reading it still shows the plan ([#3695](https://github.com/code-yeongyu/senpi/issues/3695)).
 - A `models.json` `models[]` entry that repeats a built-in model without `cost` keeps the built-in price instead of billing at $0, and a custom model with no price anywhere reports its cost as unknown (no `$` amount) instead of $0; `hideFreeModels` no longer hides such a model ([#3844](https://github.com/code-yeongyu/senpi/issues/3844)).
