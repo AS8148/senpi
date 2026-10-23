@@ -145,6 +145,7 @@ import {
 import { admitCursorHistory, cursorAdmissionBudgetBytes } from "./cursor-history-admission.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import { resolveDiscoveredResourcePaths } from "./discovered-resource-scope.ts";
+import type { DynamicSystemPromptPart } from "./dynamic-prompt/build.ts";
 import {
 	type BuildDynamicSystemPromptOptions,
 	buildDynamicSystemPrompt,
@@ -314,6 +315,7 @@ import { NestedToolCallRunner } from "./nested-tool-calls.ts";
 import { type PendingInputSnapshot, type PendingInputUpdate, SessionPendingInputs } from "./pending-input-session.ts";
 import { PROMPT_CACHE_SAFE_WAIT_ENV, resolvePromptCacheSafeWaitSeconds } from "./prompt-cache-budget.ts";
 import { PromptCachePrefixBuilds } from "./prompt-cache-prefix-request.ts";
+import type { PromptSizeInventory } from "./prompt-size-startup.ts";
 import { expandPromptTemplateWithMetadata, type PromptTemplate } from "./prompt-templates.ts";
 import { type ProviderFailure, providerFailureOf } from "./provider-failure.ts";
 import { rejectedImageSources } from "./provider-rejected-images.ts";
@@ -1004,6 +1006,9 @@ class MissingModelAccessError extends Error {
 	}
 }
 export interface ExtensionBindings {
+	readonly sizesOnly?: boolean;
+	/** Filesystem lookups for a sizes-only report; honoured only with `sizesOnly`. */
+	readonly promptSizeInventory?: PromptSizeInventory;
 	uiContext?: ExtensionUIContext;
 	mode?: ExtensionMode;
 	commandContextActions?: ExtensionCommandContextActions;
@@ -1619,6 +1624,9 @@ export class AgentSession {
 		customPrompt?: string;
 		appendSystemPrompt?: string;
 	};
+	private _baseSystemPromptParts: readonly DynamicSystemPromptPart[] = [];
+	private _sizesOnlyStartup = false;
+	private _promptSizeInventory: PromptSizeInventory | undefined;
 	private _systemPromptOverride?: string;
 	private _promptSurface: PromptSurface | undefined;
 	private _browserEngine: BrowserEngine | undefined;
@@ -5372,9 +5380,12 @@ export class AgentSession {
 			customPrompt: loaderSystemPrompt,
 			appendSystemPrompt: loaderAppendSystemPrompt.length > 0 ? loaderAppendSystemPrompt.join("\n\n") : undefined,
 		};
-		const basePrompt = loaderSystemPrompt ?? buildDynamicSystemPrompt(this._baseSystemPromptOptions);
-		const prompt =
-			loaderAppendSystemPrompt.length > 0 ? `${basePrompt}\n\n${loaderAppendSystemPrompt.join("\n\n")}` : basePrompt;
+		const prompt = buildDynamicSystemPrompt({
+			...this._baseSystemPromptOptions,
+			onParts: (parts) => {
+				this._baseSystemPromptParts = parts;
+			},
+		});
 		if (!this._isEvalOnlyPolicyArmed()) return prompt;
 		const armed = this._evalOnlyToolNames ?? new Set<string>();
 		const registered = new Set([...armed].filter((name) => this._toolRegistry.has(name)));
@@ -6941,6 +6952,12 @@ export class AgentSession {
 				: message.details,
 			timestamp: Date.now(),
 		} satisfies CustomMessage;
+		if (this._sizesOnlyStartup && options?.triggerTurn === true) {
+			// Size inspection makes no model call (#3483): keep the message for a turn that never starts.
+			this._pendingNextTurnMessages.push(appMessage);
+			deferredTurnClaim?.resolve("finished-without-start");
+			return;
+		}
 		if (itemized !== undefined) this._persistWatchers.set(appMessage, itemized);
 		if (
 			!releasedWake &&
@@ -7762,6 +7779,16 @@ export class AgentSession {
 			throw error;
 		}
 
+		if (this._sizesOnlyStartup) {
+			// Size inspection makes no model call (#3483): queue the input instead of starting a turn.
+			try {
+				await this._queueFollowUp(text, images, { textBlocks });
+			} finally {
+				deferredTurnClaim?.resolve("finished-without-start");
+				resolveBindingPromptReadiness?.();
+			}
+			return;
+		}
 		// An extension binding invokes this method fire-and-forget. When it
 		// arrives during session work, retain a barrier token after the prior work
 		// settles so callers observing session idle cannot race its provider turn.
@@ -11070,6 +11097,8 @@ export class AgentSession {
 	}
 
 	async bindExtensions(bindings: ExtensionBindings): Promise<void> {
+		this._sizesOnlyStartup = bindings.sizesOnly === true;
+		this._promptSizeInventory = this._sizesOnlyStartup ? bindings.promptSizeInventory : undefined;
 		const finishBindingWork = this._sessionWorkBarrier.begin();
 		const settleSessionStart = this._beginSessionStartSettlement();
 		const bindingPromptReadiness = new Set<Promise<void>>();
@@ -11097,7 +11126,10 @@ export class AgentSession {
 			this._applyExtensionBindings(this._extensionRunner);
 			this._engineTurnHold.start();
 			this.syncPromptCacheSafeWaitEnv();
-			await this._extensionRunner.emit(this._sessionStartEvent);
+			await this._extensionRunner.emit({
+				...this._sessionStartEvent,
+				...(this._sizesOnlyStartup ? { sizesOnly: true } : {}),
+			});
 			await restoreMovedState(this.sessionManager, (moved) =>
 				this._extensionRunner
 					.emitSessionMove({ type: "session_move_import", ...moved })
@@ -11532,6 +11564,11 @@ export class AgentSession {
 							getServiceTier: () => this.effectiveServiceTier,
 							getBaseSystemPrompt: () => this._baseSystemPrompt,
 							getBaseSystemPromptOptions: () => this._baseSystemPromptOptions,
+							getBaseSystemPromptParts: () => this._baseSystemPromptParts,
+							sizesOnlyStartup: this._sizesOnlyStartup,
+							...(this._promptSizeInventory === undefined
+								? {}
+								: { promptSizeInventory: this._promptSizeInventory }),
 						},
 						options,
 					),
