@@ -4,7 +4,10 @@ import { parentPort, workerData } from "node:worker_threads";
 import { runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import { isBunBinary } from "../../config.ts";
 import { WAKE_SOURCE_STATE_EVENT } from "../../core/extensions/builtin/monitor-state-event.ts";
+import type { ExtensionUIContext } from "../../core/extensions/types.ts";
+import { attachMcpGrantPresentation } from "../../core/mcp-grant-presentations.ts";
 import { takeOverStdout } from "../../core/output-guard.ts";
+import type { SecurityNoticeSnapshot } from "../../core/security-notices.ts";
 import { getDefaultSessionDir } from "../../core/session-manager.ts";
 import { liveSessionWritePaths } from "../../core/session-write-reservation.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
@@ -12,6 +15,7 @@ import { registerWebViewBroker } from "../../core/webview/webview-broker.ts";
 import { createCliRuntimeFactory } from "../../main.ts";
 import { initTheme } from "../interactive/theme/theme.ts";
 import { buildRpcSessionState } from "./connection-handler.ts";
+import { ConnectionRoles, roleConnection } from "./connection-roles.ts";
 import { isHandoffBusy } from "./handoff-activity.ts";
 import { createRpcSessionBinding, type RpcSessionBinding } from "./session-binding.ts";
 import { SessionEventWriter } from "./session-event-writer.ts";
@@ -48,8 +52,27 @@ const { exchange, installWriteReservation } = createWorkerCredit(send, failWorke
 installWriteReservation(canonicalSessionPath);
 
 class WorkerEventWriter extends SessionEventWriter {
+	override readonly workerSecurityBridge = true;
 	constructor() {
 		super(() => {});
+	}
+	override bindSecurityPresentations(
+		sessionId: string,
+		durableId: string,
+		notices: SecurityNoticeSnapshot,
+		ui: ExtensionUIContext,
+	): () => void {
+		const detach = attachMcpGrantPresentation(durableId, ui.select);
+		const stop = notices.subscribe((snapshot) => {
+			this.enqueue(sessionId, { type: "security_notice_snapshot", snapshot });
+		});
+		return () => {
+			detach();
+			stop();
+		};
+	}
+	override settleGrantDialog(sessionId: string, id: string): void {
+		this.enqueue(sessionId, { type: "security_grant_settled", id });
 	}
 	override publishLoadedSurfacesChanged(_sessionId: string, previous: string | undefined, digest: string): void {
 		// The isolate never emits the event itself: the host owns the per-(connection, session)
@@ -95,6 +118,8 @@ class WorkerEventWriter extends SessionEventWriter {
 }
 
 const writer = new WorkerEventWriter();
+// One session per isolate: the roles of the connections it serves, adopted from the host before each command.
+const connectionRoles = new ConnectionRoles();
 let prepared: Extract<HostToSessionWorker, { type: "prepare" }> | undefined;
 let registry: RpcSessionRegistry | undefined;
 let entry: RpcSessionEntry | undefined;
@@ -171,10 +196,12 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 		}
 		case "bind": {
 			if (!entry || binding) throw new Error("Invalid session binding");
+			if (message.roles !== undefined) connectionRoles.adopt(roleConnection(message.connection), message.roles);
 			const bindingEntry = entry;
 			const createBinding = () =>
 				createRpcSessionBinding(message.sessionId, bindingEntry, writer, () => send({ type: "request_close" }), {
 					capabilities: message.capabilities,
+					connectionRoles,
 					clientInfo: {
 						connectionId: () => writer.currentConnection(),
 						setCapabilities: (connection, capabilities) =>
@@ -198,6 +225,10 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			send({ type: "result", request: message.request });
 			return;
 		}
+		case "cancel_grant": {
+			await binding?.handle({ type: "extension_ui_response", id: message.id, cancelled: true });
+			return;
+		}
 		case "command": {
 			const privileged =
 				"type" in message.command &&
@@ -205,6 +236,7 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 					String(message.command.type),
 				);
 			if (!binding || (closing && !privileged)) throw new Error("session_closing");
+			if (message.roles !== undefined) connectionRoles.adopt(roleConnection(message.connection), message.roles);
 			const activeBinding = binding;
 			await (message.connection === undefined
 				? activeBinding.handle(message.command)
@@ -237,6 +269,7 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			unsubscribe?.();
 			unsubscribeWake?.();
 			await binding?.dispose();
+			connectionRoles.clear();
 			if (entry?.runtime) {
 				const current = entry;
 				await runWithProviderScope(current.scope, async () => {
