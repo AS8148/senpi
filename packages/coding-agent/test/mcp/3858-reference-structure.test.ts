@@ -24,6 +24,31 @@ describe("reference redaction preserves structure", () => {
 		});
 	});
 
+	// #3858 delta review: a field that names a value's kind is protocol, not payload.
+	it("keeps content-block and schema type discriminators while redacting free text", () => {
+		const block = [
+			{ type: "text", text: `token ${SECRET}` },
+			{ type: "image", mimeType: "text", data: "x" },
+		];
+		expect(redactResolvedReferenceData(block)).toEqual([
+			{ type: "text", text: "token <redacted>" },
+			{ type: "image", mimeType: "text", data: "x" },
+		]);
+		expect(
+			redactResolvedReferenceData({ inputSchema: { type: "object", properties: { q: { type: "text" } } } }),
+		).toEqual({
+			inputSchema: { type: "object", properties: { q: { type: "text" } } },
+		});
+	});
+
+	it("serializes values with toJSON the way JSON would before redacting them", () => {
+		const at = new Date("2026-10-24T00:00:00.000Z");
+		expect(redactResolvedReferenceData({ at, note: `seen ${SECRET}` })).toEqual({
+			at: "2026-10-24T00:00:00.000Z",
+			note: "seen <redacted>",
+		});
+	});
+
 	it("preserves keys and shape while redacting only nested string leaves", () => {
 		const original = { text: [{ true: true, "8080": 8080, text: `nested ${SECRET}`, short: "abc", nil: null }] };
 		expect(redactResolvedReferenceData(original)).toEqual({

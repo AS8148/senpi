@@ -30,13 +30,25 @@ export function redactResolvedReferenceValues(text: string, replacement = "<reda
 	return redacted;
 }
 
+/**
+ * Keys whose string value names what a value is (an MCP content-block or resource kind, a JSON Schema type, a
+ * JSON-RPC method) rather than carrying payload. They stay intact so the protocol shape survives; free-text
+ * fields are still redacted.
+ */
+const PROTOCOL_KEYS = new Set(["type", "mimeType", "kind", "method", "jsonrpc", "role", "format", "$schema"]);
+
 /** Copies JSON-shaped data, redacting string leaves only; never mutates the wire-facing original. */
 export function redactResolvedReferenceData<T>(value: T): T;
 export function redactResolvedReferenceData(value: unknown): unknown {
 	if (resolvedValues.size === 0) return value;
 	const copies = new WeakMap<object, object>();
 	const pending: { source: object; target: object }[] = [];
-	const copy = (source: unknown): unknown => {
+	const copy = (input: unknown): unknown => {
+		// Serialize like JSON would, so a Date reaches the sink as its ISO string rather than an empty object.
+		const source =
+			typeof input === "object" && input !== null && typeof Reflect.get(input, "toJSON") === "function"
+				? (Reflect.get(input, "toJSON") as () => unknown).call(input)
+				: input;
 		if (typeof source === "string") return redactResolvedReferenceValues(source);
 		if (typeof source !== "object" || source === null) return source;
 		const existing = copies.get(source);
@@ -50,8 +62,9 @@ export function redactResolvedReferenceData(value: unknown): unknown {
 	// A worklist and memoized copies handle arbitrary depth, cycles and shared children.
 	for (const { source, target } of pending) {
 		for (const key of Object.keys(source)) {
+			const child = Reflect.get(source, key);
 			Object.defineProperty(target, key, {
-				value: copy(Reflect.get(source, key)),
+				value: typeof child === "string" && PROTOCOL_KEYS.has(key) ? child : copy(child),
 				enumerable: true,
 				writable: true,
 				configurable: true,

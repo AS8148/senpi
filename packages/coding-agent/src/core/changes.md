@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/config-reference-redaction.ts`: a process-lifetime registry of every value a reference resolved to, rotated and retired ones included, with no cap and no eviction. It redacts raw, JSON-escaped and URL-encoded forms of each value from text, with a four-character minimum. Persistence and display copies redact only string leaves, preserving keys, numbers, booleans, null and array/object shape; an iterative, memoized walk handles deep data and cycles without changing the original.
+- `packages/coding-agent/src/core/config-reference-redaction.ts`: a process-lifetime registry of every value a reference resolved to, rotated and retired ones included, with no cap and no eviction. It redacts raw, JSON-escaped and URL-encoded forms of each value from text, with a four-character minimum. Persistence and display copies redact only string leaves, preserving keys, numbers, booleans, null and array/object shape; an iterative, memoized walk handles deep data and cycles without changing the original. String values under keys that name a value's kind (`type`, `mimeType`, `kind`, `method`, `jsonrpc`, `role`, `format`, `$schema`) are kept, and values with `toJSON` are serialized first, as JSON would.
 - `packages/coding-agent/src/core/config-reference-resolver.ts`: registers each resolved file, variable and concatenated value before returning it.
 - `packages/coding-agent/src/core/sensitive-output.ts`: the shared sensitive-output scrubber also removes registered values, covering the hidden-stdout log, the interactive stderr guard and hook output.
 

@@ -129,7 +129,19 @@ describe("model reference integration (#3858)", () => {
 			{ acquireLeases: false },
 		);
 		expect(await result).toMatchObject([{ name: "chosen", envKey: SECRET }]);
+		// Every request lists the slots; a broken unused slot warns once per field, not once per turn.
+		await listRotationSlots(
+			{
+				providerId: "fixture",
+				credential: undefined,
+				env: (name) => (name === "SLOT" ? SECRET : undefined),
+				repository: new CredentialSlotRepository(join(files.root, "health.json")),
+				policy: config.getProvider("fixture")?.credentials,
+			},
+			{ acquireLeases: false },
+		);
 		if (missing) {
+			expect(warning).toHaveBeenCalledTimes(1);
 			expect(warning).toHaveBeenCalledWith(
 				expect.stringContaining(
 					"providers.fixture.credentials.slots.broken.value: configuration reference missing",

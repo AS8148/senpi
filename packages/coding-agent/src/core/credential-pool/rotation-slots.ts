@@ -103,6 +103,9 @@ function overlayModelBlock(slot: RotationSlot, until: number | undefined): Rotat
 	};
 }
 
+/** Skipped-slot notices already printed in this process (field + reason; never a value). */
+const warnedSlotReferences = new Set<string>();
+
 /**
  * Lists the provider's rotation slots with sidecar health overlaid. Stored
  * credentials own the lane when present; env slots participate only when
@@ -147,7 +150,12 @@ export async function listRotationSlots(
 						: undefined;
 		} catch (error) {
 			if (!(error instanceof ConfigReferenceError)) throw error;
-			console.warn(`${error.field}: configuration reference ${error.reason}; skipping credential slot`);
+			const notice = `${error.field}: configuration reference ${error.reason}; skipping credential slot`;
+			// Slots are listed on every request; a broken unused slot warns once per process, not once per turn.
+			if (!warnedSlotReferences.has(notice)) {
+				warnedSlotReferences.add(notice);
+				console.warn(notice);
+			}
 			referenceError ??= error;
 			continue;
 		}
