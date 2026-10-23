@@ -3720,6 +3720,10 @@ export class InteractiveMode {
 			notify: (message, type) => this.showExtensionNotify(message, type),
 			onTerminalInput: (handler) => this.addExtensionTerminalInputListener(handler),
 			setStatus: (key, text) => this.setExtensionStatus(key, text),
+			setSubagentCost: (costUsd) => {
+				this.footerDataProvider.setSubagentCost(costUsd);
+				this.ui.requestRender();
+			},
 			setWorkingMessage: (message) => {
 				this.workingMessage = message;
 				this.updateWorkingIndicatorMessage();
@@ -5873,7 +5877,7 @@ export class InteractiveMode {
 					tone: "warning",
 					why: event.chainConfigured
 						? "Retrying on your configured fallback chain."
-						: "No fallback chain configured — set one with /fallback.",
+						: "No fallback chain configured: set one with /fallback.",
 				});
 				break;
 

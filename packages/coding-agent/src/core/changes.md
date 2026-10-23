@@ -1,3 +1,22 @@
+## 2026-10-23 - Product copy punctuation (senpi#4040)
+
+### What changed
+
+- `packages/coding-agent/src/core/export-html/template.js`: omit the unused clipboard-error binding now that product JavaScript joins the oxlint source scope; the clipboard fallback is unchanged.
+
+### Why
+
+- The product-copy oxlint rule rejects em dashes in strings, templates and JSX text. Existing copy must pass it without changing control flow or punctuation matching.
+
+### Why an extension could not handle it
+
+- These source strings and lint directives are read before runtime extensions can rewrite them.
+
+### Expected merge conflict zones
+
+- The listed copy strings and adjacent lint comments only.
+
+
 ## 2026-10-21 - A models.json model entry keeps the built-in price; an unpriced custom model costs unknown, not $0 (senpi#3844)
 
 ### What changed
@@ -12156,6 +12175,24 @@ Fallback eligibility and the agent_end retry decision are owned by `AgentSession
 
 - `agent-session.ts`: the retry-state fields, the `transformContext` wrapper in `_installAgentNextTurnRefresh`, the start of the agent_end retry block, and `_isHardErrorFallbackEligible`.
 - `retry-fallback/settings.ts`: `DEFAULT_FALLBACK_CHAINS`.
+
+## 2026-10-20 - Footer data carries the subagent tree cost (senpi#2471)
+
+### What changed
+
+- `packages/coding-agent/src/core/footer-data-provider.ts`: `getSubagentCost()` / `setSubagentCost()` (a negative or non-finite figure clears it), cleared with the extension statuses; `ReadonlyFooterDataProvider` exposes `getSubagentCost` as an optional member.
+
+### Why
+
+- A session that fans out to subagents showed only its own spend in the footer, so it looked far cheaper than it was. The extension that runs the subagents (omo's task engine) knows the tree's spend; the footer needs a typed way to receive it and show it as `$0.380 (+1.270)` (oh-my-pi parity).
+
+### Why an extension could not handle it
+
+- The built-in footer's cost segment and the `ExtensionUIContext` contract are core; `setStatus` can only add a separate status line, not place a figure inside the cost segment.
+
+### Expected merge conflict zones
+
+- LOW: `footer-data-provider.ts` field list, `clearExtensionStatuses`, and the `ReadonlyFooterDataProvider` pick.
 
 ## 2026-10-21 - Queued input is tagged as a person's when it is enqueued (senpi#3863)
 

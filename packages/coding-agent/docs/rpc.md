@@ -5267,6 +5267,21 @@ Set or clear a status entry in the footer/status bar. Fire-and-forget.
 
 Send `statusText: undefined` (or omit it) to clear the status entry for that key.
 
+#### setSubagentCost
+
+Report the USD the subagent tree under this session has spent, which the TUI footer shows after the session's own cost as `$0.380 (+1.270)`. Fire-and-forget.
+
+```json
+{
+  "type": "extension_ui_request",
+  "id": "uuid-7",
+  "method": "setSubagentCost",
+  "costUsd": 1.27
+}
+```
+
+`costUsd: undefined` (or omitted) clears it. A negative or non-finite figure is sent as `undefined`.
+
 #### setWidget
 
 Set or clear a widget (block of text lines) displayed above or below the editor. Fire-and-forget.
