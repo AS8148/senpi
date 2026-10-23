@@ -197,7 +197,7 @@ export class FooterComponent implements Component {
 		const subagentCost = this.footerData.getSubagentCost?.() ?? 0;
 		if (totalCost || usingSubscription || subagentCost > 0) {
 			const subagentStr = subagentCost > 0 ? ` (+${subagentCost.toFixed(3)})` : "";
-			const costStr = `$${totalCost.toFixed(3)}${usingSubscription ? " (sub)" : ""}${subagentStr}`;
+			const costStr = `$${totalCost.toFixed(3)}${usageTotals.costUnknown ? "+?" : ""}${usingSubscription ? " (sub)" : ""}${subagentStr}`;
 			middle.push({ plain: costStr, colored: theme.fg("success", costStr) });
 		}
 
