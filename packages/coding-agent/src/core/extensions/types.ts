@@ -268,6 +268,14 @@ export interface ExtensionUIContext {
 	/** Set status text in the footer/status bar. Pass undefined to clear. */
 	setStatus(key: string, text: string | undefined): void;
 
+	/**
+	 * Report the USD the subagent tree under this session has spent (every child, nested child and
+	 * background child, each counted once). The footer shows it after the session's own cost, as
+	 * `$0.380 (+1.270)`. Pass undefined to clear; a negative or non-finite figure clears it too.
+	 * Optional so UI contexts written before it keep compiling; call it as `ctx.ui.setSubagentCost?.(x)`.
+	 */
+	setSubagentCost?(costUsd: number | undefined): void;
+
 	/** Set the working/loading message shown during streaming. Call with no argument to restore default. */
 	setWorkingMessage(message?: string): void;
 
