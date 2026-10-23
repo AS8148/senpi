@@ -58,6 +58,17 @@ describe("no-em-dash-copy through the product lint configuration", () => {
 		);
 	});
 
+	for (const extension of ["mjs", "cjs", "mts", "cts"]) {
+		it(`checks product .${extension} files`, () => {
+			const source =
+				extension === "cjs"
+					? 'module.exports = "Refresh failed — retry";'
+					: 'export const label = "Refresh failed — retry";';
+			const findings = lint(`copy.${extension}`, source).filter((d) => d.code === code);
+			assert.equal(findings.length, 1);
+		});
+	}
+
 	for (const filename of [
 		"copy.test.ts",
 		"copy.spec.tsx",
