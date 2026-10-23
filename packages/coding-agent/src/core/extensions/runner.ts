@@ -684,6 +684,8 @@ export class ExtensionRunner {
 		this.runtime.setSessionThinkingLevel = actions.setSessionThinkingLevel;
 		this.runtime.setSessionFastMode = actions.setSessionFastMode;
 		if (actions.sessionControl) this.runtime.sessionControl = actions.sessionControl;
+		if (actions.armToolBarrier) this.runtime.armToolBarrier = actions.armToolBarrier;
+		if (actions.releaseToolBarrier) this.runtime.releaseToolBarrier = actions.releaseToolBarrier;
 		this.runtime.createContext = () => this.createContext();
 
 		this.offloadFn = contextActions.offload;
