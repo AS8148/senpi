@@ -2781,6 +2781,28 @@ The `images` field is optional. Each image uses `ImageContent` format: `{"type":
 The `message` field for `prompt`, `steer`, and `follow_up` is limited to 1,000,000 characters;
 image payloads are not counted toward this text limit.
 
+**Tool barrier** (capability `tool_barrier`): a client that captures a pre-turn workspace checkpoint can send the prompt at once and hold the turn's workspace-changing tools until its capture is done. `toolBarrier: {"id", "deadlineMs"}` arms the barrier for the turn this prompt starts; `id` is 1-256 characters and `deadlineMs` a whole number in 1..600000.
+
+```json
+{"id": "req-1", "type": "prompt", "message": "Fix the bug", "toolBarrier": {"id": "turn-42", "deadlineMs": 35000}}
+{"id": "req-1", "type": "response", "command": "prompt", "success": true, "data": {"disposition": "started", "toolBarrier": "armed"}}
+```
+
+- While the barrier is armed, a tool whose definition is not `workspaceEffect: "read"` waits after its `tool_execution_start` and before it runs, and the session emits `tool_barrier_waiting` once per waiting call. The built-in read-only tools (`read`, `grep`, `find`, `glob`, `ls`, `todo`, `web_search`, `webfetch`, `tool_search`, and the ask-user question tools) run at once; everything else, MCP and extension tools included, waits.
+- `data.toolBarrier` is `"armed"` when the prompt started its own turn (the barrier is armed before the response is written) and `"ignored"` when the prompt was queued into a running turn as steering or follow-up content, or handled by a command. Nothing is armed in the ignored case.
+- The barrier opens on `release_tool_barrier`, when its turn ends (the run's final `agent_end`, or a queued follow-up starting the next turn), or when `deadlineMs` passes, which emits `tool_barrier_expired`. A Stop (`abort`) ends the wait and settles the turn as aborted.
+- `steer` and `follow_up` never carry a barrier, and a prompt without `toolBarrier` behaves exactly as before.
+- A malformed `toolBarrier` is refused before the prompt is accepted.
+
+#### release_tool_barrier
+
+Open the tool barrier armed under `barrierId` (capability `tool_barrier`). It is idempotent: an id that was never armed, was already released, belonged to a turn that ended, or expired answers `released: false` and still succeeds.
+
+```json
+{"id": "req-2", "type": "release_tool_barrier", "barrierId": "turn-42"}
+{"id": "req-2", "type": "response", "command": "release_tool_barrier", "success": true, "data": {"released": true}}
+```
+
 #### steer
 
 Queue a steering message while the agent is running. It is delivered after the current assistant turn finishes executing its tool calls, before the next LLM call. Skill commands and prompt templates are expanded. Extension commands are not allowed (use `prompt` instead). Like `prompt`, queued input runs extension `input` handlers with `source: "rpc"`.
@@ -4400,6 +4422,8 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 | `tool_execution_start` | Tool begins execution |
 | `tool_execution_update` | Tool execution progress (streaming output) |
 | `tool_execution_end` | Tool completes |
+| `tool_barrier_waiting` | A workspace-changing tool call started waiting on the turn's tool barrier (`id`, `toolCallId`, `toolName`) |
+| `tool_barrier_expired` | The tool barrier's `deadlineMs` passed before a release; it opened by itself (`id`, `deadlineMs`) |
 | `queue_update` | Pending steering/follow-up queue changed |
 | `compaction_start` | Compaction begins |
 | `compaction_end` | Compaction completes |
