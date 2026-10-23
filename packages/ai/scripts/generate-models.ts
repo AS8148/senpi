@@ -133,6 +133,10 @@ function readGeneratorOptions(args: string[]): {
 	if (providerIds && keepLastGoodOpenGateway) {
 		throw new Error("--keep-last-good-opengateway cannot be combined with --providers");
 	}
+	// Without --strict every OpenGateway failure already keeps the committed catalog, so the flag would be a no-op.
+	if (keepLastGoodOpenGateway && !strict) {
+		throw new Error("--keep-last-good-opengateway requires --strict");
+	}
 	return { strict, keepLastGoodOpenGateway, dataOnly, jsonOnly, jsonOutputDir, pretty, providerIds, generatedAt };
 }
 
