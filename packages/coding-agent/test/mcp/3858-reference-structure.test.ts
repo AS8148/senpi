@@ -28,16 +28,42 @@ describe("reference redaction preserves structure", () => {
 	it("keeps content-block and schema type discriminators while redacting free text", () => {
 		const block = [
 			{ type: "text", text: `token ${SECRET}` },
-			{ type: "image", mimeType: "text", data: "x" },
+			{ type: "resource", mimeType: "text/plain", data: "x" },
 		];
 		expect(redactResolvedReferenceData(block)).toEqual([
 			{ type: "text", text: "token <redacted>" },
-			{ type: "image", mimeType: "text", data: "x" },
+			{ type: "resource", mimeType: "text/plain", data: "x" },
 		]);
 		expect(
 			redactResolvedReferenceData({ inputSchema: { type: "object", properties: { q: { type: "text" } } } }),
 		).toEqual({
 			inputSchema: { type: "object", properties: { q: { type: "text" } } },
+		});
+	});
+
+	// #3858 delta review 2: a protocol key keeps only a known protocol value; anything else is redacted as before.
+	it("still redacts a secret that lands under a protocol key", () => {
+		expect(
+			redactResolvedReferenceData({
+				block: { type: "image", data: "aGk=", mimeType: SECRET },
+				result: { method: SECRET, format: `Bearer ${SECRET}`, items: [{ kind: SECRET }], type: SECRET },
+			}),
+		).toEqual({
+			block: { type: "image", data: "aGk=", mimeType: "<redacted>" },
+			result: {
+				method: "<redacted>",
+				format: "Bearer <redacted>",
+				items: [{ kind: "<redacted>" }],
+				type: "<redacted>",
+			},
+		});
+		expect(
+			redactResolvedReferenceData({ jsonrpc: "2.0", role: "user", mimeType: "image/png", format: "date-time" }),
+		).toEqual({
+			jsonrpc: "2.0",
+			role: "user",
+			mimeType: "image/png",
+			format: "date-time",
 		});
 	});
 

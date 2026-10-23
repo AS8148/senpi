@@ -30,12 +30,64 @@ export function redactResolvedReferenceValues(text: string, replacement = "<reda
 	return redacted;
 }
 
+/** MCP content-block and resource kinds plus JSON Schema types. */
+const PROTOCOL_TYPES = new Set([
+	"text",
+	"image",
+	"audio",
+	"resource",
+	"resource_link",
+	"object",
+	"array",
+	"string",
+	"number",
+	"integer",
+	"boolean",
+	"null",
+]);
+/** JSON Schema string formats. */
+const SCHEMA_FORMATS = new Set([
+	"date-time",
+	"date",
+	"time",
+	"duration",
+	"email",
+	"idn-email",
+	"hostname",
+	"idn-hostname",
+	"ipv4",
+	"ipv6",
+	"uri",
+	"uri-reference",
+	"iri",
+	"iri-reference",
+	"uri-template",
+	"uuid",
+	"json-pointer",
+	"relative-json-pointer",
+	"regex",
+	"byte",
+	"binary",
+	"password",
+]);
+
 /**
- * Keys whose string value names what a value is (an MCP content-block or resource kind, a JSON Schema type, a
- * JSON-RPC method) rather than carrying payload. They stay intact so the protocol shape survives; free-text
- * fields are still redacted.
+ * A string under one of these keys is kept only when it is a known protocol value (a content-block kind, a
+ * schema type or format, a media type, the JSON-RPC version, a role); any other value is redacted as usual,
+ * so a credential echoed into a protocol field is still caught (fail closed).
  */
-const PROTOCOL_KEYS = new Set(["type", "mimeType", "kind", "method", "jsonrpc", "role", "format", "$schema"]);
+const PROTOCOL_VALUES: Readonly<Record<string, (value: string) => boolean>> = {
+	type: (value) => PROTOCOL_TYPES.has(value),
+	mimeType: (value) => value.length <= 100 && /^[a-z]+\/[\w.+-]+$/i.test(value),
+	format: (value) => SCHEMA_FORMATS.has(value),
+	jsonrpc: (value) => value === "2.0",
+	role: (value) => value === "user" || value === "assistant",
+	$schema: (value) => value.length <= 100 && /^https:\/\/json-schema\.org\/[\w./-]+$/.test(value),
+};
+
+function isProtocolValue(key: string, value: string): boolean {
+	return Object.hasOwn(PROTOCOL_VALUES, key) && PROTOCOL_VALUES[key]?.(value) === true;
+}
 
 /** Copies JSON-shaped data, redacting string leaves only; never mutates the wire-facing original. */
 export function redactResolvedReferenceData<T>(value: T): T;
@@ -64,7 +116,7 @@ export function redactResolvedReferenceData(value: unknown): unknown {
 		for (const key of Object.keys(source)) {
 			const child = Reflect.get(source, key);
 			Object.defineProperty(target, key, {
-				value: typeof child === "string" && PROTOCOL_KEYS.has(key) ? child : copy(child),
+				value: typeof child === "string" && isProtocolValue(key, child) ? child : copy(child),
 				enumerable: true,
 				writable: true,
 				configurable: true,
