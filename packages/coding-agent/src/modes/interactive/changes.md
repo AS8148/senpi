@@ -1,3 +1,23 @@
+## 2026-10-23 - Product copy punctuation (senpi#4040)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: replace em dashes in copy with ordinary punctuation, or document an intentional non-copy lint exception.
+- `packages/coding-agent/src/modes/interactive/components/daxnuts.ts`: replace em dashes in copy with ordinary punctuation, or document an intentional non-copy lint exception.
+
+### Why
+
+- The product-copy oxlint rule rejects em dashes in strings, templates and JSX text. Existing copy must pass it without changing control flow or punctuation matching.
+
+### Why an extension could not handle it
+
+- These source strings and lint directives are read before runtime extensions can rewrite them.
+
+### Expected merge conflict zones
+
+- The listed copy strings and adjacent lint comments only.
+
+
 ## 2026-10-21 - A cost total that includes unpriced turns is marked as a lower bound (senpi#3844)
 
 ### What changed
@@ -3241,6 +3261,26 @@ The shared markdown theme and the tool card's renderer are interactive-mode inte
 ### Expected merge conflict zones
 
 - LOW: `sharedMarkdownTheme()` in `theme.ts`; the theme imports and default arguments of the seven message components; `releaseContent()` in `tool-execution-renderer.ts`.
+
+## 2026-10-20 - Footer shows the subagent tree cost (senpi#2471)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/footer.ts`: the cost segment appends ` (+X.XXX)` when the reported subagent cost is positive, and shows the segment when only subagents have spent.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the extension UI context's `setSubagentCost` stores the figure on the footer data provider and requests a render.
+
+### Why
+
+- A session that fans out to subagents showed only its own spend in the footer, so it looked far cheaper than it was. The extension that runs the subagents (omo's task engine) knows the tree's spend; the footer needs a typed way to receive it and show it as `$0.380 (+1.270)` (oh-my-pi parity).
+
+### Why an extension could not handle it
+
+- The built-in footer's cost segment and the `ExtensionUIContext` contract are core; `setStatus` can only add a separate status line, not place a figure inside the cost segment.
+
+### Expected merge conflict zones
+
+- MEDIUM: `footer.ts` cost-segment block (`totalCost || usingSubscription`).
+- LOW: `interactive-mode.ts` extension UI context object next to `setStatus`.
 ## 2026-10-21 - Admit synchronous human replies before resuming work (senpi#3864)
 
 ### What changed
