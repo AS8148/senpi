@@ -3714,6 +3714,10 @@ export class InteractiveMode {
 			notify: (message, type) => this.showExtensionNotify(message, type),
 			onTerminalInput: (handler) => this.addExtensionTerminalInputListener(handler),
 			setStatus: (key, text) => this.setExtensionStatus(key, text),
+			setSubagentCost: (costUsd) => {
+				this.footerDataProvider.setSubagentCost(costUsd);
+				this.ui.requestRender();
+			},
 			setWorkingMessage: (message) => {
 				this.workingMessage = message;
 				this.updateWorkingIndicatorMessage();
