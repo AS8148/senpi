@@ -11,7 +11,7 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { basename } from "node:path";
-import { windowsTreeKillArgs } from "./windows-process-tree.mjs";
+import { windowsTreeKillArgsAsync } from "./windows-process-tree.mjs";
 
 export const SUPPORTED_PACKAGE_MANAGERS = ["npm", "bun", "pnpm"];
 
@@ -102,15 +102,15 @@ const FORWARDED_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"];
  * The process primitives are parameters so both platform branches run under
  * test on every runner; production callers pass nothing.
  */
-export function signalGroup(
+export async function signalGroup(
 	child,
 	signal,
-	{ platform = process.platform, kill = process.kill, spawnSync: spawnSyncImpl = spawnSync } = {},
+	{ platform = process.platform, kill = process.kill, spawnSync: spawnSyncImpl = spawnSync, execFile } = {},
 ) {
 	if (child.pid === undefined) return;
 	try {
 		if (platform === "win32") {
-			const args = windowsTreeKillArgs(child.pid, spawnSyncImpl);
+			const args = await windowsTreeKillArgsAsync(child.pid, execFile);
 			if (args.length > 0) spawnSyncImpl("taskkill", args, { stdio: "ignore", windowsHide: true });
 		} else {
 			kill(-child.pid, signal);
@@ -126,25 +126,27 @@ export function signalGroup(
  * re-raises the recorded signal once all children are gone, so the first child
  * to exit cannot take the driver down while its siblings are still draining.
  */
-export function createSignalFanout() {
+export function createSignalFanout({ forward = signalGroup, signals = process } = {}) {
 	const children = new Set();
+	const pending = [];
 	let forwarded;
 	const handlers = new Map(
 		FORWARDED_SIGNALS.map((signal) => [
 			signal,
 			() => {
 				forwarded = signal;
-				for (const child of children) signalGroup(child, signal);
+				for (const child of children) pending.push(forward(child, signal));
 			},
 		]),
 	);
-	for (const [signal, handler] of handlers) process.on(signal, handler);
+	for (const [signal, handler] of handlers) signals.on(signal, handler);
 	return {
 		attach: (child) => children.add(child),
 		detach: (child) => children.delete(child),
-		/** Removes the handlers and returns the forwarded signal, if any. */
-		release() {
-			for (const [signal, handler] of handlers) process.off(signal, handler);
+		/** Drains forwarding before the caller re-raises the recorded signal. */
+		async release() {
+			for (const [signal, handler] of handlers) signals.off(signal, handler);
+			await Promise.all(pending);
 			return forwarded;
 		},
 	};
@@ -194,6 +196,7 @@ export function spawnPackageManager(pm, args, { cwd, env, label, prefix, fanout 
 			prefixLines(child.stderr, prefix, process.stderr);
 		}
 		let forwarded;
+		const pending = [];
 		const handlers = new Map(
 			fanout
 				? []
@@ -201,7 +204,7 @@ export function spawnPackageManager(pm, args, { cwd, env, label, prefix, fanout 
 						signal,
 						() => {
 							forwarded = signal;
-							signalGroup(child, signal);
+							pending.push(signalGroup(child, signal));
 						},
 					]),
 		);
@@ -216,8 +219,9 @@ export function spawnPackageManager(pm, args, { cwd, env, label, prefix, fanout 
 			console.error(`\n[${label}] failed to spawn ${pm.cmd}: ${error.message}`);
 			resolve(1);
 		});
-		child.on("close", (status) => {
+		child.on("close", async (status) => {
 			release();
+			await Promise.all(pending);
 			if (forwarded) {
 				process.kill(process.pid, forwarded);
 				return;

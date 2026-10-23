@@ -1,3 +1,22 @@
+## 2026-10-23 - Windows signal forwarding does not block on CIM (senpi#4057)
+
+### What changed
+
+- `scripts/package-manager.mjs`, `scripts/windows-process-tree.mjs`: signal forwarding asynchronously queries CIM with a one-second timeout, then feeds the result through the existing creation-time-checked explicit-PID planner; failures still permit only the root.
+- `scripts/run-tests.mjs`, `scripts/run-workspaces.mjs`: drain pending forwarding before re-raising a signal so early child exit cannot abandon cleanup.
+
+### Why
+
+- `scripts/package-manager.mjs`: synchronous five-second CIM probes serialized across children inside Ctrl-C handlers.
+
+### Why an extension could not handle it
+
+- `scripts/package-manager.mjs`: repository package-manager and test-runner signal handling.
+
+### Expected merge conflict zones
+
+- `scripts/package-manager.mjs`: signal forwarding and child close handling.
+
 ## 2026-10-19 - The bundle ships the RPC host supervisor as its own program (senpi#3743)
 
 ### What changed
