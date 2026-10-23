@@ -7,7 +7,11 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { parseArgs } from "../../../src/cli/args.ts";
-import { SubscriptionLimitStore, subscriptionLimits } from "../../../src/core/subscription-limits/limit-store.ts";
+import {
+	type MirroredLimits,
+	SubscriptionLimitStore,
+	subscriptionLimits,
+} from "../../../src/core/subscription-limits/limit-store.ts";
 import { WorkerSessionRegistry } from "../../../src/modes/rpc/worker-session-registry.ts";
 import { startWorkerHost } from "../rpc-worker-host-support.ts";
 
@@ -115,8 +119,8 @@ it("a crossed pair of tied records between two mirrored stores stops echoing", (
 	const worker = new SubscriptionLimitStore();
 	const toWorker: (typeof first | typeof second)[] = [];
 	const toHost: (typeof first | typeof second)[] = [];
-	host.subscribe((limits) => toWorker.push(structuredClone(limits) as typeof first));
-	worker.subscribe((limits) => toHost.push(structuredClone(limits) as typeof first));
+	host.subscribeMirror((limits) => toWorker.push(structuredClone(limits) as typeof first));
+	worker.subscribeMirror((limits) => toHost.push(structuredClone(limits) as typeof first));
 
 	host.adopt(first);
 	host.adopt(second);
@@ -142,7 +146,7 @@ it.each([
 ] as const)("a worker mirroring the host sees the newer poll result (%s)", (_label, [before, after]) => {
 	const host = new SubscriptionLimitStore();
 	const worker = new SubscriptionLimitStore();
-	host.subscribe((limits) => worker.adopt(structuredClone(limits)));
+	host.subscribeMirror((limits) => worker.adopt(structuredClone(limits)));
 	const windows = [{ id: "claude:5h", label: "5h", windowMinutes: 300, usedPercent: 12 }];
 	host.report("anthropic-subscription", "work", { windows, reportedAt: new Date("2026-10-23T10:00:00Z") });
 	if (before !== undefined) {
@@ -152,4 +156,79 @@ it.each([
 
 	expect(worker.snapshot()).toEqual(host.snapshot());
 	expect(worker.snapshot()[0]?.error).toBe(after);
+});
+
+// senpi#3695 (third review): one total order for every write path, so mirrored stores converge for ANY pair.
+const at = (time: string) => `2026-10-23T10:00:${time}.000Z`;
+const base = {
+	provider: "anthropic-subscription",
+	account: "work",
+	windows: [{ id: "claude:5h", label: "5h", windowMinutes: 300, usedPercent: 12 }],
+};
+const candidates: MirroredLimits[] = [
+	{ ...base, reportedAt: at("00") },
+	{ ...base, reportedAt: at("00"), error: "sign-in needed" },
+	{ ...base, reportedAt: at("00"), error: "rate limited" },
+	{ ...base, reportedAt: at("00"), error: "rate limited", updatedAt: at("05") },
+	{ ...base, reportedAt: at("05") },
+	{ ...base, reportedAt: at("05"), plan: "max" },
+	{ ...base, reportedAt: at("05"), windows: [{ ...base.windows[0], usedPercent: 40 }] },
+	{ ...base, reportedAt: at("00"), updatedAt: at("05"), error: "sign-in needed" },
+];
+
+function mirrorPair(): { host: SubscriptionLimitStore; worker: SubscriptionLimitStore; settle: () => number } {
+	const host = new SubscriptionLimitStore();
+	const worker = new SubscriptionLimitStore();
+	const toWorker: MirroredLimits[] = [];
+	const toHost: MirroredLimits[] = [];
+	host.subscribeMirror((limits) => toWorker.push(structuredClone(limits)));
+	worker.subscribeMirror((limits) => toHost.push(structuredClone(limits)));
+	const settle = () => {
+		let deliveries = 0;
+		while ((toWorker.length > 0 || toHost.length > 0) && deliveries < 100) {
+			const next = toWorker.shift();
+			if (next !== undefined) worker.adopt(next);
+			const back = toHost.shift();
+			if (back !== undefined) host.adopt(back);
+			deliveries += 1;
+		}
+		return deliveries;
+	};
+	return { host, worker, settle };
+}
+
+it("any two records, adopted on opposite sides and crossing, settle on one record with no loop", () => {
+	for (const first of candidates) {
+		for (const second of candidates) {
+			const { host, worker, settle } = mirrorPair();
+			host.adopt(first);
+			worker.adopt(second);
+
+			expect(settle()).toBeLessThan(100);
+			expect(worker.mirrorSnapshot()).toEqual(host.mirrorSnapshot());
+		}
+	}
+});
+
+it.each([
+	["windows then an error in the same millisecond", at("00"), at("00")],
+	["windows then an error later", at("00"), at("05")],
+])("host reports mirrored into a worker converge (%s)", (_label, windowsAt, errorAt) => {
+	const { host, worker, settle } = mirrorPair();
+	host.report("anthropic-subscription", "work", { windows: base.windows, reportedAt: new Date(windowsAt) });
+	host.report("anthropic-subscription", "work", { error: "sign-in needed", reportedAt: new Date(errorAt) });
+
+	expect(settle()).toBeLessThan(100);
+	expect(worker.mirrorSnapshot()).toEqual(host.mirrorSnapshot());
+});
+
+it("the ordering key never reaches the public shape", () => {
+	const store = new SubscriptionLimitStore();
+	const heard: object[] = [];
+	store.subscribe((limits) => heard.push(limits));
+	store.report("anthropic-subscription", "work", { windows: base.windows, reportedAt: new Date(at("00")) });
+	store.report("anthropic-subscription", "work", { error: "sign-in needed", reportedAt: new Date(at("05")) });
+
+	expect(store.mirrorSnapshot()[0]).toHaveProperty("updatedAt", at("05"));
+	for (const record of [...store.snapshot(), ...heard]) expect(record).not.toHaveProperty("updatedAt");
 });
