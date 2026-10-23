@@ -19,6 +19,7 @@
 
 ### Fixed
 
+- An extension can no longer open or transfer a work obligation under the keys the engine uses for its own delivery tickets and wake sources (`delivery:` and `wake-source:`); `pi.lifecycle.obligations` refuses them with `ReservedCustodyKey`, so an extension ticket is no longer cancelled by a queue clear or retired as a stale wake source ([#3986](https://github.com/code-yeongyu/senpi/issues/3986)).
 - The RPC host's cleanup of leftover internal socket directories under `/tmp` now only removes the current user's directories, scans a `TMPDIR` that is `/tmp` once, and a socket path that fits nowhere names every location it tried ([#3487](https://github.com/code-yeongyu/senpi/issues/3487)).
 - `RpcClient.setSessionContext` called with no attached session and no `sessionId` now rejects with `RpcCommandError` and `errorCode: "session_not_attached"`, as its documentation says, instead of a plain `Error`; nothing is sent ([#3967](https://github.com/code-yeongyu/senpi/issues/3967)).
 - Editing a prompt after compaction no longer brings messages the edit abandoned back into the model context ([#3864](https://github.com/code-yeongyu/senpi/issues/3864)).
