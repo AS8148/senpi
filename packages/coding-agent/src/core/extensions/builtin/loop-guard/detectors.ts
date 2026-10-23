@@ -248,10 +248,18 @@ export function detectLoop(records: readonly ToolCallRecord[], gate: NoticeGate)
 	for (const detection of detections) {
 		if (detection !== undefined) active.add(`${detection.kind}\u0000${detection.fingerprint}`);
 	}
-	// A windowed entry must survive the filler calls between repeats, so its key stays
-	// active while its signature is still over the threshold anywhere in the window.
+	// Gate entries must survive the filler calls between repeats, or a recurring
+	// short identical burst re-creates its entry every time and notices on every
+	// burst: a windowed entry stays active while its mutation-aware count is over
+	// the windowed threshold, and an identical entry while its raw in-window
+	// occurrence count is over the consecutive threshold.
+	const rawCounts = new Map<string, number>();
+	for (const record of records) rawCounts.set(record.signature, (rawCounts.get(record.signature) ?? 0) + 1);
 	for (const fingerprint of windowedOverThreshold(records)) {
 		active.add(`identical\u0000${fingerprint}`);
+	}
+	for (const [fingerprint, count] of rawCounts) {
+		if (count >= IDENTICAL_RUN_THRESHOLD) active.add(`identical\u0000${fingerprint}`);
 	}
 	gate.prune(active);
 	for (const detection of detections) {

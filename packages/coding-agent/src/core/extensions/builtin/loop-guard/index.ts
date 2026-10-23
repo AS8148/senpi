@@ -59,13 +59,15 @@ export default function loopGuardExtension(pi: ExtensionAPI): void {
 	const ageOutWindowedEpisodes = (): void => {
 		for (const fingerprint of escalation.windowedEpisodeFingerprints) {
 			if (windowedRepeatCount(tracker.records, fingerprint) < WINDOWED_REPEAT_THRESHOLD) {
-				const noneRemain = escalation.clearWindowedEpisode(fingerprint);
-				if (noneRemain) {
-					pendingRecoveryToolName = undefined;
-					setRecoveryWakeSourceActive(false);
-					setContinuationHoldActive(false);
-				}
+				escalation.clearWindowedEpisode(fingerprint);
 			}
+		}
+		// The recovery and hold state belongs to whichever hard stop armed it; release it
+		// only when no episode of either kind remains to keep blocking.
+		if (!escalation.hasActiveEpisodes()) {
+			pendingRecoveryToolName = undefined;
+			setRecoveryWakeSourceActive(false);
+			setContinuationHoldActive(false);
 		}
 	};
 

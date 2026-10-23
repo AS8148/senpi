@@ -52,12 +52,14 @@ export class IdenticalLoopEscalation {
 	private readonly attempts = new Map<string, ToolCallRecord>();
 
 	observeAttempt(toolCallId: string, record: ToolCallRecord): boolean {
-		// Windowed episodes are armed by non-consecutive repeats, so a different-signature
-		// call between repeats is the pattern itself, not a break from it.
+		// A windowed episode is armed by non-consecutive repeats, so a different-signature
+		// call between repeats is the pattern itself. A consecutive-run episode sees that
+		// same call as a break — clearing it must not touch the windowed episodes, or a short
+		// identical burst between the looping calls disarms the loop that was about to block.
 		const patternChanged =
 			this.episode !== undefined && !this.episode.windowed && this.episode.fingerprint !== record.signature;
 		if (patternChanged) {
-			this.reset();
+			this.episode = undefined;
 		}
 		this.attempts.set(toolCallId, record);
 		return patternChanged;
@@ -141,6 +143,11 @@ export class IdenticalLoopEscalation {
 	/** Fingerprints of active windowed episodes, for age-out checks against the tracker window. */
 	get windowedEpisodeFingerprints(): ReadonlySet<string> {
 		return new Set(this.windowedEpisodes.keys());
+	}
+
+	/** True while any episode (consecutive or windowed) can still block. */
+	hasActiveEpisodes(): boolean {
+		return this.episode !== undefined || this.windowedEpisodes.size > 0;
 	}
 
 	reset(): void {

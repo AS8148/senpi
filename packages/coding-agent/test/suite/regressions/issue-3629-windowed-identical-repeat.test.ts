@@ -55,6 +55,22 @@ describe("issue 3629: interleaved identical repeats escalate to a hard stop", ()
 		expect(harness.actions).toContain("abort:system");
 	});
 
+	it("keeps the windowed escalation armed when a short identical run interrupts the loop", async () => {
+		const harness = createLoopGuardHarness();
+		let blockedCount = 0;
+		for (let round = 1; round <= 60; round++) {
+			for (let burst = 0; burst < 3; burst++) {
+				await attempt(harness, `todo-${round}-${burst}`, "todo_view", { ...TODO_ARGS });
+			}
+			const result = await attempt(harness, `eval-${round}`, "eval", { ...EVAL_ARGS });
+			if (isBlockResult(result)) blockedCount++;
+		}
+		const notices = harness.customMessages.filter((message) => message.customType === "loop-guard:notice");
+		expect(notices.length).toBeLessThanOrEqual(9);
+		expect(blockedCount).toBeGreaterThanOrEqual(3);
+		expect(harness.actions).toContain("abort:system");
+	});
+
 	it("never blocks a routine edit-then-test loop", async () => {
 		const harness = createLoopGuardHarness();
 		for (let round = 1; round <= 24; round++) {
