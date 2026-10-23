@@ -1,3 +1,21 @@
+## 2026-10-23 - Claim asynchronous release input before preparation (senpi#4047)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: claim release extras before awaiting skill preparation; failed admission restores only non-rejected entries by identity, without removing a newer capture. Resume preparation rechecks held commands and manual continues on each pass, and a new inherited hold keeps every input in custody until its parent's run Resume.
+
+### Why
+
+Concurrent idle prompts could send the same extra twice and remove a newer capture. A rejected extra poisoned later prompts. A parent pause arriving during a resume skill read let that older resume consume a newly held command or continue as literal text.
+
+### Why an extension could not handle it
+
+The session owns the release array, prompt admission and held-input settlement before extension delivery.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: prompt message preparation and rejection cleanup, and the shared resume preparation loop.
+
 ## 2026-10-23 - Product copy punctuation (senpi#4040)
 
 ### What changed
@@ -12440,6 +12458,26 @@ The summary-model resolver reads session-owned state (settings, model runtime, s
 
 - LOW: the `settings.enabled` early return and the exemption consume in `_checkCompaction` (their order).
 - LOW: the end of the `agent_end` last-assistant block in `_processAgentEvent` (the spent-exemption release before the continuation block).
+
+## 2026-10-23 - Session skill reads no longer block the event loop (senpi#3796 hardening)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: skill expansion awaits the async `readSkillFileChecked` from fork-only `skill-access.ts` (`fs.promises` realpath, lstat, `open` with O_NOFOLLOW, `handle.stat()` dev/ino match, `handle.readFile`, `handle.close()` in `finally`). `_expandSkillCommand` returns plain text synchronously when there are no skill tokens, preserving queue-transfer timing. A Stop release still captures held input synchronously; each held message is a promise in `_releaseExtras` that `prompt()` removes only after preparation succeeds. A resume turn prepares its held input before it starts, includes input held during those reads, and drops withdrawals.
+- `packages/coding-agent/src/core/skills.ts`: startup discovery calls the renamed synchronous variant `readSkillFileCheckedSync`; its checks are unchanged.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: the #3796 descriptor read used `openSync`/`fstatSync`/`lstatSync`/`closeSync` on the RPC session path, where one session's skill invocation blocks every other session on the shared host (the no-sync session-path guard in #3991). The async read keeps the same refusal rules under the unchanged-filesystem threat model; ancestor-directory replacement remains out of scope, as in the synchronous read. Awaiting expansion for ordinary text changed compaction queue delivery timing, and capturing resume input only before skill reads stranded guidance that arrived while the hold was already released.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: skill invocation expansion and held-input preparation run inside `AgentSession.prompt()` and the Stop-release path before any extension callback sees the text.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_expandSkillCommand`, `_expandSkillTokens`, `_preparedHeldText`, `_takeHeldInputs`, `_startResumeTurn` and release-extras handling in `prompt()`.
+- `packages/coding-agent/src/core/skills.ts`: the checked-read call in `loadSkillFromFile`.
 
 ## 2026-10-23 - Warn when a queued input outlives a completed run (senpi#4036)
 
