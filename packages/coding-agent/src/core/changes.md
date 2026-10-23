@@ -11737,3 +11737,23 @@ The summary-model resolver reads session-owned state (settings, model runtime, s
 
 - `packages/coding-agent/src/core/auth-storage.ts`: `acquireLockAsync` and the import block.
 - `packages/coding-agent/src/core/settings-manager.ts`: `acquireLockWithRetry`, the rename step of `withPathLockAsync`, and the import block.
+
+## 2026-10-23 - Release input queued while the first post-compaction prompt starts, with threshold compaction off (senpi#4036)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_checkCompaction` consumes the post-compaction usage exemption (`_consumePostCompactionUsageExemption`) before the `settings.enabled` early return instead of after it. The overflow case is still decided first, and the function still returns `false` when threshold compaction is off.
+- `packages/coding-agent/src/core/agent-session.ts`: the `agent_end` handling of a run's last assistant disarms an exemption that run's first post-compaction response left unconsumed (an aborted or failed response, a blocked retry) and hands the parked input back to the ordinary steer/follow-up queues, whose continuation rules then decide when it runs, exactly as for input queued in a run without a compaction.
+
+### Why
+
+- After any accepted compaction, input steered while the next prompt is starting is parked in `_postCompactionDeferredSteeringMessages` / `_postCompactionDeferredFollowUpMessages`, and the drain classifier keeps queued continuations retained while the exemption is armed. Only consuming the exemption on the first ordinary response releases them (flush + scheduled continuation). With threshold compaction switched off (sessions whose compaction is owned by the compaction extension, or `compaction.enabled: false`), `_checkCompaction` returned before the consume, so the exemption stayed armed: every later steer stayed parked and was released only by a later overflow compaction, as a burst of hours-old messages. An aborted or failed first response left it armed the same way with threshold compaction on, so the release is also made when the run ends without consuming it.
+
+### Why an extension could not handle it
+
+- The exemption, the deferred queues and the drain classification are private `AgentSession` state decided inside `_checkCompaction`; no extension hook can release or consume them.
+
+### Expected merge conflict zones
+
+- LOW: the `settings.enabled` early return and the exemption consume in `_checkCompaction` (their order).
+- LOW: the end of the `agent_end` last-assistant block in `_processAgentEvent` (the spent-exemption release before the continuation block).

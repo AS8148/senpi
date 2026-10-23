@@ -3975,6 +3975,14 @@ export class AgentSession {
 					}
 				}
 			}
+			// The exemption covers only the first response after a compaction. A run that ends on that response
+			// without consuming it (an aborted or failed response, a blocked retry) has still spent it: hand the
+			// input parked while that run started back to the ordinary queues, whose rules decide when it runs,
+			// instead of holding it until a later overflow compaction (#4036).
+			if (this._hasPendingPostCompactionUsageExemption(msg) && !this._isAssistantFromBeforeLatestCompaction(msg)) {
+				this._skipNextPostCompactionAssistantCheck = false;
+				this._flushPostCompactionDeferredMessages();
+			}
 		}
 
 		if (event.type === "agent_end") {
@@ -9967,14 +9975,17 @@ export class AgentSession {
 			return compacted;
 		}
 
-		// Stuck-overflow recovery above runs regardless of the flag; threshold
-		// compaction below is the proactive path the user switched off (#1422).
-		if (!settings.enabled) return false;
-
 		// The first ordinary response can carry provider usage calculated before
 		// compaction. Consume that exemption only after proving this is not an
 		// overflow, then retain the decision for later admission re-sampling.
+		// It is consumed even when threshold compaction is switched off: the
+		// exemption is what releases input queued while that response started,
+		// so leaving it armed parked that input until a later compaction (#4036).
 		if (this._consumePostCompactionUsageExemption(assistantMessage)) return false;
+
+		// Stuck-overflow recovery above runs regardless of the flag; threshold
+		// compaction below is the proactive path the user switched off (#1422).
+		if (!settings.enabled) return false;
 
 		// Case 2: Threshold - context is getting large
 		// For error messages or all-zero usage messages, estimate from the last valid response.
