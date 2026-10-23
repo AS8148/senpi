@@ -132,3 +132,24 @@ it("a crossed pair of tied records between two mirrored stores stops echoing", (
 	expect(deliveries).toBeLessThan(100);
 	expect(host.snapshot()).toEqual(worker.snapshot());
 });
+
+// report() keeps the previous reportedAt when only the error changes, so the changed record ties with the
+// one it replaces. A worker mirroring the host must still take that newer record (senpi#3695 review).
+it.each([
+	["no error -> an error", [undefined, "sign-in needed"]],
+	["one error -> another", ["sign-in needed", "rate limited"]],
+	["the reverse error change", ["rate limited", "sign-in needed"]],
+] as const)("a worker mirroring the host sees the newer poll result (%s)", (_label, [before, after]) => {
+	const host = new SubscriptionLimitStore();
+	const worker = new SubscriptionLimitStore();
+	host.subscribe((limits) => worker.adopt(structuredClone(limits)));
+	const windows = [{ id: "claude:5h", label: "5h", windowMinutes: 300, usedPercent: 12 }];
+	host.report("anthropic-subscription", "work", { windows, reportedAt: new Date("2026-10-23T10:00:00Z") });
+	if (before !== undefined) {
+		host.report("anthropic-subscription", "work", { error: before, reportedAt: new Date("2026-10-23T10:02:30Z") });
+	}
+	host.report("anthropic-subscription", "work", { error: after, reportedAt: new Date("2026-10-23T10:05:00Z") });
+
+	expect(worker.snapshot()).toEqual(host.snapshot());
+	expect(worker.snapshot()[0]?.error).toBe(after);
+});
