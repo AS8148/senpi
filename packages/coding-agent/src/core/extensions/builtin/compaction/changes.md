@@ -2357,3 +2357,21 @@ This is the builtin extension that owns summary generation and its retry loop.
 ### Expected merge conflict zones
 
 The overflow branches of the retry loop in `runExtensionCompaction` in `speculative.ts`.
+
+## 2026-10-23 - Summarization bound reaches inside the last turn (senpi#4079)
+
+### What changed
+
+`overflow-retry.ts`: `boundSummarizationInput` and `shrinkSummarizationInputForOverflowRetry` now prune through `pruneSummarizationInputToBudget`. It drops the oldest history first, as before, and then, when the last turn alone is still over the budget, that turn's oldest tool call/result pairs, never a call without its result. The turn's request is always kept; the shrink-retry's last-resort drop now removes the oldest reply after the request instead of the request itself. `pruneOldMessagesToBudget`, which live-context pruning (`emergency-prune.ts`, `btw/side-query.ts`) uses, is unchanged.
+
+### Why
+
+A single turn close to the window could not be bounded at all: the old rule only removed messages before the last user message, so the summary request overflowed and the compaction failed. Core's split-turn prefix summary and this extension's merged request share the rule.
+
+### Why an extension could not handle it
+
+This is the builtin extension that owns these helpers; core imports them for its own summary requests.
+
+### Expected merge conflict zones
+
+`boundSummarizationInput` / `shrinkSummarizationInputForOverflowRetry` in `overflow-retry.ts`.

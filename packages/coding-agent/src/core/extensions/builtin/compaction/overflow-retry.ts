@@ -194,6 +194,32 @@ export function summarizationHistoryBudget(contextWindow: number, promptTokens: 
 	);
 }
 
+function removeFirstToolPairAfter(messages: AgentMessage[], boundaryIndex: number): PruneStep | undefined {
+	for (let index = boundaryIndex + 1; index < messages.length; index++) {
+		const message = messages[index];
+		if (message?.role === "assistant" && getToolCallIds(message).size > 0)
+			return removeAssistantToolPair(messages, index);
+	}
+	return undefined;
+}
+
+/**
+ * Summarization input only: drop the oldest history first, then, when the last turn alone is still over the budget,
+ * its oldest tool steps. The turn's request is always kept and a tool call never loses its result (senpi#4079). Live
+ * context pruning keeps using `pruneOldMessagesToBudget`, which never touches the last turn.
+ */
+function pruneSummarizationInputToBudget(messages: AgentMessage[], targetTokens: number): AgentMessage[] {
+	let pruned = pruneOldMessagesToBudget(messages, targetTokens);
+	let total = estimateTotalTokens(pruned);
+	while (total > targetTokens) {
+		const next = removeFirstToolPairAfter(pruned, findLastUserLikeIndex(pruned));
+		if (!next) break;
+		pruned = next.messages;
+		total -= next.removedTokens;
+	}
+	return pruned;
+}
+
 /**
  * Pre-size the summarization input before the first billed attempt. Only the
  * oldest messages are dropped; a fitting input passes through untouched.
@@ -203,7 +229,7 @@ export function boundSummarizationInput(
 	contextWindow: number,
 	promptTokens: number,
 ): AgentMessage[] {
-	return pruneOldMessagesToBudget(messages, summarizationHistoryBudget(contextWindow, promptTokens));
+	return pruneSummarizationInputToBudget(messages, summarizationHistoryBudget(contextWindow, promptTokens));
 }
 
 /**
@@ -219,11 +245,14 @@ export function shrinkSummarizationInputForOverflowRetry(
 	if (messages.length <= 1) return undefined;
 	const budget = summarizationHistoryBudget(contextWindow, promptTokens);
 	const halfTokens = Math.floor(estimateTotalTokens(messages) / 2);
-	const shrunk = pruneOldMessagesToBudget(messages, Math.min(halfTokens, budget));
+	const shrunk = pruneSummarizationInputToBudget(messages, Math.min(halfTokens, budget));
 	if (shrunk.length < messages.length) return shrunk;
-	// Every remaining message sits at or after the turn boundary, so budget
-	// pruning cannot shrink further; still drop the oldest so the retry
-	// differs from the rejected attempt instead of re-billing an identical one.
+	// Only the turn's request and plain (tool-free) replies remain, so budget
+	// pruning cannot shrink further; still drop one so the retry differs from
+	// the rejected attempt instead of re-billing an identical one. The oldest
+	// reply goes before the request itself (senpi#4079).
+	const boundaryIndex = findLastUserLikeIndex(messages);
+	if (boundaryIndex < messages.length - 1) return messages.filter((_message, index) => index !== boundaryIndex + 1);
 	return messages.slice(1);
 }
 

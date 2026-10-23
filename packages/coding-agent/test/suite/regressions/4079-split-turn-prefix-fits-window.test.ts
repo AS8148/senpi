@@ -98,6 +98,7 @@ describe("#4079 a split-turn prefix summary fits the window", () => {
 		expect(seeded + MAX_TOKENS).toBeGreaterThan(CONTEXT_WINDOW);
 		const summaryRequests: number[] = [];
 		let turnPrefixRequests = 0;
+		const acceptedTurnPrefixRequests: string[] = [];
 		harness.faux.setResponses(
 			Array.from({ length: 12 }, () => (context: TranscriptContext, options: { maxTokens?: number } | undefined) => {
 				const requested = providerInputTokens(context) + (options?.maxTokens ?? MAX_TOKENS);
@@ -107,6 +108,7 @@ describe("#4079 a split-turn prefix summary fits the window", () => {
 				if (requested > CONTEXT_WINDOW) {
 					return fauxOverflowError("faux", "Your input exceeds the context window of this model.");
 				}
+				if (isTurnPrefixSummaryRequest(context)) acceptedTurnPrefixRequests.push(lastUserText(context));
 				return fauxAssistantMessage(summary ? "summary of the long turn" : "continued after compaction");
 			}),
 		);
@@ -117,6 +119,10 @@ describe("#4079 a split-turn prefix summary fits the window", () => {
 		// then
 		expect(turnPrefixRequests).toBeGreaterThan(0);
 		expect(summaryRequests.every((requested) => requested <= CONTEXT_WINDOW)).toBe(true);
+		// the accepted request keeps the turn's own request and says how many tool steps it left out
+		expect(acceptedTurnPrefixRequests).toHaveLength(1);
+		expect(acceptedTurnPrefixRequests[0]).toContain("refactor the whole module");
+		expect(acceptedTurnPrefixRequests[0]).toMatch(/<omitted-history messages="[1-9]\d*" \/>/);
 		expect(harness.eventsOfType("compaction_end").some((event) => event.result !== undefined)).toBe(true);
 		const lastAssistant = [...harness.session.messages].reverse().find((message) => message.role === "assistant");
 		expect(lastAssistant).toMatchObject({ stopReason: "stop" });
