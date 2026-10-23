@@ -152,6 +152,9 @@ jobs:
           GH_TOKEN: ${{ secrets.UPSTREAM_AUTOMATION_TOKEN }}
           SENPI_SKIP_PM_VERIFY: '1'
           RELEASE_SHA: ${{ inputs.sha }}
+          # The release runs the same `npm run check` as CI, so it needs CI's TypeScript heap (ci.yml Check,
+          # senpi#4022): on the default ~4 GB heap the check ran out of memory in the 2026.10.23-1 release.
+          NODE_OPTIONS: --max-old-space-size=10240
         run: |
           test -n "$GH_TOKEN" || {
             echo "::error::UPSTREAM_AUTOMATION_TOKEN is required to push release commits and tags through branch protection."
