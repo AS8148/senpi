@@ -1,3 +1,44 @@
+## 2026-10-20 - Bind security notices and MCP grant dialogs to actual connections (senpi#3796)
+
+### What changed
+
+- `connection-handler.ts` replays retained warnings for a classic RPC presentation and creates marked, abortable grant selects only for `grant_select`. Grant answers are checked against the selected connection.
+- `rpc-types.ts` adds the optional `grantSelect` marker on select requests.
+- `session-binding.ts`, `session-event-writer.ts` and `session-event-fanout.ts` bind notices and grant authority to attached sockets, not the single handler shared by several sockets. Fork-only `security-presentations.ts` retains per-connection replay cursors and cancels grants when capability or attachment ends.
+- `session-worker.ts`, `session-worker-client.ts` and `session-worker-protocol.ts` bridge retained snapshots and grant requests through the host's actual connection capabilities. Internal snapshot, cancellation and settled-dialog records do not reach clients.
+
+### Why
+
+A late client needs the current reason, and a question-only or headless client must not hold server startup waiting for a select it cannot render. A grant belongs to the capable presentation that received it, including with worker runtimes.
+
+### Why an extension could not handle it
+
+Shared-handler routing, socket capabilities, worker transport and disconnect teardown are RPC host internals.
+
+### Expected merge conflict zones
+
+Handler bind and dialog response dispatch; session writer attachment and capability updates; worker output forwarding and control dispatch.
+
+## 2026-10-22 - Host requests: a session asks its client to continue it on another computer (senpi#3959)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: adds `RpcHostRequest` (outbound `host_request`, methods `list_relocation_targets` and `relocate_session`), `RpcHostResponse` (inbound `host_response`, added to `RpcInboundRecord`) and `RpcRelocationDueEvent` (`relocation_due`). The behavior lives in `session-relocation.ts` (new), wired from `connection-handler.ts`; capability `session_relocation` (`custom-capability.ts`, `host-capabilities.ts`); `host_response` is a control frame in `session-held.ts` and allowed while closing in `session-registry.ts`; docs/rpc.md "Continuing a session on another computer".
+- `packages/coding-agent/src/modes/rpc/session-release.ts`, `packages/coding-agent/src/modes/rpc/session-command-router.ts`: the `attached` refusal of `release_session` counts only clients OTHER than the requesting connection (`SessionReleasePort.otherAttachments`, the rule `unload_session` already used), so the host that runs a relocation from its attached connection releases with no `force`.
+- `packages/coding-agent/src/modes/rpc/session-relocation-channel.ts` (new), `packages/coding-agent/src/modes/rpc/session-command-router.ts`, `packages/coding-agent/src/modes/rpc/session-event-writer.ts`, `packages/coding-agent/src/modes/rpc/connection-handler.ts`: relocation is offered per connection. The router names the earliest-attached connection that advertised `session_relocation` in its own `set_client_info`; `host_request` and `relocation_due` are targeted records delivered to it alone, and a `host_response` from any other connection is refused `not_offering_connection`. A user abort drops a scheduled move. The offering connection is the earliest attached to THIS session (`session-attach-order.ts`, new); when a connection leaves a session (`close_session`, `releaseConnection`) the router tells the session binding (`RpcSessionBinding.connectionDetached`, `session-binding.ts`), which drops a move that connection accepted and fails its pending `host_request` with `app_disconnected`. A dropped socket's `pendingCapabilities` entry is deleted.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the engine has no view of other machines, so the agent's relocation request is answered by the client that runs the host (the desktop), and a scheduled move is announced when the turn ends instead of interrupting it.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the wire types are the RPC protocol's own; an extension cannot add inbound record kinds.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: LOW: three type declarations above `RpcInboundRecord`, and the `RpcInboundRecord` union itself.
+
 ## 2026-10-22 - A cancelled degraded question opens no input after the abort (sisyphuslabs/omo-desktop-app#4042)
 
 ### What changed

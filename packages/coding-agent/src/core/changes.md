@@ -1,3 +1,44 @@
+## 2026-10-20 - Contain project skill links and retain security notices (senpi#3796)
+
+### What changed
+
+- `packages/coding-agent/src/core/package-manager.ts`: record user, project-auto and project-selected provenance when selecting skill roots, before recursion or canonicalization.
+- `packages/coding-agent/src/core/resource-loader.ts`: retain that provenance and collect user-root authority before deduplication and skill reads.
+- `packages/coding-agent/src/core/skill-discovery.ts`: check project directories before descending and stop link cycles by ancestry.
+- `packages/coding-agent/src/core/skills.ts`: retain provenance and the user allowed-set digest on each Skill; project discovery reads use the checked descriptor primitive in the new fork-only `skill-access.ts`.
+- `packages/coding-agent/src/core/diagnostics.ts`: add the `skill-link-blocked` warning category.
+- `packages/coding-agent/src/core/agent-session.ts`: check invocation rereads and own the retained security-notice snapshot across resource extension, reload and runtime MCP notices. Fork-only `security-notices.ts` owns generations; `mcp-grant-presentations.ts` owns bounded grant decisions.
+
+### Why
+
+A project-selected link must not confer user authority on an outside target. The same containment check must apply after discovery, when an invocation or MCP declaration rereads a file. A retained reason lets every newly attached presentation explain a blocked skill.
+
+### Why an extension could not handle it
+
+Root selection, discovery, cached Skill records, invocation expansion and presentation binding precede or bypass extension callbacks.
+
+### Expected merge conflict zones
+
+Skill path collection and metadata in `package-manager.ts` and `resource-loader.ts`; recursive discovery in `skill-discovery.ts` and `skills.ts`; the invocation reread and resource lifecycle in `agent-session.ts`.
+
+## 2026-10-22 - The session holds the host that can continue it on another computer (senpi#3959)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `setRelocationHost(host)` stores the `SessionRelocationHost` (`session-relocation.ts`, new) a host installs, and the `bindCore` `sessionControl` deps read it as `relocationHost`, so `pi.session.relocationTargets()` / `requestRelocation()` reach it; without one both answer `unavailable`.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: the agent's `relocate_session` tool must ask the session's host to continue the session on another of the user's computers (sisyphuslabs/omo-desktop-app#3137); the engine knows no other machines, so the host has to plug in per session.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: the host that runs a session (the RPC connection) is only known to the session runtime; an extension cannot reach the connection that would answer.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: LOW: one field beside `_controlEndpointHost`, one setter beside `setControlEndpointHost`, one line in the `createSessionControlActions` deps of `bindCore`, one type import.
+
 ## 2026-10-21 - A user Stop pauses the session and the run it started (senpi#3811)
 
 ### What changed
@@ -97,6 +138,25 @@ The switch admission and its re-check run inside the session's model-switch path
 ### Expected merge conflict zones
 
 - The `_switchActiveModel` options and its assert line, and the `_applyPendingModelSwitch` call, in `packages/coding-agent/src/core/agent-session.ts`, against upstream changes to model switching.
+
+## 2026-10-22 - Replace Biome with oxlint and oxfmt (senpi#3976)
+
+### What changed
+
+- `packages/coding-agent/src/core/messages.ts`: the exhaustive `default:` case body is wrapped in braces (oxlint `no-case-declarations`), replacing a `biome-ignore` comment.
+- `packages/coding-agent/src/core/sdk.ts`: an `oxlint-disable-next-line eslint/prefer-const` comment on the `let agent` that a closure reads (`() => agent`, passed to the cursor exec bridge); making it `const` is a separate, reviewed change because a closure that ran before the assignment would hit the temporal dead zone.
+
+### Why
+
+- The repository moved lint and format from Biome to oxlint 1.89.0 and oxfmt 0.74.0 (senpi#3976). oxlint reports this site where Biome did not; the change keeps behaviour identical.
+
+### Why an extension could not handle it
+
+- Lint configuration and source comments are read by the linter before any agent code runs.
+
+### Expected merge conflict zones
+
+- The `default:` case in `messages.ts` and the `agent` declaration in `createAgentSession` in `sdk.ts`.
 
 ## 2026-10-21 - Human-input seam: who typed an input (senpi#3811)
 

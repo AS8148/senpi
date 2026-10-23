@@ -1,3 +1,21 @@
+## 2026-10-20 - Present retained skill security reasons once (senpi#3796)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` subscribes to the session's retained security notices on bind and sends them through the TUI notify path. It excludes `skill-link-blocked` from the ordinary startup warning box and registers the TUI's select presentation for bounded project MCP grants. Rebind and disposal detach the previous presentation.
+
+### Why
+
+Startup, invocation, reload and MCP sidecar failures need the same visible reason without a duplicate startup box.
+
+### Why an extension could not handle it
+
+TUI startup diagnostics and presentation binding are host code.
+
+### Expected merge conflict zones
+
+Startup warning filtering, `bindSession`, and extension presentation cleanup.
+
 ## 2026-10-23 - /answer skip reports partial answers once (sisyphuslabs/omo-desktop-app#4042)
 
 ### What changed
@@ -22,6 +40,25 @@
 - LOW: `packages/coding-agent/src/modes/interactive/interactive-mode.ts`, the `skip` branch of `handleAnswerCommand`.
 - LOW: `packages/coding-agent/src/modes/interactive/components/ask-user-answer-chip.ts`, `summaryRows`.
 - LOW: `packages/coding-agent/src/modes/interactive/components/ask-user-question.ts`, `finish`.
+
+## 2026-10-22 - Replace Biome with oxlint and oxfmt (senpi#3976)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: an `oxlint-disable-next-line eslint/prefer-const` comment on the settings `selector` declaration that its own callbacks read.
+
+### Why
+
+- The repository moved lint and format from Biome to oxlint 1.89.0 and oxfmt 0.74.0 (senpi#3976). oxlint reports this site where Biome did not; the change keeps behaviour identical.
+
+### Why an extension could not handle it
+
+- Lint configuration and source comments are read by the linter before any agent code runs.
+
+### Expected merge conflict zones
+
+- The settings selector block in `interactive-mode.ts`.
+
 
 ## 2026-10-21 - The resume picker's search finds a session by the id its file name carries (oh-my-openagent#7471)
 
