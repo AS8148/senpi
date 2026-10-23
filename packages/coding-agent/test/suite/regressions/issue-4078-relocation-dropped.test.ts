@@ -79,7 +79,7 @@ describe("a scheduled relocation being cleared", () => {
 		},
 	);
 
-	it("persists the abort notice when the session closes without another prompt", async () => {
+	it.each([false, true])("persists the abort notice on close with a racing detach: %s", async (detach) => {
 		// Given: an accepted relocation with the closing model response still running.
 		const rig = await relocationRig({
 			capabilities: ["session_relocation"],
@@ -97,6 +97,13 @@ describe("a scheduled relocation being cleared", () => {
 			await toolDone;
 
 			// When: the user aborts and the session closes without another model request.
+			if (detach) {
+				const stop = rig.harness.session.subscribe((event) => {
+					if (event.type !== "agent_end") return;
+					stop();
+					rig.handler.connectionDetached("sole");
+				});
+			}
 			await rig.handler.handleInputLine(JSON.stringify({ type: "abort", id: "abort-close" }));
 			await turn;
 			await rig.harness.session.agent.waitForIdle();

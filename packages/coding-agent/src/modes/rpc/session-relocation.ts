@@ -126,7 +126,8 @@ export class RpcSessionRelocation implements SessionRelocationHost {
 
 	/** The connection `connectionId` left the session: what it accepted or was asked ends here, never later. */
 	connectionDetached(connectionId: string): void {
-		if (this.scheduled?.connection === connectionId) this.dropScheduled("disconnected");
+		if (this.scheduled?.connection === connectionId && this.scheduled.dropReason === undefined)
+			this.dropScheduled("disconnected");
 		for (const pending of [...this.pending.values()])
 			if (pending.connection === connectionId)
 				pending.finish(refused("app_disconnected", "the app that was asked left this session"));
