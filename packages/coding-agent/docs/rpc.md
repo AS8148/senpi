@@ -3768,6 +3768,8 @@ Response:
 }
 ```
 
+`cost` sums the provider-reported cost of every turn. `costUnknown: true` appears when at least one turn ran on a model with no known price (senpi#3844): `cost` is then a lower bound, not the full spend. The field is absent otherwise.
+
 `failures` reports what failed provider requests cost the session. Every assistant response is one request; `erroredRequests` and `abortedRequests` count responses that ended with stop reason `error` or `aborted`, and `failedDurationMs` sums their time from request start to the recorded response. `postFailureRequests` counts the first successful response after one or more failed ones within the same user turn (a user message resets it); `postFailureFullMissRequests` counts those that read nothing from the prompt cache on a prompt of at least 2048 tokens, and `postFailureFullMissInputTokens` sums their uncached prompt tokens (input plus cache writes). The token counts are the provider's usage report; attributing the cache miss to the preceding failure is an inference from the turn's sequence. Hosts older than this field omit it.
 
 `tokens` and `cost` include assistant messages, usage reported by tools, and compaction/branch-summary generation across the full session. `contextUsage` contains the actual current context-window estimate used for compaction and footer display.
@@ -5262,6 +5264,21 @@ Set or clear a status entry in the footer/status bar. Fire-and-forget.
 ```
 
 Send `statusText: undefined` (or omit it) to clear the status entry for that key.
+
+#### setSubagentCost
+
+Report the USD the subagent tree under this session has spent, which the TUI footer shows after the session's own cost as `$0.380 (+1.270)`. Fire-and-forget.
+
+```json
+{
+  "type": "extension_ui_request",
+  "id": "uuid-7",
+  "method": "setSubagentCost",
+  "costUsd": 1.27
+}
+```
+
+`costUsd: undefined` (or omitted) clears it. A negative or non-finite figure is sent as `undefined`.
 
 #### setWidget
 
