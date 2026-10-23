@@ -199,6 +199,40 @@ describe("usage poll accounts and payloads (senpi#3684)", () => {
 		expect((await workSlot(store)).blockReason).toBeUndefined();
 	});
 
+	// senpi#3695: only an explicit token-endpoint rejection may lock an account from a background poll.
+	it.each([
+		["an HTML error page", new Error("Unexpected token '<', \"<!DOCTYPE html>\" is not valid JSON")],
+		["a network error", new TypeError("fetch failed")],
+	])("a non-auth refresh failure (%s) never locks the account", async (_label, failure) => {
+		const store = revokedStore();
+		const accounts = await listPollAccounts({
+			store,
+			env: () => undefined,
+			refresher: async () => {
+				throw failure;
+			},
+			now: () => NOW,
+		});
+
+		expect(await accounts[0]?.access(new AbortController().signal)).toBeUndefined();
+		expect((await workSlot(store)).blockReason).toBeUndefined();
+	});
+
+	it("a 401 from the token endpoint locks the account", async () => {
+		const store = revokedStore();
+		const accounts = await listPollAccounts({
+			store,
+			env: () => undefined,
+			refresher: async () => {
+				throw Object.assign(new Error("HTTP request failed. status=401; body=unauthorized"), { status: 401 });
+			},
+			now: () => NOW,
+		});
+
+		expect(await accounts[0]?.access(new AbortController().signal)).toEqual({ error: SIGN_IN_NEEDED });
+		expect((await workSlot(store)).blockReason).toBe("auth_error");
+	});
+
 	it("a transient refresh failure is retried next interval and blocks nothing", async () => {
 		const store = storage();
 		const accounts = await listPollAccounts({

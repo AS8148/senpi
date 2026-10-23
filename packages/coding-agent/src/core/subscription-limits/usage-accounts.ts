@@ -21,6 +21,30 @@ import { CredentialStoreBusyError } from "../lockfile-policy.ts";
 import type { UsageProvider } from "./usage-endpoints.ts";
 
 const EXPIRING_WITHIN_MS = 5 * 60_000;
+const REJECTED_STATUS = /\bstatus=40[01]\b/;
+const MAX_CAUSE_LINKS = 16;
+
+/**
+ * A background poll records the `auth_error` lock only on an explicit rejection from the token endpoint:
+ * `invalid_grant`, or a 400/401 answer (senpi#3695). `isGrantRejected` alone also calls an HTML error page
+ * or a plain network failure rejected; a turn tolerates that, but a poll would then lock a healthy login.
+ */
+function tokenEndpointRejected(error: unknown): boolean {
+	if (!isGrantRejected(error)) return false;
+	const seen = new Set<unknown>();
+	let link: unknown = error;
+	while (typeof link === "object" && link !== null && !seen.has(link) && seen.size < MAX_CAUSE_LINKS) {
+		seen.add(link);
+		const status: unknown = Reflect.get(link, "status");
+		if (status === 400 || status === 401) return true;
+		const message: unknown = Reflect.get(link, "message");
+		if (typeof message === "string" && (message.includes("invalid_grant") || REJECTED_STATUS.test(message))) {
+			return true;
+		}
+		link = Reflect.get(link, "cause");
+	}
+	return false;
+}
 
 /** `undefined`: nothing usable to ask with right now (an expired ChatGPT token a turn will renew). */
 export type AccessResult = { readonly access: string } | { readonly error: string } | undefined;
@@ -86,7 +110,7 @@ function claudeAccounts(stored: Credential | undefined, sources: AccountSources)
 				// slot the way a turn records it, so later polls stop at the auth_error branch above instead of asking
 				// the token endpoint again; only /login (or a turn's one-shot recovery) lifts it.
 				if (signal.aborted || error instanceof CredentialStoreBusyError) return undefined;
-				if (!isGrantRejected(error)) return undefined;
+				if (!tokenEndpointRejected(error)) return undefined;
 				try {
 					await markAuthRejected(sources, slot.name, slot.refresh);
 				} catch {
