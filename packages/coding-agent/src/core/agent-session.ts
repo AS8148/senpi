@@ -1325,7 +1325,8 @@ export class AgentSession {
 	private _stopInterrupt: StopInterrupt | undefined;
 	private _deliveredHeldInputIds: string[] = [];
 	private _heldCommandRun: Promise<void> | undefined;
-	private readonly _releaseExtras: CustomMessage[] = [];
+	/** Held person input is captured synchronously but its skills are read asynchronously, so it waits here as a promise. */
+	private readonly _releaseExtras: (CustomMessage | Promise<CustomMessage>)[] = [];
 	private _releaseExtrasGeneration = 0;
 	private _engineTurnPauseRecorded = false;
 	// The pause warning is shown once per pause: a stream of refused events would otherwise add one line each (senpi#2537).
@@ -5737,7 +5738,7 @@ export class AgentSession {
 			// Expand skill commands (/skill:name args) and prompt templates (/template args)
 			let expandedText = currentText;
 			if (expandPromptTemplates) {
-				expandedText = this._expandSkillCommand(expandedText);
+				expandedText = await this._expandSkillCommand(expandedText);
 				const templateExpansion = expandPromptTemplateWithMetadata(expandedText, [...this.promptTemplates]);
 				expandedText = templateExpansion.text;
 				if (
@@ -5902,7 +5903,10 @@ export class AgentSession {
 			if (environmentContext) messages.push(environmentContext);
 
 			// Add user message
-			messages.push(...this._releaseExtras.splice(0), ...this._engineTurnInput.messages());
+			const releaseExtras = this._releaseExtras.splice(0);
+			const turnInput = this._engineTurnInput.messages();
+			if (releaseExtras.length > 0) messages.push(...(await Promise.all(releaseExtras)));
+			messages.push(...turnInput);
 			const userContent: (TextContent | ImageContent)[] = userTextContent(expandedText, options?.textBlocks);
 			if (currentImages) {
 				userContent.push(...currentImages);
@@ -6086,7 +6090,7 @@ export class AgentSession {
 	 * Leading runs accept slash and dollar syntax; inline `$name` expands only when
 	 * it names a loaded skill, so ordinary dollar prose such as `$HOME` stays literal.
 	 */
-	private _expandSkillCommand(text: string): string {
+	private async _expandSkillCommand(text: string): Promise<string> {
 		const skills = this.resourceLoader.getSkills().skills;
 		const invocationTokens = parseSkillInvocationTokens(text, {
 			knownSkillNames: new Set(skills.map((skill) => skill.name)),
@@ -6134,7 +6138,7 @@ export class AgentSession {
 			removedTokens.push(token);
 
 			try {
-				const content = readSkillFileChecked(skill.filePath, skill.provenance, skill.allowedSet);
+				const content = await readSkillFileChecked(skill.filePath, skill.provenance, skill.allowedSet);
 				const body = stripFrontmatter(content).trim();
 				skillBlocks.push({
 					name: skill.name,
@@ -6205,7 +6209,7 @@ export class AgentSession {
 		if (!processedInput) return "handled";
 
 		// Expand skill commands and prompt templates
-		let expandedText = this._expandSkillCommand(processedInput.text);
+		let expandedText = await this._expandSkillCommand(processedInput.text);
 		const templateExpansion = expandPromptTemplateWithMetadata(expandedText, [...this.promptTemplates]);
 		expandedText = templateExpansion.text;
 
@@ -6854,12 +6858,17 @@ export class AgentSession {
 		const generation = this._userAbortGeneration;
 		const { run, continues } = this._takeHeldCommands();
 		await run;
+		const prepared = await Promise.all(
+			this._heldInputs
+				.pending()
+				.filter((input) => !continues.has(input.inputId))
+				.map(async (input) => ({ ...input, text: await this._preparedHeldText(input) })),
+		);
+		// An input withdrawn while its skills were read is not delivered; one held meanwhile waits for the next release.
+		const stillHeld = new Map(this._heldInputs.pending().map((input) => [input.inputId, input.revision]));
+		const heldInputs = prepared.filter((input) => stillHeld.get(input.inputId) === input.revision);
 		return startRunResumeTurn({
-			heldInputs: () =>
-				this._heldInputs
-					.pending()
-					.filter((input) => !continues.has(input.inputId))
-					.map((input) => ({ ...input, text: this._preparedHeldText(input) })),
+			heldInputs: () => heldInputs,
 			continueInputs: () => [...continues],
 			heldWakes: () => this._engineTurnHold.messages(),
 			send: (message) => this.sendCustomMessage(message, { triggerTurn: true }, undefined, () => true),
@@ -6932,30 +6941,33 @@ export class AgentSession {
 	}
 
 	/** A held person input's text as the model receives it: skills and prompt templates expanded. */
-	private _preparedHeldText(input: HeldInput): string {
+	private async _preparedHeldText(input: HeldInput): Promise<string> {
 		if (input.prepare !== true) return input.text;
-		return expandPromptTemplateWithMetadata(this._expandSkillCommand(input.text), [...this.promptTemplates]).text;
+		return expandPromptTemplateWithMetadata(await this._expandSkillCommand(input.text), [...this.promptTemplates]).text;
 	}
 
-	private _takeHeldInputs(): { messages: CustomMessage[]; commands: Promise<void> | undefined } {
+	private _takeHeldInputs(): { messages: Promise<CustomMessage>[]; commands: Promise<void> | undefined } {
 		const { run, continues } = this._takeHeldCommands();
 		const pending = this._heldInputs.pending();
 		// Consumed at settlement only if the releasing turn was delivered; a "." rides that turn without a message.
 		this._deliveredHeldInputIds.push(...pending.map((input) => input.inputId));
 		const messages = pending
 			.filter((input) => !continues.has(input.inputId))
-			.map(
-				(input): CustomMessage => ({
-					role: "custom",
-					customType: HELD_INPUT_ENTRY,
-					content:
-						input.images === undefined
-							? this._preparedHeldText(input)
-							: [{ type: "text", text: this._preparedHeldText(input) }, ...input.images],
-					display: true,
-					timestamp: Date.now(),
-				}),
-			);
+			.map((input): Promise<CustomMessage> => {
+				const timestamp = Date.now();
+				const message = this._preparedHeldText(input).then(
+					(text): CustomMessage => ({
+						role: "custom",
+						customType: HELD_INPUT_ENTRY,
+						content: input.images === undefined ? text : [{ type: "text", text }, ...input.images],
+						display: true,
+						timestamp,
+					}),
+				);
+				// The prompt that sends these awaits them and sees any failure; this branch only keeps an unsent one quiet.
+				message.catch(() => {});
+				return message;
+			});
 		return { messages, commands: run };
 	}
 

@@ -11757,3 +11757,22 @@ The summary-model resolver reads session-owned state (settings, model runtime, s
 
 - LOW: the `settings.enabled` early return and the exemption consume in `_checkCompaction` (their order).
 - LOW: the end of the `agent_end` last-assistant block in `_processAgentEvent` (the spent-exemption release before the continuation block).
+
+## 2026-10-23 - Session skill reads no longer block the event loop (senpi#3796 hardening)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_expandSkillCommand` and `_preparedHeldText` are async and await the async `readSkillFileChecked` from fork-only `skill-access.ts` (`fs.promises` realpath, lstat, `open` with O_NOFOLLOW, `handle.stat()` dev/ino match, `handle.readFile`, `handle.close()` in `finally`). A Stop release still captures held input synchronously; each held message is a promise in `_releaseExtras` that `prompt()` awaits where it sends them. A resume turn prepares its held input before it starts and drops inputs withdrawn while their skills were read.
+- `packages/coding-agent/src/core/skills.ts`: startup discovery calls the renamed synchronous variant `readSkillFileCheckedSync`; its checks are unchanged.
+
+### Why
+
+The #3796 descriptor read used `openSync`/`fstatSync`/`lstatSync`/`closeSync` on the RPC session path, where one session's skill invocation blocks every other session on the shared host (the no-sync session-path guard in #3991). The async read keeps the same refusal rules: nothing after the identity pin trusts the path again, so the extra awaits do not open a swap window.
+
+### Why an extension could not handle it
+
+Skill invocation expansion and held-input preparation run inside `AgentSession.prompt()` and the Stop-release path before any extension callback sees the text.
+
+### Expected merge conflict zones
+
+`_expandSkillCommand`, `_preparedHeldText`, `_takeHeldInputs`, `_startResumeTurn` and the release-extras splice in `prompt()` in `agent-session.ts`; the checked-read call in `loadSkillFromFile` in `skills.ts`.
