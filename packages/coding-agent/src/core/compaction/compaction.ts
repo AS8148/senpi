@@ -229,9 +229,12 @@ export interface CacheFriendlySummaryOptions {
 
 /**
  * Calculate total context tokens from usage.
- * Uses the native totalTokens field when available, falls back to computing from components.
+ * Prefer request context over cumulative billing; unknown context is estimated from messages.
  */
 export function calculateContextTokens(usage: Usage): number {
+	if (usage.contextUsage !== undefined) {
+		return usage.contextUsage === null ? 0 : usage.contextUsage.input + usage.contextUsage.output;
+	}
 	return usage.totalTokens || usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
 }
 
@@ -1203,13 +1206,13 @@ function findProjectedCutPoint(
 		);
 	if (isRecoveryOmissionSuffix) cutIndex++;
 
+	const startsTurn = isProjectedTurnStart(entries[cutIndex]);
+	const turnStartIndex = startsTurn ? -1 : findProjectedTurnStartIndex(entries, cutIndex, startIndex);
 	while (cutIndex > startIndex) {
 		const previous = entries[cutIndex - 1];
 		if (previous.sourceEntry.type === "compaction" || previous.messages.length > 0) break;
 		cutIndex--;
 	}
-	const startsTurn = isProjectedTurnStart(entries[cutIndex]);
-	const turnStartIndex = startsTurn ? -1 : findProjectedTurnStartIndex(entries, cutIndex, startIndex);
 	return {
 		firstKeptEntryIndex: cutIndex,
 		turnStartIndex,
@@ -1248,7 +1251,7 @@ export function prepareCompaction(
 	let cutPoint = findProjectedCutPoint(projectedEntries, boundaryStart, boundaryEnd, settings.keepRecentTokens);
 
 	if (forceProgress && cutPoint.firstKeptEntryIndex === boundaryStart) {
-		const nextCutPoint = findProjectedValidCutPoints(projectedEntries, boundaryStart + 1, boundaryEnd)[0];
+		const nextCutPoint = findProjectedValidCutPoints(projectedEntries, boundaryStart, boundaryEnd)[1];
 		if (nextCutPoint !== undefined) {
 			const turnStartIndex = findProjectedTurnStartIndex(projectedEntries, nextCutPoint, boundaryStart);
 			cutPoint = {

@@ -10,6 +10,7 @@ import { ProjectTrustStore } from "../../core/trust-manager.ts";
 import { clientFacingIdentity } from "./client-admission-record.ts";
 import { sessionQuestionBridges } from "./connection-question-bridge.ts";
 import type { RpcSessionState } from "./rpc-types.ts";
+import { sessionDialogRequests } from "./session-extension-ui-requests.ts";
 
 /**
  * Project one session into the wire state shape.
@@ -32,7 +33,11 @@ export function buildRpcSessionState(session: AgentSession, lastAbortSource?: Ag
 	const projectTrusted = new ProjectTrustStore(session.agentDir).get(cwd) === true;
 	const lastProviderDiagnostic = sanitizeProviderDiagnostic(session.agent.state.providerDiagnostic);
 	return {
+		paused: session.paused ?? false,
+		pausedNoticeCount: session.pausedNoticeCount ?? 0,
+		holds: session.holds ?? [],
 		pendingQuestions: sessionQuestionBridges.get(session)?.pendingQuestions(),
+		pendingDialogs: sessionDialogRequests.get(session)?.snapshot() ?? [],
 		model: session.model,
 		pendingModelSwitch: session.pendingModelSwitch
 			? {
@@ -47,6 +52,9 @@ export function buildRpcSessionState(session: AgentSession, lastAbortSource?: Ag
 		serviceTier: session.effectiveServiceTier,
 		fastMode: session.isFastModeActive(),
 		isStreaming: session.isStreaming,
+		pausedHeldInputCount: session.pausedHeldInputCount,
+		runPaused: session.runPaused,
+		pause: session.pauseView,
 		isCompacting: session.isCompacting,
 		retryAttempt: session.retryAttempt,
 		isBashRunning: session.isBashRunning,
