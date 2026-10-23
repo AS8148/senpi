@@ -6790,9 +6790,15 @@ export class AgentSession {
 		itemized?: ItemizedAdmission,
 		onQueued?: () => void,
 	): Promise<void> {
-		const obligations = this.workObligations;
 		// Normalize the legacy untyped content boundary before persisting a retry payload.
 		const deliveryMessage = { ...message, content: message.content ?? [] };
+		if (this._sizesOnlyStartup && options?.triggerTurn === true) {
+			// Size inspection makes no model call (#3483) and owes no work: no ticket, custody record or session file.
+			this._pendingNextTurnMessages.push({ role: "custom", ...deliveryMessage, timestamp: Date.now() } satisfies CustomMessage);
+			deferredTurnClaim?.resolve("finished-without-start");
+			return;
+		}
+		const obligations = this.workObligations;
 		const deliveryId = deliveryIdOf({ ...deliveryMessage, role: "custom", timestamp: Date.now() });
 		// A next-turn message waits for a person's turn, so it is never work the engine owes.
 		const engineTicket =
