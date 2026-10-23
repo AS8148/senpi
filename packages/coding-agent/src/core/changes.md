@@ -11757,3 +11757,21 @@ The summary-model resolver reads session-owned state (settings, model runtime, s
 
 - LOW: the `settings.enabled` early return and the exemption consume in `_checkCompaction` (their order).
 - LOW: the end of the `agent_end` last-assistant block in `_processAgentEvent` (the spent-exemption release before the continuation block).
+
+## 2026-10-23 - Release parked post-compaction input on every exit of the first response (senpi#4036 follow-up)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: one `_releasePostCompactionDeferral()` disarms the post-compaction usage exemption and flushes the deferred steer/follow-up queues; `_consumePostCompactionUsageExemption` and the new `_releaseSpentPostCompactionExemption()` both go through it, so consuming the exemption on the pre-prompt path also releases what it held. At `agent_end` a spent exemption is released right after `_checkCompaction` and before the required-compaction admission re-sample (plus once more at the end of the block for paths that skip it), and the queued-continuation decision is recomputed with `_agentEndAllowsQueuedContinuation` so the run follows the same rules as one without a compaction. When a prompt ends without starting a run (`releaseStart(false)` with joined input), the parked input is flushed before `_drainJoinedInput()`; the exemption stays armed for the drained run's first response.
+
+### Why
+
+- Review of #4038 found three more exits of the same class: with threshold compaction off, an overflow-shaped first response (a `length` stop or over-window usage) returns before the consume, so the run did not continue the released input; the admission re-sample ran before the release and still read the armed exemption's `"threshold"` placeholder, failing `prompt()` with a false `RequiredCompactionError` after an aborted first response; and a first prompt handled without a run (an `input` hook, a command, a stop-hold, an admission rejection) left joined input parked because `_drainJoinedInput` only checks the agent queues.
+
+### Why an extension could not handle it
+
+- The exemption, the deferred queues, the start claim and the continuation decision are private `AgentSession` state decided inside `agent_end` handling and `_prompt`.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `agent_end` last-assistant block in `_processAgentEvent` (release placement, `releasedExemptionAllowsQueuedContinuation`, the continuation condition), `_consumePostCompactionUsageExemption`, and `releaseStart` in `_prompt`.

@@ -3525,8 +3525,26 @@ export class AgentSession {
 	private _consumePostCompactionUsageExemption(message: AssistantMessage): boolean {
 		if (this._postCompactionUsageExemptAssistants.has(message)) return true;
 		if (!this._isPostCompactionUsageExempt(message)) return false;
-		this._skipNextPostCompactionAssistantCheck = false;
+		this._releasePostCompactionDeferral();
 		this._postCompactionUsageExemptAssistants.add(message);
+		return true;
+	}
+
+	/**
+	 * Disarm the post-compaction usage exemption and hand the input parked behind it back to the ordinary queues.
+	 * Every path that spends the exemption goes through here, so none can leave that input parked (#4036).
+	 */
+	private _releasePostCompactionDeferral(): void {
+		this._skipNextPostCompactionAssistantCheck = false;
+		this._flushPostCompactionDeferredMessages();
+	}
+
+	/** The first response after a compaction spends the exemption however it ended; true when it was released here. */
+	private _releaseSpentPostCompactionExemption(message: AssistantMessage): boolean {
+		if (!this._hasPendingPostCompactionUsageExemption(message) || this._isAssistantFromBeforeLatestCompaction(message)) {
+			return false;
+		}
+		this._releasePostCompactionDeferral();
 		return true;
 	}
 
@@ -3804,6 +3822,7 @@ export class AgentSession {
 		let retryContinuationBlocked = false;
 		let retryExhaustionAllowsQueuedContinuation = false;
 		let allowsPostCompactionUsageExemptContinuation = false;
+		let releasedExemptionAllowsQueuedContinuation = false;
 		const userAbortSuppressedQueuedContinuation =
 			event.type === "agent_end" && this._suppressQueuedContinuationAfterUserAbort;
 		if (userAbortSuppressedQueuedContinuation) {
@@ -3962,6 +3981,11 @@ export class AgentSession {
 					if (allowsPostCompactionUsageExemptContinuation) {
 						this._flushPostCompactionDeferredMessages();
 					}
+					// Released before the admission re-sample below, which would otherwise still read the armed
+					// exemption's "threshold" placeholder and fail the prompt with a false RequiredCompactionError.
+					if (this._releaseSpentPostCompactionExemption(msg)) {
+						releasedExemptionAllowsQueuedContinuation = this._agentEndAllowsQueuedContinuation(event.messages);
+					}
 					// _runAutoCompaction() returns false both when recovery was rejected and
 					// when an accepted compaction had no queue to continue. Re-sample after
 					// it settles so only the still-required (rejected) case fails admission.
@@ -3976,12 +4000,12 @@ export class AgentSession {
 				}
 			}
 			// The exemption covers only the first response after a compaction. A run that ends on that response
-			// without consuming it (an aborted or failed response, a blocked retry) has still spent it: hand the
-			// input parked while that run started back to the ordinary queues, whose rules decide when it runs,
-			// instead of holding it until a later overflow compaction (#4036).
-			if (this._hasPendingPostCompactionUsageExemption(msg) && !this._isAssistantFromBeforeLatestCompaction(msg)) {
-				this._skipNextPostCompactionAssistantCheck = false;
-				this._flushPostCompactionDeferredMessages();
+			// without consuming it (a blocked or exhausted retry, a user abort) has still spent it: the input parked
+			// while that run started rejoins the ordinary queues, whose rules then decide when it runs, exactly as
+			// for input queued in a run without a compaction (#4036).
+			if (this._releaseSpentPostCompactionExemption(msg)) {
+				releasedExemptionAllowsQueuedContinuation =
+					!userAbortSuppressedQueuedContinuation && this._agentEndAllowsQueuedContinuation(event.messages);
 			}
 		}
 
@@ -3992,6 +4016,7 @@ export class AgentSession {
 				!retryContinuationBlocked &&
 				(allowsQueuedContinuation ||
 					allowsPostCompactionUsageExemptContinuation ||
+					releasedExemptionAllowsQueuedContinuation ||
 					retryExhaustionAllowsQueuedContinuation) &&
 				this.agent.hasQueuedMessages()
 			) {
@@ -5550,7 +5575,12 @@ export class AgentSession {
 			claim.started = started;
 			this._promptStartPending = false;
 			this._notifyAdmissionIdle();
-			if (!started && claim.joined === true && !this.isStreaming) this._drainJoinedInput();
+			if (!started && claim.joined === true && !this.isStreaming) {
+				// Input that joined while the exemption was armed was parked; the turn it was meant for never ran,
+				// so hand it to the drain. The exemption stays armed for the drained run's first response (#4036).
+				this._flushPostCompactionDeferredMessages();
+				this._drainJoinedInput();
+			}
 		};
 		// A joiner marks the claim it queued into; one that queues after that claim already failed (it awaited in
 		// between) drains its own input, since the claimer has nothing left to release.
