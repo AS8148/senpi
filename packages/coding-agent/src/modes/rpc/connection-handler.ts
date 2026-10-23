@@ -86,6 +86,7 @@ import {
 	RESUME_SESSION_CAPABILITY,
 	RETRY_FALLBACK_COMMAND_CAPABILITY,
 	SESSION_HELD_CAPABILITY,
+	TOOL_BARRIER_CAPABILITY,
 	TASK_PARENT_CAPABILITY,
 } from "./custom-capability.ts";
 import {
@@ -496,10 +497,10 @@ export function createRpcConnectionHandler(
 	};
 
 	// Pending extension UI requests waiting for response
-	const pendingExtensionRequests = new SessionExtensionUiRequests();
+	const pendingExtensionRequests = new SessionExtensionUiRequests(() => session.refreshLifecycle());
 	const grantRequests = new Map<string, string | undefined>();
 	sessionDialogRequests.set(session, pendingExtensionRequests);
-	const questions = new ConnectionQuestionBridge(output);
+	const questions = new ConnectionQuestionBridge(output, () => session.refreshLifecycle());
 
 	let shutdownRequested = false;
 
@@ -1119,6 +1120,7 @@ export function createRpcConnectionHandler(
 						capabilities: [
 							...new Set([
 								"multi_session",
+								"session_lifecycle",
 								AUTO_TITLE_SESSIONS_CAPABILITY,
 								MEDIA_PLACEHOLDERS_CAPABILITY,
 								DURABLE_CLIENT_MESSAGE_ID_CAPABILITY,
@@ -1128,6 +1130,7 @@ export function createRpcConnectionHandler(
 								EVAL_CELLS_CAPABILITY,
 								AUTH_KEY_VERIFY_CAPABILITY,
 								QUEUED_MESSAGE_REVISION_CAPABILITY,
+								TOOL_BARRIER_CAPABILITY,
 								USER_ACTIVITY_CAPABILITY,
 								RESUME_SESSION_CAPABILITY,
 								...(options.retryFallbackCommand ? [RETRY_FALLBACK_COMMAND_CAPABILITY] : []),
@@ -1385,6 +1388,8 @@ export function createRpcConnectionHandler(
 
 			case "get_state":
 				return success(id, "get_state", buildRpcSessionState(session, lastAbortSource));
+			case "request_self_settle":
+				return success(id, "request_self_settle", session.requestSelfSettle());
 
 			case "get_effect_status":
 				return runGetEffectStatus(effectContext(), command);
@@ -1607,6 +1612,9 @@ export function createRpcConnectionHandler(
 					excludeFromContext: command.excludeFromContext,
 				});
 				return success(id, "record_bash_result");
+
+			case "release_tool_barrier":
+				return success(id, "release_tool_barrier", { released: session.releaseToolBarrier(command.barrierId) });
 
 			case "set_label":
 				session.sessionManager.appendLabelChange(command.entryId, command.label);
@@ -2133,6 +2141,8 @@ export function createRpcConnectionHandler(
 				questions,
 				dialogs: pendingExtensionRequests,
 				routed: routingSessionId !== undefined,
+				// An answer is a person's input by its entry point, whatever the connection role.
+				beforeAnswer: () => session.admitHumanAnswer(),
 			});
 			if (reply) output(reply);
 			return;

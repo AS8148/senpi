@@ -24,6 +24,7 @@ import type { ResolvedMessagePath } from "../../core/message-path-resolution.ts"
 import type { PendingInputSnapshot, PendingInputUpdate } from "../../core/pending-input-session.ts";
 import type { SessionEntry, SessionMessageEntry, SessionTreeNode, UsageTotals } from "../../core/session-manager.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
+import type { ToolBarrierSpec } from "../../core/tool-barrier.ts";
 import type { ApiKeyVerification } from "../../core/verify-api-key.ts";
 import type { ClientMessageAdmission } from "./client-admission-record.ts";
 import type { EffectState, EffectStatus } from "./effect-record.ts";
@@ -65,7 +66,11 @@ type RpcSessionCommand =
 			unknownCommandAsText?: boolean;
 			clientMessageId?: string;
 			clientTurnId?: string;
+			/** Arm the tool barrier for the turn this prompt starts (capability `tool_barrier`, senpi#3717). */
+			toolBarrier?: ToolBarrierSpec;
 	  }
+	/** Open the tool barrier armed under `barrierId`; an unknown or cleared id is a successful no-op. */
+	| { id?: string; type: "release_tool_barrier"; barrierId: string }
 	| {
 			id?: string;
 			type: "send_custom_message";
@@ -180,6 +185,7 @@ type RpcSessionCommand =
 
 	// State
 	| { id?: string; type: "get_state" }
+	| { id?: string; type: "request_self_settle" }
 	/**
 	 * The newest receipt of one effect (capability `effect_ledger`). With `sessionId` it answers from the
 	 * loaded session; with `sessionPath` (and no `sessionId`) from that transcript on disk, searching the
@@ -552,6 +558,7 @@ export type RpcCommand =
 			type: "open_session";
 			/** An observational/unattended open; attaching never releases an existing hold. */
 			attended?: false;
+			spawnedBy?: import("../../core/session-lifecycle-types.ts").SpawnedBy;
 			/**
 			 * Attach only to an existing session on this host generation. Requires
 			 * `expected_host_instance`; mismatch returns `owner_changed`, a released
@@ -840,6 +847,7 @@ export interface RpcSessionState {
 	paused: boolean;
 	pausedNoticeCount: number;
 	holds: { kind: HoldKind; key: string; since: string; data?: unknown; sourceCounts: Record<string, number> }[];
+	lifecycle: import("../../core/session-lifecycle-types.ts").SessionLifecycle;
 	model?: Model<any>;
 	/**
 	 * Model switch held until the next compaction, or `null` when no switch is held.
@@ -1132,6 +1140,14 @@ export type RpcResponse =
 	| {
 			id?: string;
 			type: "response";
+			command: "release_tool_barrier";
+			success: true;
+			/** False when no barrier with that id was armed (never armed, already released, ended, or expired). */
+			data: { released: boolean };
+	  }
+	| {
+			id?: string;
+			type: "response";
 			command: "dequeue_message" | "edit_queued_message";
 			success: true;
 			data: RpcQueuedInputChange & Partial<RpcEffectAnswer>;
@@ -1183,6 +1199,13 @@ export type RpcResponse =
 
 	// State
 	| { id?: string; type: "response"; command: "get_state"; success: true; data: RpcSessionState }
+	| {
+			id?: string;
+			type: "response";
+			command: "request_self_settle";
+			success: true;
+			data: import("../../core/session-lifecycle-types.ts").SelfSettleResult;
+	  }
 
 	// Model
 	| {
