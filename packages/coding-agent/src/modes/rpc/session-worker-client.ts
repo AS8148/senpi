@@ -106,14 +106,14 @@ export class SessionWorkerClient {
 		// from the host's records and then receives each change (senpi#3695). Subscribing before the request is
 		// posted keeps a change that lands in between ordered after the snapshot.
 		this.stopLimitMirror();
-		this.stopLimitMirror = subscriptionLimits.subscribe((limits) =>
+		this.stopLimitMirror = subscriptionLimits.subscribeMirror((limits) =>
 			this.post({ type: "subscription_limits", accounts: [limits] }),
 		);
 		const result = await this.request({
 			type: "prepare",
 			configuration,
 			profile,
-			subscriptionLimits: subscriptionLimits.snapshot(),
+			subscriptionLimits: subscriptionLimits.mirrorSnapshot(),
 		});
 		if (result.type !== "prepared") throw new Error("Invalid worker prepare response");
 		return result.sessionPath;

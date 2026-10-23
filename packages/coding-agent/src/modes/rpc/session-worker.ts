@@ -289,7 +289,7 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 }
 
 // A turn in this isolate reports into its own store; the host mirrors it so its clients see it (senpi#3695).
-subscriptionLimits.subscribe((limits) => send({ type: "subscription_limits", limits }));
+subscriptionLimits.subscribeMirror((limits) => send({ type: "subscription_limits", limits }));
 
 port.on("message", (message: HostToSessionWorker) => {
 	void handle(message).catch((cause: unknown) => {
