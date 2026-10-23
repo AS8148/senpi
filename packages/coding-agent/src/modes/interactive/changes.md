@@ -1,3 +1,22 @@
+## 2026-10-18 - Terminal.app's selection hint names Command-R (senpi#3604 follow-up)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/ask-user-async-widget.ts`: `selectionBypassHint()` returns `cmd+r (toggle mouse reporting)` for Terminal.app instead of `option+drag`, and the tmux note names only iTerm2.
+
+### Why
+
+- Apple documents Option-drag in Terminal as rectangular selection and Command-R as the "Allow Mouse Reporting" toggle; it documents no drag modifier that bypasses an app's mouse reporting.
+
+### Why an extension could not handle it
+
+- The widget is the interactive host's own component.
+
+### Expected merge conflict zones
+
+- LOW: the Terminal.app and tmux rows of `selectionBypassHint`.
+
+## 2026-10-20 - Present retained skill security reasons once (senpi#3796)
 ## 2026-10-23 - Product copy punctuation (senpi#4040)
 
 ### What changed
@@ -444,6 +463,24 @@ It uses the core resolver and must run for every transcript message.
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `applyThinkingLevel` and `onThinkingLevelChange`.
+
+## 2026-10-12 - Remove the /llama llama.cpp integration (senpi#3202)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: removes `llamaCppPostLoginGuidance` and the post-login `llama.cpp` branch.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the post-login guidance belongs to the `/llama` feature Q ordered removed.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: an extension cannot remove a branch inside the host's authentication flow.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the removed guidance function and branch.
 
 ## 2026-10-12 - Short owned temp roots contain TUI socket fallbacks (Refs senpi#3064)
 
