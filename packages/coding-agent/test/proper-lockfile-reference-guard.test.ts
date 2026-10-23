@@ -2,12 +2,18 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { type LockSite, lockSiteProblems, referenceViolations } from "./support/lock-site-scan.ts";
+import {
+	type LockSite,
+	lockSiteProblems,
+	referenceViolations,
+	vendoredSelfContainedViolations,
+} from "./support/lock-site-scan.ts";
 
 // Source gates for proper-lockfile (oh-my-openagent#10878):
 // 1. Only core/file-lock.ts may reference the package: an async lock elsewhere gets the default
 //    onCompromised, which throws from a heartbeat timer. The listed lockSync-only files (no
-//    heartbeat) may use their default import only for the sync calls.
+//    heartbeat) may use their default import only for the sync calls, and the listed vendored
+//    self-contained files only for `.lock(` calls that pass their own onCompromised.
 // 2. A holder that lost a live lock must stop. Each lockWithLossHandling( call passes onLost, or
 //    its call site is listed below with a reason, and each write under that lock has its own
 //    assertHeld() right before it.
@@ -24,6 +30,14 @@ const LOCK_SYNC_ONLY = new Set(
 		"core/extensions/builtin/hooks/trust-storage.ts",
 		"package-manager-cli.ts",
 	].map((path) => `${SRC}/${path}`),
+);
+
+// Files vendored byte-for-byte into another repository (oh-my-openagent) may not import senpi internals, so they
+// cannot use core/file-lock.ts. Each must give every proper-lockfile lock call its own onCompromised (the default throws
+// from a heartbeat timer) and refuse the write before each commit rename once the lock was lost; tested in
+// test/file-lock-lost-writes.test.ts and test/suite/regressions/3796-grants-store.test.ts.
+const VENDORED_SELF_CONTAINED = new Set(
+	["core/extensions/builtin/mcp/env-grants-store.ts"].map((path) => `${SRC}/${path}`),
 );
 
 const at = (file: string) => `${SRC}/${file}`;
@@ -188,12 +202,62 @@ describe("proper-lockfile reference guard", () => {
 		});
 	});
 
-	it("no file under packages/*/src references proper-lockfile except the helper and the lockSync-only files", () => {
+	it("no file under packages/*/src references proper-lockfile except the helper, the lockSync-only files and the vendored self-contained files", () => {
 		const offenders = [...repoSources()]
-			.filter(([path]) => path !== HELPER)
+			.filter(([path]) => path !== HELPER && !VENDORED_SELF_CONTAINED.has(path))
 			.map(([path, source]) => ({ path, problems: referenceViolations(source, LOCK_SYNC_ONLY.has(path)) }))
 			.filter(({ problems }) => problems.length > 0);
 		expect(offenders).toEqual([]);
+	});
+
+	describe("vendored self-contained files", () => {
+		const valid = [
+			'import { rename } from "node:fs/promises";',
+			'import lockfile from "proper-lockfile";',
+			"export async function save(path: string): Promise<void> {",
+			"\tconst release = await lockfile.lock(path, { realpath: false, onCompromised: () => {} });",
+			"\tawait rename(path, path);",
+			"\tawait release();",
+			"}",
+			"",
+		].join("\n");
+
+		it("accepts node built-ins plus one default import used only for .lock( calls with their own onCompromised", () => {
+			expect(vendoredSelfContainedViolations(valid)).toEqual([]);
+		});
+
+		it("RED: a destructured lock that keeps the default onCompromised fails", () => {
+			const destructured = `${valid}const { lock } = lockfile;\nexport const again = (path: string) => lock(path);\n`;
+			expect(vendoredSelfContainedViolations(destructured)).toEqual([
+				"uses lockfile other than as lockfile.lock(: lockfile",
+			]);
+		});
+
+		it("RED: a side-effect import of a senpi module fails", () => {
+			expect(vendoredSelfContainedViolations(`import "../../../file-lock.ts";\n${valid}`)).toEqual([
+				"imports ../../../file-lock.ts",
+			]);
+		});
+
+		it("RED: a workspace package import fails", () => {
+			expect(
+				vendoredSelfContainedViolations(`import { brand } from "@earendil-works/pi-telemetry";\n${valid}`),
+			).toEqual(["imports @earendil-works/pi-telemetry"]);
+		});
+
+		it("RED: a second lock call without its own onCompromised fails even when another call has one", () => {
+			const second = `${valid}export const other = (path: string) => lockfile.lock(path, { realpath: false });\n`;
+			expect(vendoredSelfContainedViolations(second)).toEqual(["lockfile.lock( without its own onCompromised"]);
+		});
+
+		it("every listed vendored file passes", () => {
+			const sources = repoSources();
+			for (const path of VENDORED_SELF_CONTAINED) {
+				const source = sources.get(path);
+				expect(source, path).toBeDefined();
+				expect(vendoredSelfContainedViolations(source ?? ""), path).toEqual([]);
+			}
+		});
 	});
 
 	it("every lock call passes onLost or is an allowlisted call site whose writes each assert the lock", () => {

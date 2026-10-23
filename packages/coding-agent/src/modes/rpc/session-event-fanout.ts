@@ -58,6 +58,7 @@ function snapshotPlaceholderLine(record: SnapshotRecord): string {
 }
 
 export class SessionEventFanout {
+	onConnectionClosed?: (id: string) => void;
 	private readonly connections = new Map<string, RegisteredConnection>();
 	private readonly sessionSnapshots = new Map<string, SnapshotRecord[]>();
 	private readonly lifecycleSnapshots = new Map<string, SnapshotRecord>();
@@ -79,6 +80,7 @@ export class SessionEventFanout {
 					this.connectionCapabilities.delete(id);
 					this.connectionSessions.delete(id);
 					this.registeredCapabilityConnections.delete(id);
+					this.onConnectionClosed?.(id);
 				}
 				process.stderr.write(
 					`senpi rpc connection ${id} event queue failed; closing: ${cause instanceof Error ? cause.message : String(cause)}\n`,

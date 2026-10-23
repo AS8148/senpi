@@ -1,3 +1,26 @@
+## 2026-10-20 - Contain project skill links and retain security notices (senpi#3796)
+
+### What changed
+
+- `packages/coding-agent/src/core/package-manager.ts`: record user, project-auto and project-selected provenance when selecting skill roots, before recursion or canonicalization.
+- `packages/coding-agent/src/core/resource-loader.ts`: retain that provenance and collect user-root authority before deduplication and skill reads.
+- `packages/coding-agent/src/core/skill-discovery.ts`: check project directories before descending and stop link cycles by ancestry.
+- `packages/coding-agent/src/core/skills.ts`: retain provenance and the user allowed-set digest on each Skill; project discovery reads use the checked descriptor primitive in the new fork-only `skill-access.ts`.
+- `packages/coding-agent/src/core/diagnostics.ts`: add the `skill-link-blocked` warning category.
+- `packages/coding-agent/src/core/agent-session.ts`: check invocation rereads and own the retained security-notice snapshot across resource extension, reload and runtime MCP notices. Fork-only `security-notices.ts` owns generations; `mcp-grant-presentations.ts` owns bounded grant decisions.
+
+### Why
+
+A project-selected link must not confer user authority on an outside target. The same containment check must apply after discovery, when an invocation or MCP declaration rereads a file. A retained reason lets every newly attached presentation explain a blocked skill.
+
+### Why an extension could not handle it
+
+Root selection, discovery, cached Skill records, invocation expansion and presentation binding precede or bypass extension callbacks.
+
+### Expected merge conflict zones
+
+Skill path collection and metadata in `package-manager.ts` and `resource-loader.ts`; recursive discovery in `skill-discovery.ts` and `skills.ts`; the invocation reread and resource lifecycle in `agent-session.ts`.
+
 ## 2026-10-22 - The session holds the host that can continue it on another computer (senpi#3959)
 
 ### What changed

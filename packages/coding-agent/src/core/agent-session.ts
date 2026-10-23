@@ -14,7 +14,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -292,6 +292,7 @@ import {
 	MANUAL_CONTINUE_CUSTOM_TYPE,
 	MANUAL_CONTINUE_DIRECTIVE,
 } from "./manual-continue.ts";
+import { clearMcpGrantPresentations } from "./mcp-grant-presentations.ts";
 import { registerMemoryReportSession } from "./memory-report/memory-report-registry.ts";
 import {
 	type BashExecutionMessage,
@@ -355,6 +356,7 @@ import {
 import { validateFallbackChains } from "./retry-fallback/validate.ts";
 import { type InheritResult, type ReleaseInheritedResult, RunHolds, type RunRef } from "./run-holds.ts";
 import { startRunResumeTurn } from "./run-resume-turn.ts";
+import { SecurityNoticeSnapshot } from "./security-notices.ts";
 import { isSessionBusySnapshot, type SessionActivitySnapshot, WakeSourceTracker } from "./session-activity.ts";
 import { type ControlEndpointHost, createSessionControlActions } from "./session-control-actions.ts";
 import { computeSessionFailureReport, type SessionFailureReport } from "./session-failure-report.ts";
@@ -379,6 +381,7 @@ import {
 	type SettingsManager,
 	type SettingsSourceSelection,
 } from "./settings-manager.ts";
+import { BlockedSkillLinkError, readSkillFileChecked } from "./skill-access.ts";
 import {
 	formatSkillInvocationPrompt,
 	parseSkillInvocationTokens,
@@ -1285,6 +1288,8 @@ export class AgentSession {
 
 	// Event subscription state
 	private _unsubscribeAgent?: () => void;
+	readonly securityNotices = new SecurityNoticeSnapshot();
+	private _unsubscribeSecurityNotices?: () => void;
 	private _unsubscribeSettingsSource?: () => void;
 	private _unregisterMemoryReport: () => void = () => {};
 	private _eventListeners: AgentSessionEventListener[] = [];
@@ -1635,6 +1640,10 @@ export class AgentSession {
 		this._scopedModels = config.scopedModels ?? [];
 		this._favoriteModels = config.favoriteModels ?? [];
 		this._resourceLoader = config.resourceLoader;
+		this.securityNotices.setResources(this._resourceLoader.getSkills().diagnostics);
+		this._unsubscribeSecurityNotices = this._resourceLoader.onExtensionEvent?.("security_notice", (value) =>
+			this.securityNotices.accept(value),
+		);
 		this._customTools = config.customTools ?? [];
 		this._cwd = config.cwd;
 		const modelRuntime = config.modelRuntime ?? config.modelRegistry?.modelRuntime;
@@ -4433,6 +4442,9 @@ export class AgentSession {
 	 */
 	dispose(): void {
 		this._disposed = true;
+		this._unsubscribeSecurityNotices?.();
+		this.securityNotices.dispose();
+		clearMcpGrantPresentations(this.sessionId);
 		this._engineTurnHold.invalidate();
 		this._deadlineTracker.disarm();
 		for (const dispose of this._toolContextDisposers) dispose();
@@ -6160,7 +6172,7 @@ export class AgentSession {
 			removedTokens.push(token);
 
 			try {
-				const content = readFileSync(skill.filePath, "utf-8");
+				const content = readSkillFileChecked(skill.filePath, skill.provenance, skill.allowedSet);
 				const body = stripFrontmatter(content).trim();
 				skillBlocks.push({
 					name: skill.name,
@@ -6175,6 +6187,9 @@ export class AgentSession {
 					syntax: token.syntax,
 				});
 			} catch (err) {
+				if (err instanceof BlockedSkillLinkError) {
+					this.securityNotices.add({ category: "skill-link-blocked", message: err.message, path: skill.filePath });
+				}
 				this._extensionRunner.emitError({
 					extensionPath: skill.filePath,
 					event: "skill_expansion",
@@ -10994,6 +11009,7 @@ export class AgentSession {
 		};
 
 		this._resourceLoader.extendResources(extensionPaths);
+		this.securityNotices.setResources(this._resourceLoader.getSkills().diagnostics);
 		if (skillPaths.length > 0 || promptPaths.length > 0 || themePaths.length > 0) {
 			this._baseSystemPrompt = this._rebuildSystemPrompt(this._toolDeclarationNames(this.getActiveToolNames()));
 			this.agent.state.systemPrompt = this._baseSystemPrompt;
@@ -11793,6 +11809,7 @@ export class AgentSession {
 			await this._resourceLoader.reload({ settingsAlreadyReloadedFor: this.settingsManager });
 		}
 		time("resources", "reload");
+		this.securityNotices.setResources(this._resourceLoader.getSkills().diagnostics);
 		try {
 			this._buildRuntime({
 				activeToolNames: requestedActiveToolNamesBeforeRebuild,
