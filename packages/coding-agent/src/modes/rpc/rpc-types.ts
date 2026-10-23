@@ -25,6 +25,7 @@ import type { PendingInputSnapshot, PendingInputUpdate } from "../../core/pendin
 import type { SessionEntry, SessionMessageEntry, SessionTreeNode, UsageTotals } from "../../core/session-manager.ts";
 import type { ThinkingLevelSource } from "../../core/session-thinking-memory.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
+import type { ToolBarrierSpec } from "../../core/tool-barrier.ts";
 import type { ApiKeyVerification } from "../../core/verify-api-key.ts";
 import type { ClientMessageAdmission } from "./client-admission-record.ts";
 import type { EffectState, EffectStatus } from "./effect-record.ts";
@@ -66,7 +67,11 @@ type RpcSessionCommand =
 			unknownCommandAsText?: boolean;
 			clientMessageId?: string;
 			clientTurnId?: string;
+			/** Arm the tool barrier for the turn this prompt starts (capability `tool_barrier`, senpi#3717). */
+			toolBarrier?: ToolBarrierSpec;
 	  }
+	/** Open the tool barrier armed under `barrierId`; an unknown or cleared id is a successful no-op. */
+	| { id?: string; type: "release_tool_barrier"; barrierId: string }
 	| {
 			id?: string;
 			type: "send_custom_message";
@@ -1140,6 +1145,14 @@ export type RpcResponse =
 			command: "abort";
 			success: true;
 			data?: RpcEffectAnswer | (Partial<RpcEffectAnswer> & RpcAbortQuiesce);
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "release_tool_barrier";
+			success: true;
+			/** False when no barrier with that id was armed (never armed, already released, ended, or expired). */
+			data: { released: boolean };
 	  }
 	| {
 			id?: string;
