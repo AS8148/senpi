@@ -1,3 +1,84 @@
+## 2026-10-21 - The agent loop stamps each response's timing (senpi#3879)
+
+### What changed
+
+- `packages/agent/src/agent-loop.ts`: `streamAssistantResponse` marks the request just before the stream function is called, feeds the provider's `start` and streamed delta events to a timing recorder, and stamps `timing` on the final message on every terminal path (the former `propagateThinkingTiming` is now `stampTiming`, which also stamps the thinking blocks as before). A failure before the request was issued gets no timing.
+- `packages/agent/src/response-timing.ts` (fork-only): the recorder, plus the exported `reasonedBeforeFirstDelta` / `STREAMED_DELTA_TYPES` rule that the TPS notice (`builtin/tps.ts`) also uses, so both measure one window. Wall-clock fields use `Date.now()`; `generationMs` uses the monotonic clock and the TPS notice's window (first delta to last delta, or from the response start when it reasoned before its first delta, senpi#3393).
+- `packages/agent/src/index.ts`: re-exports `response-timing.ts`.
+
+### Why
+
+- The final message is what the session persists and what `message_end`/`entry_appended` carry to RPC clients, so timing recorded there survives reloads and reaches the desktop turn stats line (desktop #3729).
+- `packages/agent/src/index.ts`: exports the generation-window rule so the TPS notice and the persisted timing share one implementation.
+
+### Why an extension could not handle it
+
+- Extensions see `message_update` events but cannot write a field onto the persisted final message before it is appended.
+- `packages/agent/src/index.ts`: the shared rule has to be importable by the coding-agent's TPS extension, which only reaches the package root.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/agent/src/agent-loop.ts` `streamAssistantResponse`: the stream function call, the `start` case, the delta cases and the four terminal `stampTiming` calls.
+- LOW: `packages/agent/src/index.ts`, one `export *` line after `agent-loop.ts`.
+
+## 2026-10-21 - Harness compaction reads request context (omo#10792)
+
+### What changed
+
+- `packages/agent/src/harness/compaction/compaction.ts`: `calculateContextTokens` prefers the optional request measurement and treats an explicit unknown as unmeasured, allowing transcript estimation.
+
+### Why
+
+- `packages/agent/src/harness/compaction/compaction.ts`: cumulative SDK billing for multiple overlapping requests must not trigger compaction as if it occupied one context window.
+
+### Why an extension could not handle it
+
+- `packages/agent/src/harness/compaction/compaction.ts`: the optional harness is independently callable and owns its context estimator below coding-agent extensions.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/harness/compaction/compaction.ts`, `calculateContextTokens`. Preserve the existing fallback for providers without request measurements.
+
+## 2026-10-21 - A run that failed in the queued-input port is marked local (senpi#3866)
+
+### What changed
+
+- `packages/agent/src/agent.ts`: `takeQueuedMessages` and `createLoopConfig` call the owner's `queuedInputPort` through `localFailurePort` (new `packages/agent/src/local-failure.ts`), which remembers every error the port's `claim`, `release` or `commitConsumption` raised. `handleRunFailure` stamps the failure message of a run that ended on such an error with `failureSource: "local"` (not on an abort).
+
+### Why
+
+- `packages/agent/src/agent.ts`: on Windows the coding-agent's pending-input journal failed its fsync with EPERM inside `commitConsumption`. `handleRunFailure` turned it into an ordinary `stopReason: "error"` message stamped with the current model, and the session took it for a model hard error and walked its whole fallback chain (omo#10781). The port is local bookkeeping, never a provider request, so its failures say so.
+
+### Why an extension could not handle it
+
+- `packages/agent/src/agent.ts`: the failure message is built inside the agent from the thrown error; only the agent knows the error came from the port.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/agent.ts`, the import block, the `port` line in `takeQueuedMessages`, the `queuedInputPort` line in `createLoopConfig`, and the spread list of `handleRunFailure`'s failure message.
+
+## 2026-10-17 - Queued input's consumption is committed before a provider sees it (senpi#3549)
+
+### What changed
+
+- `packages/agent/src/types.ts`: `AgentLoopConfig.commitQueuedConsumption(queue, messages)`, awaited with the drained queued messages before any of them enters the context.
+- `packages/agent/src/agent-loop.ts`: `runLoop` remembers which queue the pending messages were drained from and awaits `commitQueuedConsumption` before inserting them; a rejection restores them to that queue and fails the attempt, so no provider request carries them.
+- `packages/agent/src/agent.ts`: an optional `AgentOptions.queuedInputPort` with `claim` (the native drain runs under the owner's gate), `release` (the native restore, likewise) and `commitConsumption`. The loop's queue polls and restores go through it, and so do the runs started from a queue (`continue()` after an assistant message, `continueWithQueuedMessages()`, the drain after `agent_end`): `takeQueuedMessages` claims, commits, and releases on a failed commit. Without a port every queue path behaves as before.
+
+### Why
+
+- `packages/agent/src/agent-loop.ts`: the coding-agent session journals a pending input's delivery; a message must not reach a provider before that record is durable, or a crash would leave it sent but still pending (desktop #2838).
+
+### Why an extension could not handle it
+
+- `packages/agent/src/agent-loop.ts`: the drain-to-context step happens inside the loop, with no hook between them.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/agent/src/agent-loop.ts`, the queue drains in `runLoop` (each now goes through `drainSteering` / `drainFollowUp`) and the insertion before the next request.
+- MEDIUM: `packages/agent/src/agent.ts` `continue`, `continueWithQueuedMessages`, `runQueuedMessagesAfterAgentEnd` (their drains now go through `runQueuedMessages` / `takeQueuedMessages`) and `createLoopConfig`.
+- LOW: `packages/agent/src/agent.ts` `AgentOptions`; `packages/agent/src/types.ts` `AgentLoopConfig`.
+
 ## 2026-10-17 - A caller's plain abort reason is carried as the turn's message (senpi#3510)
 
 ### What changed
