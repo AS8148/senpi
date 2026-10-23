@@ -8,6 +8,7 @@ import { markMcpConnectionNeedsAuth } from "./health.ts";
 import { type HostMcpRegistry, shareable } from "./host-registry.ts";
 import { configureMcpConnectionLifecycle, disposeMcpConnectionLifecycle } from "./idle.ts";
 import { createMcpLogger } from "./log.ts";
+import { getProjectMcpAuthority } from "./project-skill-policy.ts";
 import { configureMcpReconnect, disposeMcpReconnect } from "./reconnect.ts";
 import type { McpConnectionEntry, McpSessionOptions } from "./service-types.ts";
 import { SharedMcpLease } from "./shared-lease.ts";
@@ -35,6 +36,8 @@ interface SessionConnectionOptions {
 export function createMcpSessionConnection(options: SessionConnectionOptions): McpConnectionEntry {
 	const { session, name, key, registry } = options;
 	const config = options.generation.config;
+	// The project authority is keyed by the declared config object; the generation snapshot is a new object.
+	const projectPolicy = getProjectMcpAuthority(options.declared);
 	const logger = createMcpLogger(name, { logDir: session.logDir });
 	const authPlan = resolveServerAuth({
 		agentDir: session.agentDir,
@@ -55,11 +58,12 @@ export function createMcpSessionConnection(options: SessionConnectionOptions): M
 		rekey,
 	);
 	const connectionOptions = {
+		projectPolicy,
 		credentialIdentity: options.credentialIdentity,
 		credentialsCurrent: options.credentialsCurrent,
 		authProvider: authPlan.provider,
 		config,
-		env: session.env,
+		env: projectPolicy?.initial.env ?? session.env,
 		elicitationUiProvider: options.ui,
 		logger,
 		serverName: name,

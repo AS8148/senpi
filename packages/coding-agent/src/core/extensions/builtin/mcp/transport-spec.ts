@@ -1,6 +1,6 @@
 import { AuthError, ConnectError } from "./errors.ts";
 import type { CreateMcpTransportOptions } from "./transport.ts";
-import type { McpTransportSpec } from "./transport-sdk.ts";
+import type { McpStdioTransportSpec, McpTransportSpec } from "./transport-sdk.ts";
 
 export const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
@@ -8,7 +8,7 @@ export function mcpTransportSpec(options: CreateMcpTransportOptions): McpTranspo
 	return options.config.type === "stdio" ? stdioSpec(options) : httpSpec(options);
 }
 
-function stdioSpec(options: CreateMcpTransportOptions): McpTransportSpec {
+function stdioSpec(options: CreateMcpTransportOptions): McpStdioTransportSpec {
 	const command = options.config.command;
 	if (command === undefined || command.trim().length === 0) {
 		throw new ConnectError(`MCP server ${options.serverName} stdio command is required`, {
@@ -23,6 +23,20 @@ function stdioSpec(options: CreateMcpTransportOptions): McpTransportSpec {
 		cwd: options.config.cwd,
 		env: { ...definedEnv(options.env), ...(options.config.env ?? {}) },
 		kind: "stdio",
+		projectPolicy: options.projectPolicy,
+		resolveBeforeStart:
+			options.resolveProjectPolicy === undefined
+				? undefined
+				: async () => {
+						const current = await options.resolveProjectPolicy?.();
+						if (current === undefined)
+							throw new ConnectError("Project MCP policy is no longer available", {
+								phase: "create",
+								retriable: true,
+								serverName: options.serverName,
+							});
+						return stdioSpec({ ...options, ...current, resolveProjectPolicy: undefined });
+					},
 	};
 }
 

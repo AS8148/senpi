@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- A Kitty key release no longer turns main-screen mouse capture back on after the wheel handed the mouse to the terminal; only a key press or paste does ([#3604](https://github.com/code-yeongyu/senpi/issues/3604)).
+
 ### Removed
 
 ## [2026.10.21-3] - 2026-10-22

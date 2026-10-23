@@ -111,7 +111,7 @@ function declareRemote(raw: RawServer, label: string): { declaration: RawServer;
 }
 
 /** Where `${NAME}` stays literal, a reference is refused before any I/O. */
-function referenceRefusal(name: string, raw: RawServer, label: string): string | undefined {
+export function referenceRefusal(name: string, raw: RawServer, label: string): string | undefined {
 	try {
 		refuseMcpReferences(name, raw);
 		return undefined;

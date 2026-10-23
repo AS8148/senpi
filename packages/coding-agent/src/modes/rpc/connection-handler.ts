@@ -60,6 +60,7 @@ import type {
 	WorkingIndicatorOptions,
 } from "../../core/extensions/index.ts";
 import { ExtensionRpcRequestNotFoundError } from "../../core/extensions/runner.ts";
+import { attachMcpGrantPresentation } from "../../core/mcp-grant-presentations.ts";
 import { describeUsageLimitEntry, describeUsageLimitMessage } from "../../core/retry-fallback/usage-limit.ts";
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { storedKeyHint, verifyApiKey } from "../../core/verify-api-key.ts";
@@ -85,6 +86,7 @@ import {
 	RESUME_SESSION_CAPABILITY,
 	RETRY_FALLBACK_COMMAND_CAPABILITY,
 	SESSION_HELD_CAPABILITY,
+	TOOL_BARRIER_CAPABILITY,
 	TASK_PARENT_CAPABILITY,
 } from "./custom-capability.ts";
 import {
@@ -139,6 +141,7 @@ import {
 	RPC_ERROR_INVALID_ARGUMENT,
 	RPC_ERROR_INVALID_EVAL_CELL_REQUEST,
 	RPC_ERROR_MEDIA_NOT_FOUND,
+	RPC_ERROR_MODEL_NOT_FOUND,
 	RPC_ERROR_RESPONSE_TOO_LARGE,
 	STEER_WHEN_IDLE_CAPABILITY,
 	USER_ACTIVITY_CAPABILITY,
@@ -184,7 +187,15 @@ export interface RpcConnectionOptions {
 	 */
 	clientInfo?: RelocationClientInfo & {
 		setCapabilities: (connectionId: string | undefined, capabilities: readonly string[]) => void;
+		hasCapability?: (connectionId: string, capability: string) => boolean;
 	};
+	bindSecurityPresentation?: (
+		session: AgentSessionRuntime["session"],
+		ui: ExtensionUIContext,
+	) => (() => void) | undefined;
+	/** A worker's internal bridge is gated by its host's actual socket capabilities. */
+	workerSecurityBridge?: boolean;
+	grantDialogSettled?: (id: string) => void;
 	/** Shared hosts dedupe `loaded_surfaces_changed` per connection by inventory digest; absent emits inline. */
 	publishLoadedSurfacesChanged?: (previous: string | undefined, digest: string) => void;
 }
@@ -343,6 +354,10 @@ export function createRpcConnectionHandler(
 	options: RpcConnectionOptions = {},
 ): RpcConnectionHandler {
 	let clientCapabilities = options.capabilities;
+	let unsubscribeSecurityNotices: (() => void) | undefined;
+	let detachGrantPresentation: (() => void) | undefined;
+	let grantPresentationAbort = new AbortController();
+	let securityBoundByHost = false;
 	const connectionRoles = options.connectionRoles ?? new ConnectionRoles();
 	const currentConnectionId = (): string => roleConnection(options.clientInfo?.connectionId());
 	const hasRole = (role: string): boolean => connectionRoles.has(currentConnectionId(), role);
@@ -484,9 +499,10 @@ export function createRpcConnectionHandler(
 	};
 
 	// Pending extension UI requests waiting for response
-	const pendingExtensionRequests = new SessionExtensionUiRequests();
+	const pendingExtensionRequests = new SessionExtensionUiRequests(() => session.refreshLifecycle());
+	const grantRequests = new Map<string, string | undefined>();
 	sessionDialogRequests.set(session, pendingExtensionRequests);
-	const questions = new ConnectionQuestionBridge(output);
+	const questions = new ConnectionQuestionBridge(output, () => session.refreshLifecycle());
 
 	let shutdownRequested = false;
 
@@ -513,6 +529,7 @@ export function createRpcConnectionHandler(
 				if (timeoutId) clearTimeout(timeoutId);
 				opts?.signal?.removeEventListener("abort", onAbort);
 				pendingExtensionRequests.delete(id);
+				if (grantRequests.delete(id)) options.grantDialogSettled?.(id);
 			};
 
 			const onAbort = () => {
@@ -536,9 +553,28 @@ export function createRpcConnectionHandler(
 				},
 				reject,
 			});
+			if (request.grantSelect === true) grantRequests.set(id, options.clientInfo?.connectionId());
 			output({ type: "extension_ui_request", id, ...request } as RpcExtensionUIRequest);
 		});
 	}
+	const selectGrantDialog: ExtensionUIContext["select"] = (title, choices, opts) =>
+		createDialogPromise(
+			opts,
+			undefined,
+			{
+				method: "select",
+				title,
+				options: choices,
+				timeout: opts?.timeout,
+				grantSelect: true,
+			},
+			(response) =>
+				"cancelled" in response && response.cancelled
+					? undefined
+					: "value" in response
+						? response.value
+						: undefined,
+		);
 
 	/**
 	 * Create an extension UI context that uses the RPC protocol.
@@ -593,6 +629,16 @@ export function createRpcConnectionHandler(
 				method: "setStatus",
 				statusKey: key,
 				statusText: text,
+			} as RpcExtensionUIRequest);
+		},
+
+		setSubagentCost(costUsd: number | undefined): void {
+			// Fire and forget, like setStatus: a client that renders the footer cost adds it there.
+			output({
+				type: "extension_ui_request",
+				id: crypto.randomUUID(),
+				method: "setSubagentCost",
+				costUsd: costUsd !== undefined && Number.isFinite(costUsd) && costUsd >= 0 ? costUsd : undefined,
 			} as RpcExtensionUIRequest);
 		},
 
@@ -784,6 +830,21 @@ export function createRpcConnectionHandler(
 		}
 	};
 
+	const refreshGrantPresentation = (): void => {
+		grantPresentationAbort.abort();
+		detachGrantPresentation?.();
+		detachGrantPresentation = undefined;
+		grantPresentationAbort = new AbortController();
+		if (securityBoundByHost) return;
+		if (!clientCapabilities?.includes("grant_select")) return;
+		const signal = grantPresentationAbort.signal;
+		detachGrantPresentation = attachMcpGrantPresentation(session.sessionId, (title, choices, opts) =>
+			selectGrantDialog(title, choices, {
+				...opts,
+				signal: opts?.signal === undefined ? signal : AbortSignal.any([opts.signal, signal]),
+			}),
+		);
+	};
 	const subscribeExtensionEvents = (): void => {
 		unsubscribeExtensionEvents = clientCapabilities?.includes(EXTENSION_EVENTS_CAPABILITY)
 			? session.extensionRunner.onRpcEvent(({ name, data }) => {
@@ -805,10 +866,29 @@ export function createRpcConnectionHandler(
 	};
 
 	const rebindSession = async (deferRefresh = false): Promise<void> => {
+		unsubscribeSecurityNotices?.();
 		unsubscribeLoadedSurfaces?.();
 		unsubscribeExtensionEvents?.();
 		const replacedSession = session !== runtimeHost.session;
 		session = runtimeHost.session;
+		const hostedSecurity = options.bindSecurityPresentation?.(session, {
+			...createExtensionUIContext(),
+			select: selectGrantDialog,
+		});
+		securityBoundByHost = hostedSecurity !== undefined;
+		refreshGrantPresentation();
+		unsubscribeSecurityNotices =
+			hostedSecurity ??
+			session.securityNotices?.subscribe((snapshot) => {
+				for (const notice of snapshot.notices)
+					output({
+						type: "extension_ui_request",
+						id: crypto.randomUUID(),
+						method: "notify",
+						notifyType: "warning",
+						message: notice.message,
+					});
+			});
 		sessionQuestionBridges.set(session, questions);
 		sessionDialogRequests.set(session, pendingExtensionRequests);
 		// Installed before the bind below: extensions register their control endpoint on session_start.
@@ -1052,6 +1132,7 @@ export function createRpcConnectionHandler(
 						capabilities: [
 							...new Set([
 								"multi_session",
+								"session_lifecycle",
 								AUTO_TITLE_SESSIONS_CAPABILITY,
 								MEDIA_PLACEHOLDERS_CAPABILITY,
 								DURABLE_CLIENT_MESSAGE_ID_CAPABILITY,
@@ -1061,6 +1142,7 @@ export function createRpcConnectionHandler(
 								EVAL_CELLS_CAPABILITY,
 								AUTH_KEY_VERIFY_CAPABILITY,
 								QUEUED_MESSAGE_REVISION_CAPABILITY,
+								TOOL_BARRIER_CAPABILITY,
 								USER_ACTIVITY_CAPABILITY,
 								RESUME_SESSION_CAPABILITY,
 								...(options.retryFallbackCommand ? [RETRY_FALLBACK_COMMAND_CAPABILITY] : []),
@@ -1301,7 +1383,8 @@ export function createRpcConnectionHandler(
 			// State
 			// =================================================================
 
-			case "set_client_info":
+			case "set_client_info": {
+				const wasGrantCapable = clientCapabilities?.includes("grant_select") === true;
 				if (command.capabilities !== undefined) {
 					if (!connectionRoles.declare(currentConnectionId(), command.capabilities))
 						return error(id, "set_client_info", CONNECTION_ROLE_FIXED);
@@ -1311,10 +1394,14 @@ export function createRpcConnectionHandler(
 						options.clientInfo.setCapabilities(options.clientInfo.connectionId(), command.capabilities);
 					}
 				}
+				if (wasGrantCapable !== (clientCapabilities?.includes("grant_select") === true)) refreshGrantPresentation();
 				return success(id, "set_client_info");
+			}
 
 			case "get_state":
 				return success(id, "get_state", buildRpcSessionState(session, lastAbortSource));
+			case "request_self_settle":
+				return success(id, "request_self_settle", session.requestSelfSettle());
 
 			case "get_effect_status":
 				return runGetEffectStatus(effectContext(), command);
@@ -1369,6 +1456,28 @@ export function createRpcConnectionHandler(
 				return success(id, "get_available_thinking_levels", {
 					levels: session.getAvailableThinkingLevels(),
 				});
+
+			case "get_model_thinking_level": {
+				if (typeof command.provider !== "string" || typeof command.modelId !== "string") {
+					return error(
+						id,
+						"get_model_thinking_level",
+						"get_model_thinking_level requires 'provider' and 'modelId'.",
+						RPC_ERROR_INVALID_ARGUMENT,
+					);
+				}
+				const models = await session.modelRegistry.getAvailable();
+				const model = models.find((m) => m.provider === command.provider && m.id === command.modelId);
+				if (!model) {
+					return error(
+						id,
+						"get_model_thinking_level",
+						`Model not found: ${command.provider}/${command.modelId}`,
+						RPC_ERROR_MODEL_NOT_FOUND,
+					);
+				}
+				return success(id, "get_model_thinking_level", session.getThinkingLevelForModel(model));
+			}
 
 			// =================================================================
 			// Fast mode
@@ -1537,6 +1646,9 @@ export function createRpcConnectionHandler(
 					excludeFromContext: command.excludeFromContext,
 				});
 				return success(id, "record_bash_result");
+
+			case "release_tool_barrier":
+				return success(id, "release_tool_barrier", { released: session.releaseToolBarrier(command.barrierId) });
 
 			case "set_label":
 				session.sessionManager.appendLabelChange(command.entryId, command.label);
@@ -2046,10 +2158,25 @@ export function createRpcConnectionHandler(
 			"type" in parsed &&
 			parsed.type === "extension_ui_response"
 		) {
+			if (
+				!options.workerSecurityBridge &&
+				"id" in parsed &&
+				typeof parsed.id === "string" &&
+				grantRequests.has(parsed.id)
+			) {
+				const sender = options.clientInfo?.connectionId();
+				const capable =
+					sender === undefined
+						? clientCapabilities?.includes("grant_select") === true
+						: options.clientInfo?.hasCapability?.(sender, "grant_select") === true;
+				if (grantRequests.get(parsed.id) !== sender || !capable) return;
+			}
 			const reply = settleExtensionUiResponse(parsed as RpcExtensionUIResponse, {
 				questions,
 				dialogs: pendingExtensionRequests,
 				routed: routingSessionId !== undefined,
+				// An answer is a person's input by its entry point, whatever the connection role.
+				beforeAnswer: () => session.admitHumanAnswer(),
 			});
 			if (reply) output(reply);
 			return;
@@ -2094,6 +2221,9 @@ export function createRpcConnectionHandler(
 				)
 			: () => {};
 	const dispose = async (disposeOptions: { readonly processExit?: boolean } = {}): Promise<void> => {
+		grantPresentationAbort.abort();
+		detachGrantPresentation?.();
+		unsubscribeSecurityNotices?.();
 		stopLimitEvents();
 		sessionControl?.dispose();
 		sessionControl = undefined;

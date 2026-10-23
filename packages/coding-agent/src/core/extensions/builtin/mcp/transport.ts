@@ -6,6 +6,7 @@ import type { McpElicitationUiProvider } from "./elicitation.ts";
 import { ConnectError, TimeoutError } from "./errors.ts";
 import type { McpLogger } from "./log.ts";
 import { delay, reapProcessTree } from "./process-tree.ts";
+import type { ProjectMcpMaterialization } from "./project-skill-policy.ts";
 import type { McpMaterializedTransport, McpTransportSpec } from "./transport-sdk.ts";
 import { errorMessage, mcpTransportSpec } from "./transport-spec.ts";
 import { type McpAsyncErrorSink, safeInterval, safeTimer } from "./wrap.ts";
@@ -30,6 +31,8 @@ export type McpTransportConnection = {
 };
 
 export type CreateMcpTransportOptions = {
+	readonly projectPolicy?: boolean;
+	readonly resolveProjectPolicy?: () => Promise<ProjectMcpMaterialization>;
 	readonly serverName: string;
 	readonly config: McpServerConfig;
 	readonly logger: McpLogger;

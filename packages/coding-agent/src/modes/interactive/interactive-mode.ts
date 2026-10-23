@@ -125,6 +125,7 @@ import { buildHighReasoningWarning } from "../../core/high-reasoning-warning.ts"
 import { configureHttpDispatcher, formatHttpIdleTimeoutMs } from "../../core/http-dispatcher.ts";
 import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.ts";
 import { isManualContinueSubmission } from "../../core/manual-continue.ts";
+import { attachMcpGrantPresentation } from "../../core/mcp-grant-presentations.ts";
 import { createCompactionSummaryMessage, createCustomMessage } from "../../core/messages.ts";
 import type { ModelChangeOrigin } from "../../core/model-change-origin.ts";
 import {
@@ -346,12 +347,6 @@ export { createInteractiveTui, createInteractiveTuiReference } from "./tui-rende
 /** Interface for components that can be expanded/collapsed */
 interface Expandable {
 	setExpanded(expanded: boolean): void;
-}
-
-function llamaCppPostLoginGuidance(actionLabel: string, loadedModelCount: number): string {
-	return loadedModelCount === 0
-		? `${actionLabel}. No llama.cpp models are loaded. Use /llama to load a model, then /model to select it.`
-		: `${actionLabel}. Use /model to select a loaded llama.cpp model, or /llama to manage models.`;
 }
 
 interface ActiveEditor extends EditorComponent {
@@ -906,6 +901,8 @@ export interface InteractiveModeOptions {
 }
 
 type QuestionOverlayOptions = ExtensionUIDialogOptions & {
+	/** A `user-message` answer is reported by its own delivery, so the overlay must not report it again. */
+	deliver?: "tool-result" | "user-message";
 	onProgress?: (draft: QuestionDraft) => void;
 	getDeadlineAtMs?: () => number;
 	initialDraft?: QuestionDraft;
@@ -2691,7 +2688,9 @@ export class InteractiveMode {
 				);
 			}
 
-			const skillDiagnostics = skillsResult.diagnostics.filter((diagnostic) => diagnostic.category !== "size-limit");
+			const skillDiagnostics = skillsResult.diagnostics.filter(
+				(diagnostic) => diagnostic.category !== "size-limit" && diagnostic.category !== "skill-link-blocked",
+			);
 			if (skillDiagnostics.length > 0) {
 				addDiagnosticNotice("Skill conflicts", skillDiagnostics);
 			}
@@ -2731,10 +2730,20 @@ export class InteractiveMode {
 	/**
 	 * Initialize the extension system with TUI-based UI context.
 	 */
+	private unsubscribeSecurityNotices?: () => void;
+	private detachMcpGrantPresentation?: () => void;
 	private async bindCurrentSessionExtensions(): Promise<void> {
 		await this.sessionControlHost?.disposeActive();
 		this.session.setControlEndpointHost?.(this.sessionControlHost);
 		const uiContext = this.createExtensionUIContext();
+		this.detachMcpGrantPresentation?.();
+		this.detachMcpGrantPresentation = attachMcpGrantPresentation(this.session.sessionId, (title, choices, opts) =>
+			uiContext.select(title, choices, opts),
+		);
+		this.unsubscribeSecurityNotices?.();
+		this.unsubscribeSecurityNotices = this.session.securityNotices?.subscribe((snapshot) => {
+			for (const notice of snapshot.notices) uiContext.notify(notice.message, "warning");
+		});
 		await this.session.bindExtensions({
 			uiContext,
 			mode: "tui",
@@ -3705,6 +3714,10 @@ export class InteractiveMode {
 			notify: (message, type) => this.showExtensionNotify(message, type),
 			onTerminalInput: (handler) => this.addExtensionTerminalInputListener(handler),
 			setStatus: (key, text) => this.setExtensionStatus(key, text),
+			setSubagentCost: (costUsd) => {
+				this.footerDataProvider.setSubagentCost(costUsd);
+				this.ui.requestRender();
+			},
 			setWorkingMessage: (message) => {
 				this.workingMessage = message;
 				this.updateWorkingIndicatorMessage();
@@ -3781,6 +3794,7 @@ export class InteractiveMode {
 				title,
 				options,
 				(option) => {
+					this.session.admitHumanAnswer();
 					opts?.signal?.removeEventListener("abort", onAbort);
 					this.hideExtensionSelector();
 					resolve(option);
@@ -3861,6 +3875,7 @@ export class InteractiveMode {
 				title,
 				placeholder,
 				(value) => {
+					this.session.admitHumanAnswer();
 					opts?.signal?.removeEventListener("abort", onAbort);
 					this.hideExtensionInput();
 					resolve(value);
@@ -3904,6 +3919,7 @@ export class InteractiveMode {
 				title,
 				prefill,
 				(value) => {
+					this.session.admitHumanAnswer();
 					this.hideExtensionEditor();
 					resolve(value);
 				},
@@ -3943,6 +3959,8 @@ export class InteractiveMode {
 			const previousWorkingMessage = this.workingMessage;
 			const finish = (response: QuestionResponse) => {
 				if (settled) return;
+				if (request.waitForAnswer && opts?.deliver !== "user-message" && response.resolvedBy === "local_ui")
+					this.session.admitHumanAnswer();
 				settled = true;
 				opts?.signal?.removeEventListener("abort", onAbort);
 				this.workingMessage = previousWorkingMessage;
@@ -5853,7 +5871,7 @@ export class InteractiveMode {
 					tone: "warning",
 					why: event.chainConfigured
 						? "Retrying on your configured fallback chain."
-						: "No fallback chain configured — set one with /fallback.",
+						: "No fallback chain configured: set one with /fallback.",
 				});
 				break;
 
@@ -9188,10 +9206,7 @@ export class InteractiveMode {
 			if (isUnknownModel(previousModel)) {
 				const availableModels = this.session.modelRuntime.getAvailableSnapshot();
 				const providerModels = availableModels.filter((model) => model.provider === providerId);
-				// Matches LLAMA_PROVIDER_ID from extensions/llama/provider.ts; kept inline to avoid coupling interactive mode to the built-in extension.
-				if (providerId === "llama.cpp") {
-					selectionError = llamaCppPostLoginGuidance(actionLabel, providerModels.length);
-				} else if (!hasDefaultModelProvider(providerId)) {
+				if (!hasDefaultModelProvider(providerId)) {
 					selectionError = `${actionLabel}, but no default model is configured for provider "${providerId}". Use /model to select a model.`;
 				} else if (providerModels.length === 0) {
 					selectionError = `${actionLabel}, but no models are available for that provider. Use /model to select a model.`;
@@ -9880,11 +9895,11 @@ export class InteractiveMode {
 
 			if (stats.cost > 0 || cacheWaste.missedTokens > 0) {
 				info += `\n${theme.bold("Cost")}\n`;
-				info += `${theme.fg("dim", "Total:")} $${stats.cost.toFixed(3)}`;
+				info += `${theme.fg("dim", "Total:")} $${stats.cost.toFixed(3)}${stats.costUnknown ? theme.fg("dim", " + unpriced turns") : ""}`;
 				// A single entry repeats the total, unless it names a model other than the selected one.
 				if (usageBreakdown.length > 1 || usageBreakdown[0]?.key !== selectedModelKey) {
 					for (const entry of usageBreakdown) {
-						info += `\n  ${theme.fg("dim", `${entry.key}:`)} $${entry.cost.toFixed(3)} ${theme.fg("dim", `(${formatTokens(entry.tokens)} tokens)`)}`;
+						info += `\n  ${theme.fg("dim", `${entry.key}:`)} $${entry.cost.toFixed(3)}${entry.costUnknown ? theme.fg("dim", " + unpriced turns") : ""} ${theme.fg("dim", `(${formatTokens(entry.tokens)} tokens)`)}`;
 					}
 				}
 				if (cacheWaste.missedTokens > 0) {

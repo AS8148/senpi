@@ -1,3 +1,21 @@
+## 2026-10-20 - Share the MCP environment grants store (senpi#3796)
+
+### What changed
+
+- `packages/coding-agent/package.json`: exports `./mcp-env-grants`, a self-contained atomic grants writer, snapshot reader and observer. The module documents the schema and exports the configured-directory resolver and declaration digest.
+
+### Why
+
+Native and legacy engines must read and revoke the same names-only grants with the same canonical identity hash.
+
+### Why an extension could not handle it
+
+The shared module must ship as a public engine package entry without importing the native runtime.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/package.json`: the exports map.
+
 ## 2026-10-22 - The package manifest declares reference-object support (senpi#3858)
 
 ### What changed
