@@ -250,6 +250,66 @@ describe("proper-lockfile reference guard", () => {
 			expect(vendoredSelfContainedViolations(second)).toEqual(["lockfile.lock( without its own onCompromised"]);
 		});
 
+		// #4035: every import form keeps its own row, so weakening one branch fails here.
+		it.each([
+			[
+				"a require of a senpi file",
+				'const x = require("../../../file-lock.ts");',
+				["imports ../../../file-lock.ts"],
+			],
+			["a re-export", 'export { lock } from "../../../file-lock.ts";', ["imports ../../../file-lock.ts"]],
+			["a literal dynamic import", 'await import("../../../file-lock.ts");', ["imports ../../../file-lock.ts"]],
+			["a computed dynamic import", "await import(name);", ["dynamic import or require of a computed module"]],
+		])("rejects %s", (_name, extra, expected) => {
+			expect(vendoredSelfContainedViolations(`${extra}\n${valid}`)).toEqual(expected);
+		});
+
+		// #4035: ways around the scanner that it missed before.
+		it.each([
+			[
+				"a template import whose substitution holds a quote",
+				// oxlint-disable-next-line eslint/no-template-curly-in-string -- scanner input: the source text of a template import.
+				'await import(`${"../../../file-lock.ts"}`);',
+				["dynamic import or require of a computed module"],
+			],
+			[
+				"createRequire from node:module",
+				'import { createRequire } from "node:module";\ncreateRequire(import.meta.url)("../x.ts");',
+				["imports node:module", "loads modules through createRequire"],
+			],
+			[
+				"process.getBuiltinModule without an import",
+				'process.getBuiltinModule("node:module");',
+				["loads modules through getBuiltinModule"],
+			],
+		])("RED: %s fails", (_name, extra, expected) => {
+			expect(vendoredSelfContainedViolations(`${extra}\n${valid}`)).toEqual(expected);
+		});
+
+		it.each([
+			["onCompromised: undefined", "onCompromised: undefined", "lockfile.lock( without its own onCompromised"],
+			["onCompromised: null", "onCompromised: null", "lockfile.lock( without its own onCompromised"],
+			[
+				"a spread after onCompromised",
+				"onCompromised: () => {}, ...options",
+				"lockfile.lock( spreads options that can replace onCompromised",
+			],
+		])("RED: a lock call with %s fails", (_name, options, expected) => {
+			const call = `export const other = (path: string, options: object) => lockfile.lock(path, { ${options} });\n`;
+			expect(vendoredSelfContainedViolations(`${valid}${call}`)).toEqual([expected]);
+		});
+
+		it("RED: a parenthesis inside a string does not end the lock arguments early", () => {
+			const call =
+				'export const other = (path: string) => lockfile.lock(path, { tag: ")", onCompromised: () => {} });\n';
+			expect(vendoredSelfContainedViolations(`${valid}${call}`)).toEqual([]);
+		});
+
+		it("RED: a /* inside a regular expression does not hide the code after it", () => {
+			const hidden = 'const pattern = /a/*x/;\nimport("../../../file-lock.ts");\nconst end = 1; // */\n';
+			expect(vendoredSelfContainedViolations(`${hidden}${valid}`)).toEqual(["imports ../../../file-lock.ts"]);
+		});
+
 		it("every listed vendored file passes", () => {
 			const sources = repoSources();
 			for (const path of VENDORED_SELF_CONTAINED) {
