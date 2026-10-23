@@ -64,3 +64,23 @@ test("four shares of the recorded CI workload leave substantial test-step headro
 	assert.ok(predicted < 16 * 60, `equal-share estimate ${predicted / 60} minutes leaves too little headroom`);
 	console.log(`worst recorded equal-share estimate: ${(predicted / 60).toFixed(2)} minutes per shard`);
 });
+
+// senpi#4131: dependency downloads must not consume a shard's entire job budget.
+test("every CI apt step has a short budget and the bounded mirror fallback", () => {
+	const aptJobs = ["check", "test-coding-agent", "grep-native-contract", "test-workspaces"];
+	for (const name of aptJobs) {
+		const step = workflow.jobs[name].steps.find((entry) => entry.name === "Install system dependencies");
+		assert.equal(step["timeout-minutes"], 5, name);
+		assert.match(step.run, /bash scripts\/install-ci-system-deps\.sh /, name);
+		assert.doesNotMatch(step.run, /apt-get/, name);
+	}
+	const installer = readFileSync(new URL("./install-ci-system-deps.sh", import.meta.url), "utf8");
+	assert.match(installer, /if ! download 60s "\$@"; then/);
+	assert.match(installer, /azure\\\.archive\\\.ubuntu\\\.com\|archive\.ubuntu\.com/);
+	assert.match(installer, /download 150s "\$@"/);
+	assert.match(installer, /Acquire::Retries=0/);
+	assert.match(installer, /Acquire::http::Timeout=15/);
+	assert.match(installer, /APT::Update::Error-Mode=any/);
+	assert.match(installer, /--download-only/);
+	assert.match(installer, /timeout --kill-after=5s 60s apt-get --no-download/);
+});
