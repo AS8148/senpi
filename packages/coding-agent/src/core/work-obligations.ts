@@ -5,11 +5,14 @@ import { type CustodyPayload, custodyIsOpen, readWorkCustody, type WorkCustodyRe
 /** Why a delivery ticket may not take a new delivery now (senpi#3864); "admitted" when it may. */
 export type TicketAdmission = "admitted" | "unknown" | "closed" | "consumed" | "delivering";
 
+/** Why a send's ticket was refused: its admission, or a re-send whose items differ from the queued message's. */
+export type DeliveryTicketRefusal = Exclude<TicketAdmission, "admitted"> | "different_items";
+
 /** A send whose delivery ticket was refused before anything was written. */
 export class DeliveryTicketRefused extends Error {
 	readonly ticketId: string;
-	readonly reason: Exclude<TicketAdmission, "admitted">;
-	constructor(ticketId: string, reason: Exclude<TicketAdmission, "admitted">) {
+	readonly reason: DeliveryTicketRefusal;
+	constructor(ticketId: string, reason: DeliveryTicketRefusal) {
 		super(`Delivery ticket ${ticketId} was refused: ${reason}`);
 		this.name = "DeliveryTicketRefused";
 		this.ticketId = ticketId;

@@ -2115,7 +2115,9 @@ pi.sendMessage({
   closed, consumed or in-delivery ticket rejects the promise with `DeliveryTicketRefused` and no item is
   kept, so a retry never duplicates notices. A held batch hands the ticket to its notices; a batch a user
   abort (Esc or Stop) drops during admission keeps it when it is decided again; a re-send while the
-  ticket's message is still queued answers that message's receipts.
+  ticket's message is still queued answers that message's receipts when it carries the same items, and is
+  rejected with `DeliveryTicketRefused` (`reason: "different_items"`) when it carries other items; the queued
+  message is written as first sent.
 - `items` - Make the message an itemized batch: one `{ itemId, producer, runRef?, content?, details? }` per wake it
   carries. The call then returns a promise of one receipt per item, `{ itemId, entryId, disposition, noticeId? }`.
   Admission is atomic: if a pause applies to the batch or to any item (a Stop, a parent's run pause, an unattended

@@ -1294,6 +1294,11 @@ function promptKind(options: PromptOptions | undefined): HumanInputAdmittedEvent
 /** senpi#3864: custody key prefix of a delivery ticket the engine opened itself (a producer keys its own). */
 const ENGINE_DELIVERY_KEY_PREFIX = "delivery:";
 
+/** Whether two batches carry the same items, in any order. */
+function sameItems(a: readonly string[], b: readonly string[]): boolean {
+	return a.length === b.length && a.every((id) => b.includes(id));
+}
+
 export class AgentSession {
 	readonly agent: Agent;
 	readonly sessionManager: SessionManager;
@@ -6770,6 +6775,7 @@ export class AgentSession {
 			droppedByAbort: () => {
 				this._admitItemized(message, options).then(outcome.resolve, outcome.reject);
 			},
+			itemIds: items.map((item) => item.itemId),
 		}).catch(outcome.reject);
 		return outcome.promise;
 	}
@@ -6794,7 +6800,15 @@ export class AgentSession {
 							first.droppedByAbort();
 							joined.droppedByAbort();
 						},
+						itemIds: first.itemIds,
 					},
+		);
+	}
+
+	/** The queued message that already carries this ticket, if any. */
+	private _queuedTicketCarrier(ticket: string): AgentMessage | undefined {
+		return [...this.agent.peekQueuedMessages({ all: true }), ...this._pendingNextTurnMessages].find(
+			(queued) => queued.role === "custom" && messageTicket(queued) === ticket,
 		);
 	}
 
@@ -6860,7 +6874,16 @@ export class AgentSession {
 			if (admission === "unknown") throw new CustodyViolation(ticket);
 			return;
 		}
-		if (ticket) obligations.queue(ticket, { message: deliveryMessage, deliverAs: options?.deliverAs });
+		// A re-send of a queued ticket must not replace the payload that queued message will write (senpi#4106).
+		const queuedCarrier = ticket === undefined ? undefined : this._queuedTicketCarrier(ticket);
+		const carrierItems = queuedCarrier && this._persistWatchers.get(queuedCarrier)?.itemIds;
+		if (ticket !== undefined && itemized?.itemIds && carrierItems && !sameItems(carrierItems, itemized.itemIds)) {
+			deferredTurnClaim?.resolve("finished-without-start");
+			itemized.failed(new DeliveryTicketRefused(ticket, "different_items"));
+			return;
+		}
+		if (ticket && queuedCarrier === undefined)
+			obligations.queue(ticket, { message: deliveryMessage, deliverAs: options?.deliverAs });
 		onQueued?.();
 		// A batch a user abort (Esc or Stop) dropped is decided again only after this delivery releases its ticket.
 		let readmit = false;
@@ -6873,6 +6896,7 @@ export class AgentSession {
 						droppedByAbort: () => {
 							readmit = true;
 						},
+						itemIds: itemized.itemIds,
 					};
 		try {
 			const startsTurn = options?.triggerTurn === true && !this.isStreaming;
@@ -6963,12 +6987,7 @@ export class AgentSession {
 		itemized?: ItemizedAdmission,
 	): Promise<void> {
 		const userAbortGeneration = this._userAbortGeneration;
-		const queuedCarrier =
-			options?.ticket === undefined
-				? undefined
-				: [...this.agent.peekQueuedMessages({ all: true }), ...this._pendingNextTurnMessages].find(
-						(queued) => queued.role === "custom" && messageTicket(queued) === options.ticket,
-					);
+		const queuedCarrier = options?.ticket === undefined ? undefined : this._queuedTicketCarrier(options.ticket);
 		if (queuedCarrier !== undefined) {
 			// The ticket's message is already queued: this send's receipts settle when that message is written.
 			if (itemized !== undefined) this._joinPersistWatcher(queuedCarrier, itemized);

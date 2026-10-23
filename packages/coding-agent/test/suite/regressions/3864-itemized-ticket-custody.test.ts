@@ -1,6 +1,6 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
-import type { SendMessageItem } from "../../../src/core/extensions/types.ts";
+import type { SendMessageItem, SendMessageReceipt } from "../../../src/core/extensions/types.ts";
 import { DeliveryTicketRefused } from "../../../src/core/work-obligations.ts";
 import { type ResumeFixture, resumeFixture, settle, settlesWithin } from "./issue-3811-resume-support.ts";
 
@@ -16,12 +16,12 @@ async function textFixture(): Promise<ResumeFixture> {
 	return fixture;
 }
 
-function sendWithTicket(fixture: ResumeFixture, ticket: string) {
+function sendWithTicket(fixture: ResumeFixture, ticket: string, batch: readonly SendMessageItem[] = items) {
 	return fixture
 		.api()
 		.sendMessage(
-			{ customType: WAKE, content: "Task A finished\n\nTask B finished", display: false },
-			{ triggerTurn: true, deliverAs: "followUp", items, ticket },
+			{ customType: WAKE, content: batch.map((item) => item.content).join("\n\n"), display: false },
+			{ triggerTurn: true, deliverAs: "followUp", items: batch, ticket },
 		);
 }
 
@@ -218,6 +218,39 @@ describe("itemized sendMessage with a delivery ticket", () => {
 		expect(againReceipts?.map((receipt) => receipt.entryId)).toEqual(
 			firstReceipts?.map((receipt) => receipt.entryId),
 		);
+		expect(ticketOpen(fixture, ticket)).toBe(false);
+	});
+
+	it("refuses a re-send of a queued ticket that carries different items, and keeps the queued message as sent", async () => {
+		// Given a running turn and a ticketed batch queued as a follow-up behind it (senpi#4106)
+		const fixture = await resumeFixture();
+		fixtures.push(fixture);
+		const ticket = openTicket(fixture, "result:batch");
+		const toolStarted = fixture.toolStarted();
+		const running = fixture.h.session.prompt("start");
+		await toolStarted;
+		const ended = deliveryEnded(fixture, ticket);
+		const first = sendWithTicket(fixture, ticket);
+		await ended;
+
+		// When the producer re-sends the ticket with an item the queued message does not carry
+		const other: readonly SendMessageItem[] = [{ itemId: "c", producer: "task", content: "Task C finished" }];
+		const again = Promise.resolve(sendWithTicket(fixture, ticket, other)).then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		fixture.releaseTool();
+		await running;
+		await settle(fixture);
+
+		// Then no receipt claims item c was written, and the written entry is the first send's batch
+		const [firstReceipts, refused] = await settlesWithin(Promise.all([first, again]), "itemized receipts");
+		expect(refused).toBeInstanceOf(DeliveryTicketRefused);
+		expect(firstReceipts?.map((receipt: SendMessageReceipt) => receipt.itemId)).toEqual(["a", "b"]);
+		const written = fixture.h.session.messages.flatMap((message) =>
+			message.role === "custom" && message.customType === WAKE ? [message.content] : [],
+		);
+		expect(written).toEqual(["Task A finished\n\nTask B finished"]);
 		expect(ticketOpen(fixture, ticket)).toBe(false);
 	});
 });
