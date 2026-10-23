@@ -11758,6 +11758,26 @@ The summary-model resolver reads session-owned state (settings, model runtime, s
 - LOW: the `settings.enabled` early return and the exemption consume in `_checkCompaction` (their order).
 - LOW: the end of the `agent_end` last-assistant block in `_processAgentEvent` (the spent-exemption release before the continuation block).
 
+## 2026-10-23 - Warn when a queued input outlives a completed run (senpi#4036)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: a `QueuedInputAges` tracker (`queued-input-age.ts`, fork-only) records each queued input's queue time and the number of runs started by then (`_recordQueuedInput`, the `agent_start` event). When a run settles (`_emitAgentSettled`), every input still queued that a whole run started after and settled without delivering is logged once as `queued_input_outlived_run` with `queuedId`, `mode`, `ageMs` and `source`.
+- `packages/coding-agent/src/core/session-log.ts`: `queuedId` and `ageMs` join the session-log data allowlist so the warning carries them.
+- `packages/coding-agent/src/core/agent-session.ts` (review fold): a turn is counted once where `_promptAgent` marks the run active (not on every `agent_start`, which retries and internal continuations also emit), and the check is skipped when the settling turn ended in `error` or `aborted`, whose queued input the agent core deliberately keeps for the next prompt. The user `message_start` dequeue also finds image-only input (no text to match) by the queued message object (`_queuedMessages`), so a delivered image-only steer or follow-up leaves `_steeringMessages` / `_followUpMessages` and its queue record (senpi#3592).
+
+### Why
+
+- senpi#4036 lost steered messages for about 18.5 hours with nothing in the logs naming them. The root cause is fixed separately (#4038); this is the backstop the issue asks for: any input that outlives a turn is named with its age instead of waiting silently.
+
+### Why an extension could not handle it
+
+- The queued-input records, their queue time and run boundaries are private `AgentSession` state; extensions see queue updates but not when an input was queued relative to runs, and cannot log through the session logger's allowlist.
+
+### Expected merge conflict zones
+
+- LOW: `_recordQueuedInput`, the run-active edge in `_promptAgent`, the user `message_start` dequeue in `_processAgentEvent`, and the start of `_emitAgentSettled` in `agent-session.ts`; the `ALLOWED_DATA_KEY` pattern in `session-log.ts`.
+
 ## 2026-10-23 - Release parked post-compaction input on every exit of the first response (senpi#4036 follow-up)
 
 ### What changed
