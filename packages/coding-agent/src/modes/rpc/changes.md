@@ -1,3 +1,24 @@
+## 2026-10-23 - A pruned dead pointer leaves the live generation owned (senpi#1911)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-generations.ts`: `pruneDeadGenerations` removes the pointer only while it is still the file it read. The pointer is renamed aside, compared with what was read, and linked back when a registration replaced it in between (unless an even newer one landed). `PruneOptions._test.beforePointerRemoval` is the deterministic seam for that interleaving.
+- `packages/coding-agent/src/modes/rpc/host-pointer-election.ts` (new): `electPointer` gives an absent pointer back to the ONE generation whose record proves it (public socket path, own instance id, live pid with the recorded start time, no stop intent or drain request). The pointer is created with `link()`, so it never replaces a pointer another writer created. Zero or several candidates leave no pointer.
+- `packages/coding-agent/src/modes/rpc/host-status.ts`: `host status` elects after its prune (`status --all` only reports) and reports `pointer: { state: "current" | "elected" | "missing", instanceId, candidates }`.
+- `packages/coding-agent/src/modes/rpc/host-stop.ts`, `packages/coding-agent/src/modes/rpc/host-handoff.ts`: `host stop` and `host handoff` elect under the ensure lock before they read the registration.
+
+### Why
+
+A prune dropped the pointer that named a dead generation but never re-pointed it at the live generation still serving the socket, and it removed the pointer it had read earlier without looking again, so a concurrent registration lost its pointer too. Every reader then saw no owner: `host status` reported `current: false`, and `host stop` / `host handoff` refused `unknown_owner` while a healthy host held sessions.
+
+### Why an extension could not handle it
+
+The daemon directory, its pointer and the generation records are RPC host internals that no extension API reaches.
+
+### Expected merge conflict zones
+
+- LOW: the end of `pruneDeadGenerations` in `host-generations.ts`; one call before `readHostRegistration` in `stopHostLocked` and `handoffHostLocked`; the prune line and report literal in `probeHostStatus`.
+
 ## 2026-10-20 - `get_state` reports where the thinking level came from and the session's per-model levels; `get_model_thinking_level` reads one model's level (senpi#3819)
 
 ### What changed
