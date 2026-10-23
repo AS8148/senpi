@@ -5715,6 +5715,7 @@ export class AgentSession {
 		let messages: AgentMessage[] | undefined;
 		let titlePrompt: string | undefined;
 		let consumedNextTurnMessages: CustomMessage[] | undefined;
+		let consumedReleaseExtras: (CustomMessage | Promise<CustomMessage>)[] | undefined;
 		let inputId: string | undefined;
 		let pendingCommandInvocation: CommandInvocation | undefined;
 		const emitPendingCommandInvocation = (): void => {
@@ -5984,10 +5985,18 @@ export class AgentSession {
 			if (environmentContext) messages.push(environmentContext);
 
 			// Add user message
-			const releaseExtras = this._releaseExtras.slice();
+			// Claim before awaiting: another idle prompt or capture owns only the entries left behind.
+			const releaseExtras = this._releaseExtras.splice(0);
+			consumedReleaseExtras = releaseExtras;
 			const turnInput = this._engineTurnInput.messages();
-			if (releaseExtras.length > 0) messages.push(...(await Promise.all(releaseExtras)));
-			this._releaseExtras.splice(0, releaseExtras.length);
+			if (releaseExtras.length > 0) {
+				const prepared = await Promise.allSettled(releaseExtras);
+				// A rejected preparation is dropped, not restored to fail every later prompt.
+				consumedReleaseExtras = releaseExtras.filter((_, index) => prepared[index]?.status === "fulfilled");
+				const rejected = prepared.find((result) => result.status === "rejected");
+				if (rejected !== undefined) throw rejected.reason;
+				messages.push(...prepared.flatMap((result) => (result.status === "fulfilled" ? [result.value] : [])));
+			}
 			messages.push(...turnInput);
 			const userContent: (TextContent | ImageContent)[] = userTextContent(expandedText, options?.textBlocks);
 			if (currentImages) {
@@ -6042,6 +6051,8 @@ export class AgentSession {
 			await emitInputDisposition("started");
 		} catch (error) {
 			await emitInputDisposition("rejected");
+			if (consumedReleaseExtras !== undefined)
+				this._releaseExtras.unshift(...consumedReleaseExtras.filter((extra) => !this._releaseExtras.includes(extra)));
 			if (consumedNextTurnMessages && consumedNextTurnMessages.length > 0) {
 				this._pendingNextTurnMessages = [...consumedNextTurnMessages, ...this._pendingNextTurnMessages];
 			}
@@ -6973,11 +6984,19 @@ export class AgentSession {
 	/** The resume turn both resume paths start; held input and notices are consumed only if no newer Stop aborted it. */
 	private async _startResumeTurn(): ReturnType<typeof startRunResumeTurn> {
 		const generation = this._userAbortGeneration;
-		const { run, continues } = this._takeHeldCommands();
-		await run;
+		let continues: ReadonlySet<string> = new Set();
 		const prepared = new Map<string, HeldInput>();
 		let heldInputs: HeldInput[];
 		for (;;) {
+			// A parent's pause can arrive during a read. Leave all input in custody for its run Resume.
+			if (this._runHolds.inheritedOwner() !== undefined)
+				return { turnId: undefined, delivered: Promise.resolve(false) };
+			const commands = this._takeHeldCommands();
+			continues = commands.continues;
+			if (commands.run !== undefined) {
+				await commands.run;
+				continue;
+			}
 			const pending = this._heldInputs.pending().filter((input) => !continues.has(input.inputId));
 			const unread = pending.filter((input) => prepared.get(input.inputId)?.entryId !== input.entryId);
 			if (unread.length === 0) {

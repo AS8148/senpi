@@ -1,3 +1,21 @@
+## 2026-10-23 - Claim asynchronous release input before preparation (senpi#4047)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: claim release extras before awaiting skill preparation; failed admission restores only non-rejected entries by identity, without removing a newer capture. Resume preparation rechecks held commands and manual continues on each pass, and a new inherited hold keeps every input in custody until its parent's run Resume.
+
+### Why
+
+Concurrent idle prompts could send the same extra twice and remove a newer capture. A rejected extra poisoned later prompts. A parent pause arriving during a resume skill read let that older resume consume a newly held command or continue as literal text.
+
+### Why an extension could not handle it
+
+The session owns the release array, prompt admission and held-input settlement before extension delivery.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: prompt message preparation and rejection cleanup, and the shared resume preparation loop.
+
 ## 2026-10-20 - Contain project skill links and retain security notices (senpi#3796)
 
 ### What changed

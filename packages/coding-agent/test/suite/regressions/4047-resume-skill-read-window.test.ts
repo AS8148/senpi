@@ -37,6 +37,7 @@ describe("senpi#4047 input held during a resume skill read", () => {
 	afterEach(async () => {
 		releaseRead?.();
 		await harness?.session.abort();
+		vi.restoreAllMocks();
 		harness?.cleanup();
 		if (root !== undefined) rmSync(root, { recursive: true, force: true });
 	});
@@ -157,11 +158,19 @@ describe("senpi#4047 input held during a resume skill read", () => {
 			expect(commands).toEqual([]);
 			expect(session.pausedHeldInputCount).toBe(2);
 			if (!("childSeq" in latePause)) throw new Error("late run pause refused");
+			const consumed = Promise.withResolvers<void>();
+			const held: HeldInputs = Reflect.get(session, "_heldInputs");
+			const consume = held.consume.bind(held);
+			vi.spyOn(held, "consume").mockImplementation((inputIds) => {
+				consume(inputIds);
+				if (inputIds.includes("skill-input")) consumed.resolve();
+			});
 			await session.resumeForRun({
 				parentSessionId: "new-parent",
 				parentPauseSeq: 2,
 				childSeqCutoff: latePause.childSeq,
 			});
+			await consumed.promise;
 			await session.waitForIdle();
 		}
 
