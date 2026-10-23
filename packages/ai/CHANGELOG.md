@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- OpenGateway catalog generation and runtime refresh accept the public price envelope and legacy flat tables, reject unsupported currency or billing units, and retain the last good catalog when a feed fails or produces no usable models, including strict generation ([#4067](https://github.com/code-yeongyu/senpi/issues/4067)).
+
 ### Removed
 
 ## [2026.10.21-3] - 2026-10-22

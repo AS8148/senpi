@@ -181,10 +181,12 @@ async function fetchJson(url: string, label: string): Promise<unknown> {
 	return response.json();
 }
 
-/** The committed catalog: what a failed non-strict fetch keeps shipping instead of an empty provider. */
+/** The committed catalog: what a failed fetch keeps shipping instead of an empty provider. */
 export function loadLastGoodOpenGatewayModels(path: string = LAST_GOOD_CATALOG_PATH): Model<any>[] {
 	const grouped = JSON.parse(readFileSync(path, "utf8")) as Record<string, Record<string, Model<any>>>;
-	return Object.values(grouped).flatMap((entries) => Object.values(entries));
+	const models = Object.values(grouped).flatMap((entries) => Object.values(entries));
+	if (models.length === 0) throw new Error("Last good OpenGateway catalog has no models");
+	return models;
 }
 
 export async function fetchOpenGatewayModels(
@@ -201,11 +203,13 @@ export async function fetchOpenGatewayModels(
 		const models = listing
 			.filter(isServableChatModel)
 			.flatMap((item) => buildModel(item, modelsDev, prices, recordReasoning) ?? []);
+		if (models.length === 0) throw new Error("OpenGateway refresh has no servable enriched chat models");
 		console.log(`Fetched ${models.length} chat-capable models from OpenGateway`);
 		return models;
 	} catch (error) {
 		console.error("Failed to fetch OpenGateway models:", error);
-		if (options.strict) throw error;
+		// OpenGateway alone must not abort a full catalog run, including --strict generation.
+		// The refusal stays visible above; only a successful nonempty refresh replaces the catalog.
 		const lastGood = loadLastGoodOpenGatewayModels(options.lastGoodCatalogPath);
 		console.warn(`Keeping the last good OpenGateway catalog (${lastGood.length} models)`);
 		return lastGood;

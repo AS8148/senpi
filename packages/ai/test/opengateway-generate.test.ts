@@ -277,10 +277,15 @@ describe("fetchOpenGatewayModels", () => {
 			expect(models.map((model) => model.id)).toEqual(["moonshotai/kimi-k3"]);
 		});
 
-		it("fails a strict regeneration so the outage is visible", async () => {
+		it("keeps the last good catalog even during strict regeneration", async () => {
 			vi.stubGlobal("fetch", async () => ({ ok: false, status: 503 }) as Response);
 
-			await expect(fetchOpenGatewayModels(() => {}, { strict: true })).rejects.toThrow(/returned 503/);
+			const models = await fetchOpenGatewayModels(() => {}, {
+				strict: true,
+				lastGoodCatalogPath: lastGoodCatalog(),
+			});
+
+			expect(models.map((model) => model.id)).toEqual(["moonshotai/kimi-k3"]);
 		});
 	});
 });

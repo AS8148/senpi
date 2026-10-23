@@ -126,8 +126,14 @@ function parseTiers(axisPrices: unknown): ModelCostTier[] {
 
 export function parseOpenGatewayPriceTable(value: unknown): OpenGatewayPriceTable {
 	if (!isRecord(value)) throw new Error("OpenGateway price table is not an object");
+	if ("currency" in value && value.currency !== "USD")
+		throw new Error(`OpenGateway price table has unsupported currency: ${String(value.currency)} (expected USD)`);
+	if ("unit" in value && value.unit !== "USD_PER_TOKEN")
+		throw new Error(`OpenGateway price table has unsupported unit: ${String(value.unit)} (expected USD_PER_TOKEN)`);
+	const entries = "entries" in value ? value.entries : value;
+	if (!isRecord(entries)) throw new Error("OpenGateway price table entries is not an object");
 	const routes: PriceRoute[] = [];
-	for (const entry of Object.values(value)) {
+	for (const entry of Object.values(entries)) {
 		if (!isRecord(entry) || typeof entry.provider !== "string") continue;
 		if (typeof entry.modelOwner !== "string" || typeof entry.modelName !== "string") continue;
 		const pricing = isRecord(entry.pricing) && isRecord(entry.pricing.current) ? entry.pricing.current : undefined;
