@@ -30,6 +30,17 @@ function providerInputTokens(context: TranscriptContext): number {
 	return Math.ceil(chars / 4);
 }
 
+function omittedHistoryCount(context: TranscriptContext): number | undefined {
+	const last = context.messages.at(-1);
+	if (last?.role !== "user") return undefined;
+	const text =
+		typeof last.content === "string"
+			? last.content
+			: last.content.map((block) => ("text" in block ? block.text : "")).join("");
+	const match = /<omitted-history messages="(\d+)" \/>/.exec(text);
+	return match === null ? undefined : Number(match[1]);
+}
+
 function isSummaryRequest(context: TranscriptContext): boolean {
 	const last = context.messages.at(-1);
 	if (last?.role !== "user") return false;
@@ -79,6 +90,7 @@ describe("#4032 compaction when the summarizer input itself would overflow the w
 		expect(seeded).toBeLessThan(CONTEXT_WINDOW);
 		expect(seeded + MAX_TOKENS).toBeGreaterThan(CONTEXT_WINDOW);
 		const summaryRequests: number[] = [];
+		const acceptedSummaryOmissions: Array<number | undefined> = [];
 		harness.faux.setResponses(
 			Array.from({ length: 12 }, () => (context: TranscriptContext, options: { maxTokens?: number } | undefined) => {
 				const requested = providerInputTokens(context) + (options?.maxTokens ?? MAX_TOKENS);
@@ -87,6 +99,7 @@ describe("#4032 compaction when the summarizer input itself would overflow the w
 				if (requested > CONTEXT_WINDOW) {
 					return fauxOverflowError("faux", "Your input exceeds the context window of this model.");
 				}
+				if (summary) acceptedSummaryOmissions.push(omittedHistoryCount(context));
 				return fauxAssistantMessage(summary ? "summary of the long session" : "continued after compaction");
 			}),
 		);
@@ -97,6 +110,8 @@ describe("#4032 compaction when the summarizer input itself would overflow the w
 		// then
 		expect(summaryRequests.length).toBeGreaterThan(0);
 		expect(summaryRequests.every((requested) => requested <= CONTEXT_WINDOW)).toBe(true);
+		expect(acceptedSummaryOmissions.length).toBeGreaterThan(0);
+		expect(acceptedSummaryOmissions.every((omitted) => omitted !== undefined && omitted > 0)).toBe(true);
 		expect(harness.eventsOfType("compaction_end").some((event) => event.result !== undefined)).toBe(true);
 		const lastAssistant = [...harness.session.messages].reverse().find((message) => message.role === "assistant");
 		expect(lastAssistant).toMatchObject({ stopReason: "stop" });
