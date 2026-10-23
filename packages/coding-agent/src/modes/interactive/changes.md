@@ -78,6 +78,42 @@ Startup warning filtering, `bindSession`, and extension presentation cleanup.
 - The settings selector block in `interactive-mode.ts`.
 
 
+## 2026-10-22 - Count a resumed TUI answer once (senpi#3864 review)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the question overlay reports a local answer as human input only when the answer is a tool result; a resumed question's `user-message` answer is reported by its delivery.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: a resumed blocking question answered in the TUI was counted twice.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the overlay is interactive mode itself.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `showQuestionOverlay` finish.
+
+## 2026-10-22 - Admit TUI answers as human input for the lifecycle (senpi#3864)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: admits a synchronous question/dialog answer through `admitHumanAnswer` before resuming work.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: a person answering must invalidate self-settle and count as human input.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the TUI answer path is interactive mode itself.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: question/dialog answer handling.
+
 ## 2026-10-21 - The resume picker's search finds a session by the id its file name carries (oh-my-openagent#7471)
 
 ### What changed
@@ -3204,3 +3240,20 @@ The shared markdown theme and the tool card's renderer are interactive-mode inte
 ### Expected merge conflict zones
 
 - LOW: `sharedMarkdownTheme()` in `theme.ts`; the theme imports and default arguments of the seven message components; `releaseContent()` in `tool-execution-renderer.ts`.
+## 2026-10-21 - Admit synchronous human replies before resuming work (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/modes/interactive/interactive-mode.ts`: accepted selector, input and editor replies, and synchronous questions explicitly answered by the local UI, report through the existing human-input admission hook before their promises resolve.
+
+### Why
+
+`packages/coding-agent/src/modes/interactive/interactive-mode.ts`: an answer may resume the current turn without admitting a new turn, but must still invalidate a standing agent self-settle intent.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the UI adapter owns the accepted local-user callback; automatic timeout/abort paths must not be classified as human.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/modes/interactive/interactive-mode.ts`: extension selector/input/editor callbacks and blocking question completion. Preserve the existing asynchronous question-input admission path.
