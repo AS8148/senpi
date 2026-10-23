@@ -183,6 +183,15 @@ export class WorkerSessionRegistry {
 		} catch (cause) {
 			entry.state = "quarantined";
 			worker.quarantine();
+			// A worker that dies before commit (for example one that cannot load its modules) also closes the
+			// claims and grants the open is still waiting on, so those steps report `session_closing`. Name why
+			// the worker died instead, as the commit check above does (#4037, #1953).
+			if (
+				workerFailure !== undefined &&
+				cause instanceof RpcSessionRegistryError &&
+				cause.code === "session_closing"
+			)
+				throw new RpcSessionRegistryError("open_failed", workerFailure.replace(/^open_failed: /, ""));
 			throw cause;
 		}
 	}

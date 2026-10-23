@@ -1,3 +1,21 @@
+## 2026-10-23 - A worker that dies before commit is reported as open_failed (senpi#4037)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: when an open fails with `session_closing` after its worker reported a failure, `openSession` rethrows `open_failed` with the worker's error.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: a worker that dies before commit (for example one that cannot load its modules) closes the claims and grants the open is still awaiting, so those steps threw `session_closing`; #1953 had fixed this only for the post-commit check, and the real error reached stderr alone.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: the worker lifecycle and the open's error mapping live in the rpc host, which extensions do not reach.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/worker-session-registry.ts`: the `catch` at the end of `openSession`.
+
 ## 2026-10-20 - Bind security notices and MCP grant dialogs to actual connections (senpi#3796)
 
 ### What changed
