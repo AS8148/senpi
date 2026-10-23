@@ -193,17 +193,17 @@ jobs:
             echo "- Status: ${{ job.status }}"
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # The coding-agent vitest suite dominates CI wall time (748+ files; measured
-  # 1364s single-fork, ~60% per-file import cost). Sharding it across three
+  # The coding-agent vitest suite dominates CI wall time (2467+ files; three
+  # shards reached 27-minute jobs). Sharding it across four
   # runners divides that wall while each shard keeps the CI fork-pool settings
   # from vitest.config.ts (forks pool, capped workers) that prevent the historical
   # subprocess-suite pool hang.
   test-coding-agent:
-    name: Test (coding-agent ${{ matrix.shard }}/3)
+    name: Test (coding-agent ${{ matrix.shard }}/4)
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -241,7 +241,7 @@ jobs:
 
       - name: Test shard
         timeout-minutes: 25
-        run: node ../../scripts/run-tests.mjs vitest run --shard=${{ matrix.shard }}/3
+        run: node ../../scripts/run-tests.mjs vitest run --shard=${{ matrix.shard }}/4
         working-directory: packages/coding-agent
 
       - name: Workflow summary
@@ -249,7 +249,7 @@ jobs:
         shell: bash
         run: |
           {
-            echo "## Test (coding-agent ${{ matrix.shard }}/3)"
+            echo "## Test (coding-agent ${{ matrix.shard }}/4)"
             echo "- Status: ${{ job.status }}"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Check OS temp after tests
