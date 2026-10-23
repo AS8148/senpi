@@ -1,3 +1,24 @@
+## 2026-10-23 - A pruned dead pointer leaves the live generation owned (senpi#1911)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-generations.ts`: `pruneDeadGenerations` removes the pointer only while it is still the file it read. The pointer is renamed aside, compared with what was read, and linked back when a registration replaced it in between (unless an even newer one landed). `PruneOptions._test.beforePointerRemoval` is the deterministic seam for that interleaving.
+- `packages/coding-agent/src/modes/rpc/host-pointer-election.ts` (new): `electPointer` gives an absent pointer back to the ONE generation whose record proves it (public socket path, own instance id, live pid with the recorded start time, no stop intent or drain request). The pointer is created with `link()`, so it never replaces a pointer another writer created. Zero or several candidates leave no pointer.
+- `packages/coding-agent/src/modes/rpc/host-status.ts`: `host status` elects after its prune (`status --all` only reports) and reports `pointer: { state: "current" | "elected" | "missing", instanceId, candidates }`.
+- `packages/coding-agent/src/modes/rpc/host-stop.ts`, `packages/coding-agent/src/modes/rpc/host-handoff.ts`: `host stop` and `host handoff` elect under the ensure lock before they read the registration.
+
+### Why
+
+A prune dropped the pointer that named a dead generation but never re-pointed it at the live generation still serving the socket, and it removed the pointer it had read earlier without looking again, so a concurrent registration lost its pointer too. Every reader then saw no owner: `host status` reported `current: false`, and `host stop` / `host handoff` refused `unknown_owner` while a healthy host held sessions.
+
+### Why an extension could not handle it
+
+The daemon directory, its pointer and the generation records are RPC host internals that no extension API reaches.
+
+### Expected merge conflict zones
+
+- LOW: the end of `pruneDeadGenerations` in `host-generations.ts`; one call before `readHostRegistration` in `stopHostLocked` and `handoffHostLocked`; the prune line and report literal in `probeHostStatus`.
+
 ## 2026-10-20 - `get_state` reports where the thinking level came from and the session's per-model levels; `get_model_thinking_level` reads one model's level (senpi#3819)
 
 ### What changed
@@ -7593,3 +7614,23 @@ The classic capability list in `connection-handler.ts`.
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the `login_api_key` case.
+
+## 2026-10-23 - Tell the agent when scheduled relocation is cancelled (senpi#4078)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-relocation.ts`: all three cancellation paths consume the schedule through `dropScheduled` and deliver one non-triggering `session_relocation` custom session message, with `details: { status: "dropped", reason, moveId, target }`. The reason is `disconnected`, `aborted`, or `withdrawn`. Successful scheduling and session disposal retain their existing behavior.
+- `packages/coding-agent/src/modes/rpc/session-relocation.ts`: a user abort records `aborted` on the schedule at `agent_end` and delivers it at `agent_settled`, after streaming ends. The notice is appended and persisted without another prompt, rather than parked in the pending custom-message queue. The schedule is still consumed before sending, so repeated aborts or detach notifications cannot duplicate it.
+- `packages/coding-agent/src/modes/rpc/session-relocation.ts`: a detach between those two events leaves the recorded abort for settlement rather than consuming it as a disconnect and parking its notice again. The regression covers immediate close both with and without that race.
+
+### Why
+
+- The accepted tool result had already returned, so silently clearing the schedule left the agent expecting to continue on another computer. A session message corrects its context without starting a turn or resuming an aborted run.
+
+### Why an extension could not handle it
+
+- The RPC relocation controller owns connection detachment, user-abort cancellation, and the release-time capability re-check.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/session-relocation.ts`, cancellation branches and the `RpcSessionRelocationDeps.session` method set.

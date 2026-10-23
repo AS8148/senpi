@@ -10,6 +10,20 @@
 
 ### Fixed
 
+### Removed
+
+## [2026.10.23-1] - 2026-10-23
+
+### Breaking Changes
+
+- Removed the `llama-cpp-classify` API (`api/llama-cpp-classify.ts` and its `.lazy.ts` wrapper), which existed only to serve the removed `/llama` llama.cpp extension, and dropped `"llama-cpp-classify"` from `KnownClassifierApi` ([#3202](https://github.com/code-yeongyu/senpi/issues/3202), requested by @code-yeongyu).
+
+### Added
+
+### Changed
+
+### Fixed
+
 - `calculateCost` reports `Usage.costUnknown` for a model whose `ModelCost.unknown` is set instead of a $0 cost ([#3844](https://github.com/code-yeongyu/senpi/issues/3844)).
 - OpenGateway catalog generation and runtime refresh accept the public price envelope and legacy flat tables, and reject unsupported currency or billing units. Runtime refresh and release regeneration keep the last good catalog when the feed fails or yields no usable models; the dedicated strict OpenGateway refresh still fails on it ([#4067](https://github.com/code-yeongyu/senpi/issues/4067)).
 
