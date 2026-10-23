@@ -169,6 +169,7 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 	switch (message.type) {
 		case "prepare": {
 			if (prepared) throw new Error("Session worker already prepared");
+			for (const limits of message.subscriptionLimits) subscriptionLimits.adopt(limits);
 			// Resolved here, not on the host loop, which never inspects caller paths (senpi#2898).
 			const profile = resolveMovedProfile(message.profile);
 			const path =

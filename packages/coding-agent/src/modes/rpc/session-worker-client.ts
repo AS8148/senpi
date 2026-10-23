@@ -70,7 +70,7 @@ export class SessionWorkerClient {
 	private readonly listeners = new Set<() => void>();
 	private cancelUiPending = false;
 	private terminalFailure?: string;
-	private readonly stopLimitMirror: () => void;
+	private stopLimitMirror: () => void = () => {};
 
 	private readonly callbacks: SessionWorkerCallbacks;
 
@@ -98,17 +98,23 @@ export class SessionWorkerClient {
 			});
 		});
 		this.worker.on("message", (message: SessionWorkerToHost) => this.receive(message));
-		// The host's poller feeds only the host's store; the isolate reads its own copy, so the two mirror
-		// each other: everything the host holds now, then each change (senpi#3695).
-		this.post({ type: "subscription_limits", accounts: subscriptionLimits.snapshot() });
-		this.stopLimitMirror = subscriptionLimits.subscribe((limits) =>
-			this.post({ type: "subscription_limits", accounts: [limits] }),
-		);
 		this.worker.on("error", (error: unknown) => this.fail(error instanceof Error ? error.message : String(error)));
 	}
 
 	async prepare(configuration: CliRuntimeConfiguration, profile: RpcSessionLaunchProfile): Promise<string> {
-		const result = await this.request({ type: "prepare", configuration, profile });
+		// The host's poller feeds only the host's store and the isolate reads its own copy, so the isolate starts
+		// from the host's records and then receives each change (senpi#3695). Subscribing before the request is
+		// posted keeps a change that lands in between ordered after the snapshot.
+		this.stopLimitMirror();
+		this.stopLimitMirror = subscriptionLimits.subscribe((limits) =>
+			this.post({ type: "subscription_limits", accounts: [limits] }),
+		);
+		const result = await this.request({
+			type: "prepare",
+			configuration,
+			profile,
+			subscriptionLimits: subscriptionLimits.snapshot(),
+		});
 		if (result.type !== "prepared") throw new Error("Invalid worker prepare response");
 		return result.sessionPath;
 	}

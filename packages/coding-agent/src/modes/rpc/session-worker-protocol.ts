@@ -37,7 +37,14 @@ export interface WorkerSnapshot {
 }
 
 export type HostToSessionWorker =
-	| { type: "prepare"; request: number; configuration: CliRuntimeConfiguration; profile: RpcSessionLaunchProfile }
+	| {
+			type: "prepare";
+			request: number;
+			configuration: CliRuntimeConfiguration;
+			profile: RpcSessionLaunchProfile;
+			/** The host's subscription limit records when the isolate starts (senpi#3695). */
+			subscriptionLimits: readonly AccountLimits[];
+	  }
 	| { type: "commit"; request: number }
 	| {
 			type: "bind";
@@ -54,7 +61,7 @@ export type HostToSessionWorker =
 	| { type: "permission_preset"; request: number; preset: string }
 	| { type: "cancel_ui" }
 	| { type: "cancel_grant"; id: string }
-	/** The host's subscription limit records, mirrored into the isolate's store (senpi#3695). */
+	/** A change to the host's subscription limit records after `prepare`, mirrored into the isolate (senpi#3695). */
 	| { type: "subscription_limits"; accounts: readonly AccountLimits[] }
 	| { type: "close" };
 
