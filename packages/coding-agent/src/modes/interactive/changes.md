@@ -1,3 +1,21 @@
+## 2026-10-20 - Present retained skill security reasons once (senpi#3796)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` subscribes to the session's retained security notices on bind and sends them through the TUI notify path. It excludes `skill-link-blocked` from the ordinary startup warning box and registers the TUI's select presentation for bounded project MCP grants. Rebind and disposal detach the previous presentation.
+
+### Why
+
+Startup, invocation, reload and MCP sidecar failures need the same visible reason without a duplicate startup box.
+
+### Why an extension could not handle it
+
+TUI startup diagnostics and presentation binding are host code.
+
+### Expected merge conflict zones
+
+Startup warning filtering, `bindSession`, and extension presentation cleanup.
+
 ## 2026-10-23 - /answer skip reports partial answers once (sisyphuslabs/omo-desktop-app#4042)
 
 ### What changed

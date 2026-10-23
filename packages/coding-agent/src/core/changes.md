@@ -1,3 +1,26 @@
+## 2026-10-20 - Contain project skill links and retain security notices (senpi#3796)
+
+### What changed
+
+- `packages/coding-agent/src/core/package-manager.ts`: record user, project-auto and project-selected provenance when selecting skill roots, before recursion or canonicalization.
+- `packages/coding-agent/src/core/resource-loader.ts`: retain that provenance and collect user-root authority before deduplication and skill reads.
+- `packages/coding-agent/src/core/skill-discovery.ts`: check project directories before descending and stop link cycles by ancestry.
+- `packages/coding-agent/src/core/skills.ts`: retain provenance and the user allowed-set digest on each Skill; project discovery reads use the checked descriptor primitive in the new fork-only `skill-access.ts`.
+- `packages/coding-agent/src/core/diagnostics.ts`: add the `skill-link-blocked` warning category.
+- `packages/coding-agent/src/core/agent-session.ts`: check invocation rereads and own the retained security-notice snapshot across resource extension, reload and runtime MCP notices. Fork-only `security-notices.ts` owns generations; `mcp-grant-presentations.ts` owns bounded grant decisions.
+
+### Why
+
+A project-selected link must not confer user authority on an outside target. The same containment check must apply after discovery, when an invocation or MCP declaration rereads a file. A retained reason lets every newly attached presentation explain a blocked skill.
+
+### Why an extension could not handle it
+
+Root selection, discovery, cached Skill records, invocation expansion and presentation binding precede or bypass extension callbacks.
+
+### Expected merge conflict zones
+
+Skill path collection and metadata in `package-manager.ts` and `resource-loader.ts`; recursive discovery in `skill-discovery.ts` and `skills.ts`; the invocation reread and resource lifecycle in `agent-session.ts`.
+
 ## 2026-10-22 - The session holds the host that can continue it on another computer (senpi#3959)
 
 ### What changed
@@ -11736,3 +11759,43 @@ The summary-model resolver reads session-owned state (settings, model runtime, s
 
 - `packages/coding-agent/src/core/auth-storage.ts`: `acquireLockAsync` and the import block.
 - `packages/coding-agent/src/core/settings-manager.ts`: `acquireLockWithRetry`, the rename step of `withPathLockAsync`, and the import block.
+
+## 2026-10-23 - Release input queued while the first post-compaction prompt starts, with threshold compaction off (senpi#4036)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_checkCompaction` consumes the post-compaction usage exemption (`_consumePostCompactionUsageExemption`) before the `settings.enabled` early return instead of after it. The overflow case is still decided first, and the function still returns `false` when threshold compaction is off.
+- `packages/coding-agent/src/core/agent-session.ts`: the `agent_end` handling of a run's last assistant disarms an exemption that run's first post-compaction response left unconsumed (an aborted or failed response, a blocked retry) and hands the parked input back to the ordinary steer/follow-up queues, whose continuation rules then decide when it runs, exactly as for input queued in a run without a compaction.
+
+### Why
+
+- After any accepted compaction, input steered while the next prompt is starting is parked in `_postCompactionDeferredSteeringMessages` / `_postCompactionDeferredFollowUpMessages`, and the drain classifier keeps queued continuations retained while the exemption is armed. Only consuming the exemption on the first ordinary response releases them (flush + scheduled continuation). With threshold compaction switched off (sessions whose compaction is owned by the compaction extension, or `compaction.enabled: false`), `_checkCompaction` returned before the consume, so the exemption stayed armed: every later steer stayed parked and was released only by a later overflow compaction, as a burst of hours-old messages. An aborted or failed first response left it armed the same way with threshold compaction on, so the release is also made when the run ends without consuming it.
+
+### Why an extension could not handle it
+
+- The exemption, the deferred queues and the drain classification are private `AgentSession` state decided inside `_checkCompaction`; no extension hook can release or consume them.
+
+### Expected merge conflict zones
+
+- LOW: the `settings.enabled` early return and the exemption consume in `_checkCompaction` (their order).
+- LOW: the end of the `agent_end` last-assistant block in `_processAgentEvent` (the spent-exemption release before the continuation block).
+
+## 2026-10-23 - Warn when a queued input outlives a completed run (senpi#4036)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: a `QueuedInputAges` tracker (`queued-input-age.ts`, fork-only) records each queued input's queue time and the number of runs started by then (`_recordQueuedInput`, the `agent_start` event). When a run settles (`_emitAgentSettled`), every input still queued that a whole run started after and settled without delivering is logged once as `queued_input_outlived_run` with `queuedId`, `mode`, `ageMs` and `source`.
+- `packages/coding-agent/src/core/session-log.ts`: `queuedId` and `ageMs` join the session-log data allowlist so the warning carries them.
+- `packages/coding-agent/src/core/agent-session.ts` (review fold): a turn is counted once where `_promptAgent` marks the run active (not on every `agent_start`, which retries and internal continuations also emit), and the check is skipped when the settling turn ended in `error` or `aborted`, whose queued input the agent core deliberately keeps for the next prompt. The user `message_start` dequeue also finds image-only input (no text to match) by the queued message object (`_queuedMessages`), so a delivered image-only steer or follow-up leaves `_steeringMessages` / `_followUpMessages` and its queue record (senpi#3592).
+
+### Why
+
+- senpi#4036 lost steered messages for about 18.5 hours with nothing in the logs naming them. The root cause is fixed separately (#4038); this is the backstop the issue asks for: any input that outlives a turn is named with its age instead of waiting silently.
+
+### Why an extension could not handle it
+
+- The queued-input records, their queue time and run boundaries are private `AgentSession` state; extensions see queue updates but not when an input was queued relative to runs, and cannot log through the session logger's allowlist.
+
+### Expected merge conflict zones
+
+- LOW: `_recordQueuedInput`, the run-active edge in `_promptAgent`, the user `message_start` dequeue in `_processAgentEvent`, and the start of `_emitAgentSettled` in `agent-session.ts`; the `ALLOWED_DATA_KEY` pattern in `session-log.ts`.

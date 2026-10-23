@@ -14,7 +14,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -289,6 +289,7 @@ import {
 	MANUAL_CONTINUE_CUSTOM_TYPE,
 	MANUAL_CONTINUE_DIRECTIVE,
 } from "./manual-continue.ts";
+import { clearMcpGrantPresentations } from "./mcp-grant-presentations.ts";
 import { registerMemoryReportSession } from "./memory-report/memory-report-registry.ts";
 import {
 	type BashExecutionMessage,
@@ -314,6 +315,7 @@ import { expandPromptTemplateWithMetadata, type PromptTemplate } from "./prompt-
 import { type ProviderFailure, providerFailureOf } from "./provider-failure.ts";
 import { rejectedImageSources } from "./provider-rejected-images.ts";
 import { createProviderTimeoutRetryPlan, runBoundedRetryContinuation } from "./provider-timeout-retry.ts";
+import { QueuedInputAges } from "./queued-input-age.ts";
 import { checkSessionReloadVeto } from "./reload-veto.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
 import { isBillingErrorMessage } from "./retry-fallback/billing.ts";
@@ -352,6 +354,7 @@ import {
 import { validateFallbackChains } from "./retry-fallback/validate.ts";
 import { type InheritResult, type ReleaseInheritedResult, RunHolds, type RunRef } from "./run-holds.ts";
 import { startRunResumeTurn } from "./run-resume-turn.ts";
+import { SecurityNoticeSnapshot } from "./security-notices.ts";
 import { isSessionBusySnapshot, type SessionActivitySnapshot, WakeSourceTracker } from "./session-activity.ts";
 import { type ControlEndpointHost, createSessionControlActions } from "./session-control-actions.ts";
 import { computeSessionFailureReport, type SessionFailureReport } from "./session-failure-report.ts";
@@ -375,6 +378,7 @@ import {
 	type SettingsManager,
 	type SettingsSourceSelection,
 } from "./settings-manager.ts";
+import { BlockedSkillLinkError, readSkillFileChecked } from "./skill-access.ts";
 import {
 	formatSkillInvocationPrompt,
 	parseSkillInvocationTokens,
@@ -1281,6 +1285,8 @@ export class AgentSession {
 
 	// Event subscription state
 	private _unsubscribeAgent?: () => void;
+	readonly securityNotices = new SecurityNoticeSnapshot();
+	private _unsubscribeSecurityNotices?: () => void;
 	private _unsubscribeSettingsSource?: () => void;
 	private _unregisterMemoryReport: () => void = () => {};
 	private _eventListeners: AgentSessionEventListener[] = [];
@@ -1361,6 +1367,7 @@ export class AgentSession {
 	 * message is persisted. Kept off the message itself so it can never reach a provider request.
 	 */
 	private readonly _userInputSources = new WeakMap<AgentMessage, InputSource>();
+	private readonly _queuedInputAges = new QueuedInputAges();
 	/** Recently delivered `queuedId`s (bounded), so a late dequeue answers `already_delivered`, not `not_found`. */
 	private readonly _deliveredQueuedIds = new Set<string>();
 	private _sessionLogger: SessionLogger;
@@ -1637,6 +1644,10 @@ export class AgentSession {
 		this._scopedModels = config.scopedModels ?? [];
 		this._favoriteModels = config.favoriteModels ?? [];
 		this._resourceLoader = config.resourceLoader;
+		this.securityNotices.setResources(this._resourceLoader.getSkills().diagnostics);
+		this._unsubscribeSecurityNotices = this._resourceLoader.onExtensionEvent?.("security_notice", (value) =>
+			this.securityNotices.accept(value),
+		);
 		this._customTools = config.customTools ?? [];
 		this._cwd = config.cwd;
 		const modelRuntime = config.modelRuntime ?? config.modelRegistry?.modelRuntime;
@@ -3084,6 +3095,7 @@ export class AgentSession {
 		// The run is over, so the turn a barrier was armed for is too. agent_end keeps it across an
 		// expected retry; a retry that is cancelled or declined settles here without another agent_end.
 		this._toolBarrier.clear();
+		this._warnQueuedInputOutlivingRun(agentEnd);
 		// Before the settle and idle edges: the drain they wake may redeliver what this run's file refused.
 		this.externalAdmission.observeRunSettled();
 		let deferredActions: DeferredAgentSettledAction[] = [];
@@ -3196,7 +3208,10 @@ export class AgentSession {
 		},
 	): Promise<void> {
 		deferredTurnClaim?.resolve("started");
-		if (!this._isAgentRunActive) this.externalAdmission.beginTurn();
+		if (!this._isAgentRunActive) {
+			this.externalAdmission.beginTurn();
+			this._queuedInputAges.noteRunStarted();
+		}
 		this._isAgentRunActive = true;
 		// A new turn admitted: arm the inactivity lease and the hard max-runtime cap.
 		this._deadlineTracker.arm();
@@ -3669,15 +3684,20 @@ export class AgentSession {
 			this._overflowRecoveryRungs = 0;
 			this._retryFallback.resetTurn();
 			const messageText = userMessageText(event.message.content);
-			if (messageText) {
+			// Image-only input has no text to match: find it by the message the queue handed to the agent (#3592).
+			const imageOnlyQueued = messageText
+				? undefined
+				: this._queuedInputOrder.find((input) => this._queuedMessages.get(input.queuedId) === event.message);
+			if (messageText || imageOnlyQueued !== undefined) {
 				const { clientMessageId } = readClientMessageIdentity(event.message);
 				const queued =
-					clientMessageId === undefined
+					imageOnlyQueued ??
+					(clientMessageId === undefined
 						? undefined
-						: this._queuedInputOrder.find((input) => input.clientMessageId === clientMessageId);
+						: this._queuedInputOrder.find((input) => input.clientMessageId === clientMessageId));
 				// Check steering queue first
 				const steeringIndex =
-					clientMessageId === undefined || queued?.mode === "steer"
+					(clientMessageId === undefined && queued === undefined) || queued?.mode === "steer"
 						? this._steeringMessages.indexOf(messageText)
 						: -1;
 				if (steeringIndex !== -1) {
@@ -3687,7 +3707,7 @@ export class AgentSession {
 				} else {
 					// Check follow-up queue
 					const followUpIndex =
-						clientMessageId === undefined || queued?.mode === "followUp"
+						(clientMessageId === undefined && queued === undefined) || queued?.mode === "followUp"
 							? this._followUpMessages.indexOf(messageText)
 							: -1;
 					if (followUpIndex !== -1) {
@@ -3997,6 +4017,14 @@ export class AgentSession {
 						this._requiredCompactionAdmissionError = new RequiredCompactionError();
 					}
 				}
+			}
+			// The exemption covers only the first response after a compaction. A run that ends on that response
+			// without consuming it (an aborted or failed response, a blocked retry) has still spent it: hand the
+			// input parked while that run started back to the ordinary queues, whose rules decide when it runs,
+			// instead of holding it until a later overflow compaction (#4036).
+			if (this._hasPendingPostCompactionUsageExemption(msg) && !this._isAssistantFromBeforeLatestCompaction(msg)) {
+				this._skipNextPostCompactionAssistantCheck = false;
+				this._flushPostCompactionDeferredMessages();
 			}
 		}
 
@@ -4428,6 +4456,9 @@ export class AgentSession {
 	 */
 	dispose(): void {
 		this._disposed = true;
+		this._unsubscribeSecurityNotices?.();
+		this.securityNotices.dispose();
+		clearMcpGrantPresentations(this.sessionId);
 		this._engineTurnHold.invalidate();
 		this._deadlineTracker.disarm();
 		this._toolBarrier.clear();
@@ -6150,7 +6181,7 @@ export class AgentSession {
 			removedTokens.push(token);
 
 			try {
-				const content = readFileSync(skill.filePath, "utf-8");
+				const content = readSkillFileChecked(skill.filePath, skill.provenance, skill.allowedSet);
 				const body = stripFrontmatter(content).trim();
 				skillBlocks.push({
 					name: skill.name,
@@ -6165,6 +6196,9 @@ export class AgentSession {
 					syntax: token.syntax,
 				});
 			} catch (err) {
+				if (err instanceof BlockedSkillLinkError) {
+					this.securityNotices.add({ category: "skill-link-blocked", message: err.message, path: skill.filePath });
+				}
 				this._extensionRunner.emitError({
 					extensionPath: skill.filePath,
 					event: "skill_expansion",
@@ -7376,7 +7410,30 @@ export class AgentSession {
 			...clientMessageIdentity(options),
 		});
 		if (message !== undefined) this._queuedMessages.set(queuedId, message);
+		this._queuedInputAges.noteQueued(queuedId, Date.now());
 		return queuedId;
+	}
+
+	/** Queued input that a whole turn started after and settled without delivering is overdue: say so (#4036). */
+	private _warnQueuedInputOutlivingRun(agentEnd: AgentEvent | undefined): void {
+		// A failed or aborted turn keeps queued input for the next prompt by design, so it proves nothing is stuck;
+		// the next turn that ends normally still catches input that really is.
+		const settledMessages = agentEnd?.type === "agent_end" ? agentEnd.messages : this.agent.state.messages;
+		const lastAssistant = settledMessages.findLast((message) => message.role === "assistant");
+		if (lastAssistant?.role === "assistant" && (lastAssistant.stopReason === "error" || lastAssistant.stopReason === "aborted")) {
+			return;
+		}
+		const stillQueued = this._queuedInputOrder.map((input) => input.queuedId);
+		for (const { queuedId, ageMs } of this._queuedInputAges.takeOutlived(stillQueued, Date.now())) {
+			const input = this._queuedInputOrder.find((candidate) => candidate.queuedId === queuedId);
+			const message = this._queuedMessages.get(queuedId);
+			this._sessionLogger.warn("queued_input_outlived_run", {
+				queuedId,
+				mode: input?.mode,
+				ageMs,
+				source: message === undefined ? undefined : this._userInputSources.get(message),
+			});
+		}
 	}
 
 	private _mintQueuedId(): string {
@@ -9988,14 +10045,17 @@ export class AgentSession {
 			return compacted;
 		}
 
-		// Stuck-overflow recovery above runs regardless of the flag; threshold
-		// compaction below is the proactive path the user switched off (#1422).
-		if (!settings.enabled) return false;
-
 		// The first ordinary response can carry provider usage calculated before
 		// compaction. Consume that exemption only after proving this is not an
 		// overflow, then retain the decision for later admission re-sampling.
+		// It is consumed even when threshold compaction is switched off: the
+		// exemption is what releases input queued while that response started,
+		// so leaving it armed parked that input until a later compaction (#4036).
 		if (this._consumePostCompactionUsageExemption(assistantMessage)) return false;
+
+		// Stuck-overflow recovery above runs regardless of the flag; threshold
+		// compaction below is the proactive path the user switched off (#1422).
+		if (!settings.enabled) return false;
 
 		// Case 2: Threshold - context is getting large
 		// For error messages or all-zero usage messages, estimate from the last valid response.
@@ -10643,6 +10703,7 @@ export class AgentSession {
 		};
 
 		this._resourceLoader.extendResources(extensionPaths);
+		this.securityNotices.setResources(this._resourceLoader.getSkills().diagnostics);
 		if (skillPaths.length > 0 || promptPaths.length > 0 || themePaths.length > 0) {
 			this._baseSystemPrompt = this._rebuildSystemPrompt(this._toolDeclarationNames(this.getActiveToolNames()));
 			this.agent.state.systemPrompt = this._baseSystemPrompt;
@@ -11462,6 +11523,7 @@ export class AgentSession {
 			await this._resourceLoader.reload({ settingsAlreadyReloadedFor: this.settingsManager });
 		}
 		time("resources", "reload");
+		this.securityNotices.setResources(this._resourceLoader.getSkills().diagnostics);
 		try {
 			this._buildRuntime({
 				activeToolNames: requestedActiveToolNamesBeforeRebuild,
