@@ -19,8 +19,8 @@
 
 ### Changed
 
+- A `/loop` tick that comes due while the agent is working is now steered into the running turn, so the agent reads it at its next step instead of only after the whole turn ends. This covers fixed (cron) loops, `schedule_wakeup` wakeups, keepalive wakeups and catch-up ticks. A tick whose prompt is an extension command still waits for the turn to finish. When a dynamic loop's tick lands in a turn the loop did not start and that turn ends without `schedule_wakeup`, the loop re-arms its fallback wakeup without using up its one keepalive credit ([#4072](https://github.com/code-yeongyu/senpi/issues/4072)).
 - CLI/TUI labels, tool messages, and agent prompts use periods, commas, colons, or parentheses instead of em dashes; unknown session values use `-`. Product-copy lint prevents regressions, and lint/type suppressions must explain why they are needed ([#4040](https://github.com/code-yeongyu/senpi/issues/4040)).
-
 - `release_session` refuses `attached` only while ANOTHER client is attached; the connection asking for the release no longer counts, so a client can release (or move) the session it shows without `force`. `errorData.attachments` now counts only those other clients ([#3994](https://github.com/code-yeongyu/senpi/pull/3994)).
 
 ### Fixed
