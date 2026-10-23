@@ -19,9 +19,7 @@ it("a worker-runtime session reads the host's polled limits before its first tur
 		extension,
 		`import { writeFileSync } from "node:fs";
 export default function (pi) {
-	pi.on("session_start", () => {
-		writeFileSync(${JSON.stringify(out)}, JSON.stringify(pi.getSubscriptionLimits()));
-	});
+	writeFileSync(${JSON.stringify(out)}, JSON.stringify(pi.getSubscriptionLimits()));
 }`,
 	);
 	const account = `worker-3695-${process.pid}`;
