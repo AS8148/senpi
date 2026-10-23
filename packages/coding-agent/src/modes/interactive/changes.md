@@ -17,6 +17,26 @@
 - LOW: the Terminal.app and tmux rows of `selectionBypassHint`.
 
 ## 2026-10-20 - Present retained skill security reasons once (senpi#3796)
+## 2026-10-21 - A cost total that includes unpriced turns is marked as a lower bound (senpi#3844)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/footer.ts`: the session cost reads `$X+?` when `UsageTotals.costUnknown` is set.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the `/session` cost total, and each per-model breakdown row, appends `+ unpriced turns` when `SessionStats.costUnknown` (or the row's `costUnknown`) is set.
+
+### Why
+
+- A model with no known price reports its turns as `costUnknown` (senpi#3844). Summing them as $0 would show a complete-looking total that hides the unpriced spend; the marker says the amount is a lower bound. Test: `test/footer-usage-display.test.ts`.
+
+### Why an extension could not handle it
+
+- The footer and `/session` render the core usage totals directly.
+
+### Expected merge conflict zones
+
+- LOW: the `costStr` line in `footer.ts`; the `/session` cost `Total:` line in `interactive-mode.ts`.
+
+## 2026-10-20 - Present retained skill security reasons once (senpi#3796)
 
 ### What changed
 
