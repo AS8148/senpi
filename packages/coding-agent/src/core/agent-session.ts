@@ -1214,6 +1214,8 @@ export interface SessionStats {
 		total: number;
 	};
 	cost: number;
+	/** Some turn had no known price, so `cost` is a lower bound (senpi#3844). */
+	costUnknown?: true;
 	contextUsage?: ContextUsage;
 	/** Absent from hosts that predate the report. */
 	failures?: SessionFailureReport;
@@ -13593,6 +13595,7 @@ export class AgentSession {
 				total: usageTotals.input + usageTotals.output + usageTotals.cacheRead + usageTotals.cacheWrite,
 			},
 			cost: usageTotals.cost,
+			...(usageTotals.costUnknown ? { costUnknown: true as const } : {}),
 			contextUsage: this.getContextUsage(),
 			failures: computeSessionFailureReport(this.sessionManager.getEntries()),
 		};
