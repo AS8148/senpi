@@ -112,6 +112,12 @@ export function registerLiveDelivery(pi: ExtensionAPI, deps: LiveDeliveryDeps): 
 				concurrency: 1,
 			});
 			nextDueAt = result.nextDueAt;
+			for (const event of result.events) {
+				// A job that failed inside the pass is retried later; the user still hears why it was not delivered.
+				if (event.event === "error" && event.id !== undefined) {
+					session.notify(`Scheduled prompt ${event.id} could not be delivered: ${event.error}`);
+				}
+			}
 		} catch (error) {
 			// The schedule directory could not be read or written: say so, and try again later rather than drop the jobs.
 			session.notify(
@@ -136,6 +142,8 @@ export function registerLiveDelivery(pi: ExtensionAPI, deps: LiveDeliveryDeps): 
 		session.stopped = true;
 		session.timer.cancel();
 		session.watcher?.close();
+		// Settle a pass still in flight first: once the lease is gone an outside runner may treat its claim as abandoned.
+		await tail;
 		await session.release();
 	}
 

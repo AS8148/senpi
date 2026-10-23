@@ -161,13 +161,17 @@ async function create(
 		await liveDelivery.replan();
 		lines.push(
 			"While this session stays open it delivers the prompt itself when due, steered into the current turn if one is running.",
+			runnerAvailable
+				? "After it closes, the active schedule runner delivers it."
+				: "If it closes first, the job fires the next time a `senpi schedule run` runner runs.",
+		);
+	} else {
+		lines.push(
+			runnerAvailable
+				? "A schedule runner is active; it will deliver the prompt to this session when due."
+				: "No `senpi schedule run --watch` runner is active right now; the job fires the next time a runner runs.",
 		);
 	}
-	lines.push(
-		runnerAvailable
-			? "A schedule runner is active; it will deliver the prompt to this session when due."
-			: "No `senpi schedule run --watch` runner is active right now; the job fires the next time a runner runs.",
-	);
 	return {
 		content: [{ type: "text", text: lines.join("\n") }],
 		details: { action: "create", jobs: [{ state: "pending", job }], runnerAvailable },

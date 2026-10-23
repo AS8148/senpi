@@ -5,6 +5,7 @@
  * timer are injected.
  */
 
+import { existsSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
@@ -13,6 +14,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { runDueJobs } from "../../../src/cli/schedule-runner.ts";
 import { createScheduleExtension } from "../../../src/core/extensions/builtin/schedule/index.ts";
 import type { LiveTimerPort } from "../../../src/core/extensions/builtin/schedule/live-delivery.ts";
+import { SCHEDULE_PROMPT_TOOL } from "../../../src/core/extensions/builtin/schedule/tool.ts";
+import { emitSessionShutdownEvent } from "../../../src/core/extensions/runner.ts";
 import { claimOccurrence } from "../../../src/core/extensions/builtin/schedule/occurrences.ts";
 import { ownRunnerIdentity } from "../../../src/core/extensions/builtin/schedule/runner-lease.ts";
 import {
@@ -20,7 +23,7 @@ import {
 	listScheduledJobs,
 	scheduleDir,
 } from "../../../src/core/extensions/builtin/schedule/store.ts";
-import { createHarness, getMessageText, getUserTexts, type Harness } from "../harness.ts";
+import { createHarness, createTestUiContext, getMessageText, getUserTexts, type Harness } from "../harness.ts";
 
 const T0 = Date.parse("2026-10-23T08:00:00Z");
 const MARKER = "scheduled-check-4074";
@@ -77,11 +80,20 @@ function waitTool(): { tool: AgentTool; release: () => void; started: Promise<vo
 
 async function openSession(tools: AgentTool[]) {
 	let now = T0;
+	let onNow: (() => void) | undefined;
 	const timer = new FakeTimer();
 	const harness = await createHarness({
 		tools,
 		persistSession: true,
-		extensionFactories: [createScheduleExtension({ now: () => now, timer: () => timer })],
+		extensionFactories: [
+			createScheduleExtension({
+				now: () => {
+					onNow?.();
+					return now;
+				},
+				timer: () => timer,
+			}),
+		],
 	});
 	harnesses.push(harness);
 	const dir = scheduleDir(join(harness.tempDir, "agent"));
@@ -97,13 +109,22 @@ async function openSession(tools: AgentTool[]) {
 		},
 		T0,
 	);
-	await harness.session.bindExtensions({ mode: "tui" });
+	const warnings: string[] = [];
+	await harness.session.bindExtensions({
+		mode: "tui",
+		uiContext: createTestUiContext({ notify: (message) => warnings.push(message) }),
+	});
 	return {
 		harness,
 		timer,
 		dir,
+		warnings,
 		advance: (ms: number) => {
 			now += ms;
+		},
+		/** Runs on every clock read the extension makes, so a test can act at an exact point inside a pass. */
+		setOnNow: (hook: (() => void) | undefined) => {
+			onNow = hook;
 		},
 	};
 }
@@ -164,5 +185,66 @@ describe("schedule_prompt jobs reach the open session (#4074)", () => {
 		});
 
 		expect(outside.events.filter((event) => event.event === "abandoned")).toEqual([]);
+	});
+	it("tells the user when a due job cannot be delivered", async () => {
+		const live = await openSession([]);
+		// A file where the session-lock directory belongs makes this job's delivery fail inside the pass.
+		writeFileSync(join(live.dir, "sessions"), "");
+
+		live.advance(60_000);
+		await live.timer.fireNow();
+
+		expect(live.warnings.some((warning) => warning.includes("could not be delivered"))).toBe(true);
+	});
+
+	it("finishes the pass in flight before shutdown releases the runner lease", async () => {
+		const live = await openSession([]);
+		live.harness.setResponses([fauxAssistantMessage("handled")]);
+		const firing = join(live.dir, "firing");
+		let shutdown: Promise<unknown> | undefined;
+		let shutdownStarted: () => void = () => {};
+		const started = new Promise<void>((resolve) => {
+			shutdownStarted = resolve;
+		});
+		// The clock read right after the claim: the occurrence is in firing/ and not yet settled.
+		live.setOnNow(() => {
+			if (shutdown !== undefined || !existsSync(firing) || readdirSync(firing).length === 0) return;
+			shutdown = emitSessionShutdownEvent(live.harness.session.extensionRunner, {
+				type: "session_shutdown",
+				reason: "quit",
+			});
+			shutdownStarted();
+		});
+
+		live.advance(60_000);
+		const pass = live.timer.fireNow();
+		await started;
+		await shutdown;
+
+		// The lease is released only after the claim settled, so no outside runner can find it abandoned.
+		expect(readdirSync(firing)).toEqual([]);
+		await pass;
+		await live.harness.session.waitForIdle();
+	});
+
+	it("does not tell a live session that its job waits for a runner", async () => {
+		const live = await openSession([]);
+		live.harness.setResponses([
+			fauxAssistantMessage(
+				[fauxToolCall(SCHEDULE_PROMPT_TOOL, { action: "create", prompt: "later", delaySeconds: 300 })],
+				{
+					stopReason: "toolUse",
+				},
+			),
+			fauxAssistantMessage("ok"),
+		]);
+		await live.harness.session.prompt("schedule it");
+
+		const result = live.harness.session.messages.findLast(
+			(message) => message.role === "toolResult" && message.toolName === SCHEDULE_PROMPT_TOOL,
+		);
+		const text = result === undefined ? "" : getMessageText(result);
+		expect(text).toContain("delivers the prompt itself");
+		expect(text).not.toContain("the job fires the next time a runner runs");
 	});
 });
