@@ -1020,7 +1020,7 @@ which prints the bare socket path).
   `senpi host handoff` command.
 - `status` prints `{ reachable, lifecycle, socket, pid, instanceId, generation, engineVersion, capabilities,
   launchProfile, runtimeBuildId, handover, sessions: { total, interactive, worker, retained, foreign_attached, foreign_retained },
-  zombies, rss_mb, host_rss_mb, host_footprint_mb, open_fds, memory_pressure, env_keys, generations, crashes, shard, session_rows,
+  zombies, rss_mb, host_rss_mb, host_footprint_mb, open_fds, memory_pressure, env_keys, generations, pointer, crashes, shard, session_rows,
   claims_live, claims }` and exits 3 when nothing answers - with the same
   field set, so a caller parses one shape and branches on one boolean. The additive `lifecycle` field is
   `"ready"` while an answering supervised host accepts opens, `"stopping"` while it shuts down or drains,
@@ -1043,6 +1043,16 @@ which prints the bare socket path).
   still claims in `reservations/` - the one occupancy number that is observable for a generation which no
   longer answers on the socket. Records of generations that ended are pruned by the read itself, so a status
   never lists a dead pid.
+
+  `pointer` (additive) says which generation the daemon directory names as the one serving the socket:
+  `{ state: "current", instanceId, candidates: [] }` normally. When the pruned pointer named a dead generation
+  (or none exists), the read gives it back to the ONE generation whose record proves it still serves this socket
+  (its own instance id and this public socket path, a live pid with the recorded start time, and no stop intent or
+  drain request), reported as `{ state: "elected", instanceId, candidates: [instanceId] }`. With zero or several
+  such generations nothing is elected: `{ state: "missing", instanceId: null, candidates }` lists the ones it saw,
+  and `host stop` / `host handoff` then refuse `unknown_owner`. `host stop` and `host handoff` run the same
+  election under the ensure lock; `status --all` only reports it. An election never replaces a pointer another
+  writer created meanwhile, and a prune never removes a pointer a registration replaced after the prune read it.
 
   The last five fields and `memory_pressure` are additive (a client that does not know them ignores them):
   - `memory_pressure`: whether the ANSWERING generation's memory sampler currently reads its footprint above
