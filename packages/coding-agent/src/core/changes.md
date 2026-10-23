@@ -1,3 +1,26 @@
+## 2026-10-21 - A models.json model entry keeps the built-in price; an unpriced custom model costs unknown, not $0 (senpi#3844)
+
+### What changed
+
+- `packages/coding-agent/src/core/provider-composer.ts`: `modelFromJson` takes the price of the built-in model the entry replaces (same provider, same id) when the entry omits `cost`; with no such model and no `cost`, the model gets `UNKNOWN_COST` (zero placeholder rates plus `unknown: true`) instead of all zeros. Only an exact id match lends its price: the fallback model `findModelDefaults` picks for `api`/`baseUrl` never does. `hideFreeModels` no longer hides a model whose price is unknown.
+- `packages/coding-agent/src/core/usage-totals.ts`: `combineUsage` keeps `costUnknown` when either side carries it; `UsageTotals.costUnknown` is set by `addUsageToTotals` when any summed turn is unpriced.
+- `packages/coding-agent/src/core/usage-totals.ts`: `UsageCostBreakdownEntry.costUnknown` marks a per-model row that summed an unpriced turn.
+- `packages/coding-agent/src/core/session-manager.ts`: the running `UsageTotals` gains optional `costUnknown`, set in `_accumulateUsage` when an assistant turn's usage carries it.
+- `packages/coding-agent/src/core/agent-session.ts`: `SessionStats` gains optional `costUnknown` (so RPC `get_session_stats` reports a partial total as partial); `getSessionStats` copies it from the usage totals.
+- `packages/coding-agent/src/core/provider-composer.ts` (review fold): a local `ollama` model without `cost` is a real 0 (`FREE_COST`), and a `modelOverrides` `cost` on an unknown-priced model keeps `unknown` until it sets all four rates (`setsEveryRate`).
+
+### Why
+
+- A `models[]` entry that repeated a built-in model without `cost` (for example `{"id":"glm-5.3"}` under `zai`) replaced the catalog model with a zero price, so every turn billed real tokens at exactly $0; subagent rows showed `$0.0000` next to a live tok/s. A model with no price anywhere is not free, so it must not report $0 either. Test: `test/suite/regressions/issue-3844-models-json-cost.test.ts`.
+
+### Why an extension could not handle it
+
+- The models.json merge happens in the core provider composer before any extension sees the catalog.
+
+### Expected merge conflict zones
+
+- LOW: `modelFromJson`'s signature and `cost` line, the `config.models` upsert call, and the `hideFree` filter in `provider-composer.ts`; the `combineUsage` return in `usage-totals.ts`.
+
 ## 2026-10-20 - A model switch restores that model's last thinking level in this session (senpi#3819)
 
 ### What changed
