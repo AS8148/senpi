@@ -19,6 +19,7 @@
 
 ### Fixed
 
+- An RPC session whose worker dies before it finishes opening (for example a worker that cannot load its modules) now fails with `open_failed` and the worker's error, instead of `session_closing` ([#4037](https://github.com/code-yeongyu/senpi/issues/4037)).
 - The RPC host's cleanup of leftover internal socket directories under `/tmp` now only removes the current user's directories, scans a `TMPDIR` that is `/tmp` once, and a socket path that fits nowhere names every location it tried ([#3487](https://github.com/code-yeongyu/senpi/issues/3487)).
 - `RpcClient.setSessionContext` called with no attached session and no `sessionId` now rejects with `RpcCommandError` and `errorCode: "session_not_attached"`, as its documentation says, instead of a plain `Error`; nothing is sent ([#3967](https://github.com/code-yeongyu/senpi/issues/3967)).
 - Editing a prompt after compaction no longer brings messages the edit abandoned back into the model context ([#3864](https://github.com/code-yeongyu/senpi/issues/3864)).
