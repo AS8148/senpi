@@ -21,6 +21,12 @@ function source(content: string): { dir: string; path: string } {
 	return { dir, path };
 }
 
+function sessionFileOf(manager: SessionManager): string {
+	const file = manager.getSessionFile();
+	if (file === undefined) throw new Error("the fork wrote no session file");
+	return file;
+}
+
 const forkedEntryIds = (file: string): string[] =>
 	readFileSync(file, "utf8")
 		.split("\n")
@@ -36,7 +42,7 @@ describe("SessionManager.forkFrom with a source whose header line is missing (om
 		const forked = SessionManager.forkFrom(path, dir, dir);
 
 		expect(forked.getHeader()?.parentSession).toBe(path);
-		expect(forkedEntryIds(forked.getSessionFile()!)).toEqual(["m2", "m3"]);
+		expect(forkedEntryIds(sessionFileOf(forked))).toEqual(["m2", "m3"]);
 	});
 
 	it("still forks a source that has its header", () => {
@@ -44,7 +50,7 @@ describe("SessionManager.forkFrom with a source whose header line is missing (om
 
 		const forked = SessionManager.forkFrom(path, dir, dir);
 
-		expect(forkedEntryIds(forked.getSessionFile()!)).toEqual(["m1"]);
+		expect(forkedEntryIds(sessionFileOf(forked))).toEqual(["m1"]);
 	});
 
 	it("calls an empty file empty", () => {
