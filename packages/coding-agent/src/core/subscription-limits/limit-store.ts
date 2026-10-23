@@ -21,6 +21,12 @@ export interface AccountLimits {
 	 * beside it are the last ones reported; the next successful report clears it (senpi#3684).
 	 */
 	readonly error?: string;
+	/**
+	 * When this record last changed (ISO), the order mirrored copies are taken in (senpi#3695). It differs from
+	 * `reportedAt` when a failed poll adds an error beside the last windows: the windows keep their time, the
+	 * record does not. Absent on a record from before it existed: `reportedAt` stands in.
+	 */
+	readonly updatedAt?: string;
 }
 
 /** What one usage-endpoint poll learned about an account: its full window set, or why it could not ask. */
@@ -47,6 +53,7 @@ export class SubscriptionLimitStore {
 			windows: [...merged.values()],
 			reportedAt: now.toISOString(),
 			...(previous?.plan === undefined ? {} : { plan: previous.plan }),
+			updatedAt: now.toISOString(),
 		});
 	}
 
@@ -64,7 +71,11 @@ export class SubscriptionLimitStore {
 		if (previous !== undefined && reportedAt < previous.reportedAt) return;
 		if ("error" in report) {
 			if (previous?.error === report.error) return;
-			this.#publish(key, { ...(previous ?? { provider, account, windows: [], reportedAt }), error: report.error });
+			this.#publish(key, {
+				...(previous ?? { provider, account, windows: [], reportedAt }),
+				error: report.error,
+				updatedAt: laterOf(reportedAt, previous === undefined ? undefined : orderOf(previous)),
+			});
 			return;
 		}
 		if (report.windows.length === 0 && previous === undefined) return;
@@ -74,22 +85,26 @@ export class SubscriptionLimitStore {
 			windows: [...report.windows],
 			reportedAt,
 			...(report.plan === undefined ? {} : { plan: report.plan }),
+			updatedAt: reportedAt,
 		});
 	}
 
 	/**
 	 * Takes another isolate's record as it stands (senpi#3695: the host and its session workers each hold a
 	 * store and mirror each other). An older record, or one identical to what is held, is ignored; that is
-	 * what ends the echo when the mirrored record comes straight back. Two different records can share a
-	 * reportedAt (`report()` keeps it when only the error changes); the tie goes to the one that sorts later,
-	 * so every store settles on the same record whatever order they arrive in, and the echo ends.
+	 * what ends the echo when the mirrored record comes straight back. Records are ordered by when they last
+	 * changed (`updatedAt`), so an error a poll adds beside the last windows is newer than the record it
+	 * replaces. Only two different records changed at the very same instant fall back to a deterministic
+	 * content order, so every store settles on the same one whatever order they arrive in, and the echo ends.
 	 */
 	adopt(limits: AccountLimits): void {
 		const key = `${limits.provider}\u0000${limits.account}`;
 		const previous = this.#accounts.get(key);
 		if (previous !== undefined) {
-			if (limits.reportedAt < previous.reportedAt) return;
-			if (limits.reportedAt === previous.reportedAt && canonical(limits) <= canonical(previous)) return;
+			const incoming = orderOf(limits);
+			const held = orderOf(previous);
+			if (incoming < held) return;
+			if (incoming === held && canonical(limits) <= canonical(previous)) return;
 		}
 		this.#publish(key, limits);
 	}
@@ -115,6 +130,14 @@ export class SubscriptionLimitStore {
 		this.#listeners.add(listener);
 		return () => this.#listeners.delete(listener);
 	}
+}
+
+function orderOf(limits: AccountLimits): string {
+	return limits.updatedAt ?? limits.reportedAt;
+}
+
+function laterOf(a: string, b: string | undefined): string {
+	return b !== undefined && b > a ? b : a;
 }
 
 /** A key-order-independent rendering of a record, so equal records compare equal however they were built. */
