@@ -11,6 +11,7 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { basename } from "node:path";
+import { windowsTreeKillArgs } from "./windows-process-tree.mjs";
 
 export const SUPPORTED_PACKAGE_MANAGERS = ["npm", "bun", "pnpm"];
 
@@ -109,7 +110,8 @@ export function signalGroup(
 	if (child.pid === undefined) return;
 	try {
 		if (platform === "win32") {
-			spawnSyncImpl("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+			const args = windowsTreeKillArgs(child.pid, spawnSyncImpl);
+			if (args.length > 0) spawnSyncImpl("taskkill", args, { stdio: "ignore", windowsHide: true });
 		} else {
 			kill(-child.pid, signal);
 		}

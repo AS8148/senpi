@@ -103,10 +103,17 @@ describe("package-manager", () => {
 
 	it("terminates the process tree through taskkill on win32 and never sends a POSIX signal", () => {
 		const { calls, primitives } = recordingPrimitives("win32");
+		primitives.spawnSync = (command, args) => {
+			if (command === "powershell.exe") {
+				return { status: 0, stdout: "4242 1 200 bun.exe\n4243 4242 210 node.exe\n4244 4243 100 unrelated.exe\n4245 4243 220 child.exe\n" };
+			}
+			calls.spawnSync.push([command, args]);
+			return { status: 0 };
+		};
 
 		packageManager.signalGroup({ pid: 4242 }, "SIGTERM", primitives);
 
-		assert.deepEqual(calls.spawnSync, [["taskkill", ["/pid", "4242", "/T", "/F"]]]);
+		assert.deepEqual(calls.spawnSync, [["taskkill", ["/F", "/PID", "4242", "/PID", "4243", "/PID", "4245"]]]);
 		assert.deepEqual(calls.kill, []);
 	});
 
