@@ -7,6 +7,7 @@ import { fileURLToPath } from "url";
 import { getBaiModels } from "./generate-models-bai.ts";
 import { fetchOpenGatewayModels } from "./generate-models-opengateway.ts";
 import { applyOpenAiInputCap } from "../src/utils/openai-input-cap.ts";
+import { FABLE55_LAUNCH, isFable55ModelId } from "../src/utils/fable55-launch.ts";
 import { MODEL_SHARD_SUFFIX, importedModelShards, isPrunableModelShard } from "./model-shards.ts";
 import { getEffortThinkingLevelMap, type ModelsDevReasoningOption } from "./models-dev-reasoning-options.ts";
 import { buildOpenRouterCatalog, type OpenRouterCatalog, type OpenRouterModelListItem } from "./openrouter-catalog.ts";
@@ -57,6 +58,7 @@ const packageRoot = join(__dirname, "..");
 
 function readGeneratorOptions(args: string[]): {
 	strict: boolean;
+	keepLastGoodOpenGateway: boolean;
 	dataOnly: boolean;
 	jsonOnly: boolean;
 	jsonOutputDir: string | undefined;
@@ -65,6 +67,7 @@ function readGeneratorOptions(args: string[]): {
 	generatedAt: string | undefined;
 } {
 	let strict = false;
+	let keepLastGoodOpenGateway = false;
 	let dataOnly = false;
 	let jsonOnly = false;
 	let jsonOutputDir: string | undefined;
@@ -76,6 +79,11 @@ function readGeneratorOptions(args: string[]): {
 		const arg = args[index];
 		if (arg === "--strict") {
 			strict = true;
+			continue;
+		}
+		// senpi#4067: release generation keeps the committed OpenGateway catalog when the feed fails.
+		if (arg === "--keep-last-good-opengateway") {
+			keepLastGoodOpenGateway = true;
 			continue;
 		}
 		if (arg === "--data-only") {
@@ -121,7 +129,15 @@ function readGeneratorOptions(args: string[]): {
 	if (providerIds && (dataOnly || jsonOnly || jsonOutputDir)) {
 		throw new Error("--providers cannot be combined with --data-only or JSON catalog output");
 	}
-	return { strict, dataOnly, jsonOnly, jsonOutputDir, pretty, providerIds, generatedAt };
+	// A provider-scoped run is a refresh whose failure must stay visible, never a release regeneration.
+	if (providerIds && keepLastGoodOpenGateway) {
+		throw new Error("--keep-last-good-opengateway cannot be combined with --providers");
+	}
+	// Without --strict every OpenGateway failure already keeps the committed catalog, so the flag would be a no-op.
+	if (keepLastGoodOpenGateway && !strict) {
+		throw new Error("--keep-last-good-opengateway requires --strict");
+	}
+	return { strict, keepLastGoodOpenGateway, dataOnly, jsonOnly, jsonOutputDir, pretty, providerIds, generatedAt };
 }
 
 const generatorOptions = readGeneratorOptions(process.argv.slice(2));
@@ -345,6 +361,7 @@ const EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_ANTHROPIC_MODELS = new Set([
 	"github-copilot:claude-sonnet-4.5",
 ]);
 const ANTHROPIC_ALLOWED_FALLBACK_MODELS = {
+	[FABLE55_LAUNCH.modelId]: [...FABLE55_LAUNCH.refusalFallbackModels],
 	"claude-fable-5-1": ["claude-opus-4-8", "claude-opus-5"],
 	"claude-fable-5": ["claude-opus-4-8", "claude-opus-5"],
 	"claude-opus-5-5": ["claude-opus-4-8", "claude-opus-5"],
@@ -917,6 +934,7 @@ const MID_CONVO_EFFORT_UNSUPPORTED_ANTHROPIC_MODELS = new Set(["openrouter:anthr
 function supportsAnthropicMidConvoEffort(modelId: string): boolean {
 	const id = modelId.toLowerCase().replace(/^~?anthropic\//, "");
 	return (
+		isFable55ModelId(id) ||
 		/^claude-opus-5(?:[.-]5)?(?:-\d{8})?$/.test(id) ||
 		/^claude-(?:sonnet|haiku)-5[.-]5(?:-\d{8})?$/.test(id) ||
 		/^claude-(?:fable|mythos)-5(?:[.-]1)(?:-\d{8})?$/.test(id)
@@ -931,6 +949,7 @@ function supportsAnthropicMidConvoEffort(modelId: string): boolean {
 // whose thinking-off shape (unset + effort `low`) is valid either way.
 function isAnthropicAdaptiveOnlyModel(modelId: string): boolean {
 	return (
+		isFable55ModelId(modelId) ||
 		modelId.includes("fable-5") ||
 		modelId.includes("opus-5-5") ||
 		modelId.includes("opus-5.5") ||
@@ -943,6 +962,7 @@ function isAnthropicAdaptiveOnlyModel(modelId: string): boolean {
 
 function supportsAnthropicMidConvoSystemMessages(modelId: string): boolean {
 	return (
+		isFable55ModelId(modelId) ||
 		/^claude-opus-(?:4[.-]8|5(?:[.-]5)?)(?:-\d{8})?$/.test(modelId) ||
 		/^claude-(?:sonnet|haiku)-5[.-]5(?:-\d{8})?$/.test(modelId) ||
 		/^claude-(?:fable|mythos)-5(?:[.-]1)?(?:-\d{8})?$/.test(modelId)
@@ -951,6 +971,7 @@ function supportsAnthropicMidConvoSystemMessages(modelId: string): boolean {
 
 function isAnthropicAdaptiveThinkingModel(modelId: string): boolean {
 	return (
+		isFable55ModelId(modelId) ||
 		modelId.includes("opus-4-6") ||
 		modelId.includes("opus-4.6") ||
 		modelId.includes("opus-4-7") ||
@@ -2274,6 +2295,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(data.anthropic.models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
+				if (m.status === "deprecated" && !keepDeprecatedUpstream("anthropic", modelId)) continue;
 
 				models.push({
 					id: modelId,
@@ -3427,7 +3449,7 @@ async function generateModels() {
 	const radiusModels = await fetchRadiusModels();
 	const openGatewayModels = await fetchOpenGatewayModels(
 		(id, source) => recordModelsDevReasoningOptions("opengateway", id, withXaiThinkingPin(id, source)),
-		{ strict: generatorOptions.strict },
+		{ strict: generatorOptions.strict, keepLastGoodOnFailure: generatorOptions.keepLastGoodOpenGateway },
 	);
 
 	// Combine chat models (models.dev has priority where sources overlap).

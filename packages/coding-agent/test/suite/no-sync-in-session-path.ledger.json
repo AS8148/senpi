@@ -40,13 +40,6 @@
 	"syncFs": [
 		{
 			"file": "src/core/agent-session.ts",
-			"api": "readFileSync",
-			"symbol": "_expandSkillCommand",
-			"count": 1,
-			"note": "one skill markdown file per explicit $skill token (KB-scale, read once per expansion)"
-		},
-		{
-			"file": "src/core/agent-session.ts",
 			"api": "writeFileSync",
 			"symbol": "exportToJsonl",
 			"count": 1,

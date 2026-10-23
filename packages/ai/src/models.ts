@@ -1,7 +1,7 @@
 import { lazyStream } from "./api/lazy.ts";
 import { defaultProviderAuthContext as defaultAuthContext } from "./auth/context.ts";
 import { InMemoryCredentialStore } from "./auth/credential-store.ts";
-import { appendLoginSlot, removeSlot } from "./auth/pool/slots.ts";
+import { appendLoginSlot, assertLoginKeyPresent, removeSlot, withoutBlankKey } from "./auth/pool/slots.ts";
 import { resolveRefreshCredential } from "./auth/refresh-credential.ts";
 import {
 	type AuthResolutionOverrides,
@@ -783,7 +783,9 @@ class ModelsImpl implements MutableModels {
 		}
 		const { onAccountCommitted, ...providerInteraction } = interaction;
 		const loginOperation: Promise<Credential> = method.login({ ...providerInteraction, signal }, options);
-		const credential = await raceWithAbortSignal(loginOperation, signal);
+		const loggedIn = await raceWithAbortSignal(loginOperation, signal);
+		const credential = type === "api_key" && provider.auth.apiKey?.keyOptional ? withoutBlankKey(loggedIn) : loggedIn;
+		assertLoginKeyPresent(credential);
 		let committedName: string | undefined;
 		let committedOrigin: "generated" | "provider" | undefined;
 		let mutationStarted = false;
@@ -1244,6 +1246,15 @@ export function hasApi<TApi extends Api>(model: AnyModel, api: TApi): model is M
 }
 
 export function calculateCost(model: AnyModel, usage: Usage, atMs: number = Date.now()): Usage["cost"] {
+	if (model.cost.unknown) {
+		usage.cost.input = 0;
+		usage.cost.output = 0;
+		usage.cost.cacheRead = 0;
+		usage.cost.cacheWrite = 0;
+		usage.cost.total = 0;
+		usage.costUnknown = true;
+		return usage.cost;
+	}
 	const inputTokens = usage.input + usage.cacheRead + usage.cacheWrite;
 	const card = costCardAt(model.cost, atMs);
 	let rates: ModelCostRates = card;

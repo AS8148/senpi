@@ -52,6 +52,7 @@ export type HostToSessionWorker =
 	| { type: "browser_engine"; request: number; engine: BrowserEngine }
 	| { type: "permission_preset"; request: number; preset: string }
 	| { type: "cancel_ui" }
+	| { type: "cancel_grant"; id: string }
 	| { type: "close" };
 
 export type SessionWorkerToHost =
@@ -82,4 +83,14 @@ export function typedWorkerRefusal(cause: unknown): never {
 	const message = cause instanceof Error ? cause.message : String(cause);
 	if (message.startsWith("open_failed: ")) throw new RpcSessionRegistryError("open_failed", message.slice(13));
 	throw cause;
+}
+
+/**
+ * Whether an open step failed only because its worker died: the worker's request channel rejects what is pending
+ * with a plain `session_closing` / `session_worker_exited`, and the claims and grants it held report a typed
+ * `session_closing` (senpi#4037).
+ */
+export function closedByWorkerDeath(cause: unknown): boolean {
+	if (cause instanceof RpcSessionRegistryError) return cause.code === "session_closing";
+	return cause instanceof Error && (cause.message === "session_closing" || cause.message === "session_worker_exited");
 }
