@@ -90,6 +90,15 @@ export function fromDiff({ base, pr, log = console.log }) {
 		const after = readText(path);
 		if (isChangelogTarget(path)) {
 			const [was, now] = [unreleasedBullets(before), unreleasedBullets(after)];
+			for (const [heading, lines] of now) {
+				if (DEFAULT_UNRELEASED_SUBSECTIONS.includes(heading)) continue;
+				const omitted = minus(lines, was.get(heading) ?? []);
+				if (omitted.length > 0) {
+					console.warn(
+						`changes-fragments: warning: ${path}: omitted additions under ${heading}; reclassify these in ${target}:\n${omitted.join("\n")}`,
+					);
+				}
+			}
 			const sections = DEFAULT_UNRELEASED_SUBSECTIONS.flatMap((heading) => {
 				const added = minus(now.get(heading) ?? [], was.get(heading) ?? []);
 				return added.length > 0 ? [`${heading}\n${added.join("\n")}`] : [];
@@ -100,9 +109,13 @@ export function fromDiff({ base, pr, log = console.log }) {
 				["diff", "--no-ext-diff", "--no-color", mergeBase, "--", path],
 				`reading added lines in ${path}`,
 			);
+			let inHunk = false;
 			const added = diff
 				.split("\n")
-				.filter((line) => line.startsWith("+") && !line.startsWith("+++"))
+				.filter((line) => {
+					if (line.startsWith("@@ ")) inHunk = true;
+					return inHunk && line.startsWith("+");
+				})
 				.map((line) => line.slice(1));
 			const body = added.join("\n").trim();
 			if (body !== "") add(path, body);

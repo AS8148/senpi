@@ -168,7 +168,8 @@ describe("from-diff", () => {
 			const previous = ENTRY("previous");
 			write(cwd, TRACKER, previous);
 			commit(cwd, "base");
-			write(cwd, TRACKER, `${ENTRY("old style")}\n${previous}`);
+			const entry = `${ENTRY("old style")}\n++ content\n++ b/${TRACKER}\n`;
+			write(cwd, TRACKER, `${entry}\n${previous}`);
 			write(cwd, CHANGELOG, LOG.replace("- older fix", "- older fix\n- old style fix"));
 			commit(cwd, "old-style PR");
 			const run = spawnSync(process.execPath, [SCRIPT, "from-diff", "--base", "HEAD~1", "--pr", "21"], {
@@ -180,9 +181,34 @@ describe("from-diff", () => {
 			assert.equal(readFileSync(join(cwd, CHANGELOG), "utf8"), LOG);
 			const converted = readFileSync(join(cwd, "changes/unreleased/21.md"), "utf8");
 			assert.ok(converted.includes(`<!-- changes-log: ${CHANGELOG} -->\n### Fixed\n- old style fix`), converted);
-			assert.equal(
-				parseFragment(converted).blocks.find((block) => block.log === TRACKER).body,
-				ENTRY("old style").trim(),
+			assert.equal(parseFragment(converted).blocks.find((block) => block.log === TRACKER).body, entry.trim());
+		}));
+	it("warns with omitted noncanonical section additions", () =>
+		repo((cwd) => {
+			const before = LOG.replace("### Fixed", "### Security\n\n- previous security note\n\n### Fixed");
+			write(cwd, CHANGELOG, before);
+			commit(cwd, "base");
+			write(
+				cwd,
+				CHANGELOG,
+				before
+					.replace("- previous security note", "- previous security note\n- new security note")
+					.replace("- older fix", "- older fix\n- canonical fix"),
 			);
+			commit(cwd, "noncanonical addition");
+			const run = spawnSync(process.execPath, [SCRIPT, "from-diff", "--base", "HEAD~1", "--pr", "21"], {
+				cwd,
+				encoding: "utf8",
+				timeout: 30_000,
+			});
+			assert.equal(run.status, 0, run.stderr);
+			assert.ok(run.stderr.includes(CHANGELOG), run.stderr);
+			assert.ok(run.stderr.includes("### Security"), run.stderr);
+			assert.ok(run.stderr.includes("- new security note"), run.stderr);
+			assert.ok(!run.stderr.includes("- previous security note"), run.stderr);
+			assert.equal(readFileSync(join(cwd, CHANGELOG), "utf8"), before);
+			const converted = parseFragment(readFileSync(join(cwd, "changes/unreleased/21.md"), "utf8"));
+			assert.deepEqual(converted.reasons, []);
+			assert.equal(converted.blocks[0].body, "### Fixed\n- canonical fix");
 		}));
 });

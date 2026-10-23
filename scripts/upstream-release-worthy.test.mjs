@@ -12,7 +12,6 @@ describe("upstream release worthiness", () => {
 	it("counts pending changelog fragments without writing the compiled preview (senpi#3767)", () => {
 		const cwd = mkdtempSync(join(tmpdir(), "senpi-worthy-fragments-"));
 		const log = "# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n";
-		const fragment = "<!-- changes-log: packages/ai/CHANGELOG.md -->\n### Fixed\n- Pending fix\n";
 		try {
 			for (const path of CHANGELOGS) {
 				mkdirSync(dirname(join(cwd, path)), { recursive: true });
@@ -22,10 +21,13 @@ describe("upstream release worthiness", () => {
 			const run = () => execFileSync(process.execPath, [script], { cwd, encoding: "utf8", timeout: 30_000 });
 			assert.match(run(), /release_worthy=false/);
 			mkdirSync(join(cwd, "changes/unreleased"), { recursive: true });
-			writeFileSync(join(cwd, "changes/unreleased/21.md"), fragment);
-			assert.match(run(), /release_worthy=true/);
-			for (const path of CHANGELOGS) assert.equal(readFileSync(join(cwd, path), "utf8"), log);
-			assert.equal(readFileSync(join(cwd, "changes/unreleased/21.md"), "utf8"), fragment);
+			for (const target of new Set(["packages/server/CHANGELOG.md", ...CHANGELOGS])) {
+				const fragment = `<!-- changes-log: ${target} -->\n### Fixed\n- Pending fix\n`;
+				writeFileSync(join(cwd, "changes/unreleased/21.md"), fragment);
+				assert.match(run(), /release_worthy=true/, target);
+				for (const path of CHANGELOGS) assert.equal(readFileSync(join(cwd, path), "utf8"), log);
+				assert.equal(readFileSync(join(cwd, "changes/unreleased/21.md"), "utf8"), fragment);
+			}
 		} finally {
 			rmSync(cwd, { recursive: true, force: true });
 		}

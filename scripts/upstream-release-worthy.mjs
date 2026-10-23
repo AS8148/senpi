@@ -1,14 +1,8 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
+import { CHANGELOGS } from "./release-changelog.mjs";
 import { compileFragments } from "./sync-changes-fragments.mjs";
-
-const CHANGELOGS = [
-	"packages/ai/CHANGELOG.md",
-	"packages/agent/CHANGELOG.md",
-	"packages/coding-agent/CHANGELOG.md",
-	"packages/tui/CHANGELOG.md",
-];
 
 const ENTRY_RE = /^\s*-\s+\S/m;
 
