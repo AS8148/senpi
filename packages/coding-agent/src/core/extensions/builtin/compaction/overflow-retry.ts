@@ -206,6 +206,8 @@ function removeFirstToolPairAfter(messages: AgentMessage[], boundaryIndex: numbe
 /** Shortest request text a truncation keeps, so the summary still sees what was asked. */
 const TRUNCATED_REQUEST_MIN_CHARS = 200;
 
+const TRUNCATION_NOTE = /\n\n\[\.\.\. (\d+) more characters truncated\]$/;
+
 /**
  * When the turn's request alone is over the budget, keep it but cut its text to fit (images and other non-text
  * blocks go with the cut), so a giant pasted prompt still compacts instead of exhausting every retry (senpi#4079).
@@ -217,20 +219,27 @@ function truncateRequestToBudget(messages: AgentMessage[], targetTokens: number)
 	if (request?.role !== "user") return undefined;
 	const requestTokens = estimateWireTokens(request);
 	if (requestTokens <= targetTokens) return undefined;
-	const text =
+	const fullText =
 		typeof request.content === "string"
 			? request.content
 			: request.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
+	// A request cut by an earlier retry carries its note; fold that count into the new one instead of nesting notes.
+	const earlierCut = TRUNCATION_NOTE.exec(fullText);
+	const text = earlierCut ? fullText.slice(0, earlierCut.index) : fullText;
+	const alreadyCut = earlierCut ? Number(earlierCut[1]) : 0;
 	if (text.length <= TRUNCATED_REQUEST_MIN_CHARS) return undefined;
 	const available = Math.max(0, targetTokens - (estimateTotalTokens(messages) - requestTokens));
+	// The cut ratio is measured on the text alone: images never reach the serialized summary input, so their
+	// estimated weight must not deepen the cut.
+	const textTokens = Math.max(1, estimateWireTokens({ ...request, content: text }));
 	let keep = Math.min(
 		text.length - 1,
-		Math.max(TRUNCATED_REQUEST_MIN_CHARS, Math.floor((text.length * available) / requestTokens)),
+		Math.max(TRUNCATED_REQUEST_MIN_CHARS, Math.floor((text.length * available) / textTokens)),
 	);
 	for (;;) {
 		const truncated: AgentMessage = {
 			...request,
-			content: `${text.slice(0, keep)}\n\n[... ${text.length - keep} more characters truncated]`,
+			content: `${text.slice(0, keep)}\n\n[... ${text.length - keep + alreadyCut} more characters truncated]`,
 		};
 		if (estimateWireTokens(truncated) <= available || keep <= TRUNCATED_REQUEST_MIN_CHARS)
 			return messages.map((message, index) => (index === requestIndex ? truncated : message));
@@ -268,6 +277,10 @@ export function boundSummarizationInput(
 ): AgentMessage[] {
 	const budget = summarizationHistoryBudget(contextWindow, promptTokens);
 	const pruned = pruneSummarizationInputToBudget(messages, budget);
+	// Without a user-like request (a turn that starts with a custom or summary
+	// entry) pruning can remove everything; the newest message is kept so the
+	// summary never runs on an empty conversation.
+	if (pruned.length === 0) return messages.slice(-1);
 	if (estimateTotalTokens(pruned) <= budget) return pruned;
 	return truncateRequestToBudget(pruned, budget) ?? pruned;
 }
