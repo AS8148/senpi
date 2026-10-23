@@ -1,6 +1,7 @@
 /**
- * The one entry point for async proper-lockfile locks (test/proper-lockfile-reference-guard.test.ts
- * rejects any other proper-lockfile reference under packages/<name>/src except listed lockSync users).
+ * The entry point for async proper-lockfile locks (test/proper-lockfile-reference-guard.test.ts
+ * rejects any other proper-lockfile reference under packages/<name>/src except listed lockSync users
+ * and listed vendored self-contained files, whose every lock call passes its own onCompromised).
  *
  * proper-lockfile 4.1.2 refreshes a held lock from a timer: it `stat`s the lock directory, then
  * `utimes` it. Only the `utimes` callback checks `lock.released`. An unlock that lands while the
