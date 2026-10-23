@@ -80,14 +80,16 @@ export class SubscriptionLimitStore {
 	/**
 	 * Takes another isolate's record as it stands (senpi#3695: the host and its session workers each hold a
 	 * store and mirror each other). An older record, or one identical to what is held, is ignored; that is
-	 * what ends the echo when the mirrored record comes straight back.
+	 * what ends the echo when the mirrored record comes straight back. Two different records can share a
+	 * reportedAt (`report()` keeps it when only the error changes); the tie goes to the one that sorts later,
+	 * so every store settles on the same record whatever order they arrive in, and the echo ends.
 	 */
 	adopt(limits: AccountLimits): void {
 		const key = `${limits.provider}\u0000${limits.account}`;
 		const previous = this.#accounts.get(key);
 		if (previous !== undefined) {
 			if (limits.reportedAt < previous.reportedAt) return;
-			if (JSON.stringify(limits) === JSON.stringify(previous)) return;
+			if (limits.reportedAt === previous.reportedAt && canonical(limits) <= canonical(previous)) return;
 		}
 		this.#publish(key, limits);
 	}
@@ -113,6 +115,15 @@ export class SubscriptionLimitStore {
 		this.#listeners.add(listener);
 		return () => this.#listeners.delete(listener);
 	}
+}
+
+/** A key-order-independent rendering of a record, so equal records compare equal however they were built. */
+function canonical(value: unknown): string {
+	return JSON.stringify(value, (_key, field: unknown) =>
+		field !== null && typeof field === "object" && !Array.isArray(field)
+			? Object.fromEntries(Object.entries(field).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+			: field,
+	);
 }
 
 /** The process's store. */
