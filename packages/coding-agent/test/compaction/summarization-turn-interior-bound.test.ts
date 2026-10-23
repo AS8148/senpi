@@ -2,7 +2,9 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { describe, expect, it } from "vitest";
 import {
 	boundSummarizationInput,
+	estimateTotalTokens,
 	shrinkSummarizationInputForOverflowRetry,
+	summarizationHistoryBudget,
 } from "../../src/core/extensions/builtin/compaction/overflow-retry.ts";
 
 /**
@@ -59,6 +61,13 @@ function toolResultIds(messages: AgentMessage[]): string[] {
 	return messages.flatMap((message) => (message.role === "toolResult" ? [message.toolCallId] : []));
 }
 
+function userText(message: AgentMessage | undefined): string {
+	if (message?.role !== "user") return "";
+	return typeof message.content === "string"
+		? message.content
+		: message.content.map((block) => (block.type === "text" ? block.text : "")).join("");
+}
+
 describe("#4079 the summarization bound inside one long turn", () => {
 	it("#given one turn over the budget #when the input is bounded #then the request stays, the oldest tool steps go, and no call loses its result", () => {
 		// given
@@ -91,5 +100,38 @@ describe("#4079 the summarization bound inside one long turn", () => {
 		// then
 		expect(shrunk?.[0]).toBe(request);
 		expect(shrunk).toHaveLength(2);
+	});
+	it("#given a request that alone is over the budget #when the input is bounded #then the request is kept but truncated so the input fits", () => {
+		// given
+		const request: AgentMessage = { role: "user", content: `pasted log ${"y".repeat(200_000)}`, timestamp: 0 };
+		const replies = oneLongTurn(2)
+			.filter((message) => message.role === "assistant")
+			.map((message) => ({
+				...message,
+				content: message.content.filter((block) => block.type === "text"),
+				stopReason: "stop" as const,
+			}));
+
+		// when
+		const bounded = boundSummarizationInput([request, ...replies], CONTEXT_WINDOW, 100);
+
+		// then
+		expect(bounded[0]?.role).toBe("user");
+		expect(userText(bounded[0])).toMatch(/^pasted log y+/);
+		expect(userText(bounded[0])).toContain("more characters truncated");
+		expect(estimateTotalTokens(bounded)).toBeLessThanOrEqual(summarizationHistoryBudget(CONTEXT_WINDOW, 100));
+	});
+
+	it("#given a request that alone is over the budget #when an overflow retry shrinks the input #then it truncates the request instead of giving up", () => {
+		// given
+		const request: AgentMessage = { role: "user", content: `pasted log ${"y".repeat(200_000)}`, timestamp: 0 };
+
+		// when
+		const shrunk = shrinkSummarizationInputForOverflowRetry([request], CONTEXT_WINDOW, 100);
+
+		// then
+		expect(shrunk).toHaveLength(1);
+		expect(userText(shrunk?.[0])).toContain("more characters truncated");
+		expect(estimateTotalTokens(shrunk ?? [])).toBeLessThanOrEqual(summarizationHistoryBudget(CONTEXT_WINDOW, 100));
 	});
 });
