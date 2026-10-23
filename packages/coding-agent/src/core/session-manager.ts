@@ -223,6 +223,9 @@ export interface ThinkingLevelChangeEntry extends SessionEntryBase {
 	triggerActor?: string;
 	/** The RPC model or thinking-level effect that applied this value. */
 	effectId?: string;
+	/** Model the level applied to (senpi#3819); absent on older entries. Feeds the per-session per-model map. */
+	provider?: string;
+	modelId?: string;
 }
 
 export interface ConfigurationUpdateEntry extends SessionEntryBase {
@@ -1926,6 +1929,7 @@ export class SessionManager {
 		thinkingLevel: string,
 		thinkingSelection?: ThinkingSelection,
 		trigger?: ModelChangeOrigin,
+		model?: { readonly provider: string; readonly id: string },
 	): string {
 		const entry: ThinkingLevelChangeEntry = {
 			type: "thinking_level_change",
@@ -1937,6 +1941,7 @@ export class SessionManager {
 			...(trigger === undefined ? {} : { triggerSource: trigger.source }),
 			...(trigger?.actor === undefined ? {} : { triggerActor: trigger.actor }),
 			...(trigger?.effectId === undefined ? {} : { effectId: trigger.effectId }),
+			...(model === undefined ? {} : { provider: model.provider, modelId: model.id }),
 		};
 		this._appendEntry(entry);
 		return entry.id;
