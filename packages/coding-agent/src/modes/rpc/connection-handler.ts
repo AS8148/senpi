@@ -86,6 +86,7 @@ import {
 	RESUME_SESSION_CAPABILITY,
 	RETRY_FALLBACK_COMMAND_CAPABILITY,
 	SESSION_HELD_CAPABILITY,
+	TOOL_BARRIER_CAPABILITY,
 	TASK_PARENT_CAPABILITY,
 } from "./custom-capability.ts";
 import {
@@ -1138,6 +1139,7 @@ export function createRpcConnectionHandler(
 								EVAL_CELLS_CAPABILITY,
 								AUTH_KEY_VERIFY_CAPABILITY,
 								QUEUED_MESSAGE_REVISION_CAPABILITY,
+								TOOL_BARRIER_CAPABILITY,
 								USER_ACTIVITY_CAPABILITY,
 								RESUME_SESSION_CAPABILITY,
 								...(options.retryFallbackCommand ? [RETRY_FALLBACK_COMMAND_CAPABILITY] : []),
@@ -1617,6 +1619,9 @@ export function createRpcConnectionHandler(
 					excludeFromContext: command.excludeFromContext,
 				});
 				return success(id, "record_bash_result");
+
+			case "release_tool_barrier":
+				return success(id, "release_tool_barrier", { released: session.releaseToolBarrier(command.barrierId) });
 
 			case "set_label":
 				session.sessionManager.appendLabelChange(command.entryId, command.label);
