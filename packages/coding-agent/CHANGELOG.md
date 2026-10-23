@@ -4,6 +4,8 @@
 
 ### Breaking Changes
 
+- Removed the built-in `/llama` llama.cpp router integration and its `/llama` command, the `llama.cpp` inline extension, and the interactive post-login llama.cpp guidance. A saved `llama.cpp` provider or credential in a user config is ignored and no longer resolves; the Ollama provider and third-party `meta-llama` catalog models are unaffected ([#3202](https://github.com/code-yeongyu/senpi/issues/3202), requested by @code-yeongyu).
+
 ### Added
 
 - The footer's cost shows what the session's subagents spent next to the session's own cost, as `$0.380 (+1.270)`, so a session that fans out no longer looks cheaper than it is. The figure comes from the extension that runs the subagents through the new `ctx.ui.setSubagentCost(costUsd)`; RPC forwards it as a `setSubagentCost` UI request ([#2471](https://github.com/code-yeongyu/senpi/issues/2471)).

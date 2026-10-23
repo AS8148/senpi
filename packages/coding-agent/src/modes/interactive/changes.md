@@ -445,6 +445,24 @@ It uses the core resolver and must run for every transcript message.
 
 - `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `applyThinkingLevel` and `onThinkingLevelChange`.
 
+## 2026-10-12 - Remove the /llama llama.cpp integration (senpi#3202)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: removes `llamaCppPostLoginGuidance` and the post-login `llama.cpp` branch.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the post-login guidance belongs to the `/llama` feature Q ordered removed.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: an extension cannot remove a branch inside the host's authentication flow.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the removed guidance function and branch.
+
 ## 2026-10-12 - Short owned temp roots contain TUI socket fallbacks (Refs senpi#3064)
 
 ### What changed
