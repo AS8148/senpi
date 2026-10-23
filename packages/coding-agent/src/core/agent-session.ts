@@ -278,13 +278,16 @@ import type {
 } from "./extensions/types.ts";
 import { normalizeToolExposure, RUNTIME_EXTENSION_PATH } from "./extensions/types.ts";
 import { createUserActivitySource, emitUserActivity, type UserActivityKind } from "./extensions/user-activity.ts";
-import { deliveryIdOf, ExternalAdmission } from "./external-admission.ts";
+import { deliveryIdOf, ExternalAdmission, type InputHold } from "./external-admission.ts";
 import { HELD_INPUT_ENTRY, type HeldInput, HeldInputs, type HoldInputResult, heldInputHistory } from "./held-inputs.ts";
 import { shouldWarnHighReasoning } from "./high-reasoning-warning.ts";
 import { customTurnOrigin, type InputOrigin, inputOriginOf } from "./input-origin.ts";
 import { markInterrupted, type StopInterrupt } from "./interrupted-tool-result.ts";
 import { deliveredReceipts, type ItemizedAdmission, itemNoticeMessage } from "./itemized-send.ts";
 import { LazyToolActivation } from "./lazy-tool-activation.ts";
+import { heldLifecycleNotice, messageTicket } from "./lifecycle-delivery.ts";
+import { lifecycleEditLeaf } from "./lifecycle-edit-leaf.ts";
+import { LifecycleSessionBinding } from "./lifecycle-session-binding.ts";
 import {
 	isManualContinueSubmission,
 	MANUAL_CONTINUE_CUSTOM_TYPE,
@@ -361,6 +364,7 @@ import { isSessionBusySnapshot, type SessionActivitySnapshot, WakeSourceTracker 
 import { type ControlEndpointHost, createSessionControlActions } from "./session-control-actions.ts";
 import { computeSessionFailureReport, type SessionFailureReport } from "./session-failure-report.ts";
 import type { HistoryReducer } from "./session-history-reduce.ts";
+import type { ChildLifecycleReport, LifecycleApi, SessionLifecycleEvent } from "./session-lifecycle-types.ts";
 import { createSessionLogger, type SessionLogger } from "./session-log.ts";
 import type { BranchSummaryEntry, CompactionEntry, SessionEntry, SessionProjection } from "./session-manager.ts";
 import {
@@ -438,6 +442,7 @@ import {
 	VIRTUAL_MODEL_STATE_ENTRY,
 	type VirtualModelStateData,
 } from "./virtual-models.ts";
+import { CustodyViolation, DeliveryTicketRefused } from "./work-obligations.ts";
 
 /** Externally registered tools routed through eval in addition to declared eval exposure. */
 const EVAL_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set(["workflow", "monitor"]);
@@ -539,6 +544,7 @@ export type AgentSessionEvent =
 	/** The tool barrier's ceiling passed before a release; it opened by itself (senpi#3717). */
 	| { type: "tool_barrier_expired"; id: string; deadlineMs: number }
 	| SessionHoldEvent
+	| SessionLifecycleEvent
 	| {
 			type: "resume_compaction_required";
 			projection: ModelUsabilityBudgetProjection;
@@ -1173,6 +1179,8 @@ export interface PromptOptions extends ClientMessageIdentity {
 	onSessionWorkReady?: () => void;
 	sessionTitlePrompt?: string | false;
 	onQueuedInput?: (input: PreparedClientInput) => void;
+	/** Internal: the admitted native turn now owns the input, before agent_start. */
+	onTurnAdmitted?: () => void;
 	/** Arm the tool barrier for the turn this prompt starts; ignored when the prompt is queued instead (senpi#3717). */
 	toolBarrier?: ToolBarrierSpec;
 }
@@ -1283,6 +1291,9 @@ function promptKind(options: PromptOptions | undefined): HumanInputAdmittedEvent
 	return "prompt";
 }
 
+/** senpi#3864: custody key prefix of a delivery ticket the engine opened itself (a producer keys its own). */
+const ENGINE_DELIVERY_KEY_PREFIX = "delivery:";
+
 export class AgentSession {
 	readonly agent: Agent;
 	readonly sessionManager: SessionManager;
@@ -1327,11 +1338,14 @@ export class AgentSession {
 	private _admissionIdleWaiters: Array<() => void> = [];
 	/** User-abort generation at the start of an idle trigger turn's awaited admission hooks. */
 	private _triggerTurnAdmissionAbortGeneration: number | undefined;
+	private _pendingCustomTurnHeaders = 0;
 	private _engineTurnStarts: EngineTurnStartRecord[] = [];
 	private _engineResumeWindow: boolean;
 	private readonly _engineTurnHold: EngineTurnHold;
+	private _lifecycleBinding: LifecycleSessionBinding;
 	/** Itemized batches waiting for the entry their one message is written to (senpi#3811). */
 	private readonly _persistWatchers = new WeakMap<object, ItemizedAdmission>();
+	private _resumeSettlement: Promise<void> = Promise.resolve();
 	private readonly _engineTurnRelease = new EngineTurnRelease();
 	private readonly _engineTurnInput: EngineTurnInput;
 	private readonly _humanInputListeners = new Set<(event: HumanInputAdmittedEvent) => void>();
@@ -1835,6 +1849,7 @@ export class AgentSession {
 			this._emitEntryAppended(entryId);
 			return entryId;
 		});
+		this._lifecycleBinding = this._createLifecycleBinding();
 		this._autoTitleSessions = config.autoTitleSessions ?? false;
 
 		const initialModel = this.agent.state.model;
@@ -2763,6 +2778,7 @@ export class AgentSession {
 	}
 
 	private _emit(event: AgentSessionEvent): void {
+		if (event.type === "session_paused" || event.type === "session_resumed") this.refreshLifecycle();
 		this._logSessionEvent(event);
 		if (event.type === "entry_appended") {
 			event = { ...event, entry: describeUsageLimitEntry(event.entry) };
@@ -3205,6 +3221,7 @@ export class AgentSession {
 		this.releaseSettledSessionMemory();
 		this._deadlineTracker.disarm();
 		this._emit({ type: "agent_idle" });
+		this._lifecycleBinding.controller.idle();
 		// An input release admitted into a turn that was already streaming settles here, once the run settles.
 		const settling = this._settleInputRelease();
 		if (settling) await settling;
@@ -3216,18 +3233,25 @@ export class AgentSession {
 			inputOrigin,
 			deferredTurnClaim,
 			onQueuedInput,
+			onTurnAdmitted,
 		}: {
 			readonly inputOrigin: InputOrigin;
 			readonly deferredTurnClaim?: DeferredTurnClaim;
 			readonly onQueuedInput?: (input: PreparedClientInput) => void;
+			/** Called once the turn is admitted: the human-input seam releases its admission hold here. */
+			readonly onTurnAdmitted?: () => void;
 		},
 	): Promise<void> {
+		if (this._lifecycleBinding.controller.requiresHumanContinuation)
+			throw new Error("The previous run was interrupted. Human input or Resume is required before another turn.");
 		deferredTurnClaim?.resolve("started");
+		this._lifecycleBinding.prepareRun();
 		if (!this._isAgentRunActive) {
 			this.externalAdmission.beginTurn();
 			this._queuedInputAges.noteRunStarted();
 		}
 		this._isAgentRunActive = true;
+		onTurnAdmitted?.();
 		// A new turn admitted: arm the inactivity lease and the hard max-runtime cap.
 		this._deadlineTracker.arm();
 		this._handlerTurnScope += 1;
@@ -3310,6 +3334,15 @@ export class AgentSession {
 
 	/** Internal handler for agent events - shared by subscribe and reconnect */
 	private _handleAgentEvent = (event: AgentEvent, signal: AbortSignal): void => {
+		if (event.type === "agent_start") this._lifecycleBinding.startRun();
+		if (event.type === "message_start") {
+			try {
+				const entryId = this._lifecycleBinding.consume(event.message);
+				if (entryId) this._emitEntryAppended(entryId);
+			} catch (error) {
+				this._transcriptWriteFailures.record(event.message, error);
+			}
+		}
 		this._runContinuations.observe(event);
 		// Record the calls a tool made through ctx.executeTool() and their usage on its result message,
 		// synchronously so the message carries them before any listener or persistence sees it.
@@ -3769,9 +3802,8 @@ export class AgentSession {
 			this._extensionEventSignal = undefined;
 		}
 		if (event.type === "agent_end" && this._abortProvenance.takeLateUserJoin()) await this._emitSessionAbort();
-
 		// Notify all listeners
-		this._emit(
+		const sessionEvent =
 			event.type === "agent_end"
 				? withProviderFailure({
 						...event,
@@ -3783,8 +3815,8 @@ export class AgentSession {
 					})
 				: event.type === "message_update"
 					? withResolvedToolName(event, (name) => this.resolveToolCallName(name))
-					: event,
-		);
+					: event;
+		this._emit(sessionEvent);
 		if (event.type === "agent_end") {
 			if (this._abortProvenance.takeLateUserJoin()) await this._emitSessionAbort();
 		}
@@ -3798,15 +3830,19 @@ export class AgentSession {
 			this._observeEngineTurnMessage(event.message);
 			let entryId: string | undefined;
 			try {
+				const refusal = this._transcriptWriteFailures.refusal(event.message);
+				if (refusal) throw refusal.error;
 				// Check if this is a custom message from extensions
 				if (event.message.role === "custom") {
 					// Persist as CustomMessageEntry
-					entryId = this.sessionManager.appendCustomMessageEntry(
-						event.message.customType,
-						event.message.content,
-						event.message.display,
-						event.message.details,
-					);
+					entryId =
+						this._lifecycleBinding.consumedEntry(event.message) ??
+						this.sessionManager.appendCustomMessageEntry(
+							event.message.customType,
+							event.message.content,
+							event.message.display,
+							event.message.details,
+						);
 					this._incrementMessageRevision();
 					this.externalAdmission.observePersisted(event.message);
 					this._takePersistWatcher(event.message)?.persisted(entryId);
@@ -4362,6 +4398,7 @@ export class AgentSession {
 			);
 			try {
 				await this._extensionRunner.emit(extensionEvent);
+				await this._lifecycleBinding.turnEnded(extensionEvent);
 			} finally {
 				this._abortProvenance.endAgentEnd(extensionEvent);
 			}
@@ -4541,6 +4578,7 @@ export class AgentSession {
 		this._unregisterMemoryReport();
 		this._unsubscribeWakeSources?.();
 		this._unsubscribeWakeSources = undefined;
+		this._lifecycleBinding.dispose();
 		this._eventListeners = [];
 		cleanupSessionResources(this.sessionId);
 		// Nothing reads or writes this manager once its session is gone: it releases
@@ -4559,7 +4597,8 @@ export class AgentSession {
 			isStreaming: this._isAgentRunActive,
 			isBashRunning: this.isBashRunning,
 			isCompacting: this.isCompacting,
-			hasSessionWork: this._sessionWorkBarrier.hasActiveWork,
+			hasSessionWork:
+				this._sessionWorkBarrier.hasActiveWork || this._promptStartPending || this.externalAdmission.hasInputWork,
 			hasActiveWakeSource: this._wakeSources.hasActive,
 		};
 	}
@@ -5505,10 +5544,14 @@ export class AgentSession {
 					heldByNewerStop = true;
 				},
 				promptDisposition: (disposition) => {
-					hold.accepted();
+					if (disposition !== "started") hold.accepted();
 					if (!heldByNewerStop && (disposition === "started" || disposition === "queued"))
 						this._engineTurnInput.admit(disposition === "queued", (message) => this.agent.steer(message));
 					options?.promptDisposition?.(disposition);
+				},
+				onTurnAdmitted: () => {
+					hold.accepted();
+					options?.onTurnAdmitted?.();
 				},
 			});
 			if (heldByNewerStop) {
@@ -6015,6 +6058,8 @@ export class AgentSession {
 			// Flush any pending bash messages before the new prompt
 			this._flushPendingBashMessages();
 
+			if (this._extensionBindingPromptReadiness === undefined && !this._lifecycleBinding.isRestored)
+				await this._lifecycleBinding.restore();
 			await this._assertModelReadyForTurn();
 
 			// The user's new prompt is sent below, so do not call agent.continue() here.
@@ -6104,6 +6149,7 @@ export class AgentSession {
 		await this._promptAgent(messages, {
 			inputOrigin: originOf(options),
 			onQueuedInput: options?.onQueuedInput,
+			onTurnAdmitted: options?.onTurnAdmitted,
 		});
 		await this.waitForRetry();
 		await this.waitForIdle();
@@ -6304,18 +6350,53 @@ export class AgentSession {
 	 * Shared queueing path for `steer()` and `followUp()`: extension-command guard,
 	 * `input` handlers, skill/template expansion, then the recovery-ordered enqueue.
 	 */
-	private async _queueUserInput(
+	private _queueUserInput(
 		text: string,
 		images: ImageContent[] | undefined,
 		behavior: "steer" | "followUp",
 		options?: QueuedInputOptions,
 	): Promise<QueuedInputDisposition> {
-		const origin = originOf(options);
-		if (origin === "person" && this._engineTurnHold.held) {
-			await this.prompt(text, { ...options, images, streamingBehavior: behavior, humanInputReported: true });
+		const hold = this.externalAdmission.beginInput();
+		if (originOf(options) === "person" && this._engineTurnHold.held)
+			return this._promptHeldQueuedInput(text, images, behavior, options, hold);
+		// The caller awaits the admission itself: the hold is released beside it, so holding the input adds no
+		// turns to a caller that queues several inputs before the run drains its steering queue.
+		const admitted = this._admitQueuedInput(text, images, behavior, options);
+		admitted.then(hold.end, hold.end);
+		return admitted;
+	}
+
+	private async _promptHeldQueuedInput(
+		text: string,
+		images: ImageContent[] | undefined,
+		behavior: "steer" | "followUp",
+		options: QueuedInputOptions | undefined,
+		hold: InputHold,
+	): Promise<QueuedInputDisposition> {
+		try {
+			await this.prompt(text, {
+				...options,
+				images,
+				streamingBehavior: behavior,
+				humanInputReported: true,
+				promptDisposition: (disposition) => {
+					if (disposition !== "started") hold.accepted();
+				},
+				onTurnAdmitted: () => hold.accepted(),
+			});
 			return "queued";
+		} finally {
+			hold.end();
 		}
-		if (origin === "person") this._beginPersonInput();
+	}
+
+	private async _admitQueuedInput(
+		text: string,
+		images: ImageContent[] | undefined,
+		behavior: "steer" | "followUp",
+		options?: QueuedInputOptions,
+	): Promise<QueuedInputDisposition> {
+		if (originOf(options) === "person") this._beginPersonInput();
 		// Check for extension commands (cannot be queued)
 		if (text.startsWith("/")) {
 			this._throwIfExtensionCommand(text);
@@ -6668,9 +6749,18 @@ export class AgentSession {
 				));
 		if (held) {
 			claim?.resolve("finished-without-start");
+			// The ticket is admitted before any notice is written: a refused one keeps no item (senpi#3864).
+			if (options.ticket !== undefined) {
+				const admission = this.workObligations.admission(options.ticket);
+				if (admission !== "admitted") throw new DeliveryTicketRefused(options.ticket, admission);
+			}
 			const notices = this._engineTurnHold.noteItems(
 				items.map((item) => ({ source: item.producer, message: itemNoticeMessage(message, item), item })),
 			);
+			// senpi#3864: the batch's delivery ticket moves into the held notices, as a plain held send's does.
+			const firstNotice = notices[0];
+			if (options.ticket !== undefined && firstNotice !== undefined)
+				this.workObligations.held(options.ticket, firstNotice.noticeId);
 			return notices.map((notice) => ({ ...notice, disposition: "notice_persisted" as const }));
 		}
 		const outcome = Promise.withResolvers<readonly SendMessageReceipt[]>();
@@ -6682,6 +6772,30 @@ export class AgentSession {
 			},
 		}).catch(outcome.reject);
 		return outcome.promise;
+	}
+
+	/** A re-send of a queued ticket shares the queued message's outcome instead of waiting on a message never written. */
+	private _joinPersistWatcher(carrier: AgentMessage, joined: ItemizedAdmission): void {
+		const first = this._persistWatchers.get(carrier);
+		this._persistWatchers.set(
+			carrier,
+			first === undefined
+				? joined
+				: {
+						persisted: (entryId) => {
+							first.persisted(entryId);
+							joined.persisted(entryId);
+						},
+						failed: (error) => {
+							first.failed(error);
+							joined.failed(error);
+						},
+						droppedByAbort: () => {
+							first.droppedByAbort();
+							joined.droppedByAbort();
+						},
+					},
+		);
 	}
 
 	private _takePersistWatcher(message: AgentMessage): ItemizedAdmission | undefined {
@@ -6704,24 +6818,180 @@ export class AgentSession {
 	 */
 	async sendCustomMessage<T = unknown>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
+		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn"; ticket?: string },
+		deferredTurnClaim?: DeferredTurnClaim,
+		releasedWake?: () => boolean,
+		itemized?: ItemizedAdmission,
+		onQueued?: () => void,
+	): Promise<void> {
+		// Normalize the legacy untyped content boundary before persisting a retry payload.
+		const deliveryMessage = { ...message, content: message.content ?? [] };
+		if (this._sizesOnlyStartup && options?.triggerTurn === true) {
+			// Size inspection makes no model call (#3483) and owes no work: no ticket, custody record or session file.
+			this._pendingNextTurnMessages.push({ role: "custom", ...deliveryMessage, timestamp: Date.now() } satisfies CustomMessage);
+			deferredTurnClaim?.resolve("finished-without-start");
+			return;
+		}
+		const obligations = this.workObligations;
+		const deliveryId = deliveryIdOf({ ...deliveryMessage, role: "custom", timestamp: Date.now() });
+		// A next-turn message waits for a person's turn, so it is never work the engine owes.
+		const engineTicket =
+			options?.ticket === undefined &&
+			options?.deliverAs !== "nextTurn" &&
+			(this.isStreaming || options?.triggerTurn === true)
+				? obligations
+						.open(
+							`${ENGINE_DELIVERY_KEY_PREFIX}${message.customType}:${deliveryId ?? randomUUID()}`,
+							"background",
+						)
+						.ticket()
+				: undefined;
+		const ticket = options?.ticket ?? engineTicket;
+		const generation = this._userAbortGeneration;
+		// The same ticket admission as the held branch, before the payload is queued (senpi#3864).
+		const admission = ticket === undefined ? "admitted" : obligations.admission(ticket);
+		if (ticket !== undefined && admission !== "admitted") {
+			deferredTurnClaim?.resolve("finished-without-start");
+			if (itemized !== undefined) {
+				itemized.failed(new DeliveryTicketRefused(ticket, admission));
+				return;
+			}
+			// A plain send keeps its contract: an unknown ticket is a custody violation, a settled one is a no-op.
+			if (admission === "unknown") throw new CustodyViolation(ticket);
+			return;
+		}
+		if (ticket) obligations.queue(ticket, { message: deliveryMessage, deliverAs: options?.deliverAs });
+		onQueued?.();
+		// A batch a user abort (Esc or Stop) dropped is decided again only after this delivery releases its ticket.
+		let readmit = false;
+		const delivery: ItemizedAdmission | undefined =
+			itemized === undefined
+				? undefined
+				: {
+						persisted: itemized.persisted,
+						failed: itemized.failed,
+						droppedByAbort: () => {
+							readmit = true;
+						},
+					};
+		try {
+			const startsTurn = options?.triggerTurn === true && !this.isStreaming;
+			if (startsTurn) this._pendingCustomTurnHeaders++;
+			try {
+				await this.sessionManager.persistHeaderNow();
+			} finally {
+				if (startsTurn) this._pendingCustomTurnHeaders--;
+			}
+			if (generation !== this._userAbortGeneration) {
+				if (ticket) this._retireLifecycleDelivery(ticket, !this._isEngineDelivery(ticket));
+				deferredTurnClaim?.resolve("finished-without-start");
+				readmit = itemized !== undefined;
+				return;
+			}
+			await this._deliverCustomMessage(
+				deliveryMessage,
+				{ ...options, ticket },
+				deferredTurnClaim,
+				releasedWake,
+				delivery,
+			);
+			if (ticket && generation !== this._userAbortGeneration) {
+				const retainedForLater = [
+					...this.agent.peekQueuedMessages({ all: true }),
+					...this._pendingNextTurnMessages,
+				].some((queued) => queued.role === "custom" && messageTicket(queued) === ticket);
+				if (!retainedForLater) this._retireLifecycleDelivery(ticket, !this._isEngineDelivery(ticket));
+			}
+		} catch (error) {
+			if (ticket) obligations.failed(ticket);
+			throw error;
+		} finally {
+			if (ticket) obligations.endDelivery(ticket);
+			if (readmit) itemized?.droppedByAbort();
+		}
+	}
+
+	private _queuedDeliveryTickets(): string[] {
+		return this.agent.peekQueuedMessages({ all: true }).flatMap((queued) => {
+			const ticket = queued.role === "custom" ? messageTicket(queued) : undefined;
+			return ticket === undefined ? [] : [ticket];
+		});
+	}
+
+	/**
+	 * senpi#3864: a queued delivery that leaves the queue unconsumed is no longer work the engine owes. A cleared
+	 * one is cancelled (a producer keeps its own ticket open without the payload); one an abort left queued waits
+	 * for a person's turn, so its engine ticket turns passive.
+	 */
+	/** Read from the durable custody key, so a delivery re-sent from custody after a restart is still the engine's. */
+	private _isEngineDelivery(ticket: string): boolean {
+		return this.workObligations.active.some(
+			(record) => record.ticketId === ticket && record.key.startsWith(ENGINE_DELIVERY_KEY_PREFIX),
+		);
+	}
+
+	private _releaseQueuedDeliveries(tickets: readonly string[], cause: "cleared" | "aborted"): void {
+		for (const ticket of tickets) {
+			const engineOwned = this._isEngineDelivery(ticket);
+			if (cause === "cleared") {
+				if (engineOwned) this.workObligations.cancel(ticket);
+				else this.workObligations.retire(ticket);
+			} else if (engineOwned) this.workObligations.passive(ticket);
+		}
+	}
+
+	private _retireLifecycleDelivery(ticket: string, producerOwned: boolean): void {
+		for (const queued of this.agent.peekQueuedMessages({ all: true })) {
+			if (queued.role === "custom" && messageTicket(queued) === ticket) this.agent.removeQueuedMessage(queued);
+		}
+		this._pendingNextTurnMessages = this._pendingNextTurnMessages.filter(
+			(queued) => messageTicket(queued) !== ticket,
+		);
+		if (producerOwned) this.workObligations.retire(ticket);
+		else this.workObligations.cancel(ticket);
+	}
+
+	private async _deliverCustomMessage<T = unknown>(
+		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
 		options?: {
 			triggerTurn?: boolean;
 			deliverAs?: "steer" | "followUp" | "nextTurn";
+			ticket?: string;
 		},
 		deferredTurnClaim?: DeferredTurnClaim,
 		releasedWake?: () => boolean,
 		itemized?: ItemizedAdmission,
 	): Promise<void> {
 		const userAbortGeneration = this._userAbortGeneration;
+		const queuedCarrier =
+			options?.ticket === undefined
+				? undefined
+				: [...this.agent.peekQueuedMessages({ all: true }), ...this._pendingNextTurnMessages].find(
+						(queued) => queued.role === "custom" && messageTicket(queued) === options.ticket,
+					);
+		if (queuedCarrier !== undefined) {
+			// The ticket's message is already queued: this send's receipts settle when that message is written.
+			if (itemized !== undefined) this._joinPersistWatcher(queuedCarrier, itemized);
+			deferredTurnClaim?.resolve("delegated");
+			return;
+		}
 		const appMessage = {
 			role: "custom" as const,
 			customType: message.customType,
-			// Untyped extensions can pass null/missing content; normalize at ingestion.
-			content: message.content ?? [],
+			content: message.content,
 			display: message.display,
-			details: message.details,
+			details: options?.ticket
+				? {
+						...(typeof message.details === "object" && message.details !== null && !Array.isArray(message.details)
+							? message.details
+							: message.details === undefined
+								? {}
+								: { producerDetails: message.details }),
+						ticketId: options.ticket,
+					}
+				: message.details,
 			timestamp: Date.now(),
-		} satisfies CustomMessage<T>;
+		} satisfies CustomMessage;
 		if (this._sizesOnlyStartup && options?.triggerTurn === true) {
 			// Size inspection makes no model call (#3483): keep the message for a turn that never starts.
 			this._pendingNextTurnMessages.push(appMessage);
@@ -6736,6 +7006,10 @@ export class AgentSession {
 				this._runHolds.holdsWake(message.details))
 		) {
 			this._engineTurnHold.note(engineWakeSource(message.customType), appMessage);
+			if (options?.ticket) {
+				const noticeId = heldLifecycleNotice(this, options.ticket, message.customType);
+				if (noticeId) this.workObligations.held(options.ticket, noticeId);
+			}
 			deferredTurnClaim?.resolve("finished-without-start");
 			return;
 		}
@@ -6805,6 +7079,8 @@ export class AgentSession {
 				};
 				this._triggerTurnAdmissionAbortGeneration = userAbortGeneration;
 				try {
+					if (this._extensionBindingPromptReadiness === undefined && !this._lifecycleBinding.isRestored)
+						await this._lifecycleBinding.restore();
 					await this._assertModelReadyForTurn();
 					await this._enforceCompactionBeforeProvider(this._findLastAssistantMessage(), false, "pre_prompt");
 					this._refreshToolDeclarationsForModel();
@@ -6843,8 +7119,10 @@ export class AgentSession {
 				if (inputOrigin === "engine") this._recordEngineTurnStart(message.customType);
 				await this._promptAgent(messages, { inputOrigin, deferredTurnClaim });
 			} else if (this.isStreaming) {
+				if (options?.ticket) this.workObligations.passive(options.ticket);
 				this._pendingCustomMessages.push(appMessage);
 			} else {
+				if (options?.ticket) this.workObligations.passive(options.ticket);
 				this._appendCustomMessage(appMessage);
 			}
 		} finally {
@@ -6865,6 +7143,16 @@ export class AgentSession {
 	onHumanInputAdmitted(listener: (event: HumanInputAdmittedEvent) => void): () => void {
 		this._humanInputListeners.add(listener);
 		return () => this._humanInputListeners.delete(listener);
+	}
+
+	/** Internal adapter boundary for a validated reply that resumes the current turn. */
+	admitHumanAnswer(): void {
+		const input = this.externalAdmission.beginInput();
+		try {
+			this._humanInputAdmitted("answer");
+		} finally {
+			input.end();
+		}
 	}
 
 	private _humanInputAdmitted(kind: HumanInputAdmittedEvent["kind"]): void {
@@ -6898,7 +7186,16 @@ export class AgentSession {
 		this._humanInputAdmitted("resume");
 		const replayed = request.effectId === undefined ? undefined : this._resumeEffects.get(request.effectId);
 		if (replayed !== undefined) return { answer: { ...replayed, replayed: true }, settled: Promise.resolve() };
-		const result = await this._resumeOnce(request);
+		// A resume is a person's input (senpi#3864): no external delivery overtakes it until its turn is queued.
+		const input = this.externalAdmission.beginInput();
+		let result: { answer: ResumeSessionAnswer; settled: Promise<void> };
+		try {
+			result = await this._resumeOnce(request, () => input.accepted());
+		} catch (error) {
+			input.end();
+			throw error;
+		}
+		result.settled.then(input.end, input.end);
 		if (request.effectId !== undefined && result.answer.resumed) {
 			this._resumeEffects.set(request.effectId, result.answer);
 			this._emitEntryAppended(
@@ -6913,6 +7210,7 @@ export class AgentSession {
 
 	private async _resumeOnce(
 		request: ResumeSessionRequest,
+		onQueued?: () => void,
 	): Promise<{ answer: ResumeSessionAnswer; settled: Promise<void> }> {
 		const pauseSeq = this._engineTurnHold.currentPauseSeq;
 		const holds = this._engineTurnHold.holds;
@@ -6949,7 +7247,7 @@ export class AgentSession {
 		const deliveredNotices = this._engineTurnHold.noticeCount;
 		const deliveredHeldInputs = this._heldInputs.pending().length;
 		if (this._stopHoldLive() || this._engineTurnHold.fences.length > 0 || deliveredHeldInputs > 0) {
-			const { turnStarted, settled } = await this._resumeAfterStop();
+			const { turnStarted, settled } = await this._resumeAfterStop(onQueued);
 			return {
 				answer: { resumed: true, pauseSeq, turnStarted, deliveredNotices, deliveredHeldInputs },
 				settled,
@@ -6961,7 +7259,7 @@ export class AgentSession {
 				const generation = this._userAbortGeneration;
 				await this.waitForIdle();
 				const claim = new DeferredTurnClaim();
-				await this.sendCustomMessage(message, { triggerTurn: true }, claim, admit);
+				await this.sendCustomMessage(message, { triggerTurn: true }, claim, admit, undefined, onQueued);
 				if ((await claim.disposition) !== "started") return false;
 				await this.waitForIdle();
 				if (generation !== this._userAbortGeneration) {
@@ -6990,9 +7288,9 @@ export class AgentSession {
 	 * once its send settled without one) and returns its settlement, which finishes the release only if the shared
 	 * resume settlement delivered the turn.
 	 */
-	private async _resumeAfterStop(): Promise<{ turnStarted: boolean; settled: Promise<void> }> {
+	private async _resumeAfterStop(onQueued?: () => void): Promise<{ turnStarted: boolean; settled: Promise<void> }> {
 		const sources = this._engineTurnHold.releaseAll("resume_session");
-		const { turnId, delivered } = await this._startResumeTurn();
+		const { turnId, delivered } = await this._startResumeTurn(onQueued);
 		const settled = (async () => {
 			if (!(await delivered)) {
 				this._engineTurnHold.rejectInput();
@@ -7005,11 +7303,41 @@ export class AgentSession {
 		return { turnStarted: turnId !== undefined, settled };
 	}
 
+	/**
+	 * Settles once the latest resume turn's held input and notices were consumed, or the turn was not delivered
+	 * (senpi#3811/#3864). Published when that resume turn begins, so a caller waits for consumption deterministically
+	 * instead of counting ticks.
+	 * @internal Not part of the RPC surface.
+	 */
+	resumeSettled(): Promise<void> {
+		return this._resumeSettlement;
+	}
+
 	/** The resume turn both resume paths start; held input and notices are consumed only if no newer Stop aborted it. */
-	private async _startResumeTurn(): ReturnType<typeof startRunResumeTurn> {
-		const generation = this._userAbortGeneration;
-		const { run, continues } = this._takeHeldCommands();
-		await run;
+	private async _startResumeTurn(onQueued?: () => void): ReturnType<typeof startRunResumeTurn> {
+		const settlement = Promise.withResolvers<void>();
+		this._resumeSettlement = settlement.promise;
+		try {
+			const generation = this._userAbortGeneration;
+			const { run, continues } = this._takeHeldCommands();
+			await run;
+			const started = await this._startResumeTurnWith(generation, continues, onQueued);
+			started.delivered.then(
+				() => settlement.resolve(),
+				() => settlement.resolve(),
+			);
+			return started;
+		} catch (error) {
+			settlement.resolve();
+			throw error;
+		}
+	}
+
+	private _startResumeTurnWith(
+		generation: number,
+		continues: ReadonlySet<string>,
+		onQueued?: () => void,
+	): ReturnType<typeof startRunResumeTurn> {
 		return startRunResumeTurn({
 			heldInputs: () =>
 				this._heldInputs
@@ -7018,7 +7346,8 @@ export class AgentSession {
 					.map((input) => ({ ...input, text: this._preparedHeldText(input) })),
 			continueInputs: () => [...continues],
 			heldWakes: () => this._engineTurnHold.messages(),
-			send: (message) => this.sendCustomMessage(message, { triggerTurn: true }, undefined, () => true),
+			send: (message) =>
+				this.sendCustomMessage(message, { triggerTurn: true }, undefined, () => true, undefined, onQueued),
 			turnStarted: (until) => this._nextTurnStart(until),
 			idle: () => this.waitForIdle(),
 			current: () => generation === this._userAbortGeneration,
@@ -7222,6 +7551,57 @@ export class AgentSession {
 
 	get paused(): boolean {
 		return this._engineTurnHold.isHeld();
+	}
+
+	private _createLifecycleBinding(): LifecycleSessionBinding {
+		return new LifecycleSessionBinding(this, {
+			append: (type, data) => {
+				const startupBookkeeping =
+					type === "session-lifecycle" &&
+					typeof data === "object" &&
+					data !== null &&
+					"epoch" in data &&
+					data.epoch === 0 &&
+					"state" in data &&
+					data.state === "done" &&
+					"humanInputRevision" in data &&
+					data.humanInputRevision === 0;
+				const id = this.sessionManager.appendCustomEntry(type, data, { startupBookkeeping });
+				this._emitEntryAppended(id);
+				return id;
+			},
+			emit: (event) => this._emit(event),
+			factsFailed: (error) => this._sessionLogger.warn("lifecycle_goal_read_failed", { error: String(error) }),
+		});
+	}
+
+	get lifecycle() {
+		this._lifecycleBinding.controller.recompute();
+		return this._lifecycleBinding.controller.ledger.snapshot;
+	}
+
+	get workObligations() {
+		return this._lifecycleBinding.controller.obligations;
+	}
+
+	get lifecycleApi(): LifecycleApi {
+		return {
+			obligations: this.workObligations,
+			reportChild: (report) => this.reportChildLifecycle(report),
+			markRunCompleted: ({ runId }) => this._lifecycleBinding.controller.markRunCompleted(runId),
+		};
+	}
+
+	reportChildLifecycle(report: ChildLifecycleReport): void {
+		this._lifecycleBinding.controller.reportChild(report);
+	}
+
+	requestSelfSettle() {
+		return this._lifecycleBinding.controller.requestSelfSettle();
+	}
+
+	refreshLifecycle(): void {
+		this._lifecycleBinding.controller.recompute();
 	}
 
 	get pausedNoticeCount(): number {
@@ -7714,7 +8094,9 @@ export class AgentSession {
 		this._queueClearRecorded = recorded;
 		this._postCompactionDeferredSteeringMessages = [];
 		this._postCompactionDeferredFollowUpMessages = [];
+		const clearedDeliveries = this._queuedDeliveryTickets();
 		this.agent.clearAllQueues();
+		this._releaseQueuedDeliveries(clearedDeliveries, "cleared");
 		this.externalAdmission.dropQueued();
 		this._emitQueueUpdate();
 		const cleared = { steering, followUp } as ClearedQueue;
@@ -7798,7 +8180,8 @@ export class AgentSession {
 		// Streaming aborts are carried by agent_end provenance; only gaps need session_abort.
 		const wasMidRun = this.isStreaming && this._retryAbortController === undefined;
 		const hadRetryBackoff = this._retryAbortController !== undefined;
-		const hasPendingTriggerTurnAdmission = this._triggerTurnAdmissionAbortGeneration === this._userAbortGeneration;
+		const hasPendingTriggerTurnAdmission =
+			this._pendingCustomTurnHeaders > 0 || this._triggerTurnAdmissionAbortGeneration === this._userAbortGeneration;
 		const hadCompactionOrPending =
 			!this.isStreaming && (this.isCompacting || this.pendingMessageCount > 0 || hasPendingTriggerTurnAdmission);
 		const hadClearedQueues = this._hadClearedQueuedMessages;
@@ -7810,6 +8193,14 @@ export class AgentSession {
 		if (hasPendingTriggerTurnAdmission) this._recordUserAbort();
 		if (this._isBeforeSettle) this._abortDuringBeforeSettle = true;
 		await this._abortActiveAgentAndRetry("user");
+		const releaseStranded = () => this._releaseQueuedDeliveries(this._queuedDeliveryTickets(), "aborted");
+		if (this.isIdle) releaseStranded();
+		else
+			this.waitForIdle().then(releaseStranded, (error: unknown) => {
+				this._sessionLogger.warn("abort_delivery_release_failed", {
+					error: error instanceof Error ? error.message : String(error),
+				});
+			});
 		// An Esc that joined an open agent_end boundary returns at once: a boundary handler that holds the run is still
 		// released after the grace (senpi#3650), without making abort() itself wait for it.
 		if (!this.isIdle) {
@@ -10808,6 +11199,8 @@ export class AgentSession {
 			void Promise.allSettled(bindingPromptReadiness).then(settleSessionStart);
 		}
 		await Promise.all(bindingPromptReadiness);
+		if (this._lifecycleBinding.isRestored) await this._lifecycleBinding.refreshFacts();
+		else await this._lifecycleBinding.restore();
 	}
 
 	private _beginSessionStartSettlement(): () => void {
@@ -10853,6 +11246,7 @@ export class AgentSession {
 		runner.setToolHookLifecycleObserver((event) => {
 			this._emit(event);
 		});
+		runner.setLifecycleAttentionObserver(() => this.refreshLifecycle());
 		runner.setEventHandlerBudget(
 			() => ({
 				warnMs: this.settingsManager.getExtensionEventHandlerWarnMs(),
@@ -10888,6 +11282,10 @@ export class AgentSession {
 	}
 
 	private _bindExtensionCore(runner: ExtensionRunner): void {
+		if (this._lifecycleBinding.sessionId !== this.sessionId) {
+			this._lifecycleBinding.dispose();
+			this._lifecycleBinding = this._createLifecycleBinding();
+		}
 		// Activity extensions publish about work outliving a turn (background
 		// terminal jobs, monitors, holds) feeds the session-busy contract. Re-bound
 		// per runner; counts survive the swap so a reload cannot make live work
@@ -10896,6 +11294,7 @@ export class AgentSession {
 		this._unsubscribeWakeSources = runner.onBusEvent(WAKE_SOURCE_STATE_EVENT, (data) =>
 			this._wakeSources.observe(data),
 		);
+		this._lifecycleBinding.bindFactEvents(runner);
 		const getCommands = (): SlashCommandInfo[] => {
 			const extensionCommands: SlashCommandInfo[] = runner.getRegisteredCommands().map((command) => ({
 				name: command.invocationName,
@@ -11023,6 +11422,7 @@ export class AgentSession {
 					host: () => this._controlEndpointHost,
 					relocationHost: () => this._relocationHost,
 				}),
+				lifecycle: this.lifecycleApi,
 			},
 			{
 				offload: (id, args, options) =>
@@ -12843,7 +13243,7 @@ export class AgentSession {
 			throw new SessionStreamingError();
 		}
 		// Stale tokens fail before the unchanged short-circuit: a stale window never learns "unchanged".
-		assertExpectedLeaf(options.expectedLeafId, this.sessionManager.getLeafId());
+		assertExpectedLeaf(options.expectedLeafId, lifecycleEditLeaf(this.sessionManager, options.expectedLeafId));
 		const targetEntry = this.sessionManager.getEntry(entryId);
 		if (!targetEntry) {
 			throw new AssistantEditError("not-found", `Entry ${entryId} not found`);
@@ -12873,7 +13273,7 @@ export class AgentSession {
 		}
 		// Stale tokens fail before the unchanged short-circuit: a stale window never learns "unchanged".
 		// `_navigateTree` re-checks the same token; nothing awaits in between, so the two agree.
-		assertExpectedUserLeaf(options.expectedLeafId, this.sessionManager.getLeafId());
+		assertExpectedUserLeaf(options.expectedLeafId, lifecycleEditLeaf(this.sessionManager, options.expectedLeafId));
 		const targetEntry = this.sessionManager.getEntry(entryId);
 		if (!targetEntry) {
 			throw new UserEditError("not-found", `Entry ${entryId} not found`);
@@ -12905,7 +13305,7 @@ export class AgentSession {
 
 		const oldLeafId = this.sessionManager.getLeafId();
 		// Stale tokens fail even for a would-be no-op, before any extension hears about the navigation.
-		assertExpectedLeaf(options.expectedLeafId, oldLeafId);
+		assertExpectedLeaf(options.expectedLeafId, lifecycleEditLeaf(this.sessionManager, options.expectedLeafId));
 
 		// Model required for summarization
 		if (options.summarize && !this.model) {
