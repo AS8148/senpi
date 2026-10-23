@@ -1,5 +1,6 @@
 import type { BrowserEngine } from "../../core/browser-engine.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
+import type { AccountLimits } from "../../core/subscription-limits/limit-store.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import type { RpcSessionState } from "./rpc-types.ts";
 import type { RpcSessionLaunchProfile } from "./session-registry.ts";
@@ -53,6 +54,8 @@ export type HostToSessionWorker =
 	| { type: "permission_preset"; request: number; preset: string }
 	| { type: "cancel_ui" }
 	| { type: "cancel_grant"; id: string }
+	/** The host's subscription limit records, mirrored into the isolate's store (senpi#3695). */
+	| { type: "subscription_limits"; accounts: readonly AccountLimits[] }
 	| { type: "close" };
 
 export type SessionWorkerToHost =
@@ -73,6 +76,8 @@ export type SessionWorkerToHost =
 	| { type: "capabilities"; connection?: string; capabilities: readonly string[]; signal: SharedArrayBuffer }
 	| { type: "loaded_surfaces"; previous?: string; digest: string; signal: SharedArrayBuffer }
 	| { type: "request_close" }
+	/** A record a turn in the isolate reported, mirrored into the host's store (senpi#3695). */
+	| { type: "subscription_limits"; limits: AccountLimits }
 	| { type: "failure"; error: string };
 
 /**

@@ -77,6 +77,21 @@ export class SubscriptionLimitStore {
 		});
 	}
 
+	/**
+	 * Takes another isolate's record as it stands (senpi#3695: the host and its session workers each hold a
+	 * store and mirror each other). An older record, or one identical to what is held, is ignored; that is
+	 * what ends the echo when the mirrored record comes straight back.
+	 */
+	adopt(limits: AccountLimits): void {
+		const key = `${limits.provider}\u0000${limits.account}`;
+		const previous = this.#accounts.get(key);
+		if (previous !== undefined) {
+			if (limits.reportedAt < previous.reportedAt) return;
+			if (JSON.stringify(limits) === JSON.stringify(previous)) return;
+		}
+		this.#publish(key, limits);
+	}
+
 	#publish(key: string, limits: AccountLimits): void {
 		this.#accounts.set(key, limits);
 		// A listener is a broadcast to clients: its failure (a closed sink) must never reach the provider

@@ -18,6 +18,7 @@ import type {
 	SessionWriteGrant,
 	WorkerSnapshot,
 } from "./session-worker-protocol.ts";
+import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { SessionWorkerRequests, type WorkerRequestInput } from "./session-worker-requests.ts";
 import { acknowledge, acknowledgeGrant } from "./session-worker-signals.ts";
 
@@ -69,6 +70,7 @@ export class SessionWorkerClient {
 	private readonly listeners = new Set<() => void>();
 	private cancelUiPending = false;
 	private terminalFailure?: string;
+	private readonly stopLimitMirror: () => void;
 
 	private readonly callbacks: SessionWorkerCallbacks;
 
@@ -81,6 +83,7 @@ export class SessionWorkerClient {
 				if (this.closeTimer) clearTimeout(this.closeTimer);
 				this.requests.close(new Error("session_worker_exited"));
 				void this.webviewBroker?.dispose();
+				this.stopLimitMirror();
 				this.listeners.clear();
 				const released = callbacks.exit();
 				if (released)
@@ -95,6 +98,12 @@ export class SessionWorkerClient {
 			});
 		});
 		this.worker.on("message", (message: SessionWorkerToHost) => this.receive(message));
+		// The host's poller feeds only the host's store; the isolate reads its own copy, so the two mirror
+		// each other: everything the host holds now, then each change (senpi#3695).
+		this.post({ type: "subscription_limits", accounts: subscriptionLimits.snapshot() });
+		this.stopLimitMirror = subscriptionLimits.subscribe((limits) =>
+			this.post({ type: "subscription_limits", accounts: [limits] }),
+		);
 		this.worker.on("error", (error: unknown) => this.fail(error instanceof Error ? error.message : String(error)));
 	}
 
@@ -360,6 +369,9 @@ export class SessionWorkerClient {
 			}
 			case "request_close":
 				this.requestClose?.();
+				return;
+			case "subscription_limits":
+				subscriptionLimits.adopt(message.limits);
 				return;
 			case "failure":
 				this.fail(message.error);

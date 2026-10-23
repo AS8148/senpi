@@ -9,6 +9,7 @@ import { attachMcpGrantPresentation } from "../../core/mcp-grant-presentations.t
 import { takeOverStdout } from "../../core/output-guard.ts";
 import type { SecurityNoticeSnapshot } from "../../core/security-notices.ts";
 import { getDefaultSessionDir } from "../../core/session-manager.ts";
+import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { liveSessionWritePaths } from "../../core/session-write-reservation.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
 import { registerWebViewBroker } from "../../core/webview/webview-broker.ts";
@@ -260,6 +261,9 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			entry.runtime.setPermissionPreset(message.preset);
 			send({ type: "result", request: message.request });
 			return;
+		case "subscription_limits":
+			for (const limits of message.accounts) subscriptionLimits.adopt(limits);
+			return;
 		case "cancel_ui":
 			binding?.cancelPendingExtensionUiRequests?.();
 			send({ type: "control_done", control: "cancel_ui" });
@@ -282,6 +286,9 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			process.exit(0);
 	}
 }
+
+// A turn in this isolate reports into its own store; the host mirrors it so its clients see it (senpi#3695).
+subscriptionLimits.subscribe((limits) => send({ type: "subscription_limits", limits }));
 
 port.on("message", (message: HostToSessionWorker) => {
 	void handle(message).catch((cause: unknown) => {
