@@ -2,13 +2,7 @@
 // The fragment half of the changelog gate (senpi#3610): what a PR's changes/unreleased/<pr>.md covers,
 // and why a fragment or a direct log edit is refused. Pure over the git reads it is handed.
 
-import {
-	FRAGMENT_README,
-	fragmentPr,
-	isChangelogTarget,
-	isFragmentPath,
-	parseFragment,
-} from "./changes-fragments.mjs";
+import { FRAGMENT_README, fragmentPr, isChangelogTarget, isFragmentPath, parseFragment } from "./changes-fragments.mjs";
 import { parseTrackerEntries } from "./changes-md-policy.mjs";
 
 const UNRELEASED_SECTION = /^## \[Unreleased\][^\n]*\n([\s\S]*?)(?=^## \[|(?![\s\S]))/m;
@@ -47,12 +41,22 @@ export function collectFragmentFacts({ records, readHead, readBase, headFiles, a
 			}
 			continue;
 		}
-		// Once fragments are adopted, only the compile job and the release add to existing logs.
+		// Once fragments are adopted, only the release cut adds to existing logs.
 		if (!adopted || status === "A" || status === "D") continue;
 		if (/(^|\/)changes\.md$/.test(path)) {
-			const before = new Set(readBase(path).split("\n").map((line) => line.trim()));
-			if (readHead(path).split("\n").some((line) => line.trim() !== "" && !before.has(line.trim()))) {
-				violations.push(`${path}: adds to an existing changes.md; put the entry in your changes/unreleased/<pr>.md`);
+			const before = new Set(
+				readBase(path)
+					.split("\n")
+					.map((line) => line.trim()),
+			);
+			if (
+				readHead(path)
+					.split("\n")
+					.some((line) => line.trim() !== "" && !before.has(line.trim()))
+			) {
+				violations.push(
+					`${path}: adds to an existing changes.md; put the entry in your changes/unreleased/<pr>.md`,
+				);
 			}
 		} else if (isChangelogTarget(path) && bulletCount(readHead(path)) > bulletCount(readBase(path))) {
 			violations.push(`${path}: adds an [Unreleased] bullet; put it in your changes/unreleased/<pr>.md`);

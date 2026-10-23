@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // Per-PR change fragments (senpi#3610, senpi#3123). A PR never edits an existing changes.md tracker or a
 // package CHANGELOG.md [Unreleased] section: it adds ONE file, changes/unreleased/<pr>.md, with one block
-// per log it would have edited. The scheduled compile (scripts/sync-changes-fragments.mjs compile) writes
-// the blocks into their logs and deletes the fragments, so two PRs never touch the same file and the
-// release scripts read [Unreleased] exactly as before.
+// per log it would have edited. Only the release cut compiles the blocks into their logs and deletes
+// the fragments before stamping, so two PRs never touch the same file and a pinned release does not
+// leave shipped fragment bullets in main's [Unreleased].
 //
 //   <!-- changes-log: packages/ai/src/api/changes.md -->
 //   ## 2026-10-20 - Title (senpi#1234)

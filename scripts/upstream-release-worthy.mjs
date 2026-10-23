@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
+import { compileFragments } from "./sync-changes-fragments.mjs";
 
 const CHANGELOGS = [
 	"packages/ai/CHANGELOG.md",
@@ -58,9 +59,14 @@ function parseArgs(argv) {
 
 function runSelfTest(testCase) {
 	const fixtures = [
-		{ path: "packages/coding-agent/CHANGELOG.md", content: "# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- Fixed sync.\n" },
+		{
+			path: "packages/coding-agent/CHANGELOG.md",
+			content: "# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- Fixed sync.\n",
+		},
 	];
-	const docsOnly = [{ path: "packages/coding-agent/CHANGELOG.md", content: "# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n" }];
+	const docsOnly = [
+		{ path: "packages/coding-agent/CHANGELOG.md", content: "# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n" },
+	];
 	const cases = [
 		["entry-release", decideReleaseWorthiness(fixtures), true],
 		["force-release", decideReleaseWorthiness(docsOnly, { forceRelease: true }), true],
@@ -82,7 +88,8 @@ function main() {
 		runSelfTest(args.selfTestCase);
 		return;
 	}
-	const files = CHANGELOGS.map((path) => ({ path, content: readFileSync(path, "utf8") }));
+	const preview = compileFragments({ dryRun: true, log: () => {} });
+	const files = CHANGELOGS.map((path) => ({ path, content: preview.writes.get(path) ?? readFileSync(path, "utf8") }));
 	const result = decideReleaseWorthiness(files, { forceRelease: args.forceRelease });
 	process.stdout.write(`release_worthy=${String(result.releaseWorthy)}\n`);
 	process.stdout.write(`reason=${result.reason}\n`);

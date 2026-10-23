@@ -36,8 +36,10 @@ One block per log, each starting with the log's path:
   tracker's coverage, with the same four canonical sections.
 - A changelog block names a package `CHANGELOG.md` from `scripts/release-changelog.mjs` and holds
   `### Breaking Changes|Added|Changed|Fixed|Removed` plus bullets; the gate counts it as that package's entry.
-- Fragments are immutable once merged. The hourly `changes-compile` workflow (also
-  `node scripts/sync-changes-fragments.mjs compile`, and `scripts/release.mjs` before it stamps) prepends
+- Fragments are immutable once merged. Only `scripts/release.mjs` compiles them at the release cut,
+  on the pinned tree when `--sha` is set. Before stamping, it prepends
   tracker entries newest PR first, appends changelog bullets to their `[Unreleased]` section, and deletes the
-  fragments.
+  fragments. Do not commit standalone compilation to `main`: it would leave shipped bullets in
+  `[Unreleased]` when a pinned release merges back. Preview with
+  `node scripts/sync-changes-fragments.mjs compile --dry-run`.
 - Convert a branch that still edits the logs directly: `node scripts/sync-changes-fragments.mjs from-diff --base origin/main --pr <n>`, then commit.

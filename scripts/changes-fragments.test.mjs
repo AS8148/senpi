@@ -6,13 +6,14 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { planCompile } from "./changes-fragments.mjs";
+import { parseFragment, planCompile } from "./changes-fragments.mjs";
 import { collectFragmentFacts } from "./changes-fragments-gate.mjs";
 import { checkPrChangelog } from "./check-pr-changelog.mjs";
 
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "sync-changes-fragments.mjs");
 const CHANGELOG = "packages/ai/CHANGELOG.md";
-const LOG = "# Changelog\n\n## [Unreleased]\n\n### Added\n\n### Fixed\n\n- older fix\n\n## [2026.10.19] - 2026-10-19\n\n### Fixed\n\n- shipped\n";
+const LOG =
+	"# Changelog\n\n## [Unreleased]\n\n### Added\n\n### Fixed\n\n- older fix\n\n## [2026.10.19] - 2026-10-19\n\n### Fixed\n\n- shipped\n";
 const TRACKER = "packages/ai/src/changes.md";
 const ENTRY = (title, path = "packages/ai/src/a.ts") =>
 	`## 2026-10-20 - ${title}\n\n### What changed\n\n- \`${path}\`: ${title}.\n\n### Why\n\n- x\n\n### Why an extension could not handle it\n\n- x\n\n### Expected merge conflict zones\n\n- LOW\n`;
@@ -81,7 +82,9 @@ describe("gate facts", () => {
 			adopted,
 		});
 	it("a fragment covers its changelog and tracker, and satisfies both verdicts", () => {
-		const result = facts([{ status: "A", path: "changes/unreleased/7.md" }], { "changes/unreleased/7.md": fragment("seven") });
+		const result = facts([{ status: "A", path: "changes/unreleased/7.md" }], {
+			"changes/unreleased/7.md": fragment("seven"),
+		});
 		assert.deepEqual(result.changelogs, [CHANGELOG]);
 		assert.deepEqual(result.violations, []);
 		const verdict = checkPrChangelog({
@@ -93,9 +96,16 @@ describe("gate facts", () => {
 		assert.equal(verdict.pass, true, verdict.reason);
 	});
 	it("refuses edits to a merged fragment, a bad name, and a missing log", () => {
-		const head = { "changes/unreleased/x.md": fragment("x"), "changes/unreleased/8.md": "<!-- changes-log: nowhere/changes.md -->\n## 2026-10-20 - Lost\n" };
+		const head = {
+			"changes/unreleased/x.md": fragment("x"),
+			"changes/unreleased/8.md": "<!-- changes-log: nowhere/changes.md -->\n## 2026-10-20 - Lost\n",
+		};
 		const { violations } = facts(
-			[{ status: "M", path: "changes/unreleased/5.md" }, { status: "A", path: "changes/unreleased/x.md" }, { status: "A", path: "changes/unreleased/8.md" }],
+			[
+				{ status: "M", path: "changes/unreleased/5.md" },
+				{ status: "A", path: "changes/unreleased/x.md" },
+				{ status: "A", path: "changes/unreleased/8.md" },
+			],
 			head,
 		);
 		assert.match(violations.join("\n"), /immutable/);
@@ -103,15 +113,23 @@ describe("gate facts", () => {
 		assert.match(violations.join("\n"), /`nowhere\/changes\.md` does not exist at head/);
 	});
 	it("refuses direct additions only once the base adopted fragments", () => {
-		const head = { [TRACKER]: `${ENTRY("direct")}\n${OLD}`, [CHANGELOG]: LOG.replace("- older fix", "- older fix\n- direct") };
+		const head = {
+			[TRACKER]: `${ENTRY("direct")}\n${OLD}`,
+			[CHANGELOG]: LOG.replace("- older fix", "- older fix\n- direct"),
+		};
 		const base = { [TRACKER]: OLD, [CHANGELOG]: LOG };
-		const records = [{ status: "M", path: TRACKER }, { status: "M", path: CHANGELOG }];
+		const records = [
+			{ status: "M", path: TRACKER },
+			{ status: "M", path: CHANGELOG },
+		];
 		assert.equal(facts(records, head, base, true).violations.length, 2);
 		assert.deepEqual(facts(records, head, base, false).violations, []);
 	});
 	it("a fragment that names the wrong section fails the verdict", () => {
 		const bad = `<!-- changes-log: ${CHANGELOG} -->\n### Fixes\n- x\n`;
-		const { violations } = facts([{ status: "A", path: "changes/unreleased/9.md" }], { "changes/unreleased/9.md": bad });
+		const { violations } = facts([{ status: "A", path: "changes/unreleased/9.md" }], {
+			"changes/unreleased/9.md": bad,
+		});
 		assert.match(violations[0], /`### Fixes` is not one of/);
 		assert.equal(checkPrChangelog({ changedFiles: [], labels: [], fragmentViolations: violations }).pass, false);
 	});
@@ -127,7 +145,10 @@ describe("compile", () => {
 			(path) => ({ [TRACKER]: OLD, [CHANGELOG]: LOG })[path] ?? "",
 		);
 		assert.deepEqual(plan.reasons, []);
-		assert.equal(plan.writes.get(TRACKER), `${ENTRY("eleven")}\n\n${ENTRY("ten")}\n\n${OLD}`.replace(/\n\n\n/g, "\n\n"));
+		assert.equal(
+			plan.writes.get(TRACKER),
+			`${ENTRY("eleven")}\n\n${ENTRY("ten")}\n\n${OLD}`.replace(/\n\n\n/g, "\n\n"),
+		);
 		const log = plan.writes.get(CHANGELOG);
 		assert.ok(log.includes("### Added\n\n- new thing\n"), log);
 		assert.ok(log.includes("- older fix\n- ten (#1)\n- eleven (#1)\n"), log);
@@ -144,17 +165,24 @@ describe("from-diff", () => {
 	it("moves a branch's direct additions into its fragment and restores the logs", () =>
 		repo((cwd) => {
 			write(cwd, CHANGELOG, LOG);
-			write(cwd, TRACKER, OLD);
+			const previous = ENTRY("previous");
+			write(cwd, TRACKER, previous);
 			commit(cwd, "base");
-			write(cwd, TRACKER, `${ENTRY("old style")}\n${OLD}`);
+			write(cwd, TRACKER, `${ENTRY("old style")}\n${previous}`);
 			write(cwd, CHANGELOG, LOG.replace("- older fix", "- older fix\n- old style fix"));
 			commit(cwd, "old-style PR");
-			const run = spawnSync(process.execPath, [SCRIPT, "from-diff", "--base", "HEAD~1", "--pr", "21"], { cwd, encoding: "utf8" });
+			const run = spawnSync(process.execPath, [SCRIPT, "from-diff", "--base", "HEAD~1", "--pr", "21"], {
+				cwd,
+				encoding: "utf8",
+			});
 			assert.equal(run.status, 0, run.stderr);
-			assert.equal(readFileSync(join(cwd, TRACKER), "utf8"), OLD);
+			assert.equal(readFileSync(join(cwd, TRACKER), "utf8"), previous);
 			assert.equal(readFileSync(join(cwd, CHANGELOG), "utf8"), LOG);
 			const converted = readFileSync(join(cwd, "changes/unreleased/21.md"), "utf8");
 			assert.ok(converted.includes(`<!-- changes-log: ${CHANGELOG} -->\n### Fixed\n- old style fix`), converted);
-			assert.ok(converted.includes(`<!-- changes-log: ${TRACKER} -->\n## 2026-10-20 - old style`), converted);
+			assert.equal(
+				parseFragment(converted).blocks.find((block) => block.log === TRACKER).body,
+				ENTRY("old style").trim(),
+			);
 		}));
 });

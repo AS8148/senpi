@@ -15,7 +15,7 @@ Audit changelog entries for all commits since the last release.
    git log <tag>..HEAD --oneline
    ```
 
-3. **Read each package's [Unreleased] section:**
+3. **Read each package's [Unreleased] section and its blocks in `changes/unreleased/*.md`:**
    - packages/ai/CHANGELOG.md
    - packages/agent/CHANGELOG.md
    - packages/tui/CHANGELOG.md
@@ -25,7 +25,7 @@ Audit changelog entries for all commits since the last release.
    - Skip: changelog updates, doc-only changes, release housekeeping, upstream-sync merge commits themselves.
    - Skip: changes to generated model catalogs (for example `packages/ai/src/models.generated.ts`, `packages/ai/src/image-models.generated.ts`) unless accompanied by an intentional product-facing change in non-generated source/docs.
    - Determine which package(s) the commit affects (use `git show <hash> --stat`).
-   - Verify a changelog entry exists in the affected package(s).
+   - Verify a changelog entry exists in the affected package(s) or their pending fragment blocks.
    - For external contributions (PRs), verify format: `Description ([#N](url) by [@user](url))`.
 
 5. **Cross-package duplication rule:**
@@ -52,6 +52,6 @@ Attribution:
 ## Rules
 
 - Before adding entries, read the full `[Unreleased]` section to see which subsections already exist.
-- New entries ALWAYS go under `## [Unreleased]`. In a pull request, write them as a `CHANGELOG.md` block in `changes/unreleased/<pr>.md` instead of editing the file (senpi#3610); the compile job places them under `## [Unreleased]`.
+- In a pull request, write new entries as a `CHANGELOG.md` block in `changes/unreleased/<pr>.md` instead of editing the file (senpi#3610). Only the release cut compiles these into `## [Unreleased]` immediately before stamping; audits read pending fragments without compiling them.
 - Append to existing subsections (e.g. `### Fixed`); do not create duplicates.
 - NEVER modify already-released version sections. Each version section is immutable once released.

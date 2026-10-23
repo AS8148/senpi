@@ -1,3 +1,44 @@
+## 2026-10-20 - Keep Claude's spent-window reset in provider diagnostics (senpi#3825)
+
+`provider-diagnostic-sources.ts` adds `resetsAt` to a classified quota/rate-limit error from Claude's unified 5h/7d response headers. Only spent windows with future numeric resets contribute, and the latest spent window wins so a goal cannot wake while another cap still blocks it. Authentication and unknown errors do not read reset headers. `anthropic-provider-diagnostic.test.ts` exercises the real adapter against HTTP fixtures.
+
+## 2026-10-21 - reportedCount: absent, null or non-finite provider counts are not reported (senpi#3879)
+
+### What changed
+
+- `packages/ai/src/utils/reported-count.ts` (fork-only): `reportedCount(value)` returns a finite number or undefined; the four adapters that parse a reasoning count use it.
+
+### Why
+
+- Gateways can send `"reasoning_tokens": null`; a `=== undefined` check let that through as `reasoning: null`, which compaction's retained-message check treats as invalid usage (review of senpi#3884).
+
+### Why an extension could not handle it
+
+- Usage parsing happens inside each adapter's stream.
+
+### Expected merge conflict zones
+
+- None: new file.
+
+## 2026-10-21 - Context readers prefer request measurements (omo#10792)
+
+### What changed
+
+- `packages/ai/src/utils/estimate.ts`: `calculateContextTokens` prefers `Usage.contextUsage`; an explicit unknown measurement returns zero so transcript estimation supplies context.
+- `packages/ai/src/utils/overflow.ts`: token-based overflow detection uses request context when present rather than cumulative billed tokens. Error-message classification remains independent. `isRecoverableLength` reads request output when it is measured and falls back to the message output when request context is absent or unknown (`null`), so result-only length stops keep their previous recovery.
+
+### Why
+
+- `packages/ai/src/utils/estimate.ts` and `packages/ai/src/utils/overflow.ts`: the SDK's terminal usage can sum two overlapping full-context requests, exhausting output room or triggering overflow on a conversation that fits.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/utils/estimate.ts` and `packages/ai/src/utils/overflow.ts`: these shared readers run beneath extensions and must understand the additive usage contract for all callers.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/utils/estimate.ts`, `calculateContextTokens`; `packages/ai/src/utils/overflow.ts`, numeric overflow checks.
+
 ## 2026-10-18 - Anthropic compat gains supportsGzipRequestBody (senpi#3643)
 
 ### What changed

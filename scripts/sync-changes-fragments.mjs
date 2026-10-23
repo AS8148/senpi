@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Per-PR change fragments (senpi#3610): `compile` writes every changes/unreleased/<pr>.md into its logs and
-// deletes it (run by .github/workflows/changes-compile.yml and before a release stamps); `from-diff` moves a
+// deletes it at the release cut before stamping; `from-diff` moves a
 // branch's direct tracker/[Unreleased] additions into its fragment and restores those logs. Neither commits.
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -36,7 +36,9 @@ export function compileFragments({ dryRun = false, log = console.log } = {}) {
 		for (const [path, content] of plan.writes) writeText(path, content);
 		for (const path of plan.deletes) rmSync(path);
 	}
-	log(`changes-fragments: ${dryRun ? "would compile" : "compiled"} ${plan.deletes.length} fragment(s) into ${plan.writes.size} log(s)`);
+	log(
+		`changes-fragments: ${dryRun ? "would compile" : "compiled"} ${plan.deletes.length} fragment(s) into ${plan.writes.size} log(s)`,
+	);
 	return plan;
 }
 
@@ -94,15 +96,22 @@ export function fromDiff({ base, pr, log = console.log }) {
 			});
 			if (sections.length > 0) add(path, sections.join("\n\n"));
 		} else {
-			const baseLines = new Set(before.split("\n"));
-			const added = after.split("\n").filter((line) => !baseLines.has(line));
+			const diff = runGit(
+				["diff", "--no-ext-diff", "--no-color", mergeBase, "--", path],
+				`reading added lines in ${path}`,
+			);
+			const added = diff
+				.split("\n")
+				.filter((line) => line.startsWith("+") && !line.startsWith("+++"))
+				.map((line) => line.slice(1));
 			const body = added.join("\n").trim();
 			if (body !== "") add(path, body);
 		}
 		writeText(path, before);
 	}
 	const { reasons } = parseFragment(renderFragment(blocks));
-	if (blocks.length > 0 && reasons.length > 0) throw new Error(`the converted ${target} is invalid: ${reasons.join("; ")}`);
+	if (blocks.length > 0 && reasons.length > 0)
+		throw new Error(`the converted ${target} is invalid: ${reasons.join("; ")}`);
 	if (blocks.length > 0) writeText(target, renderFragment(blocks));
 	log(`changes-fragments: moved ${changed.length} log edit(s) into ${target}; review it, then commit`);
 }
