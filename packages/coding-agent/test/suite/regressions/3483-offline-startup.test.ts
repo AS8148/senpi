@@ -64,7 +64,11 @@ describe("sizes-only startup network boundary (#3483)", () => {
 		vi.stubEnv("SENPI_CODING_AGENT_DIR", agentDir);
 		try {
 			// When: preview awaits the built-in attach promise, not a timing delay.
-			await harness.session.bindExtensions({ mode: "print", sizesOnly });
+			await harness.session.bindExtensions({
+				mode: "print",
+				sizesOnly,
+				promptSizeInventory: cliPromptSizeInventory,
+			});
 			const result = await harness.getExtensionRunner().createContext().getPromptCachePrefixRequest?.({
 				sizesOnly: true,
 			});
