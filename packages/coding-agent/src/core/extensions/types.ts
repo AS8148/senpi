@@ -8,6 +8,7 @@
  * - Interact with the user via UI primitives
  */
 
+import type { PromptSizeReport } from "../prompt-size-report.ts";
 import type { InputOrigin } from "../input-origin.ts";
 import type { LifecycleApi } from "../session-lifecycle-types.ts";
 import type { UploadRedaction, UploadRedactionOptions } from "../share/upload-redaction.ts";
@@ -72,6 +73,7 @@ import type { BashResult } from "../bash-executor.ts";
 import type { BrowserEngine } from "../browser-engine.ts";
 import type { CompactionPreparation, CompactionResult } from "../compaction/index.ts";
 import type { WarmAnchorSnapshot } from "../compaction/warm-anchor.ts";
+import type { DynamicSystemPromptPart } from "../dynamic-prompt/build.ts";
 import type { EventBus } from "../event-bus.ts";
 import type { ExecOptions, ExecResult } from "../exec.ts";
 import type { ReadonlyFooterDataProvider } from "../footer-data-provider.ts";
@@ -95,6 +97,7 @@ import type { SlashCommandInfo } from "../slash-commands.ts";
 import type { SourceInfo, SourceScope } from "../source-info.ts";
 import type { AccountLimits } from "../subscription-limits/limit-store.ts";
 import type { BuildSystemPromptOptions } from "../system-prompt.ts";
+import type { ToolBarrierSpec, ToolWorkspaceEffect } from "../tool-barrier.ts";
 import type { BashOperations } from "../tools/bash.ts";
 import type { EditToolDetails } from "../tools/edit.ts";
 import type {
@@ -207,6 +210,12 @@ export interface QuestionRequest {
 	required?: boolean;
 }
 
+/**
+ * Why a question was cancelled. Only a cancel the user chose (`user`) or a failing question UI
+ * (`ui_failure`) shows the model the answers given before it; the lifecycle cancels stay silent.
+ */
+export type QuestionCancelOrigin = "user" | "ui_failure" | "turn_abort" | "session_closed" | "ask_user_disabled";
+
 /** Outcome of ExtensionUIContext.question. */
 export interface QuestionResponse {
 	status: "answered" | "comment-submitted" | "timed_out" | "cancelled" | "orphaned-after-restart" | "unavailable";
@@ -216,6 +225,8 @@ export interface QuestionResponse {
 	comment?: string;
 	unanswered: string[];
 	autoResolvedAfterMs?: number;
+	/** Why a `cancelled` question ended; a UI omits it for every cancel the user did not choose. */
+	cancelOrigin?: QuestionCancelOrigin;
 }
 
 /**
@@ -547,6 +558,12 @@ export interface ExtensionContext {
 	engineTurnsHeld?(): boolean;
 	/** Note a source-owned wake without rendering or charging its continuation. */
 	noteHeldWake?(source: string): void;
+	/** This session's hold records and its pause sequence (senpi#3811). */
+	getPauseState?(): { pauseSeq: number; holds: SessionHoldRecord[] };
+	/** Hold wakes tagged `details.runRef` for this run until the user resumes (senpi#3811). */
+	fenceRun?(runRef: { kind: "dag" | "task" | "workpool" | "team"; id: string }): void;
+	/** Drop this run's fence once the run is journaled cancelled; a run with no fence is a no-op (senpi#3811). */
+	releaseRunFence?(runRef: { kind: "dag" | "task" | "workpool" | "team"; id: string }): void;
 	/** Whether project-local trust is active for this context. */
 	isProjectTrusted(): boolean;
 	/** The current abort signal, or undefined when the agent is not streaming. */
@@ -685,9 +702,13 @@ export interface PromptCachePrefixRequest {
 	readonly model: Model<Api>;
 	readonly context: Context;
 	readonly options: SimpleStreamOptions;
+	/** Sizes of the exact preview composition; never includes prompt or tool content. */
+	readonly sizeReport?: PromptSizeReport;
 }
 
 export interface PromptCachePrefixRequestOptions {
+	/** Inspect composition without resolving credentials (which may refresh over the network). */
+	readonly sizesOnly?: boolean;
 	/** Aborting stops the preview pass before its next handler and resolves the build as `skipped`. */
 	readonly signal?: AbortSignal;
 }
@@ -1084,6 +1105,12 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	annotations?: ToolAnnotations;
 
 	/**
+	 * What a call can do to the workspace. `"read"` tools run while a tool barrier is armed; anything else,
+	 * including a tool that leaves this unset, waits for its release (senpi#3717).
+	 */
+	workspaceEffect?: ToolWorkspaceEffect;
+
+	/**
 	 * Whether registering the tool activates it. Default: `true` for `direct` and `model-only` tools;
 	 * other exposures are never activated on registration. A tool with `defaultActive: false` is
 	 * activated by naming it in `--tools` or the `defaultTools` setting, or with `setActiveTools()`.
@@ -1264,6 +1291,8 @@ export interface ResourcesDiscoverResult {
 /** Fired when a session is started, loaded, or reloaded */
 export interface SessionStartEvent {
 	type: "session_start";
+	/** Diagnostic startup: built-in MCP attach and cache prewarm are skipped; every other handler runs; no turn starts. */
+	readonly sizesOnly?: boolean;
 	/** Why this session start happened. */
 	reason: "startup" | "reload" | "new" | "resume" | "fork";
 	/** Initial model resolver branch, when the session was resolved during this startup. */
@@ -1284,6 +1313,21 @@ export interface HeldWakesReleasedEvent {
 }
 
 export type HeldWakesReleasedEventResult = undefined;
+
+/** A hold record on this session (senpi#3811): `session_hold` (user Stop), `run_fence`, `inherited_hold`, `unattended`. */
+export interface SessionHoldRecord {
+	kind: string;
+	key: string;
+	data?: unknown;
+}
+
+/** Fired when this session becomes paused or resumed; a run fence alone does not pause it. Omo propagates a Stop to its run. */
+export interface SessionHoldChangedEvent {
+	type: "session_hold_changed";
+	change: "paused" | "resumed";
+	pauseSeq: number;
+	holds: SessionHoldRecord[];
+}
 
 /** Fired when the current session metadata changes. */
 export interface SessionInfoChangedEvent {
@@ -1495,6 +1539,7 @@ export interface SessionTreeEvent {
 export type SessionEvent =
 	| SessionStartEvent
 	| HeldWakesReleasedEvent
+	| SessionHoldChangedEvent
 	| SessionInfoChangedEvent
 	| SessionParkedEvent
 	| SessionResumedEvent
@@ -2210,6 +2255,8 @@ export interface BeforeAgentStartEventResult {
 	message?: Pick<CustomMessage, "customType" | "content" | "display" | "details">;
 	/** Replace the complete system prompt for this turn. Later handlers observe this exact override. */
 	systemPrompt?: string;
+	/** Exact render parts of a complete replacement, used only by preview accounting. */
+	readonly systemPromptParts?: readonly DynamicSystemPromptPart[];
 }
 
 export interface SessionBeforeSwitchResult {
@@ -2423,6 +2470,7 @@ export interface ExtensionAPI {
 		event: "held_wakes_released",
 		handler: ExtensionHandler<HeldWakesReleasedEvent, HeldWakesReleasedEventResult>,
 	): () => void;
+	on(event: "session_hold_changed", handler: ExtensionHandler<SessionHoldChangedEvent>): () => void;
 	on(event: "session_info_changed", handler: ExtensionHandler<SessionInfoChangedEvent>): () => void;
 	on(event: "session_parked", handler: ExtensionHandler<SessionParkedEvent>): () => void;
 	on(event: "session_resumed", handler: ExtensionHandler<SessionResumedEvent>): () => void;
@@ -2627,10 +2675,21 @@ export interface ExtensionAPI {
 	// Actions
 	// =========================================================================
 
-	/** Send a custom message to the session. */
+	/**
+	 * Send a custom message to the session. With `items` the message is an itemized batch (senpi#3811): if a live
+	 * hold applies to any item it is stored as one notice per item, otherwise it is delivered as one message, and the
+	 * call answers one receipt per item once each item is in durable custody. `undefined` (a host without item custody)
+	 * and `void` (an implementation of this API that predates `items`, such as a test double) both mean no receipts;
+	 * admitting `void` keeps every single-signature `sendMessage(...): void` implementation assignable.
+	 */
 	sendMessage<T = unknown>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
-		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn"; ticket?: string },
+		options: SendMessageOptions & { items: readonly SendMessageItem[] },
+		// biome-ignore lint/suspicious/noConfusingVoidType: void keeps single-signature `sendMessage(...): void` implementations assignable; it means no receipts
+	): Promise<readonly SendMessageReceipt[] | undefined> | void;
+	sendMessage<T = unknown>(
+		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
+		options?: SendMessageOptions,
 	): void;
 
 	/**
@@ -2684,6 +2743,16 @@ export interface ExtensionAPI {
 
 	/** Get the names of the active tools, which are the tools declared to the model. */
 	getActiveTools(): string[];
+
+	/**
+	 * Arm the session's tool barrier (senpi#3717): until `releaseToolBarrier(id)`, the end of the turn it
+	 * belongs to, or `deadlineMs`, tools not declared `workspaceEffect: "read"` wait before they run.
+	 * Armed while idle, it belongs to the next turn.
+	 */
+	armToolBarrier(spec: ToolBarrierSpec): void;
+
+	/** Open the barrier armed under `id`; false (a no-op) when no barrier with that id is armed. */
+	releaseToolBarrier(id: string): boolean;
 
 	/** Get all configured tools with parameter schema, prompt guidelines, exposure, and source metadata. */
 	getAllTools(): ToolInfo[];
@@ -3070,10 +3139,45 @@ export interface ExtensionShortcut {
 
 type HandlerFn = (...args: unknown[]) => Promise<unknown>;
 
+export interface SendMessageOptions {
+	triggerTurn?: boolean;
+	deliverAs?: "steer" | "followUp" | "nextTurn";
+	/** A delivery ticket from `pi.lifecycle.obligations` (senpi#3864). */
+	ticket?: string;
+}
+
+/** One wake inside an itemized `sendMessage` batch (senpi#3811 design 4.5). */
+export interface SendMessageItem {
+	readonly itemId: string;
+	/** Producer label the held notice is counted under. */
+	readonly producer: string;
+	/** The run this item belongs to: a fence on that run holds the batch. */
+	readonly runRef?: { readonly kind: "dag" | "task" | "workpool" | "team"; readonly id: string };
+	/** This item's own payload, stored as its notice if the batch is held; defaults to the batch content. */
+	readonly content?: CustomMessage["content"];
+	/** This item's own details for its notice; the batch details are not copied into a per-item notice. */
+	readonly details?: unknown;
+}
+
+/** Where an item of an itemized batch went: its own notice (`noticeId`) in the held batch's one notice entry, or the one message entry that carried it. */
+export interface SendMessageReceipt {
+	readonly itemId: string;
+	readonly entryId: string;
+	readonly disposition: "notice_persisted" | "message_persisted";
+	readonly noticeId?: string;
+}
+
 export type SendMessageHandler = <T = unknown>(
 	message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
-	options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn"; ticket?: string },
+	options?: SendMessageOptions,
 ) => void;
+
+/** Admits an itemized batch and answers one receipt per item (senpi#3811 design 4.5); `undefined` when the
+ * host has no item custody and delivered the batch as a plain message. */
+export type SendItemizedMessageHandler = <T = unknown>(
+	message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
+	options: SendMessageOptions & { items: readonly SendMessageItem[] },
+) => Promise<readonly SendMessageReceipt[] | undefined>;
 
 export type SendUserMessageHandler = (
 	content: string | (TextContent | ImageContent)[],
@@ -3246,6 +3350,8 @@ export interface ExtensionRuntimeState {
 export interface ExtensionActions {
 	lifecycle?: LifecycleApi;
 	sendMessage: SendMessageHandler;
+	/** Hosts without itemized custody omit it: an itemized send is then delivered plainly and answers no receipts. */
+	sendItemizedMessage?: SendItemizedMessageHandler;
 	/** The runner passes the origin it captured when the extension called `sendUserMessage` (a person's answer is `person`). */
 	sendUserMessage: (
 		content: Parameters<SendUserMessageHandler>[0],
@@ -3273,6 +3379,9 @@ export interface ExtensionActions {
 	setSessionFastMode: SetSessionFastModeHandler;
 	/** Bound by `AgentSession`; a runtime bound without it keeps the pre-bind stub. */
 	sessionControl?: SessionControlActions;
+	/** Bound by `AgentSession` (senpi#3717); a runtime bound without them has no tool barrier. */
+	armToolBarrier?: (spec: ToolBarrierSpec) => void;
+	releaseToolBarrier?: (id: string) => boolean;
 }
 
 /**
@@ -3291,6 +3400,9 @@ export interface ExtensionContextActions {
 	isIdle: () => boolean;
 	engineTurnsHeld?: () => boolean;
 	noteHeldWake?: (source: string) => void;
+	getPauseState?: () => { pauseSeq: number; holds: SessionHoldRecord[] };
+	fenceRun?: (runRef: { kind: "dag" | "task" | "workpool" | "team"; id: string }) => void;
+	releaseRunFence?: (runRef: { kind: "dag" | "task" | "workpool" | "team"; id: string }) => void;
 	/** Internal delivery for a human-settled builtin question, never exposed on ExtensionAPI. */
 	questionInput?: () => void;
 	isProjectTrusted: () => boolean;

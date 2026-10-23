@@ -7,6 +7,21 @@ export const ENGINE_DELIVERY_KEY_PREFIX = "delivery:";
 export const WAKE_SOURCE_KEY_PREFIX = "wake-source:";
 export const ENGINE_CUSTODY_KEY_PREFIXES = [ENGINE_DELIVERY_KEY_PREFIX, WAKE_SOURCE_KEY_PREFIX] as const;
 
+/** Why a delivery ticket may not take a new delivery now (senpi#3864); "admitted" when it may. */
+export type TicketAdmission = "admitted" | "unknown" | "closed" | "consumed" | "delivering";
+
+/** A send whose delivery ticket was refused before anything was written. */
+export class DeliveryTicketRefused extends Error {
+	readonly ticketId: string;
+	readonly reason: Exclude<TicketAdmission, "admitted">;
+	constructor(ticketId: string, reason: Exclude<TicketAdmission, "admitted">) {
+		super(`Delivery ticket ${ticketId} was refused: ${reason}`);
+		this.name = "DeliveryTicketRefused";
+		this.ticketId = ticketId;
+		this.reason = reason;
+	}
+}
+
 export class CustodyViolation extends Error {
 	readonly key: string;
 	constructor(key: string) {
@@ -94,9 +109,23 @@ export class SessionWorkObligations implements WorkObligations {
 		}
 	}
 
+	/**
+	 * The single ticket admission check every send branch runs before it writes anything (held notices, a queued
+	 * message, a delivery): an unknown, closed, consumed or in-delivery ticket takes no new delivery.
+	 */
+	admission(ticketId: DeliveryTicketId): TicketAdmission {
+		const record = [...this.records.values()].find((value) => value.ticketId === ticketId);
+		if (!record) return "unknown";
+		if (!custodyIsOpen(record)) return "closed";
+		if (record.state === "consumed") return "consumed";
+		return this.delivering.has(ticketId) ? "delivering" : "admitted";
+	}
+
 	queue(ticketId: DeliveryTicketId, payload: CustodyPayload): boolean {
+		const admission = this.admission(ticketId);
+		if (admission === "unknown") throw new CustodyViolation(ticketId);
+		if (admission !== "admitted") return false;
 		const record = this.ticketRecord(ticketId);
-		if (!custodyIsOpen(record) || record.state === "consumed" || this.delivering.has(ticketId)) return false;
 		this.install({ ...record, state: "queued", payload, delivery: undefined });
 		this.delivering.add(ticketId);
 		this.store.changed();

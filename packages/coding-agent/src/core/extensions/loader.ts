@@ -30,6 +30,7 @@ import { createEventBus, type EventBus, EXTENSION_RPC_EVENT_CHANNEL, type Extens
 import type { ExecOptions } from "../exec.ts";
 import { execCommand } from "../exec.ts";
 import { RESERVED_MEMORY_REPORT_KEYS } from "../memory-report/memory-report-registry.ts";
+import type { CustomMessage } from "../messages.ts";
 import { readPiManifest } from "../pi-manifest.ts";
 import { unboundSessionControlActions } from "../session-control-actions.ts";
 import { redactForUpload, type UploadRedactionOptions } from "../share/upload-redaction.ts";
@@ -77,6 +78,9 @@ import type {
 	RegisteredChildModule,
 	RegisteredCommand,
 	RegisteredMcpServerDeclaration,
+	SendMessageItem,
+	SendMessageOptions,
+	SendMessageReceipt,
 	SessionContext,
 	SessionControlActions,
 	SessionKind,
@@ -649,10 +653,25 @@ function createExtensionAPI(
 			if (!runtime.lifecycle) throw new Error("Extension lifecycle is not bound to a session");
 			return runtime.lifecycle;
 		}),
-		sendMessage(message, options): void {
+		// Itemized sends answer receipts (senpi#3811); a plain send stays fire-and-forget.
+		sendMessage: (<T = unknown>(
+			message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
+			options?: SendMessageOptions & { items?: readonly SendMessageItem[] },
+		): Promise<readonly SendMessageReceipt[] | undefined> | undefined => {
 			assertActive();
-			runtime.sendMessage(message, options);
-		},
+			const items = options?.items;
+			if (items === undefined) {
+				runtime.sendMessage(message, options);
+				return undefined;
+			}
+			const itemized = runtime.sendItemizedMessage;
+			// A host without item custody delivers the batch plainly and answers no receipts, like an engine without items.
+			if (itemized === undefined) {
+				runtime.sendMessage(message, options);
+				return Promise.resolve(undefined);
+			}
+			return itemized(message, { ...options, items });
+		}) as ExtensionAPI["sendMessage"],
 
 		sendUserMessage(content, options): void {
 			assertActive();
@@ -699,6 +718,17 @@ function createExtensionAPI(
 		getActiveTools(): string[] {
 			assertActive();
 			return runtime.getActiveTools();
+		},
+
+		armToolBarrier(spec) {
+			assertActive();
+			if (!runtime.armToolBarrier) throw new Error("This runtime has no tool barrier (senpi#3717).");
+			runtime.armToolBarrier(spec);
+		},
+
+		releaseToolBarrier(id) {
+			assertActive();
+			return runtime.releaseToolBarrier?.(id) ?? false;
 		},
 
 		getAllTools() {
@@ -786,6 +816,18 @@ function createExtensionAPI(
 			persistHeaderNow() {
 				runtime.assertActive();
 				return sessionControlOf(runtime).persistHeaderNow();
+			},
+			relocationOffered() {
+				runtime.assertActive();
+				return sessionControlOf(runtime).relocationOffered();
+			},
+			relocationTargets(signal) {
+				runtime.assertActive();
+				return sessionControlOf(runtime).relocationTargets(signal);
+			},
+			requestRelocation(request, signal) {
+				runtime.assertActive();
+				return sessionControlOf(runtime).requestRelocation(request, signal);
 			},
 		},
 

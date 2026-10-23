@@ -34,6 +34,25 @@
 
 - `main.ts`: `sessionCwdOrUndefined` and its `--rebind` call site.
 
+## 2026-10-22 - Replace Biome with oxlint and oxfmt (senpi#3976)
+
+### What changed
+
+- `packages/coding-agent/src/experimental/services/connection.ts`: `oxlint-disable-next-line eslint/prefer-const` comments on the two `let binding!` declarations that a closure reads; `const` would hit the temporal dead zone if that closure ran before the assignment.
+
+### Why
+
+- The repository moved lint and format from Biome to oxlint 1.89.0 and oxfmt 0.74.0 (senpi#3976). oxlint reports this site where Biome did not; the change keeps behaviour identical.
+
+### Why an extension could not handle it
+
+- Lint configuration and source comments are read by the linter before any agent code runs.
+
+### Expected merge conflict zones
+
+- The two `binding` declarations in `connection.ts`.
+
+
 ## 2026-10-21 - llama.cpp declares its API key optional (senpi#3869)
 
 ### What changed
@@ -88,6 +107,24 @@
 ### Expected merge conflict zones
 
 - LOW: one export line in each barrel's host block.
+
+## 2026-10-21 - Micro context reads the request measurement (omo#10792)
+
+### What changed
+
+- `packages/coding-agent/src/experimental/micro/runtime.ts`: the micro status context count prefers `Usage.contextUsage` while cumulative usage totals retain their existing fields.
+
+### Why
+
+- `packages/coding-agent/src/experimental/micro/runtime.ts`: the same SDK message must not display cumulative billing as context on this independent surface.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/experimental/micro/runtime.ts`: this runtime owns its own context projection.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/experimental/micro/runtime.ts`, `contextTokenCount`.
 
 ## 2026-10-22 - Export the session lifecycle contract (senpi#3864)
 
@@ -5315,6 +5352,23 @@ The package barrel is the only public entry point; an extension cannot add expor
 ### Expected merge conflict zones
 
 - LOW: the `core/skills.ts` export block in `packages/coding-agent/src/index.ts`.
+## 2026-10-16 - Offline prompt size CLI route (senpi#3483)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `--print-prompt-sizes` forces offline print startup, opens the normal runtime and exits through the diagnostic before stdin, model streaming or catalog refresh.
+
+### Why
+
+The size breakdown must describe the loaded current project, including extensions, while making no provider request.
+
+### Why an extension could not handle it
+
+The flag changes core startup and dispatch before extensions can handle a turn.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: offline selection, app mode selection and the post-runtime-creation diagnostic branch.
 
 ## 2026-10-16 - Auth notices reach the TUI at startup, once per change (#3448)
 

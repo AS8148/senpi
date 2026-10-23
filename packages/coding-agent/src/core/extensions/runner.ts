@@ -11,6 +11,7 @@ import { type Theme, theme } from "../../modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../../utils/ansi.ts";
 import type { ResourceDiagnostic } from "../diagnostics.ts";
 import type { DiscoveredResourceEntry } from "../discovered-resource-scope.ts";
+import type { DynamicSystemPromptPart } from "../dynamic-prompt/build.ts";
 import { createEventBus, type EventBus, EXTENSION_RPC_EVENT_CHANNEL, type ExtensionRpcEvent } from "../event-bus.ts";
 import type { InputOrigin } from "../input-origin.ts";
 import type { KeybindingsConfig } from "../keybindings.ts";
@@ -103,6 +104,7 @@ import type {
 	ResourceDiscoverEntry,
 	ResourcesDiscoverEvent,
 	ResourcesDiscoverResult,
+	SendMessageReceipt,
 	ServiceTier,
 	SessionBeforeCompactResult,
 	SessionBeforeForkResult,
@@ -521,6 +523,7 @@ export class ExtensionRunner {
 	private isIdleFn: () => boolean = () => true;
 	private engineTurnsHeldFn: () => boolean = () => false;
 	private noteHeldWakeFn: (source: string) => void = () => {};
+	private pauseActions: Pick<ExtensionContextActions, "getPauseState" | "fenceRun" | "releaseRunFence"> = {};
 	private questionInput: ExtensionContextActions["questionInput"];
 	private personAnswerPending = false;
 	private isProjectTrustedFn: () => boolean = () => true;
@@ -643,6 +646,20 @@ export class ExtensionRunner {
 			if (options?.triggerTurn === true) this.sessionStartTurns.admit(() => actions.sendMessage(message, options));
 			else actions.sendMessage(message, options);
 		};
+		// An itemized send answers its receipts from wherever its admission ends up running (senpi#3811).
+		this.runtime.sendItemizedMessage = (message, options) => {
+			const receipts = Promise.withResolvers<readonly SendMessageReceipt[] | undefined>();
+			const send = () => {
+				const itemized = actions.sendItemizedMessage;
+				if (itemized === undefined) {
+					actions.sendMessage(message, options);
+					receipts.resolve(undefined);
+				} else itemized(message, options).then(receipts.resolve, receipts.reject);
+			};
+			if (options.triggerTurn === true) this.sessionStartTurns.admit(send);
+			else send();
+			return receipts.promise;
+		};
 		this.runtime.sendUserMessage = (content, options) => {
 			// Captured at admission: a deferred answer keeps the origin it was delivered with.
 			const inputOrigin: InputOrigin = this.personAnswerPending ? "person" : "extension";
@@ -669,6 +686,8 @@ export class ExtensionRunner {
 		this.runtime.setSessionThinkingLevel = actions.setSessionThinkingLevel;
 		this.runtime.setSessionFastMode = actions.setSessionFastMode;
 		if (actions.sessionControl) this.runtime.sessionControl = actions.sessionControl;
+		if (actions.armToolBarrier) this.runtime.armToolBarrier = actions.armToolBarrier;
+		if (actions.releaseToolBarrier) this.runtime.releaseToolBarrier = actions.releaseToolBarrier;
 		this.runtime.createContext = () => this.createContext();
 
 		this.offloadFn = contextActions.offload;
@@ -680,6 +699,11 @@ export class ExtensionRunner {
 		this.isIdleFn = contextActions.isIdle;
 		this.engineTurnsHeldFn = contextActions.engineTurnsHeld ?? (() => false);
 		this.noteHeldWakeFn = contextActions.noteHeldWake ?? (() => {});
+		this.pauseActions = {
+			getPauseState: contextActions.getPauseState,
+			fenceRun: contextActions.fenceRun,
+			releaseRunFence: contextActions.releaseRunFence,
+		};
 		this.questionInput = contextActions.questionInput;
 		this.isProjectTrustedFn = contextActions.isProjectTrusted;
 		this.getSignalFn = contextActions.getSignal;
@@ -1530,6 +1554,18 @@ export class ExtensionRunner {
 				runner.assertActive();
 				runner.noteHeldWakeFn(source);
 			},
+			getPauseState: () => {
+				runner.assertActive();
+				return runner.pauseActions.getPauseState?.() ?? { pauseSeq: 0, holds: [] };
+			},
+			fenceRun: (runRef) => {
+				runner.assertActive();
+				runner.pauseActions.fenceRun?.(runRef);
+			},
+			releaseRunFence: (runRef) => {
+				runner.assertActive();
+				runner.pauseActions.releaseRunFence?.(runRef);
+			},
 			isProjectTrusted: () => {
 				runner.assertActive();
 				return runner.isProjectTrustedFn();
@@ -2360,6 +2396,13 @@ export class ExtensionRunner {
 		return headers;
 	}
 
+	/** Use the loader's provenance, including bundled modules and generated global-default shims. */
+	getThirdPartySessionStartPaths(): string[] {
+		return this.extensions
+			.filter((ext) => ext.sourceInfo.source !== "builtin" && (ext.handlers.get("session_start")?.length ?? 0) > 0)
+			.map((ext) => ext.path);
+	}
+
 	/** Paths of extensions with a `before_agent_start` handler not registered `{ previewSafe: true }`. */
 	getPreviewUnsafeBeforeAgentStartPaths(): string[] {
 		const paths: string[] = [];
@@ -2379,6 +2422,13 @@ export class ExtensionRunner {
 			readonly preview?: boolean;
 			readonly signal?: AbortSignal;
 			readonly trigger?: BeforeAgentStartEvent["trigger"];
+			/** Internal size accounting; observes only preview composition, never real turns. */
+			readonly observePrompt?: (contribution: {
+				readonly path: string;
+				readonly before: string;
+				readonly after: string;
+				readonly parts?: readonly DynamicSystemPromptPart[];
+			}) => void;
 		} = {},
 	): Promise<BeforeAgentStartCombinedResult | undefined> {
 		let currentSystemPrompt = systemPrompt;
@@ -2410,7 +2460,9 @@ export class ExtensionRunner {
 						systemPromptOptions,
 						...(options.preview === true ? { preview: true } : {}),
 					};
+					const promptBefore = currentSystemPrompt;
 					const handlerResult = await handler(event, ctx);
+					let parts: readonly DynamicSystemPromptPart[] | undefined;
 
 					if (handlerResult) {
 						const result = handlerResult as BeforeAgentStartEventResult;
@@ -2420,7 +2472,16 @@ export class ExtensionRunner {
 						if (result.systemPrompt !== undefined) {
 							currentSystemPrompt = result.systemPrompt;
 							systemPromptModified = true;
+							parts = result.systemPromptParts;
 						}
+					}
+					if (options.preview === true) {
+						options.observePrompt?.({
+							path: ext.path,
+							before: promptBefore,
+							after: currentSystemPrompt,
+							...(parts === undefined ? {} : { parts }),
+						});
 					}
 				} catch (err) {
 					const message = err instanceof Error ? err.message : String(err);
