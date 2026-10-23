@@ -1,6 +1,7 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import type { SendMessageItem, SendMessageReceipt } from "../../../src/core/extensions/types.ts";
+import { QueuedDeliveryCleared } from "../../../src/core/itemized-send.ts";
 import { DeliveryTicketRefused } from "../../../src/core/work-obligations.ts";
 import { type ResumeFixture, resumeFixture, settle, settlesWithin } from "./issue-3811-resume-support.ts";
 
@@ -252,5 +253,43 @@ describe("itemized sendMessage with a delivery ticket", () => {
 		);
 		expect(written).toEqual(["Task A finished\n\nTask B finished"]);
 		expect(ticketOpen(fixture, ticket)).toBe(false);
+	});
+
+	it("settles the queued batch and a joined re-send when clearQueue removes the queued message", async () => {
+		// Given a running turn, a ticketed batch queued behind it, and a re-send of that batch joined to it (senpi#4106)
+		const fixture = await resumeFixture();
+		fixtures.push(fixture);
+		const ticket = openTicket(fixture, "result:batch");
+		const toolStarted = fixture.toolStarted();
+		const running = fixture.h.session.prompt("start");
+		await toolStarted;
+		const ended = deliveryEnded(fixture, ticket);
+		const outcome = (sent: ReturnType<typeof sendWithTicket>) =>
+			Promise.resolve(sent).then(
+				() => undefined,
+				(error: unknown) => error,
+			);
+		const first = outcome(sendWithTicket(fixture, ticket));
+		await ended;
+		const joined = deliveryEnded(fixture, ticket);
+		const again = outcome(sendWithTicket(fixture, ticket));
+		await joined;
+
+		// When the queue is cleared before the queued message is written
+		fixture.h.session.clearQueue();
+		fixture.releaseTool();
+		await running;
+		await settle(fixture);
+
+		// Then both sends settle as cleared, nothing was written for the batch, and the producer keeps its ticket with
+		// no payload, so it decides whether to send again (senpi#3864's cleared-delivery rule)
+		const [firstOutcome, againOutcome] = await settlesWithin(Promise.all([first, again]), "cleared receipts");
+		expect(firstOutcome).toBeInstanceOf(QueuedDeliveryCleared);
+		expect(againOutcome).toBeInstanceOf(QueuedDeliveryCleared);
+		expect(
+			fixture.h.session.messages.some((message) => message.role === "custom" && message.customType === WAKE),
+		).toBe(false);
+		const record = fixture.h.session.workObligations.active.find((active) => active.ticketId === ticket);
+		expect(record?.delivery).toBe("retired");
 	});
 });

@@ -20,6 +20,7 @@
 
 ### Fixed
 
+- When `clearQueue` removes a queued itemized `sendMessage` before it is written, the send and any re-send joined to it now reject with `QueuedDeliveryCleared` instead of never settling ([#4106](https://github.com/code-yeongyu/senpi/issues/4106)).
 - An itemized `sendMessage` that re-sends a delivery ticket whose message is still queued, with different items, is now rejected with `DeliveryTicketRefused` (`reason: "different_items"`) instead of receiving receipts for items that were never written; the queued message keeps its first content ([#4106](https://github.com/code-yeongyu/senpi/issues/4106)).
 - An RPC session whose worker dies before it finishes opening (for example a worker that cannot load its modules) now fails with `open_failed` and the worker's error, instead of `session_closing` ([#4037](https://github.com/code-yeongyu/senpi/issues/4037)).
 - The RPC host's cleanup of leftover internal socket directories under `/tmp` now only removes the current user's directories, scans a `TMPDIR` that is `/tmp` once, and a socket path that fits nowhere names every location it tried ([#3487](https://github.com/code-yeongyu/senpi/issues/3487)).

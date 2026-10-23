@@ -283,7 +283,13 @@ import { HELD_INPUT_ENTRY, type HeldInput, HeldInputs, type HoldInputResult, hel
 import { shouldWarnHighReasoning } from "./high-reasoning-warning.ts";
 import { customTurnOrigin, type InputOrigin, inputOriginOf } from "./input-origin.ts";
 import { markInterrupted, type StopInterrupt } from "./interrupted-tool-result.ts";
-import { deliveredReceipts, type ItemizedAdmission, itemNoticeMessage } from "./itemized-send.ts";
+import {
+	deliveredReceipts,
+	type ItemizedAdmission,
+	itemNoticeMessage,
+	type PersistWatcher,
+	QueuedDeliveryCleared,
+} from "./itemized-send.ts";
 import { LazyToolActivation } from "./lazy-tool-activation.ts";
 import { heldLifecycleNotice, messageTicket } from "./lifecycle-delivery.ts";
 import { lifecycleEditLeaf } from "./lifecycle-edit-leaf.ts";
@@ -1349,7 +1355,7 @@ export class AgentSession {
 	private readonly _engineTurnHold: EngineTurnHold;
 	private _lifecycleBinding: LifecycleSessionBinding;
 	/** Itemized batches waiting for the entry their one message is written to (senpi#3811). */
-	private readonly _persistWatchers = new WeakMap<object, ItemizedAdmission>();
+	private readonly _persistWatchers = new WeakMap<object, PersistWatcher>();
 	private _resumeSettlement: Promise<void> = Promise.resolve();
 	private readonly _engineTurnRelease = new EngineTurnRelease();
 	private readonly _engineTurnInput: EngineTurnInput;
@@ -6781,7 +6787,7 @@ export class AgentSession {
 	}
 
 	/** A re-send of a queued ticket shares the queued message's outcome instead of waiting on a message never written. */
-	private _joinPersistWatcher(carrier: AgentMessage, joined: ItemizedAdmission): void {
+	private _joinPersistWatcher(carrier: AgentMessage, joined: PersistWatcher): void {
 		const first = this._persistWatchers.get(carrier);
 		this._persistWatchers.set(
 			carrier,
@@ -6796,10 +6802,6 @@ export class AgentSession {
 							first.failed(error);
 							joined.failed(error);
 						},
-						droppedByAbort: () => {
-							first.droppedByAbort();
-							joined.droppedByAbort();
-						},
 						itemIds: first.itemIds,
 					},
 		);
@@ -6812,7 +6814,7 @@ export class AgentSession {
 		);
 	}
 
-	private _takePersistWatcher(message: AgentMessage): ItemizedAdmission | undefined {
+	private _takePersistWatcher(message: AgentMessage): PersistWatcher | undefined {
 		const watcher = this._persistWatchers.get(message);
 		this._persistWatchers.delete(message);
 		return watcher;
@@ -8114,8 +8116,14 @@ export class AgentSession {
 		this._postCompactionDeferredSteeringMessages = [];
 		this._postCompactionDeferredFollowUpMessages = [];
 		const clearedDeliveries = this._queuedDeliveryTickets();
+		const clearedMessages = this.agent.peekQueuedMessages({ all: true });
 		this.agent.clearAllQueues();
 		this._releaseQueuedDeliveries(clearedDeliveries, "cleared");
+		// A cleared itemized message is never written: every send waiting on it settles now (senpi#4106).
+		for (const cleared of clearedMessages) {
+			const watcher = this._takePersistWatcher(cleared);
+			watcher?.failed(new QueuedDeliveryCleared(watcher.itemIds));
+		}
 		this.externalAdmission.dropQueued();
 		this._emitQueueUpdate();
 		const cleared = { steering, followUp } as ClearedQueue;

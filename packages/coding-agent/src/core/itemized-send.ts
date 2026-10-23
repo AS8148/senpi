@@ -15,6 +15,19 @@ export interface ItemizedAdmission {
 	readonly itemIds?: readonly string[];
 }
 
+/** What waits on a queued itemized message: the entry it is written to, or the write's failure. */
+export type PersistWatcher = Pick<ItemizedAdmission, "persisted" | "failed" | "itemIds">;
+
+/** A queued itemized message that `clearQueue` removed before it was written: none of its items were delivered. */
+export class QueuedDeliveryCleared extends Error {
+	readonly itemIds: readonly string[];
+	constructor(itemIds: readonly string[] = []) {
+		super("The queued message was cleared before it was written");
+		this.name = "QueuedDeliveryCleared";
+		this.itemIds = itemIds;
+	}
+}
+
 /** The notice an item is stored as when its batch is held: its own payload and details, never the whole batch's. */
 export function itemNoticeMessage(message: BatchMessage, item: SendMessageItem): CustomMessage {
 	return {

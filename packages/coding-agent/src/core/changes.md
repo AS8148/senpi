@@ -1,3 +1,25 @@
+## 2026-10-24 - A cleared queued itemized message settles its sends (senpi#4106)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `clearQueue` takes the persist watcher of every queued message it removes and fails it with `QueuedDeliveryCleared`. The watcher map holds the narrower `PersistWatcher`, and `_joinPersistWatcher` no longer builds a `droppedByAbort` branch nothing could call.
+- `packages/coding-agent/src/core/itemized-send.ts`: adds `PersistWatcher` and the `QueuedDeliveryCleared` error (with the batch's `itemIds`).
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: a watcher settled only when its message was written or its write failed, so a queued itemized message removed by `clearQueue` left the send, and every re-send joined to it, waiting forever. Watchers in the map are only ever settled through `persisted` or `failed`, so the joined `droppedByAbort` was dead code.
+- `packages/coding-agent/src/core/itemized-send.ts`: the producer needs a distinct, typed outcome for "removed before written".
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: the queue and the persist watchers are session core state.
+- `packages/coding-agent/src/core/itemized-send.ts`: the error is part of the core itemized-send contract.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the itemized-send import, `_persistWatchers`, `_joinPersistWatcher`, `_takePersistWatcher`, and the queue drain in `clearQueue`.
+- `packages/coding-agent/src/core/itemized-send.ts`: the new exports above `itemNoticeMessage`.
+
 ## 2026-10-24 - A re-send of a queued ticket with other items is refused (senpi#4106)
 
 ### What changed
