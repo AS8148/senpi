@@ -40,7 +40,7 @@ describe("senpi#4047 input held during a resume skill read", () => {
 		if (root !== undefined) rmSync(root, { recursive: true, force: true });
 	});
 
-	it.each(["new input", "re-held input"])("delivers %s without needing another release", async (kind) => {
+	it.each(["new input", "replacement input"])("delivers %s without needing another release", async (kind) => {
 		// Given raw skill input held by a parent's run, with only a newer local Stop left to release.
 		root = mkdtempSync(join(tmpdir(), "senpi-4047-"));
 		const filePath = join(root, "SKILL.md");
@@ -73,7 +73,7 @@ describe("senpi#4047 input held during a resume skill read", () => {
 		});
 		if (!("childSeq" in paused)) throw new Error("run pause refused");
 		await session.prompt("/skill:carrier", { clientMessageId: "skill-input" });
-		if (kind === "re-held input") session.holdInput({ inputId: "late", revision: 0, text: "old input" });
+		if (kind === "replacement input") session.holdInput({ inputId: "old", revision: 0, text: "old input" });
 		await session.stop();
 		await session.resumeForRun({
 			parentSessionId: "parent",
@@ -90,14 +90,15 @@ describe("senpi#4047 input held during a resume skill read", () => {
 		// When new guidance arrives while the released resume is preparing the skill.
 		const resume = session.resumeSessionRequest({});
 		await entered.promise;
-		if (kind === "re-held input") session.withdrawHeldInput("late");
-		session.holdInput({ inputId: "late", revision: kind === "re-held input" ? 1 : 0, text: "latest guidance" });
+		if (kind === "replacement input") expect(session.withdrawHeldInput("old")).toBe(true);
+		expect(session.holdInput({ inputId: "late", revision: 0, text: "latest guidance" }).kind).toBe("held");
 		released.resolve();
 		await resume;
 		await session.waitForIdle();
 
 		// Then that same turn delivers and consumes the guidance, not a future release that may never happen.
 		expect(JSON.stringify(harness.faux.getCallLog().at(-1)?.context.messages)).toContain("latest guidance");
+		expect(JSON.stringify(harness.faux.getCallLog().at(-1)?.context.messages)).not.toContain("old input");
 		expect(session.pausedHeldInputCount).toBe(0);
 	});
 });

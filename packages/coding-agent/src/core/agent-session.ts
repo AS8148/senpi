@@ -389,6 +389,7 @@ import {
 } from "./skill-invocation.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
 import { BUILTIN_SLASH_COMMANDS } from "./slash-commands.ts";
+import type { Skill } from "./skills.ts";
 import { BUILTIN_PATH_PREFIX, createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import { stopResumeDirective } from "./stop-resume-directive.ts";
 import {
@@ -5817,7 +5818,8 @@ export class AgentSession {
 			// Expand skill commands (/skill:name args) and prompt templates (/template args)
 			let expandedText = currentText;
 			if (expandPromptTemplates) {
-				expandedText = await this._expandSkillCommand(expandedText);
+				const skillExpansion = this._expandSkillCommand(expandedText);
+				expandedText = typeof skillExpansion === "string" ? skillExpansion : await skillExpansion;
 				const templateExpansion = expandPromptTemplateWithMetadata(expandedText, [...this.promptTemplates]);
 				expandedText = templateExpansion.text;
 				if (
@@ -5982,9 +5984,10 @@ export class AgentSession {
 			if (environmentContext) messages.push(environmentContext);
 
 			// Add user message
-			const releaseExtras = this._releaseExtras.splice(0);
+			const releaseExtras = this._releaseExtras.slice();
 			const turnInput = this._engineTurnInput.messages();
 			if (releaseExtras.length > 0) messages.push(...(await Promise.all(releaseExtras)));
+			this._releaseExtras.splice(0, releaseExtras.length);
 			messages.push(...turnInput);
 			const userContent: (TextContent | ImageContent)[] = userTextContent(expandedText, options?.textBlocks);
 			if (currentImages) {
@@ -6170,12 +6173,20 @@ export class AgentSession {
 	 * Leading runs accept slash and dollar syntax; inline `$name` expands only when
 	 * it names a loaded skill, so ordinary dollar prose such as `$HOME` stays literal.
 	 */
-	private async _expandSkillCommand(text: string): Promise<string> {
+	private _expandSkillCommand(text: string): string | Promise<string> {
 		const skills = this.resourceLoader.getSkills().skills;
 		const invocationTokens = parseSkillInvocationTokens(text, {
 			knownSkillNames: new Set(skills.map((skill) => skill.name)),
 		});
 		if (invocationTokens.length === 0) return text;
+		return this._expandSkillTokens(text, skills, invocationTokens);
+	}
+
+	private async _expandSkillTokens(
+		text: string,
+		skills: readonly Skill[],
+		invocationTokens: readonly SkillInvocationToken[],
+	): Promise<string> {
 		const maxExpansions = this.settingsManager.getMaxSkillExpansionsPerPrompt();
 
 		const expandedSkillNames = new Set<string>();
@@ -6289,7 +6300,8 @@ export class AgentSession {
 		if (!processedInput) return "handled";
 
 		// Expand skill commands and prompt templates
-		let expandedText = await this._expandSkillCommand(processedInput.text);
+		const skillExpansion = this._expandSkillCommand(processedInput.text);
+		let expandedText = typeof skillExpansion === "string" ? skillExpansion : await skillExpansion;
 		const templateExpansion = expandPromptTemplateWithMetadata(expandedText, [...this.promptTemplates]);
 		expandedText = templateExpansion.text;
 
@@ -6963,15 +6975,22 @@ export class AgentSession {
 		const generation = this._userAbortGeneration;
 		const { run, continues } = this._takeHeldCommands();
 		await run;
-		const prepared = await Promise.all(
-			this._heldInputs
-				.pending()
-				.filter((input) => !continues.has(input.inputId))
-				.map(async (input) => ({ ...input, text: await this._preparedHeldText(input) })),
-		);
-		// An input withdrawn while its skills were read is not delivered; one held meanwhile waits for the next release.
-		const stillHeld = new Map(this._heldInputs.pending().map((input) => [input.inputId, input.revision]));
-		const heldInputs = prepared.filter((input) => stillHeld.get(input.inputId) === input.revision);
+		const prepared = new Map<string, HeldInput>();
+		let heldInputs: HeldInput[];
+		for (;;) {
+			const pending = this._heldInputs.pending().filter((input) => !continues.has(input.inputId));
+			const unread = pending.filter((input) => prepared.get(input.inputId)?.entryId !== input.entryId);
+			if (unread.length === 0) {
+				heldInputs = pending.map((input) => prepared.get(input.inputId) ?? input);
+				break;
+			}
+			await Promise.all(
+				unread.map(async (input) => {
+					prepared.set(input.inputId, { ...input, text: await this._preparedHeldText(input) });
+				}),
+			);
+			// The hold is already released: include new or re-held input before sending, and omit withdrawals.
+		}
 		return startRunResumeTurn({
 			heldInputs: () => heldInputs,
 			continueInputs: () => [...continues],

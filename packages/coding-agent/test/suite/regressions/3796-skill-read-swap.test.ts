@@ -56,17 +56,11 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as access from "../../../src/core/skill-access.ts";
 
-type CheckedRead = (
-	path: string,
-	provenance?: access.SkillProvenance,
-	allowed?: access.SkillAllowedSet,
-) => string | Promise<string>;
-
-// The session path reads asynchronously; the startup loader keeps a synchronous variant where one exists.
-const variants = (["readSkillFileChecked", "readSkillFileCheckedSync"] as const).flatMap((name) => {
-	const read = (access as Record<string, unknown>)[name];
-	return typeof read === "function" ? [[name, read as CheckedRead] as const] : [];
-});
+// Both exports must exist: removing or renaming one must fail instead of silently dropping coverage.
+const variants = [
+	["readSkillFileChecked", access.readSkillFileChecked],
+	["readSkillFileCheckedSync", access.readSkillFileCheckedSync],
+] as const;
 
 let root: string;
 let project: string;

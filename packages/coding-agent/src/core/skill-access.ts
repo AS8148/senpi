@@ -173,6 +173,8 @@ export function readSkillFileCheckedSync(
  * The awaits between the identity pin and the open widen the swap window, so nothing after the pin trusts
  * the path again: O_NOFOLLOW refuses a swapped-in link, the opened handle must match the pinned dev/ino,
  * and the bytes are read from that handle (senpi#3796).
+ * As in the sync read, ancestor-directory replacement after canonicalization is out of scope:
+ * the guarantee assumes the design's unchanged-filesystem threat model.
  */
 export async function readSkillFileChecked(
 	path: string,
