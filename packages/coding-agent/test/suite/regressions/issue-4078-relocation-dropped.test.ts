@@ -51,7 +51,6 @@ describe("a scheduled relocation being cleared", () => {
 			}
 			try {
 				// Then: one typed correction reaches agent context; later settlements cannot repeat it.
-				await stillWritableHere(rig);
 				const outcomes = rig.harness.session.messages.filter(
 					(message) => message.role === "custom" && message.customType === "session_relocation",
 				);
@@ -60,6 +59,12 @@ describe("a scheduled relocation being cleared", () => {
 						details: { status: "dropped", reason, moveId: "mv-dropped", target: "Studio" },
 					}),
 				]);
+				await stillWritableHere(rig);
+				expect(
+					rig.harness.session.messages.filter(
+						(message) => message.role === "custom" && message.customType === "session_relocation",
+					),
+				).toEqual(outcomes);
 				expect(rig.records.filter((record) => record.type === "relocation_due")).toEqual([]);
 			} finally {
 				await rig.cleanup();
