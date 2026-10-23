@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // senpi#4072: a /loop tick that comes due while the agent is inside a tool call is steered into that running
 // turn. The real TUI runs in a PTY against the fake model server: arm `/loop 1m <marker>`, start a turn whose
-// bash call outlives the next occurrence, and prove (a) the pending area shows the tick as `Steering:`, never
-// `Follow-up:`, and (b) the model request right after the tool result already carries the tick. Frames are
-// rendered through xterm.js to PNG.
+// foreground `eval` call outlives the next occurrence, and prove (a) the steer cut the eval's foreground wait
+// short (only a steer fires the tool's steeringSignal), (b) the model request right after the tool result already
+// carries the tick, and (c) the tick is never shown as `Follow-up:`. Frames are rendered through xterm.js to PNG.
 
 import { spawnSync } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";

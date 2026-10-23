@@ -238,7 +238,12 @@ export interface LoopScheduler {
 	onDue(loopId: LoopId, nowMs: EpochMs, sessionBusy: boolean, held?: boolean): DueResult;
 	onTickSettled(input: TickSettledInput): SettledResult;
 	onScheduleWakeup(request: ScheduleWakeupInput): ScheduleWakeupResult;
-	onTurnEndedWithoutSchedule(loopId: LoopId): KeepaliveResult;
+	/**
+	 * Keepalive for a dynamic iteration that ended without `schedule_wakeup`. `chargeCredit: false`
+	 * (a tick steered into a turn the loop did not start) arms the fallback without spending the
+	 * credit, so the user's own work can never exhaust the loop.
+	 */
+	onTurnEndedWithoutSchedule(loopId: LoopId, options?: { readonly chargeCredit?: boolean }): KeepaliveResult;
 	onUserAbort(loopId: LoopId): AbortResult;
 	pause(target: LoopId | "all"): TargetedResult;
 	resume(target: LoopId | "all"): TargetedResult;
@@ -691,7 +696,8 @@ export function createLoopScheduler(deps: LoopSchedulerDeps): LoopScheduler {
 			: { ok: true, wakeupId, replacedWakeupId, dueAt, noopStreak };
 	}
 
-	function onTurnEndedWithoutSchedule(loopId: LoopId): KeepaliveResult {
+	function onTurnEndedWithoutSchedule(loopId: LoopId, options?: { readonly chargeCredit?: boolean }): KeepaliveResult {
+		const chargeCredit = options?.chargeCredit ?? true;
 		const entry = entryOf(loopId);
 		if (entry === undefined || entry.kind !== "dynamic") return { action: "ignored" };
 		// Fixed loops re-arm from their own schedule, and a paused or ended loop has no
@@ -708,7 +714,7 @@ export function createLoopScheduler(deps: LoopSchedulerDeps): LoopScheduler {
 			return { action: "ended", endReason: "expired" };
 		}
 
-		if (entry.keepaliveCredit === 0) {
+		if (chargeCredit && entry.keepaliveCredit === 0) {
 			commit((entries) => {
 				endEntry(entries, entry, nowMs, "keepalive_exhausted");
 				return undefined;
@@ -736,7 +742,7 @@ export function createLoopScheduler(deps: LoopSchedulerDeps): LoopScheduler {
 			const armed = dynamicWithPhase(entry, "waiting", {
 				queuedForAt: null,
 				pendingWakeup: wakeup,
-				keepaliveCredit: 0,
+				keepaliveCredit: chargeCredit ? 0 : entry.keepaliveCredit,
 			});
 			entries[entry.id] = armed;
 			expired = armEntry(entries, armed, nowMs, onFire) === "expired";

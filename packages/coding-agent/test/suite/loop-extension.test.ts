@@ -744,6 +744,48 @@ describe("loop extension keepalive", () => {
 		expect(entry.pendingWakeup?.source).toBe("model");
 		expect(entry.phase).toBe("waiting");
 	});
+
+	it("does not charge keepalive when a tick steered into another turn ends without schedule_wakeup", async () => {
+		const f = await fixture();
+		await f.emit("session_start", { reason: "startup" });
+		const created = await f.controller.startDynamic({ originalArgs: "watch the queue", prompt: "watch the queue" });
+		expect(created.ok).toBe(true);
+		if (!created.ok) return;
+		await f.controller.scheduleWakeup({
+			loopId: created.loopId,
+			requestedDelaySeconds: 600,
+			delaySeconds: 600,
+			reason: "poll later",
+			prompt: "/loop watch the queue",
+			noop: false,
+		});
+		await f.emit("agent_end", { messages: [] });
+		await f.emit("agent_settled");
+
+		// Twice in a row: the wakeup comes due while the user's own turn is running, the tick is
+		// steered into that turn, and the turn ends on the user's work without schedule_wakeup.
+		for (let round = 0; round < 2; round++) {
+			const before = (await f.persisted())?.entries[created.loopId];
+			if (before?.kind !== "dynamic" || before.pendingWakeup === null) throw new Error("no pending wakeup");
+			f.setIdle(false);
+			await f.emit("input", { text: `user task ${round}`, source: "interactive" });
+			f.advance(before.pendingWakeup.dueAt - f.now());
+			f.userMessages.length = 0;
+			await f.controller.fireDue(created.loopId);
+			expect(f.userMessages.map((message) => message.deliverAs)).toEqual(["steer"]);
+			await f.emit("agent_end", { messages: [] });
+			f.setIdle(true);
+			await f.emit("agent_settled");
+
+			const entry = (await f.persisted())?.entries[created.loopId];
+			expect(entry?.kind).toBe("dynamic");
+			if (entry?.kind !== "dynamic") return;
+			expect(entry.phase).toBe("waiting");
+			expect(entry.keepaliveCredit).toBe(1);
+			expect(entry.pendingWakeup?.source).toBe("keepalive");
+			expect(f.timers.armedKeys).toEqual([created.loopId]);
+		}
+	});
 });
 
 describe("loop extension noop folding", () => {
