@@ -22,9 +22,9 @@ export interface AccountLimits {
 	 */
 	readonly error?: string;
 	/**
-	 * When this record last changed (ISO), the order mirrored copies are taken in (senpi#3695). It differs from
-	 * `reportedAt` when a failed poll adds an error beside the last windows: the windows keep their time, the
-	 * record does not. Absent on a record from before it existed: `reportedAt` stands in.
+	 * When this record last changed (ISO), the order mirrored copies are taken in (senpi#3695). Set only when it
+	 * differs from `reportedAt`: a failed poll adds an error beside the last windows, which keep their time while
+	 * the record does not. Absent, `reportedAt` is when the record last changed.
 	 */
 	readonly updatedAt?: string;
 }
@@ -53,7 +53,6 @@ export class SubscriptionLimitStore {
 			windows: [...merged.values()],
 			reportedAt: now.toISOString(),
 			...(previous?.plan === undefined ? {} : { plan: previous.plan }),
-			updatedAt: now.toISOString(),
 		});
 	}
 
@@ -68,13 +67,15 @@ export class SubscriptionLimitStore {
 		const key = `${provider}\u0000${account}`;
 		const previous = this.#accounts.get(key);
 		const reportedAt = report.reportedAt.toISOString();
-		if (previous !== undefined && reportedAt < previous.reportedAt) return;
+		if (previous !== undefined && reportedAt < orderOf(previous)) return;
 		if ("error" in report) {
 			if (previous?.error === report.error) return;
+			const base = previous ?? { provider, account, windows: [], reportedAt };
+			const updatedAt = laterOf(reportedAt, previous === undefined ? undefined : orderOf(previous));
 			this.#publish(key, {
-				...(previous ?? { provider, account, windows: [], reportedAt }),
+				...base,
 				error: report.error,
-				updatedAt: laterOf(reportedAt, previous === undefined ? undefined : orderOf(previous)),
+				...(updatedAt === base.reportedAt ? {} : { updatedAt }),
 			});
 			return;
 		}
@@ -85,7 +86,6 @@ export class SubscriptionLimitStore {
 			windows: [...report.windows],
 			reportedAt,
 			...(report.plan === undefined ? {} : { plan: report.plan }),
-			updatedAt: reportedAt,
 		});
 	}
 
