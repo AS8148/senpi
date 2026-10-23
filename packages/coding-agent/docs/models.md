@@ -182,6 +182,10 @@ The `apiKey` and `headers` fields support command execution, environment interpo
 
   The same objects work in `auth.json` for an API key's `key` and for each pooled account's `key`; a request for one account resolves only that account. Provider values supplied by an extension cannot use references. Setup tools check for `"senpiCapabilities": { "configReferenceObjects": 1 }` in the engine's `package.json` before writing these objects.
 
+  A broken reference in `credentials.slots.*.value` skips only that slot with a diagnostic naming its field and failure reason, never its value. Healthy slots remain usable; if every slot is broken, the request fails with a named reference error.
+
+  Every resolved value is treated as sensitive for the process lifetime and redacted from outbound text, including non-secret values such as paths and values from earlier rotations. Values shorter than four characters are not redacted. If you also use references for MCP servers, put secrets in `env.*` or `headers`, not `args[]`, because resolved arguments are visible in the process list.
+
   Differences from OpenCode: references are JSON objects rather than `{file:...}`/`{env:...}` text, a variable's value is never re-scanned for another reference, and `baseUrl` takes no reference.
 
 Legacy uppercase env-var-like values such as `MY_API_KEY` are migrated to `$MY_API_KEY` on startup.

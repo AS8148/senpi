@@ -13,6 +13,7 @@ import { ROTATED, referenceRoot, resolveReference, SECRET } from "../suite/regre
 import { serverConfig } from "./fixtures/reconnect.ts";
 import { capturingPi, registeredTool, textContent } from "./fixtures/register-call.ts";
 import { cleanupRoots, makeRoot, setConfig, stdioServer } from "./fixtures/service-lifecycle.ts";
+import { spawnHttpFixture } from "./fixtures/spawn-fixture.ts";
 
 // #3858: redaction is an outbound projection, never a mutation of protocol data.
 describe("reference disclosure boundaries", () => {
@@ -93,6 +94,42 @@ describe("reference disclosure boundaries", () => {
 		});
 		expect(diagnostic?.message).not.toContain(SECRET);
 		expect(error.message).toContain(SECRET);
+	});
+
+	it("redacts needs_auth errors in real service snapshots and RPC inventory snapshots", async () => {
+		await resolve();
+		const cleanup: Array<() => Promise<void>> = [];
+		const service = new McpService();
+		try {
+			const root = makeRoot("3858-needs-auth", cleanup);
+			const fixture = await spawnHttpFixture(["--tools", "1"]);
+			cleanup.push(fixture.cleanup);
+			setConfig(root, {
+				fx: { type: "http", url: fixture.url, auth: "oauth", exposure: "direct" },
+			});
+			await service.attachSession(
+				{ type: "session_start", reason: "startup" },
+				{ cwd: root.cwd, isProjectTrusted: () => true },
+				capturingPi(),
+				{ agentDir: root.agentDir },
+			);
+			expect(await service.whenAttachSettled(10_000)).toBe("settled");
+			const connection = service.getConnection("fx");
+			if (connection === undefined) throw new Error("fixture did not connect");
+			const error = new Error(`authenticate ${SECRET}`);
+			connection.markNeedsAuth(error);
+
+			expect(service.getServerSnapshots()).toMatchObject([
+				{ lifecycleState: "needs_auth", lastError: "authenticate <redacted>" },
+			]);
+			expect((await service.refreshWireStatusSnapshot()).servers).toMatchObject([
+				{ status: "needs_auth", lastError: "authenticate <redacted>" },
+			]);
+			expect(error.message).toBe(`authenticate ${SECRET}`);
+		} finally {
+			await service.dispose("quit");
+			await cleanupRoots(cleanup);
+		}
 	});
 
 	it("sanitizes server tool and resource text before model, display and spill sinks", async () => {

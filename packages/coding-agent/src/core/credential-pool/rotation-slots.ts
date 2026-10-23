@@ -1,7 +1,7 @@
 import type { Credential } from "@earendil-works/pi-ai";
 import { slotsOfOwnKind } from "@earendil-works/pi-ai/auth/pool/kinds";
 import type { PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
-import type { ConfigValue } from "@earendil-works/pi-ai/utils/config-reference";
+import { ConfigReferenceError, type ConfigValue } from "@earendil-works/pi-ai/utils/config-reference";
 import { getConfigValueEnvVarNames, resolveConfigValue } from "../resolve-config-value.ts";
 import { discoverEnvSlots } from "./env-slots.ts";
 import type { RunSlot } from "./failover.ts";
@@ -124,24 +124,33 @@ export async function listRotationSlots(
 		key: string;
 		source: "env";
 	}[] = [];
+	let referenceError: ConfigReferenceError | undefined;
 	for (const [name, ref] of Object.entries(sources.policy?.slots ?? {})) {
 		const envVarName = ref.env ?? `models.json:${name}`;
-		const key =
-			ref.env !== undefined
-				? env(ref.env)
-				: ref.value !== undefined
-					? await resolveConfigValue(
-							ref.value,
-							typeof ref.value === "string"
-								? {}
-								: Object.fromEntries(
-										getConfigValueEnvVarNames(ref.value).flatMap((variable) => {
-											const value = env(variable);
-											return value === undefined ? [] : [[variable, value]];
-										}),
-									),
-						)
-					: undefined;
+		let key: string | undefined;
+		try {
+			key =
+				ref.env !== undefined
+					? env(ref.env)
+					: ref.value !== undefined
+						? await resolveConfigValue(
+								ref.value,
+								typeof ref.value === "string"
+									? {}
+									: Object.fromEntries(
+											getConfigValueEnvVarNames(ref.value).flatMap((variable) => {
+												const value = env(variable);
+												return value === undefined ? [] : [[variable, value]];
+											}),
+										),
+							)
+						: undefined;
+		} catch (error) {
+			if (!(error instanceof ConfigReferenceError)) throw error;
+			console.warn(`${error.field}: configuration reference ${error.reason}; skipping credential slot`);
+			referenceError ??= error;
+			continue;
+		}
 		if (!key) continue;
 		policySlots.push({ name, envVarName, key, source: "env" });
 	}
@@ -216,7 +225,10 @@ export async function listRotationSlots(
 				),
 			);
 		}
-		if (policySlots.length === 0) return slots;
+		if (policySlots.length === 0) {
+			if (slots.length === 0 && referenceError !== undefined) throw referenceError;
+			return slots;
+		}
 		const namedSources: RotationSources = {
 			...sources,
 			credential: undefined,
@@ -226,6 +238,7 @@ export async function listRotationSlots(
 		return [...slots, ...namedSlots];
 	}
 	const envSlots = [...discoverEnvSlots(providerId, env), ...policySlots];
+	if (envSlots.length === 0 && referenceError !== undefined) throw referenceError;
 	return listEnvRotationSlots(sources, envSlots, acquireLeases, modelId);
 }
 

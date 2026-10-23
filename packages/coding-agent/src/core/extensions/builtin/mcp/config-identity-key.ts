@@ -19,6 +19,7 @@ const KEY_BYTES = 32;
 const EPHEMERAL_PREFIX = "ephemeral:";
 const processKey = randomBytes(KEY_BYTES);
 const installationKeys = new Map<string, Buffer | undefined>();
+const warnedPaths = new Set<string>();
 
 type KeyRead = { readonly kind: "valid"; readonly key: Buffer } | { readonly kind: "missing" | "invalid" };
 
@@ -59,17 +60,37 @@ function readKey(path: string): KeyRead {
 	try {
 		fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
 	} catch (error) {
-		return { kind: isErrno(error, "ENOENT") ? "missing" : "invalid" };
+		return isErrno(error, "ENOENT")
+			? { kind: "missing" }
+			: invalidKey(path, "cannot open safely", "repair access and ensure it is a regular file, not a symlink");
 	}
 	try {
 		const stat = fstatSync(fd);
-		const owned = process.platform === "win32" || ((stat.mode & 0o777) === 0o600 && stat.uid === process.getuid?.());
-		if (!stat.isFile() || stat.size !== KEY_BYTES || !owned) return { kind: "invalid" };
+		if (!stat.isFile()) return invalidKey(path, "not a regular file", "restore the original private key file");
+		if (stat.size !== KEY_BYTES)
+			return invalidKey(path, `wrong size (${stat.size} bytes)`, "restore the original 32-byte key from backup");
+		if (process.platform !== "win32") {
+			if (stat.uid !== process.getuid?.())
+				return invalidKey(path, "wrong owner", "chown the key file to your current user");
+			if ((stat.mode & 0o777) !== 0o600) return invalidKey(path, "wrong mode", "chmod 600 the key file");
+		}
 		const key = Buffer.alloc(KEY_BYTES);
-		return readSync(fd, key, 0, KEY_BYTES, 0) === KEY_BYTES ? { kind: "valid", key } : { kind: "invalid" };
+		return readSync(fd, key, 0, KEY_BYTES, 0) === KEY_BYTES
+			? { kind: "valid", key }
+			: invalidKey(path, "incomplete read", "restore the original 32-byte key from backup");
 	} finally {
 		closeSync(fd);
 	}
+}
+
+function invalidKey(path: string, problem: string, repair: string): KeyRead {
+	if (!warnedPaths.has(path)) {
+		warnedPaths.add(path);
+		console.warn(
+			`MCP identity key ${path}: ${problem}; persistent catalog cache is disabled. To fix: ${repair}, then restart senpi. The file was left unchanged.`,
+		);
+	}
+	return { kind: "invalid" };
 }
 
 /** A private temporary file published with link(): the key is complete or absent, and never replaced. */

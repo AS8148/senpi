@@ -892,7 +892,11 @@ export class McpService {
 			entry?.connection.state === "needs_auth" &&
 			mcpCredentialIdentity(config, name, entry.agentDir, entry.env) === undefined
 		) {
-			return { ...snapshot, lifecycleState: "needs_auth", lastError: entry.connection.lastError?.message ?? null };
+			return redactResolvedReferenceData({
+				...snapshot,
+				lifecycleState: "needs_auth",
+				lastError: entry.connection.lastError?.message ?? null,
+			});
 		}
 		return snapshot;
 	}

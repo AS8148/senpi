@@ -148,7 +148,14 @@ it. A reference object takes the place of the whole string:
 
 - **Where.** Only `headers.*`, `env.*` and `args[]`. `url`, `command`, `cwd`
   and `oauth` refuse them, and text such as `"Bearer {file:~/k}"` inside a
-  string stays literal.
+  string stays literal. Put secrets in `env.*` or `headers`, not `args[]`:
+  resolved arguments are visible in the server's process list.
+- **Redaction.** Every resolved value is treated as sensitive for the process
+  lifetime, including rotated values and non-secret values such as paths.
+  These values are redacted from outbound text, including tool results,
+  logs and status. Values shorter than four characters are not redacted.
+  In structured data, only string values are redacted; keys, numbers,
+  booleans, null and array/object shape stay intact.
 - **Who.** A reference is read exactly where `${VAR}` would expand: your own
   `mcp.json`, a trusted project's `mcp.json` and imported `.mcp.json`, and
   stdio servers of skills you own. A remote skill server, a skill of an

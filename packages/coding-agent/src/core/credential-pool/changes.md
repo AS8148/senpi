@@ -2,11 +2,11 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/credential-pool/rotation-slots.ts`: policy slot values accept the shared reference union, read named reference environment values from the supplied environment source, and propagate named reference failures.
+- `packages/coding-agent/src/core/credential-pool/rotation-slots.ts`: policy slot values accept the shared reference union and read named reference environment values from the supplied environment source. A failed reference skips only that slot with a diagnostic naming its field and reason, never its value. Stored, discovered environment and healthy policy slots remain usable; when no slot remains, the request propagates the named reference failure.
 
 ### Why
 
-- Policy slots need the same reference and origin contract as provider keys. An empty explicit request environment must not silently inherit ambient process credentials.
+- Policy slots need the same reference and origin contract as provider keys. An empty explicit request environment must not silently inherit ambient process credentials, and an unused broken slot must not fail a request that can use another slot.
 
 ### Why an extension could not handle it
 

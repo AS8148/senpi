@@ -30,8 +30,33 @@ export function redactResolvedReferenceValues(text: string, replacement = "<reda
 	return redacted;
 }
 
-/** A redacted JSON copy for persistence or display; the wire-facing original keeps its exact strings. */
-export function redactResolvedReferenceData<T>(value: T): T {
-	const json = resolvedValues.size === 0 ? undefined : JSON.stringify(value);
-	return json === undefined ? value : JSON.parse(redactResolvedReferenceValues(json));
+/** Copies JSON-shaped data, redacting string leaves only; never mutates the wire-facing original. */
+export function redactResolvedReferenceData<T>(value: T): T;
+export function redactResolvedReferenceData(value: unknown): unknown {
+	if (resolvedValues.size === 0) return value;
+	const copies = new WeakMap<object, object>();
+	const pending: { source: object; target: object }[] = [];
+	const copy = (source: unknown): unknown => {
+		if (typeof source === "string") return redactResolvedReferenceValues(source);
+		if (typeof source !== "object" || source === null) return source;
+		const existing = copies.get(source);
+		if (existing !== undefined) return existing;
+		const target: object = Array.isArray(source) ? new Array(source.length) : {};
+		copies.set(source, target);
+		pending.push({ source, target });
+		return target;
+	};
+	const result = copy(value);
+	// A worklist and memoized copies handle arbitrary depth, cycles and shared children.
+	for (const { source, target } of pending) {
+		for (const key of Object.keys(source)) {
+			Object.defineProperty(target, key, {
+				value: copy(Reflect.get(source, key)),
+				enumerable: true,
+				writable: true,
+				configurable: true,
+			});
+		}
+	}
+	return result;
 }

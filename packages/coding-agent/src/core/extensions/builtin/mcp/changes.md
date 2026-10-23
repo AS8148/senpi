@@ -6,7 +6,7 @@
 - `packages/coding-agent/src/core/extensions/builtin/mcp/expose/call.ts` and `packages/coding-agent/src/core/extensions/builtin/mcp/expose/register.ts`: sanitize progress notifications, result details and user-facing tool errors, including structured results mapped to text.
 - `packages/coding-agent/src/core/extensions/builtin/mcp/resources.ts`: sanitizes resource listings, read previews, error messages and expanded mentions without changing the URI sent to the server.
 - `packages/coding-agent/src/core/extensions/builtin/mcp/config-generation.ts`: logs each typed reference failure and clears obsolete failures on the next sync; failed servers still open no transport and do not prevent sibling connections.
-- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts` and `packages/coding-agent/src/core/extensions/builtin/mcp/service-types.ts`: expose failed reference resolution as `degraded` with the sanitized named `lastError` in status and RPC inventory.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts` and `packages/coding-agent/src/core/extensions/builtin/mcp/service-types.ts`: expose failed reference resolution as `degraded` with the sanitized named `lastError` in status and RPC inventory. The `needs_auth` snapshot override also redacts its error before status and RPC projection, without modifying the connection's original error.
 
 ### Why
 
@@ -26,7 +26,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/extensions/builtin/mcp/config-identity-key.ts`: the installation key `config-identity.key` in the agent directory is 32 random bytes written to a private temporary file and published with `link()`, so it is complete or absent and never replaced. An existing key is used only as a regular file owned by the user, mode `0600`, exactly 32 bytes. Without a valid key, identities are `ephemeral:` HMACs under a per-process key.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config-identity-key.ts`: the installation key `config-identity.key` in the agent directory is 32 random bytes written to a private temporary file and published with `link()`, so it is complete or absent and never replaced. An existing key is used only as a regular file owned by the user, mode `0600`, exactly 32 bytes. Without a valid key, identities are `ephemeral:` HMACs under a per-process key. An invalid file produces one warning per path naming the problem and repair, explaining that persistent catalog caching is disabled and a restart is required after repair; the file stays untouched and key bytes are never logged.
 - `packages/coding-agent/src/core/extensions/builtin/mcp/config-identity.ts` and `auth/catalog-identity.ts`: `hashConfig` and the catalog credential identity are HMAC-SHA-256 under that key; the unkeyed forms remain only to read entries earlier builds wrote.
 - `packages/coding-agent/src/core/extensions/builtin/mcp/log.ts`: literal-header and log redaction fingerprints are keyed too.
 - `packages/coding-agent/src/core/extensions/builtin/mcp/catalog-cache.ts`: an `ephemeral:` identity is never persisted.

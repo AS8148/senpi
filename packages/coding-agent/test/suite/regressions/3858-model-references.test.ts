@@ -34,6 +34,7 @@ describe("model reference integration (#3858)", () => {
 	afterEach(() => {
 		files.close();
 		vi.unstubAllEnvs();
+		vi.restoreAllMocks();
 	});
 
 	it("rotates provider and model headers without rewriting their declarations", async () => {
@@ -98,13 +99,19 @@ describe("model reference integration (#3858)", () => {
 		await expect(invoke()).rejects.toMatchObject({ name: "ConfigReferenceError", reason: "forbidden" });
 	});
 
-	it.each([false, true])("resolves policy references or reports their failure (missing=%s)", async (missing) => {
+	it.each([false, true])("keeps healthy policy slots usable (broken sibling=%s)", async (missing) => {
+		const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
 		const path = files.file(
 			"models.json",
 			JSON.stringify({
 				providers: {
 					fixture: {
-						credentials: { slots: { chosen: { value: missing ? { $file: "./missing" } : { $env: "SLOT" } } } },
+						credentials: {
+							slots: {
+								chosen: { value: { $env: "SLOT" } },
+								...(missing ? { broken: { value: { $file: "./missing" } } } : {}),
+							},
+						},
 					},
 				},
 			}),
@@ -121,7 +128,43 @@ describe("model reference integration (#3858)", () => {
 			},
 			{ acquireLeases: false },
 		);
-		if (missing) await expect(result).rejects.toMatchObject({ name: "ConfigReferenceError", reason: "missing" });
-		else expect(await result).toMatchObject([{ envKey: SECRET }]);
+		expect(await result).toMatchObject([{ name: "chosen", envKey: SECRET }]);
+		if (missing) {
+			expect(warning).toHaveBeenCalledWith(
+				expect.stringContaining(
+					"providers.fixture.credentials.slots.broken.value: configuration reference missing",
+				),
+			);
+			expect(JSON.stringify(warning.mock.calls)).not.toContain(SECRET);
+		} else expect(warning).not.toHaveBeenCalled();
+	});
+
+	it("fails with a named error when every policy slot is broken", async () => {
+		vi.spyOn(console, "warn").mockImplementation(() => {});
+		const path = files.file(
+			"models.json",
+			JSON.stringify({
+				providers: {
+					fixture: { credentials: { slots: { broken: { value: { $file: "./missing" } } } } },
+				},
+			}),
+		);
+		const config = await ModelConfig.load(path);
+		await expect(
+			listRotationSlots(
+				{
+					providerId: "fixture",
+					credential: undefined,
+					env: () => undefined,
+					repository: new CredentialSlotRepository(join(files.root, "health.json")),
+					policy: config.getProvider("fixture")?.credentials,
+				},
+				{ acquireLeases: false },
+			),
+		).rejects.toMatchObject({
+			name: "ConfigReferenceError",
+			field: "providers.fixture.credentials.slots.broken.value",
+			reason: "missing",
+		});
 	});
 });
