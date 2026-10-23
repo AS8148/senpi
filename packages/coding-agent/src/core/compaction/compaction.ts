@@ -1010,6 +1010,8 @@ export function cacheFriendlyContextFits(model: Model<any>, context: TranscriptC
 	);
 }
 
+const SUMMARY_PROMPT_WRAPPERS = "<conversation>\n\n</conversation>\n\n<previous-summary>\n\n</previous-summary>\n\n";
+
 /** Generate or update a conversation summary and return its provider usage. */
 export async function generateSummaryWithUsage(
 	currentMessages: AgentMessage[],
@@ -1064,7 +1066,10 @@ export async function generateSummaryWithUsage(
 	// that is close to the window by construction (an overflow, a required pre-prompt compaction) must not make the
 	// summary request overflow the same window, or the compaction - and with it overflow recovery - never succeeds.
 	const boundsHistory = !sourceContext && model.contextWindow > 0;
-	const promptTokens = Math.ceil(`${basePrompt}${transformedSource.previousSummary ?? ""}`.length / 4);
+	const promptTokens = Math.ceil(
+		`${SUMMARIZATION_SYSTEM_PROMPT}${basePrompt}${transformedSource.previousSummary ?? ""}${SUMMARY_PROMPT_WRAPPERS}`
+			.length / 4,
+	);
 	// Measured on what is sent (serialization already truncates long tool results), so a fitting request is unchanged.
 	const serializedFits = (messages: AgentMessage[]): boolean =>
 		Math.ceil(serializeConversation(convertToLlm(messages)).length / 4) + promptTokens + maxTokens <=
@@ -1082,7 +1087,11 @@ export async function generateSummaryWithUsage(
 		if (!sourceContext) {
 			const llmMessages = convertToLlm(summarizedMessages);
 			const conversationText = serializeConversation(llmMessages);
-			promptText = `<conversation>\n${conversationText}\n</conversation>\n\n`;
+			// Bounding drops the oldest history from the summary for good: say so in the request, so the summary records
+			// the gap instead of silently losing it.
+			const omitted = transformedSource.messages.length - summarizedMessages.length;
+			const omittedNote = omitted > 0 ? `<omitted-history messages="${omitted}" />\n` : "";
+			promptText = `<conversation>\n${omittedNote}${conversationText}\n</conversation>\n\n`;
 			if (transformedSource.previousSummary) {
 				promptText += `<previous-summary>\n${transformedSource.previousSummary}\n</previous-summary>\n\n`;
 			}

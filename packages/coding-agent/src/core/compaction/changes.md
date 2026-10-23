@@ -810,7 +810,7 @@ If upstream changes branch summary preparation or adds new branch summary data s
 
 ### What changed
 
-- `packages/coding-agent/src/core/compaction/compaction.ts`: `generateSummaryWithUsage`, on the standalone (non cache-friendly) path, bounds the serialized history with the builtin compaction's rule when the request would not fit the window: `boundSummarizationInput` (0.6 of the window, oldest messages first; the newest message is kept if bounding would leave nothing), and on a provider context overflow it retries with `shrinkSummarizationInputForOverflowRetry` under `allowOverflowRetry`, throwing `SummarizationOverflowExhaustedError` when exhausted. A request that already fits is sent unchanged.
+- `packages/coding-agent/src/core/compaction/compaction.ts`: `generateSummaryWithUsage`, on the standalone (non cache-friendly) path, bounds the serialized history with the builtin compaction's rule when the request would not fit the window: `boundSummarizationInput` (0.6 of the window, oldest messages first; the newest message is kept if bounding would leave nothing), and on a provider context overflow it retries with `shrinkSummarizationInputForOverflowRetry` under `allowOverflowRetry`, throwing `SummarizationOverflowExhaustedError` when exhausted. A request that already fits is sent unchanged. When bounding or the shrink-retry drops the oldest history, the summarized conversation opens with `<omitted-history messages="N" />`, so the summary records the gap rather than losing it silently; the fit check counts the summarization system prompt and the request wrappers too.
 
 ### Why
 
