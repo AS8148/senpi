@@ -1,3 +1,24 @@
+## 2026-10-20 - Bind security notices and MCP grant dialogs to actual connections (senpi#3796)
+
+### What changed
+
+- `connection-handler.ts` replays retained warnings for a classic RPC presentation and creates marked, abortable grant selects only for `grant_select`. Grant answers are checked against the selected connection.
+- `rpc-types.ts` adds the optional `grantSelect` marker on select requests.
+- `session-binding.ts`, `session-event-writer.ts` and `session-event-fanout.ts` bind notices and grant authority to attached sockets, not the single handler shared by several sockets. Fork-only `security-presentations.ts` retains per-connection replay cursors and cancels grants when capability or attachment ends.
+- `session-worker.ts`, `session-worker-client.ts` and `session-worker-protocol.ts` bridge retained snapshots and grant requests through the host's actual connection capabilities. Internal snapshot, cancellation and settled-dialog records do not reach clients.
+
+### Why
+
+A late client needs the current reason, and a question-only or headless client must not hold server startup waiting for a select it cannot render. A grant belongs to the capable presentation that received it, including with worker runtimes.
+
+### Why an extension could not handle it
+
+Shared-handler routing, socket capabilities, worker transport and disconnect teardown are RPC host internals.
+
+### Expected merge conflict zones
+
+Handler bind and dialog response dispatch; session writer attachment and capability updates; worker output forwarding and control dispatch.
+
 ## 2026-10-22 - Host requests: a session asks its client to continue it on another computer (senpi#3959)
 
 ### What changed
@@ -254,6 +275,28 @@ Both timers are RPC host internals armed before any extension loads.
 ### Expected merge conflict zones
 
 - LOW: `packages/coding-agent/src/modes/rpc/host-watchdog.ts` `armHostWatchdog`, `watchFdForEof`, `watchPpid`; `packages/coding-agent/src/modes/rpc/loop-lag-watchdog.ts` `start`, `stop`, `tick` and the constants block.
+
+## 2026-10-19 - RPC tool barrier: `prompt.toolBarrier`, `release_tool_barrier`, capability `tool_barrier` (senpi#3717)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `prompt.toolBarrier?: ToolBarrierSpec`, the `release_tool_barrier { barrierId }` command and its `{ released }` response.
+- `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`: refuses a malformed `prompt.toolBarrier` and a missing or over-long `barrierId`.
+- `packages/coding-agent/src/modes/rpc/client-input-handler.ts`: forwards `toolBarrier` to `AgentSession.prompt` and adds `data.toolBarrier: "armed" | "ignored"` to the prompt response when the prompt carried one (`armed` exactly when the disposition is `started`).
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: handles `release_tool_barrier` and advertises `tool_barrier` in classic mode. `host-capabilities.ts`: advertises it on the multi-session host. `custom-capability.ts`: `TOOL_BARRIER_CAPABILITY`.
+
+### Why
+
+A client that captures a pre-turn workspace checkpoint had to finish the capture before sending the prompt, because a write tool could run before it was ready; that capture sat on the send-to-first-request path. A session tool barrier lets the prompt go out at once while workspace-changing tools wait for the client's release.
+
+### Why an extension could not handle it
+
+RPC command, response and capability shapes are owned by the RPC mode; an extension cannot add a protocol command or a prompt field.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `prompt` member of `RpcSessionCommand` and the `RpcResponse` union before `dequeue_message`.
+
 
 ## 2026-10-19 - Removing a dead generation also ends its unproven session claims, behind the write fence (senpi#3658)
 
