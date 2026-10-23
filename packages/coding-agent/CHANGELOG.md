@@ -2,8 +2,6 @@
 
 ## [Unreleased]
 
-- Loop guard now stops an identical tool call repeated non-consecutively — other calls in between — the same way it stops consecutive repeats: a warning at the 8th occurrence in the tracked window, blocking after a second warning, and a hard stop if the calls continue. Before, only consecutive identical runs escalated, so an interleaved loop could repeat one call hundreds of times ([#3629](https://github.com/code-yeongyu/senpi/issues/3629)).
-
 ### Breaking Changes
 
 ### Added
@@ -16,6 +14,8 @@
 - `release_session` refuses `attached` only while ANOTHER client is attached; the connection asking for the release no longer counts, so a client can release (or move) the session it shows without `force`. `errorData.attachments` now counts only those other clients ([#3994](https://github.com/code-yeongyu/senpi/pull/3994)).
 
 ### Fixed
+
+- Loop guard now stops an identical tool call repeated non-consecutively, the shape of an interleaved loop that previously repeated one call hundreds of times: repeats count only while no state-changing call (edit, write, bash, eval, ...) runs between them, a warning fires at the 8th such repeat, a second at the 16th, the next identical call is blocked, and a hard stop follows three blocked attempts; two interleaved loops escalate independently ([#3629](https://github.com/code-yeongyu/senpi/issues/3629)).
 
 - A project's skills can no longer follow a link out of the project to read files elsewhere on your machine. Links into skill folders you configured yourself still work; a refused skill shows why in the TUI and in RPC clients instead of disappearing silently ([#3796](https://github.com/code-yeongyu/senpi/issues/3796)).
 - MCP servers that come from a project's skills no longer receive your whole environment. They get a small safe base (paths, home, temp, locale, CA paths) plus the variables they declare; when one asks for a variable it didn't get, the TUI and RPC clients that support it offer **Grant and save permanently**, which remembers only the variable names for that exact server declaration. Skills you installed yourself keep today's environment ([#3796](https://github.com/code-yeongyu/senpi/issues/3796)).

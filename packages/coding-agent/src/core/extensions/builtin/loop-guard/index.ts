@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "../../types.ts";
 import { CONTINUATION_HOLD_STATE_EVENT, WAKE_SOURCE_STATE_EVENT } from "../monitor-state-event.ts";
-import { detectLoop, NoticeGate } from "./detectors.ts";
+import { detectLoop, NoticeGate, windowedRepeatCount } from "./detectors.ts";
 import { IdenticalLoopEscalation } from "./escalation.ts";
 import {
 	buildLoopGuardBlockReason,
@@ -52,17 +52,20 @@ export default function loopGuardExtension(pi: ExtensionAPI): void {
 		setContinuationHoldActive(false);
 	};
 
-	// A windowed episode persists across interleaves; it ends when its signature
-	// ages out of the tracker window, which is the observable signal the loop stopped.
-	const ageOutWindowedEpisode = (): void => {
-		const fingerprint = escalation.windowedEpisodeFingerprint;
-		if (fingerprint === undefined) return;
-		let occurrences = 0;
-		for (const entry of tracker.records) {
-			if (entry.signature === fingerprint) occurrences++;
-		}
-		if (occurrences < WINDOWED_REPEAT_THRESHOLD) {
-			escalation.clearEpisode();
+	// A windowed episode persists across interleaves; it ends when its signature's
+	// repeat count (since the last state-changing call) falls below the threshold,
+	// which is the observable signal that loop stopped. When the last one clears,
+	// the recovery and hold state its hard stop armed goes with it.
+	const ageOutWindowedEpisodes = (): void => {
+		for (const fingerprint of escalation.windowedEpisodeFingerprints) {
+			if (windowedRepeatCount(tracker.records, fingerprint) < WINDOWED_REPEAT_THRESHOLD) {
+				const noneRemain = escalation.clearWindowedEpisode(fingerprint);
+				if (noneRemain) {
+					pendingRecoveryToolName = undefined;
+					setRecoveryWakeSourceActive(false);
+					setContinuationHoldActive(false);
+				}
+			}
 		}
 	};
 
@@ -78,7 +81,7 @@ export default function loopGuardExtension(pi: ExtensionAPI): void {
 
 	pi.on("tool_execution_start", (event) => {
 		const record = tracker.record(event.toolName, event.args);
-		ageOutWindowedEpisode();
+		ageOutWindowedEpisodes();
 		const patternChanged = escalation.observeAttempt(event.toolCallId, record);
 		if (patternChanged) {
 			pendingRecoveryToolName = undefined;

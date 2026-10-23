@@ -41,7 +41,7 @@ export function buildLoopGuardReminder(detection: LoopGuardDetection): string {
 				const { toolName, count } = detection;
 				return [
 					`<system-reminder>`,
-					`LOOP GUARD - REPEATED IDENTICAL TOOL CALLS: you called \`${toolName}\` ${count} times in this segment with the EXACT same arguments, with other calls in between. Re-issuing the same call returns the same result:`,
+					`LOOP GUARD - REPEATED IDENTICAL TOOL CALLS: you called \`${toolName}\` ${count} times in this segment with the EXACT same arguments, and no state-changing call (edit, write, bash, eval, ...) ran between them, so none of those repeats could observe anything new:`,
 					`- reuse the result you already received from this exact call;`,
 					`- if you were re-checking for new output or state, switch to the monitor/watch tool instead of polling;`,
 					`- if nothing is actually changing, stop calling this tool, state what is blocking you, and try a different tool or ask the user.`,

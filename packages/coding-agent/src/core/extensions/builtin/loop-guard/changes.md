@@ -1,6 +1,6 @@
 # loop-guard changes
 
-## loop-guard: escalate non-consecutive identical repeats to the hard-stop ladder (2026-10-18)
+## loop-guard: escalate non-consecutive identical repeats to the hard-stop ladder (2026-10-18, reworked 2026-10-23)
 
 - `detectors.ts` gains `detectWindowedRepeat`: occurrences of the last call's exact
   signature anywhere in the 64-record tracker window at or above the new
@@ -34,6 +34,27 @@
   `test/suite/regressions/issue-3629-windowed-identical-repeat.test.ts` (full
   notice -> block -> hard-stop ladder on an interleaved stream, interleave
   tolerance, age-out; all three fail on pre-fix code).
+
+- Review rework (2026-10-23, REQUEST-CHANGES findings): `windowedRepeatCount` counts a
+  signature's own occurrences always and resets only when a DIFFERENT mutating tool
+  (`policy.ts MUTATING_TOOL_NAMES`: edit/write/apply_patch/bash/bash_input/powershell/
+  eval/generate_image/todo_write) runs in between, so a routine edit->test loop never
+  arms (its identical test reruns are separated by edits) while the eval/todo loop from
+  senpi#3629 still escalates. `NoticeGate` entries are keyed by kind+fingerprint and
+  `detectLoop` keeps a windowed entry active while its fingerprint is anywhere over
+  threshold, so the 8 -> 16 doubling holds across filler records and two interleaved
+  loops throttle independently. Windowed episodes live per fingerprint in
+  `escalation.ts` (a map), so two parallel identical-repeat loops each block instead of
+  alternating one episode slot; age-out clears an episode when its mutation-aware count
+  drops below the threshold and releases the recovery/hold state when none remain.
+  `detectCycle` fingerprints are rotation-invariant (sorted), which stops the
+  period-2-alternation gate churn that emitted a notice on almost every call.
+  The windowed reminder claims only what the counter guarantees: repeats with no
+  state-changing call in between could not observe anything new.
+- Measured ladder (all suites 2026-10-23): windowed notices at the 8th and 16th repeat,
+  block on the next identical attempt, hard stop after three blocked attempts; the
+  cycle advisory doubles at 3/6/12/24 repetitions and saturates at 32; a 60-round
+  dual-identical stream produces 8 notices (was 115 pre-fix), 3+ blocks, one abort.
 - Expected merge conflict zones: MEDIUM in `detectors.ts` (detection union) and
   `escalation.ts` (episode shape); LOW in `policy.ts`, `index.ts`, `notice.ts`,
   `renderer.ts`, and the two test files; NONE in public extension APIs.

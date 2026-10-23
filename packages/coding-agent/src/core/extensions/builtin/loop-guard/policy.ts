@@ -27,6 +27,19 @@ export const IDENTICAL_RUN_THRESHOLD = 3;
 /** Occurrences of one byte-identical signature anywhere in the tracker window before the windowed reminder fires. */
 export const WINDOWED_REPEAT_THRESHOLD = 8;
 
+/** Tools that change repository, process, or session state. A windowed repeat count only spans the stretch after the most recent of these. */
+export const MUTATING_TOOL_NAMES: ReadonlySet<string> = new Set([
+	"edit",
+	"write",
+	"apply_patch",
+	"bash",
+	"bash_input",
+	"powershell",
+	"eval",
+	"generate_image",
+	"todo_write",
+]);
+
 /** Admitted identical-loop reminders ignored before the next same call is blocked. */
 export const IDENTICAL_BLOCK_NOTICE_THRESHOLD = 2;
 

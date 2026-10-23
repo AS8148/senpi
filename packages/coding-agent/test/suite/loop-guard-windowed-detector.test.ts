@@ -55,33 +55,35 @@ describe("detectWindowedRepeat", () => {
 		expect(consecutive.windowed).toBe(false);
 	});
 
-	it("counts occurrences across a period-7 interleave the cycle detector cannot see", () => {
-		const fillerNames = ["read", "edit", "bash", "todo_view", "webfetch", "glob", "grep"];
+	it("counts occurrences across a period-5 non-mutating interleave the cycle detector cannot see", () => {
+		const fillerNames = ["read", "todo_view", "webfetch", "glob", "grep"];
 		const records = interleaved(WINDOWED_REPEAT_THRESHOLD, (i) => [
 			fillerNames[i % fillerNames.length] ?? "read",
 			{ n: i },
 		]);
 		expect(detectWindowedRepeat(records)?.count).toBe(WINDOWED_REPEAT_THRESHOLD);
 	});
+
+	it("stops counting repeats that a state-changing call separates", () => {
+		const records = interleaved(WINDOWED_REPEAT_THRESHOLD, (i) => ["edit", { path: `src/a-${i}.ts` }]);
+		expect(detectWindowedRepeat(records)).toBeUndefined();
+	});
 });
 
 describe("detectLoop with windowed repeats", () => {
-	it("admits the first windowed detection and re-fires at the doubled count", () => {
+	it("notices at the threshold and the doubled count when driven on every record, as production does", () => {
 		const gate = new NoticeGate();
-		const records = interleaved(WINDOWED_REPEAT_THRESHOLD, (i) => ["todo_view", { step: i }]);
-		const first = detectLoop(records, gate);
-		expect(first?.kind).toBe("identical");
-		if (first?.kind !== "identical") return;
-		expect(first.windowed).toBe(true);
-		expect(first.count).toBe(WINDOWED_REPEAT_THRESHOLD);
-
-		const grow = (evalCount: number): ToolCallRecord[] =>
-			[
-				...records,
-				...interleaved(evalCount - WINDOWED_REPEAT_THRESHOLD, (i) => ["todo_view", { step: 100 + i }]),
-			].slice(-64);
-		expect(detectLoop(grow(12), gate)).toBeUndefined();
-		expect(detectLoop(grow(16), gate)?.count).toBe(16);
+		const stream: ToolCallRecord[] = [];
+		const admitted: number[] = [];
+		for (let round = 0; round < 20; round++) {
+			stream.push(rec("todo_view", { step: round }));
+			const fillerDetection = detectLoop(stream, gate);
+			if (fillerDetection !== undefined) throw new Error(`notice on filler record: ${fillerDetection.count}`);
+			stream.push(rec("eval", { code: "analyze(x)" }));
+			const detection = detectLoop(stream, gate);
+			if (detection?.kind === "identical" && detection.windowed) admitted.push(detection.count);
+		}
+		expect(admitted).toEqual([WINDOWED_REPEAT_THRESHOLD, WINDOWED_REPEAT_THRESHOLD * 2]);
 	});
 });
 

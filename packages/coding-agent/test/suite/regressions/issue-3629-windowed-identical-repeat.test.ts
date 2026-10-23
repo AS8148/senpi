@@ -25,6 +25,50 @@ async function runInterleavedRound(harness: LoopGuardHarness, round: number): Pr
 }
 
 describe("issue 3629: interleaved identical repeats escalate to a hard stop", () => {
+	it("does not flood notices when the interleaved todo call repeats identically too", async () => {
+		const harness = createLoopGuardHarness();
+		let blockedCount = 0;
+		for (let round = 1; round <= 60; round++) {
+			await attempt(harness, `todo-${round}`, "todo_view", { ...TODO_ARGS });
+			const result = await attempt(harness, `eval-${round}`, "eval", { ...EVAL_ARGS });
+			if (isBlockResult(result)) blockedCount++;
+		}
+		const notices = harness.customMessages.filter((message) => message.customType === "loop-guard:notice");
+		// windowed 8+16 plus the rotation-invariant cycle advisory's doubling stays logarithmic —
+		// nothing like the pre-fix flood (a notice on almost every call).
+		expect(notices.length).toBeLessThanOrEqual(9);
+		expect(blockedCount).toBeGreaterThanOrEqual(3);
+		expect(harness.actions).toContain("abort:system");
+	});
+
+	it("escalates two interleaved non-mutating loops independently", async () => {
+		const harness = createLoopGuardHarness();
+		let blockedCount = 0;
+		for (let round = 1; round <= 60; round++) {
+			await attempt(harness, `todo-${round}`, "todo_view", { ...TODO_ARGS });
+			const result = await attempt(harness, `out-${round}`, "bash_output", { bash_id: "b1" });
+			if (isBlockResult(result)) blockedCount++;
+		}
+		const notices = harness.customMessages.filter((message) => message.customType === "loop-guard:notice");
+		expect(notices.length).toBeLessThanOrEqual(12);
+		expect(blockedCount).toBeGreaterThanOrEqual(3);
+		expect(harness.actions).toContain("abort:system");
+	});
+
+	it("never blocks a routine edit-then-test loop", async () => {
+		const harness = createLoopGuardHarness();
+		for (let round = 1; round <= 24; round++) {
+			await attempt(harness, `edit-${round}`, "edit", {
+				path: `src/a-${round}.ts`,
+				old: `a${round}`,
+				new: `b${round}`,
+			});
+			await attempt(harness, `test-${round}`, "bash", { command: "bun test src/a.test.ts" });
+		}
+		const escalations = harness.customMessages.filter((message) => message.customType === "loop-guard:escalation");
+		expect(harness.actions).not.toContain("abort:system");
+		expect(escalations).toHaveLength(0);
+	});
 	it("notifies, blocks, and hard-stops an eval loop interleaved with todo calls", async () => {
 		const harness = createLoopGuardHarness();
 		let firstBlockedRound = 0;
