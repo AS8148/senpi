@@ -126,3 +126,12 @@ export async function resolveWantedMcpGenerations(
 	);
 	return generations;
 }
+
+/**
+ * A connection's identity: the declaration hash (which carries a project server's policy identity) plus the
+ * resolved generation hash when resolution changed anything. A server without references keeps its plain hash, so
+ * existing keys and cached catalogs stay valid.
+ */
+export function mcpConnectionIdentity(declared: string, generation: string | undefined): string {
+	return generation === undefined || generation === declared ? declared : `${declared}\0${generation}`;
+}

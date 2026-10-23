@@ -1,5 +1,5 @@
 import { detectLiteralBearerWarnings, resolveServerAuth } from "./auth/context.ts";
-import { type McpConfigGeneration, mcpGenerationRenewal } from "./config-generation.ts";
+import { type McpConfigGeneration, mcpConnectionIdentity, mcpGenerationRenewal } from "./config-generation.ts";
 import type { McpServerDeclaredConfig } from "./config-schema.ts";
 import { ServerConnection } from "./connection.ts";
 import type { McpElicitationUiProvider } from "./elicitation.ts";
@@ -74,7 +74,7 @@ export function createMcpSessionConnection(options: SessionConnectionOptions): M
 			? registry.attachShared(key, options.owner, {
 					...connectionOptions,
 					agentDir: session.agentDir,
-					configHash: options.generation.configHash,
+					configHash: mcpConnectionIdentity(options.configHash, options.generation.configHash),
 				})
 			: registry.attach(key, options.owner, () => new ServerConnection(connectionOptions));
 	const entry: McpConnectionEntry = {
@@ -90,7 +90,7 @@ export function createMcpSessionConnection(options: SessionConnectionOptions): M
 		key,
 		name,
 		configHash: options.configHash,
-		generationHash: options.generation.configHash,
+		generationHash: mcpConnectionIdentity(options.configHash, options.generation.configHash),
 		...(renewal === undefined ? {} : { generationChanged: renewal.changed }),
 		connection,
 		logger,

@@ -1,4 +1,4 @@
-import type { ConfigReferenceError } from "@earendil-works/pi-ai/utils/config-reference";
+import { ConfigReferenceError } from "@earendil-works/pi-ai/utils/config-reference";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { getAgentDir } from "../../../../config.ts";
 import { redactResolvedReferenceData } from "../../../config-reference-redaction.ts";
@@ -14,7 +14,7 @@ import { resolveAuthMode } from "./auth/context.ts";
 import { cachedCatalogNeedsRefresh, type McpCatalogCacheFile, readMcpCatalogCache } from "./catalog-cache.ts";
 import { adoptMcpCachedServer, legacyMcpCacheIdentity } from "./catalog-cache-adoption.ts";
 import { loadMcpConfig, mergeExtensionMcpServers, visitSpawnableMcpServers } from "./config.ts";
-import { resolveWantedMcpGenerations } from "./config-generation.ts";
+import { mcpConnectionIdentity, resolveWantedMcpGenerations } from "./config-generation.ts";
 import type { McpServerDeclaredConfig, ResolvedMcpConfig, ResolvedMcpServer } from "./config-schema.ts";
 import type { ServerConnection } from "./connection.ts";
 import type { McpSessionRegistration } from "./expose/session.ts";
@@ -457,44 +457,51 @@ export class McpService {
 				continue;
 			}
 			const result = project
-				? {
-						server: await prepareProjectSkillServer(
-							name,
-							decl,
-							{
-								context: binding.context,
-								options: binding.options,
-								ui: () => this.getMcpElicitationUi(),
-								notice: (identity, names) => {
-									// An untrusted project keeps the skill's references literal (senpi#2345); keep that fix in
-									// the one notice instead of a generic withheld line (senpi#3796).
-									const message =
-										names.length === 0
-											? ""
-											: projectTrusted
-												? `Project MCP server ${name} (skill ${decl.skillName}) withheld ${names.length} environment name(s): ${names.join(", ")}.`
-												: `Skill '${decl.skillName}' MCP server '${name}': ${names.map((variable) => `\${${variable}}`).join(", ")} stays literal because the skill comes from an untrusted project; trust the project or move the server into your own mcp.json to expand it.`;
-									binding.pi.events?.emit("security_notice", {
-										category: "mcp-env-withheld",
-										path: identity,
-										message,
-										remove: names.length === 0,
-									});
-									if (names.length === 0) {
-										policyWarnings.delete(identity);
-										return;
-									}
-									if (!this.#skillServerWarnings.has(message)) {
-										this.#skillServerWarnings.add(message);
-										policyWarnings.set(identity, message);
-										createMcpLogger("skills").warn(message);
-									}
-								},
+				? await prepareProjectSkillServer(
+						name,
+						decl,
+						{
+							context: binding.context,
+							options: binding.options,
+							ui: () => this.getMcpElicitationUi(),
+							notice: (identity, names) => {
+								// An untrusted project keeps the skill's references literal (senpi#2345); keep that fix in
+								// the one notice instead of a generic withheld line (senpi#3796).
+								const message =
+									names.length === 0
+										? ""
+										: projectTrusted
+											? `Project MCP server ${name} (skill ${decl.skillName}) withheld ${names.length} environment name(s): ${names.join(", ")}.`
+											: `Skill '${decl.skillName}' MCP server '${name}': ${names.map((variable) => `\${${variable}}`).join(", ")} stays literal because the skill comes from an untrusted project; trust the project or move the server into your own mcp.json to expand it.`;
+								binding.pi.events?.emit("security_notice", {
+									category: "mcp-env-withheld",
+									path: identity,
+									message,
+									remove: names.length === 0,
+								});
+								if (names.length === 0) {
+									policyWarnings.delete(identity);
+									return;
+								}
+								if (!this.#skillServerWarnings.has(message)) {
+									this.#skillServerWarnings.add(message);
+									policyWarnings.set(identity, message);
+									createMcpLogger("skills").warn(message);
+								}
 							},
-							existing,
-						),
-						warning: undefined,
-					}
+						},
+						existing,
+					).then(
+						(server) => ({ server, warning: undefined }),
+						// The skill file can gain a reference between the check above and the policy's re-read.
+						(error: unknown) => {
+							if (!(error instanceof ConfigReferenceError)) throw error;
+							return {
+								server: undefined,
+								warning: `Skill '${decl.skillName}' MCP server '${name}' skipped: ${error.message}`,
+							};
+						},
+					)
 				: resolveSkillMcpServer(name, decl.raw, decl.sourcePath, {
 						env: binding.options.env,
 						skillName: decl.skillName,
@@ -751,7 +758,7 @@ export class McpService {
 			const key =
 				server?.configHash === undefined
 					? undefined
-					: `${entry.name}\0${generations.get(entry.name)?.configHash ?? server.configHash}\0${credentialIdentities.get(entry.name) ?? "unknown"}`;
+					: `${entry.name}\0${mcpConnectionIdentity(server.configHash, generations.get(entry.name)?.configHash)}\0${credentialIdentities.get(entry.name) ?? "unknown"}`;
 			// A connection whose credentials went stale is re-created with its declarer's options, never kept under an
 			// unchanged key: kept, it would refuse every session sharing it until the service is disposed.
 			if (key === entry.key && entry.credentialsCurrent?.() !== false) continue;
@@ -771,7 +778,8 @@ export class McpService {
 			const options = declarer.options;
 			const cache = caches.get(options.agentDir);
 			const credentialIdentity = credentialIdentities.get(name);
-			const key = `${name}\0${generation.configHash}\0${credentialIdentity ?? "unknown"}`;
+			const identity = mcpConnectionIdentity(server.configHash, generation.configHash);
+			const key = `${name}\0${identity}\0${credentialIdentity ?? "unknown"}`;
 			if (this.#connections.has(key)) continue;
 			const cachedCatalog =
 				useCache && credentialIdentity !== undefined && cache !== undefined
@@ -779,7 +787,7 @@ export class McpService {
 							cache,
 							agentDir: options.agentDir,
 							serverName: name,
-							current: { configHash: generation.configHash, credentialIdentity },
+							current: { configHash: identity, credentialIdentity },
 							legacy: () => legacyMcpCacheIdentity(generation.config, name, options),
 						})
 					: undefined;

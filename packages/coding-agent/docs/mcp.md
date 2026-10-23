@@ -380,7 +380,9 @@ grants again. The store keeps no change history.
 [Reference objects](#reference-objects) follow the same line: the stdio
 servers of skills you own may use them. A project skill's server (trusted or
 not) and every remote skill server are skipped when they declare one, because
-the project environment policy below expands only plain `${VAR}` strings.
+the project environment policy below expands only plain `${VAR}` strings. The refusal follows the
+skill's recorded provenance; a skill loaded without one keeps the trust rules
+above.
 
 ## Resources and prompts
 

@@ -6,6 +6,7 @@
 - `packages/coding-agent/src/core/extensions/builtin/mcp/config-references.ts`: `plainMcpDeclaration` and `plainMcpServerConfig` refuse the first reference and narrow a declaration to plain strings; `project-env.ts` and `project-skill-policy.ts` take only that narrowed form.
 - `packages/coding-agent/src/core/extensions/builtin/mcp/service-connection.ts`: the project authority is looked up on the declared config, because the connection generation is a new snapshot object.
 - `packages/coding-agent/src/core/extensions/builtin/mcp/transport-spec.ts`: the stdio spec carries the project policy's `projectPolicy` and `resolveBeforeStart`.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: a connection's key, catalog-cache identity and shared pool key combine the declaration hash (which carries a project server's policy identity) with the resolved generation hash, so an env-only edit of a project skill server re-keys and reconnects. A reference that appears in the skill file between the refusal check and the policy's re-read is reported as the same named skip.
 
 ### Why
 
