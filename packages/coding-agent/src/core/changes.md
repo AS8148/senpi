@@ -11817,3 +11817,21 @@ The summary-model resolver reads session-owned state (settings, model runtime, s
 ### Expected merge conflict zones
 
 - MEDIUM: the `agent_end` last-assistant block in `_processAgentEvent` (release placement, `releasedExemptionAllowsQueuedContinuation`, the exempt-continuation stop-reason gate, the continuation condition), `_consumePostCompactionUsageExemption`, `_flushPostCompactionDeferredMessages` / `_requeueAtOriginalPlace`, and `releaseStart` in `_prompt`.
+
+## 2026-10-23 - The outlived-turn warning never judges a settle without an agent_end (senpi#4064)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_warnQueuedInputOutlivingRun` returns early when `_emitAgentSettled` is called without an `agent_end` event, instead of reading the last assistant from `agent.state.messages`.
+
+### Why
+
+- Those settles come only from a turn that did not end normally (the prompt threw, a queued continuation failed, a retry was aborted during its backoff). Reading the transcript there found an earlier turn's assistant that ended normally, so input queued before the failed run was reported as outliving it. A turn that fails keeps its queue by design; the next turn that ends normally still catches input that is really stuck.
+
+### Why an extension could not handle it
+
+- The check and the settle edge are private `AgentSession` state; extensions do not see which settles come with an `agent_end`.
+
+### Expected merge conflict zones
+
+- LOW: `_warnQueuedInputOutlivingRun` in `agent-session.ts`.
