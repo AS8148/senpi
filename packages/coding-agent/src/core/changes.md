@@ -11777,3 +11777,21 @@ The summary-model resolver reads session-owned state (settings, model runtime, s
 ### Expected merge conflict zones
 
 - LOW: `_recordQueuedInput`, the run-active edge in `_promptAgent`, the user `message_start` dequeue in `_processAgentEvent`, and the start of `_emitAgentSettled` in `agent-session.ts`; the `ALLOWED_DATA_KEY` pattern in `session-log.ts`.
+
+## 2026-10-23 - Fork a session file whose header line is missing (senpi#3647)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: `SessionManager.forkFrom` reads its source through `readForkSource` (`core/session-entry-file.ts`, fork-only), forks a session file that lost its line-1 header whole under the fork's new header, and reports an empty file and a non-session file with distinct errors. `loadEntriesFromFile` keeps its strict header rule.
+
+### Why
+
+omo#10375: a transcript that lost only its line-1 header was refused as "empty or invalid", so every memory-reflection fork of it failed and reflection parked. A fork writes its own header, so the lost one is not needed.
+
+### Why an extension could not handle it
+
+`forkFrom` runs before any extension sees the session, and a caller cannot repair the source without rewriting the user's transcript.
+
+### Expected merge conflict zones
+
+- `session-manager.ts`: the opening of `static forkFrom`.
