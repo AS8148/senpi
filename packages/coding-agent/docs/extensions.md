@@ -1827,6 +1827,9 @@ runtime's steering or follow-up queue like the user's queued input. The protocol
 | `admitExternalMessage({ delivery_id, text, deliverAs, expected_turn_id?, sender?, display_text?, whenIdle? })` | `{ kind, turn_epoch }` | Decides and acts in one synchronous call. `whenIdle` (`start`, the default, or `queue`) is what an idle session does with it: start a turn, or hold it (`queued`) in the `deliverAs` queue for the next turn. `kind` is `started`, `queued`, `steered`, `turn_conflict` (stale epoch, or a steer without one), `held_draft` (nothing enqueued; retry on the next wake) or `already_admitted` (also for a delivery whose entry the file refused, until the run that refused it has settled and the file's last write succeeded). The delivery becomes a `custom` entry `session_control_delivery` whose `details.delivery_id` proves it was applied. Throws once a host started handing the session over (`release_session`). `sender` (`{ kind: "agent", session_id, name? }`, `{ kind: "command_line", user? }` or `{ kind: "external", platform, author? }`) and `display_text` (the message as written) go to the entry's `details`: the terminal labels the message by its sender over `display_text`, while the model reads `text`. |
 | `listAdmittedDeliveries()` | `{ pending, emitted, failed? }` | The process-lifetime ledger: `pending` is held by the runtime, `emitted` has its transcript entry written, `failed` (present only when non-empty, `[{ delivery_id, error }]`) had its entry refused by the session file: no longer held, still with its sender, admissible again once the run that refused it has settled and the file's last write succeeded. |
 | `persistHeaderNow()` | `Promise<void>` | Writes the session header now, so the session id is durable before anything exposes it. |
+| `relocationOffered()` | `boolean` | Whether the session's host offers continuing it on another computer right now. The builtin relocation tools are active only while it is `true`. |
+| `relocationTargets(signal?)` | `Promise<RelocationTargetsResult>` | The user's other computers the session's host offers to continue on (`listed`), or `unavailable` when no host offers relocation. |
+| `requestRelocation({ target, reason }, signal?)` | `Promise<RelocationRequestResult>` | Asks the host to continue this session on `target` when the current turn ends (`scheduled`); never interrupts the turn. `unavailable` or `refused` leaves the session working here. See `docs/rpc.md` "Continuing a session on another computer". |
 
 ```typescript
 export default function ({ pi }) {
@@ -2462,6 +2465,17 @@ const builtinTools = all.filter((t) => t.sourceInfo.source === "builtin");
 const extensionTools = all.filter((t) => t.sourceInfo.source !== "builtin" && t.sourceInfo.source !== "sdk");
 pi.setActiveTools([...new Set([...active, "my_custom_tool"])]); // Keep current tools and enable my_custom_tool
 pi.setActiveTools(["read", "bash"]); // Switch to read-only
+```
+
+### pi.armToolBarrier(spec) / pi.releaseToolBarrier(id)
+
+Hold the workspace-changing tools of a turn until you are ready, for example while you capture a checkpoint of the workspace. `pi.armToolBarrier({ id, deadlineMs })` arms the session's tool barrier; while it is armed, every tool not declared `workspaceEffect: "read"` waits before it runs. Armed while the session is idle (for example from `before_agent_start`), it belongs to the next turn. It opens on `pi.releaseToolBarrier(id)` (which returns `false`, a no-op, when no barrier with that id is armed), when its turn ends, or after `deadlineMs` (1..600000), which emits the `tool_barrier_expired` session event. Stop ends the wait. `id` is 1-256 characters; arming again replaces the id and ceiling while calls already waiting keep waiting.
+
+```typescript
+pi.on("before_agent_start", () => {
+  pi.armToolBarrier({ id: "checkpoint", deadlineMs: 30_000 });
+  void captureCheckpoint().finally(() => pi.releaseToolBarrier("checkpoint"));
+});
 ```
 
 `pi.getAllTools()` returns `name`, `description`, `parameters`, `promptGuidelines`, `kernelPrelude`, `permissionParser`, and `sourceInfo`.
@@ -3246,6 +3260,7 @@ Add these fields to `pi.registerTool(...)`:
 - **`searchKeywords`**: Synonyms or domain terms, indexed with the same weight as the tool name. Never sent to the model.
 - **`searchGroup`**: Organizational filter group. Defaults to your extension's label.
 - **`namespace`** and **`annotations`**: Optional grouping and behavior hints, for example from an MCP server.
+- **`workspaceEffect`**: `"read" | "write"`. A `"read"` tool runs while a tool barrier is armed (see `pi.armToolBarrier`); any other tool, including one that leaves this unset, waits for the barrier's release. Declare `"read"` only for tools that never change files, processes or other workspace state.
 - **`outputSchema`**: Optional schema for `structuredContent`; a result can also set `isError`.
 - **`allowLazyActivation`**: Default `true`. If `false`, the tool is hidden from `tool_search` completely and cannot be lazily activated during code mode execution. Explicit activation via `pi.setActiveTools()` is still allowed.
 

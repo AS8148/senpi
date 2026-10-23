@@ -714,6 +714,17 @@ function createExtensionAPI(
 			return runtime.getActiveTools();
 		},
 
+		armToolBarrier(spec) {
+			assertActive();
+			if (!runtime.armToolBarrier) throw new Error("This runtime has no tool barrier (senpi#3717).");
+			runtime.armToolBarrier(spec);
+		},
+
+		releaseToolBarrier(id) {
+			assertActive();
+			return runtime.releaseToolBarrier?.(id) ?? false;
+		},
+
 		getAllTools() {
 			assertActive();
 			return runtime.getAllTools();
@@ -799,6 +810,18 @@ function createExtensionAPI(
 			persistHeaderNow() {
 				runtime.assertActive();
 				return sessionControlOf(runtime).persistHeaderNow();
+			},
+			relocationOffered() {
+				runtime.assertActive();
+				return sessionControlOf(runtime).relocationOffered();
+			},
+			relocationTargets(signal) {
+				runtime.assertActive();
+				return sessionControlOf(runtime).relocationTargets(signal);
+			},
+			requestRelocation(request, signal) {
+				runtime.assertActive();
+				return sessionControlOf(runtime).requestRelocation(request, signal);
 			},
 		},
 

@@ -16,6 +16,25 @@
 
 - `main.ts`: `sessionCwdOrUndefined` and its `--rebind` call site.
 
+## 2026-10-22 - Replace Biome with oxlint and oxfmt (senpi#3976)
+
+### What changed
+
+- `packages/coding-agent/src/experimental/services/connection.ts`: `oxlint-disable-next-line eslint/prefer-const` comments on the two `let binding!` declarations that a closure reads; `const` would hit the temporal dead zone if that closure ran before the assignment.
+
+### Why
+
+- The repository moved lint and format from Biome to oxlint 1.89.0 and oxfmt 0.74.0 (senpi#3976). oxlint reports this site where Biome did not; the change keeps behaviour identical.
+
+### Why an extension could not handle it
+
+- Lint configuration and source comments are read by the linter before any agent code runs.
+
+### Expected merge conflict zones
+
+- The two `binding` declarations in `connection.ts`.
+
+
 ## 2026-10-21 - llama.cpp declares its API key optional (senpi#3869)
 
 ### What changed
