@@ -49,6 +49,16 @@ describe("OpenGateway public price table", () => {
 		},
 	);
 
+	it("reads a flat table whose route keys collide with the envelope field names", () => {
+		const [first, second, third] = Object.values(livePrices.entries);
+
+		const routes = parseOpenGatewayPriceTable({ entries: first, currency: second, unit: third });
+
+		expect(routes.map((route) => route.modelId)).toEqual(
+			[first, second, third].map((entry) => `${entry.modelOwner}/${entry.modelName}`),
+		);
+	});
+
 	it("skips a malformed route without discarding the other prices", () => {
 		const routes = parseOpenGatewayPriceTable({ ...livePrices, entries: { ...livePrices.entries, broken: null } });
 

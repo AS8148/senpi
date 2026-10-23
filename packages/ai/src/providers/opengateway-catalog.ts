@@ -124,13 +124,25 @@ function parseTiers(axisPrices: unknown): ModelCostTier[] {
 	return tiers.sort((left, right) => left.inputTokensAbove - right.inputTokensAbove);
 }
 
+function isPriceRouteEntry(value: unknown): boolean {
+	return (
+		isRecord(value) &&
+		typeof value.provider === "string" &&
+		typeof value.modelOwner === "string" &&
+		typeof value.modelName === "string"
+	);
+}
+
 export function parseOpenGatewayPriceTable(value: unknown): OpenGatewayPriceTable {
 	if (!isRecord(value)) throw new Error("OpenGateway price table is not an object");
-	if ("currency" in value && value.currency !== "USD")
+	// An envelope's `entries` holds the route table; a legacy flat table whose route key happens to be
+	// `entries` holds one route there, and its `currency`/`unit` keys are routes, not metadata.
+	const isEnvelope = "entries" in value && !isPriceRouteEntry(value.entries);
+	if (isEnvelope && "currency" in value && value.currency !== "USD")
 		throw new Error(`OpenGateway price table has unsupported currency: ${String(value.currency)} (expected USD)`);
-	if ("unit" in value && value.unit !== "USD_PER_TOKEN")
+	if (isEnvelope && "unit" in value && value.unit !== "USD_PER_TOKEN")
 		throw new Error(`OpenGateway price table has unsupported unit: ${String(value.unit)} (expected USD_PER_TOKEN)`);
-	const entries = "entries" in value ? value.entries : value;
+	const entries = isEnvelope ? value.entries : value;
 	if (!isRecord(entries)) throw new Error("OpenGateway price table entries is not an object");
 	const routes: PriceRoute[] = [];
 	for (const entry of Object.values(entries)) {

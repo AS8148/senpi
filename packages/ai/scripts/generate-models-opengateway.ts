@@ -189,9 +189,20 @@ export function loadLastGoodOpenGatewayModels(path: string = LAST_GOOD_CATALOG_P
 	return models;
 }
 
+/** One-line GitHub Actions workflow command; `%`, CR and LF are escaped as the runner requires. */
+function workflowAnnotation(level: "warning" | "error", message: string): string {
+	const escaped = message.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+	return `::${level} title=OpenGateway catalog::${escaped}`;
+}
+
 export async function fetchOpenGatewayModels(
 	recordReasoning: OpenGatewayReasoningRecorder,
-	options: { strict: boolean; lastGoodCatalogPath?: string },
+	options: {
+		strict: boolean;
+		/** Release generation: keep the committed catalog even under `strict` (senpi#4067). */
+		keepLastGoodOnFailure?: boolean;
+		lastGoodCatalogPath?: string;
+	},
 ): Promise<Model<any>[]> {
 	try {
 		console.log("Fetching models from OpenGateway API...");
@@ -208,9 +219,17 @@ export async function fetchOpenGatewayModels(
 		return models;
 	} catch (error) {
 		console.error("Failed to fetch OpenGateway models:", error);
-		// OpenGateway alone must not abort a full catalog run, including --strict generation.
-		// The refusal stays visible above; only a successful nonempty refresh replaces the catalog.
+		const reason = error instanceof Error ? error.message : String(error);
+		// The dedicated `--strict --providers opengateway` refresh workflow fails here, so a persistent feed
+		// break turns its daily run red. Release generation opts in to keeping the committed catalog instead.
+		if (options.strict && !options.keepLastGoodOnFailure) {
+			console.log(workflowAnnotation("error", `OpenGateway refresh failed: ${reason}`));
+			throw error;
+		}
 		const lastGood = loadLastGoodOpenGatewayModels(options.lastGoodCatalogPath);
+		console.log(
+			workflowAnnotation("warning", `OpenGateway refresh failed (${reason}); kept the last good catalog (${lastGood.length} models)`),
+		);
 		console.warn(`Keeping the last good OpenGateway catalog (${lastGood.length} models)`);
 		return lastGood;
 	}

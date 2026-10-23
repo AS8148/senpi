@@ -11,27 +11,42 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 
+const REFUSED_FEEDS = [
+	["currency", { ...livePrices, currency: "EUR" }],
+	["unit", { ...livePrices, unit: "USD_PER_MILLION_TOKENS" }],
+	["empty prices", { ...livePrices, entries: {} }],
+	["malformed prices", { entries: null }],
+] as const;
+
 describe("OpenGateway generation feed refusal", () => {
-	it.each([
-		["currency", { ...livePrices, currency: "EUR" }],
-		["unit", { ...livePrices, unit: "USD_PER_MILLION_TOKENS" }],
-		["empty prices", { ...livePrices, entries: {} }],
-		["malformed prices", { entries: null }],
-	])("keeps the committed catalog in strict mode after refused %s", async (_reason, prices) => {
-		const expected = loadLastGoodOpenGatewayModels();
-		const refusal = vi.spyOn(console, "error").mockImplementation(() => {});
-		const retained = vi.spyOn(console, "warn").mockImplementation(() => {});
+	it.each(REFUSED_FEEDS)("fails the strict refresh run after refused %s", async (_reason, prices) => {
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		vi.spyOn(console, "log").mockImplementation(() => {});
 		vi.stubGlobal("fetch", async (url: string) =>
 			Response.json(url === PRICES_URL ? prices : gatewayResponse([{ id: "acme/new" }])),
 		);
 
-		const models = await fetchOpenGatewayModels(() => {}, { strict: true });
-
-		expect(expected.length).toBeGreaterThan(0);
-		expect(models).toEqual(expected);
-		expect(refusal).toHaveBeenCalledWith("Failed to fetch OpenGateway models:", expect.any(Error));
-		expect(retained).toHaveBeenCalledOnce();
+		await expect(fetchOpenGatewayModels(() => {}, { strict: true })).rejects.toThrow(/OpenGateway price table/);
 	});
+
+	it.each(REFUSED_FEEDS)(
+		"keeps the committed catalog in an opted-in strict run after refused %s",
+		async (_reason, prices) => {
+			const expected = loadLastGoodOpenGatewayModels();
+			const refusal = vi.spyOn(console, "error").mockImplementation(() => {});
+			const retained = vi.spyOn(console, "warn").mockImplementation(() => {});
+			vi.stubGlobal("fetch", async (url: string) =>
+				Response.json(url === PRICES_URL ? prices : gatewayResponse([{ id: "acme/new" }])),
+			);
+
+			const models = await fetchOpenGatewayModels(() => {}, { strict: true, keepLastGoodOnFailure: true });
+
+			expect(expected.length).toBeGreaterThan(0);
+			expect(models).toEqual(expected);
+			expect(refusal).toHaveBeenCalledWith("Failed to fetch OpenGateway models:", expect.any(Error));
+			expect(retained).toHaveBeenCalledOnce();
+		},
+	);
 
 	it.each([
 		["retired listing", gatewayResponse([{ id: "acme/retired", status: "retired" }])],
@@ -42,7 +57,7 @@ describe("OpenGateway generation feed refusal", () => {
 			Response.json(url === GATEWAY_URL ? listing : url === PRICES_URL ? livePrices : {}),
 		);
 
-		const models = await fetchOpenGatewayModels(() => {}, { strict: true });
+		const models = await fetchOpenGatewayModels(() => {}, { strict: true, keepLastGoodOnFailure: true });
 
 		expect(models).toEqual(expected);
 	});
@@ -54,9 +69,9 @@ describe("OpenGateway generation feed refusal", () => {
 		vi.stubGlobal("fetch", async () => new Response("unavailable", { status: 503 }));
 
 		try {
-			await expect(fetchOpenGatewayModels(() => {}, { strict: true, lastGoodCatalogPath: path })).rejects.toThrow(
-				/Last good OpenGateway catalog has no models/,
-			);
+			await expect(
+				fetchOpenGatewayModels(() => {}, { strict: true, keepLastGoodOnFailure: true, lastGoodCatalogPath: path }),
+			).rejects.toThrow(/Last good OpenGateway catalog has no models/);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
