@@ -73,7 +73,7 @@ export function createMcpProxyTool(server: string, entries: readonly McpToolCata
 					matches.length === 0
 						? `No '${server}' tools matched. Try broader keywords or op:"describe" with an exact tool name.`
 						: matches
-								.map((match) => `- ${match.doc.label}: ${match.doc.description ?? "(no description)"}`)
+								.map((match) => `- ${match.doc.label} - ${match.doc.description ?? "(no description)"}`)
 								.join("\n");
 				return textResult(server, `Tools on '${server}':\n${body}`);
 			}

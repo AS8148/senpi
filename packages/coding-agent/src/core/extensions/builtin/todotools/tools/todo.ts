@@ -160,7 +160,7 @@ function formatPhaseSummary(phase: TodoPhase, index: number, theme: Theme): stri
 	const closed = phase.tasks.filter((task) => task.status === "completed" || task.status === "abandoned").length;
 	return theme.fg(
 		"dim",
-		`${phaseRomanNumeral(index)}. ${sanitizeTodoText(phase.name)}: ${closed}/${phase.tasks.length} done`,
+		`${phaseRomanNumeral(index)}. ${sanitizeTodoText(phase.name)} - ${closed}/${phase.tasks.length} done`,
 	);
 }
 

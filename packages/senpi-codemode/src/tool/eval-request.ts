@@ -48,7 +48,7 @@ export function parseEvalRequest(
 	const summary = normalizeEvalSummary(params.summary);
 	if (summary === undefined)
 		throw new TypeError(
-			"eval run requires summary: one line in the user's language: what you are working on and for what purpose",
+			"eval run requires summary (one line in the user's language): what you are working on and for what purpose",
 		);
 	if (params.on_timeout !== undefined && params.on_timeout !== "detach" && params.on_timeout !== "error")
 		throw new TypeError(`Unknown eval on_timeout value "${String(params.on_timeout)}"`);

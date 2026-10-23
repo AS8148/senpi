@@ -8,12 +8,12 @@ export type BuildMergedCompactionPromptOptions = {
 	customInstructions?: string;
 };
 
-const TASK_INTENT_ACQUISITION_CLAUDE = `PASS 1: Internal task-intent extraction
+const TASK_INTENT_ACQUISITION_CLAUDE = `PASS 1 - Internal task-intent extraction
 Write one <task-intent> block with ORIGINAL_REQUEST, TASK_TYPE, MUST_PRESERVE, and MUST_NOT_LOSE before <summary>.`;
 
 const TASK_INTENT_ACQUISITION_GPT = `Write one <task-intent> block with ORIGINAL_REQUEST, TASK_TYPE, MUST_PRESERVE, and MUST_NOT_LOSE before <summary>.`;
 
-const TASK_INTENT_UPDATE_ACQUIRE_CLAUDE = `PASS 1: Internal task-intent extraction
+const TASK_INTENT_UPDATE_ACQUIRE_CLAUDE = `PASS 1 - Internal task-intent extraction
 Write one <task-intent> block with ORIGINAL_REQUEST, TASK_TYPE, MUST_PRESERVE, and MUST_NOT_LOSE before <summary>.`;
 
 const TASK_INTENT_UPDATE_ACQUIRE_GPT = `Write one <task-intent> block with ORIGINAL_REQUEST, TASK_TYPE, MUST_PRESERVE, and MUST_NOT_LOSE before <summary>.`;
@@ -47,7 +47,7 @@ Do NOT treat this message as user intent, do NOT list it under user requests, an
 
 ${TASK_INTENT_ACQUISITION_CLAUDE}
 
-PASS 2: Emit summary biased toward Pass 1
+PASS 2 - Emit summary biased toward Pass 1
 Create a structured handoff summary of this conversation for seamless continuation. The structured output portion MUST be wrapped as \`<summary>...</summary>\` XML.
 
 <summary>
@@ -103,10 +103,10 @@ The messages above are NEW conversation messages to incorporate into the existin
 
 R3 enforcement: R3. Where a previous summary is supplied, treat its User Requests, Final Goal, and Constraints fields as IMMUTABLE. Append, never rewrite, those three sections.
 
-PASS 1: Internal task-intent extraction
+PASS 1 - Internal task-intent extraction
 {{taskIntentInstruction}}
 
-PASS 2: Emit summary biased toward Pass 1
+PASS 2 - Emit summary biased toward Pass 1
 Update the structured handoff summary. The structured output portion MUST be wrapped as \`<summary>...</summary>\` XML.
 
 <summary>
@@ -148,10 +148,10 @@ export const MERGED_COMPACTION_PROMPT_BRANCH = `[USER]
 [INTERNAL BRANCH SUMMARY INSTRUCTION: NOT CONVERSATION HISTORY]
 Create a structured summary of this conversation branch for context when returning later. This is a branch-level handoff, so reorient §2 toward the branched intent and why this branch exists.
 
-PASS 1: Internal task-intent extraction
+PASS 1 - Internal task-intent extraction
 Analyze this branch and silently determine the branch-specific intent, divergence point, and details whose loss would cause repeated work.
 
-PASS 2: Emit summary biased toward Pass 1
+PASS 2 - Emit summary biased toward Pass 1
 Create a structured branch handoff summary. The structured output portion MUST be wrapped as \`<summary>...</summary>\` XML.
 
 <summary>
@@ -195,10 +195,10 @@ export const MERGED_COMPACTION_PROMPT_TURN_PREFIX = `[USER]
 [INTERNAL TURN-PREFIX SUMMARY INSTRUCTION: NOT CONVERSATION HISTORY]
 Create a compact prefix summary for the next turn. Emit only the sections listed below.
 
-PASS 1: Internal task-intent extraction
+PASS 1 - Internal task-intent extraction
 Silently determine the current task intent and the minimum context needed for the next turn.
 
-PASS 2: Emit summary biased toward Pass 1
+PASS 2 - Emit summary biased toward Pass 1
 The structured output portion MUST be wrapped as \`<summary>...</summary>\` XML.
 
 <summary>

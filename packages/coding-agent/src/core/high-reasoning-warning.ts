@@ -26,7 +26,7 @@ export function buildHighReasoningWarning(
 	thinkingLevel: ThinkingLevel,
 ): HighReasoningWarningContent {
 	const modelId = model.id;
-	const title = `⚠ HIGH-REASONING MODEL WARNING: ${model.provider}/${modelId} @ ${thinkingLevel}`;
+	const title = `⚠ HIGH-REASONING MODEL WARNING - ${model.provider}/${modelId} @ ${thinkingLevel}`;
 	const body = [
 		`${modelId} is a frontier reasoning model. Running it at "${thinkingLevel}" effort makes it acutely sensitive to prompt quality.`,
 		"Driving this model directly from a human prompt is NOT recommended. Risks include:",

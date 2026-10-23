@@ -36,10 +36,10 @@ Example: {"op":"init","list":[{"phase":"Setup","items":["Survey code","Write tes
 ## When to create a list
 - User explicitly requests one
 - User provides a set of tasks
-- New instructions arrive mid-task: reconcile before acting: keep what they don't conflict with, amend what they contradict, append what they add; replace only on explicit redirect
+- New instructions arrive mid-task (reconcile before acting): keep what they don't conflict with, amend what they contradict, append what they add; replace only on explicit redirect
 
 <critical>
-User hands you a multi-step plan: phased todo, numbered/bulleted checklist, or "N bugs/items/tasks":
+User hands you a multi-step plan (phased todo, numbered/bulleted checklist, or "N bugs/items/tasks"):
 - You MUST init the list with EVERY item as its own task before working.
 - Enumerate all; NEVER summarize into fewer tasks, sample "the important ones", drop items, or track the rest from memory.
 </critical>`;

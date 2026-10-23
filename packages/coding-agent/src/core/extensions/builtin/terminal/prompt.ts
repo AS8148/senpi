@@ -18,7 +18,7 @@ export function buildTerminalPromptSection(options: TerminalPromptOptions): stri
 ## Persistent terminal sessions
 
 The \`bash\` tool is PTY-backed. For long-running or interactive work, do NOT use tmux or
-manual \`&\` backgrounding: use the built-in session tools:
+manual \`&\` backgrounding; use the built-in session tools:
 
 - \`${bash}({ command, run_in_background: true })\` starts a persistent session and returns a
   \`bash_id\` immediately. Foreground calls still block and return output; their \`timeout\`
@@ -28,8 +28,8 @@ manual \`&\` backgrounding: use the built-in session tools:
   since the last read, the status line, or a rendered full-screen snapshot of TUIs via
   \`view: "screen"\`. Completion arrives as a notification carrying the exit code and output
   tail: peeking is for steering, never for waiting.
-- \`${monitor}\` subscribes you to a change. Pass exactly one source: \`command\`, \`path\` or
-  \`target\`: one branch per call, never two:
+- \`${monitor}\` subscribes you to a change. Pass exactly one source (\`command\`, \`path\` or
+  \`target\`; one branch per call, never two):
   - \`${monitor}({ description, command, filter?, timeout_ms?, persistent? })\` watches a command:
     newline-terminated PTY output lines (stderr included) matching \`filter\` arrive as injected
     events while you keep working; command exit always delivers a summary. One-shot gate: wait
