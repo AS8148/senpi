@@ -50,6 +50,7 @@ function unreleasedBullets(text) {
 	for (const line of text.split("\n")) {
 		if (line.startsWith("## ")) {
 			inside = line.trim() === "## [Unreleased]";
+			section = "## [Unreleased] (before any ### heading)";
 			continue;
 		}
 		if (!inside) continue;

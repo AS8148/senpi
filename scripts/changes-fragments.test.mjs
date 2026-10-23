@@ -183,32 +183,34 @@ describe("from-diff", () => {
 			assert.ok(converted.includes(`<!-- changes-log: ${CHANGELOG} -->\n### Fixed\n- old style fix`), converted);
 			assert.equal(parseFragment(converted).blocks.find((block) => block.log === TRACKER).body, entry.trim());
 		}));
-	it("warns with omitted noncanonical section additions", () =>
-		repo((cwd) => {
-			const before = LOG.replace("### Fixed", "### Security\n\n- previous security note\n\n### Fixed");
-			write(cwd, CHANGELOG, before);
-			commit(cwd, "base");
-			write(
-				cwd,
-				CHANGELOG,
-				before
-					.replace("- previous security note", "- previous security note\n- new security note")
-					.replace("- older fix", "- older fix\n- canonical fix"),
-			);
-			commit(cwd, "noncanonical addition");
-			const run = spawnSync(process.execPath, [SCRIPT, "from-diff", "--base", "HEAD~1", "--pr", "21"], {
-				cwd,
-				encoding: "utf8",
-				timeout: 30_000,
-			});
-			assert.equal(run.status, 0, run.stderr);
-			assert.ok(run.stderr.includes(CHANGELOG), run.stderr);
-			assert.ok(run.stderr.includes("### Security"), run.stderr);
-			assert.ok(run.stderr.includes("- new security note"), run.stderr);
-			assert.ok(!run.stderr.includes("- previous security note"), run.stderr);
-			assert.equal(readFileSync(join(cwd, CHANGELOG), "utf8"), before);
-			const converted = parseFragment(readFileSync(join(cwd, "changes/unreleased/21.md"), "utf8"));
-			assert.deepEqual(converted.reasons, []);
-			assert.equal(converted.blocks[0].body, "### Fixed\n- canonical fix");
-		}));
+	for (const heading of ["### Security", ""]) {
+		it(`warns with omitted ${heading || "unheaded"} additions`, () =>
+			repo((cwd) => {
+				const before = LOG.replace("### Added", `${heading}\n\n- previous security note\n\n### Added`);
+				write(cwd, CHANGELOG, before);
+				commit(cwd, "base");
+				write(
+					cwd,
+					CHANGELOG,
+					before
+						.replace("- previous security note", "- previous security note\n- new security note")
+						.replace("- older fix", "- older fix\n- canonical fix"),
+				);
+				commit(cwd, "noncanonical addition");
+				const run = spawnSync(process.execPath, [SCRIPT, "from-diff", "--base", "HEAD~1", "--pr", "21"], {
+					cwd,
+					encoding: "utf8",
+					timeout: 30_000,
+				});
+				assert.equal(run.status, 0, run.stderr);
+				assert.ok(run.stderr.includes(CHANGELOG), run.stderr);
+				if (heading) assert.ok(run.stderr.includes(heading), run.stderr);
+				assert.ok(run.stderr.includes("- new security note"), run.stderr);
+				assert.ok(!run.stderr.includes("- previous security note"), run.stderr);
+				assert.equal(readFileSync(join(cwd, CHANGELOG), "utf8"), before);
+				const converted = parseFragment(readFileSync(join(cwd, "changes/unreleased/21.md"), "utf8"));
+				assert.deepEqual(converted.reasons, []);
+				assert.equal(converted.blocks[0].body, "### Fixed\n- canonical fix");
+			}));
+	}
 });

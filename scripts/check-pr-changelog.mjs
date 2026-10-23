@@ -164,7 +164,7 @@ export function checkPrChangelog({
 function printUsage() {
 	console.log("usage: node scripts/check-pr-changelog.mjs --base <sha> [--labels a,b,c] [--help]");
 	console.log("");
-	console.log("Checks the PR for a CHANGELOG.md [Unreleased] entry (or the 'no-changelog'");
+	console.log("Checks the PR for a package CHANGELOG.md fragment block (or the 'no-changelog'");
 	console.log("label) and for coverage of every upstream-owned production change in its exact");
 	console.log("nearest changes.md tracker, with all four canonical sections. Exits 0 when");
 	console.log("both policies pass, 1 on failure or malformed upstream metadata.");
