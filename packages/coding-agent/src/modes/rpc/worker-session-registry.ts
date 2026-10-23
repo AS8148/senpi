@@ -273,6 +273,8 @@ export class WorkerSessionRegistry {
 				attachments: Math.max(0, entry.attachments),
 				status: entry.state === "quarantined" ? "closing" : entry.state,
 				idleMs: Math.max(0, now - entry.lastCommandAt),
+				// A worker isolate's session has no tool child of its own yet (senpi#3566 todo 4 serves the in-process host).
+				tool_child: { state: "none" },
 			};
 		});
 	}

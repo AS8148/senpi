@@ -1,10 +1,12 @@
 import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	fsJournalDurability,
 	type JournalDurability,
+	type JournalFileOpener,
 	PendingInputAppendUncertainError,
 	PendingInputJournalCorruptError,
 	PendingInputJournalError,
@@ -54,6 +56,25 @@ const SAMPLE_INPUT = {
 	superseded: [],
 	operations: {},
 } as const;
+
+function windowsEperm(): NodeJS.ErrnoException {
+	return Object.assign(new Error("EPERM: operation not permitted, fsync"), { code: "EPERM", syscall: "fsync" });
+}
+
+/**
+ * Windows' FlushFileBuffers needs a handle with write access: fsync on a handle opened read-only fails with EPERM
+ * (Bun and Node alike). The win32 opener reproduces that on any host; both record the flags each sync used.
+ */
+function recordingOpen(opened: string[], platform: "win32" | "posix"): JournalFileOpener {
+	return async (path, flags) => {
+		opened.push(flags);
+		const handle = await open(path, flags);
+		return {
+			sync: () => (platform === "win32" && flags === "r" ? Promise.reject(windowsEperm()) : handle.sync()),
+			close: () => handle.close(),
+		};
+	};
+}
 
 async function storeOver(manager: SessionManager, lifetimeId: string): Promise<PendingInputStore> {
 	let next = 0;
@@ -192,6 +213,92 @@ describe("session pending-input journal", () => {
 		expect(readFileSync(file, "utf8")).toBe(committed);
 	});
 
+	it("reads back a batch record with every input it names", async () => {
+		const dir = sessionDir();
+		const manager = SessionManager.create(dir, dir);
+		await (await storeOver(manager, "life-1")).submit(SUBMIT);
+		const [first] = await new SessionPendingInputJournal(manager).read();
+		if (first === undefined) throw new Error("no record");
+		const second = { ...first.input, clientMessageId: "c-2" };
+
+		await new SessionPendingInputJournal(manager).append({ ...first, cursor: 2, batch: [second] });
+		const records = await new SessionPendingInputJournal(
+			SessionManager.open(manager.getSessionFile() ?? "", dir),
+		).read();
+
+		expect(records.at(-1)?.batch?.map((input) => input.clientMessageId)).toEqual(["c-2"]);
+	});
+
+	it("reads a persisted session's journal from its file, never from the whole-history view (senpi#3535 retention)", async () => {
+		const dir = sessionDir();
+		const manager = SessionManager.create(dir, dir);
+		await (await storeOver(manager, "life-1")).submit(SUBMIT);
+		const reopened = SessionManager.open(manager.getSessionFile() ?? "", dir);
+		const noHistory = new Proxy(reopened, {
+			get(target, property, receiver) {
+				if (property === "getEntries")
+					return () => {
+						throw new Error("getEntries materializes the whole history of a trimmed session");
+					};
+				const value = Reflect.get(target, property, receiver);
+				return typeof value === "function" ? value.bind(target) : value;
+			},
+		});
+
+		const records = await new SessionPendingInputJournal(noHistory).read();
+
+		expect(records.map((record) => record.input.clientMessageId)).toEqual([SUBMIT.clientMessageId]);
+	});
+
+	it("keeps cursors contiguous on a branch whose file is not written yet, and reopens it (#3586 review H1)", async () => {
+		const dir = sessionDir();
+		const manager = SessionManager.create(dir, dir);
+		await (await storeOver(manager, "life-1")).submit(SUBMIT);
+		const reopened = SessionManager.open(manager.getSessionFile() ?? "", dir);
+		const branchFile = reopened.createBranchedSession(reopened.getLeafId() ?? "") ?? "";
+		expect(reopened.isTranscriptFlushed()).toBe(false);
+
+		const onBranch = await storeOver(reopened, "life-2");
+		await onBranch.submit({ ...SUBMIT, clientMessageId: "c-2", fingerprint: "fp2" });
+		const records = await new SessionPendingInputJournal(SessionManager.open(branchFile, dir)).read();
+
+		expect(records.map((record) => record.cursor)).toEqual(records.map((_record, index) => index + 1));
+		expect([...new Set(records.map((record) => record.input.clientMessageId))]).toEqual(["c-1", "c-2"]);
+	});
+
+	it("reads a final transition written whole but without its newline, as the loader keeps it (#3586 review L1)", async () => {
+		const dir = sessionDir();
+		const manager = SessionManager.create(dir, dir);
+		await (await storeOver(manager, "life-1")).submit(SUBMIT);
+		const file = manager.getSessionFile() ?? "";
+		writeFileSync(file, readFileSync(file, "utf8").replace(/\n$/, ""));
+
+		const records = await new SessionPendingInputJournal(manager).read();
+
+		expect(records.map((record) => record.input.clientMessageId)).toEqual([SUBMIT.clientMessageId]);
+	});
+
+	it("reads the same records from the file as from the session's entries (#3586 review L3)", async () => {
+		const dir = sessionDir();
+		const manager = SessionManager.create(dir, dir);
+		const store = await storeOver(manager, "life-1");
+		await store.submit(SUBMIT);
+		await store.submit({ ...SUBMIT, clientMessageId: "c-2", fingerprint: "fp2" });
+		const reopened = SessionManager.open(manager.getSessionFile() ?? "", dir);
+		const fromEntries = new Proxy(reopened, {
+			get(target, property, receiver) {
+				if (property === "isPersisted") return () => false;
+				const value = Reflect.get(target, property, receiver);
+				return typeof value === "function" ? value.bind(target) : value;
+			},
+		});
+
+		const fromFile = await new SessionPendingInputJournal(reopened).read();
+
+		expect(fromFile).toEqual(await new SessionPendingInputJournal(fromEntries).read());
+		expect(fromFile).toHaveLength(2);
+	});
+
 	it("refuses a corrupt transition in the middle of the file", async () => {
 		const dir = sessionDir();
 		const manager = SessionManager.create(dir, dir);
@@ -278,6 +385,54 @@ describe("session pending-input journal", () => {
 
 		await expect(fsJournalDurability("win32").syncDirectory(missing)).resolves.toBeUndefined();
 		await expect(fsJournalDurability("darwin").syncDirectory(missing)).rejects.toThrow();
+	});
+
+	it("syncs the file through a writable handle, which Windows needs to flush it (omo#10781)", async () => {
+		const dir = sessionDir();
+		const manager = SessionManager.create(dir, dir);
+		const opened: string[] = [];
+		const store = await PendingInputStore.open({
+			journal: new SessionPendingInputJournal(manager, fsJournalDurability("win32", recordingOpen(opened, "win32"))),
+			lifetimeId: "life-1",
+			nextQueuedId: () => "q_1",
+		});
+
+		await store.submit(SUBMIT);
+
+		expect(opened).toEqual(["r+"]);
+		expect(store.read("c-1").status).toBe("admitted");
+	});
+
+	it("still syncs a directory through a read-only handle where the OS supports it", async () => {
+		const opened: string[] = [];
+
+		await fsJournalDurability("linux", recordingOpen(opened, "posix")).syncDirectory(sessionDir());
+
+		expect(opened).toEqual(["r"]);
+	});
+
+	it("names the session file and the OS error when a sync fails, as a local error", async () => {
+		const dir = sessionDir();
+		const manager = SessionManager.create(dir, dir);
+		const failing: JournalDurability = {
+			syncFile: async () => {
+				throw windowsEperm();
+			},
+			syncDirectory: async () => undefined,
+		};
+		const store = await PendingInputStore.open({
+			journal: new SessionPendingInputJournal(manager, failing),
+			lifetimeId: "life-1",
+			nextQueuedId: () => "q_1",
+		});
+
+		const error = await store.submit(SUBMIT).catch((caught: unknown) => caught);
+
+		expect(error).toBeInstanceOf(PendingInputAppendUncertainError);
+		const message = error instanceof Error ? error.message : "";
+		expect(message).toContain(manager.getSessionFile() ?? "<no file>");
+		expect(message).toContain("EPERM: operation not permitted, fsync");
+		expect(message).toContain("local file error");
 	});
 
 	it("refuses a malformed journal entry instead of treating it as absence", async () => {

@@ -38,12 +38,21 @@ export interface WorkerSnapshot {
 export type HostToSessionWorker =
 	| { type: "prepare"; request: number; configuration: CliRuntimeConfiguration; profile: RpcSessionLaunchProfile }
 	| { type: "commit"; request: number }
-	| { type: "bind"; request: number; sessionId: string; capabilities: readonly string[]; connection?: string }
-	| { type: "command"; request: number; command: object; connection?: string }
+	| {
+			type: "bind";
+			request: number;
+			sessionId: string;
+			capabilities: readonly string[];
+			connection?: string;
+			/** Roles the connection explicitly declared on the host (senpi#3811); the isolate adopts them. */
+			roles?: readonly string[];
+	  }
+	| { type: "command"; request: number; command: object; connection?: string; roles?: readonly string[] }
 	| { type: "prompt_surface"; request: number; surface: PromptSurface }
 	| { type: "browser_engine"; request: number; engine: BrowserEngine }
 	| { type: "permission_preset"; request: number; preset: string }
 	| { type: "cancel_ui" }
+	| { type: "cancel_grant"; id: string }
 	| { type: "close" };
 
 export type SessionWorkerToHost =

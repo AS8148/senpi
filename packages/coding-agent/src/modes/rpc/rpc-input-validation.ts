@@ -1,5 +1,6 @@
 import { isBrowserEngine } from "../../core/browser-engine.ts";
 import { clientMessageIdentitySchema } from "../../core/client-message-identity.ts";
+import { validatePauseCommand } from "./pause-command-validation.ts";
 
 export const MAX_RPC_MESSAGE_CHARACTERS = 1_000_000;
 
@@ -149,6 +150,18 @@ export function rpcCommandPayloadError(command: unknown): string | undefined {
 		!(typeof value.effectId === "string" && value.effectId.length > 0 && value.effectId.length <= 256)
 	) {
 		return "effectId must be a non-empty string of at most 256 characters.";
+	}
+	const pauseFieldError = validatePauseCommand(value);
+	if (pauseFieldError !== undefined) return pauseFieldError;
+	if (value.type === "get_pending_inputs" && value.knownClientMessageIds !== undefined) {
+		const ids: unknown = value.knownClientMessageIds;
+		if (
+			!Array.isArray(ids) ||
+			ids.length > 64 ||
+			!ids.every((id) => typeof id === "string" && id.length > 0 && id.length <= 256)
+		) {
+			return "knownClientMessageIds must be an array of at most 64 non-empty strings of at most 256 characters.";
+		}
 	}
 	if (value.type === "get_effect_status" && value.sessionPath !== undefined && typeof value.sessionPath !== "string") {
 		return "sessionPath must be a string.";
