@@ -9,9 +9,10 @@ interface QueuedAt {
 }
 
 /**
- * Tracks when each queued input was queued relative to agent runs, so input that outlives a completed run is
- * reported instead of waiting silently (senpi#4036). Input queued while idle is drained when the next run starts,
- * and input queued during a run is drained at that run's turn boundaries, so neither is reported in normal flow.
+ * Tracks when each queued input was queued relative to turns, so input that outlives a completed turn is reported
+ * instead of waiting silently (senpi#4036). The caller counts a turn once when it starts (not per retry or internal
+ * continuation) and checks only turns that ended normally: steers are taken at the turn's boundaries and follow-ups
+ * when it finishes, while a failed or aborted turn keeps its queue for the next prompt by design.
  */
 export class QueuedInputAges {
 	#runsStarted = 0;

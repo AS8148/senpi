@@ -11764,6 +11764,7 @@ The summary-model resolver reads session-owned state (settings, model runtime, s
 
 - `packages/coding-agent/src/core/agent-session.ts`: a `QueuedInputAges` tracker (`queued-input-age.ts`, fork-only) records each queued input's queue time and the number of runs started by then (`_recordQueuedInput`, the `agent_start` event). When a run settles (`_emitAgentSettled`), every input still queued that a whole run started after and settled without delivering is logged once as `queued_input_outlived_run` with `queuedId`, `mode`, `ageMs` and `source`.
 - `packages/coding-agent/src/core/session-log.ts`: `queuedId` and `ageMs` join the session-log data allowlist so the warning carries them.
+- `packages/coding-agent/src/core/agent-session.ts` (review fold): a turn is counted once where `_promptAgent` marks the run active (not on every `agent_start`, which retries and internal continuations also emit), and the check is skipped when the settling turn ended in `error` or `aborted`, whose queued input the agent core deliberately keeps for the next prompt. The user `message_start` dequeue also finds image-only input (no text to match) by the queued message object (`_queuedMessages`), so a delivered image-only steer or follow-up leaves `_steeringMessages` / `_followUpMessages` and its queue record (senpi#3592).
 
 ### Why
 
@@ -11775,4 +11776,4 @@ The summary-model resolver reads session-owned state (settings, model runtime, s
 
 ### Expected merge conflict zones
 
-- LOW: `_recordQueuedInput`, the `agent_start` branch of `_processAgentEvent`, and the start of `_emitAgentSettled` in `agent-session.ts`; the `ALLOWED_DATA_KEY` pattern in `session-log.ts`.
+- LOW: `_recordQueuedInput`, the run-active edge in `_promptAgent`, the user `message_start` dequeue in `_processAgentEvent`, and the start of `_emitAgentSettled` in `agent-session.ts`; the `ALLOWED_DATA_KEY` pattern in `session-log.ts`.

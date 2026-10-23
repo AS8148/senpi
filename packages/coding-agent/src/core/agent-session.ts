@@ -3066,7 +3066,7 @@ export class AgentSession {
 			return;
 		}
 		this._isAgentRunActive = false;
-		this._warnQueuedInputOutlivingRun();
+		this._warnQueuedInputOutlivingRun(agentEnd);
 		// Before the settle and idle edges: the drain they wake may redeliver what this run's file refused.
 		this.externalAdmission.observeRunSettled();
 		let deferredActions: DeferredAgentSettledAction[] = [];
@@ -3179,7 +3179,10 @@ export class AgentSession {
 		},
 	): Promise<void> {
 		deferredTurnClaim?.resolve("started");
-		if (!this._isAgentRunActive) this.externalAdmission.beginTurn();
+		if (!this._isAgentRunActive) {
+			this.externalAdmission.beginTurn();
+			this._queuedInputAges.noteRunStarted();
+		}
 		this._isAgentRunActive = true;
 		// A new turn admitted: arm the inactivity lease and the hard max-runtime cap.
 		this._deadlineTracker.arm();
@@ -3640,7 +3643,6 @@ export class AgentSession {
 
 	private async _processAgentEvent(event: AgentEvent, signal: AbortSignal): Promise<void> {
 		if (event.type === "agent_start") {
-			this._queuedInputAges.noteRunStarted();
 			this._requiredCompactionTurnError = undefined;
 			this._armCircuitProbeWatchdog();
 		}
@@ -3650,15 +3652,20 @@ export class AgentSession {
 			this._overflowRecoveryRungs = 0;
 			this._retryFallback.resetTurn();
 			const messageText = userMessageText(event.message.content);
-			if (messageText) {
+			// Image-only input has no text to match: find it by the message the queue handed to the agent (#3592).
+			const imageOnlyQueued = messageText
+				? undefined
+				: this._queuedInputOrder.find((input) => this._queuedMessages.get(input.queuedId) === event.message);
+			if (messageText || imageOnlyQueued !== undefined) {
 				const { clientMessageId } = readClientMessageIdentity(event.message);
 				const queued =
-					clientMessageId === undefined
+					imageOnlyQueued ??
+					(clientMessageId === undefined
 						? undefined
-						: this._queuedInputOrder.find((input) => input.clientMessageId === clientMessageId);
+						: this._queuedInputOrder.find((input) => input.clientMessageId === clientMessageId));
 				// Check steering queue first
 				const steeringIndex =
-					clientMessageId === undefined || queued?.mode === "steer"
+					(clientMessageId === undefined && queued === undefined) || queued?.mode === "steer"
 						? this._steeringMessages.indexOf(messageText)
 						: -1;
 				if (steeringIndex !== -1) {
@@ -3668,7 +3675,7 @@ export class AgentSession {
 				} else {
 					// Check follow-up queue
 					const followUpIndex =
-						clientMessageId === undefined || queued?.mode === "followUp"
+						(clientMessageId === undefined && queued === undefined) || queued?.mode === "followUp"
 							? this._followUpMessages.indexOf(messageText)
 							: -1;
 					if (followUpIndex !== -1) {
@@ -7371,8 +7378,15 @@ export class AgentSession {
 		return queuedId;
 	}
 
-	/** Queued input that a whole run started after and settled without delivering is overdue: say so (#4036). */
-	private _warnQueuedInputOutlivingRun(): void {
+	/** Queued input that a whole turn started after and settled without delivering is overdue: say so (#4036). */
+	private _warnQueuedInputOutlivingRun(agentEnd: AgentEvent | undefined): void {
+		// A failed or aborted turn keeps queued input for the next prompt by design, so it proves nothing is stuck;
+		// the next turn that ends normally still catches input that really is.
+		const settledMessages = agentEnd?.type === "agent_end" ? agentEnd.messages : this.agent.state.messages;
+		const lastAssistant = settledMessages.findLast((message) => message.role === "assistant");
+		if (lastAssistant?.role === "assistant" && (lastAssistant.stopReason === "error" || lastAssistant.stopReason === "aborted")) {
+			return;
+		}
 		const stillQueued = this._queuedInputOrder.map((input) => input.queuedId);
 		for (const { queuedId, ageMs } of this._queuedInputAges.takeOutlived(stillQueued, Date.now())) {
 			const input = this._queuedInputOrder.find((candidate) => candidate.queuedId === queuedId);
