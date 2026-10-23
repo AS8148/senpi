@@ -1,8 +1,8 @@
-## 2026-10-24 - Four coding-agent CI shards leave timeout headroom (senpi#4131)
+## 2026-10-23 - Four coding-agent CI shards leave timeout headroom (senpi#4131)
 
 ### What changed
 
-- `.github/workflows/ci.yml`: schedule four coding-agent test shards and use `/4` in the Vitest command, job name, and summary. Keep the required `Check and test` fan-in and the existing job and test-step timeouts. Give all four system-dependency steps a five-minute cap and use `scripts/install-ci-system-deps.sh` to bound package transfers and retry once against a different mirror.
+- `.github/workflows/ci.yml`: schedule four coding-agent test shards and use `/4` in the Vitest command, job name, and summary. Keep the required `Check and test` fan-in and the existing job and test-step timeouts. Give all four system-dependency steps a five-minute cap and use `scripts/install-ci-system-deps.sh` to bound package transfers and retry once against a different mirror, rewriting both the mirror+file list and direct sources before the retry.
 
 ### Why
 
