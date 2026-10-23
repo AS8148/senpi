@@ -2109,6 +2109,13 @@ pi.sendMessage({
   - `"followUp"` - Waits for agent to finish. Delivered only when agent has no more tool calls.
   - `"nextTurn"` - Queued for next user prompt. Does not interrupt or trigger anything.
 - `triggerTurn: true` - If agent is idle, trigger an LLM response immediately. Only applies to `"steer"` and `"followUp"` modes (ignored for `"nextTurn"`). Requested from a `session_start` handler, the turn starts once every extension's `session_start` handler has returned.
+- `ticket` - A delivery ticket from `pi.lifecycle.obligations`. Returning from
+  `sendMessage` does not acknowledge model consumption.
+  With `items`, the ticket covers the whole batch. It is admitted before anything is written: an unknown,
+  closed, consumed or in-delivery ticket rejects the promise with `DeliveryTicketRefused` and no item is
+  kept, so a retry never duplicates notices. A held batch hands the ticket to its notices; a batch a user
+  abort (Esc or Stop) drops during admission keeps it when it is decided again; a re-send while the
+  ticket's message is still queued answers that message's receipts.
 - `items` - Make the message an itemized batch: one `{ itemId, producer, runRef?, content?, details? }` per wake it
   carries. The call then returns a promise of one receipt per item, `{ itemId, entryId, disposition, noticeId? }`.
   Admission is atomic: if a pause applies to the batch or to any item (a Stop, a parent's run pause, an unattended
@@ -2135,6 +2142,34 @@ const receipts = await pi.sendMessage(
   },
 );
 ```
+
+### pi.lifecycle
+
+Use `pi.lifecycle.obligations.open(key, kind, detail?)` to retain unfinished work
+before it can leave a producer. `kind` is `"children"` or `"background"`; opening
+the same live key is idempotent. The returned token supports:
+
+- `transfer(nextKey, kind?)`: moves custody synchronously, opening the next owner
+  before closing the current one. Transferring a closed token is an error.
+- `ticket()`: obtains the stable delivery identity for `sendMessage(..., { ticket })`.
+- `heldAsNotice(noticeId)`: closes custody after a durable held notice exists.
+- `close("consumed" | "cancelled" | "passive")`: releases producer-owned work.
+
+The engine acknowledges a ticket when its custom message enters model context
+at `message_start`, including a steer into an existing run. Its work stays in
+that run's custody until `agent_idle`. A failed delivery retains custody for retry;
+a passive message closes immediately; a held message closes against the persisted
+session-notice identity. Restart redelivers unconsumed queued messages once, but
+never replays a consumed result or reruns an interrupted tool.
+
+`pi.lifecycle.reportChild({ taskId, childSessionId, runEpoch, generation, state,
+waitingOn?, terminal? })` persists runner-owned child state. Stale epoch/generation
+pairs are ignored; a higher `runEpoch` clears the old terminal status. Terminal
+values are `completed`, `error`, `lost`, `interrupted`, and `cancelled`. Child UI
+requests remain automatically answered by their runners, not routed to a person.
+
+`pi.lifecycle.markRunCompleted({ runId })` records successful workflow completion
+for the current epoch's label. It does not request automatic thread settlement.
 
 ### pi.sendUserMessage(content, options?)
 
@@ -2465,6 +2500,17 @@ const builtinTools = all.filter((t) => t.sourceInfo.source === "builtin");
 const extensionTools = all.filter((t) => t.sourceInfo.source !== "builtin" && t.sourceInfo.source !== "sdk");
 pi.setActiveTools([...new Set([...active, "my_custom_tool"])]); // Keep current tools and enable my_custom_tool
 pi.setActiveTools(["read", "bash"]); // Switch to read-only
+```
+
+### pi.armToolBarrier(spec) / pi.releaseToolBarrier(id)
+
+Hold the workspace-changing tools of a turn until you are ready, for example while you capture a checkpoint of the workspace. `pi.armToolBarrier({ id, deadlineMs })` arms the session's tool barrier; while it is armed, every tool not declared `workspaceEffect: "read"` waits before it runs. Armed while the session is idle (for example from `before_agent_start`), it belongs to the next turn. It opens on `pi.releaseToolBarrier(id)` (which returns `false`, a no-op, when no barrier with that id is armed), when its turn ends, or after `deadlineMs` (1..600000), which emits the `tool_barrier_expired` session event. Stop ends the wait. `id` is 1-256 characters; arming again replaces the id and ceiling while calls already waiting keep waiting.
+
+```typescript
+pi.on("before_agent_start", () => {
+  pi.armToolBarrier({ id: "checkpoint", deadlineMs: 30_000 });
+  void captureCheckpoint().finally(() => pi.releaseToolBarrier("checkpoint"));
+});
 ```
 
 `pi.getAllTools()` returns `name`, `description`, `parameters`, `promptGuidelines`, `kernelPrelude`, `permissionParser`, and `sourceInfo`.
@@ -3249,6 +3295,7 @@ Add these fields to `pi.registerTool(...)`:
 - **`searchKeywords`**: Synonyms or domain terms, indexed with the same weight as the tool name. Never sent to the model.
 - **`searchGroup`**: Organizational filter group. Defaults to your extension's label.
 - **`namespace`** and **`annotations`**: Optional grouping and behavior hints, for example from an MCP server.
+- **`workspaceEffect`**: `"read" | "write"`. A `"read"` tool runs while a tool barrier is armed (see `pi.armToolBarrier`); any other tool, including one that leaves this unset, waits for the barrier's release. Declare `"read"` only for tools that never change files, processes or other workspace state.
 - **`outputSchema`**: Optional schema for `structuredContent`; a result can also set `isError`.
 - **`allowLazyActivation`**: Default `true`. If `false`, the tool is hidden from `tool_search` completely and cannot be lazily activated during code mode execution. Explicit activation via `pi.setActiveTools()` is still allowed.
 

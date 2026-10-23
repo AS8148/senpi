@@ -23,6 +23,7 @@ describe("multi-session RPC protocol info", () => {
 				serverVersion: VERSION,
 				capabilities: [
 					"multi_session",
+					"session_lifecycle",
 					"expected_host_instance",
 					"auto_title_sessions",
 					"media_placeholders",
@@ -35,6 +36,7 @@ describe("multi-session RPC protocol info", () => {
 					"eval_cells",
 					"auth_key_verify",
 					"queued_message_revision",
+					"tool_barrier",
 					"user_activity",
 					"session_held",
 					"resume_session",
@@ -43,6 +45,7 @@ describe("multi-session RPC protocol info", () => {
 					"detach_connection",
 					"unload_session",
 					"move_session",
+					"move_session_revoke",
 					"session_relocation",
 					"session_context",
 					"session_kind",

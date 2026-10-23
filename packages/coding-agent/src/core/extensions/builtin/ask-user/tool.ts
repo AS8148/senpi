@@ -228,7 +228,8 @@ export function startQuestion(
 	const opts: QuestionDialogOptions = {
 		timeout: request.timeoutMs,
 		signal: controller.signal,
-		deliver: request.waitForAnswer ? "tool-result" : "user-message",
+		// A resumed question delivers its answer as a user message (deliverAnswer), like an async one.
+		deliver: request.waitForAnswer && !resuming ? "tool-result" : "user-message",
 		hardDeadlineAtMs: Date.now() + 7_200_000,
 		getDeadlineAtMs: () => pending.deadlineAtMs,
 		onProgress: (progress) => {
@@ -322,6 +323,7 @@ export function createAskUserTool(variant: AskUserVariant, pi: ExtensionAPI, sta
 			: "Ask the user one to four concise questions.";
 	return {
 		name: TOOL_NAMES[variant],
+		workspaceEffect: "read",
 		label: "Ask user",
 		exposure: "direct",
 		allowLazyActivation: false,
