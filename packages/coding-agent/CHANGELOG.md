@@ -8,7 +8,13 @@
 
 ### Changed
 
+- A scheduled prompt (`schedule_prompt`) now arrives in its session while that session is open in the TUI or over RPC: the open session delivers its own due prompts, steered into the running turn when the agent is working, or starting a turn when it is idle. Before, `senpi schedule run` held them until the session was closed and then ran them headlessly. Prompts for sessions that are not open still go through `senpi schedule run`. If the open session cannot deliver a due prompt, it now says so in a warning ([#4074](https://github.com/code-yeongyu/senpi/issues/4074)).
+- A `/loop` tick that comes due while the agent is working is now steered into the running turn, so the agent reads it at its next step instead of only after the whole turn ends. This covers fixed (cron) loops, `schedule_wakeup` wakeups, keepalive wakeups and catch-up ticks. A tick whose prompt is an extension command still waits for the turn to finish. When a dynamic loop's tick lands in a turn the loop did not start and that turn ends without `schedule_wakeup`, the loop re-arms its fallback wakeup without using up its one keepalive credit ([#4072](https://github.com/code-yeongyu/senpi/issues/4072)).
+
 ### Fixed
+
+- Concurrent prompts after a pause no longer duplicate held input or discard a newer update. A failed skill preparation no longer blocks later prompts, and a parent pause arriving during a skill read keeps commands and manual continues held until the parent resumes them ([#4047](https://github.com/code-yeongyu/senpi/pull/4047)).
+- Invoking a project skill no longer stalls the other sessions on a shared host while its file is read and checked; the link checks from #3796 are unchanged ([#3796](https://github.com/code-yeongyu/senpi/issues/3796)).
 
 ### Removed
 
