@@ -12,10 +12,12 @@ import { stripAnsi } from "../../utils/ansi.ts";
 import type { ResourceDiagnostic } from "../diagnostics.ts";
 import type { DiscoveredResourceEntry } from "../discovered-resource-scope.ts";
 import { createEventBus, type EventBus, EXTENSION_RPC_EVENT_CHANNEL, type ExtensionRpcEvent } from "../event-bus.ts";
+import type { InputOrigin } from "../input-origin.ts";
 import type { KeybindingsConfig } from "../keybindings.ts";
 import type { NamedMemoryReporter } from "../memory-report/memory-report-registry.ts";
 import type { ModelRegistry } from "../model-registry.ts";
 import type { ScopedModel } from "../model-resolver.ts";
+import { bindQuestionInput } from "../question-input.ts";
 import type { SessionManager } from "../session-manager.ts";
 import {
 	DEFAULT_EXTENSION_EVENT_HANDLER_TIMEOUT_MS,
@@ -43,6 +45,7 @@ import {
 } from "./handler-budget.ts";
 import { kernelToolsStorage } from "./kernel-tools-context.ts";
 import { drainPendingProviderRegistrations } from "./loader.ts";
+import { runSessionMoveHandlers, type SessionMoveEmission, type SessionMoveFailure } from "./session-move-emit.ts";
 import { SessionStartTurnGate } from "./session-start-turn-gate.ts";
 import { QuitDeadline, type QuitHandlerBudget, type SessionShutdownBudget } from "./shutdown-quit-budget.ts";
 import { StaleExtensionContextError } from "./stale-context-error.ts";
@@ -100,6 +103,7 @@ import type {
 	ResourceDiscoverEntry,
 	ResourcesDiscoverEvent,
 	ResourcesDiscoverResult,
+	SendMessageReceipt,
 	ServiceTier,
 	SessionBeforeCompactResult,
 	SessionBeforeForkResult,
@@ -516,11 +520,17 @@ export class ExtensionRunner {
 	private getEffectiveServiceTier: () => ServiceTier | undefined = () => this.getServiceTier();
 	private getScopedModels: () => readonly ScopedModel[] = () => [];
 	private isIdleFn: () => boolean = () => true;
+	private engineTurnsHeldFn: () => boolean = () => false;
+	private noteHeldWakeFn: (source: string) => void = () => {};
+	private pauseActions: Pick<ExtensionContextActions, "getPauseState" | "fenceRun" | "releaseRunFence"> = {};
+	private questionInput: ExtensionContextActions["questionInput"];
+	private personAnswerPending = false;
 	private isProjectTrustedFn: () => boolean = () => true;
 	private getSignalFn: () => AbortSignal | undefined = () => undefined;
 	private waitForIdleFn: () => Promise<void> = async () => {};
 	private abortFn: ExtensionContextActions["abort"] = () => {};
 	private hasPendingMessagesFn: () => boolean = () => false;
+	private hasQueuedPersonInputFn: () => boolean = () => false;
 	private isCompactingFn: () => boolean = () => false;
 	private checkReloadVetoFn: ExtensionContextActions["checkReloadVeto"];
 	private getContextUsageFn: () => ContextUsage | undefined = () => undefined;
@@ -633,8 +643,26 @@ export class ExtensionRunner {
 			if (options?.triggerTurn === true) this.sessionStartTurns.admit(() => actions.sendMessage(message, options));
 			else actions.sendMessage(message, options);
 		};
-		this.runtime.sendUserMessage = (content, options) =>
-			this.sessionStartTurns.admit(() => actions.sendUserMessage(content, options));
+		// An itemized send answers its receipts from wherever its admission ends up running (senpi#3811).
+		this.runtime.sendItemizedMessage = (message, options) => {
+			const receipts = Promise.withResolvers<readonly SendMessageReceipt[] | undefined>();
+			const send = () => {
+				const itemized = actions.sendItemizedMessage;
+				if (itemized === undefined) {
+					actions.sendMessage(message, options);
+					receipts.resolve(undefined);
+				} else itemized(message, options).then(receipts.resolve, receipts.reject);
+			};
+			if (options.triggerTurn === true) this.sessionStartTurns.admit(send);
+			else send();
+			return receipts.promise;
+		};
+		this.runtime.sendUserMessage = (content, options) => {
+			// Captured at admission: a deferred answer keeps the origin it was delivered with.
+			const inputOrigin: InputOrigin = this.personAnswerPending ? "person" : "extension";
+			this.personAnswerPending = false;
+			this.sessionStartTurns.admit(() => actions.sendUserMessage(content, options, inputOrigin));
+		};
 		this.runtime.appendEntry = actions.appendEntry;
 		this.runtime.setSessionName = actions.setSessionName;
 		this.runtime.getSessionName = actions.getSessionName;
@@ -666,10 +694,19 @@ export class ExtensionRunner {
 		this.getEffectiveServiceTier = contextActions.getEffectiveServiceTier ?? contextActions.getServiceTier;
 		this.getScopedModels = contextActions.getScopedModels;
 		this.isIdleFn = contextActions.isIdle;
+		this.engineTurnsHeldFn = contextActions.engineTurnsHeld ?? (() => false);
+		this.noteHeldWakeFn = contextActions.noteHeldWake ?? (() => {});
+		this.pauseActions = {
+			getPauseState: contextActions.getPauseState,
+			fenceRun: contextActions.fenceRun,
+			releaseRunFence: contextActions.releaseRunFence,
+		};
+		this.questionInput = contextActions.questionInput;
 		this.isProjectTrustedFn = contextActions.isProjectTrusted;
 		this.getSignalFn = contextActions.getSignal;
 		this.abortFn = contextActions.abort;
 		this.hasPendingMessagesFn = contextActions.hasPendingMessages;
+		this.hasQueuedPersonInputFn = contextActions.hasQueuedPersonInput ?? (() => false);
 		this.isCompactingFn = contextActions.isCompacting;
 		this.checkReloadVetoFn = contextActions.checkReloadVeto;
 		this.shutdownHandler = contextActions.shutdown;
@@ -879,6 +916,11 @@ export class ExtensionRunner {
 
 	getUIContext(): ExtensionUIContext {
 		return this.uiContext;
+	}
+
+	/** True while session_start handlers run and the turns they trigger are still held. */
+	sessionStartTurnsHeld(): boolean {
+		return this.sessionStartTurns.holding;
 	}
 
 	hasUI(): boolean {
@@ -1403,7 +1445,7 @@ export class ExtensionRunner {
 		const getEffectiveServiceTier = this.getEffectiveServiceTier;
 		const getScopedModels = this.getScopedModels;
 		let compactionSignal: AbortSignal | undefined;
-		return {
+		const context: ExtensionContext = {
 			offload: (id: string, args: unknown, options?: OffloadOptions) => {
 				runner.assertActive();
 				if (runner.offloadFn === undefined)
@@ -1474,6 +1516,26 @@ export class ExtensionRunner {
 				runner.assertActive();
 				return runner.isIdleFn();
 			},
+			engineTurnsHeld: () => {
+				runner.assertActive();
+				return runner.engineTurnsHeldFn();
+			},
+			noteHeldWake: (source) => {
+				runner.assertActive();
+				runner.noteHeldWakeFn(source);
+			},
+			getPauseState: () => {
+				runner.assertActive();
+				return runner.pauseActions.getPauseState?.() ?? { pauseSeq: 0, holds: [] };
+			},
+			fenceRun: (runRef) => {
+				runner.assertActive();
+				runner.pauseActions.fenceRun?.(runRef);
+			},
+			releaseRunFence: (runRef) => {
+				runner.assertActive();
+				runner.pauseActions.releaseRunFence?.(runRef);
+			},
 			isProjectTrusted: () => {
 				runner.assertActive();
 				return runner.isProjectTrustedFn();
@@ -1497,6 +1559,10 @@ export class ExtensionRunner {
 			hasPendingMessages: () => {
 				runner.assertActive();
 				return runner.hasPendingMessagesFn();
+			},
+			hasQueuedPersonInput: () => {
+				runner.assertActive();
+				return runner.hasQueuedPersonInputFn();
 			},
 			get requestReload() {
 				runner.assertActive();
@@ -1627,6 +1693,18 @@ export class ExtensionRunner {
 				return runner.getRegisteredMcpServers();
 			},
 		};
+		if (this.questionInput) {
+			bindQuestionInput(context, () => {
+				runner.assertActive();
+				// The answer's own sendUserMessage follows synchronously and takes this token at admission.
+				runner.personAnswerPending = true;
+				queueMicrotask(() => {
+					runner.personAnswerPending = false;
+				});
+				runner.questionInput?.();
+			});
+		}
+		return context;
 	}
 
 	/**
@@ -1878,6 +1956,10 @@ export class ExtensionRunner {
 		}
 	}
 
+	emitHeldWakesReleased(sources: Record<string, number>): Promise<void> {
+		return this.emit({ type: "held_wakes_released", sources });
+	}
+
 	emit<TEvent extends RunnerEmitEvent>(event: TEvent): Promise<RunnerEmitResult<TEvent>> {
 		// Not async: other events keep the exact microtask timing of a direct dispatch.
 		// Turns requested from any session_start handler start after the last one returns (senpi#1972).
@@ -1886,6 +1968,21 @@ export class ExtensionRunner {
 			return this.dispatchLifecycle(event) as Promise<RunnerEmitResult<TEvent>>;
 		}
 		return this.dispatchEmit(event);
+	}
+
+	/**
+	 * Move handlers carry state that exists nowhere else, so every failure (a throw, or a handler still running at the
+	 * `session_shutdown` handler budget) is reported and returned: a `move` release refuses on an export failure, and
+	 * the import hand-over keeps the moved state for the next open on an import failure.
+	 */
+	async emitSessionMove(event: SessionMoveEmission): Promise<readonly SessionMoveFailure[]> {
+		const calls = flattenHandlers(this.extensions, event.type).map(({ path, handler }) => ({
+			extensionPath: path,
+			call: (signal: AbortSignal) => handler({ ...event, signal }, this.createContext(path)),
+		}));
+		const failures = await runSessionMoveHandlers(event.type, calls, this.resolveSessionShutdownBudget().handler);
+		for (const failure of failures) this.emitError({ ...failure, event: event.type });
+		return failures;
 	}
 
 	private async dispatchEmit<TEvent extends RunnerEmitEvent>(event: TEvent): Promise<RunnerEmitResult<TEvent>> {

@@ -330,6 +330,8 @@ export class ServerConnection {
 	}
 
 	#markFailure(state: ServerConnectionState, error: Error | undefined): void {
+		// disabled is terminal (dispose/disable): a late failure from an attempt it superseded must not revive it (senpi#4013).
+		if (this.#state === "disabled") return;
 		this.#lastError = error;
 		this.#setState(state, error);
 	}

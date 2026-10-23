@@ -4,6 +4,8 @@ import type { AgentSession } from "../../core/agent-session.ts";
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { detachConnection } from "./connection-detach.ts";
 import { buildRpcSessionState } from "./connection-handler.ts";
+import { CONNECTION_ROLE_FIXED, ConnectionRoles, roleConnection } from "./connection-roles.ts";
+import { SESSION_RELOCATION_CAPABILITY } from "./custom-capability.ts";
 import { answerEffectFromTranscript } from "./effect-commands.ts";
 import { latestSessionEffect } from "./effect-ledger.ts";
 import { multiSessionHostCapabilities } from "./host-capabilities.ts";
@@ -35,12 +37,14 @@ import {
 	RPC_ERROR_SESSION_CLOSING,
 	RPC_ERROR_UNKNOWN_SESSION,
 } from "./rpc-types.ts";
+import { SessionAttachOrder } from "./session-attach-order.ts";
 import { runWithSessionAttribution } from "./session-attribution.ts";
 import { createRpcSessionBinding, type RpcSessionBinding } from "./session-binding.ts";
 import { readDrainVerdicts } from "./session-drain.ts";
 import { drainSessionEffects, installSessionEffectSink } from "./session-effect-status.ts";
 import type { SessionEventWriter } from "./session-event-writer.ts";
 import { dispatchSessionBinding, sessionHeldCheck } from "./session-held.ts";
+import { moveSession } from "./session-move-commands.ts";
 import type { OpenRpcSession, RpcSessionLaunchProfile, RpcSessionRegistry } from "./session-registry.ts";
 import { RpcSessionRegistryError } from "./session-registry.ts";
 import { releaseSession } from "./session-release.ts";
@@ -136,6 +140,7 @@ export class SessionCommandRouter {
 	private readonly stopLimitBroadcast: () => void;
 	/** Session handles opened by each connection, with one count per attachment. */
 	private readonly sessionsByConnection = new Map<string, Map<string, number>>();
+	private readonly attachOrder = new SessionAttachOrder();
 	/** Opens currently awaiting runtime/binding setup, keyed by connection. */
 	private readonly opensByConnection = new Map<string, Set<Promise<void>>>();
 	/** Connections whose socket has already been detached. */
@@ -144,12 +149,13 @@ export class SessionCommandRouter {
 		RpcSessionRegistry,
 		"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size" | "warm"
 	> &
-		Partial<Pick<RpcSessionRegistry, "holderPids">>;
+		Partial<Pick<RpcSessionRegistry, "holderPids" | "agentDir">>;
 	private readonly writer: SessionEventWriter;
 	private readonly defaults: RpcHostSessionDefaults;
 	private readonly createBinding: typeof createRpcSessionBinding;
 	private readonly connectionOptions: Parameters<typeof createRpcSessionBinding>[4];
 	private readonly pendingCapabilities = new Map<string, string[]>();
+	private readonly connectionRoles = new ConnectionRoles();
 	private readonly finalizations = new Map<string, { promise: Promise<void>; resolve: () => void }>();
 	private readonly idleNow: () => number;
 	private readonly idleEvictionMs: number;
@@ -181,7 +187,7 @@ export class SessionCommandRouter {
 			RpcSessionRegistry,
 			"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size" | "warm"
 		> &
-			Partial<Pick<RpcSessionRegistry, "holderPids">>,
+			Partial<Pick<RpcSessionRegistry, "holderPids" | "agentDir">>,
 		writer: SessionEventWriter,
 		defaults: RpcHostSessionDefaults,
 		createBinding: typeof createRpcSessionBinding = createRpcSessionBinding,
@@ -411,7 +417,8 @@ export class SessionCommandRouter {
 			return detachConnection(command, this.writer.currentConnection(), (id) => this.releaseConnection(id));
 		if (command.type === "open_session") return this.openWithBarrier(command);
 		if (command.type === "close_session") return this.close(command);
-		if (command.type === "release_session")
+		if (command.type === "release_session") {
+			const caller = this.writer.currentConnection();
 			return releaseSession(
 				{
 					draining: () => this.draining,
@@ -422,10 +429,29 @@ export class SessionCommandRouter {
 					otherRequests: (sessionId) => Math.max(0, (this.activeRequests.get(sessionId) ?? 1) - 1),
 					otherRequestsSettled: (sessionId) => this.otherRequestsSettled(sessionId),
 					pendingPrompts: (sessionId) => this.bindings.get(sessionId)?.pendingPrompts?.() ?? [],
+					otherAttachments: (sessionId) => this.otherAttachments(sessionId, caller),
 					tearDown: (sessionId, sessionPath) => this.tearDownReleased(sessionId, sessionPath),
 				},
 				command,
 			);
+		}
+		if (command.type === "move_session") {
+			const agentDir = this.registry.agentDir;
+			if (agentDir === undefined)
+				return error(
+					command.id,
+					command.type,
+					"move_unsupported: this host keeps no agent directory to move sessions in",
+				);
+			return moveSession(
+				{
+					agentDir,
+					hostedPaths: () =>
+						this.registry.list().flatMap((row) => (row.sessionPath === undefined ? [] : [row.sessionPath])),
+				},
+				command,
+			);
+		}
 		if (command.type === "unload_session") {
 			const caller = this.writer.currentConnection();
 			return unloadSession(
@@ -438,11 +464,7 @@ export class SessionCommandRouter {
 					otherRequests: (sessionId) => Math.max(0, (this.activeRequests.get(sessionId) ?? 1) - 1),
 					otherRequestsSettled: (sessionId) => this.otherRequestsSettled(sessionId),
 					pendingPrompts: (sessionId) => this.bindings.get(sessionId)?.pendingPrompts?.() ?? [],
-					otherAttachments: (sessionId) => {
-						const attachments = Math.max(0, this.registry.peek(sessionId)?.attachments ?? 0);
-						const own = caller !== undefined && this.sessionsByConnection.get(caller)?.has(sessionId) === true;
-						return own ? Math.max(0, attachments - 1) : attachments;
-					},
+					otherAttachments: (sessionId) => this.otherAttachments(sessionId, caller),
 					openChildSessions: (durableSessionId) =>
 						this.registry
 							.list()
@@ -459,6 +481,17 @@ export class SessionCommandRouter {
 		}
 		if (command.type === "set_client_info" && !command.sessionId) {
 			const connection = this.writer.currentConnection();
+			if (
+				command.capabilities !== undefined &&
+				!this.connectionRoles.declare(roleConnection(connection), command.capabilities)
+			)
+				return {
+					id: command.id,
+					type: "response",
+					command: "set_client_info",
+					success: false,
+					error: CONNECTION_ROLE_FIXED,
+				} as RpcResponse;
 			if (connection !== undefined) {
 				this.pendingCapabilities.set(connection, command.capabilities ?? []);
 				this.writer.setConnectionCapabilities(connection, command.capabilities ?? []);
@@ -632,6 +665,7 @@ export class SessionCommandRouter {
 				...parkedEntryFromProfile(
 					{
 						sessionPath: retained.sessionPath,
+						contextOverlay: retained.contextOverlay,
 						...(retained.durableSessionId !== undefined ? { durableSessionId: retained.durableSessionId } : {}),
 					},
 					retained.profile,
@@ -720,8 +754,30 @@ export class SessionCommandRouter {
 		return true;
 	}
 
+	/**
+	 * The connection that offers to continue this session on another computer: the earliest-attached one that
+	 * advertised `session_relocation` in its own `set_client_info` (docs/rpc.md). Only it is asked and only it may answer.
+	 */
+	private relocationConnection(sessionId: string): string | undefined {
+		return this.attachOrder
+			.connections(sessionId)
+			.find(
+				(connection) =>
+					this.sessionsByConnection.get(connection)?.has(sessionId) === true &&
+					this.writer.getConnectionCapabilities(connection)?.includes(SESSION_RELOCATION_CAPABILITY) === true,
+			);
+	}
+
+	/** Attachments of the session other than `caller`'s own: an unload or release never counts its requester. */
+	private otherAttachments(sessionId: string, caller: string | undefined): number {
+		const attachments = Math.max(0, this.registry.peek(sessionId)?.attachments ?? 0);
+		const own = caller !== undefined && this.sessionsByConnection.get(caller)?.has(sessionId) === true;
+		return own ? Math.max(0, attachments - 1) : attachments;
+	}
+
 	/** Drops per-connection records for a handle the host closed on its own. */
 	private forgetSessionOwnership(sessionId: string): void {
+		this.attachOrder.forgetSession(sessionId);
 		for (const [connection, owned] of this.sessionsByConnection) {
 			owned.delete(sessionId);
 			if (owned.size === 0) this.sessionsByConnection.delete(connection);
@@ -809,13 +865,21 @@ export class SessionCommandRouter {
 	 * the failure response otherwise, exactly as an open does.
 	 */
 	reopenParked(entry: HandoverParkedEntry): Promise<RpcResponse | undefined> {
-		return this.open(parkedOpenCommand(entry), undefined, { reply: false, defaults: false });
+		return this.open({ ...parkedOpenCommand(entry), attended: false }, undefined, {
+			reply: false,
+			defaults: false,
+			contextOverlay: entry.contextOverlay,
+		});
 	}
 
 	private async open(
 		command: Extract<RpcCommand, { type: "open_session" }>,
 		owner?: string,
-		options?: { readonly reply?: boolean; readonly defaults?: boolean },
+		options?: {
+			readonly reply?: boolean;
+			readonly defaults?: boolean;
+			readonly contextOverlay?: HandoverParkedEntry["contextOverlay"];
+		},
 	): Promise<RpcResponse | undefined> {
 		// A parked session's reopen replays what its park recorded; a field it left empty stays empty
 		// rather than taking THIS host's default (senpi#3376 review).
@@ -844,6 +908,12 @@ export class SessionCommandRouter {
 		// registry, the runtime and the extensions downstream receive values already
 		// proven to satisfy every documented cap.
 		const kindError = sessionKindError(command.kind);
+		if (command.attended !== undefined && command.attended !== false)
+			return error(
+				command.id,
+				"open_session",
+				`${RPC_ERROR_INVALID_LAUNCH_PROFILE}: attended must be false or omitted`,
+			);
 		if (kindError) return error(command.id, "open_session", `${RPC_ERROR_INVALID_SESSION_KIND}: ${kindError}`);
 		const contextError = sessionContextError(command.context);
 		if (contextError)
@@ -875,6 +945,7 @@ export class SessionCommandRouter {
 			opened = await this.registry.openSession(
 				{
 					cwd: command.cwd ?? this.defaults.cwd,
+					...(command.attended === false ? { attended: false as const } : {}),
 					sessionPath: command.sessionPath,
 					holderEndpoint: {
 						host_instance: instanceId,
@@ -907,6 +978,7 @@ export class SessionCommandRouter {
 			);
 			const openedSession = opened;
 			const entry = this.registry.getForCommand(openedSession.sessionId, "open_session");
+			if (!opened.attached && options?.contextOverlay !== undefined) entry.contextOverlay = options.contextOverlay;
 			const state = entry.worker?.snapshot?.state;
 			// The runtime has now published its own lease. Recheck before attaching or replying,
 			// so an opener racing the initial lookup is rolled back rather than admitted.
@@ -934,6 +1006,7 @@ export class SessionCommandRouter {
 				const owned = this.sessionsByConnection.get(owner) ?? new Map<string, number>();
 				owned.set(openedSession.sessionId, (owned.get(openedSession.sessionId) ?? 0) + 1);
 				this.sessionsByConnection.set(owner, owned);
+				this.attachOrder.attached(openedSession.sessionId, owner);
 			}
 			if (!this.bindings.has(openedSession.sessionId)) {
 				this.bindings.set(
@@ -949,6 +1022,7 @@ export class SessionCommandRouter {
 								owner !== undefined
 									? (this.pendingCapabilities.get(owner) ?? this.connectionOptions?.capabilities ?? [])
 									: this.connectionOptions?.capabilities,
+							connectionRoles: this.connectionRoles,
 							clientInfo: {
 								setCapabilities: (connectionId, capabilities) => {
 									if (connectionId !== undefined) {
@@ -957,6 +1031,8 @@ export class SessionCommandRouter {
 									}
 								},
 								connectionId: () => this.writer.currentConnection(),
+								relocationConnection: () => this.relocationConnection(openedSession.sessionId),
+								deliverTo: (connection, deliver) => this.writer.withConnection(connection, deliver),
 							},
 						},
 					),
@@ -1049,8 +1125,13 @@ export class SessionCommandRouter {
 	async releaseConnection(connectionId: string): Promise<string[]> {
 		this.releasedConnections.add(connectionId);
 		this.writer.clearConnectionCapabilities(connectionId);
-		for (const sessionId of this.sessionsByConnection.get(connectionId)?.keys() ?? [])
+		this.connectionRoles.release(connectionId);
+		for (const sessionId of this.sessionsByConnection.get(connectionId)?.keys() ?? []) {
 			this.writer.detachConnectionFromSession(connectionId, sessionId);
+			this.connectionLeft(sessionId, connectionId);
+		}
+		// The socket is gone (dropped, not `detach_connection`): nothing will ever open with its capabilities again.
+		if (!this.writer.hasConnection(connectionId)) this.pendingCapabilities.delete(connectionId);
 		const opens = this.opensByConnection.get(connectionId);
 		const owned = this.sessionsByConnection.get(connectionId);
 		this.sessionsByConnection.delete(connectionId);
@@ -1239,14 +1320,22 @@ export class SessionCommandRouter {
 		}
 	}
 
+	/** `connection` no longer attaches to `sessionId`: its attach order and what it offered the session end. */
+	private connectionLeft(sessionId: string, connection: string): void {
+		this.attachOrder.detached(sessionId, connection);
+		this.bindings.get(sessionId)?.connectionDetached?.(connection);
+	}
+
 	/** Detaches the closing connection from the session's record fanout. */
 	private releaseOwnerAttachment(owner: string, sessionId: string): void {
 		this.writer.detachConnectionFromSession(owner, sessionId);
 		const owned = this.sessionsByConnection.get(owner);
 		const count = owned?.get(sessionId);
 		if (!owned || count === undefined) return;
-		if (count === 1) owned.delete(sessionId);
-		else owned.set(sessionId, count - 1);
+		if (count === 1) {
+			owned.delete(sessionId);
+			this.connectionLeft(sessionId, owner);
+		} else owned.set(sessionId, count - 1);
 		if (owned.size === 0) this.sessionsByConnection.delete(owner);
 	}
 
