@@ -13,6 +13,7 @@
 ### Changed
 
 - `release_session` refuses `attached` only while ANOTHER client is attached; the connection asking for the release no longer counts, so a client can release (or move) the session it shows without `force`. `errorData.attachments` now counts only those other clients ([#3994](https://github.com/code-yeongyu/senpi/pull/3994)).
+- The `show_html_page` tool description now tells the agent to load the bundled `visualize` skill before building a page ([#2869](https://github.com/code-yeongyu/senpi/issues/2869)).
 
 ### Fixed
 
