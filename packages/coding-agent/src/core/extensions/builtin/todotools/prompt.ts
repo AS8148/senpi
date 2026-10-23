@@ -19,7 +19,7 @@ Completing tasks out of phase order can move this pointer **back** to an earlier
 | drop | task or phase | Mark abandoned |
 | rm | task or phase (optional) | Remove task or phase; omit both to clear |
 | append | phase?, items: string[] | Append tasks to phase; lazily creates phase |
-| view |: | Read-only: echo list |
+| view | - | Read-only: echo list |
 
 Example: {"op":"init","list":[{"phase":"Setup","items":["Survey code","Write tests"]}]}
 
