@@ -140,7 +140,7 @@ export class IdenticalLoopEscalation {
 
 	/** Fingerprints of active windowed episodes, for age-out checks against the tracker window. */
 	get windowedEpisodeFingerprints(): ReadonlySet<string> {
-		return this.windowedEpisodes.keys() as ReadonlySet<string>;
+		return new Set(this.windowedEpisodes.keys());
 	}
 
 	reset(): void {
