@@ -15,6 +15,7 @@
 
 ### Changed
 
+- A person's turn now writes two session lifecycle records, one `running` record when its epoch opens and one `done` (or other terminal) record when it seals, instead of three or four. The `session_lifecycle` event for that turn arrives when its run starts rather than when the input is admitted; input into a still-open epoch is still recorded at once ([#3980](https://github.com/code-yeongyu/senpi/issues/3980)).
 - `release_session` refuses `attached` only while ANOTHER client is attached; the connection asking for the release no longer counts, so a client can release (or move) the session it shows without `force`. `errorData.attachments` now counts only those other clients ([#3994](https://github.com/code-yeongyu/senpi/pull/3994)).
 
 ### Fixed
