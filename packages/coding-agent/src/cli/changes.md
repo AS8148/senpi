@@ -1,3 +1,39 @@
+## 2026-10-19 - A bare - forces the piped-stdin read (senpi#3715)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: a bare `-` argument sets `Args.readStdin` instead of failing as `Unknown option: -`, and the help text documents it.
+
+### Why
+
+- Print mode now stops waiting for a silent stdin pipe after 2 s when a prompt argument is given (senpi#3715); `-` is the explicit way to wait for a slow producer anyway. Regression: `test/suite/regressions/issue-3715-print-stdin-open-pipe.test.ts`.
+
+### Why an extension could not handle it
+
+- Argument parsing runs before any extension loads, and a bare `-` was rejected there as an unknown short option.
+
+### Expected merge conflict zones
+
+- LOW: the `Args` field list, the short-option branch of `parseArgs`, and the `--print` help line.
+
+## 2026-10-17 - /share redacts the session, previews it and asks before uploading (senpi#3524)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: the help text says `PI_SHARE_VIEWER_URL` has no default and documents `PI_DISABLE_SHARE`.
+
+### Why
+
+- `/share` uploaded the whole session unredacted, with no confirmation, to a secret (unlisted) gist, after writing it to a fixed `os.tmpdir()/session.html`, and pointed users at the third-party `pi.dev` viewer by default. Any key, token, home path or email in a prompt or tool result left the machine in clear text. Regressions: `test/suite/regressions/3524-share-redaction.test.ts`, `test/suite/regressions/3524-share-consent.test.ts`.
+
+### Why an extension could not handle it
+
+- `/share` is a built-in interactive command and the HTML export is core; an extension cannot intercept either before the upload.
+
+### Expected merge conflict zones
+
+- LOW: the environment-variable list in `args.ts` help.
+
 ## 2026-10-18 - --tool-runtime selects where heavy tool work runs (senpi#3566)
 
 ### What changed
@@ -870,3 +906,20 @@ CLI argument semantics live in the executable entry, below any extension hook.
 ### Expected merge conflict zones
 
 Upstream edits to cli/args.ts at the next sync.
+## 2026-10-20 - Bind an operator stop to its confirmed generation (omo-desktop-app#3561)
+
+### What changed
+
+- `packages/coding-agent/src/cli/host-command.ts`: parses `--expected-generation` JSON and forwards its complete identity to the shared host runner; malformed or drain-combined input is a usage error. Existing conditional-handover parsing moves unchanged to `packages/coding-agent/src/cli/host-handover-args.ts` to keep the command module bounded.
+
+### Why
+
+- A confirmation must not authorize stopping a different generation that took over before the CLI ran.
+
+### Why an extension could not handle it
+
+- Host command parsing happens before extensions run.
+
+### Expected merge conflict zones
+
+- LOW: stop argument parsing and request construction.

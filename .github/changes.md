@@ -1,3 +1,133 @@
+## 2026-10-22 - Static checks have a bounded compiler heap (senpi#4022)
+
+### What changed
+
+- `.github/workflows/ci.yml`: only the `Static checks` job's `Check` step sets `NODE_OPTIONS=--max-old-space-size=10240`.
+
+### Why
+
+- The public GitHub-hosted `ubuntu-latest` runner has 16 GB RAM. A 10 GiB old-space cap leaves 6 GiB for the OS, runner and native allocations while allowing the root compiler to exceed its exhausted default heap. The two compiler commands run sequentially.
+
+### Why an extension could not handle it
+
+- Runner memory limits are workflow configuration, outside runtime extension points.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: the `Static checks` job's `Check` step.
+
+## 2026-10-22 - The release job builds the senpi-grep addon before its tests (senpi#3978 follow-up)
+
+### What changed
+
+- `.github/workflows/publish-npm.yml`: the `release` job runs the same `Setup Rust`, `Cache Rust` and `Build native grep addon` steps as `ci.yml`'s `test-workspaces`, before `Run release`. The addon path reaches the release's `npm test` through `SENPI_GREP_NATIVE_PATH` in `$GITHUB_ENV`. The steps are skipped in `publish-only` mode, which runs no tests.
+
+### Why
+
+- Since #3978, `scripts/probe-native-grep.test.mjs` refuses to build the addon inside a test hook when `CI` is set, and fails with a message naming the missing `Build native grep addon` step. `ci.yml` gained that step, but the release job did not. The 2026.10.21-3 release run (39840619411) therefore failed its `npm test` with six probe-native-grep failures before tagging anything.
+
+### Why an extension could not handle it
+
+- Workflow steps are repository CI configuration; no runtime extension point reaches them.
+
+### Expected merge conflict zones
+
+- The `release` job's step list in `publish-npm.yml`, around `Run release`.
+
+## 2026-10-22 - macOS/Windows CI jobs run on pull requests only for platform-specific diffs (senpi#3957)
+
+### What changed
+
+- `.github/workflows/ci.yml`: a `platform-scope` job runs `scripts/ci-platform-scope.mjs` on the PR's changed files and labels. The macOS and Windows-only jobs need it and run only when it outputs `full=true`; the ubuntu+windows matrices keep their Linux leg and add Windows only then. `Check and test` verifies its needs through the same script, which accepts `skipped` only for those jobs and only when the scope said `full=false`. The workflow is also callable (`workflow_call`), and its concurrency group is a fixed per-file prefix plus the workflow name, so a called run never cancels the PR's own run or another called workflow.
+- `.github/workflows/read-summary-binary-parity.yml`, `.github/workflows/session-worker-compile.yml`: the same scope job decides the macOS/Windows matrix legs; both also run on pushes to main with their PR paths, and are callable. Their concurrency groups use their own fixed prefix plus the workflow name; main pushes get one group per commit and are never cancelled.
+- The classifier also counts `packages/coding-agent/src/modes/rpc/**` and every file a macOS/Windows job of the classified workflow names in its steps (the suites it runs), read from the workflow file itself, so editing a Windows-tested suite still runs Windows.
+- `.github/workflows/session-worker-compile.yml` also gets a per-PR concurrency group (workflow + PR number, cancel in progress for PRs) so a new push cancels the superseded run.
+- `.github/workflows/ci-full-label.yml`: the `run-full-ci` label calls the three workflows in full on the labelled PR.
+
+### Why
+
+- Hosted macOS and Windows runners have little concurrency, and every PR ran about a dozen jobs on them, so PRs queued behind each other on platform runners even when they changed no platform code. Pushes to main still run the full set, so a platform regression surfaces right after merge.
+
+### Why an extension could not handle it
+
+- Workflow triggers and job conditions are repository CI configuration; no runtime extension point reaches them.
+
+### Expected merge conflict zones
+
+- The `on:` and `concurrency:` blocks of `ci.yml`, the `needs`/`if` lines of its macOS/Windows jobs and matrices, and the `Check and test` verify step.
+
+## 2026-10-21 - The combined macOS job keeps base per-step caps (senpi#3939)
+
+### What changed
+
+- `.github/workflows/ci.yml`: in `macos-combined`, the process-kernel and WebView suite steps go back to their base `timeout-minutes: 12` (from 20). The job cap drops from 115 to 99, the sum of the suite step caps plus 10 minutes of setup margin. The "Require the WebView suites to have executed" step runs only when the WebView suite step passed, as it did on base.
+
+### Why
+
+- `.github/workflows/ci.yml`: with 20-minute caps, a hung process-kernel suite held the scarce hosted macOS runner 8 minutes longer than before #3910. After a failed WebView suite, the executed check only added a second red step or a JSON read error.
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: step timeouts and conditions are repository CI configuration.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: the `macos-combined` job's `timeout-minutes` lines and the WebView executed-check condition.
+
+## 2026-10-22 - Script tests get the senpi-grep addon from one CI build step (senpi#3978)
+
+### What changed
+
+- `.github/workflows/ci.yml`: `test-workspaces` sets up Rust with the Rust cache and builds the senpi-grep N-API addon once ("Build native grep addon"), exporting `SENPI_GREP_NATIVE_PATH` through `$GITHUB_ENV` before both script-test steps.
+
+### Why
+
+- `.github/workflows/ci.yml`: the script tests built the addon inside a test hook (a cold release Rust build with a 300 s timeout) on every run. On a slow runner it timed out and turned main red at 69396c732a (`spawnSync npm ETIMEDOUT`).
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: CI steps are repository configuration.
+
+### Expected merge conflict zones
+
+- None expected: the change is local to this repository's CI and test scripts.
+
+## 2026-10-21 - One macOS runner executes all five CI suites (senpi#3130)
+
+### What changed
+
+- `.github/workflows/ci.yml`: `macos-combined` replaces the macOS legs of WebView, process kernel, RPC supervisor exit, terminal tools and Inspector handoff. One pinned checkout/toolchain setup, install and workspace build serve independent suite steps with their own temp snapshots/checks, execution assertions, diagnostics and timeouts. The required `Check and test` fan-in includes the combined job; Linux and Windows matrix legs stay unchanged.
+
+### Why
+
+- `.github/workflows/ci.yml`: five macOS jobs per head saturate the hosted runner quota. Combining them reduces the CI workflow to one macOS job without skipping coverage. Process kernel, terminal tools and Inspector handoff on macOS intentionally become required through the combined job; their remaining matrix legs are not added to the fan-in. WebView runs last because stopped/killed Chrome tests can wedge hosted macOS runners (#2290).
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: runner allocation and required-status wiring are repository CI configuration.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: the five OS matrices, combined job and `check-and-test` needs/summary lists.
+
+## 2026-10-19 - CI runs the tool child's Job Object containment tests on Windows (senpi#3566)
+
+### What changed
+
+- `.github/workflows/ci.yml`: a `tool-child-windows` job (`Tool child Job Object (Windows)`, `windows-latest`, Bun `1.4.3`) runs the tool child's Windows containment tests (`windows-job.win32.test.ts`, `launch-barrier.win32.test.ts`, `child-containment.test.ts`, `windows-breakaway.test.ts`, `windows-command-line.test.ts`) under Bun between the OS-temp snapshot and check steps. A follow-up step fails the job unless both real-kernel files executed and every test in them passed, because a suite that skips itself exits 0. The job is listed in the `Check and test` fan-in.
+
+### Why
+
+- The tool child holds every command it launches in a Windows Job Object through `bun:ffi` calls into kernel32. Those tests skip themselves under Node and on other platforms, so no existing job ran them against the real kernel.
+
+### Why an extension could not handle it
+
+- CI jobs are repository workflow configuration.
+
+### Expected merge conflict zones
+
+- LOW: the new job block and the `Check and test` `needs` list.
+
 ## 2026-10-18 - CI runs the main-screen wheel and ask-user hint tests on Windows (senpi#3604)
 
 ### What changed

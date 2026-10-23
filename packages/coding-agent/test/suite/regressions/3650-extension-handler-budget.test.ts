@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { clearTimeout as clearRealTimeout, setTimeout as setRealTimeout } from "node:timers";
 import { fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { HeldHandlerWaits } from "../../../src/core/extensions/handler-budget.ts";
+import { type ExtensionHandlerStall, HeldHandlerWaits } from "../../../src/core/extensions/handler-budget.ts";
 import type { ExtensionAPI, ExtensionError } from "../../../src/core/extensions/types.ts";
 import type { Settings } from "../../../src/core/settings-manager.ts";
 import { createHarness, getAssistantTexts, getUserTexts, type Harness } from "../harness.ts";
@@ -14,7 +14,7 @@ const HANDLER_TIMEOUT_MS = 100;
 const NOTIFICATION = "senpi-monitor:notification";
 const never = (): Promise<void> => new Promise<void>(() => {});
 
-type HeldEvent = "agent_start" | "message_end" | "turn_end" | "agent_settled";
+type HeldEvent = "agent_start" | "message_end" | "turn_end" | "agent_before_settle" | "agent_settled";
 
 function withinRealTime<T>(work: Promise<T>, what: string, ms = 10_000): Promise<T> {
 	return new Promise<T>((resolve, reject) => {
@@ -59,6 +59,10 @@ function holdOnMonitorTurn(event: HeldEvent, capture: { api?: ExtensionAPI }) {
 			pi.on("turn_end", async () => {
 				if (monitorTurn) await holdOnce();
 			});
+		} else if (event === "agent_before_settle") {
+			pi.on("agent_before_settle", async () => {
+				if (monitorTurn) await holdOnce();
+			});
 		} else {
 			pi.on("agent_settled", async () => {
 				if (monitorTurn) await holdOnce();
@@ -75,6 +79,21 @@ function sessionLogEvents(harness: Harness): Array<Record<string, unknown>> {
 		.split("\n")
 		.filter((line) => line.length > 0)
 		.map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+/**
+ * Resolves when the runner reports a stall at `stage`. Wraps the session's stall listener (which writes session.log
+ * synchronously), so the test waits on the report itself rather than on timing.
+ */
+function stallStage(harness: Harness, stage: ExtensionHandlerStall["stage"]): Promise<ExtensionHandlerStall> {
+	const runner = harness.getExtensionRunner();
+	const forward = Reflect.get(runner, "handlerStallListener") as ((stall: ExtensionHandlerStall) => void) | undefined;
+	return new Promise((resolve) => {
+		Reflect.set(runner, "handlerStallListener", (stall: ExtensionHandlerStall) => {
+			forward?.(stall);
+			if (stall.stage === stage) resolve(stall);
+		});
+	});
 }
 
 function customMessageTypes(harness: Harness): string[] {
@@ -108,7 +127,7 @@ describe("senpi#3650 a hung extension handler cannot freeze the session", () => 
 		return { api, errors };
 	}
 
-	it.each<HeldEvent>(["agent_start", "message_end", "turn_end", "agent_settled"])(
+	it.each<HeldEvent>(["agent_start", "message_end", "turn_end", "agent_before_settle", "agent_settled"])(
 		"releases a %s handler that never settles, persists the turn, and delivers a queued steer once",
 		async (event) => {
 			// given an extension whose %s handler never settles on the turn a monitor notification starts
@@ -140,7 +159,7 @@ describe("senpi#3650 a hung extension handler cannot freeze the session", () => 
 		30_000,
 	);
 
-	it.each<HeldEvent>(["agent_start", "turn_end"])(
+	it.each<HeldEvent>(["agent_start", "turn_end", "agent_before_settle"])(
 		"lets the turn deadline release a held %s handler when the handler budget is disabled, and delivers the steer once",
 		async (event) => {
 			// given no handler budget and a 60 s inactivity lease, and a %s handler that never settles
@@ -224,35 +243,44 @@ describe("senpi#3650 a hung extension handler cannot freeze the session", () => 
 		30_000,
 	);
 
-	it("lets Esc release a held handler when the budget and the deadline are both disabled", async () => {
-		// given no handler budget, no turn deadline, and an agent_start handler that never settles
-		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
-		const { api } = await startHeld("agent_start", {
-			extensionEventHandlerWarnMs: 0,
-			extensionEventHandlerTimeoutMs: 0,
-			turn_inactivity_ms: 0,
-			turn_max_runtime_ms: 0,
-		});
-		api.sendMessage({ customType: NOTIFICATION, content: "monitor event", display: false }, { triggerTurn: true });
-		await vi.advanceTimersByTimeAsync(0);
+	it.each(["agent_start", "agent_before_settle"] as const)(
+		"lets Esc release a held %s handler when the budget and the deadline are both disabled",
+		async (handlerEvent) => {
+			// given no handler budget, no turn deadline, and a handler that never settles
+			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
+			const { api } = await startHeld(handlerEvent, {
+				extensionEventHandlerWarnMs: 0,
+				extensionEventHandlerTimeoutMs: 0,
+				turn_inactivity_ms: 0,
+				turn_max_runtime_ms: 0,
+			});
+			api.sendMessage({ customType: NOTIFICATION, content: "monitor event", display: false }, { triggerTurn: true });
+			const steering = harness.session.prompt("late steer", { streamingBehavior: "steer" });
+			await vi.advanceTimersByTimeAsync(0);
 
-		// when the user presses Esc and the abort grace runs out
-		const aborting = harness.session.abort();
-		await vi.advanceTimersByTimeAsync(10_000);
-		vi.useRealTimers();
-		await withinRealTime(aborting, "the abort to finish");
-		await withinRealTime(harness.session.waitForIdle(), "the session to settle after Esc");
+			// when the user presses Esc and the abort grace runs out
+			const aborting = harness.session.abort();
+			await vi.advanceTimersByTimeAsync(10_000);
+			vi.useRealTimers();
+			await withinRealTime(steering, "the steer to be accepted");
+			await withinRealTime(aborting, "the abort to finish");
+			await withinRealTime(harness.session.waitForIdle(), "the session to settle after Esc");
+			await withinRealTime(harness.session.waitForSettledSessionWork(), "session work to settle");
 
-		// then the held handler was released and the session settled
-		expect(harness.session.isStreaming).toBe(false);
-		expect(sessionLogEvents(harness)).toContainEqual(
-			expect.objectContaining({
-				event: "extension_handler_stalled",
-				handlerEvent: "agent_start",
-				stage: "released",
-			}),
-		);
-	}, 30_000);
+			// then the held handler was released, the session settled, and the steer was delivered exactly once
+			expect(harness.session.isStreaming).toBe(false);
+			expect(getUserTexts(harness).filter((text) => text === "late steer")).toHaveLength(1);
+			expect(harness.session.agent.hasQueuedMessages()).toBe(false);
+			expect(sessionLogEvents(harness)).toContainEqual(
+				expect.objectContaining({
+					event: "extension_handler_stalled",
+					handlerEvent,
+					stage: "released",
+				}),
+			);
+		},
+		30_000,
+	);
 
 	it("logs a handler that fails after the host stopped waiting on it", async () => {
 		// given an agent_start handler that rejects 300 ms in, under a 100 ms cap
@@ -274,10 +302,9 @@ describe("senpi#3650 a hung extension handler cannot freeze the session", () => 
 		// when the turn moves on past the cap and the handler then fails
 		await withinRealTime(harness.session.prompt("go"), "the turn");
 		await withinRealTime(harness.session.waitForIdle(), "the session to settle");
+		const lateFailure = stallStage(harness, "late_failure");
 		rejectLate(new Error("late boom"));
-		await late.catch(() => {});
-		await Promise.resolve();
-		await Promise.resolve();
+		await withinRealTime(lateFailure, "the late failure to be reported");
 
 		// then session.log records the late failure with its error
 		expect(sessionLogEvents(harness)).toContainEqual(

@@ -16,6 +16,47 @@
 
 - LOW: the re-arm condition in `TuiMainScreen.handleMouseInput`.
 
+## 2026-10-19 - Never signal a child whose spawn failed (senpi#3706)
+
+### What changed
+
+- `packages/tui/src/autocomplete.ts`: its stop/timeout/abort path signals the child only when it has a pid, instead of calling `kill()` on it directly.
+
+### Why
+
+On Node before 24.22.0 / 26.10.0 (nodejs/node#65052), `kill()` on a child whose spawn failed (no pid) becomes `kill(0, signal)` and signals the caller's own process group, killing senpi and the rest of the terminal's foreground job.
+
+### Why an extension could not handle it
+
+The affected calls are inside core stop paths; nothing outside them owns those child processes.
+
+### Expected merge conflict zones
+
+The single `kill()` call on each listed path's stop/timeout/abort branch.
+
+## 2026-10-19 - herdr Kitty graphics probe (senpi#3698)
+
+### What changed
+
+- `packages/tui/src/terminal-capabilities.ts`: `TerminalCapabilities` gains an optional `imageProbe: "kitty"` set only while image support is still unknown and a runtime probe can settle it.
+- `packages/tui/src/terminal-image.ts`: detection recognizes herdr panes (`TERM_PROGRAM=herdr` / `HERDR_ENV=1`) — images stay off until probed, `imageProbe` is set, and the probe answer is latched process-wide (`setProbedImageProtocol`) so focus-event cache resets re-detect to the same result. Explicit `PI_IMAGE_PROTOCOL` / capability overrides strip the flag and keep precedence.
+- `packages/tui/src/tui.ts`: `TuiBase.start()` writes a 1x1 RGBA Kitty graphics query when the flag is set; `handleTerminalInput` consumes the matching APC reply. OK enables kitty (plus the `CSI 16 t` cell-size query and a repaint); an error, a reply for another id, or silence within 500 ms keeps the text fallback, so graphics sequences are never emitted blind. `stop()` drops a pending probe without resolving the latch.
+- `packages/tui/src/kitty-graphics-probe.ts` (fork-only): query builder, response classifier, timeout constant.
+
+### Why
+
+herdr panes set no environment variable identifying the outer terminal, so env-only detection disabled images inside herdr even when the outer terminal renders Kitty graphics (tool images fell back to `[image: <mime>]`); enabling kitty unconditionally instead leaks raw escape sequences when the outer terminal cannot render them (herdrdev/herdr#5295).
+
+### Why an extension could not handle it
+
+The probe is terminal I/O inside `TuiBase.start()` / `handleTerminalInput()` plus capability detection state in `terminal-image.ts`, both below any extension hook.
+
+### Expected merge conflict zones
+
+- MEDIUM: `detectCapabilitiesFromEnvironment` and the override merge in `packages/tui/src/terminal-image.ts`.
+- LOW: `TuiBase.start()`/`stop()` and the `handleTerminalInput()` consume hooks in `packages/tui/src/tui.ts`; the `TerminalCapabilities` interface in `packages/tui/src/terminal-capabilities.ts`.
+
+
 ## 2026-10-18 - Main-screen hands the wheel back to the terminal while a mouse lease is held (senpi#3604)
 
 ### What changed
@@ -55,6 +96,49 @@
 ### Expected merge conflict zones
 
 - `packages/tui/src/terminal-image.ts`: the WezTerm branch of `detectCapabilitiesFromEnvironment`, the import block, the override merges in `detectCapabilities` and `getCapabilities`, the `setCapabilityOverrides` equality check, and the tail of `imageFallback`.
+
+## 2026-10-18 - WSL and split-delivery Alt+key input reassembly (Refs senpi#3628)
+
+### What changed
+
+- `packages/tui/src/terminal.ts`: `resolveEscapeTimeoutMs` takes an optional `platform` (default `process.platform`) and resolves WSL sessions to the 100ms remote reassembly window (renamed from the SSH-only constant) through the new fork-only `wsl-session.ts` `isWslSession` (env markers plus a `/proc/version` fallback); the plain default rises from 10ms to the standard 50ms.
+- `packages/tui/src/stdin-buffer.ts`: `DEFAULT_ESCAPE_TIMEOUT_MS` rises from 10ms to 50ms, and `process()` releases a pending lone ESC whose arrival gap exceeds the escape window through the fork-only `escape-window.ts` `isStaleEscape` before appending the new chunk. The clock decides, not flush-timer delivery.
+
+### Why
+
+- `packages/tui/src/terminal.ts`: Alt+Q (dequeue) on WSL arrived as ESC and q split across reads on the WSL interop pipe; the 10ms window flushed the ESC alone, so the chord never reached the keybinding layer.
+- `packages/tui/src/stdin-buffer.ts`: the same split on any transport now merges inside the standard 50ms window, and an over-window gap is deterministically released as a lone Escape (clock-gap decision at delivery time, independent of flush-timer ordering).
+
+### Why an extension could not handle it
+
+- `packages/tui/src/terminal.ts`: ProcessTerminal constructs the StdinBuffer internally; the escape reassembly window is terminal-lifecycle state.
+- `packages/tui/src/stdin-buffer.ts`: input framing runs before extensions see any key event.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/terminal.ts`: `resolveEscapeTimeoutMs` and the escape-timeout constants.
+- `packages/tui/src/stdin-buffer.ts`: `DEFAULT_ESCAPE_TIMEOUT_MS` and the `process()` gap accounting.
+
+## 2026-10-18 - Rows inserted above the viewport never scroll stale live-area rows into the scrollback (senpi#3649)
+
+### What changed
+
+- `packages/tui/src/tui.ts`:
+  - The insert-scroll fast path now comes from `planViewportInsertScroll` in the new fork-only `viewport-insert-scroll.ts`. The plan also requires that the rows the scroll region pushes out of the viewport are the new frame's rows at those indexes and that the frame does not read as rows moved down from above (`shiftedBlockMoved`, which identical rows cannot fake); a frame whose rows were inserted at or above the viewport top takes the general repaint paths instead.
+  - `renderHeldRepaint` starts its rewrite where the old viewport's rows moved to (`insertedAboveViewport` in the new fork-only `viewport-shift.ts`), so rows that already sit in the scrollback are not written into it again. A shift counts only when the frame reads as rows moved down from above (`shiftedBlockMoved` in `viewport-shift.ts`: the skipped rows are exactly the rows already in the scrollback right above the old viewport, and the block above that keeps matching the shift holds at least one row that really moved, since identical blank or repeated rows prove nothing) and most old visible rows reappear at it; an in-place re-layout plus an append (the #2836 streamed table) keeps the old start, so no on-screen row goes missing from the scrollback. The rows inserted above stay stale until the existing catch-up replay, as the held contract already allows.
+- `packages/tui/test/regression-3649-live-area-insert-above.test.ts` covers both paths, the catch-up, the multiplexer path, a re-layout plus append under a tall live area, a plain append over identical rows across the viewport top, and an insertion above with identical rows right above the live area.
+
+### Why
+
+- `packages/tui/src/tui.ts`: with a tall /btw panel the live area fills the screen, so a running eval's expanded output grows at or above the viewport top. The scroll-region path then dropped the eval rows and pushed the stale top rows of the live area out of the viewport, and during a turn the held repaint re-pushed the rows above the viewport on every frame, so the panel and the eval output piled up and overwrote each other.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/tui.ts`: the choice of repaint path and the rows written into native scrollback are private renderer state (`previousLines`, viewport top, hardware cursor, synchronized frame writes).
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui.ts`: the `insertScrollPlan` call in `doRender()`, the removed `createViewportInsertScrollPlan` method and `MAX_SCROLL_DIFF_ROWS` constant, and the start row of `renderHeldRepaint()`.
 
 ## 2026-10-12 - Render diagnostics honor the caller's temporary directory (Refs senpi#3064)
 

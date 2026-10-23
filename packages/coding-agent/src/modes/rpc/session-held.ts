@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { readProcessStartMs } from "../../core/extensions/builtin/terminal/process-start-probe.ts";
 import { foreignSessionHolders } from "../../core/foreign-session-holders.ts";
 import { processStartTimeMs } from "../../utils/process-identity.ts";
+import { holderGenerationEnded } from "./host-stalled-evidence.ts";
 import type { RpcInboundRecord } from "./rpc-types.ts";
 import { RPC_ERROR_SESSION_HELD } from "./rpc-types.ts";
 import type { RpcSessionBinding } from "./session-binding.ts";
@@ -48,6 +49,7 @@ const READ_ONLY_OR_CONTROL = new Set<RpcInboundRecord["type"]>([
 	"set_client_info",
 	"extension_ui_response",
 	"extension_ui_progress",
+	"host_response",
 ]);
 
 /** One bounded identity snapshot for all foreign PIDs, never one subprocess per lease. */
@@ -97,6 +99,7 @@ export function sessionHeldCheck(
 	const observedStarts = new Map<number, number | undefined>();
 	return async (sessionFile, sessionId) => {
 		const holders = await foreignSessionHolders(sessionFile, sessionId, {
+			holderEnded: (generation) => holderGenerationEnded(generation),
 			readProcessStartMs: (pid) => {
 				let probe = pidStarts.get(pid);
 				if (!probe) {
