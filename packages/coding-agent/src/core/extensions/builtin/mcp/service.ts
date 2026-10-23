@@ -539,10 +539,10 @@ export class McpService {
 
 	/**
 	 * Await the startup connects the race backgrounded, bounded by `timeoutMs`.
-	 * `attachSession` resolves at the race deadline, so consumers that assemble
-	 * session state from the catalog - the first turn's system prompt - call this
-	 * to OBSERVE the attach. A `"timeout"` result means the turn goes out with
-	 * what has landed so far and the rest arrives on a later turn.
+	 * `attachSession` resolves at the race deadline, so code that must OBSERVE the
+	 * attach's catalog (tests, and hosts that watch the attach from outside; the
+	 * first turn itself awaits the attach promise in `before_agent_start`) calls
+	 * this. A `"timeout"` result means some connects are still running.
 	 *
 	 * An attach (or re-sync) still on the queue has not handed its backgrounded connects over yet, so the queue is
 	 * awaited first, within the same budget: an early call must never read an empty pending set as settled (senpi#4027).
