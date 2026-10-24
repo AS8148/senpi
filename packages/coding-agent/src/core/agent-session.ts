@@ -1450,7 +1450,7 @@ export class AgentSession {
 	}
 	private _pendingCompactionAdmission: PendingCompactionAdmission | undefined = undefined;
 	private readonly _compactionLifecycle = new CompactionLifecycleCoordinator();
-	// Work held by the barrier is a lifecycle fact: its start and its release are edges (senpi#3980).
+	// Work held by the barrier is a lifecycle fact: its release is an edge (senpi#3980).
 	private readonly _sessionWorkBarrier = new SessionWorkBarrier(() => this.refreshLifecycle());
 	/**
 	 * Extension-published activity that outlives a turn (background terminal

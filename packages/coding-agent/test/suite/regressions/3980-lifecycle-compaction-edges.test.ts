@@ -1,5 +1,6 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, expect, it, vi } from "vitest";
+import type { LifecycleSessionBinding } from "../../../src/core/lifecycle-session-binding.ts";
 import type { Harness } from "../harness.ts";
 import { createBoundLifecycleHarness as createHarness, runToAgentIdle } from "../lifecycle-test-harness.ts";
 
@@ -114,4 +115,43 @@ it("writes no lifecycle record after dispose when an in-flight compaction unwind
 
 	// Then nothing appended a lifecycle record to the released session file.
 	expect(append.mock.calls.filter(([type]) => type === "session-lifecycle")).toEqual([]);
+});
+
+it("writes no lifecycle or custody record after dispose through the idle and turn-end paths", async () => {
+	// Given a session whose run is in flight, waiting on its model reply.
+	const h = await createHarness();
+	harnesses.push(h);
+	let releaseReply!: () => void;
+	const replyHeld = new Promise<void>((resolve) => {
+		releaseReply = resolve;
+	});
+	let replyStarted!: () => void;
+	const started = new Promise<void>((resolve) => {
+		replyStarted = resolve;
+	});
+	h.setResponses([
+		async () => {
+			replyStarted();
+			await replyHeld;
+			return fauxAssistantMessage("Reply.");
+		},
+	]);
+	void h.session.prompt("Request").catch(() => undefined);
+	await started;
+	const binding = (h.session as unknown as { _lifecycleBinding: LifecycleSessionBinding })._lifecycleBinding;
+
+	// When the session is disposed and the run's end then reaches the two older write paths: the deferred-turn idle
+	// (controller.idle) and the extension agent_end (binding.turnEnded).
+	h.session.dispose();
+	const append = vi.spyOn(h.session.sessionManager, "appendCustomEntry");
+	binding.controller.idle();
+	await binding.turnEnded({ type: "agent_end", messages: [] });
+	releaseReply();
+
+	// Then nothing appended a lifecycle, child or custody record to the released session file.
+	expect(
+		append.mock.calls.filter(
+			([type]) => type === "session-lifecycle" || type === "work-custody" || type === "child-lifecycle",
+		),
+	).toEqual([]);
 });

@@ -38,6 +38,8 @@ export class LifecycleSessionBinding {
 	private nextRunOrigin: "human" | "automatic" | undefined;
 	private restoring: Promise<void> | undefined;
 	private retireFactEvents: (() => void) | undefined;
+	/** After dispose() nothing the controller decides is written or emitted: the session file is no longer this session's. */
+	private disposed = false;
 
 	constructor(session: AgentSession, host: LifecycleBindingHost) {
 		this.session = session;
@@ -55,15 +57,17 @@ export class LifecycleSessionBinding {
 						(isRecord(entry.data) && entry.data.sessionId === session.sessionId),
 				),
 			append: (record: LifecycleRecord) => {
-				host.append("session-lifecycle", record);
+				if (!this.disposed) host.append("session-lifecycle", record);
 			},
 			appendChild: (report) => {
-				host.append("child-lifecycle", { ...report, sessionId: session.sessionId });
+				if (!this.disposed) host.append("child-lifecycle", { ...report, sessionId: session.sessionId });
 			},
 			appendCustody: (record) => {
-				host.append("work-custody", { ...record, sessionId: session.sessionId });
+				if (!this.disposed) host.append("work-custody", { ...record, sessionId: session.sessionId });
 			},
-			emit: (event) => host.emit(event),
+			emit: (event) => {
+				if (!this.disposed) host.emit(event);
+			},
 			readRuntime: () => readLifecycleRuntimeFacts(session),
 		});
 		this.unsubscribeHuman = bindLifecycleHumanInput(session, (event) => this.controller.humanInput(event.at));
@@ -275,6 +279,7 @@ export class LifecycleSessionBinding {
 	}
 
 	dispose(): void {
+		this.disposed = true;
 		this.refreshGeneration++;
 		this.retireFactEvents?.();
 		this.unsubscribeHuman();
