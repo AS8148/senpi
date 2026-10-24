@@ -16,6 +16,14 @@ function runElicitationForm(
 }
 
 describe("private MRTR consent", () => {
+	it.each(["2026-02-30T12:00:00Z", "2026-10-24T24:00:00Z"])("rejects invalid calendar defaults (%s)", (value) => {
+		expect(
+			validateMrtrForm({
+				type: "object",
+				properties: { value: { type: "string", format: "date-time", default: value } },
+			}),
+		).toBe(false);
+	});
 	it("empty forms still require explicit submission", async () => {
 		const select = vi.fn().mockResolvedValue(undefined);
 		const result = await runElicitationForm({ select, input: vi.fn(), confirm: vi.fn() }, "question", {

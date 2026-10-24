@@ -160,6 +160,7 @@ function pipeStderr(
 ): void {
 	let pending = "";
 	let undecided = "";
+	let stderrEnded = false;
 	const stderr = transport.stderr;
 	if (stderr === undefined || stderr === null) return;
 	const append = (text: string) => {
@@ -169,7 +170,13 @@ function pipeStderr(
 		for (const line of lines) if (line.length > 0) logger.stderr(line);
 	};
 	protocol.resolveStdioDiagnostics = (modern) => {
-		if (!modern) append(undecided);
+		if (!modern) {
+			append(undecided);
+			if (stderrEnded && pending.length > 0) {
+				logger.stderr(pending);
+				pending = "";
+			}
+		}
 		undecided = "";
 		if (modern) pending = "";
 	};
@@ -199,9 +206,11 @@ function pipeStderr(
 		"end",
 		"transport.stderr.end",
 		() => {
+			stderrEnded = true;
 			if (protocol.legacy && protocol.version === undefined && pending.length > 0) logger.stderr(pending);
 			pending = "";
-			undecided = "";
+			// A crashed probe is classified after EOF; only that decision may release or discard its buffer.
+			if (protocol.legacy || protocol.version !== undefined) undecided = "";
 		},
 		sink,
 	);

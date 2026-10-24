@@ -21,6 +21,7 @@ export interface ModernProtocolState {
 	version?: string;
 	legacy?: boolean;
 	resolveStdioDiagnostics?: (modern: boolean) => void;
+	activateRequests?: () => void;
 }
 export type MrtrClock = McpClock;
 const states = new WeakMap<Client, ModernProtocolState>();
@@ -161,21 +162,20 @@ export async function createMcpRequestClient(
 		{ capabilities: MCP_CLIENT_ELICITATION_CAPABILITY },
 	);
 	await configureMcpElicitation(client, uiProvider);
-	await installModernRequestAdapter(client, protocol, mcpElapsedClock, readCredential);
+	installModernRequestAdapter(client, protocol, mcpElapsedClock, readCredential);
 	return client;
 }
 
 /** One instance-local adapter. Captured SDK requests retain ID allocation and final output-schema validation. */
-export async function installModernRequestAdapter(
+export function installModernRequestAdapter(
 	client: Client,
 	protocol: ModernProtocolState,
 	clock: MrtrClock = mcpElapsedClock,
 	readCredential: () => string | undefined = () => undefined,
-): Promise<void> {
-	const { safeParse } = await loadMcpSdkZodCompat();
+): void {
 	const sdkRequest = client.request.bind(client);
 	states.set(client, protocol);
-	client.request = async <T extends AnySchema>(
+	const requestWithMrtr: Client["request"] = async <T extends AnySchema>(
 		request: Request,
 		schema: T,
 		options?: RequestOptions,
@@ -248,6 +248,7 @@ export async function installModernRequestAdapter(
 		if (sdkOptions.signal?.aborted) onCallerAbort();
 		if (origin?.signal.aborted) onOwnerAbort();
 		try {
+			const { safeParse } = await interrupted(loadMcpSdkZodCompat(), operation.signal);
 			await resolveAuthority();
 			for (let round = 0; ; round++) {
 				await resolveAuthority();
@@ -367,6 +368,11 @@ export async function installModernRequestAdapter(
 			origin?.presentation?.signal.removeEventListener("abort", onPresentationLost);
 		}
 	};
+	// Preserve the SDK method itself until negotiation positively selects modern.
+	protocol.activateRequests = () => {
+		client.request = requestWithMrtr;
+	};
+	if (protocol.version !== undefined) protocol.activateRequests();
 }
 
 function interrupted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {

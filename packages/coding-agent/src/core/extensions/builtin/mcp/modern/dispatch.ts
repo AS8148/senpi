@@ -93,6 +93,7 @@ export async function materializeNegotiatedTransport(
 			(version) => {
 				stdioModernVersion = version;
 				protocol.version = version;
+				protocol.activateRequests?.();
 				protocol.resolveStdioDiagnostics?.(true);
 			},
 			undefined,

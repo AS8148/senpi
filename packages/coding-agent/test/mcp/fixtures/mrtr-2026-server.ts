@@ -27,6 +27,8 @@ export class MrtrScript {
 	readonly requests: FixtureRequest[] = [];
 	readonly methods = new Set(["tools/call", "resources/read", "prompts/get"]);
 	outputSchema?: Record<string, unknown>;
+	tools?: Array<{ name: string; inputSchema: { type: "object" } }>;
+	onRequest?: (request: FixtureRequest) => Promise<void>;
 	disconnectAfterRound?: number;
 	readonly notifications: Array<Record<string, unknown>> = [];
 	readonly barriers = new Map<string, Array<(request: FixtureRequest) => void>>();
@@ -65,7 +67,7 @@ export class MrtrScript {
 			});
 		if (request.method === "tools/list" && !this.methods.has("tools/list"))
 			return result({
-				tools: [
+				tools: this.tools ?? [
 					{
 						name: "fixture",
 						inputSchema: { type: "object" },
@@ -110,6 +112,7 @@ export async function startMrtrServer(script: MrtrScript, sse = false) {
 		const chunks: Buffer[] = [];
 		for await (const chunk of request) chunks.push(Buffer.from(chunk));
 		const message = JSON.parse(Buffer.concat(chunks).toString()) as FixtureRequest;
+		await script.onRequest?.(message);
 		if (message.method === "notifications/cancelled") {
 			script.emit("cancelReceived", message);
 			response.writeHead(204).end();

@@ -79,11 +79,16 @@ function validValue(property: Property, value: unknown): value is Value {
 				Number.isFinite(Date.parse(value)) &&
 				new Date(value).toISOString().slice(0, 10) === value
 			);
-		case "date-time":
+		case "date-time": {
+			const date = value.slice(0, 10);
 			return (
-				/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value) &&
-				Number.isFinite(Date.parse(value))
+				/^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.test(
+					value,
+				) &&
+				Number.isFinite(Date.parse(value)) &&
+				new Date(date).toISOString().slice(0, 10) === date
 			);
+		}
 		default:
 			return true;
 	}
