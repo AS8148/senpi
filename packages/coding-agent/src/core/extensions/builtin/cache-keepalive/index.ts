@@ -1,6 +1,7 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
 	type Context,
+	costCardAt,
 	isAnthropicApiBaseUrl,
 	type Model,
 	resolvePromptCacheTtlSeconds,
@@ -242,7 +243,8 @@ export function createCacheKeepAliveExtension(
 			}
 		}
 
-		pi.on("session_start", (_event, nextCtx) => {
+		pi.on("session_start", (event, nextCtx) => {
+			if (event.sizesOnly) return;
 			prewarm.start(nextCtx);
 			stop("session-restart");
 			ctx = nextCtx;
@@ -336,15 +338,14 @@ function projectedPingCost(
 	usage: { input: number; cacheRead: number; cacheWrite: number } | undefined,
 ): number {
 	const promptTokens = (usage?.input ?? 0) + (usage?.cacheRead ?? 0) + (usage?.cacheWrite ?? 0);
-	return (promptTokens * Math.max(model.cost.cacheRead, model.cost.cacheWrite)) / 1_000_000;
+	const rates = costCardAt(model.cost, Date.now());
+	return (promptTokens * Math.max(rates.cacheRead, rates.cacheWrite)) / 1_000_000;
 }
 
 function actualPingCost(model: Model<any>, usage: { input: number; cacheRead: number; cacheWrite: number }): number {
+	const rates = costCardAt(model.cost, Date.now());
 	return (
-		(usage.cacheRead * model.cost.cacheRead +
-			usage.cacheWrite * model.cost.cacheWrite +
-			usage.input * model.cost.input) /
-		1_000_000
+		(usage.cacheRead * rates.cacheRead + usage.cacheWrite * rates.cacheWrite + usage.input * rates.input) / 1_000_000
 	);
 }
 

@@ -1,3 +1,194 @@
+## 2026-10-22 - Anthropic stable-prefix cache checkpoints (senpi#3242)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `convertMessages` puts `cache_control` on the last `text`/`tool_use` block of an assistant message carrying `promptCacheBreakpoint` (never on a thinking block). Two hints are honoured when the system block holds a checkpoint (OAuth identity or a system prompt), and the second takes the tools checkpoint's slot because the system checkpoint covers the tools before it. Otherwise only the oldest hint is honoured. A hinted request drops the preceding tool-loop checkpoint, so a request never exceeds four breakpoints; a turn with ten or more parallel tool calls can then push the previous entry past the 20-block lookback and re-write the tail since the cut (bounded by the 10% block budget).
+- `packages/ai/src/api/pi-messages.ts`: strips `promptCacheBreakpoint` from assistant messages before sending, because the pi-messages wire carries `context.messages` as they are.
+
+### Why
+
+- `packages/ai/src/api/anthropic-messages.ts`: Anthropic finds earlier cache entries only within about 20 blocks before a breakpoint, and the breakpoints sat at the end of the conversation. A context-reduction step's request therefore read only the system prefix and re-wrote everything after it (400K-780K tokens per step on 1M windows in the reports). A checkpoint at the last message the frontier leaves unchanged lets the next step read that prefix.
+- `packages/ai/src/api/pi-messages.ts`: the pi-messages wire carries `context.messages` as they are, so a request-local hint must not leak onto it.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/anthropic-messages.ts`: breakpoint placement is the adapter's own request construction, after every extension payload hook.
+- `packages/ai/src/api/pi-messages.ts`: the adapter serializes the message list itself.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/api/anthropic-messages.ts`: `buildParams` (marker count, `toolCacheControl`, the `convertMessages` call), `convertMessages` (assistant branch, final checkpoint block) and the new `markAssistantMessageCacheCheckpoint`.
+- `packages/ai/src/api/pi-messages.ts`: the `context.messages` mapping in the request payload.
+
+## 2026-10-21 - usage.reasoning is left unset when the provider reports no reasoning count (senpi#3879)
+
+### What changed
+
+- `packages/ai/src/api/openai-completions.ts`: `usage.reasoning` is set only when `completion_tokens_details.reasoning_tokens` is a finite number (through `utils/reported-count.ts` `reportedCount`); absent, `null` or non-finite leaves it unset, and a reported 0 stays 0. It used to be `|| 0`.
+- `packages/ai/src/api/openai-responses-shared.ts`: `usage.reasoning` is set only when `output_tokens_details.reasoning_tokens` is a finite number (through `utils/reported-count.ts` `reportedCount`); absent, `null` or non-finite leaves it unset, and a reported 0 stays 0. It used to be `|| 0`.
+- `packages/ai/src/api/google-generative-ai.ts`: `usage.reasoning` is set only when `usageMetadata.thoughtsTokenCount` is a finite number (through `utils/reported-count.ts` `reportedCount`); absent, `null` or non-finite leaves it unset, and a reported 0 stays 0. It used to be `|| 0`.
+- `packages/ai/src/api/google-vertex.ts`: `usage.reasoning` is set only when `usageMetadata.thoughtsTokenCount` is a finite number (through `utils/reported-count.ts` `reportedCount`); absent, `null` or non-finite leaves it unset, and a reported 0 stays 0. It used to be `|| 0`.
+
+### Why
+
+- `packages/ai/src/api/openai-completions.ts`: `Usage.reasoning` is documented as "left undefined by providers that don't" expose a breakdown, but these adapters zero-filled it, so a client could not tell a reported zero from no data and showed "Reasoning 0" for providers that never report it (desktop #3729 review).
+- `packages/ai/src/api/openai-responses-shared.ts`: `Usage.reasoning` is documented as "left undefined by providers that don't" expose a breakdown, but these adapters zero-filled it, so a client could not tell a reported zero from no data and showed "Reasoning 0" for providers that never report it (desktop #3729 review).
+- `packages/ai/src/api/google-generative-ai.ts`: `Usage.reasoning` is documented as "left undefined by providers that don't" expose a breakdown, but these adapters zero-filled it, so a client could not tell a reported zero from no data and showed "Reasoning 0" for providers that never report it (desktop #3729 review).
+- `packages/ai/src/api/google-vertex.ts`: `Usage.reasoning` is documented as "left undefined by providers that don't" expose a breakdown, but these adapters zero-filled it, so a client could not tell a reported zero from no data and showed "Reasoning 0" for providers that never report it (desktop #3729 review).
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/openai-completions.ts`: usage parsing happens inside the adapter's stream before any extension sees the message.
+- `packages/ai/src/api/openai-responses-shared.ts`: usage parsing happens inside the adapter's stream before any extension sees the message.
+- `packages/ai/src/api/google-generative-ai.ts`: usage parsing happens inside the adapter's stream before any extension sees the message.
+- `packages/ai/src/api/google-vertex.ts`: usage parsing happens inside the adapter's stream before any extension sees the message.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/api/openai-completions.ts`, the `reasoning` line of the usage object.
+- LOW: `packages/ai/src/api/openai-responses-shared.ts`, the `reasoning` line of the usage object.
+- LOW: `packages/ai/src/api/google-generative-ai.ts`, the `reasoning` line of the usage object.
+- LOW: `packages/ai/src/api/google-vertex.ts`, the `reasoning` line of the usage object.
+
+## 2026-10-22 - Replace Biome with oxlint and oxfmt (senpi#3976)
+
+### What changed
+
+- `packages/ai/src/api/google-shared.ts`: the empty `providerNative` branch gains a comment saying those blocks are not replayed to Google (oxlint `no-lone-blocks`).
+- `packages/ai/src/api/openai-completions.ts`: an `oxlint-disable-next-line eslint/no-unassigned-vars` comment on `streamedReasoningDetails`, citing senpi#3934, which tracks the lost serialize-once.
+
+### Why
+
+- The repository moved lint and format from Biome to oxlint 1.89.0 and oxfmt 0.74.0 (senpi#3976). oxlint reports this site where Biome did not; the change keeps behaviour identical.
+
+### Why an extension could not handle it
+
+- Lint configuration and source comments are read by the linter before any agent code runs.
+
+### Expected merge conflict zones
+
+- The `providerNative` branch of the Google message conversion and the reasoning-details declaration in `openai-completions.ts`. senpi#3934 removes the disable comment when it restores the assignment.
+
+## 2026-10-21 - Responses cache affinity follows the stable prefix (omo#10775)
+
+### What changed
+
+- `packages/ai/src/api/openai-prompt-cache.ts`: derives a bounded, versioned key from model id, leading instructions, and the sorted tool schema set, excluding session ids and conversation messages.
+- `packages/ai/src/api/openai-responses.ts`, `packages/ai/src/api/openai-codex-responses.ts`, and `packages/ai/src/api/azure-openai-responses.ts`: use that derivation whenever caching is enabled, including native GPT-5.6+ requests and prewarm. Subscription transport headers and WebSocket ownership remain session-scoped.
+- `packages/ai/src/api/openai-responses-shared.ts`: emits Responses tools in name order without mutating the caller's array.
+
+### Why
+
+- `packages/ai/src/api/openai-prompt-cache.ts`: session UUID keys prevent new sessions and task children with identical prefixes from sharing cache affinity.
+- `packages/ai/src/api/openai-responses.ts`, `packages/ai/src/api/openai-codex-responses.ts`, and `packages/ai/src/api/azure-openai-responses.ts`: all Responses transports need the same prefix-derived body key so API-key, subscription, Azure, prewarm, and compaction calls agree.
+- `packages/ai/src/api/openai-responses-shared.ts`: stable tool ordering is required for identical provider-prefix bytes.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/openai-prompt-cache.ts`: the derivation is shared provider behavior, not a session extension concern.
+- `packages/ai/src/api/openai-responses.ts`, `packages/ai/src/api/openai-codex-responses.ts`, and `packages/ai/src/api/azure-openai-responses.ts`: these adapters construct cache fields before extension payload hooks and are shared by every session.
+- `packages/ai/src/api/openai-responses-shared.ts`: the adapter serializes tool schemas after extension tool registration, so an extension cannot enforce transport-wide ordering.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/api/openai-prompt-cache.ts`: shared derivation and clamp.
+- `packages/ai/src/api/openai-responses.ts`, `packages/ai/src/api/openai-codex-responses.ts`, and `packages/ai/src/api/azure-openai-responses.ts`: imports and request builders.
+- `packages/ai/src/api/openai-responses-shared.ts`: `convertResponsesTools`.
+
+## 2026-10-20 - chatgpt-subscription failures carry a classified providerDiagnostic (senpi#3771)
+
+### What changed
+
+- `packages/ai/src/api/openai-codex-responses.ts`: the HTTP refusal, the in-stream `error` event and the `response.failed` event attach a diagnostic from `codexHttpProviderDiagnostic` / `codexEventProviderDiagnostic` to the error they throw, and the outer `catch` copies `readProviderDiagnostic(error) ?? transportProviderDiagnosticFromError(error)` onto `output.providerDiagnostic` for `stopReason: "error"`. `response.failed` uses `describeChatGptUsageLimitEvent` on its nested `response.error` like the `error` branch does.
+- `packages/ai/src/api/openai-codex-responses/provider-diagnostic.ts` (fork-only): reads `error.code`/`error.type`, the inline or HTTP status, and `resets_at`/`resets_in_seconds`. A recognized code classifies (`usage_limit_reached`, `usage_not_included` -> `quota`; `rate_limit_exceeded` -> `rate_limit`) with `resetsAt`; otherwise a classifying status, then a safe lowercase error type (or the event type) as the code of an `unknown` diagnostic.
+
+### Why
+
+The adapter never minted a diagnostic, so every ChatGPT-subscription failure, a usage limit included, read "could not be classified (chatgpt-subscription, no code)".
+
+### Why an extension could not handle it
+
+The diagnostic rides the provider's thrown error inside the adapter, before any extension sees the failure.
+
+### Expected merge conflict zones
+
+- LOW: the HTTP `throw` in the retry loop, the outer `catch` of `stream()`, and the `error` / `response.failed` branches of `mapCodexEvents` in `openai-codex-responses.ts`.
+
+## 2026-10-19 - ChatGPT subscription Fast and Ultrafast costs use the included-usage rates (oh-my-openagent#10540)
+
+### What changed
+
+- `packages/ai/src/api/openai-codex-responses.ts`: `getServiceTierCostMultiplier` returns 2.5 for `priority`/`fast` on every model (was 2, or 2.5 for `gpt-5.5` only) and 8 for GPT-6 Astra / GPT-6.1 Sol `ultrafast` (was 6). The `openai-responses.ts` adapter keeps the API rates (2x, 6x).
+
+### Why
+
+- This adapter serves only the ChatGPT subscription lane, which spends the plan's included usage. [OpenAI's Codex pricing page](https://developers.openai.com/codex/pricing) meters Fast at 2.5x Standard and Ultrafast at 8x against included usage; 2x and 6x are the purchased-credit and API rates. A Geeky · Normal run on `gpt-6.1-sol-fast` used about 60% of a weekly limit while the shown cost tracked the lower rate.
+
+### Why an extension could not handle it
+
+- The multiplier is applied inside the adapter after the terminal usage event; an extension never sees the pre-multiplier cost.
+
+### Expected merge conflict zones
+
+- LOW: `getServiceTierCostMultiplier` in `openai-codex-responses.ts`.
+
+## 2026-10-18 - Anthropic request bodies are gzip-compressed where the endpoint accepts it (senpi#3643)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `createClient` receives `withGzipRequestBodies(options.fetch)` when `getAnthropicCompat(model).supportsGzipRequestBody` is true, so the SDK's fetch sends 4096+ character bodies with `Content-Encoding: gzip`.
+- `packages/ai/src/api/warm-prompt-cache.ts`: the Anthropic prewarm client wraps its fetch the same way.
+
+### Why
+
+- Claude Code 2.1.302 gzips first-party request bodies; long sessions re-upload 0.5-8 MB of JSON per turn, which gzip shrinks 2.2x at the median (measured in senpi#3643).
+
+### Why an extension could not handle it
+
+- The SDK client and its fetch are built inside the adapter; an extension can supply `options.fetch` per call but cannot apply a per-model compat default to every request and to the prewarm.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/api/anthropic-messages.ts` import block and the `createClient(...)` call in `openClient`; `packages/ai/src/api/warm-prompt-cache.ts` import block and the `new Anthropic({ fetch })` line.
+
+## 2026-10-14 - Shared Vertex ADC resolution for Model Garden open models
+
+### What changed
+
+- `packages/ai/src/api/google-vertex.ts`: `buildGoogleAuthOptions` and the GOOGLE_CLOUD_PROJECT/GCLOUD_PROJECT lookup move to the new fork-only, browser-safe `google-vertex-env.ts` and are imported back, unchanged in behavior.
+- `packages/ai/src/api/google-vertex-adc.ts` (fork-only): `getVertexAdcAccess` returns an ADC access token, target project and quota project through google-auth-library, the same credential chain `@google/genai` uses; it is Node-only and reached solely through its lazy boundary `google-vertex-adc.lazy.ts`, so browser bundles that include `google-vertex.ts` never pull google-auth-library.
+
+### Why
+
+- `packages/ai/src/api/google-vertex.ts`: sharing its credential and project environment helpers lets the `vertex-model-garden` builtin call Vertex Model Garden open models through the OpenAI-compatible endpoint with a bearer token, without a second credential path.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/google-vertex.ts`: the extension owns registration and transport, but the credential and project environment helpers it must reuse were private to this adapter; sharing them requires moving them to an importable module.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/api/google-vertex.ts`, the import block and the two helper bodies (`buildGoogleAuthOptions`, `resolveProject`).
+
+## 2026-10-21 - Advertised [CC] floor 2.1.306 (senpi#3854)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `claudeCodeVersion` moves 2.1.296 -> 2.1.306 to match the @anthropic-ai/claude-agent-sdk 0.3.306 bump in `packages/coding-agent/package.json` (and its regenerated `install-lock`).
+
+### Why
+
+- The Releasability gate's SDK currency check failed on main once 0.3.305/0.3.306 were published; the floor must track the pinned SDK's shipped [CC] version (senpi#2033).
+
+### Why an extension could not handle it
+
+- The advertised [CC] identity is a build-time constant; it is not runtime extension surface.
+
+### Expected merge conflict zones
+
+- The single `claudeCodeVersion` declaration line.
+
+
 ## 2026-10-13 - Advertised [CC] floor 2.1.296 (senpi#3258)
 
 ### What changed
@@ -36,6 +227,28 @@
 ### Expected merge conflict zones
 
 - LOW: one more `Set` beside `toolReferenceReplayFallbacks` and its cleanup loop, one demotion call in `createRequest`, and one retry branch in the fork-only retry block; `anthropic-web-search-expiry.ts` is fork-only.
+
+## 2026-10-12 - Remove the /llama llama.cpp integration (senpi#3202)
+
+### What changed
+
+- `packages/ai/src/api/llama-cpp-classify.ts`: deleted. This classifier API existed only to back the removed `/llama` extension; it had no consumers outside it.
+- `packages/ai/src/api/llama-cpp-classify.lazy.ts`: deleted alongside its eager twin.
+
+### Why
+
+- `packages/ai/src/api/llama-cpp-classify.ts`: Q ordered removal of the `/llama` feature; this backend had no other consumers.
+- `packages/ai/src/api/llama-cpp-classify.lazy.ts`: the lazy entry point exists only for that deleted backend.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/llama-cpp-classify.ts`: an extension cannot remove a shipped API implementation.
+- `packages/ai/src/api/llama-cpp-classify.lazy.ts`: an extension cannot remove its shipped lazy entry point.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/api/llama-cpp-classify.ts`: deleted; upstream edits will conflict.
+- `packages/ai/src/api/llama-cpp-classify.lazy.ts`: deleted alongside.
 
 ## 2026-10-11 - Replay opted-in GLM server-result pairs (senpi#3125 delta)
 
@@ -273,3 +486,79 @@ The Mistral message mapping runs inside the provider adapter after every extensi
 ### Expected merge conflict zones
 
 - LOW: the `msg.role === "user"` branch of `toChatMessages` and the new `appendUserMessage` helper above it in `mistral-conversations.ts`.
+
+## 2026-10-13 - Generation-4 ids use discrete thinking levels (senpi#3292)
+
+### What changed
+
+- `packages/ai/src/api/google-shared.ts`: `usesGoogleThinkingLevel` also matches generation-4 and later ids through `isGoogleGeneration4OrLaterModelId` (`packages/ai/src/google-thinking-generation.ts`, anchored to a complete id or a `models/` namespace), so both adapters (`google-generative-ai`, `google-vertex`) send `thinkingLevel` and, when thinking is off, clamp to the lowest supported level instead of sending `thinkingBudget`.
+
+### Why
+
+The provider documents that its generation-4 models support only `LOW`, `MEDIUM` and `HIGH`, and reject a thinking budget (or `MINIMAL`) with HTTP 400. Under the generation-3-only match, every request to those models failed.
+
+### Why an extension could not handle it
+
+The thinking wire form is chosen inside the shared Google request builder, below any extension hook.
+
+### Expected merge conflict zones
+
+The id matchers in `usesGoogleThinkingLevel`.
+
+## 2026-10-16 - One mid-stream WebSocket drop no longer moves a chatgpt-subscription session to SSE (senpi#3442)
+
+### What changed
+
+- `packages/ai/src/api/openai-codex-responses.ts`: the WebSocket catch block passes the failure phase (`before_message_stream_start` or `after_message_stream_start`) to `recordWebSocketFailure`, and a completed WebSocket response calls `recordWebSocketSuccess`.
+- `packages/ai/src/api/openai-codex-responses/fallback-state.ts`: `recordWebSocketFailure` takes that phase. A failure before output still arms the 60 s SSE cooldown at once. A failure after output starts arms it only on the second one in a row (`CODEX_WEBSOCKET_MID_STREAM_FAILURES_BEFORE_FALLBACK`); `recordWebSocketSuccess` and `clearWebSocketFallbackState` reset the run.
+
+### Why
+
+Every mid-stream close (1006 reset, 1011, 1001, even 1000) armed the cooldown, so the agent's retry of that turn and every request in the next minute went over SSE. Upstream Codex retries a dropped stream on a fresh WebSocket and switches to HTTPS only after `stream_max_retries` (`codex-rs/core/src/responses_retry.rs`). A before-output failure keeps the cooldown because that same request is served over SSE with no visible error.
+
+### Why an extension could not handle it
+
+Transport selection and the fallback cooldown live inside the provider adapter, below every extension hook.
+
+### Expected merge conflict zones
+
+- MEDIUM: the WebSocket `catch` block in `stream()` of `openai-codex-responses.ts` (upstream calls a two-argument `recordWebSocketFailure` that adds the session to a permanent fallback set).
+- LOW: `fallback-state.ts` has no upstream counterpart.
+
+## 2026-10-18 - ChatGPT usage-limit refusals name the limit and the next step (senpi#3615)
+
+### What changed
+
+- `packages/ai/src/api/openai-codex-responses.ts`: `parseErrorResponse` takes the response headers and delegates the usage-limit wording to `describeChatGptUsageLimitResponse`; the in-stream `error` event branch uses `describeChatGptUsageLimitEvent` for a `usage_limit_reached`/`usage_not_included` event before falling back to the `Codex error:` text.
+- `packages/ai/src/api/chatgpt-usage-limit.ts` (fork-only): reads `x-codex-rate-limit-reached-type` and `x-codex-credits-has-credits` next to the body's `plan_type` and `resets_at`, and states the workspace-credits, spend-cap, has-credits or plan case plus the ways to keep going. Codex's free-form `x-codex-promo-message` is left out: a model name in it would make the fallback layer scope the limit to one model. Its closing sentence starts with `ACCOUNT_LIMIT_NEXT_STEP_LEAD` from `utils/provider-failure-description.ts`, whose account-limit projection keeps any message carrying that lead as written (retry marker stripped) instead of replacing it with the generic switch-provider sentence (seen in CLI QA: the projection hid the new text). The dependency runs api -> utils so the `./utils/*` and `./models` entry graphs stay within budget.
+
+### Why
+
+Every refusal read "You have hit your ChatGPT usage limit (<plan> plan)." whether the account had credits ChatGPT did not apply, the workspace ran out of credits, or a spend cap was hit, and it never said what to do. Codex CLI reads the same headers (`codex-rs/protocol/src/error.rs`). It sends no credit opt-in flag, so the wording is the part we can match.
+
+### Why an extension could not handle it
+
+The error text is built inside the provider adapter from the raw response before any extension sees the failure, and the headers are gone by then.
+
+### Expected merge conflict zones
+
+- LOW: `parseErrorResponse` in `openai-codex-responses.ts` (signature gains `headers`) and the `type === "error"` branch of `mapCodexEvents`.
+
+## 2026-10-19 - Debug-flagged request skeleton log for every Anthropic request (senpi#3727)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-request-shape-log.ts` (new): when `SENPI_DEBUG_REQUEST_SHAPE` names a file, each request appends one JSON line with the time, provider, model and, per message index, the role plus each block's type and `id` / `tool_use_id`. No text, input, thinking or result content is written; the file is created with mode 0600.
+- `packages/ai/src/api/anthropic-messages.ts`: `createRequest`'s `send` logs the exact params of every attempt (after every sanitizer) before calling the client, because the SDK throws on a non-2xx and the rejected attempt is the one to rebuild. Main turns, side requests (compaction, titles, summaries) and the forced-tool-choice / unsigned-thinking / expired-search retries are all covered.
+
+### Why
+
+A 400 named `messages.1` while the reconstructed main-turn payload had the pair at `messages.8`; without the sent shape the failing request cannot be rebuilt.
+
+### Why an extension could not handle it
+
+`before_provider_request` runs before the provider's own sanitizers rewrite the payload, so an extension would log a different shape than the one sent, and side requests bypass it.
+
+### Expected merge conflict zones
+
+- `anthropic-messages.ts`: the import block and the end of `createRequest`.

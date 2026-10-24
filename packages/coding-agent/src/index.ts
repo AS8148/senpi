@@ -15,6 +15,7 @@ export {
 	VERSION,
 } from "./config.ts";
 export {
+	type AgentAbortCause,
 	AgentSession,
 	type AgentSessionConfig,
 	type AgentSessionEvent,
@@ -339,6 +340,22 @@ export {
 	createWriteTool,
 	type PromptTemplate,
 } from "./core/sdk.ts";
+export type {
+	ChildLifecycleReport,
+	DeliveryTicketId,
+	HumanWait,
+	LifecycleApi,
+	LifecycleHold,
+	LifecycleWaits,
+	ObligationKind,
+	ObligationToken,
+	SelfSettleResult,
+	SessionLifecycle,
+	SessionLifecycleEvent,
+	SessionLifecycleState,
+	SpawnedBy,
+	WorkObligations,
+} from "./core/session-lifecycle-types.ts";
 export {
 	type BranchSummaryEntry,
 	buildContextEntries,
@@ -509,6 +526,7 @@ export {
 	type HostGcOptions,
 	type HostGcResult,
 	type HostGenerationRow,
+	type HostHolder,
 	type HostLaunchSpec,
 	type HostLaunchSpecCore,
 	HostLaunchSpecError,

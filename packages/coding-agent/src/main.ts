@@ -45,6 +45,8 @@ import { writeHelpFlagsCache } from "./cli/help-flags-cache.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
 import { isModelsDiscoverCommand, runModelsDiscoverCommand } from "./cli/models-command.ts";
+import { printPromptSizes } from "./cli/print-prompt-sizes.ts";
+import { pipedStdinOptions } from "./cli/piped-stdin-options.ts";
 import { exitAfterOutput, printThenExit } from "./cli/print-then-exit.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import { prepareSessionOpening } from "./cli/session-opening.ts";
@@ -54,6 +56,7 @@ import {
 	shouldShowStartupLoadingIndicator,
 } from "./cli/startup-loading-indicator.ts";
 import { shouldRunFirstTimeSetup, showFirstTimeSetup, showStartupSelector } from "./cli/startup-ui.ts";
+import { resolveToolRuntime, type ToolRuntimeKind } from "./cli/tool-runtime.ts";
 import {
 	APP_NAME,
 	DISPLAY_VERSION,
@@ -92,7 +95,7 @@ import { ModelRuntime } from "./core/model-runtime.ts";
 import { markMovedSessions, movedHereSessionToContinue, withMovedSessions } from "./core/moved-sessions.ts";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.ts";
 import { recordProcessLifetime } from "./core/process-crash-record.ts";
-import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
+import { type AppMode, presetTrustsProject, resolveProjectTrusted } from "./core/project-trust.ts";
 import { resolveResumeTarget } from "./core/resume-target.ts";
 import type { CreateAgentSessionOptions } from "./core/sdk.ts";
 import {
@@ -102,10 +105,11 @@ import {
 	type SessionCwdIssue,
 } from "./core/session-cwd.ts";
 import { sessionExtensionFlagValues } from "./core/session-extension-flags.ts";
-import { assertValidSessionId, SessionManager } from "./core/session-manager.ts";
+import { assertValidSessionId, SessionManager, sessionFileNameId } from "./core/session-manager.ts";
 import { classifySessionRepository, readSessionCwd, rebindSessionFile } from "./core/session-rebind.ts";
 import { collectSettingsDiagnosticsWithContext } from "./core/settings-diagnostics.ts";
 import { SettingsManager } from "./core/settings-manager.ts";
+import { startSubscriptionUsagePolling } from "./core/subscription-limits/usage-poller.ts";
 import { type ClampedThinkingSelection, formatThinkingClampWarning } from "./core/thinking-levels.ts";
 import { printTimings, recordTiming, resetTimings, time } from "./core/timings.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
@@ -120,38 +124,37 @@ import { AUTO_TITLE_SESSIONS_CAPABILITY, parseClientCapabilities } from "./modes
 import type { PreparableRuntimeFactory, PrepareRuntimeOptions } from "./modes/rpc/host-warm.ts";
 import { dispatchInternalSupervisor } from "./modes/rpc/supervisor-route.ts";
 import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
+import { readPipedStdin } from "./utils/piped-stdin.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
 
 const EXTENSION_LOAD_FAILURE_HINT = `Hint: Start without extensions using "${APP_NAME} -ne".`;
 
 /**
- * Read all content from piped stdin.
- * Returns undefined if stdin is a TTY (interactive terminal).
+ * Auth problems for a run's diagnostics. Each credential notice appears once per process; with
+ * `persistSeen` (a run a person reads) it is also recorded as seen, so later runs stay quiet until
+ * the problem changes (senpi#3486).
  */
-async function readPipedStdin(): Promise<string | undefined> {
-	// If stdin is a TTY, we're running interactively - don't read stdin
-	if (process.stdin.isTTY) {
-		return undefined;
-	}
-
-	return new Promise((resolve) => {
-		let data = "";
-		process.stdin.setEncoding("utf8");
-		process.stdin.on("data", (chunk) => {
-			data += chunk;
-		});
-		process.stdin.on("end", () => {
-			resolve(data.trim() || undefined);
-		});
-		process.stdin.resume();
-	});
+export function collectAuthDiagnostics(
+	authStorage: AuthStorage,
+	context: string,
+	options: { persistSeen: boolean },
+): AgentSessionRuntimeDiagnostic[] {
+	return [
+		...authStorage.drainErrors().map((error) => error.message),
+		...authStorage.takePendingNotices(options).map((notice) => notice.message),
+	].map((message) => ({ type: "warning", message: `(${context}, auth storage) ${message}` }));
 }
 
-function collectAuthDiagnostics(authStorage: AuthStorage, context: string): AgentSessionRuntimeDiagnostic[] {
-	return authStorage.drainErrors().map((error) => ({
-		type: "warning",
-		message: `(${context}, auth storage) ${error.message}`,
-	}));
+/** The TUI shows auth problems at startup; credential notices are marked seen once shown (senpi#3486). */
+export function interactiveAuthNotices(authStorage: AuthStorage): { messages: string[]; markSeen: () => void } {
+	const pending = authStorage.takePendingNotices({ persistSeen: false });
+	return {
+		messages: [
+			...authStorage.drainErrors().map((error) => error.message),
+			...pending.map((notice) => notice.message),
+		],
+		markSeen: () => authStorage.markNoticesSeen(pending.map((notice) => notice.id)),
+	};
 }
 
 export function collectExtensionLoadDiagnostics(
@@ -351,8 +354,20 @@ async function findLocalSessionByExactId(
 	sessionDir?: string,
 ): Promise<{ type: "local"; path: string } | undefined> {
 	const localSessions = sessionDir ? await SessionManager.listAll(sessionDir) : await SessionManager.list(cwd);
-	const localMatch = localSessions.find((s) => s.id === sessionId);
+	// The id a file name carries counts too: a session named after it must not get a second file under that id.
+	const localMatch =
+		localSessions.find((s) => s.id === sessionId) ??
+		localSessions.find((s) => sessionFileNameId(s.path) === sessionId);
 	return localMatch ? { type: "local", path: localMatch.path } : undefined;
+}
+
+/** Header id first, then the id the file name carries (what a resume hint printed), then an id prefix. */
+function findSessionByIdOrFileName<T extends { id: string; path: string }>(sessions: T[], arg: string): T | undefined {
+	return (
+		sessions.find((s) => s.id === arg) ??
+		sessions.find((s) => sessionFileNameId(s.path) === arg) ??
+		sessions.find((s) => s.id.startsWith(arg))
+	);
 }
 
 async function resolveSessionPath(sessionArg: string, cwd: string, sessionDir?: string): Promise<ResolvedSession> {
@@ -363,8 +378,7 @@ async function resolveSessionPath(sessionArg: string, cwd: string, sessionDir?: 
 
 	// Try to match as session ID in current project first
 	const localSessions = await SessionManager.list(cwd, sessionDir);
-	const localMatch =
-		localSessions.find((s) => s.id === sessionArg) ?? localSessions.find((s) => s.id.startsWith(sessionArg));
+	const localMatch = findSessionByIdOrFileName(localSessions, sessionArg);
 
 	if (localMatch) {
 		return { type: "local", path: localMatch.path };
@@ -372,8 +386,7 @@ async function resolveSessionPath(sessionArg: string, cwd: string, sessionDir?: 
 
 	// Try global search across all projects
 	const allSessions = await SessionManager.listAll(sessionDir);
-	const globalMatch =
-		allSessions.find((s) => s.id === sessionArg) ?? allSessions.find((s) => s.id.startsWith(sessionArg));
+	const globalMatch = findSessionByIdOrFileName(allSessions, sessionArg);
 
 	if (globalMatch) {
 		return { type: "global", path: globalMatch.path, cwd: globalMatch.cwd };
@@ -498,9 +511,9 @@ async function rebindSessionOrExit(sourcePath: string, cwd: string, sessionDir?:
 	}
 }
 
-function sessionCwdOrUndefined(sessionFile: string): string | undefined {
+async function sessionCwdOrUndefined(sessionFile: string): Promise<string | undefined> {
 	try {
-		return readSessionCwd(sessionFile);
+		return await readSessionCwd(sessionFile);
 	} catch {
 		return undefined;
 	}
@@ -546,7 +559,7 @@ export async function createSessionManager(
 			console.error(chalk.red(`No session found matching '${resolved.arg}'`));
 			process.exit(1);
 		}
-		const sessionCwd = resolved.type === "global" ? resolved.cwd : sessionCwdOrUndefined(resolved.path);
+		const sessionCwd = resolved.type === "global" ? resolved.cwd : await sessionCwdOrUndefined(resolved.path);
 		if (resolved.type === "local" || sessionCwd === undefined || resolvePath(sessionCwd) === resolvePath(cwd)) {
 			return openSessionOrExit(resolved.path, sessionDir);
 		}
@@ -825,6 +838,8 @@ export interface CliRuntimeConfiguration {
 	cwd: string;
 	agentDir: string;
 	appMode: AppMode;
+	/** Resolved `--tool-runtime` (flag, then env); absent means `in-process`. A worker isolate never re-reads env. */
+	toolRuntime?: ToolRuntimeKind;
 }
 
 /** Fixed launch data is cloneable; UI callbacks and extension factories stay in their isolate. */
@@ -845,7 +860,7 @@ export function createCliRuntimeFactory(
 		modelRuntime?: ModelRuntime;
 	} = {},
 ): PreparableRuntimeFactory {
-	const { parsed, cwd, agentDir, appMode } = configuration;
+	const { parsed, cwd, agentDir, appMode, toolRuntime } = configuration;
 	const extensionFactories = local.extensionFactories ?? builtInExtensions;
 	const startupSettingsManager = local.startupSettingsManager ?? SettingsManager.create(cwd, agentDir);
 	const startupLoadingIndicator =
@@ -878,14 +893,32 @@ export function createCliRuntimeFactory(
 		const projectTrustDiagnostics: AgentSessionRuntimeDiagnostic[] = [];
 		const cachedProjectTrust = projectTrustByCwd.get(cwd);
 		const hasTrustRequiringResources = hasTrustRequiringProjectResources(cwd);
+		// A full-access session trusts its project without asking, for that session only: nothing is
+		// cached here or saved to the trust store, and a saved "do not trust" still wins (#2465).
+		const fullAccessTrust =
+			presetTrustsProject(
+				sessionExtensionFlagValues(parsed.unknownFlags, launchProfile).get("permission-preset"),
+				(startupSettingsManager.getGlobalSettings() as { readonly permissionPreset?: unknown }).permissionPreset,
+			) && trustStore.get(cwd) !== false;
 		const shouldResolveProjectTrust =
-			parsed.projectTrustOverride === undefined && cachedProjectTrust === undefined && hasTrustRequiringResources;
+			parsed.projectTrustOverride === undefined &&
+			cachedProjectTrust === undefined &&
+			!fullAccessTrust &&
+			hasTrustRequiringResources;
 		const projectTrusted = shouldResolveProjectTrust
 			? false
 			: (cachedProjectTrust ??
 				parsed.projectTrustOverride ??
-				(!hasTrustRequiringResources || trustStore.get(cwd) === true));
-		const runtimeSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted });
+				(fullAccessTrust || !hasTrustRequiringResources || trustStore.get(cwd) === true));
+		// Trusted only because of Full access (resources need trust and nothing else granted it): leaving
+		// Full access withdraws it (#3420 review T5).
+		const trustFromFullAccess =
+			fullAccessTrust &&
+			hasTrustRequiringResources &&
+			cachedProjectTrust === undefined &&
+			parsed.projectTrustOverride === undefined &&
+			trustStore.get(cwd) !== true;
+		const runtimeSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted, trustFromFullAccess });
 		// The opener's per-session fallback policy is an in-memory override: never saved, never shared.
 		if (launchProfile?.retryFallback) applyRetryFallbackProfile(runtimeSettingsManager, launchProfile.retryFallback);
 		const services = await createAgentSessionServices({
@@ -1056,6 +1089,7 @@ export function createCliRuntimeFactory(
 			),
 			promptSurface: launchProfile?.promptSurface,
 			browserEngine: launchProfile?.browserEngine,
+			...(toolRuntime !== undefined ? { toolRuntime } : {}),
 		});
 		markSwitch("createSession");
 		const cliThinkingOverride = runtimeParsed.thinking !== undefined || cliThinkingFromModel;
@@ -1085,7 +1119,8 @@ export async function main(args: string[], options?: MainOptions) {
 	// over when the first statement runs, so it is read from the process clock rather than measured.
 	recordTiming("processStart->main", Math.round(process.uptime() * 1000));
 	const extensionFactories = [...builtInExtensions, ...(options?.extensionFactories ?? [])];
-	const offlineMode = args.includes("--offline") || isTruthyEnvFlag(envValue("OFFLINE"));
+	const offlineMode =
+		args.includes("--print-prompt-sizes") || args.includes("--offline") || isTruthyEnvFlag(envValue("OFFLINE"));
 	if (offlineMode) {
 		process.env.PI_OFFLINE = "1";
 		process.env.PI_SKIP_VERSION_CHECK = "1";
@@ -1161,6 +1196,13 @@ export async function main(args: string[], options?: MainOptions) {
 			process.exit(1);
 		}
 	}
+	const toolRuntimeResolution = resolveToolRuntime(parsed);
+	// --version and --help never run a tool, so a bad tool-runtime env value must not block them.
+	if (!toolRuntimeResolution.ok && !parsed.version && !parsed.help) {
+		console.error(chalk.red(`Error: ${toolRuntimeResolution.message}`));
+		process.exit(1);
+	}
+	const toolRuntime = toolRuntimeResolution.ok ? toolRuntimeResolution.value : "in-process";
 	time("parseArgs");
 
 	if (parsed.version) {
@@ -1180,7 +1222,9 @@ export async function main(args: string[], options?: MainOptions) {
 		await printThenExit(() => console.log(`Exported to: ${result}`), 0);
 	}
 
-	let appMode = resolveAppMode(parsed, process.stdin.isTTY, process.stdout.isTTY);
+	let appMode: AppMode = parsed.printPromptSizes
+		? "print"
+		: resolveAppMode(parsed, process.stdin.isTTY, process.stdout.isTTY);
 	const shouldTakeOverStdout =
 		appMode !== "interactive" && (!isPlainRuntimeMetadataCommand(parsed) || (parsed.help && parsed.mode === "json"));
 	if (shouldTakeOverStdout) {
@@ -1262,7 +1306,7 @@ export async function main(args: string[], options?: MainOptions) {
 		reportDiagnostics([
 			...services.diagnostics,
 			...collectSettingsDiagnosticsWithContext(services.settingsManager, "model listing"),
-			...collectAuthDiagnostics(services.authStorage, "model listing"),
+			...collectAuthDiagnostics(services.authStorage, "model listing", { persistSeen: true }),
 		]);
 		const searchPattern = typeof parsed.listModels === "string" ? parsed.listModels : undefined;
 		await printThenExit(() => listModels(services.modelRuntime, searchPattern), 0);
@@ -1291,7 +1335,7 @@ export async function main(args: string[], options?: MainOptions) {
 	if (appMode === "rpc" && parsed.multiSession) {
 		if (options?.extensionFactories?.length)
 			throw new Error("Shared RPC workers require file-backed extensions; inline factories cannot cross isolates");
-		const runtimeConfiguration = { parsed, cwd, agentDir, appMode };
+		const runtimeConfiguration = { parsed, cwd, agentDir, appMode, toolRuntime };
 		// Socket hosts (the machine-wide daemon) run every session IN this process:
 		// createHostCore selects the worker registry only when a workerConfiguration
 		// is passed, so withholding it is what selects the uncapped in-process registry.
@@ -1318,6 +1362,9 @@ export async function main(args: string[], options?: MainOptions) {
 		// otherwise theme-touching extensions fail with "Theme not initialized. Call
 		// initTheme() first." (senpi#1894).
 		initTheme(startupSettingsManager.getTheme(), false);
+		if (!offlineMode) {
+			startSubscriptionUsagePolling({ agentDir, report: (message) => void process.stderr.write(`${message}\n`) });
+		}
 		printTimings();
 		await runMultiSessionHost({
 			agentDir,
@@ -1330,6 +1377,7 @@ export async function main(args: string[], options?: MainOptions) {
 				parsed.provider && parsed.model ? { provider: parsed.provider, modelId: parsed.model } : undefined,
 			initialThinkingLevel: parsed.thinking,
 			listen: parsed.listen,
+			toolRuntime,
 		});
 	}
 
@@ -1393,7 +1441,7 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	const createRuntime = createCliRuntimeFactory(
-		{ parsed, cwd, agentDir, appMode },
+		{ parsed, cwd, agentDir, appMode, toolRuntime },
 		{ extensionFactories, startupSettingsManager, startupLoadingIndicator },
 	);
 	time("createRuntime");
@@ -1414,6 +1462,9 @@ export async function main(args: string[], options?: MainOptions) {
 			startupLoadingIndicator.stop();
 		});
 	time("createAgentSessionRuntime");
+	if (parsed.printPromptSizes) {
+		await printPromptSizes(runtime);
+	}
 	await prepareSessionOpening(sessionManager, appMode);
 	const { services, session, modelFallbackMessage } = runtime;
 	const { settingsManager, modelRuntime, resourceLoader } = services;
@@ -1439,7 +1490,7 @@ export async function main(args: string[], options?: MainOptions) {
 	// Read piped stdin content (if any) - skip for RPC mode which uses stdin for JSON-RPC
 	let stdinContent: string | undefined;
 	if (appMode !== "rpc") {
-		stdinContent = await readPipedStdin();
+		stdinContent = await readPipedStdin(pipedStdinOptions(parsed, process.stderr));
 		if (stdinContent !== undefined && appMode === "interactive") {
 			appMode = "print";
 		}
@@ -1474,7 +1525,17 @@ export async function main(args: string[], options?: MainOptions) {
 		reportDiagnostics([{ type: "warning", message: formatThinkingClampWarning(startupThinkingClamp) }]);
 	}
 	if (appMode !== "interactive") {
-		reportDiagnostics(collectAuthDiagnostics(services.authStorage, "runtime creation"));
+		reportDiagnostics(
+			[...(resourceLoader.getAgentsFiles().diagnostics ?? []), ...resourceLoader.getSkills().diagnostics]
+				.filter((diagnostic) => diagnostic.type === "warning" && diagnostic.category === "size-limit")
+				.map((diagnostic) => ({
+					type: "warning" as const,
+					message: diagnostic.path ? `${diagnostic.path}: ${diagnostic.message}` : diagnostic.message,
+				})),
+		);
+		reportDiagnostics(
+			collectAuthDiagnostics(services.authStorage, "runtime creation", { persistSeen: appMode !== "rpc" }),
+		);
 	}
 	if (runtime.diagnostics.some((diagnostic) => diagnostic.type === "error")) {
 		if (runtime.diagnostics.some((diagnostic) => diagnostic.message.includes("Failed to load extension"))) {
@@ -1512,16 +1573,26 @@ export async function main(args: string[], options?: MainOptions) {
 		appMode === "interactive" ? () => {} : (message) => void process.stderr.write(`${message}\n`),
 	);
 
+	// Subscription limits are known before the first turn (senpi#3684); one-shot print runs never poll.
+	if (!offlineMode && (appMode === "rpc" || appMode === "interactive")) {
+		startSubscriptionUsagePolling({
+			agentDir,
+			// The TUI owns stderr in interactive mode, as with the child reaper below.
+			report: appMode === "interactive" ? () => {} : (message) => void process.stderr.write(`${message}\n`),
+		});
+	}
+
 	if (appMode === "rpc") {
 		const { runRpcMode } = await import("./modes/rpc/rpc-mode.ts");
 		printTimings();
-		await runRpcMode(runtime);
+		await runRpcMode(runtime, toolRuntime);
 	} else if (appMode === "interactive") {
 		// Keep the TUI graph out of headless RPC children. This is intentionally at the
 		// mode seam: interactive startup still loads the same module before first use.
 		const { InteractiveMode } = await import("./modes/interactive/interactive-mode.ts");
 		const interactiveMode = new InteractiveMode(runtime, {
 			migratedProviders,
+			authNotices: interactiveAuthNotices(services.authStorage),
 			legacyPiEditNotice: legacyPiEditStartupNotice(),
 			modelFallbackMessage,
 			autoTrustOnReloadCwd,
@@ -1564,7 +1635,7 @@ export async function main(args: string[], options?: MainOptions) {
 			initialMessage,
 			initialImages,
 		});
-		reportDiagnostics(collectAuthDiagnostics(services.authStorage, "print mode"));
+		reportDiagnostics(collectAuthDiagnostics(services.authStorage, "print mode", { persistSeen: true }));
 		stopChildReaper();
 		stopThemeWatcher();
 		restoreStdout();

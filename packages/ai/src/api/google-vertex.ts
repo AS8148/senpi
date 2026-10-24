@@ -27,6 +27,7 @@ import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
+import { reportedCount } from "../utils/reported-count.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { getSystemMessageText } from "../utils/text.ts";
 import { collapseSystemMessages, getCurrentTools, getInitialSystemMessage } from "../utils/transcript.ts";
@@ -47,6 +48,7 @@ import {
 	toProviderNativeContent,
 	usesGoogleThinkingLevel,
 } from "./google-shared.ts";
+import { buildGoogleAuthOptions, resolveVertexProjectFromEnv } from "./google-vertex-env.ts";
 import { applyExtraBody, buildBaseOptions, GOOGLE_RESERVED_BODY_KEYS } from "./simple-options.ts";
 
 export interface GoogleVertexOptions extends StreamOptions {
@@ -267,6 +269,7 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 				}
 
 				if (chunk.usageMetadata) {
+					const reasoning = reportedCount(chunk.usageMetadata.thoughtsTokenCount);
 					output.usage = {
 						input:
 							(chunk.usageMetadata.promptTokenCount || 0) - (chunk.usageMetadata.cachedContentTokenCount || 0),
@@ -274,7 +277,7 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 							(chunk.usageMetadata.candidatesTokenCount || 0) + (chunk.usageMetadata.thoughtsTokenCount || 0),
 						cacheRead: chunk.usageMetadata.cachedContentTokenCount || 0,
 						cacheWrite: 0,
-						reasoning: chunk.usageMetadata.thoughtsTokenCount || 0,
+						...(reasoning === undefined ? {} : { reasoning }),
 						totalTokens: chunk.usageMetadata.totalTokenCount || 0,
 						cost: {
 							input: 0,
@@ -457,11 +460,6 @@ function baseUrlIncludesApiVersion(baseUrl: string): boolean {
 	}
 }
 
-function buildGoogleAuthOptions(env?: ProviderEnv): { keyFilename: string } | undefined {
-	const keyFilename = getProviderEnvValue("GOOGLE_APPLICATION_CREDENTIALS", env);
-	return keyFilename ? { keyFilename } : undefined;
-}
-
 function resolveApiKey(options?: GoogleVertexOptions): string | undefined {
 	const apiKey = options?.apiKey?.trim();
 	if (!apiKey || apiKey === GCP_VERTEX_CREDENTIALS_MARKER || isPlaceholderApiKey(apiKey)) {
@@ -475,10 +473,7 @@ function isPlaceholderApiKey(apiKey: string): boolean {
 }
 
 function resolveProject(options?: GoogleVertexOptions): string {
-	const project =
-		options?.project ||
-		getProviderEnvValue("GOOGLE_CLOUD_PROJECT", options?.env) ||
-		getProviderEnvValue("GCLOUD_PROJECT", options?.env);
+	const project = resolveVertexProjectFromEnv(options);
 	if (!project) {
 		throw new Error(
 			"Vertex AI requires a project ID. Set GOOGLE_CLOUD_PROJECT/GCLOUD_PROJECT or pass project in options.",

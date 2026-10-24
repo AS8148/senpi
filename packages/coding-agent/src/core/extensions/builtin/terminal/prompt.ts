@@ -18,7 +18,7 @@ export function buildTerminalPromptSection(options: TerminalPromptOptions): stri
 ## Persistent terminal sessions
 
 The \`bash\` tool is PTY-backed. For long-running or interactive work, do NOT use tmux or
-manual \`&\` backgrounding — use the built-in session tools:
+manual \`&\` backgrounding; use the built-in session tools:
 
 - \`${bash}({ command, run_in_background: true })\` starts a persistent session and returns a
   \`bash_id\` immediately. Foreground calls still block and return output; their \`timeout\`
@@ -27,9 +27,9 @@ manual \`&\` backgrounding — use the built-in session tools:
 - \`bash_output({ bash_id, filter, view })\` peeks at a session without blocking: new output
   since the last read, the status line, or a rendered full-screen snapshot of TUIs via
   \`view: "screen"\`. Completion arrives as a notification carrying the exit code and output
-  tail — peeking is for steering, never for waiting.
-- \`${monitor}\` subscribes you to a change. Pass \`command\` XOR \`path\` — one branch per call,
-  never both:
+  tail: peeking is for steering, never for waiting.
+- \`${monitor}\` subscribes you to a change. Pass exactly one source (\`command\`, \`path\` or
+  \`target\`; one branch per call, never two):
   - \`${monitor}({ description, command, filter?, timeout_ms?, persistent? })\` watches a command:
     newline-terminated PTY output lines (stderr included) matching \`filter\` arrive as injected
     events while you keep working; command exit always delivers a summary. One-shot gate: wait
@@ -41,10 +41,16 @@ manual \`&\` backgrounding — use the built-in session tools:
     \`b="$SENPI_MONITOR_STATE_DIR/base"; p=$(cat "$b" 2>/dev/null || git rev-parse origin/main | tee "$b"); while sleep 30; do git fetch -q || true; n=$(git rev-parse origin/main); [ "$n" != "$p" ] && { echo "MOVED $p..$n"; p=$n; echo "$p" > "$b"; }; done\`.
     A watch whose command exits is not restarted, so keep failures inside the loop non-fatal.
   - \`${monitor}({ description, path, event?, persistent? })\` natively watches one regular file and
-    fires once — prefer it over a shell poll loop. \`"create"\` (the default) fires only when the file
+    fires once: prefer it over a shell poll loop. \`"create"\` (the default) fires only when the file
     appears after registration, so watch an already-existing file with \`"modify"\`; registration needs
     the parent directory to exist already, so poll with a \`command\` when the run creates that
     directory too. This branch takes no \`filter\`.
+  - \`${monitor}({ type: "rpc", target, events?, exclude?, filter?, persistent? })\` watches other
+    sessions over every RPC host and terminal: \`target: "children"\` (sessions you spawned, including
+    later ones), \`"all"\`, or one session id, path or \`st_\` task id. The result lists each matched
+    session as it is now; then each status change (\`rpc <label> status running -> idle ...\`) and
+    effect receipt arrives as an event. \`events: "all"\` adds their content, streaming collapsed to one
+    line per 2 s; \`exclude\` drops kinds. Watching never attaches to a session.
   A standing watch is marked \`persistent: true\`: it has no deadline, survives a session restart
   (the file is rescanned and any change missed while detached reported), expires 7 days after
   creation, has no per-session cap unless the \`terminal.maxDurableMonitors\` setting sets one,

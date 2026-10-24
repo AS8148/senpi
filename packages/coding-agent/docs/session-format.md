@@ -88,6 +88,11 @@ interface UserMessage {
   content: string | (TextContent | ImageContent)[];
   timestamp: number;  // Unix ms
 }
+```
+
+A `message` entry holding a user message the session admitted through `prompt`, `steer` or `followUp` (including an extension's `sendUserMessage`) also carries `inputSource` on the entry itself: `"interactive"`, `"rpc"` or `"extension"`, the same value the message's `input` event reported. It is stored on the entry and never on the message, so it is not part of any provider request. Queued input restored after a host restart keeps the source its durable record carries. Input whose record has no source, input requeued by a session move, and edited input have no `inputSource`; treat an absent value as unknown origin, never as typed input.
+
+```typescript
 
 interface AssistantMessage {
   role: "assistant";
@@ -221,6 +226,37 @@ For sessions with a parent (created via `/fork`, `/clone`, or `newSession({ pare
 {"type":"session","version":3,"id":"uuid","timestamp":"2024-12-03T14:00:00.000Z","cwd":"/path/to/project","parentSession":"/path/to/original/session.jsonl"}
 ```
 
+Execution children additionally store `spawnedBy: { parentSessionId, rootSessionId,
+taskId }` in their header. Only `spawnedBy` establishes lifecycle role `child`;
+an ordinary fork with `parentSession` remains a root.
+
+Lifecycle persistence uses custom entries on the session that owes the work:
+
+- `session-lifecycle`: the wire snapshot plus session identity, sealed-epoch and
+  revision high-water marks, open synthetic attention occurrences, consuming run
+  identity, and any unsealed self-settle intent. It is appended before publication.
+- `work-custody`: obligation identity/key/kind and `open`, `queued`, `consumed`,
+  `settled`, `held`, `cancelled`, or `passive` state. Queued records retain a delivery
+  ticket and payload; consumed records name the run and transcript entry; held
+  records name the durable notice. The custom message itself carries `details.ticketId`.
+- `child-lifecycle`: the runner's latest task report, fenced by `runEpoch` and
+  `generation`, persisted before changing the parent's lifecycle.
+
+- `interrupted-run`: `{ ticketId, runId, status: "INTERRUPTED", reason: "host_restart", at }`,
+  appended on restore for a delivery its run had consumed when the host stopped. Each
+  tool call of that run without a result also gets a synthetic `toolResult` with
+  `isError: true` and `details.interrupted.reason: "host_restart"`; the tool is not re-run.
+
+These records are durable even before a first conversation message; a file that holds
+only them (and setup entries) is still discarded when the session closes unused. Reopening
+holds the restore barrier until producers rehydrate and custody recovery completes. A
+restored wake source whose producer does not publish again by then is retired.
+A delivery that leaves the queue unconsumed (cleared, or left queued by an abort for the
+person's next turn) is cancelled or turns passive, so it is never redelivered.
+Consumed but interrupted work is not redelivered; it requires human continuation
+(or remains held unattended). Unsealed self-settle requests are invalidated on
+restart, while a sealed decision and completion identity remain unchanged.
+
 ### SessionMessageEntry
 
 A message in the conversation. The `message` field contains an `AgentMessage`.
@@ -297,6 +333,8 @@ Extension state persistence. Does NOT participate in LLM context.
 {"type":"custom","id":"h8i9j0k1","parentId":"g7h8i9j0","timestamp":"2024-12-03T14:20:00.000Z","customType":"my-extension","data":{"count":42}}
 ```
 
+Optional field: `startupBookkeeping: true` marks an entry its extension wrote at session start without any user action (`pi.appendEntry(customType, data, { startupBookkeeping: true })`). A session file this process created that holds only setup entries and such marked entries is removed when the session closes without a conversation; an unmarked custom entry keeps the file.
+
 Use `customType` to identify your extension's entries on reload. Interactive mode can render custom entries via `pi.registerEntryRenderer(customType, renderer)`, but they still do not participate in LLM context.
 
 [Virtual model](virtual-models.md) router state is stored as custom entries with `customType` `pi.virtual-model-state` and `data` `{ provider, modelId, state }`.
@@ -305,7 +343,7 @@ Use `customType` to identify your extension's entries on reload. Interactive mod
 
 These custom entries are persisted in the session and delivered to RPC clients as `entry_appended`. They do not enter model context. Existing `engine-turn-limit`, `ttsr-loop-stopped`, and notices remain unchanged.
 
-- `goal-continuation-stopped`: `data` is `{ goalId: string, reason: "stale" | "repetition" | "cap" | "unattended" | "length-exhausted" | "context-overflow", consecutiveContinuations: number, unattendedContinuations: number, at: number }`. Every active-goal denial except `not-eligible` and `single-flight` records one decision, not one entry per evaluation probe. Blocking guards still block; stale leaves the goal active but commits the remaining measured time and closes its measurement window. An accepted user message or `/goal resume` resets the stop and continuation streak and opens accounting again. The stop entry remains historical; a subsequent continuation can stop again.
+- `goal-continuation-stopped`: `data` is `{ goalId: string, reason: "stale" | "repetition" | "cap" | "no-progress" | "length-exhausted" | "context-overflow", consecutiveContinuations: number, unattendedContinuations: number, noProgressContinuations: number, at: number }`. `no-progress` (omo#10280) replaced `unattended`, which older sessions may still contain; `unattendedContinuations` counts deliveries since the last human input and no longer stops anything. Every active-goal denial except `not-eligible` and `single-flight` records one decision, not one entry per evaluation probe. Blocking guards still block; stale leaves the goal active but commits the remaining measured time and closes its measurement window. An accepted user message or `/goal resume` resets the stop and continuation streak and opens accounting again. The stop entry remains historical; a subsequent continuation can stop again.
 - `engine-paused`: `data` is `{ reason: "repetition" | "goal-repeat" | "cap-per-message" | "cap-per-minute" | "goal-stale", rule?: string, customType?: string, count?: number, at: number }`. The engine limit maps `per-user-input` to `cap-per-message` (`count` is `sinceUserInput`) and `tool-free-rate` to `cap-per-minute` (`count` is `toolFreeInWindow`). TTSR uses `repetition` and names the rule when it refuses another correction or its one-shot repetitive-turns correction reaches final idle without another turn starting. Goal output repetition uses `goal-repeat`; stale uses `goal-stale`, with the consecutive-continuation count and `customType: "goal-continuation"`.
 
 `at` is Unix epoch milliseconds. Consumers can use these entries instead of parsing notice wording, and replay them from session history after reopen.
@@ -462,7 +500,7 @@ Key methods for working with sessions programmatically.
 - `appendModelChange(provider, modelId)` - Record model change
 - `appendCompaction(summary, firstKeptEntryId, tokensBefore, details?, fromHook?, usage?)` - Add compaction; pass `null` as `firstKeptEntryId` to retain no earlier entries
 - `appendContextEdit(targetId, replacement)` - Omit (`null`) or replace one entry's message in future model context without changing raw history
-- `appendCustomEntry(customType, data?)` - Extension state (not in context)
+- `appendCustomEntry(customType, data?, options?)` - Extension state (not in context); `options.startupBookkeeping` marks startup bookkeeping
 - `appendSessionInfo(name)` - Set session display name
 - `appendCustomMessageEntry(customType, content, display, details?)` - Extension message (in context)
 - `appendLabelChange(targetId, label)` - Set/clear label

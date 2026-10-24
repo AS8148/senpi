@@ -1,6 +1,7 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { deadlineStopPendingSinceLastTurn } from "../../../turn-deadline.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
-import type { WakeSourceStateItem } from "../monitor-state-event.ts";
+import { isHumanInputMonitorNotification, type WakeSourceStateItem } from "../monitor-state-event.ts";
 import {
 	createGoalCacheWarmScheduleData,
 	estimateCacheWarmMetrics,
@@ -24,13 +25,16 @@ export {
 import {
 	continuationTurnUsedTools,
 	evaluateGoalContinuation,
+	GOAL_TOOL_EFFECT_WINDOW,
 	GOAL_USER_GRACE_DELAY_MS,
 	type GoalContinuationInput,
 	type GoalContinuationPath,
 	hasGoalContinuationProgress,
+	hasGoalTodoProgress,
 	hashAssistantText,
 	isMalformedToolUseTurn,
 	normalizeAssistantText,
+	toolEffectFingerprint,
 } from "./continuation.ts";
 import { lastAssistantMessage } from "./last-assistant-message.ts";
 import {
@@ -85,6 +89,7 @@ export class MonitorAwareGoalContinuation {
 	#consecutiveLengthRecoveries = new Map<string, number>();
 	#recentNormalizedOutputHashes: string[] = [];
 	#toollessContinuationStreak = 0;
+	#recentToolEffects: string[] = [];
 	#toollessStreakGoalId: string | null = null;
 	#endedTurnWasUserInitiated = false;
 	#lastTurnUsage: TokenUsageSnapshot | undefined;
@@ -137,18 +142,24 @@ export class MonitorAwareGoalContinuation {
 		this.#lastTurnUsage = collectAssistantUsage([...options.messages]);
 		this.#resetLengthRecoveryAfterCleanStop(options.goal, options.messages);
 		const turnUsedTools = continuationTurnUsedTools(options.messages);
-		this.#recordAssistantOutput(options.messages, turnUsedTools);
+		// A person's words delivered by a human-input monitor are new input, exactly like a typed message.
+		const humanInput = options.messages.some(isHumanInputMonitorNotification);
+		this.#recordAssistantOutput(options.messages, turnUsedTools || humanInput);
 		if (options.goal?.status !== "active") {
 			this.#cancelTimer();
 			this.#resetContinuationState();
 			return options.goal;
 		}
-		this.#recordToollessContinuationTurn(options.goal, turnUsedTools);
+		this.#recordToollessContinuationTurn(options.goal, turnUsedTools || humanInput);
 		const immediateInput = this.#buildVerdictInput(options.ctx, options.goal, "immediate", options.messages);
+		const madeProgress =
+			this.#recordToolEffect(options.messages) || humanInput || hasGoalTodoProgress(immediateInput);
 		const goal =
-			!this.#endedTurnWasUserInitiated && (turnUsedTools || hasGoalContinuationProgress(immediateInput))
-				? ((await resetContinuationStreak(goalStoreRef(options.ctx.sessionManager, options.ctx.cwd))) ??
-					options.goal)
+			!this.#endedTurnWasUserInitiated && (madeProgress || hasGoalContinuationProgress(immediateInput))
+				? ((await resetContinuationStreak(goalStoreRef(options.ctx.sessionManager, options.ctx.cwd), {
+						progress: madeProgress,
+						unattended: humanInput,
+					})) ?? options.goal)
 				: options.goal;
 		this.#goal = goal;
 		const immediateVerdict = evaluateGoalContinuation({
@@ -171,7 +182,7 @@ export class MonitorAwareGoalContinuation {
 				case "cap":
 				case "repetition":
 				case "length-exhausted":
-				case "unattended": {
+				case "no-progress": {
 					const admission = await this.#admitAndQueue(options.ctx, goal, "immediate", options.messages);
 					return admission.goal;
 				}
@@ -201,6 +212,10 @@ export class MonitorAwareGoalContinuation {
 			return options.goal;
 		}
 		if (options.willRetry) return options.goal;
+		// A deadline stop is never auto-continued; the hold releases on admitted user input.
+		if (deadlineStopPendingSinceLastTurn(options.ctx.sessionManager.getBranch()) !== undefined) {
+			return options.goal;
+		}
 		if (this.#activeWakeSourceCount() > 0) this.#schedule(options.goal, "monitor");
 		else if (lastAssistantMessage(options.messages)?.stopReason === "error") {
 			this.#pendingSystemRecovery = options;
@@ -271,6 +286,16 @@ export class MonitorAwareGoalContinuation {
 			this.#cancelTimer();
 			this.#resetContinuationState();
 		}
+	}
+
+	/** The continuation timer armed right now, if any (monitor backstop, user grace, provider retry). */
+	scheduledContinuation(): DelayedContinuationKind | undefined {
+		return this.#scheduledContinuationKind;
+	}
+
+	/** A system or provider recovery staged for `agent_settled`. */
+	hasStagedRecovery(): boolean {
+		return this.#pendingSystemRecovery !== undefined || this.#pendingProviderRecovery !== undefined;
 	}
 
 	/** Live resumption channels known to this generation (e.g. terminal snapshots replayed on reload). */
@@ -504,6 +529,7 @@ export class MonitorAwareGoalContinuation {
 		const ctx = this.#ctx;
 		const goal = this.#goal;
 		if (ctx === undefined || goal?.status !== "active" || !ctx.isIdle() || ctx.hasPendingMessages()) return;
+		if (deadlineStopPendingSinceLastTurn(ctx.sessionManager.getBranch()) !== undefined) return;
 		if (kind === "monitor" && this.#activeWakeSourceCount() === 0 && !drainFire) return;
 		const admission = await this.#admitAndQueue(
 			ctx,
@@ -631,6 +657,18 @@ export class MonitorAwareGoalContinuation {
 		const text = lastAssistantText(messages);
 		if (normalizeAssistantText(text).length === 0) return;
 		this.#recentNormalizedOutputHashes = [...this.#recentNormalizedOutputHashes, hashAssistantText(text)].slice(-3);
+	}
+
+	/**
+	 * A tool turn is progress only when its calls and outcomes differ from every recent tool turn. With no history
+	 * (first turn, or after a reload or input reset) there is nothing to prove change against, so it only seeds.
+	 */
+	#recordToolEffect(messages: readonly AgentMessage[]): boolean {
+		const fingerprint = toolEffectFingerprint(messages);
+		if (fingerprint === undefined) return false;
+		const repeated = this.#recentToolEffects.length === 0 || this.#recentToolEffects.includes(fingerprint);
+		this.#recentToolEffects = [...this.#recentToolEffects, fingerprint].slice(-GOAL_TOOL_EFFECT_WINDOW);
+		return !repeated;
 	}
 
 	#recordToollessContinuationTurn(goal: Goal, turnUsedTools: boolean): void {
@@ -779,6 +817,7 @@ export class MonitorAwareGoalContinuation {
 		this.#providerRetryAttempts = 0;
 		this.#consecutiveLengthRecoveries.clear();
 		this.#recentNormalizedOutputHashes = [];
+		this.#recentToolEffects = [];
 		this.#resetToollessContinuationStreak();
 		this.#resetCacheWarmIteration();
 	}

@@ -40,7 +40,9 @@ import {
 	type HostTarget,
 	runHostRequest,
 } from "../modes/rpc/host-runner.ts";
+import { type HostStopGeneration, parseHostStopGeneration } from "../modes/rpc/host-stop-generation.ts";
 import { emit } from "./host-emit.ts";
+import { handoverTerms } from "./host-handover-args.ts";
 
 const SUBCOMMANDS = ["ensure", "status", "stop", "handoff", "shard-path", "gc"] as const;
 type HostSubcommand = (typeof SUBCOMMANDS)[number];
@@ -51,7 +53,7 @@ const USAGE = `usage: ${APP_NAME} host <ensure|status|stop|handoff|shard-path|gc
 
   ensure      [--launch-spec <file>] [--policy upgrade|fallback|never] [--socket <path>]
   status      [--include-workers] [--all] [--socket <path>]   (--all: every endpoint, ignores --socket)
-  stop        [--drain] [--force] [--socket <path>]
+  stop        [--drain [--instance <id>] [--wait-ms <n>]] [--force] [--expected-generation <json>] [--socket <path>]
   handoff     [--launch-spec <file>] [--socket <path>]
               [--when idle --operation <id> --if-instance <id> --if-generation <n> --target-build <sha256:...>]
               (--when idle: the running host hands over to THIS runtime at its next safe idle point)
@@ -70,6 +72,11 @@ interface ParsedHostArgs {
 	readonly all: boolean;
 	readonly drain: boolean;
 	readonly force: boolean;
+	readonly expectedGeneration?: HostStopGeneration;
+	/** `stop --drain`: the generation to drain, by instance id. */
+	readonly instanceId?: string;
+	/** `stop --drain`: how long to wait for the drained generation to exit. */
+	readonly waitMs?: number;
 	readonly json: boolean;
 	readonly kind?: ShardKind;
 	readonly owner?: string;
@@ -112,7 +119,15 @@ async function hostRequest(parsed: ParsedHostArgs): Promise<HostRequest> {
 		case "status":
 			return { action: "status", target, includeWorkers: parsed.includeWorkers, all: parsed.all };
 		case "stop":
-			return { action: "stop", target, drain: parsed.drain, force: parsed.force };
+			return {
+				action: "stop",
+				target,
+				drain: parsed.drain,
+				force: parsed.force,
+				...(parsed.expectedGeneration !== undefined && { expectedGeneration: parsed.expectedGeneration }),
+				...(parsed.instanceId !== undefined && { instanceId: parsed.instanceId }),
+				...(parsed.waitMs !== undefined && { waitMs: parsed.waitMs }),
+			};
 		case "handoff":
 			return {
 				action: "handoff",
@@ -156,6 +171,9 @@ export function parseHostArgs(args: readonly string[]): ParsedHostArgs | string 
 	let all = false;
 	let drain = false;
 	let force = false;
+	let expectedGeneration: HostStopGeneration | undefined;
+	let instanceId: string | undefined;
+	let waitMs: string | undefined;
 	let json = false;
 	let kind: ShardKind | undefined;
 	let owner: string | undefined;
@@ -186,6 +204,17 @@ export function parseHostArgs(args: readonly string[]): ParsedHostArgs | string 
 		} else if (subcommand === "handoff" && value !== undefined && HANDOVER_FLAGS.has(flag ?? "")) {
 			handover[flag ?? ""] = value;
 			index++;
+		} else if (flag === "--expected-generation" && subcommand === "stop" && value !== undefined) {
+			expectedGeneration = parseHostStopGeneration(value);
+			if (expectedGeneration === undefined)
+				return "Error: --expected-generation needs instanceId, generation, pid and processStartTime (null where the platform records none).";
+			index++;
+		} else if (flag === "--instance" && subcommand === "stop" && value !== undefined) {
+			instanceId = value;
+			index++;
+		} else if (flag === "--wait-ms" && subcommand === "stop" && value !== undefined) {
+			waitMs = value;
+			index++;
 		} else if (flag === "--drain") {
 			drain = true;
 		} else if (flag === "--force") {
@@ -206,6 +235,15 @@ export function parseHostArgs(args: readonly string[]): ParsedHostArgs | string 
 	if (subcommand === "shard-path" && (kind === undefined || owner === undefined)) {
 		return `Error: "${APP_NAME} host shard-path" needs --kind <p|i> and --owner <id>.`;
 	}
+	if ((instanceId !== undefined || waitMs !== undefined) && !drain) {
+		return `Error: "${APP_NAME} host stop" takes --instance and --wait-ms only with --drain.`;
+	}
+	const parsedWaitMs = waitMs === undefined ? undefined : Number(waitMs);
+	if (expectedGeneration !== undefined && drain)
+		return "Error: --expected-generation is for a hard stop, not --drain.";
+	if (parsedWaitMs !== undefined && (!Number.isSafeInteger(parsedWaitMs) || parsedWaitMs <= 0)) {
+		return `Error: "${APP_NAME} host stop --wait-ms" needs a positive whole number of milliseconds.`;
+	}
 	const terms = Object.keys(handover).length === 0 ? undefined : handoverTerms(handover);
 	if (typeof terms === "string") return terms;
 	return {
@@ -217,6 +255,9 @@ export function parseHostArgs(args: readonly string[]): ParsedHostArgs | string 
 		all,
 		drain,
 		force,
+		...(expectedGeneration !== undefined && { expectedGeneration }),
+		...(instanceId !== undefined && { instanceId }),
+		...(parsedWaitMs !== undefined && { waitMs: parsedWaitMs }),
 		json,
 		...(kind !== undefined && { kind }),
 		...(owner !== undefined && { owner }),
@@ -227,24 +268,6 @@ export function parseHostArgs(args: readonly string[]): ParsedHostArgs | string 
 }
 
 const HANDOVER_FLAGS = new Set(["--when", "--operation", "--if-instance", "--if-generation", "--target-build"]);
-
-/** The conditional handover's terms: all five flags together, or a usage error naming what is wrong. */
-function handoverTerms(flags: Readonly<Record<string, string>>): IdleHandoverTerms | string {
-	const when = flags["--when"];
-	const operationId = flags["--operation"];
-	const ifInstanceId = flags["--if-instance"];
-	const generation = flags["--if-generation"];
-	const targetRuntimeBuildId = flags["--target-build"];
-	if (when !== "idle") return `Error: "${APP_NAME} host handoff" supports only --when idle.`;
-	if (!operationId || !ifInstanceId || !generation || !targetRuntimeBuildId) {
-		return `Error: "${APP_NAME} host handoff --when idle" needs --operation, --if-instance, --if-generation and --target-build.`;
-	}
-	const ifGeneration = Number(generation);
-	if (!/^\d+$/.test(generation) || !Number.isSafeInteger(ifGeneration)) {
-		return `Error: --if-generation must be a non-negative integer.`;
-	}
-	return { operationId, ifInstanceId, ifGeneration, targetRuntimeBuildId };
-}
 
 function isSubcommand(value: string): value is HostSubcommand {
 	return SUBCOMMANDS.includes(value as HostSubcommand);

@@ -1,3 +1,126 @@
+## 2026-10-21 - A user Stop pauses the goal with the session (senpi#3811)
+
+### What changed
+
+- `index.ts`: a user-aborted turn while the session holds a `session_hold` (a user Stop) sets the goal to `paused` and records `goal-stop-paused`; a plain interrupt with no Stop still blocks it with `user interrupted the turn`. At the next `agent_end` after the Stop is released (a human message or Resume), a goal the Stop paused becomes `active` again and records `goal-stop-resumed`.
+- `stop-pause.ts`: reads the session's holds through `ctx.getPauseState()` and the two markers. A goal paused with `/goal pause` never resumes this way.
+
+### Why
+
+After a Stop the goal ended blocked, so resuming the session did not resume the goal. Stop now pauses the work as a whole and a message or Resume continues it.
+
+### Why an extension could not handle it
+
+This is the goal builtin; it uses the public `ctx.getPauseState()` added in the same change.
+
+### Expected merge conflict zones
+
+The two `user interrupted the turn` branches (`agent_end`, `session_abort`) in `index.ts`.
+
+## 2026-10-22 - heldBy names the turn's own stop first (senpi#3900, part)
+
+### What changed
+
+- `turn-end-liveness.ts` `heldReason`: when a person's queued message releases a hold, `waiting{on, heldBy}` now names the turn's own stop first (a deadline stop, then a user abort) and only then the session-wide hold-ledger kind. The `ledger-hold` row (`held{<kind>}`, no person input queued) is unchanged, and so is the wire shape (`heldBy?: HeldReason`).
+
+### Why
+
+`heldBy` is a single diagnostic value; the lifecycle consumer (senpi#3864) asked that the turn's own stop win, since that is the stop the person is reacting to. The other half of senpi#3900 (report `waiting` only when the engine will actually start a turn from the queued input, e.g. not after a user abort) is still open there.
+
+### Expected merge conflict zones
+
+- `turn-end-liveness.ts`: `heldReason`.
+
+## 2026-10-21 - Share live continuation facts with lifecycle (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/core/extensions/builtin/goal/index.ts` registers a session-owned live fact collector in `lifecycle-facts.ts`, using the existing exported `collectTurnEndLivenessInput`. The collector reads the real continuation latch, timers, recovery and goal; it retires with the extension. Goal refresh synchronously reports status transitions so an intervening close cannot be lost to an asynchronous reread. Restore supplies the durable last turn's end kind while the same collector reconstructs current live wake facts.
+
+### Why
+
+`packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: lifecycle must read the facts after settlement and restoration, not retain a stale per-turn verdict or duplicate the continuation policy.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: these timers and latches belong to this builtin and have no external mutation surface.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: session_start, agent_start, agent_end and shutdown handlers. Preserve #3865's verdict/reporting path unchanged.
+
+## 2026-10-21 - Turn-end liveness verdict (#3863)
+
+### What changed
+
+- `turn-end-liveness.ts` (new): pure `evaluateTurnEndLiveness` returns `continuing | held | waiting | done | stalled` from what the goal lane and the todo-owed backstop just did, plus `classifyTurnEnd` over the existing terminal-error helpers. The decision is one ordered table, `TURN_END_RULES` (first match wins; the last row always matches): retry -> `continuing{retry}`; an active hold-ledger kind (senpi#3860, read through the optional `ctx.engineTurnsHeld`, probed structurally until that API lands on main) -> `held{<kind>}` regardless of child or monitor wakes, unless a person's own queued message is the input that releases it, which then reads `waiting{on, heldBy:<kind>}`. The session tags each queued entry when it is enqueued (`ctx.hasQueuedPersonInput()`): a TUI submit, an RPC client `prompt`/`steer`/`follow_up` (how desktop input arrives) and an answered question count as a person's, and the answer comes from the entries queued now, so a message removed unsent no longer counts. Anything an extension or the engine sends (Stop hook, loop tick, a timed-out question) is `pending-messages` and stays held; queued continuation -> `continuing`; print/json -> `held{non-interactive}`; a wake that will deliver a turn -> `waiting{on, heldBy?}`; a stop that waits for a person (deadline stop, user abort, child session, paused/blocked goal) -> `held`; provider error / policy rejection -> `stalled{provider-error, retryAtMs?}`; system / provider / unknown abort -> `stalled{aborted, abortSource?}`; open work with a spent guard -> `stalled{budget}`; open work -> `stalled{no-wake}`; else `done`. `effectiveWakes` drops the goal lane's own timer and staged recovery during a deadline stop (the hold is read only by the goal lane, so monitors, background work, child tasks and queued messages still deliver) and drops a trailing question on a turn that did not complete. Only a completed turn with nothing open is `done`. An identical stall (reason, reset time, abort source) since the last user message is not written again.
+- `index.ts`: the `agent_end` tail calls `reportTurnEndLiveness` after both lanes ran, which publishes `turn_end_liveness` through `publishGoalContinuationEvent` (bus + RPC), and appends a `turn-end-liveness` entry only for `stalled`.
+- `turn-end-liveness-report.ts` (new): `collectTurnEndLivenessInput` (the one input collector, exported for lifecycle consumers) and `reportTurnEndLiveness`, so `index.ts` only calls it.
+- `monitor-continuation.ts`: read-only `scheduledContinuation()` and `hasStagedRecovery()` getters. No scheduling change.
+- `todo-owed-backstop.ts`: `afterAgentEnd` returns its outcome (`delivered | capped | <suppression>`); `calledAskUser` is exported. No behavior change.
+
+### Why
+
+- Both lanes already decided whether something would re-enter the session, but only privately. RPC clients, the desktop app and pane watchdogs could not tell a healthy wait from a stall, and a no-goal turn that ended on a usage limit left no resume point. The verdict adds no budget and starts or suppresses nothing; the existing caps (8 consecutive, 60 without progress, 2 todo nudges per chain) stay the only bounds.
+
+### Follow-up
+
+- The hold ledger is read live through `ctx.engineTurnsHeld()` (#3860), which today reports only that a hold is active, so every active hold reads `held{unattended}`. A follow-up after #3860 reads `ctx.engineTurnHolds()` to report each kind (`session_hold`, `run_fence`, `inherited_hold` from #3811). No start-time snapshot is kept, since it would go stale when input or Resume releases the hold.
+
+### Design credit
+
+The idea of a turn-end liveness check is inspired by dinobot by roach (github.com/dinobot-labs/dinobot, PolyForm Noncommercial 1.0.0). No dinobot code, tests or prompt text were used; this is an independent implementation for senpi's goal and wake-source architecture.
+
+### Expected merge conflict zones
+
+- LOW: the `agent_end` tail and `session_start` head in `index.ts`; the `afterAgentEnd` return statements in `todo-owed-backstop.ts`.
+
+
+## 2026-10-21 - Revalidate held goal continuations before charging (senpi#3853)
+
+### What changed
+
+`packages/coding-agent/src/core/extensions/builtin/goal/lifecycle-helpers.ts`, `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: Checks the engine hold before continuation accounting or prompt rendering, records only a goal wake, and handles held_wakes_released by reading the current active goal and queueing one fresh continuation.
+
+### Why
+
+`packages/coding-agent/src/core/extensions/builtin/goal/lifecycle-helpers.ts`, `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: A pre-rendered held continuation can outlive its goal or contain an obsolete objective, and charging a held wake exhausts the goal guard without provider work.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/extensions/builtin/goal/lifecycle-helpers.ts`, `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: This is source-owned lifecycle behavior inside the goal builtin.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/extensions/builtin/goal/lifecycle-helpers.ts`, `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: admitAndQueueGoalContinuation and lifecycle event registration; preserve the existing continuation latch and normal post-release rules.
+
+## 2026-10-20 - Honor provider reset metadata for goal recovery (senpi#3825)
+
+`provider-retry.ts` now reads future `quota`/`rate_limit` diagnostic `resetsAt` first, then the existing retry-after marker, before legacy ISO error text. The existing provider-recovery timer therefore parks until the named reset plus its margin rather than immediately retrying a spent account, publishing its existing `providerRetry` timer state with the reset deadline. Invalid or expired metadata falls through; auth classification and unknown-reset backoff are unchanged. Regression `3825-goal-limit-reset.test.ts` covers precedence and the event-driven two-hour scheduler boundary. The provider diagnostic also preserves spent Claude window resets; see `packages/ai/src/utils/changes.md`.
+
+## 2026-10-17 - No fixed auto-continue cap; a no-progress guard instead (oh-my-openagent#10280)
+
+### What changed
+
+- `continuation.ts`: `GOAL_UNATTENDED_CONTINUATION_LIMIT` (150) and the `unattended` deny reason are gone. `GOAL_NO_PROGRESS_CONTINUATION_LIMIT` (60) and the `no-progress` deny reason replace them, read from the new persisted `Goal.noProgressContinuations`. `hasGoalTodoProgress` compares only the todo part of the continuation signature.
+- `store.ts`: every counted delivery increments `noProgressContinuations` (monitor-delayed deliveries stay exempt); `resetContinuationStreak(ref, { progress })` clears it, `{ unattended }` (human input) clears both counters, and status transitions zero it.
+- `monitor-continuation.ts`: a turn is progress when its tool effect is new, the todo state changed, or it carried a human-input monitor notification (`isHumanInputMonitorNotification`). A tool effect is `toolEffectFingerprint`: every call's name and arguments, and every result's error flag and text. Results mask run-to-run noise only (ISO timestamps, clock times, durations, `pid N`, 6+ digit numbers, 8+ hex ids), so a small counter that really advances (`12/200 modules`) stays visible. Arguments of non-mutating tools mask every number and long hex id, so `sleep N`, `--bail=N` or a timestamp argument is not a new action; arguments of mutating tools (`edit`, `write`, `apply_patch`, `todo`, decided by tool kind) stay exact so distinct edits never merge. Output alone is not the fingerprint because repeated edits of one file print the same text. A turn whose tool results all failed has no fingerprint and is never progress; a fingerprint matching any of the last `GOAL_TOOL_EFFECT_WINDOW` (256) tool turns is a repeat; with an empty window (first tool turn, after a reload or input reset) a fingerprint only seeds. So re-running the same failing test, swallowing its exit code, varying a counter or timestamp argument, sleeping a growing N, polling a status that only gains a timestamp, or rotating through a fixed set of reads is not progress, while an advancing build counter or a new edit is. Varied narration still resets the consecutive streak (#539/#567) but no longer the no-progress count. A human-input monitor delivery also resets the unattended count and clears the repetition and toolless windows, like typed input.
+- `continuation-recovery.ts` / `lifecycle-helpers.ts`: new mechanical block reason `NO_PROGRESS_BLOCKED_REASON`, so the notice ends with "Send any message to resume." `UNATTENDED_CONTINUATION_BLOCKED_REASON` stays mechanical so goals persisted with it still resume. `goal_continuation_guard_tripped` and `goal-continuation-stopped` add `noProgressContinuations`; `unattendedContinuations` stays as an informational count.
+
+### Why
+
+- A persistent setup paused after 150 continuations even while it worked, because the budget refilled only on typed input and a person's message delivered through a monitor never counted. Thresholds: across 593 local goal sessions (30 days), toolless stretches that recovered into tool use peaked at 29 (p99 7); the #1139 stall ran 122 toolless turns. 60 is twice the measured peak and above the #447 50-turn pin.
+
+- This supersedes the 2026-08-27 unattended continuation backstop (#1139) entry below.
+
+### Why an extension could not handle it
+
+- Admission, the persisted counters and progress detection are private to the goal builtin.
+
+### Expected merge conflict zones
+
+- LOW: the deny-reason union, `afterAgentEnd` progress detection, `recordContinuationDelivered` / `resetContinuationStreak`.
+
 ## 2026-10-14 - Provider-recovery continuations back off and wake when the pool frees up (senpi#3264)
 
 ### What changed

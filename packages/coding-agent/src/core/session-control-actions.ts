@@ -12,6 +12,7 @@ import type {
 } from "./extensions/session-control-types.ts";
 import type { ExternalAdmission } from "./external-admission.ts";
 import type { SessionManager } from "./session-manager.ts";
+import { RELOCATION_NOT_OFFERED, type SessionRelocationHost } from "./session-relocation.ts";
 
 export interface ControlEndpointHost {
 	register(options: RegisterControlEndpointOptions): Promise<SessionControlRegistration>;
@@ -21,6 +22,7 @@ export interface SessionControlActionDeps {
 	readonly admission: ExternalAdmission;
 	readonly sessionManager: SessionManager;
 	readonly host: () => ControlEndpointHost | undefined;
+	readonly relocationHost: () => SessionRelocationHost | undefined;
 }
 
 /** One extension generation's `pi.session`, which owns the control endpoints that generation registered. */
@@ -67,6 +69,10 @@ export function createSessionControlActions(deps: SessionControlActionDeps): Gen
 		admitExternalMessage: (input) => deps.admission.admit(input),
 		listAdmittedDeliveries: () => deps.admission.list(),
 		persistHeaderNow: () => deps.sessionManager.persistHeaderNow(),
+		relocationOffered: () => deps.relocationHost()?.offered() ?? false,
+		relocationTargets: async (signal) => (await deps.relocationHost()?.targets(signal)) ?? RELOCATION_NOT_OFFERED,
+		requestRelocation: async (request, signal) =>
+			(await deps.relocationHost()?.request(request, signal)) ?? RELOCATION_NOT_OFFERED,
 	};
 }
 
@@ -80,5 +86,8 @@ export function unboundSessionControlActions(): SessionControlActions {
 		admitExternalMessage: notBound,
 		listAdmittedDeliveries: notBound,
 		persistHeaderNow: () => Promise.reject(new Error("Extension runtime not initialized")),
+		relocationOffered: notBound,
+		relocationTargets: () => Promise.reject(new Error("Extension runtime not initialized")),
+		requestRelocation: () => Promise.reject(new Error("Extension runtime not initialized")),
 	};
 }

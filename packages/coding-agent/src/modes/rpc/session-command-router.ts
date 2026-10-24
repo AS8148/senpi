@@ -1,8 +1,21 @@
+import type { ToolRuntimeKind } from "../../cli/tool-runtime.ts";
 import { VERSION } from "../../config.ts";
+import type { AgentSession } from "../../core/agent-session.ts";
+import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { detachConnection } from "./connection-detach.ts";
 import { buildRpcSessionState } from "./connection-handler.ts";
+import { CONNECTION_ROLE_FIXED, ConnectionRoles, roleConnection } from "./connection-roles.ts";
+import { SESSION_RELOCATION_CAPABILITY } from "./custom-capability.ts";
 import { answerEffectFromTranscript } from "./effect-commands.ts";
+import { latestSessionEffect } from "./effect-ledger.ts";
 import { multiSessionHostCapabilities } from "./host-capabilities.ts";
+import { HOST_DAEMON_DIR_ENV } from "./host-daemon-paths.ts";
+import {
+	clearHandoverParkedSession,
+	type HandoverParkedEntry,
+	recordHandoverParkedSession,
+} from "./host-handover-parked.ts";
+import { parkedEntryFromProfile, parkedOpenCommand } from "./host-handover-parked-open.ts";
 import { answerWarm } from "./host-warm.ts";
 import { hostInstanceId, protocolIdentity } from "./protocol-identity.ts";
 import {
@@ -24,15 +37,26 @@ import {
 	RPC_ERROR_SESSION_CLOSING,
 	RPC_ERROR_UNKNOWN_SESSION,
 } from "./rpc-types.ts";
+import { SessionAttachOrder } from "./session-attach-order.ts";
 import { runWithSessionAttribution } from "./session-attribution.ts";
 import { createRpcSessionBinding, type RpcSessionBinding } from "./session-binding.ts";
 import { readDrainVerdicts } from "./session-drain.ts";
+import { drainSessionEffects, installSessionEffectSink } from "./session-effect-status.ts";
 import type { SessionEventWriter } from "./session-event-writer.ts";
 import { dispatchSessionBinding, sessionHeldCheck } from "./session-held.ts";
+import { moveSession } from "./session-move-commands.ts";
 import type { OpenRpcSession, RpcSessionLaunchProfile, RpcSessionRegistry } from "./session-registry.ts";
 import { RpcSessionRegistryError } from "./session-registry.ts";
 import { releaseSession } from "./session-release.ts";
+import {
+	answerSetSessionContext,
+	answerSubscribeSessions,
+	answerUnsubscribeSessions,
+	notAttachedRefusal,
+} from "./session-status-commands.ts";
+import { registryStatusSource } from "./session-status-source.ts";
 import { selectSweepEvictions } from "./session-sweep.ts";
+import { unloadSession } from "./session-unload.ts";
 import { liveToolMediaScope, toolMediaPersister } from "./tool-media-store.ts";
 
 /** How often a draining host re-checks whether the work it is waiting for has settled. */
@@ -49,7 +73,11 @@ export type RpcBindingFactory = typeof createRpcSessionBinding;
 export type RpcHostSessionDefaults = Pick<
 	RpcSessionLaunchProfile,
 	"cwd" | "permissionPreset" | "creationModel" | "initialThinkingLevel"
-> & { readonly hostContext?: RpcSessionLaunchProfile["sessionContext"] };
+> & {
+	readonly hostContext?: RpcSessionLaunchProfile["sessionContext"];
+	/** The host's `--tool-runtime`; absent means `in-process`. */
+	readonly toolRuntime?: ToolRuntimeKind;
+};
 
 /**
  * Occupancy policy for the shared multi-session host. All fields are opt-in:
@@ -67,6 +95,12 @@ export interface RpcSessionIdlePolicy {
 	onEmptyExit?: () => void;
 	/** Close connections whose last attached session has finished handoff parking. */
 	onHandoffParked?: (connections: readonly string[]) => Promise<void>;
+	/**
+	 * Endpoint daemon directory the drain appends the handoff-parked residency record to
+	 * (senpi#3282), so the successor reopens exactly the set this host held resident. Absent,
+	 * the park is not persisted (the old behavior).
+	 */
+	handoverParkedDir?: string;
 	/**
 	 * Consulted every tick before the empty-exit window advances. Returning false
 	 * both blocks the exit and resets the window, so a host with a connected but
@@ -103,8 +137,10 @@ function error(
 /** Routes control messages and enforces a routing handle for every session command. */
 export class SessionCommandRouter {
 	private readonly bindings = new Map<string, RpcSessionBinding>();
+	private readonly stopLimitBroadcast: () => void;
 	/** Session handles opened by each connection, with one count per attachment. */
 	private readonly sessionsByConnection = new Map<string, Map<string, number>>();
+	private readonly attachOrder = new SessionAttachOrder();
 	/** Opens currently awaiting runtime/binding setup, keyed by connection. */
 	private readonly opensByConnection = new Map<string, Set<Promise<void>>>();
 	/** Connections whose socket has already been detached. */
@@ -113,12 +149,13 @@ export class SessionCommandRouter {
 		RpcSessionRegistry,
 		"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size" | "warm"
 	> &
-		Partial<Pick<RpcSessionRegistry, "holderPids">>;
+		Partial<Pick<RpcSessionRegistry, "holderPids" | "agentDir">>;
 	private readonly writer: SessionEventWriter;
 	private readonly defaults: RpcHostSessionDefaults;
 	private readonly createBinding: typeof createRpcSessionBinding;
 	private readonly connectionOptions: Parameters<typeof createRpcSessionBinding>[4];
 	private readonly pendingCapabilities = new Map<string, string[]>();
+	private readonly connectionRoles = new ConnectionRoles();
 	private readonly finalizations = new Map<string, { promise: Promise<void>; resolve: () => void }>();
 	private readonly idleNow: () => number;
 	private readonly idleEvictionMs: number;
@@ -126,6 +163,7 @@ export class SessionCommandRouter {
 	private readonly onEmptyExit?: () => void;
 	private readonly canExitWhenEmpty?: () => boolean;
 	private sweepTimer: ReturnType<typeof setInterval> | undefined;
+	private uninstallEffectSink: (() => void) | undefined;
 	private drainTimer: ReturnType<typeof setInterval> | undefined;
 	private draining = false;
 	private handoffParks = 0;
@@ -135,6 +173,7 @@ export class SessionCommandRouter {
 	/** Called after any request for that session settles; a release waits here for the others to finish. */
 	private readonly requestSettledListeners = new Map<string, Set<() => void>>();
 	private readonly onHandoffParked?: RpcSessionIdlePolicy["onHandoffParked"];
+	private readonly handoverParkedDir?: string;
 	private emptySince: number | undefined;
 	/** Halves the idle window while the host reports memory pressure; never refuses work. */
 	private memoryPressure = false;
@@ -148,13 +187,17 @@ export class SessionCommandRouter {
 			RpcSessionRegistry,
 			"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size" | "warm"
 		> &
-			Partial<Pick<RpcSessionRegistry, "holderPids">>,
+			Partial<Pick<RpcSessionRegistry, "holderPids" | "agentDir">>,
 		writer: SessionEventWriter,
 		defaults: RpcHostSessionDefaults,
 		createBinding: typeof createRpcSessionBinding = createRpcSessionBinding,
 		connectionOptions: Parameters<typeof createRpcSessionBinding>[4] = {},
 		idle?: RpcSessionIdlePolicy,
 	) {
+		// Every connection hears an account's new limit windows, whichever session's request reported them.
+		this.stopLimitBroadcast = subscriptionLimits.subscribe((limits) =>
+			writer.broadcastHostRecord({ type: "subscription_limits", ...limits }),
+		);
 		this.registry = registry;
 		this.writer = writer;
 		this.defaults = defaults;
@@ -165,7 +208,30 @@ export class SessionCommandRouter {
 		this.emptyExitMs = idle?.emptyExitMs ?? Number.POSITIVE_INFINITY;
 		this.onEmptyExit = idle?.onEmptyExit;
 		this.onHandoffParked = idle?.onHandoffParked;
+		this.handoverParkedDir = idle?.handoverParkedDir;
 		this.canExitWhenEmpty = idle?.canExitWhenEmpty;
+		writer.status.setSource(registryStatusSource(registry));
+		writer.status.setLastEffectProvider((sessionId) => {
+			const session = this.registry.peek(sessionId)?.runtime?.session;
+			if (session === undefined) return undefined;
+			const latest = latestSessionEffect(session);
+			return latest === undefined
+				? undefined
+				: { effectId: latest.effectId, kind: latest.kind, state: latest.state };
+		});
+		writer.afterRecord = (sessionId) => {
+			const session = this.registry.peek(sessionId)?.runtime?.session;
+			if (session === undefined) return;
+			for (const status of drainSessionEffects(session)) this.writer.status.publishEffect(sessionId, status);
+		};
+		this.uninstallEffectSink = installSessionEffectSink({
+			owns: (session) => this.routingIdOf(session) !== undefined,
+			flush: (session, statuses) => {
+				const sessionId = this.routingIdOf(session);
+				if (sessionId === undefined) return;
+				for (const status of statuses) this.writer.status.publishEffect(sessionId, status);
+			},
+		});
 		if (Number.isFinite(this.idleEvictionMs) || Number.isFinite(this.emptyExitMs)) {
 			// Unref'd: occupancy hygiene must never be the reason the event loop stays open.
 			const tickMs = Math.max(20, Math.min(5_000, Math.min(this.idleEvictionMs, this.emptyExitMs) / 4));
@@ -303,6 +369,7 @@ export class SessionCommandRouter {
 		if (command.type === "get_protocol_info") {
 			const capabilities = multiSessionHostCapabilities({
 				warm: this.registry.warm !== undefined,
+				toolRuntime: this.defaults.toolRuntime ?? "in-process",
 				negotiated: this.connectionOptions?.capabilities ?? [],
 			});
 			return {
@@ -318,6 +385,15 @@ export class SessionCommandRouter {
 					...protocolIdentity(),
 					memory_pressure: this.memoryPressure,
 				},
+			};
+		}
+		if (command.type === "get_subscription_limits") {
+			return {
+				id: command.id,
+				type: "response",
+				command: "get_subscription_limits",
+				success: true,
+				data: { accounts: subscriptionLimits.snapshot() },
 			};
 		}
 		if (command.type === "list_sessions") {
@@ -341,7 +417,8 @@ export class SessionCommandRouter {
 			return detachConnection(command, this.writer.currentConnection(), (id) => this.releaseConnection(id));
 		if (command.type === "open_session") return this.openWithBarrier(command);
 		if (command.type === "close_session") return this.close(command);
-		if (command.type === "release_session")
+		if (command.type === "release_session") {
+			const caller = this.writer.currentConnection();
 			return releaseSession(
 				{
 					draining: () => this.draining,
@@ -352,23 +429,112 @@ export class SessionCommandRouter {
 					otherRequests: (sessionId) => Math.max(0, (this.activeRequests.get(sessionId) ?? 1) - 1),
 					otherRequestsSettled: (sessionId) => this.otherRequestsSettled(sessionId),
 					pendingPrompts: (sessionId) => this.bindings.get(sessionId)?.pendingPrompts?.() ?? [],
+					otherAttachments: (sessionId) => this.otherAttachments(sessionId, caller),
 					tearDown: (sessionId, sessionPath) => this.tearDownReleased(sessionId, sessionPath),
 				},
 				command,
 			);
+		}
+		if (command.type === "move_session") {
+			const agentDir = this.registry.agentDir;
+			if (agentDir === undefined)
+				return error(
+					command.id,
+					command.type,
+					"move_unsupported: this host keeps no agent directory to move sessions in",
+				);
+			return moveSession(
+				{
+					agentDir,
+					hostedPaths: () =>
+						this.registry.list().flatMap((row) => (row.sessionPath === undefined ? [] : [row.sessionPath])),
+				},
+				command,
+			);
+		}
+		if (command.type === "unload_session") {
+			const caller = this.writer.currentConnection();
+			return unloadSession(
+				{
+					draining: () => this.draining,
+					by: { connectionId: caller ?? "host" },
+					lookup: (sessionId) => this.registry.getForCommand(sessionId, "unload_session"),
+					code: (cause) => this.code(cause),
+					// The unload is itself one of the session's in-flight requests.
+					otherRequests: (sessionId) => Math.max(0, (this.activeRequests.get(sessionId) ?? 1) - 1),
+					otherRequestsSettled: (sessionId) => this.otherRequestsSettled(sessionId),
+					pendingPrompts: (sessionId) => this.bindings.get(sessionId)?.pendingPrompts?.() ?? [],
+					otherAttachments: (sessionId) => this.otherAttachments(sessionId, caller),
+					openChildSessions: (durableSessionId) =>
+						this.registry
+							.list()
+							.filter(
+								(row) =>
+									row.durableSessionId !== durableSessionId &&
+									(row.context?.parent_session_id === durableSessionId ||
+										row.context?.root_session_id === durableSessionId),
+							).length,
+					tearDown: (sessionId, sessionPath) => this.tearDownUnloaded(sessionId, sessionPath),
+				},
+				command,
+			);
+		}
 		if (command.type === "set_client_info" && !command.sessionId) {
 			const connection = this.writer.currentConnection();
+			if (
+				command.capabilities !== undefined &&
+				!this.connectionRoles.declare(roleConnection(connection), command.capabilities)
+			)
+				return {
+					id: command.id,
+					type: "response",
+					command: "set_client_info",
+					success: false,
+					error: CONNECTION_ROLE_FIXED,
+				} as RpcResponse;
 			if (connection !== undefined) {
 				this.pendingCapabilities.set(connection, command.capabilities ?? []);
 				this.writer.setConnectionCapabilities(connection, command.capabilities ?? []);
 			}
 			return { id: command.id, type: "response", command: "set_client_info", success: true } as RpcResponse;
 		}
+		if (command.type === "subscribe_sessions") {
+			const connection = this.writer.currentConnection();
+			const { answer, activate } = answerSubscribeSessions(command, connection, this.writer.status);
+			// On a socket host the response is enqueued HERE, ahead of activation: a delta published
+			// while this dispatch awaited the route queues behind the snapshot it belongs after.
+			if (activate !== undefined && connection !== undefined) {
+				const enqueue = async () => {
+					// Two hops: the response must be enqueued onto the actor's FIFO before the
+					// subscription goes live, so a delta published between registration and here
+					// always lands behind the snapshot answer it follows.
+					await this.writer.enqueueControl(answer, connection);
+					await new Promise<void>((resolve) => queueMicrotask(resolve));
+					try {
+						// A connection that closed while this subscribe awaited dispatch already ran dropConnection,
+						// before this pending entry existed; drop it here or it holds deltas for the life of the host.
+						if (this.writer.hasConnection(connection)) this.writer.status.activate(activate);
+						else this.writer.status.unsubscribe(connection, activate);
+					} catch (cause) {
+						process.stderr.write(`senpi rpc subscription activation failed: ${String(cause)}\n`);
+					}
+				};
+				void enqueue().catch((cause: unknown) => {
+					this.writer.status.unsubscribe(connection, activate);
+					process.stderr.write(`senpi rpc subscribe answer could not be delivered: ${String(cause)}\n`);
+				});
+				return undefined;
+			}
+			return answer;
+		}
+		if (command.type === "unsubscribe_sessions")
+			return answerUnsubscribeSessions(command, this.writer.currentConnection(), this.writer.status);
 		// A receipt of a session this host has not loaded is read from its transcript, never by loading it.
 		if (command.type === "get_effect_status" && !command.sessionId && command.sessionPath !== undefined)
 			return answerEffectFromTranscript(command.id, command.sessionPath, command.effectId);
 		if (!command.sessionId) return error(command.id, command.type, RPC_ERROR_MISSING_SESSION_ID);
 		const sessionId = command.sessionId;
+		if (command.type === "set_session_context") return this.setSessionContext(command);
 		try {
 			const entry = this.registry.getForCommand(sessionId, command.type);
 			await dispatchSessionBinding(
@@ -384,7 +550,21 @@ export class SessionCommandRouter {
 		}
 	}
 
+	/** Any attached connection may patch; a host with no per-connection identity (stdio) owns every session. */
+	private setSessionContext(command: Extract<RpcCommand, { type: "set_session_context" }>): RpcResponse {
+		const owner = this.writer.currentConnection();
+		if (owner !== undefined && this.sessionsByConnection.get(owner)?.has(command.sessionId) !== true)
+			return notAttachedRefusal(command);
+		try {
+			const entry = this.registry.getForCommand(command.sessionId, command.type);
+			return answerSetSessionContext(command, entry, this.writer.status);
+		} catch (cause) {
+			return error(command.id, command.type, this.code(cause), this.detail(cause));
+		}
+	}
+
 	async dispose(): Promise<void> {
+		this.stopLimitBroadcast();
 		this.drainExitRequested = true;
 		this.stopSweep();
 		if (this.drainTimer !== undefined) clearInterval(this.drainTimer);
@@ -405,6 +585,8 @@ export class SessionCommandRouter {
 			}),
 		);
 		this.bindings.clear();
+		this.uninstallEffectSink?.();
+		this.uninstallEffectSink = undefined;
 	}
 
 	/**
@@ -464,9 +646,36 @@ export class SessionCommandRouter {
 		const owners = handoff
 			? [...this.sessionsByConnection].filter(([, owned]) => owned.has(sessionId)).map(([connection]) => connection)
 			: [];
-		// A failed claim means an explicit close raced us and owns the entry now.
+		// A failed claim means an explicit close raced us and owns the entry now; nothing is recorded,
+		// or a closed session would come back on the next host start (MEDIUM-1, senpi#3282 review).
 		const claim = this.tryClaimClose(sessionId, { drainAttachments: true });
 		if (!claim) return;
+		// A retain_on_disconnect session survives EVERY generation: park it to disk AND into the
+		// handover record, whether the park came from the handoff drain or the idle sweep, so the
+		// successor reopens it. Recorded only after the claim wins, and only when the teardown parks
+		// (parkedPath set) - never for an explicit close. The write is awaited before the drain
+		// proceeds, or the generation can hand over and exit before it lands and the park is lost.
+		if (
+			this.handoverParkedDir !== undefined &&
+			parkedPath !== undefined &&
+			retained?.retainOnDisconnect === true &&
+			retained.sessionPath !== undefined
+		) {
+			await recordHandoverParkedSession(this.handoverParkedDir, {
+				...parkedEntryFromProfile(
+					{
+						sessionPath: retained.sessionPath,
+						contextOverlay: retained.contextOverlay,
+						...(retained.durableSessionId !== undefined ? { durableSessionId: retained.durableSessionId } : {}),
+					},
+					retained.profile,
+					Object.keys(this.defaults.hostContext ?? {}),
+				),
+				parkedBy: this.defaults.hostContext?.host_instance ?? hostInstanceId(),
+			}).catch((cause: unknown) => {
+				process.stderr.write(`senpi rpc handover park record ${sessionId} failed: ${String(cause)}\n`);
+			});
+		}
 		const binding = this.bindings.get(sessionId);
 		binding?.cancelPendingExtensionUiRequests?.();
 		if (!handoff) this.forgetSessionOwnership(sessionId);
@@ -475,7 +684,7 @@ export class SessionCommandRouter {
 				// A drain names ITS reason on the close record. An idle sweep of a RETAINED
 				// session parks instead: the file reopens by path. Anything else is a close.
 				parkedPath !== undefined && reason === undefined
-					? this.writer.parkSession(sessionId, parkedPath)
+					? this.writer.parkSession(sessionId, parkedPath, "idle")
 					: this.writer.closeSession(
 							sessionId,
 							{ type: "response", command: "close_session", success: true, data: {} },
@@ -529,12 +738,58 @@ export class SessionCommandRouter {
 		return true;
 	}
 
+	/** The idle park on request: every attachment drained, sealed `session_parked { reason: "unloaded" }`. */
+	private async tearDownUnloaded(sessionId: string, sessionPath: string): Promise<boolean> {
+		const claim = this.tryClaimClose(sessionId, { drainAttachments: true });
+		if (!claim) return false;
+		const binding = this.bindings.get(sessionId);
+		binding?.cancelPendingExtensionUiRequests?.();
+		this.forgetSessionOwnership(sessionId);
+		if (claim.finalizer)
+			await this.finalizeClose(sessionId, binding, () =>
+				this.writer.parkSession(sessionId, sessionPath, "unloaded"),
+			);
+		else await this.finalizations.get(sessionId)?.promise;
+		this.writer.forgetSession(sessionId);
+		return true;
+	}
+
+	/**
+	 * The connection that offers to continue this session on another computer: the earliest-attached one that
+	 * advertised `session_relocation` in its own `set_client_info` (docs/rpc.md). Only it is asked and only it may answer.
+	 */
+	private relocationConnection(sessionId: string): string | undefined {
+		return this.attachOrder
+			.connections(sessionId)
+			.find(
+				(connection) =>
+					this.sessionsByConnection.get(connection)?.has(sessionId) === true &&
+					this.writer.getConnectionCapabilities(connection)?.includes(SESSION_RELOCATION_CAPABILITY) === true,
+			);
+	}
+
+	/** Attachments of the session other than `caller`'s own: an unload or release never counts its requester. */
+	private otherAttachments(sessionId: string, caller: string | undefined): number {
+		const attachments = Math.max(0, this.registry.peek(sessionId)?.attachments ?? 0);
+		const own = caller !== undefined && this.sessionsByConnection.get(caller)?.has(sessionId) === true;
+		return own ? Math.max(0, attachments - 1) : attachments;
+	}
+
 	/** Drops per-connection records for a handle the host closed on its own. */
 	private forgetSessionOwnership(sessionId: string): void {
+		this.attachOrder.forgetSession(sessionId);
 		for (const [connection, owned] of this.sessionsByConnection) {
 			owned.delete(sessionId);
 			if (owned.size === 0) this.sessionsByConnection.delete(connection);
 		}
+	}
+
+	/** The routing id this host answers `session` on, if it holds it. */
+	private routingIdOf(session: AgentSession): string | undefined {
+		for (const row of this.registry.list()) {
+			if (this.registry.peek(row.sessionId)?.runtime?.session === session) return row.sessionId;
+		}
+		return undefined;
 	}
 
 	private stopSweep(): void {
@@ -578,17 +833,57 @@ export class SessionCommandRouter {
 				position: inFlight + 1,
 				in_flight: inFlight,
 			});
-		return this.open(command, owner).finally(() => {
+		const opened = this.open(command, owner);
+		// A manual reopen-by-path supersedes the handover auto-reopen for that session: clear its
+		// record entry, or a later generation would reopen a second copy (MEDIUM-1, senpi#3282 review).
+		// Cleared only after the open SUCCEEDS (MEDIUM-A): if the open fails - a session_path_in_use
+		// during a handover, or a bad profile - the entry must stay so a later generation can still
+		// reopen the session. open() resolves `undefined` on success (the response is written through
+		// the writer) and an RpcResponse only on failure, so success is `response === undefined`.
+		if (command.sessionPath !== undefined && this.handoverParkedDir !== undefined) {
+			const dir = this.handoverParkedDir;
+			const sessionPath = command.sessionPath;
+			void opened.then(
+				(response) => {
+					if (response === undefined) void clearHandoverParkedSession(dir, sessionPath).catch(() => {});
+				},
+				() => {
+					// A rejection means the open failed before producing a response; the entry stays.
+				},
+			);
+		}
+		return opened.finally(() => {
 			resolveBarrier();
 			opens.delete(barrier);
 			if (opens.size === 0) this.opensByConnection.delete(owner);
 		});
 	}
 
+	/**
+	 * The successor's reopen of a handoff-parked session: the same open as an `open_session`, with no
+	 * requesting connection and nothing to reply to (senpi#3368). Resolves `undefined` on success and
+	 * the failure response otherwise, exactly as an open does.
+	 */
+	reopenParked(entry: HandoverParkedEntry): Promise<RpcResponse | undefined> {
+		return this.open({ ...parkedOpenCommand(entry), attended: false }, undefined, {
+			reply: false,
+			defaults: false,
+			contextOverlay: entry.contextOverlay,
+		});
+	}
+
 	private async open(
 		command: Extract<RpcCommand, { type: "open_session" }>,
 		owner?: string,
+		options?: {
+			readonly reply?: boolean;
+			readonly defaults?: boolean;
+			readonly contextOverlay?: HandoverParkedEntry["contextOverlay"];
+		},
 	): Promise<RpcResponse | undefined> {
+		// A parked session's reopen replays what its park recorded; a field it left empty stays empty
+		// rather than taking THIS host's default (senpi#3376 review).
+		const defaults = options?.defaults === false ? undefined : this.defaults;
 		const instanceId = this.defaults.hostContext?.host_instance ?? hostInstanceId();
 		if (command.expectedHostInstance !== undefined) {
 			if (typeof command.expectedHostInstance !== "string" || command.expectedHostInstance.trim() === "")
@@ -613,6 +908,12 @@ export class SessionCommandRouter {
 		// registry, the runtime and the extensions downstream receive values already
 		// proven to satisfy every documented cap.
 		const kindError = sessionKindError(command.kind);
+		if (command.attended !== undefined && command.attended !== false)
+			return error(
+				command.id,
+				"open_session",
+				`${RPC_ERROR_INVALID_LAUNCH_PROFILE}: attended must be false or omitted`,
+			);
 		if (kindError) return error(command.id, "open_session", `${RPC_ERROR_INVALID_SESSION_KIND}: ${kindError}`);
 		const contextError = sessionContextError(command.context);
 		if (contextError)
@@ -641,22 +942,39 @@ export class SessionCommandRouter {
 		);
 		try {
 			await assertSessionNotHeld(command.sessionPath);
+			const ancestry = command.spawnedBy;
+			if (
+				ancestry !== undefined &&
+				(typeof ancestry !== "object" ||
+					ancestry === null ||
+					Array.isArray(ancestry) ||
+					typeof ancestry.parentSessionId !== "string" ||
+					ancestry.parentSessionId.length === 0 ||
+					typeof ancestry.rootSessionId !== "string" ||
+					ancestry.rootSessionId.length === 0 ||
+					typeof ancestry.taskId !== "string" ||
+					ancestry.taskId.length === 0)
+			)
+				return error(command.id, "open_session", "invalid_spawned_by");
 			opened = await this.registry.openSession(
 				{
 					cwd: command.cwd ?? this.defaults.cwd,
+					...(command.attended === false ? { attended: false as const } : {}),
+					...(ancestry ? { spawnedBy: ancestry } : {}),
 					sessionPath: command.sessionPath,
 					holderEndpoint: {
 						host_instance: instanceId,
+						...(process.env[HOST_DAEMON_DIR_ENV] ? { host_daemon_dir: process.env[HOST_DAEMON_DIR_ENV] } : {}),
 						...(this.defaults.hostContext?.host_socket === undefined
 							? {}
 							: { host_socket: this.defaults.hostContext.host_socket }),
 					},
-					permissionPreset: command.permissionPreset ?? this.defaults.permissionPreset,
+					permissionPreset: command.permissionPreset ?? defaults?.permissionPreset,
 					creationModel:
 						command.provider && command.modelId
 							? { provider: command.provider, modelId: command.modelId }
-							: this.defaults.creationModel,
-					initialThinkingLevel: command.thinkingLevel ?? this.defaults.initialThinkingLevel,
+							: defaults?.creationModel,
+					initialThinkingLevel: command.thinkingLevel ?? defaults?.initialThinkingLevel,
 					sessionKind: command.kind,
 					sessionContext: this.defaults.hostContext
 						? { ...command.context, ...this.defaults.hostContext }
@@ -675,6 +993,7 @@ export class SessionCommandRouter {
 			);
 			const openedSession = opened;
 			const entry = this.registry.getForCommand(openedSession.sessionId, "open_session");
+			if (!opened.attached && options?.contextOverlay !== undefined) entry.contextOverlay = options.contextOverlay;
 			const state = entry.worker?.snapshot?.state;
 			// The runtime has now published its own lease. Recheck before attaching or replying,
 			// so an opener racing the initial lookup is rolled back rather than admitted.
@@ -702,6 +1021,7 @@ export class SessionCommandRouter {
 				const owned = this.sessionsByConnection.get(owner) ?? new Map<string, number>();
 				owned.set(openedSession.sessionId, (owned.get(openedSession.sessionId) ?? 0) + 1);
 				this.sessionsByConnection.set(owner, owned);
+				this.attachOrder.attached(openedSession.sessionId, owner);
 			}
 			if (!this.bindings.has(openedSession.sessionId)) {
 				this.bindings.set(
@@ -717,6 +1037,7 @@ export class SessionCommandRouter {
 								owner !== undefined
 									? (this.pendingCapabilities.get(owner) ?? this.connectionOptions?.capabilities ?? [])
 									: this.connectionOptions?.capabilities,
+							connectionRoles: this.connectionRoles,
 							clientInfo: {
 								setCapabilities: (connectionId, capabilities) => {
 									if (connectionId !== undefined) {
@@ -725,6 +1046,8 @@ export class SessionCommandRouter {
 									}
 								},
 								connectionId: () => this.writer.currentConnection(),
+								relocationConnection: () => this.relocationConnection(openedSession.sessionId),
+								deliverTo: (connection, deliver) => this.writer.withConnection(connection, deliver),
 							},
 						},
 					),
@@ -751,6 +1074,19 @@ export class SessionCommandRouter {
 						this.writer.forgetSession(openedSession.sessionId);
 					});
 			}
+			if (opened.attached) this.writer.status.publish(openedSession.sessionId, "attach", "client");
+			else {
+				this.writer.publishSessionOpened({
+					type: "session_opened",
+					sessionId: openedSession.sessionId,
+					durableSessionId: openedSession.durableSessionId,
+					...(openedSession.sessionPath !== undefined ? { sessionPath: openedSession.sessionPath } : {}),
+					kind: entry.kind,
+					cwd: entry.cwd,
+					context: entry.context,
+				});
+				this.writer.status.publish(openedSession.sessionId, "open", "client");
+			}
 			if (!this.draining && owner !== undefined && this.releasedConnections.has(owner)) {
 				this.releaseOwnerAttachment(owner, openedSession.sessionId);
 				await this.releaseOwnedSession(openedSession.sessionId);
@@ -758,26 +1094,37 @@ export class SessionCommandRouter {
 			const replyState =
 				entry.worker?.snapshot?.state ?? (entry.runtime ? buildRpcSessionState(entry.runtime.session) : undefined);
 			if (!replyState) throw new Error("Session state was not created");
-			this.writer.enqueue(opened.sessionId, {
-				id: command.id,
-				type: "response",
-				command: "open_session",
-				success: true,
-				data: {
-					sessionId: opened.sessionId,
-					state: replyState,
-					...(opened.attached ? { attached: true } : {}),
-				},
-			});
+			if (options?.reply !== false)
+				this.writer.enqueue(opened.sessionId, {
+					id: command.id,
+					type: "response",
+					command: "open_session",
+					success: true,
+					data: {
+						sessionId: opened.sessionId,
+						state: replyState,
+						...(opened.attached ? { attached: true } : {}),
+					},
+				});
 			return undefined;
 		} catch (cause) {
 			if (opened) {
+				// Only a non-attached open published session_opened and an open status before this
+				// rollback, and only while the registry still holds the live entry, so only that
+				// rollback owes its subscribers the terminal record; an attach rollback, or one whose
+				// entry is already gone, never announced the session in the first place (#3198 review, L1).
+				if (!opened.attached) {
+					const entry = this.registry.peek(opened.sessionId);
+					if (entry?.runtime !== undefined || entry?.worker !== undefined)
+						this.writer.sealRolledBackOpen(opened.sessionId, entry.sessionPath);
+				}
 				try {
 					if (opened.attached) await this.releaseOwnedSession(opened.sessionId);
 					else await this.registry.close(opened.sessionId);
 				} catch {
 					/* The open rollback has already removed the entry. */
 				}
+				this.writer.forgetSession(opened.sessionId);
 			}
 			return error(command.id, "open_session", this.code(cause), this.detail(cause));
 		}
@@ -793,8 +1140,13 @@ export class SessionCommandRouter {
 	async releaseConnection(connectionId: string): Promise<string[]> {
 		this.releasedConnections.add(connectionId);
 		this.writer.clearConnectionCapabilities(connectionId);
-		for (const sessionId of this.sessionsByConnection.get(connectionId)?.keys() ?? [])
+		this.connectionRoles.release(connectionId);
+		for (const sessionId of this.sessionsByConnection.get(connectionId)?.keys() ?? []) {
 			this.writer.detachConnectionFromSession(connectionId, sessionId);
+			this.connectionLeft(sessionId, connectionId);
+		}
+		// The socket is gone (dropped, not `detach_connection`): nothing will ever open with its capabilities again.
+		if (!this.writer.hasConnection(connectionId)) this.pendingCapabilities.delete(connectionId);
 		const opens = this.opensByConnection.get(connectionId);
 		const owned = this.sessionsByConnection.get(connectionId);
 		this.sessionsByConnection.delete(connectionId);
@@ -888,6 +1240,7 @@ export class SessionCommandRouter {
 		const claim = this.tryClaimClose(sessionId, { drainAttachments: false, detach: true });
 		if (!claim) return;
 		if (!claim.finalizer) {
+			this.writer.status.publish(sessionId, "detach", "client");
 			if (parks && live.runtime) {
 				live.lifecycleMutex = live.lifecycleMutex.then(() => live.runtime?.emitAttachmentEvent("session_parked"));
 				await live.lifecycleMutex;
@@ -963,10 +1316,16 @@ export class SessionCommandRouter {
 		try {
 			if (owner !== undefined) this.releaseOwnerAttachment(owner, command.sessionId);
 			if (claim.finalizer) {
+				// An explicit close ends the session for good: drop any handover-parked record entry, or
+				// the session would come back on the next host start (MEDIUM-1, senpi#3282 review).
+				const entry = this.registry.peek(command.sessionId);
+				if (this.handoverParkedDir !== undefined && entry?.sessionPath !== undefined)
+					await clearHandoverParkedSession(this.handoverParkedDir, entry.sessionPath).catch(() => {});
 				await this.finalizeClose(command.sessionId, this.bindings.get(command.sessionId), () =>
 					reply.complete(true, "client_close"),
 				);
 			} else {
+				this.writer.status.publish(command.sessionId, "detach", "client");
 				await this.finalizations.get(command.sessionId)?.promise;
 				reply.complete(false);
 			}
@@ -976,14 +1335,22 @@ export class SessionCommandRouter {
 		}
 	}
 
+	/** `connection` no longer attaches to `sessionId`: its attach order and what it offered the session end. */
+	private connectionLeft(sessionId: string, connection: string): void {
+		this.attachOrder.detached(sessionId, connection);
+		this.bindings.get(sessionId)?.connectionDetached?.(connection);
+	}
+
 	/** Detaches the closing connection from the session's record fanout. */
 	private releaseOwnerAttachment(owner: string, sessionId: string): void {
 		this.writer.detachConnectionFromSession(owner, sessionId);
 		const owned = this.sessionsByConnection.get(owner);
 		const count = owned?.get(sessionId);
 		if (!owned || count === undefined) return;
-		if (count === 1) owned.delete(sessionId);
-		else owned.set(sessionId, count - 1);
+		if (count === 1) {
+			owned.delete(sessionId);
+			this.connectionLeft(sessionId, owner);
+		} else owned.set(sessionId, count - 1);
 		if (owned.size === 0) this.sessionsByConnection.delete(owner);
 	}
 

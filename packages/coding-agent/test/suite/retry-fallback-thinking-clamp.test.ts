@@ -269,4 +269,40 @@ describe("retry fallback thinking-level selection", () => {
 		expect(await controller.tryFallback("transient", { errorMessage: "overloaded_error" })).toBe(false);
 		expect(switches).toEqual([]);
 	});
+
+	it("skips an explicit level that clamps to the level in flight (senpi#3321)", async () => {
+		// toggle supports only off/high, so toggle:xhigh clamps to the high that just failed
+		const { controller, switches } = createController({
+			models: [primary, toggle],
+			chains: { "faux/toggle": ["faux/toggle:xhigh", "faux/primary"] },
+			current: { model: toggle, thinkingLevel: "high" },
+		});
+
+		expect(await controller.tryFallback("hard-error", {})).toBe(true);
+		expect(switches.map((record) => `${record.id}:${record.thinking}`)).toEqual(["primary:high"]);
+	});
+
+	it("does not retry a network blip on another rung of the model it just failed on (senpi#3344)", async () => {
+		const { controller, switches } = createController({
+			models: [primary, toggle],
+			chains: { "faux/primary": ["faux/primary:off", "faux/toggle"] },
+			current: { model: primary, thinkingLevel: "high" },
+		});
+
+		expect(await controller.tryFallback("transient", { errorMessage: "TypeError: fetch failed (ECONNRESET)" })).toBe(
+			true,
+		);
+		expect(switches.map((record) => `${record.id}:${record.thinking}`)).toEqual(["toggle:high"]);
+	});
+
+	it("still walks to another rung of the same model after a hard error", async () => {
+		const { controller, switches } = createController({
+			models: [primary, toggle],
+			chains: { "faux/primary": ["faux/primary:off", "faux/toggle"] },
+			current: { model: primary, thinkingLevel: "high" },
+		});
+
+		expect(await controller.tryFallback("hard-error", {})).toBe(true);
+		expect(switches.map((record) => `${record.id}:${record.thinking}`)).toEqual(["primary:off"]);
+	});
 });

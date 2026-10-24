@@ -15,6 +15,7 @@ import {
 	isModelType,
 	lazyStream,
 	type Model,
+	type ModelCost,
 	type OAuthAuth,
 	type OAuthCredential,
 	type OAuthCredentials,
@@ -124,6 +125,15 @@ export interface ProviderConfigInput {
 	extraBody?: Record<string, unknown>;
 	authHeader?: boolean;
 	oauth?: ExtensionOAuthConfig;
+	/**
+	 * Ambient api-key auth resolved from a shared cloud credential chain (Google
+	 * ADC, AWS env) rather than a credential configured for this provider. The
+	 * provider counts as configured only while `resolve` yields a result, and the
+	 * ambient marker keeps it from outranking a provider the user configured when
+	 * the automatic default model is chosen (senpi#2327). Ignored when `apiKey`,
+	 * credential headers, or a base provider already supply auth.
+	 */
+	ambientAuth?: ProviderAmbientAuth;
 	retryPolicy?: RetryPolicyProfile;
 	models?: ProviderModelConfig[];
 	refreshModels?(context: RefreshModelsContext): Promise<ProviderModelConfig[]>;
@@ -135,6 +145,25 @@ export interface ProviderConfigInput {
 	 * every expansion, so a settings change takes effect without re-registration.
 	 */
 	fallbackEligible?(): boolean;
+	/**
+	 * Set by a provider whose own lane chooses among the accounts stored for it (pin, session
+	 * stickiness, per-account limits) and fails over between them. The generic credential pool then
+	 * never wraps it: two layers choosing accounts pinned the lane's verdicts on slots the lane never
+	 * used and blocked all of them (senpi#2081).
+	 */
+	ownsAccountSelection?: boolean;
+}
+
+/** Ambient api-key auth hook for extension providers (see `ProviderConfigInput.ambientAuth`). */
+export interface ProviderAmbientAuth {
+	/** Display name, e.g. "Google Cloud credentials". */
+	name?: string;
+	/**
+	 * Resolve from the ambient chain. `undefined` means the chain currently
+	 * supplies no credential, so the provider stays unavailable. A returned
+	 * result should carry `ambient: true`.
+	 */
+	resolve(input: { ctx: AuthContext; signal: AbortSignal }): Promise<AuthResult | undefined>;
 }
 
 export type AuthStatus = {
@@ -237,6 +266,9 @@ function applyModelOverride(model: Model<Api>, override: ModelsJsonModelOverride
 					cacheRead: override.cost.cacheRead ?? model.cost.cacheRead,
 					cacheWrite: override.cost.cacheWrite ?? model.cost.cacheWrite,
 					tiers: override.cost.tiers ?? model.cost.tiers,
+					// A user-set price is the price: the catalog's scheduled cards would replace it on their date.
+					// An unknown price stays unknown until the override sets every rate (senpi#3844).
+					...(model.cost.unknown && !setsEveryRate(override.cost) ? { unknown: true as const } : {}),
 				}
 			: model.cost,
 		promptCache: override.promptCache ? { ...model.promptCache, ...override.promptCache } : model.promptCache,
@@ -250,11 +282,26 @@ function applyModelOverride(model: Model<Api>, override: ModelsJsonModelOverride
 	};
 }
 
+// A custom model with no price anywhere has no known cost, which is not the same as a free one. A local Ollama model
+// is the exception: it runs on the user's machine, so an omitted price is a real $0.
+const UNKNOWN_COST: ModelCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, unknown: true };
+const FREE_COST: ModelCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+
+function setsEveryRate(cost: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }): boolean {
+	return (
+		cost.input !== undefined &&
+		cost.output !== undefined &&
+		cost.cacheRead !== undefined &&
+		cost.cacheWrite !== undefined
+	);
+}
+
 function modelFromJson(
 	providerId: string,
 	definition: ModelsJsonModel,
 	providerConfig: ModelsJsonProvider,
 	defaults: { api?: Api; baseUrl?: string } | undefined,
+	catalogCost: ModelCost | undefined,
 ): ModelWithConfigMetadata {
 	const api = definition.api ?? providerConfig.api ?? defaults?.api;
 	if (!api) {
@@ -283,7 +330,7 @@ function modelFromJson(
 		defaultThinkingLevel: definition.defaultThinkingLevel,
 		input: (definition.input ?? ["text"]) as ("text" | "image" | "video")[],
 		inputLimits: definition.inputLimits,
-		cost: definition.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		cost: definition.cost ?? catalogCost ?? (providerId === "ollama" ? FREE_COST : UNKNOWN_COST),
 		promptCache: definition.promptCache,
 		contextWindow: definition.contextWindow ?? 128000,
 		maxTokens: definition.maxTokens ?? 16384,
@@ -388,11 +435,18 @@ function applyModelsJson(
 		// Extension-provided api/baseUrl still win over the resolved defaults so a
 		// models.json extension can retarget an inherited built-in entry, and remain
 		// the fallback when no built-in default exists (empty catalog).
-		const model = modelFromJson(providerId, definition, config, {
-			...defaults,
-			api: extension?.api ?? defaults?.api,
-			baseUrl: extension?.baseUrl ?? defaults?.baseUrl,
-		});
+		const existing = existingIndex >= 0 ? models[existingIndex] : undefined;
+		const model = modelFromJson(
+			providerId,
+			definition,
+			config,
+			{
+				...defaults,
+				api: extension?.api ?? defaults?.api,
+				baseUrl: extension?.baseUrl ?? defaults?.baseUrl,
+			},
+			existing?.cost,
+		);
 		if (existingIndex >= 0) models[existingIndex] = model;
 		else models.push(model);
 	}
@@ -403,7 +457,7 @@ function applyModelsJson(
 		(model) =>
 			(whitelist === undefined || whitelist.has(model.id)) &&
 			(blacklist === undefined || !blacklist.has(model.id)) &&
-			!(hideFree && model.cost.input === 0 && model.cost.output === 0),
+			!(hideFree && !model.cost.unknown && model.cost.input === 0 && model.cost.output === 0),
 	);
 }
 

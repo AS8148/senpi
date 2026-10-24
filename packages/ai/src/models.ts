@@ -1,7 +1,7 @@
 import { lazyStream } from "./api/lazy.ts";
 import { defaultProviderAuthContext as defaultAuthContext } from "./auth/context.ts";
 import { InMemoryCredentialStore } from "./auth/credential-store.ts";
-import { appendLoginSlot, removeSlot } from "./auth/pool/slots.ts";
+import { appendLoginSlot, assertLoginKeyPresent, removeSlot, withoutBlankKey } from "./auth/pool/slots.ts";
 import { resolveRefreshCredential } from "./auth/refresh-credential.ts";
 import {
 	type AuthResolutionOverrides,
@@ -21,7 +21,9 @@ import type {
 	LoginOptions,
 	ProviderAuth,
 } from "./auth/types.ts";
+import { inferGoogleThinkingLevelMap } from "./google-thinking-generation.ts";
 import { builtinCatalogAdvertisesMax } from "./model-catalog.ts";
+import { costCardAt } from "./model-cost.ts";
 import { InMemoryModelsStore, type ModelsStore, type ModelsStoreEntry } from "./models-store.ts";
 import type {
 	AnyModel,
@@ -781,7 +783,9 @@ class ModelsImpl implements MutableModels {
 		}
 		const { onAccountCommitted, ...providerInteraction } = interaction;
 		const loginOperation: Promise<Credential> = method.login({ ...providerInteraction, signal }, options);
-		const credential = await raceWithAbortSignal(loginOperation, signal);
+		const loggedIn = await raceWithAbortSignal(loginOperation, signal);
+		const credential = type === "api_key" && provider.auth.apiKey?.keyOptional ? withoutBlankKey(loggedIn) : loggedIn;
+		assertLoginKeyPresent(credential);
 		let committedName: string | undefined;
 		let committedOrigin: "generated" | "provider" | undefined;
 		let mutationStarted = false;
@@ -1241,11 +1245,21 @@ export function hasApi<TApi extends Api>(model: AnyModel, api: TApi): model is M
 	return isModelType(model, "chat") && model.api === api;
 }
 
-export function calculateCost(model: AnyModel, usage: Usage): Usage["cost"] {
+export function calculateCost(model: AnyModel, usage: Usage, atMs: number = Date.now()): Usage["cost"] {
+	if (model.cost.unknown) {
+		usage.cost.input = 0;
+		usage.cost.output = 0;
+		usage.cost.cacheRead = 0;
+		usage.cost.cacheWrite = 0;
+		usage.cost.total = 0;
+		usage.costUnknown = true;
+		return usage.cost;
+	}
 	const inputTokens = usage.input + usage.cacheRead + usage.cacheWrite;
-	let rates: ModelCostRates = model.cost;
+	const card = costCardAt(model.cost, atMs);
+	let rates: ModelCostRates = card;
 	let matchedThreshold = -1;
-	for (const tier of model.cost.tiers ?? []) {
+	for (const tier of card.tiers ?? []) {
 		if (inputTokens > tier.inputTokensAbove && tier.inputTokensAbove > matchedThreshold) {
 			rates = tier;
 			matchedThreshold = tier.inputTokensAbove;
@@ -1295,11 +1309,16 @@ export function inferOpenAIThinkingLevelMap<TApi extends Api>(model: Model<TApi>
 	return undefined;
 }
 
+/** The level map a row carries, else the one inferred from documented provider controls. */
+export function inferThinkingLevelMap<TApi extends Api>(model: Model<TApi>): ThinkingLevelMap | undefined {
+	return inferOpenAIThinkingLevelMap(model) ?? inferGoogleThinkingLevelMap(model);
+}
+
 export function getSupportedThinkingLevels<TApi extends Api>(model: Model<TApi>): ModelThinkingLevel[] {
 	if (!model.reasoning) return ["off"];
 
 	return EXTENDED_THINKING_LEVELS.filter((level) => {
-		const mapped = inferOpenAIThinkingLevelMap(model)?.[level];
+		const mapped = inferThinkingLevelMap(model)?.[level];
 		if (mapped === null) return false;
 		if (level === "xhigh") return supportsXhigh(model);
 		if (level === "max") return supportsMax(model);

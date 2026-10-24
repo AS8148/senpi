@@ -7,6 +7,7 @@ import {
 	SESSION_PATH_RETRY_AFTER_MS,
 } from "./host-reservations.ts";
 import { refreshesSessionActivity } from "./session-command-activity.ts";
+import { publishedSessionContext } from "./session-context-patch.ts";
 import {
 	type LiveWorkerPaths,
 	RESERVATION_DENIAL_CODES,
@@ -24,7 +25,12 @@ import {
 } from "./session-registry.ts";
 import { releaseWithinGrace } from "./session-teardown.ts";
 import { SessionWorkerClient } from "./session-worker-client.ts";
-import { SESSION_WORKER_LIMITS, type SessionWriteGrant, typedWorkerRefusal } from "./session-worker-protocol.ts";
+import {
+	closedByWorkerDeath,
+	SESSION_WORKER_LIMITS,
+	type SessionWriteGrant,
+	typedWorkerRefusal,
+} from "./session-worker-protocol.ts";
 import { WorkerSessionClaims } from "./worker-session-claims.ts";
 
 type SessionWorkerCallbacks = ConstructorParameters<typeof SessionWorkerClient>[0];
@@ -182,6 +188,12 @@ export class WorkerSessionRegistry {
 		} catch (cause) {
 			entry.state = "quarantined";
 			worker.quarantine();
+			// A worker that dies before commit (for example one that cannot load its modules) closes what the open
+			// is still waiting on: its own request channel rejects the pending prepare with a plain
+			// `session_closing` / `session_worker_exited`, and the claims and grants report `session_closing`.
+			// Name why the worker died instead, as the commit check above does (#4037, #1953).
+			if (workerFailure !== undefined && closedByWorkerDeath(cause))
+				throw new RpcSessionRegistryError("open_failed", workerFailure.replace(/^open_failed: /, ""));
 			throw cause;
 		}
 	}
@@ -257,6 +269,7 @@ export class WorkerSessionRegistry {
 	}
 
 	list(): RpcSessionRow[] {
+		const now = this.now();
 		return [...this.entries].map(([sessionId, entry]) => {
 			const state = entry.worker?.snapshot?.state;
 			return {
@@ -266,10 +279,13 @@ export class WorkerSessionRegistry {
 				cwd: state?.cwd ?? entry.cwd,
 				name: state?.sessionName,
 				kind: entry.kind,
-				context: entry.context,
+				context: publishedSessionContext(entry.context, entry.contextOverlay),
 				// A closing entry has already released its last attachment; never publish that as negative.
 				attachments: Math.max(0, entry.attachments),
 				status: entry.state === "quarantined" ? "closing" : entry.state,
+				idleMs: Math.max(0, now - entry.lastCommandAt),
+				// A worker isolate's session has no tool child of its own yet (senpi#3566 todo 4 serves the in-process host).
+				tool_child: { state: "none" },
 			};
 		});
 	}
