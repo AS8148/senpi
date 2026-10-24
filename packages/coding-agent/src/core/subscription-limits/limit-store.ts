@@ -141,7 +141,19 @@ export class SubscriptionLimitStore {
 	 */
 	#offer(key: string, limits: MirroredLimits): void {
 		const previous = this.#accounts.get(key);
-		if (previous !== undefined && compareRecords(limits, previous) <= 0) return;
+		if (previous === undefined) {
+			this.#publish(key, limits);
+			return;
+		}
+		// Two isolates that each wrote locally from the same held record at the same instant carry the same stamp.
+		// Neither update may be lost, so the two are combined symmetrically: both stores reach the same record.
+		if (canonical(limits) === canonical(previous)) return;
+		if (changedAtOf(limits) === changedAtOf(previous) && (limits.revision ?? 0) === (previous.revision ?? 0)) {
+			const combined = combineConcurrent(previous, limits);
+			if (canonical(combined) !== canonical(previous)) this.#publish(key, combined);
+			return;
+		}
+		if (compareRecords(limits, previous) <= 0) return;
 		this.#publish(key, limits);
 	}
 
@@ -197,6 +209,32 @@ function compareRecords(a: MirroredLimits, b: MirroredLimits): number {
 	if (firstRevision !== secondRevision) return firstRevision < secondRevision ? -1 : 1;
 	const [left, right] = [canonical(a), canonical(b)];
 	return left < right ? -1 : left > right ? 1 : 0;
+}
+
+/**
+ * Combines two different records that changed at the same stamp (senpi#3695). Symmetric, so both isolates land on
+ * the same record: windows are the union by id (on the same id the window that sorts later wins), and a field only
+ * one side set is kept; when both set it, the value that sorts later wins.
+ */
+function combineConcurrent(a: MirroredLimits, b: MirroredLimits): MirroredLimits {
+	const later = <T>(x: T | undefined, y: T | undefined): T | undefined =>
+		x === undefined ? y : y === undefined ? x : canonical(x) >= canonical(y) ? x : y;
+	const windows = new Map(a.windows.map((window) => [window.id, window]));
+	for (const window of b.windows) windows.set(window.id, later(windows.get(window.id), window) ?? window);
+	const plan = later(a.plan, b.plan);
+	const error = later(a.error, b.error);
+	const reportedAt = a.reportedAt >= b.reportedAt ? a.reportedAt : b.reportedAt;
+	const updatedAt = changedAtOf(a);
+	return {
+		provider: a.provider,
+		account: a.account,
+		windows: [...windows.values()].sort((x, y) => (x.id < y.id ? -1 : x.id > y.id ? 1 : 0)),
+		reportedAt,
+		...(plan === undefined ? {} : { plan }),
+		...(error === undefined ? {} : { error }),
+		...(updatedAt === reportedAt ? {} : { updatedAt }),
+		...(a.revision === undefined || a.revision === 0 ? {} : { revision: a.revision }),
+	};
 }
 
 function publicShape({ updatedAt: _changedAt, revision: _revision, ...limits }: MirroredLimits): AccountLimits {
