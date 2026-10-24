@@ -142,6 +142,8 @@ export async function handoffHostLocked(requested: HandoffHostOptions): Promise<
 	// string keeps its pre-#3563 meaning: this process's default).
 	const options = { ...requested, agentDir: requested.agentDir || getAgentDir() };
 	const paths = createHostDaemonPaths({ socket: options.socket, agentDir: options.agentDir });
+	// Created before the agent-dir guard on purpose: realpath needs the caller's dir to exist, so a refused
+	// foreign caller may leave an empty daemon dir under its own agent dir (harmless).
 	await createDaemonDirectories(paths);
 	const host = await probeProtocolInfo(options.socket, HANDOFF_PROBE_TIMEOUT_MS);
 	if (!host) return { action: "refuse", reason: "no_host", upgradeable: false };

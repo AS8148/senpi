@@ -2,7 +2,7 @@
 // foreign agent dir BEFORE any `begin_handover` is written to the socket. The host-side gate backstops it
 // on a current host, but the CLI refusal is the only guard against a host without that gate, so its
 // placement is pinned here with the probe and the request seam both mocked: a foreign dir answers
-// `foreign_agent_dir` without the request ever leaving, and the same dir is allowed past the check.
+// `foreign_agent_dir` without the request ever leaving, and the same dir reaches the next check.
 import { describe, expect, it, vi } from "vitest";
 import { idleHandoverOutcome } from "../../../src/modes/rpc/host-handover-request.ts";
 
@@ -46,7 +46,8 @@ describe("an idle handover from another agent directory (#3560, CLI check)", () 
 			terms(),
 		);
 
-		expect(outcome.payload).not.toMatchObject({ reason: "foreign_agent_dir" });
+		// Past the agent-dir check the next gate refuses: this CLI never launches the all-zero target build.
+		expect(outcome.payload).toMatchObject({ reason: "target_build_mismatch" });
 	});
 });
 
