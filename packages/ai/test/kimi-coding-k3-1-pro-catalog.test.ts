@@ -6,9 +6,9 @@ import { getBuiltinModel } from "../src/providers/all.ts";
 // context, image and video input. A mistyped id silently falls back to K2.8 Preview without thinking.
 describe("kimi-coding K3.1 Pro catalog rows", () => {
 	it.each([
-		["k3.1-pro", "Kimi K3.1 Pro"],
-		["k3.1-pro-highspeed", "Kimi K3.1 Pro Highspeed"],
-	] as const)("registers %s with the documented limits", (id, name) => {
+		["k3.1-pro", "Kimi K3.1 Pro", { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2 }],
+		["k3.1-pro-highspeed", "Kimi K3.1 Pro Highspeed", { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 4 }],
+	] as const)("registers %s with the documented limits", (id, name, cost) => {
 		const model = getBuiltinModel("kimi-coding", id);
 		expect(model).toBeDefined();
 		expect(model?.id).toBe(id);
@@ -28,6 +28,7 @@ describe("kimi-coding K3.1 Pro catalog rows", () => {
 			xhigh: null,
 			max: "max",
 		});
+		expect(model?.cost).toEqual(cost);
 		expect(model?.compat).toMatchObject({ forceAdaptiveThinking: true, allowEmptySignature: true });
 	});
 });

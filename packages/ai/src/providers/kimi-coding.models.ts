@@ -59,7 +59,8 @@ const values = {
 			"maxTokens": 131072
 		},
 		// K3.1 Pro ships on Kimi Code as `k3.1-pro` and `k3.1-pro-highspeed`: thinking only (low / high / max), up to
-		// 1048576 context on higher tiers, image and video input. Kimi Code is a subscription, so no per-token price.
+		// 1048576 context on higher tiers, image and video input. Cost is the equivalent Moonshot API rate (models.dev
+		// moonshotai, published 2026-10-23, checked 2026-10-24), like `k3`, to estimate subscription usage value.
 		// https://www.kimi.com/code/docs/en/kimi-code/models.html (checked 2026-10-24); the API's max_completion_tokens
 		// default is 131072 (https://platform.kimi.com/docs/guide/kimi-k3-1-pro-quickstart, checked 2026-10-24).
 		"chat:k3.1-pro": {
@@ -94,10 +95,10 @@ const values = {
 				}
 			},
 			"cost": {
-				"input": 0,
-				"output": 0,
-				"cacheRead": 0,
-				"cacheWrite": 0
+				"input": 2,
+				"output": 10,
+				"cacheRead": 0.2,
+				"cacheWrite": 2
 			},
 			"contextWindow": 1048576,
 			"maxTokens": 131072
@@ -134,10 +135,10 @@ const values = {
 				}
 			},
 			"cost": {
-				"input": 0,
-				"output": 0,
-				"cacheRead": 0,
-				"cacheWrite": 0
+				"input": 4,
+				"output": 20,
+				"cacheRead": 0.2,
+				"cacheWrite": 4
 			},
 			"contextWindow": 1048576,
 			"maxTokens": 131072
