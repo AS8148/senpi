@@ -21,7 +21,7 @@
  * Also refused while clients are attached (`attached`, unless `force`) and for a session this host
  * cannot hand over (`release_unsupported`: a worker isolate owns the runtime, or there is no file).
  */
-import { rmSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import type { AgentSession } from "../../core/agent-session.ts";
 import { isMoveId, isPlainId, parseMoveId } from "../../core/session-move/bundle.ts";
 import { prepareOutgoingState, STATE_ATTEMPT_FIELD } from "../../core/session-move/extension-state.ts";
@@ -137,7 +137,7 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 		// Each handler runs under the session_shutdown handler budget: a hung one fails the release instead of holding it.
 		if (command.reason === "move") {
 			const moveId = parseMoveId(command.moveId);
-			stagedState = prepareOutgoingState(first.sessionPath, moveId);
+			stagedState = await prepareOutgoingState(first.sessionPath, moveId);
 			const [failed] = await first.session.extensionRunner.emitSessionMove({
 				type: "session_move_export",
 				moveId,
@@ -168,7 +168,7 @@ export async function releaseSession(port: SessionReleasePort, command: ReleaseS
 			admission.reopen();
 			// A move refused before its seal is abandoned: what its export staged is never bundled, and a retry stages
 			// afresh. Once the seal names this attempt, its folder is the move's state and stays for export.
-			if (stagedState !== undefined && !sealed) rmSync(stagedState.dir, { recursive: true, force: true });
+			if (stagedState !== undefined && !sealed) await rm(stagedState.dir, { recursive: true, force: true });
 		}
 	}
 }
