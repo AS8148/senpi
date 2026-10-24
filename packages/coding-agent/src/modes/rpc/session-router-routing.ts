@@ -91,7 +91,7 @@ export async function dispatch(
 				serverVersion: VERSION,
 				capabilities,
 				mode: "multi",
-				...protocolIdentity(),
+				...protocolIdentity(host.defaults.agentDir),
 				memory_pressure: host.memoryPressure,
 			},
 		};

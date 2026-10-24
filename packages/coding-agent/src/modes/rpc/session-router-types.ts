@@ -17,6 +17,8 @@ export type RpcHostSessionDefaults = Pick<
 	"cwd" | "permissionPreset" | "creationModel" | "initialThinkingLevel"
 > & {
 	readonly hostContext?: RpcSessionLaunchProfile["sessionContext"];
+	/** The host's own agent dir (captured at startup); reported as `agentDir` so it survives a cwd change. */
+	readonly agentDir?: string;
 	/** The host's `--tool-runtime`; absent means `in-process`. */
 	readonly toolRuntime?: ToolRuntimeKind;
 };
