@@ -37,6 +37,7 @@ export class SessionLifecycleController {
 	private idleBoundaryPassed = false;
 	private pendingHuman = false;
 	private admittingHuman = false;
+	private runAdmitted = false;
 	private goal: Goal | null = null;
 	private liveness: TurnEndLivenessInput | undefined;
 	private ownTask: ChildLifecycleReport | undefined;
@@ -115,15 +116,23 @@ export class SessionLifecycleController {
 		this.ledger.humanInput(at);
 	}
 
+	/** A turn was admitted and its run is about to start. */
+	noteRunAdmitted(): void {
+		this.runAdmitted = true;
+	}
+
 	admissionSettled(): void {
 		this.admittingHuman = false;
 		if (!this.ledger.runActive && !this.ledger.interrupted && this.options.readRuntime().pendingMessages === 0)
 			this.pendingHuman = false;
+		// An admitted run publishes its own opening record when it starts (senpi#3980).
+		if (this.runAdmitted) return;
 		this.recompute();
 	}
 
 	startRun(origin?: "human" | "automatic"): void {
 		this.admittingHuman = false;
+		this.runAdmitted = false;
 		this.idleBoundaryPassed = false;
 		this.liveness = undefined;
 		const interruptedRun = this.ledger.interrupted ? this.ledger.runId : undefined;
@@ -132,10 +141,11 @@ export class SessionLifecycleController {
 		this.pendingHuman = false;
 		if (interruptedRun) this.obligations.settleRun(interruptedRun);
 		this.recompute();
-		this.ledger.checkpoint();
+		this.ledger.publishUnwritten();
 	}
 
 	idle(): void {
+		this.runAdmitted = false;
 		const seq = this.ledger.snapshot.seq;
 		this.ledger.runActive = false;
 		this.idleBoundaryPassed = true;

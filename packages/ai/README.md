@@ -1868,9 +1868,10 @@ Update `packages/ai/README.md`:
 
 #### 8. Changelog
 
-Add an entry to `packages/ai/CHANGELOG.md` under `## [Unreleased]`:
+Add a `packages/ai/CHANGELOG.md` block in `changes/unreleased/<pr>.md`:
 
 ```markdown
+<!-- changes-log: packages/ai/CHANGELOG.md -->
 ### Added
 - Added support for [Provider Name] provider ([#PR](link) by [@author](link))
 ```
