@@ -739,12 +739,8 @@ export class McpService {
 				credentialIdentities.set(name, mcpCredentialIdentity(server.config, name, agentDir, env));
 			}
 		});
-		const generations = await resolveWantedMcpGenerations(
-			wanted,
-			(name) => (declarers.get(name) ?? owner).options,
-			this.#referenceErrors,
-		);
-		if (this.#disposed) return;
+		// The catalog caches are read first, as the sync's first await: resolving the generations (which may read
+		// referenced files) comes after, so a release landing meanwhile still finds the cache read under way.
 		const agentDirs = new Set([owner, ...declarers.values()].map((declarer) => declarer.options.agentDir));
 		const caches = new Map<string | undefined, McpCatalogCacheFile>();
 		for (const agentDir of agentDirs) {
@@ -752,6 +748,12 @@ export class McpService {
 			// A dispose that landed during an await closed every connection; one created now would never be closed.
 			if (this.#disposed) return;
 		}
+		const generations = await resolveWantedMcpGenerations(
+			wanted,
+			(name) => (declarers.get(name) ?? owner).options,
+			this.#referenceErrors,
+		);
+		if (this.#disposed) return;
 		const disposals: Promise<void>[] = [];
 		for (const entry of this.#connections.values()) {
 			const server = wanted.get(entry.name);

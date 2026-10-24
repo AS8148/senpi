@@ -107,9 +107,19 @@ export async function resolveWantedMcpGenerations(
 		[...wanted].map(async ([name, server]) => {
 			if (server.config === undefined) return;
 			try {
+				const generation = await resolveMcpConfigGeneration({
+					serverName: name,
+					declared: server.config,
+					...scopeOf(name),
+				});
+				// A server that declares no reference keeps its declared identity: re-hashing it under another session's
+				// agent dir (a re-sync whose declarer has released) would re-key and respawn an unchanged server.
+				const declaredHash = server.configHash;
 				generations.set(
 					name,
-					await resolveMcpConfigGeneration({ serverName: name, declared: server.config, ...scopeOf(name) }),
+					declaredHash !== undefined && mcpServerReferences(name, server.config).length === 0
+						? { config: generation.config, configHash: declaredHash }
+						: generation,
 				);
 				failures.delete(name);
 			} catch (error) {
