@@ -390,7 +390,7 @@
 		{
 			"file": "src/core/session-entry-file.ts",
 			"callee": "closeSync",
-			"symbol": "loadEntriesFromFile",
+			"symbol": "readRawEntriesFromFile",
 			"count": 1
 		},
 		{
@@ -402,7 +402,7 @@
 		{
 			"file": "src/core/session-entry-file.ts",
 			"callee": "existsSync",
-			"symbol": "loadEntriesFromFile",
+			"symbol": "readRawEntriesFromFile",
 			"count": 1
 		},
 		{
@@ -432,7 +432,7 @@
 		{
 			"file": "src/core/session-entry-file.ts",
 			"callee": "openSync",
-			"symbol": "loadEntriesFromFile",
+			"symbol": "readRawEntriesFromFile",
 			"count": 1
 		},
 		{
@@ -450,7 +450,7 @@
 		{
 			"file": "src/core/session-entry-file.ts",
 			"callee": "readSync",
-			"symbol": "loadEntriesFromFile",
+			"symbol": "readRawEntriesFromFile",
 			"count": 1
 		},
 		{
